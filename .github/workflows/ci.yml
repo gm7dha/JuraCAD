@@ -54,8 +54,8 @@ jobs:
 
       - name: Browser smoke test
         env:
-          # Attach small screenshots as annotations so the result can be reviewed.
-          SMOKE_SCREENSHOTS: "1"
+          # Set to "1" to attach small screenshots as annotations for review.
+          SMOKE_SCREENSHOTS: "0"
         run: npm run smoke
 
       - name: Attach screenshot 1
