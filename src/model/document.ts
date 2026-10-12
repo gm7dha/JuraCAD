@@ -1,3 +1,5 @@
+import { parsePlane, parseSketchData } from "../sketch/validate";
+import { emptySketch } from "../sketch/types";
 import { FEATURE_DEFS, defaultParams } from "./features";
 import type { Feature, FeatureType, Operation, PartSmithDocument } from "./types";
 
@@ -28,7 +30,7 @@ export function nextFeatureName(doc: PartSmithDocument, type: FeatureType): stri
 }
 
 export function createFeature(doc: PartSmithDocument, type: FeatureType, operation?: Operation): Feature {
-  return {
+  const feature: Feature = {
     id: newId(),
     name: nextFeatureName(doc, type),
     type,
@@ -37,6 +39,16 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     suppressed: false,
     params: defaultParams(type),
   };
+  if (type === "sketch") feature.sketch = { plane: null, data: emptySketch() };
+  if (type === "extrude") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    feature.sketchRef = sketches[sketches.length - 1]?.id;
+    feature.extrude = { end: "blind", flip: false };
+    // Like Onshape: the first solid is a new part, later extrudes add to it.
+    const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
+    feature.operation = operation ?? (hasSolid ? "add" : "new");
+  }
+  return feature;
 }
 
 export function addFeature(doc: PartSmithDocument, feature: Feature): PartSmithDocument {
@@ -133,14 +145,26 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
       else if (typeof v === "number") params[k] = String(v);
     }
     seen.add(f.id);
-    features.push({
+    const feature: Feature = {
       id: f.id,
       name: f.name,
       type: f.type as FeatureType,
       operation: f.operation as Operation,
       suppressed: f.suppressed === true,
       params: { ...defaultParams(f.type as FeatureType), ...params },
-    });
+    };
+    if (feature.type === "sketch") {
+      const sk = f.sketch as Record<string, unknown> | undefined;
+      const data = parseSketchData(sk?.data);
+      if (!data) return null;
+      feature.sketch = { plane: sk?.plane === null ? null : parsePlane(sk?.plane), data };
+    }
+    if (feature.type === "extrude") {
+      if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+      const ex = f.extrude as Record<string, unknown> | undefined;
+      feature.extrude = { end: ex?.end === "symmetric" ? "symmetric" : "blind", flip: ex?.flip === true };
+    }
+    features.push(feature);
   }
   return {
     format: "partsmith",

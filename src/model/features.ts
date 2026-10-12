@@ -49,6 +49,20 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "z", label: "Base centre Z", defaultValue: "0", group: "position" },
     ],
   },
+  sketch: {
+    type: "sketch",
+    label: "Sketch",
+    namePrefix: "Sketch",
+    description: "A 2D drawing on a plane or flat face, used by Extrude.",
+    params: [],
+  },
+  extrude: {
+    type: "extrude",
+    label: "Extrude",
+    namePrefix: "Extrude",
+    description: "Pushes the closed shapes of a sketch out into a solid.",
+    params: [{ key: "depth", label: "Depth", defaultValue: "10", positive: true, group: "size" }],
+  },
   sphere: {
     type: "sphere",
     label: "Sphere",

@@ -12,6 +12,9 @@ import { readBinaryStl } from "../src/geometry/stl";
 import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
+import { addArc, addCircle, addLine, addRectangle } from "../src/sketch/ops";
+import { planeOnFace, type SketchPlane } from "../src/sketch/planes";
+import { emptySketch, type SketchData } from "../src/sketch/types";
 
 beforeAll(async () => {
   const OC = await opencascade();
@@ -174,5 +177,136 @@ describe("geometry engine", () => {
   it("refuses to export an empty model", () => {
     build([]);
     expect(() => engine.exportStl([], "normal")).toThrow(/nothing to export/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sketch + Extrude
+
+
+function sketchFeature(plane: SketchPlane | null, data: SketchData): Feature {
+  n++;
+  return { id: `f${n}`, name: `Sketch ${n}`, type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane, data } };
+}
+
+function extrudeFeature(sketchRef: string, depth: number, opts: Partial<Pick<Feature, "operation">> & { end?: "blind" | "symmetric"; flip?: boolean } = {}): Feature {
+  n++;
+  return {
+    id: `f${n}`,
+    name: `Extrude ${n}`,
+    type: "extrude",
+    operation: opts.operation ?? "new",
+    suppressed: false,
+    params: { depth: String(depth) },
+    sketchRef,
+    extrude: { end: opts.end ?? "blind", flip: opts.flip ?? false },
+  };
+}
+
+const rectSketch = (x0: number, y0: number, w: number, h: number) => addRectangle(emptySketch(), { x: x0, y: y0 }, { x: x0 + w, y: y0 + h }).sketch;
+const meshOf = (r: { parts: { vertices: Float32Array; triangles: Uint32Array }[] }, i = 0) => analyzeMesh(r.parts[i].vertices, r.parts[i].triangles);
+
+describe("sketch and extrude", () => {
+  it("extrudes a rectangle on the Top plane upwards", () => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 40, 30));
+    const r = build([sk, extrudeFeature(sk.id, 10)]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    const a = meshOf(r);
+    expect(a.watertight).toBe(true);
+    expect(a.volume).toBeCloseTo(12000, 1);
+    expect(a.bounds?.min[2]).toBeCloseTo(0, 4);
+    expect(a.bounds?.max[2]).toBeCloseTo(10, 4);
+  });
+
+  it("extrudes towards the viewer on Front and Right, and can flip or go both ways", () => {
+    const front = sketchFeature({ kind: "default", name: "Front" }, rectSketch(0, 0, 20, 10));
+    const f = build([front, extrudeFeature(front.id, 5)]);
+    expect(meshOf(f).bounds?.min[1]).toBeCloseTo(-5, 4); // Front extrudes along −Y
+    expect(meshOf(f).bounds?.max[2]).toBeCloseTo(10, 4); // sketch "up" is Z
+
+    const right = sketchFeature({ kind: "default", name: "Right" }, rectSketch(0, 0, 20, 10));
+    const flipped = build([right, extrudeFeature(right.id, 5, { flip: true })]);
+    expect(meshOf(flipped).bounds?.min[0]).toBeCloseTo(-5, 4);
+    expect(meshOf(flipped).bounds?.max[1]).toBeCloseTo(20, 4); // sketch "right" is Y
+
+    const top = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 10, 10));
+    const sym = build([top, extrudeFeature(top.id, 8, { end: "symmetric" })]);
+    expect(meshOf(sym).bounds?.min[2]).toBeCloseTo(-4, 4);
+    expect(meshOf(sym).bounds?.max[2]).toBeCloseTo(4, 4);
+  });
+
+  it("cuts holes from circles inside the outline", () => {
+    const base = rectSketch(0, 0, 40, 30);
+    const withHole = addCircle(base, { x: 20, y: 15 }, 5).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, withHole);
+    const r = build([sk, extrudeFeature(sk.id, 10)]);
+    const a = meshOf(r);
+    expect(a.watertight).toBe(true);
+    expect(relativeError(a.volume, (1200 - Math.PI * 25) * 10)).toBeLessThan(0.01);
+    const check = engine.check("normal");
+    expect(check.parts[0].geometryValid).toBe(true);
+  });
+
+  it("extrudes a slot made of lines and arcs", () => {
+    let s = emptySketch();
+    const bottom = addLine(s, { x: 0, y: -5 }, { x: 30, y: -5 });
+    s = bottom.sketch;
+    const right = addArc(s, { x: 30, y: -5, snap: { kind: "point", id: bottom.endId } }, { x: 30, y: 5 }, { x: 35, y: 0 });
+    s = right.sketch;
+    const rightEnd = s.points.find((p) => Math.abs(p.x - 30) < 1e-6 && Math.abs(p.y - 5) < 1e-6)!.id;
+    const top = addLine(s, { x: 30, y: 5, snap: { kind: "point", id: rightEnd } }, { x: 0, y: 5 });
+    s = top.sketch;
+    const startId = s.points.find((p) => Math.abs(p.x) < 1e-6 && Math.abs(p.y + 5) < 1e-6)!.id;
+    s = addArc(s, { x: 0, y: 5, snap: { kind: "point", id: top.endId } }, { x: 0, y: -5, snap: { kind: "point", id: startId } }, { x: -5, y: 0 }).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, s);
+    const r = build([sk, extrudeFeature(sk.id, 4)]);
+    expect(r.featureErrors).toEqual({});
+    const a = meshOf(r);
+    expect(a.watertight).toBe(true);
+    expect(relativeError(a.volume, (300 + Math.PI * 25) * 4)).toBeLessThan(0.01);
+  });
+
+  it("removes material from the latest part, like drilling", () => {
+    const hole = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 20, y: 15 }, 4).sketch);
+    const r = build([
+      feature("box", { width: 40, depth: 30, height: 20 }),
+      hole,
+      extrudeFeature(hole.id, 20, { operation: "remove" }),
+    ]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    expect(relativeError(meshOf(r).volume, 24000 - Math.PI * 16 * 20)).toBeLessThan(0.01);
+  });
+
+  it("sketches on a flat face and extrudes from it", () => {
+    const plane = planeOnFace([0, 0, 1], [10, 10, 20], "Top face of Part 1");
+    const sk = sketchFeature(plane, rectSketch(0, 0, 10, 10));
+    const r = build([feature("box", { width: 40, depth: 30, height: 20 }), sk, extrudeFeature(sk.id, 5, { operation: "add" })]);
+    expect(r.featureErrors).toEqual({});
+    const a = meshOf(r);
+    expect(a.bounds?.max[2]).toBeCloseTo(25, 4);
+    expect(a.volume).toBeCloseTo(24000 + 500, 0);
+  });
+
+  it("explains problems instead of crashing", () => {
+    const openShape = sketchFeature({ kind: "default", name: "Top" }, addLine(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 0 }).sketch);
+    const noPlane = sketchFeature(null, rectSketch(0, 0, 5, 5));
+    const later = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 5, 5));
+    const r = build([
+      openShape,
+      extrudeFeature(openShape.id, 5),
+      noPlane,
+      extrudeFeature(noPlane.id, 5),
+      extrudeFeature(later.id, 5),
+      later,
+      extrudeFeature("missing", 5),
+    ]);
+    expect(r.parts).toHaveLength(0);
+    const messages = Object.values(r.featureErrors).join(" | ");
+    expect(messages).toMatch(/no closed shapes/);
+    expect(messages).toMatch(/Pick a plane/);
+    expect(messages).toMatch(/comes after this extrude/);
+    expect(messages).toMatch(/deleted/);
   });
 });

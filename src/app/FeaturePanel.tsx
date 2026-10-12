@@ -10,6 +10,8 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
   cylinder: Icons.Cylinder,
   sphere: Icons.Sphere,
+  sketch: Icons.Sketch,
+  extrude: Icons.Extrude,
 };
 
 type MenuEntry = { label: string; action: () => void; danger?: boolean } | "divider";

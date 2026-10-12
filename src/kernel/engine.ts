@@ -9,6 +9,7 @@ import { analyzeMesh, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
 import { FEATURE_DEFS, resolveParams } from "../model/features";
 import { MESH_TOLERANCES, type Feature, type MeshQuality } from "../model/types";
+import { extrudeSketch } from "./extrude";
 import type { CheckResult, ExportResult, PartMesh, RebuildResult } from "./protocol";
 
 interface BuiltPart {
@@ -38,8 +39,26 @@ export function describeError(e: unknown, fallback: string): string {
   return fallback;
 }
 
-function buildSolid(feature: Feature, v: Record<string, number>): Shape3D {
+/** Sketches seen so far in the rebuild, by feature id. */
+type SketchMap = Map<string, Feature>;
+
+function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[]): Shape3D {
   switch (feature.type) {
+    case "extrude": {
+      if (!feature.sketchRef) throw new Error("Choose a sketch to extrude.");
+      const sketch = sketches.get(feature.sketchRef);
+      if (!sketch?.sketch?.plane) {
+        const exists = all.find((f) => f.id === feature.sketchRef);
+        if (!exists) throw new Error("Its sketch has been deleted. Pick another sketch.");
+        if (exists.suppressed) throw new Error(`${exists.name} is suppressed, so there's nothing to extrude.`);
+        if (all.indexOf(exists) > all.indexOf(feature)) throw new Error(`${exists.name} comes after this extrude in the list.`);
+        throw new Error(`${exists.name} couldn't be used.`);
+      }
+      const opts = feature.extrude ?? { end: "blind", flip: false };
+      return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip });
+    }
+    case "sketch":
+      throw new Error("A sketch isn't a solid.");
     case "box":
       return makeBox([v.x, v.y, v.z], [v.x + v.width, v.y + v.depth, v.z + v.height]);
     case "cylinder":
@@ -58,9 +77,16 @@ export class GeometryEngine {
     this.disposeParts();
     const featureErrors: Record<string, string> = {};
     let partCounter = 0;
+    const sketches: SketchMap = new Map();
 
     for (const feature of features) {
       if (feature.suppressed) continue;
+      if (feature.type === "sketch") {
+        // Sketches make no solid themselves; extrudes later in the list use them.
+        if (!feature.sketch?.plane) featureErrors[feature.id] = "Pick a plane or flat face to sketch on.";
+        else sketches.set(feature.id, feature);
+        continue;
+      }
       const def = FEATURE_DEFS[feature.type];
       if (!def) {
         featureErrors[feature.id] = "PartSmith doesn't know this kind of feature.";
@@ -85,7 +111,7 @@ export class GeometryEngine {
 
       let tool: Shape3D;
       try {
-        tool = buildSolid(feature, values);
+        tool = buildSolid(feature, values, sketches, features);
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;

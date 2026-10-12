@@ -1,5 +1,11 @@
-/** The kinds of feature PartSmith can build. Phase 1: simple solids. */
-export type FeatureType = "box" | "cylinder" | "sphere";
+import type { SketchPlane } from "../sketch/planes";
+import type { SketchData } from "../sketch/types";
+
+/** The kinds of feature PartSmith can build. */
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude";
+
+/** How an extrude runs: one way from the sketch (optionally flipped), or equally both ways. */
+export type ExtrudeEnd = "blind" | "symmetric";
 
 /**
  * How a feature's solid combines with what's already there (like Onshape's
@@ -21,6 +27,12 @@ export interface Feature {
   suppressed: boolean;
   /** Parameter values as typed, e.g. { width: "20", height: "10 + 5" }. */
   params: Record<string, string>;
+  /** Sketch features: where the sketch is and what's drawn. A null plane means "not chosen yet". */
+  sketch?: { plane: SketchPlane | null; data: SketchData };
+  /** Extrude features: the sketch feature to extrude. */
+  sketchRef?: string;
+  /** Extrude features: one way or symmetric, and whether to flip. */
+  extrude?: { end: ExtrudeEnd; flip: boolean };
 }
 
 /** One Part Studio's worth of design. Saved as a .partsmith file later (Phase 4). */
