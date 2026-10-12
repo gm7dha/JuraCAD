@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { evaluate, formatMm } from "../model/expr";
 import { FEATURE_DEFS, OPERATION_LABELS, resolveParams, type ParamDef } from "../model/features";
-import { useStore } from "../model/store";
+import { useDocument, useStore } from "../model/store";
 import type { Operation } from "../model/types";
 import { Icons } from "./icons";
 
@@ -51,6 +51,64 @@ function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; a
   );
 }
 
+/** Extrude-only settings: which sketch, which way. */
+function ExtrudeOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const mode = useStore((s) => s.editing?.mode);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const doc = useDocument();
+  if (!draft || draft.type !== "extrude") return null;
+  // Only sketches above this extrude in the list can be used.
+  const index = doc.features.findIndex((f) => f.id === draft.id);
+  const before = mode === "edit" && index >= 0 ? doc.features.slice(0, index) : doc.features;
+  const sketches = before.filter((f) => f.type === "sketch");
+  const opts = draft.extrude ?? { end: "blind" as const, flip: false };
+
+  return (
+    <fieldset className="param-group">
+      <legend>Sketch</legend>
+      {sketches.length === 0 ? (
+        <p className="dialog-error">There are no sketches yet. Cancel, then use Sketch to draw a shape first.</p>
+      ) : (
+        <select
+          className="full-select"
+          aria-label="Sketch to extrude"
+          value={draft.sketchRef ?? ""}
+          onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}
+        >
+          {!draft.sketchRef && <option value="">Choose a sketch…</option>}
+          {sketches.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+        </select>
+      )}
+      <div className="segmented two" role="radiogroup" aria-label="Direction">
+        {(["blind", "symmetric"] as const).map((end) => (
+          <button
+            type="button"
+            key={end}
+            role="radio"
+            aria-checked={opts.end === end}
+            className={opts.end === end ? "selected" : ""}
+            onClick={() => setDraftField({ extrude: { ...opts, end } })}
+            title={end === "blind" ? "Extrude out from the sketch on one side" : "Extrude the same amount on both sides of the sketch"}
+          >
+            {end === "blind" ? "One way" : "Symmetric"}
+          </button>
+        ))}
+      </div>
+      {opts.end === "blind" && (
+        <label className="check-row">
+          <input type="checkbox" checked={opts.flip} onChange={(e) => setDraftField({ extrude: { ...opts, flip: e.target.checked } })} />
+          Flip direction
+        </label>
+      )}
+    </fieldset>
+  );
+}
+
 /** The floating feature dialog (top-left of the viewport), like Onshape's. */
 export function FeatureDialog() {
   const editing = useStore((s) => s.editing);
@@ -62,7 +120,8 @@ export function FeatureDialog() {
   const ref = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    if (!editing) return;
+    // Sketches handle Esc themselves (it leaves the current tool, not the sketch).
+    if (!editing || editing.draft.type === "sketch") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -73,13 +132,13 @@ export function FeatureDialog() {
     return () => window.removeEventListener("keydown", onKey);
   }, [editing, cancelDraft]);
 
-  if (!editing) return null;
+  if (!editing || editing.draft.type === "sketch") return null;
   const { draft, mode } = editing;
   const def = FEATURE_DEFS[draft.type];
   const { errors } = resolveParams(draft);
   const hasErrors = Object.keys(errors).length > 0;
   const groups: { title: string; params: ParamDef[] }[] = [
-    { title: "Size", params: def.params.filter((p) => p.group === "size") },
+    { title: draft.type === "extrude" ? "Depth" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: "Position", params: def.params.filter((p) => p.group === "position") },
   ];
 
@@ -135,7 +194,9 @@ export function FeatureDialog() {
           ))}
         </div>
 
-        {groups.map((g, gi) => (
+        <ExtrudeOptions />
+
+        {groups.filter((g) => g.params.length > 0).map((g, gi) => (
           <fieldset key={g.title} className="param-group">
             <legend>{g.title}</legend>
             {g.params.map((p, pi) => (

@@ -3,7 +3,11 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import type { PartMesh } from "../kernel/protocol";
 import type { DatumName, PlaneName, SelectionItem } from "../model/store";
+import type { SketchController, SketchPointer, SketchTransient } from "../sketch/controller";
+import { planeFrame, type SketchPlane } from "../sketch/planes";
+import type { SketchData } from "../sketch/types";
 import { labelSprite } from "./labels";
+import { SketchLayer, type ActiveSketch } from "./SketchLayer";
 import { VIEW_DIRECTIONS, ViewCube, type StandardView } from "./ViewCube";
 
 // PartSmith is Z-up, like Onshape.
@@ -83,6 +87,10 @@ export class SceneManager {
   private readonly materials: { faces: THREE.Material[]; edges: THREE.Material[] };
   private readonly resizeObserver: ResizeObserver;
   private readonly callbacks: SceneCallbacks;
+  private readonly sketchLayer = new SketchLayer();
+  /** Set while a sketch is being edited: left-button input goes to the sketch tools. */
+  private sketchController: SketchController | null = null;
+  private readonly frameListeners = new Set<() => void>();
 
   private width = 1;
   private height = 1;
@@ -153,7 +161,7 @@ export class SceneManager {
       ],
     };
 
-    this.scene.add(this.partsGroup, this.planesGroup, this.originGroup);
+    this.scene.add(this.partsGroup, this.planesGroup, this.originGroup, this.sketchLayer.group);
     this.buildPlanes();
     this.buildOrigin();
 
@@ -309,8 +317,106 @@ export class SceneManager {
     return true;
   }
 
+  // -------------------------------------------------------------------------
+  // Sketching
+
+  /** Finished sketches to show faintly, and the sketch being edited (if any). */
+  setSketchScene(others: { plane: SketchPlane; data: SketchData }[], active: ActiveSketch | null): void {
+    this.sketchLayer.setOthers(others);
+    this.sketchLayer.setActive(active);
+  }
+
+  setSketchTransient(t: SketchTransient | null): void {
+    this.sketchLayer.setTransient(t);
+  }
+
+  /** Route left-button input to sketch tools (or back to normal picking with null). */
+  setSketchController(controller: SketchController | null): void {
+    this.sketchController = controller;
+    if (controller && this.hover) {
+      this.hover = null;
+      this.applyHighlights();
+    }
+  }
+
+  /** Look straight at a sketch plane. */
+  viewNormalToSketch(plane: SketchPlane): void {
+    const f = planeFrame(plane);
+    const dir = new THREE.Vector3(...f.n);
+    if (Math.abs(dir.z) > 0.9999) dir.set(0, -1e-4 * Math.sign(dir.z), Math.sign(dir.z)).normalize();
+    this.animateTo({ dir }, true);
+  }
+
+  /** Screen position (CSS px within the viewport) of a point on the active sketch, or null. */
+  projectSketchPoint(x: number, y: number): { x: number; y: number } | null {
+    const f = this.sketchLayer.frame;
+    if (!f) return null;
+    const v = new THREE.Vector3(
+      f.origin[0] + x * f.u[0] + y * f.v[0],
+      f.origin[1] + x * f.u[1] + y * f.v[1],
+      f.origin[2] + x * f.u[2] + y * f.v[2],
+    ).project(this.camera);
+    return { x: ((v.x + 1) / 2) * this.width, y: ((1 - v.y) / 2) * this.height };
+  }
+
+  /** Sketch coordinates under a screen point (CSS px within the viewport), or null. */
+  unprojectToSketch(px: number, py: number): { x: number; y: number } | null {
+    const f = this.sketchLayer.frame;
+    if (!f) return null;
+    const ndc = new THREE.Vector2((px / this.width) * 2 - 1, -(py / this.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const n = new THREE.Vector3(...f.n);
+    const o = new THREE.Vector3(...f.origin);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, o);
+    const hit = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    if (!hit) return null;
+    hit.sub(o);
+    return { x: hit.dot(new THREE.Vector3(...f.u)), y: hit.dot(new THREE.Vector3(...f.v)) };
+  }
+
+  /** Millimetres per screen pixel at the current zoom. */
+  mmPerPixel(): number {
+    return this.worldPerPixel();
+  }
+
+  /** Called after every frame is drawn (used to keep HTML labels in place). */
+  addFrameListener(fn: () => void): () => void {
+    this.frameListeners.add(fn);
+    return () => this.frameListeners.delete(fn);
+  }
+
+  /**
+   * If a face is flat, its outward normal and a point on it (for sketching on
+   * the face). Returns null for curved faces.
+   */
+  flatFace(item: SelectionItem): { normal: [number, number, number]; point: [number, number, number] } | null {
+    if (item.kind !== "face") return null;
+    const p = this.parts.get(item.partId);
+    const g = p?.data.faceGroups[item.index];
+    if (!p || !g) return null;
+    const { normals: n, vertices: v, triangles: t } = p.data;
+    const avg = new THREE.Vector3();
+    for (let i = g.start; i < g.start + g.count; i++) avg.add(new THREE.Vector3(n[3 * t[i]], n[3 * t[i] + 1], n[3 * t[i] + 2]));
+    if (avg.lengthSq() < 1e-12) return null;
+    avg.normalize();
+    for (let i = g.start; i < g.start + g.count; i++) {
+      const vn = new THREE.Vector3(n[3 * t[i]], n[3 * t[i] + 1], n[3 * t[i] + 2]).normalize();
+      if (vn.dot(avg) < 0.9999) return null; // curved
+    }
+    const vi = t[g.start];
+    return { normal: [avg.x, avg.y, avg.z], point: [v[3 * vi], v[3 * vi + 1], v[3 * vi + 2]] };
+  }
+
+  private sketchPointer(e: PointerEvent): SketchPointer | null {
+    const { x, y } = this.localPoint(e);
+    const p = this.unprojectToSketch(x, y);
+    if (!p) return null;
+    return { x: p.x, y: p.y, mmPerPx: this.worldPerPixel(), shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
+  }
+
   dispose(): void {
     cancelAnimationFrame(this.frame);
+    this.sketchLayer.dispose();
     this.resizeObserver.disconnect();
     this.controls.dispose();
     const el = this.renderer.domElement;
@@ -445,6 +551,7 @@ export class SceneManager {
     this.camera.top = FRUSTUM_HEIGHT / 2;
     this.camera.bottom = -FRUSTUM_HEIGHT / 2;
     this.camera.updateProjectionMatrix();
+    this.sketchLayer.setResolution(this.width, this.height);
   }
 
   private animateTo(goal: { dir?: THREE.Vector3; target?: THREE.Vector3; zoom?: number }, animate: boolean): void {
@@ -560,6 +667,16 @@ export class SceneManager {
   private onPointerDown = (e: PointerEvent) => {
     const { x, y } = this.localPoint(e);
     this.pointerDown = { x, y, button: e.button };
+    if (this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
+      const ptr = this.sketchPointer(e);
+      if (ptr) {
+        // Stop the browser's follow-up mousedown moving keyboard focus — a
+        // click can open a dimension value box that must keep the focus.
+        e.preventDefault();
+        this.renderer.domElement.setPointerCapture(e.pointerId);
+        this.sketchController.pointerDown(ptr);
+      }
+    }
     if (e.button === 2) {
       // Ctrl + right-drag pans, as in Onshape.
       this.controls.mouseButtons.RIGHT = e.ctrlKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
@@ -567,12 +684,20 @@ export class SceneManager {
   };
 
   private onPointerMove = (e: PointerEvent) => {
+    if (this.sketchController) {
+      const ptr = this.sketchPointer(e);
+      const leftDown = (e.buttons & 1) === 1;
+      if (ptr && (leftDown || e.buttons === 0)) this.sketchController.pointerMove(ptr, leftDown);
+      if (e.buttons === 0) this.pendingMove = this.localPoint(e); // view cube hover
+      return;
+    }
     if (e.buttons !== 0) return; // dragging: no hover updates
     this.pendingMove = this.localPoint(e);
   };
 
   private onPointerLeave = () => {
     this.pendingMove = null;
+    this.sketchController?.pointerLeave();
     this.viewCube.setHover(null, null, this.width);
     if (this.hover) {
       this.hover = null;
@@ -590,6 +715,12 @@ export class SceneManager {
     this.pointerDown = null;
     if (!down || down.button !== 0 || e.button !== 0) return;
     const { x, y } = this.localPoint(e);
+    const overCube = this.viewCube.contains(down.x, down.y, this.width);
+    if (this.sketchController && !overCube) {
+      if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+      this.sketchController.pointerUp();
+      return;
+    }
     if (Math.hypot(x - down.x, y - down.y) > CLICK_SLOP) return;
 
     if (this.viewCube.contains(x, y, this.width)) {
@@ -606,7 +737,8 @@ export class SceneManager {
     this.pendingMove = null;
     const overCube = this.viewCube.contains(move.x, move.y, this.width);
     this.viewCube.setHover(overCube ? move.x : null, overCube ? move.y : null, this.width);
-    const hit = overCube ? null : this.pickAt(move.x, move.y);
+    // While sketching, the sketch tools handle hover themselves.
+    const hit = overCube || this.sketchController ? null : this.pickAt(move.x, move.y);
     this.renderer.domElement.style.cursor = overCube && this.viewCube.pick(move.x, move.y, this.width) ? "pointer" : "";
     const partHit = hit?.kind === "part" ? hit.item : null;
     const planeHit = hit?.kind === "plane" ? hit.plane : null;
@@ -635,9 +767,11 @@ export class SceneManager {
       label.scale.set(h * (label.userData.aspect as number), h, 1);
     }
     this.originGroup.scale.setScalar(36 * wpp);
+    this.sketchLayer.frameUpdate(wpp);
 
     this.renderer.setViewport(0, 0, this.width, this.height);
     this.renderer.render(this.scene, this.camera);
     this.viewCube.render(this.renderer, this.camera, this.width, this.height);
+    for (const fn of this.frameListeners) fn();
   };
 }

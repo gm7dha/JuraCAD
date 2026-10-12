@@ -6,12 +6,17 @@
 
 PartSmith runs entirely in your browser. Your designs never leave your computer, there's no account, and it's free.
 
-> **Status: Phase 1 preview.** You can build parts from boxes, cylinders and spheres (adding and cutting them),
-> check they're printable and export STL. Sketching, extrudes, fillets, assemblies and drawings arrive in later
-> phases — see the [roadmap](docs/DESIGN.md#roadmap).
+> **Status: Phase 2 preview.** You can sketch shapes with dimensions and constraints, extrude them into parts,
+> combine them with boxes, cylinders and spheres, check they're printable and export STL. Fillets, revolves,
+> assemblies and drawings arrive in later phases — see the [roadmap](docs/DESIGN.md#roadmap).
 
 ## What you can do today
 
+- **Sketch** on the Top, Front or Right plane, or on any flat face: lines, rectangles, circles, arcs and points.
+  Add **dimensions** (double-click to change) and **constraints** (horizontal, vertical, parallel, perpendicular,
+  equal, tangent, concentric, midpoint, fix). Blue = still free, black = fully defined.
+- **Extrude** a sketch's closed shapes (holes included) one way or symmetrically, as a new part or added to /
+  cut from the latest part.
 - Add **Box**, **Cylinder** and **Sphere** solids, each as a **New** part or **Add**ed to / **Remove**d from the latest part.
 - Type maths and units into any size box: `10 + 2`, `25.4 mm`, `1 in`.
 - Edit any feature later (double-click it), suppress it, rename it, or delete it. Full undo/redo.
@@ -31,6 +36,8 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 | Zoom to fit | F |
 | View normal to selected face | N |
 | Undo / redo | Ctrl/⌘ + Z, Ctrl/⌘ + Y |
+| Sketch / Extrude | Shift + S / Shift + E |
+| Sketch tools | L line, R rectangle, C circle, A arc, P point, D dimension, Q construction |
 | Help | ? |
 
 ## How it's built

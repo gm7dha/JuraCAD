@@ -25,7 +25,7 @@ sheet metal, surface modelling; signed native installers.
 | --- | --- | --- |
 | Modelling style | Parametric, feature-based | Edit any step and the model rebuilds; matches Onshape |
 | Geometry kernel | OpenCascade (OCCT) in WebAssembly, via replicad | Real solid kernel: fillets, shells, STEP, hidden-line drawings |
-| Sketch solver | planegcs (FreeCAD's solver in WebAssembly) | Proven 2D constraint solver |
+| Sketch solver | Own TypeScript solver (`src/sketch/solver.ts`) — damped Gauss-Newton with a freedom (DOF) analysis | Small, fully tested, no extra WebAssembly; planegcs remains an option if we outgrow it |
 | Topological naming | Reimplement FreeCAD 1.0's history-based naming | Stops references breaking when earlier steps change |
 | Language and build | TypeScript, Vite | Widely used, well documented |
 | UI | React + Zustand | Common and easy to maintain |
@@ -96,7 +96,7 @@ Each phase ends with a working version on the live site.
 | Phase | Scope | You can… |
 | --- | --- | --- |
 | **P1 Foundation** ✅ | App shell, Onshape-style viewport, OpenCascade worker, box/cylinder/sphere with New/Add/Remove, basic model check, STL export | make simple solids and print them |
-| P2 Sketcher | Sketch on planes and faces; lines, arcs, circles; constraints and dimensions | draw a fully defined sketch |
+| **P2 Sketcher** ✅ | Sketch on planes and flat faces; lines, rectangles, circles, arcs, points; constraints and dimensions; basic Extrude (one way / symmetric, New/Add/Remove) | draw a fully defined sketch and extrude it |
 | P3 Part features | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real printable parts and change them later |
 | P4 Save, check, export | `.partsmith` files, full model check, 3MF and STEP, offline install (PWA) | keep projects and trust exports |
 | P5 Assemblies | Instances, mate connectors, Onshape mate types, BOM | check multi-part prints fit |

@@ -27,6 +27,23 @@ const KEYS: [string, string][] = [
   ["Esc", "Cancel the feature dialog / clear the selection"],
   ["Delete", "Delete the highlighted feature"],
   ["?", "Show this help"],
+  ["Shift + S", "Start a sketch on the selected plane or flat face"],
+  ["Shift + E", "Extrude a sketch"],
+];
+
+const SKETCH_KEYS: [string, string][] = [
+  ["L", "Line (keep clicking to chain lines)"],
+  ["R", "Rectangle"],
+  ["C", "Circle"],
+  ["A", "Arc through three points"],
+  ["P", "Point"],
+  ["D", "Dimension: click a line or circle (or two things), then where the number goes"],
+  ["Q", "Construction: dashed helper lines that aren't extruded"],
+  ["H / V", "Make the selected lines horizontal / vertical"],
+  ["Esc", "Stop the current tool, then clear the selection"],
+  ["Delete", "Delete the selected sketch items"],
+  [`${mod} + Z / ${mod} + Y`, "Undo / redo inside the sketch"],
+  ["Double-click a dimension", "Change its value"],
 ];
 
 export function HelpDialog() {
@@ -34,7 +51,7 @@ export function HelpDialog() {
   return (
     <Modal title="Help and shortcuts" onClose={() => openDialog(null)} width={560}>
       <p>
-        PartSmith works like Onshape. Add solids from the toolbar, then edit them any time by double-clicking them in the
+        PartSmith works like Onshape. Sketch a shape and extrude it, or add simple solids from the toolbar, then edit them any time by double-clicking them in the
         feature list. Everything is saved in this browser automatically.
       </p>
       <h3 className="help-heading">Mouse</h3>
@@ -54,6 +71,23 @@ export function HelpDialog() {
       <table className="shortcut-table">
         <tbody>
           {KEYS.map(([a, b]) => (
+            <tr key={a}>
+              <td>
+                <kbd>{a}</kbd>
+              </td>
+              <td>{b}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <h3 className="help-heading">While sketching</h3>
+      <p className="small">
+        Blue lines can still move; black lines are fully fixed by dimensions and constraints. Drag points or lines to
+        reshape. Click ✓ to finish, then use Extrude to turn the closed shapes into a solid.
+      </p>
+      <table className="shortcut-table">
+        <tbody>
+          {SKETCH_KEYS.map(([a, b]) => (
             <tr key={a}>
               <td>
                 <kbd>{a}</kbd>

@@ -10,6 +10,8 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
   cylinder: Icons.Cylinder,
   sphere: Icons.Sphere,
+  sketch: Icons.Sketch,
+  extrude: Icons.Extrude,
 };
 
 type MenuEntry = { label: string; action: () => void; danger?: boolean } | "divider";
@@ -100,7 +102,12 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
   return (
     <li
       className={["feature-row", "datum", selected && "selected", hidden && "hidden"].filter(Boolean).join(" ")}
-      onClick={() => plane && !hidden && selectPlane(selected ? null : plane)}
+      onClick={() => {
+        if (!plane || hidden) return;
+        const st = useStore.getState();
+        if (st.sketch && st.editing?.draft.sketch && !st.editing.draft.sketch.plane) st.setSketchPlane({ kind: "default", name: plane });
+        else selectPlane(selected ? null : plane);
+      }}
       onDoubleClick={() => plane && viewportApi.current?.viewNormalToPlane(plane)}
       onMouseEnter={() => plane && !hidden && setListHoverPlane(plane)}
       onMouseLeave={() => plane && setListHoverPlane(null)}
