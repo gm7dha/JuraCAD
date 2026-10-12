@@ -16,6 +16,8 @@ import {
   undo as undoHistory,
   type History,
 } from "./document";
+import type { SketchPlane } from "../sketch/planes";
+import type { SketchData } from "../sketch/types";
 import { resolveParams } from "./features";
 import type { Feature, FeatureType, PartSmithDocument } from "./types";
 
@@ -36,6 +38,24 @@ export interface Editing {
   draft: Feature;
 }
 
+export type SketchTool = "select" | "line" | "rectangle" | "circle" | "arc" | "point" | "dimension";
+
+/** State while a sketch is open for editing. */
+export interface SketchSession {
+  /** Sketch undo history (separate from the document's, like Onshape). */
+  past: SketchData[];
+  future: SketchData[];
+  tool: SketchTool;
+  /** Selected point, curve and constraint ids. */
+  selection: string[];
+  /** New lines, circles and arcs are construction geometry. */
+  construction: boolean;
+  /** Hint or problem shown in the sketch panel. */
+  message: { text: string; tone: "info" | "error" } | null;
+  /** Dimension whose value box is open. */
+  editingDimension: string | null;
+}
+
 export type DialogName = "check" | "export" | "help" | null;
 
 export interface Toast {
@@ -47,6 +67,8 @@ export interface Toast {
 export interface AppState {
   history: History;
   editing: Editing | null;
+  /** Present while the feature being edited is a sketch. */
+  sketch: SketchSession | null;
   /** Feature highlighted in the feature list. */
   selectedFeatureId: string | null;
   /** Faces and edges picked in the viewport. */
@@ -72,7 +94,21 @@ export interface AppState {
   startCreate: (type: FeatureType) => void;
   startEdit: (id: string) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude">>) => void;
+  /** Open a new sketch (plane may be chosen later). */
+  startSketch: (plane: SketchPlane | null) => void;
+  setSketchPlane: (plane: SketchPlane) => void;
+  /** Replace the sketch being edited. `record` adds an undo step. */
+  updateSketch: (data: SketchData, opts?: { record?: boolean; selection?: string[] }) => void;
+  /** Record an undo step for a drag that's finished (`before` = sketch when the drag began). */
+  recordSketchStep: (before: SketchData) => void;
+  sketchUndo: () => void;
+  sketchRedo: () => void;
+  setSketchTool: (tool: SketchTool) => void;
+  setSketchSelection: (ids: string[]) => void;
+  setSketchMessage: (text: string | null, tone?: "info" | "error") => void;
+  setSketchConstruction: (on: boolean) => void;
+  setEditingDimension: (id: string | null) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   deleteFeature: (id: string) => void;
@@ -114,6 +150,20 @@ function loadSavedDocument(): PartSmithDocument {
 
 let toastCounter = 0;
 
+const newSession = (): SketchSession => ({
+  past: [],
+  future: [],
+  tool: "line",
+  selection: [],
+  construction: false,
+  message: null,
+  editingDimension: null,
+});
+
+/** Is this id (point, curve or constraint) still in the sketch? */
+const existsIn = (d: SketchData, id: string) =>
+  d.points.some((p) => p.id === id) || d.curves.some((c) => c.id === id) || d.constraints.some((c) => c.id === id) || id === "origin";
+
 export const useStore = create<AppState>((set, get) => {
   /** Apply a document change and record it for undo. */
   const change = (fn: (doc: PartSmithDocument) => PartSmithDocument) =>
@@ -122,6 +172,7 @@ export const useStore = create<AppState>((set, get) => {
   return {
     history: historyOf(loadSavedDocument()),
     editing: null,
+    sketch: null,
     selectedFeatureId: null,
     selection: [],
     hiddenParts: [],
@@ -140,15 +191,114 @@ export const useStore = create<AppState>((set, get) => {
     toast: null,
 
     startCreate: (type) => {
-      const doc = get().history.present;
-      set({ editing: { mode: "create", draft: createFeature(doc, type) }, selectedFeatureId: null });
+      const s = get();
+      if (type === "sketch") {
+        s.startSketch(s.selectedPlane ? { kind: "default", name: s.selectedPlane } : null);
+        return;
+      }
+      const draft = createFeature(s.history.present, type);
+      // Extrude the sketch that's highlighted in the list, if any.
+      if (type === "extrude") {
+        const picked = s.history.present.features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
+        if (picked) draft.sketchRef = picked.id;
+      }
+      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null });
     },
 
     startEdit: (id) => {
       const f = get().history.present.features.find((x) => x.id === id);
       if (!f) return;
-      set({ editing: { mode: "edit", draft: { ...f, params: { ...f.params } } }, selectedFeatureId: id });
+      set({
+        editing: { mode: "edit", draft: { ...f, params: { ...f.params } } },
+        sketch: f.type === "sketch" ? newSession() : null,
+        selectedFeatureId: id,
+        selectedPlane: null,
+        selection: [],
+      });
     },
+
+    startSketch: (plane) => {
+      const draft = createFeature(get().history.present, "sketch");
+      draft.sketch = { plane, data: draft.sketch!.data };
+      set({
+        editing: { mode: "create", draft },
+        sketch: {
+          ...newSession(),
+          message: plane ? null : { text: "Click Top, Front or Right in the feature list, or a flat face, to sketch on it.", tone: "info" },
+        },
+        selectedFeatureId: null,
+        selectedPlane: null,
+        selection: [],
+      });
+    },
+
+    setSketchPlane: (plane) =>
+      set((s) =>
+        s.editing?.draft.sketch
+          ? {
+              editing: { ...s.editing, draft: { ...s.editing.draft, sketch: { ...s.editing.draft.sketch, plane } } },
+              sketch: s.sketch ? { ...s.sketch, message: null } : s.sketch,
+              selectedPlane: null,
+              selection: [],
+            }
+          : {},
+      ),
+
+    updateSketch: (data, opts = {}) =>
+      set((s) => {
+        if (!s.editing?.draft.sketch || !s.sketch) return {};
+        const prev = s.editing.draft.sketch.data;
+        if (prev === data) return opts.selection ? { sketch: { ...s.sketch, selection: opts.selection } } : {};
+        return {
+          editing: { ...s.editing, draft: { ...s.editing.draft, sketch: { ...s.editing.draft.sketch, data } } },
+          sketch: {
+            ...s.sketch,
+            past: opts.record === false ? s.sketch.past : [...s.sketch.past, prev].slice(-200),
+            future: opts.record === false ? s.sketch.future : [],
+            selection: opts.selection ?? s.sketch.selection.filter((id) => existsIn(data, id)),
+          },
+        };
+      }),
+
+    recordSketchStep: (before) =>
+      set((s) => {
+        if (!s.sketch || !s.editing?.draft.sketch || s.editing.draft.sketch.data === before) return {};
+        return { sketch: { ...s.sketch, past: [...s.sketch.past, before].slice(-200), future: [] } };
+      }),
+
+    sketchUndo: () =>
+      set((s) => {
+        if (!s.sketch || !s.editing?.draft.sketch || s.sketch.past.length === 0) return {};
+        const prev = s.sketch.past[s.sketch.past.length - 1];
+        return {
+          editing: { ...s.editing, draft: { ...s.editing.draft, sketch: { ...s.editing.draft.sketch, data: prev } } },
+          sketch: {
+            ...s.sketch,
+            past: s.sketch.past.slice(0, -1),
+            future: [s.editing.draft.sketch.data, ...s.sketch.future],
+            selection: [],
+            editingDimension: null,
+          },
+        };
+      }),
+
+    sketchRedo: () =>
+      set((s) => {
+        if (!s.sketch || !s.editing?.draft.sketch || s.sketch.future.length === 0) return {};
+        const [next, ...rest] = s.sketch.future;
+        return {
+          editing: { ...s.editing, draft: { ...s.editing.draft, sketch: { ...s.editing.draft.sketch, data: next } } },
+          sketch: { ...s.sketch, past: [...s.sketch.past, s.editing.draft.sketch.data], future: rest, selection: [], editingDimension: null },
+        };
+      }),
+
+    setSketchTool: (tool) =>
+      set((s) => (s.sketch ? { sketch: { ...s.sketch, tool, message: null, editingDimension: null } } : {})),
+    setSketchSelection: (selection) => set((s) => (s.sketch ? { sketch: { ...s.sketch, selection } } : {})),
+    setSketchMessage: (text, tone = "info") =>
+      set((s) => (s.sketch ? { sketch: { ...s.sketch, message: text ? { text, tone } : null } } : {})),
+    setSketchConstruction: (construction) => set((s) => (s.sketch ? { sketch: { ...s.sketch, construction } } : {})),
+    setEditingDimension: (editingDimension) => set((s) => (s.sketch ? { sketch: { ...s.sketch, editingDimension } } : {})),
 
     setDraftParam: (key, value) =>
       set((s) =>
@@ -161,21 +311,26 @@ export const useStore = create<AppState>((set, get) => {
     commitDraft: () => {
       const { editing } = get();
       if (!editing) return false;
+      if (editing.draft.type === "sketch" && !editing.draft.sketch?.plane) {
+        get().setSketchMessage("Pick a plane or flat face to sketch on first.", "error");
+        return false;
+      }
       const { errors } = resolveParams(editing.draft);
       if (Object.keys(errors).length > 0) return false;
       const draft = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
       change((doc) => (editing.mode === "create" ? addFeature(doc, draft) : replaceFeature(doc, draft)));
-      set({ editing: null, selectedFeatureId: draft.id });
+      set({ editing: null, sketch: null, selectedFeatureId: draft.id });
       return true;
     },
 
-    cancelDraft: () => set({ editing: null }),
+    cancelDraft: () => set({ editing: null, sketch: null }),
 
     deleteFeature: (id) => {
       change((doc) => removeFeature(doc, id));
       set((s) => ({
         selectedFeatureId: s.selectedFeatureId === id ? null : s.selectedFeatureId,
         editing: s.editing?.draft.id === id ? null : s.editing,
+        sketch: s.editing?.draft.id === id ? null : s.sketch,
       }));
     },
 
@@ -195,6 +350,7 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => ({
         history: commit(s.history, emptyDocument()),
         editing: null,
+        sketch: null,
         selectedFeatureId: null,
         selection: [],
         hiddenParts: [],
@@ -202,6 +358,7 @@ export const useStore = create<AppState>((set, get) => {
 
     // Undo/redo only when no feature dialog is open (see App shortcuts).
     undo: () => set((s) => (s.editing ? {} : { history: undoHistory(s.history), selection: [] })),
+    // (While sketching, Ctrl+Z goes to sketchUndo instead — see App shortcuts.)
     redo: () => set((s) => (s.editing ? {} : { history: redoHistory(s.history), selection: [] })),
 
     selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane })),

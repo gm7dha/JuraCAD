@@ -37,9 +37,10 @@ export function EmptyHint() {
   if (!empty) return null;
   return (
     <div className="empty-hint">
-      Add a <strong>Box</strong>, <strong>Cylinder</strong> or <strong>Sphere</strong> from the toolbar to get started.
+      Click <strong>Sketch</strong>, pick <strong>Top</strong>, <strong>Front</strong> or <strong>Right</strong>, draw a shape, then{" "}
+      <strong>Extrude</strong> it.
       <br />
-      <span className="muted">Right-drag to orbit · middle-drag to pan · scroll to zoom</span>
+      <span className="muted">Or add a Box, Cylinder or Sphere · right-drag to orbit · middle-drag to pan · scroll to zoom</span>
     </div>
   );
 }

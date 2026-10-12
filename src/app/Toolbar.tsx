@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import { useStore } from "../model/store";
 import type { FeatureType } from "../model/types";
-import { viewportApi } from "../viewport/Viewport";
+import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 
 function ToolButton({
@@ -42,12 +42,23 @@ const SOLIDS: { type: FeatureType; label: string; icon: ReactNode }[] = [
 
 /** Tools that arrive in later phases, shown greyed out so the roadmap is visible. */
 const COMING: { label: string; icon: ReactNode; phase: string }[] = [
-  { label: "Sketch", icon: <Icons.Sketch />, phase: "Phase 2" },
-  { label: "Extrude", icon: <Icons.Extrude />, phase: "Phase 3" },
   { label: "Revolve", icon: <Icons.Revolve />, phase: "Phase 3" },
   { label: "Fillet", icon: <Icons.Fillet />, phase: "Phase 3" },
   { label: "Shell", icon: <Icons.Shell />, phase: "Phase 3" },
 ];
+
+/** Start a sketch on the selected plane or flat face (or ask for one). */
+export function startSketchFromSelection() {
+  const s = useStore.getState();
+  const faces = s.selection.filter((x) => x.kind === "face");
+  if (faces.length === 1 && !s.selectedPlane) {
+    const plane = planeForFace(faces[0]);
+    if (plane) return s.startSketch(plane);
+    s.showToast("That face is curved — sketches need a flat face or a plane.", "error");
+    return s.startSketch(null);
+  }
+  s.startCreate("sketch");
+}
 
 export function Toolbar() {
   const editing = useStore((s) => s.editing !== null);
@@ -58,6 +69,7 @@ export function Toolbar() {
   const startCreate = useStore((s) => s.startCreate);
   const editingType = useStore((s) => (s.editing?.mode === "create" ? s.editing.draft.type : null));
   const ready = useStore((s) => s.kernelStatus === "ready");
+  const hasSketch = useStore((s) => s.history.present.features.some((f) => f.type === "sketch"));
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
   const mod = isMac ? "⌘" : "Ctrl+";
 
@@ -80,6 +92,24 @@ export function Toolbar() {
             title={`Add a ${s.label.toLowerCase()}`}
           />
         ))}
+      </div>
+      <div className="tool-divider" />
+      <div className="tool-group">
+        <ToolButton
+          label="Sketch"
+          icon={<Icons.Sketch />}
+          onClick={startSketchFromSelection}
+          disabled={!ready}
+          title="Sketch (Shift+S) — select a plane or flat face first, or pick one after"
+        />
+        <ToolButton
+          label="Extrude"
+          icon={<Icons.Extrude />}
+          onClick={() => startCreate("extrude")}
+          disabled={!ready || !hasSketch}
+          active={editingType === "extrude"}
+          title={hasSketch ? "Extrude (Shift+E) — turn a sketch's closed shapes into a solid" : "Draw a sketch first, then extrude it"}
+        />
       </div>
       <div className="tool-divider" />
       <div className="tool-group coming">

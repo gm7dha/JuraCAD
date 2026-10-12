@@ -177,13 +177,73 @@ try {
   await page.keyboard.press("Escape");
   await page.keyboard.press("Shift+Digit7");
 
+  step = "starting a sketch and picking the Top plane";
+  await page.getByRole("button", { name: "Sketch", exact: true }).click();
+  await page.waitForSelector(".sketch-panel");
+  await page.locator(".feature-row.datum", { hasText: "Top" }).click();
+  await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane"));
+  await page.waitForTimeout(600); // camera turns to look down on the sketch
+  const vp = await page.locator(".viewport").boundingBox();
+  const cx = vp.x + vp.width / 2;
+  const cy = vp.y + vp.height / 2;
+
+  step = "drawing a rectangle";
+  await page.keyboard.press("r");
+  await page.mouse.click(cx - 90, cy + 60);
+  await page.mouse.move(cx + 40, cy - 20, { steps: 4 });
+  await page.mouse.click(cx + 90, cy - 60);
+  await page.waitForFunction(() => document.querySelector(".sketch-status")?.textContent?.includes("1 closed shape"));
+
+  step = "dimensioning the rectangle's width by typing";
+  await page.keyboard.press("d");
+  await page.mouse.click(cx + 30, cy + 60); // the bottom edge
+  await page.mouse.click(cx + 30, cy + 110); // where the value goes
+  const editor = page.locator(".dimension-editor input");
+  await editor.waitFor();
+  await editor.fill("50");
+  await editor.press("Enter");
+  await page.waitForFunction(() => [...document.querySelectorAll(".dimension-label")].some((e) => e.textContent === "50"));
+
+  step = "adding a circle inside (it becomes a hole)";
+  await page.keyboard.press("c");
+  await page.mouse.click(cx, cy);
+  await page.mouse.click(cx + 20, cy);
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.querySelector(".sketch-status")?.textContent?.includes("1 closed shape"));
+  const sketchStatusText = await page.locator(".sketch-status").innerText();
+  await shot("sketch");
+
+  step = "finishing the sketch";
+  await page.locator(".sketch-panel").getByRole("button", { name: "Accept" }).click();
+  await page.waitForSelector(".sketch-panel", { state: "detached" });
+
+  step = "extruding the sketch";
+  await page.getByRole("button", { name: "Extrude", exact: true }).click();
+  await page.getByRole("radio", { name: "New" }).click();
+  await page.locator("#param-depth").fill("15");
+  await page.getByRole("button", { name: "Accept" }).click();
+  await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 2"), null, { timeout: 30_000 });
+  const failedAfterExtrude = await page.locator(".feature-row.failed").count();
+  if (failedAfterExtrude > 0) throw new Error(`${failedAfterExtrude} feature(s) failed after extruding`);
+  await page.keyboard.press("Shift+Digit7");
+  await page.keyboard.press("f");
+  await page.waitForTimeout(600);
+  await shot("extruded");
+
+  step = "checking the extruded part";
+  await page.getByRole("button", { name: "Check model" }).click();
+  await page.waitForSelector(".check-headline", { timeout: 30_000 });
+  const extrudeCheck = await page.locator(".check-report").innerText();
+  if (!/Part 2/.test(extrudeCheck)) throw new Error(`check report didn't include Part 2: ${extrudeCheck}`);
+  await page.getByRole("button", { name: "Close", exact: true }).first().click();
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); undo, export name and planes OK.`,
+    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

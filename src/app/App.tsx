@@ -10,7 +10,11 @@ import { FeatureDialog } from "./FeatureDialog";
 import { FeaturePanel } from "./FeaturePanel";
 import { HelpDialog } from "./HelpDialog";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
-import { Toolbar } from "./Toolbar";
+import { SketchOverlay } from "./SketchOverlay";
+import { SketchPanel } from "./SketchPanel";
+import { SketchToolbar } from "./SketchToolbar";
+import { deleteSketchSelection, setSketchTool, sketchEscape, toggleSketchConstruction, applySketchRelation } from "./sketchActions";
+import { startSketchFromSelection, Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 
 const SHIFT_VIEWS: Record<string, StandardView> = {
@@ -29,12 +33,65 @@ function isTyping(target: EventTarget | null): boolean {
   return el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
 }
 
+/** Keyboard shortcuts while a sketch is open. Returns true if the key was used. */
+function sketchShortcut(e: KeyboardEvent): boolean {
+  const s = useStore.getState();
+  if (!s.sketch) return false;
+  const mod = e.ctrlKey || e.metaKey;
+  if (isTyping(e.target)) return false;
+  if (mod) {
+    const key = e.key.toLowerCase();
+    if (key === "z" && !e.shiftKey) s.sketchUndo();
+    else if (key === "y" || (key === "z" && e.shiftKey)) s.sketchRedo();
+    else return false;
+    return true;
+  }
+  if (e.altKey || s.dialog) return false;
+  if (e.key === "Escape") {
+    sketchEscape();
+    return true;
+  }
+  if (e.key === "Delete" || e.key === "Backspace") return deleteSketchSelection() || true;
+  if (e.shiftKey) return false;
+  const tools: Record<string, Parameters<typeof setSketchTool>[0]> = {
+    l: "line",
+    r: "rectangle",
+    c: "circle",
+    a: "arc",
+    p: "point",
+    d: "dimension",
+  };
+  const key = e.key.toLowerCase();
+  if (!s.editing?.draft.sketch?.plane) return false;
+  if (tools[key]) {
+    setSketchTool(tools[key]);
+    return true;
+  }
+  if (key === "q") {
+    toggleSketchConstruction();
+    return true;
+  }
+  if (key === "h" || key === "v") {
+    applySketchRelation(key === "h" ? "horizontal" : "vertical");
+    return true;
+  }
+  if (key === "n") {
+    viewportApi.current?.viewNormalToSketch(s.editing.draft.sketch.plane);
+    return true;
+  }
+  return false;
+}
+
 /** Onshape-style keyboard shortcuts. */
 function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const s = useStore.getState();
       const mod = e.ctrlKey || e.metaKey;
+      if (sketchShortcut(e)) {
+        e.preventDefault();
+        return;
+      }
 
       // Undo / redo the document — but not while typing in a box (the box
       // undoes its own text) or while a feature dialog is open, where it
@@ -58,6 +115,18 @@ function useShortcuts() {
         e.preventDefault();
         viewportApi.current?.setView(SHIFT_VIEWS[e.code]);
         return;
+      }
+      if (e.shiftKey && !s.editing && s.kernelStatus === "ready") {
+        if (e.code === "KeyS") {
+          e.preventDefault();
+          startSketchFromSelection();
+          return;
+        }
+        if (e.code === "KeyE" && s.history.present.features.some((f) => f.type === "sketch")) {
+          e.preventDefault();
+          s.startCreate("extrude");
+          return;
+        }
       }
       switch (e.key) {
         case "f":
@@ -93,6 +162,7 @@ function useShortcuts() {
 
 export function App() {
   const dialog = useStore((s) => s.dialog);
+  const sketching = useStore((s) => s.sketch !== null);
 
   useEffect(() => connectKernel(), []);
   useShortcuts();
@@ -100,12 +170,14 @@ export function App() {
   return (
     <div className="app">
       <TopBar />
-      <Toolbar />
+      {sketching ? <SketchToolbar /> : <Toolbar />}
       <div className="workspace">
         <FeaturePanel />
         <main className="viewport-area">
           <Viewport />
+          <SketchOverlay />
           <FeatureDialog />
+          <SketchPanel />
           <EngineStatus />
           <EmptyHint />
           <SelectionInfo />

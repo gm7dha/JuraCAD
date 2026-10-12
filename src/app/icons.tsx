@@ -154,6 +154,58 @@ export const Icons = {
       <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
     </Svg>
   ),
+  Select: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 3l14 8-6 1.5L10 19z" />
+    </Svg>
+  ),
+  Line: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 19 19 5" />
+      <circle cx="5" cy="19" r="1.6" fill="currentColor" />
+      <circle cx="19" cy="5" r="1.6" fill="currentColor" />
+    </Svg>
+  ),
+  Rectangle: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="4" y="6" width="16" height="12" />
+    </Svg>
+  ),
+  Circle: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+    </Svg>
+  ),
+  Arc: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 18a9 9 0 0 1 16 0" />
+      <circle cx="4" cy="18" r="1.6" fill="currentColor" />
+      <circle cx="20" cy="18" r="1.6" fill="currentColor" />
+      <circle cx="12" cy="9" r="1.6" fill="currentColor" />
+    </Svg>
+  ),
+  Point: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="3" fill="currentColor" />
+    </Svg>
+  ),
+  Dimension: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 8v8M20 8v8M4 12h16" />
+      <path d="m7 9.5-3 2.5 3 2.5M17 9.5l3 2.5-3 2.5" />
+    </Svg>
+  ),
+  Construction: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 19 19 5" strokeDasharray="3 2.5" />
+    </Svg>
+  ),
+  Trash: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+    </Svg>
+  ),
   New: (p: IconProps) => (
     <Svg {...p}>
       <path d="M14 3H6v18h12V7z" />
