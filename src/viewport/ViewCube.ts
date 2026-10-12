@@ -22,6 +22,12 @@ export const VIEW_DIRECTIONS: Record<StandardView, THREE.Vector3> = {
 // BoxGeometry material order: +X, -X, +Y, -Y, +Z, -Z
 const FACE_VIEWS: StandardView[] = ["right", "left", "back", "front", "top", "bottom"];
 const FACE_LABELS = ["Right", "Left", "Back", "Front", "Top", "Bottom"];
+/**
+ * BoxGeometry maps each face's texture differently. These clockwise rotations
+ * make every label read upright when that face is viewed straight on with
+ * Z up (worked out from three.js BoxGeometry's UV layout).
+ */
+const FACE_TEXT_ROTATION = [-Math.PI / 2, Math.PI / 2, Math.PI, 0, 0, Math.PI];
 
 const FACE_COLOUR = new THREE.Color("#ffffff");
 const HOVER_COLOUR = new THREE.Color("#cfe3ff");
@@ -38,7 +44,7 @@ export class ViewCube {
 
   constructor() {
     const materials = FACE_LABELS.map(
-      (label) =>
+      (label, i) =>
         new THREE.MeshBasicMaterial({
           map: textTexture(label, {
             width: 256,
@@ -47,12 +53,12 @@ export class ViewCube {
             color: "#3c4652",
             background: "#ffffff",
             border: "#9aa6b2",
+            rotation: FACE_TEXT_ROTATION[i],
           }),
         }),
     );
     this.cube = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), materials);
     this.scene.add(this.cube);
-    this.orientFaceTextures();
 
     const edges = new THREE.LineSegments(
       new THREE.EdgesGeometry(this.cube.geometry),
@@ -72,21 +78,6 @@ export class ViewCube {
     axes.position.set(-1.25, -1.25, -1.25);
     axes.renderOrder = 5;
     this.scene.add(axes);
-  }
-
-  /**
-   * BoxGeometry's default UVs leave some labels upside down or mirrored when
-   * seen from Onshape-style Z-up views. Rotate each face's texture so text
-   * reads upright from that face's standard view.
-   */
-  private orientFaceTextures(): void {
-    // Rotation (radians) applied to each face texture, in material order.
-    const rotations = [0, 0, 0, 0, 0, Math.PI];
-    this.cube.material.forEach((m, i) => {
-      if (!m.map || rotations[i] === 0) return;
-      m.map.center.set(0.5, 0.5);
-      m.map.rotation = rotations[i];
-    });
   }
 
   /** Screen rectangle (CSS pixels, from the top-left) the cube occupies. */

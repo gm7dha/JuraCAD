@@ -3,7 +3,16 @@ import * as THREE from "three";
 /** A canvas texture with centred text, used for plane labels and the view cube. */
 export function textTexture(
   text: string,
-  opts: { width?: number; height?: number; font?: string; color?: string; background?: string; border?: string } = {},
+  opts: {
+    width?: number;
+    height?: number;
+    font?: string;
+    color?: string;
+    background?: string;
+    border?: string;
+    /** Rotate the text clockwise by this many radians (used by the view cube). */
+    rotation?: number;
+  } = {},
 ): THREE.CanvasTexture {
   const width = opts.width ?? 256;
   const height = opts.height ?? 64;
@@ -25,7 +34,9 @@ export function textTexture(
     g.fillStyle = opts.color ?? "#333";
     g.textAlign = "center";
     g.textBaseline = "middle";
-    g.fillText(text, width / 2, height / 2 + 2);
+    g.translate(width / 2, height / 2);
+    g.rotate(opts.rotation ?? 0);
+    g.fillText(text, 0, 2);
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;

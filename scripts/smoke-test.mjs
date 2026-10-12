@@ -99,6 +99,9 @@ try {
   await page.keyboard.press("Shift+Digit5");
   await page.waitForTimeout(600);
   await shot("top-view");
+  await page.keyboard.press("Shift+Digit4");
+  await page.waitForTimeout(600);
+  await shot("right-view");
   await page.keyboard.press("Shift+Digit7");
   await page.waitForTimeout(600);
 

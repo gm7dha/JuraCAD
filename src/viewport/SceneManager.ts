@@ -293,11 +293,11 @@ export class SceneManager {
     const fill = new THREE.MeshBasicMaterial({
       color: COLOURS.plane,
       transparent: true,
-      opacity: 0.16,
+      opacity: 0.09,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    const border = new THREE.LineBasicMaterial({ color: COLOURS.planeBorder, transparent: true, opacity: 0.8 });
+    const border = new THREE.LineBasicMaterial({ color: COLOURS.planeBorder, transparent: true, opacity: 0.55 });
 
     const makePlane = (name: string, rotation: THREE.Euler) => {
       const group = new THREE.Group();
@@ -337,7 +337,8 @@ export class SceneManager {
     const box = new THREE.Box3();
     for (const p of this.parts.values()) box.expandByObject(p.mesh);
     const extent = box.isEmpty() ? 0 : Math.max(...box.getSize(new THREE.Vector3()).toArray(), 0);
-    this.planeSize = Math.max(100, Math.ceil((extent * 1.25) / 10) * 10);
+    // Like Onshape, planes roughly cover the model (100 mm when empty).
+    this.planeSize = extent > 0 ? Math.max(10, Math.ceil((extent * 1.1) / 5) * 5) : 100;
     for (const group of this.planesGroup.children) {
       const inner = group.children[0];
       inner.scale.setScalar(this.planeSize);
