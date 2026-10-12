@@ -122,6 +122,11 @@ export const Icons = {
       <path d="M4 20V10a6 6 0 0 1 6-6h10" />
     </Svg>
   ),
+  Chamfer: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 20V10l6-6h10" />
+    </Svg>
+  ),
   Shell: (p: IconProps) => (
     <Svg {...p}>
       <rect x="4" y="6" width="16" height="14" rx="1" />

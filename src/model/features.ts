@@ -63,6 +63,20 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Pushes the closed shapes of a sketch out into a solid.",
     params: [{ key: "depth", label: "Depth", defaultValue: "10", positive: true, group: "size" }],
   },
+  fillet: {
+    type: "fillet",
+    label: "Fillet",
+    namePrefix: "Fillet",
+    description: "Rounds off sharp edges.",
+    params: [{ key: "radius", label: "Radius", defaultValue: "2", positive: true, group: "size" }],
+  },
+  chamfer: {
+    type: "chamfer",
+    label: "Chamfer",
+    namePrefix: "Chamfer",
+    description: "Bevels sharp edges with a flat cut.",
+    params: [{ key: "distance", label: "Distance", defaultValue: "1", positive: true, group: "size" }],
+  },
   sphere: {
     type: "sphere",
     label: "Sphere",
@@ -82,6 +96,11 @@ export const OPERATION_LABELS: Record<Operation, string> = {
   add: "Add",
   remove: "Remove",
 };
+
+/** Features that change an existing part's edges rather than adding a solid (no New/Add/Remove). */
+export function isEdgeFeature(type: FeatureType): type is "fillet" | "chamfer" {
+  return type === "fillet" || type === "chamfer";
+}
 
 export interface ResolvedParams {
   values: Record<string, number>;

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 
-import { useStore, type SelectionItem } from "../model/store";
+import { indexOfRef, type TopoPick } from "../geometry/topoRef";
+import { isEdgeFeature } from "../model/features";
+import { pickFor, useStore, type SelectionItem } from "../model/store";
+import type { PartMesh } from "../kernel/protocol";
 import type { Feature } from "../model/types";
 import { SketchController } from "../sketch/controller";
 import { planeOnFace, type SketchPlane } from "../sketch/planes";
@@ -45,6 +48,13 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
+  // Picking edges and faces for a fillet or chamfer.
+  if (s.editing && isEdgeFeature(s.editing.draft.type)) {
+    if (target?.kind !== "part") return;
+    const pick = pickFor(s.parts, target.item);
+    if (pick) s.toggleDraftPick(pick);
+    return;
+  }
   const { selection: current, setSelection, selectPlane, selectedPlane } = s;
   if (!target) {
     if (!additive) {
@@ -67,6 +77,19 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
 }
 
+/** Where a fillet's picks are on the parts as shown now (for highlighting). */
+function itemsForPicks(parts: PartMesh[], picks: TopoPick[]): SelectionItem[] {
+  const items: SelectionItem[] = [];
+  for (const pick of picks) {
+    const part = parts.find((p) => p.id === pick.partId);
+    if (!part) continue;
+    const list = pick.ref.kind === "edge" ? part.edgeRefs : part.faceRefs;
+    const index = indexOfRef(list ?? [], pick.ref);
+    if (index >= 0) items.push({ partId: part.id, kind: pick.ref.kind, index });
+  }
+  return items;
+}
+
 /** Sketches to show faintly: finished ones that no extrude has used yet, or that are highlighted. */
 function visibleSketches(features: Feature[], editingId: string | null, selectedId: string | null) {
   const used = new Set(features.filter((f) => f.type === "extrude" && !f.suppressed && f.sketchRef).map((f) => f.sketchRef!));
@@ -79,6 +102,7 @@ export function Viewport() {
   const containerRef = useRef<HTMLDivElement>(null);
   const parts = useStore((s) => s.parts);
   const selection = useStore((s) => s.selection);
+  const picks = useStore((s) => (s.editing && isEdgeFeature(s.editing.draft.type) ? s.editing.draft.picks ?? null : null));
   const hiddenParts = useStore((s) => s.hiddenParts);
   const selectedPlane = useStore((s) => s.selectedPlane);
   const listHoverPlane = useStore((s) => s.listHoverPlane);
@@ -119,7 +143,7 @@ export function Viewport() {
 
   useEffect(() => viewportApi.current?.setHidden(hiddenParts), [hiddenParts]);
   useEffect(() => viewportApi.current?.setParts(parts), [parts]);
-  useEffect(() => viewportApi.current?.setSelection(selection), [selection]);
+  useEffect(() => viewportApi.current?.setSelection(picks ? itemsForPicks(parts, picks) : selection), [selection, picks, parts]);
   useEffect(
     () => viewportApi.current?.setDatums({ selected: selectedPlane, listHover: listHoverPlane, hidden: hiddenDatums }),
     [selectedPlane, listHoverPlane, hiddenDatums],

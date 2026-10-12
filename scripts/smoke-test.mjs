@@ -237,13 +237,37 @@ try {
   if (!/Part 2/.test(extrudeCheck)) throw new Error(`check report didn't include Part 2: ${extrudeCheck}`);
   await page.getByRole("button", { name: "Close", exact: true }).first().click();
 
+  step = "filleting the edges of a face";
+  await page.keyboard.press("Shift+Digit5");
+  await page.keyboard.press("f");
+  await page.waitForTimeout(600);
+  const vp = await page.locator(".viewport").boundingBox();
+  await page.mouse.click(vp.x + vp.width * 0.5, vp.y + vp.height * 0.5);
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Shift+KeyF");
+  await page.waitForSelector(".feature-dialog .pick-list li", { timeout: 5_000 });
+  const pickCount = await page.locator(".feature-dialog .pick-list li").count();
+  await page.locator("#param-radius").fill("1");
+  await page.getByRole("button", { name: "Accept" }).click();
+  await page.waitForSelector(".feature-row:not(.datum) >> text=Fillet 1", { timeout: 10_000 });
+  await page.waitForTimeout(2_000);
+  const failedAfterFillet = await page.locator(".feature-row.failed").count();
+  if (failedAfterFillet > 0) {
+    const why = await page.locator(".feature-row.failed").first().getAttribute("title");
+    throw new Error(`the fillet failed: ${why}`);
+  }
+  await page.keyboard.press("Shift+Digit7");
+  await page.keyboard.press("f");
+  await page.waitForTimeout(600);
+  await shot("filleted");
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2.`,
+    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s).`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

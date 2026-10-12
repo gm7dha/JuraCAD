@@ -16,9 +16,10 @@ import {
   undo as undoHistory,
   type History,
 } from "./document";
+import { sameRef, type TopoPick } from "../geometry/topoRef";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
-import { resolveParams } from "./features";
+import { isEdgeFeature, resolveParams } from "./features";
 import type { Feature, FeatureType, PartSmithDocument } from "./types";
 
 export interface SelectionItem {
@@ -26,6 +27,14 @@ export interface SelectionItem {
   kind: "face" | "edge";
   /** Face or edge number within the part. */
   index: number;
+}
+
+/** What a picked face or edge looks like, so a feature can find it again after rebuilds. */
+export function pickFor(parts: PartMesh[], item: SelectionItem): TopoPick | null {
+  const part = parts.find((p) => p.id === item.partId);
+  const ref = item.kind === "edge" ? part?.edgeRefs?.[item.index] : part?.faceRefs?.[item.index];
+  if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return null;
+  return { partId: item.partId, ref };
 }
 
 /** The default planes, as in Onshape. Top = XY, Front = XZ, Right = YZ. */
@@ -94,7 +103,9 @@ export interface AppState {
   startCreate: (type: FeatureType) => void;
   startEdit: (id: string) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "picks">>) => void;
+  /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
+  toggleDraftPick: (pick: TopoPick) => void;
   /** Open a new sketch (plane may be chosen later). */
   startSketch: (plane: SketchPlane | null) => void;
   setSketchPlane: (plane: SketchPlane) => void;
@@ -202,7 +213,11 @@ export const useStore = create<AppState>((set, get) => {
         const picked = s.history.present.features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) draft.sketchRef = picked.id;
       }
-      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null });
+      // Fillet and chamfer start with whatever edges and faces are selected.
+      if (isEdgeFeature(type)) {
+        draft.picks = s.selection.map((item) => pickFor(s.parts, item)).filter((p): p is TopoPick => p !== null);
+      }
+      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], selectedPlane: null });
     },
 
     startEdit: (id) => {
@@ -307,6 +322,15 @@ export const useStore = create<AppState>((set, get) => {
 
     setDraftField: (patch) =>
       set((s) => (s.editing ? { editing: { ...s.editing, draft: { ...s.editing.draft, ...patch } } } : {})),
+
+    toggleDraftPick: (pick) =>
+      set((s) => {
+        if (!s.editing) return {};
+        const picks = s.editing.draft.picks ?? [];
+        const i = picks.findIndex((p) => p.partId === pick.partId && sameRef(p.ref, pick.ref));
+        const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, pick];
+        return { editing: { ...s.editing, draft: { ...s.editing.draft, picks: next } } };
+      }),
 
     commitDraft: () => {
       const { editing } = get();

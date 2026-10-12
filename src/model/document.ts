@@ -1,3 +1,4 @@
+import { parsePick } from "../geometry/topoRef";
 import { parsePlane, parseSketchData } from "../sketch/validate";
 import { emptySketch } from "../sketch/types";
 import { FEATURE_DEFS, defaultParams } from "./features";
@@ -47,6 +48,10 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     // Like Onshape: the first solid is a new part, later extrudes add to it.
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
+  }
+  if (type === "fillet" || type === "chamfer") {
+    feature.operation = "add";
+    feature.picks = [];
   }
   return feature;
 }
@@ -163,6 +168,9 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const ex = f.extrude as Record<string, unknown> | undefined;
       feature.extrude = { end: ex?.end === "symmetric" ? "symmetric" : "blind", flip: ex?.flip === true };
+    }
+    if (feature.type === "fillet" || feature.type === "chamfer") {
+      feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);
   }
