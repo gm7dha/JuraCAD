@@ -76,6 +76,13 @@ PartSmith will follow FreeCAD 1.0's approach in its own code: every sketch entit
 OpenCascade's *generated/modified* history names each face and edge from that history; feature references
 store names, not numbers; unresolved names show the feature in red rather than silently picking the wrong edge.
 
+**Step 1 (done, with Fillet/Chamfer):** picks are stored as *what the edge or face looks like*
+(`src/geometry/topoRef.ts`): curve or surface type, ends/middle or centre/normal, and position relative to the
+part's bounding box. Each rebuild finds the closest match of the same kind and direction — judged mainly by the
+line or plane it lies on, or by its relative position when the whole part was resized. If nothing is close
+enough the feature turns red and asks for the edges to be picked again. This copes with resizing and moving
+things; the history-based naming above is still the goal for heavier changes.
+
 ## Controls (Onshape-style)
 
 | Action | Control |
@@ -97,7 +104,7 @@ Each phase ends with a working version on the live site.
 | --- | --- | --- |
 | **P1 Foundation** ✅ | App shell, Onshape-style viewport, OpenCascade worker, box/cylinder/sphere with New/Add/Remove, basic model check, STL export | make simple solids and print them |
 | **P2 Sketcher** ✅ | Sketch on planes and flat faces; lines, rectangles, circles, arcs, points; constraints and dimensions; basic Extrude (one way / symmetric, New/Add/Remove) | draw a fully defined sketch and extrude it |
-| P3 Part features | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real printable parts and change them later |
+| P3 Part features (in progress: fillet, chamfer ✅) | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real printable parts and change them later |
 | P4 Save, check, export | `.partsmith` files, full model check, 3MF and STEP, offline install (PWA) | keep projects and trust exports |
 | P5 Assemblies | Instances, mate connectors, Onshape mate types, BOM | check multi-part prints fit |
 | P6 2D drawings | ISO sheets, first-angle views, hidden lines, dimensions, PDF/SVG/DXF | print a dimensioned drawing |
