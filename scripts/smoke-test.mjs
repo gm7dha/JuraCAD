@@ -241,8 +241,8 @@ try {
   await page.keyboard.press("Shift+Digit5");
   await page.keyboard.press("f");
   await page.waitForTimeout(600);
-  const vp = await page.locator(".viewport").boundingBox();
-  await page.mouse.click(vp.x + vp.width * 0.5, vp.y + vp.height * 0.5);
+  const area = await page.locator(".viewport").boundingBox();
+  await page.mouse.click(area.x + area.width * 0.5, area.y + area.height * 0.5);
   await page.waitForTimeout(300);
   await page.keyboard.press("Shift+KeyF");
   await page.waitForSelector(".feature-dialog .pick-list li", { timeout: 5_000 });
