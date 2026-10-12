@@ -670,6 +670,9 @@ export class SceneManager {
     if (this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const ptr = this.sketchPointer(e);
       if (ptr) {
+        // Stop the browser's follow-up mousedown moving keyboard focus — a
+        // click can open a dimension value box that must keep the focus.
+        e.preventDefault();
         this.renderer.domElement.setPointerCapture(e.pointerId);
         this.sketchController.pointerDown(ptr);
       }
