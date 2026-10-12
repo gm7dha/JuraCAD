@@ -18,24 +18,36 @@ jobs:
     name: Build and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
 
+      # Failures in the steps below are also reported as annotations (the
+      # "Annotations" box on the run page) so they're readable at a glance.
       - name: Install dependencies
         run: |
-          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+          set -o pipefail
+          if [ -f package-lock.json ]; then cmd="npm ci"; else cmd="npm install"; fi
+          $cmd --no-audit --no-fund 2>&1 | tee install.log || {
+            echo "::error title=Install failed::$(tail -n 40 install.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
+            exit 1
+          }
 
       - name: Type check
         run: npm run typecheck
 
       - name: Run tests
-        run: npm test
+        run: npm test -- --reporter=default --reporter=github-actions
 
       - name: Build site
-        run: npm run build
+        run: |
+          set -o pipefail
+          npx vite build 2>&1 | tee build.log || {
+            echo "::error title=Build failed::$(tail -n 40 build.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
+            exit 1
+          }
 
       - name: Keep the built site (for previewing pull requests)
         uses: actions/upload-artifact@v4

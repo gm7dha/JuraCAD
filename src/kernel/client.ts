@@ -1,8 +1,6 @@
 import type { Feature, MeshQuality } from "../model/types";
 import type { CheckResult, ExportResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
-type ResultOf<T extends KernelRequest["type"]> = Extract<KernelResponseBody, { type: T }>["result"];
-
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
  * Rebuilds are "latest wins": while one is running, newer requests replace
@@ -46,14 +44,11 @@ export class KernelClient {
     };
   }
 
-  private send<T extends KernelRequest["type"]>(request: Extract<KernelRequest, { type: T }>): Promise<ResultOf<T>> {
+  private send(request: KernelRequest): Promise<KernelResponseBody> {
     const id = this.nextId++;
     const message: ToWorker = { id, request };
-    return new Promise<ResultOf<T>>((resolve, reject) => {
-      this.pending.set(id, {
-        resolve: (body) => resolve(body.result as ResultOf<T>),
-        reject,
-      });
+    return new Promise<KernelResponseBody>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
       this.worker.postMessage(message);
     });
   }
@@ -70,7 +65,7 @@ export class KernelClient {
       const { features, onDone } = this.queuedRebuild;
       this.queuedRebuild = null;
       try {
-        const result = await this.send({ type: "rebuild", features });
+        const result = (await this.send({ type: "rebuild", features })).result as RebuildResult;
         // Skip stale results if something newer is already waiting.
         if (!this.queuedRebuild) onDone(result);
       } catch (e) {
@@ -90,11 +85,11 @@ export class KernelClient {
   }
 
   check(quality: MeshQuality): Promise<CheckResult> {
-    return this.send({ type: "check", quality });
+    return this.send({ type: "check", quality }).then((body) => body.result as CheckResult);
   }
 
   exportStl(partIds: string[], quality: MeshQuality): Promise<ExportResult> {
-    return this.send({ type: "exportStl", partIds, quality });
+    return this.send({ type: "exportStl", partIds, quality }).then((body) => body.result as ExportResult);
   }
 
   terminate(): void {
