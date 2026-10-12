@@ -3,11 +3,12 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { getOC, makeBox, makeCylinder, makeSphere, measureVolume, type Shape3D } from "replicad";
+import { getOC, makeBox, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
 
 import { analyzeMesh, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
-import { FEATURE_DEFS, resolveParams } from "../model/features";
+import { matchRefs, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { FEATURE_DEFS, isEdgeFeature, resolveParams } from "../model/features";
 import { MESH_TOLERANCES, type Feature, type MeshQuality } from "../model/types";
 import { extrudeSketch } from "./extrude";
 import type { CheckResult, ExportResult, PartMesh, RebuildResult } from "./protocol";
@@ -39,6 +40,94 @@ export function describeError(e: unknown, fallback: string): string {
   return fallback;
 }
 
+/** Read a replicad vector into a plain array, freeing the OpenCascade object. */
+function take(v: Vector): Vec3 {
+  const r: Vec3 = [v.x, v.y, v.z];
+  v.delete();
+  return r;
+}
+
+type Bounds = [Vec3, Vec3];
+
+export function edgeRefOf(e: Edge, bounds: Bounds): EdgeRef {
+  const mid = take(e.pointAt(0.5));
+  return {
+    kind: "edge",
+    curve: e.geomType,
+    a: roundVec(take(e.startPoint)),
+    b: roundVec(take(e.endPoint)),
+    mid: roundVec(mid),
+    rel: relativeTo(mid, bounds[0], bounds[1]),
+  };
+}
+
+export function faceRefOf(f: Face, bounds: Bounds): FaceRef {
+  const center = take(f.center);
+  let normal: Vec3 = [0, 0, 0];
+  try {
+    normal = take(f.normalAt(center));
+  } catch {
+    // some surfaces have no normal at their centre of mass; direction is then ignored
+  }
+  return { kind: "face", surface: f.geomType, center: roundVec(center), normal: roundVec(normal), rel: relativeTo(center, bounds[0], bounds[1]) };
+}
+
+function boundsOf(shape: Shape3D): Bounds {
+  const box = shape.boundingBox;
+  const b = box.bounds as Bounds;
+  box.delete();
+  return b;
+}
+
+/**
+ * Find the picked edges (and the edges of picked faces) on a part as it is
+ * now. Throws a friendly error if some can't be found.
+ */
+function findPickedEdges(shape: Shape3D, picks: TopoPick[]): Edge[] {
+  const edges = shape.edges;
+  const faces = shape.faces;
+  const bounds = boundsOf(shape);
+  const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+  const edgePicks = picks.filter((p) => p.ref.kind === "edge").map((p) => p.ref);
+  const facePicks = picks.filter((p) => p.ref.kind === "face").map((p) => p.ref);
+  const edgeMatch = matchRefs(edgePicks, edges.map((e) => edgeRefOf(e, bounds)), size);
+  const faceMatch = matchRefs(facePicks, faces.map((f) => faceRefOf(f, bounds)), size);
+  const missing = [...edgeMatch, ...faceMatch].filter((m) => m === null).length;
+  if (missing > 0) {
+    edges.forEach((e) => e.delete());
+    faces.forEach((f) => f.delete());
+    throw new Error(
+      `${missing} of the picked edges or faces can't be found any more (the part has changed too much). Edit this feature and pick them again.`,
+    );
+  }
+  const chosen: Edge[] = edgeMatch.map((i) => edges[i!]);
+  for (const i of faceMatch) {
+    for (const e of faces[i!].edges) {
+      if (chosen.some((c) => c.isSame(e))) e.delete();
+      else chosen.push(e);
+    }
+  }
+  edges.forEach((e) => !chosen.includes(e) && e.delete());
+  faces.forEach((f) => f.delete());
+  return chosen;
+}
+
+/** True when the shape is at least one solid and passes OpenCascade's own check. */
+function isValidSolid(shape: Shape3D): boolean {
+  try {
+    const solids = shape.solids;
+    const count = solids.length;
+    solids.forEach((x) => x.delete());
+    if (count === 0) return false;
+    const analyzer = new (getOC().BRepCheck_Analyzer)(shape.wrapped, true, false, false);
+    const ok = analyzer.IsValid();
+    analyzer.delete();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Sketches seen so far in the rebuild, by feature id. */
 type SketchMap = Map<string, Feature>;
 
@@ -58,7 +147,9 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip });
     }
     case "sketch":
-      throw new Error("A sketch isn't a solid.");
+    case "fillet":
+    case "chamfer":
+      throw new Error("This feature doesn't make a solid of its own.");
     case "box":
       return makeBox([v.x, v.y, v.z], [v.x + v.width, v.y + v.depth, v.z + v.height]);
     case "cylinder":
@@ -90,6 +181,11 @@ export class GeometryEngine {
       const def = FEATURE_DEFS[feature.type];
       if (!def) {
         featureErrors[feature.id] = "PartSmith doesn't know this kind of feature.";
+        continue;
+      }
+      if (isEdgeFeature(feature.type)) {
+        const err = this.applyEdgeFeature(feature);
+        if (err) featureErrors[feature.id] = err;
         continue;
       }
 
@@ -146,6 +242,59 @@ export class GeometryEngine {
     return { parts, featureErrors, durationMs: Math.round(performance.now() - started) };
   }
 
+  /** Fillet or chamfer the picked edges of their parts. Returns an error message, or null. */
+  private applyEdgeFeature(feature: Feature): string | null {
+    const def = FEATURE_DEFS[feature.type];
+    const { values, errors } = resolveParams(feature);
+    const badParam = def.params.find((p) => errors[p.key]);
+    if (badParam) return `${badParam.label}: ${errors[badParam.key]}`;
+    const picks = feature.picks ?? [];
+    if (picks.length === 0) return "Click the edges (or faces) you want to " + (feature.type === "fillet" ? "round." : "bevel.");
+    const size = feature.type === "fillet" ? values.radius : values.distance;
+
+    // Apply part by part; picks remember which part they're on.
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    for (const partId of partIds) {
+      const part = this.parts.find((p) => p.id === partId);
+      if (!part) return "The part these edges were on no longer exists. Edit this feature and pick the edges again.";
+    }
+    const results: { part: BuiltPart; shape: Shape3D }[] = [];
+    try {
+      for (const partId of partIds) {
+        const part = this.parts.find((p) => p.id === partId)!;
+        const chosen = findPickedEdges(part.shape, picks.filter((p) => p.partId === partId));
+        const pick = (e: Edge) => (chosen.some((c) => c.isSame(e)) ? size : null);
+        const failed =
+          feature.type === "fillet"
+            ? "Couldn't round these edges. Try a smaller radius — it has to fit on the faces next to each edge."
+            : "Couldn't bevel these edges. Try a smaller distance — it has to fit on the faces next to each edge.";
+        let shape: Shape3D;
+        try {
+          shape = feature.type === "fillet" ? part.shape.fillet(pick) : part.shape.chamfer(pick);
+        } catch {
+          throw new Error(failed);
+        } finally {
+          chosen.forEach((c) => c.delete());
+        }
+        // OpenCascade sometimes "succeeds" with a broken solid when the size is too big.
+        if (!isValidSolid(shape)) {
+          shape.delete();
+          throw new Error(failed);
+        }
+        results.push({ part, shape });
+      }
+    } catch (e) {
+      results.forEach((r) => r.shape.delete());
+      return describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
+    }
+    for (const { part, shape } of results) {
+      part.shape.delete();
+      part.shape = shape;
+      part.featureIds.push(feature.id);
+    }
+    return null;
+  }
+
   /** Checks every part for printability. */
   check(quality: MeshQuality): CheckResult {
     const oc = getOC();
@@ -197,6 +346,29 @@ export class GeometryEngine {
   private meshPart(p: BuiltPart): PartMesh {
     const faces = p.shape.mesh(MESH_TOLERANCES.display);
     const edges = p.shape.meshEdges(MESH_TOLERANCES.display);
+    // Describe each face and edge so picks can be found again after the next rebuild.
+    const bounds = boundsOf(p.shape);
+    const faceById = new Map<number, Face[]>();
+    for (const f of p.shape.faces) faceById.set(f.hashCode, [...(faceById.get(f.hashCode) ?? []), f]);
+    const edgeById = new Map<number, Edge[]>();
+    for (const e of p.shape.edges) edgeById.set(e.hashCode, [...(edgeById.get(e.hashCode) ?? []), e]);
+    const unknownFace: FaceRef = { kind: "face", surface: "UNKNOWN", center: [0, 0, 0], normal: [0, 0, 0] };
+    const unknownEdge: EdgeRef = { kind: "edge", curve: "UNKNOWN", a: [0, 0, 0], b: [0, 0, 0], mid: [0, 0, 0] };
+    const faceRefs = faces.faceGroups.map((g) => {
+      const f = faceById.get(g.faceId)?.shift();
+      if (!f) return unknownFace;
+      const ref = faceRefOf(f, bounds);
+      f.delete();
+      return ref;
+    });
+    const edgeRefs = edges.edgeGroups.map((g) => {
+      const e = edgeById.get(g.edgeId)?.shift();
+      if (!e) return unknownEdge;
+      const ref = edgeRefOf(e, bounds);
+      e.delete();
+      return ref;
+    });
+    for (const list of [...faceById.values(), ...edgeById.values()]) list.forEach((x) => x.delete());
     return {
       id: p.id,
       name: p.name,
@@ -207,6 +379,8 @@ export class GeometryEngine {
       faceGroups: faces.faceGroups,
       lines: Float32Array.from(edges.lines),
       edgeGroups: edges.edgeGroups,
+      faceRefs,
+      edgeRefs,
     };
   }
 

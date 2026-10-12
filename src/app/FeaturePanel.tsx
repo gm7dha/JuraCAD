@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
-import { describeParamErrors, FEATURE_DEFS, OPERATION_LABELS } from "../model/features";
+import { describeParamErrors, FEATURE_DEFS, isEdgeFeature, OPERATION_LABELS } from "../model/features";
 import { useDocument, useStore, type DatumName, type PlaneName } from "../model/store";
 import type { Feature, FeatureType } from "../model/types";
 import { viewportApi } from "../viewport/Viewport";
@@ -12,6 +12,8 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   sphere: Icons.Sphere,
   sketch: Icons.Sketch,
   extrude: Icons.Extrude,
+  fillet: Icons.Fillet,
+  chamfer: Icons.Chamfer,
 };
 
 type MenuEntry = { label: string; action: () => void; danger?: boolean } | "divider";
@@ -136,7 +138,7 @@ function FeatureRow({ feature, onMenu }: { feature: Feature; onMenu: (e: ReactMo
   const renameFeature = useStore((s) => s.renameFeature);
   const Icon = TYPE_ICONS[feature.type];
   const error = kernelError ?? describeParamErrors(feature);
-  const op = feature.operation === "new" ? "" : ` (${OPERATION_LABELS[feature.operation]})`;
+  const op = feature.operation === "new" || feature.type === "sketch" || isEdgeFeature(feature.type) ? "" : ` (${OPERATION_LABELS[feature.operation]})`;
 
   const entries: MenuEntry[] = [
     { label: "Edit…", action: () => startEdit(feature.id) },

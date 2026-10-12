@@ -1,4 +1,5 @@
 import type { MeshAnalysis } from "../geometry/meshCheck";
+import type { EdgeRef, FaceRef } from "../geometry/topoRef";
 import type { Feature, MeshQuality } from "../model/types";
 
 /** Display mesh for one part, ready to hand to three.js. */
@@ -16,6 +17,10 @@ export interface PartMesh {
   lines: Float32Array;
   /** One entry per B-rep edge: vertex range in `lines`. */
   edgeGroups: { start: number; count: number; edgeId: number }[];
+  /** What each face looks like (same order as faceGroups), so picks can be remembered across rebuilds. */
+  faceRefs: FaceRef[];
+  /** What each edge looks like (same order as edgeGroups). */
+  edgeRefs: EdgeRef[];
 }
 
 export interface RebuildResult {

@@ -29,6 +29,7 @@ const KEYS: [string, string][] = [
   ["?", "Show this help"],
   ["Shift + S", "Start a sketch on the selected plane or flat face"],
   ["Shift + E", "Extrude a sketch"],
+  ["Shift + F", "Fillet (round) the selected edges"],
 ];
 
 const SKETCH_KEYS: [string, string][] = [

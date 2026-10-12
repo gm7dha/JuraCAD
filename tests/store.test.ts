@@ -88,3 +88,37 @@ describe("default planes", () => {
     expect(s().hiddenDatums).toEqual(["Origin"]);
   });
 });
+
+describe("fillet picks", () => {
+  const edge = (x: number) => ({ kind: "edge" as const, curve: "LINE", a: [x, 0, 0] as [number, number, number], b: [x, 10, 0] as [number, number, number], mid: [x, 5, 0] as [number, number, number] });
+  const part = {
+    id: "p1",
+    name: "Part 1",
+    featureIds: ["p1"],
+    vertices: new Float32Array(),
+    normals: new Float32Array(),
+    triangles: new Uint32Array(),
+    faceGroups: [],
+    lines: new Float32Array(),
+    edgeGroups: [],
+    faceRefs: [],
+    edgeRefs: [edge(0), edge(10)],
+  };
+
+  it("starts with the selected edges, and clicking toggles them", () => {
+    useStore.setState({ parts: [part], selection: [{ partId: "p1", kind: "edge", index: 1 }] });
+    s().startCreate("fillet");
+    expect(s().editing?.draft.picks).toEqual([{ partId: "p1", ref: edge(10) }]);
+    expect(s().selection).toEqual([]);
+
+    s().toggleDraftPick({ partId: "p1", ref: edge(0) });
+    expect(s().editing?.draft.picks).toHaveLength(2);
+    s().toggleDraftPick({ partId: "p1", ref: edge(10) });
+    expect(s().editing?.draft.picks).toEqual([{ partId: "p1", ref: edge(0) }]);
+
+    expect(s().commitDraft()).toBe(true);
+    const saved = s().history.present.features.at(-1)!;
+    expect(saved.type).toBe("fillet");
+    expect(saved.picks).toHaveLength(1);
+  });
+});

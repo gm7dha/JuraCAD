@@ -6,8 +6,8 @@
 
 PartSmith runs entirely in your browser. Your designs never leave your computer, there's no account, and it's free.
 
-> **Status: Phase 2 preview.** You can sketch shapes with dimensions and constraints, extrude them into parts,
-> combine them with boxes, cylinders and spheres, check they're printable and export STL. Fillets, revolves,
+> **Status: Phase 3 preview.** You can sketch shapes with dimensions and constraints, extrude them into parts, round or bevel edges,
+> combine them with boxes, cylinders and spheres, check they're printable and export STL. Revolves, shells,
 > assemblies and drawings arrive in later phases — see the [roadmap](docs/DESIGN.md#roadmap).
 
 ## What you can do today
@@ -17,6 +17,8 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
   equal, tangent, concentric, midpoint, fix). Blue = still free, black = fully defined.
 - **Extrude** a sketch's closed shapes (holes included) one way or symmetrically, as a new part or added to /
   cut from the latest part.
+- **Fillet** (round) and **Chamfer** (bevel) edges: click edges, or a face to do all its edges. They keep
+  working when you change the sizes of earlier features.
 - Add **Box**, **Cylinder** and **Sphere** solids, each as a **New** part or **Add**ed to / **Remove**d from the latest part.
 - Type maths and units into any size box: `10 + 2`, `25.4 mm`, `1 in`.
 - Edit any feature later (double-click it), suppress it, rename it, or delete it. Full undo/redo.

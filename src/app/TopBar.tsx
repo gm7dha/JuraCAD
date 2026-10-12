@@ -35,7 +35,7 @@ export function TopBar() {
         }}
       />
       <span className="phase-badge" title="This is an early version. More tools arrive in each phase.">
-        Phase 1 preview
+        Phase 3 preview
       </span>
       <div className="topbar-spacer" />
       <button

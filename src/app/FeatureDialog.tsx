@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 
 import { evaluate, formatMm } from "../model/expr";
-import { FEATURE_DEFS, OPERATION_LABELS, resolveParams, type ParamDef } from "../model/features";
+import { describeRef } from "../geometry/topoRef";
+import { FEATURE_DEFS, isEdgeFeature, OPERATION_LABELS, resolveParams, type ParamDef } from "../model/features";
 import { useDocument, useStore } from "../model/store";
 import type { Operation } from "../model/types";
 import { Icons } from "./icons";
@@ -109,6 +110,49 @@ function ExtrudeOptions() {
   );
 }
 
+/** Fillet/chamfer: the edges and faces picked so far. */
+function PicksField() {
+  const draft = useStore((s) => s.editing?.draft);
+  const parts = useStore((s) => s.parts);
+  const toggleDraftPick = useStore((s) => s.toggleDraftPick);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (!draft || !isEdgeFeature(draft.type)) return null;
+  const picks = draft.picks ?? [];
+  const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
+  const verb = draft.type === "fillet" ? "round" : "bevel";
+
+  return (
+    <fieldset className="param-group">
+      <legend>Edges</legend>
+      {picks.length === 0 ? (
+        <p className="dialog-hint pick-hint">Click the edges you want to {verb} in the 3D view. Click a face to {verb} all its edges.</p>
+      ) : (
+        <ul className="pick-list" aria-label="Picked edges and faces">
+          {picks.map((p, i) => (
+            <li key={i}>
+              <span>
+                {describeRef(p.ref)}
+                {multiPart && <span className="muted"> · {parts.find((x) => x.id === p.partId)?.name ?? "part"}</span>}
+              </span>
+              <button type="button" className="icon-button small" onClick={() => toggleDraftPick(p)} title="Remove from this feature" aria-label="Remove">
+                <Icons.Cross size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {picks.length > 0 && (
+        <div className="pick-footer">
+          <span className="muted small">Click more edges to add them, or click one again to remove it.</span>
+          <button type="button" className="link-button" onClick={() => setDraftField({ picks: [] })}>
+            Clear
+          </button>
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 /** The floating feature dialog (top-left of the viewport), like Onshape's. */
 export function FeatureDialog() {
   const editing = useStore((s) => s.editing);
@@ -178,6 +222,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
+        {!isEdgeFeature(draft.type) && (
         <div className="segmented" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -193,8 +238,10 @@ export function FeatureDialog() {
             </button>
           ))}
         </div>
+        )}
 
         <ExtrudeOptions />
+        <PicksField />
 
         {groups.filter((g) => g.params.length > 0).map((g, gi) => (
           <fieldset key={g.title} className="param-group">

@@ -127,6 +127,11 @@ function useShortcuts() {
           s.startCreate("extrude");
           return;
         }
+        if (e.code === "KeyF" && s.parts.length > 0) {
+          e.preventDefault();
+          s.startCreate("fillet");
+          return;
+        }
       }
       switch (e.key) {
         case "f":

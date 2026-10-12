@@ -8,6 +8,7 @@ import { setOC } from "replicad";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { analyzeMesh } from "../src/geometry/meshCheck";
+import type { TopoPick } from "../src/geometry/topoRef";
 import { readBinaryStl } from "../src/geometry/stl";
 import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
@@ -308,5 +309,109 @@ describe("sketch and extrude", () => {
     expect(messages).toMatch(/Pick a plane/);
     expect(messages).toMatch(/comes after this extrude/);
     expect(messages).toMatch(/deleted/);
+  });
+});
+
+describe("fillet and chamfer", () => {
+  /** A pick for the edge (or face) of the first part whose middle is nearest `at`. */
+  function pickAt(r: ReturnType<typeof build>, kind: "edge" | "face", at: [number, number, number]): TopoPick {
+    const part = r.parts[0];
+    const refs = kind === "edge" ? part.edgeRefs : part.faceRefs;
+    const pos = (x: (typeof refs)[number]) => (x.kind === "edge" ? x.mid : x.center);
+    const best = [...refs].sort((p, q) => Math.hypot(...pos(p).map((v, i) => v - at[i])) - Math.hypot(...pos(q).map((v, i) => v - at[i])))[0];
+    return { partId: part.id, ref: best };
+  }
+  const edgeFeature = (type: "fillet" | "chamfer", size: number, picks: TopoPick[]): Feature => ({
+    ...feature(type, type === "fillet" ? { radius: size } : { distance: size }, "add"),
+    picks,
+  });
+  const exactVolume = () => engine.check("normal").parts[0].exactVolume!;
+
+  it("describes every edge and face of a part", () => {
+    const r = build([feature("box", { width: 10, depth: 10, height: 10 })]);
+    const p = r.parts[0];
+    expect(p.edgeRefs).toHaveLength(12);
+    expect(p.faceRefs).toHaveLength(6);
+    expect(p.edgeRefs.every((e) => e.curve === "LINE")).toBe(true);
+    const top = p.faceRefs.find((f) => f.center[2] > 9.99)!;
+    expect(top.surface).toBe("PLANE");
+    expect(top.normal).toEqual([0, 0, 1]);
+  });
+
+  it("rounds one edge of a cube by exactly the right amount", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const pick = pickAt(build([box]), "edge", [5, 0, 10]);
+    const r = build([box, edgeFeature("fillet", 2, [pick])]);
+    expect(r.featureErrors).toEqual({});
+    // A 2 mm fillet along a 10 mm edge removes (4 - π) × 10 mm³.
+    expect(exactVolume()).toBeCloseTo(1000 - (4 - Math.PI) * 10, 3);
+    const check = engine.check("normal").parts[0];
+    expect(check.geometryValid).toBe(true);
+    expect(check.mesh.watertight).toBe(true);
+  });
+
+  it("bevels one edge with a chamfer", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const pick = pickAt(build([box]), "edge", [5, 0, 10]);
+    build([box, edgeFeature("chamfer", 2, [pick])]);
+    expect(exactVolume()).toBeCloseTo(1000 - 2 * 10, 3);
+  });
+
+  it("rounds all edges of a picked face", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const pick = pickAt(build([box]), "face", [5, 5, 10]);
+    const r = build([box, edgeFeature("fillet", 1, [pick])]);
+    expect(r.featureErrors).toEqual({});
+    const v = exactVolume();
+    // Four rounded 10 mm edges remove a little under 4 × (1 - π/4) × 10.
+    expect(v).toBeLessThan(1000 - 4 * (1 - Math.PI / 4) * 8);
+    expect(v).toBeGreaterThan(1000 - 4 * (1 - Math.PI / 4) * 10);
+    expect(r.parts[0].faceRefs.length).toBeGreaterThan(6);
+  });
+
+  it("still finds the edge after the box is resized", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const picks = [pickAt(build([box]), "edge", [5, 0, 10]), pickAt(build([box]), "edge", [10, 0, 5])];
+    const bigger = { ...box, params: { ...box.params, width: "20", height: "15" } };
+    const r = build([bigger, edgeFeature("chamfer", 1, picks)]);
+    expect(r.featureErrors).toEqual({});
+    // Two 1 mm chamfers (0.5 mm² cross-section) along edges of 20 and 15 mm, sharing a corner.
+    const v = exactVolume();
+    expect(v).toBeLessThan(20 * 10 * 15 - 0.5 * 30);
+    expect(v).toBeGreaterThan(20 * 10 * 15 - 0.5 * 35);
+  });
+
+  it("follows the hole when a drilled block's hole is filleted", () => {
+    const block = feature("box", { width: 30, depth: 30, height: 10 });
+    const hole = feature("cylinder", { diameter: 10, height: 10, x: 15, y: 15 }, "remove");
+    const first = build([block, hole]);
+    const rim = first.parts[0].edgeRefs.find((e) => e.curve === "CIRCLE" && e.mid[2] > 9.99)!;
+    expect(rim).toBeTruthy();
+    const r = build([block, hole, edgeFeature("fillet", 1, [{ partId: block.id, ref: rim }])]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+  });
+
+  it("explains problems in plain words", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const pick = pickAt(build([box]), "edge", [5, 0, 10]);
+
+    let r = build([box, edgeFeature("fillet", 2, [])]);
+    expect(Object.values(r.featureErrors)[0]).toMatch(/Click the edges/);
+
+    // Too big to fit: the part stays as it was.
+    const tooBig = edgeFeature("fillet", 20, [pick]);
+    r = build([box, tooBig]);
+    expect(r.featureErrors[tooBig.id]).toMatch(/radius|round/i);
+    expect(exactVolume()).toBeCloseTo(1000, 3);
+
+    // The edge has gone (its part was rebuilt without it).
+    const lost = edgeFeature("fillet", 1, [{ partId: box.id, ref: { ...pick.ref, a: [0, 0, 90], b: [10, 0, 90], mid: [5, 0, 90], rel: [0.5, 0, 9] } as TopoPick["ref"] }]);
+    r = build([box, lost]);
+    expect(r.featureErrors[lost.id]).toMatch(/can't be found/);
+
+    const orphan = edgeFeature("fillet", 1, [{ ...pick, partId: "gone" }]);
+    r = build([box, orphan]);
+    expect(r.featureErrors[orphan.id]).toMatch(/no longer exists/);
   });
 });

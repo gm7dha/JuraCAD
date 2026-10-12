@@ -43,7 +43,6 @@ const SOLIDS: { type: FeatureType; label: string; icon: ReactNode }[] = [
 /** Tools that arrive in later phases, shown greyed out so the roadmap is visible. */
 const COMING: { label: string; icon: ReactNode; phase: string }[] = [
   { label: "Revolve", icon: <Icons.Revolve />, phase: "Phase 3" },
-  { label: "Fillet", icon: <Icons.Fillet />, phase: "Phase 3" },
   { label: "Shell", icon: <Icons.Shell />, phase: "Phase 3" },
 ];
 
@@ -70,6 +69,7 @@ export function Toolbar() {
   const editingType = useStore((s) => (s.editing?.mode === "create" ? s.editing.draft.type : null));
   const ready = useStore((s) => s.kernelStatus === "ready");
   const hasSketch = useStore((s) => s.history.present.features.some((f) => f.type === "sketch"));
+  const hasPart = useStore((s) => s.parts.length > 0);
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
   const mod = isMac ? "⌘" : "Ctrl+";
 
@@ -109,6 +109,25 @@ export function Toolbar() {
           disabled={!ready || !hasSketch}
           active={editingType === "extrude"}
           title={hasSketch ? "Extrude (Shift+E) — turn a sketch's closed shapes into a solid" : "Draw a sketch first, then extrude it"}
+        />
+      </div>
+      <div className="tool-divider" />
+      <div className="tool-group">
+        <ToolButton
+          label="Fillet"
+          icon={<Icons.Fillet />}
+          onClick={() => startCreate("fillet")}
+          disabled={!ready || !hasPart}
+          active={editingType === "fillet"}
+          title={hasPart ? "Fillet (Shift+F) — round off edges. Select edges first, or pick them after" : "Make a part first, then round its edges"}
+        />
+        <ToolButton
+          label="Chamfer"
+          icon={<Icons.Chamfer />}
+          onClick={() => startCreate("chamfer")}
+          disabled={!ready || !hasPart}
+          active={editingType === "chamfer"}
+          title={hasPart ? "Chamfer — bevel edges with a flat cut. Select edges first, or pick them after" : "Make a part first, then bevel its edges"}
         />
       </div>
       <div className="tool-divider" />
