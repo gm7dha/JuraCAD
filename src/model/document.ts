@@ -88,9 +88,9 @@ export function historyOf(doc: PartSmithDocument): History {
   return { past: [], present: doc, future: [] };
 }
 
-/** Record a change. No-op when nothing actually changed. */
+/** Record a change. No-op when nothing actually changed (e.g. a dialog accepted without edits). */
 export function commit(h: History, next: PartSmithDocument): History {
-  if (next === h.present) return h;
+  if (next === h.present || JSON.stringify(next) === JSON.stringify(h.present)) return h;
   const past = [...h.past, h.present].slice(-HISTORY_LIMIT);
   return { past, present: next, future: [] };
 }

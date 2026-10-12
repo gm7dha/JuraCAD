@@ -26,6 +26,11 @@ export interface SelectionItem {
   index: number;
 }
 
+/** The default planes, as in Onshape. Top = XY, Front = XZ, Right = YZ. */
+export type PlaneName = "Top" | "Front" | "Right";
+/** Default geometry listed at the top of the feature list. */
+export type DatumName = "Origin" | PlaneName;
+
 export interface Editing {
   mode: "create" | "edit";
   draft: Feature;
@@ -47,6 +52,11 @@ export interface AppState {
   /** Faces and edges picked in the viewport. */
   selection: SelectionItem[];
   hiddenParts: string[];
+  /** Default plane picked in the list or viewport (planes and faces aren't selected together). */
+  selectedPlane: PlaneName | null;
+  /** Plane whose row the pointer is over in the feature list (highlighted in the viewport). */
+  listHoverPlane: PlaneName | null;
+  hiddenDatums: DatumName[];
 
   kernelStatus: "loading" | "ready" | "failed";
   kernelError: string | null;
@@ -75,6 +85,9 @@ export interface AppState {
   selectFeature: (id: string | null) => void;
   setSelection: (items: SelectionItem[]) => void;
   toggleHidden: (partId: string) => void;
+  selectPlane: (plane: PlaneName | null) => void;
+  setListHoverPlane: (plane: PlaneName | null) => void;
+  toggleDatum: (datum: DatumName) => void;
   openDialog: (d: DialogName) => void;
   showToast: (text: string, tone?: Toast["tone"]) => void;
 
@@ -112,6 +125,9 @@ export const useStore = create<AppState>((set, get) => {
     selectedFeatureId: null,
     selection: [],
     hiddenParts: [],
+    selectedPlane: null,
+    listHoverPlane: null,
+    hiddenDatums: [],
 
     kernelStatus: "loading",
     kernelError: null,
@@ -184,15 +200,34 @@ export const useStore = create<AppState>((set, get) => {
         hiddenParts: [],
       })),
 
-    undo: () => set((s) => ({ history: undoHistory(s.history), editing: null, selection: [] })),
-    redo: () => set((s) => ({ history: redoHistory(s.history), editing: null, selection: [] })),
+    // Undo/redo only when no feature dialog is open (see App shortcuts).
+    undo: () => set((s) => (s.editing ? {} : { history: undoHistory(s.history), selection: [] })),
+    redo: () => set((s) => (s.editing ? {} : { history: redoHistory(s.history), selection: [] })),
 
-    selectFeature: (id) => set({ selectedFeatureId: id }),
-    setSelection: (items) => set({ selection: items }),
+    selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane })),
+    setSelection: (items) =>
+      set((s) => ({ selection: items, selectedPlane: items.length > 0 ? null : s.selectedPlane })),
     toggleHidden: (partId) =>
       set((s) => ({
         hiddenParts: s.hiddenParts.includes(partId) ? s.hiddenParts.filter((p) => p !== partId) : [...s.hiddenParts, partId],
       })),
+
+    selectPlane: (plane) =>
+      set((s) => ({
+        selectedPlane: plane,
+        selection: plane ? [] : s.selection,
+        selectedFeatureId: plane ? null : s.selectedFeatureId,
+      })),
+    setListHoverPlane: (listHoverPlane) => set({ listHoverPlane }),
+    toggleDatum: (datum) =>
+      set((s) => {
+        const hidden = s.hiddenDatums.includes(datum);
+        return {
+          hiddenDatums: hidden ? s.hiddenDatums.filter((d) => d !== datum) : [...s.hiddenDatums, datum],
+          // A hidden plane can't stay selected.
+          selectedPlane: !hidden && s.selectedPlane === datum ? null : s.selectedPlane,
+        };
+      }),
 
     openDialog: (dialog) => set({ dialog }),
 

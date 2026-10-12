@@ -325,16 +325,35 @@ button:disabled {
   cursor: default;
 }
 
-.feature-row:not(.default):hover,
+.feature-row:hover,
 .part-row:hover {
   background: var(--line-2);
 }
 
-.feature-row.default {
+.feature-row.datum {
   color: var(--ink-2);
 }
 
-.feature-row.selected {
+.feature-row.datum.hidden .feature-name,
+.feature-row.datum.hidden .feature-icon {
+  color: var(--ink-3);
+  opacity: 0.6;
+}
+
+/* Eye (show/hide) buttons appear on hover, and stay visible while hidden. */
+.icon-button.eye {
+  visibility: hidden;
+}
+
+.feature-row:hover .icon-button.eye,
+.part-row:hover .icon-button.eye,
+.icon-button.eye.is-hidden,
+.icon-button.eye:focus-visible {
+  visibility: visible;
+}
+
+.feature-row.selected,
+.feature-row.selected:hover {
   background: var(--accent-soft);
 }
 
