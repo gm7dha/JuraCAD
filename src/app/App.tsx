@@ -36,8 +36,10 @@ function useShortcuts() {
       const s = useStore.getState();
       const mod = e.ctrlKey || e.metaKey;
 
-      // Undo / redo work everywhere except while typing in a box.
-      if (mod && !isTyping(e.target)) {
+      // Undo / redo the document — but not while typing in a box (the box
+      // undoes its own text) or while a feature dialog is open, where it
+      // would silently undo an earlier, already-saved change.
+      if (mod && !isTyping(e.target) && !s.editing) {
         const key = e.key.toLowerCase();
         if (key === "z" && !e.shiftKey) {
           e.preventDefault();
@@ -64,13 +66,16 @@ function useShortcuts() {
           break;
         case "n":
         case "N":
-          if (!viewportApi.current?.viewNormalToSelection()) s.showToast("Select a face first, then press N.");
+          if (!viewportApi.current?.viewNormalToSelection()) s.showToast("Select a face or plane first, then press N.");
           break;
         case "?":
           s.openDialog("help");
           break;
         case "Escape":
-          if (!s.editing) s.setSelection([]);
+          if (!s.editing) {
+            s.setSelection([]);
+            s.selectPlane(null);
+          }
           break;
         case "Delete":
         case "Backspace":

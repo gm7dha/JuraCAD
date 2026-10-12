@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import type { PartMesh } from "../kernel/protocol";
-import type { SelectionItem } from "../model/store";
+import type { DatumName, PlaneName, SelectionItem } from "../model/store";
 import { labelSprite } from "./labels";
 import { VIEW_DIRECTIONS, ViewCube, type StandardView } from "./ViewCube";
 
@@ -19,7 +19,14 @@ const COLOURS = {
   plane: "#f2c36b",
   planeBorder: "#d9a03a",
   planeLabel: "#9a6a12",
+  planeHover: "#ffb15c",
+  planeHoverBorder: "#ff8a00",
+  planeSelected: "#5b9dff",
+  planeSelectedBorder: "#1f6fd1",
 };
+
+/** Which way to look at each default plane for "View normal to". */
+const PLANE_VIEWS: Record<PlaneName, StandardView> = { Top: "top", Front: "front", Right: "right" };
 
 /** Base frustum height in mm at zoom 1. Zoom changes what is actually visible. */
 const FRUSTUM_HEIGHT = 200;
@@ -34,9 +41,19 @@ interface PartObjects {
   lines: THREE.LineSegments<THREE.BufferGeometry, THREE.Material[]>;
 }
 
+/** What's under the pointer: a face/edge of a part, or one of the default planes. */
+export type PickTarget = { kind: "part"; item: SelectionItem } | { kind: "plane"; plane: PlaneName };
+
 export interface SceneCallbacks {
   /** Called when the user clicks in the viewport. `additive` is true with Shift/Ctrl/Cmd held. */
-  onPick: (item: SelectionItem | null, additive: boolean) => void;
+  onPick: (target: PickTarget | null, additive: boolean) => void;
+}
+
+interface PlaneObjects {
+  group: THREE.Group;
+  square: THREE.Mesh;
+  fill: THREE.MeshBasicMaterial;
+  border: THREE.LineBasicMaterial;
 }
 
 type Pick = SelectionItem;
@@ -61,6 +78,7 @@ export class SceneManager {
   private readonly planesGroup = new THREE.Group();
   private readonly originGroup = new THREE.Group();
   private readonly planeLabels: THREE.Sprite[] = [];
+  private readonly planes = new Map<PlaneName, PlaneObjects>();
   private readonly parts = new Map<string, PartObjects>();
   private readonly materials: { faces: THREE.Material[]; edges: THREE.Material[] };
   private readonly resizeObserver: ResizeObserver;
@@ -71,6 +89,12 @@ export class SceneManager {
   private hover: Pick | null = null;
   private selection: Pick[] = [];
   private hidden = new Set<string>();
+  private hiddenDatums = new Set<DatumName>();
+  private selectedPlane: PlaneName | null = null;
+  /** Plane highlighted because the pointer is over its row in the feature list. */
+  private listHoverPlane: PlaneName | null = null;
+  /** Plane under the pointer in the viewport. */
+  private hoverPlane: PlaneName | null = null;
   private planeSize = 100;
   private frame = 0;
   private pointerDown: { x: number; y: number; button: number } | null = null;
@@ -236,8 +260,27 @@ export class SceneManager {
     this.animateTo({ dir: VIEW_DIRECTIONS[view] }, animate);
   }
 
-  /** Look straight at the selected face (Onshape's "View normal to"). Returns false if no face is selected. */
+  /** Selection, list-hover and visibility of the default planes and origin. */
+  setDatums(state: { selected: PlaneName | null; listHover: PlaneName | null; hidden: DatumName[] }): void {
+    this.selectedPlane = state.selected;
+    this.listHoverPlane = state.listHover;
+    this.hiddenDatums = new Set(state.hidden);
+    for (const [name, p] of this.planes) p.group.visible = !this.hiddenDatums.has(name);
+    this.originGroup.visible = !this.hiddenDatums.has("Origin");
+    if (this.hoverPlane && this.hiddenDatums.has(this.hoverPlane)) this.hoverPlane = null;
+    this.applyPlaneHighlights();
+  }
+
+  viewNormalToPlane(plane: PlaneName): void {
+    this.setView(PLANE_VIEWS[plane]);
+  }
+
+  /** Look straight at the selected plane or face (Onshape's "View normal to"). Returns false if nothing suitable is selected. */
   viewNormalToSelection(): boolean {
+    if (this.selectedPlane) {
+      this.viewNormalToPlane(this.selectedPlane);
+      return true;
+    }
     const face = [...this.selection].reverse().find((s) => s.kind === "face");
     if (!face) return false;
     const p = this.parts.get(face.partId);
@@ -290,20 +333,21 @@ export class SceneManager {
   // Scene furniture
 
   private buildPlanes(): void {
-    const fill = new THREE.MeshBasicMaterial({
-      color: COLOURS.plane,
-      transparent: true,
-      opacity: 0.09,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const border = new THREE.LineBasicMaterial({ color: COLOURS.planeBorder, transparent: true, opacity: 0.55 });
-
-    const makePlane = (name: string, rotation: THREE.Euler) => {
+    const makePlane = (name: PlaneName, rotation: THREE.Euler) => {
+      // Each plane has its own materials so it can be highlighted on its own.
+      const fill = new THREE.MeshBasicMaterial({
+        color: COLOURS.plane,
+        transparent: true,
+        opacity: 0.09,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const border = new THREE.LineBasicMaterial({ color: COLOURS.planeBorder, transparent: true, opacity: 0.55 });
       const group = new THREE.Group();
       group.name = name;
       const square = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), fill);
       square.renderOrder = -1;
+      square.userData.plane = name;
       const outline = new THREE.LineLoop(
         new THREE.BufferGeometry().setFromPoints([
           new THREE.Vector3(-0.5, -0.5, 0),
@@ -325,12 +369,24 @@ export class SceneManager {
       this.planeLabels.push(label);
       group.add(label);
       this.planesGroup.add(group);
+      this.planes.set(name, { group, square, fill, border });
     };
 
     makePlane("Top", new THREE.Euler(0, 0, 0)); // XY
     makePlane("Front", new THREE.Euler(Math.PI / 2, 0, 0)); // XZ
     makePlane("Right", new THREE.Euler(0, Math.PI / 2, Math.PI / 2)); // YZ
     this.updatePlaneSize();
+  }
+
+  private applyPlaneHighlights(): void {
+    for (const [name, p] of this.planes) {
+      const selected = this.selectedPlane === name;
+      const hovered = this.hoverPlane === name || this.listHoverPlane === name;
+      p.fill.color.set(selected ? COLOURS.planeSelected : hovered ? COLOURS.planeHover : COLOURS.plane);
+      p.fill.opacity = selected ? 0.2 : hovered ? 0.18 : 0.09;
+      p.border.color.set(selected ? COLOURS.planeSelectedBorder : hovered ? COLOURS.planeHoverBorder : COLOURS.planeBorder);
+      p.border.opacity = selected || hovered ? 0.95 : 0.55;
+    }
   }
 
   private updatePlaneSize(): void {
@@ -449,7 +505,7 @@ export class SceneManager {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  private pickAt(x: number, y: number): Pick | null {
+  private pickAt(x: number, y: number): PickTarget | null {
     const ndc = new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     const threshold = EDGE_PICK_PIXELS * this.worldPerPixel();
@@ -471,15 +527,21 @@ export class SceneManager {
       const groups = this.parts.get(partId)?.data.edgeGroups ?? [];
       const vertex = edgeHit.index ?? -1;
       const index = groups.findIndex((g) => vertex >= g.start && vertex < g.start + g.count);
-      if (index >= 0) return { partId, kind: "edge", index };
+      if (index >= 0) return { kind: "part", item: { partId, kind: "edge", index } };
     }
     if (faceHit && faceHit.faceIndex !== undefined && faceHit.faceIndex !== null) {
       const partId = faceHit.object.userData.partId as string;
       const groups = this.parts.get(partId)?.data.faceGroups ?? [];
       const triIndex = faceHit.faceIndex * 3;
       const index = groups.findIndex((g) => triIndex >= g.start && triIndex < g.start + g.count);
-      if (index >= 0) return { partId, kind: "face", index };
+      if (index >= 0) return { kind: "part", item: { partId, kind: "face", index } };
     }
+
+    // Nothing on a part: try the default planes (nearest first).
+    const squares: THREE.Object3D[] = [];
+    for (const [name, p] of this.planes) if (!this.hiddenDatums.has(name)) squares.push(p.square);
+    const planeHit = this.raycaster.intersectObjects(squares, false)[0];
+    if (planeHit) return { kind: "plane", plane: planeHit.object.userData.plane as PlaneName };
     return null;
   }
 
@@ -516,6 +578,10 @@ export class SceneManager {
       this.hover = null;
       this.applyHighlights();
     }
+    if (this.hoverPlane) {
+      this.hoverPlane = null;
+      this.applyPlaneHighlights();
+    }
     this.renderer.domElement.style.cursor = "";
   };
 
@@ -542,9 +608,15 @@ export class SceneManager {
     this.viewCube.setHover(overCube ? move.x : null, overCube ? move.y : null, this.width);
     const hit = overCube ? null : this.pickAt(move.x, move.y);
     this.renderer.domElement.style.cursor = overCube && this.viewCube.pick(move.x, move.y, this.width) ? "pointer" : "";
-    if (!sameItem(hit, this.hover) && (hit || this.hover)) {
-      this.hover = hit;
+    const partHit = hit?.kind === "part" ? hit.item : null;
+    const planeHit = hit?.kind === "plane" ? hit.plane : null;
+    if (!sameItem(partHit, this.hover) && (partHit || this.hover)) {
+      this.hover = partHit;
       this.applyHighlights();
+    }
+    if (planeHit !== this.hoverPlane) {
+      this.hoverPlane = planeHit;
+      this.applyPlaneHighlights();
     }
   }
 

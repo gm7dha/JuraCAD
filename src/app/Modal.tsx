@@ -13,18 +13,26 @@ interface ModalProps {
 /** A centred dialog box. Closes on Escape or the ✕ button. */
 export function Modal({ title, onClose, children, footer, width = 520 }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null);
+  // Keep the latest onClose without re-running the effects below on every render.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Focus the dialog once when it opens — never again, or it would steal the
+  // cursor from text boxes inside it every time the dialog redraws.
+  useEffect(() => {
+    if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
     };
     window.addEventListener("keydown", onKey, true);
-    ref.current?.focus();
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>

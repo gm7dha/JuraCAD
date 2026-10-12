@@ -83,7 +83,7 @@ try {
   await page.waitForTimeout(1500);
   const failed = await page.locator(".feature-row.failed").count();
   if (failed > 0) throw new Error(`${failed} feature(s) failed to build`);
-  const features = await page.locator(".feature-row:not(.default)").count();
+  const features = await page.locator(".feature-row:not(.datum)").count();
   if (features !== 2) throw new Error(`expected 2 features in the list, found ${features}`);
 
   step = "hovering and selecting a face";
@@ -113,8 +113,14 @@ try {
   if (!/Ready to print/.test(headline)) throw new Error(`check said: ${headline}`);
   await page.getByRole("button", { name: "Close", exact: true }).first().click();
 
-  step = "exporting STL";
+  step = "exporting STL (typing a file name)";
   await page.getByRole("button", { name: "Export STL" }).click();
+  const nameBox = page.locator("#export-name");
+  await nameBox.click();
+  await nameBox.press("Control+a");
+  await page.keyboard.type("bracket v2", { delay: 25 });
+  const typed = await nameBox.inputValue();
+  if (typed !== "bracket v2") throw new Error(`the file name box lost the typing: it says "${typed}"`);
   const downloadPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.getByRole("button", { name: "Check & export" }).click();
   const download = await downloadPromise;
@@ -122,16 +128,54 @@ try {
   const { statSync } = await import("node:fs");
   const bytes = statSync(path).size;
   if (bytes < 84 + 50 * 12) throw new Error(`STL file is suspiciously small (${bytes} bytes)`);
+  if (download.suggestedFilename() !== "bracket v2.stl") throw new Error(`file was named ${download.suggestedFilename()}`);
 
-  step = "editing a feature";
-  await page.locator(".feature-row:not(.default)").first().dblclick();
-  await page.locator("#param-height").fill("30");
+  step = "editing a feature three times, then undoing once";
+  const boxRow = page.locator(".feature-row:not(.datum)").first();
+  for (const x of ["10", "20", "30"]) {
+    await boxRow.dblclick();
+    await page.locator("#param-x").fill(x);
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForTimeout(400);
+  }
+  // Accepting without changes must not add an undo step.
+  await boxRow.dblclick();
   await page.getByRole("button", { name: "Accept" }).click();
-  await page.waitForTimeout(1200);
-
-  step = "undo";
+  await page.waitForTimeout(300);
   await page.keyboard.press("Control+z");
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(500);
+  await boxRow.dblclick();
+  const xAfterUndo = await page.locator("#param-x").inputValue();
+  if (xAfterUndo !== "20") throw new Error(`one undo should go back one step (x = 20), but x = ${xAfterUndo}`);
+
+  step = "pressing undo while a feature dialog is open";
+  await page.getByRole("radio", { name: "Add" }).click(); // focus on a button, not a text box
+  await page.keyboard.press("Control+z");
+  await page.waitForTimeout(400);
+  if ((await page.locator(".feature-dialog").count()) !== 1) throw new Error("undo closed the open feature dialog");
+  if ((await page.locator("#param-x").inputValue()) !== "20") throw new Error("undo changed the feature being edited");
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  step = "selecting, viewing and hiding the default planes";
+  const topRow = page.locator(".feature-row.datum", { hasText: "Top" });
+  await topRow.click();
+  if (!(await topRow.getAttribute("class")).includes("selected")) throw new Error("clicking Top didn't select it");
+  const planeStatus = await statusText();
+  if (!planeStatus.includes("Top plane selected")) throw new Error(`status said: ${planeStatus}`);
+  await page.keyboard.press("n");
+  await page.waitForTimeout(600);
+  await shot("top-plane-selected");
+  await page.locator(".feature-row.datum", { hasText: "Front" }).dblclick();
+  await page.waitForTimeout(500);
+  const rightRow = page.locator(".feature-row.datum", { hasText: "Right" });
+  await rightRow.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Hide" }).click();
+  if (!(await rightRow.getAttribute("class")).includes("hidden")) throw new Error("hiding the Right plane didn't work");
+  await rightRow.hover();
+  await page.getByRole("button", { name: "Show Right" }).click();
+  if ((await rightRow.getAttribute("class")).includes("hidden")) throw new Error("showing the Right plane didn't work");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Shift+Digit7");
 
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
@@ -139,7 +183,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}).`,
+    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); undo, export name and planes OK.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

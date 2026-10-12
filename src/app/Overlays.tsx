@@ -50,9 +50,12 @@ export function SelectionInfo() {
   const parts = useStore((s) => s.parts);
   const busy = useStore((s) => s.rebuildBusy);
   const ms = useStore((s) => s.lastRebuildMs);
+  const plane = useStore((s) => s.selectedPlane);
 
   let text = "";
-  if (selection.length === 1) {
+  if (plane) {
+    text = `${plane} plane selected — press N to look straight at it`;
+  } else if (selection.length === 1) {
     const s = selection[0];
     const part = parts.find((p) => p.id === s.partId);
     text = `${s.kind === "face" ? "Face" : "Edge"} ${s.index + 1} of ${part?.name ?? "part"}`;

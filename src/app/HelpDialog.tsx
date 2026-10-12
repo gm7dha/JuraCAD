@@ -8,14 +8,15 @@ const MOUSE: [string, string][] = [
   ["Orbit", "Right-drag"],
   ["Pan", "Middle-drag, or Ctrl + right-drag"],
   ["Zoom (towards the cursor)", "Scroll wheel"],
-  ["Select a face or edge", "Left-click"],
+  ["Select a face, edge or plane", "Left-click"],
   ["Add to selection", "Shift-click or Ctrl-click"],
   ["Jump to a standard view", "Click a face of the view cube"],
+  ["Look straight at a plane", "Double-click Top, Front or Right in the feature list"],
 ];
 
 const KEYS: [string, string][] = [
   ["F", "Zoom to fit"],
-  ["N", "View normal to the selected face"],
+  ["N", "View normal to the selected face or plane"],
   ["Shift + 1 / 2", "Front / back view"],
   ["Shift + 3 / 4", "Left / right view"],
   ["Shift + 5 / 6", "Top / bottom view"],

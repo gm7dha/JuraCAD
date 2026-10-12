@@ -50,8 +50,9 @@ const COMING: { label: string; icon: ReactNode; phase: string }[] = [
 ];
 
 export function Toolbar() {
-  const canUndo = useStore((s) => s.history.past.length > 0);
-  const canRedo = useStore((s) => s.history.future.length > 0);
+  const editing = useStore((s) => s.editing !== null);
+  const canUndo = useStore((s) => s.history.past.length > 0) && !editing;
+  const canRedo = useStore((s) => s.history.future.length > 0) && !editing;
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
   const startCreate = useStore((s) => s.startCreate);
@@ -63,8 +64,8 @@ export function Toolbar() {
   return (
     <div className="toolbar" role="toolbar" aria-label="Tools">
       <div className="tool-group">
-        <ToolButton label="Undo" icon={<Icons.Undo />} onClick={undo} disabled={!canUndo} title={`Undo (${mod}Z)`} />
-        <ToolButton label="Redo" icon={<Icons.Redo />} onClick={redo} disabled={!canRedo} title={`Redo (${mod}Y)`} />
+        <ToolButton label="Undo" icon={<Icons.Undo />} onClick={undo} disabled={!canUndo} title={editing ? "Finish or cancel the open feature first" : `Undo (${mod}Z)`} />
+        <ToolButton label="Redo" icon={<Icons.Redo />} onClick={redo} disabled={!canRedo} title={editing ? "Finish or cancel the open feature first" : `Redo (${mod}Y)`} />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
