@@ -35,16 +35,22 @@ page.on("pageerror", (e) => consoleErrors.push(e.message));
 let shotNumber = 0;
 async function shot(name) {
   shotNumber++;
-  const file = `${shotDir}/${shotNumber}-${name}.jpg`;
-  const buffer = await page.screenshot({ type: "jpeg", quality: 55 });
-  writeFileSync(file, buffer);
-  if (wantShots && inCI) {
-    const b64 = buffer.toString("base64");
-    const size = 40000;
-    const parts = Math.ceil(b64.length / size);
-    for (let i = 0; i < parts; i++) {
-      annotate("notice", `screenshot ${shotNumber}-${name} part ${i + 1}/${parts}`, b64.slice(i * size, (i + 1) * size));
-    }
+  const base = `${shotDir}/${shotNumber}-${name}`;
+  const buffer = await page.screenshot({ type: "jpeg", quality: 70 });
+  writeFileSync(`${base}.jpg`, buffer);
+  if (wantShots) {
+    // A small copy, sent back as annotations by the next CI steps.
+    const small = await page.evaluate(async (b64) => {
+      const img = new Image();
+      img.src = `data:image/jpeg;base64,${b64}`;
+      await img.decode();
+      const c = document.createElement("canvas");
+      c.width = 560;
+      c.height = Math.round((img.height / img.width) * 560);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL("image/jpeg", 0.5).split(",")[1];
+    }, buffer.toString("base64"));
+    writeFileSync(`${base}.b64`, small);
   }
 }
 

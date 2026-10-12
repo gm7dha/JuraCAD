@@ -58,6 +58,19 @@ jobs:
           SMOKE_SCREENSHOTS: "1"
         run: npm run smoke
 
+      - name: Attach screenshot 1
+        if: always()
+        run: node scripts/emit-screenshot.mjs 1
+      - name: Attach screenshot 2
+        if: always()
+        run: node scripts/emit-screenshot.mjs 2
+      - name: Attach screenshot 3
+        if: always()
+        run: node scripts/emit-screenshot.mjs 3
+      - name: Attach screenshot 4
+        if: always()
+        run: node scripts/emit-screenshot.mjs 4
+
       - name: Keep the built site (for previewing pull requests)
         uses: actions/upload-artifact@v4
         with:
