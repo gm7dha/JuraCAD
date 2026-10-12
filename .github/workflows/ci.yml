@@ -49,6 +49,15 @@ jobs:
             exit 1
           }
 
+      - name: Install browser for the smoke test
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser smoke test
+        env:
+          # Attach small screenshots as annotations so the result can be reviewed.
+          SMOKE_SCREENSHOTS: "1"
+        run: npm run smoke
+
       - name: Keep the built site (for previewing pull requests)
         uses: actions/upload-artifact@v4
         with:
