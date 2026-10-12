@@ -33,6 +33,9 @@ function dimensionText(c: SketchConstraint): string {
   return shown;
 }
 
+/** Shared empty list: a selector must not return a new array each time, or React re-renders forever. */
+const NO_SELECTION: string[] = [];
+
 interface Placement {
   id: string;
   /** Sketch position the element sits at. */
@@ -48,7 +51,7 @@ interface Placement {
  */
 export function SketchOverlay() {
   const data = useStore((s) => (s.editing?.draft.type === "sketch" && s.editing.draft.sketch?.plane ? s.editing.draft.sketch.data : null));
-  const selection = useStore((s) => s.sketch?.selection ?? []);
+  const selection = useStore((s) => s.sketch?.selection ?? NO_SELECTION);
   const editingDimension = useStore((s) => s.sketch?.editingDimension ?? null);
   const elements = useRef(new Map<string, HTMLElement>());
   const placements = useRef<Placement[]>([]);
