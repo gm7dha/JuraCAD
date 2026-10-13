@@ -98,6 +98,8 @@ export class SceneManager {
   private section: THREE.Plane | null = null;
   /** Part colours by part id, and one face material per colour (made as needed). */
   private colours: Record<string, string> = {};
+  /** Assembly positions by part id (4×4, column by column); parts not listed stay where they are. */
+  private placements: Record<string, number[]> = {};
   private readonly colourMaterials = new Map<string, THREE.MeshPhongMaterial>();
   private readonly makeFaceMaterial: (color: string) => THREE.MeshPhongMaterial;
   private readonly resizeObserver: ResizeObserver;
@@ -256,11 +258,32 @@ export class SceneManager {
       this.partsGroup.add(mesh, lines, cut);
       this.parts.set(data.id, { data, mesh, lines, cut });
     }
+    this.applyPlacements();
 
     if (this.hover && !this.parts.has(this.hover.partId)) this.hover = null;
     this.updatePlaneSize();
     this.applyHighlights();
     if (firstParts) this.fit(true);
+  }
+
+  /** Place parts (assembly instances): id → 4×4 matrix. Cheap — the meshes are kept. */
+  setPlacements(placements: Record<string, number[]>): void {
+    this.placements = placements;
+    this.applyPlacements();
+    this.updatePlaneSize();
+  }
+
+  private applyPlacements(): void {
+    for (const [id, p] of this.parts) {
+      const m = this.placements[id];
+      for (const o of [p.mesh, p.lines, p.cut]) {
+        o.matrixAutoUpdate = false;
+        if (m) o.matrix.fromArray(m);
+        else o.matrix.identity();
+        o.matrixWorldNeedsUpdate = true;
+        o.updateMatrixWorld(true);
+      }
+    }
   }
 
   /** Turn the section view on (cut along this plane) or off (null). */
@@ -304,8 +327,13 @@ export class SceneManager {
     for (const p of this.parts.values()) {
       if (!p.mesh.visible) continue;
       const v = p.data.vertices;
+      // Measure along the direction as seen inside the part (it may be placed in an assembly).
+      const m = p.mesh.matrixWorld;
+      const e = m.elements;
+      const ld = new THREE.Vector3(...dir).applyMatrix3(new THREE.Matrix3().setFromMatrix4(m).transpose());
+      const offset = e[12] * dir[0] + e[13] * dir[1] + e[14] * dir[2];
       for (let i = 0; i < v.length; i += 3) {
-        const d = v[i] * dir[0] + v[i + 1] * dir[1] + v[i + 2] * dir[2];
+        const d = v[i] * ld.x + v[i + 1] * ld.y + v[i + 2] * ld.z + offset;
         if (d < lo) lo = d;
         if (d > hi) hi = d;
       }

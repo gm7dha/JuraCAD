@@ -825,7 +825,23 @@ button:disabled {
 
 .tab.add {
   padding: 0 10px;
+}
+
+.tab:hover:not(:disabled):not(.active) {
+  color: var(--ink);
+  background: var(--line-2);
+}
+
+.tab:disabled {
   opacity: 0.45;
+}
+
+.tab-rename {
+  width: 140px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font: inherit;
 }
 
 .toast {
@@ -1074,6 +1090,88 @@ kbd {
 }
 
 /* ------------------------------------------------------------------ narrow screens */
+
+/* ------------------------------------------------------------------ assemblies */
+
+.instance-colour {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  flex: none;
+}
+
+.instance-fixed {
+  display: inline-flex;
+  color: var(--ink-3);
+}
+
+.bom-table {
+  width: calc(100% - 20px);
+  margin: 0 10px 6px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.bom-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--line);
+  padding: 3px 4px;
+}
+
+.bom-table td {
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.bom-table th:last-child,
+.bom-table td:last-child {
+  text-align: right;
+}
+
+.bom-table tr.missing td {
+  color: var(--error);
+}
+
+.bom-download {
+  margin: 4px 10px 10px;
+}
+
+.insert-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.insert-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+}
+
+.insert-row:hover {
+  background: var(--line-2);
+  border-color: var(--line);
+}
+
+.insert-row .feature-name {
+  flex: 1;
+}
+
+.param-field.compact {
+  margin-bottom: 6px;
+}
 
 @media (max-width: 860px) {
   .workspace {

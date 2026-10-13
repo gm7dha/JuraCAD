@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
-import { useStore } from "../model/store";
+import { activeAssembly, useStore } from "../model/store";
+import { AssemblyPanel, AssemblyToolbar, InsertPanel, InstancePanel } from "./AssemblyUI";
 import { Viewport, viewportApi } from "../viewport/Viewport";
 import type { StandardView } from "../viewport/ViewCube";
 import { CheckDialog } from "./CheckDialog";
@@ -124,11 +125,27 @@ function useShortcuts() {
           return;
         }
       }
-      if (mod || e.altKey || isTyping(e.target) || s.dialog) return;
+      if (mod || e.altKey || isTyping(e.target) || (s.dialog && s.dialog !== "insert")) return;
 
       if (e.shiftKey && SHIFT_VIEWS[e.code]) {
         e.preventDefault();
         viewportApi.current?.setView(SHIFT_VIEWS[e.code]);
+        return;
+      }
+      const asm = activeAssembly(s);
+      if (asm) {
+        if (e.key === "Escape") {
+          if (s.dialog === "insert") s.openDialog(null);
+          else s.setAsmSelection([]);
+          return;
+        }
+        if ((e.key === "Delete" || e.key === "Backspace") && s.asmSelection.length) {
+          e.preventDefault();
+          s.removeInstances(s.asmSelection);
+          return;
+        }
+        if (e.key === "f" || e.key === "F") viewportApi.current?.fit();
+        if (e.key === "?") s.openDialog("help");
         return;
       }
       if (e.shiftKey && !s.editing && s.kernelStatus === "ready") {
@@ -183,6 +200,7 @@ function useShortcuts() {
 export function App() {
   const dialog = useStore((s) => s.dialog);
   const sketching = useStore((s) => s.sketch !== null);
+  const assembly = useStore(activeAssembly);
 
   useEffect(() => connectKernel(), []);
   useShortcuts();
@@ -209,23 +227,32 @@ export function App() {
   return (
     <div className="app">
       <TopBar />
-      {sketching ? <SketchToolbar /> : <Toolbar />}
+      {assembly ? <AssemblyToolbar /> : sketching ? <SketchToolbar /> : <Toolbar />}
       <div className="workspace">
-        <FeaturePanel />
+        {assembly ? <AssemblyPanel assembly={assembly} /> : <FeaturePanel />}
         <main className="viewport-area">
           <Viewport />
-          <SketchOverlay />
-          <FeatureDialog />
-          <SketchPanel />
+          {assembly ? (
+            <>
+              <InsertPanel />
+              <InstancePanel />
+            </>
+          ) : (
+            <>
+              <SketchOverlay />
+              <FeatureDialog />
+              <SketchPanel />
+              <MeasurePanel />
+            </>
+          )}
           <EngineStatus />
           <EmptyHint />
           <SelectionInfo />
-          <MeasurePanel />
           <SectionPanel />
         </main>
       </div>
       <BottomTabs />
-      {dialog === "check" && <CheckDialog />}
+      {dialog === "check" && !assembly && <CheckDialog />}
       {dialog === "export" && <ExportDialog />}
       {dialog === "help" && <HelpDialog />}
       {dialog === "variables" && <VariablesDialog />}

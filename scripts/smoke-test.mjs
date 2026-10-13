@@ -14,6 +14,8 @@ import { preview } from "vite";
 
 const inCI = process.env.GITHUB_ACTIONS === "true";
 const wantShots = process.env.SMOKE_SCREENSHOTS === "1";
+// GitHub keeps only 50 annotations per job (about 12 screenshots), so SMOKE_SHOW can name just the ones wanted.
+const showOnly = (process.env.SMOKE_SHOW ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 const shotDir = "smoke-screenshots";
 mkdirSync(shotDir, { recursive: true });
 
@@ -42,7 +44,7 @@ async function shot(name) {
   const base = `${shotDir}/${shotNumber}-${name}`;
   const buffer = await page.screenshot({ type: "jpeg", quality: 70 });
   writeFileSync(`${base}.jpg`, buffer);
-  if (wantShots) {
+  if (wantShots && (showOnly.length === 0 || showOnly.includes(name) || name === "failure")) {
     // A small copy, sent back as annotations by the next CI steps.
     const small = await page.evaluate(async (b64) => {
       const img = new Image();
@@ -435,13 +437,39 @@ try {
   const stlParts = await importModel(path, "STL");
   await shot("imported");
 
+  step = "making an assembly";
+  await page.getByRole("button", { name: "Add an assembly" }).click();
+  await page.waitForSelector('[aria-label="Assembly tools"]');
+  await page.getByRole("button", { name: "Insert", exact: true }).click();
+  await page.getByRole("button", { name: "Insert Part 1", exact: true }).click();
+  await page.getByRole("button", { name: "Insert Part 1", exact: true }).click();
+  await page.getByRole("button", { name: "Insert Part 2", exact: true }).click();
+  await page.waitForSelector(".feature-row >> text=Part 1 <2>");
+  const bom = await page.locator(".bom-table").innerText();
+  if (!/Part 1\s+2\b/.test(bom) || !/Part 2\s+1\b/.test(bom)) throw new Error(`the parts list reads "${bom.replace(/\n/g, " / ")}"`);
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.locator(".feature-row >> text=Part 1 <2>").click();
+  await page.getByLabel("Z (blue)", { exact: true }).fill("30");
+  await page.getByLabel("Z (blue)", { exact: true }).press("Enter");
+  await page.getByLabel("Z", { exact: true }).fill("90");
+  await page.getByLabel("Z", { exact: true }).press("Enter");
+  await page.waitForTimeout(300);
+  if ((await page.getByLabel("Z (blue)", { exact: true }).inputValue()) !== "30") throw new Error("the typed position didn't stick");
+  await page.evaluate(() => (document.activeElement)?.blur?.());
+  await page.keyboard.press("f");
+  await page.waitForTimeout(600);
+  await shot("assembly");
+  const instanceCount = await page.locator(".feature-row").count();
+  await page.getByRole("button", { name: "Part Studio 1" }).click();
+  await page.waitForSelector('[aria-label="Tools"]');
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part).`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances and a parts list.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

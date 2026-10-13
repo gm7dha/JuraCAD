@@ -306,4 +306,28 @@ export const Icons = {
       <path d="M14 3v4h4M12 11v6M9 14h6" />
     </Svg>
   ),
+  Assembly: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M8 3 13 5.8v5.6L8 14.2 3 11.4V5.8z" fill="currentColor" fillOpacity={0.15} />
+      <path d="M16 9.8 21 12.6v5.6L16 21l-5-2.8v-5.6z" />
+    </Svg>
+  ),
+  Pin: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M9 3h6l-1 6 3 3H7l3-3z" />
+      <path d="M12 12v9" />
+    </Svg>
+  ),
+  Insert: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M12 3 20 7.5v9L12 21 4 16.5v-9z" />
+      <path d="M12 8.5v7M8.5 12h7" />
+    </Svg>
+  ),
+  List: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M9 6h11M9 12h11M9 18h11" />
+      <path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" strokeWidth={2.6} />
+    </Svg>
+  ),
 };

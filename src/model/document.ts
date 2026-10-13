@@ -5,6 +5,7 @@ import { emptySketch } from "../sketch/types";
 import { FEATURE_DEFS, defaultParams, isSolidFeature } from "./features";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
+import { parseAssemblies } from "../assembly/assembly";
 import type { Feature, FeatureType, ImportedFile, Operation, PartSmithDocument } from "./types";
 
 /**
@@ -256,5 +257,6 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     features,
     ...(Array.isArray(d.variables) && d.variables.length ? { variables: parseVariables(d.variables) } : {}),
     ...(Object.keys(parseAppearance(d.appearance)).length ? { appearance: parseAppearance(d.appearance) } : {}),
+    ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
   };
 }

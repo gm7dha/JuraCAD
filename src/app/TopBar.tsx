@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { useDocument, useStore } from "../model/store";
+import { activeAssembly, useDocument, useStore } from "../model/store";
 import { Icons } from "./icons";
 import { forgetFile, openFromFile, saveToFile } from "./fileActions";
 import { browserKind, installApp, installSteps, isInstalledApp, useCanInstall } from "./install";
@@ -14,6 +14,7 @@ export function TopBar() {
   const openDialog = useStore((s) => s.openDialog);
   const newDocument = useStore((s) => s.newDocument);
   const hasParts = useStore((s) => s.parts.length > 0);
+  const inAssembly = useStore((s) => activeAssembly(s) !== null);
   const fileName = useStore((s) => s.fileName);
   const unsaved = useStore((s) => s.savedDoc !== s.history.present && s.history.present.features.length > 0);
   const platform = detectPlatform();
@@ -86,7 +87,7 @@ export function TopBar() {
       >
         <Icons.Save size={18} /> <span className="button-label">Save</span>
       </button>
-      <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts} title="Check the model is a sound, closed solid before you export it">
+      <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts || inAssembly} title={inAssembly ? "Check model works in the Part Studio tab" : "Check the model is a sound, closed solid before you export it"}>
         <Icons.Check size={18} /> <span className="button-label">Check model</span>
       </button>
       <button className="primary-button" onClick={() => openDialog("export")} disabled={!hasParts} title="Download a STEP or STL file to send to a manufacturer or 3D printer">

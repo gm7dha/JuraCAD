@@ -3,6 +3,7 @@ import type { Variable } from "./variables";
 import type { HoleFit, HoleKind } from "./holes";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
+import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
 export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import";
@@ -86,6 +87,27 @@ export interface PartSmithDocument {
   variables?: Variable[];
   /** Colour of each part ("#rrggbb"), by the id of the feature that made it. Parts without one are grey. */
   appearance?: Record<string, string>;
+  /** Assembly tabs (optional: older saves have none). */
+  assemblies?: Assembly[];
+}
+
+/** One copy of a part placed in an assembly. */
+export interface Instance {
+  id: string;
+  /** The Part Studio part it shows (the id of the feature that made the part). */
+  partId: string;
+  /** e.g. "Part 1 <2>". */
+  name: string;
+  placement: Placement;
+  /** Fixed instances stay where they are; others move to satisfy mates. */
+  fixed: boolean;
+}
+
+/** An assembly tab: parts placed together. */
+export interface Assembly {
+  id: string;
+  name: string;
+  instances: Instance[];
 }
 
 /** How finely curved surfaces are turned into triangles. */

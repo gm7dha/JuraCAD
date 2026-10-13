@@ -20,6 +20,7 @@ export function serializeDocument(doc: PartSmithDocument, savedAt = new Date()):
     ...(doc.variables?.length ? { variables: doc.variables } : {}),
     ...(doc.appearance && Object.keys(doc.appearance).length ? { appearance: doc.appearance } : {}),
     features: doc.features,
+    ...(doc.assemblies?.length ? { assemblies: doc.assemblies } : {}),
   };
   return JSON.stringify(file, null, 1) + "\n";
 }
