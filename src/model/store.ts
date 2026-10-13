@@ -125,7 +125,7 @@ export interface AppState {
   startCreate: (type: FeatureType) => void;
   startEdit: (id: string) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -285,6 +285,11 @@ export const useStore = create<AppState>((set, get) => {
           draft.sketchRef = picked.id;
           if (type === "revolve" && picked.sketch) draft.revolve = { axis: defaultAxis(picked.sketch.data), flip: false };
         }
+      }
+      // Transform the part that's selected in the 3D view (or the latest part).
+      if (type === "transform" && draft.transform) {
+        const partId = s.selection[0]?.partId ?? s.parts[s.parts.length - 1]?.id;
+        if (partId) draft.transform = { ...draft.transform, partId };
       }
       // A hole uses the sketch highlighted in the list, if any.
       if (type === "hole" && draft.hole) {

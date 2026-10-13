@@ -238,6 +238,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         h.flip,
       );
     }
+    case "transform":
     case "sketch":
     case "fillet":
     case "chamfer":
@@ -295,6 +296,12 @@ export class GeometryEngine {
       if (isPickFeature(feature.type)) {
         const err = feature.type === "shell" ? this.applyShell(feature) : this.applyEdgeFeature(feature);
         if (err) featureErrors[feature.id] = err;
+        continue;
+      }
+      if (feature.type === "transform") {
+        const r = this.applyTransform(feature, partCounter + 1);
+        if (r.error) featureErrors[feature.id] = r.error;
+        if (r.newPart) partCounter++;
         continue;
       }
       if (isPatternFeature(feature.type)) {
@@ -358,6 +365,41 @@ export class GeometryEngine {
 
     const parts = this.parts.map((p) => this.meshPart(p));
     return { parts, featureErrors, durationMs: Math.round(performance.now() - started) };
+  }
+
+  /** Move and/or turn a part, or a copy of it. */
+  private applyTransform(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+    const def = FEATURE_DEFS.transform;
+    const { values, errors } = resolveParams(feature);
+    const badParam = def.params.find((p) => errors[p.key]);
+    if (badParam) return { error: `${badParam.label}: ${errors[badParam.key]}` };
+    const t = feature.transform;
+    if (!t?.partId) return { error: "Choose the part to move." };
+    const part = this.parts.find((p) => p.id === t.partId);
+    if (!part) return { error: "The part it moves no longer exists. Edit this feature and choose another part." };
+    if (Math.abs(values.angle) < 1e-12 && Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) < 1e-12 && !t.copy) {
+      return { error: "Nothing to do yet — enter a distance to move or an angle to turn." };
+    }
+    let shape = part.shape.clone();
+    try {
+      if (Math.abs(values.angle) > 1e-12) {
+        const [lo, hi] = boundsOf(part.shape);
+        const centre: [number, number, number] = t.about === "origin" ? [0, 0, 0] : [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+        shape = shape.rotate(values.angle, centre, AXES[t.axis]);
+      }
+      if (Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) > 0) shape = shape.translate([values.dx, values.dy, values.dz]);
+    } catch (e) {
+      shape.delete();
+      return { error: describeError(e, "Couldn't move this part.") };
+    }
+    if (t.copy) {
+      this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape });
+      return { newPart: true };
+    }
+    part.shape.delete();
+    part.shape = shape;
+    part.featureIds.push(feature.id);
+    return {};
   }
 
   /**

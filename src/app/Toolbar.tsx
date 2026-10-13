@@ -156,6 +156,14 @@ export function Toolbar() {
       <div className="tool-divider" />
       <div className="tool-group">
         <ToolButton
+          label="Move"
+          icon={<Icons.Move />}
+          onClick={() => startCreate("transform")}
+          disabled={!ready || !hasPart}
+          active={editingType === "transform"}
+          title={hasPart ? "Move / copy — move or turn a part, or a copy of it. Select the part first, or pick it after" : "Make a part first, then move it"}
+        />
+        <ToolButton
           label="Mirror"
           icon={<Icons.Mirror />}
           onClick={() => startCreate("mirror")}

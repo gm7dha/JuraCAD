@@ -354,6 +354,18 @@ try {
   if ((await page.locator("#param-diameter").inputValue()) !== "3.3") throw new Error("tapped M4 should be a 3.3 mm drill");
   await page.getByRole("button", { name: "Cancel" }).click();
 
+  step = "moving a copy of a part";
+  await page.getByRole("button", { name: "Move", exact: true }).click();
+  await page.waitForSelector(".feature-dialog >> text=Make a copy");
+  await page.getByLabel("Make a copy (keep the original where it is)").check();
+  await page.locator("#param-dz").fill("60");
+  await page.getByRole("button", { name: "Accept" }).click();
+  await page.waitForSelector(".feature-row:not(.datum) >> text=Transform 1", { timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 4"), null, { timeout: 30_000 });
+  if ((await page.locator(".feature-row.failed").count()) > 0) {
+    throw new Error(`the move failed: ${await page.locator(".feature-row.failed").first().getAttribute("title")}`);
+  }
+
   step = "adding a variable";
   await page.getByRole("button", { name: "Variables", exact: true }).click();
   await page.getByRole("button", { name: "+ Add variable" }).click();

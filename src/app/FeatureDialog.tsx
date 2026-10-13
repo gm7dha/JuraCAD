@@ -163,6 +163,52 @@ function SketchSolidOptions() {
   );
 }
 
+/** Transform settings: which part, turned about which axis, moved or copied. */
+function TransformOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const parts = useStore((s) => s.parts);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (!draft || draft.type !== "transform" || !draft.transform) return null;
+  const t = draft.transform;
+  const choices = parts.filter((p) => p.id !== draft.id); // not the copy this feature makes
+  const update = (patch: Partial<typeof t>) => setDraftField({ transform: { ...t, ...patch } });
+  return (
+    <fieldset className="param-group">
+      <legend>Part</legend>
+      <select className="full-select" aria-label="Part to move" value={t.partId ?? ""} onChange={(e) => update({ partId: e.target.value || undefined })}>
+        {!t.partId && <option value="">Choose a part…</option>}
+        {choices.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+        {t.partId && !choices.some((p) => p.id === t.partId) && <option value={t.partId}>Missing part — choose another</option>}
+      </select>
+      <p className="dialog-hint field-hint">Or click the part in the 3D view.</p>
+      <label className="check-row">
+        <input type="checkbox" checked={t.copy} onChange={(e) => update({ copy: e.target.checked })} />
+        Make a copy (keep the original where it is)
+      </label>
+      <label className="field-label" htmlFor="transform-axis">
+        Turn about
+      </label>
+      <div className="inline-selects">
+        <select id="transform-axis" className="full-select" value={t.axis} onChange={(e) => update({ axis: e.target.value as Axis })}>
+          {(["x", "y", "z"] as const).map((a) => (
+            <option key={a} value={a}>
+              {AXIS_LABELS[a]}
+            </option>
+          ))}
+        </select>
+        <select className="full-select" aria-label="Turn about which point" value={t.about} onChange={(e) => update({ about: e.target.value as "origin" | "centre" })}>
+          <option value="centre">through the part's centre</option>
+          <option value="origin">through the origin</option>
+        </select>
+      </div>
+    </fieldset>
+  );
+}
+
 /** Hole settings: which sketch marks the holes, what kind, and standard sizes. */
 function HoleOptions() {
   const draft = useStore((s) => s.editing?.draft);
@@ -404,8 +450,8 @@ export function FeatureDialog() {
   const { errors } = resolveParams(draft);
   const hasErrors = Object.keys(errors).length > 0;
   const groups: { title: string; params: ParamDef[] }[] = [
-    { title: draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : "Size", params: def.params.filter((p) => p.group === "size") },
-    { title: "Position", params: def.params.filter((p) => p.group === "position") },
+    { title: draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
+    { title: draft.type === "transform" ? "Move" : "Position", params: def.params.filter((p) => p.group === "position") },
   ];
 
   return (
@@ -444,7 +490,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && (
         <div className="segmented" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -464,6 +510,7 @@ export function FeatureDialog() {
 
         <SketchSolidOptions />
         <HoleOptions />
+        <TransformOptions />
         <PicksField />
         <PatternOptions />
 
