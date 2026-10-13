@@ -330,4 +330,44 @@ export const Icons = {
       <path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" strokeWidth={2.6} />
     </Svg>
   ),
+  MateFasten: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="3" y="4" width="8" height="16" rx="1" />
+      <rect x="13" y="4" width="8" height="16" rx="1" />
+      <path d="M9 12h6M12 9v6" />
+    </Svg>
+  ),
+  MateRevolute: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 4a8 8 0 1 1-7.4 5" />
+      <path d="M4 5v4h4" />
+    </Svg>
+  ),
+  MateSlider: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 15h18" />
+      <rect x="7" y="8" width="8" height="5" rx="1" />
+      <path d="M17 10.5h4M19 8.5l2 2-2 2" />
+    </Svg>
+  ),
+  MateCylindrical: (p: IconProps) => (
+    <Svg {...p}>
+      <ellipse cx="12" cy="6" rx="4" ry="1.8" />
+      <path d="M8 6v12c0 1 1.8 1.8 4 1.8s4-.8 4-1.8V6" />
+      <path d="M12 2v20" strokeDasharray="2 2" />
+    </Svg>
+  ),
+  MatePlanar: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M2 16 8 12h14l-6 4z" />
+      <rect x="9" y="6" width="7" height="5" rx="1" />
+    </Svg>
+  ),
+  MateBall: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="12" cy="9" r="5" />
+      <path d="M12 14v7M8 21h8" />
+    </Svg>
+  ),
 };

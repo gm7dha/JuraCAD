@@ -9,7 +9,9 @@ import { eulerDegFromQuat, quatFromEulerDeg, type Placement } from "../assembly/
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { evaluate } from "../model/expr";
 import { activeAssembly, useStore } from "../model/store";
-import type { Assembly, Instance } from "../model/types";
+import type { Assembly, Instance, Mate, MateConnector, MateType } from "../model/types";
+import { MATE_ORDER, MATE_TYPES, mateValues } from "../assembly/mates";
+import { useSolvedAssembly } from "./assemblySolve";
 import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
@@ -25,6 +27,15 @@ function ToolButton({ label, icon, onClick, disabled, active, title }: { label: 
     </button>
   );
 }
+
+const MATE_ICONS: Record<MateType, (p: { size?: number }) => ReactNode> = {
+  fastened: Icons.MateFasten,
+  revolute: Icons.MateRevolute,
+  slider: Icons.MateSlider,
+  cylindrical: Icons.MateCylindrical,
+  planar: Icons.MatePlanar,
+  ball: Icons.MateBall,
+};
 
 /** Box of each part, worked out once per rebuild. */
 const boxCache = new WeakMap<PartMesh, Box3 | null>();
@@ -57,6 +68,7 @@ export function AssemblyToolbar() {
   const selection = useStore((s) => s.asmSelection);
   const insertOpen = useStore((s) => s.dialog === "insert");
   const sectionOn = useStore((s) => s.section !== null);
+  const draftType = useStore((s) => s.mateDraft?.mate.type ?? null);
   const platform = detectPlatform();
   const selected = asm?.instances.filter((i) => selection.includes(i.id)) ?? [];
   const allFixed = selected.length > 0 && selected.every((i) => i.fixed);
@@ -90,6 +102,24 @@ export function AssemblyToolbar() {
           onClick={() => useStore.getState().removeInstances(selected.map((i) => i.id))}
           title={selected.length ? "Remove the selected parts from this assembly (Delete)" : "Select a part first"}
         />
+      </div>
+      <div className="tool-divider" />
+      <div className="tool-group">
+        {MATE_ORDER.map((type) => {
+          const Icon = MATE_ICONS[type];
+          const enough = (asm?.instances.length ?? 0) >= 2;
+          return (
+            <ToolButton
+              key={type}
+              label={MATE_TYPES[type].label}
+              icon={<Icon />}
+              onClick={() => useStore.getState().startMate(type)}
+              disabled={!enough}
+              active={draftType === type}
+              title={enough ? `${MATE_TYPES[type].label} — ${MATE_TYPES[type].description}` : "Insert at least two parts first, then join them with a mate"}
+            />
+          );
+        })}
       </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">
@@ -151,6 +181,66 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
   );
 }
 
+function MateRow({ mate, error, instanceNames }: { mate: Mate; error?: string; instanceNames: Record<string, string> }) {
+  const editing = useStore((s) => s.mateDraft?.mate.id === mate.id);
+  const Icon = MATE_ICONS[mate.type];
+  const between = `${instanceNames[mate.a.instanceId] ?? "?"} and ${instanceNames[mate.b.instanceId] ?? "?"}`;
+  return (
+    <li
+      className={["feature-row", editing && "editing", error && !mate.suppressed && "failed", mate.suppressed && "suppressed"].filter(Boolean).join(" ")}
+      onDoubleClick={() => useStore.getState().editMate(mate.id)}
+      title={mate.suppressed ? "Suppressed — not used" : error ? `Problem: ${error}` : `${MATE_TYPES[mate.type].label} joining ${between}. Double-click to edit.`}
+    >
+      <span className="feature-icon">
+        <Icon size={18} />
+      </span>
+      <span className="feature-name">{mate.name}</span>
+      {error && !mate.suppressed && (
+        <span className="feature-error-icon" aria-label="Problem">
+          <Icons.Warning size={16} />
+        </span>
+      )}
+      <span className="row-actions">
+        <button className="icon-button small" onClick={() => useStore.getState().editMate(mate.id)} aria-label={`Edit ${mate.name}`} title="Edit">
+          <Icons.Sketch size={15} />
+        </button>
+        <button
+          className="icon-button small"
+          onClick={() => useStore.getState().toggleMateSuppressed(mate.id)}
+          aria-label={mate.suppressed ? `Use ${mate.name} again` : `Suppress ${mate.name}`}
+          title={mate.suppressed ? "Use again" : "Suppress (switch off for now)"}
+        >
+          {mate.suppressed ? <Icons.EyeOff size={15} /> : <Icons.Eye size={15} />}
+        </button>
+        <button className="icon-button small" onClick={() => useStore.getState().deleteMate(mate.id)} aria-label={`Delete ${mate.name}`} title="Delete (the parts stay where they are)">
+          <Icons.Trash size={15} />
+        </button>
+      </span>
+    </li>
+  );
+}
+
+function MatesSection({ assembly }: { assembly: Assembly }) {
+  const { solved } = useSolvedAssembly();
+  const mates = assembly.mates ?? [];
+  const instanceNames = useMemo(() => Object.fromEntries(assembly.instances.map((i) => [i.id, i.name])), [assembly.instances]);
+  return (
+    <section className="panel-section mates">
+      <h3>
+        Mates <span className="count">({mates.length})</span>
+      </h3>
+      <ul className="feature-list">
+        {mates.map((m) => (
+          <MateRow key={m.id} mate={m} error={solved?.mateErrors[m.id]} instanceNames={instanceNames} />
+        ))}
+      </ul>
+      {mates.length === 0 && assembly.instances.length >= 2 && (
+        <p className="panel-hint">Join parts with a mate: choose Fasten, Hinge, Slider… in the toolbar, then click a face or edge on each part.</p>
+      )}
+    </section>
+  );
+}
+
 /** Left panel in an assembly: its instances, then the bill of materials. */
 export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
   const parts = useStore((s) => s.parts);
@@ -172,6 +262,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
         </ul>
         {assembly.instances.length === 0 && <p className="panel-hint">Click Insert to bring in parts from the Part Studio.</p>}
       </section>
+      <MatesSection assembly={assembly} />
       <section className="panel-section parts">
         <h3>
           Parts list <span className="count">({bom.reduce((n, r) => n + r.quantity, 0)})</span>
@@ -310,8 +401,12 @@ export function InstancePanel() {
   const asm = useStore(activeAssembly);
   const selection = useStore((s) => s.asmSelection);
   const insertOpen = useStore((s) => s.dialog === "insert");
+  const mating = useStore((s) => s.mateDraft !== null);
+  const { solved } = useSolvedAssembly();
   const instance = asm && selection.length === 1 ? asm.instances.find((i) => i.id === selection[0]) : undefined;
-  if (!instance || insertOpen) return null;
+  if (!instance || insertOpen || mating) return null;
+  const drivenBy = solved?.drivenBy[instance.id];
+  const driver = drivenBy ? asm?.mates?.find((m) => m.id === drivenBy) : undefined;
   const update = useStore.getState().updateInstance;
   const { position, rotation } = instance.placement;
   const turn = eulerDegFromQuat(rotation);
@@ -341,6 +436,12 @@ export function InstancePanel() {
           <input type="checkbox" checked={instance.fixed} onChange={(e) => update(instance.id, { fixed: e.target.checked })} />
           Fixed (stays where it is)
         </label>
+        {driver ? (
+          <p className="dialog-hint">
+            Placed by <strong>{driver.name}</strong>. To move it, change the mate's amounts (double-click the mate), or delete the mate.
+          </p>
+        ) : (
+          <>
         <fieldset className="param-group">
           <legend>Position</legend>
           {(["X (red)", "Y (green)", "Z (blue)"] as const).map((l, k) => (
@@ -361,7 +462,152 @@ export function InstancePanel() {
         >
           Straighten (no turn)
         </button>
+          </>
+        )}
       </div>
     </div>
+  );
+}
+
+/** "Flat face", "Circular edge"… for showing what was picked. */
+function connectorLabel(c: MateConnector): string {
+  const ref = c.pick.ref;
+  if (ref.kind === "face") {
+    if (ref.surface === "PLANE") return "flat face";
+    if (ref.surface.startsWith("CYLIND")) return "round face";
+    if (ref.surface === "SPHERE") return "ball face";
+    if (ref.surface === "CONE") return "cone face";
+    return "curved face";
+  }
+  if (ref.curve === "LINE") return "straight edge";
+  if (ref.curve === "CIRCLE") return "circular edge";
+  return "curved edge";
+}
+
+/** Typed box (live) for a mate amount, with a slider for movements. */
+function MateValueField({ def, value, onChange }: { def: { key: string; label: string; unit: "mm" | "°"; free: boolean }; value: string; onChange: (v: string) => void }) {
+  const r = evaluate(value.trim() || "0");
+  const id = `mate-${def.key}`;
+  const range = def.unit === "°" ? 180 : 200;
+  return (
+    <div className={`param-field compact${r.ok ? "" : " invalid"}`}>
+      <label htmlFor={id}>{def.label}</label>
+      <div className="param-input">
+        <input
+          id={id}
+          value={value}
+          spellCheck={false}
+          autoComplete="off"
+          inputMode="decimal"
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          aria-invalid={!r.ok}
+        />
+        <span className="unit">{def.unit}</span>
+      </div>
+      {def.free && (
+        <input
+          type="range"
+          className="mate-slider"
+          aria-label={`${def.label} slider`}
+          min={-range}
+          max={range}
+          step={def.unit === "°" ? 1 : 0.5}
+          value={r.ok ? Math.max(-range, Math.min(range, r.value)) : 0}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+      {!r.ok && <div className="param-message error">{r.error}</div>}
+    </div>
+  );
+}
+
+/** The mate dialog: pick a face or edge on two parts, choose the kind of joint and its amounts. */
+export function MateDialog() {
+  const draftState = useStore((s) => s.mateDraft);
+  const asm = useStore(activeAssembly);
+  const { solved } = useSolvedAssembly();
+  if (!draftState || !asm) return null;
+  const { mate, mode } = draftState;
+  const st = useStore.getState();
+  const def = MATE_TYPES[mate.type];
+  const ready = !!mate.a && !!mate.b;
+  const { errors } = mateValues(mate);
+  const problem = ready ? solved?.mateErrors[mate.id] : undefined;
+  const nameOf = (c?: MateConnector) => (c ? asm.instances.find((i) => i.id === c.instanceId)?.name ?? "?" : "");
+  const slot = (c: MateConnector | undefined, n: 1 | 2) => (
+    <div className={`connector-slot${c ? " filled" : ""}${(!mate.a && n === 1) || (mate.a && !mate.b && n === 2) ? " waiting" : ""}`}>
+      <span className="connector-number">{n}</span>
+      {c ? (
+        <span>
+          {nameOf(c)} — {connectorLabel(c)}
+        </span>
+      ) : (
+        <span className="muted">{n === 1 ? "Click a face or edge on the part that stays put" : "Click a face or edge on the part to move"}</span>
+      )}
+    </div>
+  );
+
+  return (
+    <form
+      className="feature-dialog mate-dialog"
+      aria-label="Mate"
+      onSubmit={(e) => {
+        e.preventDefault();
+        st.commitMateDraft();
+      }}
+    >
+      <header className="feature-dialog-header">
+        <span className="feature-dialog-title">{def.label} mate</span>
+        <span className="feature-dialog-actions">
+          <button
+            type="submit"
+            className="dialog-ok"
+            disabled={!ready || Object.keys(errors).length > 0}
+            title={ready ? "Accept (Enter)" : "Pick a face or edge on each of two parts first"}
+            aria-label="Accept"
+          >
+            <Icons.Tick size={18} />
+          </button>
+          <button type="button" className="dialog-cancel" onClick={st.cancelMateDraft} title="Cancel (Esc)" aria-label="Cancel">
+            <Icons.Cross size={18} />
+          </button>
+        </span>
+      </header>
+      <div className="feature-dialog-body">
+        <input className="feature-name-input" value={mate.name} aria-label="Mate name" onChange={(e) => st.setMateDraft({ name: e.target.value })} />
+        <label className="field-label" htmlFor="mate-type">
+          Kind of mate
+        </label>
+        <select id="mate-type" value={mate.type} onChange={(e) => st.setMateDraft({ type: e.target.value as MateType })}>
+          {MATE_ORDER.map((t) => (
+            <option key={t} value={t}>
+              {MATE_TYPES[t].label}
+            </option>
+          ))}
+        </select>
+        <p className="dialog-hint field-hint">{def.description}</p>
+        {slot(mate.a, 1)}
+        {slot(mate.b, 2)}
+        {ready && (
+          <button type="button" className="text-button small-text" onClick={() => st.setMateDraft({ a: undefined, b: undefined })}>
+            Pick again
+          </button>
+        )}
+        <label className="check-row">
+          <input type="checkbox" checked={mate.flip} onChange={(e) => st.setMateDraft({ flip: e.target.checked })} />
+          Flip (turn the moving part round)
+        </label>
+        {def.values.map((d) => (
+          <MateValueField key={d.key} def={d} value={mate.values[d.key] ?? "0"} onChange={(v) => st.setMateDraft({ values: { ...mate.values, [d.key]: v } })} />
+        ))}
+        {problem && <p className="param-message error">{problem}</p>}
+        {mode === "edit" && (
+          <button type="button" className="text-button danger-text" onClick={() => st.deleteMate(mate.id)}>
+            Delete this mate
+          </button>
+        )}
+      </div>
+    </form>
   );
 }

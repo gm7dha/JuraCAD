@@ -91,6 +91,8 @@ export class SceneManager {
   private readonly partsGroup = new THREE.Group();
   private readonly planesGroup = new THREE.Group();
   private readonly originGroup = new THREE.Group();
+  /** Mate connector markers (small X/Y/Z arrows), kept a constant size on screen. */
+  private readonly markersGroup = new THREE.Group();
   private readonly planeLabels: THREE.Sprite[] = [];
   private readonly planes = new Map<PlaneName, PlaneObjects>();
   private readonly parts = new Map<string, PartObjects>();
@@ -181,7 +183,7 @@ export class SceneManager {
     };
     this.renderer.localClippingEnabled = true;
 
-    this.scene.add(this.partsGroup, this.planesGroup, this.originGroup, this.sketchLayer.group);
+    this.scene.add(this.partsGroup, this.planesGroup, this.originGroup, this.markersGroup, this.sketchLayer.group);
     this.buildPlanes();
     this.buildOrigin();
 
@@ -283,6 +285,60 @@ export class SceneManager {
         o.matrixWorldNeedsUpdate = true;
         o.updateMatrixWorld(true);
       }
+    }
+  }
+
+  /**
+   * Screen position (CSS px within the viewport) of a point on a face — the
+   * middle of its first triangle. Used by the browser smoke test to click faces.
+   */
+  screenPointOnFace(partId: string, faceIndex: number): { x: number; y: number } | null {
+    const p = this.parts.get(partId);
+    const g = p?.data.faceGroups[faceIndex];
+    if (!p || !g) return null;
+    const t = p.data.triangles;
+    const v = p.data.vertices;
+    const c = new THREE.Vector3();
+    for (let k = 0; k < 3; k++) c.add(new THREE.Vector3(v[3 * t[g.start + k]], v[3 * t[g.start + k] + 1], v[3 * t[g.start + k] + 2]));
+    c.divideScalar(3).applyMatrix4(p.mesh.matrixWorld).project(this.camera);
+    return { x: ((c.x + 1) / 2) * this.width, y: ((1 - c.y) / 2) * this.height };
+  }
+
+  /** Ids of the parts (or assembly instances) on show, and what their faces look like. */
+  shownParts(): { id: string; faceRefs: PartMesh["faceRefs"] }[] {
+    return [...this.parts.values()].map((p) => ({ id: p.data.id, faceRefs: p.data.faceRefs }));
+  }
+
+  /** Show mate connectors: each an origin with X and Z directions (world coordinates). */
+  setMarkers(markers: { origin: [number, number, number]; x: [number, number, number]; z: [number, number, number] }[]): void {
+    for (const child of [...this.markersGroup.children]) {
+      this.markersGroup.remove(child);
+      child.traverse((o) => {
+        if (o instanceof THREE.Line || o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+    }
+    for (const m of markers) {
+      const z = new THREE.Vector3(...m.z).normalize();
+      const x = new THREE.Vector3(...m.x).normalize();
+      const y = new THREE.Vector3().crossVectors(z, x);
+      const g = new THREE.Group();
+      const arm = (dir: THREE.Vector3, colour: string, len: number) => {
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(len)]),
+          new THREE.LineBasicMaterial({ color: colour, depthTest: false, linewidth: 2 }),
+        );
+        line.renderOrder = 6;
+        return line;
+      };
+      g.add(arm(x, "#d43c3c", 0.7), arm(y, "#2f9e44", 0.7), arm(z, "#2f6fd1", 1));
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), new THREE.MeshBasicMaterial({ color: "#1d232a", depthTest: false }));
+      dot.renderOrder = 6;
+      g.add(dot);
+      g.position.set(...m.origin);
+      this.markersGroup.add(g);
     }
   }
 
@@ -876,6 +932,7 @@ export class SceneManager {
       label.scale.set(h * (label.userData.aspect as number), h, 1);
     }
     this.originGroup.scale.setScalar(36 * wpp);
+    for (const m of this.markersGroup.children) m.scale.setScalar(40 * wpp);
     this.sketchLayer.frameUpdate(wpp);
 
     this.renderer.setViewport(0, 0, this.width, this.height);
