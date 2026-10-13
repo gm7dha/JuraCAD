@@ -6,6 +6,15 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.5 — More modelling · commit `3891772`
+
+- Move, turn and copy parts.
+- Measure: lengths, distances, angles, radii and centre-to-centre gaps.
+- Section view: cut the view along Top, Front or Right to see inside.
+- Part colours, kept in saved files and carried into STEP and 3MF exports (STEP files no longer mark every part red).
+- Import STEP and STL files (toolbar, drag and drop, or Open) as New / Add / Remove; STEP files with several solids give one part each.
+- Faster handling of parts with thousands of faces.
+
 ## v0.4 — Phase 4: Save, check, export (+ sketch tools and holes) · commit `bb4d88e`
 
 - Save and Open `.partsmith` files (Ctrl/⌘ + S, Ctrl/⌘ + O, or drag a file onto the window); "Unsaved changes" label.
