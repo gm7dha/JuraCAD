@@ -1298,3 +1298,15 @@ kbd {
   margin: -4px 0 8px;
   font-size: 11.5px;
 }
+
+.platform-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 6px;
+}
+
+.platform-row .segmented {
+  width: 170px;
+  margin: 0;
+}

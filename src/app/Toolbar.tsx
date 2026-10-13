@@ -4,6 +4,7 @@ import { useStore } from "../model/store";
 import type { FeatureType } from "../model/types";
 import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
+import { detectPlatform, shortcut } from "./platform";
 
 function ToolButton({
   label,
@@ -65,14 +66,13 @@ export function Toolbar() {
   const ready = useStore((s) => s.kernelStatus === "ready");
   const hasSketch = useStore((s) => s.history.present.features.some((f) => f.type === "sketch"));
   const hasPart = useStore((s) => s.parts.length > 0);
-  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-  const mod = isMac ? "⌘" : "Ctrl+";
+  const platform = detectPlatform();
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Tools">
       <div className="tool-group">
-        <ToolButton label="Undo" icon={<Icons.Undo />} onClick={undo} disabled={!canUndo} title={editing ? "Finish or cancel the open feature first" : `Undo (${mod}Z)`} />
-        <ToolButton label="Redo" icon={<Icons.Redo />} onClick={redo} disabled={!canRedo} title={editing ? "Finish or cancel the open feature first" : `Redo (${mod}Y)`} />
+        <ToolButton label="Undo" icon={<Icons.Undo />} onClick={undo} disabled={!canUndo} title={editing ? "Finish or cancel the open feature first" : `Undo (${shortcut(platform, "Z")})`} />
+        <ToolButton label="Redo" icon={<Icons.Redo />} onClick={redo} disabled={!canRedo} title={editing ? "Finish or cancel the open feature first" : `Redo (${shortcut(platform, platform === "mac" ? "Z" : "Y", { shift: platform === "mac" })})`} />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">

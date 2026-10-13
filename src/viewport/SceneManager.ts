@@ -556,9 +556,12 @@ export class SceneManager {
 
   private animateTo(goal: { dir?: THREE.Vector3; target?: THREE.Vector3; zoom?: number }, animate: boolean): void {
     const fromDir = this.camera.position.clone().sub(this.controls.target).normalize();
-    const toDir = (goal.dir ?? fromDir).clone().normalize();
-    const toTarget = (goal.target ?? this.controls.target).clone();
-    const toZoom = goal.zoom ?? this.camera.zoom;
+    // If the camera is already moving (e.g. F pressed straight after Shift+7), keep heading where it
+    // was going for anything this move doesn't change, rather than cancelling the turn.
+    const running = this.animation;
+    const toDir = (goal.dir ?? running?.toDir ?? fromDir).clone().normalize();
+    const toTarget = (goal.target ?? running?.toTarget ?? this.controls.target).clone();
+    const toZoom = goal.zoom ?? running?.toZoom ?? this.camera.zoom;
     if (!animate) {
       this.applyCamera(toDir, toTarget, toZoom);
       return;
@@ -678,8 +681,8 @@ export class SceneManager {
       }
     }
     if (e.button === 2) {
-      // Ctrl + right-drag pans, as in Onshape.
-      this.controls.mouseButtons.RIGHT = e.ctrlKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+      // Ctrl + right-drag pans, as in Onshape (⌘ + right-drag too, for Macs).
+      this.controls.mouseButtons.RIGHT = e.ctrlKey || e.metaKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
     }
   };
 
