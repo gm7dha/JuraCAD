@@ -462,10 +462,10 @@ try {
   const instanceCount = await page.locator(".feature-row").count();
 
   step = "fastening two parts together with a mate";
-  // Where the top faces of the first two copies are on screen.
+  // Where the top faces of Part 1 <2> and Part 2 <1> are on screen (Part 1 <1> sits under the dialog).
   const tops = await page.evaluate(() => {
     const v = window.partsmithViewport.current;
-    return v.shownParts().slice(0, 2).map((p) => {
+    return v.shownParts().slice(1, 3).map((p) => {
       const i = p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99);
       return v.screenPointOnFace(p.id, i);
     });
@@ -474,6 +474,11 @@ try {
   const canvas = page.locator(".viewport-canvas");
   await page.getByRole("button", { name: "Fasten", exact: true }).click();
   await page.waitForSelector('form[aria-label="Mate"]');
+  const box = await page.locator('form[aria-label="Mate"]').boundingBox();
+  const canvasBox = await canvas.boundingBox();
+  for (const t of tops) {
+    if (box && canvasBox && t.x + canvasBox.x < box.x + box.width && t.y + canvasBox.y < box.y + box.height) throw new Error(`a face to click (${Math.round(t.x)}, ${Math.round(t.y)}) is under the mate dialog`);
+  }
   await canvas.click({ position: tops[0] });
   await canvas.click({ position: tops[1] });
   await page.waitForSelector(".connector-slot.filled >> nth=1", { timeout: 5_000 });
@@ -483,7 +488,7 @@ try {
   if ((await page.locator(".panel-section.mates .feature-row.failed").count()) > 0) {
     throw new Error(`the mate has a problem: ${await page.locator(".panel-section.mates .feature-row.failed").first().getAttribute("title")}`);
   }
-  await page.locator(".feature-row >> text=Part 1 <2>").click();
+  await page.locator(".feature-row >> text=Part 2 <1>").click();
   await page.waitForSelector(".instance-panel >> text=Placed by");
   await page.keyboard.press("Escape");
   await page.keyboard.press("f");
