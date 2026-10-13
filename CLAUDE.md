@@ -25,5 +25,7 @@
   that can be joined and decoded. Set it back to "0" before merging.
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
   bump `CACHE` in sw.js if its caching rules change.
+- Versions: bump `version` in package.json and add a CHANGELOG.md entry (with the merge commit) at the end of each
+  phase. This session type can't create GitHub releases or push tags, so CHANGELOG.md is the record.
 - No `package-lock.json` is committed yet (it couldn't be generated in the first session); add one when
   a session can run `npm install`.
