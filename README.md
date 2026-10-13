@@ -17,6 +17,8 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
   equal, tangent, concentric, midpoint, fix). Blue = still free, black = fully defined.
 - **Extrude** a sketch's closed shapes (holes included) one way, symmetrically or **through all**, as a new part or added to /
   cut from the latest part.
+- **Hole**: drill holes at a sketch's points or circle centres — plain, counterbored or countersunk, through or
+  to a depth (with a drill point), sized by screw (M2–M12, clearance or tapped).
 - **Revolve** a sketch around a line for round parts (knobs, rings, bottles), all the way round or part way.
 - **Shell** a part to hollow it out, leaving walls of the thickness you choose.
 - **Mirror** features across a plane, and repeat them in a row (**Pattern**) or round a circle (**Circular**) —

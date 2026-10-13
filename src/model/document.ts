@@ -53,6 +53,11 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
   }
+  if (type === "hole") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    feature.operation = "remove";
+    feature.hole = { sketchRef: sketches[sketches.length - 1]?.id, kind: "simple", standard: "M3", fit: "clearance", end: "throughAll", flip: false };
+  }
   if (type === "mirror" || type === "linearPattern" || type === "circularPattern") {
     feature.operation = "add";
     const solids = doc.features.filter((f) => isSolidFeature(f.type) && !f.suppressed);
@@ -189,6 +194,18 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     if (feature.type === "mirror") {
       const mr = f.mirror as Record<string, unknown> | undefined;
       feature.mirror = { sources: ids(mr?.sources), plane: parsePlane(mr?.plane) ?? { kind: "default", name: "Right" } };
+    }
+    if (feature.type === "hole") {
+      const h = (f.hole ?? {}) as Record<string, unknown>;
+      feature.operation = "remove";
+      feature.hole = {
+        ...(typeof h.sketchRef === "string" ? { sketchRef: h.sketchRef } : {}),
+        kind: h.kind === "counterbore" || h.kind === "countersink" ? h.kind : "simple",
+        standard: typeof h.standard === "string" ? h.standard : "Custom",
+        fit: h.fit === "tapped" ? "tapped" : "clearance",
+        end: h.end === "blind" ? "blind" : "throughAll",
+        flip: h.flip === true,
+      };
     }
     if (feature.type === "revolve") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;

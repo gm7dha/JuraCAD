@@ -83,6 +83,20 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Hollows out a part, leaving walls of the thickness you choose.",
     params: [{ key: "thickness", label: "Wall thickness", defaultValue: "2", positive: true, group: "size" }],
   },
+  hole: {
+    type: "hole",
+    label: "Hole",
+    namePrefix: "Hole",
+    description: "Drills holes at a sketch's points and circle centres — plain, counterbored, countersunk or tapped.",
+    params: [
+      { key: "diameter", label: "Hole diameter", defaultValue: "3.4", positive: true, group: "size" },
+      { key: "depth", label: "Depth", defaultValue: "10", positive: true, group: "size" },
+      { key: "cboreDiameter", label: "Counterbore diameter", defaultValue: "6.5", positive: true, group: "size" },
+      { key: "cboreDepth", label: "Counterbore depth", defaultValue: "3.4", positive: true, group: "size" },
+      { key: "cskDiameter", label: "Countersink diameter", defaultValue: "6.3", positive: true, group: "size" },
+      { key: "cskAngle", label: "Countersink angle", defaultValue: "90", positive: true, group: "size", unit: "°" },
+    ],
+  },
   mirror: {
     type: "mirror",
     label: "Mirror",
@@ -161,7 +175,19 @@ export function isPatternFeature(type: FeatureType): type is "mirror" | "linearP
 
 /** Features that build a solid of their own, so they can be patterned or mirrored. */
 export function isSolidFeature(type: FeatureType): boolean {
-  return type === "box" || type === "cylinder" || type === "sphere" || type === "extrude" || type === "revolve";
+  return type === "box" || type === "cylinder" || type === "sphere" || type === "extrude" || type === "revolve" || type === "hole";
+}
+
+/** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole">): Set<string> {
+  const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
+  if (f.type === "extrude" && f.extrude?.end === "throughAll") keys.delete("depth");
+  if (f.type === "hole" && f.hole) {
+    if (f.hole.end === "throughAll") keys.delete("depth");
+    if (f.hole.kind !== "counterbore") ["cboreDiameter", "cboreDepth"].forEach((k) => keys.delete(k));
+    if (f.hole.kind !== "countersink") ["cskDiameter", "cskAngle"].forEach((k) => keys.delete(k));
+  }
+  return keys;
 }
 
 /** Features made from a sketch (they have New/Add/Remove and a sketch to choose). */

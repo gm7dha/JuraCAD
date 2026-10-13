@@ -1,10 +1,22 @@
 import type { TopoPick } from "../geometry/topoRef";
 import type { Variable } from "./variables";
+import type { HoleFit, HoleKind } from "./holes";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole";
+
+export interface HoleOptions {
+  sketchRef?: string;
+  kind: HoleKind;
+  /** Screw size such as "M4", or "Custom". */
+  standard: string;
+  fit: HoleFit;
+  end: "blind" | "throughAll";
+  /** Drill out of the face instead of into it. */
+  flip: boolean;
+}
 
 /** A world axis, for patterns. */
 export type Axis = "x" | "y" | "z";
@@ -40,6 +52,8 @@ export interface Feature {
   extrude?: { end: ExtrudeEnd; flip: boolean };
   /** Revolve features: the line to spin around ("vertical"/"horizontal" sketch axes, or a sketch line id) and which way. */
   revolve?: { axis: string; flip: boolean };
+  /** Hole features: where (the points and circle centres of a sketch) and what kind. */
+  hole?: HoleOptions;
   /** Linear and circular patterns: the features to repeat, and along or around which axis. */
   pattern?: { sources: string[]; axis: Axis; flip: boolean };
   /** Mirror: the features to mirror, and the plane to mirror them across. */

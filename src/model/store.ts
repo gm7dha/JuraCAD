@@ -125,7 +125,7 @@ export interface AppState {
   startCreate: (type: FeatureType) => void;
   startEdit: (id: string) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -285,6 +285,11 @@ export const useStore = create<AppState>((set, get) => {
           draft.sketchRef = picked.id;
           if (type === "revolve" && picked.sketch) draft.revolve = { axis: defaultAxis(picked.sketch.data), flip: false };
         }
+      }
+      // A hole uses the sketch highlighted in the list, if any.
+      if (type === "hole" && draft.hole) {
+        const picked = s.history.present.features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
+        if (picked) draft.hole = { ...draft.hole, sketchRef: picked.id };
       }
       // Mirror and patterns start with the feature highlighted in the list, if it makes a solid.
       if (isPatternFeature(type)) {

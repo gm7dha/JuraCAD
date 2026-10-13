@@ -345,6 +345,15 @@ try {
   await page.waitForTimeout(600);
   await shot("patterned");
 
+  step = "opening the hole tool";
+  await page.getByRole("button", { name: "Hole", exact: true }).click();
+  await page.waitForSelector(".feature-dialog >> text=Where and what");
+  await page.locator("#hole-standard").selectOption("M4");
+  if ((await page.locator("#param-diameter").inputValue()) !== "4.5") throw new Error("choosing M4 didn't fill in the 4.5 mm clearance size");
+  await page.getByRole("radio", { name: "Tapped" }).click();
+  if ((await page.locator("#param-diameter").inputValue()) !== "3.3") throw new Error("tapped M4 should be a 3.3 mm drill");
+  await page.getByRole("button", { name: "Cancel" }).click();
+
   step = "adding a variable";
   await page.getByRole("button", { name: "Variables", exact: true }).click();
   await page.getByRole("button", { name: "+ Add variable" }).click();

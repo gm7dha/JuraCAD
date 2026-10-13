@@ -113,6 +113,18 @@ export function Toolbar() {
           active={editingType === "revolve"}
           title={hasSketch ? "Revolve — spin a sketch's closed shapes around a line, for round parts" : "Draw a sketch first, then revolve it"}
         />
+        <ToolButton
+          label="Hole"
+          icon={<Icons.Hole />}
+          onClick={() => startCreate("hole")}
+          disabled={!ready || !hasSketch || !hasPart}
+          active={editingType === "hole"}
+          title={
+            hasSketch && hasPart
+              ? "Hole — drill plain, counterbored, countersunk or tapped holes at a sketch's points"
+              : "Make a part, then sketch points on it where the holes go"
+          }
+        />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
