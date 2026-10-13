@@ -23,6 +23,7 @@ import {
   radiusOf,
   type Placed,
 } from "./ops";
+import { addPolygon, addSlot, filletCorner, trimAt } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
 
 export interface SketchPointer {
@@ -168,6 +169,26 @@ export class SketchController {
     const tool = this.tool;
     if (tool === "select") return this.selectDown(e);
     if (tool === "dimension") return this.dimensionClick(e);
+    if (tool === "trim") {
+      const hit = this.hitAt(e);
+      if (hit?.kind !== "curve") {
+        this.state.setSketchMessage("Click the part of a line, arc or circle you want to cut away.", "info");
+        return;
+      }
+      this.commit(trimAt(d, hit.id, { x: e.x, y: e.y }), []);
+      this.emit({ hover: null });
+      return;
+    }
+    if (tool === "sketchFillet") {
+      const hit = this.hitAt(e);
+      if (hit?.kind !== "point" || hit.id === ORIGIN_ID) {
+        this.state.setSketchMessage("Click the corner point where two lines meet.", "info");
+        return;
+      }
+      const r = filletCorner(d, hit.id, this.state.sketch?.filletRadius ?? "2");
+      this.commit(r, r.arcId ? [r.arcId] : []);
+      return;
+    }
 
     const p = this.placeAt(e);
     const construction = this.state.sketch?.construction ?? false;
@@ -220,6 +241,27 @@ export class SketchController {
         this.emit({ preview: [] });
         return;
       }
+      case "slot": {
+        if (this.placed.length < 2) {
+          this.placed = [...this.placed, p];
+          return;
+        }
+        const [a, b] = this.placed;
+        const r = addSlot(d, a, b, slotRadius(a, b, p), construction);
+        if (this.commit(r, r.curveIds)) this.placed = [];
+        this.emit({ preview: [] });
+        return;
+      }
+      case "polygon": {
+        if (this.placed.length === 0) {
+          this.placed = [p];
+          return;
+        }
+        const r = addPolygon(d, this.placed[0], p, this.state.sketch?.polygonSides ?? 6, construction);
+        if (this.commit(r, r.lineIds)) this.placed = [];
+        this.emit({ preview: [] });
+        return;
+      }
       case "arc": {
         if (this.placed.length < 2) {
           this.placed = [...this.placed, p];
@@ -242,8 +284,9 @@ export class SketchController {
       this.emit({ hover: this.hitAt(e), preview: [], snap: null, inference: null });
       return;
     }
-    if (tool === "dimension") {
-      this.emit({ hover: this.hitAt(e), snap: null });
+    if (tool === "dimension" || tool === "trim" || tool === "sketchFillet") {
+      const hit = this.hitAt(e);
+      this.emit({ hover: tool === "trim" && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
       return;
     }
 
@@ -269,6 +312,15 @@ export class SketchController {
       const b: [number, number] = [c[0], a[1]];
       const dd: [number, number] = [a[0], c[1]];
       preview.push({ kind: "line", a, b }, { kind: "line", a: b, b: c }, { kind: "line", a: c, b: dd }, { kind: "line", a: dd, b: a });
+    } else if (tool === "slot" && first) {
+      if (this.placed.length === 1) preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
+      else preview.push(...slotPreview(first, this.placed[1], slotRadius(first, this.placed[1], p)));
+    } else if (tool === "polygon" && first) {
+      const n = Math.max(3, Math.min(64, Math.round(this.state.sketch?.polygonSides ?? 6)));
+      const R = Math.hypot(p.x - first.x, p.y - first.y);
+      const a0 = Math.atan2(p.y - first.y, p.x - first.x);
+      const corner = (i: number): [number, number] => [first.x + R * Math.cos(a0 + (2 * Math.PI * i) / n), first.y + R * Math.sin(a0 + (2 * Math.PI * i) / n)];
+      for (let i = 0; i < n; i++) preview.push({ kind: "line", a: corner(i), b: corner(i + 1) });
     } else if (tool === "circle" && first) {
       preview.push({ kind: "circle", c: [first.x, first.y], r: Math.hypot(p.x - first.x, p.y - first.y) });
     } else if (tool === "arc" && first) {
@@ -391,4 +443,23 @@ export class SketchController {
     this.emit({ pending: [] });
     if (this.commit(r)) this.state.setEditingDimension(r.dimensionId);
   }
+}
+
+/** Half the slot's width: how far the third click is from the line through the two centres. */
+function slotRadius(a: { x: number; y: number }, b: { x: number; y: number }, p: { x: number; y: number }): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  return Math.abs(dx * (p.y - a.y) - dy * (p.x - a.x)) / (Math.hypot(dx, dy) || 1);
+}
+
+function slotPreview(a: { x: number; y: number }, b: { x: number; y: number }, r: number): PreviewShape[] {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const L = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / L) * r, ny = (dx / L) * r;
+  const ang = Math.atan2(ny, nx);
+  return [
+    { kind: "line", a: [a.x + nx, a.y + ny], b: [b.x + nx, b.y + ny] },
+    { kind: "line", a: [a.x - nx, a.y - ny], b: [b.x - nx, b.y - ny] },
+    { kind: "arc", c: [a.x, a.y], r, a0: ang, a1: ang + Math.PI },
+    { kind: "arc", c: [b.x, b.y], r, a0: ang + Math.PI, a1: ang },
+  ];
 }

@@ -178,7 +178,7 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     if (feature.type === "extrude") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const ex = f.extrude as Record<string, unknown> | undefined;
-      feature.extrude = { end: ex?.end === "symmetric" ? "symmetric" : "blind", flip: ex?.flip === true };
+      feature.extrude = { end: ex?.end === "symmetric" || ex?.end === "throughAll" ? ex.end : "blind", flip: ex?.flip === true };
     }
     const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
     if (feature.type === "linearPattern" || feature.type === "circularPattern") {

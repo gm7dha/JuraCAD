@@ -151,13 +151,13 @@ function checkedSolve(before: SketchData, changed: SketchData, what: string, mus
 // ---------------------------------------------------------------------------
 // Adding geometry
 
-function settle(sketch: SketchData): EditResult {
+export function settle(sketch: SketchData): EditResult {
   const r = solveSketch(sketch);
   return { sketch: r.sketch };
 }
 
 /** Resolve a placed point into a point id, adding the point and any snap constraint. */
-function placePoint(s: SketchData, p: Placed): { sketch: SketchData; id: string } {
+export function placePoint(s: SketchData, p: Placed): { sketch: SketchData; id: string } {
   if (p.snap?.kind === "point" && isPointId(s, p.snap.id) && p.snap.id !== ORIGIN_ID) return { sketch: s, id: p.snap.id };
   const id = sketchId("p");
   const points = [...s.points, { id, x: p.x, y: p.y }];

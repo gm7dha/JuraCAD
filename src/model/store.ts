@@ -50,7 +50,18 @@ export interface Editing {
   draft: Feature;
 }
 
-export type SketchTool = "select" | "line" | "rectangle" | "circle" | "arc" | "point" | "dimension";
+export type SketchTool =
+  | "select"
+  | "line"
+  | "rectangle"
+  | "circle"
+  | "arc"
+  | "point"
+  | "dimension"
+  | "slot"
+  | "polygon"
+  | "sketchFillet"
+  | "trim";
 
 /** State while a sketch is open for editing. */
 export interface SketchSession {
@@ -66,6 +77,10 @@ export interface SketchSession {
   message: { text: string; tone: "info" | "error" } | null;
   /** Dimension whose value box is open. */
   editingDimension: string | null;
+  /** Polygon tool: number of sides. */
+  polygonSides: number;
+  /** Corner-rounding tool: radius as typed. */
+  filletRadius: string;
 }
 
 export type DialogName = "check" | "export" | "help" | "variables" | null;
@@ -131,6 +146,7 @@ export interface AppState {
   setSketchMessage: (text: string | null, tone?: "info" | "error") => void;
   setSketchConstruction: (on: boolean) => void;
   setEditingDimension: (id: string | null) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   deleteFeature: (id: string) => void;
@@ -219,6 +235,8 @@ const newSession = (): SketchSession => ({
   construction: false,
   message: null,
   editingDimension: null,
+  polygonSides: 6,
+  filletRadius: "2",
 });
 
 /** Is this id (point, curve or constraint) still in the sketch? */
@@ -379,6 +397,7 @@ export const useStore = create<AppState>((set, get) => {
     setSketchMessage: (text, tone = "info") =>
       set((s) => (s.sketch ? { sketch: { ...s.sketch, message: text ? { text, tone } : null } } : {})),
     setSketchConstruction: (construction) => set((s) => (s.sketch ? { sketch: { ...s.sketch, construction } } : {})),
+    setSketchOptions: (patch) => set((s) => (s.sketch ? { sketch: { ...s.sketch, ...patch } } : {})),
     setEditingDimension: (editingDimension) => set((s) => (s.sketch ? { sketch: { ...s.sketch, editingDimension } } : {})),
 
     setDraftParam: (key, value) =>

@@ -222,6 +222,30 @@ export const Icons = {
       <circle cx="12" cy="12" r="3" fill="currentColor" />
     </Svg>
   ),
+  Slot: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="2.5" y="8" width="19" height="8" rx="4" />
+      <path d="M6.5 12h11" strokeDasharray="2 2" />
+    </Svg>
+  ),
+  Polygon: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M12 3.5 19.4 7.8v8.4L12 20.5l-7.4-4.3V7.8z" />
+    </Svg>
+  ),
+  CornerRound: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 20V12a8 8 0 0 1 8-8h8" />
+      <path d="M4 4h4M4 4v4" strokeDasharray="1.5 1.5" />
+    </Svg>
+  ),
+  Trim: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="6" cy="7" r="2.5" />
+      <circle cx="6" cy="17" r="2.5" />
+      <path d="M8.2 8.3 20 16M8.2 15.7 20 8" />
+    </Svg>
+  ),
   Dimension: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 8v8M20 8v8M4 12h16" />

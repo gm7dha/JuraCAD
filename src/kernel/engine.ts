@@ -170,7 +170,18 @@ function isValidSolid(shape: Shape3D): boolean {
 /** Sketches seen so far in the rebuild, by feature id. */
 type SketchMap = Map<string, Feature>;
 
-function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[]): Shape3D {
+/** The furthest any part reaches from a sketch plane's origin. */
+function reach(plane: Parameters<typeof planeFrame>[0], parts: BuiltPart[]): number {
+  const o = planeFrame(plane).origin;
+  let far = 1;
+  for (const p of parts) {
+    const [lo, hi] = boundsOf(p.shape);
+    for (const x of [lo[0], hi[0]]) for (const y of [lo[1], hi[1]]) for (const z of [lo[2], hi[2]]) far = Math.max(far, Math.hypot(x - o[0], y - o[1], z - o[2]));
+  }
+  return far;
+}
+
+function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[]): Shape3D {
   switch (feature.type) {
     case "extrude":
     case "revolve": {
@@ -189,6 +200,12 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         return revolveSketch(sketch.sketch.plane, sketch.sketch.data, { axis: opts.axis, angle: v.angle, flip: opts.flip });
       }
       const opts = feature.extrude ?? { end: "blind", flip: false };
+      if (opts.end === "throughAll") {
+        if (feature.operation !== "remove") throw new Error("Through all only works with Remove — it cuts right through the part.");
+        // Long enough to pass through every part, both ways from the sketch.
+        const depth = 2 * reach(sketch.sketch.plane, parts) + 2;
+        return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth, end: "symmetric", flip: false });
+      }
       return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip });
     }
     case "sketch":
@@ -274,7 +291,7 @@ export class GeometryEngine {
 
       let tool: Shape3D;
       try {
-        tool = buildSolid(feature, values, sketches, features);
+        tool = buildSolid(feature, values, sketches, features, this.parts);
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;

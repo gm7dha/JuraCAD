@@ -57,7 +57,7 @@ export function TopBar() {
       <div className="topbar-spacer" />
       {canInstall && (
         <button className="text-button" onClick={() => void installApp()} title="Install PartSmith as an app on this computer — it then opens in its own window and works offline">
-          <Icons.Export size={18} style={{ transform: "rotate(180deg)" }} /> Install app
+          <Icons.Export size={18} style={{ transform: "rotate(180deg)" }} /> <span className="button-label">Install app</span>
         </button>
       )}
       <button
@@ -70,23 +70,23 @@ export function TopBar() {
         }}
         title="Start a new empty part"
       >
-        <Icons.New size={18} /> New
+        <Icons.New size={18} /> <span className="button-label">New</span>
       </button>
       <button className="text-button" onClick={() => void openFromFile()} title={`Open a .partsmith file (${shortcut(platform, "O")})`}>
-        <Icons.Open size={18} /> Open
+        <Icons.Open size={18} /> <span className="button-label">Open</span>
       </button>
       <button
         className="text-button"
         onClick={() => void saveToFile()}
         title={`Save to a .partsmith file on your computer (${shortcut(platform, "S")}). ${shortcut(platform, "S", { shift: true })} saves a copy under a new name.`}
       >
-        <Icons.Save size={18} /> Save
+        <Icons.Save size={18} /> <span className="button-label">Save</span>
       </button>
       <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts} title="Check the model is a sound, closed solid before you export it">
-        <Icons.Check size={18} /> Check model
+        <Icons.Check size={18} /> <span className="button-label">Check model</span>
       </button>
       <button className="primary-button" onClick={() => openDialog("export")} disabled={!hasParts} title="Download a STEP or STL file to send to a manufacturer or 3D printer">
-        <Icons.Export size={18} /> Export
+        <Icons.Export size={18} /> <span className="button-label">Export</span>
       </button>
       <button className="icon-button" onClick={() => openDialog("help")} aria-label="Help and shortcuts" title="Help and shortcuts (?)">
         <Icons.Help />

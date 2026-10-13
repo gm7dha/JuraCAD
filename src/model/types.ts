@@ -10,7 +10,7 @@ export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" |
 export type Axis = "x" | "y" | "z";
 
 /** How an extrude runs: one way from the sketch (optionally flipped), or equally both ways. */
-export type ExtrudeEnd = "blind" | "symmetric";
+export type ExtrudeEnd = "blind" | "symmetric" | "throughAll";
 
 /**
  * How a feature's solid combines with what's already there (like Onshape's

@@ -128,8 +128,8 @@ function SketchSolidOptions() {
         </>
       )}
       {draft.type === "extrude" && (
-      <div className="segmented two" role="radiogroup" aria-label="Direction">
-        {(["blind", "symmetric"] as const).map((end) => (
+      <div className="segmented three" role="radiogroup" aria-label="Direction">
+        {(["blind", "symmetric", "throughAll"] as const).map((end) => (
           <button
             type="button"
             key={end}
@@ -137,9 +137,15 @@ function SketchSolidOptions() {
             aria-checked={opts.end === end}
             className={opts.end === end ? "selected" : ""}
             onClick={() => setDraftField({ extrude: { ...opts, end } })}
-            title={end === "blind" ? "Extrude out from the sketch on one side" : "Extrude the same amount on both sides of the sketch"}
+            title={
+              end === "blind"
+                ? "Extrude out from the sketch on one side"
+                : end === "symmetric"
+                  ? "Extrude the same amount on both sides of the sketch"
+                  : "Cut right through every part, on both sides of the sketch, however thick it gets (Remove only)"
+            }
           >
-            {end === "blind" ? "One way" : "Symmetric"}
+            {end === "blind" ? "One way" : end === "symmetric" ? "Symmetric" : "Through all"}
           </button>
         ))}
       </div>
@@ -371,7 +377,10 @@ export function FeatureDialog() {
         <PicksField />
         <PatternOptions />
 
-        {groups.filter((g) => g.params.length > 0).map((g, gi) => (
+        {groups
+          .map((g) => (draft.type === "extrude" && draft.extrude?.end === "throughAll" ? { ...g, params: g.params.filter((p) => p.key !== "depth") } : g))
+          .filter((g) => g.params.length > 0)
+          .map((g, gi) => (
           <fieldset key={g.title} className="param-group">
             <legend>{g.title}</legend>
             {g.params.map((p, pi) => (
