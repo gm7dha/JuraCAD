@@ -93,7 +93,7 @@ export interface SectionView {
   flip: boolean;
 }
 
-export type DialogName = "check" | "export" | "help" | "variables" | null;
+export type DialogName = "check" | "export" | "help" | "variables" | "insert" | null;
 
 export interface Toast {
   id: number;
@@ -128,6 +128,12 @@ export interface AppState {
 
   dialog: DialogName;
   toast: Toast | null;
+  /** The tab on show: an assembly's id, or null for the Part Studio. */
+  activeTab: string | null;
+  /** Instances selected in the assembly on show. */
+  asmSelection: string[];
+  /** Instances hidden in the 3D view. */
+  hiddenInstances: string[];
   /** The design as last saved to (or opened from) a file; compare with history.present to see unsaved changes. */
   savedDoc: PartSmithDocument | null;
   /** Name of that file, e.g. "Bracket.partsmith". */
@@ -176,6 +182,18 @@ export interface AppState {
   openDocument: (doc: PartSmithDocument, fileName: string) => void;
   /** Note that the current design has just been saved to this file. */
   markSaved: (fileName: string) => void;
+  /** Add an assembly tab and switch to it. */
+  addAssembly: () => void;
+  /** Show the Part Studio (null) or an assembly. */
+  setActiveTab: (id: string | null) => void;
+  removeAssembly: (id: string) => void;
+  renameAssembly: (id: string, name: string) => void;
+  /** Put a copy of a part into the assembly on show. */
+  insertInstance: (part: { id: string; name: string }, placement?: Placement) => void;
+  updateInstance: (id: string, patch: Partial<Pick<Instance, "name" | "placement" | "fixed">>) => void;
+  removeInstances: (ids: string[]) => void;
+  setAsmSelection: (ids: string[]) => void;
+  toggleInstanceHidden: (id: string) => void;
   undo: () => void;
   redo: () => void;
   selectFeature: (id: string | null) => void;
@@ -288,6 +306,9 @@ export const useStore = create<AppState>((set, get) => {
 
     dialog: null,
     toast: null,
+    activeTab: null,
+    asmSelection: [],
+    hiddenInstances: [],
 
     startCreate: (type) => {
       const s = get();
@@ -529,6 +550,8 @@ export const useStore = create<AppState>((set, get) => {
         selectedFeatureId: null,
         selection: [],
         hiddenParts: [],
+        activeTab: null,
+        asmSelection: [],
         savedDoc: null,
         fileName: null,
       }));
@@ -544,6 +567,8 @@ export const useStore = create<AppState>((set, get) => {
         selection: [],
         selectedPlane: null,
         hiddenParts: [],
+        activeTab: null,
+        asmSelection: [],
         fileName,
       }));
       set((s) => ({ savedDoc: s.history.present }));
@@ -554,6 +579,50 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => ({ savedDoc: s.history.present, fileName }));
       rememberFile(get().history.present, fileName);
     },
+
+    addAssembly: () => {
+      const before = new Set((get().history.present.assemblies ?? []).map((a) => a.id));
+      change((doc) => addAssembly(doc));
+      const added = (get().history.present.assemblies ?? []).find((a) => !before.has(a.id));
+      if (added) set({ activeTab: added.id, asmSelection: [], selection: [], selectedPlane: null, editing: null, sketch: null });
+    },
+
+    setActiveTab: (activeTab) => {
+      if (get().editing) return;
+      set({ activeTab, asmSelection: [], selection: [], selectedPlane: null, section: null });
+    },
+
+    removeAssembly: (id) => {
+      change((doc) => removeAssembly(doc, id));
+      if (get().activeTab === id) set({ activeTab: null, asmSelection: [] });
+    },
+
+    renameAssembly: (id, name) => change((doc) => renameAssembly(doc, id, name)),
+
+    insertInstance: (part, placement) => {
+      const tab = get().activeTab;
+      if (!tab) return;
+      const before = new Set(activeAssembly(get())?.instances.map((i) => i.id) ?? []);
+      change((doc) => insertInstance(doc, tab, part, placement));
+      const added = activeAssembly(get())?.instances.find((i) => !before.has(i.id));
+      if (added) set({ asmSelection: [added.id] });
+    },
+
+    updateInstance: (id, patch) => {
+      const tab = get().activeTab;
+      if (tab) change((doc) => updateInstance(doc, tab, id, patch));
+    },
+
+    removeInstances: (ids) => {
+      const tab = get().activeTab;
+      if (!tab || ids.length === 0) return;
+      change((doc) => removeInstances(doc, tab, ids));
+      set((s) => ({ asmSelection: s.asmSelection.filter((x) => !ids.includes(x)) }));
+    },
+
+    setAsmSelection: (asmSelection) => set({ asmSelection }),
+    toggleInstanceHidden: (id) =>
+      set((s) => ({ hiddenInstances: s.hiddenInstances.includes(id) ? s.hiddenInstances.filter((x) => x !== id) : [...s.hiddenInstances, id] })),
 
     // Undo/redo only when no feature dialog is open (see App shortcuts).
     undo: () => set((s) => (s.editing ? {} : { history: undoHistory(s.history), selection: [] })),
@@ -607,6 +676,12 @@ export const useStore = create<AppState>((set, get) => {
       }),
   };
 });
+
+/** The assembly on show, or null when the Part Studio is on show (or the assembly was undone away). */
+export function activeAssembly(s: Pick<AppState, "activeTab" | "history">): Assembly | null {
+  if (!s.activeTab) return null;
+  return s.history.present.assemblies?.find((a) => a.id === s.activeTab) ?? null;
+}
 
 /** The current document (without any unsaved draft). */
 export const useDocument = () => useStore((s) => s.history.present);

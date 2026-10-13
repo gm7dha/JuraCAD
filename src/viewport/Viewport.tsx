@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef } from "react";
 
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
-import { pickFor, useStore, type SelectionItem } from "../model/store";
+import { activeAssembly, pickFor, useStore, type SelectionItem } from "../model/store";
+import { placementMatrix } from "../assembly/math";
+import type { Assembly } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
 import type { Feature } from "../model/types";
 import { SketchController } from "../sketch/controller";
@@ -14,6 +16,37 @@ import { sectionPlane } from "./section";
 
 /** Shared empty colour list (a selector must not make a new object each time). */
 const NO_COLOURS: Record<string, string> = {};
+const NO_PLACEMENTS: Record<string, number[]> = {};
+
+/** Each instance shown as a copy of its part's mesh (moved into place with setPlacements). */
+function instanceMeshes(parts: PartMesh[], assembly: Assembly): PartMesh[] {
+  const out: PartMesh[] = [];
+  for (const i of assembly.instances) {
+    const part = parts.find((p) => p.id === i.partId);
+    if (part) out.push({ ...part, id: i.id, name: i.name, featureIds: [] });
+  }
+  return out;
+}
+
+/** Selected instances, as every face of each (so the whole part lights up). */
+function instanceSelection(display: PartMesh[], ids: string[]): SelectionItem[] {
+  const items: SelectionItem[] = [];
+  for (const p of display) if (ids.includes(p.id)) p.faceGroups.forEach((_, index) => items.push({ partId: p.id, kind: "face", index }));
+  return items;
+}
+
+/** A click in an assembly selects whole instances. */
+function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
+  const s = useStore.getState();
+  const id = target?.kind === "part" ? target.item.partId : null;
+  if (!id) {
+    if (!additive) s.setAsmSelection([]);
+    return;
+  }
+  const current = s.asmSelection;
+  if (additive) s.setAsmSelection(current.includes(id) ? current.filter((x) => x !== id) : [...current, id]);
+  else s.setAsmSelection(current.length === 1 && current[0] === id ? [] : [id]);
+}
 
 /** Lets keyboard shortcuts and toolbar buttons reach the 3D view. */
 export const viewportApi: { current: SceneManager | null; sketch: SketchController | null } = { current: null, sketch: null };
@@ -42,6 +75,7 @@ export function planeForFace(item: SelectionItem): SketchPlane | null {
 /** Apply a click in the viewport to the selection, like Onshape. */
 function handlePick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
+  if (activeAssembly(s)) return handleAssemblyPick(target, additive);
   // Choosing where a new sketch goes.
   if (s.sketch && s.editing?.draft.sketch && !s.editing.draft.sketch.plane) {
     if (target?.kind === "plane") s.setSketchPlane({ kind: "default", name: target.plane });
@@ -169,13 +203,46 @@ export function Viewport() {
     };
   }, []);
 
-  useEffect(() => viewportApi.current?.setHidden(hiddenParts), [hiddenParts]);
+  const assembly = useStore(activeAssembly);
+  const asmSelection = useStore((s) => s.asmSelection);
+  const hiddenInstances = useStore((s) => s.hiddenInstances);
+  // In an assembly the meshes only change when parts are rebuilt or instances added/removed, not when they move.
+  const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${i.partId}`).join(",") : null;
+  const display = useMemo(
+    () => (assembly ? instanceMeshes(parts, assembly) : parts),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [parts, instanceKey],
+  );
+  const placements = useMemo(() => {
+    if (!assembly) return NO_PLACEMENTS;
+    return Object.fromEntries(assembly.instances.map((i) => [i.id, placementMatrix(i.placement)]));
+  }, [assembly]);
+
+  useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenInstances : hiddenParts), [hiddenParts, hiddenInstances, assembly]);
   const section = useStore((s) => s.section);
   const appearance = useStore((s) => s.history.present.appearance ?? NO_COLOURS);
-  useEffect(() => viewportApi.current?.setPartColours(appearance), [appearance]);
+  const colours = useMemo(() => {
+    if (!assembly) return appearance;
+    const out: Record<string, string> = {};
+    for (const i of assembly.instances) if (appearance[i.partId]) out[i.id] = appearance[i.partId];
+    return out;
+  }, [appearance, assembly]);
+  useEffect(() => viewportApi.current?.setPartColours(colours), [colours]);
   useEffect(() => viewportApi.current?.setSection(section ? sectionPlane(section) : null), [section]);
-  useEffect(() => viewportApi.current?.setParts(parts), [parts]);
-  useEffect(() => viewportApi.current?.setSelection(picks ? itemsForPicks(parts, picks) : selection), [selection, picks, parts]);
+  useEffect(() => {
+    // Placements first, so the parts arrive already in position.
+    viewportApi.current?.setPlacements(placements);
+    viewportApi.current?.setParts(display);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [display]);
+  useEffect(() => viewportApi.current?.setPlacements(placements), [placements]);
+  useEffect(
+    () =>
+      viewportApi.current?.setSelection(
+        assembly ? instanceSelection(display, asmSelection) : picks ? itemsForPicks(parts, picks) : selection,
+      ),
+    [selection, picks, parts, assembly, display, asmSelection],
+  );
   useEffect(
     () => viewportApi.current?.setDatums({ selected: selectedPlane, listHover: listHoverPlane, hidden: hiddenDatums }),
     [selectedPlane, listHoverPlane, hiddenDatums],
@@ -205,7 +272,11 @@ export function Viewport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.id, planeKey]);
 
-  const others = useMemo(() => visibleSketches(features, draft?.id ?? null, selectedFeatureId), [features, draft?.id, selectedFeatureId]);
+  const inAssembly = assembly !== null;
+  const others = useMemo(
+    () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId)),
+    [features, draft?.id, selectedFeatureId, inAssembly],
+  );
   useEffect(() => {
     const manager = viewportApi.current;
     if (!manager) return;
