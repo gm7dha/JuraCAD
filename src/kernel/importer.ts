@@ -4,7 +4,7 @@
  * Reading a big file is slow, so the result is remembered and each rebuild
  * gets a fresh copy instead of reading the file again.
  */
-import { assembleWire, cast, getOC, makeFace, makeLine, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { assembleWire, cast, getOC, makeFace, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
 
 import { describeError } from "./engine";
 import { readBinaryStl } from "../geometry/stl";
@@ -83,35 +83,59 @@ function stlCorners(bytes: Uint8Array): Float32Array {
  */
 function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
   const scale = units === "in" ? 25.4 : 1;
-  const corners = stlCorners(bytes);
-  const indices = Array.from({ length: corners.length / 3 }, (_, i) => i);
-  const { vertices, triangles } = weld(corners, indices);
+  const raw = stlCorners(bytes);
+  const indices = Array.from({ length: raw.length / 3 }, (_, i) => i);
+  const { vertices, triangles } = weld(raw, indices);
   if (triangles.length === 0) throw new Error("The STL file has no usable triangles in it.");
   const point = (i: number): [number, number, number] => [vertices[i * 3] * scale, vertices[i * 3 + 1] * scale, vertices[i * 3 + 2] * scale];
 
   const oc = getOC() as any;
+  // Corners and edges are made once and shared by the triangles that meet there,
+  // so the triangles join up into one connected surface.
+  const garbage: { delete(): void }[] = [];
+  const corners = new Map<number, any>();
+  const corner = (i: number) => {
+    let v = corners.get(i);
+    if (!v) {
+      const [x, y, z] = point(i);
+      const pnt = new oc.gp_Pnt(x, y, z);
+      const maker = new oc.BRepBuilderAPI_MakeVertex(pnt);
+      v = maker.Vertex();
+      maker.delete();
+      pnt.delete();
+      corners.set(i, v);
+    }
+    return v;
+  };
   const edges = new Map<string, Edge>();
   const faces: Face[] = [];
-  const edge = (a: number, b: number): Edge => {
-    const key = a < b ? `${a},${b}` : `${b},${a}`;
+  /** The edge from corner a to corner b (the shared edge, turned round if needed). */
+  const edge = (a: number, b: number): { e: Edge; temporary: boolean } => {
+    const lo = Math.min(a, b);
+    const hi = Math.max(a, b);
+    const key = `${lo},${hi}`;
     let e = edges.get(key);
     if (!e) {
-      e = makeLine(point(Math.min(a, b)), point(Math.max(a, b)));
+      const maker = new oc.BRepBuilderAPI_MakeEdge(corner(lo), corner(hi));
+      e = cast(maker.Edge()) as Edge;
+      maker.delete();
       edges.set(key, e);
     }
-    return e;
+    return a === lo ? { e, temporary: false } : { e: cast(e.wrapped.Reversed()) as Edge, temporary: true };
   };
-  const garbage: { delete(): void }[] = [];
   const t0 = performance.now();
   try {
     for (let t = 0; t < triangles.length; t += 3) {
       const [a, b, c] = [triangles[t], triangles[t + 1], triangles[t + 2]];
-      const wire = assembleWire([edge(a, b), edge(b, c), edge(c, a)]);
+      const sides = [edge(a, b), edge(b, c), edge(c, a)];
+      const wire = assembleWire(sides.map((x) => x.e));
       let face: Face;
       try {
         face = makeFace(wire);
       } finally {
         wire.delete();
+        // Turned-round copies of shared edges are only needed for the wire.
+        sides.forEach((x) => x.temporary && x.e.delete());
       }
       // Make the face point the way the triangle does (outwards), whichever way OpenCascade chose.
       const [pa, pb, pc] = [point(a), point(b), point(c)];
@@ -165,6 +189,7 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
   } finally {
     faces.forEach((f) => f.delete());
     edges.forEach((e) => e.delete());
+    corners.forEach((v) => v.delete());
     garbage.reverse().forEach((g) => {
       try {
         g.delete();
