@@ -11,6 +11,7 @@ import { FeaturePanel } from "./FeaturePanel";
 import { HelpDialog } from "./HelpDialog";
 import { VariablesDialog } from "./VariablesDialog";
 import { MeasurePanel } from "./MeasurePanel";
+import { SectionPanel } from "./SectionPanel";
 import { openFile, openFromFile, saveToFile } from "./fileActions";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
 import { SketchOverlay } from "./SketchOverlay";
@@ -220,6 +221,7 @@ export function App() {
           <EmptyHint />
           <SelectionInfo />
           <MeasurePanel />
+          <SectionPanel />
         </main>
       </div>
       <BottomTabs />

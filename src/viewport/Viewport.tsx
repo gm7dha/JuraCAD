@@ -10,6 +10,7 @@ import { planeOnFace, type SketchPlane } from "../sketch/planes";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
 import { SceneManager, type PickTarget } from "./SceneManager";
+import { sectionPlane } from "./section";
 
 /** Lets keyboard shortcuts and toolbar buttons reach the 3D view. */
 export const viewportApi: { current: SceneManager | null; sketch: SketchController | null } = { current: null, sketch: null };
@@ -165,6 +166,8 @@ export function Viewport() {
   }, []);
 
   useEffect(() => viewportApi.current?.setHidden(hiddenParts), [hiddenParts]);
+  const section = useStore((s) => s.section);
+  useEffect(() => viewportApi.current?.setSection(section ? sectionPlane(section) : null), [section]);
   useEffect(() => viewportApi.current?.setParts(parts), [parts]);
   useEffect(() => viewportApi.current?.setSelection(picks ? itemsForPicks(parts, picks) : selection), [selection, picks, parts]);
   useEffect(

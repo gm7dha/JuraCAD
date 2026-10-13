@@ -139,6 +139,13 @@ export const Icons = {
       <path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" />
     </Svg>
   ),
+  Section: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 8 12 4l8 4v8l-8 4-8-4z" />
+      <path d="M2 13h20" strokeDasharray="2 2" />
+      <path d="M4 13h16l-4 2.5H8z" fill="currentColor" opacity="0.35" />
+    </Svg>
+  ),
   Mirror: (p: IconProps) => (
     <Svg {...p}>
       <path d="M12 3v18" strokeDasharray="2 2" />
