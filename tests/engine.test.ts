@@ -856,7 +856,13 @@ describe("part colours in exports", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });
     build([box]);
     const step = new TextDecoder().decode((await engine.exportStep([], { [box.id]: "#ff8000" })).step);
-    expect(step).toMatch(/COLOUR_RGB\('',1\.?0*,0\.50196\d*,0\.?0*\)|COLOUR_RGB\('',1\.,0\.50\d*,0\.\)/);
+    // STEP wraps long lines, so join them before looking for the colour.
+    const flat = step.replace(/\s+/g, "");
+    const colours = [...flat.matchAll(/COLOUR_RGB\('[^']*',([-\d.Ee+]+),([-\d.Ee+]+),([-\d.Ee+]+)\)/g)].map((m) =>
+      m.slice(1, 4).map(Number),
+    );
+    const orange = colours.some(([r, g, b]) => Math.abs(r - 1) < 0.01 && Math.abs(g - 128 / 255) < 0.01 && Math.abs(b) < 0.01);
+    expect(orange ? "found" : `colours: ${JSON.stringify(colours)} ${flat.match(/.{0,80}COLOUR.{0,120}/g)?.slice(0, 4).join(" | ")}`).toBe("found");
     const mf = new TextDecoder().decode(engine.export3mf([], "coarse", "T", { [box.id]: "#ff8000" }).data);
     expect(mf).toMatch(/displaycolor="#FF8000"/);
   });

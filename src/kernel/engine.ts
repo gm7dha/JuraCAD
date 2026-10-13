@@ -17,6 +17,7 @@ import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, ThreeMfResult } from "./protocol";
 import { write3mf } from "../geometry/threeMf";
+import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 interface BuiltPart {
@@ -731,7 +732,8 @@ export class GeometryEngine {
     const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
     if (chosen.length === 0) throw new Error("There's nothing to export yet.");
     const blob = exportSTEP(
-      chosen.map((p) => ({ shape: p.shape, name: p.name, ...(colours[p.id] ? { color: colours[p.id] } : {}) })),
+      // Without a colour the STEP writer would make every part red, so uncoloured parts get the usual grey.
+      chosen.map((p) => ({ shape: p.shape, name: p.name, color: colours[p.id] ?? DEFAULT_PART_COLOUR })),
       { unit: "mm" },
     );
     return { step: await blob.arrayBuffer(), partCount: chosen.length };
