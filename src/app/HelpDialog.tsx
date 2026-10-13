@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { useStore } from "../model/store";
 import { Modal } from "./Modal";
+import { APP_VERSION, SHORT_VERSION } from "../version";
 import { detectPlatform, helpRows, type Platform } from "./platform";
 
 function KeyTable({ rows, keysFirst }: { rows: [string, string][]; keysFirst: boolean }) {
@@ -73,7 +74,7 @@ export function HelpDialog() {
       </p>
       <KeyTable rows={rows.sketch} keysFirst />
       <p className="muted small">
-        PartSmith is free and open source (MIT). It uses the OpenCascade geometry kernel (LGPL 2.1) via replicad.{" "}
+        PartSmith {SHORT_VERSION} ({APP_VERSION}). PartSmith is free and open source (MIT). It uses the OpenCascade geometry kernel (LGPL 2.1) via replicad.{" "}
         <a href="https://github.com/Gm7dha/partsmith" target="_blank" rel="noreferrer">
           Source on GitHub
         </a>

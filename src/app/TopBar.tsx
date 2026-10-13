@@ -5,6 +5,7 @@ import { Icons } from "./icons";
 import { forgetFile, openFromFile, saveToFile } from "./fileActions";
 import { browserKind, installApp, installSteps, isInstalledApp, useCanInstall } from "./install";
 import { Modal } from "./Modal";
+import { SHORT_VERSION } from "../version";
 import { detectPlatform, shortcut } from "./platform";
 
 export function TopBar() {
@@ -54,8 +55,8 @@ export function TopBar() {
       >
         {unsaved ? (fileName ? "Unsaved changes" : "Not saved to a file") : fileName ? `Saved · ${fileName}` : ""}
       </span>
-      <span className="phase-badge" title="This is an early version. More tools arrive in each phase.">
-        Phase 4 preview
+      <span className="phase-badge" title="Your PartSmith version. See Help (?) for what's new.">
+        {SHORT_VERSION} preview
       </span>
       <div className="topbar-spacer" />
       {!installed && (
