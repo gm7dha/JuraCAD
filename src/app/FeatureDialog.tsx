@@ -9,7 +9,7 @@ import { holePositionCount } from "../sketch/holePositions";
 import { planeLabel } from "../sketch/planes";
 import type { Axis } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
-import { useDocument, useStore } from "../model/store";
+import { activeFeatures, studioParts, useStore } from "../model/store";
 import type { Operation } from "../model/types";
 import { Icons } from "./icons";
 import { importedSize } from "../model/importFile";
@@ -65,11 +65,11 @@ function SketchSolidOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const mode = useStore((s) => s.editing?.mode);
   const setDraftField = useStore((s) => s.setDraftField);
-  const doc = useDocument();
+  const features = useStore(activeFeatures);
   if (!draft || !isSketchSolid(draft.type)) return null;
   // Only sketches above this extrude in the list can be used.
-  const index = doc.features.findIndex((f) => f.id === draft.id);
-  const before = mode === "edit" && index >= 0 ? doc.features.slice(0, index) : doc.features;
+  const index = features.findIndex((f) => f.id === draft.id);
+  const before = mode === "edit" && index >= 0 ? features.slice(0, index) : features;
   const sketches = before.filter((f) => f.type === "sketch");
   const opts = draft.extrude ?? { end: "blind" as const, flip: false };
   const rev = draft.revolve ?? { axis: "vertical", flip: false };
@@ -168,7 +168,7 @@ function SketchSolidOptions() {
 /** Transform settings: which part, turned about which axis, moved or copied. */
 function TransformOptions() {
   const draft = useStore((s) => s.editing?.draft);
-  const parts = useStore((s) => s.parts);
+  const parts = useStore(studioParts);
   const setDraftField = useStore((s) => s.setDraftField);
   if (!draft || draft.type !== "transform" || !draft.transform) return null;
   const t = draft.transform;
@@ -264,11 +264,11 @@ function HoleOptions() {
   const mode = useStore((s) => s.editing?.mode);
   const setDraftField = useStore((s) => s.setDraftField);
   const setDraftParam = useStore((s) => s.setDraftParam);
-  const doc = useDocument();
+  const features = useStore(activeFeatures);
   if (!draft || draft.type !== "hole" || !draft.hole) return null;
   const h = draft.hole;
-  const index = doc.features.findIndex((f) => f.id === draft.id);
-  const sketches = (mode === "edit" && index >= 0 ? doc.features.slice(0, index) : doc.features).filter((f) => f.type === "sketch");
+  const index = features.findIndex((f) => f.id === draft.id);
+  const sketches = (mode === "edit" && index >= 0 ? features.slice(0, index) : features).filter((f) => f.type === "sketch");
   const chosen = sketches.find((f) => f.id === h.sketchRef)?.sketch?.data;
   const count = chosen ? holePositionCount(chosen) : 0;
   const update = (patch: Partial<HoleSettings>) => {
@@ -349,14 +349,14 @@ const AXIS_LABELS: Record<Axis, string> = { x: "X (red, left–right)", y: "Y (g
 /** Mirror and pattern settings: which features to repeat, and how. */
 function PatternOptions() {
   const draft = useStore((s) => s.editing?.draft);
-  const doc = useDocument();
+  const features = useStore(activeFeatures);
   const toggleDraftSource = useStore((s) => s.toggleDraftSource);
   const setDraftField = useStore((s) => s.setDraftField);
   const setDraftMirrorPlane = useStore((s) => s.setDraftMirrorPlane);
   if (!draft || !isPatternFeature(draft.type)) return null;
   const mirror = draft.type === "mirror";
   const sources = (mirror ? draft.mirror?.sources : draft.pattern?.sources) ?? [];
-  const named = sources.map((id) => ({ id, name: doc.features.find((f) => f.id === id)?.name ?? "Deleted feature" }));
+  const named = sources.map((id) => ({ id, name: features.find((f) => f.id === id)?.name ?? "Deleted feature" }));
   const pattern = draft.pattern ?? { sources: [], axis: "x" as Axis, flip: false };
   const plane = draft.mirror?.plane;
 
@@ -425,7 +425,7 @@ function PatternOptions() {
 /** Fillet/chamfer/shell: the edges and faces picked so far. */
 function PicksField() {
   const draft = useStore((s) => s.editing?.draft);
-  const parts = useStore((s) => s.parts);
+  const parts = useStore(studioParts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
   if (!draft || !isPickFeature(draft.type)) return null;

@@ -438,7 +438,8 @@ try {
   await shot("imported");
 
   step = "making an assembly";
-  await page.getByRole("button", { name: "Add an assembly" }).click();
+  await page.getByRole("button", { name: "Add a tab" }).click();
+  await page.getByRole("menuitem", { name: "Assembly" }).click();
   await page.waitForSelector('[aria-label="Assembly tools"]');
   await page.getByRole("button", { name: "Insert", exact: true }).click();
   await page.getByRole("button", { name: "Insert Part 1", exact: true }).click();
@@ -538,13 +539,28 @@ try {
   if (!/Bracket/.test(await page.locator(".bom-table").innerText())) throw new Error("the parts list didn't pick up the new name");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
+  step = "adding a second Part Studio";
+  await page.getByRole("button", { name: "Add a tab" }).click();
+  await page.getByRole("menuitem", { name: "Part Studio" }).click();
+  await page.waitForSelector(".tab.active >> text=Part Studio 2");
+  if ((await page.locator(".feature-row:not(.datum)").count()) !== 0) throw new Error("the new Part Studio isn't empty");
+  await page.getByRole("button", { name: "Box", exact: true }).click();
+  await page.getByRole("button", { name: "Accept" }).click();
+  await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
+  await page.getByRole("button", { name: "Assembly 1" }).click();
+  await page.getByRole("button", { name: "Insert", exact: true }).click();
+  await page.waitForSelector(".insert-studio >> text=Part Studio 2");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Part Studio 1" }).click();
+  await page.waitForFunction(() => document.querySelectorAll(".part-row").length > 1);
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; made a second Part Studio with its own part.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

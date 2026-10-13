@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
-import { activeAssembly, useStore } from "../model/store";
+import { activeAssembly, activeFeatures, studioParts, useStore } from "../model/store";
 import { AssemblyPanel, AssemblyToolbar, InsertPanel, InstancePanel, MateDialog } from "./AssemblyUI";
 import { Viewport, viewportApi } from "../viewport/Viewport";
 import type { StandardView } from "../viewport/ViewCube";
@@ -155,12 +155,12 @@ function useShortcuts() {
           startSketchFromSelection();
           return;
         }
-        if (e.code === "KeyE" && s.history.present.features.some((f) => f.type === "sketch")) {
+        if (e.code === "KeyE" && activeFeatures(s).some((f) => f.type === "sketch")) {
           e.preventDefault();
           s.startCreate("extrude");
           return;
         }
-        if (e.code === "KeyF" && s.parts.length > 0) {
+        if (e.code === "KeyF" && studioParts(s).length > 0) {
           e.preventDefault();
           s.startCreate("fillet");
           return;

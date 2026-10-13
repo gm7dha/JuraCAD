@@ -87,10 +87,21 @@ export interface PartSmithDocument {
   variables?: Variable[];
   /** Colour of each part ("#rrggbb"), by the id of the feature that made it. Parts without one are grey. */
   appearance?: Record<string, string>;
+  /** Name of the first Part Studio (whose features are `features`); "Part Studio 1" when not set. */
+  studioName?: string;
+  /** More Part Studios (optional: older saves have just the one). */
+  partStudios?: PartStudio[];
   /** Names given to parts, by part id (parts without one are "Part 1", "Part 2"…). */
   partNames?: Record<string, string>;
   /** Assembly tabs (optional: older saves have none). */
   assemblies?: Assembly[];
+}
+
+/** A Part Studio tab after the first: its own list of features, making its own parts. */
+export interface PartStudio {
+  id: string;
+  name: string;
+  features: Feature[];
 }
 
 /** One copy of a part placed in an assembly. */

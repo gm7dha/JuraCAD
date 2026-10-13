@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { getKernel } from "../kernel/connect";
 import type { CheckReport } from "../model/checkReport";
-import { useDocument, useStore } from "../model/store";
+import { useDocument, activeStudioId, studioParts, useStore } from "../model/store";
 import type { MeshQuality } from "../model/types";
 import { runCheck, ReportView } from "./CheckDialog";
 import { downloadFile, safeFileName } from "./download";
@@ -39,7 +39,8 @@ type Stage = { kind: "options" } | { kind: "working"; text: string } | { kind: "
 
 export function ExportDialog() {
   const doc = useDocument();
-  const parts = useStore((s) => s.parts);
+  // The Part Studio on show (all parts while an assembly is on show).
+  const parts = useStore((s) => (activeStudioId(s) ? studioParts(s) : s.parts));
   const openDialog = useStore((s) => s.openDialog);
   const showToast = useStore((s) => s.showToast);
   const [which, setWhich] = useState<string>("all");
@@ -50,7 +51,7 @@ export function ExportDialog() {
   const [error, setError] = useState<string | null>(null);
 
   const close = () => openDialog(null);
-  const partIds = which === "all" ? [] : [which];
+  const partIds = which === "all" ? parts.map((p) => p.id) : [which];
 
   const doExport = async () => {
     setError(null);

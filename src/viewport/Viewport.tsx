@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
-import { activeAssembly, pickFor, useStore, type SelectionItem } from "../model/store";
+import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
 import { compose, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { findPick, frameOnParts, framePlacement } from "../assembly/connectors";
 import { useSolvedAssembly } from "../app/assemblySolve";
@@ -219,13 +219,15 @@ function visibleSketches(features: Feature[], editingId: string | null, selected
 export function Viewport() {
   const containerRef = useRef<HTMLDivElement>(null);
   const parts = useStore((s) => s.parts);
+  /** The parts of the Part Studio on show. */
+  const shownParts = useStore(studioParts);
   const selection = useStore((s) => s.selection);
   const picks = useStore((s) => (s.editing && isPickFeature(s.editing.draft.type) ? s.editing.draft.picks ?? null : null));
   const hiddenParts = useStore((s) => s.hiddenParts);
   const selectedPlane = useStore((s) => s.selectedPlane);
   const listHoverPlane = useStore((s) => s.listHoverPlane);
   const hiddenDatums = useStore((s) => s.hiddenDatums);
-  const features = useStore((s) => s.history.present.features);
+  const features = useStore(activeFeatures);
   const selectedFeatureId = useStore((s) => s.selectedFeatureId);
   const draft = useStore((s) => (s.editing?.draft.type === "sketch" ? s.editing.draft : null));
   const sketchSelection = useStore((s) => s.sketch?.selection);
@@ -250,7 +252,7 @@ export function Viewport() {
     // Show whatever is already built (e.g. after a hot reload).
     const s = useStore.getState();
     manager.setHidden(s.hiddenParts);
-    manager.setParts(s.parts);
+    manager.setParts(studioParts(s));
     manager.setPartColours(s.history.present.appearance ?? {});
     manager.setSelection(s.selection);
     manager.setDatums({ selected: s.selectedPlane, listHover: s.listHoverPlane, hidden: s.hiddenDatums });
@@ -266,9 +268,9 @@ export function Viewport() {
   // In an assembly the meshes only change when parts are rebuilt or instances added/removed, not when they move.
   const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${i.partId}`).join(",") : null;
   const display = useMemo(
-    () => (assembly ? instanceMeshes(parts, assembly) : parts),
+    () => (assembly ? instanceMeshes(parts, assembly) : shownParts),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [parts, instanceKey],
+    [parts, shownParts, instanceKey],
   );
   const { solved } = useSolvedAssembly();
   const mateDraft = useStore((s) => s.mateDraft?.mate ?? null);

@@ -4,7 +4,9 @@ import { STORAGE_KEY, useStore } from "../model/store";
 
 /** Whether the "too big to keep" message has been shown since the last successful keep. */
 let storageWarned = false;
-import type { Feature } from "../model/types";
+import { activeStudioId } from "../model/store";
+import { studiosOf } from "../model/studios";
+import type { StudioInput } from "./protocol";
 import { KernelClient } from "./client";
 
 let client: KernelClient | null = null;
@@ -14,10 +16,14 @@ export function getKernel(): KernelClient {
   return client;
 }
 
-/** The features to build right now: the saved list plus any feature being edited. */
-function currentFeatures(): Feature[] {
+/** What to build right now: every Part Studio, with the feature being edited swapped into the one on show. */
+function currentStudios(): StudioInput[] {
   const s = useStore.getState();
-  return featuresWithDraft(s.history.present.features, s.editing?.draft ?? null);
+  const editingIn = s.editing ? activeStudioId(s) : null;
+  return studiosOf(s.history.present).map((st) => ({
+    id: st.id,
+    features: st.id === editingIn ? featuresWithDraft(st.features, s.editing?.draft ?? null) : st.features,
+  }));
 }
 
 /**
@@ -33,14 +39,14 @@ export function connectKernel(): () => void {
   const rebuild = () => {
     useStore.getState().setRebuildBusy(true);
     const doc = useStore.getState().history.present;
-    kernel.requestRebuild(currentFeatures(), resolveVariables(doc.variables).values, doc.partNames ?? {}, (result) => {
+    kernel.requestRebuild(currentStudios(), resolveVariables(doc.variables).values, doc.partNames ?? {}, (result) => {
       const s = useStore.getState();
       if (result instanceof Error) {
         s.setRebuildBusy(false);
         s.showToast(result.message, "error");
         return;
       }
-      s.setRebuildResult(result.parts, result.featureErrors, result.durationMs);
+      s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder);
     });
   };
 
@@ -55,6 +61,7 @@ export function connectKernel(): () => void {
   let lastFeatures = useStore.getState().history.present.features;
   let lastVariables = useStore.getState().history.present.variables;
   let lastPartNames = useStore.getState().history.present.partNames;
+  let lastStudios = useStore.getState().history.present.partStudios;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
 
@@ -64,8 +71,10 @@ export function connectKernel(): () => void {
       s.history.present.features !== lastFeatures ||
       draft !== lastDraft ||
       s.history.present.variables !== lastVariables ||
-      s.history.present.partNames !== lastPartNames
+      s.history.present.partNames !== lastPartNames ||
+      s.history.present.partStudios !== lastStudios
     ) {
+      lastStudios = s.history.present.partStudios;
       lastPartNames = s.history.present.partNames;
       lastFeatures = s.history.present.features;
       lastVariables = s.history.present.variables;

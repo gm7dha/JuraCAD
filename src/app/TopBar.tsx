@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { activeAssembly, useDocument, useStore } from "../model/store";
+import { allFeatures } from "../model/studios";
 import { Icons } from "./icons";
 import { forgetFile, openFromFile, saveToFile } from "./fileActions";
 import { browserKind, installApp, installSteps, isInstalledApp, useCanInstall } from "./install";
@@ -16,7 +17,7 @@ export function TopBar() {
   const hasParts = useStore((s) => s.parts.length > 0);
   const inAssembly = useStore((s) => activeAssembly(s) !== null);
   const fileName = useStore((s) => s.fileName);
-  const unsaved = useStore((s) => s.savedDoc !== s.history.present && s.history.present.features.length > 0);
+  const unsaved = useStore((s) => s.savedDoc !== s.history.present && allFeatures(s.history.present).length > 0);
   const platform = detectPlatform();
   const canInstall = useCanInstall();
   const [installHelp, setInstallHelp] = useState(false);
@@ -68,7 +69,7 @@ export function TopBar() {
       <button
         className="text-button"
         onClick={() => {
-          if (doc.features.length === 0 || window.confirm("Start a new, empty part? (You can undo this.)")) {
+          if (allFeatures(doc).length === 0 || window.confirm("Start a new, empty design? (You can undo this.)")) {
             newDocument();
             forgetFile();
           }

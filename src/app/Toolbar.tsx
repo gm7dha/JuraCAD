@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { useStore } from "../model/store";
+import { activeFeatures, studioParts, useStore } from "../model/store";
 import type { FeatureType } from "../model/types";
 import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -66,8 +66,8 @@ export function Toolbar() {
   const startCreate = useStore((s) => s.startCreate);
   const editingType = useStore((s) => (s.editing?.mode === "create" ? s.editing.draft.type : null));
   const ready = useStore((s) => s.kernelStatus === "ready");
-  const hasSketch = useStore((s) => s.history.present.features.some((f) => f.type === "sketch"));
-  const hasPart = useStore((s) => s.parts.length > 0);
+  const hasSketch = useStore((s) => activeFeatures(s).some((f) => f.type === "sketch"));
+  const hasPart = useStore((s) => studioParts(s).length > 0);
   const sectionOn = useStore((s) => s.section !== null);
   const platform = detectPlatform();
 

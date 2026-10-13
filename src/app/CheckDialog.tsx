@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { getKernel } from "../kernel/connect";
 import { buildCheckReport, type CheckReport, type Level } from "../model/checkReport";
-import { useStore } from "../model/store";
+import { activeFeatures, studioParts, useStore } from "../model/store";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
 
@@ -16,9 +16,10 @@ export function LevelIcon({ level }: { level: Level }) {
 export async function runCheck(): Promise<CheckReport> {
   const kernel = getKernel();
   await kernel.whenIdle();
-  const result = await kernel.check("normal");
+  const s0 = useStore.getState();
+  const result = await kernel.check("normal", studioParts(s0).map((p) => p.id));
   const s = useStore.getState();
-  const failed = s.history.present.features.filter((f) => !f.suppressed && s.featureErrors[f.id]).length;
+  const failed = activeFeatures(s).filter((f) => !f.suppressed && s.featureErrors[f.id]).length;
   return buildCheckReport(result, failed);
 }
 

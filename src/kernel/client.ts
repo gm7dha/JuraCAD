@@ -1,6 +1,6 @@
 import type { TopoPick } from "../geometry/topoRef";
-import type { Feature, MeshQuality } from "../model/types";
-import type { CheckResult, ExportResult, Measurement, StepResult, ThreeMfResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { MeshQuality } from "../model/types";
+import type { CheckResult, ExportResult, Measurement, StepResult, StudioInput, ThreeMfResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -14,7 +14,7 @@ export class KernelClient {
   private readonly pending = new Map<number, { resolve: (body: KernelResponseBody) => void; reject: (e: Error) => void }>();
 
   private rebuildRunning = false;
-  private queuedRebuild: { features: Feature[]; variables: Record<string, number>; partNames: Record<string, string>; onDone: (r: RebuildResult | Error) => void } | null = null;
+  private queuedRebuild: { studios: StudioInput[]; variables: Record<string, number>; partNames: Record<string, string>; onDone: (r: RebuildResult | Error) => void } | null = null;
   private idleWaiters: (() => void)[] = [];
 
   constructor() {
@@ -56,22 +56,22 @@ export class KernelClient {
 
   /** Ask for a rebuild; `onDone` fires only for the latest request that actually ran. */
   requestRebuild(
-    features: Feature[],
+    studios: StudioInput[],
     variables: Record<string, number>,
     partNames: Record<string, string>,
     onDone: (result: RebuildResult | Error) => void,
   ): void {
-    this.queuedRebuild = { features, variables, partNames, onDone };
+    this.queuedRebuild = { studios, variables, partNames, onDone };
     if (!this.rebuildRunning) void this.drainRebuilds();
   }
 
   private async drainRebuilds(): Promise<void> {
     this.rebuildRunning = true;
     while (this.queuedRebuild) {
-      const { features, variables, partNames, onDone } = this.queuedRebuild;
+      const { studios, variables, partNames, onDone } = this.queuedRebuild;
       this.queuedRebuild = null;
       try {
-        const result = (await this.send({ type: "rebuild", features, variables, partNames })).result as RebuildResult;
+        const result = (await this.send({ type: "rebuild", studios, variables, partNames })).result as RebuildResult;
         // Skip stale results if something newer is already waiting.
         if (!this.queuedRebuild) onDone(result);
       } catch (e) {
@@ -90,8 +90,8 @@ export class KernelClient {
     return new Promise((resolve) => this.idleWaiters.push(resolve));
   }
 
-  check(quality: MeshQuality): Promise<CheckResult> {
-    return this.send({ type: "check", quality }).then((body) => body.result as CheckResult);
+  check(quality: MeshQuality, partIds: string[] = []): Promise<CheckResult> {
+    return this.send({ type: "check", quality, partIds }).then((body) => body.result as CheckResult);
   }
 
   exportStl(partIds: string[], quality: MeshQuality): Promise<ExportResult> {

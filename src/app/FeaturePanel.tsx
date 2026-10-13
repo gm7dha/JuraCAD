@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type R
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
-import { useDocument, useStore, type DatumName, type PlaneName } from "../model/store";
+import { activeFeatures, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
 import type { Feature, FeatureType } from "../model/types";
 import { viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -328,8 +328,7 @@ function PartRow({
 const DATUMS: DatumName[] = ["Origin", "Top", "Front", "Right"];
 
 export function FeaturePanel() {
-  const doc = useDocument();
-  const parts = useStore((s) => s.parts);
+  const parts = useStore(studioParts);
   const hiddenParts = useStore((s) => s.hiddenParts);
   const toggleHidden = useStore((s) => s.toggleHidden);
   const draftIsNew = useStore((s) => (s.editing?.mode === "create" ? s.editing.draft : null));
@@ -340,7 +339,7 @@ export function FeaturePanel() {
     setMenu({ x: e.clientX, y: e.clientY, entries });
   };
 
-  const features = doc.features;
+  const features = useStore(activeFeatures);
 
   return (
     <aside className="side-panel" aria-label="Feature list">
