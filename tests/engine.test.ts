@@ -722,20 +722,20 @@ describe("holes", () => {
     const { block, sk } = setup();
     const r = build([block, sk, holeFeature(sk.id, {}, { diameter: 4.5 })]);
     expect(r.featureErrors).toEqual({});
-    expect(volume()).toBeCloseTo(16000 - 2 * Math.PI * 2.25 * 2.25 * 20, 2);
+    expect(volume()).toBeCloseTo(32000 - 2 * Math.PI * 2.25 * 2.25 * 20, 2);
     expect(engine.check("normal").parts[0].geometryValid).toBe(true);
   });
 
   it("drills to a depth with a drill point, counterbored and countersunk", () => {
     const { block, sk } = setup();
     build([block, sk, holeFeature(sk.id, { end: "blind" }, { diameter: 4.5, depth: 10 })]);
-    expect(volume()).toBeCloseTo(16000 - 2 * holeVolume(size({})), 2);
+    expect(volume()).toBeCloseTo(32000 - 2 * holeVolume(size({})), 2);
 
     build([block, sk, holeFeature(sk.id, { kind: "counterbore", end: "blind" }, { diameter: 4.5, depth: 10, cboreDiameter: 8, cboreDepth: 4.4 })]);
-    expect(volume()).toBeCloseTo(16000 - 2 * holeVolume(size({ kind: "counterbore" })), 2);
+    expect(volume()).toBeCloseTo(32000 - 2 * holeVolume(size({ kind: "counterbore" })), 2);
 
     build([block, sk, holeFeature(sk.id, { kind: "countersink" }, { diameter: 4.5, cskDiameter: 9.4, cskAngle: 90 })]);
-    expect(volume()).toBeCloseTo(16000 - 2 * holeVolume(size({ kind: "countersink", throughAll: true, throughLength: 20 })), 2);
+    expect(volume()).toBeCloseTo(32000 - 2 * holeVolume(size({ kind: "countersink", throughAll: true, throughLength: 20 })), 2);
   });
 
   it("uses circle centres too, and can be patterned", () => {
