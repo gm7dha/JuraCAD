@@ -287,7 +287,7 @@ export class GeometryEngine {
   private tools = new Map<string, FeatureTool>();
 
   /** Replays the whole feature list from scratch. */
-  rebuild(features: Feature[], variables: Record<string, number> = {}): RebuildResult {
+  rebuild(features: Feature[], variables: Record<string, number> = {}, partNames: Record<string, string> = {}): RebuildResult {
     const started = performance.now();
     // Every size below is worked out with the document's variables.
     setCurrentScope(variables);
@@ -392,6 +392,8 @@ export class GeometryEngine {
       }
     }
 
+    // Names the user gave parts (used in the lists and in exported files).
+    for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
     const parts = this.parts.map((p) => this.meshPart(p));
     return { parts, featureErrors, durationMs: Math.round(performance.now() - started) };
   }

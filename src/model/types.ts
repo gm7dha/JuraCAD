@@ -87,6 +87,8 @@ export interface PartSmithDocument {
   variables?: Variable[];
   /** Colour of each part ("#rrggbb"), by the id of the feature that made it. Parts without one are grey. */
   appearance?: Record<string, string>;
+  /** Names given to parts, by part id (parts without one are "Part 1", "Part 2"…). */
+  partNames?: Record<string, string>;
   /** Assembly tabs (optional: older saves have none). */
   assemblies?: Assembly[];
 }

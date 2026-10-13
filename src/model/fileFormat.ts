@@ -19,6 +19,7 @@ export function serializeDocument(doc: PartSmithDocument, savedAt = new Date()):
     savedAt: savedAt.toISOString(),
     ...(doc.variables?.length ? { variables: doc.variables } : {}),
     ...(doc.appearance && Object.keys(doc.appearance).length ? { appearance: doc.appearance } : {}),
+    ...(doc.partNames && Object.keys(doc.partNames).length ? { partNames: doc.partNames } : {}),
     features: doc.features,
     ...(doc.assemblies?.length ? { assemblies: doc.assemblies } : {}),
   };
