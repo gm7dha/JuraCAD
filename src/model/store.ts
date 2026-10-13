@@ -19,6 +19,8 @@ import {
 import { sameRef, type TopoPick } from "../geometry/topoRef";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
+import { setCurrentScope } from "./expr";
+import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
 import type { Feature, FeatureType, PartSmithDocument } from "./types";
@@ -66,7 +68,7 @@ export interface SketchSession {
   editingDimension: string | null;
 }
 
-export type DialogName = "check" | "export" | "help" | null;
+export type DialogName = "check" | "export" | "help" | "variables" | null;
 
 export interface Toast {
   id: number;
@@ -131,6 +133,8 @@ export interface AppState {
   toggleSuppressed: (id: string) => void;
   renameFeature: (id: string, name: string) => void;
   renameDocument: (name: string) => void;
+  /** Replace the variable list (one undo step); renames are followed everywhere. */
+  setVariables: (variables: Variable[]) => void;
   newDocument: () => void;
   undo: () => void;
   redo: () => void;
@@ -399,6 +403,8 @@ export const useStore = create<AppState>((set, get) => {
 
     renameFeature: (id, name) => change((doc) => renameFeature(doc, id, name)),
 
+    setVariables: (variables) => change((doc) => applyVariables(doc, variables)),
+
     renameDocument: (name) => {
       const trimmed = name.trim();
       if (trimmed && trimmed !== get().history.present.name) change((doc) => ({ ...doc, name: trimmed }));
@@ -468,3 +474,13 @@ export const useStore = create<AppState>((set, get) => {
 
 /** The current document (without any unsaved draft). */
 export const useDocument = () => useStore((s) => s.history.present);
+
+// Keep the maths boxes' variable values in step with the document (including after undo/redo).
+let scopeFor: Variable[] | undefined | null = null;
+function syncScope(variables: Variable[] | undefined) {
+  if (variables === scopeFor) return;
+  scopeFor = variables;
+  setCurrentScope(resolveVariables(variables).values);
+}
+syncScope(useStore.getState().history.present.variables);
+useStore.subscribe((s) => syncScope(s.history.present.variables));

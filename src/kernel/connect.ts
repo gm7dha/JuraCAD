@@ -1,4 +1,5 @@
 import { featuresWithDraft } from "../model/document";
+import { resolveVariables } from "../model/variables";
 import { STORAGE_KEY, useStore } from "../model/store";
 import type { Feature } from "../model/types";
 import { KernelClient } from "./client";
@@ -28,7 +29,7 @@ export function connectKernel(): () => void {
 
   const rebuild = () => {
     useStore.getState().setRebuildBusy(true);
-    kernel.requestRebuild(currentFeatures(), (result) => {
+    kernel.requestRebuild(currentFeatures(), resolveVariables(useStore.getState().history.present.variables).values, (result) => {
       const s = useStore.getState();
       if (result instanceof Error) {
         s.setRebuildBusy(false);
@@ -48,13 +49,15 @@ export function connectKernel(): () => void {
   );
 
   let lastFeatures = useStore.getState().history.present.features;
+  let lastVariables = useStore.getState().history.present.variables;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
 
   const unsubscribe = useStore.subscribe((s) => {
     const draft = s.editing?.draft ?? null;
-    if (s.history.present.features !== lastFeatures || draft !== lastDraft) {
+    if (s.history.present.features !== lastFeatures || draft !== lastDraft || s.history.present.variables !== lastVariables) {
       lastFeatures = s.history.present.features;
+      lastVariables = s.history.present.variables;
       lastDraft = draft;
       if (s.kernelStatus === "ready") rebuild();
     }

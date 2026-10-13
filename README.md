@@ -23,7 +23,9 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 - **Fillet** (round) and **Chamfer** (bevel) edges: click edges, or a face to do all its edges. They keep
   working when you change the sizes of earlier features.
 - Add **Box**, **Cylinder** and **Sphere** solids, each as a **New** part or **Add**ed to / **Remove**d from the latest part.
-- Type maths and units into any size box: `10 + 2`, `25.4 mm`, `1 in`.
+- Type maths and units into any size box: `10 + 2`, `25.4 mm`, `1/4 in`.
+- **Variables**: name a size (e.g. `wall = 2`) and type the name into any box or sketch dimension (`wall * 2`).
+  Change it once and the whole design updates.
 - Edit any feature later (double-click it), suppress it, rename it, or delete it. Full undo/redo.
 - **Check model** — confirms each part is closed and watertight, valid, in one piece, and not too thin.
 - **Export STEP** (exact shapes — what machine shops and most manufacturers want) or **STL** (for 3D printing) in coarse,

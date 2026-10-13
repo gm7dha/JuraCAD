@@ -1319,3 +1319,58 @@ kbd {
 .field-note {
   margin: 4px 0 0;
 }
+
+/* Variables dialog */
+.variables-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.variables-table th {
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 0 6px 4px;
+}
+
+.variables-table td {
+  padding: 3px 6px 3px 0;
+  vertical-align: middle;
+}
+
+.variables-table input {
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 8px;
+  font: inherit;
+}
+
+.variables-table tr.invalid input {
+  border-color: var(--error);
+}
+
+.variable-result {
+  min-width: 140px;
+  color: var(--ink-2);
+}
+
+.variable-result .error-text {
+  color: var(--error);
+  font-size: 12px;
+}
+
+.variable-actions {
+  white-space: nowrap;
+  width: 1%;
+}
+
+.add-variable {
+  margin-top: 2px;
+}

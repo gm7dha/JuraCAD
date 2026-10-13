@@ -58,7 +58,7 @@ export interface StepResult {
 }
 
 export type KernelRequest =
-  | { type: "rebuild"; features: Feature[] }
+  | { type: "rebuild"; features: Feature[]; variables: Record<string, number> }
   | { type: "check"; quality: MeshQuality }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality }
   | { type: "exportStep"; partIds: string[] };

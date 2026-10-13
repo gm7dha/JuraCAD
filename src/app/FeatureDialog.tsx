@@ -391,7 +391,7 @@ export function FeatureDialog() {
           </div>
         )}
         <p className="dialog-hint">
-          {busy ? "Updating preview…" : "Tip: you can type maths and units, e.g. 10 + 2 or 1 in."}
+          {busy ? "Updating preview…" : "Tip: you can type maths, units and variables, e.g. 10 + 2, 1 in or wall * 2."}
         </p>
       </div>
     </form>
