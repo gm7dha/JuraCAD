@@ -376,5 +376,17 @@ export function Viewport() {
     manager.setSketchScene(others, { plane, data: sketchData, analysis, failing, selection: new Set(sketchSelection ?? []) });
   }, [others, plane, sketchData, sketchSelection]);
 
-  return <div ref={containerRef} className="viewport" data-testid="viewport" />;
+  return (
+    <>
+      <div ref={containerRef} className="viewport" data-testid="viewport" />
+      <button
+        type="button"
+        className="iso-button"
+        onClick={() => viewportApi.current?.setView("iso")}
+        title="Isometric view (Shift+7)"
+      >
+        Isometric
+      </button>
+    </>
+  );
 }

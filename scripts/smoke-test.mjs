@@ -495,6 +495,10 @@ try {
   await page.waitForTimeout(600);
   await shot("mated");
 
+  step = "using the Isometric button";
+  await page.getByRole("button", { name: "Isometric", exact: true }).click();
+  await page.waitForTimeout(400);
+
   step = "dragging a part with the mouse";
   await page.locator(".feature-row >> text=Part 1 <1>").click();
   await page.getByRole("button", { name: "Unfix", exact: true }).click();
@@ -511,6 +515,9 @@ try {
   await page.mouse.move(cb.x + grabAt.x - 40, cb.y + grabAt.y + 25, { steps: 6 });
   await page.mouse.up();
   await page.waitForSelector(".instance-panel");
+  await page
+    .waitForFunction((before) => document.querySelector("#instance-x-red-")?.value !== before, xBefore, { timeout: 5_000 })
+    .catch(() => {});
   const xAfter = await page.getByLabel("X (red)", { exact: true }).inputValue();
   if (xAfter === xBefore) {
     const toast = (await page.locator(".toast").allInnerTexts()).join(" / ");
