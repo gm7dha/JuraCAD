@@ -5,7 +5,7 @@ import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform";
 
 export interface HoleOptions {
   sketchRef?: string;
@@ -54,6 +54,8 @@ export interface Feature {
   revolve?: { axis: string; flip: boolean };
   /** Hole features: where (the points and circle centres of a sketch) and what kind. */
   hole?: HoleOptions;
+  /** Transform: move and/or turn a part (or a copy of it). */
+  transform?: { partId?: string; axis: Axis; about: "origin" | "centre"; copy: boolean };
   /** Linear and circular patterns: the features to repeat, and along or around which axis. */
   pattern?: { sources: string[]; axis: Axis; flip: boolean };
   /** Mirror: the features to mirror, and the plane to mirror them across. */

@@ -760,3 +760,48 @@ describe("holes", () => {
     expect(build([block, sk, bad]).featureErrors[bad.id]).toMatch(/wider than the hole/);
   });
 });
+
+describe("move, turn and copy parts", () => {
+  const transformFeature = (partId: string, t: Partial<NonNullable<Feature["transform"]>>, params: Record<string, number>): Feature => ({
+    ...feature("transform", params, "add"),
+    transform: { partId, axis: "z", about: "centre", copy: false, ...t },
+  });
+  const boundsOfPart = (r: ReturnType<typeof build>, i = 0) => analyzeMesh(r.parts[i].vertices, r.parts[i].triangles).bounds!;
+
+  it("moves a part", () => {
+    const box = feature("box", { width: 10, depth: 20, height: 5 });
+    const r = build([box, transformFeature(box.id, {}, { dx: 30, dy: -5, dz: 2 })]);
+    expect(r.featureErrors).toEqual({});
+    expect(boundsOfPart(r).min.map((v) => Math.round(v * 1000) / 1000)).toEqual([30, -5, 2]);
+  });
+
+  it("turns a part a quarter turn about its centre", () => {
+    const box = feature("box", { width: 10, depth: 20, height: 5 });
+    const r = build([box, transformFeature(box.id, {}, { angle: 90 })]);
+    const b = boundsOfPart(r);
+    // 10 wide × 20 deep becomes 20 wide × 10 deep, still centred on (5, 10).
+    expect(b.max[0] - b.min[0]).toBeCloseTo(20, 4);
+    expect(b.max[1] - b.min[1]).toBeCloseTo(10, 4);
+    expect((b.max[0] + b.min[0]) / 2).toBeCloseTo(5, 4);
+  });
+
+  it("copies a part, keeping the original", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const copy = transformFeature(box.id, { copy: true }, { dx: 20 });
+    const r = build([box, copy]);
+    expect(r.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2"]);
+    expect(boundsOfPart(r, 0).min[0]).toBeCloseTo(0, 4);
+    expect(boundsOfPart(r, 1).min[0]).toBeCloseTo(20, 4);
+    // Later features on the copy work as on any part.
+    const hole = feature("cylinder", { diameter: 4, height: 10, x: 25, y: 5 }, "remove");
+    expect(build([box, copy, hole]).featureErrors).toEqual({});
+  });
+
+  it("explains problems in plain words", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const nothing = transformFeature(box.id, {}, {});
+    expect(build([box, nothing]).featureErrors[nothing.id]).toMatch(/Nothing to do yet/);
+    const gone = transformFeature("nope", {}, { dx: 5 });
+    expect(build([box, gone]).featureErrors[gone.id]).toMatch(/no longer exists/);
+  });
+});

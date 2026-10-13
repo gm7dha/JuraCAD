@@ -1298,6 +1298,12 @@ kbd {
   margin-bottom: 4px;
 }
 
+.inline-selects {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
 .field-label {
   display: block;
   font-size: 12.5px;

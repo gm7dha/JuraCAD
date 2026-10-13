@@ -97,6 +97,18 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "cskAngle", label: "Countersink angle", defaultValue: "90", positive: true, group: "size", unit: "°" },
     ],
   },
+  transform: {
+    type: "transform",
+    label: "Move / copy",
+    namePrefix: "Transform",
+    description: "Moves and/or turns a part, or a copy of it.",
+    params: [
+      { key: "angle", label: "Turn by", defaultValue: "0", group: "size", unit: "°" },
+      { key: "dx", label: "Move X (red)", defaultValue: "0", group: "position" },
+      { key: "dy", label: "Move Y (green)", defaultValue: "0", group: "position" },
+      { key: "dz", label: "Move Z (blue)", defaultValue: "0", group: "position" },
+    ],
+  },
   mirror: {
     type: "mirror",
     label: "Mirror",

@@ -161,3 +161,15 @@ describe("mirror and pattern features", () => {
     expect(saved?.features[2].pattern).toEqual(circ.pattern);
   });
 });
+
+describe("transform features", () => {
+  it("default to turning about the part centre, and survive saving", () => {
+    let doc = emptyDocument();
+    doc = addFeature(doc, createFeature(doc, "box"));
+    const t = createFeature(doc, "transform");
+    expect(t.transform).toEqual({ axis: "z", about: "centre", copy: false });
+    t.transform = { partId: doc.features[0].id, axis: "x", about: "origin", copy: true };
+    const saved = parseDocument(JSON.parse(JSON.stringify(addFeature(doc, t))));
+    expect(saved?.features[1].transform).toEqual(t.transform);
+  });
+});

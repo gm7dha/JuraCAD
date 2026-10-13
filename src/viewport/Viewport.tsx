@@ -48,6 +48,13 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
+  // Choosing the part to move.
+  if (s.editing?.draft.type === "transform" && s.editing.draft.transform) {
+    if (target?.kind === "part" && target.item.partId !== s.editing.draft.id) {
+      s.setDraftField({ transform: { ...s.editing.draft.transform, partId: target.item.partId } });
+    }
+    return;
+  }
   // Choosing the plane to mirror across.
   if (s.editing?.draft.type === "mirror") {
     if (target?.kind === "plane") s.setDraftMirrorPlane({ kind: "default", name: target.plane });

@@ -21,6 +21,7 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
   to a depth (with a drill point), sized by screw (M2–M12, clearance or tapped).
 - **Revolve** a sketch around a line for round parts (knobs, rings, bottles), all the way round or part way.
 - **Shell** a part to hollow it out, leaving walls of the thickness you choose.
+- **Move / copy** a part: move it along X, Y, Z and/or turn it about an axis — or make a moved copy.
 - **Mirror** features across a plane, and repeat them in a row (**Pattern**) or round a circle (**Circular**) —
   for example a ring of bolt holes. Each copy adds or cuts just like the original.
 - **Fillet** (round) and **Chamfer** (bevel) edges: click edges, or a face to do all its edges. They keep

@@ -17,6 +17,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   fillet: Icons.Fillet,
   mirror: Icons.Mirror,
   hole: Icons.Hole,
+  transform: Icons.Move,
   linearPattern: Icons.LinearPattern,
   circularPattern: Icons.CircularPattern,
   chamfer: Icons.Chamfer,
@@ -150,7 +151,7 @@ function FeatureRow({ feature, onMenu }: { feature: Feature; onMenu: (e: ReactMo
     return !!d && ((d.mirror?.sources ?? d.pattern?.sources ?? []) as string[]).includes(feature.id);
   });
   const op =
-    feature.operation === "new" || feature.type === "sketch" || isPickFeature(feature.type) || isPatternFeature(feature.type) || feature.type === "hole" ? "" : ` (${OPERATION_LABELS[feature.operation]})`;
+    feature.operation === "new" || feature.type === "sketch" || isPickFeature(feature.type) || isPatternFeature(feature.type) || feature.type === "hole" || feature.type === "transform" ? "" : ` (${OPERATION_LABELS[feature.operation]})`;
 
   const entries: MenuEntry[] = [
     { label: "Edit…", action: () => startEdit(feature.id) },

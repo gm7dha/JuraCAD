@@ -53,6 +53,10 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
   }
+  if (type === "transform") {
+    feature.operation = "add";
+    feature.transform = { axis: "z", about: "centre", copy: false };
+  }
   if (type === "hole") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
     feature.operation = "remove";
@@ -194,6 +198,15 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     if (feature.type === "mirror") {
       const mr = f.mirror as Record<string, unknown> | undefined;
       feature.mirror = { sources: ids(mr?.sources), plane: parsePlane(mr?.plane) ?? { kind: "default", name: "Right" } };
+    }
+    if (feature.type === "transform") {
+      const t = (f.transform ?? {}) as Record<string, unknown>;
+      feature.transform = {
+        ...(typeof t.partId === "string" ? { partId: t.partId } : {}),
+        axis: t.axis === "x" || t.axis === "y" ? t.axis : "z",
+        about: t.about === "origin" ? "origin" : "centre",
+        copy: t.copy === true,
+      };
     }
     if (feature.type === "hole") {
       const h = (f.hole ?? {}) as Record<string, unknown>;

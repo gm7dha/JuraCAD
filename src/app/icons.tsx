@@ -133,6 +133,12 @@ export const Icons = {
       <path d="M13 10h7M13 14h7" />
     </Svg>
   ),
+  Move: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M12 3v18M3 12h18" />
+      <path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" />
+    </Svg>
+  ),
   Mirror: (p: IconProps) => (
     <Svg {...p}>
       <path d="M12 3v18" strokeDasharray="2 2" />
