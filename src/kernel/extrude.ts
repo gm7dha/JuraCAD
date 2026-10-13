@@ -12,6 +12,7 @@ import {
   makeThreePointArc,
   Vector,
   type Edge,
+  type Face,
   type Shape3D,
 } from "replicad";
 
@@ -26,9 +27,10 @@ export interface ExtrudeOptions {
 }
 
 /** Free OpenCascade objects once we're done with them. */
-const release = (...items: { delete(): void }[]) => items.forEach((i) => i.delete());
+export const release = (...items: { delete(): void }[]) => items.forEach((i) => i.delete());
 
-function loopPrism(loop: Loop, frame: PlaneFrame, offset: number, vector: [number, number, number]): Shape3D {
+/** A flat face for one closed loop of the sketch, `offset` mm along the plane's normal. */
+export function loopFace(loop: Loop, frame: PlaneFrame, offset: number): Face {
   const P = ([x, y]: [number, number]) => toWorld(frame, x, y, offset);
   const edges: Edge[] = loop.segments.map((seg) => {
     switch (seg.kind) {
@@ -41,12 +43,20 @@ function loopPrism(loop: Loop, frame: PlaneFrame, offset: number, vector: [numbe
     }
   });
   const wire = assembleWire(edges);
-  const face = makeFace(wire);
+  try {
+    return makeFace(wire);
+  } finally {
+    release(wire, ...edges);
+  }
+}
+
+function loopPrism(loop: Loop, frame: PlaneFrame, offset: number, vector: [number, number, number]): Shape3D {
+  const face = loopFace(loop, frame, offset);
   const v = new Vector(vector);
   try {
     return basicFaceExtrusion(face, v);
   } finally {
-    release(v, face, wire, ...edges);
+    release(v, face);
   }
 }
 

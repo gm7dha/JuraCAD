@@ -261,13 +261,52 @@ try {
   await page.waitForTimeout(600);
   await shot("filleted");
 
+  step = "sketching a profile with a construction line to spin around";
+  await page.getByRole("button", { name: "Sketch", exact: true }).click();
+  await page.waitForSelector(".sketch-panel");
+  await page.locator(".feature-row.datum", { hasText: "Front" }).click();
+  await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Front plane"));
+  await page.waitForTimeout(600);
+  await page.keyboard.press("q"); // new shapes are construction geometry
+  await page.keyboard.press("l");
+  await page.mouse.click(cx - 120, cy - 80);
+  await page.mouse.click(cx - 120, cy + 80);
+  await page.keyboard.press("Escape"); // stop the chain of lines
+  await page.keyboard.press("Escape"); // leave the line tool
+  await page.keyboard.press("Escape"); // clear any selection
+  await page.keyboard.press("q"); // back to normal shapes
+  await page.keyboard.press("r");
+  await page.mouse.click(cx - 60, cy + 50);
+  await page.mouse.move(cx, cy, { steps: 4 });
+  await page.mouse.click(cx + 20, cy - 50);
+  await page.waitForFunction(() => document.querySelector(".sketch-status")?.textContent?.includes("1 closed shape"));
+  await page.locator(".sketch-panel").getByRole("button", { name: "Accept" }).click();
+  await page.waitForSelector(".sketch-panel", { state: "detached" });
+
+  step = "revolving the sketch";
+  await page.getByRole("button", { name: "Revolve", exact: true }).click();
+  const axisChoice = await page.locator("#revolve-axis option:checked").innerText();
+  if (!/Construction line/.test(axisChoice)) throw new Error(`revolve didn't pick the construction line, it picked "${axisChoice}"`);
+  await page.getByRole("radio", { name: "New" }).click();
+  await page.getByRole("button", { name: "Accept" }).click();
+  await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 3"), null, { timeout: 30_000 });
+  const failedAfterRevolve = await page.locator(".feature-row.failed").count();
+  if (failedAfterRevolve > 0) {
+    const why = await page.locator(".feature-row.failed").first().getAttribute("title");
+    throw new Error(`the revolve failed: ${why}`);
+  }
+  await page.keyboard.press("Shift+Digit7");
+  await page.keyboard.press("f");
+  await page.waitForTimeout(600);
+  await shot("revolved");
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s).`,
+    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

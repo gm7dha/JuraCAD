@@ -40,11 +40,6 @@ const SOLIDS: { type: FeatureType; label: string; icon: ReactNode }[] = [
   { type: "sphere", label: "Sphere", icon: <Icons.Sphere /> },
 ];
 
-/** Tools that arrive in later phases, shown greyed out so the roadmap is visible. */
-const COMING: { label: string; icon: ReactNode; phase: string }[] = [
-  { label: "Revolve", icon: <Icons.Revolve />, phase: "Phase 3" },
-  { label: "Shell", icon: <Icons.Shell />, phase: "Phase 3" },
-];
 
 /** Start a sketch on the selected plane or flat face (or ask for one). */
 export function startSketchFromSelection() {
@@ -110,6 +105,14 @@ export function Toolbar() {
           active={editingType === "extrude"}
           title={hasSketch ? "Extrude (Shift+E) — turn a sketch's closed shapes into a solid" : "Draw a sketch first, then extrude it"}
         />
+        <ToolButton
+          label="Revolve"
+          icon={<Icons.Revolve />}
+          onClick={() => startCreate("revolve")}
+          disabled={!ready || !hasSketch}
+          active={editingType === "revolve"}
+          title={hasSketch ? "Revolve — spin a sketch's closed shapes around a line, for round parts" : "Draw a sketch first, then revolve it"}
+        />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
@@ -129,12 +132,14 @@ export function Toolbar() {
           active={editingType === "chamfer"}
           title={hasPart ? "Chamfer — bevel edges with a flat cut. Select edges first, or pick them after" : "Make a part first, then bevel its edges"}
         />
-      </div>
-      <div className="tool-divider" />
-      <div className="tool-group coming">
-        {COMING.map((c) => (
-          <ToolButton key={c.label} label={c.label} icon={c.icon} disabled title={`${c.label} — coming in ${c.phase}`} />
-        ))}
+        <ToolButton
+          label="Shell"
+          icon={<Icons.Shell />}
+          onClick={() => startCreate("shell")}
+          disabled={!ready || !hasPart}
+          active={editingType === "shell"}
+          title={hasPart ? "Shell — hollow out a part. Click the face to leave open (usually the top)" : "Make a part first, then hollow it out"}
+        />
       </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">

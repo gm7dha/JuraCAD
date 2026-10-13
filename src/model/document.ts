@@ -1,5 +1,6 @@
 import { parsePick } from "../geometry/topoRef";
 import { parsePlane, parseSketchData } from "../sketch/validate";
+import { defaultAxis } from "../sketch/axis";
 import { emptySketch } from "../sketch/types";
 import { FEATURE_DEFS, defaultParams } from "./features";
 import type { Feature, FeatureType, Operation, PartSmithDocument } from "./types";
@@ -41,15 +42,17 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     params: defaultParams(type),
   };
   if (type === "sketch") feature.sketch = { plane: null, data: emptySketch() };
-  if (type === "extrude") {
+  if (type === "extrude" || type === "revolve") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
-    feature.sketchRef = sketches[sketches.length - 1]?.id;
-    feature.extrude = { end: "blind", flip: false };
+    const sketch = sketches[sketches.length - 1];
+    feature.sketchRef = sketch?.id;
+    if (type === "extrude") feature.extrude = { end: "blind", flip: false };
+    else feature.revolve = { axis: sketch?.sketch ? defaultAxis(sketch.sketch.data) : "vertical", flip: false };
     // Like Onshape: the first solid is a new part, later extrudes add to it.
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
   }
-  if (type === "fillet" || type === "chamfer") {
+  if (type === "fillet" || type === "chamfer" || type === "shell") {
     feature.operation = "add";
     feature.picks = [];
   }
@@ -169,7 +172,12 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
       const ex = f.extrude as Record<string, unknown> | undefined;
       feature.extrude = { end: ex?.end === "symmetric" ? "symmetric" : "blind", flip: ex?.flip === true };
     }
-    if (feature.type === "fillet" || feature.type === "chamfer") {
+    if (feature.type === "revolve") {
+      if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+      const rv = f.revolve as Record<string, unknown> | undefined;
+      feature.revolve = { axis: typeof rv?.axis === "string" ? rv.axis : "vertical", flip: rv?.flip === true };
+    }
+    if (feature.type === "fillet" || feature.type === "chamfer" || feature.type === "shell") {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

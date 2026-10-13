@@ -55,7 +55,7 @@ jobs:
       - name: Browser smoke test
         env:
           # Set to "1" to attach small screenshots as annotations for review.
-          SMOKE_SCREENSHOTS: "0"
+          SMOKE_SCREENSHOTS: "1"
         run: npm run smoke
 
       - name: Attach screenshot 1
@@ -82,6 +82,9 @@ jobs:
       - name: Attach screenshot 8
         if: always()
         run: node scripts/emit-screenshot.mjs 8
+      - name: Attach screenshot 9
+        if: always()
+        run: node scripts/emit-screenshot.mjs 9
 
       - name: Keep the built site (for previewing pull requests)
         uses: actions/upload-artifact@v4

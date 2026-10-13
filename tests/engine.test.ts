@@ -13,6 +13,7 @@ import { readBinaryStl } from "../src/geometry/stl";
 import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
+import { defaultAxis } from "../src/sketch/axis";
 import { addArc, addCircle, addLine, addRectangle } from "../src/sketch/ops";
 import { planeOnFace, type SketchPlane } from "../src/sketch/planes";
 import { emptySketch, type SketchData } from "../src/sketch/types";
@@ -413,5 +414,112 @@ describe("fillet and chamfer", () => {
     const orphan = edgeFeature("fillet", 1, [{ ...pick, partId: "gone" }]);
     r = build([box, orphan]);
     expect(r.featureErrors[orphan.id]).toMatch(/no longer exists/);
+  });
+});
+
+describe("revolve", () => {
+  function revolveFeature(sketchRef: string, angle: number, axis = "vertical", opts: { operation?: Operation; flip?: boolean } = {}): Feature {
+    n++;
+    return {
+      id: `f${n}`,
+      name: `Revolve ${n}`,
+      type: "revolve",
+      operation: opts.operation ?? "new",
+      suppressed: false,
+      params: { angle: String(angle) },
+      sketchRef,
+      revolve: { axis, flip: opts.flip ?? false },
+    };
+  }
+
+  it("spins a rectangle into a ring around the sketch's up-down axis", () => {
+    // On Front, sketch "up" is Z, so this makes a ring around the Z axis.
+    const sk = sketchFeature({ kind: "default", name: "Front" }, rectSketch(10, 0, 10, 10));
+    const r = build([sk, revolveFeature(sk.id, 360)]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(Math.PI * (20 * 20 - 10 * 10) * 10, 1);
+    const a = meshOf(r);
+    expect(a.watertight).toBe(true);
+    expect(a.bounds?.min[0]).toBeCloseTo(-20, 1);
+    expect(a.bounds?.max[1]).toBeCloseTo(20, 1);
+    expect(a.bounds?.max[2]).toBeCloseTo(10, 3);
+  });
+
+  it("goes part of the way round", () => {
+    const sk = sketchFeature({ kind: "default", name: "Front" }, rectSketch(10, 0, 10, 10));
+    build([sk, revolveFeature(sk.id, 90)]);
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo((Math.PI * 300 * 10) / 4, 1);
+  });
+
+  it("uses a construction line as the axis by default", () => {
+    // A square sitting on a construction line along the sketch's X axis: spins into a 10 mm × r10 cylinder.
+    let data = rectSketch(0, 0, 10, 10);
+    const axis = addLine(data, { x: -5, y: 0 }, { x: 15, y: 0 }, { construction: true });
+    data = axis.sketch;
+    expect(defaultAxis(data)).toBe(axis.lineId);
+    const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+    const r = build([sk, revolveFeature(sk.id, 360, axis.lineId)]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(Math.PI * 100 * 10, 1);
+  });
+
+  it("can cut a groove from an existing part", () => {
+    const cyl = feature("cylinder", { diameter: 40, height: 20 });
+    // A 2 × 2 mm square at the cylinder's edge, half way up: spun round it cuts a groove.
+    const sk = sketchFeature({ kind: "default", name: "Front" }, rectSketch(18, 9, 2, 2));
+    const r = build([cyl, sk, revolveFeature(sk.id, 360, "vertical", { operation: "remove" })]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(Math.PI * 400 * 20 - Math.PI * (400 - 18 * 18) * 2, 0);
+  });
+
+  it("refuses shapes that cross the axis", () => {
+    const sk = sketchFeature({ kind: "default", name: "Front" }, rectSketch(-5, 0, 10, 10));
+    const rev = revolveFeature(sk.id, 360);
+    const r = build([sk, rev]);
+    expect(r.featureErrors[rev.id]).toMatch(/crosses the line/);
+    const missing = revolveFeature(sk.id, 360, "no-such-line");
+    expect(build([sk, missing]).featureErrors[missing.id]).toMatch(/isn't in the sketch/);
+    const tooFar = revolveFeature(sk.id, 400);
+    expect(build([sk, tooFar]).featureErrors[tooFar.id]).toMatch(/at most 360/);
+  });
+});
+
+describe("shell", () => {
+  const shellFeature = (thickness: number, picks: TopoPick[]): Feature => ({ ...feature("shell", { thickness }, "add"), picks });
+  const topFace = (r: ReturnType<typeof build>): TopoPick => {
+    const part = r.parts[0];
+    const top = [...part.faceRefs].sort((a, b) => b.center[2] - a.center[2])[0];
+    return { partId: part.id, ref: top };
+  };
+
+  it("hollows a box into an open tray", () => {
+    const box = feature("box", { width: 20, depth: 20, height: 10 });
+    const pick = topFace(build([box]));
+    const r = build([box, shellFeature(2, [pick])]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(20 * 20 * 10 - 16 * 16 * 8, 2);
+    const check = engine.check("normal").parts[0];
+    expect(check.geometryValid).toBe(true);
+    expect(check.mesh.watertight).toBe(true);
+  });
+
+  it("keeps working after the box is resized", () => {
+    const box = feature("box", { width: 20, depth: 20, height: 10 });
+    const pick = topFace(build([box]));
+    const taller = { ...box, params: { ...box.params, height: "15", width: "30" } };
+    const r = build([taller, shellFeature(1, [pick])]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(30 * 20 * 15 - 28 * 18 * 14, 2);
+  });
+
+  it("explains problems in plain words", () => {
+    const box = feature("box", { width: 20, depth: 20, height: 10 });
+    const pick = topFace(build([box]));
+    const none = shellFeature(2, []);
+    expect(build([box, none]).featureErrors[none.id]).toMatch(/Click the face/);
+    const thick = shellFeature(15, [pick]);
+    const r = build([box, thick]);
+    expect(r.featureErrors[thick.id]).toMatch(/thinner walls/);
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(4000, 2);
   });
 });

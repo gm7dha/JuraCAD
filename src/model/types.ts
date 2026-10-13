@@ -3,7 +3,7 @@ import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "fillet" | "chamfer";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell";
 
 /** How an extrude runs: one way from the sketch (optionally flipped), or equally both ways. */
 export type ExtrudeEnd = "blind" | "symmetric";
@@ -34,7 +34,9 @@ export interface Feature {
   sketchRef?: string;
   /** Extrude features: one way or symmetric, and whether to flip. */
   extrude?: { end: ExtrudeEnd; flip: boolean };
-  /** Fillet and chamfer features: the edges (or faces, meaning all their edges) to round or bevel. */
+  /** Revolve features: the line to spin around ("vertical"/"horizontal" sketch axes, or a sketch line id) and which way. */
+  revolve?: { axis: string; flip: boolean };
+  /** Fillet and chamfer: the edges (or faces, meaning all their edges) to round or bevel. Shell: the faces to remove. */
   picks?: TopoPick[];
 }
 

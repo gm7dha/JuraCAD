@@ -158,15 +158,16 @@ export function matchRefs(wants: TopoRef[], candidates: TopoRef[], size: number)
 }
 
 /** Short description for lists, e.g. "Straight edge" or "Flat face". */
-export function describeRef(ref: TopoRef): string {
+export function describeRef(ref: TopoRef, faceOnly = false): string {
   if (ref.kind === "edge") {
     if (ref.curve === "LINE") return "Straight edge";
     if (ref.curve === "CIRCLE") return dist(ref.a, ref.b) < 1e-6 ? "Circular edge" : "Curved edge";
     return "Curved edge";
   }
-  if (ref.surface === "PLANE") return "Flat face (all its edges)";
-  if (ref.surface === "CYLINDRE") return "Round face (all its edges)";
-  return "Curved face (all its edges)";
+  const all = faceOnly ? "" : " (all its edges)";
+  if (ref.surface === "PLANE") return `Flat face${all}`;
+  if (ref.surface === "CYLINDRE") return `Round face${all}`;
+  return `Curved face${all}`;
 }
 
 /** Check untrusted JSON for a pick. */
