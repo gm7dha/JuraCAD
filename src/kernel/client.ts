@@ -1,5 +1,6 @@
+import type { TopoPick } from "../geometry/topoRef";
 import type { Feature, MeshQuality } from "../model/types";
-import type { CheckResult, ExportResult, StepResult, ThreeMfResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { CheckResult, ExportResult, Measurement, StepResult, ThreeMfResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -94,6 +95,10 @@ export class KernelClient {
 
   export3mf(partIds: string[], quality: MeshQuality, title: string): Promise<ThreeMfResult> {
     return this.send({ type: "export3mf", partIds, quality, title }).then((body) => body.result as ThreeMfResult);
+  }
+
+  measure(picks: TopoPick[]): Promise<Measurement> {
+    return this.send({ type: "measure", picks }).then((body) => body.result as Measurement);
   }
 
   exportStep(partIds: string[]): Promise<StepResult> {

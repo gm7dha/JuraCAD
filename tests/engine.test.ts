@@ -805,3 +805,48 @@ describe("move, turn and copy parts", () => {
     expect(build([box, gone]).featureErrors[gone.id]).toMatch(/no longer exists/);
   });
 });
+
+describe("measure", () => {
+  const pickNear = (r: ReturnType<typeof build>, kind: "edge" | "face", at: [number, number, number], part = 0): TopoPick => {
+    const p = r.parts[part];
+    const refs = kind === "edge" ? p.edgeRefs : p.faceRefs;
+    const pos = (x: (typeof refs)[number]) => (x.kind === "edge" ? x.mid : x.center);
+    const best = [...refs].sort((a, b) => Math.hypot(...pos(a).map((v, i) => v - at[i])) - Math.hypot(...pos(b).map((v, i) => v - at[i])))[0];
+    return { partId: p.id, ref: best };
+  };
+
+  it("measures an edge's length and a face's area", () => {
+    const r = build([feature("box", { width: 40, depth: 30, height: 20 })]);
+    const m = engine.measure([pickNear(r, "edge", [20, 0, 20])]);
+    expect(m.items[0].label).toBe("Straight edge");
+    expect(m.items[0].length).toBeCloseTo(40, 6);
+    expect(engine.measure([pickNear(r, "face", [20, 15, 20])]).items[0].area).toBeCloseTo(1200, 4);
+  });
+
+  it("measures the gap and angle between two faces", () => {
+    const r = build([feature("box", { width: 40, depth: 30, height: 20 })]);
+    const m = engine.measure([pickNear(r, "face", [20, 15, 20]), pickNear(r, "face", [20, 15, 0])]);
+    expect(m.distance).toBeCloseTo(20, 6);
+    expect(m.angle).toBe(0);
+    const side = engine.measure([pickNear(r, "face", [20, 15, 20]), pickNear(r, "face", [0, 15, 10])]);
+    expect(side.angle).toBe(90);
+  });
+
+  it("measures hole sizes and the spacing between holes", () => {
+    const block = feature("box", { width: 50, depth: 20, height: 10 });
+    const h1 = feature("cylinder", { diameter: 6, height: 10, x: 10, y: 10 }, "remove");
+    const h2 = feature("cylinder", { diameter: 6, height: 10, x: 40, y: 10 }, "remove");
+    const r = build([block, h1, h2]);
+    const rimAt = (x: number): TopoPick => {
+      const p = r.parts[0];
+      const rim = p.edgeRefs.find((e) => e.curve === "CIRCLE" && e.mid[2] > 9.99 && Math.abs(e.mid[0] - x) < 4)!;
+      return { partId: p.id, ref: rim };
+    };
+    const m = engine.measure([rimAt(10), rimAt(40)]);
+    expect(m.items[0].radius).toBeCloseTo(3, 6);
+    expect(m.centreDistance?.total).toBeCloseTo(30, 6);
+    expect(m.centreDistance?.dx).toBeCloseTo(30, 6);
+    expect(m.centreDistance?.dy).toBeCloseTo(0, 6);
+    expect(m.distance).toBeCloseTo(24, 6);
+  });
+});
