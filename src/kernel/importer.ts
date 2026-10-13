@@ -201,9 +201,22 @@ const SIMPLIFY_LIMIT = 20_000;
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+/** A short name for an imported file's contents, so the same file is recognised again. */
+export function importKey(file: ImportedFile): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 5381;
+  const d = file.data;
+  for (let i = 0; i < d.length; i++) {
+    const c = d.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 16777619);
+    h2 = (Math.imul(h2, 33) + c) | 0;
+  }
+  return `${file.format}|${file.units}|${d.length}|${(h1 >>> 0).toString(36)}${(h2 >>> 0).toString(36)}`;
+}
+
 /** The solids in an imported file (fresh copies the caller owns). */
 export function importSolids(file: ImportedFile): Shape3D[] {
-  const key = `${file.format}|${file.units}|${file.data}`;
+  const key = importKey(file);
   let solids = cache.get(key);
   if (!solids) {
     solids = file.format === "step" ? readStep(file.data) : readStl(fromBase64(file.data), file.units);

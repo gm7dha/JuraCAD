@@ -8,7 +8,7 @@ import type { ImportedFile } from "./types";
 /** Bigger files make the design slow to save and rebuild. */
 export const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
 /** STL triangles become faces of a solid; past this it gets too slow to work with. */
-export const MAX_STL_TRIANGLES = 100_000;
+export const MAX_STL_TRIANGLES = 50_000;
 
 export const IMPORT_ACCEPT = ".step,.stp,.stl";
 

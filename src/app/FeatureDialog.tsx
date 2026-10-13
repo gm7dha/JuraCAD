@@ -227,6 +227,9 @@ function ImportOptions() {
           — {file.format === "step" ? "STEP" : "STL"}, {importedSize(file)}
         </span>
       </p>
+      {file.format === "stl" && file.data.length > 1_000_000 && (
+        <p className="dialog-hint field-hint">This is a detailed file, so the preview can take up to a minute to appear.</p>
+      )}
       <button type="button" className="text-button" onClick={() => chooseImportFile(true)}>
         Choose a different file…
       </button>

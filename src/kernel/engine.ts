@@ -19,7 +19,7 @@ import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, Th
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep } from "./stepExport";
-import { importSolids } from "./importer";
+import { importKey, importSolids } from "./importer";
 import { edgesOf, facesOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
@@ -28,7 +28,13 @@ interface BuiltPart {
   name: string;
   featureIds: string[];
   shape: Shape3D;
+  /** For a part straight from an imported file: identifies its display mesh, which is kept between rebuilds while the part is unchanged. */
+  meshKey?: string;
 }
+
+/** Display meshes of unchanged imported parts (they can take seconds to make). */
+const importedMeshes = new Map<string, PartMesh>();
+const IMPORTED_MESH_CACHE = 8;
 
 /** Turn whatever OpenCascade threw into a readable sentence. */
 export function describeError(e: unknown, fallback: string): string {
@@ -353,7 +359,7 @@ export class GeometryEngine {
         solids.forEach((solid, i) => {
           partCounter++;
           const id = i === 0 ? feature.id : `${feature.id}~${i + 1}`;
-          this.parts.push({ id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid });
+          this.parts.push({ id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid, meshKey: `${importKey(feature.import!)}#${i}` });
         });
         tool.delete();
         continue;
@@ -765,6 +771,30 @@ export class GeometryEngine {
   }
 
   private meshPart(p: BuiltPart): PartMesh {
+    // An imported part nothing has changed since: reuse its mesh (copied, as the arrays are handed over to the app).
+    const key = p.meshKey && p.featureIds.length === 1 ? p.meshKey : null;
+    const cached = key ? importedMeshes.get(key) : undefined;
+    if (cached) {
+      return {
+        ...cached,
+        id: p.id,
+        name: p.name,
+        featureIds: [...p.featureIds],
+        vertices: cached.vertices.slice(),
+        normals: cached.normals.slice(),
+        triangles: cached.triangles.slice(),
+        lines: cached.lines.slice(),
+      };
+    }
+    const mesh = this.makePartMesh(p);
+    if (key) {
+      importedMeshes.set(key, { ...mesh, vertices: mesh.vertices.slice(), normals: mesh.normals.slice(), triangles: mesh.triangles.slice(), lines: mesh.lines.slice() });
+      while (importedMeshes.size > IMPORTED_MESH_CACHE) importedMeshes.delete(importedMeshes.keys().next().value as string);
+    }
+    return mesh;
+  }
+
+  private makePartMesh(p: BuiltPart): PartMesh {
     const faces = p.shape.mesh(MESH_TOLERANCES.display);
     const edges = p.shape.meshEdges(MESH_TOLERANCES.display);
     // Describe each face and edge so picks can be found again after the next rebuild.

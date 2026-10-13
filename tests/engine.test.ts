@@ -957,7 +957,10 @@ describe("importing STEP and STL files", () => {
     engine.rebuild([importFeature({ fileName: "ball.stl", format: "stl", data: btoa(b64), units: "mm" })]);
     const again = performance.now() - t2;
     expect(r.featureErrors).toEqual({});
-    expect(`TEMP ${out.triangleCount} triangles: first ${Math.round(first)} ms, rebuild ${Math.round(again)} ms`).toBe("");
+    expect(out.triangleCount).toBeGreaterThan(20_000);
+    // Generous limits for slow CI machines; rebuilding reuses the part and its mesh.
+    expect(first).toBeLessThan(60_000);
+    expect(again).toBeLessThan(2_000);
   });
 
   it("explains a damaged file", () => {
