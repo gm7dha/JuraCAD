@@ -133,6 +133,21 @@ function findPickedFaces(shape: Shape3D, picks: TopoPick[]): Face[] {
   return chosen;
 }
 
+/** True when `after` has less volume than `before` and fits inside its bounding box. */
+function shrankWithin(before: Shape3D, after: Shape3D): boolean {
+  try {
+    const v0 = measureVolume(before);
+    const v1 = measureVolume(after);
+    if (!(v1 > 1e-6 && v1 < v0 - 1e-6)) return false;
+    const [a0, a1] = boundsOf(before);
+    const [b0, b1] = boundsOf(after);
+    const tol = 1e-3 + 1e-6 * Math.hypot(a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]);
+    return [0, 1, 2].every((i) => b0[i] >= a0[i] - tol && b1[i] <= a1[i] + tol);
+  } catch {
+    return false;
+  }
+}
+
 /** True when the shape is at least one solid and passes OpenCascade's own check. */
 function isValidSolid(shape: Shape3D): boolean {
   try {
@@ -297,7 +312,9 @@ export class GeometryEngine {
     } finally {
       faces.forEach((f) => f.delete());
     }
-    if (!isValidSolid(shape)) {
+    // A hollowed part must be valid, lighter than before, and no bigger than before. (With walls
+    // thicker than the part, OpenCascade can "succeed" with a strange inside-out solid.)
+    if (!isValidSolid(shape) || !shrankWithin(part.shape, shape)) {
       shape.delete();
       return failed;
     }
