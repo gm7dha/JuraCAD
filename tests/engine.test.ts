@@ -10,8 +10,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { analyzeMesh } from "../src/geometry/meshCheck";
 import type { TopoPick } from "../src/geometry/topoRef";
 import { readBinaryStl } from "../src/geometry/stl";
-import { GeometryEngine, meshTimings } from "../src/kernel/engine";
-import { lastStlTimings } from "../src/kernel/importer";
+import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
 import { defaultAxis } from "../src/sketch/axis";
@@ -933,7 +932,6 @@ describe("importing STEP and STL files", () => {
 
     build([feature("sphere", { diameter: 40 })]);
     const stl = new Uint8Array(engine.exportStl([], "coarse").stl);
-    const triangles = engine.exportStl([], "coarse").triangleCount;
     engine.dispose();
     let b64 = "";
     for (const x of stl) b64 += String.fromCharCode(x);
@@ -941,38 +939,25 @@ describe("importing STEP and STL files", () => {
     r = build([importFeature({ fileName: "ball.stl", format: "stl", data: btoa(b64), units: "mm" })]);
     const ms = performance.now() - started;
     expect(r.featureErrors).toEqual({});
-    {
-      const shape = (engine as unknown as { parts: { shape: import("replicad").Shape3D }[] }).parts[0].shape;
-      const tm: Record<string, number> = {};
-      const time = (k: string, fn: () => unknown) => {
-        const t = performance.now();
-        fn();
-        tm[k] = (tm[k] ?? 0) + performance.now() - t;
-      };
-      let faces: import("replicad").Face[] = [];
-      let edges: import("replicad").Edge[] = [];
-      time("listFaces", () => (faces = shape.faces));
-      time("listEdges", () => (edges = shape.edges));
-      time("hash", () => faces.forEach((f) => f.hashCode));
-      for (const f of faces.slice(0, 500)) {
-        let c: import("replicad").Vector | undefined;
-        time("center", () => (c = f.center));
-        time("normalAt", () => f.normalAt(c!).delete());
-        time("geomType", () => f.geomType);
-        c!.delete();
-      }
-      for (const e of edges.slice(0, 500)) {
-        time("pointAt", () => e.pointAt(0.5).delete());
-        time("startEnd", () => (e.startPoint.delete(), e.endPoint.delete()));
-        time("edgeType", () => e.geomType);
-      }
-      tm.faceCount = faces.length;
-      tm.edgeCount = edges.length;
-      expect(`TEMP2 ${JSON.stringify(tm)}`).toBe("");
-    }
-    expect(`TEMP imported a ${triangles}-triangle STL in ${Math.round(ms)} ms ${JSON.stringify(lastStlTimings)} ${JSON.stringify(meshTimings)}`).toBe("");
-    expect(ms).toBeLessThan(20_000);
+    expect(ms).toBeLessThan(3000);
     expect(relativeError(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume, (4 / 3) * Math.PI * 8000)).toBeLessThan(0.05);
+  });
+
+  it("copes with a detailed STL", () => {
+    build([feature("sphere", { diameter: 40 })]);
+    const out = engine.exportStl([], "fine");
+    engine.dispose();
+    const stl = new Uint8Array(out.stl);
+    let b64 = "";
+    for (const x of stl) b64 += String.fromCharCode(x);
+    const started = performance.now();
+    const r = build([importFeature({ fileName: "ball.stl", format: "stl", data: btoa(b64), units: "mm" })]);
+    const first = performance.now() - started;
+    const t2 = performance.now();
+    engine.rebuild([importFeature({ fileName: "ball.stl", format: "stl", data: btoa(b64), units: "mm" })]);
+    const again = performance.now() - t2;
+    expect(r.featureErrors).toEqual({});
+    expect(`TEMP ${out.triangleCount} triangles: first ${Math.round(first)} ms, rebuild ${Math.round(again)} ms`).toBe("");
   });
 
   it("explains a damaged file", () => {

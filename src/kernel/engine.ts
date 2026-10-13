@@ -20,6 +20,7 @@ import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep } from "./stepExport";
 import { importSolids } from "./importer";
+import { edgesOf, facesOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 interface BuiltPart {
@@ -28,9 +29,6 @@ interface BuiltPart {
   featureIds: string[];
   shape: Shape3D;
 }
-
-/** How long the last part's display mesh took, by stage (for tests). */
-export let meshTimings: Record<string, number> = {};
 
 /** Turn whatever OpenCascade threw into a readable sentence. */
 export function describeError(e: unknown, fallback: string): string {
@@ -96,8 +94,8 @@ function boundsOf(shape: Shape3D): Bounds {
  * now. Throws a friendly error if some can't be found.
  */
 function findPickedEdges(shape: Shape3D, picks: TopoPick[]): Edge[] {
-  const edges = shape.edges;
-  const faces = shape.faces;
+  const edges = edgesOf(shape);
+  const faces = facesOf(shape);
   const bounds = boundsOf(shape);
   const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
   const edgePicks = picks.filter((p) => p.ref.kind === "edge").map((p) => p.ref);
@@ -114,7 +112,7 @@ function findPickedEdges(shape: Shape3D, picks: TopoPick[]): Edge[] {
   }
   const chosen: Edge[] = edgeMatch.map((i) => edges[i!]);
   for (const i of faceMatch) {
-    for (const e of faces[i!].edges) {
+    for (const e of edgesOf(faces[i!])) {
       if (chosen.some((c) => c.isSame(e))) e.delete();
       else chosen.push(e);
     }
@@ -126,7 +124,7 @@ function findPickedEdges(shape: Shape3D, picks: TopoPick[]): Edge[] {
 
 /** Find the picked faces on a part as it is now. Throws a friendly error if some can't be found. */
 function findPickedFaces(shape: Shape3D, picks: TopoPick[]): Face[] {
-  const faces = shape.faces;
+  const faces = facesOf(shape);
   const bounds = boundsOf(shape);
   const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
   const match = matchRefs(
@@ -162,7 +160,7 @@ function shrankWithin(before: Shape3D, after: Shape3D): boolean {
 /** True when the shape is at least one solid and passes OpenCascade's own check. */
 function isValidSolid(shape: Shape3D): boolean {
   try {
-    const solids = shape.solids;
+    const solids = solidsOf(shape);
     const count = solids.length;
     solids.forEach((x) => x.delete());
     if (count === 0) return false;
@@ -351,7 +349,7 @@ export class GeometryEngine {
       if (feature.operation === "new" && feature.type === "import") {
         // A STEP file may hold several parts: each solid becomes its own part.
         this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
-        const solids = tool.solids as Shape3D[];
+        const solids = solidsOf(tool);
         solids.forEach((solid, i) => {
           partCounter++;
           const id = i === 0 ? feature.id : `${feature.id}~${i + 1}`;
@@ -370,7 +368,7 @@ export class GeometryEngine {
 
       try {
         const result = feature.operation === "add" ? target.shape.fuse(tool) : target.shape.cut(tool);
-        if (result.solids.length === 0) {
+        if (solidsOf(result).length === 0) {
           result.delete();
           throw new Error("This would remove the whole part.");
         }
@@ -388,9 +386,7 @@ export class GeometryEngine {
       }
     }
 
-    const TB = performance.now();
     const parts = this.parts.map((p) => this.meshPart(p));
-    meshTimings.build = TB - started;
     return { parts, featureErrors, durationMs: Math.round(performance.now() - started) };
   }
 
@@ -499,7 +495,7 @@ export class GeometryEngine {
             copy.delete();
           }
         }
-        if (shape.solids.length === 0) {
+        if (solidsOf(shape).length === 0) {
           shape.delete();
           working.delete(part.id);
           release();
@@ -687,7 +683,7 @@ export class GeometryEngine {
       const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
       const item = describePick(pick.ref);
       if (pick.ref.kind === "edge") {
-        const edges = part.shape.edges;
+        const edges = edgesOf(part.shape);
         const [i] = matchRefs([pick.ref], edges.map((e) => edgeRefOf(e, bounds)), size);
         if (i === null) continue;
         const edge = edges[i];
@@ -699,7 +695,7 @@ export class GeometryEngine {
         }
         found.push({ item, shape: edge });
       } else {
-        const faces = part.shape.faces;
+        const faces = facesOf(part.shape);
         const [i] = matchRefs([pick.ref], faces.map((f) => faceRefOf(f, bounds)), size);
         if (i === null) continue;
         const face = faces[i];
@@ -707,7 +703,7 @@ export class GeometryEngine {
         item.area = measureArea(face);
         if (pick.ref.surface === "CYLINDRE") {
           // A round face's size comes from one of its round edges.
-          for (const e of face.edges) {
+          for (const e of edgesOf(face)) {
             if (!item.radius && e.geomType === "CIRCLE") {
               const c = circleThrough3D(take(e.pointAt(0)), take(e.pointAt(1 / 3)), take(e.pointAt(2 / 3)));
               if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
@@ -769,17 +765,14 @@ export class GeometryEngine {
   }
 
   private meshPart(p: BuiltPart): PartMesh {
-    const T0 = performance.now();
     const faces = p.shape.mesh(MESH_TOLERANCES.display);
-    const T1 = performance.now();
     const edges = p.shape.meshEdges(MESH_TOLERANCES.display);
-    const T2 = performance.now();
     // Describe each face and edge so picks can be found again after the next rebuild.
     const bounds = boundsOf(p.shape);
     const faceById = new Map<number, Face[]>();
-    for (const f of p.shape.faces) faceById.set(f.hashCode, [...(faceById.get(f.hashCode) ?? []), f]);
+    for (const f of facesOf(p.shape)) faceById.set(f.hashCode, [...(faceById.get(f.hashCode) ?? []), f]);
     const edgeById = new Map<number, Edge[]>();
-    for (const e of p.shape.edges) edgeById.set(e.hashCode, [...(edgeById.get(e.hashCode) ?? []), e]);
+    for (const e of edgesOf(p.shape)) edgeById.set(e.hashCode, [...(edgeById.get(e.hashCode) ?? []), e]);
     const unknownFace: FaceRef = { kind: "face", surface: "UNKNOWN", center: [0, 0, 0], normal: [0, 0, 0] };
     const unknownEdge: EdgeRef = { kind: "edge", curve: "UNKNOWN", a: [0, 0, 0], b: [0, 0, 0], mid: [0, 0, 0] };
     const faceRefs = faces.faceGroups.map((g) => {
@@ -797,7 +790,6 @@ export class GeometryEngine {
       return ref;
     });
     for (const list of [...faceById.values(), ...edgeById.values()]) list.forEach((x) => x.delete());
-    meshTimings = { mesh: T1 - T0, edges: T2 - T1, refs: performance.now() - T2 };
     return {
       id: p.id,
       name: p.name,
