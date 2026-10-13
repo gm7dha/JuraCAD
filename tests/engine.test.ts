@@ -941,7 +941,7 @@ describe("importing STEP and STL files", () => {
     r = build([importFeature({ fileName: "ball.stl", format: "stl", data: btoa(b64), units: "mm" })]);
     const ms = performance.now() - started;
     expect(r.featureErrors).toEqual({});
-    console.log(`::notice title=STL import timing::imported a ${triangles}-triangle STL in ${Math.round(ms)} ms ${JSON.stringify(lastStlTimings)}`);
+    expect(`TEMP imported a ${triangles}-triangle STL in ${Math.round(ms)} ms ${JSON.stringify(lastStlTimings)}`).toBe("");
     expect(ms).toBeLessThan(20_000);
     expect(relativeError(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume, (4 / 3) * Math.PI * 8000)).toBeLessThan(0.05);
   });
