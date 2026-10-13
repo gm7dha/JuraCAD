@@ -540,7 +540,7 @@ describe("STEP export", () => {
     expect(text).toMatch(/SI_UNIT\(\.MILLI\.,\.METRE\.\)/);
     const { importSTEP, measureVolume: volumeOf } = await import("replicad");
     const back = await importSTEP(new Blob([step]));
-    expect(volumeOf(back)).toBeCloseTo(30 * 20 * 10 - Math.PI * 16 * 10, 2);
+    expect(volumeOf(back as Parameters<typeof volumeOf>[0])).toBeCloseTo(30 * 20 * 10 - Math.PI * 16 * 10, 2);
   });
 
   it("refuses to export an empty model", async () => {
