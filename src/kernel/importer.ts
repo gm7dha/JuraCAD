@@ -107,11 +107,26 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
     for (let t = 0; t < triangles.length; t += 3) {
       const [a, b, c] = [triangles[t], triangles[t + 1], triangles[t + 2]];
       const wire = assembleWire([edge(a, b), edge(b, c), edge(c, a)]);
+      let face: Face;
       try {
-        faces.push(makeFace(wire));
+        face = makeFace(wire);
       } finally {
         wire.delete();
       }
+      // Make the face point the way the triangle does (outwards), whichever way OpenCascade chose.
+      const [pa, pb, pc] = [point(a), point(b), point(c)];
+      const u = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+      const v = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+      const want = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const n = face.normalAt();
+      const dot = n.x * want[0] + n.y * want[1] + n.z * want[2];
+      n.delete();
+      if (dot < 0) {
+        const flipped = cast(face.wrapped.Reversed()) as Face;
+        face.delete();
+        face = flipped;
+      }
+      faces.push(face);
     }
     const t1 = performance.now();
     // The triangles already share their edges, so they can go straight into one shell.
