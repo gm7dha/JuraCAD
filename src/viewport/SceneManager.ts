@@ -56,11 +56,21 @@ interface PartObjects {
 }
 
 /** What's under the pointer: a face/edge of a part, or one of the default planes. */
-export type PickTarget = { kind: "part"; item: SelectionItem } | { kind: "plane"; plane: PlaneName };
+export type PickTarget = { kind: "part"; item: SelectionItem; point?: [number, number, number] } | { kind: "plane"; plane: PlaneName };
+
+/** A line from the eye through a point on the screen (world coordinates). */
+export interface ScreenRay {
+  origin: [number, number, number];
+  dir: [number, number, number];
+}
 
 export interface SceneCallbacks {
   /** Called when the user clicks in the viewport. `additive` is true with Shift/Ctrl/Cmd held. */
   onPick: (target: PickTarget | null, additive: boolean) => void;
+  /** Left-drag that began on a part (only while dragging is switched on). Return false to ignore it. */
+  onDragStart?: (target: PickTarget & { kind: "part" }, ray: ScreenRay, shift: boolean) => boolean;
+  onDragMove?: (ray: ScreenRay) => void;
+  onDragEnd?: () => void;
 }
 
 interface PlaneObjects {
@@ -125,6 +135,9 @@ export class SceneManager {
   private planeSize = 100;
   private frame = 0;
   private pointerDown: { x: number; y: number; button: number } | null = null;
+  /** Dragging parts with the left button (assemblies). */
+  private dragEnabled = false;
+  private drag: { target: PickTarget & { kind: "part" }; started: boolean; refused: boolean } | null = null;
   private pendingMove: { x: number; y: number } | null = null;
   private animation: {
     start: number;
@@ -307,6 +320,19 @@ export class SceneManager {
   /** Ids of the parts (or assembly instances) on show, and what their faces look like. */
   shownParts(): { id: string; faceRefs: PartMesh["faceRefs"] }[] {
     return [...this.parts.values()].map((p) => ({ id: p.data.id, faceRefs: p.data.faceRefs }));
+  }
+
+  /** Let left-drags on parts move them (assemblies). */
+  setDragEnabled(on: boolean): void {
+    this.dragEnabled = on;
+    if (!on) this.drag = null;
+  }
+
+  private rayAt(x: number, y: number): ScreenRay {
+    const ndc = new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const r = this.raycaster.ray;
+    return { origin: r.origin.toArray() as [number, number, number], dir: r.direction.clone().normalize().toArray() as [number, number, number] };
   }
 
   /** Show mate connectors: each an origin with X and Z directions (world coordinates). */
@@ -799,14 +825,14 @@ export class SceneManager {
       const groups = this.parts.get(partId)?.data.edgeGroups ?? [];
       const vertex = edgeHit.index ?? -1;
       const index = groups.findIndex((g) => vertex >= g.start && vertex < g.start + g.count);
-      if (index >= 0) return { kind: "part", item: { partId, kind: "edge", index } };
+      if (index >= 0) return { kind: "part", item: { partId, kind: "edge", index }, point: edgeHit.point.toArray() as [number, number, number] };
     }
     if (faceHit && faceHit.faceIndex !== undefined && faceHit.faceIndex !== null) {
       const partId = faceHit.object.userData.partId as string;
       const groups = this.parts.get(partId)?.data.faceGroups ?? [];
       const triIndex = faceHit.faceIndex * 3;
       const index = groups.findIndex((g) => triIndex >= g.start && triIndex < g.start + g.count);
-      if (index >= 0) return { kind: "part", item: { partId, kind: "face", index } };
+      if (index >= 0) return { kind: "part", item: { partId, kind: "face", index }, point: faceHit.point.toArray() as [number, number, number] };
     }
 
     // Nothing on a part: try the default planes (nearest first).
@@ -842,6 +868,10 @@ export class SceneManager {
         this.sketchController.pointerDown(ptr);
       }
     }
+    if (this.dragEnabled && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
+      const hit = this.pickAt(x, y);
+      this.drag = hit?.kind === "part" ? { target: hit, started: false, refused: false } : null;
+    }
     if (e.button === 2) {
       // Ctrl + right-drag pans, as in Onshape (⌘ + right-drag too, for Macs).
       this.controls.mouseButtons.RIGHT = e.ctrlKey || e.metaKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
@@ -854,6 +884,20 @@ export class SceneManager {
       const leftDown = (e.buttons & 1) === 1;
       if (ptr && (leftDown || e.buttons === 0)) this.sketchController.pointerMove(ptr, leftDown);
       if (e.buttons === 0) this.pendingMove = this.localPoint(e); // view cube hover
+      return;
+    }
+    if (this.drag && this.pointerDown && (e.buttons & 1) === 1) {
+      const { x, y } = this.localPoint(e);
+      const d = this.drag;
+      if (!d.started && !d.refused && Math.hypot(x - this.pointerDown.x, y - this.pointerDown.y) > CLICK_SLOP) {
+        d.started = this.callbacks.onDragStart?.(d.target, this.rayAt(x, y), e.shiftKey) ?? false;
+        d.refused = !d.started;
+        if (d.started) {
+          this.renderer.domElement.setPointerCapture(e.pointerId);
+          this.renderer.domElement.style.cursor = "grabbing";
+        }
+      }
+      if (d.started) this.callbacks.onDragMove?.(this.rayAt(x, y));
       return;
     }
     if (e.buttons !== 0) return; // dragging: no hover updates
@@ -878,6 +922,14 @@ export class SceneManager {
   private onPointerUp = (e: PointerEvent) => {
     const down = this.pointerDown;
     this.pointerDown = null;
+    const drag = this.drag;
+    this.drag = null;
+    if (drag?.started) {
+      if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+      this.renderer.domElement.style.cursor = "";
+      this.callbacks.onDragEnd?.();
+      return;
+    }
     if (!down || down.button !== 0 || e.button !== 0) return;
     const { x, y } = this.localPoint(e);
     const overCube = this.viewCube.contains(down.x, down.y, this.width);

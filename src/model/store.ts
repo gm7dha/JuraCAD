@@ -27,6 +27,7 @@ import { defaultAxis } from "../sketch/axis";
 import type { Assembly, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateType, PartSmithDocument } from "./types";
 import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
+import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
 
@@ -143,6 +144,8 @@ export interface AppState {
   hiddenInstances: string[];
   /** The mate dialog, while open. */
   mateDraft: { mode: "create" | "edit"; mate: MateDraft } | null;
+  /** What a mouse drag in an assembly is changing, while the button is held. */
+  dragPreview: DragChange | null;
   /** The design as last saved to (or opened from) a file; compare with history.present to see unsaved changes. */
   savedDoc: PartSmithDocument | null;
   /** Name of that file, e.g. "Bracket.partsmith". */
@@ -213,6 +216,9 @@ export interface AppState {
   cancelMateDraft: () => void;
   deleteMate: (id: string) => void;
   toggleMateSuppressed: (id: string) => void;
+  setDragPreview: (change: DragChange | null) => void;
+  /** Keep what the drag did (one undo step). */
+  commitDrag: () => void;
   undo: () => void;
   redo: () => void;
   selectFeature: (id: string | null) => void;
@@ -329,6 +335,7 @@ export const useStore = create<AppState>((set, get) => {
     asmSelection: [],
     hiddenInstances: [],
     mateDraft: null,
+    dragPreview: null,
 
     startCreate: (type) => {
       const s = get();
@@ -703,6 +710,25 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     cancelMateDraft: () => set({ mateDraft: null }),
+
+    setDragPreview: (dragPreview) => set({ dragPreview }),
+
+    commitDrag: () => {
+      const s = get();
+      const asm = activeAssembly(s);
+      const d = s.dragPreview;
+      set({ dragPreview: null });
+      if (!asm || !d) return;
+      if (d.kind === "instance") {
+        change((doc) => updateInstance(doc, asm.id, d.id, { placement: d.placement }));
+        return;
+      }
+      const mate = asm.mates?.find((m) => m.id === d.id);
+      if (!mate) return;
+      const moved = withDragChange(asm, d);
+      const { placements } = solveWithParts(moved, s.parts);
+      change((doc) => settlePlacements(putMate(doc, asm.id, { ...mate, values: d.values }), asm.id, placements));
+    },
 
     deleteMate: (id) => {
       const s = get();

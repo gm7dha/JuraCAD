@@ -494,6 +494,26 @@ try {
   await page.keyboard.press("f");
   await page.waitForTimeout(600);
   await shot("mated");
+
+  step = "dragging a part with the mouse";
+  await page.locator(".feature-row >> text=Part 1 <1>").click();
+  await page.getByRole("button", { name: "Unfix", exact: true }).click();
+  const xBefore = await page.getByLabel("X (red)", { exact: true }).inputValue();
+  await page.keyboard.press("Escape");
+  const grabAt = await page.evaluate(() => {
+    const v = window.partsmithViewport.current;
+    const p = v.shownParts()[0];
+    return v.screenPointOnFace(p.id, p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99));
+  });
+  const cb = await canvas.boundingBox();
+  await page.mouse.move(cb.x + grabAt.x, cb.y + grabAt.y);
+  await page.mouse.down();
+  await page.mouse.move(cb.x + grabAt.x - 40, cb.y + grabAt.y + 25, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForSelector(".instance-panel");
+  const xAfter = await page.getByLabel("X (red)", { exact: true }).inputValue();
+  if (xAfter === xBefore) throw new Error(`dragging didn't move the part (X stayed ${xBefore})`);
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
   await page.waitForSelector('[aria-label="Tools"]');
 
@@ -503,7 +523,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
