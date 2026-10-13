@@ -14,6 +14,8 @@ import { preview } from "vite";
 
 const inCI = process.env.GITHUB_ACTIONS === "true";
 const wantShots = process.env.SMOKE_SCREENSHOTS === "1";
+// GitHub keeps only 50 annotations per job (about 12 screenshots), so SMOKE_SHOW can name just the ones wanted.
+const showOnly = (process.env.SMOKE_SHOW ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 const shotDir = "smoke-screenshots";
 mkdirSync(shotDir, { recursive: true });
 
@@ -42,7 +44,7 @@ async function shot(name) {
   const base = `${shotDir}/${shotNumber}-${name}`;
   const buffer = await page.screenshot({ type: "jpeg", quality: 70 });
   writeFileSync(`${base}.jpg`, buffer);
-  if (wantShots) {
+  if (wantShots && (showOnly.length === 0 || showOnly.includes(name) || name === "failure")) {
     // A small copy, sent back as annotations by the next CI steps.
     const small = await page.evaluate(async (b64) => {
       const img = new Image();

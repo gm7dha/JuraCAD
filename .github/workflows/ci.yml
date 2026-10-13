@@ -57,6 +57,7 @@ jobs:
         env:
           # Set to "1" to attach small screenshots as annotations for review.
           SMOKE_SCREENSHOTS: "1"
+          SMOKE_SHOW: "imported,assembly"
         run: npm run smoke
 
       - name: Attach screenshot 1
