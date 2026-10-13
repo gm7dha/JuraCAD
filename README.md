@@ -31,6 +31,8 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 - **Variables**: name a size (e.g. `wall = 2`) and type the name into any box or sketch dimension (`wall * 2`).
   Change it once and the whole design updates.
 - Edit any feature later (double-click it), suppress it, rename it, or delete it. Full undo/redo.
+- **Measure**: select an edge or face to see its length, diameter or area; select two for the gap, angle and
+  centre-to-centre spacing (great for checking hole positions).
 - **Check model** — confirms each part is closed and watertight, valid and in one piece, finds its thinnest wall,
   and spots separate parts that overlap.
 - **Install it as an app** (Chrome/Edge: the Install app button) so it opens in its own window and works offline;
