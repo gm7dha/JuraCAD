@@ -90,7 +90,7 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
       return [solid];
     } catch (e) {
       if (e instanceof Error && /couldn't be read/.test(e.message)) throw e;
-      throw new Error("The STL file couldn't be turned into a solid. Check it's a closed (watertight) shape.");
+      throw new Error(`The STL file couldn't be turned into a solid. Check it's a closed (watertight) shape. [${e instanceof Error ? e.message : typeof e === "number" ? "code " + e : String(e)}]`);
     } finally {
       for (const g of garbage.reverse()) {
         try {
