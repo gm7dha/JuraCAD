@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
-import { describeParamErrors, FEATURE_DEFS, isPickFeature, OPERATION_LABELS } from "../model/features";
+import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
 import { useDocument, useStore, type DatumName, type PlaneName } from "../model/store";
 import type { Feature, FeatureType } from "../model/types";
 import { viewportApi } from "../viewport/Viewport";
@@ -15,6 +15,9 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   revolve: Icons.Revolve,
   shell: Icons.Shell,
   fillet: Icons.Fillet,
+  mirror: Icons.Mirror,
+  linearPattern: Icons.LinearPattern,
+  circularPattern: Icons.CircularPattern,
   chamfer: Icons.Chamfer,
 };
 
@@ -110,6 +113,7 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
         if (!plane || hidden) return;
         const st = useStore.getState();
         if (st.sketch && st.editing?.draft.sketch && !st.editing.draft.sketch.plane) st.setSketchPlane({ kind: "default", name: plane });
+        else if (st.editing?.draft.type === "mirror") st.setDraftMirrorPlane({ kind: "default", name: plane });
         else selectPlane(selected ? null : plane);
       }}
       onDoubleClick={() => plane && viewportApi.current?.viewNormalToPlane(plane)}
@@ -140,7 +144,12 @@ function FeatureRow({ feature, onMenu }: { feature: Feature; onMenu: (e: ReactMo
   const renameFeature = useStore((s) => s.renameFeature);
   const Icon = TYPE_ICONS[feature.type];
   const error = kernelError ?? describeParamErrors(feature);
-  const op = feature.operation === "new" || feature.type === "sketch" || isPickFeature(feature.type) ? "" : ` (${OPERATION_LABELS[feature.operation]})`;
+  const isSource = useStore((s) => {
+    const d = s.editing?.draft;
+    return !!d && ((d.mirror?.sources ?? d.pattern?.sources ?? []) as string[]).includes(feature.id);
+  });
+  const op =
+    feature.operation === "new" || feature.type === "sketch" || isPickFeature(feature.type) || isPatternFeature(feature.type) ? "" : ` (${OPERATION_LABELS[feature.operation]})`;
 
   const entries: MenuEntry[] = [
     { label: "Edit…", action: () => startEdit(feature.id) },
@@ -164,10 +173,21 @@ function FeatureRow({ feature, onMenu }: { feature: Feature; onMenu: (e: ReactMo
         editing && "editing",
         error && !feature.suppressed && "failed",
         feature.suppressed && "suppressed",
+        isSource && "source",
       ]
         .filter(Boolean)
         .join(" ")}
-      onClick={() => selectFeature(feature.id)}
+      onClick={() => {
+        // While a mirror or pattern is open, clicking a feature adds it to (or removes it from) what's repeated.
+        const st = useStore.getState();
+        const d = st.editing?.draft;
+        if (d && isPatternFeature(d.type) && d.id !== feature.id) {
+          if (isSolidFeature(feature.type)) st.toggleDraftSource(feature.id);
+          else st.showToast(`${feature.name} doesn't add or cut a solid, so it can't be ${d.type === "mirror" ? "mirrored" : "patterned"}.`);
+          return;
+        }
+        selectFeature(feature.id);
+      }}
       onDoubleClick={() => startEdit(feature.id)}
       onContextMenu={(e) => onMenu(e, entries)}
       title={

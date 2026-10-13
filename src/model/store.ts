@@ -19,7 +19,7 @@ import {
 import { sameRef, type TopoPick } from "../geometry/topoRef";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
-import { isPickFeature, isSketchSolid, resolveParams } from "./features";
+import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
 import type { Feature, FeatureType, PartSmithDocument } from "./types";
 
@@ -104,9 +104,13 @@ export interface AppState {
   startCreate: (type: FeatureType) => void;
   startEdit: (id: string) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
+  /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
+  toggleDraftSource: (featureId: string) => void;
+  /** Mirror: the plane to mirror across. */
+  setDraftMirrorPlane: (plane: SketchPlane) => void;
   /** Open a new sketch (plane may be chosen later). */
   startSketch: (plane: SketchPlane | null) => void;
   setSketchPlane: (plane: SketchPlane) => void;
@@ -215,6 +219,14 @@ export const useStore = create<AppState>((set, get) => {
         if (picked) {
           draft.sketchRef = picked.id;
           if (type === "revolve" && picked.sketch) draft.revolve = { axis: defaultAxis(picked.sketch.data), flip: false };
+        }
+      }
+      // Mirror and patterns start with the feature highlighted in the list, if it makes a solid.
+      if (isPatternFeature(type)) {
+        const picked = s.history.present.features.find((f) => f.id === s.selectedFeatureId && isSolidFeature(f.type));
+        if (picked) {
+          if (draft.mirror) draft.mirror = { ...draft.mirror, sources: [picked.id] };
+          if (draft.pattern) draft.pattern = { ...draft.pattern, sources: [picked.id] };
         }
       }
       // Fillet, chamfer and shell start with whatever is selected (faces only, for shell).
@@ -338,6 +350,21 @@ export const useStore = create<AppState>((set, get) => {
         const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, pick];
         return { editing: { ...s.editing, draft: { ...s.editing.draft, picks: next } } };
       }),
+
+    toggleDraftSource: (featureId) =>
+      set((s) => {
+        if (!s.editing) return {};
+        const d = s.editing.draft;
+        const toggle = (list: string[]) => (list.includes(featureId) ? list.filter((x) => x !== featureId) : [...list, featureId]);
+        if (d.mirror) return { editing: { ...s.editing, draft: { ...d, mirror: { ...d.mirror, sources: toggle(d.mirror.sources) } } } };
+        if (d.pattern) return { editing: { ...s.editing, draft: { ...d, pattern: { ...d.pattern, sources: toggle(d.pattern.sources) } } } };
+        return {};
+      }),
+
+    setDraftMirrorPlane: (plane) =>
+      set((s) =>
+        s.editing?.draft.mirror ? { editing: { ...s.editing, draft: { ...s.editing.draft, mirror: { ...s.editing.draft.mirror, plane } } } } : {},
+      ),
 
     commitDraft: () => {
       const { editing } = get();

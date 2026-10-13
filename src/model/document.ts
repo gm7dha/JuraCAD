@@ -2,7 +2,7 @@ import { parsePick } from "../geometry/topoRef";
 import { parsePlane, parseSketchData } from "../sketch/validate";
 import { defaultAxis } from "../sketch/axis";
 import { emptySketch } from "../sketch/types";
-import { FEATURE_DEFS, defaultParams } from "./features";
+import { FEATURE_DEFS, defaultParams, isSolidFeature } from "./features";
 import type { Feature, FeatureType, Operation, PartSmithDocument } from "./types";
 
 /**
@@ -51,6 +51,13 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     // Like Onshape: the first solid is a new part, later extrudes add to it.
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
+  }
+  if (type === "mirror" || type === "linearPattern" || type === "circularPattern") {
+    feature.operation = "add";
+    const solids = doc.features.filter((f) => isSolidFeature(f.type) && !f.suppressed);
+    const sources = solids.length ? [solids[solids.length - 1].id] : [];
+    if (type === "mirror") feature.mirror = { sources, plane: { kind: "default", name: "Right" } };
+    else feature.pattern = { sources, axis: type === "circularPattern" ? "z" : "x", flip: false };
   }
   if (type === "fillet" || type === "chamfer" || type === "shell") {
     feature.operation = "add";
@@ -171,6 +178,16 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const ex = f.extrude as Record<string, unknown> | undefined;
       feature.extrude = { end: ex?.end === "symmetric" ? "symmetric" : "blind", flip: ex?.flip === true };
+    }
+    const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+    if (feature.type === "linearPattern" || feature.type === "circularPattern") {
+      const pt = f.pattern as Record<string, unknown> | undefined;
+      const axis = pt?.axis === "y" || pt?.axis === "z" ? pt.axis : pt?.axis === "x" ? "x" : feature.type === "circularPattern" ? "z" : "x";
+      feature.pattern = { sources: ids(pt?.sources), axis, flip: pt?.flip === true };
+    }
+    if (feature.type === "mirror") {
+      const mr = f.mirror as Record<string, unknown> | undefined;
+      feature.mirror = { sources: ids(mr?.sources), plane: parsePlane(mr?.plane) ?? { kind: "default", name: "Right" } };
     }
     if (feature.type === "revolve") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;

@@ -18,6 +18,8 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
   cut from the latest part.
 - **Revolve** a sketch around a line for round parts (knobs, rings, bottles), all the way round or part way.
 - **Shell** a part to hollow it out, leaving walls of the thickness you choose.
+- **Mirror** features across a plane, and repeat them in a row (**Pattern**) or round a circle (**Circular**) —
+  for example a ring of bolt holes. Each copy adds or cuts just like the original.
 - **Fillet** (round) and **Chamfer** (bevel) edges: click edges, or a face to do all its edges. They keep
   working when you change the sizes of earlier features.
 - Add **Box**, **Cylinder** and **Sphere** solids, each as a **New** part or **Add**ed to / **Remove**d from the latest part.

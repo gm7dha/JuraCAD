@@ -10,8 +10,12 @@ export interface ParamDef {
   positive?: boolean;
   /** Grouping in the dialog. */
   group: "size" | "position";
-  /** Unit shown beside the box (millimetres unless it's an angle). */
-  unit?: "mm" | "°";
+  /** Unit shown beside the box (millimetres unless it's an angle or a count). */
+  unit?: "mm" | "°" | "";
+  /** Must be a whole number. */
+  integer?: boolean;
+  /** Smallest allowed value. */
+  min?: number;
 }
 
 export interface FeatureDef {
@@ -79,6 +83,33 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Hollows out a part, leaving walls of the thickness you choose.",
     params: [{ key: "thickness", label: "Wall thickness", defaultValue: "2", positive: true, group: "size" }],
   },
+  mirror: {
+    type: "mirror",
+    label: "Mirror",
+    namePrefix: "Mirror",
+    description: "Makes a mirror-image copy of features across a plane.",
+    params: [],
+  },
+  linearPattern: {
+    type: "linearPattern",
+    label: "Linear pattern",
+    namePrefix: "Linear pattern",
+    description: "Repeats features in a straight line, evenly spaced.",
+    params: [
+      { key: "count", label: "How many (including the original)", defaultValue: "3", positive: true, integer: true, min: 2, group: "size", unit: "" },
+      { key: "spacing", label: "Spacing", defaultValue: "20", positive: true, group: "size" },
+    ],
+  },
+  circularPattern: {
+    type: "circularPattern",
+    label: "Circular pattern",
+    namePrefix: "Circular pattern",
+    description: "Repeats features around an axis, evenly spaced.",
+    params: [
+      { key: "count", label: "How many (including the original)", defaultValue: "6", positive: true, integer: true, min: 2, group: "size", unit: "" },
+      { key: "angle", label: "Spread over", defaultValue: "360", positive: true, group: "size", unit: "°" },
+    ],
+  },
   fillet: {
     type: "fillet",
     label: "Fillet",
@@ -123,6 +154,16 @@ export function isPickFeature(type: FeatureType): type is "fillet" | "chamfer" |
   return type === "fillet" || type === "chamfer" || type === "shell";
 }
 
+/** Features that repeat earlier features (no New/Add/Remove of their own: each copy does what the original did). */
+export function isPatternFeature(type: FeatureType): type is "mirror" | "linearPattern" | "circularPattern" {
+  return type === "mirror" || type === "linearPattern" || type === "circularPattern";
+}
+
+/** Features that build a solid of their own, so they can be patterned or mirrored. */
+export function isSolidFeature(type: FeatureType): boolean {
+  return type === "box" || type === "cylinder" || type === "sphere" || type === "extrude" || type === "revolve";
+}
+
 /** Features made from a sketch (they have New/Add/Remove and a sketch to choose). */
 export function isSketchSolid(type: FeatureType): type is "extrude" | "revolve" {
   return type === "extrude" || type === "revolve";
@@ -148,6 +189,14 @@ export function resolveParams(feature: Pick<Feature, "type" | "params">): Resolv
     }
     if (p.positive && r.value <= 0) {
       errors[p.key] = `${p.label} must be more than 0`;
+      continue;
+    }
+    if (p.integer && !Number.isInteger(r.value)) {
+      errors[p.key] = "Must be a whole number";
+      continue;
+    }
+    if (p.min !== undefined && r.value < p.min) {
+      errors[p.key] = `Must be at least ${p.min}`;
       continue;
     }
     values[p.key] = r.value;

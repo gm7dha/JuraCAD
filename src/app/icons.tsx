@@ -127,6 +127,27 @@ export const Icons = {
       <path d="M4 20V10l6-6h10" />
     </Svg>
   ),
+  Mirror: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M12 3v18" strokeDasharray="2 2" />
+      <path d="M9 7 4 17h5zM15 7l5 10h-5z" />
+    </Svg>
+  ),
+  LinearPattern: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="3" y="9" width="5" height="6" rx="1" />
+      <rect x="10" y="9" width="5" height="6" rx="1" />
+      <rect x="17" y="9" width="4" height="6" rx="1" strokeDasharray="2 1.5" />
+    </Svg>
+  ),
+  CircularPattern: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="7" strokeDasharray="2 2" />
+      <circle cx="12" cy="5" r="2" />
+      <circle cx="18.1" cy="15.5" r="2" />
+      <circle cx="5.9" cy="15.5" r="2" />
+    </Svg>
+  ),
   Shell: (p: IconProps) => (
     <Svg {...p}>
       <rect x="4" y="6" width="16" height="14" rx="1" />

@@ -312,13 +312,31 @@ try {
   await page.waitForTimeout(600);
   await shot("revolved");
 
+  step = "repeating the revolve with a linear pattern";
+  await page.getByRole("button", { name: "Pattern", exact: true }).click();
+  await page.waitForSelector(".feature-dialog .pick-list li", { timeout: 5_000 });
+  const patternSource = await page.locator(".feature-dialog .pick-list li").first().innerText();
+  await page.locator("#param-count").fill("2");
+  await page.locator("#param-spacing").fill("80");
+  await page.getByRole("button", { name: "Accept" }).click();
+  await page.waitForSelector(".feature-row:not(.datum) >> text=Linear pattern 1", { timeout: 10_000 });
+  await page.waitForTimeout(2_000);
+  const failedAfterPattern = await page.locator(".feature-row.failed").count();
+  if (failedAfterPattern > 0) {
+    const why = await page.locator(".feature-row.failed").first().getAttribute("title");
+    throw new Error(`the pattern failed: ${why}`);
+  }
+  await page.keyboard.press("f");
+  await page.waitForTimeout(600);
+  await shot("patterned");
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3.`,
+    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}".`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

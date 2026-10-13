@@ -3,7 +3,10 @@ import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern";
+
+/** A world axis, for patterns. */
+export type Axis = "x" | "y" | "z";
 
 /** How an extrude runs: one way from the sketch (optionally flipped), or equally both ways. */
 export type ExtrudeEnd = "blind" | "symmetric";
@@ -36,6 +39,10 @@ export interface Feature {
   extrude?: { end: ExtrudeEnd; flip: boolean };
   /** Revolve features: the line to spin around ("vertical"/"horizontal" sketch axes, or a sketch line id) and which way. */
   revolve?: { axis: string; flip: boolean };
+  /** Linear and circular patterns: the features to repeat, and along or around which axis. */
+  pattern?: { sources: string[]; axis: Axis; flip: boolean };
+  /** Mirror: the features to mirror, and the plane to mirror them across. */
+  mirror?: { sources: string[]; plane: SketchPlane };
   /** Fillet and chamfer: the edges (or faces, meaning all their edges) to round or bevel. Shell: the faces to remove. */
   picks?: TopoPick[];
 }

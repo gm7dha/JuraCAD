@@ -362,6 +362,11 @@ button:disabled {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+.feature-row.source {
+  background: #fff4e6;
+  box-shadow: inset 3px 0 0 #ff7a00;
+}
+
 .feature-row.draft {
   font-style: italic;
 }
@@ -1309,4 +1314,8 @@ kbd {
 .platform-row .segmented {
   width: 170px;
   margin: 0;
+}
+
+.field-note {
+  margin: 4px 0 0;
 }
