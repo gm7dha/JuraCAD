@@ -23,7 +23,9 @@ import { setCurrentScope } from "./expr";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Feature, FeatureType, ImportedFile, PartSmithDocument } from "./types";
+import type { Assembly, Feature, FeatureType, ImportedFile, Instance, PartSmithDocument } from "./types";
+import { addAssembly, insertInstance, removeAssembly, removeInstances, renameAssembly, updateInstance } from "../assembly/assembly";
+import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
 
 export interface SelectionItem {
