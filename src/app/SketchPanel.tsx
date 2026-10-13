@@ -11,6 +11,10 @@ export function SketchPanel() {
   const draft = useStore((s) => (s.editing?.draft.type === "sketch" ? s.editing.draft : null));
   const message = useStore((s) => s.sketch?.message ?? null);
   const selectionCount = useStore((s) => s.sketch?.selection.length ?? 0);
+  const tool = useStore((s) => s.sketch?.tool ?? "select");
+  const polygonSides = useStore((s) => s.sketch?.polygonSides ?? 6);
+  const filletRadius = useStore((s) => s.sketch?.filletRadius ?? "2");
+  const setSketchOptions = useStore((s) => s.setSketchOptions);
   const setDraftField = useStore((s) => s.setDraftField);
   const commitDraft = useStore((s) => s.commitDraft);
   const cancelDraft = useStore((s) => s.cancelDraft);
@@ -59,6 +63,25 @@ export function SketchPanel() {
         <div className="sketch-plane-row">
           <span className="muted">On</span> <strong>{plane ? planeLabel(plane) : "— choose a plane —"}</strong>
         </div>
+        {tool === "polygon" && (
+          <label className="tool-option">
+            Sides
+            <input
+              type="number"
+              min={3}
+              max={64}
+              value={polygonSides}
+              onChange={(e) => setSketchOptions({ polygonSides: Math.max(3, Math.min(64, Number(e.target.value) || 3)) })}
+            />
+          </label>
+        )}
+        {tool === "sketchFillet" && (
+          <label className="tool-option">
+            Radius
+            <input value={filletRadius} spellCheck={false} onChange={(e) => setSketchOptions({ filletRadius: e.target.value })} />
+            <span className="muted">mm</span>
+          </label>
+        )}
         {confirmCancel && (
           <div className="dialog-error" role="alert">
             Discard your changes to this sketch? Click ✕ again to discard, or keep sketching.

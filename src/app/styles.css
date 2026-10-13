@@ -1394,3 +1394,25 @@ kbd {
 .file-input {
   display: none;
 }
+
+.tool-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 6px 0;
+}
+
+.tool-option input {
+  width: 80px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 8px;
+  font: inherit;
+}
+
+.segmented.three {
+  grid-template-columns: repeat(3, 1fr);
+}

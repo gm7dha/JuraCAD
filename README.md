@@ -11,10 +11,11 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 
 ## What you can do today
 
-- **Sketch** on the Top, Front or Right plane, or on any flat face: lines, rectangles, circles, arcs and points.
+- **Sketch** on the Top, Front or Right plane, or on any flat face: lines, rectangles, circles, arcs, slots,
+  polygons and points; **round corners** and **trim** away pieces of lines.
   Add **dimensions** (double-click to change) and **constraints** (horizontal, vertical, parallel, perpendicular,
   equal, tangent, concentric, midpoint, fix). Blue = still free, black = fully defined.
-- **Extrude** a sketch's closed shapes (holes included) one way or symmetrically, as a new part or added to /
+- **Extrude** a sketch's closed shapes (holes included) one way, symmetrically or **through all**, as a new part or added to /
   cut from the latest part.
 - **Revolve** a sketch around a line for round parts (knobs, rings, bottles), all the way round or part way.
 - **Shell** a part to hollow it out, leaving walls of the thickness you choose.

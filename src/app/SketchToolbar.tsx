@@ -13,8 +13,12 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "rectangle", label: "Rectangle", key: "R", icon: <Icons.Rectangle />, hint: "Click two opposite corners" },
   { tool: "circle", label: "Circle", key: "C", icon: <Icons.Circle />, hint: "Click the centre, then a point on the edge" },
   { tool: "arc", label: "Arc", key: "A", icon: <Icons.Arc />, hint: "Click both ends, then a point the arc passes through" },
+  { tool: "slot", label: "Slot", key: "S", icon: <Icons.Slot />, hint: "Click both end centres, then move out to set the width" },
+  { tool: "polygon", label: "Polygon", key: "G", icon: <Icons.Polygon />, hint: "Click the centre, then a corner (set the number of sides in the sketch panel)" },
   { tool: "point", label: "Point", key: "P", icon: <Icons.Point />, hint: "Click to place a point" },
   { tool: "dimension", label: "Dimension", key: "D", icon: <Icons.Dimension />, hint: "Click a line or circle (or two things), then where the value goes" },
+  { tool: "sketchFillet", label: "Round", key: "", icon: <Icons.CornerRound />, hint: "Click a corner where two lines meet to round it (set the radius in the sketch panel)" },
+  { tool: "trim", label: "Trim", key: "T", icon: <Icons.Trim />, hint: "Click a piece of a line, arc or circle to cut it away up to where other lines cross it" },
 ];
 
 const RELATIONS: RelationTool[] = [
@@ -58,7 +62,7 @@ export function SketchToolbar() {
             active={tool === t.tool}
             disabled={!hasPlane}
             onClick={() => setSketchTool(t.tool)}
-            title={`${t.label} (${t.key}) — ${t.hint}`}
+            title={`${t.label}${t.key ? ` (${t.key})` : ""} — ${t.hint}`}
           />
         ))}
         <ToolBtn

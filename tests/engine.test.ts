@@ -656,3 +656,35 @@ describe("fuller model check", () => {
     expect(engine.check("normal").overlaps).toEqual([]);
   });
 });
+
+describe("extrude through all and the new sketch shapes", () => {
+  it("cuts a hole right through, whichever side the sketch is on", () => {
+    const block = feature("box", { width: 40, depth: 40, height: 25, z: -5 });
+    const sk = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 20, y: 20 }, 4).sketch);
+    const cut = { ...extrudeFeature(sk.id, 1, { operation: "remove" }), extrude: { end: "throughAll" as const, flip: false } };
+    const r = build([block, sk, cut]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(40 * 40 * 25 - Math.PI * 16 * 25, 1);
+
+    const add = { ...cut, operation: "add" as const };
+    expect(build([block, sk, add]).featureErrors[add.id]).toMatch(/only works with Remove/);
+  });
+
+  it("extrudes slots, polygons and rounded rectangles", async () => {
+    const { addSlot, addPolygon, filletCorner } = await import("../src/sketch/tools");
+    const slot = sketchFeature({ kind: "default", name: "Top" }, addSlot(emptySketch(), { x: 0, y: 0 }, { x: 30, y: 0 }, 5).sketch);
+    build([slot, extrudeFeature(slot.id, 2)]);
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo((30 * 10 + Math.PI * 25) * 2, 2);
+
+    const hex = sketchFeature({ kind: "default", name: "Top" }, addPolygon(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 0 }, 6).sketch);
+    build([hex, extrudeFeature(hex.id, 1)]);
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo((3 * Math.sqrt(3) / 2) * 100, 2);
+
+    const rect = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 40, y: 20 });
+    const corner = (rect.sketch.curves[0] as { p2: string }).p2;
+    const rounded = sketchFeature({ kind: "default", name: "Top" }, filletCorner(rect.sketch, corner, "5").sketch);
+    const r = build([rounded, extrudeFeature(rounded.id, 1)]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(800 - (25 - (Math.PI * 25) / 4), 2);
+  });
+});

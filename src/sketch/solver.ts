@@ -178,6 +178,27 @@ function buildSystem(sketch: SketchData): System {
           const [lineId, circId] = kind(a) === "line" ? [a, b] : [b, a];
           const [p, q] = lineEnds(lineId);
           const c = circular(circId);
+          // When the line ends on the arc (a slot, a rounded corner), "distance to the line = radius"
+          // gives the solver no sense of direction there, so use "line at right angles to the radius
+          // where they join" instead.
+          const line = sketch.curves.find((k) => k.id === lineId);
+          const arc = sketch.curves.find((k) => k.id === circId);
+          const joint =
+            line?.type === "line" && arc?.type === "arc"
+              ? [line.p1, line.p2].find((id) => id === arc.start || id === arc.end)
+              : undefined;
+          if (joint && line?.type === "line") {
+            const J = P(joint);
+            const other = P(joint === line.p1 ? line.p2 : line.p1);
+            return {
+              size: 1,
+              eval: (x, out) => {
+                const j = J(x), o = other(x), cc = c.centre(x);
+                const dx = o[0] - j[0], dy = o[1] - j[1];
+                out.push((dx * (j[0] - cc[0]) + dy * (j[1] - cc[1])) / (Math.hypot(dx, dy) || 1));
+              },
+            };
+          }
           return {
             size: 1,
             eval: (x, out) => {

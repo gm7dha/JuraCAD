@@ -62,6 +62,9 @@ function sketchShortcut(e: KeyboardEvent): boolean {
     a: "arc",
     p: "point",
     d: "dimension",
+    s: "slot",
+    g: "polygon",
+    t: "trim",
   };
   const key = e.key.toLowerCase();
   if (!s.editing?.draft.sketch?.plane) return false;
