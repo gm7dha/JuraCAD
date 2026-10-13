@@ -66,6 +66,8 @@ button:disabled {
 .app {
   display: grid;
   grid-template-rows: auto auto 1fr auto;
+  /* minmax(0, …) stops a long toolbar from stretching the whole page wider than the window */
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
 }
 
@@ -103,6 +105,8 @@ button:disabled {
   padding: 0 10px 0 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
+  min-width: 0;
+  overflow: hidden;
 }
 
 .brand {
@@ -119,8 +123,9 @@ button:disabled {
   border: 1px solid transparent;
   border-radius: var(--radius);
   padding: 5px 8px;
-  min-width: 120px;
+  min-width: 100px;
   width: 260px;
+  flex: 0 1 260px;
   background: transparent;
   font-weight: 500;
 }
@@ -216,6 +221,7 @@ button:disabled {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
+  min-width: 0;
 }
 
 .tool-group {
@@ -1068,6 +1074,34 @@ kbd {
 }
 
 /* ------------------------------------------------------------------ narrow screens */
+
+@media (max-width: 1400px) {
+  .tool-button {
+    min-width: 46px;
+    padding: 2px 3px;
+    font-size: 10.5px;
+  }
+  /* Constraint buttons show just their symbol; the name is in the tooltip. */
+  .relation-button {
+    min-width: 32px;
+  }
+  .relation-button > span:not(.relation-symbol) {
+    display: none;
+  }
+}
+
+@media (max-width: 1300px) {
+  .phase-badge {
+    display: none;
+  }
+}
+
+@media (max-width: 1000px) {
+  .topbar .button-label,
+  .save-state {
+    display: none;
+  }
+}
 
 @media (max-width: 860px) {
   .workspace {
