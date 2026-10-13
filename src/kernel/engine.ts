@@ -193,6 +193,9 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
     case "fillet":
     case "chamfer":
     case "shell":
+    case "mirror":
+    case "linearPattern":
+    case "circularPattern":
       throw new Error("This feature doesn't make a solid of its own.");
     case "box":
       return makeBox([v.x, v.y, v.z], [v.x + v.width, v.y + v.depth, v.z + v.height]);
