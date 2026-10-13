@@ -238,6 +238,18 @@ export const Icons = {
       <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
     </Svg>
   ),
+  Open: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 6h6l2 2h10v11H3z" />
+      <path d="M3 10h18" />
+    </Svg>
+  ),
+  Save: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 3h11l3 3v15H5z" />
+      <path d="M8 3v5h7V3M8 21v-7h8v7" />
+    </Svg>
+  ),
   New: (p: IconProps) => (
     <Svg {...p}>
       <path d="M14 3H6v18h12V7z" />

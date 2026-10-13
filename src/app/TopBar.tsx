@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 
 import { useDocument, useStore } from "../model/store";
 import { Icons } from "./icons";
+import { forgetFile, openFromFile, saveToFile } from "./fileActions";
+import { detectPlatform, shortcut } from "./platform";
 
 export function TopBar() {
   const doc = useDocument();
@@ -9,6 +11,9 @@ export function TopBar() {
   const openDialog = useStore((s) => s.openDialog);
   const newDocument = useStore((s) => s.newDocument);
   const hasParts = useStore((s) => s.parts.length > 0);
+  const fileName = useStore((s) => s.fileName);
+  const unsaved = useStore((s) => s.savedDoc !== s.history.present && s.history.present.features.length > 0);
+  const platform = detectPlatform();
   const [name, setName] = useState(doc.name);
 
   useEffect(() => setName(doc.name), [doc.name]);
@@ -34,18 +39,41 @@ export function TopBar() {
           }
         }}
       />
+      <span
+        className={`save-state${unsaved ? " unsaved" : ""}`}
+        title={
+          unsaved
+            ? "Your work is kept in this browser, but has changes not yet saved to a file. Click Save to keep a copy on your computer."
+            : `Saved to ${fileName}`
+        }
+      >
+        {unsaved ? (fileName ? "Unsaved changes" : "Not saved to a file") : fileName ? `Saved · ${fileName}` : ""}
+      </span>
       <span className="phase-badge" title="This is an early version. More tools arrive in each phase.">
-        Phase 3 preview
+        Phase 4 preview
       </span>
       <div className="topbar-spacer" />
       <button
         className="text-button"
         onClick={() => {
-          if (doc.features.length === 0 || window.confirm("Start a new, empty part? (You can undo this.)")) newDocument();
+          if (doc.features.length === 0 || window.confirm("Start a new, empty part? (You can undo this.)")) {
+            newDocument();
+            forgetFile();
+          }
         }}
         title="Start a new empty part"
       >
         <Icons.New size={18} /> New
+      </button>
+      <button className="text-button" onClick={() => void openFromFile()} title={`Open a .partsmith file (${shortcut(platform, "O")})`}>
+        <Icons.Open size={18} /> Open
+      </button>
+      <button
+        className="text-button"
+        onClick={() => void saveToFile()}
+        title={`Save to a .partsmith file on your computer (${shortcut(platform, "S")}). ${shortcut(platform, "S", { shift: true })} saves a copy under a new name.`}
+      >
+        <Icons.Save size={18} /> Save
       </button>
       <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts} title="Check the model is a sound, closed solid before you export it">
         <Icons.Check size={18} /> Check model

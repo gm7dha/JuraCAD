@@ -101,6 +101,10 @@ export interface AppState {
 
   dialog: DialogName;
   toast: Toast | null;
+  /** The design as last saved to (or opened from) a file; compare with history.present to see unsaved changes. */
+  savedDoc: PartSmithDocument | null;
+  /** Name of that file, e.g. "Bracket.partsmith". */
+  fileName: string | null;
 
   // actions
   startCreate: (type: FeatureType) => void;
@@ -136,6 +140,10 @@ export interface AppState {
   /** Replace the variable list (one undo step); renames are followed everywhere. */
   setVariables: (variables: Variable[]) => void;
   newDocument: () => void;
+  /** Replace the design with one opened from a file (undoable). */
+  openDocument: (doc: PartSmithDocument, fileName: string) => void;
+  /** Note that the current design has just been saved to this file. */
+  markSaved: (fileName: string) => void;
   undo: () => void;
   redo: () => void;
   selectFeature: (id: string | null) => void;
@@ -154,6 +162,39 @@ export interface AppState {
 }
 
 export const STORAGE_KEY = "partsmith.document.v1";
+/** Which file the design in browser storage was last saved to, so "Saved" survives a page refresh. */
+const FILE_KEY = "partsmith.file.v1";
+
+/** A short fingerprint of a design, to tell whether it changed since it was saved. */
+export function fingerprint(doc: PartSmithDocument): string {
+  const text = JSON.stringify(doc);
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return `${text.length}:${h >>> 0}`;
+}
+
+function rememberFile(doc: PartSmithDocument, fileName: string | null) {
+  try {
+    if (fileName) globalThis.localStorage?.setItem(FILE_KEY, JSON.stringify({ fileName, print: fingerprint(doc) }));
+    else globalThis.localStorage?.removeItem(FILE_KEY);
+  } catch {
+    // storage blocked: only the label is affected
+  }
+}
+
+/** The saved-file label for a design just loaded from browser storage. */
+function savedFileFor(doc: PartSmithDocument): { savedDoc: PartSmithDocument | null; fileName: string | null } {
+  try {
+    const raw = globalThis.localStorage?.getItem(FILE_KEY);
+    if (raw) {
+      const f = JSON.parse(raw) as { fileName?: unknown; print?: unknown };
+      if (typeof f.fileName === "string") return { savedDoc: f.print === fingerprint(doc) ? doc : null, fileName: f.fileName };
+    }
+  } catch {
+    // ignore
+  }
+  return { savedDoc: null, fileName: null };
+}
 
 function loadSavedDocument(): PartSmithDocument {
   try {
@@ -189,8 +230,10 @@ export const useStore = create<AppState>((set, get) => {
   const change = (fn: (doc: PartSmithDocument) => PartSmithDocument) =>
     set((s) => ({ history: commit(s.history, fn(s.history.present)) }));
 
+  const initialDoc = loadSavedDocument();
   return {
-    history: historyOf(loadSavedDocument()),
+    ...savedFileFor(initialDoc),
+    history: historyOf(initialDoc),
     editing: null,
     sketch: null,
     selectedFeatureId: null,
@@ -410,7 +453,7 @@ export const useStore = create<AppState>((set, get) => {
       if (trimmed && trimmed !== get().history.present.name) change((doc) => ({ ...doc, name: trimmed }));
     },
 
-    newDocument: () =>
+    newDocument: () => {
       set((s) => ({
         history: commit(s.history, emptyDocument()),
         editing: null,
@@ -418,7 +461,31 @@ export const useStore = create<AppState>((set, get) => {
         selectedFeatureId: null,
         selection: [],
         hiddenParts: [],
-      })),
+        savedDoc: null,
+        fileName: null,
+      }));
+      rememberFile(get().history.present, null);
+    },
+
+    openDocument: (doc, fileName) => {
+      set((s) => ({
+        history: commit(s.history, doc),
+        editing: null,
+        sketch: null,
+        selectedFeatureId: null,
+        selection: [],
+        selectedPlane: null,
+        hiddenParts: [],
+        fileName,
+      }));
+      set((s) => ({ savedDoc: s.history.present }));
+      rememberFile(get().history.present, fileName);
+    },
+
+    markSaved: (fileName) => {
+      set((s) => ({ savedDoc: s.history.present, fileName }));
+      rememberFile(get().history.present, fileName);
+    },
 
     // Undo/redo only when no feature dialog is open (see App shortcuts).
     undo: () => set((s) => (s.editing ? {} : { history: undoHistory(s.history), selection: [] })),

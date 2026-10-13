@@ -28,6 +28,10 @@ const browser = await chromium.launch({
   args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
 });
 const page = await browser.newPage({ viewport: { width: 1180, height: 760 }, acceptDownloads: true });
+// Use the download / file-picker way of saving and opening (the Save-as windows can't be driven headless).
+await page.addInitScript(() => {
+  for (const k of ["showSaveFilePicker", "showOpenFilePicker"]) Object.defineProperty(window, k, { value: undefined, configurable: true });
+});
 const consoleErrors = [];
 page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text()));
 page.on("pageerror", (e) => consoleErrors.push(e.message));
@@ -340,13 +344,35 @@ try {
   await page.getByRole("button", { name: "Done" }).click();
   await page.waitForSelector(".variables-table", { state: "detached" });
 
+  step = "saving the design to a file";
+  const featureCount = await page.locator(".feature-row:not(.datum)").count();
+  const savePromise = page.waitForEvent("download", { timeout: 30_000 });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  const saved = await savePromise;
+  const savedPath = await saved.path();
+  const savedText = readFileSync(savedPath, "utf8");
+  if (!saved.suggestedFilename().endsWith(".partsmith")) throw new Error(`saved as ${saved.suggestedFilename()}`);
+  if (!/"format": "partsmith"/.test(savedText) || !/"gap"/.test(savedText)) throw new Error("the saved file is missing the design or its variables");
+  await page.waitForSelector(".save-state:not(.unsaved)");
+
+  step = "starting a new design, then opening the saved file";
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll(".feature-row:not(.datum)").length === 0);
+  const chooserPromise = page.waitForEvent("filechooser", { timeout: 10_000 });
+  await page.getByRole("button", { name: "Open", exact: true }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles(savedPath);
+  await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n, featureCount, { timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 3"), null, { timeout: 30_000 });
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm.`,
+    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features).`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

@@ -1374,3 +1374,23 @@ kbd {
 .add-variable {
   margin-top: 2px;
 }
+
+.save-state {
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.save-state.unsaved::before {
+  content: "●";
+  color: #e8a33d;
+  margin-right: 5px;
+  font-size: 10px;
+}
+
+.file-input {
+  display: none;
+}
