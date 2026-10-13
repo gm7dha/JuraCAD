@@ -2,7 +2,10 @@ import { useEffect, useRef } from "react";
 
 import { evaluate, formatMm } from "../model/expr";
 import { describeRef } from "../geometry/topoRef";
-import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, type ParamDef } from "../model/features";
+import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, visibleParamKeys, type ParamDef } from "../model/features";
+import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
+import type { HoleOptions as HoleSettings } from "../model/types";
+import { holePositionCount } from "../sketch/holePositions";
 import { planeLabel } from "../sketch/planes";
 import type { Axis } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
@@ -156,6 +159,92 @@ function SketchSolidOptions() {
           Flip direction
         </label>
       )}
+    </fieldset>
+  );
+}
+
+/** Hole settings: which sketch marks the holes, what kind, and standard sizes. */
+function HoleOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const mode = useStore((s) => s.editing?.mode);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const setDraftParam = useStore((s) => s.setDraftParam);
+  const doc = useDocument();
+  if (!draft || draft.type !== "hole" || !draft.hole) return null;
+  const h = draft.hole;
+  const index = doc.features.findIndex((f) => f.id === draft.id);
+  const sketches = (mode === "edit" && index >= 0 ? doc.features.slice(0, index) : doc.features).filter((f) => f.type === "sketch");
+  const chosen = sketches.find((f) => f.id === h.sketchRef)?.sketch?.data;
+  const count = chosen ? holePositionCount(chosen) : 0;
+  const update = (patch: Partial<HoleSettings>) => {
+    const next = { ...h, ...patch };
+    setDraftField({ hole: next });
+    // Picking a screw size fills in the standard sizes.
+    const sizes = standardParams(next.standard, next.fit);
+    if (sizes && (patch.standard !== undefined || patch.fit !== undefined)) Object.entries(sizes).forEach(([k, v]) => setDraftParam(k, v));
+  };
+  const seg = <T extends string>(label: string, value: T, options: [T, string, string][], onPick: (v: T) => void) => (
+    <div className={`segmented ${options.length === 2 ? "two" : "three"}`} role="radiogroup" aria-label={label}>
+      {options.map(([v, text, hint]) => (
+        <button type="button" key={v} role="radio" aria-checked={value === v} className={value === v ? "selected" : ""} onClick={() => onPick(v)} title={hint}>
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+
+  return (
+    <fieldset className="param-group">
+      <legend>Where and what</legend>
+      {sketches.length === 0 ? (
+        <p className="dialog-error">There are no sketches yet. Cancel, then sketch on the face and place points (P) where the holes go.</p>
+      ) : (
+        <select className="full-select" aria-label="Sketch with the hole positions" value={h.sketchRef ?? ""} onChange={(e) => update({ sketchRef: e.target.value || undefined })}>
+          {!h.sketchRef && <option value="">Choose a sketch…</option>}
+          {sketches.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {chosen && (
+        <p className={count ? "dialog-hint field-hint" : "dialog-error"}>
+          {count
+            ? `${count} hole${count > 1 ? "s" : ""} — one at each point and circle centre in the sketch.`
+            : "This sketch has no points or circles. Add points (P) where the holes go."}
+        </p>
+      )}
+      {seg("Hole type", h.kind, [
+        ["simple", "Simple", "A plain round hole"],
+        ["counterbore", "Counterbore", "A wider step at the top so a cap screw's head sits below the surface"],
+        ["countersink", "Countersink", "A cone at the top so a countersunk screw sits flush"],
+      ], (kind) => update({ kind }))}
+      <label className="field-label" htmlFor="hole-standard">
+        Screw size
+      </label>
+      <select id="hole-standard" className="full-select" value={h.standard} onChange={(e) => update({ standard: e.target.value })}>
+        <option value="Custom">Custom sizes</option>
+        {SCREW_SIZES.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.name}
+          </option>
+        ))}
+      </select>
+      {h.standard !== "Custom" &&
+        seg("Fit", h.fit, [
+          ["clearance", "Clearance", "The screw passes through freely"],
+          ["tapped", "Tapped", "Drill size for cutting a thread — the screw screws into the part"],
+        ], (fit) => update({ fit }))}
+      {seg("Depth", h.end, [
+        ["throughAll", "Through all", "Right through the part"],
+        ["blind", "To a depth", "Stops at a set depth, with a drill point at the bottom"],
+      ], (end) => update({ end }))}
+      <label className="check-row">
+        <input type="checkbox" checked={h.flip} onChange={(e) => update({ flip: e.target.checked })} />
+        Flip direction
+      </label>
+      <p className="dialog-hint field-hint">{describeHole(h)}</p>
     </fieldset>
   );
 }
@@ -355,7 +444,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && (
         <div className="segmented" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -374,11 +463,12 @@ export function FeatureDialog() {
         )}
 
         <SketchSolidOptions />
+        <HoleOptions />
         <PicksField />
         <PatternOptions />
 
         {groups
-          .map((g) => (draft.type === "extrude" && draft.extrude?.end === "throughAll" ? { ...g, params: g.params.filter((p) => p.key !== "depth") } : g))
+          .map((g) => ({ ...g, params: g.params.filter((p) => visibleParamKeys(draft).has(p.key)) }))
           .filter((g) => g.params.length > 0)
           .map((g, gi) => (
           <fieldset key={g.title} className="param-group">

@@ -14,7 +14,8 @@ import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
 import { defaultAxis } from "../src/sketch/axis";
-import { addArc, addCircle, addLine, addRectangle } from "../src/sketch/ops";
+import { addArc, addCircle, addLine, addPoint, addRectangle } from "../src/sketch/ops";
+import { holeVolume, type HoleSize } from "../src/model/holes";
 import { planeOnFace, type SketchPlane } from "../src/sketch/planes";
 import { emptySketch, type SketchData } from "../src/sketch/types";
 
@@ -686,5 +687,76 @@ describe("extrude through all and the new sketch shapes", () => {
     const r = build([rounded, extrudeFeature(rounded.id, 1)]);
     expect(r.featureErrors).toEqual({});
     expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(800 - (25 - (Math.PI * 25) / 4), 2);
+  });
+});
+
+describe("holes", () => {
+  const holeFeature = (sketchRef: string, hole: Partial<NonNullable<Feature["hole"]>>, params: Record<string, number>): Feature => ({
+    ...feature("hole", params, "remove"),
+    hole: { sketchRef, kind: "simple", standard: "Custom", fit: "clearance", end: "throughAll", flip: false, ...hole },
+  });
+  /** A 40 × 40 × 20 block whose top face is on the Top plane, with points at two corners' insets. */
+  const setup = () => {
+    const block = feature("box", { width: 40, depth: 40, height: 20, z: -20 });
+    let data = emptySketch();
+    data = addPoint(data, { x: 10, y: 10 }).sketch;
+    data = addPoint(data, { x: 30, y: 30 }).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+    return { block, sk };
+  };
+  const volume = () => engine.check("normal").parts[0].exactVolume!;
+  const size = (over: Partial<HoleSize>): HoleSize => ({
+    kind: "simple",
+    diameter: 4.5,
+    depth: 10,
+    throughAll: false,
+    throughLength: 0,
+    cboreDiameter: 8,
+    cboreDepth: 4.4,
+    cskDiameter: 9.4,
+    cskAngle: 90,
+    ...over,
+  });
+
+  it("drills straight through at each point", () => {
+    const { block, sk } = setup();
+    const r = build([block, sk, holeFeature(sk.id, {}, { diameter: 4.5 })]);
+    expect(r.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(32000 - 2 * Math.PI * 2.25 * 2.25 * 20, 2);
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+  });
+
+  it("drills to a depth with a drill point, counterbored and countersunk", () => {
+    const { block, sk } = setup();
+    build([block, sk, holeFeature(sk.id, { end: "blind" }, { diameter: 4.5, depth: 10 })]);
+    expect(volume()).toBeCloseTo(32000 - 2 * holeVolume(size({})), 2);
+
+    build([block, sk, holeFeature(sk.id, { kind: "counterbore", end: "blind" }, { diameter: 4.5, depth: 10, cboreDiameter: 8, cboreDepth: 4.4 })]);
+    expect(volume()).toBeCloseTo(32000 - 2 * holeVolume(size({ kind: "counterbore" })), 2);
+
+    build([block, sk, holeFeature(sk.id, { kind: "countersink" }, { diameter: 4.5, cskDiameter: 9.4, cskAngle: 90 })]);
+    expect(volume()).toBeCloseTo(32000 - 2 * holeVolume(size({ kind: "countersink", throughAll: true, throughLength: 20 })), 2);
+  });
+
+  it("uses circle centres too, and can be patterned", () => {
+    const block = feature("box", { width: 60, depth: 20, height: 10, z: -10 });
+    const sk = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 10, y: 10 }, 1).sketch);
+    const hole = holeFeature(sk.id, {}, { diameter: 4 });
+    const pattern: Feature = { ...feature("linearPattern", { count: 3, spacing: 20 }, "add"), pattern: { sources: [hole.id], axis: "x", flip: false } };
+    const r = build([block, sk, hole, pattern]);
+    expect(r.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(12000 - 3 * Math.PI * 4 * 10, 2);
+  });
+
+  it("explains problems in plain words", () => {
+    const { block } = setup();
+    const empty = sketchFeature({ kind: "default", name: "Top" }, addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 5, y: 5 }).sketch);
+    const h = holeFeature(empty.id, {}, { diameter: 4 });
+    expect(build([block, empty, h]).featureErrors[h.id]).toMatch(/no points for holes/);
+    const { sk } = setup();
+    const lone = holeFeature(sk.id, {}, { diameter: 4 });
+    expect(build([sk, lone]).featureErrors[lone.id]).toMatch(/no part to drill into/);
+    const bad = holeFeature(sk.id, { kind: "counterbore" }, { diameter: 6, cboreDiameter: 5 });
+    expect(build([block, sk, bad]).featureErrors[bad.id]).toMatch(/wider than the hole/);
   });
 });

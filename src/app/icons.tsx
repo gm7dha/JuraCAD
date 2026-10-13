@@ -222,6 +222,13 @@ export const Icons = {
       <circle cx="12" cy="12" r="3" fill="currentColor" />
     </Svg>
   ),
+  Hole: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 9h18v10H3z" />
+      <path d="M9 9v10M15 9v10" strokeDasharray="2 1.5" />
+      <path d="M8 9V5h8v4" />
+    </Svg>
+  ),
   Slot: (p: IconProps) => (
     <Svg {...p}>
       <rect x="2.5" y="8" width="19" height="8" rx="4" />

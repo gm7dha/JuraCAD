@@ -14,6 +14,7 @@ import { setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operation } from "../model/types";
 import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
+import { holeTool } from "./hole";
 import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, ThreeMfResult } from "./protocol";
 import { write3mf } from "../geometry/threeMf";
 
@@ -208,6 +209,35 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       }
       return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip });
     }
+    case "hole": {
+      const h = feature.hole;
+      if (!h?.sketchRef) throw new Error("Choose the sketch whose points mark where the holes go.");
+      const sketch = sketches.get(h.sketchRef);
+      if (!sketch?.sketch?.plane) {
+        const exists = all.find((f) => f.id === h.sketchRef);
+        if (!exists) throw new Error("Its sketch has been deleted. Pick another sketch.");
+        if (exists.suppressed) throw new Error(`${exists.name} is suppressed, so there's nowhere to drill.`);
+        if (all.indexOf(exists) > all.indexOf(feature)) throw new Error(`${exists.name} comes after this hole in the list.`);
+        throw new Error(`${exists.name} couldn't be used.`);
+      }
+      const through = h.end === "throughAll";
+      return holeTool(
+        sketch.sketch.plane,
+        sketch.sketch.data,
+        {
+          kind: h.kind,
+          diameter: v.diameter,
+          depth: v.depth,
+          throughAll: through,
+          throughLength: through ? 2 * reach(sketch.sketch.plane, parts) + 2 : 0,
+          cboreDiameter: v.cboreDiameter,
+          cboreDepth: v.cboreDepth,
+          cskDiameter: v.cskDiameter,
+          cskAngle: v.cskAngle,
+        },
+        h.flip,
+      );
+    }
     case "sketch":
     case "fillet":
     case "chamfer":
@@ -283,7 +313,9 @@ export class GeometryEngine {
       const target = this.parts[this.parts.length - 1];
       if (feature.operation !== "new" && !target) {
         featureErrors[feature.id] =
-          feature.operation === "add"
+          feature.type === "hole"
+            ? "There's no part to drill into yet. Make a part first."
+            : feature.operation === "add"
             ? "There's no part to add to yet. Use New for the first solid."
             : "There's no part to remove from yet. Use New for the first solid.";
         continue;
