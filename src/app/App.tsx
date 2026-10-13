@@ -10,7 +10,7 @@ import { FeatureDialog } from "./FeatureDialog";
 import { FeaturePanel } from "./FeaturePanel";
 import { HelpDialog } from "./HelpDialog";
 import { VariablesDialog } from "./VariablesDialog";
-import { openFile } from "./fileActions";
+import { openFile, openFromFile, saveToFile } from "./fileActions";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
 import { SketchOverlay } from "./SketchOverlay";
 import { SketchPanel } from "./SketchPanel";
