@@ -95,6 +95,18 @@ jobs:
       - name: Attach screenshot 12
         if: always()
         run: node scripts/emit-screenshot.mjs 12
+      - name: Attach screenshot 13
+        if: always()
+        run: node scripts/emit-screenshot.mjs 13
+      - name: Attach screenshot 14
+        if: always()
+        run: node scripts/emit-screenshot.mjs 14
+      - name: Attach screenshot 15
+        if: always()
+        run: node scripts/emit-screenshot.mjs 15
+      - name: Attach screenshot 16
+        if: always()
+        run: node scripts/emit-screenshot.mjs 16
 
       - name: Keep the built site (for previewing pull requests)
         uses: actions/upload-artifact@v4
