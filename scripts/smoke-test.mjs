@@ -474,10 +474,10 @@ try {
   const canvas = page.locator(".viewport-canvas");
   await page.getByRole("button", { name: "Fasten", exact: true }).click();
   await page.waitForSelector('form[aria-label="Mate"]');
-  const box = await page.locator('form[aria-label="Mate"]').boundingBox();
+  const dialogBox = await page.locator('form[aria-label="Mate"]').boundingBox();
   const canvasBox = await canvas.boundingBox();
   for (const t of tops) {
-    if (box && canvasBox && t.x + canvasBox.x < box.x + box.width && t.y + canvasBox.y < box.y + box.height) throw new Error(`a face to click (${Math.round(t.x)}, ${Math.round(t.y)}) is under the mate dialog`);
+    if (dialogBox && canvasBox && t.x + canvasBox.x < dialogBox.x + dialogBox.width && t.y + canvasBox.y < dialogBox.y + dialogBox.height) throw new Error(`a face to click (${Math.round(t.x)}, ${Math.round(t.y)}) is under the mate dialog`);
   }
   await canvas.click({ position: tops[0] });
   await canvas.click({ position: tops[1] });
