@@ -10,7 +10,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { analyzeMesh } from "../src/geometry/meshCheck";
 import type { TopoPick } from "../src/geometry/topoRef";
 import { readBinaryStl } from "../src/geometry/stl";
-import { GeometryEngine } from "../src/kernel/engine";
+import { GeometryEngine, meshTimings } from "../src/kernel/engine";
 import { lastStlTimings } from "../src/kernel/importer";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
@@ -941,7 +941,7 @@ describe("importing STEP and STL files", () => {
     r = build([importFeature({ fileName: "ball.stl", format: "stl", data: btoa(b64), units: "mm" })]);
     const ms = performance.now() - started;
     expect(r.featureErrors).toEqual({});
-    expect(`TEMP imported a ${triangles}-triangle STL in ${Math.round(ms)} ms ${JSON.stringify(lastStlTimings)}`).toBe("");
+    expect(`TEMP imported a ${triangles}-triangle STL in ${Math.round(ms)} ms ${JSON.stringify(lastStlTimings)} ${JSON.stringify(meshTimings)}`).toBe("");
     expect(ms).toBeLessThan(20_000);
     expect(relativeError(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume, (4 / 3) * Math.PI * 8000)).toBeLessThan(0.05);
   });

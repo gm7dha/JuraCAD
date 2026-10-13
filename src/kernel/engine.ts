@@ -29,6 +29,9 @@ interface BuiltPart {
   shape: Shape3D;
 }
 
+/** How long the last part's display mesh took, by stage (for tests). */
+export let meshTimings: Record<string, number> = {};
+
 /** Turn whatever OpenCascade threw into a readable sentence. */
 export function describeError(e: unknown, fallback: string): string {
   if (e instanceof Error && e.message) return e.message;
@@ -385,7 +388,9 @@ export class GeometryEngine {
       }
     }
 
+    const TB = performance.now();
     const parts = this.parts.map((p) => this.meshPart(p));
+    meshTimings.build = TB - started;
     return { parts, featureErrors, durationMs: Math.round(performance.now() - started) };
   }
 
@@ -764,8 +769,11 @@ export class GeometryEngine {
   }
 
   private meshPart(p: BuiltPart): PartMesh {
+    const T0 = performance.now();
     const faces = p.shape.mesh(MESH_TOLERANCES.display);
+    const T1 = performance.now();
     const edges = p.shape.meshEdges(MESH_TOLERANCES.display);
+    const T2 = performance.now();
     // Describe each face and edge so picks can be found again after the next rebuild.
     const bounds = boundsOf(p.shape);
     const faceById = new Map<number, Face[]>();
@@ -789,6 +797,7 @@ export class GeometryEngine {
       return ref;
     });
     for (const list of [...faceById.values(), ...edgeById.values()]) list.forEach((x) => x.delete());
+    meshTimings = { mesh: T1 - T0, edges: T2 - T1, refs: performance.now() - T2 };
     return {
       id: p.id,
       name: p.name,
