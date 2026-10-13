@@ -78,7 +78,7 @@ export function CheckDialog() {
             Close
           </button>
           <button className="primary-button" onClick={() => openDialog("export")} disabled={!report}>
-            <Icons.Export size={18} /> Export STL…
+            <Icons.Export size={18} /> Export…
           </button>
         </>
       }

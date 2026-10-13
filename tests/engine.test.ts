@@ -1,6 +1,6 @@
 /**
  * Runs the real OpenCascade engine (in Node) against reference models and
- * checks volumes, positions and printability. This is how we catch the
+ * checks volumes, positions and soundness. This is how we catch the
  * geometry going wrong when code changes.
  */
 import opencascade from "replicad-opencascadejs";
@@ -521,5 +521,30 @@ describe("shell", () => {
     const r = build([box, thick]);
     expect(r.featureErrors[thick.id]).toMatch(/thinner walls/);
     expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(4000, 2);
+  });
+});
+
+describe("STEP export", () => {
+  it("writes exact shapes that read back with the same volume", async () => {
+    const block = feature("box", { width: 30, depth: 20, height: 10 });
+    const hole = feature("cylinder", { diameter: 8, height: 10, x: 15, y: 10 }, "remove");
+    build([block, hole]);
+    const { step, partCount } = await engine.exportStep([]);
+    expect(partCount).toBe(1);
+    const text = new TextDecoder().decode(step);
+    expect(text.startsWith("ISO-10303-21")).toBe(true);
+    // Exact shapes: the hole is stored as a true cylinder, not triangles.
+    expect(text).toMatch(/CYLINDRICAL_SURFACE/);
+    expect(text).toMatch(/Part 1/);
+    // Millimetres.
+    expect(text).toMatch(/SI_UNIT\(\.MILLI\.,\.METRE\.\)/);
+    const { importSTEP, measureVolume: volumeOf } = await import("replicad");
+    const back = await importSTEP(new Blob([step]));
+    expect(volumeOf(back)).toBeCloseTo(30 * 20 * 10 - Math.PI * 16 * 10, 2);
+  });
+
+  it("refuses to export an empty model", async () => {
+    build([]);
+    await expect(engine.exportStep([])).rejects.toThrow(/nothing to export/);
   });
 });

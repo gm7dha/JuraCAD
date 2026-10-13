@@ -54,6 +54,12 @@ ctx.onmessage = (event) => {
           body = { type: "exportStl", result };
           break;
         }
+        case "exportStep": {
+          const result = await engine.exportStep(request.partIds);
+          transfer.push(result.step);
+          body = { type: "exportStep", result };
+          break;
+        }
       }
       ctx.postMessage({ kind: "response", id, ok: true, body }, transfer);
     } catch (e) {

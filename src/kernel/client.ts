@@ -1,5 +1,5 @@
 import type { Feature, MeshQuality } from "../model/types";
-import type { CheckResult, ExportResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { CheckResult, ExportResult, StepResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -90,6 +90,10 @@ export class KernelClient {
 
   exportStl(partIds: string[], quality: MeshQuality): Promise<ExportResult> {
     return this.send({ type: "exportStl", partIds, quality }).then((body) => body.result as ExportResult);
+  }
+
+  exportStep(partIds: string[]): Promise<StepResult> {
+    return this.send({ type: "exportStep", partIds }).then((body) => body.result as StepResult);
   }
 
   terminate(): void {
