@@ -106,7 +106,8 @@ Each phase ends with a working version on the live site.
 | **P1 Foundation** ✅ | App shell, Onshape-style viewport, OpenCascade worker, box/cylinder/sphere with New/Add/Remove, basic model check, STL export | make simple solids and export them |
 | **P2 Sketcher** ✅ | Sketch on planes and flat faces; lines, rectangles, circles, arcs, points; constraints and dimensions; basic Extrude (one way / symmetric, New/Add/Remove) | draw a fully defined sketch and extrude it |
 | **P3 Part features** ✅ (topological naming: step 1) | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real parts and change them later |
-| P4 Save, check, export (in progress: .partsmith save/open ✅) | `.partsmith` files, full model check, 3MF (STEP export arrived early, in P3), offline install (PWA) | keep projects and trust exports |
+| **P4 Save, check, export** ✅ | `.partsmith` save/open, fuller model check (thinnest wall, overlapping parts), STEP/STL/3MF export, install as an offline app | keep projects and trust exports |
+| P4b More modelling | Sketch trim/extend/offset/fillet, slots and polygons, use part edges in sketches; extrude through all / up to face / draft; hole tool (counterbore, countersink, tapped); move/rotate/copy parts; measure; section view; part colours; import STEP/STL | model real parts quickly |
 | P5 Assemblies | Instances, mate connectors, Onshape mate types, BOM | check multi-part designs fit together |
 | P6 2D drawings | ISO sheets, first-angle views, hidden lines, dimensions, PDF/SVG/DXF | print a dimensioned drawing |
 | P7 Extras | Patterns, holes, text, sweep/loft, sections, import, inches, optional print-bed preview, dark mode | as needed |

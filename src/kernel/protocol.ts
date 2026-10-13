@@ -1,4 +1,4 @@
-import type { MeshAnalysis } from "../geometry/meshCheck";
+import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
 import type { EdgeRef, FaceRef } from "../geometry/topoRef";
 import type { Feature, MeshQuality } from "../model/types";
 
@@ -39,10 +39,14 @@ export interface PartCheck {
   /** Exact volume from the solid model, mm³. */
   exactVolume: number | null;
   mesh: MeshAnalysis;
+  /** Thinnest wall found (approximate), or null if it couldn't be measured. */
+  thinnest: ThicknessEstimate | null;
 }
 
 export interface CheckResult {
   parts: PartCheck[];
+  /** Pairs of separate parts that occupy the same space. */
+  overlaps?: { a: string; b: string; volume: number }[];
 }
 
 export interface ExportResult {
@@ -57,17 +61,25 @@ export interface StepResult {
   partCount: number;
 }
 
+export interface ThreeMfResult {
+  /** .3mf file contents. */
+  data: ArrayBuffer;
+  triangleCount: number;
+}
+
 export type KernelRequest =
   | { type: "rebuild"; features: Feature[]; variables: Record<string, number> }
   | { type: "check"; quality: MeshQuality }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality }
-  | { type: "exportStep"; partIds: string[] };
+  | { type: "exportStep"; partIds: string[] }
+  | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string };
 
 export type KernelResponseBody =
   | { type: "rebuild"; result: RebuildResult }
   | { type: "check"; result: CheckResult }
   | { type: "exportStl"; result: ExportResult }
-  | { type: "exportStep"; result: StepResult };
+  | { type: "exportStep"; result: StepResult }
+  | { type: "export3mf"; result: ThreeMfResult };
 
 /** Messages sent from the main thread to the worker. */
 export type ToWorker = { id: number; request: KernelRequest };

@@ -24,6 +24,7 @@ const part = (overrides: Partial<PartCheck> = {}, mesh: Partial<MeshAnalysis> = 
   geometryValid: true,
   exactVolume: 24000,
   mesh: { ...goodMesh, ...mesh },
+  thinnest: null,
   ...overrides,
 });
 
@@ -59,5 +60,24 @@ describe("check report", () => {
     const r = buildCheckReport({ parts: [] }, 0);
     expect(r.level).toBe("error");
     expect(r.headline).toMatch(/nothing to check/);
+  });
+
+  it("reports the thinnest wall, warning when it's very thin", () => {
+    const ok = buildCheckReport({ parts: [part({ thinnest: { thickness: 2, at: [1, 2, 3] } })] }, 0);
+    expect(ok.parts[0].findings.map((f) => f.text)).toContain("Thinnest wall is about 2 mm");
+    expect(ok.level).toBe("ok");
+    const thin = buildCheckReport({ parts: [part({ thinnest: { thickness: 0.3, at: [1, 2, 3] } })] }, 0);
+    expect(thin.level).toBe("warn");
+    expect(thin.parts[0].findings.some((f) => /about 0\.3 mm thick \(near 1, 2, 3\)/.test(f.text))).toBe(true);
+  });
+
+  it("warns about separate parts that overlap", () => {
+    const r = buildCheckReport(
+      { parts: [part(), part({ partId: "p2", name: "Part 2" })], overlaps: [{ a: "Part 1", b: "Part 2", volume: 1500 }] },
+      0,
+    );
+    expect(r.level).toBe("warn");
+    expect(r.parts[0].findings.some((f) => /Overlaps Part 2 by about 1.5 cm³/.test(f.text))).toBe(true);
+    expect(r.parts[1].findings.some((f) => /Overlaps Part 1/.test(f.text))).toBe(true);
   });
 });

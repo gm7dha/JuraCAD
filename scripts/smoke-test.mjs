@@ -146,6 +146,17 @@ try {
   if (!stepText.startsWith("ISO-10303-21")) throw new Error(`the STEP file doesn't look like STEP: ${stepText.slice(0, 40)}`);
   if (!stepDownload.suggestedFilename().endsWith(".step")) throw new Error(`STEP file was named ${stepDownload.suggestedFilename()}`);
 
+  step = "exporting 3MF";
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await page.getByRole("radio", { name: /3MF/ }).check();
+  const mfPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.getByRole("button", { name: "Check & export" }).click();
+  const mfDownload = await mfPromise;
+  const mfBytes = readFileSync(await mfDownload.path());
+  if (mfBytes[0] !== 0x50 || mfBytes[1] !== 0x4b || !mfDownload.suggestedFilename().endsWith(".3mf")) {
+    throw new Error(`the 3MF file doesn't look right (${mfDownload.suggestedFilename()})`);
+  }
+
   step = "editing a feature three times, then undoing once";
   const boxRow = page.locator(".feature-row:not(.datum)").first();
   for (const x of ["10", "20", "30"]) {
@@ -372,7 +383,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features).`,
+    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features).`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

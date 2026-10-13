@@ -62,7 +62,19 @@ export function reportPart(p: PartCheck): PartReport {
   if (m.bounds) {
     const d = m.bounds.max.map((v, i) => v - m.bounds!.min[i]);
     size = `${round(d[0])} × ${round(d[1])} × ${round(d[2])} mm`;
-    if (Math.min(...d) < 0.4) findings.push({ level: "warn", text: "Is less than 0.4 mm thick overall — very thin parts are hard to make" });
+    if (!p.thinnest && Math.min(...d) < 0.4) findings.push({ level: "warn", text: "Is less than 0.4 mm thick overall — very thin parts are hard to make" });
+  }
+  if (p.thinnest) {
+    const t = p.thinnest.thickness;
+    const where = p.thinnest.at.map((v) => round(v)).join(", ");
+    if (t < THIN_WALL_MM) {
+      findings.push({
+        level: "warn",
+        text: `Has a wall only about ${round(t, 2)} mm thick (near ${where}) — very thin walls are fragile and hard to make`,
+      });
+    } else {
+      findings.push({ level: "ok", text: `Thinnest wall is about ${round(t, 2)} mm` });
+    }
   }
   const volumeMm3 = p.exactVolume ?? m.volume;
   const volume = `${round(volumeMm3 / 1000, 2)} cm³`;
@@ -70,9 +82,26 @@ export function reportPart(p: PartCheck): PartReport {
   return { partId: p.partId, name: p.name, level: worst(findings.map((f) => f.level)), findings, size, volume };
 }
 
+/** Walls thinner than this get a warning (most processes struggle below about half a millimetre). */
+export const THIN_WALL_MM = 0.5;
+
 /** Turn raw check numbers into a plain-English report. */
 export function buildCheckReport(result: CheckResult, failedFeatureCount: number): CheckReport {
   const parts = result.parts.map(reportPart);
+  for (const o of result.overlaps ?? []) {
+    for (const [self, other] of [
+      [o.a, o.b],
+      [o.b, o.a],
+    ]) {
+      const part = parts.find((p) => p.name === self);
+      if (!part) continue;
+      part.findings.push({
+        level: "warn",
+        text: `Overlaps ${other} by about ${round(o.volume / 1000, 2)} cm³ — separate parts can't share space. To join them into one part, use Add instead of New`,
+      });
+      part.level = worst(part.findings.map((f) => f.level));
+    }
+  }
   const levels = parts.map((p) => p.level);
   if (failedFeatureCount > 0) levels.push("warn");
   const level = parts.length === 0 ? "error" : worst(levels);

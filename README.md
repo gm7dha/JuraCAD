@@ -27,9 +27,12 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 - **Variables**: name a size (e.g. `wall = 2`) and type the name into any box or sketch dimension (`wall * 2`).
   Change it once and the whole design updates.
 - Edit any feature later (double-click it), suppress it, rename it, or delete it. Full undo/redo.
-- **Check model** — confirms each part is closed and watertight, valid, in one piece, and not too thin.
-- **Export STEP** (exact shapes — what machine shops and most manufacturers want) or **STL** (for 3D printing) in coarse,
-  normal or fine quality. PartSmith checks the model first and warns you about problems.
+- **Check model** — confirms each part is closed and watertight, valid and in one piece, finds its thinnest wall,
+  and spots separate parts that overlap.
+- **Install it as an app** (Chrome/Edge: the Install app button) so it opens in its own window and works offline;
+  installed, it can open `.partsmith` files you double-click.
+- **Export STEP** (exact shapes — what machine shops and most manufacturers want), **STL** or **3MF** (for 3D printing;
+  3MF keeps part names) in coarse, normal or fine quality. PartSmith checks the model first and warns you about problems.
 - **Save** your design to a `.partsmith` file on your computer and **Open** it again later (or drag the file onto the
   window). Your latest work is also kept in the browser automatically.
 
