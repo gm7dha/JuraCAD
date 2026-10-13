@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { exportSTEP, getOC, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
+import { getOC, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -18,6 +18,7 @@ import { holeTool } from "./hole";
 import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, ThreeMfResult } from "./protocol";
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
+import { writeStep } from "./stepExport";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 interface BuiltPart {
@@ -731,12 +732,8 @@ export class GeometryEngine {
   async exportStep(partIds: string[], colours: Record<string, string> = {}): Promise<StepResult> {
     const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
     if (chosen.length === 0) throw new Error("There's nothing to export yet.");
-    const blob = exportSTEP(
-      // Without a colour the STEP writer would make every part red, so uncoloured parts get the usual grey.
-      chosen.map((p) => ({ shape: p.shape, name: p.name, color: colours[p.id] ?? DEFAULT_PART_COLOUR })),
-      { unit: "mm" },
-    );
-    return { step: await blob.arrayBuffer(), partCount: chosen.length };
+    const bytes = writeStep(chosen.map((p) => ({ shape: p.shape, name: p.name, colour: colours[p.id] ?? DEFAULT_PART_COLOUR })));
+    return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: chosen.length };
   }
 
   get partCount(): number {
