@@ -96,6 +96,10 @@ export class SceneManager {
   private readonly parts = new Map<string, PartObjects>();
   private readonly materials: { faces: THREE.Material[]; edges: THREE.Material[]; cut: THREE.Material };
   private section: THREE.Plane | null = null;
+  /** Part colours by part id, and one face material per colour (made as needed). */
+  private colours: Record<string, string> = {};
+  private readonly colourMaterials = new Map<string, THREE.MeshPhongMaterial>();
+  private readonly makeFaceMaterial: (color: string) => THREE.MeshPhongMaterial;
   private readonly resizeObserver: ResizeObserver;
   private readonly callbacks: SceneCallbacks;
   private readonly sketchLayer = new SketchLayer();
@@ -163,6 +167,7 @@ export class SceneManager {
         polygonOffsetFactor: 1,
         polygonOffsetUnits: 1,
       });
+    this.makeFaceMaterial = faceMat;
     this.materials = {
       faces: [faceMat(COLOURS.part), faceMat(COLOURS.partHover), faceMat(COLOURS.partSelected)],
       edges: [
@@ -233,7 +238,7 @@ export class SceneManager {
       geometry.setIndex(new THREE.BufferAttribute(data.triangles, 1));
       data.faceGroups.forEach((g) => geometry.addGroup(g.start, g.count, 0));
       geometry.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geometry, this.materials.faces);
+      const mesh = new THREE.Mesh(geometry, this.faceMaterialsFor(data.id));
       mesh.userData.partId = data.id;
 
       const lineGeometry = new THREE.BufferGeometry();
@@ -262,13 +267,34 @@ export class SceneManager {
   setSection(section: SectionPlane | null): void {
     this.section = section ? new THREE.Plane(new THREE.Vector3(...section.normal), section.constant) : null;
     const planes = this.section ? [this.section] : [];
-    for (const m of [...this.materials.faces, ...this.materials.edges, this.materials.cut]) m.clippingPlanes = planes;
+    const faces = [...this.materials.faces, ...this.colourMaterials.values()];
+    for (const m of [...faces, ...this.materials.edges, this.materials.cut]) m.clippingPlanes = planes;
     // While cut open, outer faces are drawn front-side only and the inside shows in the cut colour.
-    for (const m of this.materials.faces) {
+    for (const m of faces) {
       m.side = this.section ? THREE.FrontSide : THREE.DoubleSide;
       m.needsUpdate = true;
     }
     for (const p of this.parts.values()) p.cut.visible = this.section !== null && p.mesh.visible;
+  }
+
+  /** Colour parts (part id → "#rrggbb"); parts not listed are the default grey. */
+  setPartColours(colours: Record<string, string>): void {
+    this.colours = colours;
+    for (const [id, p] of this.parts) p.mesh.material = this.faceMaterialsFor(id);
+  }
+
+  /** Normal, hover and selected materials for a part: its own colour, then the shared highlights. */
+  private faceMaterialsFor(partId: string): THREE.Material[] {
+    const colour = this.colours[partId];
+    if (!colour) return this.materials.faces;
+    let m = this.colourMaterials.get(colour);
+    if (!m) {
+      m = this.makeFaceMaterial(colour);
+      m.clippingPlanes = this.section ? [this.section] : [];
+      m.side = this.section ? THREE.FrontSide : THREE.DoubleSide;
+      this.colourMaterials.set(colour, m);
+    }
+    return [m, this.materials.faces[1], this.materials.faces[2]];
   }
 
   /** The model's extent along a direction (for the section slider). */
@@ -478,6 +504,7 @@ export class SceneManager {
       p.lines.geometry.dispose();
     }
     this.materials.faces.forEach((m) => m.dispose());
+    this.colourMaterials.forEach((m) => m.dispose());
     this.materials.edges.forEach((m) => m.dispose());
     this.viewCube.dispose();
     this.renderer.dispose();

@@ -55,7 +55,7 @@ ctx.onmessage = (event) => {
           break;
         }
         case "export3mf": {
-          const result = engine.export3mf(request.partIds, request.quality, request.title);
+          const result = engine.export3mf(request.partIds, request.quality, request.title, request.colours);
           transfer.push(result.data);
           body = { type: "export3mf", result };
           break;
@@ -64,7 +64,7 @@ ctx.onmessage = (event) => {
           body = { type: "measure", result: engine.measure(request.picks) };
           break;
         case "exportStep": {
-          const result = await engine.exportStep(request.partIds);
+          const result = await engine.exportStep(request.partIds, request.colours);
           transfer.push(result.step);
           body = { type: "exportStep", result };
           break;

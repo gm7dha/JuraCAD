@@ -18,6 +18,7 @@ export function serializeDocument(doc: PartSmithDocument, savedAt = new Date()):
     savedWith: "PartSmith (https://gm7dha.github.io/partsmith/)",
     savedAt: savedAt.toISOString(),
     ...(doc.variables?.length ? { variables: doc.variables } : {}),
+    ...(doc.appearance && Object.keys(doc.appearance).length ? { appearance: doc.appearance } : {}),
     features: doc.features,
   };
   return JSON.stringify(file, null, 1) + "\n";

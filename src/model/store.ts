@@ -164,6 +164,8 @@ export interface AppState {
   toggleSuppressed: (id: string) => void;
   renameFeature: (id: string, name: string) => void;
   renameDocument: (name: string) => void;
+  /** Colour a part (null = back to the default grey). One undo step. */
+  setPartColour: (partId: string, colour: string | null) => void;
   /** Replace the variable list (one undo step); renames are followed everywhere. */
   setVariables: (variables: Variable[]) => void;
   newDocument: () => void;
@@ -487,6 +489,15 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     renameFeature: (id, name) => change((doc) => renameFeature(doc, id, name)),
+
+    setPartColour: (partId, colour) =>
+      change((doc) => {
+        const appearance = { ...(doc.appearance ?? {}) };
+        if (colour) appearance[partId] = colour;
+        else delete appearance[partId];
+        const { appearance: _old, ...rest } = doc;
+        return Object.keys(appearance).length ? { ...rest, appearance } : rest;
+      }),
 
     setVariables: (variables) => change((doc) => applyVariables(doc, variables)),
 

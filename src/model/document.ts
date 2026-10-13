@@ -4,6 +4,7 @@ import { defaultAxis } from "../sketch/axis";
 import { emptySketch } from "../sketch/types";
 import { FEATURE_DEFS, defaultParams, isSolidFeature } from "./features";
 import { parseVariables } from "./variables";
+import { parseAppearance } from "./colours";
 import type { Feature, FeatureType, Operation, PartSmithDocument } from "./types";
 
 /**
@@ -236,5 +237,6 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     name: typeof d.name === "string" && d.name.trim() ? d.name : "Untitled part",
     features,
     ...(Array.isArray(d.variables) && d.variables.length ? { variables: parseVariables(d.variables) } : {}),
+    ...(Object.keys(parseAppearance(d.appearance)).length ? { appearance: parseAppearance(d.appearance) } : {}),
   };
 }

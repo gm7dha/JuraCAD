@@ -57,12 +57,12 @@ export function ExportDialog() {
     setStage({ kind: "working", text: `Creating ${format.toUpperCase()}…` });
     try {
       if (format === "step") {
-        const { step, partCount } = await getKernel().exportStep(partIds);
+        const { step, partCount } = await getKernel().exportStep(partIds, doc.appearance);
         const name = `${safeFileName(fileName, "partsmith")}.step`;
         downloadFile(step, name, "model/step");
         showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})`, "success");
       } else if (format === "3mf") {
-        const { data, triangleCount } = await getKernel().export3mf(partIds, quality, doc.name);
+        const { data, triangleCount } = await getKernel().export3mf(partIds, quality, doc.name, doc.appearance);
         const name = `${safeFileName(fileName, "partsmith")}.3mf`;
         downloadFile(data, name, "model/3mf");
         showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");

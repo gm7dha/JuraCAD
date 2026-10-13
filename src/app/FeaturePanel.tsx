@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
+import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
 import { useDocument, useStore, type DatumName, type PlaneName } from "../model/store";
 import type { Feature, FeatureType } from "../model/types";
@@ -135,6 +136,50 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
   );
 }
 
+/** A part's colour: click to choose another. */
+function ColourSwatch({ partId, name }: { partId: string; name: string }) {
+  const colour = useStore((s) => s.history.present.appearance?.[partId] ?? DEFAULT_PART_COLOUR);
+  const setPartColour = useStore((s) => s.setPartColour);
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="swatch-wrap">
+      <button
+        type="button"
+        className="colour-swatch"
+        style={{ background: colour }}
+        onClick={() => setOpen((o) => !o)}
+        title={`Colour of ${name} — click to change`}
+        aria-label={`Colour of ${name}`}
+        aria-expanded={open}
+      />
+      {open && (
+        <div className="colour-popover" role="dialog" aria-label={`Choose a colour for ${name}`} onMouseLeave={() => setOpen(false)}>
+          <div className="colour-grid">
+            {PART_COLOURS.map((c) => (
+              <button
+                type="button"
+                key={c.hex}
+                className={`colour-choice${c.hex === colour ? " selected" : ""}`}
+                style={{ background: c.hex }}
+                title={c.name}
+                aria-label={c.name}
+                onClick={() => {
+                  setPartColour(partId, c.hex === DEFAULT_PART_COLOUR ? null : c.hex);
+                  setOpen(false);
+                }}
+              />
+            ))}
+          </div>
+          <label className="colour-custom">
+            Other…
+            <input type="color" value={colour} onChange={(e) => setPartColour(partId, e.target.value)} />
+          </label>
+        </div>
+      )}
+    </span>
+  );
+}
+
 function FeatureRow({ feature, onMenu }: { feature: Feature; onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void }) {
   const kernelError = useStore((s) => s.featureErrors[feature.id]);
   const selected = useStore((s) => s.selectedFeatureId === feature.id);
@@ -267,9 +312,7 @@ export function FeaturePanel() {
             const hidden = hiddenParts.includes(p.id);
             return (
               <li key={p.id} className={`part-row${hidden ? " hidden" : ""}`}>
-                <span className="feature-icon part">
-                  <Icons.Part size={18} />
-                </span>
+                <ColourSwatch partId={p.id} name={p.name} />
                 <span className="feature-name">{p.name}</span>
                 <EyeButton hidden={hidden} name={p.name} onToggle={() => toggleHidden(p.id)} />
               </li>
