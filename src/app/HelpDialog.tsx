@@ -42,6 +42,8 @@ export function HelpDialog() {
         then edit them any time by double-clicking them in the feature list. Any box accepts maths, units and
         variables (set them up with Variables in the toolbar), e.g. <kbd>wall * 2</kbd> or <kbd>1/4 in</kbd>.
         Your latest work is kept in this browser automatically; use Save to keep a .partsmith file on your computer.
+        In Chrome or Edge, Install app (top bar) makes PartSmith a desktop app that works offline; in Safari on a Mac,
+        use File › Add to Dock.
       </p>
       <div className="platform-row">
         <span className="muted small">Shortcuts shown for</span>

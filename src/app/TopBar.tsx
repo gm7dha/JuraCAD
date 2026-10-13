@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useDocument, useStore } from "../model/store";
 import { Icons } from "./icons";
 import { forgetFile, openFromFile, saveToFile } from "./fileActions";
+import { installApp, useCanInstall } from "./install";
 import { detectPlatform, shortcut } from "./platform";
 
 export function TopBar() {
@@ -14,6 +15,7 @@ export function TopBar() {
   const fileName = useStore((s) => s.fileName);
   const unsaved = useStore((s) => s.savedDoc !== s.history.present && s.history.present.features.length > 0);
   const platform = detectPlatform();
+  const canInstall = useCanInstall();
   const [name, setName] = useState(doc.name);
 
   useEffect(() => setName(doc.name), [doc.name]);
@@ -53,6 +55,11 @@ export function TopBar() {
         Phase 4 preview
       </span>
       <div className="topbar-spacer" />
+      {canInstall && (
+        <button className="text-button" onClick={() => void installApp()} title="Install PartSmith as an app on this computer — it then opens in its own window and works offline">
+          <Icons.Export size={18} style={{ transform: "rotate(180deg)" }} /> Install app
+        </button>
+      )}
       <button
         className="text-button"
         onClick={() => {

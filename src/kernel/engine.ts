@@ -5,7 +5,7 @@
  */
 import { exportSTEP, getOC, makeBox, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
 
-import { analyzeMesh, withoutDegenerateTriangles } from "../geometry/meshCheck";
+import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
@@ -14,7 +14,8 @@ import { setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operation } from "../model/types";
 import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
-import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult } from "./protocol";
+import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, ThreeMfResult } from "./protocol";
+import { write3mf } from "../geometry/threeMf";
 
 interface BuiltPart {
   id: string;
@@ -498,6 +499,7 @@ export class GeometryEngine {
     const oc = getOC();
     const tol = MESH_TOLERANCES[quality];
     return {
+      overlaps: this.findOverlaps(),
       parts: this.parts.map((p) => {
         let geometryValid: boolean | null = null;
         try {
@@ -514,9 +516,33 @@ export class GeometryEngine {
           exactVolume = null;
         }
         const m = p.shape.mesh(tol);
-        return { partId: p.id, name: p.name, geometryValid, exactVolume, mesh: analyzeMesh(m.vertices, m.triangles) };
+        const mesh = analyzeMesh(m.vertices, m.triangles);
+        // Measuring wall thickness only makes sense on a closed surface.
+        const thinnest = mesh.watertight ? estimateThickness(m.vertices, m.triangles) : null;
+        return { partId: p.id, name: p.name, geometryValid, exactVolume, mesh, thinnest };
       }),
     };
+  }
+
+  /** Separate parts that occupy the same space (they would clash). */
+  private findOverlaps(): NonNullable<CheckResult["overlaps"]> {
+    const found: NonNullable<CheckResult["overlaps"]> = [];
+    const boxes = this.parts.map((p) => boundsOf(p.shape));
+    const apart = (a: Bounds, b: Bounds) => [0, 1, 2].some((i) => a[1][i] < b[0][i] || b[1][i] < a[0][i]);
+    for (let i = 0; i < this.parts.length; i++) {
+      for (let j = i + 1; j < this.parts.length; j++) {
+        if (apart(boxes[i], boxes[j])) continue;
+        try {
+          const common = this.parts[i].shape.intersect(this.parts[j].shape);
+          const volume = measureVolume(common);
+          common.delete();
+          if (volume > 1e-3) found.push({ a: this.parts[i].name, b: this.parts[j].name, volume });
+        } catch {
+          // couldn't tell; say nothing rather than guess
+        }
+      }
+    }
+    return found;
   }
 
   /** One binary STL containing the chosen parts (all parts when the list is empty). */
@@ -531,6 +557,20 @@ export class GeometryEngine {
     const triangleCount = meshes.reduce((n, m) => n + m.triangles.length / 3, 0);
     const names = chosen.map((p) => p.name).join(", ");
     return { stl: writeBinaryStl(meshes, `PartSmith export: ${names}`), triangleCount };
+  }
+
+  /** One 3MF file with each chosen part as a separate, named object. */
+  export3mf(partIds: string[], quality: MeshQuality, title: string): ThreeMfResult {
+    const tol = MESH_TOLERANCES[quality];
+    const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
+    if (chosen.length === 0) throw new Error("There's nothing to export yet.");
+    const meshes = chosen.map((p) => {
+      const m = p.shape.mesh(tol);
+      return { name: p.name, vertices: m.vertices, triangles: withoutDegenerateTriangles(m.vertices, m.triangles) };
+    });
+    const bytes = write3mf(meshes, title);
+    const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    return { data, triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0) };
   }
 
   /**

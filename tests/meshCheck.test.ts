@@ -115,3 +115,25 @@ describe("STL files", () => {
     expect(view.getFloat32(84 + 8, true)).toBeCloseTo(-1, 6);
   });
 });
+
+describe("wall thickness", () => {
+  /** A closed box mesh with outward-facing triangles. */
+  function boxMesh(w: number, d: number, h: number) {
+    const c = [[0, 0, 0], [w, 0, 0], [w, d, 0], [0, d, 0], [0, 0, h], [w, 0, h], [w, d, h], [0, d, h]];
+    const f = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+    return { vertices: c.flat(), triangles: f.flat() };
+  }
+
+  it("finds the thinnest direction of a slab", async () => {
+    const { estimateThickness } = await import("../src/geometry/meshCheck");
+    const m = boxMesh(40, 30, 1.5);
+    const r = estimateThickness(m.vertices, m.triangles);
+    expect(r?.thickness).toBeCloseTo(1.5, 6);
+  });
+
+  it("measures a cube across", async () => {
+    const { estimateThickness } = await import("../src/geometry/meshCheck");
+    const m = boxMesh(10, 10, 10);
+    expect(estimateThickness(m.vertices, m.triangles)?.thickness).toBeCloseTo(10, 6);
+  });
+});

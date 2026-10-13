@@ -203,3 +203,89 @@ export function analyzeMesh(
     watertight,
   };
 }
+
+/** Where a part is thinnest, found by measuring straight through it. */
+export interface ThicknessEstimate {
+  /** Smallest wall thickness found, mm. */
+  thickness: number;
+  /** A point on the surface where it was found. */
+  at: [number, number, number];
+}
+
+/**
+ * Estimate the thinnest wall: from points spread over the surface, measure
+ * straight inwards to where the ray leaves the solid again. (The surface must
+ * face outwards, as OpenCascade's meshes do.) Checks up to `maxSamples`
+ * triangles, so it stays quick on large models; tiny gaps between samples can
+ * be missed, so the answer is "about".
+ */
+export function estimateThickness(
+  vertices: ArrayLike<number>,
+  triangles: ArrayLike<number>,
+  maxSamples = 2500,
+): ThicknessEstimate | null {
+  const count = triangles.length / 3;
+  if (count < 4) return null;
+  const V = (i: number): [number, number, number] => [vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]];
+  // Pre-compute each triangle's corners for the ray tests.
+  const tri = new Float64Array(count * 9);
+  for (let t = 0; t < count; t++) {
+    for (let k = 0; k < 3; k++) {
+      const p = V(triangles[t * 3 + k]);
+      tri.set(p, t * 9 + k * 3);
+    }
+  }
+  let best: ThicknessEstimate | null = null;
+  const step = Math.max(1, Math.floor(count / maxSamples));
+  for (let s = 0; s < count; s += step) {
+    const o = s * 9;
+    const ax = tri[o], ay = tri[o + 1], az = tri[o + 2];
+    const e1x = tri[o + 3] - ax, e1y = tri[o + 4] - ay, e1z = tri[o + 5] - az;
+    const e2x = tri[o + 6] - ax, e2y = tri[o + 7] - ay, e2z = tri[o + 8] - az;
+    let nx = e1y * e2z - e1z * e2y;
+    let ny = e1z * e2x - e1x * e2z;
+    let nz = e1x * e2y - e1y * e2x;
+    const len = Math.hypot(nx, ny, nz);
+    if (len < 1e-12) continue;
+    // Ray from the centre of this triangle, pointing into the solid.
+    nx /= -len;
+    ny /= -len;
+    nz /= -len;
+    const cx = ax + (e1x + e2x) / 3;
+    const cy = ay + (e1y + e2y) / 3;
+    const cz = az + (e1z + e2z) / 3;
+    const hit = nearestHit(tri, count, s, cx, cy, cz, nx, ny, nz);
+    if (hit !== null && (!best || hit < best.thickness)) best = { thickness: hit, at: [cx, cy, cz] };
+  }
+  return best;
+}
+
+/** Distance along the ray to the nearest triangle (other than `skip`), or null. Möller–Trumbore. */
+function nearestHit(tri: Float64Array, count: number, skip: number, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number): number | null {
+  let nearest = Infinity;
+  for (let t = 0; t < count; t++) {
+    if (t === skip) continue;
+    const o = t * 9;
+    const ax = tri[o], ay = tri[o + 1], az = tri[o + 2];
+    const e1x = tri[o + 3] - ax, e1y = tri[o + 4] - ay, e1z = tri[o + 5] - az;
+    const e2x = tri[o + 6] - ax, e2y = tri[o + 7] - ay, e2z = tri[o + 8] - az;
+    const px = dy * e2z - dz * e2y;
+    const py = dz * e2x - dx * e2z;
+    const pz = dx * e2y - dy * e2x;
+    const det = e1x * px + e1y * py + e1z * pz;
+    if (Math.abs(det) < 1e-12) continue;
+    const inv = 1 / det;
+    const tx = ox - ax, ty = oy - ay, tz = oz - az;
+    const u = (tx * px + ty * py + tz * pz) * inv;
+    if (u < -1e-9 || u > 1 + 1e-9) continue;
+    const qx = ty * e1z - tz * e1y;
+    const qy = tz * e1x - tx * e1z;
+    const qz = tx * e1y - ty * e1x;
+    const v = (dx * qx + dy * qy + dz * qz) * inv;
+    if (v < -1e-9 || u + v > 1 + 1e-9) continue;
+    const dist = (e2x * qx + e2y * qy + e2z * qz) * inv;
+    // Ignore hits right at the start (neighbouring triangles sharing the point).
+    if (dist > 1e-6 && dist < nearest) nearest = dist;
+  }
+  return Number.isFinite(nearest) ? nearest : null;
+}

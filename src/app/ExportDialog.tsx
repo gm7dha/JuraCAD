@@ -15,7 +15,7 @@ const QUALITY: { value: MeshQuality; label: string; hint: string }[] = [
   { value: "fine", label: "Fine", hint: "Smoothest curves, larger file" },
 ];
 
-export type ExportFormat = "step" | "stl";
+export type ExportFormat = "step" | "stl" | "3mf";
 
 const FORMATS: { value: ExportFormat; label: string; hint: string }[] = [
   {
@@ -27,6 +27,11 @@ const FORMATS: { value: ExportFormat; label: string; hint: string }[] = [
     value: "stl",
     label: "STL (.stl)",
     hint: "The shape as small triangles. For 3D printing and slicers, and services that ask for STL.",
+  },
+  {
+    value: "3mf",
+    label: "3MF (.3mf)",
+    hint: "Triangles too, but tidier: keeps part names and is preferred by modern slicers (Bambu, Prusa, Cura).",
   },
 ];
 
@@ -49,13 +54,18 @@ export function ExportDialog() {
 
   const doExport = async () => {
     setError(null);
-    setStage({ kind: "working", text: format === "step" ? "Creating STEP…" : "Creating STL…" });
+    setStage({ kind: "working", text: `Creating ${format.toUpperCase()}…` });
     try {
       if (format === "step") {
         const { step, partCount } = await getKernel().exportStep(partIds);
         const name = `${safeFileName(fileName, "partsmith")}.step`;
         downloadFile(step, name, "model/step");
         showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})`, "success");
+      } else if (format === "3mf") {
+        const { data, triangleCount } = await getKernel().export3mf(partIds, quality, doc.name);
+        const name = `${safeFileName(fileName, "partsmith")}.3mf`;
+        downloadFile(data, name, "model/3mf");
+        showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
       } else {
         const { stl, triangleCount } = await getKernel().exportStl(partIds, quality);
         const name = `${safeFileName(fileName, "partsmith")}.stl`;
@@ -155,8 +165,8 @@ export function ExportDialog() {
           ))}
         </div>
 
-        {format === "stl" && <span className="form-label">Quality</span>}
-        {format === "stl" && (
+        {format !== "step" && <span className="form-label">Quality</span>}
+        {format !== "step" && (
         <div className="quality-options" role="radiogroup" aria-label="Quality">
           {QUALITY.map((q) => (
             <label key={q.value} className={`quality-option${quality === q.value ? " selected" : ""}`}>

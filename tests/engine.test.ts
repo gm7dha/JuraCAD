@@ -615,3 +615,44 @@ describe("variables", () => {
     expect(missing.featureErrors[box.id]).toMatch(/no variable called "wall"/);
   });
 });
+
+describe("3MF export", () => {
+  it("writes each part as a named, joined-up mesh", () => {
+    build([feature("box", { width: 10, depth: 10, height: 10 }), feature("box", { width: 5, depth: 5, height: 5, x: 20 })]);
+    const { data, triangleCount } = engine.export3mf([], "coarse", "Two boxes");
+    expect(triangleCount).toBe(24);
+    const text = new TextDecoder().decode(data);
+    expect(text.startsWith("PK")).toBe(true);
+    expect(text).toMatch(/name="Part 1"/);
+    expect(text).toMatch(/name="Part 2"/);
+    expect(text).toMatch(/unit="millimeter"/);
+    // Corners are shared: 8 per box.
+    expect(text.match(/<vertex /g)).toHaveLength(16);
+  });
+});
+
+describe("fuller model check", () => {
+  it("measures the thinnest wall", () => {
+    build([feature("box", { width: 40, depth: 30, height: 1.2 })]);
+    const t = engine.check("normal").parts[0].thinnest;
+    expect(t?.thickness).toBeCloseTo(1.2, 3);
+  });
+
+  it("measures the wall of a hollowed tray, not its overall size", () => {
+    const box = feature("box", { width: 30, depth: 30, height: 15 });
+    const r0 = build([box]);
+    const top = [...r0.parts[0].faceRefs].sort((a, b) => b.center[2] - a.center[2])[0];
+    build([box, { ...feature("shell", { thickness: 1.5 }, "add"), picks: [{ partId: box.id, ref: top }] }]);
+    expect(engine.check("normal").parts[0].thinnest?.thickness).toBeCloseTo(1.5, 2);
+  });
+
+  it("spots separate parts that overlap", () => {
+    build([feature("box", { width: 10, depth: 10, height: 10 }), feature("box", { width: 10, depth: 10, height: 10, x: 5 })]);
+    const overlaps = engine.check("normal").overlaps ?? [];
+    expect(overlaps).toHaveLength(1);
+    expect(overlaps[0]).toMatchObject({ a: "Part 1", b: "Part 2" });
+    expect(overlaps[0].volume).toBeCloseTo(500, 3);
+    build([feature("box", { width: 10, depth: 10, height: 10 }), feature("box", { width: 10, depth: 10, height: 10, x: 10 })]);
+    expect(engine.check("normal").overlaps).toEqual([]);
+  });
+});
