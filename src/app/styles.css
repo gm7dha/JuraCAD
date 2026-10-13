@@ -1452,3 +1452,12 @@ kbd {
   }
 }
 
+
+.install-steps {
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.install-steps li + li {
+  margin-top: 6px;
+}
