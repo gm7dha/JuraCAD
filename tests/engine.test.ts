@@ -921,6 +921,29 @@ describe("importing STEP and STL files", () => {
     expect(analyzeMesh(r3.parts[0].vertices, r3.parts[0].triangles).volume).toBeCloseTo(8000 * 25.4 ** 3, -3);
   });
 
+  it("reads text STL files, and finely curved ones in reasonable time", () => {
+    const P = [[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]];
+    const tris = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]];
+    const text = `solid tet\n${tris.map((t) => `facet normal 0 0 0\nouter loop\n${t.map((i) => `vertex ${P[i].join(" ")}`).join("\n")}\nendloop\nendfacet`).join("\n")}\nendsolid tet\n`;
+    let r = build([importFeature({ fileName: "tet.stl", format: "stl", data: btoa(text), units: "mm" })]);
+    expect(r.featureErrors).toEqual({});
+    expect(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume).toBeCloseTo(1000 / 6, 1);
+    engine.dispose();
+
+    build([feature("sphere", { diameter: 40 })]);
+    const stl = new Uint8Array(engine.exportStl([], "fine").stl);
+    const triangles = engine.exportStl([], "fine").triangleCount;
+    engine.dispose();
+    let b64 = "";
+    for (const x of stl) b64 += String.fromCharCode(x);
+    const started = performance.now();
+    r = build([importFeature({ fileName: "ball.stl", format: "stl", data: btoa(b64), units: "mm" })]);
+    const ms = performance.now() - started;
+    expect(r.featureErrors).toEqual({});
+    console.log(`imported a ${triangles}-triangle STL in ${Math.round(ms)} ms`);
+    expect(relativeError(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume, (4 / 3) * Math.PI * 8000)).toBeLessThan(0.02);
+  });
+
   it("explains a damaged file", () => {
     const r = build([importFeature({ fileName: "bad.step", format: "step", data: "ISO-10303-21;\nnonsense", units: "mm" })]);
     expect(Object.values(r.featureErrors)[0]).toMatch(/STEP file/);
