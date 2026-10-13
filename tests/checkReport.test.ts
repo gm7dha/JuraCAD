@@ -28,10 +28,10 @@ const part = (overrides: Partial<PartCheck> = {}, mesh: Partial<MeshAnalysis> = 
 });
 
 describe("check report", () => {
-  it("says a good part is ready to print", () => {
+  it("says a good part is ready to export", () => {
     const r = buildCheckReport({ parts: [part()] }, 0);
     expect(r.level).toBe("ok");
-    expect(r.headline).toBe("Ready to print.");
+    expect(r.headline).toBe("Ready to export.");
     expect(r.parts[0].size).toBe("40 × 30 × 20 mm");
     expect(r.parts[0].volume).toBe("24 cm³");
   });

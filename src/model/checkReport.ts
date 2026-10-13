@@ -50,10 +50,10 @@ export function reportPart(p: PartCheck): PartReport {
 
   if (p.geometryValid === true) findings.push({ level: "ok", text: "Geometry is valid" });
   else if (p.geometryValid === false)
-    findings.push({ level: "warn", text: "OpenCascade reported a geometry problem — check the printed result" });
+    findings.push({ level: "warn", text: "OpenCascade reported a geometry problem — check the exported file carefully" });
 
   if (m.pieces > 1) {
-    findings.push({ level: "warn", text: `Is in ${m.pieces} separate pieces — they'll print as separate objects` });
+    findings.push({ level: "warn", text: `Is in ${m.pieces} separate pieces — they'll be made as separate objects` });
   } else if (m.pieces === 1) {
     findings.push({ level: "ok", text: "One solid piece" });
   }
@@ -62,7 +62,7 @@ export function reportPart(p: PartCheck): PartReport {
   if (m.bounds) {
     const d = m.bounds.max.map((v, i) => v - m.bounds!.min[i]);
     size = `${round(d[0])} × ${round(d[1])} × ${round(d[2])} mm`;
-    if (Math.min(...d) < 0.4) findings.push({ level: "warn", text: "Is thinner than 0.4 mm somewhere — likely too thin to print" });
+    if (Math.min(...d) < 0.4) findings.push({ level: "warn", text: "Is less than 0.4 mm thick overall — very thin parts are hard to make" });
   }
   const volumeMm3 = p.exactVolume ?? m.volume;
   const volume = `${round(volumeMm3 / 1000, 2)} cm³`;
@@ -79,9 +79,9 @@ export function buildCheckReport(result: CheckResult, failedFeatureCount: number
 
   let headline: string;
   if (parts.length === 0) headline = "There's nothing to check yet.";
-  else if (level === "ok") headline = parts.length === 1 ? "Ready to print." : "All parts are ready to print.";
-  else if (level === "warn") headline = "Printable, but have a look at the notes below.";
-  else headline = "Problems found — the slicer may refuse this or print it wrongly.";
+  else if (level === "ok") headline = parts.length === 1 ? "Ready to export." : "All parts are ready to export.";
+  else if (level === "warn") headline = "Usable, but have a look at the notes below.";
+  else headline = "Problems found — a manufacturer's or printer's software may reject this or make it wrongly.";
 
   if (failedFeatureCount > 0) {
     headline += ` ${plural(failedFeatureCount, "feature")} couldn't be built, so the model may not be what you expect.`;

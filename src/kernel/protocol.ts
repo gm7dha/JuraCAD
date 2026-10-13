@@ -51,15 +51,23 @@ export interface ExportResult {
   triangleCount: number;
 }
 
+export interface StepResult {
+  /** STEP file contents (exact shapes, millimetres). */
+  step: ArrayBuffer;
+  partCount: number;
+}
+
 export type KernelRequest =
   | { type: "rebuild"; features: Feature[] }
   | { type: "check"; quality: MeshQuality }
-  | { type: "exportStl"; partIds: string[]; quality: MeshQuality };
+  | { type: "exportStl"; partIds: string[]; quality: MeshQuality }
+  | { type: "exportStep"; partIds: string[] };
 
 export type KernelResponseBody =
   | { type: "rebuild"; result: RebuildResult }
   | { type: "check"; result: CheckResult }
-  | { type: "exportStl"; result: ExportResult };
+  | { type: "exportStl"; result: ExportResult }
+  | { type: "exportStep"; result: StepResult };
 
 /** Messages sent from the main thread to the worker. */
 export type ToWorker = { id: number; request: KernelRequest };

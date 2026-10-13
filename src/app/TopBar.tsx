@@ -47,11 +47,11 @@ export function TopBar() {
       >
         <Icons.New size={18} /> New
       </button>
-      <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts} title="Check the model is ready to print">
+      <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts} title="Check the model is a sound, closed solid before you export it">
         <Icons.Check size={18} /> Check model
       </button>
-      <button className="primary-button" onClick={() => openDialog("export")} disabled={!hasParts} title="Download an STL file for your slicer">
-        <Icons.Export size={18} /> Export STL
+      <button className="primary-button" onClick={() => openDialog("export")} disabled={!hasParts} title="Download a STEP or STL file to send to a manufacturer or 3D printer">
+        <Icons.Export size={18} /> Export
       </button>
       <button className="icon-button" onClick={() => openDialog("help")} aria-label="Help and shortcuts" title="Help and shortcuts (?)">
         <Icons.Help />

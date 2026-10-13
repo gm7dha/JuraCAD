@@ -110,11 +110,12 @@ try {
   await page.waitForSelector(".check-headline", { timeout: 30_000 });
   const headline = await page.locator(".check-headline").innerText();
   await shot("check-model");
-  if (!/Ready to print/.test(headline)) throw new Error(`check said: ${headline}`);
+  if (!/Ready to export/.test(headline)) throw new Error(`check said: ${headline}`);
   await page.getByRole("button", { name: "Close", exact: true }).first().click();
 
   step = "exporting STL (typing a file name)";
-  await page.getByRole("button", { name: "Export STL" }).click();
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await page.getByRole("radio", { name: /STL/ }).check();
   const nameBox = page.locator("#export-name");
   await nameBox.click();
   await nameBox.press("Control+a");
@@ -129,6 +130,17 @@ try {
   const bytes = statSync(path).size;
   if (bytes < 84 + 50 * 12) throw new Error(`STL file is suspiciously small (${bytes} bytes)`);
   if (download.suggestedFilename() !== "bracket v2.stl") throw new Error(`file was named ${download.suggestedFilename()}`);
+
+  step = "exporting STEP";
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  if (!(await page.getByRole("radio", { name: /STEP/ }).isChecked())) throw new Error("STEP isn't the default format");
+  const stepPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.getByRole("button", { name: "Check & export" }).click();
+  const stepDownload = await stepPromise;
+  const { readFileSync } = await import("node:fs");
+  const stepText = readFileSync(await stepDownload.path(), "utf8");
+  if (!stepText.startsWith("ISO-10303-21")) throw new Error(`the STEP file doesn't look like STEP: ${stepText.slice(0, 40)}`);
+  if (!stepDownload.suggestedFilename().endsWith(".step")) throw new Error(`STEP file was named ${stepDownload.suggestedFilename()}`);
 
   step = "editing a feature three times, then undoing once";
   const boxRow = page.locator(".feature-row:not(.datum)").first();
@@ -306,7 +318,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3.`,
+    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

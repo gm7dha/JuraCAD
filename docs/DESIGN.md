@@ -1,18 +1,19 @@
 # PartSmith — Design
 
-PartSmith is a free, open-source, browser-based **parametric CAD tool for 3D printing**, with the look and
+PartSmith is a free, open-source, browser-based **general-purpose parametric CAD tool**, with the look and
 controls of Onshape. It runs entirely in the browser, installs as an app on Windows and macOS (from Phase 4),
 and works offline.
 
-**Who it's for:** a hobbyist designing parts for 3D printing. Every trade-off favours that use over
-professional engineering.
+**Who it's for:** a hobbyist designing real parts — to 3D print at home, or to send as STEP or STL files to a
+manufacturer to be made in nylon, stainless steel or other materials. Every trade-off favours simplicity over
+professional-engineering depth. (Originally aimed at 3D printing only; widened in Phase 3.)
 
 ## Goals
 
 - Sketch on a plane or face, constrain it with dimensions, and build solids with features
   (extrude, revolve, fillet, shell and so on).
 - Edit any earlier step and have the model rebuild correctly.
-- Check the model is printable (watertight, no errors), then export STL or 3MF.
+- Check the model is a sound, closed solid, then export STEP (exact, for manufacturers) or STL (for printing).
 - Combine parts into assemblies with Onshape-style mates.
 - Produce simple 2D drawings from parts.
 
@@ -47,7 +48,7 @@ Main thread (what you see)                 Background worker (heavy maths)
 │ UI (React)  src/app          │  feature  │ Geometry engine  src/kernel   │
 │ Viewport (three.js)          │   list    │  - replays features in order  │
 │   src/viewport               │ ────────▶ │  - OpenCascade via replicad   │
-│ Document store (Zustand)     │ ◀──────── │  - meshes, checks, STL export │
+│ Document store (Zustand)     │ ◀──────── │  - meshes, checks, STEP/STL   │
 │   src/model                  │  meshes   └───────────────────────────────┘
 └──────────────────────────────┘
           │ autosave
@@ -59,7 +60,7 @@ Main thread (what you see)                 Background worker (heavy maths)
   (`10 + 2`, `1 in`), undo/redo history and the app store. Pure, tested code.
 - **`src/kernel`** — the worker protocol, the client (latest-wins rebuilds), and `engine.ts`, which turns
   features into OpenCascade solids. The engine also runs in Node for tests.
-- **`src/geometry`** — pure mesh tools: the printability check (watertight, pieces, volume) and the STL writer.
+- **`src/geometry`** — pure mesh tools: the soundness check (watertight, pieces, volume) and the STL writer.
 - **`src/viewport`** — the three.js scene: Onshape mouse controls, view cube, planes, origin, hover and picking.
 - **`src/app`** — React components: top bar, toolbar, feature list, feature dialog, check/export/help dialogs.
 
@@ -102,13 +103,13 @@ Each phase ends with a working version on the live site.
 
 | Phase | Scope | You can… |
 | --- | --- | --- |
-| **P1 Foundation** ✅ | App shell, Onshape-style viewport, OpenCascade worker, box/cylinder/sphere with New/Add/Remove, basic model check, STL export | make simple solids and print them |
+| **P1 Foundation** ✅ | App shell, Onshape-style viewport, OpenCascade worker, box/cylinder/sphere with New/Add/Remove, basic model check, STL export | make simple solids and export them |
 | **P2 Sketcher** ✅ | Sketch on planes and flat faces; lines, rectangles, circles, arcs, points; constraints and dimensions; basic Extrude (one way / symmetric, New/Add/Remove) | draw a fully defined sketch and extrude it |
-| P3 Part features (in progress: fillet, chamfer, revolve, shell ✅) | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real printable parts and change them later |
-| P4 Save, check, export | `.partsmith` files, full model check, 3MF and STEP, offline install (PWA) | keep projects and trust exports |
-| P5 Assemblies | Instances, mate connectors, Onshape mate types, BOM | check multi-part prints fit |
+| P3 Part features (in progress: fillet, chamfer, revolve, shell ✅) | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real parts and change them later |
+| P4 Save, check, export | `.partsmith` files, full model check, 3MF (STEP export arrived early, in P3), offline install (PWA) | keep projects and trust exports |
+| P5 Assemblies | Instances, mate connectors, Onshape mate types, BOM | check multi-part designs fit together |
 | P6 2D drawings | ISO sheets, first-angle views, hidden lines, dimensions, PDF/SVG/DXF | print a dimensioned drawing |
-| P7 Extras | Patterns, holes, text, sweep/loft, sections, import, inches, print-bed preview, dark mode | as needed |
+| P7 Extras | Patterns, holes, text, sweep/loft, sections, import, inches, optional print-bed preview, dark mode | as needed |
 
 ## How we work
 

@@ -11,8 +11,23 @@ import { Modal } from "./Modal";
 
 const QUALITY: { value: MeshQuality; label: string; hint: string }[] = [
   { value: "coarse", label: "Coarse", hint: "Small file, visible facets on curves" },
-  { value: "normal", label: "Normal", hint: "Good for most prints" },
+  { value: "normal", label: "Normal", hint: "Good for most uses" },
   { value: "fine", label: "Fine", hint: "Smoothest curves, larger file" },
+];
+
+export type ExportFormat = "step" | "stl";
+
+const FORMATS: { value: ExportFormat; label: string; hint: string }[] = [
+  {
+    value: "step",
+    label: "STEP (.step)",
+    hint: "The exact shape — curves stay perfectly round. What machine shops and most manufacturers ask for (metal, nylon, moulding…).",
+  },
+  {
+    value: "stl",
+    label: "STL (.stl)",
+    hint: "The shape as small triangles. For 3D printing and slicers, and services that ask for STL.",
+  },
 ];
 
 type Stage = { kind: "options" } | { kind: "working"; text: string } | { kind: "warning"; report: CheckReport };
@@ -24,6 +39,7 @@ export function ExportDialog() {
   const showToast = useStore((s) => s.showToast);
   const [which, setWhich] = useState<string>("all");
   const [quality, setQuality] = useState<MeshQuality>("normal");
+  const [format, setFormat] = useState<ExportFormat>("step");
   const [fileName, setFileName] = useState(() => safeFileName(doc.name));
   const [stage, setStage] = useState<Stage>({ kind: "options" });
   const [error, setError] = useState<string | null>(null);
@@ -33,12 +49,19 @@ export function ExportDialog() {
 
   const doExport = async () => {
     setError(null);
-    setStage({ kind: "working", text: "Creating STL…" });
+    setStage({ kind: "working", text: format === "step" ? "Creating STEP…" : "Creating STL…" });
     try {
-      const { stl, triangleCount } = await getKernel().exportStl(partIds, quality);
-      const name = `${safeFileName(fileName, "partsmith")}.stl`;
-      downloadFile(stl, name, "model/stl");
-      showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
+      if (format === "step") {
+        const { step, partCount } = await getKernel().exportStep(partIds);
+        const name = `${safeFileName(fileName, "partsmith")}.step`;
+        downloadFile(step, name, "model/step");
+        showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})`, "success");
+      } else {
+        const { stl, triangleCount } = await getKernel().exportStl(partIds, quality);
+        const name = `${safeFileName(fileName, "partsmith")}.stl`;
+        downloadFile(stl, name, "model/stl");
+        showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
+      }
       close();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -90,7 +113,7 @@ export function ExportDialog() {
   const working = stage.kind === "working";
   return (
     <Modal
-      title="Export STL"
+      title="Export"
       onClose={close}
       footer={
         <>
@@ -114,7 +137,26 @@ export function ExportDialog() {
           ))}
         </select>
 
-        <span className="form-label">Quality</span>
+        <span className="form-label">Format</span>
+        <div className="quality-options" role="radiogroup" aria-label="Format">
+          {FORMATS.map((f) => (
+            <label key={f.value} className={`quality-option${format === f.value ? " selected" : ""}`}>
+              <input
+                type="radio"
+                name="format"
+                value={f.value}
+                checked={format === f.value}
+                onChange={() => setFormat(f.value)}
+                disabled={working}
+              />
+              <span className="quality-label">{f.label}</span>
+              <span className="quality-hint">{f.hint}</span>
+            </label>
+          ))}
+        </div>
+
+        {format === "stl" && <span className="form-label">Quality</span>}
+        {format === "stl" && (
         <div className="quality-options" role="radiogroup" aria-label="Quality">
           {QUALITY.map((q) => (
             <label key={q.value} className={`quality-option${quality === q.value ? " selected" : ""}`}>
@@ -131,14 +173,18 @@ export function ExportDialog() {
             </label>
           ))}
         </div>
+        )}
 
         <label htmlFor="export-name">File name</label>
         <div className="param-input">
           <input id="export-name" value={fileName} onChange={(e) => setFileName(e.target.value)} disabled={working} />
-          <span className="unit">.stl</span>
+          <span className="unit">.{format}</span>
         </div>
       </div>
-      <p className="muted small">Units are millimetres. PartSmith checks the model before saving and warns you about any problems.</p>
+      <p className="muted small">
+        Units are millimetres. PartSmith checks the model before saving and warns you about any problems. Not sure which
+        format? Send STEP — almost every manufacturer can use it.
+      </p>
       {error && <p className="dialog-error">{error}</p>}
     </Modal>
   );

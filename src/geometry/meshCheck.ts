@@ -1,5 +1,5 @@
 /**
- * Printability checks on a triangle mesh — the same triangles that go into
+ * Soundness checks on a triangle mesh — the same triangles that go into
  * the STL file, so what we check is exactly what the slicer will receive.
  *
  * A mesh is "watertight" when every edge is shared by exactly two triangles

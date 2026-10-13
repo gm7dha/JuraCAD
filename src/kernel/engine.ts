@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { getOC, makeBox, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
+import { exportSTEP, getOC, makeBox, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
 
 import { analyzeMesh, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -12,7 +12,7 @@ import { FEATURE_DEFS, isPickFeature, resolveParams } from "../model/features";
 import { MESH_TOLERANCES, type Feature, type MeshQuality } from "../model/types";
 import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
-import type { CheckResult, ExportResult, PartMesh, RebuildResult } from "./protocol";
+import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult } from "./protocol";
 
 interface BuiltPart {
   id: string;
@@ -377,7 +377,7 @@ export class GeometryEngine {
     return null;
   }
 
-  /** Checks every part for printability. */
+  /** Checks every part is a sound, closed solid. */
   check(quality: MeshQuality): CheckResult {
     const oc = getOC();
     const tol = MESH_TOLERANCES[quality];
@@ -415,6 +415,21 @@ export class GeometryEngine {
     const triangleCount = meshes.reduce((n, m) => n + m.triangles.length / 3, 0);
     const names = chosen.map((p) => p.name).join(", ");
     return { stl: writeBinaryStl(meshes, `PartSmith export: ${names}`), triangleCount };
+  }
+
+  /**
+   * One STEP file containing the chosen parts (all when the list is empty).
+   * STEP keeps the exact shape — curves stay curves — which is what most
+   * manufacturers (machining, sheet metal, injection moulding) ask for.
+   */
+  async exportStep(partIds: string[]): Promise<StepResult> {
+    const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
+    if (chosen.length === 0) throw new Error("There's nothing to export yet.");
+    const blob = exportSTEP(
+      chosen.map((p) => ({ shape: p.shape, name: p.name })),
+      { unit: "mm" },
+    );
+    return { step: await blob.arrayBuffer(), partCount: chosen.length };
   }
 
   get partCount(): number {
