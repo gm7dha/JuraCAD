@@ -101,6 +101,17 @@ try {
   const measured = (await page.locator(".measure-panel tr").first().innerText()).replace(/\s+/g, " ");
   await shot("drilled-block");
 
+  step = "cutting the block open with a section view";
+  await page.getByRole("button", { name: "Section", exact: true }).click();
+  await page.waitForSelector(".section-panel");
+  await page.getByRole("radio", { name: "Front" }).click();
+  await page.waitForTimeout(400);
+  await page.keyboard.press("Shift+Digit7");
+  await page.waitForTimeout(500);
+  await shot("section");
+  await page.getByRole("button", { name: "Close section view" }).click();
+  await page.waitForSelector(".section-panel", { state: "detached" });
+
   step = "switching to the top view";
   await page.keyboard.press("Shift+Digit5");
   await page.waitForTimeout(600);

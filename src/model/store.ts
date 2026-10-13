@@ -83,6 +83,15 @@ export interface SketchSession {
   filletRadius: string;
 }
 
+/** Section view (display only — not saved): cut the view along a default plane. */
+export interface SectionView {
+  plane: PlaneName;
+  /** Position of the cut along the plane's direction, mm. */
+  offset: number;
+  /** Show the other side. */
+  flip: boolean;
+}
+
 export type DialogName = "check" | "export" | "help" | "variables" | null;
 
 export interface Toast {
@@ -98,6 +107,8 @@ export interface AppState {
   sketch: SketchSession | null;
   /** Feature highlighted in the feature list. */
   selectedFeatureId: string | null;
+  /** The section view, when one is on. */
+  section: SectionView | null;
   /** Faces and edges picked in the viewport. */
   selection: SelectionItem[];
   hiddenParts: string[];
@@ -169,6 +180,7 @@ export interface AppState {
   setListHoverPlane: (plane: PlaneName | null) => void;
   toggleDatum: (datum: DatumName) => void;
   openDialog: (d: DialogName) => void;
+  setSection: (section: SectionView | null) => void;
   showToast: (text: string, tone?: Toast["tone"]) => void;
 
   // set by the kernel connection
@@ -256,6 +268,7 @@ export const useStore = create<AppState>((set, get) => {
     sketch: null,
     selectedFeatureId: null,
     selection: [],
+    section: null,
     hiddenParts: [],
     selectedPlane: null,
     listHoverPlane: null,
@@ -547,6 +560,7 @@ export const useStore = create<AppState>((set, get) => {
       }),
 
     openDialog: (dialog) => set({ dialog }),
+    setSection: (section) => set({ section }),
 
     showToast: (text, tone = "info") => set({ toast: { id: ++toastCounter, text, tone } }),
 

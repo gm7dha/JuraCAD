@@ -27,7 +27,15 @@ const COLOURS = {
   planeHoverBorder: "#ff8a00",
   planeSelected: "#5b9dff",
   planeSelectedBorder: "#1f6fd1",
+  /** Inside of a part when it's cut open by a section view. */
+  sectionCut: "#d9774f",
 };
+
+/** A section view: everything on the far side of this plane is hidden (n·p + c < 0 is cut away). */
+export interface SectionPlane {
+  normal: [number, number, number];
+  constant: number;
+}
 
 /** Which way to look at each default plane for "View normal to". */
 const PLANE_VIEWS: Record<PlaneName, StandardView> = { Top: "top", Front: "front", Right: "right" };
@@ -42,6 +50,8 @@ const CLICK_SLOP = 4;
 interface PartObjects {
   data: PartMesh;
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material[]>;
+  /** The part's inside surface, shown flat-coloured where a section cuts it open. */
+  cut: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   lines: THREE.LineSegments<THREE.BufferGeometry, THREE.Material[]>;
 }
 
@@ -84,7 +94,8 @@ export class SceneManager {
   private readonly planeLabels: THREE.Sprite[] = [];
   private readonly planes = new Map<PlaneName, PlaneObjects>();
   private readonly parts = new Map<string, PartObjects>();
-  private readonly materials: { faces: THREE.Material[]; edges: THREE.Material[] };
+  private readonly materials: { faces: THREE.Material[]; edges: THREE.Material[]; cut: THREE.Material };
+  private section: THREE.Plane | null = null;
   private readonly resizeObserver: ResizeObserver;
   private readonly callbacks: SceneCallbacks;
   private readonly sketchLayer = new SketchLayer();
@@ -159,7 +170,9 @@ export class SceneManager {
         new THREE.LineBasicMaterial({ color: COLOURS.edgeHover }),
         new THREE.LineBasicMaterial({ color: COLOURS.edgeSelected }),
       ],
+      cut: new THREE.MeshBasicMaterial({ color: COLOURS.sectionCut, side: THREE.BackSide }),
     };
+    this.renderer.localClippingEnabled = true;
 
     this.scene.add(this.partsGroup, this.planesGroup, this.originGroup, this.sketchLayer.group);
     this.buildPlanes();
@@ -205,7 +218,7 @@ export class SceneManager {
     for (const p of this.parts.values()) {
       p.mesh.geometry.dispose();
       p.lines.geometry.dispose();
-      this.partsGroup.remove(p.mesh, p.lines);
+      this.partsGroup.remove(p.mesh, p.lines, p.cut);
     }
     this.parts.clear();
 
@@ -230,15 +243,48 @@ export class SceneManager {
       const lines = new THREE.LineSegments(lineGeometry, this.materials.edges);
       lines.userData.partId = data.id;
 
+      const cut = new THREE.Mesh(geometry, this.materials.cut);
+      cut.visible = this.section !== null;
+
       mesh.visible = lines.visible = !this.hidden.has(data.id);
-      this.partsGroup.add(mesh, lines);
-      this.parts.set(data.id, { data, mesh, lines });
+      if (this.hidden.has(data.id)) cut.visible = false;
+      this.partsGroup.add(mesh, lines, cut);
+      this.parts.set(data.id, { data, mesh, lines, cut });
     }
 
     if (this.hover && !this.parts.has(this.hover.partId)) this.hover = null;
     this.updatePlaneSize();
     this.applyHighlights();
     if (firstParts) this.fit(true);
+  }
+
+  /** Turn the section view on (cut along this plane) or off (null). */
+  setSection(section: SectionPlane | null): void {
+    this.section = section ? new THREE.Plane(new THREE.Vector3(...section.normal), section.constant) : null;
+    const planes = this.section ? [this.section] : [];
+    for (const m of [...this.materials.faces, ...this.materials.edges, this.materials.cut]) m.clippingPlanes = planes;
+    // While cut open, outer faces are drawn front-side only and the inside shows in the cut colour.
+    for (const m of this.materials.faces) {
+      m.side = this.section ? THREE.FrontSide : THREE.DoubleSide;
+      m.needsUpdate = true;
+    }
+    for (const p of this.parts.values()) p.cut.visible = this.section !== null && p.mesh.visible;
+  }
+
+  /** The model's extent along a direction (for the section slider). */
+  extentAlong(dir: [number, number, number]): [number, number] | null {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const p of this.parts.values()) {
+      if (!p.mesh.visible) continue;
+      const v = p.data.vertices;
+      for (let i = 0; i < v.length; i += 3) {
+        const d = v[i] * dir[0] + v[i + 1] * dir[1] + v[i + 2] * dir[2];
+        if (d < lo) lo = d;
+        if (d > hi) hi = d;
+      }
+    }
+    return Number.isFinite(lo) ? [lo, hi] : null;
   }
 
   setSelection(items: SelectionItem[]): void {
@@ -248,7 +294,10 @@ export class SceneManager {
 
   setHidden(ids: string[]): void {
     this.hidden = new Set(ids);
-    for (const [id, p] of this.parts) p.mesh.visible = p.lines.visible = !this.hidden.has(id);
+    for (const [id, p] of this.parts) {
+      p.mesh.visible = p.lines.visible = !this.hidden.has(id);
+      p.cut.visible = p.mesh.visible && this.section !== null;
+    }
   }
 
   /** Zoom and centre so everything visible fits on screen. */
@@ -628,8 +677,10 @@ export class SceneManager {
       meshes.push(p.mesh);
       lines.push(p.lines);
     }
-    const faceHit = this.raycaster.intersectObjects(meshes, false)[0];
-    const edgeHit = this.raycaster.intersectObjects(lines, false)[0];
+    // With a section on, ignore anything in the part that's cut away.
+    const kept = (h: THREE.Intersection) => !this.section || this.section.distanceToPoint(h.point) >= -1e-6;
+    const faceHit = this.raycaster.intersectObjects(meshes, false).find(kept);
+    const edgeHit = this.raycaster.intersectObjects(lines, false).find(kept);
 
     // Prefer an edge when it's not hidden behind the face we hit.
     if (edgeHit && (!faceHit || edgeHit.distance <= faceHit.distance + threshold * 2)) {

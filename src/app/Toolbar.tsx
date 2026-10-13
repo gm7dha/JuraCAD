@@ -5,6 +5,7 @@ import type { FeatureType } from "../model/types";
 import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { detectPlatform, shortcut } from "./platform";
+import { startSection } from "./SectionPanel";
 
 function ToolButton({
   label,
@@ -66,6 +67,7 @@ export function Toolbar() {
   const ready = useStore((s) => s.kernelStatus === "ready");
   const hasSketch = useStore((s) => s.history.present.features.some((f) => f.type === "sketch"));
   const hasPart = useStore((s) => s.parts.length > 0);
+  const sectionOn = useStore((s) => s.section !== null);
   const platform = detectPlatform();
 
   return (
@@ -199,6 +201,16 @@ export function Toolbar() {
         />
       </div>
       <div className="toolbar-spacer" />
+      <div className="tool-group">
+        <ToolButton
+          label="Section"
+          icon={<Icons.Section />}
+          onClick={() => (useStore.getState().section ? useStore.getState().setSection(null) : startSection())}
+          disabled={!hasPart}
+          active={sectionOn}
+          title="Section view — slice the view open to see inside (doesn't change the part)"
+        />
+      </div>
       <div className="tool-group">
         <ToolButton label="Fit" icon={<Icons.Fit />} onClick={() => viewportApi.current?.fit()} title="Zoom to fit (F)" />
       </div>
