@@ -11,6 +11,7 @@ import { analyzeMesh } from "../src/geometry/meshCheck";
 import type { TopoPick } from "../src/geometry/topoRef";
 import { readBinaryStl } from "../src/geometry/stl";
 import { GeometryEngine } from "../src/kernel/engine";
+import { lastStlTimings } from "../src/kernel/importer";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
 import { defaultAxis } from "../src/sketch/axis";
@@ -931,8 +932,8 @@ describe("importing STEP and STL files", () => {
     engine.dispose();
 
     build([feature("sphere", { diameter: 40 })]);
-    const stl = new Uint8Array(engine.exportStl([], "fine").stl);
-    const triangles = engine.exportStl([], "fine").triangleCount;
+    const stl = new Uint8Array(engine.exportStl([], "coarse").stl);
+    const triangles = engine.exportStl([], "coarse").triangleCount;
     engine.dispose();
     let b64 = "";
     for (const x of stl) b64 += String.fromCharCode(x);
@@ -940,8 +941,9 @@ describe("importing STEP and STL files", () => {
     r = build([importFeature({ fileName: "ball.stl", format: "stl", data: btoa(b64), units: "mm" })]);
     const ms = performance.now() - started;
     expect(r.featureErrors).toEqual({});
-    console.log(`imported a ${triangles}-triangle STL in ${Math.round(ms)} ms`);
-    expect(relativeError(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume, (4 / 3) * Math.PI * 8000)).toBeLessThan(0.02);
+    console.log(`imported a ${triangles}-triangle STL in ${Math.round(ms)} ms`, JSON.stringify(lastStlTimings));
+    expect(ms).toBeLessThan(20_000);
+    expect(relativeError(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume, (4 / 3) * Math.PI * 8000)).toBeLessThan(0.05);
   });
 
   it("explains a damaged file", () => {

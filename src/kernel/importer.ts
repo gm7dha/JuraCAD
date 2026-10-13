@@ -4,8 +4,9 @@
  * Reading a big file is slow, so the result is remembered and each rebuild
  * gets a fresh copy instead of reading the file again.
  */
-import { assembleWire, cast, getOC, makeFace, makeLine, makeSolid, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { assembleWire, cast, getOC, makeFace, makeLine, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
 
+import { describeError } from "./engine";
 import { readBinaryStl } from "../geometry/stl";
 import { weld } from "../geometry/threeMf";
 import { fromBase64 } from "../model/importFile";
@@ -88,6 +89,7 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
   if (triangles.length === 0) throw new Error("The STL file has no usable triangles in it.");
   const point = (i: number): [number, number, number] => [vertices[i * 3] * scale, vertices[i * 3 + 1] * scale, vertices[i * 3 + 2] * scale];
 
+  const oc = getOC() as any;
   const edges = new Map<string, Edge>();
   const faces: Face[] = [];
   const edge = (a: number, b: number): Edge => {
@@ -99,6 +101,8 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
     }
     return e;
   };
+  const garbage: { delete(): void }[] = [];
+  const t0 = performance.now();
   try {
     for (let t = 0; t < triangles.length; t += 3) {
       const [a, b, c] = [triangles[t], triangles[t + 1], triangles[t + 2]];
@@ -109,18 +113,19 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
         wire.delete();
       }
     }
-    let solid: Shape3D;
-    try {
-      solid = makeSolid(faces);
-    } catch {
-      throw new Error("The STL file couldn't be turned into a solid. Check it's a closed (watertight) shape.");
-    }
-    // Join the triangles that lie flat together into single faces.
-    try {
-      solid = solid.simplify();
-    } catch {
-      /* keep the triangles */
-    }
+    const t1 = performance.now();
+    // The triangles already share their edges, so they can go straight into one shell.
+    const builder = new oc.TopoDS_Builder();
+    garbage.push(builder);
+    const shell = new oc.TopoDS_Shell();
+    garbage.push(shell);
+    builder.MakeShell(shell);
+    for (const f of faces) builder.Add(shell, f.wrapped);
+    const maker = new oc.BRepBuilderAPI_MakeSolid();
+    garbage.push(maker);
+    maker.Add(shell);
+    let solid = cast(maker.Solid()) as Shape3D;
+    const t2 = performance.now();
     try {
       if (measureVolume(solid) < 0) {
         const flipped = cast(solid.wrapped.Reversed()) as Shape3D;
@@ -130,12 +135,37 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
     } catch {
       /* keep it as it is */
     }
+    // Join the triangles that lie flat together into single faces (slow on very detailed meshes, where it rarely helps).
+    if (triangles.length / 3 <= SIMPLIFY_LIMIT) {
+      try {
+        solid = solid.simplify();
+      } catch {
+        /* keep the triangles */
+      }
+    }
+    lastStlTimings = { faces: t1 - t0, solid: t2 - t1, simplify: performance.now() - t2, triangles: triangles.length / 3 };
     return [solid];
+  } catch (e) {
+    throw new Error(`The STL file couldn't be turned into a solid. Check it's a closed (watertight) shape. (${describeError(e, "unknown")})`);
   } finally {
     faces.forEach((f) => f.delete());
     edges.forEach((e) => e.delete());
+    garbage.reverse().forEach((g) => {
+      try {
+        g.delete();
+      } catch {
+        /* already gone */
+      }
+    });
   }
 }
+
+/** Above this many triangles, flat areas aren't joined back into single faces. */
+const SIMPLIFY_LIMIT = 20_000;
+
+/** How long the last STL import's stages took (for tests). */
+export let lastStlTimings: { faces: number; solid: number; simplify: number; triangles: number } | null = null;
+
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /** The solids in an imported file (fresh copies the caller owns). */
