@@ -3,7 +3,10 @@ import { useEffect, useMemo, useRef } from "react";
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
 import { activeAssembly, pickFor, useStore, type SelectionItem } from "../model/store";
-import { placementMatrix } from "../assembly/math";
+import { compose, placementMatrix, rotate, type Placement } from "../assembly/math";
+import { findPick, frameOnParts, framePlacement } from "../assembly/connectors";
+import { useSolvedAssembly } from "../app/assemblySolve";
+import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
 import type { Feature } from "../model/types";
@@ -28,6 +31,19 @@ function instanceMeshes(parts: PartMesh[], assembly: Assembly): PartMesh[] {
   return out;
 }
 
+/** The faces or edges picked for a mate, as shown now. */
+function connectorItems(parts: PartMesh[], assembly: Assembly, connectors: (MateConnector | undefined)[]): SelectionItem[] {
+  const items: SelectionItem[] = [];
+  for (const c of connectors) {
+    if (!c) continue;
+    const instance = assembly.instances.find((i) => i.id === c.instanceId);
+    const part = instance && parts.find((p) => p.id === instance.partId);
+    const index = part ? findPick(part, c.pick) : -1;
+    if (instance && index >= 0) items.push({ partId: instance.id, kind: c.pick.ref.kind, index });
+  }
+  return items;
+}
+
 /** Selected instances, as every face of each (so the whole part lights up). */
 function instanceSelection(display: PartMesh[], ids: string[]): SelectionItem[] {
   const items: SelectionItem[] = [];
@@ -35,9 +51,20 @@ function instanceSelection(display: PartMesh[], ids: string[]): SelectionItem[] 
   return items;
 }
 
-/** A click in an assembly selects whole instances. */
+/** A click in an assembly selects whole instances (or, while making a mate, a face or edge for it). */
 function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
+  if (s.mateDraft) {
+    if (target?.kind !== "part") return;
+    const asm = activeAssembly(s);
+    const instance = asm?.instances.find((i) => i.id === target.item.partId);
+    const part = instance && s.parts.find((p) => p.id === instance.partId);
+    if (!instance || !part) return;
+    const ref = target.item.kind === "edge" ? part.edgeRefs?.[target.item.index] : part.faceRefs?.[target.item.index];
+    if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return;
+    s.pickMateConnector({ instanceId: instance.id, pick: { partId: part.id, ref } });
+    return;
+  }
   const id = target?.kind === "part" ? target.item.partId : null;
   if (!id) {
     if (!additive) s.setAsmSelection([]);
@@ -213,10 +240,33 @@ export function Viewport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [parts, instanceKey],
   );
+  const { solved } = useSolvedAssembly();
+  const mateDraft = useStore((s) => s.mateDraft?.mate ?? null);
   const placements = useMemo(() => {
     if (!assembly) return NO_PLACEMENTS;
-    return Object.fromEntries(assembly.instances.map((i) => [i.id, placementMatrix(i.placement)]));
-  }, [assembly]);
+    return Object.fromEntries(assembly.instances.map((i) => [i.id, placementMatrix(solved?.placements[i.id] ?? i.placement)]));
+  }, [assembly, solved]);
+
+  // Arrows showing the mate connectors picked so far.
+  useEffect(() => {
+    const manager = viewportApi.current;
+    if (!manager) return;
+    if (!assembly || !mateDraft) {
+      manager.setMarkers([]);
+      return;
+    }
+    const markers: { origin: [number, number, number]; x: [number, number, number]; z: [number, number, number] }[] = [];
+    for (const c of [mateDraft.a, mateDraft.b]) {
+      if (!c) continue;
+      const instance = assembly.instances.find((i) => i.id === c.instanceId);
+      const f = frameOnParts(parts, c.pick);
+      if (!instance || !f) continue;
+      const where: Placement = solved?.placements[instance.id] ?? instance.placement;
+      const world = compose(where, framePlacement(f));
+      markers.push({ origin: world.position, x: rotate(world.rotation, [1, 0, 0]), z: rotate(world.rotation, [0, 0, 1]) });
+    }
+    manager.setMarkers(markers);
+  }, [assembly, mateDraft, parts, solved]);
 
   useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenInstances : hiddenParts), [hiddenParts, hiddenInstances, assembly]);
   const section = useStore((s) => s.section);
@@ -239,9 +289,15 @@ export function Viewport() {
   useEffect(
     () =>
       viewportApi.current?.setSelection(
-        assembly ? instanceSelection(display, asmSelection) : picks ? itemsForPicks(parts, picks) : selection,
+        assembly
+          ? mateDraft
+            ? connectorItems(parts, assembly, [mateDraft.a, mateDraft.b])
+            : instanceSelection(display, asmSelection)
+          : picks
+            ? itemsForPicks(parts, picks)
+            : selection,
       ),
-    [selection, picks, parts, assembly, display, asmSelection],
+    [selection, picks, parts, assembly, display, asmSelection, mateDraft],
   );
   useEffect(
     () => viewportApi.current?.setDatums({ selected: selectedPlane, listHover: listHoverPlane, hidden: hiddenDatums }),

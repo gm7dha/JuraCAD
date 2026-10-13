@@ -3,7 +3,8 @@
  * new document and never changes its input, so undo keeps working.
  */
 import { newId } from "../model/document";
-import type { Assembly, Instance, PartSmithDocument } from "../model/types";
+import { parsePick } from "../geometry/topoRef";
+import type { Assembly, Instance, Mate, MateConnector, MateType, PartSmithDocument } from "../model/types";
 import { applyPlacement, IDENTITY, quatNormalize, type Placement, type Quat, type Vec3 } from "./math";
 
 const assembliesOf = (doc: PartSmithDocument) => doc.assemblies ?? [];
@@ -83,9 +84,45 @@ export function updateInstance(
   }));
 }
 
+/** Remove instances, and the mates that joined them to anything. */
 export function removeInstances(doc: PartSmithDocument, assemblyId: string, ids: string[]): PartSmithDocument {
   const gone = new Set(ids);
-  return updateAssembly(doc, assemblyId, (a) => ({ ...a, instances: a.instances.filter((i) => !gone.has(i.id)) }));
+  return updateAssembly(doc, assemblyId, (a) =>
+    withMates(
+      { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
+      (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
+    ),
+  );
+}
+
+function withMates(a: Assembly, mates: Mate[]): Assembly {
+  const { mates: _old, ...rest } = a;
+  return mates.length ? { ...rest, mates } : rest;
+}
+
+/** Add a mate, or replace the one with the same id. */
+export function putMate(doc: PartSmithDocument, assemblyId: string, mate: Mate): PartSmithDocument {
+  return updateAssembly(doc, assemblyId, (a) => {
+    const mates = a.mates ?? [];
+    return withMates(a, mates.some((m) => m.id === mate.id) ? mates.map((m) => (m.id === mate.id ? mate : m)) : [...mates, mate]);
+  });
+}
+
+export function removeMate(doc: PartSmithDocument, assemblyId: string, mateId: string): PartSmithDocument {
+  return updateAssembly(doc, assemblyId, (a) => withMates(a, (a.mates ?? []).filter((m) => m.id !== mateId)));
+}
+
+/** Store where the mates put each part, so it stays there if a mate is later removed. */
+export function settlePlacements(doc: PartSmithDocument, assemblyId: string, placements: Record<string, Placement>): PartSmithDocument {
+  return updateAssembly(doc, assemblyId, (a) => ({
+    ...a,
+    instances: a.instances.map((i) => {
+      const p = placements[i.id];
+      if (!p || i.fixed) return i;
+      const same = p.position.every((v, k) => Math.abs(v - i.placement.position[k]) < 1e-9) && p.rotation.every((v, k) => Math.abs(v - i.placement.rotation[k]) < 1e-12);
+      return same ? i : { ...i, placement: p };
+    }),
+  }));
 }
 
 export interface BomRow {
@@ -130,6 +167,42 @@ function parsePlacement(raw: unknown): Placement {
   return { position, rotation };
 }
 
+const MATE_TYPE_NAMES = new Set<string>(["fastened", "revolute", "slider", "cylindrical", "planar", "ball"]);
+
+function parseConnector(raw: unknown): MateConnector | null {
+  const c = (raw ?? {}) as Record<string, unknown>;
+  const pick = parsePick(c.pick);
+  if (typeof c.instanceId !== "string" || !pick) return null;
+  return { instanceId: c.instanceId, pick };
+}
+
+function parseMate(raw: unknown, ids: Set<string>): Mate | null {
+  if (!raw || typeof raw !== "object") return null;
+  const m = raw as Record<string, unknown>;
+  if (typeof m.id !== "string" || ids.has(m.id) || typeof m.type !== "string" || !MATE_TYPE_NAMES.has(m.type)) return null;
+  const a = parseConnector(m.a);
+  const b = parseConnector(m.b);
+  if (!a || !b) return null;
+  ids.add(m.id);
+  const values: Record<string, string> = {};
+  if (m.values && typeof m.values === "object") {
+    for (const [k, v] of Object.entries(m.values as Record<string, unknown>)) {
+      if (typeof v === "string") values[k] = v;
+      else if (typeof v === "number" && Number.isFinite(v)) values[k] = String(v);
+    }
+  }
+  return {
+    id: m.id,
+    name: typeof m.name === "string" && m.name.trim() ? m.name : "Mate",
+    type: m.type as MateType,
+    a,
+    b,
+    flip: m.flip === true,
+    values,
+    ...(m.suppressed === true ? { suppressed: true } : {}),
+  };
+}
+
 /** Check assemblies from untrusted JSON. Bad entries are dropped rather than failing the whole file. */
 export function parseAssemblies(raw: unknown): Assembly[] {
   if (!Array.isArray(raw)) return [];
@@ -154,7 +227,13 @@ export function parseAssemblies(raw: unknown): Assembly[] {
         fixed: ri.fixed === true,
       });
     }
-    out.push({ id: r.id, name: typeof r.name === "string" && r.name.trim() ? r.name : "Assembly", instances });
+    const mates: Mate[] = [];
+    for (const m of Array.isArray(r.mates) ? r.mates : []) {
+      const mate = parseMate(m, ids);
+      if (mate) mates.push(mate);
+    }
+    const assembly: Assembly = { id: r.id, name: typeof r.name === "string" && r.name.trim() ? r.name : "Assembly", instances };
+    out.push(mates.length ? { ...assembly, mates } : assembly);
   }
   return out;
 }

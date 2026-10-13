@@ -3,6 +3,7 @@ import { create } from "zustand";
 import type { PartMesh } from "../kernel/protocol";
 import {
   addFeature,
+  newId,
   commit,
   createFeature,
   emptyDocument,
@@ -23,8 +24,9 @@ import { setCurrentScope } from "./expr";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, Feature, FeatureType, ImportedFile, Instance, PartSmithDocument } from "./types";
-import { addAssembly, insertInstance, removeAssembly, removeInstances, renameAssembly, updateInstance } from "../assembly/assembly";
+import type { Assembly, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateType, PartSmithDocument } from "./types";
+import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, settlePlacements, updateInstance } from "../assembly/assembly";
+import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
 
@@ -95,6 +97,9 @@ export interface SectionView {
   flip: boolean;
 }
 
+/** A mate being made or changed; its two connectors may not be picked yet. */
+export type MateDraft = Omit<Mate, "a" | "b"> & { a?: MateConnector; b?: MateConnector };
+
 export type DialogName = "check" | "export" | "help" | "variables" | "insert" | null;
 
 export interface Toast {
@@ -136,6 +141,8 @@ export interface AppState {
   asmSelection: string[];
   /** Instances hidden in the 3D view. */
   hiddenInstances: string[];
+  /** The mate dialog, while open. */
+  mateDraft: { mode: "create" | "edit"; mate: MateDraft } | null;
   /** The design as last saved to (or opened from) a file; compare with history.present to see unsaved changes. */
   savedDoc: PartSmithDocument | null;
   /** Name of that file, e.g. "Bracket.partsmith". */
@@ -196,6 +203,16 @@ export interface AppState {
   removeInstances: (ids: string[]) => void;
   setAsmSelection: (ids: string[]) => void;
   toggleInstanceHidden: (id: string) => void;
+  startMate: (type: MateType) => void;
+  editMate: (id: string) => void;
+  setMateDraft: (patch: Partial<MateDraft>) => void;
+  /** A face or edge clicked while the mate dialog is open: fills the first connector, then the second. */
+  pickMateConnector: (c: MateConnector) => void;
+  /** Save the mate (false if it isn't ready). */
+  commitMateDraft: () => boolean;
+  cancelMateDraft: () => void;
+  deleteMate: (id: string) => void;
+  toggleMateSuppressed: (id: string) => void;
   undo: () => void;
   redo: () => void;
   selectFeature: (id: string | null) => void;
@@ -311,6 +328,7 @@ export const useStore = create<AppState>((set, get) => {
     activeTab: null,
     asmSelection: [],
     hiddenInstances: [],
+    mateDraft: null,
 
     startCreate: (type) => {
       const s = get();
@@ -554,6 +572,7 @@ export const useStore = create<AppState>((set, get) => {
         hiddenParts: [],
         activeTab: null,
         asmSelection: [],
+        mateDraft: null,
         savedDoc: null,
         fileName: null,
       }));
@@ -571,6 +590,7 @@ export const useStore = create<AppState>((set, get) => {
         hiddenParts: [],
         activeTab: null,
         asmSelection: [],
+        mateDraft: null,
         fileName,
       }));
       set((s) => ({ savedDoc: s.history.present }));
@@ -591,7 +611,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveTab: (activeTab) => {
       if (get().editing) return;
-      set({ activeTab, asmSelection: [], selection: [], selectedPlane: null, section: null });
+      set({ activeTab, asmSelection: [], selection: [], selectedPlane: null, section: null, mateDraft: null });
     },
 
     removeAssembly: (id) => {
@@ -623,13 +643,92 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     setAsmSelection: (asmSelection) => set({ asmSelection }),
+
+    startMate: (type) => {
+      const asm = activeAssembly(get());
+      if (!asm) return;
+      const values: Record<string, string> = {};
+      for (const d of MATE_TYPES[type].values) values[d.key] = "0";
+      set({
+        mateDraft: { mode: "create", mate: { id: newId("m"), name: nextMateName(asm, type), type, flip: false, values } },
+        asmSelection: [],
+        dialog: null,
+      });
+    },
+
+    editMate: (id) => {
+      const mate = activeAssembly(get())?.mates?.find((m) => m.id === id);
+      if (mate) set({ mateDraft: { mode: "edit", mate: { ...mate, values: { ...mate.values } } }, asmSelection: [], dialog: null });
+    },
+
+    setMateDraft: (patch) =>
+      set((s) => {
+        if (!s.mateDraft) return {};
+        const mate = { ...s.mateDraft.mate, ...patch };
+        // A new kind of mate keeps the amounts it shares with the old one, and starts the rest at 0.
+        if (patch.type && patch.type !== s.mateDraft.mate.type) {
+          const values: Record<string, string> = {};
+          for (const d of MATE_TYPES[patch.type].values) values[d.key] = s.mateDraft.mate.values[d.key] ?? "0";
+          mate.values = values;
+          const asm = activeAssembly(s);
+          const autoName = /^\S+ \d+$/.test(s.mateDraft.mate.name) && s.mateDraft.mode === "create";
+          if (asm && autoName) mate.name = nextMateName(asm, patch.type);
+        }
+        return { mateDraft: { ...s.mateDraft, mate } };
+      }),
+
+    pickMateConnector: (c) =>
+      set((s) => {
+        if (!s.mateDraft) return {};
+        const m = s.mateDraft.mate;
+        let next: MateDraft;
+        if (!m.a || (m.a && m.b) || (!m.b && m.a.instanceId === c.instanceId)) next = { ...m, a: c, b: undefined };
+        else next = { ...m, b: c };
+        return { mateDraft: { ...s.mateDraft, mate: next } };
+      }),
+
+    commitMateDraft: () => {
+      const s = get();
+      const asm = activeAssembly(s);
+      const d = s.mateDraft;
+      if (!asm || !d || !d.mate.a || !d.mate.b) return false;
+      const mate: Mate = { ...d.mate, a: d.mate.a, b: d.mate.b, name: d.mate.name.trim() || MATE_TYPES[d.mate.type].label };
+      change((doc) => {
+        const withMate = putMate(doc, asm.id, mate);
+        const solvedAsm = withMate.assemblies?.find((a) => a.id === asm.id);
+        return solvedAsm ? settlePlacements(withMate, asm.id, solveWithParts(solvedAsm, s.parts).placements) : withMate;
+      });
+      set({ mateDraft: null });
+      return true;
+    },
+
+    cancelMateDraft: () => set({ mateDraft: null }),
+
+    deleteMate: (id) => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm) return;
+      // Parts stay where the mates had put them.
+      const { placements } = solveWithParts(asm, s.parts);
+      change((doc) => removeMate(settlePlacements(doc, asm.id, placements), asm.id, id));
+      if (s.mateDraft?.mate.id === id) set({ mateDraft: null });
+    },
+
+    toggleMateSuppressed: (id) => {
+      const s = get();
+      const asm = activeAssembly(s);
+      const mate = asm?.mates?.find((m) => m.id === id);
+      if (!asm || !mate) return;
+      const { placements } = solveWithParts(asm, s.parts);
+      change((doc) => putMate(settlePlacements(doc, asm.id, placements), asm.id, { ...mate, suppressed: !mate.suppressed }));
+    },
     toggleInstanceHidden: (id) =>
       set((s) => ({ hiddenInstances: s.hiddenInstances.includes(id) ? s.hiddenInstances.filter((x) => x !== id) : [...s.hiddenInstances, id] })),
 
     // Undo/redo only when no feature dialog is open (see App shortcuts).
-    undo: () => set((s) => (s.editing ? {} : { history: undoHistory(s.history), selection: [] })),
+    undo: () => set((s) => (s.editing || s.mateDraft ? {} : { history: undoHistory(s.history), selection: [] })),
     // (While sketching, Ctrl+Z goes to sketchUndo instead — see App shortcuts.)
-    redo: () => set((s) => (s.editing ? {} : { history: redoHistory(s.history), selection: [] })),
+    redo: () => set((s) => (s.editing || s.mateDraft ? {} : { history: redoHistory(s.history), selection: [] })),
 
     selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane })),
     setSelection: (items) =>

@@ -1169,6 +1169,77 @@ kbd {
   flex: 1;
 }
 
+.connector-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.connector-slot.filled {
+  border-style: solid;
+  background: #f3f8ff;
+}
+
+.connector-slot.waiting {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(31, 111, 209, 0.12);
+}
+
+.connector-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--line);
+  font-size: 11px;
+  font-weight: 650;
+  flex: none;
+}
+
+.connector-slot.filled .connector-number {
+  background: var(--accent);
+  color: #fff;
+}
+
+.mate-dialog select {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.mate-slider {
+  width: 100%;
+  margin: 4px 0 0;
+}
+
+.row-actions {
+  display: none;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.feature-row:hover .row-actions,
+.feature-row:focus-within .row-actions {
+  display: inline-flex;
+}
+
+.danger-text {
+  color: var(--error);
+  margin-top: 6px;
+}
+
+.small-text {
+  font-size: 12px;
+  margin: -2px 0 6px;
+}
+
 .param-field.compact {
   margin-bottom: 6px;
 }

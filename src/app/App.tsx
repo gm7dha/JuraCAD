@@ -2,7 +2,7 @@ import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
 import { activeAssembly, useStore } from "../model/store";
-import { AssemblyPanel, AssemblyToolbar, InsertPanel, InstancePanel } from "./AssemblyUI";
+import { AssemblyPanel, AssemblyToolbar, InsertPanel, InstancePanel, MateDialog } from "./AssemblyUI";
 import { Viewport, viewportApi } from "../viewport/Viewport";
 import type { StandardView } from "../viewport/ViewCube";
 import { CheckDialog } from "./CheckDialog";
@@ -135,11 +135,12 @@ function useShortcuts() {
       const asm = activeAssembly(s);
       if (asm) {
         if (e.key === "Escape") {
-          if (s.dialog === "insert") s.openDialog(null);
+          if (s.mateDraft) s.cancelMateDraft();
+          else if (s.dialog === "insert") s.openDialog(null);
           else s.setAsmSelection([]);
           return;
         }
-        if ((e.key === "Delete" || e.key === "Backspace") && s.asmSelection.length) {
+        if ((e.key === "Delete" || e.key === "Backspace") && s.asmSelection.length && !s.mateDraft) {
           e.preventDefault();
           s.removeInstances(s.asmSelection);
           return;
@@ -236,6 +237,7 @@ export function App() {
             <>
               <InsertPanel />
               <InstancePanel />
+              <MateDialog />
             </>
           ) : (
             <>

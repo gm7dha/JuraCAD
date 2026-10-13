@@ -103,11 +103,36 @@ export interface Instance {
   fixed: boolean;
 }
 
+/** Kinds of mate (Onshape names in brackets where they differ): Fasten, Hinge (revolute), Slider, Cylindrical, Planar, Ball. */
+export type MateType = "fastened" | "revolute" | "slider" | "cylindrical" | "planar" | "ball";
+
+/** One end of a mate: a face or edge on an instance, remembered by what it looks like. */
+export interface MateConnector {
+  instanceId: string;
+  /** The face or edge (its partId is the Part Studio part). */
+  pick: TopoPick;
+}
+
+export interface Mate {
+  id: string;
+  name: string;
+  type: MateType;
+  a: MateConnector;
+  b: MateConnector;
+  /** Point the two connectors the same way instead of face to face. */
+  flip: boolean;
+  /** Amounts as typed (angle, distance, gap…), like feature sizes. */
+  values: Record<string, string>;
+  suppressed?: boolean;
+}
+
 /** An assembly tab: parts placed together. */
 export interface Assembly {
   id: string;
   name: string;
   instances: Instance[];
+  /** How the parts are joined (optional: older saves have none). */
+  mates?: Mate[];
 }
 
 /** How finely curved surfaces are turned into triangles. */

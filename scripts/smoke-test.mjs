@@ -64,7 +64,7 @@ const statusText = () => page.locator(".status-strip").innerText();
 
 try {
   step = "loading the app";
-  await page.goto("http://localhost:4173/partsmith/");
+  await page.goto("http://localhost:4173/partsmith/?smoke");
   await page.waitForSelector(".topbar", { timeout: 30_000 });
 
   step = "waiting for the geometry engine";
@@ -460,6 +460,40 @@ try {
   await page.waitForTimeout(600);
   await shot("assembly");
   const instanceCount = await page.locator(".feature-row").count();
+
+  step = "fastening two parts together with a mate";
+  // Where the top faces of Part 1 <2> and Part 2 <1> are on screen (Part 1 <1> sits under the dialog).
+  const tops = await page.evaluate(() => {
+    const v = window.partsmithViewport.current;
+    return v.shownParts().slice(1, 3).map((p) => {
+      const i = p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99);
+      return v.screenPointOnFace(p.id, i);
+    });
+  });
+  if (tops.some((t) => !t)) throw new Error("couldn't find the top faces to click");
+  const canvas = page.locator(".viewport-canvas");
+  await page.getByRole("button", { name: "Fasten", exact: true }).click();
+  await page.waitForSelector('form[aria-label="Mate"]');
+  const dialogBox = await page.locator('form[aria-label="Mate"]').boundingBox();
+  const canvasBox = await canvas.boundingBox();
+  for (const t of tops) {
+    if (dialogBox && canvasBox && t.x + canvasBox.x < dialogBox.x + dialogBox.width && t.y + canvasBox.y < dialogBox.y + dialogBox.height) throw new Error(`a face to click (${Math.round(t.x)}, ${Math.round(t.y)}) is under the mate dialog`);
+  }
+  await canvas.click({ position: tops[0] });
+  await canvas.click({ position: tops[1] });
+  await page.waitForSelector(".connector-slot.filled >> nth=1", { timeout: 5_000 });
+  await page.getByRole("button", { name: "Accept" }).click();
+  await page.waitForSelector('form[aria-label="Mate"]', { state: "detached" });
+  await page.waitForSelector(".panel-section.mates .feature-row >> text=Fasten 1");
+  if ((await page.locator(".panel-section.mates .feature-row.failed").count()) > 0) {
+    throw new Error(`the mate has a problem: ${await page.locator(".panel-section.mates .feature-row.failed").first().getAttribute("title")}`);
+  }
+  await page.locator(".feature-row >> text=Part 2 <1>").click();
+  await page.waitForSelector(".instance-panel >> text=Placed by");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("f");
+  await page.waitForTimeout(600);
+  await shot("mated");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
   await page.waitForSelector('[aria-label="Tools"]');
 
@@ -469,7 +503,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances and a parts list.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

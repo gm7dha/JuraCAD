@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./app/App";
+import { viewportApi } from "./viewport/Viewport";
 import "./app/styles.css";
 
 const root = document.getElementById("root");
@@ -14,6 +15,11 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
       // Offline use just isn't available; everything else works.
     });
   });
+}
+
+// The browser smoke test (opened with ?smoke) reaches the 3D view to find where to click.
+if (new URLSearchParams(window.location.search).has("smoke")) {
+  (window as unknown as { partsmithViewport: typeof viewportApi }).partsmithViewport = viewportApi;
 }
 
 createRoot(root).render(

@@ -10,6 +10,10 @@
   tested in Node (`tests/engine.test.ts` loads the real OCCT engine).
 - Sketches: data and pure edits in `src/sketch/` (own constraint solver in `solver.ts`, closed-shape finding in
   `regions.ts`); the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
+- Assemblies: `src/assembly/` — `math.ts` (placements: move + quaternion), `assembly.ts` (pure document edits, parts
+  list, parsing), `connectors.ts` (mate connector frames from display meshes), `mates.ts` (mate types and the solver:
+  spreads out from fixed parts; loops are only checked). UI in `src/app/AssemblyUI.tsx`; instances are drawn as
+  copies of part meshes moved with `SceneManager.setPlacements`.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
@@ -22,9 +26,10 @@
   (`gh api repos/gm7dha/partsmith/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .partsmith → New → open it again → import the STEP and STL it exported. To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .partsmith → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces (the page is opened with `?smoke`, which exposes `window.partsmithViewport` so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
-  that can be joined and decoded. Set it back to "0" before merging.
+  that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
+  to the shot names you want (e.g. "assembly,mated"). Set `SMOKE_SCREENSHOTS` back to "0" before merging.
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
   bump `CACHE` in sw.js if its caching rules change.
 - Versions: bump `version` in package.json and add a CHANGELOG.md entry (with the merge commit) at the end of each
