@@ -60,6 +60,9 @@ ctx.onmessage = (event) => {
           body = { type: "export3mf", result };
           break;
         }
+        case "measure":
+          body = { type: "measure", result: engine.measure(request.picks) };
+          break;
         case "exportStep": {
           const result = await engine.exportStep(request.partIds);
           transfer.push(result.step);

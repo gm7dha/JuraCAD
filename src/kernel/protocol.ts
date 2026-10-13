@@ -1,5 +1,6 @@
 import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
-import type { EdgeRef, FaceRef } from "../geometry/topoRef";
+import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
+import type { Measurement } from "../geometry/measureMath";
 import type { Feature, MeshQuality } from "../model/types";
 
 /** Display mesh for one part, ready to hand to three.js. */
@@ -67,11 +68,14 @@ export interface ThreeMfResult {
   triangleCount: number;
 }
 
+export type { Measurement } from "../geometry/measureMath";
+
 export type KernelRequest =
   | { type: "rebuild"; features: Feature[]; variables: Record<string, number> }
   | { type: "check"; quality: MeshQuality }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality }
   | { type: "exportStep"; partIds: string[] }
+  | { type: "measure"; picks: TopoPick[] }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string };
 
 export type KernelResponseBody =
@@ -79,6 +83,7 @@ export type KernelResponseBody =
   | { type: "check"; result: CheckResult }
   | { type: "exportStl"; result: ExportResult }
   | { type: "exportStep"; result: StepResult }
+  | { type: "measure"; result: Measurement }
   | { type: "export3mf"; result: ThreeMfResult };
 
 /** Messages sent from the main thread to the worker. */

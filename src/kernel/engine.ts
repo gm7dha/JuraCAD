@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { exportSTEP, getOC, makeBox, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
+import { exportSTEP, getOC, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -17,6 +17,7 @@ import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, ThreeMfResult } from "./protocol";
 import { write3mf } from "../geometry/threeMf";
+import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 interface BuiltPart {
   id: string;
@@ -648,6 +649,63 @@ export class GeometryEngine {
     const triangleCount = meshes.reduce((n, m) => n + m.triangles.length / 3, 0);
     const names = chosen.map((p) => p.name).join(", ");
     return { stl: writeBinaryStl(meshes, `PartSmith export: ${names}`), triangleCount };
+  }
+
+  /** Measure one or two picked edges/faces: lengths, areas, round sizes, and the gap and angle between them. */
+  measure(picks: TopoPick[]): Measurement {
+    const found: { item: MeasuredItem; shape: Edge | Face }[] = [];
+    for (const pick of picks.slice(0, 2)) {
+      const part = this.parts.find((p) => p.id === pick.partId);
+      if (!part) continue;
+      const bounds = boundsOf(part.shape);
+      const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+      const item = describePick(pick.ref);
+      if (pick.ref.kind === "edge") {
+        const edges = part.shape.edges;
+        const [i] = matchRefs([pick.ref], edges.map((e) => edgeRefOf(e, bounds)), size);
+        if (i === null) continue;
+        const edge = edges[i];
+        edges.forEach((e, j) => j !== i && e.delete());
+        item.length = measureLength(edge);
+        if (pick.ref.curve === "CIRCLE") {
+          const c = circleThrough3D(take(edge.pointAt(0)), take(edge.pointAt(1 / 3)), take(edge.pointAt(2 / 3)));
+          if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
+        }
+        found.push({ item, shape: edge });
+      } else {
+        const faces = part.shape.faces;
+        const [i] = matchRefs([pick.ref], faces.map((f) => faceRefOf(f, bounds)), size);
+        if (i === null) continue;
+        const face = faces[i];
+        faces.forEach((f, j) => j !== i && f.delete());
+        item.area = measureArea(face);
+        if (pick.ref.surface === "CYLINDRE") {
+          // A round face's size comes from one of its round edges.
+          for (const e of face.edges) {
+            if (!item.radius && e.geomType === "CIRCLE") {
+              const c = circleThrough3D(take(e.pointAt(0)), take(e.pointAt(1 / 3)), take(e.pointAt(2 / 3)));
+              if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
+            }
+            e.delete();
+          }
+        }
+        found.push({ item, shape: face });
+      }
+    }
+    const result: Measurement = { items: found.map((f) => f.item) };
+    if (found.length === 2) {
+      try {
+        result.distance = measureDistanceBetween(found[0].shape, found[1].shape);
+      } catch {
+        // leave it out
+      }
+      const angle = angleBetween(picks[0].ref, picks[1].ref);
+      if (angle !== null) result.angle = angle;
+      const [a, b] = found.map((f) => f.item.centre);
+      if (a && b) result.centreDistance = centreGap(a, b);
+    }
+    found.forEach((f) => f.shape.delete());
+    return result;
   }
 
   /** One 3MF file with each chosen part as a separate, named object. */
