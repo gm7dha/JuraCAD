@@ -14,7 +14,9 @@ import { SketchController } from "../sketch/controller";
 import { planeOnFace, type SketchPlane } from "../sketch/planes";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
-import { SceneManager, type PickTarget } from "./SceneManager";
+import { SceneManager, type PickTarget, type ScreenRay } from "./SceneManager";
+import { planDrag, type DragPlan } from "../assembly/drag";
+import { solveWithParts } from "../assembly/mates";
 import { sectionPlane } from "./section";
 
 /** Shared empty colour list (a selector must not make a new object each time). */
@@ -165,6 +167,34 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
 }
 
+/** The drag in progress in an assembly. */
+let activeDrag: DragPlan | null = null;
+
+function dragStart(target: PickTarget & { kind: "part" }, ray: ScreenRay, shift: boolean): boolean {
+  const s = useStore.getState();
+  const asm = activeAssembly(s);
+  if (!asm || s.mateDraft || !target.point) return false;
+  const solved = solveWithParts(asm, s.parts);
+  const r = planDrag(asm, solved, (m, side) => frameOnParts(s.parts, m[side].pick), target.item.partId, target.point, ray.dir, shift);
+  if ("refuse" in r) {
+    if (r.refuse) s.showToast(r.refuse);
+    return false;
+  }
+  activeDrag = r.plan;
+  s.setAsmSelection([target.item.partId]);
+  return true;
+}
+
+function dragMove(ray: ScreenRay) {
+  const change = activeDrag?.update(ray);
+  if (change) useStore.getState().setDragPreview(change);
+}
+
+function dragEnd() {
+  activeDrag = null;
+  useStore.getState().commitDrag();
+}
+
 /** Where a fillet's picks are on the parts as shown now (for highlighting). */
 function itemsForPicks(parts: PartMesh[], picks: TopoPick[]): SelectionItem[] {
   const items: SelectionItem[] = [];
@@ -207,7 +237,7 @@ export function Viewport() {
     if (!container) return;
     let manager: SceneManager;
     try {
-      manager = new SceneManager(container, { onPick: handlePick });
+      manager = new SceneManager(container, { onPick: handlePick, onDragStart: dragStart, onDragMove: dragMove, onDragEnd: dragEnd });
     } catch (e) {
       useStore.getState().showToast(
         "Your browser couldn't start 3D graphics (WebGL). Try Chrome or Edge, and check hardware acceleration is on.",
@@ -246,6 +276,8 @@ export function Viewport() {
     if (!assembly) return NO_PLACEMENTS;
     return Object.fromEntries(assembly.instances.map((i) => [i.id, placementMatrix(solved?.placements[i.id] ?? i.placement)]));
   }, [assembly, solved]);
+
+  useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft), [assembly, mateDraft]);
 
   // Arrows showing the mate connectors picked so far.
   useEffect(() => {
@@ -344,5 +376,17 @@ export function Viewport() {
     manager.setSketchScene(others, { plane, data: sketchData, analysis, failing, selection: new Set(sketchSelection ?? []) });
   }, [others, plane, sketchData, sketchSelection]);
 
-  return <div ref={containerRef} className="viewport" data-testid="viewport" />;
+  return (
+    <>
+      <div ref={containerRef} className="viewport" data-testid="viewport" />
+      <button
+        type="button"
+        className="iso-button"
+        onClick={() => viewportApi.current?.setView("iso")}
+        title="Isometric view (Shift+7)"
+      >
+        Isometric
+      </button>
+    </>
+  );
 }

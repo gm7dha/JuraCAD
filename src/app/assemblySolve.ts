@@ -2,6 +2,7 @@
 import { useMemo } from "react";
 
 import { solveWithParts, type SolveResult } from "../assembly/mates";
+import { withDragChange } from "../assembly/drag";
 import { activeAssembly, useStore, type MateDraft } from "../model/store";
 import type { Assembly, Mate } from "../model/types";
 
@@ -17,8 +18,9 @@ export function useSolvedAssembly(): { assembly: Assembly | null; solved: SolveR
   const assembly = useStore(activeAssembly);
   const parts = useStore((s) => s.parts);
   const draft = useStore((s) => s.mateDraft?.mate ?? null);
+  const drag = useStore((s) => s.dragPreview);
   return useMemo(() => {
     if (!assembly) return { assembly: null, solved: null };
-    return { assembly, solved: solveWithParts(withDraftMate(assembly, draft), parts) };
-  }, [assembly, parts, draft]);
+    return { assembly, solved: solveWithParts(withDragChange(withDraftMate(assembly, draft), drag), parts) };
+  }, [assembly, parts, draft, drag]);
 }
