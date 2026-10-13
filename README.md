@@ -6,7 +6,7 @@
 
 PartSmith runs entirely in your browser. Your designs never leave your computer, there's no account, and it's free.
 
-> **Status: Phase 3 preview.** You can sketch shapes with dimensions and constraints, extrude or revolve them into parts, round, bevel or hollow them,
+> **Status: Phase 4 preview.** You can sketch shapes with dimensions and constraints, extrude or revolve them into parts, round, bevel or hollow them,
 > combine them with boxes, cylinders and spheres, check they're sound and export STEP or STL. Assemblies and drawings arrive in later phases — see the [roadmap](docs/DESIGN.md#roadmap).
 
 ## What you can do today
@@ -30,7 +30,8 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 - **Check model** — confirms each part is closed and watertight, valid, in one piece, and not too thin.
 - **Export STEP** (exact shapes — what machine shops and most manufacturers want) or **STL** (for 3D printing) in coarse,
   normal or fine quality. PartSmith checks the model first and warns you about problems.
-- Your work is saved in the browser automatically.
+- **Save** your design to a `.partsmith` file on your computer and **Open** it again later (or drag the file onto the
+  window). Your latest work is also kept in the browser automatically.
 
 ## Controls (same as Onshape)
 

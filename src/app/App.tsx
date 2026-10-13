@@ -10,6 +10,7 @@ import { FeatureDialog } from "./FeatureDialog";
 import { FeaturePanel } from "./FeaturePanel";
 import { HelpDialog } from "./HelpDialog";
 import { VariablesDialog } from "./VariablesDialog";
+import { openFile, openFromFile, saveToFile } from "./fileActions";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
 import { SketchOverlay } from "./SketchOverlay";
 import { SketchPanel } from "./SketchPanel";
@@ -89,6 +90,14 @@ function useShortcuts() {
     const onKey = (e: KeyboardEvent) => {
       const s = useStore.getState();
       const mod = e.ctrlKey || e.metaKey;
+      // Save and open work everywhere, even while typing (and stop the browser saving the web page).
+      if (mod && !e.altKey && (e.key.toLowerCase() === "s" || e.key.toLowerCase() === "o")) {
+        e.preventDefault();
+        if (s.dialog) return;
+        if (e.key.toLowerCase() === "s") void saveToFile(e.shiftKey);
+        else void openFromFile();
+        return;
+      }
       if (sketchShortcut(e)) {
         e.preventDefault();
         return;
@@ -172,6 +181,25 @@ export function App() {
 
   useEffect(() => connectKernel(), []);
   useShortcuts();
+
+  // Drop a .partsmith file anywhere on the window to open it.
+  useEffect(() => {
+    const over = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    const drop = (e: DragEvent) => {
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      e.preventDefault();
+      void openFile(file);
+    };
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  }, []);
 
   return (
     <div className="app">
