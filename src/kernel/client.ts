@@ -1,6 +1,6 @@
 import type { TopoPick } from "../geometry/topoRef";
-import type { Feature, MeshQuality } from "../model/types";
-import type { CheckResult, ExportResult, Measurement, StepResult, ThreeMfResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { MeshQuality } from "../model/types";
+import type { CheckResult, ExportResult, Measurement, StepResult, StudioInput, ThreeMfResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -14,7 +14,7 @@ export class KernelClient {
   private readonly pending = new Map<number, { resolve: (body: KernelResponseBody) => void; reject: (e: Error) => void }>();
 
   private rebuildRunning = false;
-  private queuedRebuild: { features: Feature[]; variables: Record<string, number>; partNames: Record<string, string>; onDone: (r: RebuildResult | Error) => void } | null = null;
+  private queuedRebuild: { studios: StudioInput[]; variables: Record<string, number>; partNames: Record<string, string>; onDone: (r: RebuildResult | Error) => void } | null = null;
   private idleWaiters: (() => void)[] = [];
 
   constructor() {
@@ -56,24 +56,30 @@ export class KernelClient {
 
   /** Ask for a rebuild; `onDone` fires only for the latest request that actually ran. */
   requestRebuild(
-    features: Feature[],
+    studios: StudioInput[],
     variables: Record<string, number>,
     partNames: Record<string, string>,
     onDone: (result: RebuildResult | Error) => void,
   ): void {
-    this.queuedRebuild = { features, variables, partNames, onDone };
+    this.queuedRebuild = { studios, variables, partNames, onDone };
     if (!this.rebuildRunning) void this.drainRebuilds();
   }
 
   private async drainRebuilds(): Promise<void> {
     this.rebuildRunning = true;
+    // Results skipped because a newer rebuild was waiting: each only holds the
+    // Part Studios it rebuilt, so they're carried into the next one.
+    let carried: RebuildResult | null = null;
     while (this.queuedRebuild) {
-      const { features, variables, partNames, onDone } = this.queuedRebuild;
+      const { studios, variables, partNames, onDone } = this.queuedRebuild;
       this.queuedRebuild = null;
       try {
-        const result = (await this.send({ type: "rebuild", features, variables, partNames })).result as RebuildResult;
+        const fresh = (await this.send({ type: "rebuild", studios, variables, partNames })).result as RebuildResult;
+        const result: RebuildResult = carried ? mergeRebuilds(carried, fresh) : fresh;
+        carried = null;
         // Skip stale results if something newer is already waiting.
         if (!this.queuedRebuild) onDone(result);
+        else carried = result;
       } catch (e) {
         if (!this.queuedRebuild) onDone(e instanceof Error ? e : new Error(String(e)));
       }
@@ -90,8 +96,8 @@ export class KernelClient {
     return new Promise((resolve) => this.idleWaiters.push(resolve));
   }
 
-  check(quality: MeshQuality): Promise<CheckResult> {
-    return this.send({ type: "check", quality }).then((body) => body.result as CheckResult);
+  check(quality: MeshQuality, partIds: string[] = []): Promise<CheckResult> {
+    return this.send({ type: "check", quality, partIds }).then((body) => body.result as CheckResult);
   }
 
   exportStl(partIds: string[], quality: MeshQuality): Promise<ExportResult> {
@@ -113,4 +119,16 @@ export class KernelClient {
   terminate(): void {
     this.worker.terminate();
   }
+}
+
+/** An earlier rebuild's parts for Part Studios a later one didn't rebuild, plus the later one's. */
+export function mergeRebuilds(earlier: RebuildResult, later: RebuildResult): RebuildResult {
+  if (!later.rebuilt || !earlier.rebuilt) return later;
+  const order = later.studioOrder ?? [];
+  const keep = earlier.rebuilt.filter((id) => !later.rebuilt!.includes(id) && order.includes(id));
+  return {
+    ...later,
+    rebuilt: [...later.rebuilt, ...keep],
+    parts: [...later.parts, ...earlier.parts.filter((p) => keep.includes(p.studioId ?? "main"))],
+  };
 }

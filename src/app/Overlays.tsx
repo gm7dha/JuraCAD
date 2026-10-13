@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
-import { activeAssembly, useStore } from "../model/store";
+import { activeAssembly, activeFeatures, activeStudioId, useStore } from "../model/store";
 import { Icons } from "./icons";
+import { MAIN_STUDIO, MAIN_STUDIO_NAME } from "../model/studios";
 
 /** Shown over the viewport while the geometry engine loads, or if it fails. */
 export function EngineStatus() {
@@ -35,7 +36,7 @@ export function EngineStatus() {
 export function EmptyHint() {
   const asm = useStore(activeAssembly);
   const insertOpen = useStore((s) => s.dialog === "insert");
-  const empty = useStore((s) => s.history.present.features.length === 0 && !s.editing && s.kernelStatus === "ready");
+  const empty = useStore((s) => activeFeatures(s).length === 0 && !s.editing && s.kernelStatus === "ready");
   if (asm) {
     if (asm.instances.length > 0 || insertOpen) return null;
     return (
@@ -93,30 +94,50 @@ export function SelectionInfo() {
   );
 }
 
-/** One tab: click to show it, double-click to rename, right-click (or ⋯) for more. */
-function AssemblyTab({ id, name, active }: { id: string; name: string; active: boolean }) {
+/** One tab: click to show it, double-click to rename, right-click to delete. */
+function DocTab({
+  id,
+  name,
+  kind,
+  active,
+  disabled,
+  canDelete,
+}: {
+  id: string | null;
+  name: string;
+  kind: "studio" | "assembly";
+  active: boolean;
+  disabled: boolean;
+  canDelete: boolean;
+}) {
   const [renaming, setRenaming] = useState(false);
   const [text, setText] = useState(name);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (renaming) input.current?.select();
   }, [renaming]);
+  const Icon = kind === "studio" ? Icons.Part : Icons.Assembly;
   const finish = (keep: boolean) => {
-    if (keep) useStore.getState().renameAssembly(id, text);
+    const st = useStore.getState();
+    if (keep) {
+      if (kind === "assembly" && id) st.renameAssembly(id, text);
+      else st.renamePartStudio(id ?? MAIN_STUDIO, text);
+    }
     setRenaming(false);
   };
   if (renaming) {
     return (
       <span className="tab active">
-        <Icons.Assembly size={16} />
+        <Icon size={16} />
         <input
           ref={input}
           className="tab-rename"
           value={text}
-          aria-label="Assembly name"
+          aria-label={kind === "studio" ? "Part Studio name" : "Assembly name"}
           onChange={(e) => setText(e.target.value)}
           onBlur={() => finish(true)}
           onKeyDown={(e) => {
+            e.stopPropagation();
             if (e.key === "Enter") finish(true);
             if (e.key === "Escape") finish(false);
           }}
@@ -128,49 +149,84 @@ function AssemblyTab({ id, name, active }: { id: string; name: string; active: b
     <button
       className={`tab${active ? " active" : ""}`}
       aria-current={active ? "page" : undefined}
+      disabled={disabled && !active}
       onClick={() => useStore.getState().setActiveTab(id)}
       onDoubleClick={() => {
+        if (disabled) return;
         setText(name);
         setRenaming(true);
       }}
       onContextMenu={(e) => {
         e.preventDefault();
-        if (window.confirm(`Delete ${name}? (Undo brings it back.)`)) useStore.getState().removeAssembly(id);
+        if (!canDelete || disabled) return;
+        if (!window.confirm(`Delete ${name}? (Undo brings it back.)`)) return;
+        if (kind === "assembly" && id) useStore.getState().removeAssembly(id);
+        else if (id) useStore.getState().removePartStudio(id);
       }}
-      title={`${name} — double-click to rename, right-click to delete`}
+      title={`${name} — double-click to rename${canDelete ? ", right-click to delete" : ""}`}
     >
-      <Icons.Assembly size={16} /> {name}
+      <Icon size={16} /> {name}
     </button>
   );
 }
 
-/** Onshape-style tabs along the bottom: the Part Studio, then any assemblies. */
+/** The + menu: add a Part Studio or an assembly. */
+function AddTabMenu({ disabled }: { disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [open]);
+  const pick = (what: "studio" | "assembly") => {
+    setOpen(false);
+    if (what === "studio") useStore.getState().addPartStudio();
+    else useStore.getState().addAssembly();
+  };
+  return (
+    <div className="add-tab" ref={ref}>
+      <button
+        className="tab add"
+        onClick={() => setOpen((o) => !o)}
+        disabled={disabled}
+        title={disabled ? "Finish or cancel the open feature first" : "Add a Part Studio or an assembly"}
+        aria-label="Add a tab"
+        aria-expanded={open}
+      >
+        <Icons.Plus size={16} />
+      </button>
+      {open && (
+        <div className="add-tab-menu" role="menu">
+          <button role="menuitem" className="menu-item" onClick={() => pick("studio")}>
+            <Icons.Part size={16} /> Part Studio
+          </button>
+          <button role="menuitem" className="menu-item" onClick={() => pick("assembly")}>
+            <Icons.Assembly size={16} /> Assembly
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Onshape-style tabs along the bottom: Part Studios, then assemblies, then +. */
 export function BottomTabs() {
-  const assemblies = useStore((s) => s.history.present.assemblies);
+  const doc = useStore((s) => s.history.present);
+  const studio = useStore(activeStudioId);
   const asm = useStore(activeAssembly);
   const editing = useStore((s) => s.editing !== null);
   return (
     <nav className="bottom-tabs" aria-label="Document tabs">
-      <button
-        className={`tab${asm ? "" : " active"}`}
-        aria-current={asm ? undefined : "page"}
-        onClick={() => useStore.getState().setActiveTab(null)}
-        disabled={editing}
-      >
-        <Icons.Part size={16} /> Part Studio 1
-      </button>
-      {(assemblies ?? []).map((a) => (
-        <AssemblyTab key={a.id} id={a.id} name={a.name} active={asm?.id === a.id} />
+      <DocTab id={null} name={doc.studioName ?? MAIN_STUDIO_NAME} kind="studio" active={studio === MAIN_STUDIO} disabled={editing} canDelete={false} />
+      {(doc.partStudios ?? []).map((p) => (
+        <DocTab key={p.id} id={p.id} name={p.name} kind="studio" active={studio === p.id} disabled={editing} canDelete />
       ))}
-      <button
-        className="tab add"
-        onClick={() => useStore.getState().addAssembly()}
-        disabled={editing}
-        title={editing ? "Finish or cancel the open feature first" : "Add an assembly — put parts together"}
-        aria-label="Add an assembly"
-      >
-        <Icons.Plus size={16} />
-      </button>
+      {(doc.assemblies ?? []).map((a) => (
+        <DocTab key={a.id} id={a.id} name={a.name} kind="assembly" active={asm?.id === a.id} disabled={editing} canDelete />
+      ))}
+      <AddTabMenu disabled={editing} />
     </nav>
   );
 }

@@ -8,7 +8,8 @@ import { billOfMaterials, bomCsv, boundsOfVertices, placedBox, spotBeside, type 
 import { eulerDegFromQuat, quatFromEulerDeg, type Placement } from "../assembly/math";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { evaluate } from "../model/expr";
-import { activeAssembly, useStore } from "../model/store";
+import { activeAssembly, partsInStudio, useStore } from "../model/store";
+import { studiosOf } from "../model/studios";
 import type { Assembly, Instance, Mate, MateConnector, MateType } from "../model/types";
 import { MATE_ORDER, MATE_TYPES, mateValues } from "../assembly/mates";
 import { useSolvedAssembly } from "./assemblySolve";
@@ -245,7 +246,15 @@ function MatesSection({ assembly }: { assembly: Assembly }) {
 export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
   const parts = useStore((s) => s.parts);
   const docName = useStore((s) => s.history.present.name);
-  const partNames = useMemo(() => Object.fromEntries(parts.map((p) => [p.id, p.name])), [parts]);
+  const doc = useStore((s) => s.history.present);
+  const partNames = useMemo(() => {
+    const studios = studiosOf(doc);
+    const label = (p: PartMesh) => {
+      if (studios.length < 2) return p.name;
+      return `${p.name} (${studios.find((st) => st.id === (p.studioId ?? "main"))?.name ?? "Part Studio"})`;
+    };
+    return Object.fromEntries(parts.map((p) => [p.id, label(p)]));
+  }, [parts, doc]);
   const bom = useMemo(() => billOfMaterials(assembly, partNames), [assembly, partNames]);
   const kernelReady = useStore((s) => s.kernelStatus === "ready");
 
@@ -304,6 +313,8 @@ export function InsertPanel() {
   const open = useStore((s) => s.dialog === "insert");
   const asm = useStore(activeAssembly);
   const parts = useStore((s) => s.parts);
+  const doc = useStore((s) => s.history.present);
+  const studios = useMemo(() => studiosOf(doc), [doc]);
   if (!open || !asm) return null;
   const close = () => useStore.getState().openDialog(null);
   return (
@@ -322,8 +333,14 @@ export function InsertPanel() {
         ) : (
           <>
             <p className="dialog-hint">Click a part to put a copy of it into {asm.name}. Click again for more copies.</p>
+            {studios.map((st) => {
+              const mine = partsInStudio(parts, st.id);
+              if (mine.length === 0) return null;
+              return (
+            <div key={st.id}>
+            {studios.length > 1 && <div className="insert-studio">{st.name}</div>}
             <ul className="insert-list">
-              {parts.map((p) => {
+              {mine.map((p) => {
                 const count = asm.instances.filter((i) => i.partId === p.id).length;
                 return (
                   <li key={p.id}>
@@ -337,6 +354,9 @@ export function InsertPanel() {
                 );
               })}
             </ul>
+            </div>
+              );
+            })}
           </>
         )}
       </div>

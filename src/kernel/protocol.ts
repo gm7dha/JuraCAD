@@ -3,10 +3,18 @@ import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
 import type { Feature, MeshQuality } from "../model/types";
 
+/** One Part Studio's features, for a rebuild. */
+export interface StudioInput {
+  id: string;
+  features: Feature[];
+}
+
 /** Display mesh for one part, ready to hand to three.js. */
 export interface PartMesh {
   id: string;
   name: string;
+  /** The Part Studio it belongs to. */
+  studioId?: string;
   /** IDs of the features that built or changed this part. */
   featureIds: string[];
   vertices: Float32Array;
@@ -30,6 +38,10 @@ export interface RebuildResult {
   featureErrors: Record<string, string>;
   /** Milliseconds the rebuild took in the worker. */
   durationMs: number;
+  /** Part Studios that were rebuilt (`parts` holds only theirs); the others are as before. */
+  rebuilt?: string[];
+  /** Every Part Studio, in order. */
+  studioOrder?: string[];
 }
 
 export interface PartCheck {
@@ -71,8 +83,8 @@ export interface ThreeMfResult {
 export type { Measurement } from "../geometry/measureMath";
 
 export type KernelRequest =
-  | { type: "rebuild"; features: Feature[]; variables: Record<string, number>; partNames?: Record<string, string> }
-  | { type: "check"; quality: MeshQuality }
+  | { type: "rebuild"; studios: StudioInput[]; variables: Record<string, number>; partNames?: Record<string, string> }
+  | { type: "check"; quality: MeshQuality; partIds?: string[] }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string> }
   | { type: "measure"; picks: TopoPick[] }

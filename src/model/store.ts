@@ -31,6 +31,7 @@ import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
+import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
 export interface SelectionItem {
   partId: string;
@@ -199,6 +200,10 @@ export interface AppState {
   markSaved: (fileName: string) => void;
   /** Add an assembly tab and switch to it. */
   addAssembly: () => void;
+  /** Add a Part Studio tab and switch to it. */
+  addPartStudio: () => void;
+  renamePartStudio: (id: string, name: string) => void;
+  removePartStudio: (id: string) => void;
   /** Show the Part Studio (null) or an assembly. */
   setActiveTab: (id: string | null) => void;
   removeAssembly: (id: string) => void;
@@ -237,7 +242,7 @@ export interface AppState {
   // set by the kernel connection
   setKernelStatus: (status: AppState["kernelStatus"], error?: string) => void;
   setRebuildBusy: (busy: boolean) => void;
-  setRebuildResult: (parts: PartMesh[], featureErrors: Record<string, string>, ms: number) => void;
+  setRebuildResult: (parts: PartMesh[], featureErrors: Record<string, string>, ms: number, rebuilt?: string[], studioOrder?: string[]) => void;
 }
 
 export const STORAGE_KEY = "partsmith.document.v1";
@@ -310,6 +315,11 @@ export const useStore = create<AppState>((set, get) => {
   /** Apply a document change and record it for undo. */
   const change = (fn: (doc: PartSmithDocument) => PartSmithDocument) =>
     set((s) => ({ history: commit(s.history, fn(s.history.present)) }));
+  /** A change to the features of the Part Studio on show. */
+  const changeStudio = (fn: (doc: PartSmithDocument) => PartSmithDocument) =>
+    change((doc) => inStudio(doc, activeStudioId(get()) ?? MAIN_STUDIO, fn));
+  /** The document as the Part Studio on show sees it (its features in `features`). */
+  const view = () => studioView(get().history.present, activeStudioId(get()) ?? MAIN_STUDIO);
 
   const initialDoc = loadSavedDocument();
   return {
@@ -346,10 +356,11 @@ export const useStore = create<AppState>((set, get) => {
         s.startSketch(s.selectedPlane ? { kind: "default", name: s.selectedPlane } : null);
         return;
       }
-      const draft = createFeature(s.history.present, type);
+      const draft = createFeature(view(), type);
+      const features = activeFeatures(s);
       // Extrude or revolve the sketch that's highlighted in the list, if any.
       if (isSketchSolid(type)) {
-        const picked = s.history.present.features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
+        const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) {
           draft.sketchRef = picked.id;
           if (type === "revolve" && picked.sketch) draft.revolve = { axis: defaultAxis(picked.sketch.data), flip: false };
@@ -357,17 +368,18 @@ export const useStore = create<AppState>((set, get) => {
       }
       // Transform the part that's selected in the 3D view (or the latest part).
       if (type === "transform" && draft.transform) {
-        const partId = s.selection[0]?.partId ?? s.parts[s.parts.length - 1]?.id;
+        const mine = studioParts(s);
+        const partId = s.selection[0]?.partId ?? mine[mine.length - 1]?.id;
         if (partId) draft.transform = { ...draft.transform, partId };
       }
       // A hole uses the sketch highlighted in the list, if any.
       if (type === "hole" && draft.hole) {
-        const picked = s.history.present.features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
+        const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) draft.hole = { ...draft.hole, sketchRef: picked.id };
       }
       // Mirror and patterns start with the feature highlighted in the list, if it makes a solid.
       if (isPatternFeature(type)) {
-        const picked = s.history.present.features.find((f) => f.id === s.selectedFeatureId && isSolidFeature(f.type));
+        const picked = features.find((f) => f.id === s.selectedFeatureId && isSolidFeature(f.type));
         if (picked) {
           if (draft.mirror) draft.mirror = { ...draft.mirror, sources: [picked.id] };
           if (draft.pattern) draft.pattern = { ...draft.pattern, sources: [picked.id] };
@@ -385,10 +397,10 @@ export const useStore = create<AppState>((set, get) => {
 
     startImport: (file) => {
       const s = get();
-      const draft = createFeature(s.history.present, "import");
+      const draft = createFeature(view(), "import");
       draft.import = file;
       const base = importName(file.fileName);
-      const used = new Set(s.history.present.features.map((f) => f.name));
+      const used = new Set(activeFeatures(s).map((f) => f.name));
       let name = base;
       for (let n = 2; used.has(name); n++) name = `${base} (${n})`;
       draft.name = name;
@@ -396,7 +408,7 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     startEdit: (id) => {
-      const f = get().history.present.features.find((x) => x.id === id);
+      const f = activeFeatures(get()).find((x) => x.id === id);
       if (!f) return;
       set({
         editing: { mode: "edit", draft: { ...f, params: { ...f.params } } },
@@ -408,7 +420,7 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     startSketch: (plane) => {
-      const draft = createFeature(get().history.present, "sketch");
+      const draft = createFeature(view(), "sketch");
       draft.sketch = { plane, data: draft.sketch!.data };
       set({
         editing: { mode: "create", draft },
@@ -533,7 +545,7 @@ export const useStore = create<AppState>((set, get) => {
       const { errors } = resolveParams(editing.draft);
       if (Object.keys(errors).length > 0) return false;
       const draft = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
-      change((doc) => (editing.mode === "create" ? addFeature(doc, draft) : replaceFeature(doc, draft)));
+      changeStudio((doc) => (editing.mode === "create" ? addFeature(doc, draft) : replaceFeature(doc, draft)));
       set({ editing: null, sketch: null, selectedFeatureId: draft.id });
       return true;
     },
@@ -541,7 +553,7 @@ export const useStore = create<AppState>((set, get) => {
     cancelDraft: () => set({ editing: null, sketch: null }),
 
     deleteFeature: (id) => {
-      change((doc) => removeFeature(doc, id));
+      changeStudio((doc) => removeFeature(doc, id));
       set((s) => ({
         selectedFeatureId: s.selectedFeatureId === id ? null : s.selectedFeatureId,
         editing: s.editing?.draft.id === id ? null : s.editing,
@@ -550,11 +562,11 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     toggleSuppressed: (id) => {
-      const f = get().history.present.features.find((x) => x.id === id);
-      if (f) change((doc) => setSuppressed(doc, id, !f.suppressed));
+      const f = activeFeatures(get()).find((x) => x.id === id);
+      if (f) changeStudio((doc) => setSuppressed(doc, id, !f.suppressed));
     },
 
-    renameFeature: (id, name) => change((doc) => renameFeature(doc, id, name)),
+    renameFeature: (id, name) => changeStudio((doc) => renameFeature(doc, id, name)),
 
     setPartColour: (partId, colour) =>
       change((doc) => {
@@ -627,7 +639,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveTab: (activeTab) => {
       if (get().editing) return;
-      set({ activeTab, asmSelection: [], selection: [], selectedPlane: null, section: null, mateDraft: null });
+      set({ activeTab, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null });
     },
 
     removeAssembly: (id) => {
@@ -636,6 +648,21 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     renameAssembly: (id, name) => change((doc) => renameAssembly(doc, id, name)),
+
+    addPartStudio: () => {
+      if (get().editing) return;
+      const id = newId("s");
+      change((doc) => addStudio(doc, id));
+      set({ activeTab: id, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null });
+    },
+
+    renamePartStudio: (id, name) => change((doc) => renameStudio(doc, id, name)),
+
+    removePartStudio: (id) => {
+      if (get().editing) return;
+      change((doc) => removeStudio(doc, id));
+      if (get().activeTab === id) set({ activeTab: null, selection: [], selectedFeatureId: null });
+    },
 
     insertInstance: (part, placement) => {
       const tab = get().activeTab;
@@ -797,8 +824,17 @@ export const useStore = create<AppState>((set, get) => {
 
     setKernelStatus: (kernelStatus, error) => set({ kernelStatus, kernelError: error ?? null }),
     setRebuildBusy: (rebuildBusy) => set({ rebuildBusy }),
-    setRebuildResult: (parts, featureErrors, ms) =>
+    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder) =>
       set((s) => {
+        // Part Studios that weren't rebuilt keep the parts they had.
+        let parts = built;
+        if (rebuilt && studioOrder) {
+          parts = [];
+          for (const id of studioOrder) {
+            if (rebuilt.includes(id)) parts.push(...built.filter((p) => (p.studioId ?? MAIN_STUDIO) === id));
+            else parts.push(...s.parts.filter((p) => (p.studioId ?? MAIN_STUDIO) === id));
+          }
+        }
         const ids = new Set(parts.map((p) => p.id));
         return {
           parts,
@@ -818,6 +854,44 @@ export function activeAssembly(s: Pick<AppState, "activeTab" | "history">): Asse
   if (!s.activeTab) return null;
   return s.history.present.assemblies?.find((a) => a.id === s.activeTab) ?? null;
 }
+
+/**
+ * The Part Studio on show (its id), or null when an assembly is on show.
+ * Falls back to the first Part Studio if the tab's studio was undone away.
+ */
+export function activeStudioId(s: Pick<AppState, "activeTab" | "history">): string | null {
+  const doc = s.history.present;
+  if (s.activeTab && doc.assemblies?.some((a) => a.id === s.activeTab)) return null;
+  return s.activeTab && studioExists(doc, s.activeTab) ? s.activeTab : MAIN_STUDIO;
+}
+
+/** Features of the Part Studio on show (the first one while an assembly is on show). Same array each time. */
+export function activeFeatures(s: Pick<AppState, "activeTab" | "history">): Feature[] {
+  return studioFeatures(s.history.present, activeStudioId(s) ?? MAIN_STUDIO);
+}
+
+const studioPartsCache = new WeakMap<PartMesh[], Map<string, PartMesh[]>>();
+/** The parts made by one Part Studio (the same array each time for the same parts list, so safe in selectors). */
+export function partsInStudio(parts: PartMesh[], studioId: string): PartMesh[] {
+  let byStudio = studioPartsCache.get(parts);
+  if (!byStudio) {
+    byStudio = new Map();
+    studioPartsCache.set(parts, byStudio);
+  }
+  let list = byStudio.get(studioId);
+  if (!list) {
+    list = parts.filter((p) => (p.studioId ?? MAIN_STUDIO) === studioId);
+    byStudio.set(studioId, list);
+  }
+  return list;
+}
+
+/** Parts of the Part Studio on show (none while an assembly is on show). */
+export function studioParts(s: Pick<AppState, "activeTab" | "history" | "parts">): PartMesh[] {
+  const id = activeStudioId(s);
+  return id ? partsInStudio(s.parts, id) : NO_PARTS;
+}
+const NO_PARTS: PartMesh[] = [];
 
 /** The current document (without any unsaved draft). */
 export const useDocument = () => useStore((s) => s.history.present);

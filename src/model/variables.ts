@@ -3,6 +3,7 @@
  * sketch dimension or other variable. Change the value once and everything
  * that uses it updates.
  */
+import { mapAllFeatures } from "./studios";
 import { solveSketch } from "../sketch/solver";
 import { evaluate, namesIn, RESERVED_NAMES, setCurrentScope, type Scope } from "./expr";
 import type { PartSmithDocument } from "./types";
@@ -70,9 +71,7 @@ export function renameInExpression(src: string, from: string, to: string): strin
 
 /** Every expression in the document, with a way to replace it. */
 function mapExpressions(doc: PartSmithDocument, fn: (src: string) => string): PartSmithDocument {
-  return {
-    ...doc,
-    features: doc.features.map((f) => {
+  return mapAllFeatures(doc, (f) => {
       const params = Object.fromEntries(Object.entries(f.params).map(([k, v]) => [k, fn(v)]));
       const changedParams = Object.keys(params).some((k) => params[k] !== f.params[k]);
       let sketch = f.sketch;
@@ -84,8 +83,7 @@ function mapExpressions(doc: PartSmithDocument, fn: (src: string) => string): Pa
         }
       }
       return changedParams || sketch !== f.sketch ? { ...f, params: changedParams ? params : f.params, sketch } : f;
-    }),
-  };
+  });
 }
 
 /** How many boxes and dimensions use a variable. */
@@ -117,16 +115,13 @@ export function applyVariables(doc: PartSmithDocument, variables: Variable[]): P
 /** Re-solve every sketch whose dimensions use variables, with these values. */
 export function resolveSketches(doc: PartSmithDocument, values: Scope): PartSmithDocument {
   setCurrentScope(values);
-  return {
-    ...doc,
-    features: doc.features.map((f) => {
-      if (!f.sketch) return f;
-      const usesNames = f.sketch.data.constraints.some((c) => c.value !== undefined && namesIn(c.value).length > 0);
-      if (!usesNames) return f;
-      const r = solveSketch(f.sketch.data);
-      return r.ok ? { ...f, sketch: { ...f.sketch, data: r.sketch } } : f;
-    }),
-  };
+  return mapAllFeatures(doc, (f) => {
+    if (!f.sketch) return f;
+    const usesNames = f.sketch.data.constraints.some((c) => c.value !== undefined && namesIn(c.value).length > 0);
+    if (!usesNames) return f;
+    const r = solveSketch(f.sketch.data);
+    return r.ok ? { ...f, sketch: { ...f.sketch, data: r.sketch } } : f;
+  });
 }
 
 /** Plain list from untrusted JSON. */

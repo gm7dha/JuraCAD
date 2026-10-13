@@ -845,6 +845,31 @@ button:disabled {
   font: inherit;
 }
 
+.add-tab {
+  position: relative;
+  display: flex;
+}
+
+.add-tab-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 160px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  z-index: 30;
+}
+
+.add-tab-menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
 .tab-rename {
   width: 140px;
   padding: 2px 6px;
@@ -1146,6 +1171,15 @@ kbd {
 
 .bom-download {
   margin: 4px 10px 10px;
+}
+
+.insert-studio {
+  margin: 10px 0 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink-2);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
 }
 
 .insert-list {

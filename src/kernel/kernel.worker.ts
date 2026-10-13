@@ -38,7 +38,7 @@ ctx.onmessage = (event) => {
       const transfer: Transferable[] = [];
       switch (request.type) {
         case "rebuild": {
-          const result = engine.rebuild(request.features, request.variables, request.partNames);
+          const result = engine.rebuildStudios(request.studios, request.variables, request.partNames);
           for (const p of result.parts) {
             transfer.push(p.vertices.buffer, p.normals.buffer, p.triangles.buffer, p.lines.buffer);
           }
@@ -46,7 +46,7 @@ ctx.onmessage = (event) => {
           break;
         }
         case "check":
-          body = { type: "check", result: engine.check(request.quality) };
+          body = { type: "check", result: engine.check(request.quality, request.partIds) };
           break;
         case "exportStl": {
           const result = engine.exportStl(request.partIds, request.quality);

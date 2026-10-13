@@ -980,3 +980,38 @@ describe("part names", () => {
     expect(step).toContain("PRODUCT('Bracket'");
   });
 });
+
+describe("several Part Studios", () => {
+  it("builds each, and rebuilds only the ones that changed", () => {
+    engine = new GeometryEngine();
+    const a = feature("box", { width: 10, depth: 10, height: 10 });
+    const b = feature("cylinder", { diameter: 10, height: 5 });
+    const first = engine.rebuildStudios([
+      { id: "main", features: [a] },
+      { id: "s2", features: [b] },
+    ]);
+    expect(first.rebuilt).toEqual(["main", "s2"]);
+    expect(first.parts.map((p) => [p.studioId, p.name])).toEqual([
+      ["main", "Part 1"],
+      ["s2", "Part 1"],
+    ]);
+    const same = engine.rebuildStudios([
+      { id: "main", features: [a] },
+      { id: "s2", features: [b] },
+    ]);
+    expect(same.rebuilt).toEqual([]);
+    expect(same.parts).toEqual([]);
+    const b2 = { ...b, params: { ...b.params, height: "8" } };
+    const changed = engine.rebuildStudios([
+      { id: "main", features: [a] },
+      { id: "s2", features: [b2] },
+    ]);
+    expect(changed.rebuilt).toEqual(["s2"]);
+    // Checks and exports still see every part.
+    expect(engine.check("coarse").parts).toHaveLength(2);
+    expect(engine.check("coarse", [b2.id]).parts.map((p) => p.partId)).toEqual([b2.id]);
+    // A removed Part Studio's parts go.
+    engine.rebuildStudios([{ id: "main", features: [a] }]);
+    expect(engine.partCount).toBe(1);
+  });
+});

@@ -15,13 +15,16 @@ import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operat
 import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
-import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, ThreeMfResult } from "./protocol";
+import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult } from "./protocol";
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep } from "./stepExport";
 import { importKey, importSolids } from "./importer";
 import { edgesOf, facesOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
+
+/** Id of the first Part Studio (matches MAIN_STUDIO in model/studios.ts). */
+const MAIN_STUDIO_ID = "main";
 
 interface BuiltPart {
   id: string;
@@ -282,16 +285,76 @@ interface FeatureTool {
 
 const AXES: Record<Axis, [number, number, number]> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
 
-export class GeometryEngine {
-  private parts: BuiltPart[] = [];
-  private tools = new Map<string, FeatureTool>();
+/** What a Part Studio built, kept until its features (or the variables or part names) change. */
+interface StudioBuild {
+  key: string;
+  parts: BuiltPart[];
+  tools: Map<string, FeatureTool>;
+  errors: Record<string, string>;
+}
 
-  /** Replays the whole feature list from scratch. */
-  rebuild(features: Feature[], variables: Record<string, number> = {}, partNames: Record<string, string> = {}): RebuildResult {
+export class GeometryEngine {
+  /** Every part of every Part Studio (for exports, checks and measuring). */
+  private parts: BuiltPart[] = [];
+  /** While a Part Studio is being built: the solids its features added or cut. */
+  private tools = new Map<string, FeatureTool>();
+  private builds = new Map<string, StudioBuild>();
+
+  /**
+   * Rebuild the Part Studios whose features (or the variables or part names)
+   * changed since last time; the others keep what they built. Returns the
+   * meshes of the rebuilt studios only, and errors for all of them.
+   */
+  rebuildStudios(
+    studios: StudioInput[],
+    variables: Record<string, number> = {},
+    partNames: Record<string, string> = {},
+  ): RebuildResult & { rebuilt: string[]; studioOrder: string[] } {
     const started = performance.now();
     // Every size below is worked out with the document's variables.
     setCurrentScope(variables);
-    this.disposeParts();
+    const wanted = new Set(studios.map((s) => s.id));
+    for (const [id, b] of this.builds) {
+      if (!wanted.has(id)) {
+        this.disposeBuild(b);
+        this.builds.delete(id);
+      }
+    }
+    const rebuilt: string[] = [];
+    const meshes: PartMesh[] = [];
+    const featureErrors: Record<string, string> = {};
+    const shared = JSON.stringify([variables, partNames]);
+    for (const studio of studios) {
+      const key = JSON.stringify(studio.features) + shared;
+      let b = this.builds.get(studio.id);
+      if (!b || b.key !== key) {
+        if (b) this.disposeBuild(b);
+        this.parts = [];
+        this.tools = new Map();
+        const errors = this.buildFeatures(studio.features);
+        // Names the user gave parts (used in the lists and in exported files).
+        for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
+        b = { key, parts: this.parts, tools: this.tools, errors };
+        this.builds.set(studio.id, b);
+        rebuilt.push(studio.id);
+        for (const p of b.parts) meshes.push({ ...this.meshPart(p), studioId: studio.id });
+      }
+      Object.assign(featureErrors, b.errors);
+    }
+    this.parts = studios.flatMap((s) => this.builds.get(s.id)?.parts ?? []);
+    this.tools = new Map();
+    return { parts: meshes, featureErrors, durationMs: Math.round(performance.now() - started), rebuilt, studioOrder: studios.map((s) => s.id) };
+  }
+
+  /** Replays one feature list from scratch (a document with a single Part Studio). */
+  rebuild(features: Feature[], variables: Record<string, number> = {}, partNames: Record<string, string> = {}): RebuildResult {
+    const old = this.builds.get(MAIN_STUDIO_ID);
+    if (old) old.key = "";
+    return this.rebuildStudios([{ id: MAIN_STUDIO_ID, features }], variables, partNames);
+  }
+
+  /** Build one Part Studio's features into this.parts and this.tools; returns the features' problems. */
+  private buildFeatures(features: Feature[]): Record<string, string> {
     const featureErrors: Record<string, string> = {};
     let partCounter = 0;
     const sketches: SketchMap = new Map();
@@ -392,10 +455,7 @@ export class GeometryEngine {
       }
     }
 
-    // Names the user gave parts (used in the lists and in exported files).
-    for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
-    const parts = this.parts.map((p) => this.meshPart(p));
-    return { parts, featureErrors, durationMs: Math.round(performance.now() - started) };
+    return featureErrors;
   }
 
   /** Move and/or turn a part, or a copy of it. */
@@ -616,13 +676,14 @@ export class GeometryEngine {
     return null;
   }
 
-  /** Checks every part is a sound, closed solid. */
-  check(quality: MeshQuality): CheckResult {
+  /** Checks the chosen parts (all when the list is empty) are sound, closed solids. */
+  check(quality: MeshQuality, partIds: string[] = []): CheckResult {
     const oc = getOC();
     const tol = MESH_TOLERANCES[quality];
+    const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
     return {
-      overlaps: this.findOverlaps(),
-      parts: this.parts.map((p) => {
+      overlaps: this.findOverlaps(chosen),
+      parts: chosen.map((p) => {
         let geometryValid: boolean | null = null;
         try {
           const analyzer = new oc.BRepCheck_Analyzer(p.shape.wrapped, true, false, false);
@@ -647,18 +708,18 @@ export class GeometryEngine {
   }
 
   /** Separate parts that occupy the same space (they would clash). */
-  private findOverlaps(): NonNullable<CheckResult["overlaps"]> {
+  private findOverlaps(parts: BuiltPart[]): NonNullable<CheckResult["overlaps"]> {
     const found: NonNullable<CheckResult["overlaps"]> = [];
-    const boxes = this.parts.map((p) => boundsOf(p.shape));
+    const boxes = parts.map((p) => boundsOf(p.shape));
     const apart = (a: Bounds, b: Bounds) => [0, 1, 2].some((i) => a[1][i] < b[0][i] || b[1][i] < a[0][i]);
-    for (let i = 0; i < this.parts.length; i++) {
-      for (let j = i + 1; j < this.parts.length; j++) {
+    for (let i = 0; i < parts.length; i++) {
+      for (let j = i + 1; j < parts.length; j++) {
         if (apart(boxes[i], boxes[j])) continue;
         try {
-          const common = this.parts[i].shape.intersect(this.parts[j].shape);
+          const common = parts[i].shape.intersect(parts[j].shape);
           const volume = measureVolume(common);
           common.delete();
-          if (volume > 1e-3) found.push({ a: this.parts[i].name, b: this.parts[j].name, volume });
+          if (volume > 1e-3) found.push({ a: parts[i].name, b: parts[j].name, volume });
         } catch {
           // couldn't tell; say nothing rather than guess
         }
@@ -837,22 +898,29 @@ export class GeometryEngine {
     };
   }
 
-  private disposeParts(): void {
-    for (const p of this.parts) {
+  private disposeBuild(b: StudioBuild): void {
+    for (const p of b.parts) {
       try {
         p.shape.delete();
       } catch {
         // already freed
       }
     }
-    this.parts = [];
-    for (const t of this.tools.values()) {
+    for (const t of b.tools.values()) {
       try {
         t.shape.delete();
       } catch {
         // already freed
       }
     }
-    this.tools.clear();
+    b.parts = [];
+    b.tools.clear();
+  }
+
+  private disposeParts(): void {
+    for (const b of this.builds.values()) this.disposeBuild(b);
+    this.builds.clear();
+    this.parts = [];
+    this.tools = new Map();
   }
 }

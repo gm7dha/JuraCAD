@@ -6,7 +6,8 @@ import { FEATURE_DEFS, defaultParams, isSolidFeature } from "./features";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
 import { parseAssemblies } from "../assembly/assembly";
-import type { Feature, FeatureType, ImportedFile, Operation, PartSmithDocument } from "./types";
+import type { Feature, FeatureType, ImportedFile, Operation, PartSmithDocument, PartStudio } from "./types";
+import { MAIN_STUDIO } from "./studios";
 
 /**
  * Pure functions for changing a document. They never modify their input;
@@ -194,14 +195,10 @@ function parseImportedFile(raw: unknown): ImportedFile | null {
 const FEATURE_TYPES = new Set<string>(Object.keys(FEATURE_DEFS));
 const OPERATIONS = new Set<string>(["new", "add", "remove"]);
 
-/** Check untrusted JSON (e.g. from browser storage) and return a clean document, or null. */
-export function parseDocument(data: unknown): PartSmithDocument | null {
-  if (!data || typeof data !== "object") return null;
-  const d = data as Record<string, unknown>;
-  if (d.format !== "partsmith" || d.version !== 1 || !Array.isArray(d.features)) return null;
+/** Check one Part Studio's features from untrusted JSON (ids must be unique across the document: `seen`). */
+function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
   const features: Feature[] = [];
-  const seen = new Set<string>();
-  for (const raw of d.features) {
+  for (const raw of list) {
     if (!raw || typeof raw !== "object") return null;
     const f = raw as Record<string, unknown>;
     if (typeof f.id !== "string" || seen.has(f.id)) return null;
@@ -279,6 +276,25 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     }
     features.push(feature);
   }
+  return features;
+}
+
+/** Check untrusted JSON (e.g. from browser storage) and return a clean document, or null. */
+export function parseDocument(data: unknown): PartSmithDocument | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (d.format !== "partsmith" || d.version !== 1 || !Array.isArray(d.features)) return null;
+  const seen = new Set<string>();
+  const features = parseFeatures(d.features, seen);
+  if (!features) return null;
+  const partStudios: PartStudio[] = [];
+  for (const raw of Array.isArray(d.partStudios) ? d.partStudios : []) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    if (typeof r.id !== "string" || r.id === MAIN_STUDIO || partStudios.some((x) => x.id === r.id) || !Array.isArray(r.features)) continue;
+    const list = parseFeatures(r.features, seen);
+    if (!list) return null;
+    partStudios.push({ id: r.id, name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : "Part Studio", features: list });
+  }
   return {
     format: "partsmith",
     version: 1,
@@ -286,6 +302,8 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     features,
     ...(Array.isArray(d.variables) && d.variables.length ? { variables: parseVariables(d.variables) } : {}),
     ...(Object.keys(parseAppearance(d.appearance)).length ? { appearance: parseAppearance(d.appearance) } : {}),
+    ...(typeof d.studioName === "string" && d.studioName.trim() && d.studioName.trim() !== "Part Studio 1" ? { studioName: d.studioName.trim() } : {}),
+    ...(partStudios.length ? { partStudios } : {}),
     ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),
     ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
   };
