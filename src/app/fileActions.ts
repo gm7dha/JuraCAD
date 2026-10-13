@@ -9,6 +9,7 @@
 import { FILE_EXTENSION, FILE_MIME, nameFromFileName, readDocumentFile, serializeDocument } from "../model/fileFormat";
 import { useStore } from "../model/store";
 import { downloadFile, safeFileName } from "./download";
+import { IMPORT_ACCEPT, readImport } from "../model/importFile";
 
 // The File System Access API isn't in TypeScript's built-in types yet.
 interface WritableFile {
@@ -31,6 +32,13 @@ type PickerWindow = Window & {
 };
 
 const FILE_TYPES = [{ description: "PartSmith design", accept: { [FILE_MIME]: [FILE_EXTENSION], "application/json": [FILE_EXTENSION] } }];
+
+const OPEN_TYPES = [
+  { description: "PartSmith design, or a STEP or STL model to import", accept: { [FILE_MIME]: [FILE_EXTENSION], "application/json": [FILE_EXTENSION], "model/step": [".step", ".stp"], "model/stl": [".stl"] } },
+];
+
+/** STEP and STL files are imported into the design rather than opened. */
+const isModelFile = (name: string) => /\.(step|stp|stl)$/i.test(name);
 
 /** The file the design was last saved to or opened from (Chrome/Edge only). */
 let currentHandle: FileHandle | null = null;
@@ -78,8 +86,9 @@ export async function openFromFile(): Promise<void> {
   const w = window as PickerWindow;
   try {
     if (w.showOpenFilePicker) {
-      const [handle] = await w.showOpenFilePicker({ types: FILE_TYPES });
-      if (await openFile(await handle.getFile())) currentHandle = handle;
+      const [handle] = await w.showOpenFilePicker({ types: OPEN_TYPES });
+      const file = await handle.getFile();
+      if ((await openFile(file)) && !isModelFile(file.name)) currentHandle = handle;
       return;
     }
   } catch (e) {
@@ -90,12 +99,12 @@ export async function openFromFile(): Promise<void> {
   // Other browsers: the ordinary file picker.
   const input = document.createElement("input");
   input.type = "file";
-  input.accept = `${FILE_EXTENSION},application/json`;
+  input.accept = `${FILE_EXTENSION},application/json,${IMPORT_ACCEPT}`;
   input.className = "file-input";
   input.onchange = () => {
     const file = input.files?.[0];
     input.remove();
-    if (file) void openFile(file).then((ok) => ok && (currentHandle = null));
+    if (file) void openFile(file).then((ok) => ok && !isModelFile(file.name) && (currentHandle = null));
   };
   document.body.appendChild(input);
   input.click();
@@ -108,6 +117,8 @@ export async function openFile(file: File): Promise<boolean> {
     s.showToast("Finish or cancel the open feature first, then open a file.", "error");
     return false;
   }
+  // A STEP or STL file dropped or opened here is imported into the current design.
+  if (isModelFile(file.name)) return importFile(file);
   const result = readDocumentFile(await file.text(), file.name);
   if (!result.ok) {
     s.showToast(result.error, "error");
@@ -123,4 +134,40 @@ export async function openFile(file: File): Promise<boolean> {
 /** Forget the file (after New), so the next Save asks where to save. */
 export function forgetFile(): void {
   currentHandle = null;
+}
+
+/**
+ * Import a STEP or STL file: ask for one, then open the Import dialog with a
+ * preview. With `replace`, the file swaps in for the one in the open Import dialog.
+ */
+export function chooseImportFile(replace = false): void {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = IMPORT_ACCEPT;
+  input.className = "file-input";
+  input.onchange = () => {
+    const file = input.files?.[0];
+    input.remove();
+    if (file) void importFile(file, replace);
+  };
+  document.body.appendChild(input);
+  input.click();
+}
+
+/** Read a STEP or STL file and start importing it. Returns true if it worked. */
+export async function importFile(file: File, replace = false): Promise<boolean> {
+  const s = useStore.getState();
+  const draft = s.editing?.draft;
+  if (s.editing && !(replace && draft?.type === "import")) {
+    s.showToast("Finish or cancel the open feature first, then import.", "error");
+    return false;
+  }
+  const result = readImport(file.name, new Uint8Array(await file.arrayBuffer()));
+  if (!result.ok) {
+    useStore.getState().showToast(result.error, "error");
+    return false;
+  }
+  if (replace && draft?.type === "import") useStore.getState().setDraftField({ import: result.file });
+  else useStore.getState().startImport(result.file);
+  return true;
 }

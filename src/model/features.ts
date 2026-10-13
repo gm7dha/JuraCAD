@@ -150,6 +150,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Bevels sharp edges with a flat cut.",
     params: [{ key: "distance", label: "Distance", defaultValue: "1", positive: true, group: "size" }],
   },
+  import: {
+    type: "import",
+    label: "Import",
+    namePrefix: "Import",
+    description: "A STEP or STL file from another program, brought in as a part.",
+    params: [],
+  },
   sphere: {
     type: "sphere",
     label: "Sphere",
@@ -187,7 +194,7 @@ export function isPatternFeature(type: FeatureType): type is "mirror" | "linearP
 
 /** Features that build a solid of their own, so they can be patterned or mirrored. */
 export function isSolidFeature(type: FeatureType): boolean {
-  return type === "box" || type === "cylinder" || type === "sphere" || type === "extrude" || type === "revolve" || type === "hole";
+  return type === "box" || type === "cylinder" || type === "sphere" || type === "extrude" || type === "revolve" || type === "hole" || type === "import";
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */

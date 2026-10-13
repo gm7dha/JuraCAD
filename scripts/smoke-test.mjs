@@ -416,13 +416,32 @@ try {
   await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n, featureCount, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 3"), null, { timeout: 30_000 });
 
+  step = "importing the STEP and STL files exported earlier";
+  const importModel = async (file, label) => {
+    const before = await page.locator(".part-row").count();
+    const failedBefore = await page.locator(".feature-row.failed").count();
+    const importChooser = page.waitForEvent("filechooser", { timeout: 10_000 });
+    await page.getByRole("button", { name: "Import", exact: true }).click();
+    await (await importChooser).setFiles(file);
+    await page.waitForSelector('form[aria-label="Import feature"]', { timeout: 10_000 });
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForSelector('form[aria-label="Import feature"]', { state: "detached" });
+    await page.waitForFunction((n) => document.querySelectorAll(".part-row").length > n, before, { timeout: 60_000 });
+    const failed = await page.locator(".feature-row.failed").count();
+    if (failed > failedBefore) throw new Error(`importing ${label} left a feature with a problem`);
+    return (await page.locator(".part-row").count()) - before;
+  };
+  const stepParts = await importModel(await stepDownload.path(), "STEP");
+  const stlParts = await importModel(path, "STL");
+  await shot("imported");
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features).`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part).`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

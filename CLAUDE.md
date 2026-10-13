@@ -2,6 +2,8 @@
 
 - The owner is a hobbyist with no coding background who directs the work. Explain changes in plain English
   in pull requests, and keep the app's wording friendly and jargon-free.
+- The owner has said to merge PRs without asking once CI passes (squash merge), then tell them what changed so
+  they can try it on the live site.
 - Design and roadmap: `docs/DESIGN.md`. The look and controls follow Onshape.
 - Stack: TypeScript, React 18, Vite 5, Zustand 5, three.js, replicad 1.x + replicad-opencascadejs (OCCT WASM).
 - Geometry runs in `src/kernel/kernel.worker.ts`; the logic lives in `src/kernel/engine.ts` so it can be
@@ -20,7 +22,7 @@
   (`gh api repos/gm7dha/partsmith/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .partsmith → New → open it again. To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .partsmith → New → open it again → import the STEP and STL it exported. To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. Set it back to "0" before merging.
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);

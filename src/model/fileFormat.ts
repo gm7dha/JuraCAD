@@ -33,10 +33,10 @@ export function readDocumentFile(text: string, fileName = "That file"): ReadResu
     data = JSON.parse(text);
   } catch {
     if (/^ISO-10303-21/.test(text.trimStart())) {
-      return { ok: false, error: `${fileName} is a STEP file. PartSmith can't open STEP files yet — only .partsmith files.` };
+      return { ok: false, error: `${fileName} is a STEP file. Use Import in the toolbar to bring it into your design.` };
     }
     if (/^solid\s/i.test(text.trimStart()) || /\0/.test(text.slice(0, 200))) {
-      return { ok: false, error: `${fileName} looks like an STL or other model file. PartSmith can only open .partsmith files.` };
+      return { ok: false, error: `${fileName} looks like an STL or other model file. Use Import in the toolbar to bring an STL or STEP file into your design.` };
     }
     return { ok: false, error: `${fileName} isn't a PartSmith file (it couldn't be read).` };
   }

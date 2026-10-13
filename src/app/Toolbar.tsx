@@ -6,6 +6,7 @@ import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
+import { chooseImportFile } from "./fileActions";
 
 function ToolButton({
   label,
@@ -89,6 +90,14 @@ export function Toolbar() {
             title={`Add a ${s.label.toLowerCase()}`}
           />
         ))}
+        <ToolButton
+          label="Import"
+          icon={<Icons.Import />}
+          onClick={() => chooseImportFile()}
+          disabled={!ready || editing}
+          active={editingType === "import"}
+          title={editing ? "Finish or cancel the open feature first" : "Import — bring in a STEP or STL file from another program as a part"}
+        />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
