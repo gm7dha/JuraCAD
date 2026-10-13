@@ -145,3 +145,19 @@ describe("revolve and shell features", () => {
     expect(saved?.features[1].revolve).toEqual(rev.revolve);
   });
 });
+
+describe("mirror and pattern features", () => {
+  it("start with the latest solid feature, and survive saving", () => {
+    let doc = emptyDocument();
+    const box = createFeature(doc, "box");
+    doc = addFeature(doc, box);
+    const mirror = createFeature(doc, "mirror");
+    expect(mirror.mirror).toEqual({ sources: [box.id], plane: { kind: "default", name: "Right" } });
+    const circ = createFeature(doc, "circularPattern");
+    expect(circ.pattern).toEqual({ sources: [box.id], axis: "z", flip: false });
+    expect(circ.params).toEqual({ count: "6", angle: "360" });
+    const saved = parseDocument(JSON.parse(JSON.stringify(addFeature(addFeature(doc, mirror), circ))));
+    expect(saved?.features[1].mirror).toEqual(mirror.mirror);
+    expect(saved?.features[2].pattern).toEqual(circ.pattern);
+  });
+});

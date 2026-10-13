@@ -548,3 +548,58 @@ describe("STEP export", () => {
     await expect(engine.exportStep([])).rejects.toThrow(/nothing to export/);
   });
 });
+
+describe("mirror and patterns", () => {
+  const patternFeature = (type: "linearPattern" | "circularPattern", sources: string[], params: Record<string, number>, axis: "x" | "y" | "z" = "x"): Feature => ({
+    ...feature(type, params, "add"),
+    pattern: { sources, axis, flip: false },
+  });
+  const mirrorFeature = (sources: string[], name: "Top" | "Front" | "Right" = "Right"): Feature => ({
+    ...feature("mirror", {}, "add"),
+    mirror: { sources, plane: { kind: "default", name } },
+  });
+  const volume = () => engine.check("normal").parts[0].exactVolume!;
+
+  it("repeats a hole in a row", () => {
+    const plate = feature("box", { width: 60, depth: 20, height: 10 });
+    const hole = feature("cylinder", { diameter: 6, height: 10, x: 10, y: 10 }, "remove");
+    const r = build([plate, hole, patternFeature("linearPattern", [hole.id], { count: 3, spacing: 20 })]);
+    expect(r.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(12000 - 3 * Math.PI * 9 * 10, 2);
+    expect(r.parts).toHaveLength(1);
+  });
+
+  it("repeats a hole round a circle", () => {
+    const disc = feature("cylinder", { diameter: 60, height: 10 });
+    const hole = feature("cylinder", { diameter: 6, height: 10, x: 20 }, "remove");
+    const r = build([disc, hole, patternFeature("circularPattern", [hole.id], { count: 6, angle: 360 }, "z")]);
+    expect(r.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(Math.PI * 900 * 10 - 6 * Math.PI * 9 * 10, 1);
+  });
+
+  it("mirrors a boss to the other side", () => {
+    const base = feature("box", { width: 40, depth: 20, height: 10, x: -20 });
+    const boss = feature("cylinder", { diameter: 6, height: 5, x: 10, y: 10, z: 10 }, "add");
+    const r = build([base, boss, mirrorFeature([boss.id])]);
+    expect(r.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(8000 + 2 * Math.PI * 9 * 5, 2);
+    const check = engine.check("normal").parts[0];
+    expect(check.geometryValid).toBe(true);
+    expect(check.mesh.pieces).toBe(1);
+  });
+
+  it("explains problems in plain words", () => {
+    const plate = feature("box", { width: 60, depth: 20, height: 10 });
+    const hole = feature("cylinder", { diameter: 6, height: 10, x: 10, y: 10 }, "remove");
+    const none = patternFeature("linearPattern", [], { count: 3, spacing: 20 });
+    expect(build([plate, hole, none]).featureErrors[none.id]).toMatch(/Pick the features/);
+    const half = patternFeature("linearPattern", [hole.id], { count: 2.5, spacing: 20 });
+    expect(build([plate, hole, half]).featureErrors[half.id]).toMatch(/whole number/);
+    const one = patternFeature("linearPattern", [hole.id], { count: 1, spacing: 20 });
+    expect(build([plate, hole, one]).featureErrors[one.id]).toMatch(/at least 2/);
+    const early = patternFeature("linearPattern", [hole.id], { count: 2, spacing: 20 });
+    expect(build([plate, early, hole]).featureErrors[early.id]).toMatch(/comes after/);
+    const gone = mirrorFeature(["nope"]);
+    expect(build([plate, gone]).featureErrors[gone.id]).toMatch(/deleted/);
+  });
+});

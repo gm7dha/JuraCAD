@@ -141,6 +141,33 @@ export function Toolbar() {
           title={hasPart ? "Shell — hollow out a part. Click the face to leave open (usually the top)" : "Make a part first, then hollow it out"}
         />
       </div>
+      <div className="tool-divider" />
+      <div className="tool-group">
+        <ToolButton
+          label="Mirror"
+          icon={<Icons.Mirror />}
+          onClick={() => startCreate("mirror")}
+          disabled={!ready || !hasPart}
+          active={editingType === "mirror"}
+          title={hasPart ? "Mirror — copy features to the other side of a plane" : "Make a part first, then mirror its features"}
+        />
+        <ToolButton
+          label="Pattern"
+          icon={<Icons.LinearPattern />}
+          onClick={() => startCreate("linearPattern")}
+          disabled={!ready || !hasPart}
+          active={editingType === "linearPattern"}
+          title={hasPart ? "Linear pattern — repeat features in a row, evenly spaced" : "Make a part first, then repeat its features"}
+        />
+        <ToolButton
+          label="Circular"
+          icon={<Icons.CircularPattern />}
+          onClick={() => startCreate("circularPattern")}
+          disabled={!ready || !hasPart}
+          active={editingType === "circularPattern"}
+          title={hasPart ? "Circular pattern — repeat features around an axis, e.g. a ring of holes" : "Make a part first, then repeat its features"}
+        />
+      </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">
         <ToolButton label="Fit" icon={<Icons.Fit />} onClick={() => viewportApi.current?.fit()} title="Zoom to fit (F)" />

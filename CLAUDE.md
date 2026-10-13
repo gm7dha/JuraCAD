@@ -18,7 +18,7 @@
   (`gh api repos/gm7dha/partsmith/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → check → export STL and STEP → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line. To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → check → export STL and STEP → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern. To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. Set it back to "0" before merging.
 - No `package-lock.json` is committed yet (it couldn't be generated in the first session); add one when

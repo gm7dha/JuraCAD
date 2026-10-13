@@ -8,8 +8,9 @@ import { exportSTEP, getOC, makeBox, makeCylinder, makeSphere, measureVolume, ty
 import { analyzeMesh, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
-import { FEATURE_DEFS, isPickFeature, resolveParams } from "../model/features";
-import { MESH_TOLERANCES, type Feature, type MeshQuality } from "../model/types";
+import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
+import { planeFrame } from "../sketch/planes";
+import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operation } from "../model/types";
 import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult } from "./protocol";
@@ -192,6 +193,9 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
     case "fillet":
     case "chamfer":
     case "shell":
+    case "mirror":
+    case "linearPattern":
+    case "circularPattern":
       throw new Error("This feature doesn't make a solid of its own.");
     case "box":
       return makeBox([v.x, v.y, v.z], [v.x + v.width, v.y + v.depth, v.z + v.height]);
@@ -202,8 +206,19 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
   }
 }
 
+/** The solid a feature added or cut, kept so patterns and mirrors can repeat it. */
+interface FeatureTool {
+  shape: Shape3D;
+  operation: Operation;
+  /** The part it changed (or made). */
+  partId: string;
+}
+
+const AXES: Record<Axis, [number, number, number]> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+
 export class GeometryEngine {
   private parts: BuiltPart[] = [];
+  private tools = new Map<string, FeatureTool>();
 
   /** Replays the whole feature list from scratch. */
   rebuild(features: Feature[]): RebuildResult {
@@ -228,6 +243,11 @@ export class GeometryEngine {
       }
       if (isPickFeature(feature.type)) {
         const err = feature.type === "shell" ? this.applyShell(feature) : this.applyEdgeFeature(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
+      if (isPatternFeature(feature.type)) {
+        const err = this.applyPattern(feature, features);
         if (err) featureErrors[feature.id] = err;
         continue;
       }
@@ -258,6 +278,7 @@ export class GeometryEngine {
 
       if (feature.operation === "new") {
         partCounter++;
+        this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
         this.parts.push({ id: feature.id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: tool });
         continue;
       }
@@ -271,6 +292,7 @@ export class GeometryEngine {
         target.shape.delete();
         target.shape = result;
         target.featureIds.push(feature.id);
+        this.tools.set(feature.id, { shape: tool.clone(), operation: feature.operation, partId: target.id });
       } catch (e) {
         featureErrors[feature.id] = describeError(
           e,
@@ -283,6 +305,97 @@ export class GeometryEngine {
 
     const parts = this.parts.map((p) => this.meshPart(p));
     return { parts, featureErrors, durationMs: Math.round(performance.now() - started) };
+  }
+
+  /**
+   * Mirror or pattern: repeat what earlier features did (add or cut their
+   * solid) at mirrored, shifted or turned positions. Returns an error message, or null.
+   */
+  private applyPattern(feature: Feature, all: Feature[]): string | null {
+    const def = FEATURE_DEFS[feature.type];
+    const { values, errors } = resolveParams(feature);
+    const badParam = def.params.find((p) => errors[p.key]);
+    if (badParam) return `${badParam.label}: ${errors[badParam.key]}`;
+    const mirror = feature.type === "mirror";
+    const sourceIds = (mirror ? feature.mirror?.sources : feature.pattern?.sources) ?? [];
+    if (sourceIds.length === 0) {
+      return `Pick the features to ${mirror ? "mirror" : "repeat"} — click them in the feature list while this dialog is open.`;
+    }
+
+    // Use the sources in the order they were built.
+    const ordered = all.filter((f) => sourceIds.includes(f.id));
+    const at = all.indexOf(feature);
+    for (const id of sourceIds) {
+      const f = all.find((x) => x.id === id);
+      if (!f) return "One of the features it repeats has been deleted. Edit this feature and pick again.";
+      if (all.indexOf(f) > at) return `${f.name} comes after this ${def.label.toLowerCase()} in the list.`;
+      if (!isSolidFeature(f.type)) return `${f.name} can't be ${mirror ? "mirrored" : "patterned"} — pick features that add or cut a solid.`;
+      if (f.suppressed) return `${f.name} is suppressed, so there's nothing to ${mirror ? "mirror" : "repeat"}.`;
+      if (!this.tools.has(id)) return `${f.name} couldn't be built, so it can't be ${mirror ? "mirrored" : "repeated"}.`;
+    }
+
+    // Where each copy goes.
+    const placements: ((s: Shape3D) => Shape3D)[] = [];
+    if (mirror) {
+      const frame = planeFrame(feature.mirror!.plane);
+      placements.push((s) => s.mirror(frame.n, frame.origin));
+    } else {
+      const axis = AXES[feature.pattern?.axis ?? "x"];
+      const sign = feature.pattern?.flip ? -1 : 1;
+      const count = values.count;
+      if (feature.type === "linearPattern") {
+        for (let i = 1; i < count; i++) {
+          const d = values.spacing * i * sign;
+          placements.push((s) => s.translate([axis[0] * d, axis[1] * d, axis[2] * d]));
+        }
+      } else {
+        if (values.angle > 360) return "Spread over: must be at most 360°";
+        const step = values.angle >= 360 - 1e-9 ? 360 / count : values.angle / (count - 1);
+        for (let i = 1; i < count; i++) placements.push((s) => s.rotate(step * i * sign, [0, 0, 0], axis));
+      }
+    }
+
+    // Work on copies of the parts, and only keep them if everything succeeds.
+    const working = new Map<string, Shape3D>();
+    const release = () => working.forEach((s) => s.delete());
+    try {
+      for (const source of ordered) {
+        const tool = this.tools.get(source.id)!;
+        const part = this.parts.find((p) => p.id === tool.partId);
+        if (!part) {
+          release();
+          return `The part ${source.name} belonged to no longer exists.`;
+        }
+        let shape = working.get(part.id) ?? part.shape.clone();
+        for (const place of placements) {
+          const copy = place(tool.shape.clone());
+          try {
+            const next = tool.operation === "remove" ? shape.cut(copy) : shape.fuse(copy);
+            shape.delete();
+            shape = next;
+          } finally {
+            copy.delete();
+          }
+        }
+        if (shape.solids.length === 0) {
+          shape.delete();
+          working.delete(part.id);
+          release();
+          return "This would remove the whole part.";
+        }
+        working.set(part.id, shape);
+      }
+    } catch (e) {
+      release();
+      return describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
+    }
+    for (const [id, shape] of working) {
+      const part = this.parts.find((p) => p.id === id)!;
+      part.shape.delete();
+      part.shape = shape;
+      part.featureIds.push(feature.id);
+    }
+    return null;
   }
 
   /** Hollow out a part, removing the picked faces. Returns an error message, or null. */
@@ -490,5 +603,13 @@ export class GeometryEngine {
       }
     }
     this.parts = [];
+    for (const t of this.tools.values()) {
+      try {
+        t.shape.delete();
+      } catch {
+        // already freed
+      }
+    }
+    this.tools.clear();
   }
 }

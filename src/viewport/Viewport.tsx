@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
-import { isPickFeature, isSketchSolid } from "../model/features";
+import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
 import { pickFor, useStore, type SelectionItem } from "../model/store";
 import type { PartMesh } from "../kernel/protocol";
 import type { Feature } from "../model/types";
@@ -48,6 +48,18 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
+  // Choosing the plane to mirror across.
+  if (s.editing?.draft.type === "mirror") {
+    if (target?.kind === "plane") s.setDraftMirrorPlane({ kind: "default", name: target.plane });
+    else if (target?.kind === "part" && target.item.kind === "face") {
+      const plane = planeForFace(target.item);
+      if (plane) s.setDraftMirrorPlane(plane);
+      else s.showToast("That face is curved. Pick a flat face or one of the planes to mirror across.");
+    }
+    return;
+  }
+  // Patterns pick their features in the list, not in the 3D view.
+  if (s.editing && isPatternFeature(s.editing.draft.type)) return;
   // Picking edges and faces for a fillet, chamfer or shell.
   if (s.editing && isPickFeature(s.editing.draft.type)) {
     if (target?.kind !== "part") return;

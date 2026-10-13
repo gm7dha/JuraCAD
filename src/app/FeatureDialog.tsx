@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 
 import { evaluate, formatMm } from "../model/expr";
 import { describeRef } from "../geometry/topoRef";
-import { FEATURE_DEFS, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, type ParamDef } from "../model/features";
+import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, type ParamDef } from "../model/features";
+import { planeLabel } from "../sketch/planes";
+import type { Axis } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { useDocument, useStore } from "../model/store";
 import type { Operation } from "../model/types";
@@ -47,7 +49,7 @@ function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; a
           {error}
         </div>
       ) : showsWorking && r.ok ? (
-        <div className="param-message">= {def.unit === "°" ? `${Math.round(r.value * 1000) / 1000}°` : formatMm(r.value)}</div>
+        <div className="param-message">= {def.unit === "°" ? `${Math.round(r.value * 1000) / 1000}°` : def.unit === "" ? r.value : formatMm(r.value)}</div>
       ) : null}
     </div>
   );
@@ -152,6 +154,84 @@ function SketchSolidOptions() {
   );
 }
 
+const AXIS_LABELS: Record<Axis, string> = { x: "X (red, left–right)", y: "Y (green, front–back)", z: "Z (blue, up–down)" };
+
+/** Mirror and pattern settings: which features to repeat, and how. */
+function PatternOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const doc = useDocument();
+  const toggleDraftSource = useStore((s) => s.toggleDraftSource);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const setDraftMirrorPlane = useStore((s) => s.setDraftMirrorPlane);
+  if (!draft || !isPatternFeature(draft.type)) return null;
+  const mirror = draft.type === "mirror";
+  const sources = (mirror ? draft.mirror?.sources : draft.pattern?.sources) ?? [];
+  const named = sources.map((id) => ({ id, name: doc.features.find((f) => f.id === id)?.name ?? "Deleted feature" }));
+  const pattern = draft.pattern ?? { sources: [], axis: "x" as Axis, flip: false };
+  const plane = draft.mirror?.plane;
+
+  return (
+    <>
+      <fieldset className="param-group">
+        <legend>Features to {mirror ? "mirror" : "repeat"}</legend>
+        {named.length === 0 ? (
+          <p className="dialog-hint pick-hint">Click the features to {mirror ? "mirror" : "repeat"} in the feature list (for example a hole).</p>
+        ) : (
+          <ul className="pick-list" aria-label="Features to repeat">
+            {named.map((f) => (
+              <li key={f.id}>
+                <span>{f.name}</span>
+                <button type="button" className="icon-button small" onClick={() => toggleDraftSource(f.id)} title="Remove" aria-label="Remove">
+                  <Icons.Cross size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {named.length > 0 && <p className="muted small field-note">Click features in the list to add or remove them. Each copy adds or cuts just like the original.</p>}
+      </fieldset>
+      {mirror && plane ? (
+        <fieldset className="param-group">
+          <legend>Mirror across</legend>
+          <select
+            className="full-select"
+            aria-label="Plane to mirror across"
+            value={plane.kind === "default" ? plane.name : "face"}
+            onChange={(e) => e.target.value !== "face" && setDraftMirrorPlane({ kind: "default", name: e.target.value as "Top" | "Front" | "Right" })}
+          >
+            <option value="Right">Right plane (mirrors left ↔ right)</option>
+            <option value="Front">Front plane (mirrors front ↔ back)</option>
+            <option value="Top">Top plane (mirrors up ↔ down)</option>
+            {plane.kind === "face" && <option value="face">{planeLabel(plane)}</option>}
+          </select>
+          <p className="dialog-hint field-hint">Or click a plane or flat face in the 3D view.</p>
+        </fieldset>
+      ) : (
+        <fieldset className="param-group">
+          <legend>{draft.type === "circularPattern" ? "Around the axis" : "Along the axis"}</legend>
+          <select
+            className="full-select"
+            aria-label="Axis"
+            value={pattern.axis}
+            onChange={(e) => setDraftField({ pattern: { ...pattern, axis: e.target.value as Axis } })}
+          >
+            {(["x", "y", "z"] as const).map((a) => (
+              <option key={a} value={a}>
+                {AXIS_LABELS[a]}
+                {draft.type === "circularPattern" ? " through the origin" : ""}
+              </option>
+            ))}
+          </select>
+          <label className="check-row">
+            <input type="checkbox" checked={pattern.flip} onChange={(e) => setDraftField({ pattern: { ...pattern, flip: e.target.checked } })} />
+            Flip direction
+          </label>
+        </fieldset>
+      )}
+    </>
+  );
+}
+
 /** Fillet/chamfer/shell: the edges and faces picked so far. */
 function PicksField() {
   const draft = useStore((s) => s.editing?.draft);
@@ -229,7 +309,7 @@ export function FeatureDialog() {
   const { errors } = resolveParams(draft);
   const hasErrors = Object.keys(errors).length > 0;
   const groups: { title: string; params: ParamDef[] }[] = [
-    { title: draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : "Size", params: def.params.filter((p) => p.group === "size") },
+    { title: draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: "Position", params: def.params.filter((p) => p.group === "position") },
   ];
 
@@ -269,7 +349,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && (
         <div className="segmented" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -289,6 +369,7 @@ export function FeatureDialog() {
 
         <SketchSolidOptions />
         <PicksField />
+        <PatternOptions />
 
         {groups.filter((g) => g.params.length > 0).map((g, gi) => (
           <fieldset key={g.title} className="param-group">
