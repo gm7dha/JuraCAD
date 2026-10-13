@@ -969,3 +969,14 @@ describe("importing STEP and STL files", () => {
     expect(r.parts).toHaveLength(0);
   });
 });
+
+describe("part names", () => {
+  it("uses names given to parts, in the parts and in STEP files", async () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    engine = new GeometryEngine();
+    const r = engine.rebuild([box], {}, { [box.id]: "Bracket" });
+    expect(r.parts[0].name).toBe("Bracket");
+    const step = new TextDecoder().decode((await engine.exportStep([])).step);
+    expect(step).toContain("PRODUCT('Bracket'");
+  });
+});

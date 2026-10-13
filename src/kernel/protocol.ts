@@ -71,7 +71,7 @@ export interface ThreeMfResult {
 export type { Measurement } from "../geometry/measureMath";
 
 export type KernelRequest =
-  | { type: "rebuild"; features: Feature[]; variables: Record<string, number> }
+  | { type: "rebuild"; features: Feature[]; variables: Record<string, number>; partNames?: Record<string, string> }
   | { type: "check"; quality: MeshQuality }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string> }

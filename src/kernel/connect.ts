@@ -32,7 +32,8 @@ export function connectKernel(): () => void {
 
   const rebuild = () => {
     useStore.getState().setRebuildBusy(true);
-    kernel.requestRebuild(currentFeatures(), resolveVariables(useStore.getState().history.present.variables).values, (result) => {
+    const doc = useStore.getState().history.present;
+    kernel.requestRebuild(currentFeatures(), resolveVariables(doc.variables).values, doc.partNames ?? {}, (result) => {
       const s = useStore.getState();
       if (result instanceof Error) {
         s.setRebuildBusy(false);
@@ -53,12 +54,19 @@ export function connectKernel(): () => void {
 
   let lastFeatures = useStore.getState().history.present.features;
   let lastVariables = useStore.getState().history.present.variables;
+  let lastPartNames = useStore.getState().history.present.partNames;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
 
   const unsubscribe = useStore.subscribe((s) => {
     const draft = s.editing?.draft ?? null;
-    if (s.history.present.features !== lastFeatures || draft !== lastDraft || s.history.present.variables !== lastVariables) {
+    if (
+      s.history.present.features !== lastFeatures ||
+      draft !== lastDraft ||
+      s.history.present.variables !== lastVariables ||
+      s.history.present.partNames !== lastPartNames
+    ) {
+      lastPartNames = s.history.present.partNames;
       lastFeatures = s.history.present.features;
       lastVariables = s.history.present.variables;
       lastDraft = draft;

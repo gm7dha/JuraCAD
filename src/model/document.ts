@@ -146,6 +146,35 @@ export function redo(h: History): History {
   return { past: [...h.past, h.present], present: next, future: rest };
 }
 
+/**
+ * Give a part a name (an empty name goes back to "Part N"). Copies of it in
+ * assemblies that still carry the old name ("Part 1 <2>") follow the new one.
+ */
+export function renamePart(doc: PartSmithDocument, partId: string, oldName: string, newName: string): PartSmithDocument {
+  const name = newName.trim().slice(0, 80);
+  const names = { ...(doc.partNames ?? {}) };
+  if (name) names[partId] = name;
+  else delete names[partId];
+  const { partNames: _old, ...rest } = doc;
+  const shown = name || oldName;
+  const assemblies = doc.assemblies?.map((a) => ({
+    ...a,
+    instances: a.instances.map((i) => {
+      if (i.partId !== partId) return i;
+      const m = /^(.*) <(\d+)>$/.exec(i.name);
+      return m && m[1] === oldName ? { ...i, name: `${shown} <${m[2]}>` } : i;
+    }),
+  }));
+  return { ...rest, ...(Object.keys(names).length ? { partNames: names } : {}), ...(assemblies ? { assemblies } : {}) };
+}
+
+function parsePartNames(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === "string" && v.trim()) out[id] = v.trim().slice(0, 80);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Loading saved documents safely
 
@@ -257,6 +286,7 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     features,
     ...(Array.isArray(d.variables) && d.variables.length ? { variables: parseVariables(d.variables) } : {}),
     ...(Object.keys(parseAppearance(d.appearance)).length ? { appearance: parseAppearance(d.appearance) } : {}),
+    ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),
     ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
   };
 }

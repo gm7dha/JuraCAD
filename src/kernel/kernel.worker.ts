@@ -38,7 +38,7 @@ ctx.onmessage = (event) => {
       const transfer: Transferable[] = [];
       switch (request.type) {
         case "rebuild": {
-          const result = engine.rebuild(request.features, request.variables);
+          const result = engine.rebuild(request.features, request.variables, request.partNames);
           for (const p of result.parts) {
             transfer.push(p.vertices.buffer, p.normals.buffer, p.triangles.buffer, p.lines.buffer);
           }

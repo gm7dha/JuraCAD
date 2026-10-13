@@ -262,6 +262,69 @@ function FeatureRow({ feature, onMenu }: { feature: Feature; onMenu: (e: ReactMo
   );
 }
 
+/** A part in the Parts list: colour, name (double-click to rename) and show/hide. */
+function PartRow({
+  id,
+  name,
+  hidden,
+  onToggle,
+  onMenu,
+}: {
+  id: string;
+  name: string;
+  hidden: boolean;
+  onToggle: () => void;
+  onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void;
+}) {
+  const [renaming, setRenaming] = useState(false);
+  const [text, setText] = useState(name);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (renaming) input.current?.select();
+  }, [renaming]);
+  const start = () => {
+    setText(name);
+    setRenaming(true);
+  };
+  const finish = (keep: boolean) => {
+    if (keep) useStore.getState().renamePart(id, text);
+    setRenaming(false);
+  };
+  return (
+    <li
+      className={`part-row${hidden ? " hidden" : ""}`}
+      onDoubleClick={start}
+      onContextMenu={(e) =>
+        onMenu(e, [
+          { label: "Rename…", action: start },
+          { label: hidden ? "Show" : "Hide", action: onToggle },
+        ])
+      }
+      title="Double-click to rename, right-click for more"
+    >
+      <ColourSwatch partId={id} name={name} />
+      {renaming ? (
+        <input
+          ref={input}
+          className="part-rename"
+          value={text}
+          aria-label={`New name for ${name}`}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={() => finish(true)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") finish(true);
+            if (e.key === "Escape") finish(false);
+          }}
+        />
+      ) : (
+        <span className="feature-name">{name}</span>
+      )}
+      <EyeButton hidden={hidden} name={name} onToggle={onToggle} />
+    </li>
+  );
+}
+
 const DATUMS: DatumName[] = ["Origin", "Top", "Front", "Right"];
 
 export function FeaturePanel() {
@@ -309,16 +372,9 @@ export function FeaturePanel() {
           Parts <span className="count">({parts.length})</span>
         </h3>
         <ul className="part-list">
-          {parts.map((p) => {
-            const hidden = hiddenParts.includes(p.id);
-            return (
-              <li key={p.id} className={`part-row${hidden ? " hidden" : ""}`}>
-                <ColourSwatch partId={p.id} name={p.name} />
-                <span className="feature-name">{p.name}</span>
-                <EyeButton hidden={hidden} name={p.name} onToggle={() => toggleHidden(p.id)} />
-              </li>
-            );
-          })}
+          {parts.map((p) => (
+            <PartRow key={p.id} id={p.id} name={p.name} hidden={hiddenParts.includes(p.id)} onToggle={() => toggleHidden(p.id)} onMenu={onMenu} />
+          ))}
         </ul>
         {parts.length === 0 && <p className="panel-hint">No parts yet.</p>}
       </section>

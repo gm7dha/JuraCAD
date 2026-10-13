@@ -12,6 +12,7 @@ import {
   redo as redoHistory,
   removeFeature,
   renameFeature,
+  renamePart,
   replaceFeature,
   setSuppressed,
   undo as undoHistory,
@@ -185,6 +186,8 @@ export interface AppState {
   toggleSuppressed: (id: string) => void;
   renameFeature: (id: string, name: string) => void;
   renameDocument: (name: string) => void;
+  /** Name a part (blank goes back to "Part N"). One undo step. */
+  renamePart: (partId: string, name: string) => void;
   /** Colour a part (null = back to the default grey). One undo step. */
   setPartColour: (partId: string, colour: string | null) => void;
   /** Replace the variable list (one undo step); renames are followed everywhere. */
@@ -563,6 +566,12 @@ export const useStore = create<AppState>((set, get) => {
       }),
 
     setVariables: (variables) => change((doc) => applyVariables(doc, variables)),
+
+    renamePart: (partId, name) => {
+      const old = get().parts.find((p) => p.id === partId)?.name ?? "";
+      if (name.trim() === old) return;
+      change((doc) => renamePart(doc, partId, old, name));
+    },
 
     renameDocument: (name) => {
       const trimmed = name.trim();
