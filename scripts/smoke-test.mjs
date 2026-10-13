@@ -330,13 +330,23 @@ try {
   await page.waitForTimeout(600);
   await shot("patterned");
 
+  step = "adding a variable";
+  await page.getByRole("button", { name: "Variables", exact: true }).click();
+  await page.getByRole("button", { name: "+ Add variable" }).click();
+  await page.getByRole("textbox", { name: "Variable name" }).fill("gap");
+  await page.getByRole("textbox", { name: "Value of gap" }).fill("1/4 in");
+  const worksOut = await page.locator(".variable-result").first().innerText();
+  if (!/6\.35 mm/.test(worksOut)) throw new Error(`the variable worked out as "${worksOut}"`);
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.waitForSelector(".variables-table", { state: "detached" });
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}".`,
+    `Box + drilled hole built; selection: "${selected.trim()}"; check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

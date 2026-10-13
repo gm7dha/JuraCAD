@@ -8,6 +8,8 @@
   tested in Node (`tests/engine.test.ts` loads the real OCCT engine).
 - Sketches: data and pure edits in `src/sketch/` (own constraint solver in `solver.ts`, closed-shape finding in
   `regions.ts`); the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
+- Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
+  (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
 - Keep pure logic (model, geometry, reports) out of React and covered by Vitest tests.
 - Every change: `npm run typecheck && npm test && npm run build`. CI runs the same and publishes `main`
@@ -18,7 +20,7 @@
   (`gh api repos/gm7dha/partsmith/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → check → export STL and STEP → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern. To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → check → export STL and STEP → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → add a variable. To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. Set it back to "0" before merging.
 - No `package-lock.json` is committed yet (it couldn't be generated in the first session); add one when

@@ -9,6 +9,7 @@ import { ExportDialog } from "./ExportDialog";
 import { FeatureDialog } from "./FeatureDialog";
 import { FeaturePanel } from "./FeaturePanel";
 import { HelpDialog } from "./HelpDialog";
+import { VariablesDialog } from "./VariablesDialog";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
 import { SketchOverlay } from "./SketchOverlay";
 import { SketchPanel } from "./SketchPanel";
@@ -192,6 +193,7 @@ export function App() {
       {dialog === "check" && <CheckDialog />}
       {dialog === "export" && <ExportDialog />}
       {dialog === "help" && <HelpDialog />}
+      {dialog === "variables" && <VariablesDialog />}
       <ToastView />
     </div>
   );

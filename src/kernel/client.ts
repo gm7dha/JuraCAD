@@ -13,7 +13,7 @@ export class KernelClient {
   private readonly pending = new Map<number, { resolve: (body: KernelResponseBody) => void; reject: (e: Error) => void }>();
 
   private rebuildRunning = false;
-  private queuedRebuild: { features: Feature[]; onDone: (r: RebuildResult | Error) => void } | null = null;
+  private queuedRebuild: { features: Feature[]; variables: Record<string, number>; onDone: (r: RebuildResult | Error) => void } | null = null;
   private idleWaiters: (() => void)[] = [];
 
   constructor() {
@@ -54,18 +54,18 @@ export class KernelClient {
   }
 
   /** Ask for a rebuild; `onDone` fires only for the latest request that actually ran. */
-  requestRebuild(features: Feature[], onDone: (result: RebuildResult | Error) => void): void {
-    this.queuedRebuild = { features, onDone };
+  requestRebuild(features: Feature[], variables: Record<string, number>, onDone: (result: RebuildResult | Error) => void): void {
+    this.queuedRebuild = { features, variables, onDone };
     if (!this.rebuildRunning) void this.drainRebuilds();
   }
 
   private async drainRebuilds(): Promise<void> {
     this.rebuildRunning = true;
     while (this.queuedRebuild) {
-      const { features, onDone } = this.queuedRebuild;
+      const { features, variables, onDone } = this.queuedRebuild;
       this.queuedRebuild = null;
       try {
-        const result = (await this.send({ type: "rebuild", features })).result as RebuildResult;
+        const result = (await this.send({ type: "rebuild", features, variables })).result as RebuildResult;
         // Skip stale results if something newer is already waiting.
         if (!this.queuedRebuild) onDone(result);
       } catch (e) {

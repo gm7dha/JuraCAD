@@ -168,6 +168,16 @@ export function Toolbar() {
           title={hasPart ? "Circular pattern — repeat features around an axis, e.g. a ring of holes" : "Make a part first, then repeat its features"}
         />
       </div>
+      <div className="tool-divider" />
+      <div className="tool-group">
+        <ToolButton
+          label="Variables"
+          icon={<Icons.Variables />}
+          onClick={() => useStore.getState().openDialog("variables")}
+          disabled={editing}
+          title={editing ? "Finish or cancel the open feature first" : "Variables — name sizes (like wall = 2) and use them in any box"}
+        />
+      </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">
         <ToolButton label="Fit" icon={<Icons.Fit />} onClick={() => viewportApi.current?.fit()} title="Zoom to fit (F)" />

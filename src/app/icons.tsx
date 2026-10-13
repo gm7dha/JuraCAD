@@ -127,6 +127,12 @@ export const Icons = {
       <path d="M4 20V10l6-6h10" />
     </Svg>
   ),
+  Variables: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 7c2 0 2 10 4 10M4 17c2 0 4-10 6-10" />
+      <path d="M13 10h7M13 14h7" />
+    </Svg>
+  ),
   Mirror: (p: IconProps) => (
     <Svg {...p}>
       <path d="M12 3v18" strokeDasharray="2 2" />

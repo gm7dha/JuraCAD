@@ -10,6 +10,7 @@ import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame } from "../sketch/planes";
+import { setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operation } from "../model/types";
 import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
@@ -221,8 +222,10 @@ export class GeometryEngine {
   private tools = new Map<string, FeatureTool>();
 
   /** Replays the whole feature list from scratch. */
-  rebuild(features: Feature[]): RebuildResult {
+  rebuild(features: Feature[], variables: Record<string, number> = {}): RebuildResult {
     const started = performance.now();
+    // Every size below is worked out with the document's variables.
+    setCurrentScope(variables);
     this.disposeParts();
     const featureErrors: Record<string, string> = {};
     let partCounter = 0;

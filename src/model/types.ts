@@ -1,4 +1,5 @@
 import type { TopoPick } from "../geometry/topoRef";
+import type { Variable } from "./variables";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 
@@ -53,6 +54,8 @@ export interface PartSmithDocument {
   version: 1;
   name: string;
   features: Feature[];
+  /** Named sizes usable in any box (optional: older saves have none). */
+  variables?: Variable[];
 }
 
 /** How finely curved surfaces are turned into triangles. */

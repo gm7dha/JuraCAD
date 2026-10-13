@@ -603,3 +603,15 @@ describe("mirror and patterns", () => {
     expect(build([plate, gone]).featureErrors[gone.id]).toMatch(/deleted/);
   });
 });
+
+describe("variables", () => {
+  it("builds sizes from the document's variables", () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: "wall * 10", depth: "wall * 5", height: "wall" });
+    const r = engine.rebuild([box], { wall: 2 });
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(20 * 10 * 2, 3);
+    const missing = engine.rebuild([box], {});
+    expect(missing.featureErrors[box.id]).toMatch(/no variable called "wall"/);
+  });
+});

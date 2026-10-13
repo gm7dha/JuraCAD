@@ -39,8 +39,9 @@ export function HelpDialog() {
     <Modal title="Help and shortcuts" onClose={() => openDialog(null)} width={560}>
       <p>
         PartSmith works like Onshape. Sketch a shape and extrude or revolve it, or add simple solids from the toolbar,
-        then edit them any time by double-clicking them in the feature list. Everything is saved in this browser
-        automatically.
+        then edit them any time by double-clicking them in the feature list. Any box accepts maths, units and
+        variables (set them up with Variables in the toolbar), e.g. <kbd>wall * 2</kbd> or <kbd>1/4 in</kbd>.
+        Everything is saved in this browser automatically.
       </p>
       <div className="platform-row">
         <span className="muted small">Shortcuts shown for</span>
