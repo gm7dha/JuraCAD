@@ -74,9 +74,9 @@ export type KernelRequest =
   | { type: "rebuild"; features: Feature[]; variables: Record<string, number> }
   | { type: "check"; quality: MeshQuality }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality }
-  | { type: "exportStep"; partIds: string[] }
+  | { type: "exportStep"; partIds: string[]; colours?: Record<string, string> }
   | { type: "measure"; picks: TopoPick[] }
-  | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string };
+  | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string> };
 
 export type KernelResponseBody =
   | { type: "rebuild"; result: RebuildResult }

@@ -850,3 +850,14 @@ describe("measure", () => {
     expect(m.distance).toBeCloseTo(24, 6);
   });
 });
+
+describe("part colours in exports", () => {
+  it("writes colours into STEP and 3MF files", async () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    build([box]);
+    const step = new TextDecoder().decode((await engine.exportStep([], { [box.id]: "#ff8000" })).step);
+    expect(step).toMatch(/COLOUR_RGB\('',1\.?0*,0\.50196\d*,0\.?0*\)|COLOUR_RGB\('',1\.,0\.50\d*,0\.\)/);
+    const mf = new TextDecoder().decode(engine.export3mf([], "coarse", "T", { [box.id]: "#ff8000" }).data);
+    expect(mf).toMatch(/displaycolor="#FF8000"/);
+  });
+});

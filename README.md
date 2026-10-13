@@ -33,6 +33,8 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 - Edit any feature later (double-click it), suppress it, rename it, or delete it. Full undo/redo.
 - **Measure**: select an edge or face to see its length, diameter or area; select two for the gap, angle and
   centre-to-centre spacing (great for checking hole positions).
+- **Part colours**: click the swatch beside a part in the Parts list. Colours are saved and go into STEP and
+  3MF exports.
 - **Section view**: slice the view open along Top, Front or Right to see inside (display only).
 - **Check model** — confirms each part is closed and watertight, valid and in one piece, finds its thinnest wall,
   and spots separate parts that overlap.

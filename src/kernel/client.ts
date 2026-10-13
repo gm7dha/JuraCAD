@@ -93,16 +93,16 @@ export class KernelClient {
     return this.send({ type: "exportStl", partIds, quality }).then((body) => body.result as ExportResult);
   }
 
-  export3mf(partIds: string[], quality: MeshQuality, title: string): Promise<ThreeMfResult> {
-    return this.send({ type: "export3mf", partIds, quality, title }).then((body) => body.result as ThreeMfResult);
+  export3mf(partIds: string[], quality: MeshQuality, title: string, colours?: Record<string, string>): Promise<ThreeMfResult> {
+    return this.send({ type: "export3mf", partIds, quality, title, colours }).then((body) => body.result as ThreeMfResult);
   }
 
   measure(picks: TopoPick[]): Promise<Measurement> {
     return this.send({ type: "measure", picks }).then((body) => body.result as Measurement);
   }
 
-  exportStep(partIds: string[]): Promise<StepResult> {
-    return this.send({ type: "exportStep", partIds }).then((body) => body.result as StepResult);
+  exportStep(partIds: string[], colours?: Record<string, string>): Promise<StepResult> {
+    return this.send({ type: "exportStep", partIds, colours }).then((body) => body.result as StepResult);
   }
 
   terminate(): void {

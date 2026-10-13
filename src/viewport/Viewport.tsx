@@ -12,6 +12,9 @@ import type { SketchData } from "../sketch/types";
 import { SceneManager, type PickTarget } from "./SceneManager";
 import { sectionPlane } from "./section";
 
+/** Shared empty colour list (a selector must not make a new object each time). */
+const NO_COLOURS: Record<string, string> = {};
+
 /** Lets keyboard shortcuts and toolbar buttons reach the 3D view. */
 export const viewportApi: { current: SceneManager | null; sketch: SketchController | null } = { current: null, sketch: null };
 
@@ -157,6 +160,7 @@ export function Viewport() {
     const s = useStore.getState();
     manager.setHidden(s.hiddenParts);
     manager.setParts(s.parts);
+    manager.setPartColours(s.history.present.appearance ?? {});
     manager.setSelection(s.selection);
     manager.setDatums({ selected: s.selectedPlane, listHover: s.listHoverPlane, hidden: s.hiddenDatums });
     return () => {
@@ -167,6 +171,8 @@ export function Viewport() {
 
   useEffect(() => viewportApi.current?.setHidden(hiddenParts), [hiddenParts]);
   const section = useStore((s) => s.section);
+  const appearance = useStore((s) => s.history.present.appearance ?? NO_COLOURS);
+  useEffect(() => viewportApi.current?.setPartColours(appearance), [appearance]);
   useEffect(() => viewportApi.current?.setSection(section ? sectionPlane(section) : null), [section]);
   useEffect(() => viewportApi.current?.setParts(parts), [parts]);
   useEffect(() => viewportApi.current?.setSelection(picks ? itemsForPicks(parts, picks) : selection), [selection, picks, parts]);

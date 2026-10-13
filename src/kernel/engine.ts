@@ -709,13 +709,13 @@ export class GeometryEngine {
   }
 
   /** One 3MF file with each chosen part as a separate, named object. */
-  export3mf(partIds: string[], quality: MeshQuality, title: string): ThreeMfResult {
+  export3mf(partIds: string[], quality: MeshQuality, title: string, colours: Record<string, string> = {}): ThreeMfResult {
     const tol = MESH_TOLERANCES[quality];
     const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
     if (chosen.length === 0) throw new Error("There's nothing to export yet.");
     const meshes = chosen.map((p) => {
       const m = p.shape.mesh(tol);
-      return { name: p.name, vertices: m.vertices, triangles: withoutDegenerateTriangles(m.vertices, m.triangles) };
+      return { name: p.name, vertices: m.vertices, triangles: withoutDegenerateTriangles(m.vertices, m.triangles), colour: colours[p.id] };
     });
     const bytes = write3mf(meshes, title);
     const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -727,11 +727,11 @@ export class GeometryEngine {
    * STEP keeps the exact shape — curves stay curves — which is what most
    * manufacturers (machining, sheet metal, injection moulding) ask for.
    */
-  async exportStep(partIds: string[]): Promise<StepResult> {
+  async exportStep(partIds: string[], colours: Record<string, string> = {}): Promise<StepResult> {
     const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
     if (chosen.length === 0) throw new Error("There's nothing to export yet.");
     const blob = exportSTEP(
-      chosen.map((p) => ({ shape: p.shape, name: p.name })),
+      chosen.map((p) => ({ shape: p.shape, name: p.name, ...(colours[p.id] ? { color: colours[p.id] } : {}) })),
       { unit: "mm" },
     );
     return { step: await blob.arrayBuffer(), partCount: chosen.length };

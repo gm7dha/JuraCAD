@@ -14,6 +14,8 @@ export interface MeshPart {
   vertices: ArrayLike<number>;
   /** Three corner indices per triangle. */
   triangles: ArrayLike<number>;
+  /** Display colour "#rrggbb", if the part has one. */
+  colour?: string;
 }
 
 /** Merge repeated corners (same position to 0.01 µm) so triangles share them. */
@@ -56,16 +58,25 @@ export function modelXml(parts: MeshPart[], title: string): string {
     ' <metadata name="Application">PartSmith</metadata>',
     " <resources>",
   ];
+  // Colours (if any part has one) go in a material list that each object points to.
+  const coloured = parts.some((p) => p.colour);
+  const firstObject = coloured ? 2 : 1;
+  if (coloured) {
+    lines.push('  <basematerials id="1">');
+    for (const p of parts) lines.push(`   <base name="${xmlEscape(p.name)}" displaycolor="${(p.colour ?? "#A8B4C0").toUpperCase()}"/>`);
+    lines.push("  </basematerials>");
+  }
   parts.forEach((p, i) => {
     const m = weld(p.vertices, p.triangles);
-    lines.push(`  <object id="${i + 1}" type="model" name="${xmlEscape(p.name)}">`, "   <mesh>", "    <vertices>");
+    const material = coloured ? ` pid="1" pindex="${i}"` : "";
+    lines.push(`  <object id="${i + firstObject}" type="model" name="${xmlEscape(p.name)}"${material}>`, "   <mesh>", "    <vertices>");
     for (let v = 0; v < m.vertices.length; v += 3) lines.push(`     <vertex x="${num(m.vertices[v])}" y="${num(m.vertices[v + 1])}" z="${num(m.vertices[v + 2])}"/>`);
     lines.push("    </vertices>", "    <triangles>");
     for (let t = 0; t < m.triangles.length; t += 3) lines.push(`     <triangle v1="${m.triangles[t]}" v2="${m.triangles[t + 1]}" v3="${m.triangles[t + 2]}"/>`);
     lines.push("    </triangles>", "   </mesh>", "  </object>");
   });
   lines.push(" </resources>", " <build>");
-  parts.forEach((_, i) => lines.push(`  <item objectid="${i + 1}"/>`));
+  parts.forEach((_, i) => lines.push(`  <item objectid="${i + firstObject}"/>`));
   lines.push(" </build>", "</model>", "");
   return lines.join("\n");
 }

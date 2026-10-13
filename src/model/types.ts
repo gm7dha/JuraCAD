@@ -72,6 +72,8 @@ export interface PartSmithDocument {
   features: Feature[];
   /** Named sizes usable in any box (optional: older saves have none). */
   variables?: Variable[];
+  /** Colour of each part ("#rrggbb"), by the id of the feature that made it. Parts without one are grey. */
+  appearance?: Record<string, string>;
 }
 
 /** How finely curved surfaces are turned into triangles. */

@@ -45,3 +45,16 @@ describe("3MF files", () => {
     expect(a).toEqual(b);
   });
 });
+
+describe("3MF colours", () => {
+  it("gives each part its colour through a material list", () => {
+    const tri = { vertices: [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], triangles: [0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3] };
+    const files = unzip(write3mf([{ name: "Red one", colour: "#d64545", ...tri }, { name: "Plain", ...tri }], "T"));
+    const model = files["3D/3dmodel.model"];
+    expect(model).toMatch(/<basematerials id="1">/);
+    expect(model).toMatch(/<base name="Red one" displaycolor="#D64545"\/>/);
+    expect(model).toMatch(/<base name="Plain" displaycolor="#A8B4C0"\/>/);
+    expect(model).toMatch(/<object id="2" type="model" name="Red one" pid="1" pindex="0">/);
+    expect(model).toMatch(/<item objectid="3"\/>/);
+  });
+});

@@ -101,6 +101,11 @@ try {
   const measured = (await page.locator(".measure-panel tr").first().innerText()).replace(/\s+/g, " ");
   await shot("drilled-block");
 
+  step = "colouring the part";
+  await page.getByRole("button", { name: "Colour of Part 1" }).click();
+  await page.getByRole("button", { name: "Blue", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".colour-swatch")?.getAttribute("style")?.includes("61, 127, 217"));
+
   step = "cutting the block open with a section view";
   await page.getByRole("button", { name: "Section", exact: true }).click();
   await page.waitForSelector(".section-panel");
