@@ -455,6 +455,7 @@ try {
   await page.getByLabel("Z", { exact: true }).press("Enter");
   await page.waitForTimeout(300);
   if ((await page.getByLabel("Z (blue)", { exact: true }).inputValue()) !== "30") throw new Error("the typed position didn't stick");
+  await page.evaluate(() => (document.activeElement)?.blur?.());
   await page.keyboard.press("f");
   await page.waitForTimeout(600);
   await shot("assembly");
