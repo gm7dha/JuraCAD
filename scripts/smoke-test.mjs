@@ -512,7 +512,11 @@ try {
   await page.mouse.up();
   await page.waitForSelector(".instance-panel");
   const xAfter = await page.getByLabel("X (red)", { exact: true }).inputValue();
-  if (xAfter === xBefore) throw new Error(`dragging didn't move the part (X stayed ${xBefore})`);
+  if (xAfter === xBefore) {
+    const toast = (await page.locator(".toast").allInnerTexts()).join(" / ");
+    const debug = await page.evaluate(() => window.partsmithViewport.current?.lastDragDebug ?? "");
+    throw new Error(`dragging didn't move the part (X stayed ${xBefore}) at (${Math.round(grabAt.x)}, ${Math.round(grabAt.y)}); message: ${toast || "none"}; ${debug}`);
+  }
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
   await page.waitForSelector('[aria-label="Tools"]');

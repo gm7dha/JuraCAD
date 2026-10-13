@@ -138,6 +138,8 @@ export class SceneManager {
   /** Dragging parts with the left button (assemblies). */
   private dragEnabled = false;
   private drag: { target: PickTarget & { kind: "part" }; started: boolean; refused: boolean } | null = null;
+  /** What the last left-press in drag mode found (for the smoke test's error messages). */
+  lastDragDebug = "";
   private pendingMove: { x: number; y: number } | null = null;
   private animation: {
     start: number;
@@ -871,6 +873,7 @@ export class SceneManager {
     if (this.dragEnabled && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const hit = this.pickAt(x, y);
       this.drag = hit?.kind === "part" ? { target: hit, started: false, refused: false } : null;
+      this.lastDragDebug = `press hit ${hit ? (hit.kind === "part" ? hit.item.partId : hit.plane) : "nothing"}`;
     }
     if (e.button === 2) {
       // Ctrl + right-drag pans, as in Onshape (⌘ + right-drag too, for Macs).
@@ -892,6 +895,7 @@ export class SceneManager {
       if (!d.started && !d.refused && Math.hypot(x - this.pointerDown.x, y - this.pointerDown.y) > CLICK_SLOP) {
         d.started = this.callbacks.onDragStart?.(d.target, this.rayAt(x, y), e.shiftKey) ?? false;
         d.refused = !d.started;
+        this.lastDragDebug += d.started ? ", drag started" : ", drag refused";
         if (d.started) {
           this.renderer.domElement.setPointerCapture(e.pointerId);
           this.renderer.domElement.style.cursor = "grabbing";
