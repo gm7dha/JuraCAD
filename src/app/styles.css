@@ -1075,34 +1075,6 @@ kbd {
 
 /* ------------------------------------------------------------------ narrow screens */
 
-@media (max-width: 1400px) {
-  .tool-button {
-    min-width: 46px;
-    padding: 2px 3px;
-    font-size: 10.5px;
-  }
-  /* Constraint buttons show just their symbol; the name is in the tooltip. */
-  .relation-button {
-    min-width: 32px;
-  }
-  .relation-button > span:not(.relation-symbol) {
-    display: none;
-  }
-}
-
-@media (max-width: 1300px) {
-  .phase-badge {
-    display: none;
-  }
-}
-
-@media (max-width: 1000px) {
-  .topbar .button-label,
-  .save-state {
-    display: none;
-  }
-}
-
 @media (max-width: 860px) {
   .workspace {
     grid-template-columns: 200px 1fr;
@@ -1450,3 +1422,33 @@ kbd {
 .segmented.three {
   grid-template-columns: repeat(3, 1fr);
 }
+
+/* Narrow screens (kept last so these win over the rules above). */
+@media (max-width: 1400px) {
+  .tool-button {
+    min-width: 46px;
+    padding: 2px 3px;
+    font-size: 10.5px;
+  }
+  /* Constraint buttons show just their symbol; the name is in the tooltip. */
+  .relation-button {
+    min-width: 32px;
+  }
+  .relation-button > span:not(.relation-symbol) {
+    display: none;
+  }
+}
+
+@media (max-width: 1300px) {
+  .phase-badge {
+    display: none;
+  }
+}
+
+@media (max-width: 1000px) {
+  .topbar .button-label,
+  .save-state {
+    display: none;
+  }
+}
+
