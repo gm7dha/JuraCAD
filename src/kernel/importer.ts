@@ -6,6 +6,7 @@
  */
 import { cast, getOC, measureVolume, type Shape3D } from "replicad";
 
+import { describeError } from "./engine";
 import { fromBase64 } from "../model/importFile";
 import type { ImportedFile } from "../model/types";
 
@@ -74,7 +75,15 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
       garbage.push(unified);
       const maker = new oc.BRepBuilderAPI_MakeSolid();
       garbage.push(maker);
-      maker.Add(oc.TopoDS.Shell(unified));
+      // The joined-up result may come back wrapped in a compound: add every shell in it.
+      const explorer = new oc.TopExp_Explorer(unified, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+      garbage.push(explorer);
+      let shells = 0;
+      for (; explorer.More(); explorer.Next()) {
+        maker.Add(oc.TopoDS.Shell(explorer.Current()));
+        shells++;
+      }
+      if (shells === 0) throw new Error("no shells");
       let solid = cast(maker.Solid()) as Shape3D;
       // Triangles facing the wrong way give a solid that's inside out.
       try {
@@ -90,7 +99,7 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
       return [solid];
     } catch (e) {
       if (e instanceof Error && /couldn't be read/.test(e.message)) throw e;
-      throw new Error(`The STL file couldn't be turned into a solid. Check it's a closed (watertight) shape. [${e instanceof Error ? e.message : typeof e === "number" ? "code " + e : String(e)}]`);
+      throw new Error(`The STL file couldn't be turned into a solid. Check it's a closed (watertight) shape. [${describeError(e, "unknown")}]`);
     } finally {
       for (const g of garbage.reverse()) {
         try {
