@@ -1311,6 +1311,11 @@ kbd {
   margin: 2px 0 4px;
 }
 
+.import-file {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+
 .dialog-hint.field-hint {
   margin: -4px 0 8px;
   font-size: 11.5px;

@@ -42,6 +42,7 @@ export function HelpDialog() {
         PartSmith works like Onshape. Sketch a shape and extrude or revolve it, or add simple solids from the toolbar,
         then edit them any time by double-clicking them in the feature list. Any box accepts maths, units and
         variables (set them up with Variables in the toolbar), e.g. <kbd>wall * 2</kbd> or <kbd>1/4 in</kbd>.
+        Import brings in STEP or STL files from other programs (or drag one onto the window).
         Your latest work is kept in this browser automatically; use Save to keep a .partsmith file on your computer.
         Install (top bar) makes PartSmith a desktop app with its own window that works offline; in Safari on a Mac,
         use File › Add to Dock.

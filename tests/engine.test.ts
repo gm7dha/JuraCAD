@@ -867,3 +867,63 @@ describe("part colours in exports", () => {
     expect(mf).toMatch(/displaycolor="#FF8000"/);
   });
 });
+
+describe("importing STEP and STL files", () => {
+  function importFeature(file: Feature["import"], operation: Operation = "new"): Feature {
+    return { ...feature("import", {}, operation), import: file };
+  }
+
+  it("brings back a STEP file as the same solid, one part per solid", async () => {
+    const a = feature("box", { width: 40, depth: 30, height: 20 });
+    const b = feature("box", { width: 10, depth: 10, height: 10, x: 100 });
+    build([a, b]);
+    const step = new TextDecoder().decode((await engine.exportStep([])).step);
+    engine.dispose();
+
+    const imp = importFeature({ fileName: "two.step", format: "step", data: step, units: "mm" });
+    const r = build([imp]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => p.id)).toEqual([imp.id, `${imp.id}~2`]);
+    expect(r.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2"]);
+    expect(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume).toBeCloseTo(24000, 0);
+    expect(analyzeMesh(r.parts[1].vertices, r.parts[1].triangles).volume).toBeCloseTo(1000, 0);
+    expect(r.parts[0].faceGroups).toHaveLength(6);
+
+    // Rebuilding again uses the remembered copy and gives the same result.
+    const again = engine.rebuild([imp]);
+    expect(again.parts).toHaveLength(2);
+  });
+
+  it("brings in an STL as a closed solid that can be cut from another part", () => {
+    build([feature("box", { width: 20, depth: 20, height: 20 })]);
+    const stl = new Uint8Array(engine.exportStl([], "normal").stl);
+    engine.dispose();
+    let b64 = "";
+    for (const x of stl) b64 += String.fromCharCode(x);
+    const file = { fileName: "cube.stl", format: "stl" as const, data: btoa(b64), units: "mm" as const };
+
+    const r = build([importFeature(file)]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    // Flat triangles are joined back into the cube's 6 faces.
+    expect(r.parts[0].faceGroups).toHaveLength(6);
+    expect(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume).toBeCloseTo(8000, 0);
+    engine.dispose();
+
+    // Cut the cube out of a bigger block.
+    const r2 = build([feature("box", { width: 40, depth: 40, height: 10, x: -10, y: -10 }), importFeature(file, "remove")]);
+    expect(r2.featureErrors).toEqual({});
+    expect(analyzeMesh(r2.parts[0].vertices, r2.parts[0].triangles).volume).toBeCloseTo(16000 - 4000, 0);
+    engine.dispose();
+
+    // In inches, 20 units become 508 mm.
+    const r3 = build([importFeature({ ...file, units: "in" })]);
+    expect(analyzeMesh(r3.parts[0].vertices, r3.parts[0].triangles).volume).toBeCloseTo(8000 * 25.4 ** 3, -3);
+  });
+
+  it("explains a damaged file", () => {
+    const r = build([importFeature({ fileName: "bad.step", format: "step", data: "ISO-10303-21;\nnonsense", units: "mm" })]);
+    expect(Object.values(r.featureErrors)[0]).toMatch(/STEP file/);
+    expect(r.parts).toHaveLength(0);
+  });
+});

@@ -22,6 +22,12 @@ function Svg({ size = 20, children, ...rest }: IconProps & { children: ReactNode
 }
 
 export const Icons = {
+  Import: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M12 3v10M8 9.5l4 4 4-4" />
+      <path d="M4 14.5v4A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-4" />
+    </Svg>
+  ),
   Box: (p: IconProps) => (
     <Svg {...p}>
       <path d="M12 3 20 7.5v9L12 21 4 16.5v-9z" />

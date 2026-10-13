@@ -5,7 +5,7 @@ import { emptySketch } from "../sketch/types";
 import { FEATURE_DEFS, defaultParams, isSolidFeature } from "./features";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
-import type { Feature, FeatureType, Operation, PartSmithDocument } from "./types";
+import type { Feature, FeatureType, ImportedFile, Operation, PartSmithDocument } from "./types";
 
 /**
  * Pure functions for changing a document. They never modify their input;
@@ -148,6 +148,19 @@ export function redo(h: History): History {
 // ---------------------------------------------------------------------------
 // Loading saved documents safely
 
+function parseImportedFile(raw: unknown): ImportedFile | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (r.format !== "step" && r.format !== "stl") return null;
+  if (typeof r.data !== "string" || !r.data) return null;
+  return {
+    fileName: typeof r.fileName === "string" ? r.fileName : r.format === "step" ? "model.step" : "model.stl",
+    format: r.format,
+    data: r.data,
+    units: r.units === "in" ? "in" : "mm",
+  };
+}
+
 const FEATURE_TYPES = new Set<string>(Object.keys(FEATURE_DEFS));
 const OPERATIONS = new Set<string>(["new", "add", "remove"]);
 
@@ -225,6 +238,11 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const rv = f.revolve as Record<string, unknown> | undefined;
       feature.revolve = { axis: typeof rv?.axis === "string" ? rv.axis : "vertical", flip: rv?.flip === true };
+    }
+    if (feature.type === "import") {
+      const im = parseImportedFile(f.import);
+      if (!im) return null;
+      feature.import = im;
     }
     if (feature.type === "fillet" || feature.type === "chamfer" || feature.type === "shell") {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];

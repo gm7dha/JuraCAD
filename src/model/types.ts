@@ -5,7 +5,7 @@ import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import";
 
 export interface HoleOptions {
   sketchRef?: string;
@@ -16,6 +16,16 @@ export interface HoleOptions {
   end: "blind" | "throughAll";
   /** Drill out of the face instead of into it. */
   flip: boolean;
+}
+
+/** A STEP or STL file brought in from another program, kept inside the design. */
+export interface ImportedFile {
+  fileName: string;
+  format: "step" | "stl";
+  /** STEP: the file's text. STL: the file's bytes in base64. */
+  data: string;
+  /** STL files have no units: what one unit in the file means. STEP files say for themselves. */
+  units: "mm" | "in";
 }
 
 /** A world axis, for patterns. */
@@ -60,6 +70,8 @@ export interface Feature {
   pattern?: { sources: string[]; axis: Axis; flip: boolean };
   /** Mirror: the features to mirror, and the plane to mirror them across. */
   mirror?: { sources: string[]; plane: SketchPlane };
+  /** Import: the file, stored in the design. */
+  import?: ImportedFile;
   /** Fillet and chamfer: the edges (or faces, meaning all their edges) to round or bevel. Shell: the faces to remove. */
   picks?: TopoPick[];
 }

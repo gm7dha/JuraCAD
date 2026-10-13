@@ -23,7 +23,8 @@ import { setCurrentScope } from "./expr";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Feature, FeatureType, PartSmithDocument } from "./types";
+import type { Feature, FeatureType, ImportedFile, PartSmithDocument } from "./types";
+import { importName } from "./importFile";
 
 export interface SelectionItem {
   partId: string;
@@ -135,8 +136,10 @@ export interface AppState {
   // actions
   startCreate: (type: FeatureType) => void;
   startEdit: (id: string) => void;
+  /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
+  startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -326,6 +329,18 @@ export const useStore = create<AppState>((set, get) => {
           .map((item) => pickFor(s.parts, item))
           .filter((p): p is TopoPick => p !== null);
       }
+      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], selectedPlane: null });
+    },
+
+    startImport: (file) => {
+      const s = get();
+      const draft = createFeature(s.history.present, "import");
+      draft.import = file;
+      const base = importName(file.fileName);
+      const used = new Set(s.history.present.features.map((f) => f.name));
+      let name = base;
+      for (let n = 2; used.has(name); n++) name = `${base} (${n})`;
+      draft.name = name;
       set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], selectedPlane: null });
     },
 

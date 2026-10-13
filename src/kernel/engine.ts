@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { getOC, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
+import { getOC, makeCompound, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -19,6 +19,7 @@ import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, Th
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep } from "./stepExport";
+import { importSolids } from "./importer";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 interface BuiltPart {
@@ -250,6 +251,11 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
     case "linearPattern":
     case "circularPattern":
       throw new Error("This feature doesn't make a solid of its own.");
+    case "import": {
+      if (!feature.import) throw new Error("This import has lost its file. Delete it and import the file again.");
+      const solids = importSolids(feature.import);
+      return solids.length === 1 ? solids[0] : (makeCompound(solids) as Shape3D);
+    }
     case "box":
       return makeBox([v.x, v.y, v.z], [v.x + v.width, v.y + v.depth, v.z + v.height]);
     case "cylinder":
@@ -336,6 +342,19 @@ export class GeometryEngine {
         tool = buildSolid(feature, values, sketches, features, this.parts);
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
+        continue;
+      }
+
+      if (feature.operation === "new" && feature.type === "import") {
+        // A STEP file may hold several parts: each solid becomes its own part.
+        this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
+        const solids = tool.solids as Shape3D[];
+        solids.forEach((solid, i) => {
+          partCounter++;
+          const id = i === 0 ? feature.id : `${feature.id}~${i + 1}`;
+          this.parts.push({ id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid });
+        });
+        tool.delete();
         continue;
       }
 

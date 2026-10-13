@@ -1,6 +1,9 @@
 import { featuresWithDraft } from "../model/document";
 import { resolveVariables } from "../model/variables";
 import { STORAGE_KEY, useStore } from "../model/store";
+
+/** Whether the "too big to keep" message has been shown since the last successful keep. */
+let storageWarned = false;
 import type { Feature } from "../model/types";
 import { KernelClient } from "./client";
 
@@ -65,8 +68,13 @@ export function connectKernel(): () => void {
       lastDoc = s.history.present;
       try {
         globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(lastDoc));
+        storageWarned = false;
       } catch {
-        // storage full or blocked; the session still works
+        // Storage full (e.g. a big imported file) or blocked: the session still works, but say so once.
+        if (!storageWarned && globalThis.localStorage) {
+          storageWarned = true;
+          useStore.getState().showToast("This design is too big for the browser to keep automatically. Use Save to keep it as a file.", "error");
+        }
       }
     }
   });

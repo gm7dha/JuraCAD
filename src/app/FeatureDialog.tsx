@@ -12,6 +12,8 @@ import { axisLabel, defaultAxis } from "../sketch/axis";
 import { useDocument, useStore } from "../model/store";
 import type { Operation } from "../model/types";
 import { Icons } from "./icons";
+import { importedSize } from "../model/importFile";
+import { chooseImportFile } from "./fileActions";
 
 const OPERATIONS: Operation[] = ["new", "add", "remove"];
 
@@ -205,6 +207,50 @@ function TransformOptions() {
           <option value="origin">through the origin</option>
         </select>
       </div>
+    </fieldset>
+  );
+}
+
+/** Import settings: which file, and (for STL) its units. */
+function ImportOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (!draft || draft.type !== "import" || !draft.import) return null;
+  const file = draft.import;
+  return (
+    <fieldset className="param-group">
+      <legend>File</legend>
+      <p className="import-file">
+        <strong>{file.fileName}</strong>
+        <span className="muted small">
+          {" "}
+          — {file.format === "step" ? "STEP" : "STL"}, {importedSize(file)}
+        </span>
+      </p>
+      <button type="button" className="text-button" onClick={() => chooseImportFile(true)}>
+        Choose a different file…
+      </button>
+      {file.format === "stl" && (
+        <>
+          <label className="field-label" htmlFor="import-units">
+            Units in the file
+          </label>
+          <select
+            id="import-units"
+            className="full-select"
+            value={file.units}
+            onChange={(e) => setDraftField({ import: { ...file, units: e.target.value === "in" ? "in" : "mm" } })}
+          >
+            <option value="mm">Millimetres</option>
+            <option value="in">Inches</option>
+          </select>
+          <p className="dialog-hint field-hint">STL files don't say what units they use. If the part looks 25 times too small, choose inches.</p>
+        </>
+      )}
+      <p className="dialog-hint field-hint">
+        The file is kept inside your design. Use Move to put the part where you want it, and Remove to cut its shape out of
+        another part.
+      </p>
     </fieldset>
   );
 }
@@ -511,6 +557,7 @@ export function FeatureDialog() {
         <SketchSolidOptions />
         <HoleOptions />
         <TransformOptions />
+        <ImportOptions />
         <PicksField />
         <PatternOptions />
 
@@ -537,7 +584,7 @@ export function FeatureDialog() {
           </div>
         )}
         <p className="dialog-hint">
-          {busy ? "Updating preview…" : "Tip: you can type maths, units and variables, e.g. 10 + 2, 1 in or wall * 2."}
+          {busy ? "Updating preview…" : def.params.length ? "Tip: you can type maths, units and variables, e.g. 10 + 2, 1 in or wall * 2." : null}
         </p>
       </div>
     </form>
