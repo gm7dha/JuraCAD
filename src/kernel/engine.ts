@@ -8,9 +8,10 @@ import { getOC, makeBox, makeCylinder, makeSphere, measureVolume, type Edge, typ
 import { analyzeMesh, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
-import { FEATURE_DEFS, isEdgeFeature, resolveParams } from "../model/features";
+import { FEATURE_DEFS, isPickFeature, resolveParams } from "../model/features";
 import { MESH_TOLERANCES, type Feature, type MeshQuality } from "../model/types";
 import { extrudeSketch } from "./extrude";
+import { revolveSketch } from "./revolve";
 import type { CheckResult, ExportResult, PartMesh, RebuildResult } from "./protocol";
 
 interface BuiltPart {
@@ -112,6 +113,41 @@ function findPickedEdges(shape: Shape3D, picks: TopoPick[]): Edge[] {
   return chosen;
 }
 
+/** Find the picked faces on a part as it is now. Throws a friendly error if some can't be found. */
+function findPickedFaces(shape: Shape3D, picks: TopoPick[]): Face[] {
+  const faces = shape.faces;
+  const bounds = boundsOf(shape);
+  const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+  const match = matchRefs(
+    picks.map((p) => p.ref),
+    faces.map((f) => faceRefOf(f, bounds)),
+    size,
+  );
+  const missing = match.filter((m) => m === null).length;
+  const chosen = match.filter((m): m is number => m !== null).map((i) => faces[i]);
+  faces.forEach((f) => !chosen.includes(f) && f.delete());
+  if (missing > 0) {
+    chosen.forEach((f) => f.delete());
+    throw new Error(`${missing} of the picked faces can't be found any more (the part has changed too much). Edit this feature and pick them again.`);
+  }
+  return chosen;
+}
+
+/** True when `after` has less volume than `before` and fits inside its bounding box. */
+function shrankWithin(before: Shape3D, after: Shape3D): boolean {
+  try {
+    const v0 = measureVolume(before);
+    const v1 = measureVolume(after);
+    if (!(v1 > 1e-6 && v1 < v0 - 1e-6)) return false;
+    const [a0, a1] = boundsOf(before);
+    const [b0, b1] = boundsOf(after);
+    const tol = 1e-3 + 1e-6 * Math.hypot(a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]);
+    return [0, 1, 2].every((i) => b0[i] >= a0[i] - tol && b1[i] <= a1[i] + tol);
+  } catch {
+    return false;
+  }
+}
+
 /** True when the shape is at least one solid and passes OpenCascade's own check. */
 function isValidSolid(shape: Shape3D): boolean {
   try {
@@ -133,15 +169,21 @@ type SketchMap = Map<string, Feature>;
 
 function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[]): Shape3D {
   switch (feature.type) {
-    case "extrude": {
-      if (!feature.sketchRef) throw new Error("Choose a sketch to extrude.");
+    case "extrude":
+    case "revolve": {
+      const verb = feature.type === "extrude" ? "extrude" : "revolve";
+      if (!feature.sketchRef) throw new Error(`Choose a sketch to ${verb}.`);
       const sketch = sketches.get(feature.sketchRef);
       if (!sketch?.sketch?.plane) {
         const exists = all.find((f) => f.id === feature.sketchRef);
         if (!exists) throw new Error("Its sketch has been deleted. Pick another sketch.");
-        if (exists.suppressed) throw new Error(`${exists.name} is suppressed, so there's nothing to extrude.`);
-        if (all.indexOf(exists) > all.indexOf(feature)) throw new Error(`${exists.name} comes after this extrude in the list.`);
+        if (exists.suppressed) throw new Error(`${exists.name} is suppressed, so there's nothing to ${verb}.`);
+        if (all.indexOf(exists) > all.indexOf(feature)) throw new Error(`${exists.name} comes after this ${verb} in the list.`);
         throw new Error(`${exists.name} couldn't be used.`);
+      }
+      if (feature.type === "revolve") {
+        const opts = feature.revolve ?? { axis: "vertical", flip: false };
+        return revolveSketch(sketch.sketch.plane, sketch.sketch.data, { axis: opts.axis, angle: v.angle, flip: opts.flip });
       }
       const opts = feature.extrude ?? { end: "blind", flip: false };
       return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip });
@@ -149,6 +191,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
     case "sketch":
     case "fillet":
     case "chamfer":
+    case "shell":
       throw new Error("This feature doesn't make a solid of its own.");
     case "box":
       return makeBox([v.x, v.y, v.z], [v.x + v.width, v.y + v.depth, v.z + v.height]);
@@ -183,8 +226,8 @@ export class GeometryEngine {
         featureErrors[feature.id] = "PartSmith doesn't know this kind of feature.";
         continue;
       }
-      if (isEdgeFeature(feature.type)) {
-        const err = this.applyEdgeFeature(feature);
+      if (isPickFeature(feature.type)) {
+        const err = feature.type === "shell" ? this.applyShell(feature) : this.applyEdgeFeature(feature);
         if (err) featureErrors[feature.id] = err;
         continue;
       }
@@ -240,6 +283,45 @@ export class GeometryEngine {
 
     const parts = this.parts.map((p) => this.meshPart(p));
     return { parts, featureErrors, durationMs: Math.round(performance.now() - started) };
+  }
+
+  /** Hollow out a part, removing the picked faces. Returns an error message, or null. */
+  private applyShell(feature: Feature): string | null {
+    const { values, errors } = resolveParams(feature);
+    if (errors.thickness) return `Wall thickness: ${errors.thickness}`;
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    if (picks.length === 0) return "Click the face to leave open (usually the top). The rest of the part becomes walls.";
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return "Shell works on one part at a time. Remove the faces picked on the other part.";
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these faces were on no longer exists. Edit this feature and pick the faces again.";
+
+    let faces: Face[];
+    try {
+      faces = findPickedFaces(part.shape, picks);
+    } catch (e) {
+      return describeError(e, "Couldn't find the picked faces.");
+    }
+    const failed =
+      "Couldn't hollow this part. Try thinner walls — rounded corners and thin areas must be thicker than the walls.";
+    let shape: Shape3D;
+    try {
+      shape = part.shape.shell(values.thickness, (f) => f.inList(faces));
+    } catch {
+      return failed;
+    } finally {
+      faces.forEach((f) => f.delete());
+    }
+    // A hollowed part must be valid, lighter than before, and no bigger than before. (With walls
+    // thicker than the part, OpenCascade can "succeed" with a strange inside-out solid.)
+    if (!isValidSolid(shape) || !shrankWithin(part.shape, shape)) {
+      shape.delete();
+      return failed;
+    }
+    part.shape.delete();
+    part.shape = shape;
+    part.featureIds.push(feature.id);
+    return null;
   }
 
   /** Fillet or chamfer the picked edges of their parts. Returns an error message, or null. */

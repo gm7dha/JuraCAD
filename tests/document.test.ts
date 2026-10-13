@@ -118,3 +118,30 @@ describe("feature parameters", () => {
     expect(describeParamErrors({ ...f, params: { ...f.params, diameter: "-1" } })).toMatch(/Diameter/);
   });
 });
+
+describe("revolve and shell features", () => {
+  it("revolve picks the latest sketch and its construction line", async () => {
+    const { addLine, addRectangle } = await import("../src/sketch/ops");
+    const { emptySketch } = await import("../src/sketch/types");
+    let data = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 10 }).sketch;
+    const axis = addLine(data, { x: -5, y: 0 }, { x: 15, y: 0 }, { construction: true });
+    data = axis.sketch;
+    let doc = emptyDocument();
+    const sk = createFeature(doc, "sketch");
+    sk.sketch = { plane: { kind: "default", name: "Top" }, data };
+    doc = addFeature(doc, sk);
+    const rev = createFeature(doc, "revolve");
+    expect(rev.sketchRef).toBe(sk.id);
+    expect(rev.revolve).toEqual({ axis: axis.lineId, flip: false });
+    expect(rev.params.angle).toBe("360");
+
+    const shell = createFeature(addFeature(doc, rev), "shell");
+    expect(shell.picks).toEqual([]);
+    expect(shell.params.thickness).toBe("2");
+
+    // Both survive saving and loading.
+    const saved = parseDocument(JSON.parse(JSON.stringify(addFeature(addFeature(doc, rev), shell))));
+    expect(saved?.features.map((f) => f.type)).toEqual(["sketch", "revolve", "shell"]);
+    expect(saved?.features[1].revolve).toEqual(rev.revolve);
+  });
+});

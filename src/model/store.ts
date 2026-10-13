@@ -19,7 +19,8 @@ import {
 import { sameRef, type TopoPick } from "../geometry/topoRef";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
-import { isEdgeFeature, resolveParams } from "./features";
+import { isPickFeature, isSketchSolid, resolveParams } from "./features";
+import { defaultAxis } from "../sketch/axis";
 import type { Feature, FeatureType, PartSmithDocument } from "./types";
 
 export interface SelectionItem {
@@ -103,7 +104,7 @@ export interface AppState {
   startCreate: (type: FeatureType) => void;
   startEdit: (id: string) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "picks">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Open a new sketch (plane may be chosen later). */
@@ -208,14 +209,20 @@ export const useStore = create<AppState>((set, get) => {
         return;
       }
       const draft = createFeature(s.history.present, type);
-      // Extrude the sketch that's highlighted in the list, if any.
-      if (type === "extrude") {
+      // Extrude or revolve the sketch that's highlighted in the list, if any.
+      if (isSketchSolid(type)) {
         const picked = s.history.present.features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
-        if (picked) draft.sketchRef = picked.id;
+        if (picked) {
+          draft.sketchRef = picked.id;
+          if (type === "revolve" && picked.sketch) draft.revolve = { axis: defaultAxis(picked.sketch.data), flip: false };
+        }
       }
-      // Fillet and chamfer start with whatever edges and faces are selected.
-      if (isEdgeFeature(type)) {
-        draft.picks = s.selection.map((item) => pickFor(s.parts, item)).filter((p): p is TopoPick => p !== null);
+      // Fillet, chamfer and shell start with whatever is selected (faces only, for shell).
+      if (isPickFeature(type)) {
+        draft.picks = s.selection
+          .filter((item) => type !== "shell" || item.kind === "face")
+          .map((item) => pickFor(s.parts, item))
+          .filter((p): p is TopoPick => p !== null);
       }
       set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], selectedPlane: null });
     },

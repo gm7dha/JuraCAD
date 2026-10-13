@@ -104,7 +104,7 @@ Each phase ends with a working version on the live site.
 | --- | --- | --- |
 | **P1 Foundation** ✅ | App shell, Onshape-style viewport, OpenCascade worker, box/cylinder/sphere with New/Add/Remove, basic model check, STL export | make simple solids and print them |
 | **P2 Sketcher** ✅ | Sketch on planes and flat faces; lines, rectangles, circles, arcs, points; constraints and dimensions; basic Extrude (one way / symmetric, New/Add/Remove) | draw a fully defined sketch and extrude it |
-| P3 Part features (in progress: fillet, chamfer ✅) | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real printable parts and change them later |
+| P3 Part features (in progress: fillet, chamfer, revolve, shell ✅) | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real printable parts and change them later |
 | P4 Save, check, export | `.partsmith` files, full model check, 3MF and STEP, offline install (PWA) | keep projects and trust exports |
 | P5 Assemblies | Instances, mate connectors, Onshape mate types, BOM | check multi-part prints fit |
 | P6 2D drawings | ISO sheets, first-angle views, hidden lines, dimensions, PDF/SVG/DXF | print a dimensioned drawing |

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
-import { isEdgeFeature } from "../model/features";
+import { isPickFeature, isSketchSolid } from "../model/features";
 import { pickFor, useStore, type SelectionItem } from "../model/store";
 import type { PartMesh } from "../kernel/protocol";
 import type { Feature } from "../model/types";
@@ -48,9 +48,13 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
-  // Picking edges and faces for a fillet or chamfer.
-  if (s.editing && isEdgeFeature(s.editing.draft.type)) {
+  // Picking edges and faces for a fillet, chamfer or shell.
+  if (s.editing && isPickFeature(s.editing.draft.type)) {
     if (target?.kind !== "part") return;
+    if (s.editing.draft.type === "shell" && target.item.kind !== "face") {
+      s.showToast("Shell removes faces — click a face (such as the top) rather than an edge.");
+      return;
+    }
     const pick = pickFor(s.parts, target.item);
     if (pick) s.toggleDraftPick(pick);
     return;
@@ -92,7 +96,7 @@ function itemsForPicks(parts: PartMesh[], picks: TopoPick[]): SelectionItem[] {
 
 /** Sketches to show faintly: finished ones that no extrude has used yet, or that are highlighted. */
 function visibleSketches(features: Feature[], editingId: string | null, selectedId: string | null) {
-  const used = new Set(features.filter((f) => f.type === "extrude" && !f.suppressed && f.sketchRef).map((f) => f.sketchRef!));
+  const used = new Set(features.filter((f) => isSketchSolid(f.type) && !f.suppressed && f.sketchRef).map((f) => f.sketchRef!));
   return features
     .filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && f.id !== editingId && (!used.has(f.id) || f.id === selectedId))
     .map((f) => ({ plane: f.sketch!.plane!, data: f.sketch!.data }));
@@ -102,7 +106,7 @@ export function Viewport() {
   const containerRef = useRef<HTMLDivElement>(null);
   const parts = useStore((s) => s.parts);
   const selection = useStore((s) => s.selection);
-  const picks = useStore((s) => (s.editing && isEdgeFeature(s.editing.draft.type) ? s.editing.draft.picks ?? null : null));
+  const picks = useStore((s) => (s.editing && isPickFeature(s.editing.draft.type) ? s.editing.draft.picks ?? null : null));
   const hiddenParts = useStore((s) => s.hiddenParts);
   const selectedPlane = useStore((s) => s.selectedPlane);
   const listHoverPlane = useStore((s) => s.listHoverPlane);

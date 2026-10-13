@@ -4,6 +4,7 @@ import { useStore, type SketchTool } from "../model/store";
 import { RELATION_HINTS, RELATION_LABELS, type RelationTool } from "../sketch/ops";
 import { RELATION_SYMBOLS } from "../sketch/layout";
 import { Icons } from "./icons";
+import { detectPlatform, shortcut } from "./platform";
 import { applySketchRelation, deleteSketchSelection, setSketchTool, toggleSketchConstruction } from "./sketchActions";
 
 const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hint: string }[] = [
@@ -39,12 +40,13 @@ export function SketchToolbar() {
   const hasPlane = useStore((s) => !!s.editing?.draft.sketch?.plane);
   const sketchUndo = useStore((s) => s.sketchUndo);
   const sketchRedo = useStore((s) => s.sketchRedo);
+  const platform = detectPlatform();
 
   return (
     <div className="toolbar sketch-toolbar" role="toolbar" aria-label="Sketch tools">
       <div className="tool-group">
-        <ToolBtn label="Undo" icon={<Icons.Undo />} onClick={sketchUndo} disabled={!canUndo} title="Undo in this sketch (Ctrl+Z)" />
-        <ToolBtn label="Redo" icon={<Icons.Redo />} onClick={sketchRedo} disabled={!canRedo} title="Redo in this sketch (Ctrl+Y)" />
+        <ToolBtn label="Undo" icon={<Icons.Undo />} onClick={sketchUndo} disabled={!canUndo} title={`Undo in this sketch (${shortcut(platform, "Z")})`} />
+        <ToolBtn label="Redo" icon={<Icons.Redo />} onClick={sketchRedo} disabled={!canRedo} title={`Redo in this sketch (${shortcut(platform, platform === "mac" ? "Z" : "Y", { shift: platform === "mac" })})`} />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">

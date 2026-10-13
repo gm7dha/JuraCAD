@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 
 import { evaluate, formatMm } from "../model/expr";
 import { describeRef } from "../geometry/topoRef";
-import { FEATURE_DEFS, isEdgeFeature, OPERATION_LABELS, resolveParams, type ParamDef } from "../model/features";
+import { FEATURE_DEFS, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, type ParamDef } from "../model/features";
+import { axisLabel, defaultAxis } from "../sketch/axis";
 import { useDocument, useStore } from "../model/store";
 import type { Operation } from "../model/types";
 import { Icons } from "./icons";
@@ -39,31 +40,40 @@ function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; a
           aria-invalid={!!error}
           aria-describedby={error ? `${id}-error` : undefined}
         />
-        <span className="unit">mm</span>
+        <span className="unit">{def.unit ?? "mm"}</span>
       </div>
       {error ? (
         <div className="param-message error" id={`${id}-error`}>
           {error}
         </div>
       ) : showsWorking && r.ok ? (
-        <div className="param-message">= {formatMm(r.value)}</div>
+        <div className="param-message">= {def.unit === "°" ? `${Math.round(r.value * 1000) / 1000}°` : formatMm(r.value)}</div>
       ) : null}
     </div>
   );
 }
 
-/** Extrude-only settings: which sketch, which way. */
-function ExtrudeOptions() {
+/** Extrude and revolve settings: which sketch, which way (and, for revolve, around what). */
+function SketchSolidOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const mode = useStore((s) => s.editing?.mode);
   const setDraftField = useStore((s) => s.setDraftField);
   const doc = useDocument();
-  if (!draft || draft.type !== "extrude") return null;
+  if (!draft || !isSketchSolid(draft.type)) return null;
   // Only sketches above this extrude in the list can be used.
   const index = doc.features.findIndex((f) => f.id === draft.id);
   const before = mode === "edit" && index >= 0 ? doc.features.slice(0, index) : doc.features;
   const sketches = before.filter((f) => f.type === "sketch");
   const opts = draft.extrude ?? { end: "blind" as const, flip: false };
+  const rev = draft.revolve ?? { axis: "vertical", flip: false };
+  const chosen = sketches.find((f) => f.id === draft.sketchRef)?.sketch?.data;
+  const lines = chosen ? chosen.curves.filter((c) => c.type === "line") : [];
+  const pickSketch = (id: string | undefined) => {
+    const data = sketches.find((f) => f.id === id)?.sketch?.data;
+    setDraftField(
+      draft.type === "revolve" && data ? { sketchRef: id, revolve: { ...rev, axis: defaultAxis(data) } } : { sketchRef: id },
+    );
+  };
 
   return (
     <fieldset className="param-group">
@@ -75,7 +85,7 @@ function ExtrudeOptions() {
           className="full-select"
           aria-label="Sketch to extrude"
           value={draft.sketchRef ?? ""}
-          onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}
+          onChange={(e) => pickSketch(e.target.value || undefined)}
         >
           {!draft.sketchRef && <option value="">Choose a sketch…</option>}
           {sketches.map((f) => (
@@ -85,6 +95,37 @@ function ExtrudeOptions() {
           ))}
         </select>
       )}
+      {draft.type === "revolve" && (
+        <>
+          <label className="field-label" htmlFor="revolve-axis">
+            Spin around
+          </label>
+          <select
+            id="revolve-axis"
+            className="full-select"
+            value={rev.axis}
+            onChange={(e) => setDraftField({ revolve: { ...rev, axis: e.target.value } })}
+          >
+            <option value="vertical">{chosen ? axisLabel(chosen, "vertical") : "Up–down axis"}</option>
+            <option value="horizontal">{chosen ? axisLabel(chosen, "horizontal") : "Left–right axis"}</option>
+            {chosen &&
+              lines.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {axisLabel(chosen, l.id)}
+                </option>
+              ))}
+            {chosen && !["vertical", "horizontal"].includes(rev.axis) && !lines.some((l) => l.id === rev.axis) && (
+              <option value={rev.axis}>Missing line — pick another</option>
+            )}
+          </select>
+          <p className="dialog-hint field-hint">Tip: draw a construction line (Q) in the sketch to spin around any line you like.</p>
+          <label className="check-row">
+            <input type="checkbox" checked={rev.flip} onChange={(e) => setDraftField({ revolve: { ...rev, flip: e.target.checked } })} />
+            Flip direction (for less than a full turn)
+          </label>
+        </>
+      )}
+      {draft.type === "extrude" && (
       <div className="segmented two" role="radiogroup" aria-label="Direction">
         {(["blind", "symmetric"] as const).map((end) => (
           <button
@@ -100,7 +141,8 @@ function ExtrudeOptions() {
           </button>
         ))}
       </div>
-      {opts.end === "blind" && (
+      )}
+      {draft.type === "extrude" && opts.end === "blind" && (
         <label className="check-row">
           <input type="checkbox" checked={opts.flip} onChange={(e) => setDraftField({ extrude: { ...opts, flip: e.target.checked } })} />
           Flip direction
@@ -110,28 +152,33 @@ function ExtrudeOptions() {
   );
 }
 
-/** Fillet/chamfer: the edges and faces picked so far. */
+/** Fillet/chamfer/shell: the edges and faces picked so far. */
 function PicksField() {
   const draft = useStore((s) => s.editing?.draft);
   const parts = useStore((s) => s.parts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
-  if (!draft || !isEdgeFeature(draft.type)) return null;
+  if (!draft || !isPickFeature(draft.type)) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
+  const shell = draft.type === "shell";
   const verb = draft.type === "fillet" ? "round" : "bevel";
 
   return (
     <fieldset className="param-group">
-      <legend>Edges</legend>
+      <legend>{shell ? "Faces to remove" : "Edges"}</legend>
       {picks.length === 0 ? (
-        <p className="dialog-hint pick-hint">Click the edges you want to {verb} in the 3D view. Click a face to {verb} all its edges.</p>
+        <p className="dialog-hint pick-hint">
+          {shell
+            ? "Click the face (or faces) to leave open — usually the top. The rest of the part becomes walls."
+            : `Click the edges you want to ${verb} in the 3D view. Click a face to ${verb} all its edges.`}
+        </p>
       ) : (
         <ul className="pick-list" aria-label="Picked edges and faces">
           {picks.map((p, i) => (
             <li key={i}>
               <span>
-                {describeRef(p.ref)}
+                {describeRef(p.ref, shell)}
                 {multiPart && <span className="muted"> · {parts.find((x) => x.id === p.partId)?.name ?? "part"}</span>}
               </span>
               <button type="button" className="icon-button small" onClick={() => toggleDraftPick(p)} title="Remove from this feature" aria-label="Remove">
@@ -143,7 +190,7 @@ function PicksField() {
       )}
       {picks.length > 0 && (
         <div className="pick-footer">
-          <span className="muted small">Click more edges to add them, or click one again to remove it.</span>
+          <span className="muted small">Click more {shell ? "faces" : "edges"} to add them, or click one again to remove it.</span>
           <button type="button" className="link-button" onClick={() => setDraftField({ picks: [] })}>
             Clear
           </button>
@@ -182,7 +229,7 @@ export function FeatureDialog() {
   const { errors } = resolveParams(draft);
   const hasErrors = Object.keys(errors).length > 0;
   const groups: { title: string; params: ParamDef[] }[] = [
-    { title: draft.type === "extrude" ? "Depth" : "Size", params: def.params.filter((p) => p.group === "size") },
+    { title: draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: "Position", params: def.params.filter((p) => p.group === "position") },
   ];
 
@@ -222,7 +269,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isEdgeFeature(draft.type) && (
+        {!isPickFeature(draft.type) && (
         <div className="segmented" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -240,7 +287,7 @@ export function FeatureDialog() {
         </div>
         )}
 
-        <ExtrudeOptions />
+        <SketchSolidOptions />
         <PicksField />
 
         {groups.filter((g) => g.params.length > 0).map((g, gi) => (

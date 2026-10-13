@@ -10,6 +10,8 @@ export interface ParamDef {
   positive?: boolean;
   /** Grouping in the dialog. */
   group: "size" | "position";
+  /** Unit shown beside the box (millimetres unless it's an angle). */
+  unit?: "mm" | "°";
 }
 
 export interface FeatureDef {
@@ -63,6 +65,20 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Pushes the closed shapes of a sketch out into a solid.",
     params: [{ key: "depth", label: "Depth", defaultValue: "10", positive: true, group: "size" }],
   },
+  revolve: {
+    type: "revolve",
+    label: "Revolve",
+    namePrefix: "Revolve",
+    description: "Spins the closed shapes of a sketch around a line, for round parts.",
+    params: [{ key: "angle", label: "Angle", defaultValue: "360", positive: true, group: "size", unit: "°" }],
+  },
+  shell: {
+    type: "shell",
+    label: "Shell",
+    namePrefix: "Shell",
+    description: "Hollows out a part, leaving walls of the thickness you choose.",
+    params: [{ key: "thickness", label: "Wall thickness", defaultValue: "2", positive: true, group: "size" }],
+  },
   fillet: {
     type: "fillet",
     label: "Fillet",
@@ -97,9 +113,19 @@ export const OPERATION_LABELS: Record<Operation, string> = {
   remove: "Remove",
 };
 
-/** Features that change an existing part's edges rather than adding a solid (no New/Add/Remove). */
+/** Features that round or bevel edges. */
 export function isEdgeFeature(type: FeatureType): type is "fillet" | "chamfer" {
   return type === "fillet" || type === "chamfer";
+}
+
+/** Features that change faces or edges picked on an existing part, rather than adding a solid (no New/Add/Remove). */
+export function isPickFeature(type: FeatureType): type is "fillet" | "chamfer" | "shell" {
+  return type === "fillet" || type === "chamfer" || type === "shell";
+}
+
+/** Features made from a sketch (they have New/Add/Remove and a sketch to choose). */
+export function isSketchSolid(type: FeatureType): type is "extrude" | "revolve" {
+  return type === "extrude" || type === "revolve";
 }
 
 export interface ResolvedParams {
