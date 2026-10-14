@@ -18,6 +18,7 @@ import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapStart, type Cylinder } from "./textSolid";
+import { grooveVolume, threadPieces } from "./thread";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type SectionRequest } from "../drawing/sections";
@@ -729,6 +730,11 @@ export class GeometryEngine {
         if (r.newPart) partCounter++;
         continue;
       }
+      if (feature.type === "thread") {
+        const err = this.applyThread(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "draft" || feature.type === "moveFace" || feature.type === "deleteFace") {
         const err = this.applyFaceEdit(feature);
         if (err) featureErrors[feature.id] = err;
@@ -941,6 +947,99 @@ export class GeometryEngine {
   }
 
   /** Draft, Move face or Delete face on the picked faces of one part. */
+  /** Thread: cut a helical V groove round each picked round face (outside of a rod, or inside a hole). */
+  private applyThread(feature: Feature): string | null {
+    const { values, errors } = resolveParams(feature);
+    const bad = FEATURE_DEFS.thread.params.find((p) => errors[p.key]);
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    if (picks.length === 0) return "Click the round face to thread — the outside of a rod (bolt) or the inside of a hole (nut).";
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return "Thread works on one part at a time. Remove the faces picked on the other part.";
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these faces were on no longer exists. Edit this feature and pick the faces again.";
+    let faces: Face[];
+    try {
+      faces = findPickedFaces(part.shape, picks);
+    } catch (e) {
+      return describeError(e, "Couldn't find the picked faces.");
+    }
+    let shape = part.shape;
+    try {
+      for (const face of faces) {
+        const cyl = cylinderOfFace(face);
+        if (!cyl) throw new Error("Threads go on round (cylinder) faces. Remove the other faces.");
+        // How far the face runs along its axis.
+        const heights: number[] = [];
+        for (const e of edgesOf(face)) {
+          try {
+            for (const t of [0, 0.5, 1]) {
+              const q = take(e.pointAt(t));
+              heights.push(dot3([q[0] - cyl.origin[0], q[1] - cyl.origin[1], q[2] - cyl.origin[2]], cyl.axis));
+            }
+          } finally {
+            e.delete();
+          }
+        }
+        const lo = Math.min(...heights);
+        const hi = Math.max(...heights);
+        // Rod or hole: which way the face points at its middle.
+        const c = take(face.center);
+        const h = dot3([c[0] - cyl.origin[0], c[1] - cyl.origin[1], c[2] - cyl.origin[2]], cyl.axis);
+        const off: Vec3 = [c[0] - cyl.origin[0] - cyl.axis[0] * h, c[1] - cyl.origin[1] - cyl.axis[1] * h, c[2] - cyl.origin[2] - cyl.axis[2] * h];
+        let radial: Vec3 = Math.hypot(...off) > 1e-6 ? off : Math.abs(cyl.axis[2]) < 0.9 ? cross3(cyl.axis, [0, 0, 1]) : cross3(cyl.axis, [1, 0, 0]);
+        const l = Math.hypot(...radial);
+        radial = [radial[0] / l, radial[1] / l, radial[2] / l];
+        const onSurface: Vec3 = [cyl.origin[0] + cyl.axis[0] * h + radial[0] * cyl.radius, cyl.origin[1] + cyl.axis[1] * h + radial[1] * cyl.radius, cyl.origin[2] + cyl.axis[2] * h + radial[2] * cyl.radius];
+        let external = true;
+        try {
+          external = dot3(take(face.normalAt(onSurface)), radial) > 0;
+        } catch {
+          // assume a rod
+        }
+        const pitch = values.pitch;
+        const full = !(values.length > 0) || values.length >= hi - lo - 1e-6;
+        // Runs out past the open end (and past the far end too when it's the full length), so the groove ends cleanly.
+        const from = full ? lo - pitch : hi - values.length;
+        // Two turns at a time; a piece that cuts the wrong amount (or leaves the part broken) is tried again a turn at a time.
+        const cutPiece = (pieces: { shape: Shape3D; from: number; to: number }[], retry: boolean) => {
+          for (const piece of pieces) {
+            try {
+              const before = measureVolume(shape);
+              const next: Shape3D = shape.cut(piece.shape);
+              const removed = before - measureVolume(next);
+              const expected = grooveVolume(cyl, pitch, external, piece.from, piece.to, lo, hi);
+              const ok = isValidSolid(next) && (expected < 1e-6 || (removed > 0.5 * expected && removed < 1.6 * expected));
+              if (!ok) {
+                next.delete();
+                if (retry) cutPiece(threadPieces(cyl, piece.from, piece.to, pitch, external, 1), false);
+                else throw new Error("The thread couldn't be cut cleanly here — try a slightly different pitch or length.");
+                continue;
+              }
+              if (shape !== part.shape) shape.delete();
+              shape = next;
+            } finally {
+              piece.shape.delete();
+            }
+          }
+        };
+        cutPiece(threadPieces(cyl, from, hi + pitch, pitch, external), true);
+      }
+      const solids = solidsOf(shape);
+      solids.forEach((x) => x.delete());
+      if (solids.length === 0 || !isValidSolid(shape)) throw new Error("The thread couldn't be cut cleanly — try a different pitch or length.");
+      part.shape.delete();
+      part.shape = shape;
+      part.featureIds.push(feature.id);
+      return null;
+    } catch (e) {
+      if (shape !== part.shape) shape.delete();
+      return describeError(e, "Couldn't cut the thread.");
+    } finally {
+      faces.forEach((f) => f.delete());
+    }
+  }
+
   private applyFaceEdit(feature: Feature): string | null {
     const def = FEATURE_DEFS[feature.type];
     const { values, errors } = resolveParams(feature);

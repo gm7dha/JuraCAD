@@ -933,6 +933,53 @@ describe("what stops a Delete face", () => {
   });
 });
 
+describe("threads", () => {
+  const sideOf = (r: ReturnType<typeof build>, partId: string) => ({
+    partId,
+    ref: r.parts.find((p) => p.id === partId)!.faceRefs.find((f) => f.kind === "face" && f.surface === "CYLINDRE")!,
+  });
+
+  it("cuts a bolt thread round a rod", () => {
+    const rod = feature("cylinder", { diameter: 8, height: 12, x: 0, y: 0, z: 0 });
+    const first = build([rod]);
+    const before = engine.check("normal").parts[0].exactVolume!;
+    const thread: Feature = { ...feature("thread", { pitch: 1.25, length: 0 }), picks: [sideOf(first, rod.id)] };
+    const r = build([rod, thread]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    const check = engine.check("normal").parts[0];
+    expect(check.geometryValid).toBe(true);
+    // The groove takes away roughly its cross-section (½ × 0.88 × 0.77 mm²) times its length round the rod.
+    expect(check.exactVolume!).toBeLessThan(before - 20);
+    expect(check.exactVolume!).toBeGreaterThan(before - 200);
+  });
+
+  it("cuts a nut thread inside a hole, part of the way down", () => {
+    const block = feature("box", { width: 20, depth: 20, height: 10 });
+    const hole = feature("cylinder", { diameter: 6.75, height: 10, x: 10, y: 10 }, "remove");
+    const first = build([block, hole]);
+    const before = engine.check("normal").parts[0].exactVolume!;
+    const thread: Feature = { ...feature("thread", { pitch: 1.25, length: 6 }), picks: [sideOf(first, block.id)] };
+    const r = build([block, hole, thread]);
+    expect(r.featureErrors).toEqual({});
+    const check = engine.check("normal").parts[0];
+    expect(check.geometryValid).toBe(true);
+    expect(check.exactVolume!).toBeLessThan(before - 5);
+    // The hole only gets bigger, so the outside doesn't change.
+    const b = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).bounds!;
+    expect(b.max[0]).toBeCloseTo(20, 3);
+  });
+
+  it("explains what it needs", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const first = build([box]);
+    const flat = { partId: box.id, ref: first.parts[0].faceRefs[0] };
+    const thread: Feature = { ...feature("thread", { pitch: 1, length: 0 }), picks: [] };
+    expect(build([box, thread]).featureErrors[thread.id]).toMatch(/round face/);
+    expect(build([box, { ...thread, picks: [flat] }]).featureErrors[thread.id]).toMatch(/round/);
+  });
+});
+
 describe("plane features", () => {
   it("build nothing, but say when they can't be placed", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });
