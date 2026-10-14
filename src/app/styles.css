@@ -413,6 +413,13 @@ button:disabled {
   background: var(--accent-soft);
 }
 
+/* Features that made the picked part(s), and the part(s) a picked feature made. */
+.feature-row.linked,
+.part-row.linked {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .part-row.selected .feature-name {
   color: var(--accent-dark);
   font-weight: 550;

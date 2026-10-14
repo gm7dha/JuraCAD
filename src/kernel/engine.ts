@@ -689,14 +689,17 @@ export class GeometryEngine {
     if (Math.abs(values.angle) < 1e-12 && Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) < 1e-12 && !t.copy) {
       return { error: "Nothing to do yet — enter a distance to move or an angle to turn." };
     }
+    const [lo, hi] = boundsOf(part.shape);
+    const centre: [number, number, number] = t.about === "origin" ? [0, 0, 0] : [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+    const move = (s: Shape3D): Shape3D => {
+      let out = s;
+      if (Math.abs(values.angle) > 1e-12) out = out.rotate(values.angle, centre, AXES[t.axis]);
+      if (Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) > 0) out = out.translate([values.dx, values.dy, values.dz]);
+      return out;
+    };
     let shape = part.shape.clone();
     try {
-      if (Math.abs(values.angle) > 1e-12) {
-        const [lo, hi] = boundsOf(part.shape);
-        const centre: [number, number, number] = t.about === "origin" ? [0, 0, 0] : [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
-        shape = shape.rotate(values.angle, centre, AXES[t.axis]);
-      }
-      if (Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) > 0) shape = shape.translate([values.dx, values.dy, values.dz]);
+      shape = move(shape);
     } catch (e) {
       shape.delete();
       return { error: describeError(e, "Couldn't move this part.") };
@@ -708,6 +711,15 @@ export class GeometryEngine {
     part.shape.delete();
     part.shape = shape;
     part.featureIds.push(feature.id);
+    // The features that made this part move with it, so a later pattern or mirror of them starts from where the part is now.
+    for (const tool of this.tools.values()) {
+      if (tool.partId !== part.id) continue;
+      try {
+        tool.shape = move(tool.shape);
+      } catch {
+        // Leave it where it was; a pattern of it would then start from the old place.
+      }
+    }
     return {};
   }
 

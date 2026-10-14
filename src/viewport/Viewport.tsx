@@ -16,6 +16,7 @@ import { copyEdge } from "../sketch/tools";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
 import { setSketchTheme } from "./SketchLayer";
+import { partsOfFeature } from "../model/partLinks";
 import { SceneManager, type PickTarget, type ScreenRay } from "./SceneManager";
 import { planDrag, type DragPlan } from "../assembly/drag";
 import { solveWithParts } from "../assembly/mates";
@@ -353,7 +354,13 @@ export function Viewport() {
 
   useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenInstances : hiddenParts), [hiddenParts, hiddenInstances, assembly]);
   const selectedParts = useStore((s) => s.selectedParts);
-  useEffect(() => viewportApi.current?.setSelectedParts(assembly ? [] : selectedParts), [selectedParts, assembly]);
+  const pickedFeature = useStore((s) => s.selectedFeatureId);
+  const studioFeatures = useStore(activeFeatures);
+  // Picked parts, or the parts a picked feature made, light up.
+  useEffect(() => {
+    const lit = assembly ? [] : selectedParts.length ? selectedParts : pickedFeature ? partsOfFeature(parts, pickedFeature, studioFeatures) : [];
+    viewportApi.current?.setSelectedParts(lit);
+  }, [selectedParts, assembly, pickedFeature, parts, studioFeatures]);
   const section = useStore((s) => s.section);
   const appearance = useStore((s) => s.history.present.appearance ?? NO_COLOURS);
   const colours = useMemo(() => {

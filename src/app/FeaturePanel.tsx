@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
@@ -7,6 +7,7 @@ import type { Feature, FeatureType } from "../model/types";
 import { viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { clickRow, dragRows } from "../model/listSelection";
+import { featuresOfParts, partsOfFeature } from "../model/partLinks";
 
 const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
@@ -190,7 +191,7 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
   );
 }
 
-function FeatureRow({ feature, onMenu }: { feature: Feature; onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void }) {
+function FeatureRow({ feature, onMenu, linked }: { feature: Feature; onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void; linked: boolean }) {
   const kernelError = useStore((s) => s.featureErrors[feature.id]);
   const selected = useStore((s) => s.selectedFeatureId === feature.id);
   const editing = useStore((s) => s.editing?.draft.id === feature.id);
@@ -227,6 +228,7 @@ function FeatureRow({ feature, onMenu }: { feature: Feature; onMenu: (e: ReactMo
       className={[
         "feature-row",
         selected && "selected",
+        !selected && linked && "linked",
         editing && "editing",
         error && !feature.suppressed && "failed",
         feature.suppressed && "suppressed",
@@ -277,6 +279,7 @@ function PartRow({
   name,
   hidden,
   selected,
+  linked,
   onToggle,
   onMenu,
   onPress,
@@ -286,6 +289,7 @@ function PartRow({
   name: string;
   hidden: boolean;
   selected: boolean;
+  linked: boolean;
   onToggle: () => void;
   onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void;
   onPress: (e: ReactPointerEvent) => void;
@@ -307,7 +311,7 @@ function PartRow({
   };
   return (
     <li
-      className={`part-row${hidden ? " hidden" : ""}${selected ? " selected" : ""}`}
+      className={`part-row${hidden ? " hidden" : ""}${selected ? " selected" : linked ? " linked" : ""}`}
       aria-selected={selected}
       onDoubleClick={start}
       onPointerDown={(e) => {
@@ -319,6 +323,7 @@ function PartRow({
       onContextMenu={(e) =>
         onMenu(e, [
           { label: "Rename…", action: start },
+          { label: "Duplicate…", action: () => useStore.getState().duplicateParts([id]) },
           { label: hidden ? "Show" : "Hide", action: onToggle },
         ])
       }
@@ -358,7 +363,9 @@ function PartsList({
   hiddenParts,
   toggleHidden,
   onMenu,
+  linked,
 }: {
+  linked: string[];
   parts: { id: string; name: string }[];
   hiddenParts: string[];
   toggleHidden: (id: string) => void;
@@ -416,6 +423,7 @@ function PartsList({
       { label: "Show only these", action: () => st().setPartsHidden(order.filter((x) => !group.includes(x)), true) },
       { label: "Show all parts", action: () => st().setPartsHidden(order, false) },
       "divider",
+      { label: `Duplicate these ${n} parts`, action: () => st().duplicateParts(group) },
       { label: `Export these ${n} parts…`, action: () => st().openDialog("export") },
       { label: "Clear selection", action: () => st().setSelectedParts([]) },
     ];
@@ -438,6 +446,7 @@ function PartsList({
             name={p.name}
             hidden={hiddenParts.includes(p.id)}
             selected={selected.includes(p.id)}
+            linked={linked.includes(p.id)}
             onToggle={() => toggleHidden(p.id)}
             onMenu={(e, entries) => onMenu(e, menuFor(p.id, entries))}
             onPress={(e) => press(e, p.id)}
@@ -445,11 +454,14 @@ function PartsList({
           />
         ))}
       </ul>
-      {selected.length > 1 && (
+      {selected.length > 0 && (
         <div className="parts-selection-bar" role="toolbar" aria-label="Selected parts">
-          <span>{selected.length} parts selected</span>
+          <span>{selected.length === 1 ? "1 part selected" : `${selected.length} parts selected`}</span>
           <button type="button" className="text-button small-text" onClick={() => st().setPartsHidden(selected, !selected.every((id) => hiddenParts.includes(id)))}>
             {selected.every((id) => hiddenParts.includes(id)) ? "Show" : "Hide"}
+          </button>
+          <button type="button" className="text-button small-text" onClick={() => st().duplicateParts(selected)}>
+            Duplicate
           </button>
           <button type="button" className="text-button small-text" onClick={() => st().openDialog("export")}>
             Export…
@@ -478,6 +490,11 @@ export function FeaturePanel() {
   };
 
   const features = useStore(activeFeatures);
+  // Picked parts light up the features that made them, and a picked feature its parts.
+  const selectedParts = useStore((s) => s.selectedParts);
+  const selectedFeatureId = useStore((s) => s.selectedFeatureId);
+  const linkedFeatures = useMemo(() => (selectedParts.length ? featuresOfParts(parts, selectedParts, features) : []), [parts, selectedParts, features]);
+  const linkedParts = useMemo(() => (selectedFeatureId ? partsOfFeature(parts, selectedFeatureId, features) : []), [parts, selectedFeatureId, features]);
 
   return (
     <aside className="side-panel" aria-label="Feature list">
@@ -490,7 +507,7 @@ export function FeaturePanel() {
             <DatumRow key={d} name={d} onMenu={onMenu} />
           ))}
           {features.map((f) => (
-            <FeatureRow key={f.id} feature={f} onMenu={onMenu} />
+            <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} />
           ))}
           {draftIsNew && (
             <li className="feature-row editing draft">
@@ -508,7 +525,7 @@ export function FeaturePanel() {
         <h3>
           Parts <span className="count">({parts.length})</span>
         </h3>
-        <PartsList parts={parts} hiddenParts={hiddenParts} toggleHidden={toggleHidden} onMenu={onMenu} />
+        <PartsList parts={parts} hiddenParts={hiddenParts} toggleHidden={toggleHidden} onMenu={onMenu} linked={linkedParts} />
         {parts.length === 0 && <p className="panel-hint">No parts yet.</p>}
       </section>
 

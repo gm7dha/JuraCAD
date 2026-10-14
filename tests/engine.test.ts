@@ -785,6 +785,15 @@ describe("move, turn and copy parts", () => {
     expect((b.max[0] + b.min[0]) / 2).toBeCloseTo(5, 4);
   });
 
+  it("patterns a moved part from where it is now", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const pattern: Feature = { ...feature("linearPattern", { count: 3, spacing: 20 }, "add"), pattern: { sources: [box.id], axis: "x", flip: false } };
+    const r = build([box, transformFeature(box.id, {}, { dx: 50, dy: 5 }), pattern]);
+    expect(r.featureErrors).toEqual({});
+    const b = boundsOfPart(r);
+    expect([b.min[0], b.max[0], b.min[1]].map((v) => Math.round(v * 1000) / 1000)).toEqual([50, 100, 5]);
+  });
+
   it("copies a part, keeping the original", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });
     const copy = transformFeature(box.id, { copy: true }, { dx: 20 });
