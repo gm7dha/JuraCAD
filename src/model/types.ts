@@ -6,7 +6,21 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane";
+
+/**
+ * A construction plane: a set distance from a plane or flat face ("offset"),
+ * tilted about one of its directions ("angle"), or halfway between two
+ * parallel faces ("midplane").
+ */
+export interface PlaneOptions {
+  mode: "offset" | "angle" | "midplane";
+  ref: SketchPlane;
+  /** Midplane: the second face. */
+  ref2?: SketchPlane;
+  /** Angle: tilt about the reference's across (u) or up (v) direction. */
+  axis: "u" | "v";
+}
 
 export interface HoleOptions {
   sketchRef?: string;
@@ -71,6 +85,8 @@ export interface Feature {
   revolve?: { axis: string; flip: boolean };
   /** Hole features: where (the points and circle centres of a sketch) and what kind. */
   hole?: HoleOptions;
+  /** Plane features: where the plane is. */
+  planeDef?: PlaneOptions;
   /** Transform: move and/or turn a part (or a copy of it). */
   transform?: { partId?: string; axis: Axis; about: "origin" | "centre"; copy: boolean };
   /** Linear and circular patterns: the features to repeat, and along or around which axis. */

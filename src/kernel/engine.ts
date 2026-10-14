@@ -10,6 +10,7 @@ import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame } from "../sketch/planes";
+import { planeFeatureFrame } from "../sketch/planeFeature";
 import { setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operation } from "../model/types";
 import { extrudeSketch } from "./extrude";
@@ -490,6 +491,8 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       return makeCylinder(v.diameter / 2, v.height, [v.x, v.y, v.z], [0, 0, 1]);
     case "sphere":
       return makeSphere(v.diameter / 2).translate([v.x, v.y, v.z]);
+    default:
+      throw new Error(`A ${feature.type} doesn't make a solid.`);
   }
 }
 
@@ -579,6 +582,15 @@ export class GeometryEngine {
 
     for (const feature of features) {
       if (feature.suppressed) continue;
+      if (feature.type === "plane") {
+        // Construction planes make no solid; just say if one can't be placed.
+        const { values, errors } = resolveParams(feature);
+        const bad = FEATURE_DEFS.plane.params.find((p) => errors[p.key]);
+        const frame = feature.planeDef ? planeFeatureFrame(feature.planeDef, values) : "Choose what the plane is based on.";
+        if (bad) featureErrors[feature.id] = `${bad.label}: ${errors[bad.key]}`;
+        else if (typeof frame === "string") featureErrors[feature.id] = frame;
+        continue;
+      }
       if (feature.type === "sketch") {
         // Sketches make no solid themselves; extrudes later in the list use them.
         if (!feature.sketch?.plane) featureErrors[feature.id] = "Pick a plane or flat face to sketch on.";

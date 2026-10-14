@@ -761,6 +761,18 @@ describe("holes", () => {
   });
 });
 
+describe("plane features", () => {
+  it("build nothing, but say when they can't be placed", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const plane: Feature = { ...feature("plane", { distance: 30, angle: 0 }), planeDef: { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" } };
+    const ok = build([box, plane]);
+    expect(ok.featureErrors).toEqual({});
+    expect(ok.parts).toHaveLength(1);
+    const half: Feature = { ...plane, planeDef: { ...plane.planeDef!, mode: "midplane" } };
+    expect(build([box, half]).featureErrors[plane.id]).toMatch(/second/);
+  });
+});
+
 describe("move, turn and copy parts", () => {
   const transformFeature = (partId: string, t: Partial<NonNullable<Feature["transform"]>>, params: Record<string, number>): Feature => ({
     ...feature("transform", params, "add"),

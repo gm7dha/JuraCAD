@@ -57,6 +57,16 @@ export function startSketchFromSelection() {
   s.startCreate("sketch");
 }
 
+/** Plane: from the selected flat face, plane or Plane feature (or Top, to change in the dialog). */
+export function startPlaneFromSelection() {
+  const s = useStore.getState();
+  const faces = s.selection.filter((x) => x.kind === "face");
+  const face = faces.length === 1 && !s.selectedPlane ? planeForFace(faces[0]) : null;
+  s.startCreate("plane");
+  const draft = useStore.getState().editing?.draft;
+  if (face && draft?.planeDef) useStore.getState().setDraftField({ planeDef: { ...draft.planeDef, ref: face } });
+}
+
 export function Toolbar() {
   const editing = useStore((s) => s.editing !== null);
   const canUndo = useStore((s) => s.history.past.length > 0) && !editing;
@@ -108,6 +118,14 @@ export function Toolbar() {
           onClick={startSketchFromSelection}
           disabled={!ready}
           title="Sketch (Shift+S) — select a plane or flat face first, or pick one after"
+        />
+        <ToolButton
+          label="Plane"
+          icon={<Icons.Plane />}
+          onClick={startPlaneFromSelection}
+          disabled={!ready}
+          active={editingType === "plane"}
+          title="Plane — a construction plane to sketch on: a distance from a plane or flat face, tilted, or halfway between two faces"
         />
         <ToolButton
           label="Extrude"

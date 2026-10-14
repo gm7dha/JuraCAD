@@ -8,6 +8,7 @@ import { viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { clickRow, dragRows } from "../model/listSelection";
 import { featuresOfParts, partsOfFeature } from "../model/partLinks";
+import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 
 const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
@@ -28,6 +29,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   sweep: Icons.Sweep,
   loft: Icons.Loft,
   text: Icons.Text,
+  plane: Icons.Plane,
 };
 
 type MenuEntry = { label: string; action: () => void; danger?: boolean } | "divider";
@@ -240,6 +242,15 @@ function FeatureRow({ feature, onMenu, linked }: { feature: Feature; onMenu: (e:
         // While a mirror or pattern is open, clicking a feature adds it to (or removes it from) what's repeated.
         const st = useStore.getState();
         const d = st.editing?.draft;
+        // A Plane feature clicked while something needs a plane: use it.
+        if (feature.type === "plane" && d && d.id !== feature.id) {
+          const frame = framesOf(activeFeatures(st)).get(feature.id);
+          const plane = frame ? planeAsSketchPlane(feature, frame) : null;
+          if (plane && st.sketch && d.sketch && !d.sketch.plane) return st.setSketchPlane(plane);
+          if (plane && d.type === "text" && d.text) return st.setDraftField({ text: { ...d.text, plane } });
+          if (plane && d.type === "mirror") return st.setDraftMirrorPlane(plane);
+          if (plane && d.type === "plane" && d.planeDef) return st.setDraftField({ planeDef: { ...d.planeDef, ref: plane } });
+        }
         if (d && isPatternFeature(d.type) && d.id !== feature.id) {
           if (isSolidFeature(feature.type)) st.toggleDraftSource(feature.id);
           else st.showToast(`${feature.name} doesn't add or cut a solid, so it can't be ${d.type === "mirror" ? "mirrored" : "patterned"}.`);

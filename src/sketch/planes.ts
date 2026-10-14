@@ -11,8 +11,12 @@ export type DefaultPlane = "Top" | "Front" | "Right";
 
 export type SketchPlane =
   | { kind: "default"; name: DefaultPlane }
-  /** A flat face of a part. The frame is captured when the sketch is created. */
-  | { kind: "face"; origin: Vec3; u: Vec3; v: Vec3; label: string };
+  /**
+   * A flat face of a part, or a Plane feature (`planeRef`, its id). The frame
+   * is captured when picked; for a Plane feature it's kept up to date when the
+   * plane changes (see planeFeature.ts).
+   */
+  | { kind: "face"; origin: Vec3; u: Vec3; v: Vec3; label: string; planeRef?: string };
 
 export interface PlaneFrame {
   origin: Vec3;

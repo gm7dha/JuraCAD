@@ -8,6 +8,7 @@ import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
 import { holePositionCount } from "../sketch/holePositions";
 import { planeLabel } from "../sketch/planes";
+import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import type { Axis } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { activeFeatures, studioParts, useLengthUnit, useStore } from "../model/store";
@@ -62,6 +63,82 @@ function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; a
         <div className="param-message">= {def.unit === "°" ? `${Math.round(r.value * 1000) / 1000}°` : def.unit === "" ? r.value : formatLength(r.value, unit)}</div>
       ) : null}
     </div>
+  );
+}
+
+/** Plane settings: what it's based on, and how (a distance away, tilted, or halfway between two faces). */
+function PlaneDefOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const features = useStore(activeFeatures);
+  if (draft?.type !== "plane" || !draft.planeDef) return null;
+  const pd = draft.planeDef;
+  const update = (patch: Partial<typeof pd>) => setDraftField({ planeDef: { ...pd, ...patch } });
+  // Earlier Plane features can be based on too.
+  const at = features.findIndex((f) => f.id === draft.id);
+  const earlier = (at >= 0 ? features.slice(0, at) : features).filter((f) => f.type === "plane");
+  const frames = framesOf(features);
+  const refValue = pd.ref.kind === "default" ? pd.ref.name : pd.ref.planeRef ? `plane:${pd.ref.planeRef}` : "face";
+  return (
+    <>
+      <div className="segmented three" role="radiogroup" aria-label="Kind of plane">
+        {(
+          [
+            ["offset", "Distance", "Parallel to a plane or flat face, a set distance away"],
+            ["angle", "Tilted", "Turned about one of the plane's directions"],
+            ["midplane", "Halfway", "Halfway between two parallel flat faces"],
+          ] as const
+        ).map(([mode, label, hint]) => (
+          <button type="button" key={mode} role="radio" aria-checked={pd.mode === mode} className={pd.mode === mode ? "selected" : ""} title={hint} onClick={() => update({ mode })}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <fieldset className="param-group">
+        <legend>{pd.mode === "midplane" ? "Between" : "From"}</legend>
+        <select
+          className="full-select"
+          aria-label="Plane to start from"
+          value={refValue}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "Top" || v === "Front" || v === "Right") update({ ref: { kind: "default", name: v } });
+            else if (v.startsWith("plane:")) {
+              const f = earlier.find((x) => `plane:${x.id}` === v);
+              const frame = f && frames.get(f.id);
+              if (f && frame) update({ ref: planeAsSketchPlane(f, frame) });
+            }
+          }}
+        >
+          <option value="Top">Top plane</option>
+          <option value="Front">Front plane</option>
+          <option value="Right">Right plane</option>
+          {earlier.map((f) => (
+            <option key={f.id} value={`plane:${f.id}`}>
+              {f.name}
+            </option>
+          ))}
+          {refValue === "face" && <option value="face">{planeLabel(pd.ref)}</option>}
+        </select>
+        {pd.mode === "midplane" && (
+          <p className={pd.ref2 ? "dialog-hint field-hint" : "dialog-error"}>
+            {pd.ref2 ? `and ${planeLabel(pd.ref2)}` : "Now click a second flat face, parallel to the first."}
+            {pd.ref2 && (
+              <button type="button" className="text-button small-text" onClick={() => update({ ref2: undefined })}>
+                {" "}Pick again
+              </button>
+            )}
+          </p>
+        )}
+        {pd.mode === "angle" && (
+          <select className="full-select" aria-label="Tilt about" value={pd.axis} onChange={(e) => update({ axis: e.target.value === "v" ? "v" : "u" })}>
+            <option value="u">Tilt about its across direction</option>
+            <option value="v">Tilt about its up direction</option>
+          </select>
+        )}
+        <p className="dialog-hint field-hint">Or click a plane or flat face in the 3D view{pd.mode === "midplane" ? " (first one face, then the other)" : ""}.</p>
+      </fieldset>
+    </>
   );
 }
 
@@ -599,7 +676,7 @@ export function FeatureDialog() {
   const { errors } = resolveParams(draft);
   const hasErrors = Object.keys(errors).length > 0;
   const groups: { title: string; params: ParamDef[] }[] = [
-    { title: draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
+    { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: draft.type === "transform" ? "Move" : "Position", params: def.params.filter((p) => p.group === "position") },
   ];
 
@@ -639,7 +716,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && (
         <div className="segmented" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -657,6 +734,7 @@ export function FeatureDialog() {
         </div>
         )}
 
+        <PlaneDefOptions />
         <SketchSolidOptions />
         <SweepLoftOptions />
         <TextFeatureOptions />

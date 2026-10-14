@@ -1,4 +1,4 @@
-import { evaluate } from "./expr";
+import { evaluate, type Scope } from "./expr";
 import type { Feature, FeatureType, Operation } from "./types";
 
 export interface ParamDef {
@@ -187,6 +187,16 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "A STEP or STL file from another program, brought in as a part.",
     params: [],
   },
+  plane: {
+    type: "plane",
+    label: "Plane",
+    namePrefix: "Plane",
+    description: "A flat construction plane to sketch on: set a distance away from a plane or flat face, tilted, or halfway between two faces.",
+    params: [
+      { key: "distance", label: "Distance", defaultValue: "20", group: "size" },
+      { key: "angle", label: "Tilt", defaultValue: "30", group: "size", unit: "°" },
+    ],
+  },
   sphere: {
     type: "sphere",
     label: "Sphere",
@@ -239,9 +249,10 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole">): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef">): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   if (f.type === "extrude" && (f.extrude?.end === "throughAll" || f.extrude?.end === "upToFace")) keys.delete("depth");
+  if (f.type === "plane" && f.planeDef?.mode !== "angle") keys.delete("angle");
   if (f.type === "hole" && f.hole) {
     if (f.hole.end === "throughAll") keys.delete("depth");
     if (f.hole.kind !== "counterbore") ["cboreDiameter", "cboreDepth"].forEach((k) => keys.delete(k));
@@ -262,13 +273,13 @@ export interface ResolvedParams {
 }
 
 /** Turn a feature's typed expressions into millimetre values, checking each one. */
-export function resolveParams(feature: Pick<Feature, "type" | "params">): ResolvedParams {
+export function resolveParams(feature: Pick<Feature, "type" | "params">, scope?: Scope): ResolvedParams {
   const def = FEATURE_DEFS[feature.type];
   const values: Record<string, number> = {};
   const errors: Record<string, string> = {};
   for (const p of def.params) {
     const src = feature.params[p.key] ?? p.defaultValue;
-    const r = evaluate(src);
+    const r = scope ? evaluate(src, scope) : evaluate(src);
     if (!r.ok) {
       errors[p.key] = r.error;
       continue;

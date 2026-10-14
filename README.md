@@ -11,7 +11,7 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 
 ## What you can do today
 
-- **Sketch** on the Top, Front or Right plane, or on any flat face: lines, rectangles, circles, arcs, slots,
+- **Sketch** on the Top, Front or Right plane, any flat face, or a construction **Plane** (a distance away, tilted, or halfway between two faces): lines, rectangles, circles, arcs, slots,
   polygons and points; **round corners**, **trim** away pieces of lines, **offset**, and **mirror** shapes across a line.
   Add **dimensions** (double-click to change) and **constraints** (horizontal, vertical, parallel, perpendicular,
   equal, tangent, concentric, midpoint, symmetric, fix). Blue = still free, black = fully defined.

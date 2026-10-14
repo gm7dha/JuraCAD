@@ -27,7 +27,14 @@ export function parsePlane(raw: unknown): SketchPlane | null {
   const p = raw as Record<string, unknown>;
   if (p.kind === "default" && (p.name === "Top" || p.name === "Front" || p.name === "Right")) return { kind: "default", name: p.name };
   if (p.kind === "face" && vec3(p.origin) && vec3(p.u) && vec3(p.v)) {
-    return { kind: "face", origin: p.origin, u: p.u, v: p.v, label: typeof p.label === "string" ? p.label : "Face" };
+    return {
+      kind: "face",
+      origin: p.origin,
+      u: p.u,
+      v: p.v,
+      label: typeof p.label === "string" ? p.label : "Face",
+      ...(typeof p.planeRef === "string" ? { planeRef: p.planeRef } : {}),
+    };
   }
   return null;
 }
