@@ -95,6 +95,36 @@ export interface PartSmithDocument {
   partNames?: Record<string, string>;
   /** Assembly tabs (optional: older saves have none). */
   assemblies?: Assembly[];
+  /** Drawing tabs (optional: older saves have none). */
+  drawings?: Drawing[];
+}
+
+/** Which way a drawing view looks at the part. */
+export type ViewKind = "front" | "top" | "right" | "left" | "back" | "bottom" | "iso";
+
+/** One view on a drawing sheet. */
+export interface DrawingView {
+  id: string;
+  kind: ViewKind;
+  /** Centre of the view on the sheet (mm from the bottom-left corner); missing = placed automatically. */
+  at?: [number, number];
+}
+
+export type SheetSize = "A4" | "A3" | "A2";
+
+/** A drawing tab: views of a part on a sheet, with a title block. */
+export interface Drawing {
+  id: string;
+  name: string;
+  /** The part drawn (its id), or an assembly (its id). */
+  source: { kind: "part" | "assembly"; id: string } | null;
+  sheet: SheetSize;
+  /** Drawing scale (2 = 2:1, 0.5 = 1:2); missing = chosen to fit. */
+  scale?: number;
+  hiddenLines: boolean;
+  views: DrawingView[];
+  /** Title block entries. */
+  title: { title?: string; drawnBy?: string; material?: string; notes?: string };
 }
 
 /** A Part Studio tab after the first: its own list of features, making its own parts. */

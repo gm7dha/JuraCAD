@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { getOC, makeCompound, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
+import { getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -15,7 +15,9 @@ import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operat
 import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
-import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult } from "./protocol";
+import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import { VIEW_CAMERAS } from "../drawing/cameras";
+import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep } from "./stepExport";
@@ -764,6 +766,85 @@ export class GeometryEngine {
       out.push({ id: i.id, partId: i.partId, name: i.name, shape });
     }
     return out;
+  }
+
+  /**
+   * Drawing views: the chosen parts (or an assembly's placed copies) seen from
+   * each direction, with the lines hidden behind the part worked out.
+   */
+  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true): ViewProjection[] {
+    const placed = instances?.length ? this.placeInstances(instances) : [];
+    const shapes = placed.length ? placed.map((p) => p.shape) : (partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts).map((p) => p.shape);
+    if (shapes.length === 0) {
+      placed.forEach((p) => p.shape.delete());
+      return views.map((kind) => ({ kind, visible: [], hidden: [], circles: [], points: [], bounds: null }));
+    }
+    const whole = shapes.length === 1 ? shapes[0] : makeCompound(shapes);
+    try {
+      return views.map((kind) => {
+        const { toward, right } = VIEW_CAMERAS[kind];
+        const camera = new ProjectionCamera([0, 0, 0], toward, right);
+        try {
+          const { visible, hidden } = makeProjectedEdges(whole, camera, withHidden);
+          const out: ViewProjection = { kind, visible: [], hidden: [], circles: [], points: [], bounds: null };
+          let lo = [Infinity, Infinity];
+          let hi = [-Infinity, -Infinity];
+          const addEdge = (e: Edge, isHidden: boolean) => {
+            const type = e.geomType;
+            let length = 0;
+            try {
+              length = measureLength(e);
+            } catch {
+              length = 0;
+            }
+            const steps = type === "LINE" ? 1 : Math.max(12, Math.min(240, Math.ceil(length / 0.4)));
+            const line: number[] = [];
+            for (let i = 0; i <= steps; i++) {
+              const [x, y] = take(e.pointAt(i / steps));
+              line.push(x, y);
+              if (!isHidden) {
+                lo = [Math.min(lo[0], x), Math.min(lo[1], y)];
+                hi = [Math.max(hi[0], x), Math.max(hi[1], y)];
+              }
+            }
+            (isHidden ? out.hidden : out.visible).push(line);
+            const n = line.length;
+            out.points.push(line[0], line[1], line[n - 2], line[n - 1]);
+            if (type === "CIRCLE" && steps >= 3) {
+              const a: Vec3 = [line[0], line[1], 0];
+              const b: Vec3 = [line[2 * Math.floor(steps / 3)], line[2 * Math.floor(steps / 3) + 1], 0];
+              const c: Vec3 = [line[2 * Math.floor((2 * steps) / 3)], line[2 * Math.floor((2 * steps) / 3) + 1], 0];
+              const circle = circleThrough3D(a, b, c);
+              if (circle) {
+                const full = Math.hypot(line[0] - line[n - 2], line[1] - line[n - 1]) < 1e-6;
+                out.circles.push({ cx: circle.centre[0], cy: circle.centre[1], r: circle.radius, hidden: isHidden, full });
+              }
+            }
+          };
+          visible.forEach((e) => {
+            addEdge(e, false);
+            e.delete();
+          });
+          hidden.forEach((e) => {
+            addEdge(e, true);
+            e.delete();
+          });
+          if (lo[0] <= hi[0]) out.bounds = [lo[0], lo[1], hi[0], hi[1]];
+          return out;
+        } finally {
+          camera.delete();
+        }
+      });
+    } finally {
+      if (whole !== shapes[0] || shapes.length > 1) {
+        try {
+          whole.delete();
+        } catch {
+          // already freed
+        }
+      }
+      placed.forEach((p) => p.shape.delete());
+    }
   }
 
   /** Pairs of assembly instances that occupy the same space. */

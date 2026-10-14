@@ -1,7 +1,7 @@
 import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
-import type { Feature, MeshQuality } from "../model/types";
+import type { Feature, MeshQuality, ViewKind } from "../model/types";
 
 /** A copy of a part placed in an assembly, for exports and clash checks. */
 export interface InstanceInput {
@@ -11,6 +11,21 @@ export interface InstanceInput {
   position: [number, number, number];
   /** Quaternion x, y, z, w. */
   rotation: [number, number, number, number];
+}
+
+/** A drawing view's lines, in the view's own flat coordinates (mm; x right, y up on the paper). */
+export interface ViewProjection {
+  kind: ViewKind;
+  /** Visible lines, each a flat list of points x0, y0, x1, y1… */
+  visible: number[][];
+  /** Lines hidden behind the part (drawn dashed). */
+  hidden: number[][];
+  /** Circles and arcs, for dimensions. */
+  circles: { cx: number; cy: number; r: number; hidden: boolean; full: boolean }[];
+  /** Corner and end points, for dimensions to snap to. */
+  points: number[];
+  /** minX, minY, maxX, maxY — null when there's nothing to draw. */
+  bounds: [number, number, number, number] | null;
 }
 
 /** One Part Studio's features, for a rebuild. */
@@ -98,6 +113,7 @@ export type KernelRequest =
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[] }
   | { type: "clashes"; instances: InstanceInput[] }
+  | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
 
@@ -108,7 +124,8 @@ export type KernelResponseBody =
   | { type: "exportStep"; result: StepResult }
   | { type: "measure"; result: Measurement }
   | { type: "export3mf"; result: ThreeMfResult }
-  | { type: "clashes"; result: NonNullable<CheckResult["overlaps"]> };
+  | { type: "clashes"; result: NonNullable<CheckResult["overlaps"]> }
+  | { type: "project"; result: ViewProjection[] };
 
 /** Messages sent from the main thread to the worker. */
 export type ToWorker = { id: number; request: KernelRequest };

@@ -575,13 +575,31 @@ try {
   await page.getByRole("button", { name: "Part Studio 1" }).click();
   await page.waitForFunction(() => document.querySelectorAll(".part-row").length > 1);
 
+  step = "making a drawing";
+  await page.getByRole("button", { name: "Add a tab" }).click();
+  await page.getByRole("menuitem", { name: "Drawing" }).click();
+  await page.waitForSelector(".tab.active >> text=Drawing 1");
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length > 20, null, { timeout: 60_000 });
+  const viewCount = await page.locator(".drawing-view-handle").count();
+  if (viewCount !== 4) throw new Error(`the drawing has ${viewCount} views, not 4`);
+  await page.getByLabel("Drawn by").fill("Smoke test");
+  await page.getByLabel("Drawn by").press("Enter");
+  await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "Smoke test"));
+  await shot("drawing");
+  const pdfPromise = page.waitForEvent("download", { timeout: 30_000 });
+  await page.getByRole("button", { name: "PDF", exact: true }).click();
+  const pdf = await pdfPromise;
+  const pdfText = readFileSync(await pdf.path(), "latin1");
+  if (!pdfText.startsWith("%PDF-1.4") || !pdfText.includes("(Smoke test) Tj")) throw new Error("the PDF doesn't look right");
+  await page.getByRole("button", { name: "Part Studio 1" }).click();
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views saved as ${pdf.suggestedFilename()} (${pdfText.length} bytes).`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

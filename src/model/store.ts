@@ -25,9 +25,10 @@ import { setCurrentScope } from "./expr";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateType, PartSmithDocument } from "./types";
+import type { Assembly, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateType, PartSmithDocument } from "./types";
 import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
+import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
@@ -202,6 +203,12 @@ export interface AppState {
   addAssembly: () => void;
   /** Add a Part Studio tab and switch to it. */
   addPartStudio: () => void;
+  /** Add a drawing tab (of the part selected or last shown) and switch to it. */
+  addDrawing: () => void;
+  /** Change the drawing on show (one undo step). */
+  changeDrawing: (fn: (d: Drawing) => Drawing) => void;
+  renameDrawing: (id: string, name: string) => void;
+  removeDrawing: (id: string) => void;
   renamePartStudio: (id: string, name: string) => void;
   removePartStudio: (id: string) => void;
   /** Show the Part Studio (null) or an assembly. */
@@ -658,6 +665,31 @@ export const useStore = create<AppState>((set, get) => {
 
     renamePartStudio: (id, name) => change((doc) => renameStudio(doc, id, name)),
 
+    addDrawing: () => {
+      const s = get();
+      if (s.editing) return;
+      // Draw the part that's selected, else the last part of the Part Studio on show, else any part.
+      const shown = studioParts(s);
+      const partId = s.selection[0]?.partId ?? shown[shown.length - 1]?.id ?? s.parts[s.parts.length - 1]?.id;
+      const asm = activeAssembly(s);
+      const source = asm ? { kind: "assembly" as const, id: asm.id } : partId ? { kind: "part" as const, id: partId } : null;
+      const id = newId("d");
+      change((doc) => addDrawingTo(doc, id, source));
+      set({ activeTab: id, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, dialog: null });
+    },
+
+    changeDrawing: (fn) => {
+      const d = activeDrawing(get());
+      if (d) change((doc) => updateDrawing(doc, d.id, fn));
+    },
+
+    renameDrawing: (id, name) => change((doc) => renameDrawingIn(doc, id, name)),
+
+    removeDrawing: (id) => {
+      change((doc) => removeDrawingFrom(doc, id));
+      if (get().activeTab === id) set({ activeTab: null });
+    },
+
     removePartStudio: (id) => {
       if (get().editing) return;
       change((doc) => removeStudio(doc, id));
@@ -862,6 +894,7 @@ export function activeAssembly(s: Pick<AppState, "activeTab" | "history">): Asse
 export function activeStudioId(s: Pick<AppState, "activeTab" | "history">): string | null {
   const doc = s.history.present;
   if (s.activeTab && doc.assemblies?.some((a) => a.id === s.activeTab)) return null;
+  if (s.activeTab && doc.drawings?.some((d) => d.id === s.activeTab)) return null;
   return s.activeTab && studioExists(doc, s.activeTab) ? s.activeTab : MAIN_STUDIO;
 }
 
@@ -892,6 +925,12 @@ export function studioParts(s: Pick<AppState, "activeTab" | "history" | "parts">
   return id ? partsInStudio(s.parts, id) : NO_PARTS;
 }
 const NO_PARTS: PartMesh[] = [];
+
+/** The drawing on show, or null. */
+export function activeDrawing(s: Pick<AppState, "activeTab" | "history">): Drawing | null {
+  if (!s.activeTab) return null;
+  return s.history.present.drawings?.find((d) => d.id === s.activeTab) ?? null;
+}
 
 /** The current document (without any unsaved draft). */
 export const useDocument = () => useStore((s) => s.history.present);

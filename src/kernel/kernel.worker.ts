@@ -60,6 +60,9 @@ ctx.onmessage = (event) => {
           body = { type: "export3mf", result };
           break;
         }
+        case "project":
+          body = { type: "project", result: engine.project(request.partIds, request.instances, request.views, request.hidden) };
+          break;
         case "clashes":
           body = { type: "clashes", result: engine.clashes(request.instances) };
           break;

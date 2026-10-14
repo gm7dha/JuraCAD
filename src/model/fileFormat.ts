@@ -24,6 +24,7 @@ export function serializeDocument(doc: PartSmithDocument, savedAt = new Date()):
     features: doc.features,
     ...(doc.partStudios?.length ? { partStudios: doc.partStudios } : {}),
     ...(doc.assemblies?.length ? { assemblies: doc.assemblies } : {}),
+    ...(doc.drawings?.length ? { drawings: doc.drawings } : {}),
   };
   return JSON.stringify(file, null, 1) + "\n";
 }
