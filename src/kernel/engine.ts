@@ -18,7 +18,7 @@ import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapStart, type Cylinder } from "./textSolid";
-import { threadGroove } from "./thread";
+import { grooveVolume, threadPieces } from "./thread";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type SectionRequest } from "../drawing/sections";
@@ -1001,14 +1001,27 @@ export class GeometryEngine {
         const full = !(values.length > 0) || values.length >= hi - lo - 1e-6;
         // Runs out past the open end (and past the far end too when it's the full length), so the groove ends cleanly.
         const from = full ? lo - pitch : hi - values.length;
-        const groove = threadGroove(cyl, from, hi + pitch, pitch, external);
-        try {
-          const next: Shape3D = shape.cut(groove);
-          if (shape !== part.shape) shape.delete();
-          shape = next;
-        } finally {
-          groove.delete();
-        }
+        // A few turns at a time; a piece that cuts (almost) nothing is tried again a turn at a time.
+        const cutPiece = (pieces: { shape: Shape3D; from: number; to: number }[], retry: boolean) => {
+          for (const piece of pieces) {
+            try {
+              const before = measureVolume(shape);
+              const next: Shape3D = shape.cut(piece.shape);
+              const removed = before - measureVolume(next);
+              const expected = grooveVolume(cyl, pitch, external, piece.from, piece.to, lo, hi);
+              if (retry && expected > 1e-6 && removed < 0.3 * expected) {
+                next.delete();
+                cutPiece(threadPieces(cyl, piece.from, piece.to, pitch, external, 1), false);
+                continue;
+              }
+              if (shape !== part.shape) shape.delete();
+              shape = next;
+            } finally {
+              piece.shape.delete();
+            }
+          }
+        };
+        cutPiece(threadPieces(cyl, from, hi + pitch, pitch, external), true);
       }
       const solids = solidsOf(shape);
       solids.forEach((x) => x.delete());

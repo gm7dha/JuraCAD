@@ -31,20 +31,49 @@ export const ISO_COARSE: [number, number][] = [
 export const threadDepth = (pitch: number, external: boolean) => pitch * (external ? 0.6134 : 0.5413);
 
 /**
- * The groove to cut: from `from` to `to` (distances along the axis from the
- * cylinder's origin), a 60° V of the given pitch, pointing into the
- * material — towards the axis on a rod, away from it in a hole.
+ * The groove to cut, in pieces of a few turns each: from `from` to `to`
+ * (distances along the axis from the cylinder's origin), a 60° V of the given
+ * pitch, pointing into the material — towards the axis on a rod, away from it
+ * in a hole. (One long helical sweep is valid on its own, but OpenCascade's
+ * cutting often silently does nothing with it; a few turns at a time works.)
  */
+export function threadPieces(cyl: Cylinder, from: number, to: number, pitch: number, external: boolean, turnsPerPiece = 3): { shape: Shape3D; from: number; to: number }[] {
+  if (!(pitch > 0)) throw new Error("Enter a pitch (the distance between threads).");
+  const depth = threadDepth(pitch, external);
+  if (external && depth >= cyl.radius * 0.9) throw new Error("That pitch is too coarse for such a thin rod — choose a smaller size.");
+  if (to - from < pitch) throw new Error("The thread needs to be at least one pitch long.");
+  const out: { shape: Shape3D; from: number; to: number }[] = [];
+  const step = turnsPerPiece * pitch;
+  try {
+    for (let z = from; z < to - 1e-9; z += step) {
+      const end = Math.min(z + step, to);
+      out.push({ shape: threadGroove(cyl, z, end, pitch, external), from: z, to: end });
+    }
+  } catch (e) {
+    out.forEach((p) => p.shape.delete());
+    throw e;
+  }
+  return out;
+}
+
+/** About how much one piece of groove takes out of a face running from `lo` to `hi` along the axis (mm³). */
+export function grooveVolume(cyl: Cylinder, pitch: number, external: boolean, from: number, to: number, lo: number, hi: number): number {
+  const depth = threadDepth(pitch, external);
+  const area = depth * depth * Math.tan(Math.PI / 6);
+  const rc = external ? cyl.radius - depth / 3 : cyl.radius + depth / 3;
+  const overlap = Math.max(0, Math.min(to, hi) - Math.max(from, lo));
+  return area * 2 * Math.PI * rc * (overlap / pitch);
+}
+
+/** One piece of groove (see threadPieces). */
 export function threadGroove(cyl: Cylinder, from: number, to: number, pitch: number, external: boolean): Shape3D {
   if (!(pitch > 0)) throw new Error("Enter a pitch (the distance between threads).");
   const R = cyl.radius;
   const depth = threadDepth(pitch, external);
-  if (external && depth >= R * 0.9) throw new Error("That pitch is too coarse for such a thin rod — choose a smaller size.");
   const k = cyl.axis;
   const at = (h: number): Vec3 => [cyl.origin[0] + k[0] * h, cyl.origin[1] + k[1] * h, cyl.origin[2] + k[2] * h];
   const base = at(from);
   const height = to - from;
-  if (height < pitch) throw new Error("The thread needs to be at least one pitch long.");
   const helix = makeHelix(pitch, height, R, base, k);
   const sp = helix.startPoint;
   const start: Vec3 = [sp.x, sp.y, sp.z];
