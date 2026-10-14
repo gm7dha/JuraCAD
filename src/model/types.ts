@@ -91,6 +91,8 @@ export interface PartSmithDocument {
   features: Feature[];
   /** Named sizes usable in any box (optional: older saves have none). */
   variables?: Variable[];
+  /** Units shown and typed: inches, or (missing) millimetres. The model itself is always in millimetres. */
+  units?: "in";
   /** Colour of each part ("#rrggbb"), by the id of the feature that made it. Parts without one are grey. */
   appearance?: Record<string, string>;
   /** Name of the first Part Studio (whose features are `features`); "Part Studio 1" when not set. */

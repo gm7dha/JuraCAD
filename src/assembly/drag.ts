@@ -10,6 +10,7 @@ import type { Assembly, Mate } from "../model/types";
 import { framePlacement, type Frame } from "./connectors";
 import { add, compose, cross, dot, length, normalize, rotate, scale, sub, type Placement, type Vec3 } from "./math";
 import { clampToLimits, mateValues, type SolveResult } from "./mates";
+import { lengthUnit, startingLength } from "../model/units";
 
 export interface Ray {
   origin: Vec3;
@@ -88,7 +89,11 @@ export function planDrag(
   const sign = mate.b.instanceId === instanceId ? 1 : -1;
   const { values: start } = mateValues(mate);
   // Movements stop at the mate's limits.
-  const limited = (key: string, v: number, step: number) => String(clampToLimits(mate, key, Number(round(v, step))));
+  // Lengths are saved in the design's units (angles in degrees).
+  const limited = (key: string, v: number, step: number) => {
+    const value = clampToLimits(mate, key, lengthUnit() === "in" && key !== "angle" ? v : Number(round(v, step)));
+    return key === "angle" ? String(value) : startingLength(value);
+  };
   const withValue = (key: string, value: number, step: number): DragChange => ({ kind: "mate", id: mate.id, values: { ...mate.values, [key]: limited(key, value, step) } });
 
   const turnPlan = (): DragStart => {

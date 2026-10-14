@@ -1,3 +1,4 @@
+import { formatVolume, lengthNumber, lengthUnit } from "./units";
 import type { CheckResult, PartCheck } from "../kernel/protocol";
 
 export type Level = "ok" | "warn" | "error";
@@ -25,6 +26,9 @@ export interface CheckReport {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 const worst = (levels: Level[]): Level => (levels.includes("error") ? "error" : levels.includes("warn") ? "warn" : "ok");
+
+/** A wall thickness in the design's units: "1.25 mm" or "0.049 in". */
+const about = (mm: number) => (lengthUnit() === "in" ? `${lengthNumber(mm, "in", 3)} in` : `${round(mm, 2)} mm`);
 
 function round(n: number, dp = 1): string {
   const f = 10 ** dp;
@@ -61,23 +65,24 @@ export function reportPart(p: PartCheck): PartReport {
   let size = "—";
   if (m.bounds) {
     const d = m.bounds.max.map((v, i) => v - m.bounds!.min[i]);
-    size = `${round(d[0])} × ${round(d[1])} × ${round(d[2])} mm`;
+    const inch = lengthUnit() === "in";
+    size = inch ? `${d.map((v) => lengthNumber(v, "in", 2)).join(" × ")} in` : `${round(d[0])} × ${round(d[1])} × ${round(d[2])} mm`;
     if (!p.thinnest && Math.min(...d) < 0.4) findings.push({ level: "warn", text: "Is less than 0.4 mm thick overall — very thin parts are hard to make" });
   }
   if (p.thinnest) {
     const t = p.thinnest.thickness;
-    const where = p.thinnest.at.map((v) => round(v)).join(", ");
+    const where = p.thinnest.at.map((v) => (lengthUnit() === "in" ? lengthNumber(v, "in", 2) : round(v))).join(", ");
     if (t < THIN_WALL_MM) {
       findings.push({
         level: "warn",
-        text: `Has a wall only about ${round(t, 2)} mm thick (near ${where}) — very thin walls are fragile and hard to make`,
+        text: `Has a wall only about ${about(t)} thick (near ${where}) — very thin walls are fragile and hard to make`,
       });
     } else {
-      findings.push({ level: "ok", text: `Thinnest wall is about ${round(t, 2)} mm` });
+      findings.push({ level: "ok", text: `Thinnest wall is about ${about(t)}` });
     }
   }
   const volumeMm3 = p.exactVolume ?? m.volume;
-  const volume = `${round(volumeMm3 / 1000, 2)} cm³`;
+  const volume = lengthUnit() === "in" ? formatVolume(volumeMm3, "in") : `${round(volumeMm3 / 1000, 2)} cm³`;
 
   return { partId: p.partId, name: p.name, level: worst(findings.map((f) => f.level)), findings, size, volume };
 }

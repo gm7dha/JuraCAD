@@ -30,7 +30,9 @@
 - Keep pure logic (model, geometry, reports) out of React and covered by Vitest tests.
 - Every change: `npm run typecheck && npm test && npm run build`. CI runs the same and publishes `main`
   to GitHub Pages (base path `/partsmith/`).
-- Units are millimetres everywhere. Z is up (Onshape convention): Top = XY, Front = XZ, Right = YZ.
+- Units are millimetres everywhere in the model. A design can be shown in inches (`doc.units`): `src/model/units.ts`
+  (`storeLength`/`showLength` save typed lengths with " in" so switching never changes geometry; `useLengthUnit()`
+  re-renders components that show lengths). Z is up (Onshape convention): Top = XY, Front = XZ, Right = YZ.
 - If the npm registry is unreachable from your environment, push to a branch with an open (draft) PR and
   let CI install, test and build. CI failures are reported as check-run annotations
   (`gh api repos/gm7dha/partsmith/check-runs/<job id>/annotations`), readable even when job logs and

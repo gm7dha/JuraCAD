@@ -5,6 +5,7 @@
  * the caller keeps the old sketch.
  */
 import { evaluate } from "../model/expr";
+import { startingLength } from "../model/units";
 import { analyzeSketch, solveSketch } from "./solver";
 import {
   isDimension,
@@ -463,7 +464,8 @@ export function addDimension(
   if (typeof spec === "string") return { sketch: s, error: spec, dimensionId: "" };
   const id = sketchId("d");
   const draft: SketchConstraint = { id, ...spec, value: "0", labelOffset };
-  draft.value = roundValue(measure(s, draft));
+  // Lengths start in the design's units (angles in degrees).
+  draft.value = draft.type === "angle" ? roundValue(measure(s, draft)) : startingLength(measure(s, draft));
   const r = checkedSolve(s, { ...s, constraints: [...s.constraints, draft] }, "A dimension", true);
   if (r.error) {
     return {

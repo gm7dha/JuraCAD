@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
-import { evaluate, formatMm } from "../model/expr";
+import { evaluate } from "../model/expr";
+import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
 import { describeRef } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
@@ -9,7 +10,7 @@ import { holePositionCount } from "../sketch/holePositions";
 import { planeLabel } from "../sketch/planes";
 import type { Axis } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
-import { activeFeatures, studioParts, useStore } from "../model/store";
+import { activeFeatures, studioParts, useLengthUnit, useStore } from "../model/store";
 import type { Operation } from "../model/types";
 import { Icons } from "./icons";
 import { importedSize } from "../model/importFile";
@@ -25,10 +26,14 @@ const OPERATION_HINTS: Record<Operation, string> = {
 
 function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; autoFocus: boolean }) {
   const setDraftParam = useStore((s) => s.setDraftParam);
+  const unit = useLengthUnit();
+  const isLength = def.unit === undefined || def.unit === "mm";
+  // Lengths are shown and typed in the design's units (see units.ts).
+  const shown = isLength ? showLength(value, unit) : value;
   const r = evaluate(value);
   const error = !r.ok ? r.error : def.positive && r.value <= 0 ? "Must be more than 0" : null;
   // Show the worked-out value when the user typed maths or units.
-  const showsWorking = r.ok && !error && value.trim() !== String(r.value);
+  const showsWorking = r.ok && !error && shown.trim() !== (isLength ? lengthNumber(r.value, unit, 4) : String(r.value));
   const id = `param-${def.key}`;
 
   return (
@@ -37,24 +42,24 @@ function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; a
       <div className="param-input">
         <input
           id={id}
-          value={value}
+          value={shown}
           autoFocus={autoFocus}
           spellCheck={false}
           autoComplete="off"
           inputMode="decimal"
-          onChange={(e) => setDraftParam(def.key, e.target.value)}
+          onChange={(e) => setDraftParam(def.key, isLength ? storeLength(e.target.value, unit) : e.target.value)}
           onFocus={(e) => e.target.select()}
           aria-invalid={!!error}
           aria-describedby={error ? `${id}-error` : undefined}
         />
-        <span className="unit">{def.unit ?? "mm"}</span>
+        <span className="unit">{isLength ? unit : def.unit}</span>
       </div>
       {error ? (
         <div className="param-message error" id={`${id}-error`}>
           {error}
         </div>
       ) : showsWorking && r.ok ? (
-        <div className="param-message">= {def.unit === "°" ? `${Math.round(r.value * 1000) / 1000}°` : def.unit === "" ? r.value : formatMm(r.value)}</div>
+        <div className="param-message">= {def.unit === "°" ? `${Math.round(r.value * 1000) / 1000}°` : def.unit === "" ? r.value : formatLength(r.value, unit)}</div>
       ) : null}
     </div>
   );

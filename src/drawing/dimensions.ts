@@ -3,6 +3,7 @@
  * changes, measuring, and drawing them (extension lines, arrows, the number).
  * Sizes on paper follow ISO 129 roughly: 3.5 mm text, 3 mm arrows.
  */
+import { lengthNumber } from "../model/units";
 import type { ViewProjection } from "../kernel/protocol";
 import type { Dimension, DimPoint } from "../model/types";
 import type { Prim } from "./sheet";
@@ -16,10 +17,9 @@ const OVERSHOOT = 2;
 
 const dist = (a: P2, b: P2) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
-/** "40", "12.5", "0.25" (up to 2 decimal places, no trailing zeros). */
+/** "40", "12.5", "0.25" in the design's units (up to 2 decimal places in mm, 3 in inches; no trailing zeros). */
 export function formatSize(v: number): string {
-  const r = Math.round(v * 100) / 100;
-  return String(Object.is(r, -0) ? 0 : r);
+  return lengthNumber(v);
 }
 
 function boundsOf(p: ViewProjection): [number, number, number, number] {

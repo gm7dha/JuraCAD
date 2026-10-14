@@ -92,6 +92,12 @@ function tokenize(src: string): Token[] {
     if (ch === ")") {
       tokens.push({ kind: "rparen" });
       i++;
+      // A unit after a bracket applies to what's in it: "(1 + 1/4) in".
+      const unit = /^\s*(mm|cm|ft|in|m|")(?![A-Za-z0-9_])/i.exec(src.slice(i));
+      if (unit) {
+        tokens.push({ kind: "unit", factor: UNIT_TO_MM[unit[1].toLowerCase()] });
+        i += unit[0].length;
+      }
       continue;
     }
     throw new Error(`"${ch}" isn't allowed here`);
@@ -207,6 +213,15 @@ export function evaluate(src: string, scope: Scope = currentScope): EvalResult {
     return { ok: true, value: Math.round(value * 1e9) / 1e9 };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** True when the text uses a unit (mm, in…) or a variable — so it doesn't depend on the document's units. */
+export function hasUnitsOrNames(src: string): boolean {
+  try {
+    return tokenize(src).some((t) => t.kind === "unit" || (t.kind === "name" && t.value !== "pi"));
+  } catch {
+    return true;
   }
 }
 

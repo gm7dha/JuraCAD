@@ -7,6 +7,7 @@
  * the view from the top goes below the front view, the view from the right
  * goes to its left.
  */
+import { lengthUnit } from "../model/units";
 import type { ViewProjection } from "../kernel/protocol";
 import type { Drawing, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { centreLines, centreMarks, hatchLines, placeBalloons } from "./annotations";
@@ -394,7 +395,7 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
     [50, "DATE", info.date],
     [80, "SCALE", scaleLabel(scale)],
     [102, "SHEET", drawing.sheet],
-    [120, "UNITS", "mm"],
+    [120, "UNITS", lengthUnit()],
     [138, "PROJECTION", ""],
   ];
   for (const [dx, l, v] of cells) {

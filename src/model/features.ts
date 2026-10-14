@@ -299,6 +299,21 @@ export function describeParamErrors(feature: Feature): string | null {
   return `${first.label}: ${errors[first.key]}`;
 }
 
-export function defaultParams(type: FeatureType): Record<string, string> {
-  return Object.fromEntries(FEATURE_DEFS[type].params.map((p) => [p.key, p.defaultValue]));
+/**
+ * Starting values for a feature's boxes. In an inch design, sizes start at a
+ * round number of inches near the usual millimetre default (and are saved with
+ * "in", see units.ts).
+ */
+export function defaultParams(type: FeatureType, unit: "mm" | "in" = "mm"): Record<string, string> {
+  return Object.fromEntries(
+    FEATURE_DEFS[type].params.map((p) => {
+      const isLength = p.unit === undefined || p.unit === "mm";
+      const mm = Number(p.defaultValue);
+      if (unit === "mm" || !isLength || !mm) return [p.key, p.defaultValue];
+      const inches = mm / 25.4;
+      const step = inches >= 1 ? 4 : 16;
+      const nice = Math.max(1 / 16, Math.round(inches * step) / step);
+      return [p.key, `${nice} in`];
+    }),
+  );
 }
