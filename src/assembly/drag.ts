@@ -165,6 +165,42 @@ export function planDrag(
         },
       };
     }
+    case "pinSlot": {
+      if (shift) return turnPlan();
+      // Slide along the slot (the connector's X direction).
+      const x = axis.x;
+      const across = sub(normalize(view), scale(x, dot(normalize(view), x)));
+      if (length(across) < 0.05) return { refuse: "You're looking straight along the slot — turn the view a little to drag it." };
+      const normal = normalize(across);
+      const s0 = dot(sub(grab, axis.origin), x);
+      return {
+        plan: {
+          update(ray) {
+            const hit = rayPlane(ray, grab, normal);
+            if (!hit) return null;
+            return withValue("dx", (start.dx ?? 0) + sign * (dot(sub(hit, axis.origin), x) - s0), 0.1);
+          },
+        },
+      };
+    }
+    case "parallel": {
+      if (shift) return slidePlan();
+      if (Math.abs(dot(normalize(view), axis.z)) < 0.05) return { refuse: "You're looking side-on — turn the view a little to drag it (hold Shift to move it up and down)." };
+      return {
+        plan: {
+          update(ray) {
+            const hit = rayPlane(ray, grab, axis.z);
+            if (!hit) return null;
+            const d = sub(hit, grab);
+            return {
+              kind: "mate",
+              id: mate.id,
+              values: { ...mate.values, dx: limited("dx", (start.dx ?? 0) + sign * dot(d, axis.x), 0.1), dy: limited("dy", (start.dy ?? 0) + sign * dot(d, axis.y), 0.1) },
+            };
+          },
+        },
+      };
+    }
     case "fastened":
       return { refuse: `${instance.name} is fastened by ${mate.name}, so it can't move. Edit the mate to change where it sits.` };
     case "ball":

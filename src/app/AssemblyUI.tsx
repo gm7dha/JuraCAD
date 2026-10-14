@@ -37,6 +37,8 @@ const MATE_ICONS: Record<MateType, (p: { size?: number }) => ReactNode> = {
   cylindrical: Icons.MateCylindrical,
   planar: Icons.MatePlanar,
   ball: Icons.MateBall,
+  pinSlot: Icons.MatePinSlot,
+  parallel: Icons.MateParallel,
 };
 
 

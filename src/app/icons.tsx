@@ -345,6 +345,18 @@ export const Icons = {
       <path d="M8 5l8 2M8 9l8 2M8 13l8 2M8 17l8 2" />
     </Svg>
   ),
+  MatePinSlot: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="3" y="9" width="18" height="6" rx="3" />
+      <circle cx="9" cy="12" r="1.8" fill="currentColor" />
+    </Svg>
+  ),
+  MateParallel: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M7 20V4M17 20V4" />
+      <path d="M4 7l3-3 3 3M14 7l3-3 3 3" />
+    </Svg>
+  ),
   ChevronLeft: (p: IconProps) => (
     <Svg {...p}>
       <path d="M15 5l-7 7 7 7" />

@@ -313,7 +313,7 @@ export interface Instance {
 }
 
 /** Kinds of mate (Onshape names in brackets where they differ): Fasten, Hinge (revolute), Slider, Cylindrical, Planar, Ball. */
-export type MateType = "fastened" | "revolute" | "slider" | "cylindrical" | "planar" | "ball";
+export type MateType = "fastened" | "revolute" | "slider" | "cylindrical" | "planar" | "ball" | "pinSlot" | "parallel";
 
 /** One end of a mate: a face or edge on an instance, remembered by what it looks like. */
 export interface MateConnector {

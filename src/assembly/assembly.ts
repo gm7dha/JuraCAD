@@ -175,7 +175,7 @@ function parsePlacement(raw: unknown): Placement {
   return { position, rotation };
 }
 
-const MATE_TYPE_NAMES = new Set<string>(["fastened", "revolute", "slider", "cylindrical", "planar", "ball"]);
+const MATE_TYPE_NAMES = new Set<string>(["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "pinSlot", "parallel"]);
 
 function parseConnector(raw: unknown): MateConnector | null {
   const c = (raw ?? {}) as Record<string, unknown>;
