@@ -109,7 +109,11 @@ export interface SheetInfo {
   balloons?: { item: number; at: [number, number, number] }[];
 }
 
-const sizeOf = (p: ViewProjection | undefined): [number, number] => (p?.bounds ? [p.bounds[2] - p.bounds[0], p.bounds[3] - p.bounds[1]] : [0, 0]);
+/** A view's size on paper at scale 1 (detail views are drawn `zoom` times bigger). */
+const sizeOf = (p: ViewProjection | undefined): [number, number] => {
+  const z = p?.zoom ?? 1;
+  return p?.bounds ? [(p.bounds[2] - p.bounds[0]) * z, (p.bounds[3] - p.bounds[1]) * z] : [0, 0];
+};
 const centreOf = (p: ViewProjection | undefined): [number, number] =>
   p?.bounds ? [(p.bounds[0] + p.bounds[2]) / 2, (p.bounds[1] + p.bounds[3]) / 2] : [0, 0];
 
@@ -135,6 +139,9 @@ function viewArea(size: [number, number], reserve = TITLE_H): { x0: number; y0: 
 export type Projections = Partial<Record<string, ViewProjection>>;
 
 const isSectionKey = (k: string) => k.startsWith("section:");
+const isDetailKey = (k: string) => k.startsWith("detail:");
+/** Views placed freely in the side column, with their names underneath. */
+const isLabelled = (k: string) => isSectionKey(k) || isDetailKey(k);
 
 /** Width and height the arrangement needs on paper at a scale. */
 function needed(
@@ -151,10 +158,10 @@ function needed(
   const gridW = used(cols).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(cols).length - 1);
   const gridH = used(rows).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(rows).length - 1);
   // The 3D view and the section views share a column to the right, one above another (sections with room for their names).
-  const side = ["iso", ...keys.filter(isSectionKey)]
+  const side = ["iso", ...keys.filter(isLabelled)]
     .map((key) => {
       const [w, h] = size(key);
-      return { key, w, h: h > 0 && isSectionKey(key) ? h + LABEL_ROOM : h };
+      return { key, w, h: h > 0 && isLabelled(key) ? h + LABEL_ROOM : h };
     })
     .filter((x) => x.w > 0);
   const sideW = Math.max(0, ...side.map((x) => x.w));
@@ -219,7 +226,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   const sideX = gridRight > left ? gridRight + GAP : left;
   let sideY = top;
   for (const item of n.side) {
-    const viewH = isSectionKey(item.key) ? item.h - LABEL_ROOM : item.h;
+    const viewH = isLabelled(item.key) ? item.h - LABEL_ROOM : item.h;
     autoCentre[item.key] = [sideX + item.w / 2, sideY - viewH / 2];
     sideY -= item.h + GAP;
   }
@@ -232,7 +239,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   const centreFor = (k: string): [number, number] => {
     const at = placedAt(k);
     if (k === "front") return front;
-    if (k === "iso" || isSectionKey(k)) return at ?? [autoCentre[k][0], autoCentre[k][1]];
+    if (k === "iso" || isLabelled(k)) return at ?? [autoCentre[k][0], autoCentre[k][1]];
     if (k === "top" || k === "bottom") return [front[0], at ? at[1] : autoCentre[k][1] + dy];
     return [at ? at[0] : autoCentre[k][0] + dx, front[1]];
   };
@@ -245,19 +252,27 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     if (!p?.bounds) continue;
     const centre = centreFor(key);
     const [cx, cy] = centreOf(p);
-    const map = (line: number[]) => line.map((val, i) => (i % 2 === 0 ? centre[0] + (val - cx) * scale : centre[1] + (val - cy) * scale));
+    // Detail views are drawn bigger than the rest.
+    const vs = scale * (p.zoom ?? 1);
+    const map = (line: number[]) => line.map((val, i) => (i % 2 === 0 ? centre[0] + (val - cx) * vs : centre[1] + (val - cy) * vs));
     if (v.kind === "section" && p.cutFaces) {
       for (const seg of hatchLines(p.cutFaces, HATCH_SPACING / scale)) prims.push({ kind: "path", points: map(seg), style: "thin" });
     }
     for (const line of drawing.hiddenLines ? p.hidden : []) prims.push({ kind: "path", points: map(line), style: "hidden" });
     for (const line of p.visible) prims.push({ kind: "path", points: map(line), style: "visible" });
     if (drawing.centreLines !== false) {
-      for (const seg of [...centreMarks(p, scale), ...centreLines(p, scale)]) prims.push({ kind: "path", points: map(seg), style: "centre" });
+      for (const seg of [...centreMarks(p, vs), ...centreLines(p, vs)]) prims.push({ kind: "path", points: map(seg), style: "centre" });
     }
     const [w, h] = sizeOf(p).map((d) => d * scale);
     const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
     const cut = v.kind === "section" ? drawing.sections?.find((c) => c.id === v.section) : undefined;
     if (cut) prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: `SECTION ${cut.letter}-${cut.letter}`, size: 3.5, anchor: "middle", bold: true });
+    const detail = v.kind === "detail" ? drawing.details?.find((x) => x.id === v.detail) : undefined;
+    if (detail) {
+      // The detail's circle, and its name with its own scale.
+      prims.push(circle(centre[0], centre[1], (w + h) / 4, "thin"));
+      prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: `DETAIL ${detail.letter} (${scaleLabel(vs)})`, size: 3.5, anchor: "middle", bold: true });
+    }
     views.push({ id: v.id, kind: v.kind, key, centre, box });
   }
 
@@ -267,6 +282,19 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     const host = views.find((v) => v.key === cut.host);
     const hp = projections[cut.host];
     if (host && hp?.bounds) prims.push(...cuttingPlane(host, hp, scale, cut));
+  }
+
+  // Where each detail comes from: a circle on its host view, with its letter.
+  for (const detail of drawing.details ?? []) {
+    if (!views.some((v) => v.key === `detail:${detail.id}`)) continue;
+    const host = views.find((v) => v.key === detail.host);
+    const hp = projections[detail.host];
+    if (!host || !hp?.bounds) continue;
+    const [x0, y0, x1, y1] = hp.bounds;
+    const [px, py] = toSheet(host, hp, scale, x0 + detail.centre[0] * (x1 - x0), y0 + detail.centre[1] * (y1 - y0));
+    const r = detail.radius * scale;
+    prims.push(circle(px, py, r, "thin"));
+    prims.push({ kind: "text", x: px + r * 0.75 + 1.5, y: py + r * 0.75 + 1.5, text: detail.letter, size: 3.5, anchor: "start", bold: true });
   }
 
   // Balloons: the parts list's item numbers, pointing at the parts.
@@ -294,7 +322,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
       to: prims.length,
       a: at(resolved.a),
       b: resolved.b ? at(resolved.b) : null,
-      rad: (resolved.r ?? 0) * scale,
+      rad: (resolved.r ?? 0) * scale * (p.zoom ?? 1),
     });
   }
 
@@ -359,7 +387,8 @@ function balloonPrims(host: PlacedView, p: ViewProjection, scale: number, balloo
 /** Where a point of a view (in its own mm) lands on the sheet. */
 export function toSheet(view: PlacedView, projection: ViewProjection, scale: number, x: number, y: number): [number, number] {
   const [cx, cy] = centreOf(projection);
-  return [view.centre[0] + (x - cx) * scale, view.centre[1] + (y - cy) * scale];
+  const s = scale * (projection.zoom ?? 1);
+  return [view.centre[0] + (x - cx) * s, view.centre[1] + (y - cy) * s];
 }
 
 const rect = (x0: number, y0: number, x1: number, y1: number, style: LineStyle): Prim => ({ kind: "path", points: [x0, y0, x1, y0, x1, y1, x0, y1], closed: true, style });
