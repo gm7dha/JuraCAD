@@ -1,7 +1,7 @@
 import type { TopoPick } from "../geometry/topoRef";
-import type { MeshQuality, ViewKind } from "../model/types";
+import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { SectionRequest } from "../drawing/sections";
-import type { CheckResult, ExportResult, InstanceInput, Measurement, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { CheckResult, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -111,6 +111,11 @@ export class KernelClient {
 
   measure(picks: TopoPick[]): Promise<Measurement> {
     return this.send({ type: "measure", picks }).then((body) => body.result as Measurement);
+  }
+
+  /** Which fillets / chamfers stop a Delete face working (see GeometryEngine.deleteFaceBlockers). */
+  deleteFaceBlockers(features: Feature[], featureId: string, variables: Record<string, number>): Promise<DeleteFaceBlockers> {
+    return this.send({ type: "deleteFaceBlockers", features, featureId, variables }).then((body) => body.result as DeleteFaceBlockers);
   }
 
   exportStep(partIds: string[], colours?: Record<string, string>, instances?: InstanceInput[]): Promise<StepResult> {

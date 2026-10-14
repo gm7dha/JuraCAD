@@ -113,6 +113,12 @@ export interface ThreeMfResult {
 
 export type { Measurement } from "../geometry/measureMath";
 
+/** Fillet / Chamfer features in the way of a Delete face (`blockers`), or that made the picked face (`makers`). */
+export interface DeleteFaceBlockers {
+  blockers: string[];
+  makers: string[];
+}
+
 export type KernelRequest =
   | { type: "rebuild"; studios: StudioInput[]; variables: Record<string, number>; partNames?: Record<string, string> }
   | { type: "check"; quality: MeshQuality; partIds?: string[] }
@@ -121,6 +127,7 @@ export type KernelRequest =
   | { type: "clashes"; instances: InstanceInput[] }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[] }
   | { type: "measure"; picks: TopoPick[] }
+  | { type: "deleteFaceBlockers"; features: Feature[]; featureId: string; variables: Record<string, number> }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
 
 export type KernelResponseBody =
@@ -129,6 +136,7 @@ export type KernelResponseBody =
   | { type: "exportStl"; result: ExportResult }
   | { type: "exportStep"; result: StepResult }
   | { type: "measure"; result: Measurement }
+  | { type: "deleteFaceBlockers"; result: DeleteFaceBlockers }
   | { type: "export3mf"; result: ThreeMfResult }
   | { type: "clashes"; result: NonNullable<CheckResult["overlaps"]> }
   | { type: "project"; result: ViewProjection[] };
