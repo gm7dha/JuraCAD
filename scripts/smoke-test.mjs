@@ -617,7 +617,7 @@ try {
   step = "adding a section view";
   await page.getByLabel("Section A-A (front, cut through)").check();
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "SECTION A-A"), null, { timeout: 60_000 });
-  await shot("section");
+  await shot("drawsection");
   step = "drawing the assembly";
   await page.locator("#drawing-source").selectOption({ label: "Assembly 1" });
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "QTY"), null, { timeout: 60_000 });
