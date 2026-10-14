@@ -310,6 +310,12 @@ function dragEnd() {
   useStore.getState().commitDrag();
 }
 
+/** A selection box in the Part Studio: select the parts it chose (Shift/Ctrl adds to the selection). */
+function boxSelect(partIds: string[], additive: boolean) {
+  const s = useStore.getState();
+  s.setSelectedParts(additive ? [...new Set([...s.selectedParts, ...partIds])] : partIds);
+}
+
 /** Where a fillet's picks are on the parts as shown now (for highlighting). */
 function itemsForPicks(parts: PartMesh[], picks: TopoPick[]): SelectionItem[] {
   const items: SelectionItem[] = [];
@@ -361,7 +367,7 @@ export function Viewport() {
     if (!container) return;
     let manager: SceneManager;
     try {
-      manager = new SceneManager(container, { onPick: handlePick, onDragStart: dragStart, onDragMove: dragMove, onDragEnd: dragEnd });
+      manager = new SceneManager(container, { onPick: handlePick, onDragStart: dragStart, onDragMove: dragMove, onDragEnd: dragEnd, onBoxSelect: boxSelect });
     } catch (e) {
       useStore.getState().showToast(
         "Your browser couldn't start 3D graphics (WebGL). Try Chrome or Edge, and check hardware acceleration is on.",
@@ -407,6 +413,8 @@ export function Viewport() {
   }, [assembly, solved, parts, explode]);
 
   useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft && !(explode > 0)), [assembly, mateDraft, explode]);
+  const editingAnything = useStore((s) => !!s.editing);
+  useEffect(() => viewportApi.current?.setBoxSelectEnabled(!assembly && !editingAnything), [assembly, editingAnything]);
 
   // Arrows showing the mate connectors picked so far.
   useEffect(() => {

@@ -2296,3 +2296,18 @@ kbd {
 .toolbar-arrow:hover {
   color: var(--accent);
 }
+
+/* Selection box in the 3D view: solid when dragged rightwards (wholly inside), dashed leftwards (touching). */
+.box-select {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.box-select.crossing {
+  border-style: dashed;
+  background: color-mix(in srgb, #2e9d4f 10%, transparent);
+  border-color: #2e9d4f;
+}
