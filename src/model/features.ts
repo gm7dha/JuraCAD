@@ -67,7 +67,10 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     label: "Extrude",
     namePrefix: "Extrude",
     description: "Pushes the closed shapes of a sketch out into a solid.",
-    params: [{ key: "depth", label: "Depth", defaultValue: "10", positive: true, group: "size" }],
+    params: [
+      { key: "depth", label: "Depth", defaultValue: "10", positive: true, group: "size" },
+      { key: "draft", label: "Draft (taper)", defaultValue: "0", group: "size", unit: "°" },
+    ],
   },
   revolve: {
     type: "revolve",
@@ -200,7 +203,7 @@ export function isSolidFeature(type: FeatureType): boolean {
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
 export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole">): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
-  if (f.type === "extrude" && f.extrude?.end === "throughAll") keys.delete("depth");
+  if (f.type === "extrude" && (f.extrude?.end === "throughAll" || f.extrude?.end === "upToFace")) keys.delete("depth");
   if (f.type === "hole" && f.hole) {
     if (f.hole.end === "throughAll") keys.delete("depth");
     if (f.hole.kind !== "counterbore") ["cboreDiameter", "cboreDepth"].forEach((k) => keys.delete(k));

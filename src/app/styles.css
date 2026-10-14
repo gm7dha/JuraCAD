@@ -1351,6 +1351,15 @@ kbd {
   overflow-y: auto;
 }
 
+.segmented.four {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.dialog-hint.attention {
+  color: var(--accent);
+  font-weight: 550;
+}
+
 .connector-slot {
   display: flex;
   align-items: center;

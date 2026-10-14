@@ -133,6 +133,13 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
+  // Choosing the face an extrude goes up to.
+  if (s.editing?.draft.type === "extrude" && s.editing.draft.extrude?.end === "upToFace") {
+    if (target?.kind !== "part" || target.item.kind !== "face") return;
+    const pick = pickFor(s.parts, target.item);
+    if (pick) s.setDraftField({ extrude: { ...s.editing.draft.extrude, upTo: pick } });
+    return;
+  }
   // Choosing the part to move.
   if (s.editing?.draft.type === "transform" && s.editing.draft.transform) {
     if (target?.kind === "part" && target.item.partId !== s.editing.draft.id) {
@@ -240,7 +247,14 @@ export function Viewport() {
   /** The parts of the Part Studio on show. */
   const shownParts = useStore(studioParts);
   const selection = useStore((s) => s.selection);
-  const picks = useStore((s) => (s.editing && isPickFeature(s.editing.draft.type) ? s.editing.draft.picks ?? null : null));
+  const picks = useStore((s) =>
+    s.editing && isPickFeature(s.editing.draft.type)
+      ? s.editing.draft.picks ?? null
+      : s.editing?.draft.extrude?.end === "upToFace" && s.editing.draft.extrude.upTo
+        ? s.editing.draft.extrude.upTo
+        : null,
+  );
+  const pickList = useMemo(() => (picks ? (Array.isArray(picks) ? picks : [picks]) : null), [picks]);
   const hiddenParts = useStore((s) => s.hiddenParts);
   const selectedPlane = useStore((s) => s.selectedPlane);
   const listHoverPlane = useStore((s) => s.listHoverPlane);
@@ -346,7 +360,7 @@ export function Viewport() {
             ? connectorItems(parts, assembly, [mateDraft.a, mateDraft.b])
             : instanceSelection(display, asmSelection)
           : picks
-            ? itemsForPicks(parts, picks)
+            ? itemsForPicks(parts, pickList ?? [])
             : selection,
       ),
     [selection, picks, parts, assembly, display, asmSelection, mateDraft],

@@ -133,8 +133,8 @@ function SketchSolidOptions() {
         </>
       )}
       {draft.type === "extrude" && (
-      <div className="segmented three" role="radiogroup" aria-label="Direction">
-        {(["blind", "symmetric", "throughAll"] as const).map((end) => (
+      <div className="segmented four" role="radiogroup" aria-label="Direction">
+        {(["blind", "symmetric", "upToFace", "throughAll"] as const).map((end) => (
           <button
             type="button"
             key={end}
@@ -147,13 +147,20 @@ function SketchSolidOptions() {
                 ? "Extrude out from the sketch on one side"
                 : end === "symmetric"
                   ? "Extrude the same amount on both sides of the sketch"
-                  : "Cut right through every part, on both sides of the sketch, however thick it gets (Remove only)"
+                  : end === "upToFace"
+                    ? "Extrude until it reaches a flat face you click (parallel to the sketch)"
+                    : "Cut right through every part, on both sides of the sketch, however thick it gets (Remove only)"
             }
           >
-            {end === "blind" ? "One way" : end === "symmetric" ? "Symmetric" : "Through all"}
+            {end === "blind" ? "One way" : end === "symmetric" ? "Both" : end === "upToFace" ? "To face" : "Through"}
           </button>
         ))}
       </div>
+      )}
+      {draft.type === "extrude" && opts.end === "upToFace" && (
+        <p className={`dialog-hint field-hint${opts.upTo ? "" : " attention"}`}>
+          {opts.upTo ? "Face chosen — click another face to change it." : "Click the flat face to extrude up to."}
+        </p>
       )}
       {draft.type === "extrude" && opts.end === "blind" && (
         <label className="check-row">

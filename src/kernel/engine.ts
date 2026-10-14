@@ -224,7 +224,30 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         const depth = 2 * reach(sketch.sketch.plane, parts) + 2;
         return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth, end: "symmetric", flip: false });
       }
-      return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip });
+      if (opts.end === "upToFace") {
+        if (!opts.upTo) throw new Error("Click the flat face to extrude up to.");
+        const part = parts.find((p) => p.id === opts.upTo!.partId);
+        if (!part) throw new Error("The part with the face to extrude up to has gone. Edit this extrude and pick another face.");
+        const [face] = findPickedFaces(part.shape, [opts.upTo]);
+        let centre: Vec3;
+        let normal: Vec3;
+        try {
+          if (face.geomType !== "PLANE") throw new Error("Up to face needs a flat face.");
+          centre = take(face.center);
+          normal = take(face.normalAt(centre));
+        } finally {
+          face.delete();
+        }
+        const frame = planeFrame(sketch.sketch.plane);
+        const n = frame.n;
+        if (Math.abs(normal[0] * n[0] + normal[1] * n[1] + normal[2] * n[2]) < 0.999) {
+          throw new Error("Up to face needs a face parallel to the sketch.");
+        }
+        const d = (centre[0] - frame.origin[0]) * n[0] + (centre[1] - frame.origin[1]) * n[1] + (centre[2] - frame.origin[2]) * n[2];
+        if (Math.abs(d) < 1e-6) throw new Error("That face is level with the sketch, so there's nothing to extrude.");
+        return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: Math.abs(d), end: "blind", flip: d < 0, draft: v.draft });
+      }
+      return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip, draft: v.draft });
     }
     case "hole": {
       const h = feature.hole;

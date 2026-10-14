@@ -1075,3 +1075,42 @@ describe("drawing views", () => {
     expect(engine.project([], undefined, ["front"], false)[0].hidden).toEqual([]);
   });
 });
+
+describe("extrude up to a face, and with draft", () => {
+  it("extrudes from the sketch up to a parallel face of another part", () => {
+    // A 10 mm high slab sits 30 mm up; a 10 × 10 square on Top goes up to its underside (z = 30).
+    const slab = feature("box", { width: 40, depth: 40, height: 10, x: -10, y: -10, z: 30 });
+    engine = new GeometryEngine();
+    const first = engine.rebuild([slab]);
+    const p = first.parts[0];
+    const under = p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] < -0.99);
+    const sk = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 10, 10));
+    const ex = { ...extrudeFeature(sk.id, 5), extrude: { end: "upToFace" as const, flip: false, upTo: { partId: p.id, ref: p.faceRefs[under] } } };
+    const r = engine.rebuild([slab, sk, ex]);
+    expect(r.featureErrors).toEqual({});
+    const peg = r.parts.find((x) => x.id === ex.id)!;
+    const a = analyzeMesh(peg.vertices, peg.triangles);
+    expect(a.volume).toBeCloseTo(10 * 10 * 30, 1);
+    expect(a.bounds?.max[2]).toBeCloseTo(30, 3);
+    // A side face isn't parallel to the sketch: explained.
+    const side = p.faceRefs.findIndex((f) => f.surface === "PLANE" && Math.abs(f.normal[0]) > 0.99);
+    const bad = { ...ex, extrude: { ...ex.extrude, upTo: { partId: p.id, ref: p.faceRefs[side] } } };
+    expect(engine.rebuild([slab, sk, bad]).featureErrors[ex.id]).toMatch(/parallel/);
+  });
+
+  it("tapers the sides with a draft angle", () => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 20, 20));
+    const ex = { ...extrudeFeature(sk.id, 10), params: { depth: "10", draft: "10" } };
+    const r = build([sk, ex]);
+    expect(r.featureErrors).toEqual({});
+    const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    expect(a.watertight).toBe(true);
+    // Each side moves in by 10·tan 10° ≈ 1.763 mm by the top: a frustum of a square pyramid.
+    const t = 10 * Math.tan((10 * Math.PI) / 180);
+    const top = 20 - 2 * t;
+    const expected = (10 / 3) * (400 + top * top + 20 * top);
+    expect(relativeError(a.volume, expected)).toBeLessThan(0.002);
+    expect(a.bounds?.min[0]).toBeCloseTo(0, 3);
+    expect(build([sk, { ...ex, params: { depth: "10", draft: "60" } }]).featureErrors[ex.id]).toMatch(/less than 45/);
+  });
+});
