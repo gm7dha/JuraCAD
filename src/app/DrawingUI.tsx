@@ -6,7 +6,9 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 
 import { arrangeViews, putDimension, removeDimension, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
-import { bottomReserve, fitScale, layoutSheet, type BomLine, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { surfacePointNearCentre } from "../drawing/annotations";
+import { applyPlacement } from "../assembly/math";
+import { bottomReserve, fitScale, layoutSheet, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { dimPoint, dragDimension, drawDimension, measureDim, placeLength, resolveDim, snapPoints } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
@@ -46,7 +48,20 @@ function bomFor(drawing: Drawing, doc: PartSmithDocument, parts: PartMesh[]): Bo
   const asm = doc.assemblies?.find((a) => a.id === drawing.source!.id);
   if (!asm) return undefined;
   const names = Object.fromEntries(parts.map((p) => [p.id, p.name]));
-  return billOfMaterials(asm, names).map((r, i) => ({ item: i + 1, name: r.name, quantity: r.quantity }));
+  return billOfMaterials(asm, names).map((r, i) => ({ item: i + 1, name: r.name, quantity: r.quantity, partId: r.partId }));
+}
+
+/** A spot on one copy of each listed part, for the balloons to point at. */
+function balloonsFor(bom: BomLine[] | undefined, instances: InstanceInput[] | undefined, parts: PartMesh[]): SheetInfo["balloons"] {
+  if (!bom?.length || !instances?.length) return undefined;
+  const out: NonNullable<SheetInfo["balloons"]> = [];
+  for (const row of bom) {
+    const inst = instances.find((i) => i.partId === row.partId);
+    const mesh = parts.find((p) => p.id === row.partId);
+    const spot = mesh ? surfacePointNearCentre(mesh.vertices) : null;
+    if (inst && spot) out.push({ item: row.item, at: applyPlacement({ position: inst.position, rotation: inst.rotation }, spot) });
+  }
+  return out;
 }
 
 /** Projections already worked out, by drawing (kept while switching tabs). */
@@ -55,14 +70,15 @@ const inFlight = new Map<string, { key: unknown[]; promise: Promise<Projections>
 const sameKey = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** The drawing's views from the geometry engine, refreshed when the part or the chosen views change. */
-function useProjections(drawing: Drawing): { projections: Projections | null; subject: string | null; busy: boolean; error: string | null } {
+function useProjections(drawing: Drawing): { projections: Projections | null; subject: string | null; instances?: InstanceInput[]; busy: boolean; error: string | null } {
   const doc = useStore((s) => s.history.present);
   const parts = useStore((s) => s.parts);
   const ready = useStore((s) => s.kernelStatus === "ready");
   const subject = drawingSubject(drawing, doc, parts);
   const kinds = drawing.views.map((v) => v.kind);
   // The same key object while nothing it's made of changes, so the effect below only runs on real changes.
-  const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines] : null;
+  const sectionAt = drawing.sectionAt ?? 0.5;
+  const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines, kinds.includes("section") ? sectionAt : null] : null;
   const keyRef = useRef<unknown[] | null>(null);
   if (!rawKey) keyRef.current = null;
   else if (!keyRef.current || !sameKey(keyRef.current, rawKey)) keyRef.current = rawKey;
@@ -86,7 +102,7 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
       const kernel = getKernel();
       const promise = kernel
         .whenIdle()
-        .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines))
+        .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sectionAt))
         .then((list) => {
           const result: Projections = {};
           for (const p of list) result[p.kind] = p;
@@ -109,7 +125,7 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, ready, drawing.id]);
 
-  return { projections: state.result ?? fresh, subject: subject?.name ?? null, busy: state.busy, error: state.error };
+  return { projections: state.result ?? fresh, subject: subject?.name ?? null, instances: subject?.instances, busy: state.busy, error: state.error };
 }
 
 /** The sheet as last laid out on screen (for saving). */
@@ -313,6 +329,56 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
             <input type="checkbox" checked={drawing.hiddenLines} onChange={(e) => change((d) => ({ ...d, hiddenLines: e.target.checked }))} />
             Show hidden lines (dashed)
           </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={drawing.centreLines !== false}
+              onChange={(e) =>
+                change((d) => {
+                  const { centreLines: _old, ...rest } = d;
+                  return e.target.checked ? rest : { ...rest, centreLines: false };
+                })
+              }
+            />
+            Centre lines on holes and round parts
+          </label>
+          {drawing.source?.kind === "assembly" && (
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={drawing.balloons !== false}
+                onChange={(e) =>
+                  change((d) => {
+                    const { balloons: _old, ...rest } = d;
+                    return e.target.checked ? rest : { ...rest, balloons: false };
+                  })
+                }
+              />
+              Numbered balloons (match the parts list)
+            </label>
+          )}
+          {drawing.views.some((v) => v.kind === "section") && (
+            <div className="drawing-field">
+              <label htmlFor="drawing-section-at">Section cut, front to back</label>
+              <select
+                id="drawing-section-at"
+                value={String(Math.round((drawing.sectionAt ?? 0.5) * 100))}
+                onChange={(e) =>
+                  change((d) => {
+                    const { sectionAt: _old, ...rest } = d;
+                    const v = Number(e.target.value) / 100;
+                    return v === 0.5 ? rest : { ...rest, sectionAt: v };
+                  })
+                }
+              >
+                {[10, 20, 25, 30, 40, 50, 60, 70, 75, 80, 90].map((pc) => (
+                  <option key={pc} value={String(pc)}>
+                    {pc === 50 ? "Through the middle (50%)" : `${pc}% of the way back`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </section>
       <section className="panel-section">
@@ -390,7 +456,10 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const change = useStore((s) => s.changeDrawing);
   const tool = useStore((s) => s.drawingTool);
   const selectedDim = useStore((s) => s.selectedDim);
-  const { projections, subject, busy, error } = useProjections(drawing);
+  const { projections, subject, instances, busy, error } = useProjections(drawing);
+  const instancesKey = instances ? JSON.stringify(instances) : "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const balloons = useMemo(() => balloonsFor(bom, instances, allParts), [bom, instancesKey, allParts]);
   const [drag, setDrag] = useState<{ viewId: string; start: P2; from: P2; at: P2 } | null>(null);
   const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number } } | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
@@ -411,8 +480,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     return d;
   }, [drawing, drag, dimDrag]);
   const layout = useMemo(
-    () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today(), bom }) : null),
-    [shown, projections, docName, subject, bom],
+    () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today(), bom, balloons }) : null),
+    [shown, projections, docName, subject, bom, balloons],
   );
   useEffect(() => {
     if (layout && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name };

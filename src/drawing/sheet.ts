@@ -9,9 +9,12 @@
  */
 import type { ViewProjection } from "../kernel/protocol";
 import type { Drawing, SheetSize, ViewKind } from "../model/types";
+import { centreLines, centreMarks, hatchLines, placeBalloons } from "./annotations";
+import { projectPoint } from "./cameras";
 import { drawDimension, measureDim, resolveDim } from "./dimensions";
 
-export type LineStyle = "border" | "visible" | "hidden" | "thin";
+/** "centre" is the long-and-short dashed line for centre lines and cutting planes. */
+export type LineStyle = "border" | "visible" | "hidden" | "thin" | "centre";
 
 export type Prim =
   | { kind: "path"; points: number[]; closed?: boolean; fill?: boolean; style: LineStyle }
@@ -28,12 +31,18 @@ export function scaleLabel(s: number): string {
 }
 
 /** Line widths (mm) and dash patterns for each style. */
-export const LINE_STYLES: Record<LineStyle, { width: number; dash?: [number, number] }> = {
+export const LINE_STYLES: Record<LineStyle, { width: number; dash?: number[] }> = {
   border: { width: 0.7 },
   visible: { width: 0.5 },
   hidden: { width: 0.25, dash: [3, 1.5] },
   thin: { width: 0.25 },
+  centre: { width: 0.25, dash: [6, 1.5, 1, 1.5] },
 };
+
+/** Spacing of section hatching on paper (mm). */
+export const HATCH_SPACING = 2.5;
+/** Balloon size on paper (mm). */
+export const BALLOON_RADIUS = 4;
 
 const MARGIN = 10;
 const TITLE_W = 180;
@@ -79,6 +88,8 @@ export interface BomLine {
   item: number;
   name: string;
   quantity: number;
+  /** The part (for balloons). */
+  partId?: string;
 }
 
 export interface SheetInfo {
@@ -90,6 +101,8 @@ export interface SheetInfo {
   subject: string;
   /** Date shown in the title block, e.g. "14/10/2026". */
   date: string;
+  /** Assembly drawings: a spot on one copy of each listed part (model mm), for numbered balloons. */
+  balloons?: { item: number; at: [number, number, number] }[];
 }
 
 const sizeOf = (p: ViewProjection | undefined): [number, number] => (p?.bounds ? [p.bounds[2] - p.bounds[0], p.bounds[3] - p.bounds[1]] : [0, 0]);
@@ -115,19 +128,30 @@ function viewArea(size: [number, number], reserve = TITLE_H): { x0: number; y0: 
 }
 
 /** Width and height the arrangement needs on paper at a scale. */
-function needed(projections: Partial<Record<ViewKind, ViewProjection>>, kinds: Set<ViewKind>, s: number): { w: number; h: number; cols: number[]; rows: number[]; iso: [number, number] } {
+function needed(
+  projections: Partial<Record<ViewKind, ViewProjection>>,
+  kinds: Set<ViewKind>,
+  s: number,
+): { w: number; h: number; cols: number[]; rows: number[]; iso: [number, number]; section: [number, number] } {
   const size = (k: ViewKind) => (kinds.has(k) ? sizeOf(projections[k]).map((v) => v * s) : [0, 0]);
   const [fw, fh] = size("front");
   const cols = [size("right")[0], fw, size("left")[0], size("back")[0]];
   const rows = [size("bottom")[1], fh, size("top")[1]];
   const iso = size("iso") as [number, number];
+  const section = size("section") as [number, number];
   const used = (list: number[]) => list.filter((v) => v > 0);
   const gridW = used(cols).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(cols).length - 1);
   const gridH = used(rows).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(rows).length - 1);
-  const w = gridW + (iso[0] > 0 ? (gridW > 0 ? GAP : 0) + iso[0] : 0);
-  const h = Math.max(gridH, iso[1]);
-  return { w, h, cols, rows, iso };
+  // The 3D view and the section view share a column to the right, one above the other.
+  const sideW = Math.max(iso[0], section[0]);
+  const sideH = iso[1] + section[1] + (iso[1] > 0 && section[1] > 0 ? GAP + LABEL_ROOM : section[1] > 0 ? LABEL_ROOM : 0);
+  const w = gridW + (sideW > 0 ? (gridW > 0 ? GAP : 0) + sideW : 0);
+  const h = Math.max(gridH, sideH);
+  return { w, h, cols, rows, iso, section };
 }
+
+/** Room under a section view for its name (mm). */
+const LABEL_ROOM = 8;
 
 /** The biggest standard scale at which all the views fit on the sheet. */
 export function fitScale(projections: Partial<Record<ViewKind, ViewProjection>>, kinds: ViewKind[], sheet: SheetSize, reserve = TITLE_H): { scale: number; fits: boolean } {
@@ -174,6 +198,7 @@ export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKi
     bottom: [colX[1], rowY[0]],
     top: [colX[1], rowY[2]],
     iso: [(gridRight > left ? gridRight + GAP : left) + n.iso[0] / 2, top - n.iso[1] / 2],
+    section: [(gridRight > left ? gridRight + GAP : left) + n.section[0] / 2, top - (n.iso[1] > 0 ? n.iso[1] + GAP : 0) - n.section[1] / 2],
   };
 
   // Views the user moved keep their place — but views lined up with the front view stay lined up with it.
@@ -184,7 +209,7 @@ export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKi
   const centreFor = (k: ViewKind): [number, number] => {
     const at = placedAt(k);
     if (k === "front") return front;
-    if (k === "iso") return at ?? [autoCentre.iso[0], autoCentre.iso[1]];
+    if (k === "iso" || k === "section") return at ?? [autoCentre[k][0], autoCentre[k][1]];
     if (k === "top" || k === "bottom") return [front[0], at ? at[1] : autoCentre[k][1] + dy];
     return [at ? at[0] : autoCentre[k][0] + dx, front[1]];
   };
@@ -197,10 +222,31 @@ export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKi
     const centre = centreFor(v.kind);
     const [cx, cy] = centreOf(p);
     const map = (line: number[]) => line.map((val, i) => (i % 2 === 0 ? centre[0] + (val - cx) * scale : centre[1] + (val - cy) * scale));
+    if (v.kind === "section" && p.cutFaces) {
+      for (const seg of hatchLines(p.cutFaces, HATCH_SPACING / scale)) prims.push({ kind: "path", points: map(seg), style: "thin" });
+    }
     for (const line of drawing.hiddenLines ? p.hidden : []) prims.push({ kind: "path", points: map(line), style: "hidden" });
     for (const line of p.visible) prims.push({ kind: "path", points: map(line), style: "visible" });
+    if (drawing.centreLines !== false) {
+      for (const seg of [...centreMarks(p, scale), ...centreLines(p, scale)]) prims.push({ kind: "path", points: map(seg), style: "centre" });
+    }
     const [w, h] = sizeOf(p).map((d) => d * scale);
-    views.push({ id: v.id, kind: v.kind, centre, box: [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2] });
+    const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
+    if (v.kind === "section") prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: `SECTION ${SECTION_LETTER}-${SECTION_LETTER}`, size: 3.5, anchor: "middle", bold: true });
+    views.push({ id: v.id, kind: v.kind, centre, box });
+  }
+
+  // Where the section is cut, shown on the top view (or the right view).
+  const sectionView = projections.section;
+  if (sectionView?.cutAt !== undefined && views.some((v) => v.kind === "section")) {
+    const host = views.find((v) => v.kind === "top") ?? views.find((v) => v.kind === "right");
+    if (host) prims.push(...cuttingPlane(host, projections[host.kind]!, scale, sectionView.cutAt));
+  }
+
+  // Balloons: the parts list's item numbers, pointing at the parts.
+  if (info.balloons?.length && drawing.balloons !== false) {
+    const host = views.find((v) => v.kind === "iso") ?? views.find((v) => v.kind === "front") ?? views.find((v) => v.kind !== "section");
+    if (host) prims.push(...balloonPrims(host, projections[host.kind]!, scale, info.balloons));
   }
 
   // Dimensions, on the views they belong to.
@@ -228,6 +274,59 @@ export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKi
 
   prims.push(...frameAndTitle(size, drawing, scale, info));
   return { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, prims };
+}
+
+const SECTION_LETTER = "A";
+
+/** The cutting-plane line across a view, with arrows showing which way the section looks, and its letters. */
+function cuttingPlane(host: PlacedView, p: ViewProjection, scale: number, cutAt: number): Prim[] {
+  const b = p.bounds!;
+  const over = 5;
+  // In the top view the cut runs left to right at y = cutAt; in the right view, up and down at x = cutAt.
+  const across = host.kind === "top";
+  const [x0, y0] = toSheet(host, p, scale, across ? b[0] : cutAt, across ? cutAt : b[1]);
+  const [x1, y1] = toSheet(host, p, scale, across ? b[2] : cutAt, across ? cutAt : b[3]);
+  const d: [number, number] = across ? [1, 0] : [0, 1];
+  // The section looks toward the back (+Y): up the top view, to the right in the right view.
+  const look: [number, number] = across ? [0, 1] : [1, 0];
+  const a: [number, number] = [x0 - d[0] * over, y0 - d[1] * over];
+  const z: [number, number] = [x1 + d[0] * over, y1 + d[1] * over];
+  const out: Prim[] = [line(a[0], a[1], z[0], z[1], "centre")];
+  for (const [end, sign] of [[a, 1], [z, -1]] as const) {
+    // A short thick piece at each end, and an arrow off it.
+    out.push({ kind: "path", points: [end[0], end[1], end[0] + d[0] * 4 * sign, end[1] + d[1] * 4 * sign], style: "visible" });
+    const tip: [number, number] = [end[0] + look[0] * 7, end[1] + look[1] * 7];
+    out.push(line(end[0], end[1], tip[0], tip[1]));
+    out.push({
+      kind: "path",
+      points: [tip[0], tip[1], tip[0] - look[0] * 2.5 + d[0] * 0.9, tip[1] - look[1] * 2.5 + d[1] * 0.9, tip[0] - look[0] * 2.5 - d[0] * 0.9, tip[1] - look[1] * 2.5 - d[1] * 0.9],
+      closed: true,
+      fill: true,
+      style: "thin",
+    });
+    out.push({ kind: "text", x: tip[0] + look[0] * 1.5 - d[0] * 2.5 * sign, y: tip[1] + look[1] * 1.5 - d[1] * 2.5 * sign - (across ? 0 : 1.2), text: SECTION_LETTER, size: 3.5, anchor: "middle", bold: true });
+  }
+  return out;
+}
+
+/** Numbered balloons around a view, with leader lines to the parts. */
+function balloonPrims(host: PlacedView, p: ViewProjection, scale: number, balloons: NonNullable<SheetInfo["balloons"]>): Prim[] {
+  const targets = balloons.map((b) => {
+    const [x, y] = projectPoint(host.kind, b.at);
+    return toSheet(host, p, scale, x, y);
+  });
+  const spots = placeBalloons(host.box, targets, BALLOON_RADIUS);
+  const out: Prim[] = [];
+  balloons.forEach((b, i) => {
+    const [bx, by] = spots[i];
+    const [tx, ty] = targets[i];
+    const l = Math.hypot(tx - bx, ty - by) || 1;
+    out.push(circle(bx, by, BALLOON_RADIUS, "thin"));
+    out.push({ kind: "text", x: bx, y: by - 1.25, text: String(b.item), size: 3.5, anchor: "middle" });
+    out.push(line(bx + ((tx - bx) / l) * BALLOON_RADIUS, by + ((ty - by) / l) * BALLOON_RADIUS, tx, ty));
+    out.push({ ...circle(tx, ty, 0.6, "thin"), fill: true });
+  });
+  return out;
 }
 
 /** Where a point of a view (in its own mm) lands on the sheet. */

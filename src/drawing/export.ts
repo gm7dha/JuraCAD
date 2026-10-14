@@ -115,28 +115,30 @@ export function sheetPdf(prims: Prim[], size: [number, number], title = "PartSmi
 // ---------------------------------------------------------------------------
 // DXF (for CAD and laser/CNC programs)
 
-/** An AutoCAD R12 DXF file of the sheet (millimetres): lines on layers VISIBLE, HIDDEN and THIN, and text. */
+/** An AutoCAD R12 DXF file of the sheet (millimetres): lines on layers VISIBLE, HIDDEN, CENTRE and THIN, and text. */
 export function sheetDxf(prims: Prim[]): string {
   const out: string[] = [];
   const g = (code: number, value: string | number) => out.push(String(code), typeof value === "number" ? n(value) : value);
   g(0, "SECTION"), g(2, "HEADER"), g(9, "$ACADVER"), g(1, "AC1009"), g(9, "$INSUNITS"), g(70, 4), g(0, "ENDSEC");
   g(0, "SECTION"), g(2, "TABLES");
-  g(0, "TABLE"), g(2, "LTYPE"), g(70, 2);
+  g(0, "TABLE"), g(2, "LTYPE"), g(70, 3);
   g(0, "LTYPE"), g(2, "CONTINUOUS"), g(70, 0), g(3, "Solid line"), g(72, 65), g(73, 0), g(40, 0);
   g(0, "LTYPE"), g(2, "DASHED"), g(70, 0), g(3, "Dashed __ __ __"), g(72, 65), g(73, 2), g(40, 4.5), g(49, 3), g(49, -1.5);
+  g(0, "LTYPE"), g(2, "CENTER"), g(70, 0), g(3, "Center ____ _ ____ _"), g(72, 65), g(73, 4), g(40, 10), g(49, 6), g(49, -1.5), g(49, 1), g(49, -1.5);
   g(0, "ENDTAB");
-  g(0, "TABLE"), g(2, "LAYER"), g(70, 4);
+  g(0, "TABLE"), g(2, "LAYER"), g(70, 5);
   for (const [name, ltype, colour] of [
     ["BORDER", "CONTINUOUS", 7],
     ["VISIBLE", "CONTINUOUS", 7],
     ["HIDDEN", "DASHED", 8],
     ["THIN", "CONTINUOUS", 3],
+    ["CENTRE", "CENTER", 1],
   ] as const) {
     g(0, "LAYER"), g(2, name), g(70, 0), g(62, colour), g(6, ltype);
   }
   g(0, "ENDTAB"), g(0, "ENDSEC");
   g(0, "SECTION"), g(2, "ENTITIES");
-  const layer = (style: string) => (style === "border" ? "BORDER" : style === "visible" ? "VISIBLE" : style === "hidden" ? "HIDDEN" : "THIN");
+  const layer = (style: string) => (style === "border" ? "BORDER" : style === "visible" ? "VISIBLE" : style === "hidden" ? "HIDDEN" : style === "centre" ? "CENTRE" : "THIN");
   for (const p of prims) {
     if (p.kind === "path") {
       const pts = p.points;

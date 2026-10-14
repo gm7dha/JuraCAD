@@ -117,8 +117,8 @@ export class KernelClient {
   }
 
   /** Drawing views of parts (or an assembly's placed copies). */
-  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], hidden: boolean): Promise<ViewProjection[]> {
-    return this.send({ type: "project", partIds, instances, views, hidden }).then((body) => body.result as ViewProjection[]);
+  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], hidden: boolean, sectionAt?: number): Promise<ViewProjection[]> {
+    return this.send({ type: "project", partIds, instances, views, hidden, sectionAt }).then((body) => body.result as ViewProjection[]);
   }
 
   /** Pairs of assembly instances that occupy the same space. */
