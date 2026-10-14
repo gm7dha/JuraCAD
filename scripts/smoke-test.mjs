@@ -793,6 +793,11 @@ try {
       return window.partsmithViewport.current.projectSketchPoint(p.x + c.radius, p.y);
     });
     await page.mouse.click(box.x + rim.x, box.y + rim.y);
+    const picked = await page.evaluate(() => window.partsmithStore.getState().sketch);
+    if (!picked.selection.length) {
+      const d = await page.evaluate(() => window.partsmithStore.getState().editing.draft.sketch.data);
+      throw new Error(`clicking the circle's edge at ${JSON.stringify(rim)} (viewport ${JSON.stringify(box)}) didn't select it: tool ${picked.tool}, message ${JSON.stringify(picked.message)}, centre ${picked.patternCentre}; circles ${JSON.stringify(d.curves.filter((k) => k.type === "circle"))}`);
+    }
     await page.mouse.move(mx + 60, my + 60, { steps: 3 });
     await shot("sketchpattern");
     await page.getByRole("button", { name: "Make pattern" }).click();
