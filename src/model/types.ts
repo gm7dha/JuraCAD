@@ -125,6 +125,34 @@ export interface Drawing {
   views: DrawingView[];
   /** Title block entries. */
   title: { title?: string; drawnBy?: string; material?: string; notes?: string };
+  /** Dimensions (optional: older saves have none). */
+  dimensions?: Dimension[];
+}
+
+/**
+ * A dimension on a drawing view. Points are in the view's own flat
+ * coordinates (model mm), each also remembered as a fraction across the
+ * view, so they can be found again when the part changes size.
+ */
+export interface Dimension {
+  id: string;
+  view: ViewKind;
+  type: "horizontal" | "vertical" | "aligned" | "diameter" | "radius";
+  a: DimPoint;
+  /** Second point (lengths). */
+  b?: DimPoint;
+  /** Circle radius (diameters and radii). */
+  r?: number;
+  /** How far the dimension line sits from what it measures (paper mm; may be negative). For circles: leader length. */
+  offset: number;
+  /** Circles: direction of the leader (degrees). */
+  angle?: number;
+}
+
+export interface DimPoint {
+  at: [number, number];
+  /** Where it is as a fraction of the view's width and height. */
+  rel: [number, number];
 }
 
 /** A Part Studio tab after the first: its own list of features, making its own parts. */

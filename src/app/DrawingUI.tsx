@@ -4,14 +4,16 @@
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
-import { arrangeViews, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
-import { sheetPdf, sheetSvg } from "../drawing/export";
-import { fitScale, layoutSheet, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, type SheetLayout } from "../drawing/sheet";
+import { arrangeViews, putDimension, removeDimension, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
+import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
+import { fitScale, layoutSheet, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { dimPoint, dragDimension, drawDimension, measureDim, placeLength, resolveDim, snapPoints } from "../drawing/dimensions";
+import { newId } from "../model/document";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh, ViewProjection } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useStore } from "../model/store";
 import { studiosOf } from "../model/studios";
-import type { Drawing, PartSmithDocument, ViewKind } from "../model/types";
+import type { Dimension, Drawing, PartSmithDocument, ViewKind } from "../model/types";
 import { instancesForKernel } from "./assemblySolve";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
@@ -108,7 +110,7 @@ function today(): string {
 }
 
 /** Save the drawing on show as a PDF or SVG file. */
-export function exportDrawing(format: "pdf" | "svg") {
+export function exportDrawing(format: "pdf" | "svg" | "dxf") {
   const s = useStore.getState();
   const d = activeDrawing(s);
   if (!d || !shownSheet || shownSheet.drawingId !== d.id) {
@@ -118,7 +120,8 @@ export function exportDrawing(format: "pdf" | "svg") {
   const base = safeFileName(`${s.history.present.name} ${d.name}`, "drawing");
   const title = `${s.history.present.name} — ${d.name}`;
   if (format === "pdf") downloadFile(new Blob([sheetPdf(shownSheet.layout.prims, shownSheet.layout.size, title) as BlobPart], { type: "application/pdf" }), `${base}.pdf`);
-  else downloadFile(new Blob([sheetSvg(shownSheet.layout.prims, shownSheet.layout.size, title)], { type: "image/svg+xml" }), `${base}.svg`);
+  else if (format === "svg") downloadFile(new Blob([sheetSvg(shownSheet.layout.prims, shownSheet.layout.size, title)], { type: "image/svg+xml" }), `${base}.svg`);
+  else downloadFile(new Blob([sheetDxf(shownSheet.layout.prims)], { type: "application/dxf" }), `${base}.dxf`);
   s.showToast(`Saved ${base}.${format}`, "success");
 }
 
@@ -132,6 +135,7 @@ function ToolButton({ label, icon, onClick, disabled, title }: { label: string; 
 }
 
 export function DrawingToolbar() {
+  const tool = useStore((s) => s.drawingTool);
   const canUndo = useStore((s) => s.history.past.length > 0);
   const canRedo = useStore((s) => s.history.future.length > 0);
   const platform = detectPlatform();
@@ -145,9 +149,20 @@ export function DrawingToolbar() {
       <div className="tool-group">
         <ToolButton label="PDF" icon={<Icons.Export />} onClick={() => exportDrawing("pdf")} title="Save the drawing as a PDF, ready to print or send (true size)" />
         <ToolButton label="SVG" icon={<Icons.Export />} onClick={() => exportDrawing("svg")} title="Save the drawing as an SVG picture (true size, opens in drawing programs)" />
+        <ToolButton label="DXF" icon={<Icons.Export />} onClick={() => exportDrawing("dxf")} title="Save the drawing as a DXF file (for other CAD programs, laser cutters and CNC)" />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
+        <button
+          className={`tool-button${tool === "dimension" ? " active" : ""}`}
+          onClick={() => useStore.getState().setDrawingTool(tool === "dimension" ? "select" : "dimension")}
+          title="Dimension (D) — click two corners, an edge, or a circle. Drag a dimension's number to move it; Delete removes it"
+          aria-label="Dimension"
+          aria-pressed={tool === "dimension"}
+        >
+          <Icons.Dimension />
+          <span>Dimension</span>
+        </button>
         <ToolButton
           label="Arrange"
           icon={<Icons.Fit />}
@@ -301,38 +316,170 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   );
 }
 
+type P2 = [number, number];
+
+/** Something on a view a dimension can attach to, in view and sheet coordinates. */
+type Snap =
+  | { kind: "point"; view: ViewKind; at: P2; sheet: P2 }
+  | { kind: "line"; view: ViewKind; a: P2; b: P2; sheetA: P2; sheetB: P2 }
+  | { kind: "circle"; view: ViewKind; centre: P2; r: number; full: boolean; sheet: P2; sheetR: number };
+
+function snapsOf(layout: SheetLayout, projections: Projections): Snap[] {
+  const out: Snap[] = [];
+  for (const v of layout.views) {
+    const p = projections[v.kind];
+    if (!p) continue;
+    const at = (q: P2) => toSheetPoint(v, p, layout.scale, q[0], q[1]);
+    for (const q of snapPoints(p)) out.push({ kind: "point", view: v.kind, at: q, sheet: at(q) });
+    for (const c of p.circles) if (!c.hidden) out.push({ kind: "circle", view: v.kind, centre: [c.cx, c.cy], r: c.r, full: c.full, sheet: at([c.cx, c.cy]), sheetR: c.r * layout.scale });
+    for (const l of p.visible) if (l.length === 4) out.push({ kind: "line", view: v.kind, a: [l[0], l[1]], b: [l[2], l[3]], sheetA: at([l[0], l[1]]), sheetB: at([l[2], l[3]]) });
+  }
+  return out;
+}
+
+function segDist(p: P2, a: P2, b: P2): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+
+/** The nearest thing to attach to: points first, then circle outlines, then straight edges. */
+function findSnap(snaps: Snap[], at: P2, tol: number): Snap | null {
+  let best: Snap | null = null;
+  let bestD = tol;
+  for (const s of snaps) if (s.kind === "point" && Math.hypot(s.sheet[0] - at[0], s.sheet[1] - at[1]) < bestD) {
+    best = s;
+    bestD = Math.hypot(s.sheet[0] - at[0], s.sheet[1] - at[1]);
+  }
+  if (best) return best;
+  for (const s of snaps) if (s.kind === "circle" && Math.abs(Math.hypot(s.sheet[0] - at[0], s.sheet[1] - at[1]) - s.sheetR) < bestD) {
+    best = s;
+    bestD = Math.abs(Math.hypot(s.sheet[0] - at[0], s.sheet[1] - at[1]) - s.sheetR);
+  }
+  if (best) return best;
+  for (const s of snaps) if (s.kind === "line" && segDist(at, s.sheetA, s.sheetB) < bestD) {
+    best = s;
+    bestD = segDist(at, s.sheetA, s.sheetB);
+  }
+  return best;
+}
+
+/** A dimension being made: its view and first point, then its second. */
+type Pending = { view: ViewKind; a: P2; b?: P2 };
+
 /** The sheet itself, with views you can drag about. Scroll to zoom, middle- or right-drag to pan. */
 export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const docName = useStore((s) => s.history.present.name);
   const change = useStore((s) => s.changeDrawing);
+  const tool = useStore((s) => s.drawingTool);
+  const selectedDim = useStore((s) => s.selectedDim);
   const { projections, subject, busy, error } = useProjections(drawing);
-  const [drag, setDrag] = useState<{ viewId: string; start: [number, number]; from: [number, number]; at: [number, number] } | null>(null);
+  const [drag, setDrag] = useState<{ viewId: string; start: P2; from: P2; at: P2 } | null>(null);
+  const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number } } | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [cursor, setCursor] = useState<P2 | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [W, H] = SHEETS[drawing.sheet];
   const pad = 12;
   const [box, setBox] = useState<[number, number, number, number]>([-pad, -pad, W + 2 * pad, H + 2 * pad]);
   const pan = useRef<{ x: number; y: number; box: [number, number, number, number] } | null>(null);
   useEffect(() => setBox([-pad, -pad, W + 2 * pad, H + 2 * pad]), [W, H]);
+  useEffect(() => setPending(null), [tool, drawing.id]);
 
-  // While a view is dragged, show it where it's going.
-  const shown = useMemo(
-    () => (drag ? { ...drawing, views: drawing.views.map((v) => (v.id === drag.viewId ? { ...v, at: drag.at } : v)) } : drawing),
-    [drawing, drag],
-  );
+  // While a view or a dimension is dragged, show it where it's going.
+  const shown = useMemo(() => {
+    let d = drawing;
+    if (drag) d = { ...d, views: d.views.map((v) => (v.id === drag.viewId ? { ...v, at: drag.at } : v)) };
+    if (dimDrag) d = { ...d, dimensions: d.dimensions?.map((x) => (x.id === dimDrag.id ? { ...x, ...dimDrag.patch } : x)) };
+    return d;
+  }, [drawing, drag, dimDrag]);
   const layout = useMemo(
     () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today() }) : null),
     [shown, projections, docName, subject],
   );
   useEffect(() => {
-    if (layout && !drag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name };
-  }, [layout, drag, drawing.id, drawing.name]);
+    if (layout && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name };
+  }, [layout, drag, dimDrag, drawing.id, drawing.name]);
+  const snaps = useMemo(() => (layout && projections && tool === "dimension" ? snapsOf(layout, projections) : []), [layout, projections, tool]);
 
-  const toSheet = (e: { clientX: number; clientY: number }): [number, number] => {
+  // Delete removes the selected dimension; Esc steps back.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
+      const s = useStore.getState();
+      if ((e.key === "Delete" || e.key === "Backspace") && s.selectedDim) {
+        e.preventDefault();
+        const id = s.selectedDim;
+        s.changeDrawing((d) => removeDimension(d, id));
+        s.selectDim(null);
+      } else if (e.key === "Escape") {
+        if (pending) setPending(null);
+        else if (s.selectedDim) s.selectDim(null);
+        else if (s.drawingTool !== "select") s.setDrawingTool("select");
+      } else if ((e.key === "d" || e.key === "D") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        s.setDrawingTool(s.drawingTool === "dimension" ? "select" : "dimension");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pending]);
+
+  const toSheet = (e: { clientX: number; clientY: number }): P2 => {
     const svg = svgRef.current;
     const m = svg?.getScreenCTM();
     if (!svg || !m) return [0, 0];
     const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
     return [p.x, H - p.y];
+  };
+  /** About 8 screen pixels, in sheet millimetres. */
+  const tolerance = () => {
+    const r = svgRef.current?.getBoundingClientRect();
+    return r ? Math.max(box[2] / r.width, box[3] / r.height) * 8 : 2;
+  };
+
+  const viewAt = (kind: ViewKind) => {
+    const v = layout?.views.find((x) => x.kind === kind);
+    const p = projections?.[kind];
+    return v && p && layout ? (q: P2) => toSheetPoint(v, p, layout.scale, q[0], q[1]) : null;
+  };
+
+  /** The length dimension the pending points and the pointer would make. */
+  const previewDim = (): Dimension | null => {
+    if (!pending?.b || !cursor || !projections?.[pending.view]) return null;
+    const at = viewAt(pending.view);
+    if (!at) return null;
+    const p = projections[pending.view]!;
+    const place = placeLength(at(pending.a), at(pending.b), cursor);
+    return { id: "preview", view: pending.view, type: place.type, a: dimPoint(pending.a, p), b: dimPoint(pending.b, p), offset: place.offset };
+  };
+
+  const dimensionClick = (e: ReactPointerEvent<SVGSVGElement>) => {
+    const here = toSheet(e);
+    const preview = previewDim();
+    if (preview) {
+      change((d) => putDimension(d, { ...preview, id: newId("dm") }));
+      setPending(null);
+      return;
+    }
+    const snap = findSnap(snaps, here, tolerance());
+    if (!snap) return;
+    const p = projections?.[snap.view];
+    if (!p) return;
+    if (snap.kind === "circle" && !pending) {
+      const angle = Math.round((Math.atan2(here[1] - snap.sheet[1], here[0] - snap.sheet[0]) * 180) / Math.PI);
+      change((d) => putDimension(d, { id: newId("dm"), view: snap.view, type: snap.full ? "diameter" : "radius", a: dimPoint(snap.centre, p), r: snap.r, offset: 8, angle }));
+      return;
+    }
+    if (snap.kind === "line") {
+      setPending({ view: snap.view, a: snap.a, b: snap.b });
+      return;
+    }
+    const point = snap.kind === "point" ? snap.at : snap.centre;
+    if (pending && pending.view === snap.view && Math.hypot(point[0] - pending.a[0], point[1] - pending.a[1]) > 1e-9) setPending({ ...pending, b: point });
+    else setPending({ view: snap.view, a: point });
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -350,7 +497,11 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       pan.current = { x: e.clientX, y: e.clientY, box };
       (e.target as Element).setPointerCapture?.(e.pointerId);
       e.preventDefault();
+      return;
     }
+    if (e.button !== 0) return;
+    if (tool === "dimension") dimensionClick(e);
+    else useStore.getState().selectDim(null);
   };
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (pan.current && svgRef.current) {
@@ -359,9 +510,13 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       setBox([pan.current.box[0] - (e.clientX - pan.current.x) * perPx, pan.current.box[1] - (e.clientY - pan.current.y) * perPx, pan.current.box[2], pan.current.box[3]]);
       return;
     }
-    if (drag) {
-      const [x, y] = toSheet(e);
-      setDrag({ ...drag, at: [drag.from[0] + x - drag.start[0], drag.from[1] + y - drag.start[1]] });
+    const here = toSheet(e);
+    if (tool === "dimension") setCursor(here);
+    if (drag) setDrag({ ...drag, at: [drag.from[0] + here[0] - drag.start[0], drag.from[1] + here[1] - drag.start[1]] });
+    if (dimDrag) {
+      const dim = drawing.dimensions?.find((x) => x.id === dimDrag.id);
+      const placed = layout?.dims.find((x) => x.id === dimDrag.id);
+      if (dim && placed) setDimDrag({ id: dim.id, patch: dragDimension(dim, placed.a, placed.b, placed.rad, here) });
     }
   };
   const onPointerUp = () => {
@@ -373,6 +528,11 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         change((d) => ({ ...d, views: d.views.map((v) => (v.id === viewId ? { ...v, at: [Math.round(at[0] * 10) / 10, Math.round(at[1] * 10) / 10] } : v)) }));
       }
     }
+    if (dimDrag) {
+      const { id, patch } = dimDrag;
+      setDimDrag(null);
+      change((d) => ({ ...d, dimensions: d.dimensions?.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+    }
   };
 
   let message: string | null = null;
@@ -381,9 +541,59 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   else if (error) message = `Couldn't make the views: ${error}`;
   else if (!layout) message = "Making the views…";
   else if (drawing.views.length === 0) message = "Tick some views in the panel on the left.";
+  else if (tool === "dimension")
+    message = pending?.b
+      ? "Move to place the dimension (above or below for across, beside for up-and-down), then click."
+      : pending
+        ? "Now click a second point (or click a circle for its diameter). Esc to start again."
+        : "Click a corner, then another — or click an edge for its length, or a circle for its diameter.";
+
+  const hover = tool === "dimension" && cursor && !pending?.b ? findSnap(snaps, cursor, tolerance()) : null;
+  const preview = previewDim();
+  const previewPrims = (() => {
+    if (!preview || !projections) return [];
+    const at = viewAt(preview.view);
+    const p = projections[preview.view];
+    if (!at || !p) return [];
+    const r = resolveDim(preview, p);
+    return drawDimension(preview, r, at, measureDim(preview, r)).prims;
+  })();
+  const selected = layout?.dims.find((d) => d.id === selectedDim);
+  const lost = new Set(layout?.dims.filter((d) => !d.found).map((d) => d.id));
+
+  const renderPrim = (p: Prim, i: number, colour: string) => {
+    if (p.kind === "path") {
+      const st = LINE_STYLES[p.style];
+      const pts = [];
+      for (let k = 0; k < p.points.length; k += 2) pts.push(`${p.points[k]},${H - p.points[k + 1]}`);
+      const props = { points: pts.join(" "), fill: p.fill ? colour : "none", stroke: colour, strokeWidth: st.width, strokeDasharray: st.dash?.join(" "), strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+      return p.closed || p.fill ? <polygon key={i} {...props} /> : <polyline key={i} {...props} />;
+    }
+    return (
+      <text
+        key={i}
+        x={p.x}
+        y={H - p.y}
+        fontSize={p.size}
+        textAnchor={p.anchor}
+        fontWeight={p.bold ? 700 : 400}
+        className="drawing-text"
+        fill={colour}
+        transform={p.rotate ? `rotate(${-p.rotate} ${p.x} ${H - p.y})` : undefined}
+      >
+        {p.text}
+      </text>
+    );
+  };
+  const colourOf = (i: number) => {
+    const d = layout?.dims.find((x) => i >= x.from && i < x.to);
+    if (!d) return "#111";
+    if (d.id === selectedDim) return "#1f6fd1";
+    return lost.has(d.id) ? "#c2410c" : "#111";
+  };
 
   return (
-    <div className="drawing-area">
+    <div className={`drawing-area${tool === "dimension" ? " dimensioning" : ""}`}>
       <svg
         ref={svgRef}
         className="drawing-svg"
@@ -392,44 +602,69 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={() => setCursor(null)}
         onContextMenu={(e) => e.preventDefault()}
         aria-label="Drawing sheet"
         data-testid="drawing-sheet"
       >
         <rect x={0} y={0} width={W} height={H} className="drawing-paper" />
-        {layout?.prims.map((p, i) => {
-          if (p.kind === "path") {
-            const st = LINE_STYLES[p.style];
-            const pts = [];
-            for (let k = 0; k < p.points.length; k += 2) pts.push(`${p.points[k]},${H - p.points[k + 1]}`);
-            const props = { points: pts.join(" "), fill: "none", stroke: "#111", strokeWidth: st.width, strokeDasharray: st.dash?.join(" "), strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
-            return p.closed ? <polygon key={i} {...props} /> : <polyline key={i} {...props} />;
-          }
-          return (
-            <text key={i} x={p.x} y={H - p.y} fontSize={p.size} textAnchor={p.anchor} fontWeight={p.bold ? 700 : 400} className="drawing-text">
-              {p.text}
-            </text>
-          );
-        })}
-        {layout?.views.map((v) => (
-          <rect
-            key={v.id}
-            className={`drawing-view-handle${drag?.viewId === v.id ? " dragging" : ""}`}
-            x={v.box[0] - 3}
-            y={H - v.box[3] - 3}
-            width={v.box[2] - v.box[0] + 6}
-            height={v.box[3] - v.box[1] + 6}
-            onPointerDown={(e) => {
-              if (e.button !== 0) return;
-              e.stopPropagation();
-              (e.target as Element).setPointerCapture(e.pointerId);
-              const start = toSheet(e);
-              setDrag({ viewId: v.id, start, from: v.centre, at: v.centre });
-            }}
-          >
-            <title>{`${VIEW_LABELS[v.kind]} view — drag to move`}</title>
-          </rect>
-        ))}
+        {layout?.prims.map((p, i) => renderPrim(p, i, colourOf(i)))}
+        {tool === "select" &&
+          layout?.views.map((v) => (
+            <rect
+              key={v.id}
+              className={`drawing-view-handle${drag?.viewId === v.id ? " dragging" : ""}`}
+              x={v.box[0] - 3}
+              y={H - v.box[3] - 3}
+              width={v.box[2] - v.box[0] + 6}
+              height={v.box[3] - v.box[1] + 6}
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                useStore.getState().selectDim(null);
+                (e.target as Element).setPointerCapture(e.pointerId);
+                const start = toSheet(e);
+                setDrag({ viewId: v.id, start, from: v.centre, at: v.centre });
+              }}
+            >
+              <title>{`${VIEW_LABELS[v.kind]} view — drag to move`}</title>
+            </rect>
+          ))}
+        {tool === "select" &&
+          layout?.dims.map((d) => (
+            <circle
+              key={d.id}
+              className={`drawing-dim-handle${d.id === selectedDim ? " selected" : ""}`}
+              cx={d.label[0]}
+              cy={H - d.label[1] - 1.5}
+              r={4}
+              data-dim={d.id}
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                useStore.getState().selectDim(d.id);
+                (e.target as Element).setPointerCapture(e.pointerId);
+                const dim = drawing.dimensions?.find((x) => x.id === d.id);
+                if (dim) setDimDrag({ id: d.id, patch: { offset: dim.offset, ...(dim.angle !== undefined ? { angle: dim.angle } : {}) } });
+              }}
+            >
+              <title>{d.found ? "Drag to move this dimension; Delete removes it" : "What this dimension measured has changed too much — delete it and add it again"}</title>
+            </circle>
+          ))}
+        {previewPrims.map((p, i) => renderPrim(p, -1 - i, "#1f6fd1"))}
+        {pending && viewAt(pending.view) && (
+          <circle cx={viewAt(pending.view)!(pending.a)[0]} cy={H - viewAt(pending.view)!(pending.a)[1]} r={1.2} className="drawing-snap picked" />
+        )}
+        {hover && (
+          <circle
+            cx={hover.kind === "line" ? (hover.sheetA[0] + hover.sheetB[0]) / 2 : hover.sheet[0]}
+            cy={H - (hover.kind === "line" ? (hover.sheetA[1] + hover.sheetB[1]) / 2 : hover.sheet[1])}
+            r={hover.kind === "circle" ? hover.sheetR : 1.2}
+            className={`drawing-snap ${hover.kind}`}
+          />
+        )}
+        {hover?.kind === "line" && <line x1={hover.sheetA[0]} y1={H - hover.sheetA[1]} x2={hover.sheetB[0]} y2={H - hover.sheetB[1]} className="drawing-snap-line" />}
+        {selected && <circle cx={selected.label[0]} cy={H - selected.label[1] - 1.5} r={4.5} className="drawing-dim-selected" />}
       </svg>
       {message && <div className="drawing-message">{message}</div>}
       {layout?.tooBig && <div className="drawing-message warn">The part is too big for this sheet even at {scaleLabel(layout.scale)}. Try a bigger sheet.</div>}

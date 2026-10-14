@@ -2,7 +2,7 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { Drawing, DrawingView, PartSmithDocument, SheetSize, ViewKind } from "../model/types";
+import type { Dimension, DimPoint, Drawing, DrawingView, PartSmithDocument, SheetSize, ViewKind } from "../model/types";
 
 const drawingsOf = (doc: PartSmithDocument) => doc.drawings ?? [];
 
@@ -66,13 +66,27 @@ export function renameDrawing(doc: PartSmithDocument, id: string, name: string):
   return trimmed ? updateDrawing(doc, id, (d) => ({ ...d, name: trimmed })) : doc;
 }
 
-/** Show or hide one kind of view (shown views keep their place). */
+/** Show or hide one kind of view (shown views keep their place; a hidden view's dimensions go with it). */
 export function toggleView(d: Drawing, kind: ViewKind): Drawing {
   const has = d.views.some((v) => v.kind === kind);
-  return {
-    ...d,
-    views: has ? d.views.filter((v) => v.kind !== kind) : [...d.views, { id: `${d.id}-${kind}`, kind }],
-  };
+  if (!has) return { ...d, views: [...d.views, { id: `${d.id}-${kind}`, kind }] };
+  const out: Drawing = { ...d, views: d.views.filter((v) => v.kind !== kind) };
+  const dims = (d.dimensions ?? []).filter((x) => x.view !== kind);
+  if (dims.length) out.dimensions = dims;
+  else delete out.dimensions;
+  return out;
+}
+
+/** Add a dimension, or replace the one with the same id. */
+export function putDimension(d: Drawing, dim: Dimension): Drawing {
+  const dims = d.dimensions ?? [];
+  return { ...d, dimensions: dims.some((x) => x.id === dim.id) ? dims.map((x) => (x.id === dim.id ? dim : x)) : [...dims, dim] };
+}
+
+export function removeDimension(d: Drawing, id: string): Drawing {
+  const left = (d.dimensions ?? []).filter((x) => x.id !== id);
+  const { dimensions: _old, ...rest } = d;
+  return left.length ? { ...rest, dimensions: left } : rest;
 }
 
 /** Put every view back in its automatic place. */
@@ -110,7 +124,9 @@ export function parseDrawings(raw: unknown): Drawing[] {
       const v = text(t[k], k === "notes" ? 1000 : 200);
       if (v) title[k] = v;
     }
+    const dimensions = (Array.isArray(r.dimensions) ? r.dimensions : []).map(parseDimension).filter((x): x is Dimension => x !== null);
     out.push({
+      ...(dimensions.length ? { dimensions } : {}),
       id: r.id,
       name: text(r.name, 80)?.trim() || "Drawing",
       source,
@@ -122,4 +138,38 @@ export function parseDrawings(raw: unknown): Drawing[] {
     });
   }
   return out;
+}
+
+const DIM_TYPES = new Set(["horizontal", "vertical", "aligned", "diameter", "radius"]);
+
+function parseDimPoint(raw: unknown): DimPoint | null {
+  const p = (raw ?? {}) as Record<string, unknown>;
+  const pair = (v: unknown) => (Array.isArray(v) && v.length === 2 && v.every(num) ? (v as [number, number]) : null);
+  const at = pair(p.at);
+  const rel = pair(p.rel);
+  return at && rel ? { at, rel } : null;
+}
+
+function parseDimension(raw: unknown): Dimension | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.id !== "string" || typeof r.type !== "string" || !DIM_TYPES.has(r.type)) return null;
+  if (typeof r.view !== "string" || !VIEW_KINDS.includes(r.view as ViewKind)) return null;
+  const a = parseDimPoint(r.a);
+  if (!a) return null;
+  const type = r.type as Dimension["type"];
+  const round = type === "diameter" || type === "radius";
+  const b = round ? null : parseDimPoint(r.b);
+  if (!round && !b) return null;
+  if (round && !(num(r.r) && (r.r as number) > 0)) return null;
+  return {
+    id: r.id,
+    view: r.view as ViewKind,
+    type,
+    a,
+    ...(b ? { b } : {}),
+    ...(round ? { r: r.r as number } : {}),
+    offset: num(r.offset) ? (r.offset as number) : 8,
+    ...(num(r.angle) ? { angle: r.angle as number } : {}),
+  };
 }

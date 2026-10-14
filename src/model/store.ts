@@ -147,6 +147,9 @@ export interface AppState {
   hiddenInstances: string[];
   /** The mate dialog, while open. */
   mateDraft: { mode: "create" | "edit"; mate: MateDraft } | null;
+  /** Drawing tab: what clicks on the sheet do, and the selected dimension. */
+  drawingTool: "select" | "dimension";
+  selectedDim: string | null;
   /** What a mouse drag in an assembly is changing, while the button is held. */
   dragPreview: DragChange | null;
   /** The design as last saved to (or opened from) a file; compare with history.present to see unsaved changes. */
@@ -232,6 +235,8 @@ export interface AppState {
   deleteMate: (id: string) => void;
   toggleMateSuppressed: (id: string) => void;
   setDragPreview: (change: DragChange | null) => void;
+  setDrawingTool: (tool: "select" | "dimension") => void;
+  selectDim: (id: string | null) => void;
   /** Keep what the drag did (one undo step). */
   commitDrag: () => void;
   undo: () => void;
@@ -356,6 +361,8 @@ export const useStore = create<AppState>((set, get) => {
     hiddenInstances: [],
     mateDraft: null,
     dragPreview: null,
+    drawingTool: "select",
+    selectedDim: null,
 
     startCreate: (type) => {
       const s = get();
@@ -646,7 +653,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveTab: (activeTab) => {
       if (get().editing) return;
-      set({ activeTab, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null });
+      set({ activeTab, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
     },
 
     removeAssembly: (id) => {
@@ -780,6 +787,8 @@ export const useStore = create<AppState>((set, get) => {
     cancelMateDraft: () => set({ mateDraft: null }),
 
     setDragPreview: (dragPreview) => set({ dragPreview }),
+    setDrawingTool: (drawingTool) => set({ drawingTool, selectedDim: null }),
+    selectDim: (selectedDim) => set({ selectedDim }),
 
     commitDrag: () => {
       const s = get();

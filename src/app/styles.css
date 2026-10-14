@@ -1254,6 +1254,49 @@ kbd {
   stroke-dasharray: 2 1;
 }
 
+.drawing-area.dimensioning .drawing-svg {
+  cursor: crosshair;
+}
+
+.drawing-snap {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.5;
+  pointer-events: none;
+}
+
+.drawing-snap.point,
+.drawing-snap.picked {
+  fill: var(--accent);
+}
+
+.drawing-snap.line {
+  fill: var(--accent);
+}
+
+.drawing-snap-line {
+  stroke: var(--accent);
+  stroke-width: 0.8;
+  pointer-events: none;
+}
+
+.drawing-dim-handle {
+  fill: transparent;
+  cursor: move;
+}
+
+.drawing-dim-handle:hover {
+  fill: rgba(31, 111, 209, 0.12);
+}
+
+.drawing-dim-selected {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.3;
+  stroke-dasharray: 1 0.8;
+  pointer-events: none;
+}
+
 .drawing-message {
   position: absolute;
   top: 16px;
