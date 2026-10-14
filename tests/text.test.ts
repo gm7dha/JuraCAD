@@ -34,7 +34,8 @@ describe("text outlines", () => {
 
   it("smooths curves, and uses ? for letters the font doesn't have", () => {
     const d = textOutlines(font, "D", 10, 8).contours[0];
-    expect(d.length).toBe(1 + 8 + 1);
+    // Start, eight steps along the curve; the line back to the curve's end repeats a point, so it's dropped.
+    expect(d.length).toBe(1 + 8);
     expect(textOutlines(font, "Z", 10).contours).toHaveLength(1);
     expect(textOutlines(font, "  ", 10).contours).toHaveLength(0);
   });
