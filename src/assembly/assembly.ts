@@ -14,7 +14,7 @@ function withAssemblies(doc: PartSmithDocument, assemblies: Assembly[]): PartSmi
   return assemblies.length ? { ...rest, assemblies } : rest;
 }
 
-function updateAssembly(doc: PartSmithDocument, id: string, fn: (a: Assembly) => Assembly): PartSmithDocument {
+export function updateAssembly(doc: PartSmithDocument, id: string, fn: (a: Assembly) => Assembly): PartSmithDocument {
   if (!assembliesOf(doc).some((a) => a.id === id)) return doc;
   return withAssemblies(
     doc,
@@ -112,6 +112,14 @@ export function removeMate(doc: PartSmithDocument, assemblyId: string, mateId: s
   return updateAssembly(doc, assemblyId, (a) => withMates(a, (a.mates ?? []).filter((m) => m.id !== mateId)));
 }
 
+/** Spread the parts apart for an exploded view (null or 0 puts them back together). */
+export function setExplode(doc: PartSmithDocument, assemblyId: string, amount: number | null): PartSmithDocument {
+  return updateAssembly(doc, assemblyId, (a) => {
+    const { explode: _old, ...rest } = a;
+    return amount && amount > 0 ? { ...rest, explode: amount } : rest;
+  });
+}
+
 /** Store where the mates put each part, so it stays there if a mate is later removed. */
 export function settlePlacements(doc: PartSmithDocument, assemblyId: string, placements: Record<string, Placement>): PartSmithDocument {
   return updateAssembly(doc, assemblyId, (a) => ({
@@ -191,6 +199,19 @@ function parseMate(raw: unknown, ids: Set<string>): Mate | null {
       else if (typeof v === "number" && Number.isFinite(v)) values[k] = String(v);
     }
   }
+  let limits: Mate["limits"];
+  if (m.limits && typeof m.limits === "object") {
+    for (const [k, v] of Object.entries(m.limits as Record<string, unknown>)) {
+      if (!v || typeof v !== "object") continue;
+      const l = v as Record<string, unknown>;
+      const end: { min?: string; max?: string } = {};
+      for (const e of ["min", "max"] as const) {
+        if (typeof l[e] === "string" && (l[e] as string).trim()) end[e] = l[e] as string;
+        else if (typeof l[e] === "number" && Number.isFinite(l[e])) end[e] = String(l[e]);
+      }
+      if (end.min !== undefined || end.max !== undefined) (limits ??= {})[k] = end;
+    }
+  }
   return {
     id: m.id,
     name: typeof m.name === "string" && m.name.trim() ? m.name : "Mate",
@@ -199,6 +220,7 @@ function parseMate(raw: unknown, ids: Set<string>): Mate | null {
     b,
     flip: m.flip === true,
     values,
+    ...(limits ? { limits } : {}),
     ...(m.suppressed === true ? { suppressed: true } : {}),
   };
 }
@@ -232,7 +254,12 @@ export function parseAssemblies(raw: unknown): Assembly[] {
       const mate = parseMate(m, ids);
       if (mate) mates.push(mate);
     }
-    const assembly: Assembly = { id: r.id, name: typeof r.name === "string" && r.name.trim() ? r.name : "Assembly", instances };
+    const assembly: Assembly = {
+      id: r.id,
+      name: typeof r.name === "string" && r.name.trim() ? r.name : "Assembly",
+      instances,
+      ...(typeof r.explode === "number" && Number.isFinite(r.explode) && r.explode > 0 ? { explode: Math.min(r.explode, 10) } : {}),
+    };
     out.push(mates.length ? { ...assembly, mates } : assembly);
   }
   return out;

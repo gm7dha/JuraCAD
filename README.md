@@ -43,6 +43,7 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
   dragging, and join them with **mates** — Fasten, Hinge, Slider, Cylindrical, Planar and Ball — by clicking a face
   or edge on each part. Drag a hinged part to turn it. A **parts list** (with quantities, downloadable as CSV),
   a **clash check**, and **export** of the whole assembly in place (STEP keeps each part separate and named).
+  **Limits** on how far a hinge turns or a slider slides, and an **exploded view** (Explode) that pulls the parts apart.
 - **Drawings** (the **+** at the bottom): Front, Top, Right and 3D views of a part or assembly on an A4–A2 sheet,
   laid out first-angle with dashed hidden lines and a title block; drag views about; add **dimensions** by
   clicking corners, edges or circles (they update when the part changes); centre lines on holes; a hatched

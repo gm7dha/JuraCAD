@@ -26,7 +26,7 @@ import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
 import type { Assembly, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateType, PartSmithDocument } from "./types";
-import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, settlePlacements, updateInstance } from "../assembly/assembly";
+import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
@@ -238,6 +238,11 @@ export interface AppState {
   cancelMateDraft: () => void;
   deleteMate: (id: string) => void;
   toggleMateSuppressed: (id: string) => void;
+  /** Exploded view of the assembly on show: how far apart (null = together). */
+  setExplode: (amount: number | null) => void;
+  /** The exploded view's spread while its slider is being dragged (not saved until let go). */
+  explodePreview: number | null;
+  setExplodePreview: (amount: number | null) => void;
   setDragPreview: (change: DragChange | null) => void;
   setDrawingTool: (tool: "select" | "dimension") => void;
   selectDim: (id: string | null) => void;
@@ -822,6 +827,13 @@ export const useStore = create<AppState>((set, get) => {
       if (s.mateDraft?.mate.id === id) set({ mateDraft: null });
     },
 
+    setExplode: (amount) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => setExplode(doc, asm.id, amount));
+      set({ explodePreview: null });
+    },
+    explodePreview: null,
+    setExplodePreview: (amount) => set({ explodePreview: amount }),
     toggleMateSuppressed: (id) => {
       const s = get();
       const asm = activeAssembly(s);

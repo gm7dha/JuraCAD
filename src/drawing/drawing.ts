@@ -139,6 +139,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       ...(num(r.sectionAt) ? { sectionAt: Math.max(0.01, Math.min(0.99, r.sectionAt as number)) } : {}),
       ...(r.centreLines === false ? { centreLines: false } : {}),
       ...(r.balloons === false ? { balloons: false } : {}),
+      ...(r.exploded === true ? { exploded: true } : {}),
     });
   }
   return out;

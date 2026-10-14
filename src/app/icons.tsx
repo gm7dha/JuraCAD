@@ -200,6 +200,13 @@ export const Icons = {
       <path d="M12 5v14M5 12h14" />
     </Svg>
   ),
+  Explode: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="9" y="9" width="6" height="6" />
+      <path d="M3 3h4v4H3zM17 3h4v4h-4zM3 17h4v4H3zM17 17h4v4h-4z" />
+      <path d="M7.5 7.5 9 9M16.5 7.5 15 9M7.5 16.5 9 15M16.5 16.5 15 15" />
+    </Svg>
+  ),
   Fit: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />

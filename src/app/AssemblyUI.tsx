@@ -4,15 +4,15 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { billOfMaterials, bomCsv, boundsOfVertices, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
+import { billOfMaterials, bomCsv, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
 import { eulerDegFromQuat, quatFromEulerDeg, type Placement } from "../assembly/math";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { evaluate } from "../model/expr";
 import { activeAssembly, partsInStudio, useStore } from "../model/store";
 import { studiosOf } from "../model/studios";
 import type { Assembly, Instance, Mate, MateConnector, MateType } from "../model/types";
-import { MATE_ORDER, MATE_TYPES, mateValues } from "../assembly/mates";
-import { useSolvedAssembly } from "./assemblySolve";
+import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
+import { partBox, useSolvedAssembly } from "./assemblySolve";
 import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
@@ -38,12 +38,6 @@ const MATE_ICONS: Record<MateType, (p: { size?: number }) => ReactNode> = {
   ball: Icons.MateBall,
 };
 
-/** Box of each part, worked out once per rebuild. */
-const boxCache = new WeakMap<PartMesh, Box3 | null>();
-function partBox(p: PartMesh): Box3 | null {
-  if (!boxCache.has(p)) boxCache.set(p, boundsOfVertices(p.vertices));
-  return boxCache.get(p) ?? null;
-}
 
 /** Put a copy of a part into the assembly on show, beside what's already there. */
 export function insertPart(part: PartMesh) {
@@ -124,6 +118,20 @@ export function AssemblyToolbar() {
       </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">
+        <ToolButton
+          label="Explode"
+          icon={<Icons.Explode />}
+          onClick={() => {
+            const s = useStore.getState();
+            s.setExplode(asm?.explode ? null : 1);
+            s.setAsmSelection([]);
+            // Zoom to show the parts in their new places.
+            setTimeout(() => viewportApi.current?.fit(), 50);
+          }}
+          disabled={(asm?.instances.length ?? 0) < 2 || draftType !== null}
+          active={!!asm?.explode}
+          title={asm?.explode ? "Put the parts back together" : "Exploded view — pull the parts apart to show how they go together"}
+        />
         <ToolButton
           label="Section"
           icon={<Icons.Section />}
@@ -489,6 +497,57 @@ export function InstancePanel() {
   );
 }
 
+/** The exploded view's settings: how far apart the parts are spread. */
+export function ExplodePanel() {
+  const asm = useStore(activeAssembly);
+  const preview = useStore((s) => s.explodePreview);
+  const busy = useStore((s) => s.asmSelection.length > 0 || s.dialog === "insert" || s.mateDraft !== null);
+  if (!asm?.explode || busy) return null;
+  const st = useStore.getState();
+  const amount = preview ?? asm.explode;
+  const commit = () => {
+    const p = useStore.getState().explodePreview;
+    if (p !== null) {
+      useStore.getState().setExplode(p);
+      setTimeout(() => viewportApi.current?.fit(), 50);
+    }
+  };
+  return (
+    <div className="feature-dialog instance-panel" role="region" aria-label="Exploded view">
+      <header className="feature-dialog-header">
+        <span className="feature-dialog-title">Exploded view</span>
+        <span className="feature-dialog-actions">
+          <button type="button" className="dialog-cancel" onClick={() => st.setExplode(null)} title="Put the parts back together" aria-label="Close exploded view">
+            <Icons.Cross size={18} />
+          </button>
+        </span>
+      </header>
+      <div className="feature-dialog-body">
+        <label className="field-label" htmlFor="explode-spread">
+          Spread: {Math.round(amount * 100)}%
+        </label>
+        <input
+          id="explode-spread"
+          type="range"
+          className="mate-slider"
+          min={0.1}
+          max={3}
+          step={0.05}
+          value={amount}
+          onChange={(e) => st.setExplodePreview(Number(e.target.value))}
+          onPointerUp={commit}
+          onKeyUp={commit}
+          onBlur={commit}
+        />
+        <p className="dialog-hint">
+          Parts move straight out from the middle{asm.instances.some((i) => i.fixed) ? " of the fixed parts, which stay put" : ""}. Only the picture changes —
+          mates, exports and clash checks use the real places. Drawings of this assembly can show it exploded too.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /** "Flat face", "Circular edge"… for showing what was picked. */
 function connectorLabel(c: MateConnector): string {
   const ref = c.pick.ref;
@@ -504,11 +563,30 @@ function connectorLabel(c: MateConnector): string {
   return "curved edge";
 }
 
-/** Typed box (live) for a mate amount, with a slider for movements. */
-function MateValueField({ def, value, onChange }: { def: { key: string; label: string; unit: "mm" | "°"; free: boolean }; value: string; onChange: (v: string) => void }) {
+/** Typed box (live) for a mate amount, with a slider for movements, and optional limits on how far it can go. */
+function MateValueField({
+  def,
+  value,
+  onChange,
+  limit,
+  limitRange,
+  limitError,
+  onLimit,
+}: {
+  def: { key: string; label: string; unit: "mm" | "°"; free: boolean };
+  value: string;
+  onChange: (v: string) => void;
+  limit?: { min?: string; max?: string };
+  limitRange?: { min: number; max: number };
+  limitError?: string;
+  onLimit?: (l: { min?: string; max?: string } | undefined) => void;
+}) {
   const r = evaluate(value.trim() || "0");
   const id = `mate-${def.key}`;
-  const range = def.unit === "°" ? 180 : 200;
+  const span = def.unit === "°" ? 180 : 200;
+  const lo = limitRange && Number.isFinite(limitRange.min) ? limitRange.min : -span;
+  const hi = limitRange && Number.isFinite(limitRange.max) ? limitRange.max : span;
+  const ok = lo <= hi;
   return (
     <div className={`param-field compact${r.ok ? "" : " invalid"}`}>
       <label htmlFor={id}>{def.label}</label>
@@ -530,14 +608,41 @@ function MateValueField({ def, value, onChange }: { def: { key: string; label: s
           type="range"
           className="mate-slider"
           aria-label={`${def.label} slider`}
-          min={-range}
-          max={range}
+          min={ok ? lo : -span}
+          max={ok ? hi : span}
           step={def.unit === "°" ? 1 : 0.5}
-          value={r.ok ? Math.max(-range, Math.min(range, r.value)) : 0}
+          value={r.ok ? Math.max(ok ? lo : -span, Math.min(ok ? hi : span, r.value)) : 0}
           onChange={(e) => onChange(e.target.value)}
         />
       )}
       {!r.ok && <div className="param-message error">{r.error}</div>}
+      {def.free && onLimit && (
+        <>
+          <label className="check-row small-text">
+            <input type="checkbox" checked={!!limit} onChange={(e) => onLimit(e.target.checked ? { min: def.unit === "°" ? "-90" : "0", max: def.unit === "°" ? "90" : "50" } : undefined)} />
+            Limit how far it {def.unit === "°" ? "turns" : "slides"}
+          </label>
+          {limit && (
+            <div className="mate-limits">
+              {(["min", "max"] as const).map((end) => (
+                <div className="param-input" key={end}>
+                  <input
+                    aria-label={`${def.label} ${end === "min" ? "lowest" : "highest"}`}
+                    placeholder={end === "min" ? "lowest" : "highest"}
+                    value={limit[end] ?? ""}
+                    spellCheck={false}
+                    autoComplete="off"
+                    inputMode="decimal"
+                    onChange={(e) => onLimit({ ...limit, [end]: e.target.value })}
+                  />
+                  <span className="unit">{def.unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {limitError && <div className="param-message error">{limitError}</div>}
+        </>
+      )}
     </div>
   );
 }
@@ -553,6 +658,7 @@ export function MateDialog() {
   const def = MATE_TYPES[mate.type];
   const ready = !!mate.a && !!mate.b;
   const { errors } = mateValues(mate);
+  const limits = mateLimits(mate);
   const problem = ready ? solved?.mateErrors[mate.id] : undefined;
   const nameOf = (c?: MateConnector) => (c ? asm.instances.find((i) => i.id === c.instanceId)?.name ?? "?" : "");
   const slot = (c: MateConnector | undefined, n: 1 | 2) => (
@@ -619,7 +725,21 @@ export function MateDialog() {
           Flip (turn the moving part round)
         </label>
         {def.values.map((d) => (
-          <MateValueField key={d.key} def={d} value={mate.values[d.key] ?? "0"} onChange={(v) => st.setMateDraft({ values: { ...mate.values, [d.key]: v } })} />
+          <MateValueField
+            key={d.key}
+            def={d}
+            value={mate.values[d.key] ?? "0"}
+            onChange={(v) => st.setMateDraft({ values: { ...mate.values, [d.key]: v } })}
+            limit={mate.limits?.[d.key]}
+            limitRange={limits.limits[d.key]}
+            limitError={limits.errors[d.key]}
+            onLimit={(l) => {
+              const next = { ...(mate.limits ?? {}) };
+              if (l) next[d.key] = l;
+              else delete next[d.key];
+              st.setMateDraft({ limits: Object.keys(next).length ? next : undefined });
+            }}
+          />
         ))}
         {problem && <p className="param-message error">{problem}</p>}
         {mode === "edit" && (

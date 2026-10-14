@@ -5,7 +5,7 @@ import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/feature
 import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
 import { compose, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { findPick, frameOnParts, framePlacement } from "../assembly/connectors";
-import { useSolvedAssembly } from "../app/assemblySolve";
+import { explodeAssembly, useSolvedAssembly } from "../app/assemblySolve";
 import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
@@ -317,12 +317,17 @@ export function Viewport() {
   );
   const { solved } = useSolvedAssembly();
   const mateDraft = useStore((s) => s.mateDraft?.mate ?? null);
+  // Exploded view: shown spread apart, except while a mate is being made.
+  const explodePreview = useStore((s) => s.explodePreview);
+  const explode = mateDraft ? 0 : (explodePreview ?? assembly?.explode ?? 0);
   const placements = useMemo(() => {
     if (!assembly) return NO_PLACEMENTS;
-    return Object.fromEntries(assembly.instances.map((i) => [i.id, placementMatrix(solved?.placements[i.id] ?? i.placement)]));
-  }, [assembly, solved]);
+    const solvedPlaces = Object.fromEntries(assembly.instances.map((i) => [i.id, solved?.placements[i.id] ?? i.placement]));
+    const shown = explodeAssembly(assembly, parts, solvedPlaces, explode);
+    return Object.fromEntries(assembly.instances.map((i) => [i.id, placementMatrix(shown[i.id])]));
+  }, [assembly, solved, parts, explode]);
 
-  useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft), [assembly, mateDraft]);
+  useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft && !(explode > 0)), [assembly, mateDraft, explode]);
 
   // Arrows showing the mate connectors picked so far.
   useEffect(() => {

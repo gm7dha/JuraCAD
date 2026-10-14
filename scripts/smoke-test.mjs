@@ -558,6 +558,13 @@ try {
   const asmStep = await asmDownload;
   const asmStepText = readFileSync(await asmStep.path(), "utf8");
   if (!/PRODUCT\('Bracket <2>'/.test(asmStepText)) throw new Error("the assembly STEP file doesn't name its parts");
+  step = "exploding the assembly";
+  await page.getByRole("button", { name: "Explode", exact: true }).click();
+  await page.waitForSelector('[aria-label="Exploded view"]', { timeout: 5_000 });
+  await page.locator("#explode-spread").fill("2");
+  await page.locator("#explode-spread").dispatchEvent("pointerup");
+  await page.waitForFunction(() => document.querySelector('[aria-label="Exploded view"] .field-label')?.textContent?.includes("200%"));
+  await shot("exploded");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
   step = "adding a second Part Studio";
@@ -622,6 +629,9 @@ try {
   await page.locator("#drawing-source").selectOption({ label: "Assembly 1" });
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "QTY"), null, { timeout: 60_000 });
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "SECTION A-A"), null, { timeout: 60_000 });
+  await page.getByLabel("Exploded (parts spread apart)").check();
+  await page.waitForSelector(".drawing-busy, .drawing-sheet", { timeout: 5_000 }).catch(() => {});
+  await page.waitForTimeout(3000);
   await shot("asmdrawing");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
@@ -631,7 +641,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; assembly drawing with a parts list.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
