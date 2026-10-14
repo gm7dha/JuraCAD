@@ -8,21 +8,21 @@ import { arrangeViews, putDimension, removeDimension, SHEET_SIZES, toggleView, V
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { applyPlacement } from "../assembly/math";
-import { bottomReserve, fitScale, layoutSheet, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { dimPoint, dragDimension, drawDimension, measureDim, placeLength, resolveDim, snapPoints } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
-import type { InstanceInput, PartMesh, ViewProjection } from "../kernel/protocol";
+import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useStore } from "../model/store";
 import { studiosOf } from "../model/studios";
-import type { Dimension, Drawing, PartSmithDocument, ViewKind } from "../model/types";
+import type { Dimension, Drawing, PartSmithDocument, SectionCut } from "../model/types";
+import { addSection, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { detectPlatform, shortcut } from "./platform";
 
-type Projections = Partial<Record<ViewKind, ViewProjection>>;
 
 /** What a drawing shows, ready for the geometry engine (null when its part has gone). */
 function drawingSubject(
@@ -79,10 +79,10 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
   const parts = useStore((s) => s.parts);
   const ready = useStore((s) => s.kernelStatus === "ready");
   const subject = drawingSubject(drawing, doc, parts);
-  const kinds = drawing.views.map((v) => v.kind);
+  const kinds = drawing.views.map((v) => v.kind).filter((k) => k !== "section");
+  const sections = sectionRequests(drawing);
   // The same key object while nothing it's made of changes, so the effect below only runs on real changes.
-  const sectionAt = drawing.sectionAt ?? 0.5;
-  const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines, kinds.includes("section") ? sectionAt : null] : null;
+  const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines, JSON.stringify(sections)] : null;
   const keyRef = useRef<unknown[] | null>(null);
   if (!rawKey) keyRef.current = null;
   else if (!keyRef.current || !sameKey(keyRef.current, rawKey)) keyRef.current = rawKey;
@@ -106,7 +106,7 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
       const kernel = getKernel();
       const promise = kernel
         .whenIdle()
-        .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sectionAt))
+        .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sections))
         .then((list) => {
           const result: Projections = {};
           for (const p of list) result[p.kind] = p;
@@ -193,6 +193,16 @@ export function DrawingToolbar() {
           <Icons.Dimension />
           <span>Dimension</span>
         </button>
+        <button
+          className={`tool-button${tool === "section" ? " active" : ""}`}
+          onClick={() => useStore.getState().setDrawingTool(tool === "section" ? "select" : "section")}
+          title="Section — click two points across the front, top or a side view to cut the part open there. Flip or remove sections in the panel"
+          aria-label="Section"
+          aria-pressed={tool === "section"}
+        >
+          <Icons.Section />
+          <span>Section</span>
+        </button>
         <ToolButton
           label="Arrange"
           icon={<Icons.Fit />}
@@ -235,7 +245,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   const change = useStore((s) => s.changeDrawing);
   const { projections, subject } = useProjections(drawing);
   const auto = projections
-    ? fitScale(projections, drawing.views.map((v) => v.kind), drawing.sheet, bottomReserve(drawing, bomFor(drawing, doc, parts)))
+    ? fitScale(projections, drawingViewKeys(drawing), drawing.sheet, bottomReserve(drawing, bomFor(drawing, doc, parts)))
     : null;
   const studios = studiosOf(doc);
   const sourceValue = drawing.source ? `${drawing.source.kind}:${drawing.source.id}` : "";
@@ -376,30 +386,9 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
               Exploded (parts spread apart)
             </label>
           )}
-          {drawing.views.some((v) => v.kind === "section") && (
-            <div className="drawing-field">
-              <label htmlFor="drawing-section-at">Section cut, front to back</label>
-              <select
-                id="drawing-section-at"
-                value={String(Math.round((drawing.sectionAt ?? 0.5) * 100))}
-                onChange={(e) =>
-                  change((d) => {
-                    const { sectionAt: _old, ...rest } = d;
-                    const v = Number(e.target.value) / 100;
-                    return v === 0.5 ? rest : { ...rest, sectionAt: v };
-                  })
-                }
-              >
-                {[10, 20, 25, 30, 40, 50, 60, 70, 75, 80, 90].map((pc) => (
-                  <option key={pc} value={String(pc)}>
-                    {pc === 50 ? "Through the middle (50%)" : `${pc}% of the way back`}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
         </div>
       </section>
+      <SectionsList drawing={drawing} change={change} />
       <section className="panel-section">
         <h3>Title block</h3>
         <div className="drawing-fields">
@@ -413,23 +402,67 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   );
 }
 
+/** The drawing's section cuts: flip which way each looks, or remove it. */
+function SectionsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
+  const sections = drawing.sections ?? [];
+  return (
+    <section className="panel-section">
+      <h3>Sections</h3>
+      <div className="drawing-views">
+        {sections.length === 0 && (
+          <p className="panel-hint">
+            To cut the part open, choose <strong>Section</strong> in the toolbar, then click two points across the front, top or side view.
+          </p>
+        )}
+        {sections.map((s: SectionCut) => (
+          <div className="section-row" key={s.id}>
+            <span>
+              Section {s.letter}-{s.letter} <span className="muted small">(on {VIEW_LABELS[s.host]})</span>
+            </span>
+            <span className="row-actions-inline">
+              <button
+                type="button"
+                className="text-button small-text"
+                onClick={() => change((d) => updateSection(d, s.id, (c) => ({ ...c, flip: !c.flip })))}
+                title="Look the other way (keep the other side of the cut)"
+                aria-label={`Flip section ${s.letter}`}
+              >
+                Flip
+              </button>
+              <button
+                type="button"
+                className="text-button small-text danger-text"
+                onClick={() => change((d) => removeSection(d, s.id))}
+                title="Remove this section and its view"
+                aria-label={`Remove section ${s.letter}`}
+              >
+                Remove
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 type P2 = [number, number];
 
 /** Something on a view a dimension can attach to, in view and sheet coordinates. */
 type Snap =
-  | { kind: "point"; view: ViewKind; at: P2; sheet: P2 }
-  | { kind: "line"; view: ViewKind; a: P2; b: P2; sheetA: P2; sheetB: P2 }
-  | { kind: "circle"; view: ViewKind; centre: P2; r: number; full: boolean; sheet: P2; sheetR: number };
+  | { kind: "point"; view: string; at: P2; sheet: P2 }
+  | { kind: "line"; view: string; a: P2; b: P2; sheetA: P2; sheetB: P2 }
+  | { kind: "circle"; view: string; centre: P2; r: number; full: boolean; sheet: P2; sheetR: number };
 
 function snapsOf(layout: SheetLayout, projections: Projections): Snap[] {
   const out: Snap[] = [];
   for (const v of layout.views) {
-    const p = projections[v.kind];
+    const p = projections[v.key];
     if (!p) continue;
     const at = (q: P2) => toSheetPoint(v, p, layout.scale, q[0], q[1]);
-    for (const q of snapPoints(p)) out.push({ kind: "point", view: v.kind, at: q, sheet: at(q) });
-    for (const c of p.circles) if (!c.hidden) out.push({ kind: "circle", view: v.kind, centre: [c.cx, c.cy], r: c.r, full: c.full, sheet: at([c.cx, c.cy]), sheetR: c.r * layout.scale });
-    for (const l of p.visible) if (l.length === 4) out.push({ kind: "line", view: v.kind, a: [l[0], l[1]], b: [l[2], l[3]], sheetA: at([l[0], l[1]]), sheetB: at([l[2], l[3]]) });
+    for (const q of snapPoints(p)) out.push({ kind: "point", view: v.key, at: q, sheet: at(q) });
+    for (const c of p.circles) if (!c.hidden) out.push({ kind: "circle", view: v.key, centre: [c.cx, c.cy], r: c.r, full: c.full, sheet: at([c.cx, c.cy]), sheetR: c.r * layout.scale });
+    for (const l of p.visible) if (l.length === 4) out.push({ kind: "line", view: v.key, a: [l[0], l[1]], b: [l[2], l[3]], sheetA: at([l[0], l[1]]), sheetB: at([l[2], l[3]]) });
   }
   return out;
 }
@@ -464,7 +497,7 @@ function findSnap(snaps: Snap[], at: P2, tol: number): Snap | null {
 }
 
 /** A dimension being made: its view and first point, then its second. */
-type Pending = { view: ViewKind; a: P2; b?: P2 };
+type Pending = { view: string; a: P2; b?: P2 };
 
 /** The sheet itself, with views you can drag about. Scroll to zoom, middle- or right-drag to pan. */
 export function DrawingSheet({ drawing }: { drawing: Drawing }) {
@@ -482,6 +515,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const [drag, setDrag] = useState<{ viewId: string; start: P2; from: P2; at: P2 } | null>(null);
   const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number } } | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  /** Section tool: the cutting line's first point (view mm), on its view. */
+  const [cutStart, setCutStart] = useState<{ view: string; at: P2 } | null>(null);
   const [cursor, setCursor] = useState<P2 | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [W, H] = SHEETS[drawing.sheet];
@@ -489,7 +524,10 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const [box, setBox] = useState<[number, number, number, number]>([-pad, -pad, W + 2 * pad, H + 2 * pad]);
   const pan = useRef<{ x: number; y: number; box: [number, number, number, number] } | null>(null);
   useEffect(() => setBox([-pad, -pad, W + 2 * pad, H + 2 * pad]), [W, H]);
-  useEffect(() => setPending(null), [tool, drawing.id]);
+  useEffect(() => {
+    setPending(null);
+    setCutStart(null);
+  }, [tool, drawing.id]);
 
   // While a view or a dimension is dragged, show it where it's going.
   const shown = useMemo(() => {
@@ -505,7 +543,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   useEffect(() => {
     if (layout && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name };
   }, [layout, drag, dimDrag, drawing.id, drawing.name]);
-  const snaps = useMemo(() => (layout && projections && tool === "dimension" ? snapsOf(layout, projections) : []), [layout, projections, tool]);
+  const snaps = useMemo(() => (layout && projections && tool !== "select" ? snapsOf(layout, projections) : []), [layout, projections, tool]);
 
   // Delete removes the selected dimension; Esc steps back.
   useEffect(() => {
@@ -519,7 +557,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         s.changeDrawing((d) => removeDimension(d, id));
         s.selectDim(null);
       } else if (e.key === "Escape") {
-        if (pending) setPending(null);
+        if (cutStart) setCutStart(null);
+        else if (pending) setPending(null);
         else if (s.selectedDim) s.selectDim(null);
         else if (s.drawingTool !== "select") s.setDrawingTool("select");
       } else if ((e.key === "d" || e.key === "D") && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -528,7 +567,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending]);
+  }, [pending, cutStart]);
 
   const toSheet = (e: { clientX: number; clientY: number }): P2 => {
     const svg = svgRef.current;
@@ -543,9 +582,9 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     return r ? Math.max(box[2] / r.width, box[3] / r.height) * 8 : 2;
   };
 
-  const viewAt = (kind: ViewKind) => {
-    const v = layout?.views.find((x) => x.kind === kind);
-    const p = projections?.[kind];
+  const viewAt = (key: string) => {
+    const v = layout?.views.find((x) => x.key === key);
+    const p = projections?.[key];
     return v && p && layout ? (q: P2) => toSheetPoint(v, p, layout.scale, q[0], q[1]) : null;
   };
 
@@ -585,6 +624,52 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     else setPending({ view: snap.view, a: point });
   };
 
+  /** Where the section tool would put a point: on a front/top/side view, snapped to corners and hole centres. */
+  const cutPoint = (here: P2, onView?: string): { view: string; at: P2; sheet: P2 } | null => {
+    if (!layout || !projections) return null;
+    const snap = findSnap(snaps, here, tolerance());
+    if (snap && snap.kind !== "line" && (!onView || snap.view === onView) && SECTION_HOSTS.includes(snap.view as SectionCut["host"])) {
+      return snap.kind === "point" ? { view: snap.view, at: snap.at, sheet: snap.sheet } : { view: snap.view, at: snap.centre, sheet: snap.sheet };
+    }
+    const v = layout.views.find(
+      (x) => (onView ? x.key === onView : SECTION_HOSTS.includes(x.kind)) && here[0] > x.box[0] - 8 && here[0] < x.box[2] + 8 && here[1] > x.box[1] - 8 && here[1] < x.box[3] + 8,
+    );
+    const p = v && projections[v.key];
+    if (!v || !p?.bounds) return null;
+    const cx = (p.bounds[0] + p.bounds[2]) / 2;
+    const cy = (p.bounds[1] + p.bounds[3]) / 2;
+    return { view: v.key, at: [cx + (here[0] - v.centre[0]) / layout.scale, cy + (here[1] - v.centre[1]) / layout.scale], sheet: here };
+  };
+  /** The section line's end for the pointer: straightened when it's within a few degrees of across or up-and-down. */
+  const cutEnd = (here: P2): { at: P2; sheet: P2 } | null => {
+    if (!cutStart || !layout) return null;
+    const hit = cutPoint(here, cutStart.view);
+    if (!hit) return null;
+    const [ax, ay] = cutStart.at;
+    let [bx, by] = hit.at;
+    const ang = Math.abs((Math.atan2(by - ay, bx - ax) * 180) / Math.PI);
+    if (ang < 4 || ang > 176) by = ay;
+    else if (Math.abs(ang - 90) < 4) bx = ax;
+    const at = viewAt(cutStart.view);
+    return at ? { at: [bx, by], sheet: at([bx, by]) } : null;
+  };
+  const sectionClick = (here: P2) => {
+    if (!cutStart) {
+      const p = cutPoint(here);
+      if (p) setCutStart({ view: p.view, at: p.at });
+      return;
+    }
+    const end = cutEnd(here);
+    const p = projections?.[cutStart.view];
+    if (!end || !p?.bounds || !layout || Math.hypot(end.at[0] - cutStart.at[0], end.at[1] - cutStart.at[1]) * layout.scale < 2) return;
+    const host = cutStart.view as SectionCut["host"];
+    const a = toRel(p.bounds, cutStart.at);
+    const b = toRel(p.bounds, end.at);
+    change((d) => addSection(d, { id: newId("sc"), host, a, b }));
+    setCutStart(null);
+    useStore.getState().setDrawingTool("select");
+  };
+
   const onWheel = (e: React.WheelEvent) => {
     const [x, y] = toSheet(e);
     const sy = H - y;
@@ -604,6 +689,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     }
     if (e.button !== 0) return;
     if (tool === "dimension") dimensionClick(e);
+    else if (tool === "section") sectionClick(toSheet(e));
     else useStore.getState().selectDim(null);
   };
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
@@ -614,7 +700,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       return;
     }
     const here = toSheet(e);
-    if (tool === "dimension") setCursor(here);
+    if (tool !== "select") setCursor(here);
     if (drag) setDrag({ ...drag, at: [drag.from[0] + here[0] - drag.start[0], drag.from[1] + here[1] - drag.start[1]] });
     if (dimDrag) {
       const dim = drawing.dimensions?.find((x) => x.id === dimDrag.id);
@@ -650,8 +736,14 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       : pending
         ? "Now click a second point (or click a circle for its diameter). Esc to start again."
         : "Click a corner, then another — or click an edge for its length, or a circle for its diameter.";
+  else if (tool === "section")
+    message = cutStart
+      ? "Click where the cutting line ends (it straightens when nearly across or up-and-down). Esc to start again."
+      : "Click where the cutting line starts, on the front, top or a side view (corners and hole centres snap).";
 
   const hover = tool === "dimension" && cursor && !pending?.b ? findSnap(snaps, cursor, tolerance()) : null;
+  const cutHover = tool === "section" && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor)) : null;
+  const cutFrom = cutStart ? viewAt(cutStart.view)?.(cutStart.at) : null;
   const preview = previewDim();
   const previewPrims = (() => {
     if (!preview || !projections) return [];
@@ -696,7 +788,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   };
 
   return (
-    <div className={`drawing-area${tool === "dimension" ? " dimensioning" : ""}`}>
+    <div className={`drawing-area${tool !== "select" ? " dimensioning" : ""}`}>
       <svg
         ref={svgRef}
         className="drawing-svg"
@@ -730,7 +822,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
                 setDrag({ viewId: v.id, start, from: v.centre, at: v.centre });
               }}
             >
-              <title>{`${VIEW_LABELS[v.kind]} view — drag to move`}</title>
+              <title>{`${v.kind === "section" ? `Section ${drawing.sections?.find((c) => `section:${c.id}` === v.key)?.letter ?? ""}` : VIEW_LABELS[v.kind]} view — drag to move`}</title>
             </rect>
           ))}
         {tool === "select" &&
@@ -768,6 +860,9 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         )}
         {hover?.kind === "line" && <line x1={hover.sheetA[0]} y1={H - hover.sheetA[1]} x2={hover.sheetB[0]} y2={H - hover.sheetB[1]} className="drawing-snap-line" />}
         {selected && <circle cx={selected.label[0]} cy={H - selected.label[1] - 1.5} r={4.5} className="drawing-dim-selected" />}
+        {cutFrom && <circle cx={cutFrom[0]} cy={H - cutFrom[1]} r={1.2} className="drawing-snap picked" />}
+        {cutFrom && cutHover && <line x1={cutFrom[0]} y1={H - cutFrom[1]} x2={cutHover.sheet[0]} y2={H - cutHover.sheet[1]} className="drawing-cut-preview" />}
+        {cutHover && <circle cx={cutHover.sheet[0]} cy={H - cutHover.sheet[1]} r={1.2} className="drawing-snap point" />}
       </svg>
       {message && <div className="drawing-message">{message}</div>}
       {layout?.tooBig && <div className="drawing-message warn">The part is too big for this sheet even at {scaleLabel(layout.scale)}. Try a bigger sheet.</div>}

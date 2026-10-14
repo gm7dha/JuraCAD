@@ -2,6 +2,7 @@ import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
+import type { SectionRequest } from "../drawing/sections";
 
 /** A copy of a part placed in an assembly, for exports and clash checks. */
 export interface InstanceInput {
@@ -15,7 +16,8 @@ export interface InstanceInput {
 
 /** A drawing view's lines, in the view's own flat coordinates (mm; x right, y up on the paper). */
 export interface ViewProjection {
-  kind: ViewKind;
+  /** The view's kind, or "section:<id>" for a section view. */
+  kind: string;
   /** Visible lines, each a flat list of points x0, y0, x1, y1… */
   visible: number[][];
   /** Lines hidden behind the part (drawn dashed). */
@@ -30,8 +32,6 @@ export interface ViewProjection {
   axes?: number[][];
   /** Section views: the faces made by the cut, as triangles (x, y × 3 each). */
   cutFaces?: number[];
-  /** Section views: where the cut is, front to back (world Y, mm). */
-  cutAt?: number;
 }
 
 /** One Part Studio's features, for a rebuild. */
@@ -119,7 +119,7 @@ export type KernelRequest =
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[] }
   | { type: "clashes"; instances: InstanceInput[] }
-  | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sectionAt?: number }
+  | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[] }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
 

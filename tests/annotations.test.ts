@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { centreLines, centreMarks, hatchLines, mergeSegments, placeBalloons, surfacePointNearCentre } from "../src/drawing/annotations";
-import { addDrawing, parseDrawings, toggleView } from "../src/drawing/drawing";
+import { addDrawing, parseDrawings } from "../src/drawing/drawing";
+import { addSection, nextSectionLetter, removeSection, sectionGeometry } from "../src/drawing/sections";
 import { sheetDxf } from "../src/drawing/export";
 import { layoutSheet } from "../src/drawing/sheet";
 import type { ViewProjection } from "../src/kernel/protocol";
@@ -110,7 +111,8 @@ describe("drawing extras on the sheet", () => {
     top: rectView("top", 40, 30, { circles: [{ cx: 10, cy: 15, r: 5, hidden: false, full: true }] }),
     right: rectView("right", 30, 20),
     iso: rectView("iso", 50, 45),
-    section: rectView("section", 40, 20, { cutAt: 15, cutFaces: [0, 0, 40, 0, 40, 20, 0, 0, 40, 20, 0, 20] }),
+    "section:A": rectView("section", 40, 20, { cutFaces: [0, 0, 40, 0, 40, 20, 0, 0, 40, 20, 0, 20] }),
+    "section:B": rectView("section", 30, 20),
   };
 
   it("draws centre lines unless turned off", () => {
@@ -120,9 +122,10 @@ describe("drawing extras on the sheet", () => {
   });
 
   it("adds a hatched section view, its name, and where it's cut", () => {
-    const d = toggleView(base(), "section");
+    const d = addSection(base(), { id: "A", host: "top", a: [0, 0.5], b: [1, 0.5] });
+    expect(d.sections![0].letter).toBe("A");
     const l = layoutSheet(d, holed, info);
-    const section = l.views.find((v) => v.kind === "section")!;
+    const section = l.views.find((v) => v.key === "section:A")!;
     const iso = l.views.find((v) => v.kind === "iso")!;
     // Under the 3D view, in the same column.
     expect(section.box[3]).toBeLessThan(iso.box[1]);
@@ -141,9 +144,39 @@ describe("drawing extras on the sheet", () => {
     // Everything still on the sheet.
     for (const v of l.views) expect(v.box[1]).toBeGreaterThan(10);
     // Saved and read back.
-    const saved = parseDrawings(JSON.parse(JSON.stringify([{ ...d, sectionAt: 0.25, centreLines: false, balloons: false }])))[0];
-    expect([saved.sectionAt, saved.centreLines, saved.balloons, saved.views.some((v) => v.kind === "section")]).toEqual([0.25, false, false, true]);
+    const saved = parseDrawings(JSON.parse(JSON.stringify([{ ...d, centreLines: false, balloons: false }])))[0];
+    expect([saved.sections, saved.centreLines, saved.balloons, saved.views.some((v) => v.kind === "section" && v.section === "A")]).toEqual([d.sections, false, false, true]);
     expect(sheetDxf(l.prims)).toContain("\nLINE\n8\nCENTRE\n");
+  });
+
+  it("takes several sections, each with its own letter, view and cutting line", () => {
+    let d = addSection(base(), { id: "A", host: "top", a: [0, 0.5], b: [1, 0.5] });
+    // B: up and down across the front view, a quarter of the way along.
+    d = addSection(d, { id: "B", host: "front", a: [0.25, 0], b: [0.25, 1] });
+    expect(d.sections!.map((s) => s.letter)).toEqual(["A", "B"]);
+    const l = layoutSheet(d, holed, info);
+    const [a, b] = ["section:A", "section:B"].map((k) => l.views.find((v) => v.key === k)!);
+    expect(b.box[3]).toBeLessThan(a.box[1]);
+    const texts = l.prims.filter((p) => p.kind === "text").map((p) => (p.kind === "text" ? p.text : ""));
+    expect(texts).toContain("SECTION B-B");
+    expect(texts.filter((t) => t === "B")).toHaveLength(2);
+    // B's line is up and down at x = 10 on the front view; its arrows point to the left (the section looks along −X, from the right).
+    const front = l.views.find((v) => v.kind === "front")!;
+    const x = front.box[0] + 10 * l.scale;
+    const vertical = l.prims.find((p) => p.kind === "path" && p.style === "centre" && p.points.length === 4 && Math.abs(p.points[0] - x) < 1e-9 && Math.abs(p.points[2] - x) < 1e-9);
+    expect(!!vertical).toBe(true);
+    // Removing B takes its view and any dimensions on it.
+    const withDim = { ...d, dimensions: [{ id: "dm", view: "section:B", type: "horizontal" as const, a: { at: [0, 0] as [number, number], rel: [0, 0] as [number, number] }, b: { at: [1, 0] as [number, number], rel: [1, 0] as [number, number] }, offset: 5 }] };
+    const gone = removeSection(withDim, "B");
+    expect([gone.sections?.length, gone.views.some((v) => v.section === "B"), gone.dimensions]).toEqual([1, false, undefined]);
+    expect(nextSectionLetter(gone)).toBe("B");
+  });
+
+  it("reads drawings saved with the old single section", () => {
+    const old = parseDrawings([{ id: "d", name: "D", source: null, sheet: "A4", hiddenLines: true, title: {}, sectionAt: 0.25, views: [{ id: "s", kind: "section" }], dimensions: [{ id: "x", view: "section", type: "diameter", a: { at: [0, 0], rel: [0, 0] }, r: 2, offset: 8 }] }])[0];
+    expect(old.sections).toEqual([{ id: "A", letter: "A", host: "top", a: [0, 0.25], b: [1, 0.25] }]);
+    expect(old.views).toEqual([{ id: "s", kind: "section", section: "A" }]);
+    expect(old.dimensions?.[0].view).toBe("section:A");
   });
 
   it("numbers the parts of an assembly with balloons", () => {
@@ -158,5 +191,26 @@ describe("drawing extras on the sheet", () => {
     const numbers = l.prims.filter((p) => p.kind === "text" && p.size === 3.5 && (p.text === "1" || p.text === "2") && (p.x < iso.box[0] || p.x > iso.box[2] || p.y < iso.box[1] || p.y > iso.box[3]));
     expect(numbers).toHaveLength(2);
     expect(layoutSheet({ ...d, balloons: false }, holed, { ...info, balloons }).prims.length).toBeLessThan(l.prims.length);
+  });
+});
+
+describe("section geometry", () => {
+  it("works out the cut and which way it looks", () => {
+    // Across the top view at y = 15: cut on y = 15, looking from the front (like the Front view).
+    const a = sectionGeometry("top", [0, 15], [40, 15])!;
+    expect(a.origin).toEqual([0, 15, 0]);
+    expect(a.normal.map((v) => Math.round(v * 1e9) / 1e9 + 0)).toEqual([0, -1, 0]);
+    expect(a.right.map((v) => Math.round(v * 1e9) / 1e9 + 0)).toEqual([1, 0, 0]);
+    expect(a.look.map((v) => Math.round(v * 1e9) / 1e9 + 0)).toEqual([0, 1]);
+    // Flipped: looks from the back.
+    expect(sectionGeometry("top", [0, 15], [40, 15], true)!.normal.map((v) => Math.round(v * 1e9) / 1e9 + 0)).toEqual([0, 1, 0]);
+    // Up and down across the front view: looks along X like the Right view, Z up.
+    const b = sectionGeometry("front", [10, 0], [10, 20])!;
+    expect(b.normal.map((v) => Math.round(v * 1e9) / 1e9 + 0)).toEqual([1, 0, 0]);
+    expect(b.right.map((v) => Math.round(v * 1e9) / 1e9 + 0)).toEqual([0, 1, 0]);
+    // Across the front view: looks down from above (or up from below).
+    const c = sectionGeometry("front", [0, 10], [40, 10])!;
+    expect(Math.abs(c.normal[2])).toBeCloseTo(1, 9);
+    expect(sectionGeometry("front", [1, 1], [1, 1])).toBeNull();
   });
 });

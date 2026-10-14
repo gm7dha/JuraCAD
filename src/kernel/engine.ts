@@ -19,6 +19,7 @@ import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid } from "./textSolid";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
+import { fromRel, sectionGeometry, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
 import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
@@ -143,23 +144,99 @@ function cylinderAxes(shape: Shape3D): [Vec3, Vec3][] {
   return out;
 }
 
+const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross3 = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
 /**
- * Cut a shape for a section view: everything nearer the viewer than the cut
- * (`at` = 0 front … 1 back) is taken away. Returns the rest, where the cut
- * is, and the faces made by the cut as flat triangles in the view.
+ * One drawing view: the shape seen along `toward`, with the lines hidden
+ * behind it (when asked), its circles for dimensions, and the centre lines of
+ * round faces seen from the side (`axes`, in 3D).
  */
-function sectionCut(
-  shape: Shape3D,
-  at: number,
-  toward: Vec3,
-  flat: (p: Vec3) => [number, number],
-): { shape: Shape3D; at: number; faces: number[] } | null {
+function projectView(shape: Shape3D, kind: string, toward: Vec3, right: Vec3, withHidden: boolean, axes: [Vec3, Vec3][]): ViewProjection {
+  const up = cross3(toward, right);
+  const flat = (p: Vec3): [number, number] => [dot3(p, right), dot3(p, up)];
+  const camera = new ProjectionCamera([0, 0, 0], toward, right);
+  try {
+    const { visible, hidden } = makeProjectedEdges(shape, camera, withHidden);
+    const out: ViewProjection = { kind, visible: [], hidden: [], circles: [], points: [], bounds: null };
+    let lo = [Infinity, Infinity];
+    let hi = [-Infinity, -Infinity];
+    const addEdge = (e: Edge, isHidden: boolean) => {
+      const type = e.geomType;
+      let length = 0;
+      try {
+        length = measureLength(e);
+      } catch {
+        length = 0;
+      }
+      const steps = type === "LINE" ? 1 : Math.max(12, Math.min(240, Math.ceil(length / 0.4)));
+      const line: number[] = [];
+      for (let i = 0; i <= steps; i++) {
+        const [x, y] = take(e.pointAt(i / steps));
+        line.push(x, y);
+        if (!isHidden) {
+          lo = [Math.min(lo[0], x), Math.min(lo[1], y)];
+          hi = [Math.max(hi[0], x), Math.max(hi[1], y)];
+        }
+      }
+      (isHidden ? out.hidden : out.visible).push(line);
+      const n = line.length;
+      out.points.push(line[0], line[1], line[n - 2], line[n - 1]);
+      if (type === "CIRCLE" && steps >= 3) {
+        const a: Vec3 = [line[0], line[1], 0];
+        const b: Vec3 = [line[2 * Math.floor(steps / 3)], line[2 * Math.floor(steps / 3) + 1], 0];
+        const c: Vec3 = [line[2 * Math.floor((2 * steps) / 3)], line[2 * Math.floor((2 * steps) / 3) + 1], 0];
+        const circle = circleThrough3D(a, b, c);
+        if (circle) {
+          const full = Math.hypot(line[0] - line[n - 2], line[1] - line[n - 1]) < 1e-6;
+          out.circles.push({ cx: circle.centre[0], cy: circle.centre[1], r: circle.radius, hidden: isHidden, full });
+        }
+      }
+    };
+    visible.forEach((e) => {
+      addEdge(e, false);
+      e.delete();
+    });
+    hidden.forEach((e) => {
+      addEdge(e, true);
+      e.delete();
+    });
+    if (lo[0] <= hi[0]) out.bounds = [lo[0], lo[1], hi[0], hi[1]];
+    // Hidden lines straight behind visible ones only clutter the drawing.
+    out.hidden = dropCoveredHidden(out.visible, out.hidden);
+    const sideOn = axes.filter(([a, b]) => {
+      const d: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const l = Math.hypot(d[0], d[1], d[2]);
+      return l > 1e-9 && Math.abs(dot3(d, toward) / l) < 1e-3;
+    });
+    if (sideOn.length) out.axes = sideOn.map(([a, b]) => [...flat(a), ...flat(b)]);
+    return out;
+  } finally {
+    camera.delete();
+  }
+}
+
+/**
+ * Cut a shape for a section view: everything on the `normal` side of the cut
+ * (towards the viewer) is taken away. Returns the rest, and the faces made by
+ * the cut as flat triangles in the view.
+ */
+function sectionCut(shape: Shape3D, origin: Vec3, normal: Vec3, flat: (p: Vec3) => [number, number]): { shape: Shape3D; faces: number[] } | null {
   const [lo, hi] = boundsOf(shape);
-  // Only front-to-back cuts (toward the viewer is −Y) are made.
-  if (Math.abs(toward[1] + 1) > 1e-9) return null;
-  const y = lo[1] + Math.max(0.01, Math.min(0.99, at)) * (hi[1] - lo[1]);
-  const pad = 1 + Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
-  const box = makeBox([lo[0] - pad, lo[1] - pad, lo[2] - pad], [hi[0] + pad, y, hi[2] + pad]);
+  const mid: Vec3 = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  const diag = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+  // The cut's point nearest the middle of the shape, so the cutting box is centred on it.
+  const off = dot3([mid[0] - origin[0], mid[1] - origin[1], mid[2] - origin[2]], normal);
+  const o: Vec3 = [mid[0] - normal[0] * off, mid[1] - normal[1] * off, mid[2] - normal[2] * off];
+  const L = 2 * diag + 10;
+  // A big box above z = 0, turned so its bottom lies on the cut, facing along `normal`.
+  let box: Shape3D = makeBox([-L, -L, 0], [L, L, 2 * L]);
+  const axis = cross3([0, 0, 1], normal);
+  const s = Math.hypot(axis[0], axis[1], axis[2]);
+  const angle = (Math.atan2(s, normal[2]) * 180) / Math.PI;
+  if (s > 1e-9) box = box.rotate(angle, [0, 0, 0], [axis[0] / s, axis[1] / s, axis[2] / s]);
+  else if (normal[2] < 0) box = box.rotate(180, [0, 0, 0], [1, 0, 0]);
+  box = box.translate(o);
   let cut: Shape3D;
   try {
     cut = shape.cut(box) as Shape3D;
@@ -172,17 +249,17 @@ function sectionCut(
     cut.delete();
     return null;
   }
-  // The cut faces: flat on the cut, facing the viewer.
+  // The cut faces: flat on the cut.
   const faces: number[] = [];
   const m = cut.mesh(MESH_TOLERANCES.display);
-  const tol = 1e-4 * Math.max(1, pad);
+  const tol = 1e-4 * Math.max(1, diag);
   const v = m.vertices;
   for (let i = 0; i + 2 < m.triangles.length; i += 3) {
     const ids = [m.triangles[i], m.triangles[i + 1], m.triangles[i + 2]];
-    if (!ids.every((k) => Math.abs(v[3 * k + 1] - y) < tol)) continue;
+    if (!ids.every((k) => Math.abs(dot3([v[3 * k] - o[0], v[3 * k + 1] - o[1], v[3 * k + 2] - o[2]], normal)) < tol)) continue;
     for (const k of ids) faces.push(...flat([v[3 * k], v[3 * k + 1], v[3 * k + 2]]));
   }
-  return { shape: cut, at: y, faces };
+  return { shape: cut, faces };
 }
 
 /**
@@ -911,101 +988,51 @@ export class GeometryEngine {
    * Drawing views: the chosen parts (or an assembly's placed copies) seen from
    * each direction, with the lines hidden behind the part worked out.
    */
-  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sectionAt = 0.5): ViewProjection[] {
+  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sections: SectionRequest[] = []): ViewProjection[] {
     const placed = instances?.length ? this.placeInstances(instances) : [];
     const shapes = placed.length ? placed.map((p) => p.shape) : (partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts).map((p) => p.shape);
+    const empty = (kind: string): ViewProjection => ({ kind, visible: [], hidden: [], circles: [], points: [], bounds: null });
+    const standard = views.filter((k) => k !== "section");
     if (shapes.length === 0) {
       placed.forEach((p) => p.shape.delete());
-      return views.map((kind) => ({ kind, visible: [], hidden: [], circles: [], points: [], bounds: null }));
+      return [...standard.map(empty), ...sections.map((s) => empty(s.key))];
     }
     const whole = (shapes.length === 1 ? shapes[0] : makeCompound(shapes)) as Shape3D;
     let wholeAxes: [Vec3, Vec3][] | null = null;
-    const toFree: Shape3D[] = [];
     try {
-      return views.map((kind) => {
+      const out: ViewProjection[] = standard.map((kind) => {
         const { toward, right } = VIEW_CAMERAS[kind];
-        const up: Vec3 = [toward[1] * right[2] - toward[2] * right[1], toward[2] * right[0] - toward[0] * right[2], toward[0] * right[1] - toward[1] * right[0]];
-        const flat = (p: Vec3): [number, number] => [p[0] * right[0] + p[1] * right[1] + p[2] * right[2], p[0] * up[0] + p[1] * up[1] + p[2] * up[2]];
-        // Section views: the front part cut away, looking at the cut.
-        let source: Shape3D = whole;
-        let section: { at: number; faces: number[] } | null = null;
-        if (kind === "section") {
-          const cut = sectionCut(whole, sectionAt, toward, flat);
-          if (!cut) return { kind, visible: [], hidden: [], circles: [], points: [], bounds: null };
-          toFree.push(cut.shape);
-          source = cut.shape;
-          section = { at: cut.at, faces: cut.faces };
-        }
-        const camera = new ProjectionCamera([0, 0, 0], toward, right);
-        try {
-          const { visible, hidden } = makeProjectedEdges(source, camera, withHidden && kind !== "section");
-          const out: ViewProjection = { kind, visible: [], hidden: [], circles: [], points: [], bounds: null };
-          let lo = [Infinity, Infinity];
-          let hi = [-Infinity, -Infinity];
-          const addEdge = (e: Edge, isHidden: boolean) => {
-            const type = e.geomType;
-            let length = 0;
-            try {
-              length = measureLength(e);
-            } catch {
-              length = 0;
-            }
-            const steps = type === "LINE" ? 1 : Math.max(12, Math.min(240, Math.ceil(length / 0.4)));
-            const line: number[] = [];
-            for (let i = 0; i <= steps; i++) {
-              const [x, y] = take(e.pointAt(i / steps));
-              line.push(x, y);
-              if (!isHidden) {
-                lo = [Math.min(lo[0], x), Math.min(lo[1], y)];
-                hi = [Math.max(hi[0], x), Math.max(hi[1], y)];
-              }
-            }
-            (isHidden ? out.hidden : out.visible).push(line);
-            const n = line.length;
-            out.points.push(line[0], line[1], line[n - 2], line[n - 1]);
-            if (type === "CIRCLE" && steps >= 3) {
-              const a: Vec3 = [line[0], line[1], 0];
-              const b: Vec3 = [line[2 * Math.floor(steps / 3)], line[2 * Math.floor(steps / 3) + 1], 0];
-              const c: Vec3 = [line[2 * Math.floor((2 * steps) / 3)], line[2 * Math.floor((2 * steps) / 3) + 1], 0];
-              const circle = circleThrough3D(a, b, c);
-              if (circle) {
-                const full = Math.hypot(line[0] - line[n - 2], line[1] - line[n - 1]) < 1e-6;
-                out.circles.push({ cx: circle.centre[0], cy: circle.centre[1], r: circle.radius, hidden: isHidden, full });
-              }
-            }
-          };
-          visible.forEach((e) => {
-            addEdge(e, false);
-            e.delete();
-          });
-          hidden.forEach((e) => {
-            addEdge(e, true);
-            e.delete();
-          });
-          if (lo[0] <= hi[0]) out.bounds = [lo[0], lo[1], hi[0], hi[1]];
-          // Hidden lines straight behind visible ones only clutter the drawing.
-          out.hidden = dropCoveredHidden(out.visible, out.hidden);
-          // Centre lines of round faces seen from the side (not in the 3D view).
-          if (kind !== "iso") {
-            const axes = section ? cylinderAxes(source) : (wholeAxes ??= cylinderAxes(whole));
-            const sideOn = axes.filter(([a, b]) => {
-              const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-              const l = Math.hypot(d[0], d[1], d[2]);
-              return l > 1e-9 && Math.abs((d[0] * toward[0] + d[1] * toward[1] + d[2] * toward[2]) / l) < 1e-3;
-            });
-            if (sideOn.length) out.axes = sideOn.map(([a, b]) => [...flat(a), ...flat(b)]);
-          }
-          if (section) {
-            out.cutAt = section.at;
-            out.cutFaces = section.faces;
-          }
-          return out;
-        } finally {
-          camera.delete();
-        }
+        // Centre lines of round faces seen from the side (not in the 3D view).
+        return projectView(whole, kind, toward, right, withHidden, kind === "iso" ? [] : (wholeAxes ??= cylinderAxes(whole)));
       });
+      for (const req of sections) {
+        let host = out.find((p) => p.kind === req.host);
+        if (!host) {
+          const { toward, right } = VIEW_CAMERAS[req.host];
+          host = projectView(whole, req.host, toward, right, false, []);
+        }
+        const geo = host.bounds ? sectionGeometry(req.host, fromRel(host.bounds, req.a), fromRel(host.bounds, req.b), req.flip) : null;
+        if (!geo) {
+          out.push(empty(req.key));
+          continue;
+        }
+        const up = cross3(geo.toward, geo.right);
+        const flat = (p: Vec3): [number, number] => [dot3(p, geo.right), dot3(p, up)];
+        const cut = sectionCut(whole, geo.origin, geo.normal, flat);
+        if (!cut) {
+          out.push(empty(req.key));
+          continue;
+        }
+        try {
+          const view = projectView(cut.shape, req.key, geo.toward, geo.right, false, cylinderAxes(cut.shape));
+          view.cutFaces = cut.faces;
+          out.push(view);
+        } finally {
+          cut.shape.delete();
+        }
+      }
+      return out;
     } finally {
-      toFree.forEach((s) => s.delete());
       if (whole !== shapes[0] || shapes.length > 1) {
         try {
           whole.delete();

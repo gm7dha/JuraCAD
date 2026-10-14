@@ -1,5 +1,6 @@
 import type { TopoPick } from "../geometry/topoRef";
 import type { MeshQuality, ViewKind } from "../model/types";
+import type { SectionRequest } from "../drawing/sections";
 import type { CheckResult, ExportResult, InstanceInput, Measurement, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
@@ -117,8 +118,8 @@ export class KernelClient {
   }
 
   /** Drawing views of parts (or an assembly's placed copies). */
-  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], hidden: boolean, sectionAt?: number): Promise<ViewProjection[]> {
-    return this.send({ type: "project", partIds, instances, views, hidden, sectionAt }).then((body) => body.result as ViewProjection[]);
+  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], hidden: boolean, sections: SectionRequest[] = []): Promise<ViewProjection[]> {
+    return this.send({ type: "project", partIds, instances, views, hidden, sections }).then((body) => body.result as ViewProjection[]);
   }
 
   /** Pairs of assembly instances that occupy the same space. */

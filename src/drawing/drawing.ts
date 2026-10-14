@@ -2,7 +2,8 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { Dimension, DimPoint, Drawing, DrawingView, PartSmithDocument, SheetSize, ViewKind } from "../model/types";
+import type { Dimension, DimPoint, Drawing, DrawingView, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
+import { SECTION_HOSTS } from "./sections";
 
 const drawingsOf = (doc: PartSmithDocument) => doc.drawings ?? [];
 
@@ -11,7 +12,8 @@ function withDrawings(doc: PartSmithDocument, drawings: Drawing[]): PartSmithDoc
   return drawings.length ? { ...rest, drawings } : rest;
 }
 
-export const VIEW_KINDS: ViewKind[] = ["front", "top", "right", "left", "back", "bottom", "iso", "section"];
+/** Views that can be shown or hidden with a tick (sections are added by drawing a cutting line). */
+export const VIEW_KINDS: ViewKind[] = ["front", "top", "right", "left", "back", "bottom", "iso"];
 export const VIEW_LABELS: Record<ViewKind, string> = {
   front: "Front",
   top: "Top",
@@ -20,7 +22,7 @@ export const VIEW_LABELS: Record<ViewKind, string> = {
   back: "Back",
   bottom: "Bottom",
   iso: "3D (isometric)",
-  section: "Section A-A (front, cut through)",
+  section: "Section",
 };
 export const SHEET_SIZES: SheetSize[] = ["A4", "A3", "A2"];
 
@@ -111,21 +113,54 @@ export function parseDrawings(raw: unknown): Drawing[] {
     const src = r.source as Record<string, unknown> | null | undefined;
     const source: Drawing["source"] =
       src && (src.kind === "part" || src.kind === "assembly") && typeof src.id === "string" ? { kind: src.kind as "part" | "assembly", id: src.id } : null;
+    const sections: SectionCut[] = [];
+    for (const s of Array.isArray(r.sections) ? r.sections : []) {
+      const rs = (s ?? {}) as Record<string, unknown>;
+      const pair = (v: unknown) => (Array.isArray(v) && v.length === 2 && v.every(num) ? (v as [number, number]) : null);
+      const a = pair(rs.a);
+      const b = pair(rs.b);
+      if (typeof rs.id !== "string" || sections.some((x) => x.id === rs.id) || !SECTION_HOSTS.includes(rs.host as ViewKind) || !a || !b) continue;
+      if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9) continue;
+      const letter = typeof rs.letter === "string" && rs.letter.trim() ? rs.letter.trim().slice(0, 3) : "A";
+      sections.push({ id: rs.id, letter, host: rs.host as ViewKind, a, b, ...(rs.flip === true ? { flip: true } : {}) });
+    }
     const views: DrawingView[] = [];
     for (const v of Array.isArray(r.views) ? r.views : []) {
       const rv = (v ?? {}) as Record<string, unknown>;
-      if (typeof rv.id !== "string" || typeof rv.kind !== "string" || !VIEW_KINDS.includes(rv.kind as ViewKind)) continue;
-      if (views.some((x) => x.kind === rv.kind)) continue;
+      if (typeof rv.id !== "string" || typeof rv.kind !== "string") continue;
       const at = Array.isArray(rv.at) && rv.at.length === 2 && rv.at.every(num) ? (rv.at as [number, number]) : undefined;
+      if (rv.kind === "section") {
+        let id = typeof rv.section === "string" ? rv.section : null;
+        // Drawings saved before sections could be chosen had one section, front to back, at `sectionAt`.
+        if (!id && !sections.length) {
+          const f = num(r.sectionAt) ? Math.max(0.01, Math.min(0.99, r.sectionAt as number)) : 0.5;
+          sections.push({ id: "A", letter: "A", host: "top", a: [0, f], b: [1, f] });
+          id = "A";
+        }
+        if (!id || !sections.some((s) => s.id === id) || views.some((x) => x.kind === "section" && x.section === id)) continue;
+        views.push({ id: rv.id, kind: "section", section: id, ...(at ? { at } : {}) });
+        continue;
+      }
+      if (!VIEW_KINDS.includes(rv.kind as ViewKind)) continue;
+      if (views.some((x) => x.kind === rv.kind)) continue;
       views.push({ id: rv.id, kind: rv.kind as ViewKind, ...(at ? { at } : {}) });
     }
+    // Sections without a view are dropped.
+    const shownSections = sections.filter((s) => views.some((v) => v.kind === "section" && v.section === s.id));
     const t = (r.title ?? {}) as Record<string, unknown>;
     const title: Drawing["title"] = {};
     for (const k of ["title", "drawnBy", "material", "notes"] as const) {
       const v = text(t[k], k === "notes" ? 1000 : 200);
       if (v) title[k] = v;
     }
-    const dimensions = (Array.isArray(r.dimensions) ? r.dimensions : []).map(parseDimension).filter((x): x is Dimension => x !== null);
+    const viewKeys = new Set(views.map((v) => (v.kind === "section" ? `section:${v.section}` : v.kind)));
+    const dimensions = (Array.isArray(r.dimensions) ? r.dimensions : [])
+      .map((raw) => {
+        // Dimensions on the old single section view.
+        const old = raw && typeof raw === "object" && (raw as Record<string, unknown>).view === "section";
+        return parseDimension(old ? { ...(raw as object), view: "section:A" } : raw);
+      })
+      .filter((x): x is Dimension => x !== null && viewKeys.has(x.view));
     out.push({
       ...(dimensions.length ? { dimensions } : {}),
       id: r.id,
@@ -136,7 +171,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       hiddenLines: r.hiddenLines !== false,
       views,
       title,
-      ...(num(r.sectionAt) ? { sectionAt: Math.max(0.01, Math.min(0.99, r.sectionAt as number)) } : {}),
+      ...(shownSections.length ? { sections: shownSections } : {}),
       ...(r.centreLines === false ? { centreLines: false } : {}),
       ...(r.balloons === false ? { balloons: false } : {}),
       ...(r.exploded === true ? { exploded: true } : {}),
@@ -159,7 +194,7 @@ function parseDimension(raw: unknown): Dimension | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || typeof r.type !== "string" || !DIM_TYPES.has(r.type)) return null;
-  if (typeof r.view !== "string" || !VIEW_KINDS.includes(r.view as ViewKind)) return null;
+  if (typeof r.view !== "string" || !(VIEW_KINDS.includes(r.view as ViewKind) || /^section:.+/.test(r.view))) return null;
   const a = parseDimPoint(r.a);
   if (!a) return null;
   const type = r.type as Dimension["type"];
@@ -169,7 +204,7 @@ function parseDimension(raw: unknown): Dimension | null {
   if (round && !(num(r.r) && (r.r as number) > 0)) return null;
   return {
     id: r.id,
-    view: r.view as ViewKind,
+    view: r.view,
     type,
     a,
     ...(b ? { b } : {}),

@@ -47,7 +47,7 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 - **Drawings** (the **+** at the bottom): Front, Top, Right and 3D views of a part or assembly on an A4–A2 sheet,
   laid out first-angle with dashed hidden lines and a title block; drag views about; add **dimensions** by
   clicking corners, edges or circles (they update when the part changes); centre lines on holes; a hatched
-  **section view** cut through the part; assembly drawings get a parts list and numbered balloons.
+  **section views** (draw the cutting line across any front, top or side view; as many as you like); assembly drawings get a parts list and numbered balloons.
   Save as **PDF**, **SVG** or **DXF** at true size.
 - **Check model** — confirms each part is closed and watertight, valid and in one piece, finds its thinnest wall,
   and spots separate parts that overlap.

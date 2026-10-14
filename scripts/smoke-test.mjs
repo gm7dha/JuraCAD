@@ -622,7 +622,12 @@ try {
   const pdfText = readFileSync(await pdf.path(), "latin1");
   if (!pdfText.startsWith("%PDF-1.4") || !pdfText.includes("(Smoke test) Tj")) throw new Error("the PDF doesn't look right");
   step = "adding a section view";
-  await page.getByLabel("Section A-A (front, cut through)").check();
+  // Draw a cutting line across the top view (the second view), left to right through its middle.
+  const topBox = await page.locator(".drawing-view-handle").nth(1).boundingBox();
+  await page.getByRole("button", { name: "Section", exact: true }).click();
+  const cutY = topBox.y + topBox.height * 0.5;
+  await page.mouse.click(topBox.x + topBox.width * 0.06, cutY);
+  await page.mouse.click(topBox.x + topBox.width * 0.94, cutY + 1);
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "SECTION A-A"), null, { timeout: 60_000 });
   await shot("drawsection");
   step = "drawing the assembly";
