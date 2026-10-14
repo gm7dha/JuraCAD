@@ -224,6 +224,21 @@ try {
   await page.keyboard.press("Escape");
   await page.keyboard.press("Shift+Digit7");
 
+  step = "scrolling the toolbar with the mouse wheel";
+  {
+    const bar = page.locator('.toolbar[aria-label="Tools"]');
+    const wide = await bar.evaluate((b) => b.scrollWidth > b.clientWidth);
+    if (wide) {
+      if (!(await page.getByLabel("Scroll tools right").isVisible())) throw new Error("no arrow to show more tools");
+      const tb = await bar.boundingBox();
+      await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2);
+      await page.mouse.wheel(0, 400);
+      await page.waitForFunction(() => document.querySelector('.toolbar[aria-label="Tools"]').scrollLeft > 0);
+      await page.getByLabel("Scroll tools left").waitFor();
+      await bar.evaluate((b) => (b.scrollLeft = 0));
+    }
+  }
+
   step = "starting a sketch and picking the Top plane";
   await page.getByRole("button", { name: "Sketch", exact: true }).click();
   await page.waitForSelector(".sketch-panel");

@@ -19,6 +19,7 @@ import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from ".
 import { SketchOverlay } from "./SketchOverlay";
 import { SketchPanel } from "./SketchPanel";
 import { SketchToolbar } from "./SketchToolbar";
+import { ToolbarScroller } from "./ToolbarScroller";
 import { deleteSketchSelection, setSketchTool, sketchEscape, toggleSketchConstruction, applySketchRelation } from "./sketchActions";
 import { startSketchFromSelection, Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
@@ -237,7 +238,7 @@ export function App() {
   return (
     <div className="app">
       <TopBar />
-      {drawing ? <DrawingToolbar /> : assembly ? <AssemblyToolbar /> : sketching ? <SketchToolbar /> : <Toolbar />}
+      <ToolbarScroller>{drawing ? <DrawingToolbar /> : assembly ? <AssemblyToolbar /> : sketching ? <SketchToolbar /> : <Toolbar />}</ToolbarScroller>
       <div className="workspace">
         {drawing ? <DrawingPanel drawing={drawing} /> : assembly ? <AssemblyPanel assembly={assembly} /> : <FeaturePanel />}
         <main className="viewport-area">
