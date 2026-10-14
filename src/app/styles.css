@@ -2312,7 +2312,7 @@ kbd {
   border-color: #2e9d4f;
 }
 
-/* The Help screen's surprise: a photo over everything; any click closes it. */
+/* The Help screen's surprise: a photo in a dialog-sized frame in the middle; any click closes it. */
 .easter-egg {
   position: fixed;
   inset: 0;
@@ -2320,16 +2320,21 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.35);
   cursor: pointer;
   animation: egg-in 0.35s ease-out;
 }
 
 .easter-egg img {
-  max-width: 92vw;
-  max-height: 92vh;
-  border-radius: 12px;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+  display: block;
+  width: min(380px, 80vw);
+  max-height: 70vh;
+  object-fit: contain;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
 
 @keyframes egg-in {
