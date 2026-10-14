@@ -6,6 +6,16 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.9 — Inches, dark mode and everyday improvements · commit `15baa18`
+
+- **Inches** or millimetres per design (Settings ⚙), without changing the model.
+- **Dark mode**: Light, Dark or Automatic (Settings ⚙).
+- Parts list: select several parts (drag, Shift, Ctrl/⌘), hide, colour, export or **duplicate** them together;
+  picking a part lights up the features that made it, and the other way round.
+- Drawings: section views you draw yourself; the **smart Dimension** tool (circle → size, circle + edge →
+  centre-to-edge distance, edge + edge → distance between).
+- Fixes: patterns of a moved part start where it is now; the Settings menu is no longer hidden by the top bar.
+
 ## v0.8 — Extras: sketching, modelling, drawings and assemblies · commit `6f8dda4`
 
 - Sketch: **Offset** (O), **Use** part edges (U), **Mirror** (M) with copies that follow the originals, and a
