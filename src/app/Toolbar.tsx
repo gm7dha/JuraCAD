@@ -256,6 +256,14 @@ export function Toolbar() {
           title={hasPart ? "Move face — push flat faces out or in by a distance" : "Make a part first"}
         />
         <ToolButton
+          label="Thread"
+          icon={<Icons.Thread />}
+          onClick={() => startCreate("thread")}
+          disabled={!ready || !hasPart}
+          active={editingType === "thread"}
+          title={hasPart ? "Thread — cut a screw thread round a rod (bolt) or inside a hole (nut)" : "Make a part first"}
+        />
+        <ToolButton
           label="Delete face"
           icon={<Icons.DeleteFace />}
           onClick={() => startCreate("deleteFace")}

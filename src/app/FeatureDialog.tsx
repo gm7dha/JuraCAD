@@ -15,6 +15,7 @@ import { activeFeatures, studioParts, useLengthUnit, useStore } from "../model/s
 import type { Operation } from "../model/types";
 import { DeleteFaceHelp } from "./DeleteFaceHelp";
 import { Icons } from "./icons";
+import { ISO_COARSE } from "../kernel/thread";
 import { importedSize } from "../model/importFile";
 import { chooseImportFile } from "./fileActions";
 
@@ -809,13 +810,47 @@ function PatternOptions() {
   );
 }
 
+/** Thread: pick a metric size to set the pitch, with a reminder of what size to make the rod or hole. */
+function ThreadOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftParam = useStore((s) => s.setDraftParam);
+  if (draft?.type !== "thread") return null;
+  const pitch = Number(draft.params.pitch);
+  const match = ISO_COARSE.find(([, p]) => Math.abs(p - pitch) < 1e-9);
+  return (
+    <fieldset className="param-group">
+      <legend>Size</legend>
+      <select
+        className="full-select"
+        aria-label="Thread size"
+        value={match ? String(match[0]) : ""}
+        onChange={(e) => {
+          const size = ISO_COARSE.find(([d]) => String(d) === e.target.value);
+          if (size) setDraftParam("pitch", String(size[1]));
+        }}
+      >
+        <option value="">Custom pitch</option>
+        {ISO_COARSE.map(([d, p]) => (
+          <option key={d} value={String(d)}>
+            M{d} (pitch {p} mm)
+          </option>
+        ))}
+      </select>
+      <p className="dialog-hint field-hint">
+        Make a bolt&apos;s rod the full size ({match ? `${match[0]} mm for M${match[0]}` : "e.g. 8 mm for M8"}) and a nut&apos;s hole the tap-drill size (
+        {match ? `${Math.round((match[0] - match[1]) * 100) / 100} mm` : "e.g. 6.75 mm for M8"}). For 3D printing, sizes of M6 and up work best.
+      </p>
+    </fieldset>
+  );
+}
+
 /** Fillet/chamfer/shell: the edges and faces picked so far. */
 function PicksField() {
   const draft = useStore((s) => s.editing?.draft);
   const parts = useStore(studioParts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
-  const faceTypes = ["thicken", "draft", "moveFace", "deleteFace"];
+  const faceTypes = ["thicken", "draft", "moveFace", "deleteFace", "thread"];
   if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type))) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
@@ -826,7 +861,9 @@ function PicksField() {
   return (
     <fieldset className="param-group">
       <legend>
-        {draft.type === "thicken"
+        {draft.type === "thread"
+          ? "Round faces to thread"
+          : draft.type === "thicken"
           ? "Faces to thicken"
           : draft.type === "draft"
             ? "Faces to taper"
@@ -838,7 +875,9 @@ function PicksField() {
       </legend>
       {picks.length === 0 ? (
         <p className="dialog-hint pick-hint">
-          {draft.type === "thicken"
+          {draft.type === "thread"
+            ? "Click the outside of a rod (for a bolt) or the inside of a hole (for a nut)."
+            : draft.type === "thicken"
             ? "Click the flat faces to grow into a solid."
             : draft.type === "draft"
             ? "Click the side faces to taper."
@@ -946,7 +985,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "deleteFace" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "deleteFace" && draft.type !== "thread" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -976,6 +1015,7 @@ export function FeatureDialog() {
         <TransformOptions />
         <ImportOptions />
         <PicksField />
+        <ThreadOptions />
         <PatternOptions />
 
         {groups
