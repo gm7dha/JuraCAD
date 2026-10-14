@@ -6,6 +6,16 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.8 — Extras: sketching, modelling, drawings and assemblies · commit `6f8dda4`
+
+- Sketch: **Offset** (O), **Use** part edges (U), **Mirror** (M) with copies that follow the originals, and a
+  **Symmetric** constraint.
+- Extrude **up to a face**, and with a **draft** angle (tapered sides).
+- **Sweep** a shape along a path, **Loft** between shapes, and raised or engraved **Text**.
+- Drawings: **centre lines** on holes, **section views** you draw yourself (as many as you like, hatched,
+  with lettered cutting lines), and numbered **balloons** on assembly drawings.
+- Assemblies: **limits** on how far hinges and sliders move, and an **exploded view** (also on drawings).
+
 ## v0.7 — Phase 6: 2D drawings · commit `6c408b6`
 
 - Drawing tabs (+ › Drawing): Front, Top, Right, Left, Back, Bottom and 3D views of a part or a whole assembly,
