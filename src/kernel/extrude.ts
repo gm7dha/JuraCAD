@@ -238,10 +238,24 @@ function deleteLoopFaces(shape: Shape3D, picked: Face[]): Shape3D {
       if (f.geomType !== "PLANE") throw new Error("The face around these is curved, so the gap can't be closed.");
       rebuilt.push(makeFace(outer, keep));
     }
-    const solid = makeSolid(rebuilt);
-    return solid as Shape3D;
+    // (makeSolid takes care of the faces it's given.)
+    return makeSolid(rebuilt) as Shape3D;
+  } catch (e) {
+    rebuilt.forEach((f) => {
+      try {
+        f.delete();
+      } catch {
+        // already freed
+      }
+    });
+    throw e;
   } finally {
-    rebuilt.forEach((f) => f.delete());
-    all.forEach((f) => f.delete());
+    all.forEach((f) => {
+      try {
+        f.delete();
+      } catch {
+        // already freed
+      }
+    });
   }
 }
