@@ -70,6 +70,7 @@ function sketchShortcut(e: KeyboardEvent): boolean {
     g: "polygon",
     t: "trim",
     o: "offset",
+    m: "mirror",
     u: "useEdge",
   };
   const key = e.key.toLowerCase();

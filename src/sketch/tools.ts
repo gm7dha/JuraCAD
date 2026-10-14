@@ -5,7 +5,7 @@
  */
 import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
-import { curveById, deleteItems, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
+import { curveById, deleteItems, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
 import type { SketchArc, SketchCircle, SketchConstraint, SketchCurve, SketchData, SketchLine, SketchPoint } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
 import type { EdgeRef } from "../geometry/topoRef";
@@ -602,4 +602,69 @@ export function copyEdge(s: SketchData, frame: PlaneFrame, ref: EdgeRef): EditRe
     };
   }
   return fail("Only straight edges, circles and arcs can be copied into a sketch for now.");
+}
+
+// ---------------------------------------------------------------------------
+// Mirror
+
+/**
+ * Mirror lines, arcs and circles across a line, like Onshape's sketch
+ * Mirror. The copies are tied to the originals (each copied point is held
+ * symmetric to its original across the line; circles keep the same size), so
+ * they follow when the originals change. Points lying on the mirror line are
+ * shared rather than copied, so a mirrored outline joins up.
+ */
+export function mirrorCurves(s: SketchData, axisId: string, curveIds: string[]): EditResult & { curveIds: string[] } {
+  const fail = (error: string) => ({ sketch: s, error, curveIds: [] });
+  const axis = curveById(s, axisId);
+  if (axis?.type !== "line") return fail("Click a straight line to mirror about.");
+  const [ax, ay] = pointPos(s, axis.p1);
+  const [bx, by] = pointPos(s, axis.p2);
+  const len = Math.hypot(bx - ax, by - ay);
+  if (len < 1e-9) return fail("The mirror line has no length.");
+  const sources = curveIds.map((id) => curveById(s, id)).filter((c): c is SketchCurve => !!c && c.id !== axisId);
+  if (!sources.length) return fail("Click the lines, arcs or circles to mirror (not the mirror line itself).");
+
+  const size = Math.max(len, ...s.points.map((p) => Math.hypot(p.x, p.y)), 1);
+  const onAxis = (id: string) => {
+    const [x, y] = pointPos(s, id);
+    return Math.abs((bx - ax) * (y - ay) - (by - ay) * (x - ax)) / len < 1e-7 * size;
+  };
+  const points: SketchPoint[] = [];
+  const constraints: SketchConstraint[] = [];
+  const copies = new Map<string, string>();
+  const copyOf = (id: string): string => {
+    if (id === axis.p1 || id === axis.p2 || onAxis(id)) return id;
+    const known = copies.get(id);
+    if (known) return known;
+    const [x, y] = mirrorPoint(s, axis, pointPos(s, id));
+    const nid = sketchId("p");
+    points.push({ id: nid, x, y });
+    constraints.push({ id: sketchId("c"), type: "symmetric", refs: [id, nid, axisId] });
+    copies.set(id, nid);
+    return nid;
+  };
+
+  const curves: SketchCurve[] = [];
+  for (const c of sources) {
+    if (c.type === "line") {
+      curves.push({ id: sketchId("l"), type: "line", p1: copyOf(c.p1), p2: copyOf(c.p2), construction: c.construction });
+    } else if (c.type === "circle") {
+      const id = sketchId("ci");
+      curves.push({ id, type: "circle", center: copyOf(c.center), radius: c.radius, construction: c.construction });
+      constraints.push({ id: sketchId("c"), type: "equal", refs: [c.id, id] });
+    } else {
+      // A mirror image runs the other way round, so its start and end swap.
+      curves.push({ id: sketchId("a"), type: "arc", center: copyOf(c.center), start: copyOf(c.end), end: copyOf(c.start), construction: c.construction });
+    }
+  }
+  // A line mirrored onto itself (square to the mirror line, its ends both copied to each other) would double up.
+  const unique = curves.filter(
+    (c) => !(c.type === "line" && s.curves.some((o) => o.type === "line" && ((o.p1 === c.p1 && o.p2 === c.p2) || (o.p1 === c.p2 && o.p2 === c.p1)))),
+  );
+  if (!unique.length) return fail("Those are already their own mirror image.");
+  const next: SketchData = { points: [...s.points, ...points], curves: [...s.curves, ...unique], constraints: [...s.constraints, ...constraints] };
+  const r = solveSketch(next);
+  if (!r.ok) return fail("The mirrored copy would conflict with the sketch's other constraints or dimensions.");
+  return { sketch: r.sketch, curveIds: unique.map((c) => c.id) };
 }

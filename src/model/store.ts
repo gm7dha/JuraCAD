@@ -72,6 +72,7 @@ export type SketchTool =
   | "sketchFillet"
   | "trim"
   | "offset"
+  | "mirror"
   | "useEdge";
 
 /** State while a sketch is open for editing. */

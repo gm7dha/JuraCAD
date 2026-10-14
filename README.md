@@ -12,9 +12,9 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 ## What you can do today
 
 - **Sketch** on the Top, Front or Right plane, or on any flat face: lines, rectangles, circles, arcs, slots,
-  polygons and points; **round corners** and **trim** away pieces of lines.
+  polygons and points; **round corners**, **trim** away pieces of lines, **offset**, and **mirror** shapes across a line.
   Add **dimensions** (double-click to change) and **constraints** (horizontal, vertical, parallel, perpendicular,
-  equal, tangent, concentric, midpoint, fix). Blue = still free, black = fully defined.
+  equal, tangent, concentric, midpoint, symmetric, fix). Blue = still free, black = fully defined.
 - **Extrude** a sketch's closed shapes (holes included) one way, symmetrically or **through all**, as a new part or added to /
   cut from the latest part.
 - **Hole**: drill holes at a sketch's points or circle centres — plain, counterbored or countersunk, through or
@@ -71,7 +71,7 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 | View normal to selected face | N |
 | Undo / redo | Ctrl/⌘ + Z, Ctrl/⌘ + Y |
 | Sketch / Extrude | Shift + S / Shift + E |
-| Sketch tools | L line, R rectangle, C circle, A arc, P point, D dimension, Q construction |
+| Sketch tools | L line, R rectangle, C circle, A arc, P point, D dimension, O offset, M mirror, Q construction |
 | Help | ? |
 
 ## How it's built
