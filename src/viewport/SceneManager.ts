@@ -56,7 +56,21 @@ interface PartObjects {
 }
 
 /** What's under the pointer: a face/edge of a part, or one of the default planes. */
-export type PickTarget = { kind: "part"; item: SelectionItem; point?: [number, number, number] } | { kind: "plane"; plane: PlaneName };
+export type PickTarget =
+  | { kind: "part"; item: SelectionItem; point?: [number, number, number] }
+  | { kind: "plane"; plane: PlaneName }
+  /** A Plane feature (by its feature id). */
+  | { kind: "customPlane"; id: string };
+
+/** A Plane feature to draw: where it is, its name, and whether it's highlighted. */
+export interface CustomPlane {
+  id: string;
+  origin: [number, number, number];
+  u: [number, number, number];
+  v: [number, number, number];
+  label: string;
+  highlight: boolean;
+}
 
 /** A line from the eye through a point on the screen (world coordinates). */
 export interface ScreenRay {
@@ -203,7 +217,7 @@ export class SceneManager {
     };
     this.renderer.localClippingEnabled = true;
 
-    this.scene.add(this.partsGroup, this.planesGroup, this.originGroup, this.markersGroup, this.sketchLayer.group);
+    this.scene.add(this.partsGroup, this.planesGroup, this.customPlanesGroup, this.originGroup, this.markersGroup, this.sketchLayer.group);
     this.buildPlanes();
     this.buildOrigin();
 
@@ -689,6 +703,44 @@ export class SceneManager {
     this.updatePlaneSize();
   }
 
+  /** Draw the Plane features (replacing any drawn before). */
+  setCustomPlanes(planes: CustomPlane[]): void {
+    for (const g of [...this.customPlanesGroup.children]) {
+      this.customPlanesGroup.remove(g);
+      g.traverse((o) => {
+        const m = o as THREE.Mesh;
+        m.geometry?.dispose();
+        const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else mat?.dispose();
+      });
+    }
+    this.customPlaneData = planes;
+    for (const p of planes) {
+      const lit = p.highlight || this.hoverCustomPlane === p.id;
+      const fill = new THREE.MeshBasicMaterial({ color: lit ? COLOURS.planeSelected : COLOURS.plane, transparent: true, opacity: lit ? 0.2 : 0.1, side: THREE.DoubleSide, depthWrite: false });
+      const border = new THREE.LineBasicMaterial({ color: lit ? COLOURS.planeSelectedBorder : COLOURS.planeBorder, transparent: true, opacity: lit ? 0.95 : 0.7 });
+      const s = this.planeSize * 0.8;
+      const o = new THREE.Vector3(...p.origin);
+      const u = new THREE.Vector3(...p.u).multiplyScalar(s / 2);
+      const v = new THREE.Vector3(...p.v).multiplyScalar(s / 2);
+      const corners = [o.clone().sub(u).sub(v), o.clone().add(u).sub(v), o.clone().add(u).add(v), o.clone().sub(u).add(v)];
+      const geo = new THREE.BufferGeometry().setFromPoints([corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]]);
+      const square = new THREE.Mesh(geo, fill);
+      square.renderOrder = -1;
+      square.userData.customPlane = p.id;
+      const outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(corners), border);
+      const label = labelSprite(p.label, COLOURS.planeLabel);
+      label.position.copy(corners[3]);
+      const group = new THREE.Group();
+      group.add(square, outline, label);
+      this.customPlanesGroup.add(group);
+    }
+  }
+  private readonly customPlanesGroup = new THREE.Group();
+  private customPlaneData: CustomPlane[] = [];
+  private hoverCustomPlane: string | null = null;
+
   private applyPlaneHighlights(): void {
     for (const [name, p] of this.planes) {
       const selected = this.selectedPlane === name;
@@ -854,7 +906,9 @@ export class SceneManager {
       if (index >= 0) return { kind: "part", item: { partId, kind: "face", index }, point: faceHit.point.toArray() as [number, number, number] };
     }
 
-    // Nothing on a part: try the default planes (nearest first).
+    // Nothing on a part: try the planes (nearest first) — Plane features, then the default planes.
+    const custom = this.raycaster.intersectObjects(this.customPlanesGroup.children.map((g) => g.children[0]), false)[0];
+    if (custom) return { kind: "customPlane", id: custom.object.userData.customPlane as string };
     const squares: THREE.Object3D[] = [];
     for (const [name, p] of this.planes) if (!this.hiddenDatums.has(name)) squares.push(p.square);
     const planeHit = this.raycaster.intersectObjects(squares, false)[0];
@@ -892,7 +946,7 @@ export class SceneManager {
     if (this.dragEnabled && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const hit = this.pickAt(x, y);
       this.drag = hit?.kind === "part" ? { target: hit, started: false, refused: false } : null;
-      this.lastDragDebug = `press hit ${hit ? (hit.kind === "part" ? hit.item.partId : hit.plane) : "nothing"}`;
+      this.lastDragDebug = `press hit ${hit ? (hit.kind === "part" ? hit.item.partId : hit.kind === "plane" ? hit.plane : hit.id) : "nothing"}`;
     }
     if (e.button === 2) {
       // Ctrl + right-drag pans, as in Onshape (⌘ + right-drag too, for Macs).
@@ -982,6 +1036,11 @@ export class SceneManager {
     this.renderer.domElement.style.cursor = overCube && this.viewCube.pick(move.x, move.y, this.width) ? "pointer" : "";
     const partHit = hit?.kind === "part" ? hit.item : null;
     const planeHit = hit?.kind === "plane" ? hit.plane : null;
+    const customHit = hit?.kind === "customPlane" ? hit.id : null;
+    if (customHit !== this.hoverCustomPlane) {
+      this.hoverCustomPlane = customHit;
+      this.setCustomPlanes(this.customPlaneData);
+    }
     if (!sameItem(partHit, this.hover) && (partHit || this.hover)) {
       this.hover = partHit;
       this.applyHighlights();

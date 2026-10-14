@@ -71,6 +71,7 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     feature.text = { value: "PartSmith", plane: { kind: "default", name: "Top" }, bold: false, flip: false };
   }
+  if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
   if (type === "transform") {
     feature.operation = "add";
     feature.transform = { axis: "z", about: "centre", copy: false };
@@ -292,6 +293,16 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         plane: t.plane === null ? null : parsePlane(t.plane) ?? { kind: "default", name: "Top" },
         bold: t.bold === true,
         flip: t.flip === true,
+      };
+    }
+    if (feature.type === "plane") {
+      const pd = (f.planeDef ?? {}) as Record<string, unknown>;
+      const ref2 = parsePlane(pd.ref2);
+      feature.planeDef = {
+        mode: pd.mode === "angle" || pd.mode === "midplane" ? pd.mode : "offset",
+        ref: parsePlane(pd.ref) ?? { kind: "default", name: "Top" },
+        ...(ref2 ? { ref2 } : {}),
+        axis: pd.axis === "v" ? "v" : "u",
       };
     }
     if (feature.type === "loft") feature.sections = Array.isArray(f.sections) ? f.sections.filter((x): x is string => typeof x === "string") : [];

@@ -12,6 +12,8 @@ import type { PartMesh } from "../kernel/protocol";
 import type { Feature } from "../model/types";
 import { SketchController } from "../sketch/controller";
 import { planeFrame, planeOnFace, type SketchPlane } from "../sketch/planes";
+import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/planeFeature";
+import { resolveParams } from "../model/features";
 import { copyEdge } from "../sketch/tools";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
@@ -104,10 +106,30 @@ export function planeForFace(item: SelectionItem): SketchPlane | null {
   return planeOnFace(flat.normal, flat.point, `Face of ${part?.name ?? "part"}`);
 }
 
+/** A Plane feature clicked in the 3D view, as somewhere to sketch (or put text, or base a plane on). */
+function customPlaneAt(id: string): SketchPlane | null {
+  const features = activeFeatures(useStore.getState());
+  const f = features.find((x) => x.id === id);
+  const frame = framesOf(features).get(id);
+  return f && frame ? planeAsSketchPlane(f, frame) : null;
+}
+
 /** Apply a click in the viewport to the selection, like Onshape. */
 function handlePick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
   if (activeAssembly(s)) return handleAssemblyPick(target, additive);
+  // A Plane feature: use it wherever a plane is wanted, otherwise select it in the list.
+  if (target?.kind === "customPlane") {
+    const plane = customPlaneAt(target.id);
+    const d = s.editing?.draft;
+    if (!plane) return;
+    if (s.sketch && d?.sketch && !d.sketch.plane) s.setSketchPlane(plane);
+    else if (d?.type === "text" && d.text) s.setDraftField({ text: { ...d.text, plane } });
+    else if (d?.type === "mirror") s.setDraftMirrorPlane(plane);
+    else if (d?.type === "plane" && d.planeDef && d.id !== target.id) s.setDraftField({ planeDef: { ...d.planeDef, ref: plane } });
+    else if (!s.editing) s.selectFeature(target.id);
+    return;
+  }
   // Choosing where a new sketch goes.
   if (s.sketch && s.editing?.draft.sketch && !s.editing.draft.sketch.plane) {
     if (target?.kind === "plane") s.setSketchPlane({ kind: "default", name: target.plane });
@@ -158,6 +180,20 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       if (plane) s.setDraftField({ text: { ...t, plane } });
       else s.showToast("That face is curved. Pick a flat face or one of the planes for the text.");
     }
+    return;
+  }
+  // Choosing what a Plane feature is based on (for "halfway", the first face then the second).
+  if (s.editing?.draft.type === "plane" && s.editing.draft.planeDef) {
+    const pd = s.editing.draft.planeDef;
+    let picked: SketchPlane | null = null;
+    if (target?.kind === "plane") picked = { kind: "default", name: target.plane };
+    else if (target?.kind === "part" && target.item.kind === "face") {
+      picked = planeForFace(target.item);
+      if (!picked) s.showToast("That face is curved. Pick a flat face or one of the planes.");
+    }
+    if (!picked) return;
+    if (pd.mode === "midplane" && pd.ref.kind === "face" && !pd.ref.planeRef && !pd.ref2) s.setDraftField({ planeDef: { ...pd, ref2: picked } });
+    else s.setDraftField({ planeDef: { ...pd, ref: picked, ...(pd.mode === "midplane" ? { ref2: undefined } : {}) } });
     return;
   }
   // Choosing the plane to mirror across.
@@ -353,6 +389,28 @@ export function Viewport() {
   }, [assembly, mateDraft, parts, solved]);
 
   useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenInstances : hiddenParts), [hiddenParts, hiddenInstances, assembly]);
+  // Plane features (and the one being made), drawn as squares you can click to sketch on.
+  const planeDraft = useStore((s) => (s.editing?.draft.type === "plane" ? s.editing.draft : null));
+  const listFeatures = useStore(activeFeatures);
+  const pickedFeatureForPlanes = useStore((s) => s.selectedFeatureId);
+  useEffect(() => {
+    const manager = viewportApi.current;
+    if (!manager) return;
+    if (assembly) {
+      manager.setCustomPlanes([]);
+      return;
+    }
+    const frames = framesOf(listFeatures);
+    const list = listFeatures
+      .filter((f) => f.type === "plane" && frames.has(f.id) && f.id !== planeDraft?.id)
+      .map((f) => ({ id: f.id, ...frames.get(f.id)!, label: f.name, highlight: f.id === pickedFeatureForPlanes }));
+    if (planeDraft?.planeDef) {
+      const { values, errors } = resolveParams(planeDraft);
+      const frame = Object.keys(errors).length ? null : planeFeatureFrame(planeDraft.planeDef, values);
+      if (frame && typeof frame !== "string") list.push({ id: planeDraft.id, ...frame, label: planeDraft.name, highlight: true });
+    }
+    manager.setCustomPlanes(list.map((p) => ({ id: p.id, origin: p.origin, u: p.u, v: p.v, label: p.label, highlight: p.highlight })));
+  }, [listFeatures, planeDraft, assembly, pickedFeatureForPlanes]);
   const selectedParts = useStore((s) => s.selectedParts);
   const pickedFeature = useStore((s) => s.selectedFeatureId);
   const studioFeatures = useStore(activeFeatures);

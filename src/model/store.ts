@@ -22,6 +22,7 @@ import { sameRef, type TopoPick } from "../geometry/topoRef";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { setCurrentScope } from "./expr";
+import { framesOf, planeAsSketchPlane, refreshDocumentPlanes } from "../sketch/planeFeature";
 import { setLengthUnit, startingLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
@@ -354,7 +355,12 @@ const existsIn = (d: SketchData, id: string) =>
 export const useStore = create<AppState>((set, get) => {
   /** Apply a document change and record it for undo. */
   const change = (fn: (doc: PartSmithDocument) => PartSmithDocument) =>
-    set((s) => ({ history: commit(s.history, fn(s.history.present)) }));
+    set((s) => {
+      const next = fn(s.history.present);
+      // Keep sketches (and anything else) on Plane features where their planes are now.
+      const settled = next === s.history.present ? next : refreshDocumentPlanes(next, resolveVariables(next.variables).values);
+      return { history: commit(s.history, settled) };
+    });
   /** A change to the features of the Part Studio on show. */
   const changeStudio = (fn: (doc: PartSmithDocument) => PartSmithDocument) =>
     change((doc) => inStudio(doc, activeStudioId(get()) ?? MAIN_STUDIO, fn));
@@ -396,7 +402,10 @@ export const useStore = create<AppState>((set, get) => {
     startCreate: (type) => {
       const s = get();
       if (type === "sketch") {
-        s.startSketch(s.selectedPlane ? { kind: "default", name: s.selectedPlane } : null);
+        // On the highlighted plane, or Plane feature, if any.
+        const planeFeature = activeFeatures(s).find((f) => f.id === s.selectedFeatureId && f.type === "plane");
+        const frame = planeFeature ? framesOf(activeFeatures(s)).get(planeFeature.id) : undefined;
+        s.startSketch(planeFeature && frame ? planeAsSketchPlane(planeFeature, frame) : s.selectedPlane ? { kind: "default", name: s.selectedPlane } : null);
         return;
       }
       const draft = createFeature(view(), type);
@@ -414,6 +423,13 @@ export const useStore = create<AppState>((set, get) => {
         const mine = studioParts(s);
         const partId = s.selection[0]?.partId ?? mine[mine.length - 1]?.id;
         if (partId) draft.transform = { ...draft.transform, partId };
+      }
+      // A plane starts from the plane (or Plane feature) highlighted, if any.
+      if (type === "plane" && draft.planeDef) {
+        const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "plane");
+        const frame = picked ? framesOf(features).get(picked.id) : undefined;
+        if (picked && frame) draft.planeDef = { ...draft.planeDef, ref: planeAsSketchPlane(picked, frame) };
+        else if (s.selectedPlane) draft.planeDef = { ...draft.planeDef, ref: { kind: "default", name: s.selectedPlane } };
       }
       // A hole uses the sketch highlighted in the list, if any.
       if (type === "hole" && draft.hole) {

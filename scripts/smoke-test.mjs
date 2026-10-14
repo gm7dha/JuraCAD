@@ -714,13 +714,25 @@ try {
   await shot("darkassembly");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
+  step = "adding a construction plane and sketching on it";
+  await page.getByRole("button", { name: "Plane", exact: true }).click();
+  await page.locator("#param-distance").fill("30");
+  await page.getByRole("button", { name: "Accept" }).click();
+  await page.waitForSelector(".feature-row >> text=Plane 1");
+  if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after adding a plane");
+  await page.locator(".feature-row >> text=Plane 1").click();
+  await page.getByRole("button", { name: "Sketch", exact: true }).click();
+  await page.waitForFunction(() => document.body.textContent?.includes("On Plane 1"), null, { timeout: 5_000 });
+  await shot("plane");
+  await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
