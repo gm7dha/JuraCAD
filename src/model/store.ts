@@ -210,6 +210,11 @@ export interface AppState {
   setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
+  /**
+   * Turn features off (Delete face's "fillets in the way" prompt). With
+   * `commit`, the open feature is added in the same undo step; otherwise it's dropped.
+   */
+  suppressThenFinish: (ids: string[], commit: boolean) => void;
   deleteFeature: (id: string) => void;
   toggleSuppressed: (id: string) => void;
   renameFeature: (id: string, name: string) => void;
@@ -650,6 +655,22 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     cancelDraft: () => set({ editing: null, sketch: null }),
+
+    suppressThenFinish: (ids, commit) => {
+      const { editing } = get();
+      const off = (doc: PartSmithDocument) => ids.reduce((d, id) => setSuppressed(d, id, true), doc);
+      if (commit && editing) {
+        const draft = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
+        changeStudio((doc) => {
+          const d = off(doc);
+          return editing.mode === "create" ? addFeature(d, draft) : replaceFeature(d, draft);
+        });
+        set({ editing: null, sketch: null, selectedFeatureId: draft.id });
+        return;
+      }
+      changeStudio(off);
+      set({ editing: null, sketch: null });
+    },
 
     deleteFeature: (id) => {
       changeStudio((doc) => removeFeature(doc, id));

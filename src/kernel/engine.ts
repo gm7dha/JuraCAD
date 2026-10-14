@@ -589,6 +589,53 @@ export class GeometryEngine {
     return { parts: meshes, featureErrors, durationMs: Math.round(performance.now() - started), rebuilt, studioOrder: studios.map((s) => s.id) };
   }
 
+  /**
+   * Delete face can only close up a hole or boss, so a fillet or chamfer
+   * rounding the edges next to it gets in the way. Works out which earlier
+   * Fillet / Chamfer features on that part are in the way (turning them off
+   * lets the Delete face work), or made the picked face itself. Leaves what's
+   * already built untouched.
+   */
+  deleteFaceBlockers(features: Feature[], featureId: string, variables: Record<string, number> = {}): { blockers: string[]; makers: string[] } {
+    const none = { blockers: [] as string[], makers: [] as string[] };
+    const idx = features.findIndex((f) => f.id === featureId);
+    const target = features[idx];
+    const partId = target?.picks?.find((p) => p.ref.kind === "face")?.partId;
+    if (idx < 0 || target.type !== "deleteFace" || !partId) return none;
+    setCurrentScope(variables);
+    const upto = features.slice(0, idx + 1);
+    const saved = { parts: this.parts, tools: this.tools };
+    const run = (off: Set<string>): { error?: string; featureIds: string[] } => {
+      this.parts = [];
+      this.tools = new Map();
+      try {
+        const errors = this.buildFeatures(upto.map((f) => (off.has(f.id) ? { ...f, suppressed: true } : f)));
+        return { error: errors[featureId], featureIds: [...(this.parts.find((p) => p.id === partId)?.featureIds ?? [])] };
+      } finally {
+        this.disposeBuild({ key: "", parts: this.parts, tools: this.tools, errors: {} });
+        this.parts = saved.parts;
+        this.tools = saved.tools;
+      }
+    };
+    try {
+      const base = run(new Set());
+      if (!base.error) return none;
+      const candidates = upto.filter((f) => (f.type === "fillet" || f.type === "chamfer") && !f.suppressed && base.featureIds.includes(f.id)).map((f) => f.id);
+      const makers: string[] = [];
+      for (const id of candidates) {
+        const r = run(new Set([id]));
+        if (!r.error) return { blockers: [id], makers: [] };
+        // The picked face disappears with this feature: it made that face.
+        if (/can't be found|no longer exists/.test(r.error)) makers.push(id);
+      }
+      if (makers.length) return { blockers: [], makers };
+      if (candidates.length > 1 && !run(new Set(candidates)).error) return { blockers: candidates, makers: [] };
+      return none;
+    } catch {
+      return none;
+    }
+  }
+
   /** Replays one feature list from scratch (a document with a single Part Studio). */
   rebuild(features: Feature[], variables: Record<string, number> = {}, partNames: Record<string, string> = {}): RebuildResult {
     const old = this.builds.get(MAIN_STUDIO_ID);

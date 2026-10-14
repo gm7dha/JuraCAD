@@ -300,6 +300,14 @@ export const Icons = {
       <circle cx="6" cy="12" r="2.5" />
       <circle cx="12" cy="12" r="2.5" />
       <circle cx="18" cy="12" r="2.5" strokeDasharray="2 1.5" />
+  ChevronLeft: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M15 5l-7 7 7 7" />
+    </Svg>
+  ),
+  ChevronRight: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M9 5l7 7-7 7" />
     </Svg>
   ),
   Circle: (p: IconProps) => (

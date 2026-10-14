@@ -897,6 +897,42 @@ describe("draft, move face and delete face", () => {
   });
 });
 
+describe("what stops a Delete face", () => {
+  const filletedHole = () => {
+    const block = feature("box", { width: 30, depth: 30, height: 10 });
+    const hole = feature("cylinder", { diameter: 10, height: 10, x: 15, y: 15 }, "remove");
+    const first = build([block, hole]);
+    const rim = first.parts[0].edgeRefs.find((e) => e.curve === "CIRCLE" && e.mid[2] > 9.99)!;
+    const fillet: Feature = { ...feature("fillet", { radius: 1 }, "add"), picks: [{ partId: block.id, ref: rim }] };
+    const r = build([block, hole, fillet]);
+    return { block, hole, fillet, r };
+  };
+
+  it("names the fillet in the way of deleting a hole's wall", () => {
+    const { block, hole, fillet, r } = filletedHole();
+    const wall = r.parts[0].faceRefs.filter((f) => f.kind === "face" && f.surface.startsWith("CYLIND")).map((ref) => ({ partId: block.id, ref }));
+    const del: Feature = { ...feature("deleteFace", {}), picks: wall };
+    const features = [block, hole, fillet, del];
+    expect(build(features).featureErrors[del.id]).toBeTruthy();
+    const before = engine.check("normal").parts.length;
+    expect(engine.deleteFaceBlockers(features, del.id)).toEqual({ blockers: [fillet.id], makers: [] });
+    // What was built is left alone.
+    expect(engine.check("normal").parts.length).toBe(before);
+    // And with the fillet turned off, the hole closes up.
+    expect(build([block, hole, { ...fillet, suppressed: true }, del]).featureErrors).toEqual({});
+  });
+
+  it("says when the picked face is the fillet's own rounded face", () => {
+    const { block, hole, fillet, r } = filletedHole();
+    const round = r.parts[0].faceRefs.filter((f) => f.kind === "face" && f.surface.startsWith("TOR")).map((ref) => ({ partId: block.id, ref }));
+    expect(round.length).toBeGreaterThan(0);
+    const del: Feature = { ...feature("deleteFace", {}), picks: round };
+    const features = [block, hole, fillet, del];
+    expect(build(features).featureErrors[del.id]).toBeTruthy();
+    expect(engine.deleteFaceBlockers(features, del.id)).toEqual({ blockers: [], makers: [fillet.id] });
+  });
+});
+
 describe("plane features", () => {
   it("build nothing, but say when they can't be placed", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });
