@@ -7,7 +7,7 @@ import type { Feature, FeatureType } from "../model/types";
 import { viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { clickRow, dragRows } from "../model/listSelection";
-import { featuresOfParts, partsOfFeature } from "../model/partLinks";
+import { featuresOfParts, groupByPart, partsOfFeature } from "../model/partLinks";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 
 const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
@@ -514,21 +514,89 @@ export function FeaturePanel() {
   const selectedParts = useStore((s) => s.selectedParts);
   const selectedFeatureId = useStore((s) => s.selectedFeatureId);
   const linkedFeatures = useMemo(() => (selectedParts.length ? featuresOfParts(parts, selectedParts, features) : []), [parts, selectedParts, features]);
+  // "Group by part": remembered on this computer.
+  const [grouped, setGrouped] = useState(() => {
+    try {
+      return localStorage.getItem("partsmith.groupFeatures") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setGroupedPref = (on: boolean) => {
+    setGrouped(on);
+    try {
+      localStorage.setItem("partsmith.groupFeatures", on ? "1" : "0");
+    } catch {
+      // Not remembered; fine.
+    }
+  };
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  const groups = useMemo(() => (grouped ? groupByPart(parts, features) : { groups: [], other: [] }), [grouped, parts, features]);
   const linkedParts = useMemo(() => (selectedFeatureId ? partsOfFeature(parts, selectedFeatureId, features) : []), [parts, selectedFeatureId, features]);
 
   return (
     <aside className="side-panel" aria-label="Feature list">
       <section className="panel-section features">
-        <h3>
-          Features <span className="count">({features.length})</span>
+        <h3 className="panel-heading-row">
+          <span>
+            Features <span className="count">({features.length})</span>
+          </span>
+          <label className="group-toggle" title="Show the features under each part they made (the build order is unchanged)">
+            <input type="checkbox" checked={grouped} onChange={(e) => setGroupedPref(e.target.checked)} />
+            Group by part
+          </label>
         </h3>
         <ul className="feature-list">
           {DATUMS.map((d) => (
             <DatumRow key={d} name={d} onMenu={onMenu} />
           ))}
-          {features.map((f) => (
-            <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} />
-          ))}
+          {!grouped &&
+            features.map((f) => <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} />)}
+          {grouped &&
+            groups.groups.map((g) => (
+              <li key={g.partId} className="feature-group" role="treeitem" aria-expanded={!collapsed.includes(g.partId)}>
+                <button
+                  type="button"
+                  className="feature-group-head"
+                  onClick={() => setCollapsed((c) => (c.includes(g.partId) ? c.filter((x) => x !== g.partId) : [...c, g.partId]))}
+                  aria-label={`${collapsed.includes(g.partId) ? "Show" : "Hide"} the features of ${g.name}`}
+                >
+                  <span className={`caret${collapsed.includes(g.partId) ? "" : " open"}`}>▸</span>
+                  <Icons.Part size={15} />
+                  <span className="feature-name">{g.name}</span>
+                  <span className="count">({g.featureIds.length})</span>
+                </button>
+                {!collapsed.includes(g.partId) && (
+                  <ul className="feature-list nested" role="group">
+                    {g.featureIds.map((id) => {
+                      const f = features.find((x) => x.id === id);
+                      return f ? <FeatureRow key={id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(id)} /> : null;
+                    })}
+                  </ul>
+                )}
+              </li>
+            ))}
+          {grouped && groups.other.length > 0 && (
+            <li className="feature-group" role="treeitem" aria-expanded={!collapsed.includes("other")}>
+              <button
+                type="button"
+                className="feature-group-head"
+                onClick={() => setCollapsed((c) => (c.includes("other") ? c.filter((x) => x !== "other") : [...c, "other"]))}
+              >
+                <span className={`caret${collapsed.includes("other") ? "" : " open"}`}>▸</span>
+                <span className="feature-name muted">Not part of a part yet</span>
+                <span className="count">({groups.other.length})</span>
+              </button>
+              {!collapsed.includes("other") && (
+                <ul className="feature-list nested" role="group">
+                  {groups.other.map((id) => {
+                    const f = features.find((x) => x.id === id);
+                    return f ? <FeatureRow key={id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(id)} /> : null;
+                  })}
+                </ul>
+              )}
+            </li>
+          )}
           {draftIsNew && (
             <li className="feature-row editing draft">
               <span className="feature-icon">{TYPE_ICONS[draftIsNew.type]({ size: 18 })}</span>
