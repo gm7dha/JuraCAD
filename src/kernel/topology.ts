@@ -5,12 +5,12 @@
  * skip repeats, which gets very slow on shapes with thousands of faces (such
  * as imported STL files). Here repeats are found by hash first.
  */
-import { cast, getOC, type Edge, type Face, type Shape3D } from "replicad";
+import { cast, getOC, type Edge, type Face, type Wire, type Shape3D } from "replicad";
 
 const HASH_MAX = 2147483647;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-function list<T>(shape: { wrapped: unknown }, kind: "TopAbs_FACE" | "TopAbs_EDGE" | "TopAbs_SOLID"): T[] {
+function list<T>(shape: { wrapped: unknown }, kind: "TopAbs_FACE" | "TopAbs_EDGE" | "TopAbs_SOLID" | "TopAbs_WIRE"): T[] {
   const oc = getOC() as any;
   const explorer = new oc.TopExp_Explorer(shape.wrapped, oc.TopAbs_ShapeEnum[kind], oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
   const buckets = new Map<number, any[]>();
@@ -34,4 +34,5 @@ function list<T>(shape: { wrapped: unknown }, kind: "TopAbs_FACE" | "TopAbs_EDGE
 
 export const facesOf = (shape: { wrapped: unknown }): Face[] => list<Face>(shape, "TopAbs_FACE");
 export const edgesOf = (shape: { wrapped: unknown }): Edge[] => list<Edge>(shape, "TopAbs_EDGE");
+export const wiresOf = (shape: { wrapped: unknown }): Wire[] => list<Wire>(shape, "TopAbs_WIRE");
 export const solidsOf = (shape: { wrapped: unknown }): Shape3D[] => list<Shape3D>(shape, "TopAbs_SOLID");

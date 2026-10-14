@@ -6,7 +6,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "deleteFace";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -118,8 +118,10 @@ export interface Feature {
   booleanDef?: BooleanOptions;
   /** Split: which part, and the plane that cuts it in two. */
   splitDef?: SplitOptions;
-  /** Thicken and Rib: which way. */
+  /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
+  /** Draft: the neutral plane (the faces pivot where they meet it; the part pulls out along its normal). */
+  neutral?: SketchPlane;
   /** Transform: move and/or turn a part (or a copy of it). */
   transform?: { partId?: string; axis: Axis; about: "origin" | "centre"; copy: boolean };
   /** Linear and circular patterns: the features to repeat, and along or around which axis. */

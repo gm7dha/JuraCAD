@@ -13,6 +13,7 @@ import {
   makeCircle,
   makeFace,
   makeLine,
+  makeSolid,
   makeThreePointArc,
   Vector,
   type Edge,
@@ -24,7 +25,7 @@ import {
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { findRegions, type Loop } from "../sketch/regions";
 import type { SketchData } from "../sketch/types";
-import { facesOf } from "./topology";
+import { edgesOf as edgesOfShape, facesOf, wiresOf } from "./topology";
 
 export interface ExtrudeOptions {
   depth: number;
@@ -155,4 +156,123 @@ export function draftSides(shape: Shape3D, frame: PlaneFrame, dirSign: number, a
     plane.delete();
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * Draft (taper) chosen faces of a part, Onshape's Draft feature: each face is
+ * tilted by `angle` degrees about where it meets the neutral plane, so the
+ * part pulls out of a mould along the plane's normal (`flip` pulls the other way).
+ */
+export function draftFaces(shape: Shape3D, faces: Face[], neutral: PlaneFrame, flip: boolean, angle: number): Shape3D {
+  if (Math.abs(angle) >= 45) throw new Error("The draft angle must be less than 45°.");
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const s = flip ? -1 : 1;
+  const pull: [number, number, number] = [neutral.n[0] * s, neutral.n[1] * s, neutral.n[2] * s];
+  const dir = asDir(pull) as any;
+  const plane = makePln(neutral.origin, pull) as any;
+  const builder = new oc.BRepOffsetAPI_DraftAngle(shape.wrapped);
+  try {
+    for (const f of faces) builder.Add(f.wrapped, dir, (angle * Math.PI) / 180, plane, true);
+    builder.Build();
+    if (!builder.IsDone()) throw new Error("The draft couldn't be applied. Faces parallel to the neutral plane can't be drafted; try a smaller angle.");
+    return cast(builder.Shape()) as Shape3D;
+  } finally {
+    builder.delete();
+    dir.delete();
+    plane.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * Delete faces and let the part heal over the gap (OpenCascade's
+ * defeaturing): removes fillets, chamfers, holes and bosses.
+ */
+export function deleteFaces(shape: Shape3D, faces: Face[]): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  if (!oc.BRepAlgoAPI_Defeaturing) return deleteLoopFaces(shape, faces);
+  const df = new oc.BRepAlgoAPI_Defeaturing();
+  try {
+    df.SetShape(shape.wrapped);
+    for (const f of faces) df.AddFaceToRemove(f.wrapped);
+    try {
+      df.Build();
+    } catch {
+      df.Build(new oc.Message_ProgressRange_1());
+    }
+    if (!df.IsDone()) throw new Error("Those faces can't be removed — the faces around them can't be stretched to close the gap.");
+    return cast(df.Shape()) as Shape3D;
+  } finally {
+    df.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * Delete faces that sit in their own edge loop — a hole's wall (and floor),
+ * a boss's sides (and top) — by taking those loops out of the faces around
+ * them and closing the part up again. (Fillets and chamfers blend into their
+ * neighbours' outer edges, so they can't be removed this way.)
+ */
+function deleteLoopFaces(shape: Shape3D, picked: Face[]): Shape3D {
+  let stage = "faces";
+  const all = facesOf(shape);
+  const removed = all.filter((f) => picked.some((p) => p.isSame(f)));
+  const kept = all.filter((f) => !removed.includes(f));
+  stage = "edges";
+  const gone: Edge[] = removed.flatMap((f) => edgesOfShape(f));
+  const touches = (w: Wire) => edgesOfShape(w).some((e) => gone.some((g) => g.isSame(e)));
+  const rebuilt: Face[] = [];
+  try {
+    for (const f of kept) {
+      stage = "outer wire";
+      // The outer loop is the one with the biggest extent; the rest are holes in the face.
+      const wires = wiresOf(f);
+      const size = (w: Wire) => {
+        const b = w.boundingBox;
+        const [lo, hi] = b.bounds as [number[], number[]];
+        b.delete();
+        return Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+      };
+      const outer = wires.reduce((m, w) => (size(w) > size(m) ? w : m), wires[0]);
+      stage = "touches";
+      if (touches(outer)) {
+        throw new Error("Only holes and bosses (faces in a loop of their own) can be deleted for now — a fillet or chamfer blends into the faces next to it.");
+      }
+      stage = "inner wires";
+      const inner = wires.filter((w) => w !== outer);
+      const keep = inner.filter((w) => !touches(w));
+      if (keep.length === inner.length) {
+        stage = "clone";
+        rebuilt.push(f.clone());
+        continue;
+      }
+      if (f.geomType !== "PLANE") throw new Error("The face around these is curved, so the gap can't be closed.");
+      stage = "make face";
+      rebuilt.push(makeFace(outer, keep));
+    }
+    stage = "make solid";
+    // (makeSolid takes care of the faces it's given.)
+    return makeSolid(rebuilt) as Shape3D;
+  } catch (e) {
+    if (e instanceof Error && /deleted/.test(e.message)) e.message = `${e.message} (at ${stage})`;
+    rebuilt.forEach((f) => {
+      try {
+        f.delete();
+      } catch {
+        // already freed
+      }
+    });
+    throw e;
+  } finally {
+    all.forEach((f) => {
+      try {
+        f.delete();
+      } catch {
+        // already freed
+      }
+    });
+  }
 }

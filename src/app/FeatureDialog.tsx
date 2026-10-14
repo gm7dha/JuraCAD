@@ -131,6 +131,52 @@ function SplitOptionsField() {
   );
 }
 
+/** Draft: the neutral plane, and which way the part pulls out. */
+function DraftOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const features = useStore(activeFeatures);
+  if (draft?.type !== "draft") return null;
+  const neutral = draft.neutral ?? { kind: "default" as const, name: "Top" as const };
+  const planes = features.filter((f) => f.type === "plane");
+  const frames = framesOf(features);
+  const value = neutral.kind === "default" ? neutral.name : neutral.planeRef ? `plane:${neutral.planeRef}` : "face";
+  return (
+    <fieldset className="param-group">
+      <legend>Neutral plane</legend>
+      <select
+        className="full-select"
+        aria-label="Neutral plane"
+        value={value}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "Top" || v === "Front" || v === "Right") setDraftField({ neutral: { kind: "default", name: v } });
+          else if (v.startsWith("plane:")) {
+            const f = planes.find((x) => `plane:${x.id}` === v);
+            const frame = f && frames.get(f.id);
+            if (f && frame) setDraftField({ neutral: planeAsSketchPlane(f, frame) });
+          }
+        }}
+      >
+        <option value="Top">Top plane</option>
+        <option value="Front">Front plane</option>
+        <option value="Right">Right plane</option>
+        {planes.map((f) => (
+          <option key={f.id} value={`plane:${f.id}`}>
+            {f.name}
+          </option>
+        ))}
+        {value === "face" && <option value="face">{planeLabel(neutral)}</option>}
+      </select>
+      <p className="dialog-hint field-hint">The faces pivot where they meet this plane (or click a plane in the 3D view). Usually the base of the part.</p>
+      <label className="check-row">
+        <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked })} />
+        Flip (pull out the other way)
+      </label>
+    </fieldset>
+  );
+}
+
 /** Rib: which sketch; Rib and Thicken: which way. */
 function RibThickenOptions() {
   const draft = useStore((s) => s.editing?.draft);
@@ -767,20 +813,37 @@ function PicksField() {
   const parts = useStore(studioParts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
-  if (!draft || !(isPickFeature(draft.type) || draft.type === "thicken")) return null;
+  const faceTypes = ["thicken", "draft", "moveFace", "deleteFace"];
+  if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type))) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
-  const thicken = draft.type === "thicken";
+  const thicken = faceTypes.includes(draft.type);
   const shell = draft.type === "shell" || thicken;
   const verb = draft.type === "fillet" ? "round" : "bevel";
 
   return (
     <fieldset className="param-group">
-      <legend>{thicken ? "Faces to thicken" : shell ? "Faces to remove" : "Edges"}</legend>
+      <legend>
+        {draft.type === "thicken"
+          ? "Faces to thicken"
+          : draft.type === "draft"
+            ? "Faces to taper"
+            : draft.type === "moveFace"
+              ? "Faces to move"
+              : draft.type === "deleteFace" || shell
+                ? "Faces to remove"
+                : "Edges"}
+      </legend>
       {picks.length === 0 ? (
         <p className="dialog-hint pick-hint">
-          {thicken
+          {draft.type === "thicken"
             ? "Click the flat faces to grow into a solid."
+            : draft.type === "draft"
+            ? "Click the side faces to taper."
+            : draft.type === "moveFace"
+            ? "Click the flat faces to push out (or in, with a minus distance)."
+            : draft.type === "deleteFace"
+            ? "Click the faces to remove — all the faces of a fillet, hole or boss."
             : shell
             ? "Click the face (or faces) to leave open — usually the top. The rest of the part becomes walls."
             : `Click the edges you want to ${verb} in the 3D view. Click a face to ${verb} all its edges.`}
@@ -881,7 +944,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "split" && draft.type !== "rib" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "deleteFace" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -903,6 +966,7 @@ export function FeatureDialog() {
         <BooleanOptionsField />
         <SplitOptionsField />
         <RibThickenOptions />
+        <DraftOptions />
         <SketchSolidOptions />
         <SweepLoftOptions />
         <TextFeatureOptions />

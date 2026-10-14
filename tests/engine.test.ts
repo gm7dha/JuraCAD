@@ -853,6 +853,50 @@ describe("split, thicken and rib", () => {
   });
 });
 
+describe("draft, move face and delete face", () => {
+  const vol = () => Math.round(engine.check("normal").parts[0].exactVolume! * 100) / 100;
+  const faceOf = (r: ReturnType<typeof build>, test: (f: { surface: string; normal: number[] }) => boolean) => {
+    const p = r.parts[0];
+    return p.faceRefs.filter((f) => f.kind === "face" && test(f as { surface: string; normal: number[] })).map((ref) => ({ partId: p.id, ref }));
+  };
+
+  it("moves a flat face out, or in", () => {
+    const box = feature("box", { width: 20, depth: 10, height: 10 });
+    const r1 = build([box]);
+    const top = faceOf(r1, (f) => f.surface === "PLANE" && f.normal[2] > 0.99);
+    const out: Feature = { ...feature("moveFace", { distance: 3 }), picks: top };
+    expect(build([box, out]).featureErrors).toEqual({});
+    expect(vol()).toBe(2600);
+    build([box, { ...out, params: { distance: "-3" } }]);
+    expect(vol()).toBe(1400);
+  });
+
+  it("tapers side faces about the neutral plane", () => {
+    const box = feature("box", { width: 20, depth: 20, height: 10 });
+    const r1 = build([box]);
+    const sides = faceOf(r1, (f) => f.surface === "PLANE" && Math.abs(f.normal[2]) < 0.01);
+    const draft: Feature = { ...feature("draft", { angle: 5 }), picks: sides, neutral: { kind: "default", name: "Top" } };
+    const r = build([box, draft]);
+    expect(r.featureErrors).toEqual({});
+    // Narrower at the top: each side leans in by 10 × tan 5° ≈ 0.875 mm.
+    const v = vol();
+    expect(v).toBeLessThan(4000);
+    expect(v).toBeGreaterThan(3600);
+  });
+
+  it("deletes a hole's wall, closing the hole", () => {
+    const box = feature("box", { width: 20, depth: 20, height: 10 });
+    const hole = feature("cylinder", { diameter: 6, height: 10, x: 10, y: 10 }, "remove");
+    const r1 = build([box, hole]);
+    const wall = faceOf(r1, (f) => f.surface.startsWith("CYLIND"));
+    expect(wall.length).toBeGreaterThan(0);
+    const del: Feature = { ...feature("deleteFace", {}), picks: wall };
+    const r = build([box, hole, del]);
+    expect(r.featureErrors).toEqual({});
+    expect(vol()).toBe(4000);
+  });
+});
+
 describe("plane features", () => {
   it("build nothing, but say when they can't be placed", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });
