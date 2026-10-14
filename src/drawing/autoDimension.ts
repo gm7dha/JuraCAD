@@ -53,9 +53,13 @@ const same = (a: number, b: number) => Math.abs(a - b) < 1e-3;
 export function outlinePoints(p: ViewProjection): P2[] {
   const out: P2[] = [];
   const onCircle = (x: number, y: number) => p.circles.some((c) => Math.abs(Math.hypot(x - c.cx, y - c.cy) - c.r) < 1e-4);
+  // Only ends of visible lines: hidden (dashed) edges are dimensioned in the view where they show.
+  const ends: P2[] = [];
+  for (const line of p.visible) if (line.length >= 4) ends.push([line[0], line[1]], [line[line.length - 2], line[line.length - 1]]);
+  const seen = (x: number, y: number) => ends.some((q) => Math.abs(q[0] - x) < 1e-4 && Math.abs(q[1] - y) < 1e-4);
   for (let i = 0; i + 1 < p.points.length; i += 2) {
     const [x, y] = [p.points[i], p.points[i + 1]];
-    if (onCircle(x, y)) continue;
+    if (onCircle(x, y) || !seen(x, y)) continue;
     if (!out.some((q) => Math.abs(q[0] - x) < 1e-6 && Math.abs(q[1] - y) < 1e-6)) out.push([x, y]);
   }
   return out;

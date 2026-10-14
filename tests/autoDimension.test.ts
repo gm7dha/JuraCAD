@@ -7,15 +7,17 @@ import type { ViewProjection } from "../src/kernel/protocol";
 /** A view with these outline corners (as edges round the outline) and circles. */
 function view(kind: string, corners: [number, number][], circles: ViewProjection["circles"] = []): ViewProjection {
   const points: number[] = [];
+  const visible: number[][] = [];
   corners.forEach(([x, y], i) => {
     const [nx, ny] = corners[(i + 1) % corners.length];
     points.push(x, y, nx, ny);
+    visible.push([x, y, nx, ny]);
   });
   const xs = corners.map((c) => c[0]);
   const ys = corners.map((c) => c[1]);
   return {
     kind,
-    visible: [],
+    visible,
     hidden: [],
     circles,
     points,
@@ -88,6 +90,12 @@ describe("auto dimension", () => {
   it("puts hole positions in the top view when there's no front view", () => {
     const dims = autoDimensions(projections, ["top", "right"], [], 1, id);
     expect(sizes(dims, projections)).toEqual(["right vertical 20", "top diameter 6", "top horizontal 30", "top horizontal 40", "top vertical 15", "top vertical 30"]);
+  });
+
+  it("leaves out hidden edges", () => {
+    const withHole = { ...front, points: [...front.points, 27, 0, 27, 10, 33, 0, 33, 10], hidden: [[27, 0, 27, 10], [33, 0, 33, 10]] };
+    const dims = autoDimensions({ front: withHole }, ["front"], [], 1, id);
+    expect(dims.filter((d) => d.type === "horizontal").length).toBe(2);
   });
 
   it("gives rounded corners a radius, and leaves their ends out of the outline", () => {
