@@ -25,7 +25,7 @@ import {
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { findRegions, type Loop } from "../sketch/regions";
 import type { SketchData } from "../sketch/types";
-import { facesOf } from "./topology";
+import { edgesOf as edgesOfShape, facesOf } from "./topology";
 
 export interface ExtrudeOptions {
   depth: number;
@@ -217,30 +217,39 @@ export function deleteFaces(shape: Shape3D, faces: Face[]): Shape3D {
  * neighbours' outer edges, so they can't be removed this way.)
  */
 function deleteLoopFaces(shape: Shape3D, picked: Face[]): Shape3D {
+  let stage = "faces";
   const all = facesOf(shape);
   const removed = all.filter((f) => picked.some((p) => p.isSame(f)));
   const kept = all.filter((f) => !removed.includes(f));
-  const gone: Edge[] = removed.flatMap((f) => f.edges);
-  const touches = (w: Wire) => w.edges.some((e) => gone.some((g) => g.isSame(e)));
+  stage = "edges";
+  const gone: Edge[] = removed.flatMap((f) => edgesOfShape(f));
+  const touches = (w: Wire) => edgesOfShape(w).some((e) => gone.some((g) => g.isSame(e)));
   const rebuilt: Face[] = [];
   try {
     for (const f of kept) {
+      stage = "outer wire";
       const outer = f.outerWire();
+      stage = "touches";
       if (touches(outer)) {
         throw new Error("Only holes and bosses (faces in a loop of their own) can be deleted for now — a fillet or chamfer blends into the faces next to it.");
       }
+      stage = "inner wires";
       const inner = f.innerWires();
       const keep = inner.filter((w) => !touches(w));
       if (keep.length === inner.length) {
+        stage = "clone";
         rebuilt.push(f.clone());
         continue;
       }
       if (f.geomType !== "PLANE") throw new Error("The face around these is curved, so the gap can't be closed.");
+      stage = "make face";
       rebuilt.push(makeFace(outer, keep));
     }
+    stage = "make solid";
     // (makeSolid takes care of the faces it's given.)
     return makeSolid(rebuilt) as Shape3D;
   } catch (e) {
+    if (e instanceof Error && /deleted/.test(e.message)) e.message = `${e.message} (at ${stage})`;
     rebuilt.forEach((f) => {
       try {
         f.delete();
