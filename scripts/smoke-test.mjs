@@ -229,6 +229,7 @@ try {
     const bar = page.locator('.toolbar[aria-label="Tools"]');
     const wide = await bar.evaluate((b) => b.scrollWidth > b.clientWidth);
     if (wide) {
+      await bar.evaluate((b) => (b.scrollLeft = 0));
       await page.getByLabel("Scroll tools right").waitFor({ timeout: 5_000 }).catch(async () => {
         const info = await bar.evaluate((b) => `scrollLeft ${b.scrollLeft}, client ${b.clientWidth}, scroll ${b.scrollWidth}, parent ${b.parentElement?.className}`);
         throw new Error(`no arrow to show more tools (${info})`);
