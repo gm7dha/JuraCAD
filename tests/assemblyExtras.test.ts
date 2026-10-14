@@ -8,7 +8,7 @@ import { IDENTITY, type Placement, type Vec3 } from "../src/assembly/math";
 import { clampToLimits, mateLimits, mateValues, solveAssembly } from "../src/assembly/mates";
 import { parseDrawings } from "../src/drawing/drawing";
 import { emptyDocument } from "../src/model/document";
-import type { Assembly, Instance, Mate, MateType } from "../src/model/types";
+import type { Assembly, Instance, Mate, MateType, PartSmithDocument } from "../src/model/types";
 
 const inst = (id: string, fixed = false, placement: Placement = IDENTITY): Instance => ({ id, partId: `p_${id}`, name: id, placement, fixed });
 const pick = { partId: "p", ref: { kind: "face" as const, surface: "PLANE", center: [0, 0, 0] as Vec3, normal: [0, 0, 1] as Vec3 } };
@@ -24,7 +24,7 @@ const mate = (type: MateType, values: Record<string, string> = {}, limits?: Mate
 });
 const top: Frame = { origin: [0, 0, 10], z: [0, 0, 1], x: [1, 0, 0] };
 const bottom: Frame = { origin: [0, 0, 0], z: [0, 0, -1], x: [1, 0, 0] };
-const frames = (m: Mate, side: "a" | "b") => (side === "a" ? top : bottom);
+const frames = (_m: Mate, side: "a" | "b") => (side === "a" ? top : bottom);
 const down = (x: number, y: number): Ray => ({ origin: [x, y, 1000], dir: [0, 0, -1] });
 const front = (x: number, z: number): Ray => ({ origin: [x, 1000, z], dir: [0, -1, 0] });
 
@@ -97,7 +97,7 @@ describe("exploded views", () => {
   });
 
   it("is kept with the assembly, and drawings can show it", () => {
-    let doc = { ...emptyDocument(), assemblies: [{ id: "a", name: "A", instances: [] }] as Assembly[] };
+    let doc: PartSmithDocument = { ...emptyDocument(), assemblies: [{ id: "a", name: "A", instances: [] }] };
     doc = setExplode(doc, "a", 1.5);
     expect(doc.assemblies![0].explode).toBe(1.5);
     expect(parseAssemblies(JSON.parse(JSON.stringify(doc.assemblies)))[0].explode).toBe(1.5);
