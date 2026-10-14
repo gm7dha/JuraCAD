@@ -246,7 +246,7 @@ export function DrawingToolbar() {
           label="Auto dimension"
           icon={<Icons.AutoDimension />}
           onClick={autoDimensionDrawing}
-          title="Auto dimension — add the overall sizes, steps, hole sizes and hole positions the drawing needs, measured from one corner"
+          title="Auto dimension — add the overall sizes, steps, hole sizes and hole positions the drawing needs, measured from one corner (choosing baseline, chain or ordinate for each row, whichever reads best)"
         />
         <ToolButton
           label="Arrange"

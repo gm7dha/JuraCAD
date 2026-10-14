@@ -151,7 +151,22 @@ export function rowOffset(p: ViewProjection, side: Side, a: P2, b: P2, scale: nu
   return -((x1 - Math.max(a[0], b[0])) * scale + gap);
 }
 
-/** Points a dimension can use at view coordinate `v` along `dir`, plus the corner they're measured from. */
+/**
+ * Which style suits a row of positions (distances from the corner, nearest first):
+ *  - evenly spaced features (like a row of holes): a chain of the equal gaps, plus the overall size;
+ *  - five or more positions: ordinate (one tidy row of numbers);
+ *  - otherwise baseline (each from the corner; a single size is just an ordinary dimension).
+ */
+export function rowStyle(distances: number[]): "baseline" | "chain" | "ordinate" {
+  const inner = distances.slice(0, -1);
+  if (inner.length >= 3) {
+    const gaps = inner.slice(1).map((d, k) => d - inner[k]);
+    if (gaps.every((g) => Math.abs(g - gaps[0]) < 1e-3)) return "chain";
+  }
+  return distances.length >= 5 ? "ordinate" : "baseline";
+}
+
+/** One direction's dimensions on a view, measured from its corner, in the style that reads best. */
 function baseline(p: ViewProjection, row: Row, existing: Dimension[], scale: number, newId: () => string): Dimension[] {
   const i = row.dir === "h" ? 0 : 1;
   const j = 1 - i;
@@ -161,28 +176,42 @@ function baseline(p: ViewProjection, row: Row, existing: Dimension[], scale: num
   // The corner: furthest left (then lowest) for widths; lowest (then furthest left) for heights.
   const datum = [...outlinePoints(p)].sort((a, b) => a[i] - b[i] || a[j] - b[j])[0] ?? pts[0];
   const type = row.dir === "h" ? "horizontal" : "vertical";
-  const mine = existing.filter((d) => d.view === row.view && d.type === type);
-  const taken = (v: number) => mine.some((d) => d.b && same(Math.abs(d.b.at[i] - d.a.at[i]), Math.abs(v - datum[i])));
-  const values = row.values.filter((v) => Math.abs(v - datum[i]) > 1e-3 && !taken(v));
+  // Dimensions already measuring this direction on this view (any style).
+  const mine = existing.filter((d) => d.view === row.view && (d.type === type || (d.type === "ordinate" && (d.axis ?? "h") === row.dir)));
+  const taken = (v: number) => mine.some((d) => d.b && (same(d.b.at[i], v) || same(d.a.at[i], v)));
+  const fresh = row.values.filter((v) => Math.abs(v - datum[i]) > 1e-3 && !taken(v));
   // Keep the overall size if there are too many.
-  const chosen = values.length > MAX_PER_ROW ? [...values.slice(0, MAX_PER_ROW - 1), values[values.length - 1]] : values;
-  // Shortest nearest the view; carry on outside any dimensions already in that row.
+  const chosen = fresh.length > MAX_PER_ROW ? [...fresh.slice(0, MAX_PER_ROW - 1), fresh[fresh.length - 1]] : fresh;
   chosen.sort((a, b) => Math.abs(a - datum[i]) - Math.abs(b - datum[i]));
-  const out: Dimension[] = [];
-  chosen.forEach((v, n) => {
-    // The point at that position nearest the side the dimension goes on (below for widths, right for heights).
-    // Which side the row goes on: away from the views next to this one (first-angle layout puts
-    // the top view below the front view, and the right view to its left).
-    const where = rowSide(row.view, row.dir);
-    // The point at that position nearest that side, so extension lines are short.
-    const at = pts
-      .filter((q) => same(q[i], v))
-      .sort((a, b) => (where === "below" ? a[1] - b[1] : where === "above" ? b[1] - a[1] : where === "left" ? a[0] - b[0] : b[0] - a[0]))[0];
-    if (!at) return;
-    const offset = rowOffset(p, where, datum, at, scale, mine.length + n);
-    out.push({ id: newId(), view: row.view, type, a: dimPoint(datum, p), b: dimPoint(at, p), offset });
+  if (!chosen.length) return [];
+  // Which side the row goes on: away from the views next to this one (first-angle layout puts
+  // the top view below the front view, and the right view to its left).
+  const where = rowSide(row.view, row.dir);
+  // The point at each position nearest that side, so extension lines are short.
+  const pointAt = (v: number) =>
+    pts.filter((q) => same(q[i], v)).sort((a, b) => (where === "below" ? a[1] - b[1] : where === "above" ? b[1] - a[1] : where === "left" ? a[0] - b[0] : b[0] - a[0]))[0];
+  const targets = chosen.map(pointAt).filter((q): q is P2 => !!q);
+  // Something already measured here: just add the rest from the corner, so styles don't get mixed up.
+  const style = mine.length ? "baseline" : rowStyle(targets.map((q) => Math.abs(q[i] - datum[i])));
+  const firstRow = mine.filter((d) => d.type !== "ordinate").length;
+  const dim = (a: P2, b: P2, rowNo: number, kind: "length" | "ordinate" = "length"): Dimension => ({
+    id: newId(),
+    view: row.view,
+    type: kind === "ordinate" ? "ordinate" : type,
+    a: dimPoint(a, p),
+    b: dimPoint(b, p),
+    offset: rowOffset(p, where, a, b, scale, rowNo),
+    ...(kind === "ordinate" ? { axis: row.dir } : {}),
   });
-  return out;
+  if (style === "ordinate") return [datum, ...targets].map((q) => dim(datum, q, firstRow, "ordinate"));
+  if (style === "chain") {
+    const last = targets[targets.length - 1];
+    const links = targets.slice(0, -1).map((q, k) => dim(k === 0 ? datum : targets[k - 1], q, firstRow));
+    // The last gap follows from the overall size, so it isn't dimensioned twice.
+    return [...links, dim(datum, last, firstRow + 1)];
+  }
+  // Baseline: shortest nearest the view, each from the corner.
+  return targets.map((q, n) => dim(datum, q, firstRow + n));
 }
 
 /** One diameter for each hole / boss size, and one radius for each rounded-corner size. */

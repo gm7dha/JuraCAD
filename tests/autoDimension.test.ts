@@ -115,4 +115,45 @@ describe("auto dimension", () => {
     const dims = autoDimensions({ front: plate }, ["front"], [], 1, id);
     expect(sizes(dims, { front: plate })).toEqual(["front horizontal 20", "front radius 3", "front vertical 10"]);
   });
+
+  it("chains evenly spaced holes, with the overall size outside", () => {
+    // A 50 × 10 strip with four Ø4 holes 10 apart, starting 10 from the left.
+    const strip = view(
+      "top",
+      [
+        [0, 0],
+        [50, 0],
+        [50, 10],
+        [0, 10],
+      ],
+      [10, 20, 30, 40].map((cx) => ({ cx, cy: 5, r: 2, hidden: false, full: true })),
+    );
+    const dims = autoDimensions({ top: strip }, ["top"], [], 1, id).filter((d) => d.type === "horizontal");
+    expect(sizes(dims, { top: strip })).toEqual(["top horizontal 10", "top horizontal 10", "top horizontal 10", "top horizontal 10", "top horizontal 50"]);
+    // The chain shares one row; the overall size sits further out.
+    const overall = dims.find((d) => Math.abs(measureDim(d, resolveDim(d, strip)) - 50) < 1e-6)!;
+    const chain = dims.filter((d) => d !== overall);
+    // (Below the top view, each line sits `offset` below the lower of its two points.)
+    const lineY = (d: (typeof dims)[number]) => Math.min(d.a.at[1], d.b!.at[1]) + d.offset;
+    expect(new Set(chain.map(lineY)).size).toBe(1);
+    expect(lineY(overall)).toBeLessThan(lineY(chain[0]));
+  });
+
+  it("uses ordinate dimensions when there are many uneven positions", () => {
+    const plate = view(
+      "top",
+      [
+        [0, 0],
+        [60, 0],
+        [60, 10],
+        [0, 10],
+      ],
+      [7, 15, 26, 41].map((cx) => ({ cx, cy: 5, r: 1, hidden: false, full: true })),
+    );
+    const dims = autoDimensions({ top: plate }, ["top"], [], 1, id).filter((d) => d.type === "ordinate");
+    expect(sizes(dims, { top: plate })).toEqual(["top ordinate 0", "top ordinate 15", "top ordinate 26", "top ordinate 41", "top ordinate 60", "top ordinate 7"]);
+    // Running it again adds nothing.
+    const all = autoDimensions({ top: plate }, ["top"], [], 1, id);
+    expect(autoDimensions({ top: plate }, ["top"], all, 1, id)).toEqual([]);
+  });
 });
