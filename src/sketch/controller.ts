@@ -19,7 +19,9 @@ import {
   dragCircleRim,
   dragCurve,
   dragPoint,
+  joinPoints,
   pointPos,
+  pointsSharingCurve,
   radiusOf,
   type Placed,
 } from "./ops";
@@ -68,6 +70,8 @@ interface DragState {
   moved: boolean;
   additive: boolean;
   hit: Hit | null;
+  /** Dragging a point: the point (or origin) it has snapped onto, joined when the drag ends. */
+  snapTo?: string | null;
 }
 
 export class SketchController {
@@ -415,6 +419,12 @@ export class SketchController {
     const drag = this.drag;
     this.drag = null;
     if (drag.moved) {
+      if (drag.kind === "point" && drag.snapTo) {
+        const r = joinPoints(this.data ?? drag.start, drag.id, drag.snapTo);
+        if (r.error) this.state.setSketchMessage(r.error, "error");
+        else this.state.updateSketch(r.sketch, { record: false });
+        this.emit({ snap: null });
+      }
       this.state.recordSketchStep(drag.start);
       return;
     }
@@ -465,7 +475,14 @@ export class SketchController {
     if (!drag.moved && Math.hypot(e.x - drag.startX, e.y - drag.startY) < DRAG_PX * e.mmPerPx) return;
     drag.moved = true;
     let next = drag.start;
-    if (drag.kind === "point") next = dragPoint(drag.start, drag.id, e.x, e.y);
+    if (drag.kind === "point") {
+      // Hovering close to another point snaps onto it (and joins them when let go).
+      const others = this.hitAt(e, pointsSharingCurve(drag.start, drag.id));
+      drag.snapTo = others?.kind === "point" ? others.id : null;
+      const [x, y] = drag.snapTo ? pointPos(drag.start, drag.snapTo) : [e.x, e.y];
+      next = dragPoint(drag.start, drag.id, x, y);
+      this.emit({ snap: drag.snapTo ? [x, y] : null });
+    }
     else if (drag.kind === "curve") next = dragCurve(drag.start, drag.id, e.x - drag.startX, e.y - drag.startY);
     else {
       const c = curveById(drag.start, drag.id);

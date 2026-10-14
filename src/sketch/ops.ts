@@ -511,6 +511,32 @@ export function dragPoint(s: SketchData, pointId: string, x: number, y: number):
   return r.ok ? r.sketch : s;
 }
 
+/** Points that share a line, arc or circle with `pointId` (snapping a point onto one of these would squash that shape). */
+export function pointsSharingCurve(s: SketchData, pointId: string): Set<string> {
+  const out = new Set<string>([pointId]);
+  for (const c of s.curves) {
+    const ps = curvePoints(c);
+    if (ps.includes(pointId)) ps.forEach((id) => out.add(id));
+  }
+  return out;
+}
+
+/**
+ * Join a point dragged onto another point (or the origin): they're held
+ * together with a coincident constraint from then on.
+ */
+export function joinPoints(s: SketchData, pointId: string, targetId: string): EditResult {
+  if (pointId === targetId) return { sketch: s };
+  if (pointsSharingCurve(s, pointId).has(targetId)) return { sketch: s, error: "Those two points are on the same line, arc or circle." };
+  const already = s.constraints.some((c) => c.type === "coincident" && c.refs.includes(pointId) && c.refs.includes(targetId));
+  if (already) return { sketch: s };
+  const [x, y] = pointPos(s, targetId);
+  const moved = { ...s, points: s.points.map((p) => (p.id === pointId ? { ...p, x, y } : p)) };
+  const r = solveSketch({ ...moved, constraints: [...s.constraints, { id: sketchId("c"), type: "coincident", refs: [pointId, targetId] }] });
+  if (!r.ok) return { sketch: s, error: "That point can't join the other one — it's held in place by other constraints or dimensions." };
+  return { sketch: r.sketch };
+}
+
 /** Move a whole curve by (dx, dy) from its position in `start`. */
 export function dragCurve(start: SketchData, curveId: string, dx: number, dy: number): SketchData {
   const c = curveById(start, curveId);
