@@ -306,6 +306,8 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         bold: t.bold === true,
         flip: t.flip === true,
       };
+      const face = parsePick(t.face);
+      if (face && face.ref.kind === "face") feature.text.face = face;
     }
     if (feature.type === "split") {
       const sp = (f.splitDef ?? {}) as Record<string, unknown>;

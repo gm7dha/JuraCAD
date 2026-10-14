@@ -469,7 +469,7 @@ function TextFeatureOptions() {
   const setDraftField = useStore((s) => s.setDraftField);
   if (draft?.type !== "text" || !draft.text) return null;
   const t = draft.text;
-  const where = !t.plane ? "— click a plane or flat face —" : t.plane.kind === "default" ? `${t.plane.name} plane` : t.plane.label;
+  const where = t.face ? "a round face (wrapped round it)" : !t.plane ? "— click a plane or a face —" : t.plane.kind === "default" ? `${t.plane.name} plane` : t.plane.label;
   return (
     <fieldset className="param-group">
       <legend>Text</legend>
@@ -482,7 +482,8 @@ function TextFeatureOptions() {
         onChange={(e) => setDraftField({ text: { ...t, value: e.target.value } })}
       />
       <p className="dialog-hint field-hint">
-        On <strong>{where}</strong>. Click a plane or a flat face to move it there.
+        On <strong>{where}</strong>. Click a plane, a flat face or a round face to move it there.
+        {t.face ? " On a round face, Start X moves it round the face and Start Y along it." : ""}
       </p>
       <label className="check-row">
         <input type="checkbox" checked={t.bold} onChange={(e) => setDraftField({ text: { ...t, bold: e.target.checked } })} />

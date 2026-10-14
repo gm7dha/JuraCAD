@@ -1399,4 +1399,29 @@ describe("text", () => {
     expect(v).toBeGreaterThan(60 * 30 * 10 - 200);
     expect(build([{ ...t, text: { ...t.text!, value: "   " } }]).featureErrors[t.id]).toMatch(/Type some text/);
   });
+
+  it("wraps round a round face, raised or engraved", () => {
+    const rod = feature("cylinder", { diameter: 20, height: 30, x: 0, y: 0, z: 0 });
+    const first = build([rod]);
+    const side = first.parts[0].faceRefs.find((f) => f.kind === "face" && f.surface === "CYLINDRE")!;
+    expect(side).toBeTruthy();
+    const pick = { partId: rod.id, ref: side };
+    const solidVolume = analyzeMesh(first.parts[0].vertices, first.parts[0].triangles).volume;
+    const raised: Feature = { ...feature("text", { size: 6, depth: 1, x: 0, y: 0 }, "add"), text: { value: "ROD", plane: null, bold: true, flip: false, face: pick } };
+    const r = build([rod, raised]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    expect(a.volume).toBeGreaterThan(solidVolume + 5);
+    // The letters stand about 1 mm proud, facing the front (−Y).
+    expect(a.bounds!.min[1]).toBeLessThan(-10.5);
+    expect(a.bounds!.min[1]).toBeGreaterThan(-11.5);
+    expect(a.bounds!.max[1]).toBeLessThan(10.2);
+    const engraved: Feature = { ...raised, operation: "remove", text: { ...raised.text!, flip: true } };
+    const e = build([rod, engraved]);
+    expect(e.featureErrors).toEqual({});
+    const v = analyzeMesh(e.parts[0].vertices, e.parts[0].triangles).volume;
+    expect(v).toBeLessThan(solidVolume - 5);
+    expect(v).toBeGreaterThan(solidVolume - 300);
+  });
 });
