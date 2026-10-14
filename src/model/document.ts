@@ -66,6 +66,11 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
       feature.pathRef = sketches[sketches.length - 2]?.id;
     } else feature.sections = sketches.slice(-2).map((f) => f.id);
   }
+  if (type === "text") {
+    const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
+    feature.operation = operation ?? (hasSolid ? "add" : "new");
+    feature.text = { value: "PartSmith", plane: { kind: "default", name: "Top" }, bold: false, flip: false };
+  }
   if (type === "transform") {
     feature.operation = "add";
     feature.transform = { axis: "z", about: "centre", copy: false };
@@ -279,6 +284,15 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "sweep") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       if (typeof f.pathRef === "string") feature.pathRef = f.pathRef;
+    }
+    if (feature.type === "text") {
+      const t = (f.text ?? {}) as Record<string, unknown>;
+      feature.text = {
+        value: typeof t.value === "string" ? t.value.slice(0, 500) : "",
+        plane: t.plane === null ? null : parsePlane(t.plane) ?? { kind: "default", name: "Top" },
+        bold: t.bold === true,
+        flip: t.flip === true,
+      };
     }
     if (feature.type === "loft") feature.sections = Array.isArray(f.sections) ? f.sections.filter((x): x is string => typeof x === "string") : [];
     if (feature.type === "revolve") {

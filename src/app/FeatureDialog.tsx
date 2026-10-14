@@ -172,6 +172,39 @@ function SketchSolidOptions() {
   );
 }
 
+/** Text: the words, the plane, bold, and which way. */
+function TextFeatureOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (draft?.type !== "text" || !draft.text) return null;
+  const t = draft.text;
+  const where = !t.plane ? "— click a plane or flat face —" : t.plane.kind === "default" ? `${t.plane.name} plane` : t.plane.label;
+  return (
+    <fieldset className="param-group">
+      <legend>Text</legend>
+      <textarea
+        className="text-feature-input"
+        value={t.value}
+        rows={2}
+        aria-label="Text"
+        spellCheck={false}
+        onChange={(e) => setDraftField({ text: { ...t, value: e.target.value } })}
+      />
+      <p className="dialog-hint field-hint">
+        On <strong>{where}</strong>. Click a plane or a flat face to move it there.
+      </p>
+      <label className="check-row">
+        <input type="checkbox" checked={t.bold} onChange={(e) => setDraftField({ text: { ...t, bold: e.target.checked } })} />
+        Bold
+      </label>
+      <label className="check-row">
+        <input type="checkbox" checked={t.flip} onChange={(e) => setDraftField({ text: { ...t, flip: e.target.checked } })} />
+        Flip direction (into the part — use with Remove to engrave)
+      </label>
+    </fieldset>
+  );
+}
+
 /** Sweep (profile and path sketches) and loft (the sketches to pass through, in order). */
 function SweepLoftOptions() {
   const draft = useStore((s) => s.editing?.draft);
@@ -621,6 +654,7 @@ export function FeatureDialog() {
 
         <SketchSolidOptions />
         <SweepLoftOptions />
+        <TextFeatureOptions />
         <HoleOptions />
         <TransformOptions />
         <ImportOptions />

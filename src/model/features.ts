@@ -153,6 +153,19 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Makes a smooth solid joining shapes drawn on different sketches — for example a square base blending into a round top.",
     params: [],
   },
+  text: {
+    type: "text",
+    label: "Text",
+    namePrefix: "Text",
+    description: "Raised or engraved lettering on a plane or flat face.",
+    params: [
+      { key: "size", label: "Letter size", defaultValue: "10", positive: true, group: "size" },
+      { key: "depth", label: "Depth", defaultValue: "2", positive: true, group: "size" },
+      { key: "angle", label: "Turn", defaultValue: "0", group: "size", unit: "°" },
+      { key: "x", label: "Start X (on the plane)", defaultValue: "0", group: "position" },
+      { key: "y", label: "Start Y (on the plane)", defaultValue: "0", group: "position" },
+    ],
+  },
   fillet: {
     type: "fillet",
     label: "Fillet",
@@ -220,7 +233,8 @@ export function isSolidFeature(type: FeatureType): boolean {
     type === "hole" ||
     type === "import" ||
     type === "sweep" ||
-    type === "loft"
+    type === "loft" ||
+    type === "text"
   );
 }
 

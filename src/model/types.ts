@@ -6,7 +6,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text";
 
 export interface HoleOptions {
   sketchRef?: string;
@@ -63,6 +63,8 @@ export interface Feature {
   pathRef?: string;
   /** Loft: the sketches to pass through, in order. */
   sections?: string[];
+  /** Text: what it says, where it goes, and how. */
+  text?: { value: string; plane: SketchPlane | null; bold: boolean; flip: boolean };
   /** Extrude features: one way or symmetric, and whether to flip. */
   extrude?: { end: ExtrudeEnd; flip: boolean; /** Up to face: the flat face to stop at. */ upTo?: TopoPick };
   /** Revolve features: the line to spin around ("vertical"/"horizontal" sketch axes, or a sketch line id) and which way. */

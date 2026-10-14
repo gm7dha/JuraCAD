@@ -16,6 +16,7 @@ import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
+import { textSolid } from "./textSolid";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { dropCoveredHidden } from "../drawing/hidden";
@@ -266,6 +267,11 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       const profile = need(feature.sketchRef, "profile");
       const path = need(feature.pathRef, "path");
       return sweepSketch(profile.plane!, profile.data, path.plane!, path.data);
+    }
+    case "text": {
+      const t = feature.text;
+      if (!t?.plane) throw new Error("Click a plane or flat face to put the text on.");
+      return textSolid(t.plane, { value: t.value, bold: t.bold, flip: t.flip, size: v.size, depth: v.depth, x: v.x, y: v.y, angle: v.angle });
     }
     case "loft": {
       const sections = (feature.sections ?? []).map((id) => {

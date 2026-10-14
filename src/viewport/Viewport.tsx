@@ -147,6 +147,17 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
+  // Choosing where text goes.
+  if (s.editing?.draft.type === "text" && s.editing.draft.text) {
+    const t = s.editing.draft.text;
+    if (target?.kind === "plane") s.setDraftField({ text: { ...t, plane: { kind: "default", name: target.plane } } });
+    else if (target?.kind === "part" && target.item.kind === "face") {
+      const plane = planeForFace(target.item);
+      if (plane) s.setDraftField({ text: { ...t, plane } });
+      else s.showToast("That face is curved. Pick a flat face or one of the planes for the text.");
+    }
+    return;
+  }
   // Choosing the plane to mirror across.
   if (s.editing?.draft.type === "mirror") {
     if (target?.kind === "plane") s.setDraftMirrorPlane({ kind: "default", name: target.plane });
