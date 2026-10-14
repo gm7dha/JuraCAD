@@ -547,7 +547,9 @@ try {
   await shot("assembly-check");
   await page.getByRole("button", { name: "Close" }).first().click();
   await page.getByRole("button", { name: "Export", exact: true }).click();
-  await page.waitForSelector("text=The whole assembly");
+  await page.waitForSelector('#export-parts option[value="all"]', { state: "attached" });
+  const allOption = await page.locator('#export-parts option[value="all"]').innerText();
+  if (!/whole assembly/.test(allOption)) throw new Error(`the export choice reads "${allOption}"`);
   const asmDownload = page.waitForEvent("download", { timeout: 60_000 });
   await page.getByRole("button", { name: /Check & export/ }).click();
   // Clashes only warn; export anyway if asked.
