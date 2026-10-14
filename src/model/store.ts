@@ -63,7 +63,7 @@ export interface Editing {
 }
 
 /** Drawing tools: select, the smart Dimension, baseline / chain / ordinate runs, and section. */
-export type DrawingTool = "select" | "dimension" | "baseline" | "chain" | "ordinate" | "section";
+export type DrawingTool = "select" | "dimension" | "baseline" | "chain" | "ordinate" | "section" | "note";
 
 export type SketchTool =
   | "select"

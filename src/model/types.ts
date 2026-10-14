@@ -196,6 +196,8 @@ export interface Drawing {
   title: { title?: string; drawnBy?: string; material?: string; notes?: string };
   /** Dimensions (optional: older saves have none). */
   dimensions?: Dimension[];
+  /** Text notes placed anywhere on the sheet. */
+  notes?: DrawingNote[];
   /** Section cuts drawn on the views (optional: older saves have none). */
   sections?: SectionCut[];
   /** False hides centre marks and centre lines (missing = shown). */
@@ -257,6 +259,13 @@ export interface Dimension {
   suffix?: string;
   /** Ordinate dimensions: measured across ("h") or up-and-down ("v"). */
   axis?: "h" | "v";
+}
+
+/** A note on a drawing sheet: its top-left corner (sheet mm, y up) and its lines of text. */
+export interface DrawingNote {
+  id: string;
+  at: [number, number];
+  text: string;
 }
 
 export interface DimPoint {
