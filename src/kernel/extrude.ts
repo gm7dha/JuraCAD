@@ -13,6 +13,7 @@ import {
   makeCircle,
   makeFace,
   makeLine,
+  makeSolid,
   makeThreePointArc,
   Vector,
   type Edge,
@@ -191,7 +192,7 @@ export function draftFaces(shape: Shape3D, faces: Face[], neutral: PlaneFrame, f
 export function deleteFaces(shape: Shape3D, faces: Face[]): Shape3D {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
-  if (!oc.BRepAlgoAPI_Defeaturing) throw new Error("Delete face isn't available in this version of the geometry engine.");
+  if (!oc.BRepAlgoAPI_Defeaturing) return deleteLoopFaces(shape, faces);
   const df = new oc.BRepAlgoAPI_Defeaturing();
   try {
     df.SetShape(shape.wrapped);
@@ -207,4 +208,40 @@ export function deleteFaces(shape: Shape3D, faces: Face[]): Shape3D {
     df.delete();
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * Delete faces that sit in their own edge loop — a hole's wall (and floor),
+ * a boss's sides (and top) — by taking those loops out of the faces around
+ * them and closing the part up again. (Fillets and chamfers blend into their
+ * neighbours' outer edges, so they can't be removed this way.)
+ */
+function deleteLoopFaces(shape: Shape3D, picked: Face[]): Shape3D {
+  const all = facesOf(shape);
+  const removed = all.filter((f) => picked.some((p) => p.isSame(f)));
+  const kept = all.filter((f) => !removed.includes(f));
+  const gone: Edge[] = removed.flatMap((f) => f.edges);
+  const touches = (w: Wire) => w.edges.some((e) => gone.some((g) => g.isSame(e)));
+  const rebuilt: Face[] = [];
+  try {
+    for (const f of kept) {
+      const outer = f.outerWire();
+      if (touches(outer)) {
+        throw new Error("Only holes and bosses (faces in a loop of their own) can be deleted for now — a fillet or chamfer blends into the faces next to it.");
+      }
+      const inner = f.innerWires();
+      const keep = inner.filter((w) => !touches(w));
+      if (keep.length === inner.length) {
+        rebuilt.push(f.clone());
+        continue;
+      }
+      if (f.geomType !== "PLANE") throw new Error("The face around these is curved, so the gap can't be closed.");
+      rebuilt.push(makeFace(outer, keep));
+    }
+    const solid = makeSolid(rebuilt);
+    return solid as Shape3D;
+  } finally {
+    rebuilt.forEach((f) => f.delete());
+    all.forEach((f) => f.delete());
+  }
 }
