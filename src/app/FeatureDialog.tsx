@@ -13,6 +13,7 @@ import type { Axis } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { activeFeatures, studioParts, useLengthUnit, useStore } from "../model/store";
 import type { Operation } from "../model/types";
+import { DeleteFaceHelp } from "./DeleteFaceHelp";
 import { Icons } from "./icons";
 import { importedSize } from "../model/importFile";
 import { chooseImportFile } from "./fileActions";
@@ -998,6 +999,7 @@ export function FeatureDialog() {
             <Icons.Warning size={16} /> {buildError}
           </div>
         )}
+        {buildError && draft.type === "deleteFace" && <DeleteFaceHelp error={buildError} />}
         <p className="dialog-hint">
           {busy ? "Updating preview…" : def.params.length ? "Tip: you can type maths, units and variables, e.g. 10 + 2, 1 in or wall * 2." : null}
         </p>
