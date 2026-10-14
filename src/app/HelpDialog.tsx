@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { useStore } from "../model/store";
 import { Modal } from "./Modal";
 import { APP_VERSION, SHORT_VERSION } from "../version";
 import { detectPlatform, helpRows, type Platform } from "./platform";
+import { eggClick } from "./easterEgg";
 
 function KeyTable({ rows, keysFirst }: { rows: [string, string][]; keysFirst: boolean }) {
   return (
@@ -35,6 +36,14 @@ export function HelpDialog() {
   const openDialog = useStore((s) => s.openDialog);
   const [platform, setPlatform] = useState<Platform>(() => detectPlatform());
   const rows = helpRows(platform);
+  const clicks = useRef<number[]>([]);
+  const [egg, setEgg] = useState(false);
+  const choose = (p: Platform) => {
+    setPlatform(p);
+    const r = eggClick(clicks.current, performance.now());
+    clicks.current = r.recent;
+    if (r.found) setEgg(true);
+  };
 
   return (
     <Modal title="Help and shortcuts" onClose={() => openDialog(null)} width={560}>
@@ -57,7 +66,7 @@ export function HelpDialog() {
               role="radio"
               aria-checked={platform === p}
               className={platform === p ? "selected" : ""}
-              onClick={() => setPlatform(p)}
+              onClick={() => choose(p)}
             >
               {p === "mac" ? "Mac" : "Windows"}
             </button>
@@ -81,6 +90,11 @@ export function HelpDialog() {
         </a>
         .
       </p>
+      {egg && (
+        <div className="easter-egg" role="dialog" aria-label="Surprise!" onClick={() => setEgg(false)} title="Click to close">
+          <img src={`${import.meta.env.BASE_URL}easter-egg.jpg`} alt="A happy spaniel in a teal harness, standing on a carved log" />
+        </div>
+      )}
     </Modal>
   );
 }
