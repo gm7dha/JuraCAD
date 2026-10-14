@@ -2,8 +2,8 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { Dimension, DrawingNote, DimPoint, Drawing, DrawingView, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
-import { SECTION_HOSTS } from "./sections";
+import type { DetailView, Dimension, DrawingNote, DimPoint, Drawing, DrawingView, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
+import { SECTION_HOSTS, viewKey } from "./sections";
 
 const drawingsOf = (doc: PartSmithDocument) => doc.drawings ?? [];
 
@@ -23,6 +23,7 @@ export const VIEW_LABELS: Record<ViewKind, string> = {
   bottom: "Bottom",
   iso: "3D (isometric)",
   section: "Section",
+  detail: "Detail",
 };
 export const SHEET_SIZES: SheetSize[] = ["A4", "A3", "A2"];
 
@@ -135,6 +136,16 @@ export function parseDrawings(raw: unknown): Drawing[] {
       const letter = typeof rs.letter === "string" && rs.letter.trim() ? rs.letter.trim().slice(0, 3) : "A";
       sections.push({ id: rs.id, letter, host: rs.host as ViewKind, a, b, ...(rs.flip === true ? { flip: true } : {}) });
     }
+    const details: DetailView[] = [];
+    for (const x of Array.isArray(r.details) ? r.details : []) {
+      const rx = (x ?? {}) as Record<string, unknown>;
+      const centre = Array.isArray(rx.centre) && rx.centre.length === 2 && rx.centre.every(num) ? (rx.centre as [number, number]) : null;
+      if (typeof rx.id !== "string" || details.some((d) => d.id === rx.id) || !SECTION_HOSTS.includes(rx.host as ViewKind) || !centre) continue;
+      if (!num(rx.radius) || (rx.radius as number) <= 0) continue;
+      const zoom = num(rx.zoom) && (rx.zoom as number) > 0 ? Math.min(50, rx.zoom as number) : 2;
+      const letter = typeof rx.letter === "string" && rx.letter.trim() ? rx.letter.trim().slice(0, 3) : "B";
+      details.push({ id: rx.id, letter, host: rx.host as ViewKind, centre, radius: rx.radius as number, zoom });
+    }
     const views: DrawingView[] = [];
     for (const v of Array.isArray(r.views) ? r.views : []) {
       const rv = (v ?? {}) as Record<string, unknown>;
@@ -152,6 +163,12 @@ export function parseDrawings(raw: unknown): Drawing[] {
         views.push({ id: rv.id, kind: "section", section: id, ...(at ? { at } : {}) });
         continue;
       }
+      if (rv.kind === "detail") {
+        const id = typeof rv.detail === "string" ? rv.detail : null;
+        if (!id || !details.some((x) => x.id === id) || views.some((x) => x.kind === "detail" && x.detail === id)) continue;
+        views.push({ id: rv.id, kind: "detail", detail: id, ...(at ? { at } : {}) });
+        continue;
+      }
       if (!VIEW_KINDS.includes(rv.kind as ViewKind)) continue;
       if (views.some((x) => x.kind === rv.kind)) continue;
       views.push({ id: rv.id, kind: rv.kind as ViewKind, ...(at ? { at } : {}) });
@@ -164,7 +181,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       const v = text(t[k], k === "notes" ? 1000 : 200);
       if (v) title[k] = v;
     }
-    const viewKeys = new Set(views.map((v) => (v.kind === "section" ? `section:${v.section}` : v.kind)));
+    const viewKeys = new Set(views.map((v) => viewKey(v)));
     const dimensions = (Array.isArray(r.dimensions) ? r.dimensions : [])
       .map((raw) => {
         // Dimensions on the old single section view.
@@ -191,6 +208,9 @@ export function parseDrawings(raw: unknown): Drawing[] {
       views,
       title,
       ...(shownSections.length ? { sections: shownSections } : {}),
+      ...(details.some((x) => views.some((v) => v.kind === "detail" && v.detail === x.id))
+        ? { details: details.filter((x) => views.some((v) => v.kind === "detail" && v.detail === x.id)) }
+        : {}),
       ...(r.centreLines === false ? { centreLines: false } : {}),
       ...(r.balloons === false ? { balloons: false } : {}),
       ...(r.exploded === true ? { exploded: true } : {}),
@@ -213,7 +233,7 @@ function parseDimension(raw: unknown): Dimension | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || typeof r.type !== "string" || !DIM_TYPES.has(r.type)) return null;
-  if (typeof r.view !== "string" || !(VIEW_KINDS.includes(r.view as ViewKind) || /^section:.+/.test(r.view))) return null;
+  if (typeof r.view !== "string" || !(VIEW_KINDS.includes(r.view as ViewKind) || /^(section|detail):.+/.test(r.view))) return null;
   const a = parseDimPoint(r.a);
   if (!a) return null;
   const type = r.type as Dimension["type"];

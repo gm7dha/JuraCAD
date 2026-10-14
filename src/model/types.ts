@@ -167,7 +167,7 @@ export interface PartSmithDocument {
 
 /** Which way a drawing view looks at the part. */
 /** "section" is a view of the part cut through along a line drawn on another view (see Drawing.sections). */
-export type ViewKind = "front" | "top" | "right" | "left" | "back" | "bottom" | "iso" | "section";
+export type ViewKind = "front" | "top" | "right" | "left" | "back" | "bottom" | "iso" | "section" | "detail";
 
 /** One view on a drawing sheet. */
 export interface DrawingView {
@@ -175,6 +175,8 @@ export interface DrawingView {
   kind: ViewKind;
   /** Section views: which section (its id in Drawing.sections). */
   section?: string;
+  /** Detail views: which detail (its id in Drawing.details). */
+  detail?: string;
   /** Centre of the view on the sheet (mm from the bottom-left corner); missing = placed automatically. */
   at?: [number, number];
 }
@@ -196,6 +198,8 @@ export interface Drawing {
   title: { title?: string; drawnBy?: string; material?: string; notes?: string };
   /** Dimensions (optional: older saves have none). */
   dimensions?: Dimension[];
+  /** Detail views (each also has an entry in `views`). */
+  details?: DetailView[];
   /** Text notes placed anywhere on the sheet. */
   notes?: DrawingNote[];
   /** Section cuts drawn on the views (optional: older saves have none). */
@@ -215,6 +219,19 @@ export interface Drawing {
  * view it's drawn on, so the cut stays in the same place on the part when it
  * changes size.
  */
+/** A detail view: a circle on a view, shown again bigger. */
+export interface DetailView {
+  id: string;
+  /** "B", "C"… (shared with section letters). */
+  letter: string;
+  host: ViewKind;
+  /** The circle's centre as fractions of the host view's width and height, and its radius (model mm). */
+  centre: [number, number];
+  radius: number;
+  /** How many times bigger than the rest of the sheet. */
+  zoom: number;
+}
+
 export interface SectionCut {
   id: string;
   /** "A", "B"… */

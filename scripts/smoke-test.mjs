@@ -724,6 +724,18 @@ try {
   await page.mouse.click(topBox.x + topBox.width * 0.94, cutY + 1);
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "SECTION A-A"), null, { timeout: 60_000 });
   await shot("drawsection");
+  step = "adding a detail view";
+  {
+    const frontNow = await page.locator(".drawing-view-handle").first().boundingBox();
+    await page.getByRole("button", { name: "Detail", exact: true }).click();
+    const cxp = frontNow.x + frontNow.width * 0.8;
+    const cyp = frontNow.y + frontNow.height * 0.3;
+    await page.mouse.click(cxp, cyp);
+    await page.mouse.move(cxp + 15, cyp, { steps: 3 });
+    await page.mouse.click(cxp + 15, cyp);
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^DETAIL [A-Z]/.test(t.textContent ?? "")), null, { timeout: 10_000 });
+    await shot("detail");
+  }
   step = "drawing the assembly";
   await page.locator("#drawing-source").selectOption({ label: "Assembly 1" });
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "QTY"), null, { timeout: 60_000 });
