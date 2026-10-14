@@ -211,6 +211,7 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(round ? { r: r.r as number } : {}),
     offset: num(r.offset) ? (r.offset as number) : 8,
     ...(num(r.angle) ? { angle: r.angle as number } : {}),
+    ...(num(r.textAlong) && r.textAlong !== 0 ? { textAlong: r.textAlong as number } : {}),
     ...(type === "ordinate" ? { axis: r.axis === "v" ? ("v" as const) : ("h" as const) } : {}),
   };
 }

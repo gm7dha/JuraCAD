@@ -239,7 +239,24 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
     prims.push(arrow(la, dir), arrow(lb, [-dir[0], -dir[1]]));
   }
   const angle = readable((Math.atan2(along[1], along[0]) * 180) / Math.PI);
-  const mid: P2 = [(la[0] + lb[0]) / 2, (la[1] + lb[1]) / 2];
+  // The number sits in the middle, unless it's been slid along the line (it can go past the ends:
+  // the dimension line then carries on out to it).
+  const shift = dim.textAlong ?? 0;
+  const mid: P2 = [(la[0] + lb[0]) / 2 + along[0] * shift, (la[1] + lb[1]) / 2 + along[1] * shift];
+  if (shift !== 0) {
+    const t = (p: P2) => p[0] * along[0] + p[1] * along[1];
+    const lo = Math.min(t(la), t(lb));
+    const hi = Math.max(t(la), t(lb));
+    const half = (text.length * TEXT_SIZE * 0.55) / 2 + 1;
+    const tm = t(mid);
+    const from = tm - half < lo ? tm - half : tm + half > hi ? tm + half : null;
+    if (from !== null) {
+      const edge = from < lo ? lo : hi;
+      const at = (v: number): P2 => [la[0] + along[0] * (v - t(la)), la[1] + along[1] * (v - t(la))];
+      const [p, q] = [at(edge), at(from)];
+      prims.push({ kind: "path", points: [p[0], p[1], q[0], q[1]], style: "thin" });
+    }
+  }
   const rad = (angle * Math.PI) / 180;
   // "Above" the line, as you'd read the text.
   const up: P2 = [-Math.sin(rad), Math.cos(rad)];
@@ -278,26 +295,33 @@ export function placeLength(a: P2, b: P2, cursor: P2, force?: "horizontal" | "ve
 }
 
 /** New offset (and leader angle for circles) when a dimension's number is dragged to `cursor` (sheet mm). */
-export function dragDimension(dim: Dimension, a: P2, b: P2 | null, rad: number, cursor: P2): { offset: number; angle?: number } {
+export function dragDimension(dim: Dimension, a: P2, b: P2 | null, rad: number, cursor: P2): { offset: number; angle?: number; textAlong?: number } {
   if (dim.type === "diameter" || dim.type === "radius") {
     const angle = (Math.atan2(cursor[1] - a[1], cursor[0] - a[0]) * 180) / Math.PI;
     return { offset: Math.max(2, Math.round((dist(cursor, a) - rad) * 10) / 10), angle: Math.round(angle) };
   }
   const q = b ?? a;
   const r = (v: number) => Math.round(v * 10) / 10;
+  // Lengths: the number also slides along the line (snapping back to the middle near it).
+  const slide = (dir: P2) => {
+    const v = (cursor[0] - (a[0] + q[0]) / 2) * dir[0] + (cursor[1] - (a[1] + q[1]) / 2) * dir[1];
+    return Math.abs(v) < 2 ? 0 : r(v);
+  };
   if (dim.type === "horizontal" || (dim.type === "ordinate" && dim.axis !== "v")) {
     const minY = Math.min(a[1], q[1]);
     const maxY = Math.max(a[1], q[1]);
-    return { offset: r(cursor[1] >= (minY + maxY) / 2 ? cursor[1] - maxY : cursor[1] - minY) };
+    const offset = r(cursor[1] >= (minY + maxY) / 2 ? cursor[1] - maxY : cursor[1] - minY);
+    return dim.type === "ordinate" ? { offset } : { offset, textAlong: slide([1, 0]) };
   }
   if (dim.type === "vertical" || dim.type === "ordinate") {
     const minX = Math.min(a[0], q[0]);
     const maxX = Math.max(a[0], q[0]);
-    return { offset: r(cursor[0] <= (minX + maxX) / 2 ? minX - cursor[0] : maxX - cursor[0]) };
+    const offset = r(cursor[0] <= (minX + maxX) / 2 ? minX - cursor[0] : maxX - cursor[0]);
+    return dim.type === "ordinate" ? { offset } : { offset, textAlong: slide([0, 1]) };
   }
   const d = dist(a, q) || 1;
   const across: P2 = [-(q[1] - a[1]) / d, (q[0] - a[0]) / d];
-  return { offset: r(cursor[0] * across[0] + cursor[1] * across[1] - (a[0] * across[0] + a[1] * across[1])) };
+  return { offset: r(cursor[0] * across[0] + cursor[1] * across[1] - (a[0] * across[0] + a[1] * across[1])), textAlong: slide([(q[0] - a[0]) / d, (q[1] - a[1]) / d]) };
 }
 
 // ---------------------------------------------------------------------------

@@ -246,6 +246,8 @@ export interface Dimension {
   offset: number;
   /** Circles: direction of the leader (degrees). */
   angle?: number;
+  /** Lengths: how far the number has been slid along the dimension line from the middle (paper mm). */
+  textAlong?: number;
   /** Ordinate dimensions: measured across ("h") or up-and-down ("v"). */
   axis?: "h" | "v";
 }
