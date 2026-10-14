@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
 import { viewportApi } from "./viewport/Viewport";
 import "./app/styles.css";
+import { initTheme } from "./app/theme";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root element");
@@ -21,6 +22,9 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 if (new URLSearchParams(window.location.search).has("smoke")) {
   (window as unknown as { partsmithViewport: typeof viewportApi }).partsmithViewport = viewportApi;
 }
+
+// Light or dark, before the first paint.
+initTheme();
 
 createRoot(root).render(
   <StrictMode>

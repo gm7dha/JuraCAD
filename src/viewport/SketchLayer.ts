@@ -21,6 +21,15 @@ export const SKETCH_COLOURS = {
   dimension: new THREE.Color("#4b5866"),
 };
 
+/** Sketch colours for a dark or light background (fully defined lines are black on light, near-white on dark). */
+export function setSketchTheme(dark: boolean): void {
+  SKETCH_COLOURS.defined.set(dark ? "#eef2f6" : "#161b21");
+  SKETCH_COLOURS.inactive.set(dark ? "#8d99a6" : "#5b6672");
+  SKETCH_COLOURS.dimension.set(dark ? "#b4bec9" : "#4b5866");
+  SKETCH_COLOURS.free.set(dark ? "#5aa0ff" : "#1f6fd1");
+  SKETCH_COLOURS.preview.set(dark ? "#5aa0ff" : "#1f6fd1");
+}
+
 export interface ActiveSketch {
   plane: SketchPlane;
   data: SketchData;
