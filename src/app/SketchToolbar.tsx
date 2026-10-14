@@ -11,8 +11,10 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "select", label: "Select", key: "Esc", icon: <Icons.Select />, hint: "Click to select, drag to move" },
   { tool: "line", label: "Line", key: "L", icon: <Icons.Line />, hint: "Click to start, keep clicking to chain lines, Esc to stop" },
   { tool: "rectangle", label: "Rectangle", key: "R", icon: <Icons.Rectangle />, hint: "Click two opposite corners" },
+  { tool: "centreRectangle", label: "Centre rect", key: "", icon: <Icons.CentreRectangle />, hint: "Click the centre, then a corner" },
   { tool: "circle", label: "Circle", key: "C", icon: <Icons.Circle />, hint: "Click the centre, then a point on the edge" },
   { tool: "arc", label: "Arc", key: "A", icon: <Icons.Arc />, hint: "Click both ends, then a point the arc passes through" },
+  { tool: "tangentArc", label: "Tangent arc", key: "", icon: <Icons.TangentArc />, hint: "Click the end of a line or arc, then where the arc should finish — it carries on smoothly" },
   { tool: "slot", label: "Slot", key: "S", icon: <Icons.Slot />, hint: "Click both end centres, then move out to set the width" },
   { tool: "polygon", label: "Polygon", key: "G", icon: <Icons.Polygon />, hint: "Click the centre, then a corner (set the number of sides in the sketch panel)" },
   { tool: "point", label: "Point", key: "P", icon: <Icons.Point />, hint: "Click to place a point" },
@@ -21,6 +23,7 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "trim", label: "Trim", key: "T", icon: <Icons.Trim />, hint: "Click a piece of a line, arc or circle to cut it away up to where other lines cross it" },
   { tool: "offset", label: "Offset", key: "O", icon: <Icons.Offset />, hint: "Click a shape's edge on the side to offset towards — a copy that far away (set the distance in the sketch panel)" },
   { tool: "mirror", label: "Mirror", key: "M", icon: <Icons.Mirror />, hint: "Click the line to mirror about, then the shapes to copy across (or select the shapes first). The copies follow the originals" },
+  { tool: "sketchPattern", label: "Pattern", key: "", icon: <Icons.SketchPattern />, hint: "Click shapes to repeat them in a row or round a centre (set how many and how far apart in the sketch panel)" },
   { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part to copy them into the sketch (they stay fixed where they are)" },
 ];
 

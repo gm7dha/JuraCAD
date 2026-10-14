@@ -281,6 +281,27 @@ export const Icons = {
       <rect x="4" y="6" width="16" height="12" />
     </Svg>
   ),
+  CentreRectangle: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="4" y="6" width="16" height="12" />
+      <path d="M4 6l16 12" strokeDasharray="2 2" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+    </Svg>
+  ),
+  TangentArc: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 18h8" />
+      <path d="M11 18a6 6 0 0 0 6-6V5" />
+      <circle cx="11" cy="18" r="1.5" fill="currentColor" />
+    </Svg>
+  ),
+  SketchPattern: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="6" cy="12" r="2.5" />
+      <circle cx="12" cy="12" r="2.5" />
+      <circle cx="18" cy="12" r="2.5" strokeDasharray="2 1.5" />
+    </Svg>
+  ),
   AutoDimension: (p: IconProps) => (
     <Svg {...p}>
       <rect x="6" y="9" width="12" height="9" />
