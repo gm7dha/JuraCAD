@@ -629,8 +629,16 @@ try {
   await page.mouse.click(frontBox.x + frontBox.width - inset, bottom);
   await page.mouse.move(frontBox.x + frontBox.width / 2, bottom + 12 * mm, { steps: 3 });
   await page.mouse.click(frontBox.x + frontBox.width / 2, bottom + 12 * mm);
+  // Smart dimension: the left edge, then the right edge, gives the distance between them.
+  const midY = frontBox.y + frontBox.height / 2;
+  await page.mouse.click(frontBox.x + inset, midY);
+  await page.mouse.click(frontBox.x + frontBox.width - inset, midY);
+  await page.mouse.move(frontBox.x + frontBox.width / 2, frontBox.y - 10 * mm, { steps: 3 });
+  await page.mouse.click(frontBox.x + frontBox.width / 2, frontBox.y - 10 * mm);
   await page.keyboard.press("Escape");
   await page.waitForSelector(".drawing-dim-handle", { timeout: 5_000 });
+  const dimCount = await page.locator(".drawing-dim-handle").count();
+  if (dimCount !== 2) throw new Error(`expected 2 dimensions (corner to corner, edge to edge), found ${dimCount}`);
   const dimTexts = await page.locator(".drawing-text").evaluateAll((els) => els.map((e) => e.textContent ?? ""));
   const dimValue = dimTexts.find((t) => /^\d+(\.\d+)?$/.test(t));
   if (!dimValue) throw new Error(`no dimension on the drawing (texts: ${dimTexts.slice(0, 30).join(", ")})`);

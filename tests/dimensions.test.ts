@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dimLabel, dimPoint, drawDimension, formatSize, measureDim, placeLength, resolveDim, snapPoints } from "../src/drawing/dimensions";
+import { dimLabel, dimPoint, drawDimension, formatSize, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints } from "../src/drawing/dimensions";
 import { addDrawing, parseDrawings, putDimension, removeDimension, toggleView } from "../src/drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../src/drawing/export";
 import { layoutSheet } from "../src/drawing/sheet";
@@ -113,5 +113,35 @@ describe("dimensions on drawings", () => {
     expect(dxf).toContain("%%c10");
     expect(dxf).toContain("\nLINE\n8\nVISIBLE\n");
     expect(dxf.trimEnd().endsWith("EOF")).toBe(true);
+  });
+});
+
+describe("smart dimensions (two clicks)", () => {
+  const hole = { kind: "circle" as const, centre: [10, 10] as [number, number], r: 5, full: true };
+  const right = { kind: "line" as const, a: [40, 0] as [number, number], b: [40, 20] as [number, number] };
+  const top = { kind: "line" as const, a: [0, 20] as [number, number], b: [40, 20] as [number, number] };
+  const bottom = { kind: "line" as const, a: [40, 0] as [number, number], b: [0, 0] as [number, number] };
+
+  it("measures from a hole's centre straight across to an edge", () => {
+    expect(pairFor(hole, right)).toEqual({ a: [10, 10], b: [40, 0], force: "horizontal" });
+    expect(pairFor(top, hole)).toEqual({ a: [10, 10], b: [0, 20], force: "vertical" });
+    // Measured that way, it's the distance from the centre to the edge.
+    const d = { id: "d", view: "front", type: "horizontal" as const, a: dimPoint([10, 10], view()), b: dimPoint([40, 0], view()), offset: 5 };
+    expect(measureDim(d, resolveDim(d, view()))).toBe(30);
+  });
+
+  it("measures between holes, corners and parallel edges", () => {
+    expect(pairFor(hole, { kind: "point", at: [40, 20] })).toEqual({ a: [10, 10], b: [40, 20] });
+    expect(pairFor(top, bottom)).toEqual({ a: [0, 20], b: [0, 0], force: "vertical" });
+    expect(pairFor(bottom, top)).toEqual({ a: [40, 0], b: [40, 20], force: "vertical" });
+    expect("error" in pairFor(top, right)).toBe(true);
+    expect("error" in pairFor(hole, { kind: "line", a: [0, 0], b: [40, 20] })).toBe(true);
+    expect(sameTarget(top, { kind: "line", a: [40, 20], b: [0, 20] })).toBe(true);
+    expect(sameTarget(hole, { ...hole, r: 6 })).toBe(false);
+  });
+
+  it("can be told which way to measure", () => {
+    expect(placeLength([10, 10], [40, 0], [25, 30], "horizontal").type).toBe("horizontal");
+    expect(placeLength([10, 10], [40, 0], [60, 5], "vertical")).toEqual({ type: "vertical", offset: -20 });
   });
 });

@@ -230,7 +230,7 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
  * mm) and where the pointer is: above or below them gives a horizontal one,
  * beside them a vertical one, and in between a slanted (aligned) one.
  */
-export function placeLength(a: P2, b: P2, cursor: P2): { type: "horizontal" | "vertical" | "aligned"; offset: number } {
+export function placeLength(a: P2, b: P2, cursor: P2, force?: "horizontal" | "vertical"): { type: "horizontal" | "vertical" | "aligned"; offset: number } {
   const minX = Math.min(a[0], b[0]);
   const maxX = Math.max(a[0], b[0]);
   const minY = Math.min(a[1], b[1]);
@@ -240,6 +240,8 @@ export function placeLength(a: P2, b: P2, cursor: P2): { type: "horizontal" | "v
   const horizontal = () => ({ type: "horizontal" as const, offset: cursor[1] >= maxY ? cursor[1] - maxY : cursor[1] < minY ? cursor[1] - minY : 8 });
   // Vertical dimension lines are measured with "across" pointing left (−x).
   const vertical = () => ({ type: "vertical" as const, offset: cursor[0] <= minX ? minX - cursor[0] : cursor[0] > maxX ? maxX - cursor[0] : 8 });
+  if (force === "horizontal") return horizontal();
+  if (force === "vertical") return vertical();
   if (flatY && !flatX) return horizontal();
   if (flatX && !flatY) return vertical();
   const outY = cursor[1] > maxY ? cursor[1] - maxY : cursor[1] < minY ? minY - cursor[1] : 0;
@@ -273,4 +275,51 @@ export function dragDimension(dim: Dimension, a: P2, b: P2 | null, rad: number, 
   const d = dist(a, q) || 1;
   const across: P2 = [-(q[1] - a[1]) / d, (q[0] - a[0]) / d];
   return { offset: r(cursor[0] * across[0] + cursor[1] * across[1] - (a[0] * across[0] + a[1] * across[1])) };
+}
+
+// ---------------------------------------------------------------------------
+// Smart dimensioning: what two clicks measure (like Onshape's single Dimension tool)
+
+/** Something clicked on a view: a corner or end, an edge, or a circle. */
+export type DimTarget = { kind: "point"; at: P2 } | { kind: "line"; a: P2; b: P2 } | { kind: "circle"; centre: P2; r: number; full: boolean };
+
+const EPS = 1e-6;
+const isFlat = (l: { a: P2; b: P2 }) => Math.abs(l.b[1] - l.a[1]) < EPS * Math.max(1, dist(l.a, l.b));
+const isUpright = (l: { a: P2; b: P2 }) => Math.abs(l.b[0] - l.a[0]) < EPS * Math.max(1, dist(l.a, l.b));
+const nearerEnd = (l: { a: P2; b: P2 }, p: P2): P2 => (dist(l.a, p) <= dist(l.b, p) ? l.a : l.b);
+const pointOf = (t: DimTarget): P2 | null => (t.kind === "point" ? t.at : t.kind === "circle" ? t.centre : null);
+
+/** True when two clicks picked the same thing. */
+export function sameTarget(x: DimTarget, y: DimTarget): boolean {
+  if (x.kind !== y.kind) return false;
+  if (x.kind === "point" && y.kind === "point") return dist(x.at, y.at) < EPS;
+  if (x.kind === "circle" && y.kind === "circle") return dist(x.centre, y.centre) < EPS && Math.abs(x.r - y.r) < EPS;
+  if (x.kind === "line" && y.kind === "line") return (dist(x.a, y.a) < EPS && dist(x.b, y.b) < EPS) || (dist(x.a, y.b) < EPS && dist(x.b, y.a) < EPS);
+  return false;
+}
+
+/**
+ * The distance two clicked things make: between two points or hole centres;
+ * from a point or hole centre straight across to a level or upright edge;
+ * or between two parallel level (or upright) edges. Returns the two points
+ * to dimension between and which way to measure, or why it can't.
+ */
+export function pairFor(first: DimTarget, second: DimTarget): { a: P2; b: P2; force?: "horizontal" | "vertical" } | { error: string } {
+  const p1 = pointOf(first);
+  const p2 = pointOf(second);
+  if (p1 && p2) return dist(p1, p2) < EPS ? { error: "Those are in the same place — click something else." } : { a: p1, b: p2 };
+  const slanted = "For a slanted edge, click its end points instead.";
+  if (first.kind === "line" && second.kind === "line") {
+    // The two ends nearest each other, so the extension lines are short.
+    const ends = [first.a, first.b].flatMap((p) => [second.a, second.b].map((q) => [p, q] as [P2, P2]));
+    const [a, b] = ends.reduce((m, e) => (dist(e[0], e[1]) < dist(m[0], m[1]) ? e : m));
+    if (isFlat(first) && isFlat(second)) return { a, b, force: "vertical" };
+    if (isUpright(first) && isUpright(second)) return { a, b, force: "horizontal" };
+    return { error: "Those edges aren't parallel. Click two level or two upright edges, or their corners." };
+  }
+  const line = first.kind === "line" ? first : (second as { kind: "line"; a: P2; b: P2 });
+  const p = (p1 ?? p2)!;
+  if (isFlat(line)) return { a: p, b: nearerEnd(line, p), force: "vertical" };
+  if (isUpright(line)) return { a: p, b: nearerEnd(line, p), force: "horizontal" };
+  return { error: slanted };
 }
