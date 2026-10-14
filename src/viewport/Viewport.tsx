@@ -182,6 +182,11 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
+  // Picking parts for a Boolean.
+  if (s.editing?.draft.type === "boolean") {
+    if (target?.kind === "part") s.toggleBooleanPart(target.item.partId);
+    return;
+  }
   // Choosing what a Plane feature is based on (for "halfway", the first face then the second).
   if (s.editing?.draft.type === "plane" && s.editing.draft.planeDef) {
     const pd = s.editing.draft.planeDef;
@@ -414,11 +419,20 @@ export function Viewport() {
   const selectedParts = useStore((s) => s.selectedParts);
   const pickedFeature = useStore((s) => s.selectedFeatureId);
   const studioFeatures = useStore(activeFeatures);
-  // Picked parts, or the parts a picked feature made, light up.
+  // Picked parts, or the parts a picked feature made (or a Boolean being set up uses), light up.
+  const booleanDef = useStore((s) => (s.editing?.draft.type === "boolean" ? s.editing.draft.booleanDef ?? null : null));
   useEffect(() => {
-    const lit = assembly ? [] : selectedParts.length ? selectedParts : pickedFeature ? partsOfFeature(parts, pickedFeature, studioFeatures) : [];
+    const lit = assembly
+      ? []
+      : booleanDef
+        ? [...booleanDef.targets, ...booleanDef.tools]
+        : selectedParts.length
+          ? selectedParts
+          : pickedFeature
+            ? partsOfFeature(parts, pickedFeature, studioFeatures)
+            : [];
     viewportApi.current?.setSelectedParts(lit);
-  }, [selectedParts, assembly, pickedFeature, parts, studioFeatures]);
+  }, [selectedParts, assembly, pickedFeature, parts, studioFeatures, booleanDef]);
   const section = useStore((s) => s.section);
   const appearance = useStore((s) => s.history.present.appearance ?? NO_COLOURS);
   const colours = useMemo(() => {

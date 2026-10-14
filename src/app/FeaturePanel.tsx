@@ -30,6 +30,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   loft: Icons.Loft,
   text: Icons.Text,
   plane: Icons.Plane,
+  boolean: Icons.Boolean,
 };
 
 type MenuEntry = { label: string; action: () => void; danger?: boolean } | "divider";
@@ -411,6 +412,11 @@ function PartsList({
 
   const press = (e: ReactPointerEvent, id: string) => {
     if (e.button !== 0) return;
+    // With a Boolean open, clicking a part adds it to (or takes it off) the Boolean instead.
+    if (st().editing?.draft.type === "boolean") {
+      st().toggleBooleanPart(id);
+      return;
+    }
     e.preventDefault(); // no text highlighting while dragging
     const add = e.ctrlKey || e.metaKey;
     const r = clickRow(order, st().selectedParts, anchor.current, id, { add, range: e.shiftKey });

@@ -761,6 +761,53 @@ describe("holes", () => {
   });
 });
 
+describe("boolean and intersect", () => {
+  const vol = () => engine.check("normal").parts.map((p) => Math.round(p.exactVolume! * 1000) / 1000);
+  const boolean = (op: "union" | "subtract" | "intersect", targets: string[], tools: string[] = [], keepTools = false): Feature => ({
+    ...feature("boolean", {}),
+    booleanDef: { op, targets, tools, keepTools },
+  });
+  // Two 10 mm cubes overlapping by 5 mm along X.
+  const a = feature("box", { width: 10, depth: 10, height: 10 });
+  const b = feature("box", { width: 10, depth: 10, height: 10, x: 5 });
+
+  it("joins parts into one", () => {
+    const r = build([a, b, boolean("union", [a.id, b.id])]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    expect(vol()).toEqual([1500]);
+  });
+
+  it("cuts parts with others, using them up unless kept", () => {
+    const r = build([a, b, boolean("subtract", [a.id], [b.id])]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => p.id)).toEqual([a.id]);
+    expect(vol()).toEqual([500]);
+    expect(build([a, b, boolean("subtract", [a.id], [b.id], true)]).parts).toHaveLength(2);
+  });
+
+  it("keeps only where parts overlap", () => {
+    const r = build([a, b, boolean("intersect", [a.id, b.id])]);
+    expect(vol()).toEqual([500]);
+    expect(r.parts).toHaveLength(1);
+    const far = feature("box", { width: 5, depth: 5, height: 5, x: 50 });
+    expect(build([a, far, boolean("intersect", [a.id, far.id])]).featureErrors).not.toEqual({});
+  });
+
+  it("explains what's missing", () => {
+    expect(build([a, b, boolean("union", [a.id])]).featureErrors).not.toEqual({});
+    expect(build([a, b, boolean("subtract", [a.id])]).featureErrors).not.toEqual({});
+  });
+
+  it("intersects a new solid with the latest part", () => {
+    const cyl = feature("cylinder", { diameter: 10, height: 20, x: 0, y: 0, z: -5 }, "intersect");
+    const r = build([a, cyl]);
+    expect(r.featureErrors).toEqual({});
+    // A quarter of the cylinder's disc inside the cube, 10 mm tall.
+    expect(vol()[0]).toBeCloseTo((Math.PI * 25 * 10) / 4, 1);
+  });
+});
+
 describe("plane features", () => {
   it("build nothing, but say when they can't be placed", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });

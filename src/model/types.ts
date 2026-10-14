@@ -6,7 +6,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -20,6 +20,22 @@ export interface PlaneOptions {
   ref2?: SketchPlane;
   /** Angle: tilt about the reference's across (u) or up (v) direction. */
   axis: "u" | "v";
+}
+
+/**
+ * Join parts into one ("union"), cut some parts with others ("subtract"), or
+ * keep only where parts overlap ("intersect"), like Onshape's Boolean.
+ */
+export interface BooleanOptions {
+  op: "union" | "subtract" | "intersect";
+  /** The parts joined or intersected, or (subtract) the parts that are cut. */
+  targets: string[];
+  /** Subtract: the parts that do the cutting. */
+  tools: string[];
+  /** Subtract: keep the cutting parts too (otherwise they're used up). */
+  keepTools: boolean;
+  /** Which list a click in the 3D view adds to (subtract). */
+  picking?: "targets" | "tools";
 }
 
 export interface HoleOptions {
@@ -56,7 +72,8 @@ export type ExtrudeEnd = "blind" | "symmetric" | "throughAll" | "upToFace";
  *  - add:    merges into the most recent part
  *  - remove: is cut away from the most recent part
  */
-export type Operation = "new" | "add" | "remove";
+/** What a feature does with its solid: a new part, added to the latest part, cut from it, or kept only where they overlap. */
+export type Operation = "new" | "add" | "remove" | "intersect";
 
 export interface Feature {
   /** Permanent ID, never reused. */
@@ -87,6 +104,8 @@ export interface Feature {
   hole?: HoleOptions;
   /** Plane features: where the plane is. */
   planeDef?: PlaneOptions;
+  /** Boolean features: which parts, and what to do with them. */
+  booleanDef?: BooleanOptions;
   /** Transform: move and/or turn a part (or a copy of it). */
   transform?: { partId?: string; axis: Axis; about: "origin" | "centre"; copy: boolean };
   /** Linear and circular patterns: the features to repeat, and along or around which axis. */

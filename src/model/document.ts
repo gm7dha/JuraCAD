@@ -71,6 +71,7 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     feature.text = { value: "PartSmith", plane: { kind: "default", name: "Top" }, bold: false, flip: false };
   }
+  if (type === "boolean") feature.booleanDef = { op: "union", targets: [], tools: [], keepTools: false, picking: "targets" };
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
   if (type === "transform") {
     feature.operation = "add";
@@ -231,7 +232,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       id: f.id,
       name: f.name,
       type: f.type as FeatureType,
-      operation: f.operation as Operation,
+      operation: f.operation === "add" || f.operation === "remove" || f.operation === "intersect" ? f.operation : "new",
       suppressed: f.suppressed === true,
       params: { ...defaultParams(f.type as FeatureType), ...params },
     };
@@ -293,6 +294,16 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         plane: t.plane === null ? null : parsePlane(t.plane) ?? { kind: "default", name: "Top" },
         bold: t.bold === true,
         flip: t.flip === true,
+      };
+    }
+    if (feature.type === "boolean") {
+      const b = (f.booleanDef ?? {}) as Record<string, unknown>;
+      feature.booleanDef = {
+        op: b.op === "subtract" || b.op === "intersect" ? b.op : "union",
+        targets: ids(b.targets),
+        tools: ids(b.tools),
+        keepTools: b.keepTools === true,
+        picking: b.picking === "tools" ? "tools" : "targets",
       };
     }
     if (feature.type === "plane") {

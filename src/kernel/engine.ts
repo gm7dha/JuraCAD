@@ -607,6 +607,11 @@ export class GeometryEngine {
         if (err) featureErrors[feature.id] = err;
         continue;
       }
+      if (feature.type === "boolean") {
+        const err = this.applyBoolean(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "transform") {
         const r = this.applyTransform(feature, partCounter + 1);
         if (r.error) featureErrors[feature.id] = r.error;
@@ -666,10 +671,10 @@ export class GeometryEngine {
       }
 
       try {
-        const result = feature.operation === "add" ? target.shape.fuse(tool) : target.shape.cut(tool);
+        const result = feature.operation === "add" ? target.shape.fuse(tool) : feature.operation === "intersect" ? (target.shape.intersect(tool) as Shape3D) : target.shape.cut(tool);
         if (solidsOf(result).length === 0) {
           result.delete();
-          throw new Error("This would remove the whole part.");
+          throw new Error(feature.operation === "intersect" ? "This doesn't overlap the part, so nothing would be left." : "This would remove the whole part.");
         }
         target.shape.delete();
         target.shape = result;
@@ -678,7 +683,7 @@ export class GeometryEngine {
       } catch (e) {
         featureErrors[feature.id] = describeError(
           e,
-          feature.operation === "add" ? "Couldn't merge this into the part." : "Couldn't cut this from the part.",
+          feature.operation === "add" ? "Couldn't merge this into the part." : feature.operation === "intersect" ? "Couldn't intersect this with the part." : "Couldn't cut this from the part.",
         );
       } finally {
         tool.delete();
@@ -686,6 +691,76 @@ export class GeometryEngine {
     }
 
     return featureErrors;
+  }
+
+  /**
+   * Boolean: join parts into the first one, cut some parts with others, or
+   * keep only where parts overlap. Parts used up disappear from the list.
+   */
+  private applyBoolean(feature: Feature): string | null {
+    const b = feature.booleanDef;
+    if (!b) return "Choose the parts.";
+    const find = (ids: string[]) => ids.map((id) => this.parts.find((p) => p.id === id));
+    const targets = find(b.targets);
+    const tools = find(b.tools);
+    if (targets.some((p) => !p) || tools.some((p) => !p)) return "One of its parts no longer exists. Edit this feature and pick again.";
+    const ts = targets as BuiltPart[];
+    const tls = (tools as BuiltPart[]).filter((p) => !ts.includes(p));
+    const fuseAll = (shapes: Shape3D[]): Shape3D => {
+      let out = shapes[0].clone();
+      for (const s of shapes.slice(1)) {
+        const next = out.fuse(s);
+        out.delete();
+        out = next;
+      }
+      return out;
+    };
+    const used = new Set<BuiltPart>();
+    try {
+      if (b.op === "union" || b.op === "intersect") {
+        if (ts.length < 2) return `Pick at least two parts to ${b.op === "union" ? "join" : "intersect"} — click them in the 3D view or the Parts list.`;
+        let shape = ts[0].shape.clone();
+        for (const p of ts.slice(1)) {
+          const next = b.op === "union" ? shape.fuse(p.shape) : (shape.intersect(p.shape) as Shape3D);
+          shape.delete();
+          shape = next;
+        }
+        if (solidsOf(shape).length === 0) {
+          shape.delete();
+          return "These parts don't overlap, so nothing would be left.";
+        }
+        ts[0].shape.delete();
+        ts[0].shape = shape;
+        ts.slice(1).forEach((p) => used.add(p));
+        ts[0].featureIds.push(feature.id, ...ts.slice(1).flatMap((p) => p.featureIds));
+      } else {
+        if (ts.length === 0) return "Pick the parts to cut — click them in the 3D view or the Parts list.";
+        if (tls.length === 0) return "Now pick the parts to cut with: choose “Cut with” below, then click them.";
+        const cutter = fuseAll(tls.map((p) => p.shape));
+        try {
+          const results = ts.map((p) => p.shape.cut(cutter));
+          if (results.some((r) => solidsOf(r).length === 0)) {
+            results.forEach((r) => r.delete());
+            return "This would cut away a whole part.";
+          }
+          ts.forEach((p, i) => {
+            p.shape.delete();
+            p.shape = results[i];
+            p.featureIds.push(feature.id);
+          });
+        } finally {
+          cutter.delete();
+        }
+        if (!b.keepTools) tls.forEach((p) => used.add(p));
+      }
+    } catch (e) {
+      return describeError(e, "Couldn't combine these parts.");
+    }
+    for (const p of used) {
+      p.shape.delete();
+      this.parts.splice(this.parts.indexOf(p), 1);
+    }
+    return null;
   }
 
   /** Move and/or turn a part, or a copy of it. */
@@ -758,6 +833,7 @@ export class GeometryEngine {
       if (!f) return "One of the features it repeats has been deleted. Edit this feature and pick again.";
       if (all.indexOf(f) > at) return `${f.name} comes after this ${def.label.toLowerCase()} in the list.`;
       if (!isSolidFeature(f.type)) return `${f.name} can't be ${mirror ? "mirrored" : "patterned"} — pick features that add or cut a solid.`;
+      if (f.operation === "intersect") return `${f.name} intersects, so it can't be ${mirror ? "mirrored" : "patterned"} — pick features that add or cut a solid.`;
       if (f.suppressed) return `${f.name} is suppressed, so there's nothing to ${mirror ? "mirror" : "repeat"}.`;
       if (!this.tools.has(id)) return `${f.name} couldn't be built, so it can't be ${mirror ? "mirrored" : "repeated"}.`;
     }

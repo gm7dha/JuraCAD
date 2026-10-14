@@ -79,6 +79,7 @@ export function Toolbar() {
   const hasSketch = useStore((s) => activeFeatures(s).some((f) => f.type === "sketch"));
   const sketchCount = useStore((s) => activeFeatures(s).filter((f) => f.type === "sketch").length);
   const hasPart = useStore((s) => studioParts(s).length > 0);
+  const partCount = useStore((s) => studioParts(s).length);
   const sectionOn = useStore((s) => s.section !== null);
   const platform = detectPlatform();
 
@@ -166,6 +167,14 @@ export function Toolbar() {
           disabled={!ready}
           active={editingType === "text"}
           title="Text — raised or engraved lettering on a plane or flat face"
+        />
+        <ToolButton
+          label="Boolean"
+          icon={<Icons.Boolean />}
+          onClick={() => startCreate("boolean")}
+          disabled={!ready || partCount < 2}
+          active={editingType === "boolean"}
+          title={partCount >= 2 ? "Boolean — join parts into one, cut parts with others, or keep just where they overlap" : "Make at least two parts first"}
         />
         <ToolButton
           label="Hole"
