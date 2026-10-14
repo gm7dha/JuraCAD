@@ -235,7 +235,8 @@ export interface Dimension {
   id: string;
   /** The view it's on: its kind, or "section:<id>" for a section view. */
   view: string;
-  type: "horizontal" | "vertical" | "aligned" | "diameter" | "radius";
+  /** "ordinate": just the distance from datum `a` to point `b`, along `axis`, at the end of a leader. */
+  type: "horizontal" | "vertical" | "aligned" | "diameter" | "radius" | "ordinate";
   a: DimPoint;
   /** Second point (lengths). */
   b?: DimPoint;
@@ -245,6 +246,8 @@ export interface Dimension {
   offset: number;
   /** Circles: direction of the leader (degrees). */
   angle?: number;
+  /** Ordinate dimensions: measured across ("h") or up-and-down ("v"). */
+  axis?: "h" | "v";
 }
 
 export interface DimPoint {

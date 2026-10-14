@@ -116,6 +116,8 @@ export function measureDim(dim: Dimension, r: ResolvedDim): number {
       return 2 * (r.r ?? 0);
     case "radius":
       return r.r ?? 0;
+    case "ordinate":
+      return dim.axis === "v" ? Math.abs(b[1] - r.a[1]) : Math.abs(b[0] - r.a[0]);
   }
 }
 
@@ -176,6 +178,27 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
 
   const pa = at(r.a);
   const pb = at(r.b ?? r.a);
+  if (dim.type === "ordinate") {
+    // A leader from the point out to the side, with the distance from the datum at its end
+    // (across: the leader runs up or down and the number reads upwards; up-and-down: it runs sideways).
+    const vertical = dim.axis !== "v";
+    const across: P2 = vertical ? [0, 1] : [-1, 0];
+    const h = (p: P2) => p[0] * across[0] + p[1] * across[1];
+    const base = dim.offset >= 0 ? Math.max(h(pa), h(pb)) + dim.offset : Math.min(h(pa), h(pb)) + dim.offset;
+    const sign = Math.sign(base - h(pb)) || 1;
+    const end: P2 = [pb[0] + across[0] * (base - h(pb)), pb[1] + across[1] * (base - h(pb))];
+    const start: P2 = [pb[0] + across[0] * sign * GAP, pb[1] + across[1] * sign * GAP];
+    prims.push({ kind: "path", points: [start[0], start[1], end[0], end[1]], style: "thin" });
+    // The number just beyond the end of the leader, reading away from the part.
+    const out: P2 = [across[0] * sign, across[1] * sign];
+    const label: P2 = [end[0] + out[0] * 1, end[1] + out[1] * 1];
+    if (vertical) {
+      prims.push({ kind: "text", x: label[0] + TEXT_SIZE * 0.35, y: label[1], text, size: TEXT_SIZE, anchor: sign > 0 ? "start" : "end", rotate: 90 });
+    } else {
+      prims.push({ kind: "text", x: label[0], y: label[1] - TEXT_SIZE * 0.35, text, size: TEXT_SIZE, anchor: sign > 0 ? "end" : "start" });
+    }
+    return { prims, label };
+  }
   // Direction the dimension line runs along, and the way extension lines go.
   let along: P2;
   let across: P2;
@@ -262,12 +285,12 @@ export function dragDimension(dim: Dimension, a: P2, b: P2 | null, rad: number, 
   }
   const q = b ?? a;
   const r = (v: number) => Math.round(v * 10) / 10;
-  if (dim.type === "horizontal") {
+  if (dim.type === "horizontal" || (dim.type === "ordinate" && dim.axis !== "v")) {
     const minY = Math.min(a[1], q[1]);
     const maxY = Math.max(a[1], q[1]);
     return { offset: r(cursor[1] >= (minY + maxY) / 2 ? cursor[1] - maxY : cursor[1] - minY) };
   }
-  if (dim.type === "vertical") {
+  if (dim.type === "vertical" || dim.type === "ordinate") {
     const minX = Math.min(a[0], q[0]);
     const maxX = Math.max(a[0], q[0]);
     return { offset: r(cursor[0] <= (minX + maxX) / 2 ? minX - cursor[0] : maxX - cursor[0]) };

@@ -128,9 +128,31 @@ export function autoDimensions(projections: Projections, views: string[], existi
   return out;
 }
 
+export type Side = "above" | "below" | "left" | "right";
+
+/** Which side of a view a row of across ("h") or up-and-down ("v") dimensions goes. */
+export function rowSide(view: string, dir: "h" | "v"): Side {
+  const side = SIDES[view as ViewKind] ?? { h: "below", v: "right" };
+  return dir === "h" ? side.h : side.v;
+}
+
+/**
+ * The offset that puts a dimension between view points a and b on row `row`
+ * (0 = nearest) on one side of the view. Lengths are drawn `offset` beyond the
+ * furthest point (positive) or before the nearest (negative); vertical
+ * dimensions measure "across" leftwards, so for them positive is to the left.
+ */
+export function rowOffset(p: ViewProjection, side: Side, a: P2, b: P2, scale: number, row: number): number {
+  const [x0, y0, x1, y1] = p.bounds ?? [0, 0, 0, 0];
+  const gap = FIRST_ROW + row * ROW_STEP;
+  if (side === "below") return -((Math.min(a[1], b[1]) - y0) * scale + gap);
+  if (side === "above") return (y1 - Math.max(a[1], b[1])) * scale + gap;
+  if (side === "left") return (Math.min(a[0], b[0]) - x0) * scale + gap;
+  return -((x1 - Math.max(a[0], b[0])) * scale + gap);
+}
+
 /** Points a dimension can use at view coordinate `v` along `dir`, plus the corner they're measured from. */
 function baseline(p: ViewProjection, row: Row, existing: Dimension[], scale: number, newId: () => string): Dimension[] {
-  const [x0, y0, x1, y1] = p.bounds!;
   const i = row.dir === "h" ? 0 : 1;
   const j = 1 - i;
   const centres = p.circles.filter((c) => c.full && !c.hidden).map((c): P2 => [c.cx, c.cy]);
@@ -151,24 +173,13 @@ function baseline(p: ViewProjection, row: Row, existing: Dimension[], scale: num
     // The point at that position nearest the side the dimension goes on (below for widths, right for heights).
     // Which side the row goes on: away from the views next to this one (first-angle layout puts
     // the top view below the front view, and the right view to its left).
-    const side = SIDES[row.view as ViewKind] ?? { h: "below", v: "right" };
-    const where = row.dir === "h" ? side.h : side.v;
+    const where = rowSide(row.view, row.dir);
     // The point at that position nearest that side, so extension lines are short.
     const at = pts
       .filter((q) => same(q[i], v))
       .sort((a, b) => (where === "below" ? a[1] - b[1] : where === "above" ? b[1] - a[1] : where === "left" ? a[0] - b[0] : b[0] - a[0]))[0];
     if (!at) return;
-    const gap = FIRST_ROW + (mine.length + n) * ROW_STEP;
-    // Lengths are drawn `offset` beyond the furthest point (positive) or before the nearest (negative);
-    // vertical dimensions measure "across" leftwards, so for them positive is to the left.
-    const offset =
-      where === "below"
-        ? -((Math.min(datum[1], at[1]) - y0) * scale + gap)
-        : where === "above"
-          ? (y1 - Math.max(datum[1], at[1])) * scale + gap
-          : where === "left"
-            ? (Math.min(datum[0], at[0]) - x0) * scale + gap
-            : -((x1 - Math.max(datum[0], at[0])) * scale + gap);
+    const offset = rowOffset(p, where, datum, at, scale, mine.length + n);
     out.push({ id: newId(), view: row.view, type, a: dimPoint(datum, p), b: dimPoint(at, p), offset });
   });
   return out;

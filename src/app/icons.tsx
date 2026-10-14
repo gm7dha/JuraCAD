@@ -288,6 +288,23 @@ export const Icons = {
       <path d="M3 3l1 2 2 1-2 1-1 2-1-2-2-1 2-1z" fill="currentColor" stroke="none" />
     </Svg>
   ),
+  BaselineDim: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 20V6M4 9h8M4 13h12M4 17h16" />
+      <path d="M12 7v4M16 11v4M20 15v4" />
+    </Svg>
+  ),
+  ChainDim: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 14h18M3 10v8M9 10v8M15 10v8M21 10v8" />
+    </Svg>
+  ),
+  OrdinateDim: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 20V8M10 20v-9M16 20V9M4 8V4M10 11V4M16 9V4" />
+      <path d="M2 20h18" />
+    </Svg>
+  ),
   ChevronLeft: (p: IconProps) => (
     <Svg {...p}>
       <path d="M15 5l-7 7 7 7" />

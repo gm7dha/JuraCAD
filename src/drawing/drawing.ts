@@ -180,7 +180,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
   return out;
 }
 
-const DIM_TYPES = new Set(["horizontal", "vertical", "aligned", "diameter", "radius"]);
+const DIM_TYPES = new Set(["horizontal", "vertical", "aligned", "diameter", "radius", "ordinate"]);
 
 function parseDimPoint(raw: unknown): DimPoint | null {
   const p = (raw ?? {}) as Record<string, unknown>;
@@ -211,5 +211,6 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(round ? { r: r.r as number } : {}),
     offset: num(r.offset) ? (r.offset as number) : 8,
     ...(num(r.angle) ? { angle: r.angle as number } : {}),
+    ...(type === "ordinate" ? { axis: r.axis === "v" ? ("v" as const) : ("h" as const) } : {}),
   };
 }
