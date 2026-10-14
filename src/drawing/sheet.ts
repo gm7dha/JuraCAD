@@ -9,12 +9,13 @@
  */
 import type { ViewProjection } from "../kernel/protocol";
 import type { Drawing, SheetSize, ViewKind } from "../model/types";
+import { drawDimension, measureDim, resolveDim } from "./dimensions";
 
 export type LineStyle = "border" | "visible" | "hidden" | "thin";
 
 export type Prim =
-  | { kind: "path"; points: number[]; closed?: boolean; style: LineStyle }
-  | { kind: "text"; x: number; y: number; text: string; size: number; anchor: "start" | "middle" | "end"; bold?: boolean };
+  | { kind: "path"; points: number[]; closed?: boolean; fill?: boolean; style: LineStyle }
+  | { kind: "text"; x: number; y: number; text: string; size: number; anchor: "start" | "middle" | "end"; bold?: boolean; rotate?: number };
 
 export const SHEETS: Record<SheetSize, [number, number]> = { A4: [297, 210], A3: [420, 297], A2: [594, 420] };
 
@@ -49,12 +50,28 @@ export interface PlacedView {
   box: [number, number, number, number];
 }
 
+export interface PlacedDim {
+  id: string;
+  /** Where its number is on the sheet. */
+  label: [number, number];
+  /** False when what it measured can't be found any more. */
+  found: boolean;
+  /** Its shapes' range in `prims` (for highlighting). */
+  from: number;
+  to: number;
+  /** What it measures, on the sheet: its points (or circle centre) and circle radius. */
+  a: [number, number];
+  b: [number, number] | null;
+  rad: number;
+}
+
 export interface SheetLayout {
   size: [number, number];
   scale: number;
   /** True when even the smallest scale doesn't fit (the views may run off the sheet). */
   tooBig: boolean;
   views: PlacedView[];
+  dims: PlacedDim[];
   prims: Prim[];
 }
 
@@ -164,8 +181,31 @@ export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKi
     views.push({ id: v.id, kind: v.kind, centre, box: [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2] });
   }
 
+  // Dimensions, on the views they belong to.
+  const dims: PlacedDim[] = [];
+  for (const dim of drawing.dimensions ?? []) {
+    const view = views.find((v) => v.kind === dim.view);
+    const p = projections[dim.view];
+    if (!view || !p) continue;
+    const resolved = resolveDim(dim, p);
+    const at = ([x, y]: [number, number]) => toSheet(view, p, scale, x, y);
+    const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved));
+    const from = prims.length;
+    prims.push(...drawn.prims);
+    dims.push({
+      id: dim.id,
+      label: drawn.label,
+      found: resolved.found,
+      from,
+      to: prims.length,
+      a: at(resolved.a),
+      b: resolved.b ? at(resolved.b) : null,
+      rad: (resolved.r ?? 0) * scale,
+    });
+  }
+
   prims.push(...frameAndTitle(size, drawing, scale, info));
-  return { size, scale, tooBig: !drawing.scale && !auto.fits, views, prims };
+  return { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, prims };
 }
 
 /** Where a point of a view (in its own mm) lands on the sheet. */

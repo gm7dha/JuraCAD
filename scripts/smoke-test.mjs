@@ -585,7 +585,30 @@ try {
   await page.getByLabel("Drawn by").fill("Smoke test");
   await page.getByLabel("Drawn by").press("Enter");
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "Smoke test"));
+  step = "dimensioning the drawing";
+  await page.locator("#drawing-source").selectOption({ label: "Bracket" });
+  await page.waitForFunction(() => document.querySelectorAll(".drawing-view-handle").length === 4, null, { timeout: 60_000 });
+  await page.waitForTimeout(500);
+  // The front view's handle is 3 mm bigger than the view all round.
+  const frontBox = await page.locator(".drawing-view-handle").first().boundingBox();
+  const mm = frontBox.width / (await page.locator(".drawing-view-handle").first().evaluate((el) => el.getBBox().width));
+  const inset = 3 * mm;
+  await page.getByRole("button", { name: "Dimension", exact: true }).click();
+  const bottom = frontBox.y + frontBox.height - inset;
+  await page.mouse.click(frontBox.x + inset, bottom);
+  await page.mouse.click(frontBox.x + frontBox.width - inset, bottom);
+  await page.mouse.move(frontBox.x + frontBox.width / 2, bottom + 12 * mm, { steps: 3 });
+  await page.mouse.click(frontBox.x + frontBox.width / 2, bottom + 12 * mm);
+  await page.keyboard.press("Escape");
+  await page.waitForSelector(".drawing-dim-handle", { timeout: 5_000 });
+  const dimTexts = await page.locator(".drawing-text").evaluateAll((els) => els.map((e) => e.textContent ?? ""));
+  const dimValue = dimTexts.find((t) => /^\d+(\.\d+)?$/.test(t));
+  if (!dimValue) throw new Error(`no dimension on the drawing (texts: ${dimTexts.slice(0, 30).join(", ")})`);
   await shot("drawing");
+  const dxfPromise = page.waitForEvent("download", { timeout: 30_000 });
+  await page.getByRole("button", { name: "DXF", exact: true }).click();
+  const dxfText = readFileSync(await (await dxfPromise).path(), "utf8");
+  if (!dxfText.includes("ENTITIES") || !dxfText.includes(`\n1\n${dimValue}\n`)) throw new Error("the DXF file doesn't look right");
   const pdfPromise = page.waitForEvent("download", { timeout: 30_000 });
   await page.getByRole("button", { name: "PDF", exact: true }).click();
   const pdf = await pdfPromise;
@@ -599,7 +622,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views saved as ${pdf.suggestedFilename()} (${pdfText.length} bytes).`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes).`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
