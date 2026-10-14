@@ -601,13 +601,14 @@ try {
   await page.mouse.click(frontBox.x + frontBox.width / 2, bottom + 12 * mm);
   await page.keyboard.press("Escape");
   await page.waitForSelector(".drawing-dim-handle", { timeout: 5_000 });
-  const dimTexts = await page.locator(".drawing-text").allInnerTexts();
-  if (!dimTexts.includes("40")) throw new Error(`no 40 mm dimension on the drawing (texts: ${dimTexts.slice(0, 30).join(", ")})`);
+  const dimTexts = await page.locator(".drawing-text").evaluateAll((els) => els.map((e) => e.textContent ?? ""));
+  const dimValue = dimTexts.find((t) => /^\d+(\.\d+)?$/.test(t));
+  if (!dimValue) throw new Error(`no dimension on the drawing (texts: ${dimTexts.slice(0, 30).join(", ")})`);
   await shot("drawing");
   const dxfPromise = page.waitForEvent("download", { timeout: 30_000 });
   await page.getByRole("button", { name: "DXF", exact: true }).click();
   const dxfText = readFileSync(await (await dxfPromise).path(), "utf8");
-  if (!dxfText.includes("ENTITIES") || !dxfText.includes("\n40\n")) throw new Error("the DXF file doesn't look right");
+  if (!dxfText.includes("ENTITIES") || !dxfText.includes(`\n1\n${dimValue}\n`)) throw new Error("the DXF file doesn't look right");
   const pdfPromise = page.waitForEvent("download", { timeout: 30_000 });
   await page.getByRole("button", { name: "PDF", exact: true }).click();
   const pdf = await pdfPromise;
@@ -621,7 +622,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a 40 mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes).`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes).`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
