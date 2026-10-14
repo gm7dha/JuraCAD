@@ -17,7 +17,7 @@ import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
-import { textSolid } from "./textSolid";
+import { textSolid, wrappedTextSolid, wrapStart, type Cylinder } from "./textSolid";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type SectionRequest } from "../drawing/sections";
@@ -146,6 +146,27 @@ function cylinderAxes(shape: Shape3D): [Vec3, Vec3][] {
 }
 
 const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+/** A round face's cylinder, worked out from one of its round edges (null if it has none). */
+function cylinderOfFace(face: Face): Cylinder | null {
+  if (face.geomType !== "CYLINDRE") return null;
+  const edges = edgesOf(face);
+  try {
+    for (const e of edges) {
+      if (e.geomType !== "CIRCLE") continue;
+      const p0 = take(e.pointAt(0));
+      const p1 = take(e.pointAt(1 / 3));
+      const p2 = take(e.pointAt(2 / 3));
+      const c = circleThrough3D(p0, p1, p2);
+      const n = cross3([p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]], [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]]);
+      const l = Math.hypot(...n);
+      if (c && l > 1e-12) return { origin: c.centre, axis: [n[0] / l, n[1] / l, n[2] / l], radius: c.radius };
+    }
+  } finally {
+    edges.forEach((e) => e.delete());
+  }
+  return null;
+}
 const cross3 = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 /**
@@ -452,7 +473,27 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
     }
     case "text": {
       const t = feature.text;
-      if (!t?.plane) throw new Error("Click a plane or flat face to put the text on.");
+      if (t?.face) {
+        const part = parts.find((p) => p.id === t.face!.partId);
+        if (!part) throw new Error("The part the text was on no longer exists. Click a face to put it on.");
+        const [face] = findPickedFaces(part.shape, [t.face]);
+        try {
+          const cyl = cylinderOfFace(face);
+          if (!cyl) throw new Error("Text can only wrap round a round (cylinder) face. Click a flat face, a round face or a plane.");
+          const start = wrapStart(cyl, take(face.center));
+          const onSurface: Vec3 = [0, 1, 2].map((i) => cyl.origin[i] + cyl.axis[i] * start.height + start.radial[i] * cyl.radius) as Vec3;
+          let convex = true;
+          try {
+            convex = dot3(take(face.normalAt(onSurface)), start.radial) > 0;
+          } catch {
+            // no normal there: assume the outside of a rod
+          }
+          return wrappedTextSolid(cyl, start, convex, { value: t.value, bold: t.bold, flip: t.flip, size: v.size, depth: v.depth, x: v.x, y: v.y, angle: v.angle });
+        } finally {
+          face.delete();
+        }
+      }
+      if (!t?.plane) throw new Error("Click a plane or a face to put the text on.");
       return textSolid(t.plane, { value: t.value, bold: t.bold, flip: t.flip, size: v.size, depth: v.depth, x: v.x, y: v.y, angle: v.angle });
     }
     case "loft": {

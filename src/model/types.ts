@@ -105,7 +105,14 @@ export interface Feature {
   /** Loft: the sketches to pass through, in order. */
   sections?: string[];
   /** Text: what it says, where it goes, and how. */
-  text?: { value: string; plane: SketchPlane | null; bold: boolean; flip: boolean };
+  text?: {
+    value: string;
+    plane: SketchPlane | null;
+    bold: boolean;
+    flip: boolean;
+    /** Round (cylinder) face the text wraps around, instead of a plane. */
+    face?: TopoPick;
+  };
   /** Extrude features: one way or symmetric, and whether to flip. */
   extrude?: { end: ExtrudeEnd; flip: boolean; /** Up to face: the flat face to stop at. */ upTo?: TopoPick };
   /** Revolve features: the line to spin around ("vertical"/"horizontal" sketch axes, or a sketch line id) and which way. */
