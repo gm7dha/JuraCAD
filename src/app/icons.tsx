@@ -200,6 +200,12 @@ export const Icons = {
       <path d="M12 5v14M5 12h14" />
     </Svg>
   ),
+  Boolean: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="9.5" cy="12" r="5.5" />
+      <circle cx="14.5" cy="12" r="5.5" />
+    </Svg>
+  ),
   Settings: (p: IconProps) => (
     <Svg {...p}>
       <circle cx="12" cy="12" r="3" />

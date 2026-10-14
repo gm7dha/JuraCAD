@@ -173,7 +173,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -265,6 +265,8 @@ export interface AppState {
   setSelection: (items: SelectionItem[]) => void;
   toggleHidden: (partId: string) => void;
   setSelectedParts: (ids: string[]) => void;
+  /** Boolean dialog: add a part to (or take it off) the list being picked. */
+  toggleBooleanPart: (partId: string) => void;
   /**
    * Copy parts (a Move/copy feature with "copy" ticked), placed just to the
    * side. One part opens the Move/copy dialog to adjust; several are copied straight away.
@@ -424,6 +426,8 @@ export const useStore = create<AppState>((set, get) => {
         const partId = s.selection[0]?.partId ?? mine[mine.length - 1]?.id;
         if (partId) draft.transform = { ...draft.transform, partId };
       }
+      // A Boolean starts with the parts picked in the Parts list.
+      if (type === "boolean" && draft.booleanDef && s.selectedParts.length) draft.booleanDef = { ...draft.booleanDef, targets: [...s.selectedParts] };
       // A plane starts from the plane (or Plane feature) highlighted, if any.
       if (type === "plane" && draft.planeDef) {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "plane");
@@ -922,6 +926,17 @@ export const useStore = create<AppState>((set, get) => {
       set({ selectedParts: [] });
       s.showToast(`Copied ${added.length} parts — each copy is a Move/copy feature you can edit.`, "success");
     },
+    toggleBooleanPart: (partId) =>
+      set((s) => {
+        const d = s.editing?.draft;
+        const b = d?.booleanDef;
+        if (!s.editing || !d || !b) return {};
+        const key = b.op === "subtract" && b.picking === "tools" ? "tools" : "targets";
+        const other = key === "tools" ? "targets" : "tools";
+        const list = b[key].includes(partId) ? b[key].filter((x) => x !== partId) : [...b[key], partId];
+        const booleanDef = { ...b, [key]: list, [other]: b[other].filter((x) => x !== partId) };
+        return { editing: { ...s.editing, draft: { ...d, booleanDef } } };
+      }),
     setSelectedParts: (selectedParts) => set((s) => ({ selectedParts, selectedFeatureId: selectedParts.length ? null : s.selectedFeatureId })),
     setPartsHidden: (ids, hidden) =>
       set((s) => ({ hiddenParts: hidden ? [...s.hiddenParts.filter((p) => !ids.includes(p)), ...ids] : s.hiddenParts.filter((p) => !ids.includes(p)) })),

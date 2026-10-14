@@ -17,12 +17,13 @@ import { Icons } from "./icons";
 import { importedSize } from "../model/importFile";
 import { chooseImportFile } from "./fileActions";
 
-const OPERATIONS: Operation[] = ["new", "add", "remove"];
+const OPERATIONS: Operation[] = ["new", "add", "remove", "intersect"];
 
 const OPERATION_HINTS: Record<Operation, string> = {
   new: "Make a new, separate part",
   add: "Merge into the latest part",
   remove: "Cut away from the latest part",
+  intersect: "Keep only where it overlaps the latest part",
 };
 
 function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; autoFocus: boolean }) {
@@ -63,6 +64,71 @@ function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; a
         <div className="param-message">= {def.unit === "°" ? `${Math.round(r.value * 1000) / 1000}°` : def.unit === "" ? r.value : formatLength(r.value, unit)}</div>
       ) : null}
     </div>
+  );
+}
+
+/** Boolean settings: join, cut or intersect, and the parts for each. */
+function BooleanOptionsField() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const toggle = useStore((s) => s.toggleBooleanPart);
+  const parts = useStore(studioParts);
+  if (draft?.type !== "boolean" || !draft.booleanDef) return null;
+  const b = draft.booleanDef;
+  const update = (patch: Partial<typeof b>) => setDraftField({ booleanDef: { ...b, ...patch } });
+  const nameOf = (id: string) => parts.find((p) => p.id === id)?.name ?? "(missing part)";
+  const list = (ids: string[], label: string) => (
+    <ul className="pick-list" aria-label={label}>
+      {ids.map((id) => (
+        <li key={id}>
+          <span>{nameOf(id)}</span>
+          <button type="button" className="icon-button small" onClick={() => toggle(id)} title="Remove" aria-label={`Remove ${nameOf(id)}`}>
+            <Icons.Cross size={14} />
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <>
+      <div className="segmented three" role="radiogroup" aria-label="Boolean">
+        {(
+          [
+            ["union", "Join", "Merge the parts into one"],
+            ["subtract", "Subtract", "Cut some parts with others"],
+            ["intersect", "Intersect", "Keep only where the parts overlap"],
+          ] as const
+        ).map(([op, label, hint]) => (
+          <button type="button" key={op} role="radio" aria-checked={b.op === op} className={b.op === op ? "selected" : ""} title={hint} onClick={() => update({ op, picking: "targets" })}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {b.op !== "subtract" ? (
+        <fieldset className="param-group">
+          <legend>Parts</legend>
+          {list(b.targets, "Parts")}
+          <p className="dialog-hint field-hint">Click parts in the 3D view or the Parts list to add or remove them.</p>
+        </fieldset>
+      ) : (
+        <>
+          <fieldset className={`param-group pick-slot${b.picking !== "tools" ? " active" : ""}`} onClick={() => b.picking === "tools" && update({ picking: "targets" })}>
+            <legend>Parts to cut</legend>
+            {list(b.targets, "Parts to cut")}
+            {b.picking !== "tools" && <p className="dialog-hint field-hint">Click the parts to cut.</p>}
+          </fieldset>
+          <fieldset className={`param-group pick-slot${b.picking === "tools" ? " active" : ""}`} onClick={() => b.picking !== "tools" && update({ picking: "tools" })}>
+            <legend>Cut with</legend>
+            {list(b.tools, "Cut with")}
+            {b.picking === "tools" ? <p className="dialog-hint field-hint">Click the parts to cut with.</p> : <p className="dialog-hint field-hint">Click here, then the parts to cut with.</p>}
+            <label className="check-row" onClick={(e) => e.stopPropagation()}>
+              <input type="checkbox" checked={b.keepTools} onChange={(e) => update({ keepTools: e.target.checked })} />
+              Keep the parts used to cut
+            </label>
+          </fieldset>
+        </>
+      )}
+    </>
   );
 }
 
@@ -716,8 +782,8 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && (
-        <div className="segmented" role="radiogroup" aria-label="Operation">
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && (
+        <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
               type="button"
@@ -735,6 +801,7 @@ export function FeatureDialog() {
         )}
 
         <PlaneDefOptions />
+        <BooleanOptionsField />
         <SketchSolidOptions />
         <SweepLoftOptions />
         <TextFeatureOptions />

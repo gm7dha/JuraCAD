@@ -187,6 +187,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "A STEP or STL file from another program, brought in as a part.",
     params: [],
   },
+  boolean: {
+    type: "boolean",
+    label: "Boolean",
+    namePrefix: "Boolean",
+    description: "Join parts into one, cut some parts with others, or keep just where parts overlap.",
+    params: [],
+  },
   plane: {
     type: "plane",
     label: "Plane",
@@ -215,6 +222,7 @@ export const OPERATION_LABELS: Record<Operation, string> = {
   new: "New",
   add: "Add",
   remove: "Remove",
+  intersect: "Intersect",
 };
 
 /** Features that round or bevel edges. */
