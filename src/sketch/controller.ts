@@ -25,7 +25,20 @@ import {
   radiusOf,
   type Placed,
 } from "./ops";
-import { addPolygon, addSlot, filletCorner, mirrorCurves, offsetCurves, trimAt } from "./tools";
+import {
+  addCentreRectangle,
+  addPolygon,
+  addSlot,
+  addTangentArc,
+  filletCorner,
+  mirrorCurves,
+  offsetCurves,
+  patternTransform,
+  readPatternSettings,
+  tangentArcCentre,
+  tangentAt,
+  trimAt,
+} from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
 import { rectOf, sketchItemsInBox } from "../viewport/boxSelect";
 
@@ -168,6 +181,59 @@ export class SketchController {
     this.emit({ hover: null });
   }
 
+  /**
+   * Pattern tool: click lines, arcs and circles to choose what to repeat (and,
+   * for a circular pattern, a point to go round); the sketch panel's button
+   * makes the copies.
+   */
+  private patternClick(e: SketchPointer): void {
+    const hit = this.hitAt(e);
+    const st = this.state;
+    if (hit?.kind === "point" && st.sketch?.patternKind === "circular") {
+      st.setSketchOptions({ patternCentre: hit.id });
+      st.setSketchMessage("Centre chosen. Click the shapes to repeat, then Make pattern in the sketch panel.", "info");
+    } else if (hit?.kind === "curve") {
+      const sel = st.sketch?.selection ?? [];
+      st.setSketchSelection(sel.includes(hit.id) ? sel.filter((x) => x !== hit.id) : [...sel, hit.id]);
+      st.setSketchMessage(null);
+    } else {
+      st.setSketchMessage("Click the lines, arcs and circles to repeat, then Make pattern in the sketch panel.", "info");
+      return;
+    }
+    this.emit({ preview: this.patternPreview() });
+  }
+
+  /** Faint copies showing where the pattern tool would put things. */
+  private patternPreview(): PreviewShape[] {
+    const d = this.data;
+    const session = this.state.sketch;
+    if (!d || !session) return [];
+    const sources = session.selection.map((id) => curveById(d, id)).filter((c) => !!c);
+    const opts = readPatternSettings(d, session);
+    if (!sources.length || typeof opts === "string" || !(opts.count >= 2 && opts.count <= 200)) return [];
+    const out: PreviewShape[] = [];
+    for (let i = 1; i < Math.round(opts.count); i++) {
+      const move = patternTransform(opts, i);
+      const at = (id: string) => move(pointPos(d, id));
+      for (const c of sources) {
+        if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
+        else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius });
+        else {
+          const cc = at(c.center);
+          const s0 = at(c.start);
+          const s1 = at(c.end);
+          out.push({ kind: "arc", c: cc, r: radiusOf(d, c), a0: Math.atan2(s0[1] - cc[1], s0[0] - cc[0]), a1: Math.atan2(s1[1] - cc[1], s1[0] - cc[0]) });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Redraw the pattern preview (after its settings change in the panel). */
+  refreshPreview(): void {
+    if (this.tool === "sketchPattern") this.emit({ preview: this.patternPreview() });
+  }
+
   // ---------------------------------------------------------------------------
   // Snapping
 
@@ -246,6 +312,7 @@ export class SketchController {
     }
     if (tool === "useEdge") return;
     if (tool === "mirror") return this.mirrorClick(e);
+    if (tool === "sketchPattern") return this.patternClick(e);
     if (tool === "sketchFillet") {
       const hit = this.hitAt(e);
       if (hit?.kind !== "point" || hit.id === ORIGIN_ID) {
@@ -294,6 +361,38 @@ export class SketchController {
         }
         const r = addRectangle(d, this.placed[0], p, construction);
         if (this.commit(r)) this.placed = [];
+        this.emit({ preview: [] });
+        return;
+      }
+      case "centreRectangle": {
+        if (this.placed.length === 0) {
+          this.placed = [p];
+          return;
+        }
+        const r = addCentreRectangle(d, this.placed[0], p, construction);
+        if (this.commit(r)) this.placed = [];
+        this.emit({ preview: [] });
+        return;
+      }
+      case "tangentArc": {
+        if (this.placed.length === 0) {
+          const id = p.snap?.kind === "point" ? p.snap.id : null;
+          if (!id || !tangentAt(d, id)) {
+            this.state.setSketchMessage("Click the end of a line or arc to carry on from.", "info");
+            return;
+          }
+          this.placed = [p];
+          this.state.setSketchMessage(null);
+          return;
+        }
+        const startId = (this.placed[0].snap as { id: string }).id;
+        const r = addTangentArc(d, startId, p, construction);
+        if (!this.commit(r, [r.arcId])) return;
+        // Keep going from the arc's new end, like the line tool.
+        const arc = r.sketch.curves.find((c) => c.id === r.arcId);
+        const endId = arc?.type === "arc" ? (arc.start === startId ? arc.end : arc.start) : null;
+        const closed = p.snap?.kind === "point" || p.snap?.kind === "origin";
+        this.placed = endId && !closed ? [{ ...p, snap: { kind: "point", id: endId } }] : [];
         this.emit({ preview: [] });
         return;
       }
@@ -352,6 +451,12 @@ export class SketchController {
       return;
     }
     if (tool === "useEdge") return;
+    if (tool === "sketchPattern") {
+      const hit = this.hitAt(e);
+      const circular = this.state.sketch?.patternKind === "circular";
+      this.emit({ hover: hit?.kind === "curve" || (circular && hit?.kind === "point") ? hit : null, snap: null, preview: this.patternPreview() });
+      return;
+    }
     if (tool === "dimension" || tool === "trim" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
       const hit = this.hitAt(e);
       this.emit({ hover: (tool === "trim" || tool === "offset" || tool === "mirror") && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
@@ -386,6 +491,22 @@ export class SketchController {
       const b: [number, number] = [c[0], a[1]];
       const dd: [number, number] = [a[0], c[1]];
       preview.push({ kind: "line", a, b }, { kind: "line", a: b, b: c }, { kind: "line", a: c, b: dd }, { kind: "line", a: dd, b: a });
+    } else if (tool === "centreRectangle" && first) {
+      const c: [number, number] = [p.x, p.y];
+      const a: [number, number] = [2 * first.x - p.x, 2 * first.y - p.y];
+      const b: [number, number] = [c[0], a[1]];
+      const dd: [number, number] = [a[0], c[1]];
+      preview.push({ kind: "line", a, b }, { kind: "line", a: b, b: c }, { kind: "line", a: c, b: dd }, { kind: "line", a: dd, b: a }, { kind: "guide", a, b: c });
+    } else if (tool === "tangentArc" && first) {
+      const startId = (first.snap as { id: string }).id;
+      const t = tangentAt(d, startId);
+      const centre = t ? tangentArcCentre([first.x, first.y], t.dir, [p.x, p.y]) : null;
+      if (t && centre) {
+        const r = Math.hypot(first.x - centre[0], first.y - centre[1]);
+        const left = t.dir[0] * (p.y - first.y) - t.dir[1] * (p.x - first.x) > 0;
+        const [from, to] = left ? [[first.x, first.y], [p.x, p.y]] : [[p.x, p.y], [first.x, first.y]];
+        preview.push({ kind: "arc", c: centre, r, a0: Math.atan2(from[1] - centre[1], from[0] - centre[0]), a1: Math.atan2(to[1] - centre[1], to[0] - centre[0]) });
+      } else preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
     } else if (tool === "slot" && first) {
       if (this.placed.length === 1) preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
       else preview.push(...slotPreview(first, this.placed[1], slotRadius(first, this.placed[1], p)));

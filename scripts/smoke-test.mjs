@@ -805,13 +805,71 @@ try {
     await page.getByLabel("Group by part").uncheck();
   }
 
+  step = "sketch extras: centre rectangle, tangent arc and a pattern";
+  {
+    await page.getByRole("button", { name: "Sketch", exact: true }).click();
+    await page.waitForSelector(".sketch-panel");
+    await page.locator(".feature-row.datum", { hasText: "Top" }).click();
+    await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane"));
+    await page.waitForTimeout(600);
+    const box = await page.locator(".viewport").boundingBox();
+    const mx = box.x + box.width / 2;
+    const my = box.y + box.height / 2;
+    const curves = () => page.evaluate(() => window.partsmithStore.getState().editing?.draft.sketch?.data.curves.map((c) => c.type + (c.construction ? "*" : "")) ?? []);
+
+    await page.getByRole("button", { name: "Centre rect", exact: true }).click();
+    await page.mouse.click(mx - 150, my - 80);
+    await page.mouse.click(mx - 100, my - 50);
+    let now = await curves();
+    if (now.filter((c) => c === "line").length !== 4 || !now.includes("line*")) throw new Error(`centre rectangle made ${now.join(",")}`);
+
+    await page.keyboard.press("l");
+    await page.mouse.click(mx - 150, my + 80);
+    await page.mouse.click(mx - 60, my + 80);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Tangent arc", exact: true }).click();
+    await page.mouse.click(mx - 60, my + 80);
+    await page.mouse.move(mx - 40, my + 120, { steps: 3 });
+    await page.mouse.click(mx - 60, my + 140);
+    await page.keyboard.press("Escape");
+    now = await curves();
+    if (!now.includes("arc")) throw new Error(`tangent arc wasn't drawn (${now.join(",")})`);
+
+    await page.keyboard.press("c");
+    await page.mouse.click(mx + 120, my);
+    await page.mouse.click(mx + 135, my);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Pattern", exact: true }).click();
+    await page.getByRole("button", { name: "Round a centre" }).click();
+    // A shape just drawn stays selected, so the pattern tool starts with the circle; clicking it would deselect it.
+    const already = await page.evaluate(() => window.partsmithStore.getState().sketch.selection.length);
+    if (!already) {
+      // Click exactly on the circle's edge (snapping may have nudged it while drawing).
+      const rim = await page.evaluate(() => {
+        const d = window.partsmithStore.getState().editing.draft.sketch.data;
+        const c = d.curves.find((k) => k.type === "circle");
+        const p = d.points.find((q) => q.id === c.center);
+        return window.partsmithViewport.current.projectSketchPoint(p.x + c.radius, p.y);
+      });
+      await page.mouse.click(box.x + rim.x, box.y + rim.y);
+    }
+    await page.mouse.move(mx + 60, my + 60, { steps: 3 });
+    await shot("sketchpattern");
+    await page.getByRole("button", { name: "Make pattern" }).click();
+    now = await curves();
+    if (now.filter((c) => c === "circle").length !== 3) throw new Error(`pattern made ${now.join(",")}`);
+    await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
+    if (await page.locator(".sketch-panel").count()) await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
+    await page.waitForSelector(".sketch-panel", { state: "detached" });
+  }
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

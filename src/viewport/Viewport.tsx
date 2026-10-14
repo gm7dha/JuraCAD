@@ -176,11 +176,14 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   // Choosing where text goes.
   if (s.editing?.draft.type === "text" && s.editing.draft.text) {
     const t = s.editing.draft.text;
-    if (target?.kind === "plane") s.setDraftField({ text: { ...t, plane: { kind: "default", name: target.plane } } });
+    const { face: _old, ...flat } = t;
+    if (target?.kind === "plane") s.setDraftField({ text: { ...flat, plane: { kind: "default", name: target.plane } } });
     else if (target?.kind === "part" && target.item.kind === "face") {
       const plane = planeForFace(target.item);
-      if (plane) s.setDraftField({ text: { ...t, plane } });
-      else s.showToast("That face is curved. Pick a flat face or one of the planes for the text.");
+      const pick = plane ? null : pickFor(s.parts, target.item);
+      if (plane) s.setDraftField({ text: { ...flat, plane } });
+      else if (pick?.ref.kind === "face" && pick.ref.surface === "CYLINDRE") s.setDraftField({ text: { ...flat, plane: null, face: pick } });
+      else s.showToast("Text can go on a flat face, a round (cylinder) face, or one of the planes.");
     }
     return;
   }

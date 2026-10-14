@@ -66,8 +66,10 @@ export type SketchTool =
   | "select"
   | "line"
   | "rectangle"
+  | "centreRectangle"
   | "circle"
   | "arc"
+  | "tangentArc"
   | "point"
   | "dimension"
   | "slot"
@@ -76,6 +78,7 @@ export type SketchTool =
   | "trim"
   | "offset"
   | "mirror"
+  | "sketchPattern"
   | "useEdge";
 
 /** State while a sketch is open for editing. */
@@ -98,6 +101,16 @@ export interface SketchSession {
   filletRadius: string;
   /** Offset tool: distance as typed. */
   offsetDistance: string;
+  /** Pattern tool: in a row or round a centre. */
+  patternKind: "linear" | "circular";
+  /** Pattern tool: how many, counting the original. */
+  patternCount: number;
+  /** Linear pattern: gap between copies as typed. */
+  patternSpacing: string;
+  /** Linear pattern: direction in degrees from X. Circular pattern: angle to spread over. */
+  patternAngle: string;
+  /** Circular pattern: the point to go round. */
+  patternCentre: string;
 }
 
 /** Section view (display only — not saved): cut the view along a default plane. */
@@ -194,7 +207,7 @@ export interface AppState {
   setSketchMessage: (text: string | null, tone?: "info" | "error") => void;
   setSketchConstruction: (on: boolean) => void;
   setEditingDimension: (id: string | null) => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius" | "offsetDistance">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**
@@ -353,6 +366,11 @@ const newSession = (): SketchSession => ({
   polygonSides: 6,
   filletRadius: "2",
   offsetDistance: "2",
+  patternKind: "linear",
+  patternCount: 3,
+  patternSpacing: "10",
+  patternAngle: "0",
+  patternCentre: "origin",
 });
 
 /** Is this id (point, curve or constraint) still in the sketch? */
