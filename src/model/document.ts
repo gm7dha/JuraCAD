@@ -77,7 +77,11 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.sketchRef = sketches[sketches.length - 1]?.id;
     feature.operation = "add";
   }
-  if (type === "thicken") feature.picks = [];
+  if (type === "thicken" || type === "moveFace" || type === "deleteFace") feature.picks = [];
+  if (type === "draft") {
+    feature.picks = [];
+    feature.neutral = { kind: "default", name: "Top" };
+  }
   if (type === "boolean") feature.booleanDef = { op: "union", targets: [], tools: [], keepTools: false, picking: "targets" };
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
   if (type === "transform") {
@@ -345,7 +349,9 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       if (!im) return null;
       feature.import = im;
     }
-    if (feature.type === "fillet" || feature.type === "chamfer" || feature.type === "shell" || feature.type === "thicken") {
+    if (feature.type === "draft") feature.neutral = parsePlane(f.neutral) ?? { kind: "default", name: "Top" };
+    if (feature.type === "draft" && f.flipSide === true) feature.flipSide = true;
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "deleteFace"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

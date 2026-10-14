@@ -156,3 +156,55 @@ export function draftSides(shape: Shape3D, frame: PlaneFrame, dirSign: number, a
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
+
+/**
+ * Draft (taper) chosen faces of a part, Onshape's Draft feature: each face is
+ * tilted by `angle` degrees about where it meets the neutral plane, so the
+ * part pulls out of a mould along the plane's normal (`flip` pulls the other way).
+ */
+export function draftFaces(shape: Shape3D, faces: Face[], neutral: PlaneFrame, flip: boolean, angle: number): Shape3D {
+  if (Math.abs(angle) >= 45) throw new Error("The draft angle must be less than 45°.");
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const s = flip ? -1 : 1;
+  const pull: [number, number, number] = [neutral.n[0] * s, neutral.n[1] * s, neutral.n[2] * s];
+  const dir = asDir(pull) as any;
+  const plane = makePln(neutral.origin, pull) as any;
+  const builder = new oc.BRepOffsetAPI_DraftAngle(shape.wrapped);
+  try {
+    for (const f of faces) builder.Add(f.wrapped, dir, (angle * Math.PI) / 180, plane, true);
+    builder.Build();
+    if (!builder.IsDone()) throw new Error("The draft couldn't be applied. Faces parallel to the neutral plane can't be drafted; try a smaller angle.");
+    return cast(builder.Shape()) as Shape3D;
+  } finally {
+    builder.delete();
+    dir.delete();
+    plane.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * Delete faces and let the part heal over the gap (OpenCascade's
+ * defeaturing): removes fillets, chamfers, holes and bosses.
+ */
+export function deleteFaces(shape: Shape3D, faces: Face[]): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  if (!oc.BRepAlgoAPI_Defeaturing) throw new Error("Delete face isn't available in this version of the geometry engine.");
+  const df = new oc.BRepAlgoAPI_Defeaturing();
+  try {
+    df.SetShape(shape.wrapped);
+    for (const f of faces) df.AddFaceToRemove(f.wrapped);
+    try {
+      df.Build();
+    } catch {
+      df.Build(new oc.Message_ProgressRange_1());
+    }
+    if (!df.IsDone()) throw new Error("Those faces can't be removed — the faces around them can't be stretched to close the gap.");
+    return cast(df.Shape()) as Shape3D;
+  } finally {
+    df.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}

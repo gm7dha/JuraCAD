@@ -200,6 +200,26 @@ export const Icons = {
       <path d="M12 5v14M5 12h14" />
     </Svg>
   ),
+  Draft: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M6 20l3-16h6l3 16z" />
+      <path d="M12 2v6" strokeDasharray="2 2" />
+    </Svg>
+  ),
+  MoveFace: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 10h10v10H4z" />
+      <path d="M14 10l4-4M14 20l4-4M18 6v10" strokeDasharray="2 2" />
+      <path d="M8 6l4-4 4 4" />
+    </Svg>
+  ),
+  DeleteFace: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 20V8a4 4 0 0 1 4-4h12" strokeDasharray="2 2" />
+      <path d="M4 20h16V4" />
+      <path d="M9 9l6 6M15 9l-6 6" />
+    </Svg>
+  ),
   Split: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 7l6-3 0 16-6-3z" />

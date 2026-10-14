@@ -13,7 +13,7 @@ import { planeFrame, toWorld } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
 import { setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operation } from "../model/types";
-import { extrudeSketch } from "./extrude";
+import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
@@ -641,6 +641,11 @@ export class GeometryEngine {
         if (r.newPart) partCounter++;
         continue;
       }
+      if (feature.type === "draft" || feature.type === "moveFace" || feature.type === "deleteFace") {
+        const err = this.applyFaceEdit(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "rib") {
         const err = this.applyRib(feature, sketches);
         if (err) featureErrors[feature.id] = err;
@@ -844,6 +849,73 @@ export class GeometryEngine {
       return { error: describeError(e, "Couldn't combine the thickened faces with the part.") };
     } finally {
       solid.delete();
+    }
+  }
+
+  /** Draft, Move face or Delete face on the picked faces of one part. */
+  private applyFaceEdit(feature: Feature): string | null {
+    const def = FEATURE_DEFS[feature.type];
+    const { values, errors } = resolveParams(feature);
+    const bad = def.params.find((p) => errors[p.key]);
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    if (picks.length === 0) return feature.type === "deleteFace" ? "Click the faces to remove (a fillet, a hole's wall…)." : "Click the faces to change.";
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return `${def.label} works on one part at a time. Remove the faces picked on the other part.`;
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these faces were on no longer exists. Edit this feature and pick the faces again.";
+    let faces: Face[];
+    try {
+      faces = findPickedFaces(part.shape, picks);
+    } catch (e) {
+      return describeError(e, "Couldn't find the picked faces.");
+    }
+    let result: Shape3D | null = null;
+    try {
+      if (feature.type === "draft") {
+        if (Math.abs(values.angle) < 1e-9) return "Enter an angle to taper by.";
+        result = draftFaces(part.shape, faces, planeFrame(feature.neutral ?? { kind: "default", name: "Top" }), !!feature.flipSide, values.angle);
+      } else if (feature.type === "deleteFace") {
+        result = deleteFaces(part.shape, faces);
+      } else {
+        const d = values.distance;
+        if (Math.abs(d) < 1e-9) return "Enter a distance to move the faces by.";
+        // Each flat face swept out (or in) along its own normal, then added (or cut).
+        let prism: Shape3D | null = null;
+        for (const face of faces) {
+          if (face.geomType !== "PLANE") throw new Error("Move face works on flat faces. Remove the curved face.");
+          const n = take(face.normalAt());
+          const piece = basicFaceExtrusion(face, new Vector([n[0] * d, n[1] * d, n[2] * d])) as Shape3D;
+          if (!prism) prism = piece;
+          else {
+            const next: Shape3D = prism.fuse(piece);
+            prism.delete();
+            piece.delete();
+            prism = next;
+          }
+        }
+        if (!prism) return "Click the faces to move.";
+        try {
+          result = d > 0 ? part.shape.fuse(prism) : part.shape.cut(prism);
+        } finally {
+          prism.delete();
+        }
+      }
+      const solids = solidsOf(result);
+      solids.forEach((x) => x.delete());
+      if (solids.length === 0 || !isValidSolid(result)) {
+        result.delete();
+        return feature.type === "deleteFace" ? "Those faces can't be removed cleanly." : "That would leave the part broken — try a smaller amount.";
+      }
+      part.shape.delete();
+      part.shape = result;
+      part.featureIds.push(feature.id);
+      return null;
+    } catch (e) {
+      result?.delete();
+      return describeError(e, `Couldn't apply this ${def.label.toLowerCase()}.`);
+    } finally {
+      faces.forEach((f) => f.delete());
     }
   }
 

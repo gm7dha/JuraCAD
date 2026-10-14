@@ -187,6 +187,27 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "A STEP or STL file from another program, brought in as a part.",
     params: [],
   },
+  draft: {
+    type: "draft",
+    label: "Draft",
+    namePrefix: "Draft",
+    description: "Tapers faces by an angle so the part pulls out of a mould: the faces pivot where they meet the neutral plane.",
+    params: [{ key: "angle", label: "Angle", defaultValue: "3", group: "size", unit: "°" }],
+  },
+  moveFace: {
+    type: "moveFace",
+    label: "Move face",
+    namePrefix: "Move face",
+    description: "Moves flat faces straight out (or in, with a minus distance), growing or shrinking the part.",
+    params: [{ key: "distance", label: "Distance", defaultValue: "2", group: "size" }],
+  },
+  deleteFace: {
+    type: "deleteFace",
+    label: "Delete face",
+    namePrefix: "Delete face",
+    description: "Removes faces and closes the gap — takes away fillets, chamfers, holes and bosses.",
+    params: [],
+  },
   split: {
     type: "split",
     label: "Split",

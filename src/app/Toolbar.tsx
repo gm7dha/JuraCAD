@@ -239,6 +239,30 @@ export function Toolbar() {
           active={editingType === "shell"}
           title={hasPart ? "Shell — hollow out a part. Click the face to leave open (usually the top)" : "Make a part first, then hollow it out"}
         />
+        <ToolButton
+          label="Draft"
+          icon={<Icons.Draft />}
+          onClick={() => startCreate("draft")}
+          disabled={!ready || !hasPart}
+          active={editingType === "draft"}
+          title={hasPart ? "Draft — taper faces so the part pulls out of a mould" : "Make a part first"}
+        />
+        <ToolButton
+          label="Move face"
+          icon={<Icons.MoveFace />}
+          onClick={() => startCreate("moveFace")}
+          disabled={!ready || !hasPart}
+          active={editingType === "moveFace"}
+          title={hasPart ? "Move face — push flat faces out or in by a distance" : "Make a part first"}
+        />
+        <ToolButton
+          label="Delete face"
+          icon={<Icons.DeleteFace />}
+          onClick={() => startCreate("deleteFace")}
+          disabled={!ready || !hasPart}
+          active={editingType === "deleteFace"}
+          title={hasPart ? "Delete face — remove fillets, chamfers, holes or bosses and close the gap" : "Make a part first"}
+        />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">

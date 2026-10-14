@@ -128,6 +128,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     else if (d?.type === "mirror") s.setDraftMirrorPlane(plane);
     else if (d?.type === "plane" && d.planeDef && d.id !== target.id) s.setDraftField({ planeDef: { ...d.planeDef, ref: plane } });
     else if (d?.type === "split" && d.splitDef) s.setDraftField({ splitDef: { ...d.splitDef, plane } });
+    else if (d?.type === "draft") s.setDraftField({ neutral: plane });
     else if (!s.editing) s.selectFeature(target.id);
     return;
   }
@@ -197,11 +198,17 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
-  // Thicken: flat faces.
-  if (s.editing?.draft.type === "thicken") {
+  // Draft: a click on a plane sets the neutral plane.
+  if (s.editing?.draft.type === "draft" && target?.kind === "plane") {
+    s.setDraftField({ neutral: { kind: "default", name: target.plane } });
+    return;
+  }
+  // Thicken, Draft, Move face, Delete face: faces.
+  const faceFeature = s.editing?.draft.type;
+  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "deleteFace") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "face") {
-      s.showToast("Thicken grows faces — click a flat face rather than an edge.");
+      s.showToast("Click a face rather than an edge.");
       return;
     }
     const pick = pickFor(s.parts, target.item);
