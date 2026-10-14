@@ -2256,6 +2256,8 @@ kbd {
 .pattern-options .primary-button {
   width: 100%;
   margin-top: 4px;
+}
+
 /* Long toolbars: the mouse wheel scrolls them sideways, and arrows show there's more. */
 .toolbar-scroller {
   position: relative;
