@@ -808,7 +808,7 @@ export class GeometryEngine {
         const piece = basicFaceExtrusion(face, new Vector([n[0] * t, n[1] * t, n[2] * t])) as Shape3D;
         if (!solid) solid = piece;
         else {
-          const next = solid.fuse(piece);
+          const next: Shape3D = solid.fuse(piece);
           solid.delete();
           piece.delete();
           solid = next;
@@ -914,7 +914,7 @@ export class GeometryEngine {
         const piece = choice.shape;
         if (!rib) rib = piece;
         else {
-          const next = rib.fuse(piece);
+          const next: Shape3D = rib.fuse(piece);
           rib.delete();
           piece.delete();
           rib = next;
