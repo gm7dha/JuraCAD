@@ -77,7 +77,7 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.sketchRef = sketches[sketches.length - 1]?.id;
     feature.operation = "add";
   }
-  if (type === "thicken" || type === "moveFace" || type === "deleteFace") feature.picks = [];
+  if (type === "thicken" || type === "moveFace" || type === "deleteFace" || type === "thread") feature.picks = [];
   if (type === "draft") {
     feature.picks = [];
     feature.neutral = { kind: "default", name: "Top" };
@@ -353,7 +353,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     }
     if (feature.type === "draft") feature.neutral = parsePlane(f.neutral) ?? { kind: "default", name: "Top" };
     if (feature.type === "draft" && f.flipSide === true) feature.flipSide = true;
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "deleteFace"].includes(feature.type)) {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "deleteFace", "thread"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

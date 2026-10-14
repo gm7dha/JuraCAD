@@ -201,6 +201,16 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Moves flat faces straight out (or in, with a minus distance), growing or shrinking the part.",
     params: [{ key: "distance", label: "Distance", defaultValue: "2", group: "size" }],
   },
+  thread: {
+    type: "thread",
+    label: "Thread",
+    namePrefix: "Thread",
+    description: "Cuts a screw thread (60°, metric) round a rod for a bolt, or inside a hole for a nut.",
+    params: [
+      { key: "pitch", label: "Pitch", defaultValue: "1.25", positive: true, group: "size" },
+      { key: "length", label: "Length (0 = whole face)", defaultValue: "0", group: "size" },
+    ],
+  },
   deleteFace: {
     type: "deleteFace",
     label: "Delete face",
