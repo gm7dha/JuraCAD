@@ -13,7 +13,7 @@ import { dimPoint, dragDimension, drawDimension, measureDim, placeLength, resolv
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
-import type { InstanceInput, PartMesh, ViewProjection } from "../kernel/protocol";
+import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useStore } from "../model/store";
 import { studiosOf } from "../model/studios";
 import type { Dimension, Drawing, PartSmithDocument, SectionCut } from "../model/types";
