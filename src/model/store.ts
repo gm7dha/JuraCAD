@@ -31,6 +31,7 @@ import type { Assembly, Drawing, Feature, FeatureType, ImportedFile, Instance, M
 import { boundsOfVertices } from "../assembly/assembly";
 import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
+import { DEFAULT_MATERIAL } from "./materials";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
@@ -224,6 +225,8 @@ export interface AppState {
   renameDocument: (name: string) => void;
   /** Name a part (blank goes back to "Part N"). One undo step. */
   renamePart: (partId: string, name: string) => void;
+  /** Set what a part is made of (null = back to PLA). One undo step. */
+  setPartMaterial: (partId: string, material: string | null) => void;
   /** Colour a part (null = back to the default grey). One undo step. */
   setPartColour: (partId: string, colour: string | null) => void;
   /** Replace the variable list (one undo step); renames are followed everywhere. */
@@ -690,6 +693,15 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     renameFeature: (id, name) => changeStudio((doc) => renameFeature(doc, id, name)),
+
+    setPartMaterial: (partId, material) =>
+      change((doc) => {
+        const materials = { ...(doc.materials ?? {}) };
+        if (material && material !== DEFAULT_MATERIAL) materials[partId] = material;
+        else delete materials[partId];
+        const { materials: _old, ...rest } = doc;
+        return Object.keys(materials).length ? { ...rest, materials } : rest;
+      }),
 
     setPartColour: (partId, colour) =>
       change((doc) => {
