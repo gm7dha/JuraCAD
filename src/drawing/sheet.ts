@@ -75,7 +75,15 @@ export interface SheetLayout {
   prims: Prim[];
 }
 
+export interface BomLine {
+  item: number;
+  name: string;
+  quantity: number;
+}
+
 export interface SheetInfo {
+  /** Parts list for assembly drawings (shown above the title block). */
+  bom?: BomLine[];
   /** The design's name. */
   designName: string;
   /** What's drawn (the part's name). */
@@ -89,8 +97,21 @@ const centreOf = (p: ViewProjection | undefined): [number, number] =>
   p?.bounds ? [(p.bounds[0] + p.bounds[2]) / 2, (p.bounds[1] + p.bounds[3]) / 2] : [0, 0];
 
 /** The area views may use: the frame, minus a strip above the title block. */
-function viewArea(size: [number, number]): { x0: number; y0: number; x1: number; y1: number } {
-  return { x0: MARGIN + 5, y0: MARGIN + TITLE_H + 5, x1: size[0] - MARGIN - 5, y1: size[1] - MARGIN - 5 };
+const BOM_ROW = 6;
+const NOTE_LINE = 4.5;
+
+function notesOf(drawing: Drawing): string[] {
+  return (drawing.title.notes ?? "").split("\n").filter((l) => l.trim()).slice(0, 8);
+}
+
+/** Height kept free at the bottom for the title block, parts list and notes. */
+export function bottomReserve(drawing: Pick<Drawing, "title"> | null, bom: BomLine[] | undefined): number {
+  const notes = drawing ? notesOf(drawing as Drawing).length : 0;
+  return TITLE_H + (bom?.length ? (bom.length + 1) * BOM_ROW + 3 : 0) + (notes ? (notes + 1) * NOTE_LINE + 3 : 0);
+}
+
+function viewArea(size: [number, number], reserve = TITLE_H): { x0: number; y0: number; x1: number; y1: number } {
+  return { x0: MARGIN + 5, y0: MARGIN + reserve + 5, x1: size[0] - MARGIN - 5, y1: size[1] - MARGIN - 5 };
 }
 
 /** Width and height the arrangement needs on paper at a scale. */
@@ -109,8 +130,8 @@ function needed(projections: Partial<Record<ViewKind, ViewProjection>>, kinds: S
 }
 
 /** The biggest standard scale at which all the views fit on the sheet. */
-export function fitScale(projections: Partial<Record<ViewKind, ViewProjection>>, kinds: ViewKind[], sheet: SheetSize): { scale: number; fits: boolean } {
-  const area = viewArea(SHEETS[sheet]);
+export function fitScale(projections: Partial<Record<ViewKind, ViewProjection>>, kinds: ViewKind[], sheet: SheetSize, reserve = TITLE_H): { scale: number; fits: boolean } {
+  const area = viewArea(SHEETS[sheet], reserve);
   const set = new Set(kinds);
   for (const s of STANDARD_SCALES) {
     const n = needed(projections, set, s);
@@ -123,9 +144,10 @@ export function fitScale(projections: Partial<Record<ViewKind, ViewProjection>>,
 export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKind, ViewProjection>>, info: SheetInfo): SheetLayout {
   const size = SHEETS[drawing.sheet];
   const kinds = drawing.views.map((v) => v.kind).filter((k) => projections[k]?.bounds);
-  const auto = fitScale(projections, kinds, drawing.sheet);
+  const reserve = bottomReserve(drawing, info.bom);
+  const auto = fitScale(projections, kinds, drawing.sheet, reserve);
   const scale = drawing.scale ?? auto.scale;
-  const area = viewArea(size);
+  const area = viewArea(size, reserve);
   const n = needed(projections, new Set(kinds), scale);
 
   // Automatic places: the grid of aligned views centred in the area, the 3D view to its right.
@@ -261,8 +283,31 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
   out.push({ kind: "path", points: [sx + 11, sy - 1.75, sx + 22, sy - 3.5, sx + 22, sy + 3.5, sx + 11, sy + 1.75], closed: true, style: "thin" });
 
   // Notes, just above the title block.
-  const notes = (drawing.title.notes ?? "").split("\n").filter((l) => l.trim()).slice(0, 8);
-  notes.forEach((t, i) => out.push({ kind: "text", x: x0, y: y0 + TITLE_H + 4 + (notes.length - 1 - i) * 4.5, text: t, size: 3, anchor: "start" }));
-  if (notes.length) out.push({ kind: "text", x: x0, y: y0 + TITLE_H + 4 + notes.length * 4.5, text: "NOTES", size: 3, anchor: "start", bold: true });
+  // Parts list (assemblies), just above the title block: item, part, quantity.
+  let top = y0 + TITLE_H;
+  const bom = info.bom ?? [];
+  if (bom.length) {
+    const rows = [...bom].reverse();
+    const h = (rows.length + 1) * BOM_ROW;
+    out.push(rect(x0, top, x1, top + h, "border"));
+    for (let i = 1; i <= rows.length; i++) out.push(line(x0, top + i * BOM_ROW, x1, top + i * BOM_ROW));
+    out.push(line(x0 + 15, top, x0 + 15, top + h), line(x1 - 20, top, x1 - 20, top + h));
+    rows.forEach((r, i) => {
+      const y = top + i * BOM_ROW + 1.8;
+      out.push({ kind: "text", x: x0 + 7.5, y, text: String(r.item), size: 3, anchor: "middle" });
+      out.push({ kind: "text", x: x0 + 17, y, text: r.name, size: 3, anchor: "start" });
+      out.push({ kind: "text", x: x1 - 10, y, text: String(r.quantity), size: 3, anchor: "middle" });
+    });
+    const hy = top + rows.length * BOM_ROW + 1.8;
+    out.push({ kind: "text", x: x0 + 7.5, y: hy, text: "ITEM", size: 2.5, anchor: "middle", bold: true });
+    out.push({ kind: "text", x: x0 + 17, y: hy, text: "PART", size: 2.5, anchor: "start", bold: true });
+    out.push({ kind: "text", x: x1 - 10, y: hy, text: "QTY", size: 2.5, anchor: "middle", bold: true });
+    top += h;
+  }
+
+  // Notes, above that.
+  const notes = notesOf(drawing);
+  notes.forEach((t, i) => out.push({ kind: "text", x: x0, y: top + 4 + (notes.length - 1 - i) * NOTE_LINE, text: t, size: 3, anchor: "start" }));
+  if (notes.length) out.push({ kind: "text", x: x0, y: top + 4 + notes.length * NOTE_LINE, text: "NOTES", size: 3, anchor: "start", bold: true });
   return out;
 }
