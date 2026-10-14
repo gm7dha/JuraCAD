@@ -6,6 +6,17 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.7 — Phase 6: 2D drawings · commit `6c408b6`
+
+- Drawing tabs (+ › Drawing): Front, Top, Right, Left, Back, Bottom and 3D views of a part or a whole assembly,
+  laid out first-angle on A4, A3 or A2, with dashed hidden lines and a title block (title, material, drawn by,
+  date, scale, notes).
+- Views can be dragged (lined-up views stay lined up); scale fits the sheet or is chosen.
+- Dimensions: click two points, an edge, or a circle; across, up-and-down, slanted, diameter and radius; they
+  follow the part when it changes.
+- Assembly drawings show a parts list.
+- Save drawings as PDF, SVG or DXF at true size.
+
 ## v0.6 — Phase 5: Assemblies · commit `e3f1a55`
 
 - Assembly tabs (the + at the bottom): insert copies of parts, place them by typing a position and turn, Fix / Unfix.

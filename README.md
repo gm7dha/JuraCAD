@@ -6,8 +6,8 @@
 
 PartSmith runs entirely in your browser. Your designs never leave your computer, there's no account, and it's free.
 
-> **Status: v0.6 preview (Phase 5 done).** You can sketch shapes with dimensions and constraints, extrude or revolve them into parts, round, bevel or hollow them,
-> put parts together in assemblies with mates, check they're sound and fit, and export STEP, STL or 3MF. 2D drawings arrive next — see the [roadmap](docs/DESIGN.md#roadmap).
+> **Status: v0.7 preview (Phase 6 done).** You can sketch shapes with dimensions and constraints, extrude or revolve them into parts, round, bevel or hollow them,
+> put parts together in assemblies with mates, check they're sound and fit, export STEP, STL or 3MF, and make dimensioned 2D drawings (PDF, SVG, DXF). See the [roadmap](docs/DESIGN.md#roadmap).
 
 ## What you can do today
 
@@ -43,6 +43,10 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
   dragging, and join them with **mates** — Fasten, Hinge, Slider, Cylindrical, Planar and Ball — by clicking a face
   or edge on each part. Drag a hinged part to turn it. A **parts list** (with quantities, downloadable as CSV),
   a **clash check**, and **export** of the whole assembly in place (STEP keeps each part separate and named).
+- **Drawings** (the **+** at the bottom): Front, Top, Right and 3D views of a part or assembly on an A4–A2 sheet,
+  laid out first-angle with dashed hidden lines and a title block; drag views about; add **dimensions** by
+  clicking corners, edges or circles (they update when the part changes); assembly drawings get a parts list.
+  Save as **PDF**, **SVG** or **DXF** at true size.
 - **Check model** — confirms each part is closed and watertight, valid and in one piece, finds its thinnest wall,
   and spots separate parts that overlap.
 - **Install it as an app** (Chrome/Edge: the Install app button) so it opens in its own window and works offline;
