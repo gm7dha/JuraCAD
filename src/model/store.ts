@@ -130,6 +130,8 @@ export interface AppState {
   /** Faces and edges picked in the viewport. */
   selection: SelectionItem[];
   hiddenParts: string[];
+  /** Whole parts picked in the Parts list (for hiding, colouring or exporting several at once). */
+  selectedParts: string[];
   /** Default plane picked in the list or viewport (planes and faces aren't selected together). */
   selectedPlane: PlaneName | null;
   /** Plane whose row the pointer is over in the feature list (highlighted in the viewport). */
@@ -260,6 +262,9 @@ export interface AppState {
   selectFeature: (id: string | null) => void;
   setSelection: (items: SelectionItem[]) => void;
   toggleHidden: (partId: string) => void;
+  setSelectedParts: (ids: string[]) => void;
+  /** Hide or show several parts at once. */
+  setPartsHidden: (ids: string[], hidden: boolean) => void;
   selectPlane: (plane: PlaneName | null) => void;
   setListHoverPlane: (plane: PlaneName | null) => void;
   toggleDatum: (datum: DatumName) => void;
@@ -360,6 +365,7 @@ export const useStore = create<AppState>((set, get) => {
     selection: [],
     section: null,
     hiddenParts: [],
+    selectedParts: [],
     selectedPlane: null,
     listHoverPlane: null,
     hiddenDatums: [],
@@ -629,6 +635,7 @@ export const useStore = create<AppState>((set, get) => {
         selectedFeatureId: null,
         selection: [],
         hiddenParts: [],
+        selectedParts: [],
         activeTab: null,
         asmSelection: [],
         mateDraft: null,
@@ -647,6 +654,7 @@ export const useStore = create<AppState>((set, get) => {
         selection: [],
         selectedPlane: null,
         hiddenParts: [],
+        selectedParts: [],
         activeTab: null,
         asmSelection: [],
         mateDraft: null,
@@ -670,7 +678,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveTab: (activeTab) => {
       if (get().editing) return;
-      set({ activeTab, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
+      set({ activeTab, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
     },
 
     removeAssembly: (id) => {
@@ -867,6 +875,9 @@ export const useStore = create<AppState>((set, get) => {
     selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane })),
     setSelection: (items) =>
       set((s) => ({ selection: items, selectedPlane: items.length > 0 ? null : s.selectedPlane })),
+    setSelectedParts: (selectedParts) => set({ selectedParts }),
+    setPartsHidden: (ids, hidden) =>
+      set((s) => ({ hiddenParts: hidden ? [...s.hiddenParts.filter((p) => !ids.includes(p)), ...ids] : s.hiddenParts.filter((p) => !ids.includes(p)) })),
     toggleHidden: (partId) =>
       set((s) => ({
         hiddenParts: s.hiddenParts.includes(partId) ? s.hiddenParts.filter((p) => p !== partId) : [...s.hiddenParts, partId],
@@ -916,6 +927,7 @@ export const useStore = create<AppState>((set, get) => {
           // Drop picks and hidden flags for parts that no longer exist.
           selection: s.selection.filter((x) => ids.has(x.partId)),
           hiddenParts: s.hiddenParts.filter((p) => ids.has(p)),
+          selectedParts: s.selectedParts.filter((p) => ids.has(p)),
         };
       }),
   };

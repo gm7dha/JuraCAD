@@ -51,6 +51,7 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
   clicking corners, edges or circles (they update when the part changes); centre lines on holes; a hatched
   **section views** (draw the cutting line across any front, top or side view; as many as you like); assembly drawings get a parts list and numbered balloons.
   Save as **PDF**, **SVG** or **DXF** at true size.
+- **Select several parts** in the Parts list: drag down the list, Shift + click for a run, Ctrl (⌘) + click to add one. Hide, colour or export them together.
 - **Check model** — confirms each part is closed and watertight, valid and in one piece, finds its thinnest wall,
   and spots separate parts that overlap.
 - **Install it as an app** (Chrome/Edge: the Install app button) so it opens in its own window and works offline;
