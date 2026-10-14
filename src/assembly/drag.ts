@@ -9,7 +9,7 @@
 import type { Assembly, Mate } from "../model/types";
 import { framePlacement, type Frame } from "./connectors";
 import { add, compose, cross, dot, length, normalize, rotate, scale, sub, type Placement, type Vec3 } from "./math";
-import { mateValues, type SolveResult } from "./mates";
+import { clampToLimits, mateValues, type SolveResult } from "./mates";
 
 export interface Ray {
   origin: Vec3;
@@ -87,7 +87,9 @@ export function planDrag(
   // Mate amounts move the second connector's part; dragging the first part goes the other way.
   const sign = mate.b.instanceId === instanceId ? 1 : -1;
   const { values: start } = mateValues(mate);
-  const withValue = (key: string, value: string): DragChange => ({ kind: "mate", id: mate.id, values: { ...mate.values, [key]: value } });
+  // Movements stop at the mate's limits.
+  const limited = (key: string, v: number, step: number) => String(clampToLimits(mate, key, Number(round(v, step))));
+  const withValue = (key: string, value: number, step: number): DragChange => ({ kind: "mate", id: mate.id, values: { ...mate.values, [key]: limited(key, value, step) } });
 
   const turnPlan = (): DragStart => {
     const n = axis.z;
@@ -109,7 +111,7 @@ export function planDrag(
           if (length(v) < 1e-6) return null;
           total += Math.atan2(dot(cross(last, v), n), dot(last, v));
           last = v;
-          return withValue("angle", round((start.angle ?? 0) + (sign * total * 180) / Math.PI, 0.5));
+          return withValue("angle", (start.angle ?? 0) + (sign * total * 180) / Math.PI, 0.5);
         },
       },
     };
@@ -127,7 +129,7 @@ export function planDrag(
           const hit = rayPlane(ray, grab, normal);
           if (!hit) return null;
           const s = dot(sub(hit, axis.origin), z);
-          return withValue("distance", round((start.distance ?? 0) + sign * (s - s0), 0.1));
+          return withValue("distance", (start.distance ?? 0) + sign * (s - s0), 0.1);
         },
       },
     };
@@ -152,7 +154,7 @@ export function planDrag(
             return {
               kind: "mate",
               id: mate.id,
-              values: { ...mate.values, dx: round((start.dx ?? 0) + dot(d, axis.x), 0.1), dy: round((start.dy ?? 0) + dot(d, axis.y), 0.1) },
+              values: { ...mate.values, dx: limited("dx", (start.dx ?? 0) + dot(d, axis.x), 0.1), dy: limited("dy", (start.dy ?? 0) + dot(d, axis.y), 0.1) },
             };
           },
         },

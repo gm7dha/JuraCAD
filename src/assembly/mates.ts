@@ -82,19 +82,52 @@ export const MATE_TYPES: Record<MateType, MateTypeDef> = {
 
 export const MATE_ORDER: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "ball"];
 
-/** Values worked out from what's typed (0 where blank); errors by key. */
-export function mateValues(mate: Pick<Mate, "type" | "values">): { values: Record<string, number>; errors: Record<string, string> } {
-  const values: Record<string, number> = {};
+/**
+ * The limits on a mate's movements, worked out from what's typed (missing
+ * ends are ±Infinity). Only movements (free amounts) can have limits.
+ */
+export function mateLimits(mate: Pick<Mate, "type" | "limits">): { limits: Record<string, { min: number; max: number }>; errors: Record<string, string> } {
+  const limits: Record<string, { min: number; max: number }> = {};
   const errors: Record<string, string> = {};
+  for (const def of MATE_TYPES[mate.type].values) {
+    const l = mate.limits?.[def.key];
+    if (!def.free || !l) continue;
+    const end = (src: string | undefined, fallback: number, word: string): number => {
+      if (!src?.trim()) return fallback;
+      const r = evaluate(src);
+      if (r.ok) return r.value;
+      errors[def.key] = `${word} limit: ${r.error}`;
+      return fallback;
+    };
+    const min = end(l.min, -Infinity, "Lowest");
+    const max = end(l.max, Infinity, "Highest");
+    if (min > max && !errors[def.key]) errors[def.key] = "The lowest limit is more than the highest.";
+    if (min > -Infinity || max < Infinity) limits[def.key] = { min, max };
+  }
+  return { limits, errors };
+}
+
+/** Keep a movement's amount within its limits. */
+export function clampToLimits(mate: Pick<Mate, "type" | "limits">, key: string, value: number): number {
+  const l = mateLimits(mate).limits[key];
+  return l && l.min <= l.max ? Math.max(l.min, Math.min(l.max, value)) : value;
+}
+
+/** Values worked out from what's typed (0 where blank), kept within any limits; errors by key. */
+export function mateValues(mate: Pick<Mate, "type" | "values" | "limits">): { values: Record<string, number>; errors: Record<string, string> } {
+  const values: Record<string, number> = {};
+  const { limits, errors } = mateLimits(mate);
   for (const def of MATE_TYPES[mate.type].values) {
     const src = (mate.values[def.key] ?? "").trim();
     if (!src) {
       values[def.key] = 0;
-      continue;
+    } else {
+      const r = evaluate(src);
+      if (r.ok) values[def.key] = r.value;
+      else errors[def.key] = r.error;
     }
-    const r = evaluate(src);
-    if (r.ok) values[def.key] = r.value;
-    else errors[def.key] = r.error;
+    const l = limits[def.key];
+    if (l && l.min <= l.max && values[def.key] !== undefined) values[def.key] = Math.max(l.min, Math.min(l.max, values[def.key]));
   }
   return { values, errors };
 }

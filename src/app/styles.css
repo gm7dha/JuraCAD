@@ -1424,6 +1424,13 @@ kbd {
   margin: 4px 0 0;
 }
 
+.mate-limits {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 2px;
+}
+
 .row-actions {
   display: none;
   gap: 2px;

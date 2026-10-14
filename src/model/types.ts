@@ -140,6 +140,8 @@ export interface Drawing {
   centreLines?: boolean;
   /** False hides the numbered balloons on assembly drawings (missing = shown). */
   balloons?: boolean;
+  /** Assembly drawings: show the parts spread apart (the assembly's exploded view). */
+  exploded?: boolean;
 }
 
 /**
@@ -207,6 +209,8 @@ export interface Mate {
   flip: boolean;
   /** Amounts as typed (angle, distance, gap…), like feature sizes. */
   values: Record<string, string>;
+  /** How far each movement may go (typed like the amounts; blank = no limit). */
+  limits?: Record<string, { min?: string; max?: string }>;
   suppressed?: boolean;
 }
 
@@ -217,6 +221,8 @@ export interface Assembly {
   instances: Instance[];
   /** How the parts are joined (optional: older saves have none). */
   mates?: Mate[];
+  /** Exploded view: how far the parts are spread apart (1 = their distance from the middle again); missing = together. */
+  explode?: number;
 }
 
 /** How finely curved surfaces are turned into triangles. */

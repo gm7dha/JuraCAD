@@ -17,7 +17,7 @@ import type { InstanceInput, PartMesh, ViewProjection } from "../kernel/protocol
 import { activeDrawing, partsInStudio, useStore } from "../model/store";
 import { studiosOf } from "../model/studios";
 import type { Dimension, Drawing, PartSmithDocument, ViewKind } from "../model/types";
-import { instancesForKernel } from "./assemblySolve";
+import { explodeAssembly, instancesForKernel } from "./assemblySolve";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { detectPlatform, shortcut } from "./platform";
@@ -38,7 +38,11 @@ function drawingSubject(
   }
   const asm = doc.assemblies?.find((a) => a.id === src.id);
   if (!asm) return null;
-  const instances = instancesForKernel(asm, parts);
+  let instances = instancesForKernel(asm, parts);
+  if (drawing.exploded) {
+    const spread = explodeAssembly(asm, parts, Object.fromEntries(instances.map((i) => [i.id, { position: i.position, rotation: i.rotation }])), asm.explode ?? 1);
+    instances = instances.map((i) => ({ ...i, position: spread[i.id]?.position ?? i.position }));
+  }
   return { name: asm.name, partIds: [], instances, key: [JSON.stringify(instances), ...parts.filter((p) => instances.some((i) => i.partId === p.id))] };
 }
 
@@ -355,6 +359,21 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
                 }
               />
               Numbered balloons (match the parts list)
+            </label>
+          )}
+          {drawing.source?.kind === "assembly" && (
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={!!drawing.exploded}
+                onChange={(e) =>
+                  change((d) => {
+                    const { exploded: _old, ...rest } = arrangeViews(d);
+                    return e.target.checked ? { ...rest, exploded: true } : rest;
+                  })
+                }
+              />
+              Exploded (parts spread apart)
             </label>
           )}
           {drawing.views.some((v) => v.kind === "section") && (
