@@ -24,6 +24,35 @@ function lookup(frames: Record<string, [Frame | null, Frame | null]>) {
   return (m: Mate, side: "a" | "b") => frames[m.id]?.[side === "a" ? 0 : 1] ?? null;
 }
 
+describe("closing loops of mates", () => {
+  it("turns a hinge so the loop closes", () => {
+    // b is fastened to a turned 90°, and also hinged to a (at 0°): the hinge has to turn to 90° to fit.
+    const asm: Assembly = {
+      id: "a",
+      name: "A",
+      instances: [inst("a", true), inst("b")],
+      mates: [mate("m1", "fastened", "a", "b", { angle: "90" }), mate("m2", "revolute", "a", "b", { angle: "0" })],
+    };
+    const r = solveAssembly(asm, lookup({ m1: [top, bottom], m2: [top, bottom] }));
+    expect(r.mateErrors).toEqual({});
+    expect(((r.adjusted?.m2.angle ?? 0) % 360 + 360) % 360).toBeCloseTo(90, 3);
+  });
+
+  it("slides a slider along so a chain of parts meets back up", () => {
+    // a (fixed) → b by a Fasten with a 10 mm gap; a → b also by a Slider at 0: the slider must slide 10.
+    const asm: Assembly = {
+      id: "a",
+      name: "A",
+      instances: [inst("a", true), inst("b")],
+      mates: [mate("m1", "fastened", "a", "b", { gap: "10" }), mate("m2", "slider", "a", "b", { distance: "0" })],
+    };
+    const r = solveAssembly(asm, lookup({ m1: [top, bottom], m2: [top, bottom] }));
+    expect(r.mateErrors).toEqual({});
+    expect(r.adjusted?.m2.distance).toBeCloseTo(10, 4);
+    close(r.placements.b.position, [0, 0, 20], 4);
+  });
+});
+
 describe("solving mates", () => {
   it("fastens one part on top of another, face to face", () => {
     const asm: Assembly = { id: "a", name: "A", instances: [inst("base", true), inst("lid")], mates: [mate("m1", "fastened", "base", "lid")] };
@@ -88,7 +117,7 @@ describe("solving mates", () => {
     };
     const r = solveAssembly(loop, lookup({ m1: [top, bottom], m2: [top, bottom] }));
     expect(r.mateErrors.m1).toBeUndefined();
-    expect(r.mateErrors.m2).toMatch(/disagrees/);
+    expect(r.mateErrors.m2).toMatch(/can't be met/);
     // Agreeing loops are fine.
     const ok = solveAssembly({ ...loop, mates: [mate("m1", "fastened", "a", "b"), mate("m2", "revolute", "a", "b")] }, lookup({ m1: [top, bottom], m2: [top, bottom] }));
     expect(ok.mateErrors).toEqual({});
