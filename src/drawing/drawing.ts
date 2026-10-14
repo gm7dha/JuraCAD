@@ -2,7 +2,7 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { DetailView, Dimension, DimPoint, Drawing, DrawingView, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
+import type { DetailView, Dimension, DrawingNote, DimPoint, Drawing, DrawingView, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { SECTION_HOSTS, viewKey } from "./sections";
 
 const drawingsOf = (doc: PartSmithDocument) => doc.drawings ?? [];
@@ -93,6 +93,17 @@ export function removeDimension(d: Drawing, id: string): Drawing {
   return left.length ? { ...rest, dimensions: left } : rest;
 }
 
+export function putNote(d: Drawing, note: DrawingNote): Drawing {
+  const notes = d.notes ?? [];
+  return { ...d, notes: notes.some((x) => x.id === note.id) ? notes.map((x) => (x.id === note.id ? note : x)) : [...notes, note] };
+}
+
+export function removeNote(d: Drawing, id: string): Drawing {
+  const left = (d.notes ?? []).filter((x) => x.id !== id);
+  const { notes: _old, ...rest } = d;
+  return left.length ? { ...rest, notes: left } : rest;
+}
+
 /** Put every view back in its automatic place. */
 export function arrangeViews(d: Drawing): Drawing {
   return { ...d, views: d.views.map(({ at: _at, ...v }) => v) };
@@ -178,8 +189,16 @@ export function parseDrawings(raw: unknown): Drawing[] {
         return parseDimension(old ? { ...(raw as object), view: "section:A" } : raw);
       })
       .filter((x): x is Dimension => x !== null && viewKeys.has(x.view));
+    const notes = (Array.isArray(r.notes) ? r.notes : [])
+      .map((raw): DrawingNote | null => {
+        const n = (raw ?? {}) as Record<string, unknown>;
+        const at = Array.isArray(n.at) && n.at.length === 2 && n.at.every(num) ? (n.at as [number, number]) : null;
+        return typeof n.id === "string" && at && typeof n.text === "string" ? { id: n.id, at, text: n.text.slice(0, 2000) } : null;
+      })
+      .filter((x): x is DrawingNote => x !== null);
     out.push({
       ...(dimensions.length ? { dimensions } : {}),
+      ...(notes.length ? { notes } : {}),
       id: r.id,
       name: text(r.name, 80)?.trim() || "Drawing",
       source,

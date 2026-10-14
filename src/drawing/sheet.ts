@@ -85,8 +85,14 @@ export interface SheetLayout {
   tooBig: boolean;
   views: PlacedView[];
   dims: PlacedDim[];
+  /** Notes: where each one's text sits (sheet mm), for picking and dragging. */
+  notes: { id: string; box: [number, number, number, number] }[];
   prims: Prim[];
 }
+
+/** Text size and line spacing of notes (paper mm). */
+export const SHEET_NOTE_SIZE = 3.5;
+export const SHEET_NOTE_LINE = 5.5;
 
 export interface BomLine {
   item: number;
@@ -326,8 +332,21 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     });
   }
 
+  // Notes: lines of text from their top-left corner.
+  const notes: SheetLayout["notes"] = [];
+  for (const note of drawing.notes ?? []) {
+    const lines = note.text.split("\n");
+    const [x, y] = note.at;
+    lines.forEach((line, i) => {
+      if (line.trim()) prims.push({ kind: "text", x, y: y - SHEET_NOTE_SIZE - i * SHEET_NOTE_LINE, text: line, size: SHEET_NOTE_SIZE, anchor: "start" });
+    });
+    const w = Math.max(4, ...lines.map((l) => l.length * SHEET_NOTE_SIZE * 0.55));
+    const h = SHEET_NOTE_SIZE + (lines.length - 1) * SHEET_NOTE_LINE + 1;
+    notes.push({ id: note.id, box: [x, y - h, x + w, y] });
+  }
+
   prims.push(...frameAndTitle(size, drawing, scale, info));
-  return { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, prims };
+  return { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, notes, prims };
 }
 
 /** The cutting line across a view, with arrows showing which way the section looks, and its letters. */
