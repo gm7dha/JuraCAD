@@ -11,7 +11,7 @@ function withDrawings(doc: PartSmithDocument, drawings: Drawing[]): PartSmithDoc
   return drawings.length ? { ...rest, drawings } : rest;
 }
 
-export const VIEW_KINDS: ViewKind[] = ["front", "top", "right", "left", "back", "bottom", "iso"];
+export const VIEW_KINDS: ViewKind[] = ["front", "top", "right", "left", "back", "bottom", "iso", "section"];
 export const VIEW_LABELS: Record<ViewKind, string> = {
   front: "Front",
   top: "Top",
@@ -20,6 +20,7 @@ export const VIEW_LABELS: Record<ViewKind, string> = {
   back: "Back",
   bottom: "Bottom",
   iso: "3D (isometric)",
+  section: "Section A-A (front, cut through)",
 };
 export const SHEET_SIZES: SheetSize[] = ["A4", "A3", "A2"];
 
@@ -135,6 +136,9 @@ export function parseDrawings(raw: unknown): Drawing[] {
       hiddenLines: r.hiddenLines !== false,
       views,
       title,
+      ...(num(r.sectionAt) ? { sectionAt: Math.max(0.01, Math.min(0.99, r.sectionAt as number)) } : {}),
+      ...(r.centreLines === false ? { centreLines: false } : {}),
+      ...(r.balloons === false ? { balloons: false } : {}),
     });
   }
   return out;

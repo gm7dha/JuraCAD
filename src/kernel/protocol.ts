@@ -26,6 +26,12 @@ export interface ViewProjection {
   points: number[];
   /** minX, minY, maxX, maxY — null when there's nothing to draw. */
   bounds: [number, number, number, number] | null;
+  /** Centre lines of round faces seen from the side: x0, y0, x1, y1 each. */
+  axes?: number[][];
+  /** Section views: the faces made by the cut, as triangles (x, y × 3 each). */
+  cutFaces?: number[];
+  /** Section views: where the cut is, front to back (world Y, mm). */
+  cutAt?: number;
 }
 
 /** One Part Studio's features, for a rebuild. */
@@ -113,7 +119,7 @@ export type KernelRequest =
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[] }
   | { type: "clashes"; instances: InstanceInput[] }
-  | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean }
+  | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sectionAt?: number }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
 

@@ -106,7 +106,8 @@ export interface PartSmithDocument {
 }
 
 /** Which way a drawing view looks at the part. */
-export type ViewKind = "front" | "top" | "right" | "left" | "back" | "bottom" | "iso";
+/** "section" is the front view cut through (Section A-A). */
+export type ViewKind = "front" | "top" | "right" | "left" | "back" | "bottom" | "iso" | "section";
 
 /** One view on a drawing sheet. */
 export interface DrawingView {
@@ -133,6 +134,12 @@ export interface Drawing {
   title: { title?: string; drawnBy?: string; material?: string; notes?: string };
   /** Dimensions (optional: older saves have none). */
   dimensions?: Dimension[];
+  /** Where the section view cuts, front to back (0–1); missing = through the middle. */
+  sectionAt?: number;
+  /** False hides centre marks and centre lines (missing = shown). */
+  centreLines?: boolean;
+  /** False hides the numbered balloons on assembly drawings (missing = shown). */
+  balloons?: boolean;
 }
 
 /**

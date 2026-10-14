@@ -1351,6 +1351,11 @@ kbd {
   overflow-y: auto;
 }
 
+/* Sections keep their full height; the panel scrolls instead of squashing them. */
+.drawing-panel .panel-section {
+  flex: 0 0 auto;
+}
+
 .text-feature-input {
   width: 100%;
   padding: 6px 8px;

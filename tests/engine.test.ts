@@ -1073,6 +1073,35 @@ describe("drawing views", () => {
     expect(Math.min(...hy)).toBeCloseTo(10, 3);
     // Without hidden lines there are none.
     expect(engine.project([], undefined, ["front"], false)[0].hidden).toEqual([]);
+    // The hole's centre line shows from the front (it's upright), not from the top.
+    expect(front.axes).toHaveLength(1);
+    const [x0, y0, x1, y1] = front.axes![0];
+    expect([x0, x1].map((v) => Math.round(v * 1000) / 1000)).toEqual([10, 10]);
+    expect([Math.min(y0, y1), Math.max(y0, y1)].map((v) => Math.round(v * 1000) / 1000)).toEqual([10, 20]);
+    expect(top.axes).toBeUndefined();
+  });
+
+  it("cuts a section view through the part", () => {
+    const block = feature("box", { width: 40, depth: 30, height: 20 });
+    const hole = feature("cylinder", { diameter: 10, height: 15, x: 10, y: 15, z: 10 }, "remove");
+    engine.rebuild([block, hole]);
+    const [section] = engine.project([], undefined, ["section"], true, 0.5);
+    expect(section.cutAt).toBeCloseTo(15, 6);
+    expect(section.hidden).toEqual([]);
+    section.bounds!.forEach((v, i) => expect(v).toBeCloseTo([0, 0, 40, 20][i], 3));
+    // The cut face is the 40 × 20 block less the 10 × 10 slice through the hole.
+    const t = section.cutFaces!;
+    let area = 0;
+    for (let i = 0; i < t.length; i += 6) area += Math.abs((t[i + 2] - t[i]) * (t[i + 5] - t[i + 1]) - (t[i + 4] - t[i]) * (t[i + 3] - t[i + 1])) / 2;
+    expect(area).toBeCloseTo(700, 1);
+    // The cut-open hole still has its centre line.
+    expect(section.axes?.length).toBe(1);
+    // Cutting near the back misses the hole: the whole 40 × 20 face is cut.
+    const [back] = engine.project([], undefined, ["section"], true, 0.9);
+    let backArea = 0;
+    const b = back.cutFaces!;
+    for (let i = 0; i < b.length; i += 6) backArea += Math.abs((b[i + 2] - b[i]) * (b[i + 5] - b[i + 1]) - (b[i + 4] - b[i]) * (b[i + 3] - b[i + 1])) / 2;
+    expect(backArea).toBeCloseTo(800, 1);
   });
 });
 
