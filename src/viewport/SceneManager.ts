@@ -1,3 +1,4 @@
+import { rectOf, shapeInBox, type Rect } from "./boxSelect";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -85,6 +86,8 @@ export interface SceneCallbacks {
   onDragStart?: (target: PickTarget & { kind: "part" }, ray: ScreenRay, shift: boolean) => boolean;
   onDragMove?: (ray: ScreenRay) => void;
   onDragEnd?: () => void;
+  /** A selection box dragged on empty space: the parts it chose (`additive` with Shift/Ctrl/Cmd held). */
+  onBoxSelect?: (partIds: string[], additive: boolean) => void;
 }
 
 interface PlaneObjects {
@@ -156,6 +159,10 @@ export class SceneManager {
   private pointerDown: { x: number; y: number; button: number } | null = null;
   /** Dragging parts with the left button (assemblies). */
   private dragEnabled = false;
+  /** Left-drag on empty space draws a selection box (Part Studio). */
+  private boxEnabled = false;
+  private box: { x: number; y: number; cx: number; cy: number; shown: boolean; additive: boolean } | null = null;
+  private readonly boxEl: HTMLDivElement;
   private drag: { target: PickTarget & { kind: "part" }; started: boolean; refused: boolean } | null = null;
   /** What the last left-press in drag mode found (for the smoke test's error messages). */
   lastDragDebug = "";
@@ -181,6 +188,10 @@ export class SceneManager {
     this.renderer.autoClear = true;
     this.renderer.domElement.className = "viewport-canvas";
     container.appendChild(this.renderer.domElement);
+    this.boxEl = document.createElement("div");
+    this.boxEl.className = "box-select";
+    this.boxEl.hidden = true;
+    container.appendChild(this.boxEl);
 
     this.camera = new THREE.OrthographicCamera(-100, 100, 100, -100, 0.1, 1e6);
     this.camera.up.set(0, 0, 1);
@@ -341,6 +352,40 @@ export class SceneManager {
   /** Ids of the parts (or assembly instances) on show, and what their faces look like. */
   shownParts(): { id: string; faceRefs: PartMesh["faceRefs"] }[] {
     return [...this.parts.values()].map((p) => ({ id: p.data.id, faceRefs: p.data.faceRefs }));
+  }
+
+  /** Let left-drags on empty space draw a selection box. */
+  setBoxSelectEnabled(on: boolean): void {
+    this.boxEnabled = on;
+    if (!on) this.endBox();
+  }
+
+  private endBox(): void {
+    this.box = null;
+    this.boxEl.hidden = true;
+  }
+
+  /** Parts chosen by a box on screen (px): wholly inside, or (crossing) any part of them. */
+  partsInBox(r: Rect, crossing: boolean): string[] {
+    const out: string[] = [];
+    const v = new THREE.Vector3();
+    const toScreen = (attr: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, m: THREE.Matrix4): Float32Array => {
+      const pts = new Float32Array(attr.count * 2);
+      for (let i = 0; i < attr.count; i++) {
+        v.fromBufferAttribute(attr, i).applyMatrix4(m).project(this.camera);
+        pts[2 * i] = ((v.x + 1) / 2) * this.width;
+        pts[2 * i + 1] = ((1 - v.y) / 2) * this.height;
+      }
+      return pts;
+    };
+    for (const p of this.parts.values()) {
+      if (!p.mesh.visible) continue;
+      p.mesh.updateMatrixWorld();
+      const points = toScreen(p.mesh.geometry.getAttribute("position"), p.mesh.matrixWorld);
+      const segments = toScreen(p.lines.geometry.getAttribute("position"), p.lines.matrixWorld);
+      if (shapeInBox(r, points, segments, crossing)) out.push(p.data.id);
+    }
+    return out;
   }
 
   /** Let left-drags on parts move them (assemblies). */
@@ -629,7 +674,7 @@ export class SceneManager {
     const { x, y } = this.localPoint(e);
     const p = this.unprojectToSketch(x, y);
     if (!p) return null;
-    return { x: p.x, y: p.y, mmPerPx: this.worldPerPixel(), shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
+    return { x: p.x, y: p.y, mmPerPx: this.worldPerPixel(), shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, screenX: x };
   }
 
   dispose(): void {
@@ -943,6 +988,11 @@ export class SceneManager {
         this.sketchController.pointerDown(ptr);
       }
     }
+    if (this.boxEnabled && !this.sketchController && e.button === 0 && e.pointerType !== "touch" && !this.viewCube.contains(x, y, this.width)) {
+      // On empty space (or a plane), a drag draws a selection box; a plain click still picks.
+      const hit = this.pickAt(x, y);
+      if (hit?.kind !== "part") this.box = { x, y, cx: x, cy: y, shown: false, additive: e.shiftKey || e.ctrlKey || e.metaKey };
+    }
     if (this.dragEnabled && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const hit = this.pickAt(x, y);
       this.drag = hit?.kind === "part" ? { target: hit, started: false, refused: false } : null;
@@ -960,6 +1010,28 @@ export class SceneManager {
       const leftDown = (e.buttons & 1) === 1;
       if (ptr && (leftDown || e.buttons === 0)) this.sketchController.pointerMove(ptr, leftDown);
       if (e.buttons === 0) this.pendingMove = this.localPoint(e); // view cube hover
+      return;
+    }
+    if (this.box && (e.buttons & 1) === 1) {
+      const { x, y } = this.localPoint(e);
+      const b = this.box;
+      b.cx = x;
+      b.cy = y;
+      if (!b.shown && Math.hypot(x - b.x, y - b.y) > CLICK_SLOP) {
+        b.shown = true;
+        this.boxEl.hidden = false;
+        this.renderer.domElement.setPointerCapture(e.pointerId);
+      }
+      if (b.shown) {
+        const r = rectOf(b.x, b.y, x, y);
+        const s = this.boxEl.style;
+        s.left = `${r.x0}px`;
+        s.top = `${r.y0}px`;
+        s.width = `${r.x1 - r.x0}px`;
+        s.height = `${r.y1 - r.y0}px`;
+        // Dragged leftwards: dashed, takes anything it touches.
+        this.boxEl.classList.toggle("crossing", x < b.x);
+      }
       return;
     }
     if (this.drag && this.pointerDown && (e.buttons & 1) === 1) {
@@ -1006,6 +1078,15 @@ export class SceneManager {
       this.renderer.domElement.style.cursor = "";
       this.callbacks.onDragEnd?.();
       return;
+    }
+    const box = this.box;
+    if (box) {
+      this.endBox();
+      if (box.shown) {
+        if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+        this.callbacks.onBoxSelect?.(this.partsInBox(rectOf(box.x, box.y, box.cx, box.cy), box.cx < box.x), box.additive);
+        return;
+      }
     }
     if (!down || down.button !== 0 || e.button !== 0) return;
     const { x, y } = this.localPoint(e);

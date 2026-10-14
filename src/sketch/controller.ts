@@ -40,6 +40,7 @@ import {
   trimAt,
 } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
+import { rectOf, sketchItemsInBox } from "../viewport/boxSelect";
 
 export interface SketchPointer {
   /** Sketch coordinates (mm). */
@@ -49,6 +50,8 @@ export interface SketchPointer {
   mmPerPx: number;
   shift: boolean;
   ctrl: boolean;
+  /** Screen position across the view (px), for telling which way a box was dragged. */
+  screenX?: number;
 }
 
 /** Temporary shapes drawn while a tool is in progress. */
@@ -83,6 +86,9 @@ interface DragState {
   moved: boolean;
   additive: boolean;
   hit: Hit | null;
+  startScreenX?: number;
+  /** Dragging from empty space draws a selection box: its far corner and whether it was dragged leftwards. */
+  box?: { x: number; y: number; crossing: boolean };
   /** Dragging a point: the point (or origin) it has snapped onto, joined when the drag ends. */
   snapTo?: string | null;
 }
@@ -539,6 +545,15 @@ export class SketchController {
     if (this.tool !== "select" || !this.drag) return;
     const drag = this.drag;
     this.drag = null;
+    if (drag.moved && drag.kind === "none") {
+      this.emit({ preview: [] });
+      const d = this.data;
+      if (!d || !drag.box) return;
+      const found = sketchItemsInBox(d, rectOf(drag.startX, drag.startY, drag.box.x, drag.box.y), drag.box.crossing);
+      const sel = this.state.sketch?.selection ?? [];
+      this.state.setSketchSelection(drag.additive ? [...new Set([...sel, ...found])] : found);
+      return;
+    }
     if (drag.moved) {
       if (drag.kind === "point" && drag.snapTo) {
         const r = joinPoints(this.data ?? drag.start, drag.id, drag.snapTo);
@@ -587,14 +602,25 @@ export class SketchController {
       // Dragging a circle's rim resizes it; drag its centre point to move it.
       kind = c.type === "circle" ? "rim" : "curve";
     }
-    this.drag = { kind, id: hit?.id ?? "", start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit };
+    this.drag = { kind, id: hit?.id ?? "", start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit, startScreenX: e.screenX };
   }
 
   private selectDrag(e: SketchPointer) {
     const drag = this.drag!;
-    if (drag.kind === "none") return;
     if (!drag.moved && Math.hypot(e.x - drag.startX, e.y - drag.startY) < DRAG_PX * e.mmPerPx) return;
     drag.moved = true;
+    if (drag.kind === "none") {
+      // From empty space: a selection box. Leftwards takes anything it touches.
+      const crossing = e.screenX !== undefined && drag.startScreenX !== undefined ? e.screenX < drag.startScreenX : e.x < drag.startX;
+      drag.box = { x: e.x, y: e.y, crossing };
+      const a: [number, number] = [drag.startX, drag.startY];
+      const b: [number, number] = [e.x, drag.startY];
+      const c: [number, number] = [e.x, e.y];
+      const dd: [number, number] = [drag.startX, e.y];
+      const kind = crossing ? "guide" : "line";
+      this.emit({ preview: [{ kind, a, b }, { kind, a: b, b: c }, { kind, a: c, b: dd }, { kind, a: dd, b: a }], hover: null });
+      return;
+    }
     let next = drag.start;
     if (drag.kind === "point") {
       // Hovering close to another point snaps onto it (and joins them when let go).

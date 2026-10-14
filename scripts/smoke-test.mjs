@@ -749,6 +749,27 @@ try {
   await shot("darkassembly");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
+  step = "selecting parts by dragging a box in the 3D view";
+  {
+    await page.keyboard.press("Escape");
+    const vb = await page.locator(".viewport").boundingBox();
+    const total = await page.locator(".part-row").count();
+    // Right to left: a crossing box takes every part it touches.
+    await page.mouse.move(vb.x + vb.width - 40, vb.y + vb.height - 40);
+    await page.mouse.down();
+    await page.mouse.move(vb.x + vb.width / 2, vb.y + vb.height / 2, { steps: 4 });
+    await page.mouse.move(vb.x + 40, vb.y + 60, { steps: 4 });
+    if (!(await page.locator(".box-select.crossing").isVisible())) throw new Error("no selection box while dragging");
+    await page.mouse.up();
+    // Every part on show (some may be hidden) — at least two of them.
+    await page.waitForFunction(() => document.querySelectorAll(".part-row.selected").length >= 2, null, { timeout: 5_000 }).catch(async () => {
+      throw new Error(`the box selected ${await page.locator(".part-row.selected").count()} of ${total} parts`);
+    });
+    await shot("boxselect");
+    const clearBox = page.getByRole("button", { name: "Clear selection" });
+    if (await clearBox.count()) await clearBox.click();
+  }
+
   step = "adding a construction plane and sketching on it";
   await page.getByRole("button", { name: "Plane", exact: true }).click();
   await page.locator("#param-distance").fill("30");
