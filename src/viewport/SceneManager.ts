@@ -435,6 +435,13 @@ export class SceneManager {
     this.applyHighlights();
   }
 
+  /** Whole parts picked in the Parts list: drawn in the selection colour. */
+  setSelectedParts(ids: string[]): void {
+    this.selectedParts = new Set(ids);
+    this.applyHighlights();
+  }
+  private selectedParts = new Set<string>();
+
   setHidden(ids: string[]): void {
     this.hidden = new Set(ids);
     for (const [id, p] of this.parts) {
@@ -857,7 +864,9 @@ export class SceneManager {
 
   private applyHighlights(): void {
     for (const [id, p] of this.parts) {
+      const whole = this.selectedParts.has(id);
       const state = (kind: "face" | "edge", index: number) => {
+        if (whole) return 2;
         if (this.selection.some((s) => s.partId === id && s.kind === kind && s.index === index)) return 2;
         if (this.hover && this.hover.partId === id && this.hover.kind === kind && this.hover.index === index) return 1;
         return 0;

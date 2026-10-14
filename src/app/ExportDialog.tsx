@@ -38,6 +38,9 @@ const FORMATS: { value: ExportFormat; label: string; hint: string }[] = [
 
 type Stage = { kind: "options" } | { kind: "working"; text: string } | { kind: "warning"; report: CheckReport };
 
+/** Shared empty list (a selector must not return a new array each time). */
+const NO_PARTS: string[] = [];
+
 export function ExportDialog() {
   const doc = useDocument();
   const asm0 = activeAssembly(useStore.getState());
@@ -49,7 +52,9 @@ export function ExportDialog() {
   const parts = instances ?? studio;
   const openDialog = useStore((s) => s.openDialog);
   const showToast = useStore((s) => s.showToast);
-  const [which, setWhich] = useState<string>("all");
+  // Several parts picked in the Parts list: start with just those.
+  const picked = useStore((s) => (asm0 ? NO_PARTS : s.selectedParts));
+  const [which, setWhich] = useState<string>(() => (picked.length > 1 ? "selected" : "all"));
   const [quality, setQuality] = useState<MeshQuality>("normal");
   const [format, setFormat] = useState<ExportFormat>("step");
   const [fileName, setFileName] = useState(() => safeFileName(asm0 ? `${doc.name} ${asm0.name}` : doc.name));
@@ -57,7 +62,7 @@ export function ExportDialog() {
   const [error, setError] = useState<string | null>(null);
 
   const close = () => openDialog(null);
-  const partIds = instances ? [] : which === "all" ? parts.map((p) => p.id) : [which];
+  const partIds = instances ? [] : which === "all" ? parts.map((p) => p.id) : which === "selected" ? picked : [which];
   // In an assembly: every copy, or just the one chosen.
   const chosenInstances = instances ? (which === "all" ? instances : instances.filter((i) => i.id === which)) : undefined;
 
@@ -94,7 +99,7 @@ export function ExportDialog() {
     setStage({ kind: "working", text: "Checking the model…" });
     try {
       const report = await runCheck();
-      const relevant = which === "all" || instances ? report : { ...report, parts: report.parts.filter((p) => p.partId === which) };
+      const relevant = which === "all" || instances ? report : { ...report, parts: report.parts.filter((p) => partIds.includes(p.partId)) };
       const level = relevant.parts.some((p) => p.level === "error")
         ? "error"
         : relevant.parts.some((p) => p.level === "warn") || report.level === "warn"
@@ -149,6 +154,7 @@ export function ExportDialog() {
         <label htmlFor="export-parts">Parts</label>
         <select id="export-parts" value={which} onChange={(e) => setWhich(e.target.value)} disabled={working}>
           <option value="all">{asm ? `The whole assembly (${parts.length} parts, in place) in one file` : `All parts (${parts.length}) in one file`}</option>
+          {picked.length > 1 && <option value="selected">The {picked.length} selected parts in one file</option>}
           {parts.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name} only

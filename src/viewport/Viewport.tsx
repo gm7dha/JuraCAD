@@ -352,6 +352,8 @@ export function Viewport() {
   }, [assembly, mateDraft, parts, solved]);
 
   useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenInstances : hiddenParts), [hiddenParts, hiddenInstances, assembly]);
+  const selectedParts = useStore((s) => s.selectedParts);
+  useEffect(() => viewportApi.current?.setSelectedParts(assembly ? [] : selectedParts), [selectedParts, assembly]);
   const section = useStore((s) => s.section);
   const appearance = useStore((s) => s.history.present.appearance ?? NO_COLOURS);
   const colours = useMemo(() => {

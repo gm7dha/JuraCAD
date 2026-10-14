@@ -407,8 +407,31 @@ button:disabled {
 }
 
 .feature-row.selected,
-.feature-row.selected:hover {
+.feature-row.selected:hover,
+.part-row.selected,
+.part-row.selected:hover {
   background: var(--accent-soft);
+}
+
+.part-row.selected .feature-name {
+  color: var(--accent-dark);
+  font-weight: 550;
+}
+
+.parts-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 8px 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--accent-line);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font-size: 12px;
+}
+
+.parts-selection-bar span {
+  flex: 1;
 }
 
 .feature-row.editing {

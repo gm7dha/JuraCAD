@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
@@ -6,6 +6,7 @@ import { activeFeatures, studioParts, useStore, type DatumName, type PlaneName }
 import type { Feature, FeatureType } from "../model/types";
 import { viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
+import { clickRow, dragRows } from "../model/listSelection";
 
 const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
@@ -146,6 +147,9 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
 function ColourSwatch({ partId, name }: { partId: string; name: string }) {
   const colour = useStore((s) => s.history.present.appearance?.[partId] ?? DEFAULT_PART_COLOUR);
   const setPartColour = useStore((s) => s.setPartColour);
+  // With several parts picked, colouring one of them colours them all.
+  const group = useStore((s) => (s.selectedParts.length > 1 && s.selectedParts.includes(partId) ? s.selectedParts : null));
+  const colourAll = (c: string | null) => (group ?? [partId]).forEach((id) => setPartColour(id, c));
   const [open, setOpen] = useState(false);
   return (
     <span className="swatch-wrap">
@@ -154,7 +158,7 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
         className="colour-swatch"
         style={{ background: colour }}
         onClick={() => setOpen((o) => !o)}
-        title={`Colour of ${name} — click to change`}
+        title={group ? `Colour of the ${group.length} selected parts — click to change` : `Colour of ${name} — click to change`}
         aria-label={`Colour of ${name}`}
         aria-expanded={open}
       />
@@ -170,7 +174,7 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
                 title={c.name}
                 aria-label={c.name}
                 onClick={() => {
-                  setPartColour(partId, c.hex === DEFAULT_PART_COLOUR ? null : c.hex);
+                  colourAll(c.hex === DEFAULT_PART_COLOUR ? null : c.hex);
                   setOpen(false);
                 }}
               />
@@ -178,7 +182,7 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
           </div>
           <label className="colour-custom">
             Other…
-            <input type="color" value={colour} onChange={(e) => setPartColour(partId, e.target.value)} />
+            <input type="color" value={colour} onChange={(e) => colourAll(e.target.value)} />
           </label>
         </div>
       )}
@@ -272,14 +276,20 @@ function PartRow({
   id,
   name,
   hidden,
+  selected,
   onToggle,
   onMenu,
+  onPress,
+  onPassOver,
 }: {
   id: string;
   name: string;
   hidden: boolean;
+  selected: boolean;
   onToggle: () => void;
   onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void;
+  onPress: (e: ReactPointerEvent) => void;
+  onPassOver: (e: ReactPointerEvent) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [text, setText] = useState(name);
@@ -297,15 +307,22 @@ function PartRow({
   };
   return (
     <li
-      className={`part-row${hidden ? " hidden" : ""}`}
+      className={`part-row${hidden ? " hidden" : ""}${selected ? " selected" : ""}`}
+      aria-selected={selected}
       onDoubleClick={start}
+      onPointerDown={(e) => {
+        // Not when using the colour, eye or rename boxes.
+        if ((e.target as Element).closest("button, input, .colour-popover")) return;
+        onPress(e);
+      }}
+      onPointerEnter={onPassOver}
       onContextMenu={(e) =>
         onMenu(e, [
           { label: "Rename…", action: start },
           { label: hidden ? "Show" : "Hide", action: onToggle },
         ])
       }
-      title="Double-click to rename, right-click for more"
+      title="Click to select (drag, Shift or Ctrl for several); double-click to rename; right-click for more"
     >
       <ColourSwatch partId={id} name={name} />
       {renaming ? (
@@ -327,6 +344,122 @@ function PartRow({
       )}
       <EyeButton hidden={hidden} name={name} onToggle={onToggle} />
     </li>
+  );
+}
+
+/**
+ * The Parts list. Click a part to select it; drag down or up the list, or
+ * Shift + click, to select a run of parts; Ctrl (⌘) + click to add or remove
+ * one. Selected parts light up in the 3D view, and can be hidden, coloured or
+ * exported together.
+ */
+function PartsList({
+  parts,
+  hiddenParts,
+  toggleHidden,
+  onMenu,
+}: {
+  parts: { id: string; name: string }[];
+  hiddenParts: string[];
+  toggleHidden: (id: string) => void;
+  onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void;
+}) {
+  const selected = useStore((s) => s.selectedParts);
+  const anchor = useRef<string | null>(null);
+  const drag = useRef<{ base: string[] } | null>(null);
+  const order = parts.map((p) => p.id);
+  const st = useStore.getState;
+
+  useEffect(() => {
+    const end = () => (drag.current = null);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    return () => {
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, []);
+  // Esc clears the selection (unless something else is open and wants it).
+  useEffect(() => {
+    if (!selected.length) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== "Escape" || st().editing || (t && ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
+      st().setSelectedParts([]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected.length, st]);
+
+  const press = (e: ReactPointerEvent, id: string) => {
+    if (e.button !== 0) return;
+    e.preventDefault(); // no text highlighting while dragging
+    const add = e.ctrlKey || e.metaKey;
+    const r = clickRow(order, st().selectedParts, anchor.current, id, { add, range: e.shiftKey });
+    st().setSelectedParts(r.selected);
+    anchor.current = r.anchor;
+    // Dragging on from here picks the rows passed over (keeping the rest when Ctrl is held).
+    if (!e.shiftKey) drag.current = { base: add ? r.selected.filter((x) => x !== id) : [] };
+  };
+  const passOver = (e: ReactPointerEvent, id: string) => {
+    if (!drag.current || !anchor.current || (e.buttons & 1) === 0) return;
+    st().setSelectedParts(dragRows(order, drag.current.base, anchor.current, id));
+  };
+
+  const menuFor = (id: string, single: MenuEntry[]): MenuEntry[] => {
+    const group = selected.length > 1 && selected.includes(id) ? selected : null;
+    if (!group) return single;
+    const n = group.length;
+    return [
+      { label: `Hide these ${n} parts`, action: () => st().setPartsHidden(group, true) },
+      { label: `Show these ${n} parts`, action: () => st().setPartsHidden(group, false) },
+      { label: "Show only these", action: () => st().setPartsHidden(order.filter((x) => !group.includes(x)), true) },
+      { label: "Show all parts", action: () => st().setPartsHidden(order, false) },
+      "divider",
+      { label: `Export these ${n} parts…`, action: () => st().openDialog("export") },
+      { label: "Clear selection", action: () => st().setSelectedParts([]) },
+    ];
+  };
+
+  return (
+    <>
+      <ul
+        className="part-list"
+        aria-multiselectable="true"
+        onPointerDown={(e) => {
+          // A click on the empty part of the list clears the selection.
+          if (e.target === e.currentTarget && e.button === 0) st().setSelectedParts([]);
+        }}
+      >
+        {parts.map((p) => (
+          <PartRow
+            key={p.id}
+            id={p.id}
+            name={p.name}
+            hidden={hiddenParts.includes(p.id)}
+            selected={selected.includes(p.id)}
+            onToggle={() => toggleHidden(p.id)}
+            onMenu={(e, entries) => onMenu(e, menuFor(p.id, entries))}
+            onPress={(e) => press(e, p.id)}
+            onPassOver={(e) => passOver(e, p.id)}
+          />
+        ))}
+      </ul>
+      {selected.length > 1 && (
+        <div className="parts-selection-bar" role="toolbar" aria-label="Selected parts">
+          <span>{selected.length} parts selected</span>
+          <button type="button" className="text-button small-text" onClick={() => st().setPartsHidden(selected, !selected.every((id) => hiddenParts.includes(id)))}>
+            {selected.every((id) => hiddenParts.includes(id)) ? "Show" : "Hide"}
+          </button>
+          <button type="button" className="text-button small-text" onClick={() => st().openDialog("export")}>
+            Export…
+          </button>
+          <button type="button" className="icon-button small" onClick={() => st().setSelectedParts([])} aria-label="Clear selection" title="Clear selection (Esc)">
+            <Icons.Cross size={14} />
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -375,11 +508,7 @@ export function FeaturePanel() {
         <h3>
           Parts <span className="count">({parts.length})</span>
         </h3>
-        <ul className="part-list">
-          {parts.map((p) => (
-            <PartRow key={p.id} id={p.id} name={p.name} hidden={hiddenParts.includes(p.id)} onToggle={() => toggleHidden(p.id)} onMenu={onMenu} />
-          ))}
-        </ul>
+        <PartsList parts={parts} hiddenParts={hiddenParts} toggleHidden={toggleHidden} onMenu={onMenu} />
         {parts.length === 0 && <p className="panel-hint">No parts yet.</p>}
       </section>
 

@@ -437,6 +437,29 @@ try {
   const stlParts = await importModel(path, "STL");
   await shot("imported");
 
+  step = "selecting several parts by dragging down the Parts list";
+  {
+    const rows = page.locator(".part-row .feature-name");
+    const first = await rows.nth(0).boundingBox();
+    const third = await rows.nth(2).boundingBox();
+    await page.mouse.move(first.x + 20, first.y + first.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(first.x + 20, first.y + first.height, { steps: 4 });
+    await page.mouse.move(third.x + 20, third.y + third.height / 2, { steps: 8 });
+    await page.mouse.up();
+    const picked = await page.locator(".part-row.selected").count();
+    if (picked !== 3) throw new Error(`dragging down the Parts list selected ${picked} parts, not 3`);
+    await page.waitForSelector(".parts-selection-bar >> text=3 parts selected");
+    await shot("partselect");
+    await page.getByRole("button", { name: "Export", exact: true }).first().click();
+    await page.waitForSelector('#export-parts option[value="selected"]', { state: "attached" });
+    if ((await page.locator("#export-parts").inputValue()) !== "selected") throw new Error("the export didn't start with the selected parts");
+    await page.keyboard.press("Escape");
+    const clear = page.getByRole("button", { name: "Clear selection" });
+    if (await clear.count()) await clear.click();
+    if ((await page.locator(".part-row.selected").count()) !== 0) throw new Error("the part selection didn't clear");
+  }
+
   step = "making an assembly";
   await page.getByRole("button", { name: "Add a tab" }).click();
   await page.getByRole("menuitem", { name: "Assembly" }).click();
@@ -670,7 +693,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
