@@ -6,7 +6,7 @@
 
 PartSmith runs entirely in your browser. Your designs never leave your computer, there's no account, and it's free.
 
-> **Status: v0.7 preview (Phase 6 done).** You can sketch shapes with dimensions and constraints, extrude or revolve them into parts, round, bevel or hollow them,
+> **Status: v0.8 preview (Phase 6 done, extras under way).** You can sketch shapes with dimensions and constraints, extrude or revolve them into parts, round, bevel or hollow them,
 > put parts together in assemblies with mates, check they're sound and fit, export STEP, STL or 3MF, and make dimensioned 2D drawings (PDF, SVG, DXF). See the [roadmap](docs/DESIGN.md#roadmap).
 
 ## What you can do today
