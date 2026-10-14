@@ -111,6 +111,7 @@ Each phase ends with a working version on the live site.
 | **P5 Assemblies** ✅ v0.6 (also several Part Studios, rename parts; since: mate limits, exploded views; later: mate loops) | Instances, mate connectors, Onshape mate types, BOM | check multi-part designs fit together |
 | **P6 2D drawings** ✅ v0.7 (since: section views, balloons, centre lines; later: detail views, tolerances) | ISO sheets, first-angle views, hidden lines, dimensions, PDF/SVG/DXF | print a dimensioned drawing |
 | P7 Extras (v0.8: text, sweep/loft, offset/use/mirror, up to face/draft, drawing and assembly extras; inches and dark mode since) | Patterns, holes, text, sweep/loft, sections, import, inches, optional print-bed preview, dark mode | as needed |
+| P8 Onshape parity (in progress) | Part Studio: Plane ✅, Boolean/Intersect ✅, Split/Thicken/Rib, Draft, Move/Delete/Replace face, Helix, Curve pattern, Modify fillet, mass properties & materials, rollback bar, reorder, folders; sketch: spline, ellipse, conic, rectangles, tangent arc, extend/split, sketch patterns, line-up snapping ✅. Assemblies: mate loops, Parallel/Tangent/Pin-slot/Width mates, Gear/Rack/Screw relations, Replicate, Group, named positions. Drawings: detail/auxiliary/broken-out views, angular/ordinate/baseline dims, tolerances, notes, GD&T, hole and revision tables. Later: sheet metal | the tools an Onshape user reaches for |
 
 ## How we work
 

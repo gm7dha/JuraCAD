@@ -3,13 +3,13 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D, type Vector } from "replicad";
+import { basicFaceExtrusion, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
-import { planeFrame } from "../sketch/planes";
+import { planeFrame, toWorld } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
 import { setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operation } from "../model/types";
@@ -215,6 +215,28 @@ function projectView(shape: Shape3D, kind: string, toward: Vec3, right: Vec3, wi
   } finally {
     camera.delete();
   }
+}
+
+/**
+ * A huge box filling everything on the `normal` side of the plane through
+ * `origin` (around the shape) — cut with it to keep the other side.
+ */
+function halfSpace(shape: Shape3D, origin: Vec3, normal: Vec3): Shape3D {
+  const [lo, hi] = boundsOf(shape);
+  const mid: Vec3 = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  const diag = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+  const nl = Math.hypot(...normal) || 1;
+  const n: Vec3 = [normal[0] / nl, normal[1] / nl, normal[2] / nl];
+  const off = dot3([mid[0] - origin[0], mid[1] - origin[1], mid[2] - origin[2]], n);
+  const o: Vec3 = [mid[0] - n[0] * off, mid[1] - n[1] * off, mid[2] - n[2] * off];
+  const L = 2 * diag + 10;
+  let box: Shape3D = makeBox([-L, -L, 0], [L, L, 2 * L]);
+  const axis = cross3([0, 0, 1], n);
+  const s = Math.hypot(axis[0], axis[1], axis[2]);
+  const angle = (Math.atan2(s, n[2]) * 180) / Math.PI;
+  if (s > 1e-9) box = box.rotate(angle, [0, 0, 0], [axis[0] / s, axis[1] / s, axis[2] / s]);
+  else if (n[2] < 0) box = box.rotate(180, [0, 0, 0], [1, 0, 0]);
+  return box.translate(o);
 }
 
 /**
@@ -607,6 +629,23 @@ export class GeometryEngine {
         if (err) featureErrors[feature.id] = err;
         continue;
       }
+      if (feature.type === "split") {
+        const r = this.applySplit(feature, partCounter + 1);
+        if (r.error) featureErrors[feature.id] = r.error;
+        if (r.newPart) partCounter++;
+        continue;
+      }
+      if (feature.type === "thicken") {
+        const r = this.applyThicken(feature, partCounter + 1);
+        if (r.error) featureErrors[feature.id] = r.error;
+        if (r.newPart) partCounter++;
+        continue;
+      }
+      if (feature.type === "rib") {
+        const err = this.applyRib(feature, sketches);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "boolean") {
         const err = this.applyBoolean(feature);
         if (err) featureErrors[feature.id] = err;
@@ -691,6 +730,208 @@ export class GeometryEngine {
     }
 
     return featureErrors;
+  }
+
+  /** Split a part in two along a plane: both halves as parts, or just one side kept. */
+  private applySplit(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+    const sp = feature.splitDef;
+    if (!sp?.partId) return { error: "Click the part to split." };
+    const part = this.parts.find((p) => p.id === sp.partId);
+    if (!part) return { error: "The part it splits no longer exists. Edit this feature and pick it again." };
+    const f = planeFrame(sp.plane);
+    let front: Shape3D | null = null;
+    let back: Shape3D | null = null;
+    try {
+      const keepFront = halfSpace(part.shape, f.origin, [-f.n[0], -f.n[1], -f.n[2]]);
+      const keepBack = halfSpace(part.shape, f.origin, f.n);
+      try {
+        front = part.shape.cut(keepFront);
+        back = part.shape.cut(keepBack);
+      } finally {
+        keepFront.delete();
+        keepBack.delete();
+      }
+    } catch (e) {
+      front?.delete();
+      back?.delete();
+      return { error: describeError(e, "Couldn't split this part.") };
+    }
+    const count = (s: Shape3D) => {
+      const solids = solidsOf(s);
+      solids.forEach((x) => x.delete());
+      return solids.length;
+    };
+    if (count(front) === 0 || count(back) === 0) {
+      front.delete();
+      back.delete();
+      return { error: "The plane doesn't go through this part, so there's nothing to split." };
+    }
+    part.shape.delete();
+    part.featureIds.push(feature.id);
+    if (sp.keep === "front") {
+      back.delete();
+      part.shape = front;
+      return {};
+    }
+    if (sp.keep === "back") {
+      front.delete();
+      part.shape = back;
+      return {};
+    }
+    part.shape = back;
+    this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [...part.featureIds], shape: front });
+    return { newPart: true };
+  }
+
+  /** Grow picked flat faces into a solid, then make it a new part or add it to, cut it from or intersect it with their part. */
+  private applyThicken(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+    const { values, errors } = resolveParams(feature);
+    if (errors.thickness) return { error: `Thickness: ${errors.thickness}` };
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    if (picks.length === 0) return { error: "Click the flat faces to thicken." };
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return { error: "Thicken works on one part at a time. Remove the faces picked on the other part." };
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return { error: "The part these faces were on no longer exists. Edit this feature and pick the faces again." };
+    let faces: Face[];
+    try {
+      faces = findPickedFaces(part.shape, picks);
+    } catch (e) {
+      return { error: describeError(e, "Couldn't find the picked faces.") };
+    }
+    let solid: Shape3D | null = null;
+    try {
+      for (const face of faces) {
+        if (face.geomType !== "PLANE") throw new Error("Thicken works on flat faces. Remove the curved face.");
+        const n = take(face.normalAt());
+        const t = values.thickness * (feature.flipSide ? -1 : 1);
+        const piece = basicFaceExtrusion(face, new Vector([n[0] * t, n[1] * t, n[2] * t])) as Shape3D;
+        if (!solid) solid = piece;
+        else {
+          const next: Shape3D = solid.fuse(piece);
+          solid.delete();
+          piece.delete();
+          solid = next;
+        }
+      }
+    } catch (e) {
+      solid?.delete();
+      return { error: describeError(e, "Couldn't thicken these faces.") };
+    } finally {
+      faces.forEach((f) => f.delete());
+    }
+    if (!solid) return { error: "Click the flat faces to thicken." };
+    if (feature.operation === "new") {
+      this.tools.set(feature.id, { shape: solid.clone(), operation: "new", partId: feature.id });
+      this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape: solid });
+      return { newPart: true };
+    }
+    try {
+      const result =
+        feature.operation === "add" ? part.shape.fuse(solid) : feature.operation === "intersect" ? (part.shape.intersect(solid) as Shape3D) : part.shape.cut(solid);
+      const solids = solidsOf(result);
+      solids.forEach((x) => x.delete());
+      if (solids.length === 0) {
+        result.delete();
+        return { error: "This would remove the whole part." };
+      }
+      part.shape.delete();
+      part.shape = result;
+      part.featureIds.push(feature.id);
+      this.tools.set(feature.id, { shape: solid.clone(), operation: feature.operation, partId: part.id });
+      return {};
+    } catch (e) {
+      return { error: describeError(e, "Couldn't combine the thickened faces with the part.") };
+    } finally {
+      solid.delete();
+    }
+  }
+
+  /**
+   * Rib: a wall of the given thickness along each line of a sketch, filling
+   * the space between the line and the part (within the part's overall box),
+   * and joined to the latest part — for gussets and webs. Of the two sides of
+   * each line, the one that adds less material is filled (the corner a gusset
+   * braces); Flip picks the other.
+   */
+  private applyRib(feature: Feature, sketches: SketchMap): string | null {
+    const { values, errors } = resolveParams(feature);
+    if (errors.thickness) return `Thickness: ${errors.thickness}`;
+    if (!feature.sketchRef) return "Choose the sketch with the rib's lines.";
+    const sketch = sketches.get(feature.sketchRef);
+    if (!sketch?.sketch?.plane) return "The sketch it uses can't be found (deleted or suppressed).";
+    const part = this.parts[this.parts.length - 1];
+    if (!part) return "There's no part to add a rib to yet.";
+    const frame = planeFrame(sketch.sketch.plane);
+    const data = sketch.sketch.data;
+    const lines = data.curves.filter((c) => c.type === "line" && !c.construction);
+    if (lines.length === 0) return "Draw the rib as straight lines (not construction) in the sketch.";
+    const [lo, hi] = boundsOf(part.shape);
+    const L = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
+    const half = values.thickness / 2;
+    const n = frame.n;
+    let rib: Shape3D | null = null;
+    const pos = (id: string) => {
+      const p = data.points.find((x) => x.id === id);
+      return p ? toWorld(frame, p.x, p.y) : toWorld(frame, 0, 0);
+    };
+    try {
+      for (const line of lines) {
+        if (line.type !== "line") continue;
+        const a = pos(line.p1);
+        const b = pos(line.p2);
+        const e: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        const len = Math.hypot(...e);
+        if (len < 1e-9) continue;
+        const d = cross3(n, [e[0] / len, e[1] / len, e[2] / len]);
+        const off = (p: Vec3, s: number): Vec3 => [p[0] + n[0] * s, p[1] + n[1] * s, p[2] + n[2] * s];
+        /** The wall on one side of the line, inside the part's box, and how much it adds. */
+        const side = (sign: number) => {
+          const face = makePolygon([off(a, -half), off(b, -half), off(b, half), off(a, half)]);
+          const slab = basicFaceExtrusion(face, new Vector([d[0] * L * sign, d[1] * L * sign, d[2] * L * sign])) as Shape3D;
+          face.delete();
+          const box = makeBox(lo, hi);
+          const shape = slab.intersect(box) as Shape3D;
+          slab.delete();
+          box.delete();
+          let added = 0;
+          try {
+            const extra = shape.cut(part.shape);
+            added = measureVolume(extra);
+            extra.delete();
+          } catch {
+            added = Infinity;
+          }
+          return { shape, added };
+        };
+        const one = side(1);
+        const other = side(-1);
+        // The side that adds less (but something), or the other one when flipped.
+        const ranked = [one, other].filter((x) => x.added > 1e-6).sort((x, y) => x.added - y.added);
+        const choice = ranked.length === 0 ? null : feature.flipSide && ranked.length > 1 ? ranked[1] : ranked[0];
+        for (const x of [one, other]) if (x !== choice) x.shape.delete();
+        if (!choice) continue;
+        const piece = choice.shape;
+        if (!rib) rib = piece;
+        else {
+          const next: Shape3D = rib.fuse(piece);
+          rib.delete();
+          piece.delete();
+          rib = next;
+        }
+      }
+      if (!rib) return "Draw the rib as straight lines (not construction) in the sketch.";
+      const result = part.shape.fuse(rib);
+      part.shape.delete();
+      part.shape = result;
+      part.featureIds.push(feature.id);
+      this.tools.set(feature.id, { shape: rib.clone(), operation: "add", partId: part.id });
+      return null;
+    } catch (e) {
+      return describeError(e, "Couldn't make this rib.");
+    } finally {
+      rib?.delete();
+    }
   }
 
   /**

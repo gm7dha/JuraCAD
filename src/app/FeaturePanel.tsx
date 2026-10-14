@@ -31,6 +31,9 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   text: Icons.Text,
   plane: Icons.Plane,
   boolean: Icons.Boolean,
+  split: Icons.Split,
+  thicken: Icons.Thicken,
+  rib: Icons.Rib,
 };
 
 type MenuEntry = { label: string; action: () => void; danger?: boolean } | "divider";

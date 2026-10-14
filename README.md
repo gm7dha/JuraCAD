@@ -17,6 +17,7 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
   equal, tangent, concentric, midpoint, symmetric, fix). Blue = still free, black = fully defined.
 - **Extrude** a sketch's closed shapes (holes included) one way, symmetrically or **through all**, as a new part or added to /
 - **Boolean**: join parts into one, subtract parts from others, or keep just where they overlap. Extrudes and other solids can also **Intersect** with the latest part.
+- **Split** a part along a plane or flat face, **Thicken** flat faces into a solid, and add a **Rib** (a strengthening wall) from a sketched line.
   cut from the latest part.
 - **Hole**: drill holes at a sketch's points or circle centres — plain, counterbored or countersunk, through or
   to a depth (with a drill point), sized by screw (M2–M12, clearance or tapped).

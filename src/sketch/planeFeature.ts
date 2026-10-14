@@ -95,6 +95,10 @@ export function refreshPlaneRefs(features: Feature[], scope?: Scope): Feature[] 
       const plane = fix(f.mirror.plane);
       if (plane && plane !== f.mirror.plane) g = { ...g, mirror: { ...f.mirror, plane } };
     }
+    if (f.splitDef) {
+      const plane = fix(f.splitDef.plane);
+      if (plane && plane !== f.splitDef.plane) g = { ...g, splitDef: { ...f.splitDef, plane } };
+    }
     if (f.planeDef) {
       const ref = fix(f.planeDef.ref);
       const ref2 = fix(f.planeDef.ref2);

@@ -173,7 +173,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "flipSide">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -425,6 +425,24 @@ export const useStore = create<AppState>((set, get) => {
         const mine = studioParts(s);
         const partId = s.selection[0]?.partId ?? mine[mine.length - 1]?.id;
         if (partId) draft.transform = { ...draft.transform, partId };
+      }
+      // Split starts with the part picked in the Parts list (or clicked in the 3D view).
+      if (type === "split" && draft.splitDef) {
+        const partId = s.selectedParts[0] ?? s.selection[0]?.partId;
+        if (partId) draft.splitDef = { ...draft.splitDef, partId, picking: "plane" };
+        if (s.selectedPlane) draft.splitDef = { ...draft.splitDef, plane: { kind: "default", name: s.selectedPlane } };
+      }
+      // Thicken starts with the faces selected.
+      if (type === "thicken") {
+        draft.picks = s.selection
+          .filter((item) => item.kind === "face")
+          .map((item) => pickFor(s.parts, item))
+          .filter((p): p is TopoPick => p !== null);
+      }
+      // A rib uses the sketch highlighted in the list, if any.
+      if (type === "rib") {
+        const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
+        if (picked) draft.sketchRef = picked.id;
       }
       // A Boolean starts with the parts picked in the Parts list.
       if (type === "boolean" && draft.booleanDef && s.selectedParts.length) draft.booleanDef = { ...draft.booleanDef, targets: [...s.selectedParts] };
