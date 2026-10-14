@@ -326,6 +326,12 @@ export const Icons = {
       <path d="M2 20h18" />
     </Svg>
   ),
+  Thread: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M8 3v18M16 3v18" />
+      <path d="M8 5l8 2M8 9l8 2M8 13l8 2M8 17l8 2" />
+    </Svg>
+  ),
   ChevronLeft: (p: IconProps) => (
     <Svg {...p}>
       <path d="M15 5l-7 7 7 7" />

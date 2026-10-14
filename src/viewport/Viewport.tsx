@@ -208,7 +208,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
   // Thicken, Draft, Move face, Delete face: faces.
   const faceFeature = s.editing?.draft.type;
-  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "deleteFace") {
+  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "deleteFace" || faceFeature === "thread") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "face") {
       s.showToast("Click a face rather than an edge.");
