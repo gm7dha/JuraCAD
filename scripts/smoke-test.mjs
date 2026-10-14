@@ -663,6 +663,14 @@ try {
   await shot("asmdrawing");
   step = "switching to inches";
   await page.getByRole("button", { name: "Settings" }).click();
+  // The menu must really be on show (not cut off by the top bar).
+  const menuShows = await page.evaluate(() => {
+    const r = document.querySelector('[role="radio"][aria-checked]')?.closest(".settings-menu")?.querySelector("button")?.getBoundingClientRect();
+    if (!r) return false;
+    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return !!hit?.closest(".settings-menu");
+  });
+  if (!menuShows) throw new Error("the Settings menu is hidden behind something");
   await page.getByRole("radio", { name: "Inches" }).click();
   await page.keyboard.press("Escape");
   // The title block now says inches.
