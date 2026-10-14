@@ -766,6 +766,17 @@ try {
   await shot("darkassembly");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
+  step = "rolling back the feature list";
+  {
+    const before = await page.locator(".part-row").count();
+    await page.locator(".feature-row:not(.datum)").first().click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Roll back to here" }).click();
+    await page.locator(".rollback-bar").waitFor({ timeout: 5_000 });
+    await page.waitForFunction((n) => document.querySelectorAll(".part-row").length < n, before, { timeout: 30_000 });
+    await page.getByRole("button", { name: "Roll to end" }).click();
+    await page.waitForFunction((n) => document.querySelectorAll(".part-row").length === n, before, { timeout: 30_000 });
+  }
+
   step = "selecting parts by dragging a box in the 3D view";
   {
     await page.keyboard.press("Escape");

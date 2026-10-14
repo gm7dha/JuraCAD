@@ -2343,3 +2343,21 @@ kbd {
     transform: scale(0.9);
   }
 }
+
+/* Rollback bar: features below it are greyed out (not built while rolled back). */
+.feature-row.rolled-back {
+  opacity: 0.45;
+}
+
+.rollback-bar {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 2px 6px;
+  padding: 3px 8px;
+  border-top: 3px solid var(--accent);
+  font-size: 12px;
+  color: var(--ink-2);
+}

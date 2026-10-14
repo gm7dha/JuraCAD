@@ -134,6 +134,27 @@ export function setSuppressed(doc: PartSmithDocument, id: string, suppressed: bo
 }
 
 /** The feature list with an unsaved draft swapped in (or appended), for live preview. */
+/**
+ * What to build for a Part Studio rolled back to `rollbackTo` (Onshape's
+ * rollback bar): the features up to and including it, plus a new feature being
+ * made (it goes in at the rollback point). Null = everything.
+ */
+export function featuresToBuild(features: Feature[], draft: Feature | null, rollbackTo: string | null): Feature[] {
+  const all = featuresWithDraft(features, draft);
+  const at = rollbackTo ? features.findIndex((f) => f.id === rollbackTo) : -1;
+  if (at < 0) return all;
+  const kept = all.slice(0, at + 1);
+  if (draft && !kept.some((f) => f.id === draft.id) && !features.some((f) => f.id === draft.id)) kept.push(draft);
+  return kept;
+}
+
+/** Add a feature just after another (at the end if that one isn't there). */
+export function insertFeatureAfter(doc: PartSmithDocument, feature: Feature, afterId: string | null): PartSmithDocument {
+  const at = afterId ? doc.features.findIndex((f) => f.id === afterId) : -1;
+  if (at < 0) return addFeature(doc, feature);
+  return { ...doc, features: [...doc.features.slice(0, at + 1), feature, ...doc.features.slice(at + 1)] };
+}
+
 export function featuresWithDraft(features: Feature[], draft: Feature | null): Feature[] {
   if (!draft) return features;
   return features.some((f) => f.id === draft.id)

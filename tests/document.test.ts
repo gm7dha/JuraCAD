@@ -5,7 +5,9 @@ import {
   commit,
   createFeature,
   emptyDocument,
+  featuresToBuild,
   featuresWithDraft,
+  insertFeatureAfter,
   historyOf,
   nextFeatureName,
   parseDocument,
@@ -171,5 +173,17 @@ describe("transform features", () => {
     t.transform = { partId: doc.features[0].id, axis: "x", about: "origin", copy: true };
     const saved = parseDocument(JSON.parse(JSON.stringify(addFeature(doc, t))));
     expect(saved?.features[1].transform).toEqual(t.transform);
+  });
+});
+
+describe("rolling back", () => {
+  const f = (id: string) => ({ id, name: id, type: "box" as const, operation: "new" as const, suppressed: false, params: {} });
+  it("builds only up to the rollback point, with a new feature going in there", () => {
+    const list = [f("a1"), f("b2"), f("c3")];
+    expect(featuresToBuild(list, null, "b2").map((x) => x.id)).toEqual(["a1", "b2"]);
+    expect(featuresToBuild(list, f("n9"), "a1").map((x) => x.id)).toEqual(["a1", "n9"]);
+    expect(featuresToBuild(list, null, null).map((x) => x.id)).toEqual(["a1", "b2", "c3"]);
+    const doc = { ...emptyDocument(), features: list };
+    expect(insertFeatureAfter(doc, f("n9"), "a1").features.map((x) => x.id)).toEqual(["a1", "n9", "b2", "c3"]);
   });
 });

@@ -216,6 +216,12 @@ function FeatureRow({ feature, onMenu, linked }: { feature: Feature; onMenu: (e:
     const d = s.editing?.draft;
     return !!d && ((d.mirror?.sources ?? d.pattern?.sources ?? []) as string[]).includes(feature.id);
   });
+  const rolledBack = useStore((s) => {
+    if (!s.rollbackTo) return false;
+    const list = activeFeatures(s);
+    const at = list.findIndex((f) => f.id === s.rollbackTo);
+    return at >= 0 && list.findIndex((f) => f.id === feature.id) > at;
+  });
   const op =
     feature.operation === "new" || feature.type === "sketch" || isPickFeature(feature.type) || isPatternFeature(feature.type) || feature.type === "hole" || feature.type === "transform" ? "" : ` (${OPERATION_LABELS[feature.operation]})`;
 
@@ -229,6 +235,7 @@ function FeatureRow({ feature, onMenu, linked }: { feature: Feature; onMenu: (e:
       },
     },
     { label: feature.suppressed ? "Unsuppress" : "Suppress", action: () => toggleSuppressed(feature.id) },
+    { label: "Roll back to here", action: () => useStore.getState().setRollback(feature.id) },
     "divider",
     { label: "Delete", action: () => deleteFeature(feature.id), danger: true },
   ];
@@ -243,6 +250,7 @@ function FeatureRow({ feature, onMenu, linked }: { feature: Feature; onMenu: (e:
         error && !feature.suppressed && "failed",
         feature.suppressed && "suppressed",
         isSource && "source",
+        rolledBack && "rolled-back",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -288,6 +296,19 @@ function FeatureRow({ feature, onMenu, linked }: { feature: Feature; onMenu: (e:
           <Icons.Warning size={16} />
         </span>
       )}
+    </li>
+  );
+}
+
+/** Onshape's rollback bar: the model is shown as it was at this point; new features go in here. */
+function RollbackBar() {
+  const setRollback = useStore((s) => s.setRollback);
+  return (
+    <li className="rollback-bar" role="separator" aria-label="Rolled back here">
+      <span>Rolled back — new features go here</span>
+      <button type="button" className="text-button small-text" onClick={() => setRollback(null)} title="Show the whole model again">
+        Roll to end
+      </button>
     </li>
   );
 }
@@ -519,6 +540,7 @@ export function FeaturePanel() {
   const selectedFeatureId = useStore((s) => s.selectedFeatureId);
   const linkedFeatures = useMemo(() => (selectedParts.length ? featuresOfParts(parts, selectedParts, features) : []), [parts, selectedParts, features]);
   // "Group by part": remembered on this computer.
+  const rollbackTo = useStore((s) => s.rollbackTo);
   const [grouped, setGrouped] = useState(() => {
     try {
       return localStorage.getItem("partsmith.groupFeatures") === "1";
@@ -555,7 +577,10 @@ export function FeaturePanel() {
             <DatumRow key={d} name={d} onMenu={onMenu} />
           ))}
           {!grouped &&
-            features.map((f) => <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} />)}
+            features.flatMap((f) => [
+              <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} />,
+              ...(f.id === rollbackTo ? [<RollbackBar key="rollback" />] : []),
+            ])}
           {grouped &&
             groups.groups.map((g) => (
               <li key={g.partId} className="feature-group" role="treeitem" aria-expanded={!collapsed.includes(g.partId)}>
