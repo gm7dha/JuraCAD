@@ -7,6 +7,7 @@ import { Icons } from "./icons";
 import { forgetFile, openFromFile, saveToFile } from "./fileActions";
 import { browserKind, installApp, installSteps, isInstalledApp, useCanInstall } from "./install";
 import { Modal } from "./Modal";
+import { setThemeChoice, themeChoice, type ThemeChoice } from "./theme";
 import { SHORT_VERSION } from "../version";
 import { detectPlatform, shortcut } from "./platform";
 
@@ -119,10 +120,11 @@ export function TopBar() {
   );
 }
 
-/** Settings: units (saved with the design). */
+/** Settings: units (saved with the design) and appearance (kept on this computer). */
 function SettingsMenu() {
   const [open, setOpen] = useState(false);
   const unit = useLengthUnit();
+  const [choice, setChoice] = useState<ThemeChoice>(themeChoice);
   useEffect(() => {
     if (!open) return;
     const close = (e: PointerEvent) => {
@@ -138,7 +140,7 @@ function SettingsMenu() {
   }, [open]);
   return (
     <div className="settings-wrap">
-      <button className={`icon-button settings-button${open ? " active" : ""}`} onClick={() => setOpen(!open)} aria-label="Settings" aria-expanded={open} title="Settings — units">
+      <button className={`icon-button settings-button${open ? " active" : ""}`} onClick={() => setOpen(!open)} aria-label="Settings" aria-expanded={open} title="Settings — units, light or dark">
         <Icons.Settings />
       </button>
       {open && (
@@ -160,6 +162,31 @@ function SettingsMenu() {
             Sizes are shown in {unit === "in" ? "inches" : "millimetres"}, and a plain number typed into a size box means {unit === "in" ? "inches" : "millimetres"}. You can
             always type a unit, e.g. <code>25 mm</code> or <code>1/4 in</code>. Switching doesn't change your design.
           </p>
+          <div className="field-label settings-gap">Appearance (this computer)</div>
+          <div className="segmented three" role="radiogroup" aria-label="Appearance">
+            {(
+              [
+                ["light", "Light"],
+                ["dark", "Dark"],
+                ["system", "Automatic"],
+              ] as const
+            ).map(([c, label]) => (
+              <button
+                type="button"
+                key={c}
+                role="radio"
+                aria-checked={choice === c}
+                className={choice === c ? "selected" : ""}
+                title={c === "system" ? "Follow your computer's light or dark setting" : undefined}
+                onClick={() => {
+                  setThemeChoice(c);
+                  setChoice(c);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

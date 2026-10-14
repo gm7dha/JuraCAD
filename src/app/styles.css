@@ -14,11 +14,59 @@
   --error: #d1373a;
   --radius: 6px;
   --shadow: 0 6px 24px rgba(20, 32, 50, 0.16), 0 1px 3px rgba(20, 32, 50, 0.12);
+  --viewport-bg: linear-gradient(180deg, #ffffff 0%, #e9edf2 100%);
+  --accent-line: #b9d3f5;
+  --subtle: #f8f9fb;
+  --glass: rgba(255, 255, 255, 0.92);
+  --desk: #e4e8ed;
+  --sketch-bar: #f7faff;
+  --ok-soft: #ebf7ee;
+  --ok-ink: #1f6b35;
+  --warn-soft: #fff4e6;
+  --warn-ink: #8a5300;
+  --error-soft: #fdecec;
+  --error-ink: #a92a2d;
+  --error-line: #f4c7c8;
+  --plane-ink: #c48a1d;
+  color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: 14px;
   color: var(--ink);
   background: var(--app-bg);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Dark mode (Settings ⚙ › Appearance): the same layout with darker colours. The drawing paper stays white. */
+:root[data-theme="dark"] {
+  --accent: #4a8fe7;
+  --accent-dark: #7fb0f0;
+  --accent-soft: #1e3350;
+  --accent-line: #2f4f7a;
+  --ink: #e3e8ee;
+  --ink-2: #b4bec9;
+  --ink-3: #8592a0;
+  --line: #36404c;
+  --line-2: #2c343e;
+  --panel: #1d232b;
+  --app-bg: #151a20;
+  --subtle: #232a33;
+  --glass: rgba(29, 35, 43, 0.94);
+  --desk: #10141a;
+  --sketch-bar: #1a2230;
+  --viewport-bg: linear-gradient(180deg, #2b333d 0%, #171c22 100%);
+  --ok: #4cbb63;
+  --ok-soft: #1b3324;
+  --ok-ink: #8fdca2;
+  --warn: #e3a03a;
+  --warn-soft: #3a2c17;
+  --warn-ink: #f2c27a;
+  --error: #ef5b5e;
+  --error-soft: #3d1f22;
+  --error-ink: #f5a3a5;
+  --error-line: #6b3236;
+  --plane-ink: #e0b25a;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
 }
 
 * {
@@ -82,7 +130,7 @@ button:disabled {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: linear-gradient(180deg, #ffffff 0%, #e9edf2 100%);
+  background: var(--viewport-bg);
 }
 
 .viewport {
@@ -137,7 +185,7 @@ button:disabled {
 .doc-name:focus {
   border-color: var(--accent);
   outline: none;
-  background: #fff;
+  background: var(--panel);
 }
 
 .phase-badge {
@@ -164,7 +212,7 @@ button:disabled {
   padding: 0 12px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--panel);
   white-space: nowrap;
 }
 
@@ -259,7 +307,7 @@ button:disabled {
 
 .tool-button.active {
   background: var(--accent-soft);
-  border-color: #b9d3f5;
+  border-color: var(--accent-line);
   color: var(--accent-dark);
 }
 
@@ -369,7 +417,7 @@ button:disabled {
 }
 
 .feature-row.source {
-  background: #fff4e6;
+  background: var(--warn-soft);
   box-shadow: inset 3px 0 0 #ff7a00;
 }
 
@@ -393,7 +441,7 @@ button:disabled {
 }
 
 .feature-icon.plane {
-  color: #c48a1d;
+  color: var(--plane-ink);
 }
 
 .feature-icon.part {
@@ -440,7 +488,7 @@ button:disabled {
   z-index: 50;
   min-width: 160px;
   padding: 4px;
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -480,7 +528,7 @@ button:disabled {
   width: 280px;
   max-height: calc(100% - 24px);
   overflow-y: auto;
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: var(--shadow);
@@ -492,7 +540,7 @@ button:disabled {
   justify-content: space-between;
   padding: 8px 8px 8px 12px;
   border-bottom: 1px solid var(--line);
-  background: #fafbfc;
+  background: var(--subtle);
   border-radius: 8px 8px 0 0;
 }
 
@@ -514,7 +562,7 @@ button:disabled {
   height: 28px;
   border-radius: 5px;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--panel);
 }
 
 .dialog-ok {
@@ -533,7 +581,7 @@ button:disabled {
 }
 
 .dialog-cancel:hover {
-  background: #fdecec;
+  background: var(--error-soft);
 }
 
 .feature-dialog-body {
@@ -560,7 +608,7 @@ button:disabled {
 
 .segmented button {
   border: none;
-  background: #fff;
+  background: var(--panel);
   padding: 6px 0;
   font-size: 13px;
   color: var(--ink-2);
@@ -610,7 +658,7 @@ button:disabled {
   align-items: center;
   border: 1px solid var(--line);
   border-radius: 5px;
-  background: #fff;
+  background: var(--panel);
   overflow: hidden;
 }
 
@@ -637,7 +685,7 @@ button:disabled {
 
 .param-field.invalid .param-input {
   border-color: var(--error);
-  background: #fff6f6;
+  background: var(--error-soft);
 }
 
 .param-field.invalid .param-input input {
@@ -662,8 +710,8 @@ button:disabled {
   gap: 6px;
   align-items: flex-start;
   color: var(--error);
-  background: #fff3f3;
-  border: 1px solid #f4c7c8;
+  background: var(--error-soft);
+  border: 1px solid var(--error-line);
   border-radius: 5px;
   padding: 7px 9px;
   font-size: 13px;
@@ -742,7 +790,7 @@ button:disabled {
   align-items: center;
   max-width: 420px;
   padding: 16px 20px;
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: var(--shadow);
@@ -777,7 +825,7 @@ button:disabled {
   padding: 10px 16px;
   text-align: center;
   line-height: 1.6;
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--glass);
   border: 1px solid var(--line);
   border-radius: 8px;
   pointer-events: none;
@@ -856,7 +904,7 @@ button:disabled {
   left: 0;
   min-width: 160px;
   padding: 4px;
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 6px;
   box-shadow: var(--shadow);
@@ -925,7 +973,7 @@ button:disabled {
   flex-direction: column;
   max-width: 100%;
   max-height: calc(100vh - 32px);
-  background: #fff;
+  background: var(--panel);
   border-radius: 10px;
   box-shadow: var(--shadow);
   outline: none;
@@ -981,7 +1029,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 5px;
   padding: 0 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .form-grid .param-input input {
@@ -1030,18 +1078,18 @@ button:disabled {
 }
 
 .check-headline.ok {
-  background: #ebf7ee;
-  color: #1f6b35;
+  background: var(--ok-soft);
+  color: var(--ok-ink);
 }
 
 .check-headline.warn {
-  background: #fff6e5;
-  color: #8a5300;
+  background: var(--warn-soft);
+  color: var(--warn-ink);
 }
 
 .check-headline.error {
-  background: #fdecec;
-  color: #a92a2d;
+  background: var(--error-soft);
+  color: var(--error-ink);
 }
 
 .check-part h4 {
@@ -1118,7 +1166,7 @@ kbd {
   border: 1px solid var(--line);
   border-bottom-width: 2px;
   border-radius: 4px;
-  background: #f8f9fb;
+  background: var(--subtle);
   font-family: inherit;
   font-size: 12.5px;
 }
@@ -1218,7 +1266,7 @@ kbd {
   position: absolute;
   inset: 0;
   z-index: 3;
-  background: #e4e8ed;
+  background: var(--desk);
 }
 
 .drawing-svg {
@@ -1324,7 +1372,7 @@ kbd {
   left: 50%;
   transform: translateX(-50%);
   padding: 8px 14px;
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 6px;
   box-shadow: var(--shadow);
@@ -1334,7 +1382,7 @@ kbd {
 .drawing-message.warn {
   top: auto;
   bottom: 16px;
-  color: #8a5a00;
+  color: var(--warn-ink);
 }
 
 .drawing-busy {
@@ -1409,7 +1457,7 @@ kbd {
 
 .connector-slot.filled {
   border-style: solid;
-  background: #f3f8ff;
+  background: var(--accent-soft);
 }
 
 .connector-slot.waiting {
@@ -1490,8 +1538,8 @@ kbd {
 /* ------------------------------------------------------------------ sketching */
 
 .sketch-toolbar {
-  background: #f7faff;
-  border-bottom-color: #cfe0f7;
+  background: var(--sketch-bar);
+  border-bottom-color: var(--accent-line);
 }
 
 .relation-button {
@@ -1586,8 +1634,8 @@ kbd {
 .dimension-label {
   padding: 1px 6px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid #c3ccd6;
+  background: var(--glass);
+  border: 1px solid var(--line);
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
@@ -1602,7 +1650,7 @@ kbd {
 
 .dimension-label.selected {
   border-color: #ff7a00;
-  background: #fff3e6;
+  background: var(--warn-soft);
 }
 
 .dimension-label.failing {
@@ -1613,7 +1661,7 @@ kbd {
 .dimension-editor {
   display: flex;
   align-items: center;
-  background: #fff;
+  background: var(--panel);
   border: 2px solid var(--accent);
   border-radius: 5px;
   box-shadow: var(--shadow);
@@ -1651,9 +1699,9 @@ kbd {
   height: 17px;
   padding: 0 3px;
   border-radius: 4px;
-  border: 1px solid #9fb3c8;
-  background: #eef3f9;
-  color: #2c3e50;
+  border: 1px solid var(--line);
+  background: var(--subtle);
+  color: var(--ink);
   font-size: 10.5px;
   font-weight: 700;
   line-height: 15px;
@@ -1668,12 +1716,12 @@ kbd {
 
 .constraint-badge.selected {
   border-color: #ff7a00;
-  background: #ffe2c2;
+  background: var(--warn-soft);
 }
 
 .constraint-badge.failing {
   border-color: var(--error);
-  background: #fdecec;
+  background: var(--error-soft);
   color: var(--error);
 }
 
@@ -1684,7 +1732,7 @@ kbd {
   border-radius: 5px;
   padding: 0 8px;
   margin-bottom: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .segmented.two {
@@ -1883,7 +1931,7 @@ kbd {
   min-width: 230px;
   max-width: 340px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--glass);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: 0 2px 10px rgba(20, 30, 45, 0.12);
@@ -1932,7 +1980,7 @@ kbd {
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--glass);
   color: var(--ink-2);
   font-size: 12px;
   z-index: 2;
@@ -1949,7 +1997,7 @@ kbd {
   top: 158px;
   width: 250px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.97);
+  background: var(--glass);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: 0 2px 10px rgba(20, 30, 45, 0.12);
@@ -2012,7 +2060,7 @@ kbd {
   left: -4px;
   z-index: 30;
   padding: 8px;
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: 0 4px 16px rgba(20, 30, 45, 0.18);
@@ -2077,6 +2125,14 @@ kbd {
 .settings-menu .segmented {
   grid-template-columns: repeat(2, 1fr);
   margin-top: 4px;
+}
+
+.settings-menu .segmented.three {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.settings-gap {
+  margin-top: 12px;
 }
 
 .settings-menu .dialog-hint {

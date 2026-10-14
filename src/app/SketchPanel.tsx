@@ -17,6 +17,7 @@ export function SketchPanel() {
   const filletRadius = useStore((s) => s.sketch?.filletRadius ?? "2");
   const offsetDistance = useStore((s) => s.sketch?.offsetDistance ?? "2");
   const unit = useLengthUnit();
+  const theme = useStore((s) => s.theme);
   const setSketchOptions = useStore((s) => s.setSketchOptions);
   const setDraftField = useStore((s) => s.setDraftField);
   const commitDraft = useStore((s) => s.commitDraft);
@@ -112,7 +113,7 @@ export function SketchPanel() {
               </li>
             ) : (
               <li className="free">
-                Under-defined: {freedom} way{freedom > 1 ? "s" : ""} it can still move or resize. Blue = free, black = fixed.
+                Under-defined: {freedom} way{freedom > 1 ? "s" : ""} it can still move or resize. Blue = free, {theme === "dark" ? "white" : "black"} = fixed.
               </li>
             )}
             {regions && !empty && (

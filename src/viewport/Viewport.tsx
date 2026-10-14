@@ -15,6 +15,7 @@ import { planeFrame, planeOnFace, type SketchPlane } from "../sketch/planes";
 import { copyEdge } from "../sketch/tools";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
+import { setSketchTheme } from "./SketchLayer";
 import { SceneManager, type PickTarget, type ScreenRay } from "./SceneManager";
 import { planDrag, type DragPlan } from "../assembly/drag";
 import { solveWithParts } from "../assembly/mates";
@@ -414,6 +415,8 @@ export function Viewport() {
   }, [draft?.id, planeKey]);
 
   const inAssembly = assembly !== null;
+  const theme = useStore((s) => s.theme);
+  useEffect(() => setSketchTheme(theme === "dark"), [theme]);
   const others = useMemo(
     () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId)),
     [features, draft?.id, selectedFeatureId, inAssembly],
@@ -427,7 +430,8 @@ export function Viewport() {
     }
     const { analysis, failing } = sketchStatus(sketchData);
     manager.setSketchScene(others, { plane, data: sketchData, analysis, failing, selection: new Set(sketchSelection ?? []) });
-  }, [others, plane, sketchData, sketchSelection]);
+    // The theme changes the sketch colours, so redraw when it changes.
+  }, [others, plane, sketchData, sketchSelection, theme]);
 
   return (
     <>

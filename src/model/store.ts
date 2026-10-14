@@ -244,6 +244,9 @@ export interface AppState {
   setExplode: (amount: number | null) => void;
   /** Show and type lengths in millimetres or inches. */
   setUnits: (unit: LengthUnit) => void;
+  /** Light or dark appearance (see app/theme.ts; not saved in designs). */
+  theme: "light" | "dark";
+  setTheme: (theme: "light" | "dark") => void;
   /** The exploded view's spread while its slider is being dragged (not saved until let go). */
   explodePreview: number | null;
   setExplodePreview: (amount: number | null) => void;
@@ -831,6 +834,8 @@ export const useStore = create<AppState>((set, get) => {
       if (s.mateDraft?.mate.id === id) set({ mateDraft: null });
     },
 
+    theme: "light",
+    setTheme: (theme) => set({ theme }),
     setUnits: (unit) =>
       change((doc) => {
         const { units: _old, ...rest } = doc;
