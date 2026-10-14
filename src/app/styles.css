@@ -1351,6 +1351,15 @@ kbd {
   overflow-y: auto;
 }
 
+.text-feature-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: inherit;
+  resize: vertical;
+}
+
 .segmented.four {
   grid-template-columns: repeat(4, 1fr);
 }

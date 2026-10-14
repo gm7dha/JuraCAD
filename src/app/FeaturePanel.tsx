@@ -25,6 +25,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   import: Icons.Import,
   sweep: Icons.Sweep,
   loft: Icons.Loft,
+  text: Icons.Text,
 };
 
 type MenuEntry = { label: string; action: () => void; danger?: boolean } | "divider";
@@ -120,6 +121,8 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
         const st = useStore.getState();
         if (st.sketch && st.editing?.draft.sketch && !st.editing.draft.sketch.plane) st.setSketchPlane({ kind: "default", name: plane });
         else if (st.editing?.draft.type === "mirror") st.setDraftMirrorPlane({ kind: "default", name: plane });
+        else if (st.editing?.draft.type === "text" && st.editing.draft.text)
+          st.setDraftField({ text: { ...st.editing.draft.text, plane: { kind: "default", name: plane } } });
         else selectPlane(selected ? null : plane);
       }}
       onDoubleClick={() => plane && viewportApi.current?.viewNormalToPlane(plane)}

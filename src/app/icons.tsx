@@ -403,4 +403,9 @@ export const Icons = {
       <path d="M4 15 8 5M20 15 16 5" />
     </Svg>
   ),
+  Text: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 6V4h14v2M12 4v16M9 20h6" />
+    </Svg>
+  ),
 };

@@ -142,6 +142,14 @@ export function Toolbar() {
           title={sketchCount >= 2 ? "Loft — a smooth solid joining shapes on different sketches" : "Draw shapes on two or more sketches (on different planes) first"}
         />
         <ToolButton
+          label="Text"
+          icon={<Icons.Text />}
+          onClick={() => startCreate("text")}
+          disabled={!ready}
+          active={editingType === "text"}
+          title="Text — raised or engraved lettering on a plane or flat face"
+        />
+        <ToolButton
           label="Hole"
           icon={<Icons.Hole />}
           onClick={() => startCreate("hole")}

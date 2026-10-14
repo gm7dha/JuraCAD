@@ -1117,7 +1117,7 @@ describe("extrude up to a face, and with draft", () => {
 
 describe("sweep and loft", () => {
   it("sweeps a circle along an L-shaped path into a bent pipe", () => {
-    // Path on Top: along +X for 40, then a 10 mm bend, then along +Y for 30.
+    // Path on Top: straight along +X for 40 mm.
     let path = emptySketch();
     path = addLine(path, { x: 0, y: 0 }, { x: 40, y: 0 }).sketch;
     const pathSk = sketchFeature({ kind: "default", name: "Top" }, path);
@@ -1145,5 +1145,28 @@ describe("sweep and loft", () => {
     // A straight-sided frustum: h/3 (A1 + A2 + √(A1·A2)).
     expect(relativeError(a.volume, (10 / 3) * (400 + 100 + 200))).toBeLessThan(0.01);
     expect(build([base, { ...loftF, sections: [base.id] }]).featureErrors[loftF.id]).toMatch(/at least two/);
+  });
+});
+
+describe("text", () => {
+  it("makes solid letters, raised or engraved", () => {
+    const t: Feature = { ...feature("text", { size: 10, depth: 2, x: 5, y: 5 }), text: { value: "Hi 8", plane: { kind: "default", name: "Top" }, bold: false, flip: false } };
+    const r = build([t]);
+    expect(r.featureErrors).toEqual({});
+    const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    expect(a.watertight).toBe(true);
+    expect(a.bounds?.min[2]).toBeCloseTo(0, 6);
+    expect(a.bounds?.max[2]).toBeCloseTo(2, 6);
+    expect(a.bounds?.min[0]).toBeGreaterThan(4.9);
+    expect(a.volume).toBeGreaterThan(20);
+    // Engraved into the top of a block.
+    const block = feature("box", { width: 60, depth: 30, height: 10 });
+    const cut: Feature = { ...feature("text", { size: 10, depth: 1, x: 5, y: 10 }, "remove"), text: { value: "Hi", plane: planeOnFace([0, 0, 1], [0, 0, 10], "top"), bold: true, flip: true } };
+    const e = build([block, cut]);
+    expect(e.featureErrors).toEqual({});
+    const v = analyzeMesh(e.parts[0].vertices, e.parts[0].triangles).volume;
+    expect(v).toBeLessThan(60 * 30 * 10);
+    expect(v).toBeGreaterThan(60 * 30 * 10 - 200);
+    expect(build([{ ...t, text: { ...t.text!, value: "   " } }]).featureErrors[t.id]).toMatch(/Type some text/);
   });
 });
