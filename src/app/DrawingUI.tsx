@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { arrangeViews, putDimension, removeDimension, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
+import { autoDimensions } from "../drawing/autoDimension";
 import { applyPlacement } from "../assembly/math";
 import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { dimPoint, dragDimension, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
@@ -133,10 +134,28 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
 }
 
 /** The sheet as last laid out on screen (for saving). */
-let shownSheet: { drawingId: string; layout: SheetLayout; name: string } | null = null;
+let shownSheet: { drawingId: string; layout: SheetLayout; name: string; projections: Projections } | null = null;
 
 function today(): string {
   return new Date().toLocaleDateString("en-GB");
+}
+
+/** Auto dimension: add the sizes the drawing needs (see autoDimension.ts). One undo step. */
+export function autoDimensionDrawing() {
+  const s = useStore.getState();
+  const d = activeDrawing(s);
+  if (!d || !shownSheet || shownSheet.drawingId !== d.id) {
+    s.showToast("The drawing isn't ready yet — wait for its views to appear, then try again.", "error");
+    return;
+  }
+  const added = autoDimensions(shownSheet.projections, drawingViewKeys(d), d.dimensions ?? [], shownSheet.layout.scale, () => newId("dm"));
+  if (!added.length) {
+    const hasViews = drawingViewKeys(d).some((k) => k !== "iso" && !k.startsWith("section:"));
+    s.showToast(hasViews ? "Nothing more to add — it's already dimensioned." : "Auto dimension needs a front, top or side view.", "info");
+    return;
+  }
+  s.changeDrawing((x) => ({ ...x, dimensions: [...(x.dimensions ?? []), ...added] }));
+  s.showToast(`Added ${added.length} dimension${added.length > 1 ? "s" : ""}. Drag a number to move it, or select one and press Delete.`, "success");
 }
 
 /** Save the drawing on show as a PDF or SVG file. */
@@ -203,6 +222,12 @@ export function DrawingToolbar() {
           <Icons.Section />
           <span>Section</span>
         </button>
+        <ToolButton
+          label="Auto dimension"
+          icon={<Icons.AutoDimension />}
+          onClick={autoDimensionDrawing}
+          title="Auto dimension — add the overall sizes, steps, hole sizes and hole positions the drawing needs, measured from one corner"
+        />
         <ToolButton
           label="Arrange"
           icon={<Icons.Fit />}
@@ -551,8 +576,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     [shown, projections, docName, subject, bom, balloons, unit],
   );
   useEffect(() => {
-    if (layout && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name };
-  }, [layout, drag, dimDrag, drawing.id, drawing.name]);
+    if (layout && projections && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name, projections };
+  }, [layout, projections, drag, dimDrag, drawing.id, drawing.name]);
   const snaps = useMemo(() => (layout && projections && tool !== "select" ? snapsOf(layout, projections) : []), [layout, projections, tool]);
 
   // Delete removes the selected dimension; Esc steps back.

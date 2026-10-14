@@ -24,6 +24,7 @@ const annotate = (level, title, message) => {
   else console.log(`[${level}] ${title}: ${message}`);
 };
 
+let autoDims = 0;
 let step = "starting";
 const server = await preview({ preview: { port: 4173, strictPort: true }, logLevel: "warn" });
 const browser = await chromium.launch({
@@ -682,6 +683,21 @@ try {
   const pdf = await pdfPromise;
   const pdfText = readFileSync(await pdf.path(), "latin1");
   if (!pdfText.startsWith("%PDF-1.4") || !pdfText.includes("(Smoke test) Tj")) throw new Error("the PDF doesn't look right");
+  step = "auto dimension";
+  {
+    await page.getByRole("button", { name: "Auto dimension", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".drawing-dim-handle").length > 4, null, { timeout: 5_000 }).catch(async () => {
+      throw new Error(`auto dimension added too little (${await page.locator(".drawing-dim-handle").count()} dimensions in all)`);
+    });
+    autoDims = (await page.locator(".drawing-dim-handle").count()) - dimCount;
+    await shot("autodim");
+    // Again: nothing more to add.
+    await page.getByRole("button", { name: "Auto dimension", exact: true }).click();
+    await page.waitForTimeout(300);
+    if ((await page.locator(".drawing-dim-handle").count()) !== dimCount + autoDims) throw new Error("auto dimension repeated itself");
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction((n) => document.querySelectorAll(".drawing-dim-handle").length === n, dimCount, { timeout: 5_000 });
+  }
   step = "adding a section view";
   // Draw a cutting line across the top view (the second view), left to right through its middle.
   const topBox = await page.locator(".drawing-view-handle").nth(1).boundingBox();
@@ -832,7 +848,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension, saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
