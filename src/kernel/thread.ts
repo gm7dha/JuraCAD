@@ -35,9 +35,9 @@ export const threadDepth = (pitch: number, external: boolean) => pitch * (extern
  * (distances along the axis from the cylinder's origin), a 60° V of the given
  * pitch, pointing into the material — towards the axis on a rod, away from it
  * in a hole. (One long helical sweep is valid on its own, but OpenCascade's
- * cutting often silently does nothing with it; a few turns at a time works.)
+ * cutting often goes wrong with it; a couple of turns at a time works.)
  */
-export function threadPieces(cyl: Cylinder, from: number, to: number, pitch: number, external: boolean, turnsPerPiece = 3): { shape: Shape3D; from: number; to: number }[] {
+export function threadPieces(cyl: Cylinder, from: number, to: number, pitch: number, external: boolean, turnsPerPiece = 2): { shape: Shape3D; from: number; to: number }[] {
   if (!(pitch > 0)) throw new Error("Enter a pitch (the distance between threads).");
   const depth = threadDepth(pitch, external);
   if (external && depth >= cyl.radius * 0.9) throw new Error("That pitch is too coarse for such a thin rod — choose a smaller size.");

@@ -1001,7 +1001,7 @@ export class GeometryEngine {
         const full = !(values.length > 0) || values.length >= hi - lo - 1e-6;
         // Runs out past the open end (and past the far end too when it's the full length), so the groove ends cleanly.
         const from = full ? lo - pitch : hi - values.length;
-        // A few turns at a time; a piece that cuts (almost) nothing is tried again a turn at a time.
+        // Two turns at a time; a piece that cuts the wrong amount (or leaves the part broken) is tried again a turn at a time.
         const cutPiece = (pieces: { shape: Shape3D; from: number; to: number }[], retry: boolean) => {
           for (const piece of pieces) {
             try {
@@ -1009,9 +1009,11 @@ export class GeometryEngine {
               const next: Shape3D = shape.cut(piece.shape);
               const removed = before - measureVolume(next);
               const expected = grooveVolume(cyl, pitch, external, piece.from, piece.to, lo, hi);
-              if (retry && expected > 1e-6 && removed < 0.3 * expected) {
+              const ok = isValidSolid(next) && (expected < 1e-6 || (removed > 0.5 * expected && removed < 1.6 * expected));
+              if (!ok) {
                 next.delete();
-                cutPiece(threadPieces(cyl, piece.from, piece.to, pitch, external, 1), false);
+                if (retry) cutPiece(threadPieces(cyl, piece.from, piece.to, pitch, external, 1), false);
+                else throw new Error("The thread couldn't be cut cleanly here — try a slightly different pitch or length.");
                 continue;
               }
               if (shape !== part.shape) shape.delete();
