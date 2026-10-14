@@ -6,6 +6,18 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.10 — More Onshape: Part Studio tools, sketching and drawings · commit `bdb0382`
+
+- Part Studio: **Plane** features, **Boolean** (join, subtract, intersect), **Split**, **Thicken**, **Rib**,
+  **Draft**, **Move face** and **Delete face** (which offers to switch off fillets or chamfers in the way).
+- Text can **wrap round a round face** (raised or engraved).
+- The feature list can be **grouped by part**; **box select** by dragging on empty space (3D view and sketches).
+- Sketch: **centre rectangle**, **tangent arc**, **sketch patterns** (in a row or round a centre), lining up
+  with points you've passed over, and dragging a point onto another to **join** them.
+- Drawings: **Auto dimension**, **Baseline**, **Chain** and **Ordinate** dimensions, and dimension numbers you
+  can slide along their line.
+- The toolbar **scrolls with the mouse wheel**, with arrows at the ends; and a little surprise in Help.
+
 ## v0.9 — Inches, dark mode and everyday improvements · commit `15baa18`
 
 - **Inches** or millimetres per design (Settings ⚙), without changing the model.
