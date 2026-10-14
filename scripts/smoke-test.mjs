@@ -785,7 +785,14 @@ try {
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Pattern", exact: true }).click();
     await page.getByRole("button", { name: "Round a centre" }).click();
-    await page.mouse.click(mx + 135, my);
+    // Click exactly on the circle's edge (snapping may have nudged it while drawing).
+    const rim = await page.evaluate(() => {
+      const d = window.partsmithStore.getState().editing.draft.sketch.data;
+      const c = d.curves.find((k) => k.type === "circle");
+      const p = d.points.find((q) => q.id === c.center);
+      return window.partsmithViewport.current.projectSketchPoint(p.x + c.radius, p.y);
+    });
+    await page.mouse.click(box.x + rim.x, box.y + rim.y);
     await page.mouse.move(mx + 60, my + 60, { steps: 3 });
     await shot("sketchpattern");
     await page.getByRole("button", { name: "Make pattern" }).click();
