@@ -33,7 +33,7 @@ export interface ImportedFile {
 export type Axis = "x" | "y" | "z";
 
 /** How an extrude runs: one way from the sketch (optionally flipped), or equally both ways. */
-export type ExtrudeEnd = "blind" | "symmetric" | "throughAll";
+export type ExtrudeEnd = "blind" | "symmetric" | "throughAll" | "upToFace";
 
 /**
  * How a feature's solid combines with what's already there (like Onshape's
@@ -60,7 +60,7 @@ export interface Feature {
   /** Extrude features: the sketch feature to extrude. */
   sketchRef?: string;
   /** Extrude features: one way or symmetric, and whether to flip. */
-  extrude?: { end: ExtrudeEnd; flip: boolean };
+  extrude?: { end: ExtrudeEnd; flip: boolean; /** Up to face: the flat face to stop at. */ upTo?: TopoPick };
   /** Revolve features: the line to spin around ("vertical"/"horizontal" sketch axes, or a sketch line id) and which way. */
   revolve?: { axis: string; flip: boolean };
   /** Hole features: where (the points and circle centres of a sketch) and what kind. */
