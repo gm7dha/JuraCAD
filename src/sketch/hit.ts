@@ -97,3 +97,31 @@ export function inferOrientation(
   if (Math.abs(angle - 90) < degrees) return { x: ax, y: by, orientation: "vertical" };
   return { x: bx, y: by, orientation: null };
 }
+
+/**
+ * Line up with points the pointer has passed over (and the origin), like
+ * Onshape: within `tol` of a point's x the pointer snaps straight above or
+ * below it, within `tol` of its y it snaps level with it. Returns where to
+ * put the point, and which points it lined up with.
+ */
+export function alignWith(
+  s: SketchData,
+  x: number,
+  y: number,
+  acquired: string[],
+  tol: number,
+): { x: number; y: number; alongX?: string; alongY?: string } {
+  let bestX: { id: string; d: number; v: number } | null = null;
+  let bestY: { id: string; d: number; v: number } | null = null;
+  for (const id of [...acquired, ORIGIN_ID]) {
+    if (id !== ORIGIN_ID && !s.points.some((p) => p.id === id)) continue;
+    const [px, py] = pointPos(s, id);
+    // Not when the pointer is right on the point itself.
+    if (Math.hypot(px - x, py - y) < tol) continue;
+    const dx = Math.abs(px - x);
+    const dy = Math.abs(py - y);
+    if (dx < tol && (!bestX || dx < bestX.d)) bestX = { id, d: dx, v: px };
+    if (dy < tol && (!bestY || dy < bestY.d)) bestY = { id, d: dy, v: py };
+  }
+  return { x: bestX ? bestX.v : x, y: bestY ? bestY.v : y, ...(bestX ? { alongX: bestX.id } : {}), ...(bestY ? { alongY: bestY.id } : {}) };
+}

@@ -72,7 +72,7 @@ function arcSegments(c: Pt, r: number, a0: number, a1: number): [Pt, Pt][] {
 }
 
 function previewSegments(p: PreviewShape): [Pt, Pt][] {
-  if (p.kind === "line") return [[p.a, p.b]];
+  if (p.kind === "line" || p.kind === "guide") return [[p.a, p.b]];
   if (p.kind === "circle") return arcSegments(p.c, p.r, 0, 2 * Math.PI);
   let a1 = p.a1;
   while (a1 <= p.a0) a1 += 2 * Math.PI;
@@ -299,8 +299,10 @@ export class SketchLayer {
 
     // Tool preview and snap marker.
     const t = this.transient;
-    const prev = (t?.preview ?? []).flatMap(previewSegments);
-    this.preview.set(frame, prev, prev.map(() => SKETCH_COLOURS.preview));
+    const shapes = t?.preview ?? [];
+    const prev = shapes.flatMap(previewSegments);
+    const colours = shapes.flatMap((sh) => previewSegments(sh).map(() => (sh.kind === "guide" ? SKETCH_COLOURS.inactive : SKETCH_COLOURS.preview)));
+    this.preview.set(frame, prev, colours);
     if (t?.snap) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.Float32BufferAttribute(toWorld(frame, t.snap[0], t.snap[1]), 3));

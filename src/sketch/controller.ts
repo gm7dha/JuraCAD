@@ -4,7 +4,7 @@
  * snap marker) for the viewport to draw.
  */
 import { useStore, type SketchTool } from "../model/store";
-import { hitTest, inferOrientation, type Hit } from "./hit";
+import { alignWith, hitTest, inferOrientation, type Hit } from "./hit";
 import { offsetFor } from "./layout";
 import {
   addArc,
@@ -39,6 +39,8 @@ export interface SketchPointer {
 /** Temporary shapes drawn while a tool is in progress. */
 export type PreviewShape =
   | { kind: "line"; a: [number, number]; b: [number, number] }
+  /** A faint guide showing what the pointer has lined up with. */
+  | { kind: "guide"; a: [number, number]; b: [number, number] }
   | { kind: "circle"; c: [number, number]; r: number }
   | { kind: "arc"; c: [number, number]; r: number; a0: number; a1: number };
 
@@ -73,6 +75,8 @@ export class SketchController {
   /** Clicks collected so far by the current drawing tool. */
   private placed: Placed[] = [];
   private drag: DragState | null = null;
+  /** Points the pointer has passed over while drawing, most recent first (to line up with). */
+  private acquired: string[] = [];
   private lastTool: SketchTool | null = null;
   private readonly listeners = new Set<(t: SketchTransient) => void>();
 
@@ -104,6 +108,7 @@ export class SketchController {
       // Switching tools abandons anything half-drawn.
       this.lastTool = tool;
       this.placed = [];
+      this.acquired = [];
       this.transient = { ...this.transient, preview: [], inference: null, pending: [] };
     }
     return tool;
@@ -169,6 +174,11 @@ export class SketchController {
     if (hit?.kind === "point") {
       const [x, y] = pointPos(d, hit.id);
       return { x, y, snap: hit.id === ORIGIN_ID ? { kind: "origin" } : { kind: "point", id: hit.id } };
+    }
+    if (!hit && this.acquired.length) {
+      // Lined up with a point the pointer passed over?
+      const al = alignWith(d, e.x, e.y, this.acquired, POINT_PX * 0.8 * e.mmPerPx);
+      if (al.alongX || al.alongY) return { x: al.x, y: al.y, snap: { kind: "align", ...(al.alongX ? { x: al.alongX } : {}), ...(al.alongY ? { y: al.alongY } : {}) } };
     }
     if (hit?.kind === "curve") {
       const c = curveById(d, hit.id)!;
@@ -338,8 +348,14 @@ export class SketchController {
       return;
     }
 
+    // Passing over a point picks it up, to line up with afterwards.
+    const over = this.hitAt(e);
+    if (over?.kind === "point" && this.acquired[0] !== over.id) this.acquired = [over.id, ...this.acquired.filter((x) => x !== over.id)].slice(0, 4);
     const p = this.placeAt(e);
     const preview: PreviewShape[] = [];
+    if (p.snap?.kind === "align") {
+      for (const id of [p.snap.x, p.snap.y]) if (id) preview.push({ kind: "guide", a: pointPos(d, id), b: [p.x, p.y] });
+    }
     let inference: SketchTransient["inference"] = null;
     let snap = this.snapMarker(p);
     const first = this.placed[0];
