@@ -125,6 +125,53 @@ export function dimLabel(dim: Dimension, value: number): string {
   return dim.type === "diameter" ? `Ø${formatSize(value)}` : dim.type === "radius" ? `R${formatSize(value)}` : formatSize(value);
 }
 
+/** How far (paper mm) a number has to be lifted off its line before it counts as moved off it. */
+const OFF_LINE = 1;
+
+/**
+ * Where a length dimension's line is (sheet mm): its ends, the direction it
+ * runs, the way extension lines go, and which way is "up" for its number.
+ */
+export function dimensionLine(dim: Dimension, pa: P2, pb: P2): { along: P2; across: P2; la: P2; lb: P2; angle: number; up: P2 } {
+  let along: P2;
+  let across: P2;
+  if (dim.type === "horizontal") {
+    along = [1, 0];
+    across = [0, 1];
+  } else if (dim.type === "vertical") {
+    along = [0, 1];
+    across = [-1, 0];
+  } else {
+    const d = dist(pa, pb) || 1;
+    along = [(pb[0] - pa[0]) / d, (pb[1] - pa[1]) / d];
+    across = [-along[1], along[0]];
+  }
+  const h = (p: P2) => p[0] * across[0] + p[1] * across[1];
+  // The line sits `offset` beyond the furthest point (or before the nearest, if negative).
+  const base = dim.offset >= 0 ? Math.max(h(pa), h(pb)) + dim.offset : Math.min(h(pa), h(pb)) + dim.offset;
+  const onLine = (p: P2): P2 => [p[0] + across[0] * (base - h(p)), p[1] + across[1] * (base - h(p))];
+  const angle = readable((Math.atan2(along[1], along[0]) * 180) / Math.PI);
+  const rad = (angle * Math.PI) / 180;
+  // "Above" the line, as you'd read the text.
+  const up: P2 = [-Math.sin(rad), Math.cos(rad)];
+  return { along, across, la: onLine(pa), lb: onLine(pb), angle, up };
+}
+
+/**
+ * Shift-dragging a length dimension's number: move just the number, anywhere
+ * (the dimension line stays put). Returns how far along and off the line it is.
+ */
+export function dragDimensionText(dim: Dimension, a: P2, b: P2, cursor: P2): { textAlong: number; textAcross: number } {
+  const { along, la, lb, up } = dimensionLine(dim, a, b);
+  const mid: P2 = [(la[0] + lb[0]) / 2, (la[1] + lb[1]) / 2];
+  const d: P2 = [cursor[0] - mid[0], cursor[1] - mid[1]];
+  const r = (v: number) => Math.round(v * 10) / 10;
+  const alongBy = d[0] * along[0] + d[1] * along[1];
+  // The cursor holds the middle of the number.
+  const acrossBy = d[0] * up[0] + d[1] * up[1] - 1.2 - TEXT_SIZE * 0.35;
+  return { textAlong: Math.abs(alongBy) < 2 ? 0 : r(alongBy), textAcross: Math.abs(acrossBy) <= OFF_LINE ? 0 : r(acrossBy) };
+}
+
 /** A filled arrowhead with its tip at `tip`, pointing along `dir`. */
 function arrow(tip: P2, dir: P2): Prim {
   const l = Math.hypot(dir[0], dir[1]) || 1;
@@ -199,26 +246,7 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
     }
     return { prims, label };
   }
-  // Direction the dimension line runs along, and the way extension lines go.
-  let along: P2;
-  let across: P2;
-  if (dim.type === "horizontal") {
-    along = [1, 0];
-    across = [0, 1];
-  } else if (dim.type === "vertical") {
-    along = [0, 1];
-    across = [-1, 0];
-  } else {
-    const d = dist(pa, pb) || 1;
-    along = [(pb[0] - pa[0]) / d, (pb[1] - pa[1]) / d];
-    across = [-along[1], along[0]];
-  }
-  const h = (p: P2) => p[0] * across[0] + p[1] * across[1];
-  // The line sits `offset` beyond the furthest point (or before the nearest, if negative).
-  const base = dim.offset >= 0 ? Math.max(h(pa), h(pb)) + dim.offset : Math.min(h(pa), h(pb)) + dim.offset;
-  const onLine = (p: P2): P2 => [p[0] + across[0] * (base - h(p)), p[1] + across[1] * (base - h(p))];
-  const la = onLine(pa);
-  const lb = onLine(pb);
+  const { along, across, la, lb, angle, up } = dimensionLine(dim, pa, pb);
   const sign = Math.sign(dim.offset) || 1;
   for (const [p, q] of [
     [pa, la],
@@ -238,12 +266,22 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
     // Too short for arrows inside: point them in from outside.
     prims.push(arrow(la, dir), arrow(lb, [-dir[0], -dir[1]]));
   }
-  const angle = readable((Math.atan2(along[1], along[0]) * 180) / Math.PI);
   // The number sits in the middle, unless it's been slid along the line (it can go past the ends:
-  // the dimension line then carries on out to it).
+  // the dimension line then carries on out to it) or moved off it (a thin leader joins it back).
   const shift = dim.textAlong ?? 0;
+  const lift = dim.textAcross ?? 0;
   const mid: P2 = [(la[0] + lb[0]) / 2 + along[0] * shift, (la[1] + lb[1]) / 2 + along[1] * shift];
-  if (shift !== 0) {
+  const offLine = Math.abs(lift) > OFF_LINE;
+  if (offLine) {
+    // From the nearest point of the dimension line to the near edge of the number.
+    const t = (p: P2) => (p[0] - la[0]) * along[0] + (p[1] - la[1]) * along[1];
+    const len = t(lb);
+    const k = Math.max(Math.min(t(mid), Math.max(len, 0)), Math.min(len, 0));
+    const foot: P2 = [la[0] + along[0] * k, la[1] + along[1] * k];
+    const reach = lift > 0 ? lift + 0.6 : lift + 1.2 + TEXT_SIZE * 0.9;
+    const tip: P2 = [mid[0] + up[0] * reach, mid[1] + up[1] * reach];
+    prims.push({ kind: "path", points: [foot[0], foot[1], tip[0], tip[1]], style: "thin" });
+  } else if (shift !== 0) {
     const t = (p: P2) => p[0] * along[0] + p[1] * along[1];
     const lo = Math.min(t(la), t(lb));
     const hi = Math.max(t(la), t(lb));
@@ -257,10 +295,8 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
       prims.push({ kind: "path", points: [p[0], p[1], q[0], q[1]], style: "thin" });
     }
   }
-  const rad = (angle * Math.PI) / 180;
-  // "Above" the line, as you'd read the text.
-  const up: P2 = [-Math.sin(rad), Math.cos(rad)];
-  const label: P2 = [mid[0] + up[0] * 1.2, mid[1] + up[1] * 1.2];
+  const raise = 1.2 + (offLine ? lift : 0);
+  const label: P2 = [mid[0] + up[0] * raise, mid[1] + up[1] * raise];
   prims.push({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle", ...(angle !== 0 ? { rotate: angle } : {}) });
   return { prims, label };
 }

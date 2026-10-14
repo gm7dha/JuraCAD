@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dimLabel, dimPoint, dragDimension, drawDimension, formatSize, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints } from "../src/drawing/dimensions";
+import { dimLabel, dimPoint, dragDimension, dragDimensionText, drawDimension, formatSize, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints } from "../src/drawing/dimensions";
 import { addDrawing, parseDrawings, putDimension, removeDimension, toggleView } from "../src/drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../src/drawing/export";
 import { layoutSheet } from "../src/drawing/sheet";
@@ -164,5 +164,28 @@ describe("moving a dimension's number", () => {
     // An extra piece of line reaching out beyond x = 40.
     const reach = drawn.prims.some((p) => p.kind === "path" && p.points.length === 4 && Math.max(p.points[0], p.points[2]) > 50 && p.points[1] === p.points[3]);
     expect(reach).toBe(true);
+  });
+});
+
+describe("moving just a dimension's number (Shift-drag)", () => {
+  const dim: Dimension = { id: "d", view: "front", type: "horizontal", a: { at: [0, 0], rel: [0, 0] }, b: { at: [40, 0], rel: [1, 0] }, offset: 10 };
+  const v: ViewProjection = { kind: "front", visible: [], hidden: [], circles: [], points: [0, 0, 40, 0], bounds: [0, 0, 40, 0] };
+
+  it("goes anywhere, with the line staying put", () => {
+    // The line is at y = 10, its middle at x = 20; drag the number to (30, 25).
+    const t = dragDimensionText(dim, [0, 0], [40, 0], [30, 25]);
+    expect(t.textAlong).toBe(10);
+    expect(t.textAcross).toBeGreaterThan(10);
+    const moved = { ...dim, ...t };
+    const drawn = drawDimension(moved, resolveDim(moved, v), (p) => p, 40);
+    const text = drawn.prims.find((p) => p.kind === "text")!;
+    expect(text.kind === "text" && Math.abs(text.x - 30) < 1e-6 && text.y > 20).toBe(true);
+    // A leader from the dimension line (y = 10) up towards the number.
+    const leader = drawn.prims.some((p) => p.kind === "path" && p.points.length === 4 && Math.abs(p.points[1] - 10) < 1e-6 && p.points[3] > 15);
+    expect(leader).toBe(true);
+  });
+
+  it("drops back onto the line when let go close to it", () => {
+    expect(dragDimensionText(dim, [0, 0], [40, 0], [20, 12.5]).textAcross).toBe(0);
   });
 });

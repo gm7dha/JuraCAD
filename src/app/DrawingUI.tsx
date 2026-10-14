@@ -11,7 +11,7 @@ import { autoDimensions } from "../drawing/autoDimension";
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
-import { dimPoint, dragDimension, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
+import { dimPoint, dragDimension, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
@@ -206,7 +206,7 @@ export function DrawingToolbar() {
         <button
           className={`tool-button${tool === "dimension" ? " active" : ""}`}
           onClick={() => useStore.getState().setDrawingTool(tool === "dimension" ? "select" : "dimension")}
-          title="Dimension (D) — click two corners, an edge, or a circle. Drag a dimension's number to move it; Delete removes it"
+          title="Dimension (D) — click two corners, an edge, or a circle. Drag a dimension's number to move it (hold Shift to move just the number, anywhere); Delete removes it"
           aria-label="Dimension"
           aria-pressed={tool === "dimension"}
         >
@@ -565,7 +565,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const balloons = useMemo(() => balloonsFor(bom, instances, allParts), [bom, instancesKey, allParts]);
   const [drag, setDrag] = useState<{ viewId: string; start: P2; from: P2; at: P2 } | null>(null);
-  const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number; textAlong?: number } } | null>(null);
+  const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number; textAlong?: number; textAcross?: number } } | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   /** Section tool: the cutting line's first point (view mm), on its view. */
   const [cutStart, setCutStart] = useState<{ view: string; at: P2 } | null>(null);
@@ -819,7 +819,13 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (dimDrag) {
       const dim = drawing.dimensions?.find((x) => x.id === dimDrag.id);
       const placed = layout?.dims.find((x) => x.id === dimDrag.id);
-      if (dim && placed) setDimDrag({ id: dim.id, patch: dragDimension(dim, placed.a, placed.b, placed.rad, here) });
+      // Shift: move just the number (anywhere, off the line too); otherwise move the dimension.
+      const lengthDim = dim && dim.type !== "diameter" && dim.type !== "radius" && dim.type !== "ordinate";
+      if (dim && placed && e.shiftKey && lengthDim && placed.b) {
+        setDimDrag({ id: dim.id, patch: { offset: dim.offset, ...dragDimensionText(dim, placed.a, placed.b, here) } });
+      } else if (dim && placed) {
+        setDimDrag({ id: dim.id, patch: { ...dragDimension(dim, placed.a, placed.b, placed.rad, here), textAcross: 0 } });
+      }
     }
   };
   const onPointerUp = () => {

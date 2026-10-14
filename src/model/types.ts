@@ -248,6 +248,8 @@ export interface Dimension {
   angle?: number;
   /** Lengths: how far the number has been slid along the dimension line from the middle (paper mm). */
   textAlong?: number;
+  /** Lengths: how far the number has been lifted off the dimension line (paper mm, + = above as read; joined by a leader). */
+  textAcross?: number;
   /** Ordinate dimensions: measured across ("h") or up-and-down ("v"). */
   axis?: "h" | "v";
 }
