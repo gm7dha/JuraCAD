@@ -8,6 +8,7 @@ import { arrangeViews, putDimension, removeDimension, SHEET_SIZES, toggleView, V
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
+import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { dimPoint, dragDimension, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
@@ -212,6 +213,25 @@ export function DrawingToolbar() {
           <Icons.Dimension />
           <span>Dimension</span>
         </button>
+        {(
+          [
+            ["baseline", "Baseline", <Icons.BaselineDim key="b" />, "Baseline — click a datum corner, then the next point, the next… each measured from the datum, stacked outwards. Esc to finish"],
+            ["chain", "Chain", <Icons.ChainDim key="c" />, "Chain — click a starting corner, then the next point, the next… each measured from the one before, end to end. Esc to finish"],
+            ["ordinate", "Ordinate", <Icons.OrdinateDim key="o" />, "Ordinate — click a datum corner (0), then the points to label with their distance from it. Esc to finish"],
+          ] as const
+        ).map(([t, label, icon, title]) => (
+          <button
+            key={t}
+            className={`tool-button${tool === t ? " active" : ""}`}
+            onClick={() => useStore.getState().setDrawingTool(tool === t ? "select" : t)}
+            title={title}
+            aria-label={label}
+            aria-pressed={tool === t}
+          >
+            {icon}
+            <span>{label}</span>
+          </button>
+        ))}
         <button
           className={`tool-button${tool === "section" ? " active" : ""}`}
           onClick={() => useStore.getState().setDrawingTool(tool === "section" ? "select" : "section")}
@@ -556,9 +576,13 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const [box, setBox] = useState<[number, number, number, number]>([-pad, -pad, W + 2 * pad, H + 2 * pad]);
   const pan = useRef<{ x: number; y: number; box: [number, number, number, number] } | null>(null);
   useEffect(() => setBox([-pad, -pad, W + 2 * pad, H + 2 * pad]), [W, H]);
+  /** Baseline / chain / ordinate tools: the run of dimensions being made. */
+  const [run, setRun] = useState<LinearRun | null>(null);
+  const linear = tool === "baseline" || tool === "chain" || tool === "ordinate";
   useEffect(() => {
     setPending(null);
     setCutStart(null);
+    setRun(null);
   }, [tool, drawing.id]);
 
   // While a view or a dimension is dragged, show it where it's going.
@@ -594,6 +618,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       } else if (e.key === "Escape") {
         if (cutStart) setCutStart(null);
         else if (pending) setPending(null);
+        else if (run) setRun(null);
         else if (s.selectedDim) s.selectDim(null);
         else if (s.drawingTool !== "select") s.setDrawingTool("select");
       } else if ((e.key === "d" || e.key === "D") && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -602,7 +627,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending, cutStart]);
+  }, [pending, cutStart, run]);
 
   const toSheet = (e: { clientX: number; clientY: number }): P2 => {
     const svg = svgRef.current;
@@ -682,6 +707,36 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     setPending({ ...pending, a: pair.a, b: pair.b, force: pair.force });
   };
 
+  /** Baseline / chain / ordinate: a corner or hole centre under the pointer, as a point on its view. */
+  const linearTarget = (here: P2): { view: string; at: P2 } | null => {
+    const snap = findSnap(snaps, here, tolerance());
+    if (!snap || snap.kind === "line") return null;
+    return { view: snap.view, at: snap.kind === "point" ? snap.at : snap.centre };
+  };
+  /** The dimensions a click here would add to the run. */
+  const linearNext = (here: P2 | null): Dimension[] => {
+    if (!run || !here || !layout || !projections) return [];
+    const t = linearTarget(here);
+    const p = projections[run.view];
+    if (!t || t.view !== run.view || !p) return [];
+    return nextLinear(run, p, t.at, layout.scale, drawing.dimensions ?? []).map((d, i) => ({ ...d, id: `preview${i}` }));
+  };
+  const linearClick = (here: P2) => {
+    const t = linearTarget(here);
+    if (!t) return;
+    if (!run || t.view !== run.view) {
+      setRun(startRun(t.view, tool as LinearKind, t.at));
+      return;
+    }
+    const made = linearNext(here);
+    if (!made.length) {
+      useStore.getState().showToast(run.count ? "That's already measured, or level with where it measures from." : "Click a point further across or up from the datum.", "info");
+      return;
+    }
+    change((d) => made.reduce((x, m) => putDimension(x, { ...m, id: newId("dm") }), d));
+    setRun(advanceRun(run, t.at, made));
+  };
+
   /** Where the section tool would put a point: on a front/top/side view, snapped to corners and hole centres. */
   const cutPoint = (here: P2, onView?: string): { view: string; at: P2; sheet: P2 } | null => {
     if (!layout || !projections) return null;
@@ -747,6 +802,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     }
     if (e.button !== 0) return;
     if (tool === "dimension") dimensionClick(e);
+    else if (linear) linearClick(toSheet(e));
     else if (tool === "section") sectionClick(toSheet(e));
     else useStore.getState().selectDim(null);
   };
@@ -798,13 +854,22 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
           : pending
             ? "Now click a second corner, an edge or a circle. Esc to start again."
             : "Click a circle, an edge or a corner. Then click to place it, or click a second thing to measure between them.";
-  else if (tool === "section")
+  else if (linear) {
+    const what = tool === "baseline" ? "each measured from it" : tool === "chain" ? "each measured from the one before" : "each labelled with its distance from it";
+    message = run
+      ? `Click the next corner or hole centre (${what}). Esc to finish, or click another view's point to start again there.`
+      : "Click the datum: the corner or hole centre to measure from.";
+  } else if (tool === "section")
     message = cutStart
       ? "Click where the cutting line ends (it straightens when nearly across or up-and-down). Esc to start again."
       : "Click where the cutting line starts, on the front, top or a side view (corners and hole centres snap).";
 
-  const hover = tool === "dimension" && cursor && !pending?.b ? findSnap(snaps, cursor, tolerance()) : null;
+  const hover = (tool === "dimension" && cursor && !pending?.b) || (linear && cursor) ? findSnap(snaps, cursor!, tolerance()) : null;
   const firstMark = (() => {
+    if (linear && run) {
+      const at = viewAt(run.view);
+      return at ? { point: at(run.datum) } : null;
+    }
     if (tool !== "dimension" || !pending || pending.b) return null;
     const at = viewAt(pending.view);
     const f = pending.first;
@@ -816,6 +881,15 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const cutFrom = cutStart ? viewAt(cutStart.view)?.(cutStart.at) : null;
   const preview = previewDim();
   const previewPrims = (() => {
+    if (linear && projections) {
+      const at = run && viewAt(run.view);
+      const p = run && projections[run.view];
+      if (!at || !p) return [];
+      return linearNext(cursor).flatMap((d) => {
+        const r = resolveDim(d, p);
+        return drawDimension(d, r, at, measureDim(d, r)).prims;
+      });
+    }
     if (!preview || !projections) return [];
     const at = viewAt(preview.view);
     const p = projections[preview.view];

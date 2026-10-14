@@ -62,6 +62,9 @@ export interface Editing {
   draft: Feature;
 }
 
+/** Drawing tools: select, the smart Dimension, baseline / chain / ordinate runs, and section. */
+export type DrawingTool = "select" | "dimension" | "baseline" | "chain" | "ordinate" | "section";
+
 export type SketchTool =
   | "select"
   | "line"
@@ -171,7 +174,7 @@ export interface AppState {
   /** The mate dialog, while open. */
   mateDraft: { mode: "create" | "edit"; mate: MateDraft } | null;
   /** Drawing tab: what clicks on the sheet do, and the selected dimension. */
-  drawingTool: "select" | "dimension" | "section";
+  drawingTool: DrawingTool;
   selectedDim: string | null;
   /** What a mouse drag in an assembly is changing, while the button is held. */
   dragPreview: DragChange | null;
@@ -273,7 +276,7 @@ export interface AppState {
   explodePreview: number | null;
   setExplodePreview: (amount: number | null) => void;
   setDragPreview: (change: DragChange | null) => void;
-  setDrawingTool: (tool: "select" | "dimension" | "section") => void;
+  setDrawingTool: (tool: DrawingTool) => void;
   selectDim: (id: string | null) => void;
   /** Keep what the drag did (one undo step). */
   commitDrag: () => void;

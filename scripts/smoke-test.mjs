@@ -698,6 +698,12 @@ try {
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     await page.waitForFunction((n) => document.querySelectorAll(".drawing-dim-handle").length === n, dimCount, { timeout: 5_000 });
   }
+  step = "baseline, chain and ordinate tools";
+  for (const name of ["Baseline", "Chain", "Ordinate"]) {
+    await page.getByRole("button", { name, exact: true }).click();
+    await page.waitForFunction(() => document.body.textContent?.includes("Click the datum"), null, { timeout: 5_000 });
+  }
+  await page.keyboard.press("Escape");
   step = "adding a section view";
   // Draw a cutting line across the top view (the second view), left to right through its middle.
   const topBox = await page.locator(".drawing-view-handle").nth(1).boundingBox();
