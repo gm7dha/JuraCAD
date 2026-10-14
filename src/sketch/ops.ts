@@ -27,7 +27,12 @@ export function sketchId(prefix: string): string {
 }
 
 /** What a click landed on, so new geometry can attach to it. */
-export type Snap = { kind: "point"; id: string } | { kind: "origin" } | { kind: "curve"; id: string };
+export type Snap =
+  | { kind: "point"; id: string }
+  | { kind: "origin" }
+  | { kind: "curve"; id: string }
+  /** Lined up with earlier points: straight above/below point `x` (same x), and/or level with point `y` (same y). */
+  | { kind: "align"; x?: string; y?: string };
 
 export interface Placed {
   x: number;
@@ -168,6 +173,10 @@ export function placePoint(s: SketchData, p: Placed): { sketch: SketchData; id: 
   } else if (p.snap?.kind === "curve") {
     const c = curveById(s, p.snap.id);
     if (c) constraints.push({ id: sketchId("c"), type: c.type === "line" ? "pointOnLine" : "pointOnCircle", refs: [id, c.id] });
+  } else if (p.snap?.kind === "align") {
+    // Keep it lined up: straight above/below (vertical) and/or level with (horizontal) the point it snapped to.
+    if (p.snap.x && (p.snap.x === ORIGIN_ID || isPointId(s, p.snap.x))) constraints.push({ id: sketchId("c"), type: "vertical", refs: [id, p.snap.x] });
+    if (p.snap.y && (p.snap.y === ORIGIN_ID || isPointId(s, p.snap.y))) constraints.push({ id: sketchId("c"), type: "horizontal", refs: [id, p.snap.y] });
   }
   return { sketch: { ...s, points, constraints }, id };
 }
