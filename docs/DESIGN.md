@@ -110,7 +110,7 @@ Each phase ends with a working version on the live site.
 | P4b More modelling ✅ v0.5 (done: sketch slot/polygon/round/trim, through all, hole tool, move/copy, measure, section view, part colours, import STEP/STL; later: offset, use part edges, up to face, draft) | Sketch trim/extend/offset/fillet, slots and polygons, use part edges in sketches; extrude through all / up to face / draft; hole tool (counterbore, countersink, tapped); move/rotate/copy parts; measure; section view; part colours; import STEP/STL | model real parts quickly |
 | **P5 Assemblies** ✅ v0.6 (also several Part Studios, rename parts; since: mate limits, exploded views; later: mate loops) | Instances, mate connectors, Onshape mate types, BOM | check multi-part designs fit together |
 | **P6 2D drawings** ✅ v0.7 (since: section views, balloons, centre lines; later: detail views, tolerances) | ISO sheets, first-angle views, hidden lines, dimensions, PDF/SVG/DXF | print a dimensioned drawing |
-| P7 Extras (v0.8: text, sweep/loft, offset/use/mirror, up to face/draft, drawing and assembly extras; next: inches, dark mode) | Patterns, holes, text, sweep/loft, sections, import, inches, optional print-bed preview, dark mode | as needed |
+| P7 Extras (v0.8: text, sweep/loft, offset/use/mirror, up to face/draft, drawing and assembly extras; inches and dark mode since) | Patterns, holes, text, sweep/loft, sections, import, inches, optional print-bed preview, dark mode | as needed |
 
 ## How we work
 

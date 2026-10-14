@@ -42,6 +42,8 @@
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.
+- Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
+  fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
   bump `CACHE` in sw.js if its caching rules change.
 - Versions: bump `version` in package.json and add a CHANGELOG.md entry (with the merge commit) at the end of each

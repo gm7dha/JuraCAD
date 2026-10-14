@@ -30,6 +30,7 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 - Type maths and units into any size box: `10 + 2`, `25.4 mm`, `1/4 in`.
 - **Variables**: name a size (e.g. `wall = 2`) and type the name into any box or sketch dimension (`wall * 2`).
 - **Inches or millimetres** (Settings ⚙ in the top bar): sizes are shown and typed in the design's units; you can always type a unit, e.g. `25 mm` or `1/4 in`.
+- **Dark mode** (Settings ⚙ › Appearance): Light, Dark, or Automatic (follows your computer).
   Change it once and the whole design updates.
 - Edit any feature later (double-click it), suppress it, rename it, or delete it. Full undo/redo.
 - **Measure**: select an edge or face to see its length, diameter or area; select two for the gap, angle and
