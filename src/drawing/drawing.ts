@@ -94,7 +94,8 @@ export function parseDrawings(raw: unknown): Drawing[] {
     const r = item as Record<string, unknown>;
     if (typeof r.id !== "string" || out.some((d) => d.id === r.id)) continue;
     const src = r.source as Record<string, unknown> | null | undefined;
-    const source = src && (src.kind === "part" || src.kind === "assembly") && typeof src.id === "string" ? { kind: src.kind, id: src.id } : null;
+    const source: Drawing["source"] =
+      src && (src.kind === "part" || src.kind === "assembly") && typeof src.id === "string" ? { kind: src.kind as "part" | "assembly", id: src.id } : null;
     const views: DrawingView[] = [];
     for (const v of Array.isArray(r.views) ? r.views : []) {
       const rv = (v ?? {}) as Record<string, unknown>;
