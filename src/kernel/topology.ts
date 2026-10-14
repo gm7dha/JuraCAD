@@ -10,7 +10,7 @@ import { cast, getOC, type Edge, type Face, type Wire, type Shape3D } from "repl
 const HASH_MAX = 2147483647;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-function list<T>(shape: { wrapped: unknown }, kind: "TopAbs_FACE" | "TopAbs_EDGE" | "TopAbs_SOLID"): T[] {
+function list<T>(shape: { wrapped: unknown }, kind: "TopAbs_FACE" | "TopAbs_EDGE" | "TopAbs_SOLID" | "TopAbs_WIRE"): T[] {
   const oc = getOC() as any;
   const explorer = new oc.TopExp_Explorer(shape.wrapped, oc.TopAbs_ShapeEnum[kind], oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
   const buckets = new Map<number, any[]>();
