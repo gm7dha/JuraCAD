@@ -539,6 +539,27 @@ try {
   if (!/Bracket/.test(await page.locator(".bom-table").innerText())) throw new Error("the parts list didn't pick up the new name");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
+  step = "checking and exporting the assembly";
+  await page.getByRole("button", { name: "Assembly 1" }).click();
+  await page.getByRole("button", { name: "Check model" }).click();
+  await page.waitForSelector(".check-headline", { timeout: 30_000 });
+  const asmHeadline = await page.locator(".check-headline").innerText();
+  await shot("assembly-check");
+  await page.getByRole("button", { name: "Close" }).first().click();
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await page.waitForSelector('#export-parts option[value="all"]', { state: "attached" });
+  const allOption = await page.locator('#export-parts option[value="all"]').innerText();
+  if (!/whole assembly/.test(allOption)) throw new Error(`the export choice reads "${allOption}"`);
+  const asmDownload = page.waitForEvent("download", { timeout: 60_000 });
+  await page.getByRole("button", { name: /Check & export/ }).click();
+  // Clashes only warn; export anyway if asked.
+  const anyway = page.getByRole("button", { name: "Export anyway" });
+  await Promise.race([asmDownload, anyway.waitFor({ timeout: 60_000 }).then(() => anyway.click()).catch(() => {})]);
+  const asmStep = await asmDownload;
+  const asmStepText = readFileSync(await asmStep.path(), "utf8");
+  if (!/PRODUCT\('Bracket <2>'/.test(asmStepText)) throw new Error("the assembly STEP file doesn't name its parts");
+  await page.getByRole("button", { name: "Part Studio 1" }).click();
+
   step = "adding a second Part Studio";
   await page.getByRole("button", { name: "Add a tab" }).click();
   await page.getByRole("menuitem", { name: "Part Studio" }).click();
@@ -560,7 +581,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; made a second Part Studio with its own part.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

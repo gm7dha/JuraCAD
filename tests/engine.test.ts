@@ -1015,3 +1015,33 @@ describe("several Part Studios", () => {
     expect(engine.partCount).toBe(1);
   });
 });
+
+describe("assembly exports and clashes", () => {
+  it("places copies for export, and finds where they overlap", async () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    engine.rebuild([box]);
+    const turn90z: [number, number, number, number] = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
+    const instances = [
+      { id: "i1", partId: box.id, name: "Box <1>", position: [0, 0, 0] as [number, number, number], rotation: [0, 0, 0, 1] as [number, number, number, number] },
+      // Turned a quarter about Z (now spans x −10…0) and moved 5 along X: overlaps the first by half.
+      { id: "i2", partId: box.id, name: "Box <2>", position: [15, 0, 0] as [number, number, number], rotation: turn90z },
+      { id: "i3", partId: box.id, name: "Box <3>", position: [100, 0, 0] as [number, number, number], rotation: [0, 0, 0, 1] as [number, number, number, number] },
+    ];
+    const clashes = engine.clashes(instances);
+    expect(clashes).toHaveLength(1);
+    expect(clashes[0].a).toBe("Box <1>");
+    expect(clashes[0].b).toBe("Box <2>");
+    expect(clashes[0].volume).toBeCloseTo(500, 3);
+
+    const stl = engine.exportStl([], "coarse", instances);
+    const { vertices } = readBinaryStl(stl.stl);
+    const xs = Array.from(vertices).filter((_, k) => k % 3 === 0);
+    expect(Math.min(...xs)).toBeCloseTo(0, 3);
+    expect(Math.max(...xs)).toBeCloseTo(110, 3);
+    const step = new TextDecoder().decode((await engine.exportStep([], {}, instances)).step);
+    expect(step).toContain("PRODUCT('Box <3>'");
+    // The part itself hasn't moved.
+    expect(engine.check("coarse").parts).toHaveLength(1);
+  });
+});

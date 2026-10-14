@@ -88,7 +88,7 @@ export function TopBar() {
       >
         <Icons.Save size={18} /> <span className="button-label">Save</span>
       </button>
-      <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts || inAssembly} title={inAssembly ? "Check model works in the Part Studio tab" : "Check the model is a sound, closed solid before you export it"}>
+      <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts} title={inAssembly ? "Check the assembly: do any parts clash, and are all the mates working?" : "Check the model is a sound, closed solid before you export it"}>
         <Icons.Check size={18} /> <span className="button-label">Check model</span>
       </button>
       <button className="primary-button" onClick={() => openDialog("export")} disabled={!hasParts} title="Download a STEP or STL file to send to a manufacturer or 3D printer">
