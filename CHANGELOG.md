@@ -6,6 +6,17 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.6 — Phase 5: Assemblies · commit `e3f1a55`
+
+- Assembly tabs (the + at the bottom): insert copies of parts, place them by typing a position and turn, Fix / Unfix.
+- Mates: Fasten, Hinge, Slider, Cylindrical, Planar and Ball, by clicking a face or edge on each part; amounts with
+  sliders; connectors follow the faces when the parts change.
+- Drag parts with the mouse: free parts slide, hinges turn, sliders slide.
+- Parts list with quantities (download as CSV).
+- Check assembly: clashes between parts, broken mates, missing parts.
+- Export an assembly in place (STEP keeps parts separate, named and coloured; STL; 3MF).
+- Several Part Studios in one design; rename parts; Isometric button under the view cube.
+
 ## v0.5 — More modelling · commit `3891772`
 
 - Move, turn and copy parts.

@@ -6,8 +6,8 @@
 
 PartSmith runs entirely in your browser. Your designs never leave your computer, there's no account, and it's free.
 
-> **Status: Phase 4 preview.** You can sketch shapes with dimensions and constraints, extrude or revolve them into parts, round, bevel or hollow them,
-> combine them with boxes, cylinders and spheres, check they're sound and export STEP or STL. Assemblies and drawings arrive in later phases — see the [roadmap](docs/DESIGN.md#roadmap).
+> **Status: v0.6 preview (Phase 5 done).** You can sketch shapes with dimensions and constraints, extrude or revolve them into parts, round, bevel or hollow them,
+> put parts together in assemblies with mates, check they're sound and fit, and export STEP, STL or 3MF. 2D drawings arrive next — see the [roadmap](docs/DESIGN.md#roadmap).
 
 ## What you can do today
 
@@ -38,6 +38,11 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 - **Import STEP and STL** files from other programs (toolbar Import, or drag the file onto the window). Each solid
   in a STEP file becomes a part; use it as it is, move it, or cut its shape out of another part.
 - **Section view**: slice the view open along Top, Front or Right to see inside (display only).
+- **Several Part Studios** in one design (the **+** at the bottom), and **rename parts** (double-click in the Parts list).
+- **Assemblies** (the **+** at the bottom): insert copies of parts from any Part Studio, place them by typing or by
+  dragging, and join them with **mates** — Fasten, Hinge, Slider, Cylindrical, Planar and Ball — by clicking a face
+  or edge on each part. Drag a hinged part to turn it. A **parts list** (with quantities, downloadable as CSV),
+  a **clash check**, and **export** of the whole assembly in place (STEP keeps each part separate and named).
 - **Check model** — confirms each part is closed and watertight, valid and in one piece, finds its thinnest wall,
   and spots separate parts that overlap.
 - **Install it as an app** (Chrome/Edge: the Install app button) so it opens in its own window and works offline;
