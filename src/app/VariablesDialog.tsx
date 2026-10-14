@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 
 import { newId } from "../model/document";
-import { formatMm } from "../model/expr";
-import { useDocument, useStore } from "../model/store";
+import { formatLength } from "../model/units";
+import { useDocument, useLengthUnit, useStore } from "../model/store";
 import { resolveVariables, usageCount, type Variable } from "../model/variables";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
@@ -22,6 +22,7 @@ export function VariablesDialog() {
   const doc = useDocument();
   const openDialog = useStore((s) => s.openDialog);
   const setVariables = useStore((s) => s.setVariables);
+  const unit = useLengthUnit();
   const [rows, setRows] = useState<Variable[]>(() => doc.variables ?? []);
   const { values, errors } = useMemo(() => resolveVariables(rows), [rows]);
   const hasErrors = Object.keys(errors).length > 0;
@@ -93,7 +94,7 @@ export function VariablesDialog() {
                       <span className="error-text">{error}</span>
                     ) : (
                       <>
-                        {formatMm(values[v.name])}
+                        {formatLength(values[v.name], unit)}
                         {used > 0 && <span className="muted"> · used {used}×</span>}
                       </>
                     )}
@@ -123,7 +124,7 @@ export function VariablesDialog() {
       <button className="text-button add-variable" onClick={() => setRows((rs) => [...rs, { id: newId("v"), name: freeName(rs), value: "10" }])}>
         + Add variable
       </button>
-      <p className="muted small">Renaming a variable updates every box that uses it. Values are in millimetres unless you add a unit, e.g. 1/4 in.</p>
+      <p className="muted small">Renaming a variable updates every box that uses it. Plain numbers here are millimetres{unit === "in" ? " (even in an inch design, since a variable can also be a count)" : ""} — add a unit for others, e.g. <code>1/4 in</code>.</p>
     </Modal>
   );
 }

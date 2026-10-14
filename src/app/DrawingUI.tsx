@@ -14,7 +14,7 @@ import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
-import { activeDrawing, partsInStudio, useStore } from "../model/store";
+import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { studiosOf } from "../model/studios";
 import type { Dimension, Drawing, PartSmithDocument, SectionCut } from "../model/types";
 import { addSection, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
@@ -536,9 +536,12 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (dimDrag) d = { ...d, dimensions: d.dimensions?.map((x) => (x.id === dimDrag.id ? { ...x, ...dimDrag.patch } : x)) };
     return d;
   }, [drawing, drag, dimDrag]);
+  const unit = useLengthUnit();
   const layout = useMemo(
     () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today(), bom, balloons }) : null),
-    [shown, projections, docName, subject, bom, balloons],
+    // The units change the dimension numbers and the title block.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shown, projections, docName, subject, bom, balloons, unit],
   );
   useEffect(() => {
     if (layout && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name };

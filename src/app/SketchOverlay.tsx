@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import { evaluate } from "../model/expr";
-import { useStore } from "../model/store";
+import { lengthNumber, showLength, storeLength, type LengthUnit } from "../model/units";
+import { useLengthUnit, useStore } from "../model/store";
 import { badgeAnchors, dimensionLayout, RELATION_SYMBOLS } from "../sketch/layout";
 import { moveDimensionLabel, setDimensionValue } from "../sketch/ops";
 import { isDimension, type SketchConstraint, type SketchData } from "../sketch/types";
@@ -23,10 +24,9 @@ const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
 };
 
 /** Text shown on a dimension label. */
-function dimensionText(c: SketchConstraint): string {
+function dimensionText(c: SketchConstraint, unit: LengthUnit): string {
   const r = evaluate(c.value ?? "");
-  const n = r.ok ? Math.round(r.value * 100) / 100 : NaN;
-  const shown = Number.isNaN(n) ? c.value ?? "?" : String(n);
+  const shown = !r.ok ? c.value ?? "?" : c.type === "angle" ? String(Math.round(r.value * 100) / 100) : lengthNumber(r.value, unit);
   if (c.type === "diameter") return `⌀${shown}`;
   if (c.type === "radius") return `R${shown}`;
   if (c.type === "angle") return `${shown}°`;
@@ -163,25 +163,28 @@ function DimensionLabel({
   failing: boolean;
   editing: boolean;
 }) {
-  const [text, setText] = useState(c.value ?? "");
+  const unit = useLengthUnit();
+  // Lengths are shown and typed in the design's units (see units.ts); angles in degrees.
+  const shownValue = c.type === "angle" ? c.value ?? "" : showLength(c.value ?? "", unit);
+  const [text, setText] = useState(shownValue);
   const [error, setError] = useState<string | null>(null);
   const drag = useRef<{ startData: SketchData; moved: boolean; x: number; y: number } | null>(null);
   useEffect(() => {
     if (editing) {
-      setText(c.value ?? "");
+      setText(shownValue);
       setError(null);
     }
-  }, [editing, c.value]);
+  }, [editing, shownValue]);
 
   const apply = () => {
     const s = useStore.getState();
     const current = s.editing?.draft.sketch?.data;
     if (!current) return;
-    if (text.trim() === (c.value ?? "")) {
+    if (text.trim() === shownValue.trim()) {
       s.setEditingDimension(null);
       return;
     }
-    const r = setDimensionValue(current, c.id, text.trim());
+    const r = setDimensionValue(current, c.id, c.type === "angle" ? text.trim() : storeLength(text.trim(), unit));
     if (r.error) {
       setError(r.error);
       return;
@@ -210,7 +213,7 @@ function DimensionLabel({
           }}
           onBlur={() => !error && apply()}
         />
-        <span className="unit">{c.type === "angle" ? "°" : "mm"}</span>
+        <span className="unit">{c.type === "angle" ? "°" : unit}</span>
         {error && <div className="dimension-error">{error}</div>}
       </div>
     );
@@ -262,7 +265,7 @@ function DimensionLabel({
         useStore.getState().setEditingDimension(c.id);
       }}
     >
-      {dimensionText(c)}
+      {dimensionText(c, unit)}
     </div>
   );
 }

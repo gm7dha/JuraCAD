@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { useStore } from "../model/store";
+import { useLengthUnit, useStore } from "../model/store";
+import { showLength, storeLength } from "../model/units";
 import { planeLabel } from "../sketch/planes";
 import { findRegions } from "../sketch/regions";
 import { sketchStatus } from "../viewport/Viewport";
@@ -15,6 +16,7 @@ export function SketchPanel() {
   const polygonSides = useStore((s) => s.sketch?.polygonSides ?? 6);
   const filletRadius = useStore((s) => s.sketch?.filletRadius ?? "2");
   const offsetDistance = useStore((s) => s.sketch?.offsetDistance ?? "2");
+  const unit = useLengthUnit();
   const setSketchOptions = useStore((s) => s.setSketchOptions);
   const setDraftField = useStore((s) => s.setDraftField);
   const commitDraft = useStore((s) => s.commitDraft);
@@ -79,16 +81,16 @@ export function SketchPanel() {
         {tool === "offset" && (
           <label className="tool-option">
             Distance
-            <input value={offsetDistance} spellCheck={false} aria-label="Offset distance" onChange={(e) => setSketchOptions({ offsetDistance: e.target.value })} />
-            <span className="muted">mm</span>
+            <input value={showLength(offsetDistance, unit)} spellCheck={false} aria-label="Offset distance" onChange={(e) => setSketchOptions({ offsetDistance: storeLength(e.target.value, unit) })} />
+            <span className="muted">{unit}</span>
           </label>
         )}
         {tool === "useEdge" && <p className="dialog-hint">Click edges of a part to copy them into this sketch.</p>}
         {tool === "sketchFillet" && (
           <label className="tool-option">
             Radius
-            <input value={filletRadius} spellCheck={false} onChange={(e) => setSketchOptions({ filletRadius: e.target.value })} />
-            <span className="muted">mm</span>
+            <input value={showLength(filletRadius, unit)} spellCheck={false} aria-label="Round radius" onChange={(e) => setSketchOptions({ filletRadius: storeLength(e.target.value, unit) })} />
+            <span className="muted">{unit}</span>
           </label>
         )}
         {confirmCancel && (

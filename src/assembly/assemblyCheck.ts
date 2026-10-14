@@ -5,12 +5,14 @@
  */
 import type { CheckReport, Finding, Level, PartReport } from "../model/checkReport";
 import type { Assembly } from "../model/types";
+import { formatVolume, lengthUnit } from "../model/units";
 import type { SolveResult } from "./mates";
 
 const worst = (levels: Level[]): Level => (levels.includes("error") ? "error" : levels.includes("warn") ? "warn" : "ok");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 function volumeText(v: number): string {
+  if (lengthUnit() === "in") return formatVolume(v, "in");
   if (v >= 1000) return `${Math.round(v / 100) / 10} cm³`;
   return `${Math.round(v * 10) / 10} mm³`;
 }

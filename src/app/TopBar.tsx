@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { activeAssembly, activeDrawing, useDocument, useStore } from "../model/store";
+import { activeAssembly, activeDrawing, useDocument, useLengthUnit, useStore } from "../model/store";
 import { exportDrawing } from "./DrawingUI";
 import { allFeatures } from "../model/studios";
 import { Icons } from "./icons";
@@ -101,6 +101,7 @@ export function TopBar() {
       >
         <Icons.Export size={18} /> <span className="button-label">Export</span>
       </button>
+      <SettingsMenu />
       <button className="icon-button" onClick={() => openDialog("help")} aria-label="Help and shortcuts" title="Help and shortcuts (?)">
         <Icons.Help />
       </button>
@@ -115,5 +116,52 @@ export function TopBar() {
         </Modal>
       )}
     </header>
+  );
+}
+
+/** Settings: units (saved with the design). */
+function SettingsMenu() {
+  const [open, setOpen] = useState(false);
+  const unit = useLengthUnit();
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => {
+      if (!(e.target as Element).closest?.(".settings-menu, .settings-button")) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  return (
+    <div className="settings-wrap">
+      <button className={`icon-button settings-button${open ? " active" : ""}`} onClick={() => setOpen(!open)} aria-label="Settings" aria-expanded={open} title="Settings — units">
+        <Icons.Settings />
+      </button>
+      {open && (
+        <div className="settings-menu" role="dialog" aria-label="Settings">
+          <div className="field-label">Units for this design</div>
+          <div className="segmented" role="radiogroup" aria-label="Units">
+            {(
+              [
+                ["mm", "Millimetres"],
+                ["in", "Inches"],
+              ] as const
+            ).map(([u, label]) => (
+              <button type="button" key={u} role="radio" aria-checked={unit === u} className={unit === u ? "selected" : ""} onClick={() => useStore.getState().setUnits(u)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="dialog-hint">
+            Sizes are shown in {unit === "in" ? "inches" : "millimetres"}, and a plain number typed into a size box means {unit === "in" ? "inches" : "millimetres"}. You can
+            always type a unit, e.g. <code>25 mm</code> or <code>1/4 in</code>. Switching doesn't change your design.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }

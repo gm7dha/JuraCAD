@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
-import { useStore, type PlaneName } from "../model/store";
+import { useLengthUnit, useStore, type PlaneName } from "../model/store";
+import { fromUnit, lengthNumber } from "../model/units";
 import { SECTION_AXIS } from "../viewport/section";
 import { viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -20,6 +21,7 @@ export function SectionPanel() {
   const section = useStore((s) => s.section);
   const parts = useStore((s) => s.parts);
   const setSection = useStore((s) => s.setSection);
+  const unit = useLengthUnit();
   const extent = useMemo(
     () => (section ? viewportApi.current?.extentAlong(SECTION_AXIS[section.plane]) ?? null : null),
     // Recalculate when the model or the plane changes.
@@ -75,10 +77,10 @@ export function SectionPanel() {
           type="number"
           aria-label="Cut position (mm)"
           step={step}
-          value={Math.round(section.offset * 100) / 100}
-          onChange={(e) => Number.isFinite(Number(e.target.value)) && setSection({ ...section, offset: Number(e.target.value) })}
+          value={Number(lengthNumber(section.offset, unit))}
+          onChange={(e) => Number.isFinite(Number(e.target.value)) && setSection({ ...section, offset: fromUnit(Number(e.target.value), unit) })}
         />
-        <span className="muted">mm</span>
+        <span className="muted">{unit}</span>
         <label className="check-row section-flip">
           <input type="checkbox" checked={section.flip} onChange={(e) => setSection({ ...section, flip: e.target.checked })} />
           Flip

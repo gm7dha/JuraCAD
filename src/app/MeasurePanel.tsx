@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 
 import type { Measurement } from "../geometry/measureMath";
 import { getKernel } from "../kernel/connect";
-import { pickFor, useStore } from "../model/store";
+import { pickFor, useLengthUnit, useStore } from "../model/store";
+import { formatArea, formatLength } from "../model/units";
 
-const mm = (v: number) => `${Math.round(v * 1000) / 1000} mm`;
-const mm2 = (v: number) => `${Math.round(v * 100) / 100} mm²`;
+const mm = (v: number) => formatLength(v);
+const mm2 = (v: number) => formatArea(v);
 
 /**
  * Onshape-style measurements for whatever is selected in the 3D view:
@@ -15,6 +16,7 @@ export function MeasurePanel() {
   const selection = useStore((s) => s.selection);
   const parts = useStore((s) => s.parts);
   const editing = useStore((s) => s.editing !== null);
+  useLengthUnit(); // shown in the design's units
   const [result, setResult] = useState<Measurement | null>(null);
 
   useEffect(() => {

@@ -8,7 +8,8 @@ import { billOfMaterials, bomCsv, placedBox, spotBeside, type Box3 } from "../as
 import { eulerDegFromQuat, quatFromEulerDeg, type Placement } from "../assembly/math";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { evaluate } from "../model/expr";
-import { activeAssembly, partsInStudio, useStore } from "../model/store";
+import { activeAssembly, partsInStudio, useLengthUnit, useStore } from "../model/store";
+import { fromUnit, lengthNumber, showLength, storeLength } from "../model/units";
 import { studiosOf } from "../model/studios";
 import type { Assembly, Instance, Mate, MateConnector, MateType } from "../model/types";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
@@ -374,7 +375,9 @@ export function InsertPanel() {
 
 /** A number box that accepts maths and units, and applies the value on Enter or when you leave it. */
 function NumberBox({ label, value, unit, onCommit }: { label: string; value: number; unit: string; onCommit: (v: number) => void }) {
-  const shown = String(Math.round(value * 1e4) / 1e4);
+  const lengthUnit = useLengthUnit();
+  const isLength = unit === "mm";
+  const shown = isLength ? lengthNumber(value, lengthUnit, 4) : String(Math.round(value * 1e4) / 1e4);
   const [text, setText] = useState(shown);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -383,7 +386,7 @@ function NumberBox({ label, value, unit, onCommit }: { label: string; value: num
   }, [shown]);
   const commit = () => {
     if (text.trim() === shown) return;
-    const r = evaluate(text);
+    const r = evaluate(isLength ? storeLength(text, lengthUnit) : text);
     if (!r.ok) {
       setError(r.error);
       return;
@@ -417,7 +420,7 @@ function NumberBox({ label, value, unit, onCommit }: { label: string; value: num
           }}
           aria-invalid={!!error}
         />
-        <span className="unit">{unit}</span>
+        <span className="unit">{isLength ? lengthUnit : unit}</span>
       </div>
       {error && <div className="param-message error">{error}</div>}
     </div>
@@ -583,9 +586,15 @@ function MateValueField({
 }) {
   const r = evaluate(value.trim() || "0");
   const id = `mate-${def.key}`;
-  const span = def.unit === "°" ? 180 : 200;
-  const lo = limitRange && Number.isFinite(limitRange.min) ? limitRange.min : -span;
-  const hi = limitRange && Number.isFinite(limitRange.max) ? limitRange.max : span;
+  const unitNow = useLengthUnit();
+  const isLength = def.unit === "mm";
+  // Lengths are shown, typed and slid in the design's units (see units.ts).
+  const show = (v: string) => (isLength ? showLength(v, unitNow) : v);
+  const store = (v: string) => (isLength ? storeLength(v, unitNow) : v);
+  const k = isLength ? fromUnit(1, unitNow) : 1;
+  const span = def.unit === "°" ? 180 : unitNow === "in" && isLength ? 8 : 200;
+  const lo = limitRange && Number.isFinite(limitRange.min) ? limitRange.min / k : -span;
+  const hi = limitRange && Number.isFinite(limitRange.max) ? limitRange.max / k : span;
   const ok = lo <= hi;
   return (
     <div className={`param-field compact${r.ok ? "" : " invalid"}`}>
@@ -593,15 +602,15 @@ function MateValueField({
       <div className="param-input">
         <input
           id={id}
-          value={value}
+          value={show(value)}
           spellCheck={false}
           autoComplete="off"
           inputMode="decimal"
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(store(e.target.value))}
           onFocus={(e) => e.target.select()}
           aria-invalid={!r.ok}
         />
-        <span className="unit">{def.unit}</span>
+        <span className="unit">{isLength ? unitNow : def.unit}</span>
       </div>
       {def.free && (
         <input
@@ -610,16 +619,16 @@ function MateValueField({
           aria-label={`${def.label} slider`}
           min={ok ? lo : -span}
           max={ok ? hi : span}
-          step={def.unit === "°" ? 1 : 0.5}
-          value={r.ok ? Math.max(ok ? lo : -span, Math.min(ok ? hi : span, r.value)) : 0}
-          onChange={(e) => onChange(e.target.value)}
+          step={def.unit === "°" ? 1 : unitNow === "in" ? 0.0625 : 0.5}
+          value={r.ok ? Math.max(ok ? lo : -span, Math.min(ok ? hi : span, r.value / k)) : 0}
+          onChange={(e) => onChange(store(e.target.value))}
         />
       )}
       {!r.ok && <div className="param-message error">{r.error}</div>}
       {def.free && onLimit && (
         <>
           <label className="check-row small-text">
-            <input type="checkbox" checked={!!limit} onChange={(e) => onLimit(e.target.checked ? { min: def.unit === "°" ? "-90" : "0", max: def.unit === "°" ? "90" : "50" } : undefined)} />
+            <input type="checkbox" checked={!!limit} onChange={(e) => onLimit(e.target.checked ? { min: def.unit === "°" ? "-90" : "0", max: def.unit === "°" ? "90" : store(unitNow === "in" ? "2" : "50") } : undefined)} />
             Limit how far it {def.unit === "°" ? "turns" : "slides"}
           </label>
           {limit && (
@@ -629,13 +638,13 @@ function MateValueField({
                   <input
                     aria-label={`${def.label} ${end === "min" ? "lowest" : "highest"}`}
                     placeholder={end === "min" ? "lowest" : "highest"}
-                    value={limit[end] ?? ""}
+                    value={show(limit[end] ?? "")}
                     spellCheck={false}
                     autoComplete="off"
                     inputMode="decimal"
-                    onChange={(e) => onLimit({ ...limit, [end]: e.target.value })}
+                    onChange={(e) => onLimit({ ...limit, [end]: store(e.target.value) })}
                   />
-                  <span className="unit">{def.unit}</span>
+                  <span className="unit">{isLength ? unitNow : def.unit}</span>
                 </div>
               ))}
             </div>

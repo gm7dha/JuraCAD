@@ -44,7 +44,7 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     // The first solid has nothing to add to, so it must be a new part.
     operation: operation ?? "new",
     suppressed: false,
-    params: defaultParams(type),
+    params: defaultParams(type, doc.units === "in" ? "in" : "mm"),
   };
   if (type === "sketch") feature.sketch = { plane: null, data: emptySketch() };
   if (type === "extrude" || type === "revolve") {
@@ -336,6 +336,7 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     features,
     ...(Array.isArray(d.variables) && d.variables.length ? { variables: parseVariables(d.variables) } : {}),
     ...(Object.keys(parseAppearance(d.appearance)).length ? { appearance: parseAppearance(d.appearance) } : {}),
+    ...(d.units === "in" ? { units: "in" as const } : {}),
     ...(typeof d.studioName === "string" && d.studioName.trim() && d.studioName.trim() !== "Part Studio 1" ? { studioName: d.studioName.trim() } : {}),
     ...(partStudios.length ? { partStudios } : {}),
     ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),

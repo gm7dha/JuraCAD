@@ -22,6 +22,7 @@ import { sameRef, type TopoPick } from "../geometry/topoRef";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { setCurrentScope } from "./expr";
+import { setLengthUnit, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
@@ -241,6 +242,8 @@ export interface AppState {
   toggleMateSuppressed: (id: string) => void;
   /** Exploded view of the assembly on show: how far apart (null = together). */
   setExplode: (amount: number | null) => void;
+  /** Show and type lengths in millimetres or inches. */
+  setUnits: (unit: LengthUnit) => void;
   /** The exploded view's spread while its slider is being dragged (not saved until let go). */
   explodePreview: number | null;
   setExplodePreview: (amount: number | null) => void;
@@ -828,6 +831,11 @@ export const useStore = create<AppState>((set, get) => {
       if (s.mateDraft?.mate.id === id) set({ mateDraft: null });
     },
 
+    setUnits: (unit) =>
+      change((doc) => {
+        const { units: _old, ...rest } = doc;
+        return unit === "in" ? { ...rest, units: "in" } : rest;
+      }),
     setExplode: (amount) => {
       const asm = activeAssembly(get());
       if (asm) change((doc) => setExplode(doc, asm.id, amount));
@@ -964,6 +972,10 @@ export const useDocument = () => useStore((s) => s.history.present);
 
 // Keep the maths boxes' variable values in step with the document (including after undo/redo).
 let scopeFor: Variable[] | undefined | null = null;
+/** The document's units, for components that show lengths (re-renders them when it changes). */
+export const useLengthUnit = (): LengthUnit => useStore((s) => (s.history.present.units === "in" ? "in" : "mm"));
+useStore.subscribe((s) => setLengthUnit(s.history.present.units === "in" ? "in" : "mm"));
+
 function syncScope(variables: Variable[] | undefined) {
   if (variables === scopeFor) return;
   scopeFor = variables;
