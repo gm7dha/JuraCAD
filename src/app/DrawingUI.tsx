@@ -565,7 +565,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const balloons = useMemo(() => balloonsFor(bom, instances, allParts), [bom, instancesKey, allParts]);
   const [drag, setDrag] = useState<{ viewId: string; start: P2; from: P2; at: P2 } | null>(null);
-  const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number } } | null>(null);
+  const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number; textAlong?: number } } | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   /** Section tool: the cutting line's first point (view mm), on its view. */
   const [cutStart, setCutStart] = useState<{ view: string; at: P2 } | null>(null);

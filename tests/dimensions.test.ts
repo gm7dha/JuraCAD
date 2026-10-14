@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dimLabel, dimPoint, drawDimension, formatSize, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints } from "../src/drawing/dimensions";
+import { dimLabel, dimPoint, dragDimension, drawDimension, formatSize, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints } from "../src/drawing/dimensions";
 import { addDrawing, parseDrawings, putDimension, removeDimension, toggleView } from "../src/drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../src/drawing/export";
 import { layoutSheet } from "../src/drawing/sheet";
@@ -143,5 +143,26 @@ describe("smart dimensions (two clicks)", () => {
   it("can be told which way to measure", () => {
     expect(placeLength([10, 10], [40, 0], [25, 30], "horizontal").type).toBe("horizontal");
     expect(placeLength([10, 10], [40, 0], [60, 5], "vertical")).toEqual({ type: "vertical", offset: -20 });
+  });
+});
+
+describe("moving a dimension's number", () => {
+  const dim: Dimension = { id: "d", view: "front", type: "horizontal", a: { at: [0, 0], rel: [0, 0] }, b: { at: [40, 0], rel: [1, 0] }, offset: 10 };
+  const at = (p: [number, number]): [number, number] => p;
+
+  it("slides along the line, snapping back to the middle near it", () => {
+    expect(dragDimension(dim, [0, 0], [40, 0], 0, [21, 15])).toEqual({ offset: 15, textAlong: 0 });
+    expect(dragDimension(dim, [0, 0], [40, 0], 0, [30, 15])).toEqual({ offset: 15, textAlong: 10 });
+  });
+
+  it("goes past the end, with the dimension line carried out to it", () => {
+    const moved = { ...dim, textAlong: 40 };
+    const r = resolveDim(moved, { kind: "front", visible: [], hidden: [], circles: [], points: [0, 0, 40, 0], bounds: [0, 0, 40, 0] });
+    const drawn = drawDimension(moved, r, at, 40);
+    const text = drawn.prims.find((p) => p.kind === "text")!;
+    expect(text.kind === "text" && text.x).toBeCloseTo(60);
+    // An extra piece of line reaching out beyond x = 40.
+    const reach = drawn.prims.some((p) => p.kind === "path" && p.points.length === 4 && Math.max(p.points[0], p.points[2]) > 50 && p.points[1] === p.points[3]);
+    expect(reach).toBe(true);
   });
 });
