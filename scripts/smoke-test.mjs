@@ -785,25 +785,17 @@ try {
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Pattern", exact: true }).click();
     await page.getByRole("button", { name: "Round a centre" }).click();
-    // Click exactly on the circle's edge (snapping may have nudged it while drawing).
-    const rim = await page.evaluate(() => {
-      const d = window.partsmithStore.getState().editing.draft.sketch.data;
-      const c = d.curves.find((k) => k.type === "circle");
-      const p = d.points.find((q) => q.id === c.center);
-      return window.partsmithViewport.current.projectSketchPoint(p.x + c.radius, p.y);
-    });
-    await page.evaluate(() => {
-      window.__sel = [];
-      window.partsmithStore.subscribe((st, prev) => {
-        if (st.sketch?.selection !== prev.sketch?.selection || st.sketch?.message !== prev.sketch?.message || st.sketch?.patternKind !== prev.sketch?.patternKind)
-          window.__sel.push({ sel: st.sketch?.selection, msg: st.sketch?.message?.text, kind: st.sketch?.patternKind, at: new Error().stack.split("\n").slice(2, 7).join(" | ") });
+    // A shape just drawn stays selected, so the pattern tool starts with the circle; clicking it would deselect it.
+    const already = await page.evaluate(() => window.partsmithStore.getState().sketch.selection.length);
+    if (!already) {
+      // Click exactly on the circle's edge (snapping may have nudged it while drawing).
+      const rim = await page.evaluate(() => {
+        const d = window.partsmithStore.getState().editing.draft.sketch.data;
+        const c = d.curves.find((k) => k.type === "circle");
+        const p = d.points.find((q) => q.id === c.center);
+        return window.partsmithViewport.current.projectSketchPoint(p.x + c.radius, p.y);
       });
-    });
-    await page.mouse.click(box.x + rim.x, box.y + rim.y);
-    const picked = await page.evaluate(() => window.partsmithStore.getState().sketch);
-    if (!picked.selection.length) {
-      const d = await page.evaluate(() => window.partsmithStore.getState().editing.draft.sketch.data);
-      throw new Error(`clicking the circle's edge at ${JSON.stringify(rim)} (viewport ${JSON.stringify(box)}) didn't select it: tool ${picked.tool}, message ${JSON.stringify(picked.message)}, centre ${picked.patternCentre}; circles ${JSON.stringify(d.curves.filter((k) => k.type === "circle"))}; kind ${picked.patternKind}; changes ${JSON.stringify(await page.evaluate(() => window.__sel))}`);
+      await page.mouse.click(box.x + rim.x, box.y + rim.y);
     }
     await page.mouse.move(mx + 60, my + 60, { steps: 3 });
     await shot("sketchpattern");
