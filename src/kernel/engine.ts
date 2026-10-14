@@ -17,6 +17,7 @@ import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
+import { dropCoveredHidden } from "../drawing/hidden";
 import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
@@ -830,6 +831,8 @@ export class GeometryEngine {
             e.delete();
           });
           if (lo[0] <= hi[0]) out.bounds = [lo[0], lo[1], hi[0], hi[1]];
+          // Hidden lines straight behind visible ones only clutter the drawing.
+          out.hidden = dropCoveredHidden(out.visible, out.hidden);
           return out;
         } finally {
           camera.delete();
