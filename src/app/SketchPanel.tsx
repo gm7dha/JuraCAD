@@ -14,6 +14,7 @@ export function SketchPanel() {
   const tool = useStore((s) => s.sketch?.tool ?? "select");
   const polygonSides = useStore((s) => s.sketch?.polygonSides ?? 6);
   const filletRadius = useStore((s) => s.sketch?.filletRadius ?? "2");
+  const offsetDistance = useStore((s) => s.sketch?.offsetDistance ?? "2");
   const setSketchOptions = useStore((s) => s.setSketchOptions);
   const setDraftField = useStore((s) => s.setDraftField);
   const commitDraft = useStore((s) => s.commitDraft);
@@ -75,6 +76,14 @@ export function SketchPanel() {
             />
           </label>
         )}
+        {tool === "offset" && (
+          <label className="tool-option">
+            Distance
+            <input value={offsetDistance} spellCheck={false} aria-label="Offset distance" onChange={(e) => setSketchOptions({ offsetDistance: e.target.value })} />
+            <span className="muted">mm</span>
+          </label>
+        )}
+        {tool === "useEdge" && <p className="dialog-hint">Click edges of a part to copy them into this sketch.</p>}
         {tool === "sketchFillet" && (
           <label className="tool-option">
             Radius

@@ -23,7 +23,7 @@ import {
   radiusOf,
   type Placed,
 } from "./ops";
-import { addPolygon, addSlot, filletCorner, trimAt } from "./tools";
+import { addPolygon, addSlot, filletCorner, offsetCurves, trimAt } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
 
 export interface SketchPointer {
@@ -179,6 +179,18 @@ export class SketchController {
       this.emit({ hover: null });
       return;
     }
+    if (tool === "offset") {
+      const hit = this.hitAt(e);
+      if (hit?.kind !== "curve") {
+        this.state.setSketchMessage("Click a line, arc or circle — on the side you want the copy.", "info");
+        return;
+      }
+      const r = offsetCurves(d, hit.id, { x: e.x, y: e.y }, this.state.sketch?.offsetDistance ?? "2");
+      this.commit(r, r.curveIds);
+      this.emit({ hover: null });
+      return;
+    }
+    if (tool === "useEdge") return;
     if (tool === "sketchFillet") {
       const hit = this.hitAt(e);
       if (hit?.kind !== "point" || hit.id === ORIGIN_ID) {
@@ -284,9 +296,10 @@ export class SketchController {
       this.emit({ hover: this.hitAt(e), preview: [], snap: null, inference: null });
       return;
     }
-    if (tool === "dimension" || tool === "trim" || tool === "sketchFillet") {
+    if (tool === "useEdge") return;
+    if (tool === "dimension" || tool === "trim" || tool === "sketchFillet" || tool === "offset") {
       const hit = this.hitAt(e);
-      this.emit({ hover: tool === "trim" && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
+      this.emit({ hover: (tool === "trim" || tool === "offset") && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
       return;
     }
 

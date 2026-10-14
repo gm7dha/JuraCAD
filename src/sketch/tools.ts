@@ -7,6 +7,8 @@ import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
 import { curveById, deleteItems, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
 import type { SketchArc, SketchCircle, SketchConstraint, SketchCurve, SketchData, SketchLine, SketchPoint } from "./types";
+import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
+import type { EdgeRef } from "../geometry/topoRef";
 
 type P2 = [number, number];
 const TAU = Math.PI * 2;
@@ -315,4 +317,289 @@ function tidy(before: SketchData, changed: SketchData): EditResult {
   const solved = solveSketch(result);
   if (!solved.ok) return { sketch: before, error: "Trimming there would conflict with the sketch's constraints." };
   return { sketch: solved.sketch };
+}
+
+// ---------------------------------------------------------------------------
+// Offset
+
+interface ChainStep {
+  curve: SketchLine | SketchArc;
+  /** Point the walk enters the curve at, and leaves at. */
+  from: string;
+  to: string;
+}
+
+/**
+ * The run of lines and arcs joined end to end that contains `start`, in order
+ * (a closed loop comes back to where it began). Construction geometry is ignored.
+ */
+export function chainOf(s: SketchData, start: SketchLine | SketchArc): { steps: ChainStep[]; closed: boolean } {
+  const ends = (c: SketchLine | SketchArc): [string, string] => (c.type === "line" ? [c.p1, c.p2] : [c.start, c.end]);
+  const usable = s.curves.filter((c): c is SketchLine | SketchArc => (c.type === "line" || c.type === "arc") && !c.construction);
+  const at = new Map<string, (SketchLine | SketchArc)[]>();
+  for (const c of usable) for (const p of ends(c)) at.set(p, [...(at.get(p) ?? []), c]);
+  // A join is followed only where exactly two curves meet.
+  const next = (c: SketchLine | SketchArc, p: string) => {
+    const list = at.get(p) ?? [];
+    return list.length === 2 ? list.find((x) => x !== c) ?? null : null;
+  };
+  const [a, b] = ends(start);
+  const steps: ChainStep[] = [{ curve: start, from: a, to: b }];
+  const seen = new Set([start.id]);
+  // Forwards from b.
+  let cur: SketchLine | SketchArc = start;
+  let p = b;
+  let closed = false;
+  for (;;) {
+    const n = next(cur, p);
+    if (!n) break;
+    if (n.id === start.id) {
+      closed = true;
+      break;
+    }
+    if (seen.has(n.id)) break;
+    seen.add(n.id);
+    const [na, nb] = ends(n);
+    const to = na === p ? nb : na;
+    steps.push({ curve: n, from: p, to });
+    cur = n;
+    p = to;
+  }
+  if (!closed) {
+    // Backwards from a.
+    cur = start;
+    p = a;
+    for (;;) {
+      const n = next(cur, p);
+      if (!n || seen.has(n.id)) break;
+      seen.add(n.id);
+      const [na, nb] = ends(n);
+      const from = na === p ? nb : na;
+      steps.unshift({ curve: n, from, to: p });
+      cur = n;
+      p = from;
+    }
+  }
+  return { steps, closed };
+}
+
+/** Where two infinite lines (point + direction) cross, or null if they're parallel. */
+function lineLine(p: P2, d: P2, q: P2, e: P2): P2 | null {
+  const den = cross(d, e);
+  if (Math.abs(den) < 1e-12) return null;
+  const t = cross(sub(q, p), e) / den;
+  return add(p, mul(d, t));
+}
+
+/** Where a line (point + direction) meets a circle, the crossing nearest `near`. */
+function lineCircle(p: P2, d: P2, c: P2, r: number, near: P2): P2 | null {
+  const u = unit(d);
+  const f = sub(p, c);
+  const b = dot(f, u);
+  const disc = b * b - (dot(f, f) - r * r);
+  if (disc < 0) return null;
+  const s = Math.sqrt(disc);
+  const hits = [add(p, mul(u, -b - s)), add(p, mul(u, -b + s))];
+  return hits.sort((x, y) => len(sub(x, near)) - len(sub(y, near)))[0];
+}
+
+/** Where two circles meet, the crossing nearest `near`. */
+function circleCircle(c1: P2, r1: number, c2: P2, r2: number, near: P2): P2 | null {
+  const d = len(sub(c2, c1));
+  if (d < 1e-12 || d > r1 + r2 + 1e-9 || d < Math.abs(r1 - r2) - 1e-9) return null;
+  const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, r1 * r1 - a * a));
+  const u = unit(sub(c2, c1));
+  const m = add(c1, mul(u, a));
+  const hits = [add(m, mul([-u[1], u[0]], h)), sub(m, mul([-u[1], u[0]], h))];
+  return hits.sort((x, y) => len(sub(x, near)) - len(sub(y, near)))[0];
+}
+
+/**
+ * Offset a circle, or the whole run of joined lines and arcs that the clicked
+ * curve belongs to, by `distanceText` towards the side the pointer is on
+ * (`at`). New lines stay parallel to the originals and new arcs and circles
+ * share the originals' centres, so the offset keeps its shape when the sketch
+ * changes.
+ */
+export function offsetCurves(s: SketchData, curveId: string, at: { x: number; y: number }, distanceText: string): EditResult & { curveIds: string[] } {
+  const fail = (error: string) => ({ sketch: s, curveIds: [], error });
+  const r = evaluate(distanceText);
+  if (!r.ok) return fail(r.error);
+  if (r.value <= 0) return fail("The offset distance must be more than 0.");
+  const dist = r.value;
+  const clicked = curveById(s, curveId);
+  if (!clicked) return fail("Click a line, arc or circle to offset.");
+  const P: P2 = [at.x, at.y];
+
+  if (clicked.type === "circle") {
+    const c = pointPos(s, clicked.center);
+    const outward = len(sub(P, c)) > clicked.radius;
+    const radius = clicked.radius + (outward ? dist : -dist);
+    if (radius <= 1e-6) return fail("That offset is bigger than the circle — use a smaller distance, or offset outwards.");
+    const id = sketchId("k");
+    const circle: SketchCircle = { id, type: "circle", center: clicked.center, radius, construction: false };
+    return { ...settle({ ...s, curves: [...s.curves, circle] }), curveIds: [id] };
+  }
+
+  const { steps, closed } = chainOf(s, clicked);
+  // Which side: the clicked curve's left (as the chain is walked) or right.
+  const leftNormal = (step: ChainStep, near: P2): P2 => {
+    if (step.curve.type === "line") {
+      const d = unit(sub(pointPos(s, step.to), pointPos(s, step.from)));
+      return [-d[1], d[0]];
+    }
+    const c = pointPos(s, step.curve.center);
+    const out = unit(sub(near, c));
+    // Walking an arc anticlockwise (start → end), its left is towards the centre.
+    return step.from === step.curve.start ? mul(out, -1) : out;
+  };
+  const clickedStep = steps.find((st) => st.curve.id === clicked.id)!;
+  const nearOnClicked: P2 = (() => {
+    if (clickedStep.curve.type === "line") {
+      const a = pointPos(s, clickedStep.from);
+      const b = pointPos(s, clickedStep.to);
+      const d = sub(b, a);
+      const t = Math.max(0, Math.min(1, dot(sub(P, a), d) / (dot(d, d) || 1)));
+      return add(a, mul(d, t));
+    }
+    const c = pointPos(s, clickedStep.curve.center);
+    return add(c, mul(unit(sub(P, c)), radiusOf(s, clickedStep.curve)));
+  })();
+  const side = dot(sub(P, nearOnClicked), leftNormal(clickedStep, nearOnClicked)) >= 0 ? 1 : -1;
+  const shift = side * dist;
+
+  // Each curve moved sideways: lines along their left normal, arcs to a new radius.
+  type Moved = { kind: "line"; a: P2; b: P2 } | { kind: "arc"; c: P2; r: number; a: P2; b: P2 };
+  const moved: Moved[] = [];
+  for (const st of steps) {
+    const a = pointPos(s, st.from);
+    const b = pointPos(s, st.to);
+    if (st.curve.type === "line") {
+      const n = leftNormal(st, a);
+      moved.push({ kind: "line", a: add(a, mul(n, shift)), b: add(b, mul(n, shift)) });
+    } else {
+      const c = pointPos(s, st.curve.center);
+      const r0 = radiusOf(s, st.curve);
+      const r1 = st.from === st.curve.start ? r0 - shift : r0 + shift;
+      if (r1 <= 1e-6) return fail("That offset is bigger than one of the arcs — use a smaller distance, or offset the other way.");
+      moved.push({ kind: "arc", c, r: r1, a: add(c, mul(unit(sub(a, c)), r1)), b: add(c, mul(unit(sub(b, c)), r1)) });
+    }
+  }
+
+  // Where neighbouring moved curves meet.
+  const join = (m1: Moved, m2: Moved): P2 => {
+    const e = m1.b;
+    if (len(sub(e, m2.a)) < 1e-6) return e;
+    let hit: P2 | null = null;
+    if (m1.kind === "line" && m2.kind === "line") hit = lineLine(m1.a, sub(m1.b, m1.a), m2.a, sub(m2.b, m2.a));
+    else if (m1.kind === "line" && m2.kind === "arc") hit = lineCircle(m1.a, sub(m1.b, m1.a), m2.c, m2.r, e);
+    else if (m1.kind === "arc" && m2.kind === "line") hit = lineCircle(m2.a, sub(m2.b, m2.a), m1.c, m1.r, m2.a);
+    else if (m1.kind === "arc" && m2.kind === "arc") hit = circleCircle(m1.c, m1.r, m2.c, m2.r, e);
+    return hit ?? mul(add(e, m2.a), 0.5);
+  };
+  const n = moved.length;
+  const corners: P2[] = [];
+  // corners[i] = start of moved[i]; for an open chain the last end is extra.
+  for (let i = 0; i < n; i++) {
+    if (i === 0 && !closed) corners.push(moved[0].a);
+    else corners.push(join(moved[(i - 1 + n) % n], moved[i]));
+  }
+  if (!closed) corners.push(moved[n - 1].b);
+  const points: SketchPoint[] = corners.map(([x, y]) => ({ id: sketchId("p"), x, y }));
+  const pid = (i: number) => points[closed ? i % n : i].id;
+
+  const curves: SketchCurve[] = [];
+  const constraints: SketchConstraint[] = [];
+  steps.forEach((st, i) => {
+    const from = pid(i);
+    const to = pid(i + 1);
+    if (st.curve.type === "line") {
+      const id = sketchId("l");
+      curves.push({ id, type: "line", p1: from, p2: to, construction: false });
+      constraints.push(con("parallel", [id, st.curve.id]));
+    } else {
+      const id = sketchId("a");
+      const forward = st.from === st.curve.start;
+      curves.push({ id, type: "arc", center: st.curve.center, start: forward ? from : to, end: forward ? to : from, construction: false });
+    }
+  });
+  const result = settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: [...s.constraints, ...constraints] });
+  return { ...result, curveIds: curves.map((c) => c.id) };
+}
+
+// ---------------------------------------------------------------------------
+// Using a part's edge in a sketch
+
+/**
+ * Copy a part's edge into the sketch (Onshape's "Use"): straight edges and
+ * circles or arcs lying flat on (or parallel to) the sketch plane. The copy is
+ * fixed in place, ready to extrude, cut or dimension from.
+ */
+export function copyEdge(s: SketchData, frame: PlaneFrame, ref: EdgeRef): EditResult & { curveIds: string[] } {
+  const fail = (error: string) => ({ sketch: s, curveIds: [], error });
+  const height = (p: Vec3) => (p[0] - frame.origin[0]) * frame.n[0] + (p[1] - frame.origin[1]) * frame.n[1] + (p[2] - frame.origin[2]) * frame.n[2];
+  const flat = Math.max(Math.abs(height(ref.a) - height(ref.mid)), Math.abs(height(ref.b) - height(ref.mid))) < 1e-4;
+  if (!flat) return fail("That edge isn't flat to this sketch, so it can't be copied in. Pick an edge parallel to the sketch.");
+  const A = toSketch(frame, ref.a);
+  const B = toSketch(frame, ref.b);
+  const M = toSketch(frame, ref.mid);
+  const fixed = (id: string, p: P2): SketchConstraint => ({ id: sketchId("c"), type: "fix", refs: [id], extra: [p[0], p[1]] });
+  const pt = (p: P2): SketchPoint => ({ id: sketchId("p"), x: p[0], y: p[1] });
+
+  if (ref.curve === "LINE") {
+    if (len(sub(A, B)) < 1e-6) return fail("That edge is end-on to the sketch, so it would be just a point.");
+    const [pa, pb] = [pt(A), pt(B)];
+    const id = sketchId("l");
+    return {
+      ...settle({
+        points: [...s.points, pa, pb],
+        curves: [...s.curves, { id, type: "line", p1: pa.id, p2: pb.id, construction: false }],
+        constraints: [...s.constraints, fixed(pa.id, A), fixed(pb.id, B)],
+      }),
+      curveIds: [id],
+    };
+  }
+  if (ref.curve === "CIRCLE") {
+    const full = len(sub(A, B)) < 1e-6;
+    // A whole circle's middle point is opposite its start; an arc's three points fix it.
+    const centre: P2 | null = full ? mul(add(A, M), 0.5) : (() => {
+      const ax = A[0], ay = A[1], bx = M[0], by = M[1], cx = B[0], cy = B[1];
+      const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+      if (Math.abs(d) < 1e-12) return null;
+      const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+      const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+      return [ux, uy] as P2;
+    })();
+    if (!centre) return fail("Couldn't work out that arc's centre.");
+    const r = len(sub(A, centre));
+    if (r < 1e-6) return fail("That circle is end-on to the sketch.");
+    const c = pt(centre);
+    if (full) {
+      const rim = pt(add(centre, [r, 0]));
+      const id = sketchId("k");
+      return {
+        ...settle({
+          points: [...s.points, c, rim],
+          curves: [...s.curves, { id, type: "circle", center: c.id, radius: r, construction: false }],
+          constraints: [...s.constraints, fixed(c.id, centre), fixed(rim.id, [rim.x, rim.y]), { id: sketchId("c"), type: "pointOnCircle", refs: [rim.id, id] }],
+        }),
+        curveIds: [id],
+      };
+    }
+    // Arcs run anticlockwise from start to end: pick the order that passes through the middle point.
+    const ang = (p: P2) => norm(Math.atan2(p[1] - centre[1], p[0] - centre[0]));
+    const anticlockwise = norm(ang(M) - ang(A)) < norm(ang(B) - ang(A));
+    const [ps, pe] = anticlockwise ? [pt(A), pt(B)] : [pt(B), pt(A)];
+    const id = sketchId("a");
+    return {
+      ...settle({
+        points: [...s.points, c, ps, pe],
+        curves: [...s.curves, { id, type: "arc", center: c.id, start: ps.id, end: pe.id, construction: false }],
+        constraints: [...s.constraints, fixed(c.id, centre), fixed(ps.id, [ps.x, ps.y]), fixed(pe.id, [pe.x, pe.y])],
+      }),
+      curveIds: [id],
+    };
+  }
+  return fail("Only straight edges, circles and arcs can be copied into a sketch for now.");
 }
