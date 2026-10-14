@@ -281,6 +281,13 @@ export const Icons = {
       <rect x="4" y="6" width="16" height="12" />
     </Svg>
   ),
+  AutoDimension: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="6" y="9" width="12" height="9" />
+      <path d="M6 5h12M6 3.5v3M18 3.5v3M21 9v9M19.5 9h3M19.5 18h3" />
+      <path d="M3 3l1 2 2 1-2 1-1 2-1-2-2-1 2-1z" fill="currentColor" stroke="none" />
+    </Svg>
+  ),
   ChevronLeft: (p: IconProps) => (
     <Svg {...p}>
       <path d="M15 5l-7 7 7 7" />
