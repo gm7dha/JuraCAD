@@ -132,7 +132,7 @@ export function draftSides(shape: Shape3D, frame: PlaneFrame, dirSign: number, a
         }
         if (Math.abs(n[0] * pull[0] + n[1] * pull[1] + n[2] * pull[2]) > 0.999) continue;
       }
-      builder.Add(f.wrapped, dir, (-angle * Math.PI) / 180, plane, true);
+      builder.Add(f.wrapped, dir, (angle * Math.PI) / 180, plane, true);
     }
     builder.Build();
     if (!builder.IsDone()) throw new Error("The draft couldn't be applied (try a smaller angle).");
