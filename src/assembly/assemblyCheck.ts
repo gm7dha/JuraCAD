@@ -26,7 +26,7 @@ export function assemblyReport(
 ): CheckReport {
   const sections: PartReport[] = [];
   const section = (partId: string, name: string, findings: Finding[]) =>
-    sections.push({ partId, name, level: worst(findings.map((f) => f.level)), findings, size: "", volume: "" });
+    sections.push({ partId, name, level: worst(findings.map((f) => f.level)), findings, size: "", volume: "", volumeMm3: 0 });
 
   const missing = assembly.instances.filter((i) => partNames[i.partId] === undefined);
   if (missing.length) {

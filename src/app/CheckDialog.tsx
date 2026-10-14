@@ -8,6 +8,7 @@ import { assemblyReport } from "../assembly/assemblyCheck";
 import { instancesForKernel } from "./assemblySolve";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
+import { DEFAULT_MATERIAL, formatMass, massGrams, MATERIALS } from "../model/materials";
 
 export function LevelIcon({ level }: { level: Level }) {
   if (level === "ok") return <Icons.Tick size={16} className="level-icon ok" />;
@@ -34,6 +35,24 @@ export async function runCheck(): Promise<CheckReport> {
   return buildCheckReport(result, failed);
 }
 
+/** What a part weighs, solid, in the material chosen for it (changeable here). */
+function PartMass({ partId, volumeMm3 }: { partId: string; volumeMm3: number }) {
+  const key = useStore((s) => s.history.present.materials?.[partId] ?? DEFAULT_MATERIAL);
+  const setPartMaterial = useStore((s) => s.setPartMaterial);
+  return (
+    <span className="part-mass">
+      {formatMass(massGrams(volumeMm3, key))} in{" "}
+      <select aria-label="Material" value={key} onChange={(e) => setPartMaterial(partId, e.target.value)} title="What it's made of — sets the weight (solid; less infill weighs less)">
+        {MATERIALS.map((m) => (
+          <option key={m.key} value={m.key}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
 export function ReportView({ report }: { report: CheckReport }) {
   return (
     <div className="check-report">
@@ -47,7 +66,7 @@ export function ReportView({ report }: { report: CheckReport }) {
             <LevelIcon level={p.level} /> {p.name}
             {p.size && (
               <span className="check-meta">
-                {p.size} · {p.volume}
+                {p.size} · {p.volume} · <PartMass partId={p.partId} volumeMm3={p.volumeMm3} />
               </span>
             )}
           </h4>

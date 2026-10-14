@@ -153,6 +153,8 @@ export interface PartSmithDocument {
   units?: "in";
   /** Colour of each part ("#rrggbb"), by the id of the feature that made it. Parts without one are grey. */
   appearance?: Record<string, string>;
+  /** Part id → material key (see materials.ts); missing = PLA. */
+  materials?: Record<string, string>;
   /** Name of the first Part Studio (whose features are `features`); "Part Studio 1" when not set. */
   studioName?: string;
   /** More Part Studios (optional: older saves have just the one). */
