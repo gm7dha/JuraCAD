@@ -389,4 +389,18 @@ export const Icons = {
       <path d="M4 16 12 20l8-4" strokeWidth={2.6} />
     </Svg>
   ),
+  Sweep: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 18c4 0 5-12 10-12h6" />
+      <ellipse cx="4.5" cy="18" rx="1.6" ry="3" />
+      <ellipse cx="19.5" cy="6" rx="1.6" ry="3" />
+    </Svg>
+  ),
+  Loft: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="4" y="15" width="16" height="5" rx="0.5" />
+      <ellipse cx="12" cy="5" rx="4" ry="1.6" />
+      <path d="M4 15 8 5M20 15 16 5" />
+    </Svg>
+  ),
 };

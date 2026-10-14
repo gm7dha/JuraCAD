@@ -23,6 +23,8 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   circularPattern: Icons.CircularPattern,
   chamfer: Icons.Chamfer,
   import: Icons.Import,
+  sweep: Icons.Sweep,
+  loft: Icons.Loft,
 };
 
 type MenuEntry = { label: string; action: () => void; danger?: boolean } | "divider";

@@ -6,7 +6,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft";
 
 export interface HoleOptions {
   sketchRef?: string;
@@ -57,8 +57,12 @@ export interface Feature {
   params: Record<string, string>;
   /** Sketch features: where the sketch is and what's drawn. A null plane means "not chosen yet". */
   sketch?: { plane: SketchPlane | null; data: SketchData };
-  /** Extrude features: the sketch feature to extrude. */
+  /** Extrude, revolve and sweep (its profile): the sketch feature to use. */
   sketchRef?: string;
+  /** Sweep: the sketch whose lines and arcs make the path. */
+  pathRef?: string;
+  /** Loft: the sketches to pass through, in order. */
+  sections?: string[];
   /** Extrude features: one way or symmetric, and whether to flip. */
   extrude?: { end: ExtrudeEnd; flip: boolean; /** Up to face: the flat face to stop at. */ upTo?: TopoPick };
   /** Revolve features: the line to spin around ("vertical"/"horizontal" sketch axes, or a sketch line id) and which way. */

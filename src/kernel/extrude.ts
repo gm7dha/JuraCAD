@@ -18,6 +18,7 @@ import {
   type Edge,
   type Face,
   type Shape3D,
+  type Wire,
 } from "replicad";
 
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
@@ -36,8 +37,8 @@ export interface ExtrudeOptions {
 /** Free OpenCascade objects once we're done with them. */
 export const release = (...items: { delete(): void }[]) => items.forEach((i) => i.delete());
 
-/** A flat face for one closed loop of the sketch, `offset` mm along the plane's normal. */
-export function loopFace(loop: Loop, frame: PlaneFrame, offset: number): Face {
+/** The closed outline of one loop of the sketch, `offset` mm along the plane's normal. */
+export function loopWire(loop: Loop, frame: PlaneFrame, offset: number): Wire {
   const P = ([x, y]: [number, number]) => toWorld(frame, x, y, offset);
   const edges: Edge[] = loop.segments.map((seg) => {
     switch (seg.kind) {
@@ -49,11 +50,20 @@ export function loopFace(loop: Loop, frame: PlaneFrame, offset: number): Face {
         return makeCircle(seg.radius, P(seg.center), frame.n);
     }
   });
-  const wire = assembleWire(edges);
+  try {
+    return assembleWire(edges);
+  } finally {
+    release(...edges);
+  }
+}
+
+/** A flat face for one closed loop of the sketch, `offset` mm along the plane's normal. */
+export function loopFace(loop: Loop, frame: PlaneFrame, offset: number): Face {
+  const wire = loopWire(loop, frame, offset);
   try {
     return makeFace(wire);
   } finally {
-    release(wire, ...edges);
+    release(wire);
   }
 }
 

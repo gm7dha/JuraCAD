@@ -172,6 +172,61 @@ function SketchSolidOptions() {
   );
 }
 
+/** Sweep (profile and path sketches) and loft (the sketches to pass through, in order). */
+function SweepLoftOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const mode = useStore((s) => s.editing?.mode);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const features = useStore(activeFeatures);
+  if (!draft || (draft.type !== "sweep" && draft.type !== "loft")) return null;
+  const index = features.findIndex((f) => f.id === draft.id);
+  const sketches = (mode === "edit" && index >= 0 ? features.slice(0, index) : features).filter((f) => f.type === "sketch");
+  const select = (label: string, value: string | undefined, onChange: (v: string | undefined) => void) => (
+    <>
+      <label className="field-label">{label}</label>
+      <select className="full-select" aria-label={label} value={value ?? ""} onChange={(e) => onChange(e.target.value || undefined)}>
+        <option value="">Choose a sketch…</option>
+        {sketches.map((f) => (
+          <option key={f.id} value={f.id}>
+            {f.name}
+          </option>
+        ))}
+      </select>
+    </>
+  );
+  if (draft.type === "sweep") {
+    return (
+      <fieldset className="param-group">
+        <legend>Sketches</legend>
+        {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v }))}
+        {select("Path to follow", draft.pathRef, (v) => setDraftField({ pathRef: v }))}
+        <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
+      </fieldset>
+    );
+  }
+  const sections = draft.sections ?? [];
+  return (
+    <fieldset className="param-group">
+      <legend>Shapes to join, in order</legend>
+      {sketches.map((f) => {
+        const at = sections.indexOf(f.id);
+        return (
+          <label key={f.id} className="check-row">
+            <input
+              type="checkbox"
+              checked={at >= 0}
+              onChange={() => setDraftField({ sections: at >= 0 ? sections.filter((x) => x !== f.id) : [...sections, f.id] })}
+            />
+            {at >= 0 ? `${at + 1}. ` : ""}
+            {f.name}
+          </label>
+        );
+      })}
+      <p className="dialog-hint field-hint">Tick the sketches in the order the solid should pass through them. Each needs one closed shape.</p>
+    </fieldset>
+  );
+}
+
 /** Transform settings: which part, turned about which axis, moved or copied. */
 function TransformOptions() {
   const draft = useStore((s) => s.editing?.draft);
@@ -565,6 +620,7 @@ export function FeatureDialog() {
         )}
 
         <SketchSolidOptions />
+        <SweepLoftOptions />
         <HoleOptions />
         <TransformOptions />
         <ImportOptions />

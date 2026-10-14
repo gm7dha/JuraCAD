@@ -57,6 +57,15 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
   }
+  if (type === "sweep" || type === "loft") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
+    feature.operation = operation ?? (hasSolid ? "add" : "new");
+    if (type === "sweep") {
+      feature.sketchRef = sketches[sketches.length - 1]?.id;
+      feature.pathRef = sketches[sketches.length - 2]?.id;
+    } else feature.sections = sketches.slice(-2).map((f) => f.id);
+  }
   if (type === "transform") {
     feature.operation = "add";
     feature.transform = { axis: "z", about: "centre", copy: false };
@@ -267,6 +276,11 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         flip: h.flip === true,
       };
     }
+    if (feature.type === "sweep") {
+      if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+      if (typeof f.pathRef === "string") feature.pathRef = f.pathRef;
+    }
+    if (feature.type === "loft") feature.sections = Array.isArray(f.sections) ? f.sections.filter((x): x is string => typeof x === "string") : [];
     if (feature.type === "revolve") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const rv = f.revolve as Record<string, unknown> | undefined;

@@ -139,6 +139,20 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "angle", label: "Spread over", defaultValue: "360", positive: true, group: "size", unit: "°" },
     ],
   },
+  sweep: {
+    type: "sweep",
+    label: "Sweep",
+    namePrefix: "Sweep",
+    description: "Carries a sketch's closed shape along a path drawn in another sketch — for pipes, handles and rails.",
+    params: [],
+  },
+  loft: {
+    type: "loft",
+    label: "Loft",
+    namePrefix: "Loft",
+    description: "Makes a smooth solid joining shapes drawn on different sketches — for example a square base blending into a round top.",
+    params: [],
+  },
   fillet: {
     type: "fillet",
     label: "Fillet",
@@ -197,7 +211,17 @@ export function isPatternFeature(type: FeatureType): type is "mirror" | "linearP
 
 /** Features that build a solid of their own, so they can be patterned or mirrored. */
 export function isSolidFeature(type: FeatureType): boolean {
-  return type === "box" || type === "cylinder" || type === "sphere" || type === "extrude" || type === "revolve" || type === "hole" || type === "import";
+  return (
+    type === "box" ||
+    type === "cylinder" ||
+    type === "sphere" ||
+    type === "extrude" ||
+    type === "revolve" ||
+    type === "hole" ||
+    type === "import" ||
+    type === "sweep" ||
+    type === "loft"
+  );
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */

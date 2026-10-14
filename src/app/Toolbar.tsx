@@ -67,6 +67,7 @@ export function Toolbar() {
   const editingType = useStore((s) => (s.editing?.mode === "create" ? s.editing.draft.type : null));
   const ready = useStore((s) => s.kernelStatus === "ready");
   const hasSketch = useStore((s) => activeFeatures(s).some((f) => f.type === "sketch"));
+  const sketchCount = useStore((s) => activeFeatures(s).filter((f) => f.type === "sketch").length);
   const hasPart = useStore((s) => studioParts(s).length > 0);
   const sectionOn = useStore((s) => s.section !== null);
   const platform = detectPlatform();
@@ -123,6 +124,22 @@ export function Toolbar() {
           disabled={!ready || !hasSketch}
           active={editingType === "revolve"}
           title={hasSketch ? "Revolve — spin a sketch's closed shapes around a line, for round parts" : "Draw a sketch first, then revolve it"}
+        />
+        <ToolButton
+          label="Sweep"
+          icon={<Icons.Sweep />}
+          onClick={() => startCreate("sweep")}
+          disabled={!ready || sketchCount < 2}
+          active={editingType === "sweep"}
+          title={sketchCount >= 2 ? "Sweep — carry a sketch's shape along a path drawn in another sketch (pipes, handles, rails)" : "Draw two sketches first: the shape, and the path for it to follow"}
+        />
+        <ToolButton
+          label="Loft"
+          icon={<Icons.Loft />}
+          onClick={() => startCreate("loft")}
+          disabled={!ready || sketchCount < 2}
+          active={editingType === "loft"}
+          title={sketchCount >= 2 ? "Loft — a smooth solid joining shapes on different sketches" : "Draw shapes on two or more sketches (on different planes) first"}
         />
         <ToolButton
           label="Hole"
