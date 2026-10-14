@@ -17,6 +17,7 @@ import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
+import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
 import type { Dimension, Drawing, PartSmithDocument, SectionCut } from "../model/types";
 import { addSection, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
@@ -260,6 +261,89 @@ export function DrawingToolbar() {
 }
 
 /** A text box that saves on Enter or when you leave it (one undo step). */
+/** The selected dimension: text before and after its number, and its tolerance. */
+function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
+  const selectedDim = useStore((s) => s.selectedDim);
+  const unit = useLengthUnit();
+  const dim = drawing.dimensions?.find((d) => d.id === selectedDim);
+  if (!dim) return null;
+  const edit = (patch: Partial<Dimension>) =>
+    change((d) => ({
+      ...d,
+      dimensions: d.dimensions?.map((x) => {
+        if (x.id !== dim.id) return x;
+        const next: Dimension = { ...x, ...patch };
+        for (const k of ["prefix", "suffix", "tolerance"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
+        return next;
+      }),
+    }));
+  const t = dim.tolerance;
+  const mode = !t ? "none" : Math.abs(t.plus - t.minus) < 1e-9 ? "sym" : "limits";
+  const shown = (mm: number) => lengthNumber(mm, unit);
+  const parse = (v: string) => {
+    const n = Number(v.replace(/^[+±−-]/, "").trim());
+    return Number.isFinite(n) ? fromUnit(Math.abs(n), unit) : null;
+  };
+  return (
+    <section className="panel-section">
+      <h3>Selected dimension</h3>
+      <div className="drawing-fields">
+        <TitleField label="Text before" value={dim.prefix ?? ""} placeholder="e.g. 4×" onCommit={(v) => edit({ prefix: v ? `${v.trimEnd()} ` : undefined })} />
+        <TitleField label="Text after" value={dim.suffix ?? ""} placeholder="e.g. TYP" onCommit={(v) => edit({ suffix: v ? ` ${v.trimStart()}` : undefined })} />
+        <div className="drawing-field">
+          <span className="field-label">Tolerance</span>
+          <div className="segmented three" role="radiogroup" aria-label="Tolerance">
+            {(
+              [
+                ["none", "None"],
+                ["sym", "±"],
+                ["limits", "+ / −"],
+              ] as const
+            ).map(([m, label]) => (
+              <button
+                type="button"
+                key={m}
+                role="radio"
+                aria-checked={mode === m}
+                className={mode === m ? "selected" : ""}
+                onClick={() => {
+                  const d = unit === "in" ? 0.127 : 0.1;
+                  if (m === "none") edit({ tolerance: undefined });
+                  else if (m === "sym") edit({ tolerance: { plus: t?.plus ?? d, minus: t?.plus ?? d } });
+                  else edit({ tolerance: { plus: t?.plus ?? d, minus: t && mode === "limits" ? t.minus : 0 } });
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {t && (
+          <TitleField
+            label={mode === "sym" ? `Tolerance ± (${unit})` : `Plus (${unit})`}
+            value={shown(t.plus)}
+            onCommit={(v) => {
+              const n = parse(v);
+              if (n !== null) edit({ tolerance: { plus: n, minus: mode === "sym" ? n : t.minus } });
+            }}
+          />
+        )}
+        {t && mode === "limits" && (
+          <TitleField
+            label={`Minus (${unit})`}
+            value={shown(t.minus)}
+            onCommit={(v) => {
+              const n = parse(v);
+              if (n !== null) edit({ tolerance: { plus: t.plus, minus: n } });
+            }}
+          />
+        )}
+      </div>
+      <p className="dialog-hint">Drag its number to move it (Shift to move just the number). Delete removes it.</p>
+    </section>
+  );
+}
+
 function TitleField({ label, value, placeholder, multiline, onCommit }: { label: string; value: string; placeholder?: string; multiline?: boolean; onCommit: (v: string) => void }) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
@@ -297,6 +381,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
 
   return (
     <aside className="side-panel drawing-panel" aria-label="Drawing settings">
+      <DimensionProperties drawing={drawing} change={change} />
       <section className="panel-section">
         <h3>Drawing</h3>
         <div className="drawing-fields">
