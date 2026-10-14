@@ -491,6 +491,8 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       return makeCylinder(v.diameter / 2, v.height, [v.x, v.y, v.z], [0, 0, 1]);
     case "sphere":
       return makeSphere(v.diameter / 2).translate([v.x, v.y, v.z]);
+    default:
+      throw new Error(`A ${feature.type} doesn't make a solid.`);
   }
 }
 
