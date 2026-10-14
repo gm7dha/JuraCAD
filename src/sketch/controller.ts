@@ -23,7 +23,7 @@ import {
   radiusOf,
   type Placed,
 } from "./ops";
-import { addPolygon, addSlot, filletCorner, offsetCurves, trimAt } from "./tools";
+import { addPolygon, addSlot, filletCorner, mirrorCurves, offsetCurves, trimAt } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
 
 export interface SketchPointer {
@@ -119,6 +119,40 @@ export class SketchController {
     return true;
   }
 
+  /**
+   * Mirror tool: the first click picks the line to mirror about (if shapes
+   * were already selected, they're mirrored straight away); each click after
+   * that mirrors the clicked line, arc or circle. Esc finishes.
+   */
+  private mirrorClick(e: SketchPointer): void {
+    const d = this.data!;
+    const hit = this.hitAt(e);
+    const axis = this.transient.pending[0];
+    if (!axis) {
+      const c = hit?.kind === "curve" ? curveById(d, hit.id) : undefined;
+      if (c?.type !== "line") {
+        this.state.setSketchMessage("First click the straight line to mirror about (a construction line works well).", "info");
+        return;
+      }
+      this.emit({ pending: [c.id] });
+      const chosen = (this.state.sketch?.selection ?? []).filter((id) => id !== c.id && d.curves.some((k) => k.id === id));
+      if (chosen.length) {
+        const r = mirrorCurves(d, c.id, chosen);
+        if (this.commit(r, r.curveIds)) this.state.setSketchMessage(`Mirrored ${chosen.length === 1 ? "1 shape" : `${chosen.length} shapes`}. Click more to mirror them too, or Esc to finish.`, "info");
+        return;
+      }
+      this.state.setSketchMessage("Now click the lines, arcs and circles to mirror. Esc when done.", "info");
+      return;
+    }
+    if (hit?.kind !== "curve" || hit.id === axis) {
+      this.state.setSketchMessage("Click a line, arc or circle to mirror it, or Esc to finish.", "info");
+      return;
+    }
+    const r = mirrorCurves(d, axis, [hit.id]);
+    if (this.commit(r, r.curveIds)) this.state.setSketchMessage("Mirrored. Click more to mirror them too, or Esc to finish.", "info");
+    this.emit({ hover: null });
+  }
+
   // ---------------------------------------------------------------------------
   // Snapping
 
@@ -191,6 +225,7 @@ export class SketchController {
       return;
     }
     if (tool === "useEdge") return;
+    if (tool === "mirror") return this.mirrorClick(e);
     if (tool === "sketchFillet") {
       const hit = this.hitAt(e);
       if (hit?.kind !== "point" || hit.id === ORIGIN_ID) {
@@ -297,9 +332,9 @@ export class SketchController {
       return;
     }
     if (tool === "useEdge") return;
-    if (tool === "dimension" || tool === "trim" || tool === "sketchFillet" || tool === "offset") {
+    if (tool === "dimension" || tool === "trim" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
       const hit = this.hitAt(e);
-      this.emit({ hover: (tool === "trim" || tool === "offset") && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
+      this.emit({ hover: (tool === "trim" || tool === "offset" || tool === "mirror") && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
       return;
     }
 

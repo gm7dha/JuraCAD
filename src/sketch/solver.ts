@@ -238,6 +238,22 @@ function buildSystem(sketch: SketchData): System {
           },
         };
       }
+      case "symmetric": {
+        // Two points mirror images across a line: halfway between them is on the line, and the line between them is square to it.
+        const p = P(a);
+        const q = P(b);
+        const [m, n] = lineEnds(con.refs[2]);
+        return {
+          size: 2,
+          eval: (x, out) => {
+            const u = p(x), w = q(x), s = m(x), e = n(x);
+            const dx = e[0] - s[0], dy = e[1] - s[1];
+            const len = Math.hypot(dx, dy) || 1;
+            const mx = (u[0] + w[0]) / 2, my = (u[1] + w[1]) / 2;
+            out.push((dx * (my - s[1]) - dy * (mx - s[0])) / len, ((w[0] - u[0]) * dx + (w[1] - u[1]) * dy) / len);
+          },
+        };
+      }
       case "pointOnLine":
       case "pointLineDistance": {
         const p = P(a);

@@ -56,6 +56,7 @@ export type RelationType =
   | "tangent"
   | "concentric"
   | "midpoint"
+  | "symmetric"
   | "pointOnLine"
   | "pointOnCircle"
   | "fix";
@@ -78,6 +79,7 @@ export interface SketchConstraint {
    *  - horizontal/verticalDistance: [sign] so the dimension keeps its direction
    *  - angle: [sign] which way round the angle is measured
    *  - tangent (circle–circle): [1] internal, [0] external
+   * Symmetric: refs are [point, point, mirror line].
    */
   extra?: number[];
   /** Dimensions only: where the label sits, relative to the measured geometry (sketch mm). */

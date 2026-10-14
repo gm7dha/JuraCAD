@@ -8,6 +8,7 @@ const sketchData = () => useStore.getState().editing?.draft.sketch?.data ?? null
 export function setSketchTool(tool: SketchTool) {
   viewportApi.sketch?.cancel();
   useStore.getState().setSketchTool(tool);
+  if (tool === "mirror") useStore.getState().setSketchMessage("Click the straight line to mirror about (a construction line works well).", "info");
 }
 
 export function applySketchRelation(tool: RelationTool) {

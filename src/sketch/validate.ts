@@ -12,6 +12,7 @@ const RELATIONS = new Set<string>([
   "tangent",
   "concentric",
   "midpoint",
+  "symmetric",
   "pointOnLine",
   "pointOnCircle",
   "fix",

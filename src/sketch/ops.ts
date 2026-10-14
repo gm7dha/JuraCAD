@@ -303,6 +303,7 @@ export type RelationTool =
   | "tangent"
   | "concentric"
   | "midpoint"
+  | "symmetric"
   | "fix";
 
 export const RELATION_LABELS: Record<RelationTool, string> = {
@@ -315,6 +316,7 @@ export const RELATION_LABELS: Record<RelationTool, string> = {
   tangent: "Tangent",
   concentric: "Concentric",
   midpoint: "Midpoint",
+  symmetric: "Symmetric",
   fix: "Fix",
 };
 
@@ -329,10 +331,21 @@ export const RELATION_HINTS: Record<RelationTool, string> = {
   tangent: "Select a line and a circle/arc, or two circles/arcs",
   concentric: "Select two circles or arcs",
   midpoint: "Select a point and a line",
+  symmetric: "Select two points (or two lines, circles or arcs) and then the line they mirror across",
   fix: "Select the points or shapes to hold in place",
 };
 
 const isLine = (c?: SketchCurve): c is SketchLine => c?.type === "line";
+
+/** Where a point lands when mirrored across a line. */
+export function mirrorPoint(s: SketchData, axis: SketchLine, [x, y]: [number, number]): [number, number] {
+  const [ax, ay] = pointPos(s, axis.p1);
+  const [bx, by] = pointPos(s, axis.p2);
+  const dx = bx - ax, dy = by - ay;
+  const t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1);
+  const fx = ax + t * dx, fy = ay + t * dy;
+  return [2 * fx - x, 2 * fy - y];
+}
 const isRound = (c?: SketchCurve): c is SketchCircle | SketchArc => c?.type === "circle" || c?.type === "arc";
 
 function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): SketchConstraint[] | string {
@@ -381,6 +394,23 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
     case "midpoint":
       if (only(2) && pts.length === 1 && lines.length === 1) return [mk("midpoint", [pts[0], lines[0].id])];
       break;
+    case "symmetric": {
+      // The mirror line is the last thing selected.
+      const axis = curveById(s, sel[sel.length - 1]);
+      if (!isLine(axis) || sel.length !== 3) break;
+      const rest = sel.slice(0, 2);
+      if (rest.every((id) => isPointId(s, id))) return [mk("symmetric", [rest[0], rest[1], axis.id])];
+      const [c1, c2] = rest.map((id) => curveById(s, id));
+      if (isLine(c1) && isLine(c2)) {
+        // Pair each end with the end of the other line nearest its mirror image.
+        const [a1, a2] = [c1.p1, c1.p2].map((id) => mirrorPoint(s, axis, pointPos(s, id)));
+        const d = (p: [number, number], id: string) => Math.hypot(p[0] - pointPos(s, id)[0], p[1] - pointPos(s, id)[1]);
+        const straight = d(a1, c2.p1) + d(a2, c2.p2) <= d(a1, c2.p2) + d(a2, c2.p1);
+        return [mk("symmetric", [c1.p1, straight ? c2.p1 : c2.p2, axis.id]), mk("symmetric", [c1.p2, straight ? c2.p2 : c2.p1, axis.id])];
+      }
+      if (isRound(c1) && isRound(c2)) return [mk("symmetric", [c1.center, c2.center, axis.id]), mk("equal", [c1.id, c2.id])];
+      break;
+    }
     case "fix": {
       const ids = new Set([...pts.filter((p) => p !== ORIGIN_ID), ...crv.flatMap(curvePoints).filter((p) => p !== ORIGIN_ID)]);
       if (ids.size) return [...ids].map((p) => mk("fix", [p], pointPos(s, p)));
