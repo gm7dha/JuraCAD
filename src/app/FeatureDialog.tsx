@@ -67,6 +67,102 @@ function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; a
   );
 }
 
+/** Split settings: which part, and the plane to cut it along. */
+function SplitOptionsField() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const parts = useStore(studioParts);
+  const features = useStore(activeFeatures);
+  if (draft?.type !== "split" || !draft.splitDef) return null;
+  const sp = draft.splitDef;
+  const update = (patch: Partial<typeof sp>) => setDraftField({ splitDef: { ...sp, ...patch } });
+  const planes = features.filter((f) => f.type === "plane");
+  const frames = framesOf(features);
+  const planeValue = sp.plane.kind === "default" ? sp.plane.name : sp.plane.planeRef ? `plane:${sp.plane.planeRef}` : "face";
+  return (
+    <>
+      <fieldset className={`param-group pick-slot${sp.picking !== "plane" ? " active" : ""}`} onClick={() => sp.picking === "plane" && update({ picking: "part" })}>
+        <legend>Part to split</legend>
+        <p className={sp.partId ? "field-hint" : "dialog-hint field-hint"}>{sp.partId ? parts.find((p) => p.id === sp.partId)?.name ?? "(missing part)" : "Click the part to split."}</p>
+      </fieldset>
+      <fieldset className={`param-group pick-slot${sp.picking === "plane" ? " active" : ""}`} onClick={() => sp.picking !== "plane" && update({ picking: "plane" })}>
+        <legend>Split along</legend>
+        <select
+          className="full-select"
+          aria-label="Plane to split along"
+          value={planeValue}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "Top" || v === "Front" || v === "Right") update({ plane: { kind: "default", name: v } });
+            else if (v.startsWith("plane:")) {
+              const f = planes.find((x) => `plane:${x.id}` === v);
+              const frame = f && frames.get(f.id);
+              if (f && frame) update({ plane: planeAsSketchPlane(f, frame) });
+            }
+          }}
+        >
+          <option value="Top">Top plane</option>
+          <option value="Front">Front plane</option>
+          <option value="Right">Right plane</option>
+          {planes.map((f) => (
+            <option key={f.id} value={`plane:${f.id}`}>
+              {f.name}
+            </option>
+          ))}
+          {planeValue === "face" && <option value="face">{planeLabel(sp.plane)}</option>}
+        </select>
+        <p className="dialog-hint field-hint">Or click a plane or flat face in the 3D view.</p>
+      </fieldset>
+      <div className="segmented three" role="radiogroup" aria-label="Keep">
+        {(
+          [
+            ["both", "Both pieces", "Keep both pieces, as two parts"],
+            ["front", "Front side", "Keep the piece on the plane's front side"],
+            ["back", "Back side", "Keep the piece on the plane's back side"],
+          ] as const
+        ).map(([keep, label, hint]) => (
+          <button type="button" key={keep} role="radio" aria-checked={sp.keep === keep} className={sp.keep === keep ? "selected" : ""} title={hint} onClick={() => update({ keep })}>
+            {label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** Rib: which sketch; Rib and Thicken: which way. */
+function RibThickenOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const features = useStore(activeFeatures);
+  if (draft?.type !== "rib" && draft?.type !== "thicken") return null;
+  const at = features.findIndex((f) => f.id === draft.id);
+  const sketches = (at >= 0 ? features.slice(0, at) : features).filter((f) => f.type === "sketch" && !f.suppressed);
+  return (
+    <>
+      {draft.type === "rib" && (
+        <fieldset className="param-group">
+          <legend>Rib lines</legend>
+          <select className="full-select" aria-label="Sketch with the rib lines" value={draft.sketchRef ?? ""} onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}>
+            {!draft.sketchRef && <option value="">Choose a sketch…</option>}
+            {sketches.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+          <p className="dialog-hint field-hint">Draw the rib as a line (or lines) across the corner it braces, on a plane through the part.</p>
+        </fieldset>
+      )}
+      <label className="check-row">
+        <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked })} />
+        {draft.type === "rib" ? "Flip (fill the other side of the line)" : "Flip (grow inwards)"}
+      </label>
+    </>
+  );
+}
+
 /** Boolean settings: join, cut or intersect, and the parts for each. */
 function BooleanOptionsField() {
   const draft = useStore((s) => s.editing?.draft);
@@ -671,18 +767,21 @@ function PicksField() {
   const parts = useStore(studioParts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
-  if (!draft || !isPickFeature(draft.type)) return null;
+  if (!draft || !(isPickFeature(draft.type) || draft.type === "thicken")) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
-  const shell = draft.type === "shell";
+  const thicken = draft.type === "thicken";
+  const shell = draft.type === "shell" || thicken;
   const verb = draft.type === "fillet" ? "round" : "bevel";
 
   return (
     <fieldset className="param-group">
-      <legend>{shell ? "Faces to remove" : "Edges"}</legend>
+      <legend>{thicken ? "Faces to thicken" : shell ? "Faces to remove" : "Edges"}</legend>
       {picks.length === 0 ? (
         <p className="dialog-hint pick-hint">
-          {shell
+          {thicken
+            ? "Click the flat faces to grow into a solid."
+            : shell
             ? "Click the face (or faces) to leave open — usually the top. The rest of the part becomes walls."
             : `Click the edges you want to ${verb} in the 3D view. Click a face to ${verb} all its edges.`}
         </p>
@@ -782,7 +881,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "split" && draft.type !== "rib" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -802,6 +901,8 @@ export function FeatureDialog() {
 
         <PlaneDefOptions />
         <BooleanOptionsField />
+        <SplitOptionsField />
+        <RibThickenOptions />
         <SketchSolidOptions />
         <SweepLoftOptions />
         <TextFeatureOptions />

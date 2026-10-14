@@ -187,6 +187,27 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "A STEP or STL file from another program, brought in as a part.",
     params: [],
   },
+  split: {
+    type: "split",
+    label: "Split",
+    namePrefix: "Split",
+    description: "Cuts a part in two along a plane or flat face, making two parts (or keeping one side).",
+    params: [],
+  },
+  thicken: {
+    type: "thicken",
+    label: "Thicken",
+    namePrefix: "Thicken",
+    description: "Grows flat faces into a solid of a set thickness (a new part, or added to or cut from the part).",
+    params: [{ key: "thickness", label: "Thickness", defaultValue: "2", positive: true, group: "size" }],
+  },
+  rib: {
+    type: "rib",
+    label: "Rib",
+    namePrefix: "Rib",
+    description: "A thin strengthening wall from the lines of a sketch, filling the space up to the part (gussets, webs).",
+    params: [{ key: "thickness", label: "Thickness", defaultValue: "3", positive: true, group: "size" }],
+  },
   boolean: {
     type: "boolean",
     label: "Boolean",

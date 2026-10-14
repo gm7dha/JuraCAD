@@ -207,6 +207,7 @@ function extrudeFeature(sketchRef: string, depth: number, opts: Partial<Pick<Fea
 }
 
 const rectSketch = (x0: number, y0: number, w: number, h: number) => addRectangle(emptySketch(), { x: x0, y: y0 }, { x: x0 + w, y: y0 + h }).sketch;
+const lineSketch = (x0: number, y0: number, x1: number, y1: number) => addLine(emptySketch(), { x: x0, y: y0 }, { x: x1, y: y1 }).sketch;
 const meshOf = (r: { parts: { vertices: Float32Array; triangles: Uint32Array }[] }, i = 0) => analyzeMesh(r.parts[i].vertices, r.parts[i].triangles);
 
 describe("sketch and extrude", () => {
@@ -805,6 +806,50 @@ describe("boolean and intersect", () => {
     expect(r.featureErrors).toEqual({});
     // A quarter of the cylinder's disc inside the cube, 10 mm tall.
     expect(vol()[0]).toBeCloseTo((Math.PI * 25 * 10) / 4, 1);
+  });
+});
+
+describe("split, thicken and rib", () => {
+  const vol = () => engine.check("normal").parts.map((p) => Math.round(p.exactVolume! * 100) / 100);
+  const cube = feature("box", { width: 20, depth: 10, height: 10, x: -5 });
+
+  it("splits a part in two along a plane, or keeps one side", () => {
+    const split = (keep: "both" | "front" | "back", name: "Right" | "Top" = "Right"): Feature => ({ ...feature("split", {}), splitDef: { partId: cube.id, plane: { kind: "default", name }, keep } });
+    const both = build([cube, split("both")]);
+    expect(both.featureErrors).toEqual({});
+    expect(both.parts).toHaveLength(2);
+    // The Right plane (x = 0) faces +X: 15 mm of the box is in front, 5 behind.
+    expect(vol().sort((x, y) => x - y)).toEqual([500, 1500]);
+    build([cube, split("front")]);
+    expect(vol()).toEqual([1500]);
+    const missed = { ...split("both", "Top"), splitDef: { partId: cube.id, plane: { kind: "face" as const, origin: [0, 0, 50] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number], label: "high" }, keep: "both" as const } };
+    expect(build([cube, missed]).featureErrors[missed.id]).toMatch(/doesn't go through/);
+  });
+
+  it("thickens a flat face", () => {
+    const r1 = build([cube]);
+    const top = r1.parts[0].faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99);
+    const thicken: Feature = { ...feature("thicken", { thickness: 3 }, "add"), picks: [{ partId: cube.id, ref: r1.parts[0].faceRefs[top] }] };
+    const r = build([cube, thicken]);
+    expect(r.featureErrors).toEqual({});
+    expect(vol()).toEqual([2000 + 600]);
+    // As a new part of its own.
+    expect(build([cube, { ...thicken, operation: "new" }]).parts).toHaveLength(2);
+  });
+
+  it("braces a corner with a rib", () => {
+    // An L: a 40 × 10 × 5 base and a 5 × 10 × 40 upright, joined.
+    const base = feature("box", { width: 40, depth: 10, height: 5 });
+    const upright = feature("box", { width: 5, depth: 10, height: 40 }, "add");
+    // A line across the inside corner, from (5, 25) to (25, 5), sketched on a plane through the middle (y = 5).
+    const sk = { ...sketchFeature({ kind: "face", origin: [0, 5, 0], u: [1, 0, 0], v: [0, 0, 1], label: "mid" }, lineSketch(5, 25, 25, 5)) };
+    const rib: Feature = { ...feature("rib", { thickness: 2 }, "add"), sketchRef: sk.id };
+    build([base, upright]);
+    const before = vol()[0];
+    const r = build([base, upright, sk, rib]);
+    expect(r.featureErrors).toEqual({});
+    // The triangle in the corner (20 × 20 / 2), 2 mm thick.
+    expect(vol()[0] - before).toBeCloseTo(400, 0);
   });
 });
 

@@ -71,6 +71,13 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     feature.text = { value: "PartSmith", plane: { kind: "default", name: "Top" }, bold: false, flip: false };
   }
+  if (type === "split") feature.splitDef = { plane: { kind: "default", name: "Right" }, keep: "both", picking: "part" };
+  if (type === "rib") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    feature.sketchRef = sketches[sketches.length - 1]?.id;
+    feature.operation = "add";
+  }
+  if (type === "thicken") feature.picks = [];
   if (type === "boolean") feature.booleanDef = { op: "union", targets: [], tools: [], keepTools: false, picking: "targets" };
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
   if (type === "transform") {
@@ -296,6 +303,17 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         flip: t.flip === true,
       };
     }
+    if (feature.type === "split") {
+      const sp = (f.splitDef ?? {}) as Record<string, unknown>;
+      feature.splitDef = {
+        ...(typeof sp.partId === "string" ? { partId: sp.partId } : {}),
+        plane: parsePlane(sp.plane) ?? { kind: "default", name: "Right" },
+        keep: sp.keep === "front" || sp.keep === "back" ? sp.keep : "both",
+        picking: sp.picking === "plane" ? "plane" : "part",
+      };
+    }
+    if (feature.type === "rib" && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+    if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "boolean") {
       const b = (f.booleanDef ?? {}) as Record<string, unknown>;
       feature.booleanDef = {
@@ -327,7 +345,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       if (!im) return null;
       feature.import = im;
     }
-    if (feature.type === "fillet" || feature.type === "chamfer" || feature.type === "shell") {
+    if (feature.type === "fillet" || feature.type === "chamfer" || feature.type === "shell" || feature.type === "thicken") {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

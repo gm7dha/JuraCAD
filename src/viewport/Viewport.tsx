@@ -127,6 +127,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     else if (d?.type === "text" && d.text) s.setDraftField({ text: { ...d.text, plane } });
     else if (d?.type === "mirror") s.setDraftMirrorPlane(plane);
     else if (d?.type === "plane" && d.planeDef && d.id !== target.id) s.setDraftField({ planeDef: { ...d.planeDef, ref: plane } });
+    else if (d?.type === "split" && d.splitDef) s.setDraftField({ splitDef: { ...d.splitDef, plane } });
     else if (!s.editing) s.selectFeature(target.id);
     return;
   }
@@ -180,6 +181,31 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       if (plane) s.setDraftField({ text: { ...t, plane } });
       else s.showToast("That face is curved. Pick a flat face or one of the planes for the text.");
     }
+    return;
+  }
+  // Split: the part, then the plane (a default plane, a Plane feature, or a flat face).
+  if (s.editing?.draft.type === "split" && s.editing.draft.splitDef) {
+    const sp = s.editing.draft.splitDef;
+    if (target?.kind === "plane") s.setDraftField({ splitDef: { ...sp, plane: { kind: "default", name: target.plane } } });
+    else if (target?.kind === "part") {
+      if (sp.picking !== "plane" || !sp.partId) s.setDraftField({ splitDef: { ...sp, partId: target.item.partId, picking: "plane" } });
+      else if (target.item.kind === "face") {
+        const plane = planeForFace(target.item);
+        if (plane) s.setDraftField({ splitDef: { ...sp, plane } });
+        else s.showToast("That face is curved. Split along a flat face or a plane.");
+      }
+    }
+    return;
+  }
+  // Thicken: flat faces.
+  if (s.editing?.draft.type === "thicken") {
+    if (target?.kind !== "part") return;
+    if (target.item.kind !== "face") {
+      s.showToast("Thicken grows faces — click a flat face rather than an edge.");
+      return;
+    }
+    const pick = pickFor(s.parts, target.item);
+    if (pick) s.toggleDraftPick(pick);
     return;
   }
   // Picking parts for a Boolean.

@@ -169,6 +169,30 @@ export function Toolbar() {
           title="Text — raised or engraved lettering on a plane or flat face"
         />
         <ToolButton
+          label="Split"
+          icon={<Icons.Split />}
+          onClick={() => startCreate("split")}
+          disabled={!ready || !hasPart}
+          active={editingType === "split"}
+          title={hasPart ? "Split — cut a part in two along a plane or flat face" : "Make a part first"}
+        />
+        <ToolButton
+          label="Thicken"
+          icon={<Icons.Thicken />}
+          onClick={() => startCreate("thicken")}
+          disabled={!ready || !hasPart}
+          active={editingType === "thicken"}
+          title={hasPart ? "Thicken — grow flat faces into a solid of a set thickness" : "Make a part first"}
+        />
+        <ToolButton
+          label="Rib"
+          icon={<Icons.Rib />}
+          onClick={() => startCreate("rib")}
+          disabled={!ready || !hasPart || !hasSketch}
+          active={editingType === "rib"}
+          title={hasPart && hasSketch ? "Rib — a thin strengthening wall along a sketch's lines, filling the space up to the part" : "Make a part, then sketch the rib's line(s)"}
+        />
+        <ToolButton
           label="Boolean"
           icon={<Icons.Boolean />}
           onClick={() => startCreate("boolean")}

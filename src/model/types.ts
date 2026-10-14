@@ -6,7 +6,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -36,6 +36,16 @@ export interface BooleanOptions {
   keepTools: boolean;
   /** Which list a click in the 3D view adds to (subtract). */
   picking?: "targets" | "tools";
+}
+
+/** Split a part in two along a plane (or keep just one side). */
+export interface SplitOptions {
+  partId?: string;
+  plane: SketchPlane;
+  /** Keep both pieces as separate parts, or only the piece on the plane's front (normal) or back side. */
+  keep: "both" | "front" | "back";
+  /** What a click in the 3D view picks. */
+  picking?: "part" | "plane";
 }
 
 export interface HoleOptions {
@@ -106,6 +116,10 @@ export interface Feature {
   planeDef?: PlaneOptions;
   /** Boolean features: which parts, and what to do with them. */
   booleanDef?: BooleanOptions;
+  /** Split: which part, and the plane that cuts it in two. */
+  splitDef?: SplitOptions;
+  /** Thicken and Rib: which way. */
+  flipSide?: boolean;
   /** Transform: move and/or turn a part (or a copy of it). */
   transform?: { partId?: string; axis: Axis; about: "origin" | "centre"; copy: boolean };
   /** Linear and circular patterns: the features to repeat, and along or around which axis. */

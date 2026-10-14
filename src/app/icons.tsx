@@ -200,6 +200,26 @@ export const Icons = {
       <path d="M12 5v14M5 12h14" />
     </Svg>
   ),
+  Split: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 7l6-3 0 16-6-3z" />
+      <path d="M14 4l6 3v10l-6 3z" />
+    </Svg>
+  ),
+  Thicken: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 16l9-4 9 4-9 4z" />
+      <path d="M3 16v-4l9-4 9 4v4" strokeDasharray="2 2" />
+      <path d="M12 12V6M10 8l2-2 2 2" />
+    </Svg>
+  ),
+  Rib: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 20h16M4 20V4" />
+      <path d="M4 14l6 6" />
+      <path d="M4 10l10 10" fill="currentColor" opacity="0.35" />
+    </Svg>
+  ),
   Boolean: (p: IconProps) => (
     <Svg {...p}>
       <circle cx="9.5" cy="12" r="5.5" />
