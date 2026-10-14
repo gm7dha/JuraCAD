@@ -153,7 +153,7 @@ export interface AppState {
   /** The mate dialog, while open. */
   mateDraft: { mode: "create" | "edit"; mate: MateDraft } | null;
   /** Drawing tab: what clicks on the sheet do, and the selected dimension. */
-  drawingTool: "select" | "dimension";
+  drawingTool: "select" | "dimension" | "section";
   selectedDim: string | null;
   /** What a mouse drag in an assembly is changing, while the button is held. */
   dragPreview: DragChange | null;
@@ -245,7 +245,7 @@ export interface AppState {
   explodePreview: number | null;
   setExplodePreview: (amount: number | null) => void;
   setDragPreview: (change: DragChange | null) => void;
-  setDrawingTool: (tool: "select" | "dimension") => void;
+  setDrawingTool: (tool: "select" | "dimension" | "section") => void;
   selectDim: (id: string | null) => void;
   /** Keep what the drag did (one undo step). */
   commitDrag: () => void;

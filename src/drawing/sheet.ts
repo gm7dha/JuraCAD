@@ -8,9 +8,10 @@
  * goes to its left.
  */
 import type { ViewProjection } from "../kernel/protocol";
-import type { Drawing, SheetSize, ViewKind } from "../model/types";
+import type { Drawing, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { centreLines, centreMarks, hatchLines, placeBalloons } from "./annotations";
 import { projectPoint } from "./cameras";
+import { fromRel, sectionGeometry, viewKey } from "./sections";
 import { drawDimension, measureDim, resolveDim } from "./dimensions";
 
 /** "centre" is the long-and-short dashed line for centre lines and cutting planes. */
@@ -53,6 +54,8 @@ const GAP = 15;
 export interface PlacedView {
   id: string;
   kind: ViewKind;
+  /** Its key in the projections: the kind, or "section:<id>". */
+  key: string;
   /** Where the middle of the view is on the sheet. */
   centre: [number, number];
   /** The view's outline on the sheet: x0, y0, x1, y1. */
@@ -127,54 +130,68 @@ function viewArea(size: [number, number], reserve = TITLE_H): { x0: number; y0: 
   return { x0: MARGIN + 5, y0: MARGIN + reserve + 5, x1: size[0] - MARGIN - 5, y1: size[1] - MARGIN - 5 };
 }
 
+/** A drawing's views' lines, by view key (see viewKey). */
+export type Projections = Partial<Record<string, ViewProjection>>;
+
+const isSectionKey = (k: string) => k.startsWith("section:");
+
 /** Width and height the arrangement needs on paper at a scale. */
 function needed(
-  projections: Partial<Record<ViewKind, ViewProjection>>,
-  kinds: Set<ViewKind>,
+  projections: Projections,
+  keys: string[],
   s: number,
-): { w: number; h: number; cols: number[]; rows: number[]; iso: [number, number]; section: [number, number] } {
-  const size = (k: ViewKind) => (kinds.has(k) ? sizeOf(projections[k]).map((v) => v * s) : [0, 0]);
+): { w: number; h: number; cols: number[]; rows: number[]; side: { key: string; w: number; h: number }[] } {
+  const shown = new Set(keys);
+  const size = (k: string) => (shown.has(k) ? sizeOf(projections[k]).map((v) => v * s) : [0, 0]);
   const [fw, fh] = size("front");
   const cols = [size("right")[0], fw, size("left")[0], size("back")[0]];
   const rows = [size("bottom")[1], fh, size("top")[1]];
-  const iso = size("iso") as [number, number];
-  const section = size("section") as [number, number];
   const used = (list: number[]) => list.filter((v) => v > 0);
   const gridW = used(cols).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(cols).length - 1);
   const gridH = used(rows).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(rows).length - 1);
-  // The 3D view and the section view share a column to the right, one above the other.
-  const sideW = Math.max(iso[0], section[0]);
-  const sideH = iso[1] + section[1] + (iso[1] > 0 && section[1] > 0 ? GAP + LABEL_ROOM : section[1] > 0 ? LABEL_ROOM : 0);
+  // The 3D view and the section views share a column to the right, one above another (sections with room for their names).
+  const side = ["iso", ...keys.filter(isSectionKey)]
+    .map((key) => {
+      const [w, h] = size(key);
+      return { key, w, h: h > 0 && isSectionKey(key) ? h + LABEL_ROOM : h };
+    })
+    .filter((x) => x.w > 0);
+  const sideW = Math.max(0, ...side.map((x) => x.w));
+  const sideH = side.reduce((t, x) => t + x.h, 0) + GAP * Math.max(0, side.length - 1);
   const w = gridW + (sideW > 0 ? (gridW > 0 ? GAP : 0) + sideW : 0);
   const h = Math.max(gridH, sideH);
-  return { w, h, cols, rows, iso, section };
+  return { w, h, cols, rows, side };
 }
 
 /** Room under a section view for its name (mm). */
 const LABEL_ROOM = 8;
 
 /** The biggest standard scale at which all the views fit on the sheet. */
-export function fitScale(projections: Partial<Record<ViewKind, ViewProjection>>, kinds: ViewKind[], sheet: SheetSize, reserve = TITLE_H): { scale: number; fits: boolean } {
+export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H): { scale: number; fits: boolean } {
   const area = viewArea(SHEETS[sheet], reserve);
-  const set = new Set(kinds);
   for (const s of STANDARD_SCALES) {
-    const n = needed(projections, set, s);
+    const n = needed(projections, keys, s);
     if (n.w <= area.x1 - area.x0 && n.h <= area.y1 - area.y0) return { scale: s, fits: true };
   }
   return { scale: STANDARD_SCALES[STANDARD_SCALES.length - 1], fits: false };
 }
 
+/** Keys of a drawing's views, in order. */
+export function drawingViewKeys(drawing: Pick<Drawing, "views">): string[] {
+  return drawing.views.map(viewKey);
+}
+
 /** Work out where everything goes on the sheet. */
-export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKind, ViewProjection>>, info: SheetInfo): SheetLayout {
+export function layoutSheet(drawing: Drawing, projections: Projections, info: SheetInfo): SheetLayout {
   const size = SHEETS[drawing.sheet];
-  const kinds = drawing.views.map((v) => v.kind).filter((k) => projections[k]?.bounds);
+  const keys = drawingViewKeys(drawing).filter((k) => projections[k]?.bounds);
   const reserve = bottomReserve(drawing, info.bom);
-  const auto = fitScale(projections, kinds, drawing.sheet, reserve);
+  const auto = fitScale(projections, keys, drawing.sheet, reserve);
   const scale = drawing.scale ?? auto.scale;
   const area = viewArea(size, reserve);
-  const n = needed(projections, new Set(kinds), scale);
+  const n = needed(projections, keys, scale);
 
-  // Automatic places: the grid of aligned views centred in the area, the 3D view to its right.
+  // Automatic places: the grid of aligned views centred in the area, the 3D and section views to its right.
   const left = area.x0 + Math.max(0, (area.x1 - area.x0 - n.w) / 2);
   const top = area.y1 - Math.max(0, (area.y1 - area.y0 - n.h) / 2);
   const colX: number[] = [];
@@ -190,26 +207,31 @@ export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKi
     rowY[i] = y - h / 2;
     if (h > 0) y -= h + GAP;
   });
-  const autoCentre: Record<ViewKind, [number, number]> = {
+  const autoCentre: Record<string, [number, number]> = {
     right: [colX[0], rowY[1]],
     front: [colX[1], rowY[1]],
     left: [colX[2], rowY[1]],
     back: [colX[3], rowY[1]],
     bottom: [colX[1], rowY[0]],
     top: [colX[1], rowY[2]],
-    iso: [(gridRight > left ? gridRight + GAP : left) + n.iso[0] / 2, top - n.iso[1] / 2],
-    section: [(gridRight > left ? gridRight + GAP : left) + n.section[0] / 2, top - (n.iso[1] > 0 ? n.iso[1] + GAP : 0) - n.section[1] / 2],
   };
+  const sideX = gridRight > left ? gridRight + GAP : left;
+  let sideY = top;
+  for (const item of n.side) {
+    const viewH = isSectionKey(item.key) ? item.h - LABEL_ROOM : item.h;
+    autoCentre[item.key] = [sideX + item.w / 2, sideY - viewH / 2];
+    sideY -= item.h + GAP;
+  }
 
   // Views the user moved keep their place — but views lined up with the front view stay lined up with it.
-  const placedAt = (k: ViewKind) => drawing.views.find((v) => v.kind === k)?.at;
+  const placedAt = (k: string) => drawing.views.find((v) => viewKey(v) === k)?.at;
   const front: [number, number] = placedAt("front") ?? autoCentre.front;
   const dx = front[0] - autoCentre.front[0];
   const dy = front[1] - autoCentre.front[1];
-  const centreFor = (k: ViewKind): [number, number] => {
+  const centreFor = (k: string): [number, number] => {
     const at = placedAt(k);
     if (k === "front") return front;
-    if (k === "iso" || k === "section") return at ?? [autoCentre[k][0], autoCentre[k][1]];
+    if (k === "iso" || isSectionKey(k)) return at ?? [autoCentre[k][0], autoCentre[k][1]];
     if (k === "top" || k === "bottom") return [front[0], at ? at[1] : autoCentre[k][1] + dy];
     return [at ? at[0] : autoCentre[k][0] + dx, front[1]];
   };
@@ -217,9 +239,10 @@ export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKi
   const prims: Prim[] = [];
   const views: PlacedView[] = [];
   for (const v of drawing.views) {
-    const p = projections[v.kind];
+    const key = viewKey(v);
+    const p = projections[key];
     if (!p?.bounds) continue;
-    const centre = centreFor(v.kind);
+    const centre = centreFor(key);
     const [cx, cy] = centreOf(p);
     const map = (line: number[]) => line.map((val, i) => (i % 2 === 0 ? centre[0] + (val - cx) * scale : centre[1] + (val - cy) * scale));
     if (v.kind === "section" && p.cutFaces) {
@@ -232,27 +255,29 @@ export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKi
     }
     const [w, h] = sizeOf(p).map((d) => d * scale);
     const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
-    if (v.kind === "section") prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: `SECTION ${SECTION_LETTER}-${SECTION_LETTER}`, size: 3.5, anchor: "middle", bold: true });
-    views.push({ id: v.id, kind: v.kind, centre, box });
+    const cut = v.kind === "section" ? drawing.sections?.find((c) => c.id === v.section) : undefined;
+    if (cut) prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: `SECTION ${cut.letter}-${cut.letter}`, size: 3.5, anchor: "middle", bold: true });
+    views.push({ id: v.id, kind: v.kind, key, centre, box });
   }
 
-  // Where the section is cut, shown on the top view (or the right view).
-  const sectionView = projections.section;
-  if (sectionView?.cutAt !== undefined && views.some((v) => v.kind === "section")) {
-    const host = views.find((v) => v.kind === "top") ?? views.find((v) => v.kind === "right");
-    if (host) prims.push(...cuttingPlane(host, projections[host.kind]!, scale, sectionView.cutAt));
+  // Where each section is cut, on the view its line was drawn on.
+  for (const cut of drawing.sections ?? []) {
+    if (!views.some((v) => v.key === `section:${cut.id}`)) continue;
+    const host = views.find((v) => v.key === cut.host);
+    const hp = projections[cut.host];
+    if (host && hp?.bounds) prims.push(...cuttingPlane(host, hp, scale, cut));
   }
 
   // Balloons: the parts list's item numbers, pointing at the parts.
   if (info.balloons?.length && drawing.balloons !== false) {
     const host = views.find((v) => v.kind === "iso") ?? views.find((v) => v.kind === "front") ?? views.find((v) => v.kind !== "section");
-    if (host) prims.push(...balloonPrims(host, projections[host.kind]!, scale, info.balloons));
+    if (host) prims.push(...balloonPrims(host, projections[host.key]!, scale, info.balloons));
   }
 
   // Dimensions, on the views they belong to.
   const dims: PlacedDim[] = [];
   for (const dim of drawing.dimensions ?? []) {
-    const view = views.find((v) => v.kind === dim.view);
+    const view = views.find((v) => v.key === dim.view);
     const p = projections[dim.view];
     if (!view || !p) continue;
     const resolved = resolveDim(dim, p);
@@ -276,19 +301,19 @@ export function layoutSheet(drawing: Drawing, projections: Partial<Record<ViewKi
   return { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, prims };
 }
 
-const SECTION_LETTER = "A";
-
-/** The cutting-plane line across a view, with arrows showing which way the section looks, and its letters. */
-function cuttingPlane(host: PlacedView, p: ViewProjection, scale: number, cutAt: number): Prim[] {
-  const b = p.bounds!;
+/** The cutting line across a view, with arrows showing which way the section looks, and its letters. */
+export function cuttingPlane(host: PlacedView, p: ViewProjection, scale: number, cut: SectionCut): Prim[] {
+  const a0 = fromRel(p.bounds!, cut.a);
+  const b0 = fromRel(p.bounds!, cut.b);
+  const geo = sectionGeometry(cut.host, a0, b0, cut.flip);
+  if (!geo) return [];
+  const [x0, y0] = toSheet(host, p, scale, a0[0], a0[1]);
+  const [x1, y1] = toSheet(host, p, scale, b0[0], b0[1]);
+  const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+  const d: [number, number] = [(x1 - x0) / len, (y1 - y0) / len];
+  const ll = Math.hypot(geo.look[0], geo.look[1]) || 1;
+  const look: [number, number] = [geo.look[0] / ll, geo.look[1] / ll];
   const over = 5;
-  // In the top view the cut runs left to right at y = cutAt; in the right view, up and down at x = cutAt.
-  const across = host.kind === "top";
-  const [x0, y0] = toSheet(host, p, scale, across ? b[0] : cutAt, across ? cutAt : b[1]);
-  const [x1, y1] = toSheet(host, p, scale, across ? b[2] : cutAt, across ? cutAt : b[3]);
-  const d: [number, number] = across ? [1, 0] : [0, 1];
-  // The section looks toward the back (+Y): up the top view, to the right in the right view.
-  const look: [number, number] = across ? [0, 1] : [1, 0];
   const a: [number, number] = [x0 - d[0] * over, y0 - d[1] * over];
   const z: [number, number] = [x1 + d[0] * over, y1 + d[1] * over];
   const out: Prim[] = [line(a[0], a[1], z[0], z[1], "centre")];
@@ -304,7 +329,8 @@ function cuttingPlane(host: PlacedView, p: ViewProjection, scale: number, cutAt:
       fill: true,
       style: "thin",
     });
-    out.push({ kind: "text", x: tip[0] + look[0] * 1.5 - d[0] * 2.5 * sign, y: tip[1] + look[1] * 1.5 - d[1] * 2.5 * sign - (across ? 0 : 1.2), text: SECTION_LETTER, size: 3.5, anchor: "middle", bold: true });
+    // The letter just beyond the arrow, a little outward along the line (text baseline sits ~1.2 below its middle).
+    out.push({ kind: "text", x: tip[0] + look[0] * 2.5 - d[0] * 2.5 * sign, y: tip[1] + look[1] * 2.5 - d[1] * 2.5 * sign - 1.2, text: cut.letter, size: 3.5, anchor: "middle", bold: true });
   }
   return out;
 }

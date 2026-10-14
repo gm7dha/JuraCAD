@@ -20,7 +20,8 @@
   spreads out from fixed parts; loops are only checked), `explode.ts` (exploded-view offsets; display and drawings only). UI in `src/app/AssemblyUI.tsx`; instances are drawn as
   copies of part meshes moved with `SceneManager.setPlacements`.
 - Drawings: `src/drawing/` — `drawing.ts` (document edits, parsing), `cameras.ts` (view directions; first-angle),
-  `annotations.ts` (centre marks/lines, section hatching, balloons), `sheet.ts` (lays the sheet out as simple line/text shapes in sheet mm, y up), `export.ts` (SVG and a hand-written
+  `annotations.ts` (centre marks/lines, section hatching, balloons), `sections.ts` (section cuts drawn on a view:
+  cut plane, camera, letters; views are keyed by `viewKey` — the kind, or "section:<id>"), `sheet.ts` (lays the sheet out as simple line/text shapes in sheet mm, y up), `export.ts` (SVG and a hand-written
   PDF from those shapes), `hidden.ts`. The engine's `project()` runs OpenCascade's hidden-line removal per view.
   UI in `src/app/DrawingUI.tsx` (the sheet is an SVG drawn over the 3D view, which stays mounted).
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values

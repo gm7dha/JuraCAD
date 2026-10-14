@@ -1280,6 +1280,27 @@ kbd {
   pointer-events: none;
 }
 
+.drawing-cut-preview {
+  stroke: var(--accent);
+  stroke-width: 0.5;
+  stroke-dasharray: 6 1.5 1 1.5;
+  pointer-events: none;
+}
+
+.section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.row-actions-inline {
+  display: flex;
+  gap: 8px;
+}
+
 .drawing-dim-handle {
   fill: transparent;
   cursor: move;

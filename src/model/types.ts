@@ -106,13 +106,15 @@ export interface PartSmithDocument {
 }
 
 /** Which way a drawing view looks at the part. */
-/** "section" is the front view cut through (Section A-A). */
+/** "section" is a view of the part cut through along a line drawn on another view (see Drawing.sections). */
 export type ViewKind = "front" | "top" | "right" | "left" | "back" | "bottom" | "iso" | "section";
 
 /** One view on a drawing sheet. */
 export interface DrawingView {
   id: string;
   kind: ViewKind;
+  /** Section views: which section (its id in Drawing.sections). */
+  section?: string;
   /** Centre of the view on the sheet (mm from the bottom-left corner); missing = placed automatically. */
   at?: [number, number];
 }
@@ -134,8 +136,8 @@ export interface Drawing {
   title: { title?: string; drawnBy?: string; material?: string; notes?: string };
   /** Dimensions (optional: older saves have none). */
   dimensions?: Dimension[];
-  /** Where the section view cuts, front to back (0–1); missing = through the middle. */
-  sectionAt?: number;
+  /** Section cuts drawn on the views (optional: older saves have none). */
+  sections?: SectionCut[];
   /** False hides centre marks and centre lines (missing = shown). */
   centreLines?: boolean;
   /** False hides the numbered balloons on assembly drawings (missing = shown). */
@@ -145,13 +147,34 @@ export interface Drawing {
 }
 
 /**
+ * A section: a cutting line drawn across one of the flat views (front, top…).
+ * The part is cut along it, straight through, and the cut is shown as its own
+ * view ("SECTION A-A"). The line's ends are kept as fractions across the
+ * view it's drawn on, so the cut stays in the same place on the part when it
+ * changes size.
+ */
+export interface SectionCut {
+  id: string;
+  /** "A", "B"… */
+  letter: string;
+  /** The view the cutting line is drawn on. */
+  host: ViewKind;
+  /** The line's ends, as fractions of the host view's width and height. */
+  a: [number, number];
+  b: [number, number];
+  /** Look the other way (keep the other side of the cut). */
+  flip?: boolean;
+}
+
+/**
  * A dimension on a drawing view. Points are in the view's own flat
  * coordinates (model mm), each also remembered as a fraction across the
  * view, so they can be found again when the part changes size.
  */
 export interface Dimension {
   id: string;
-  view: ViewKind;
+  /** The view it's on: its kind, or "section:<id>" for a section view. */
+  view: string;
   type: "horizontal" | "vertical" | "aligned" | "diameter" | "radius";
   a: DimPoint;
   /** Second point (lengths). */
