@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
 import { viewportApi } from "./viewport/Viewport";
 import "./app/styles.css";
+import { useStore } from "./model/store";
 import { initTheme } from "./app/theme";
 
 const root = document.getElementById("root");
@@ -21,6 +22,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 // The browser smoke test (opened with ?smoke) reaches the 3D view to find where to click.
 if (new URLSearchParams(window.location.search).has("smoke")) {
   (window as unknown as { partsmithViewport: typeof viewportApi }).partsmithViewport = viewportApi;
+  (window as unknown as { partsmithStore: typeof useStore }).partsmithStore = useStore;
 }
 
 // Light or dark, before the first paint.

@@ -6,6 +6,7 @@ import { planeLabel } from "../sketch/planes";
 import { findRegions } from "../sketch/regions";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
+import { makeSketchPattern, setPatternOption } from "./sketchActions";
 
 /** The sketch's feature panel (top-left of the viewport), like Onshape's sketch dialog. */
 export function SketchPanel() {
@@ -16,6 +17,11 @@ export function SketchPanel() {
   const polygonSides = useStore((s) => s.sketch?.polygonSides ?? 6);
   const filletRadius = useStore((s) => s.sketch?.filletRadius ?? "2");
   const offsetDistance = useStore((s) => s.sketch?.offsetDistance ?? "2");
+  const patternKind = useStore((s) => s.sketch?.patternKind ?? "linear");
+  const patternCount = useStore((s) => s.sketch?.patternCount ?? 3);
+  const patternSpacing = useStore((s) => s.sketch?.patternSpacing ?? "10");
+  const patternAngle = useStore((s) => s.sketch?.patternAngle ?? "0");
+  const patternCentre = useStore((s) => s.sketch?.patternCentre ?? "origin");
   const unit = useLengthUnit();
   const theme = useStore((s) => s.theme);
   const setSketchOptions = useStore((s) => s.setSketchOptions);
@@ -85,6 +91,54 @@ export function SketchPanel() {
             <input value={showLength(offsetDistance, unit)} spellCheck={false} aria-label="Offset distance" onChange={(e) => setSketchOptions({ offsetDistance: storeLength(e.target.value, unit) })} />
             <span className="muted">{unit}</span>
           </label>
+        )}
+        {tool === "sketchPattern" && (
+          <div className="pattern-options">
+            <div className="segmented two" role="group" aria-label="Pattern type">
+              {(["linear", "circular"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={patternKind === k ? "selected" : ""}
+                  aria-pressed={patternKind === k}
+                  onClick={() => setPatternOption({ patternKind: k, patternAngle: k === "linear" ? "0" : "360" })}
+                >
+                  {k === "linear" ? "In a row" : "Round a centre"}
+                </button>
+              ))}
+            </div>
+            <label className="tool-option">
+              How many
+              <input
+                type="number"
+                min={2}
+                max={200}
+                aria-label="How many"
+                value={patternCount}
+                onChange={(e) => setPatternOption({ patternCount: Math.max(2, Math.min(200, Math.round(Number(e.target.value)) || 2)) })}
+              />
+            </label>
+            {patternKind === "linear" && (
+              <label className="tool-option">
+                Spacing
+                <input value={showLength(patternSpacing, unit)} spellCheck={false} aria-label="Pattern spacing" onChange={(e) => setPatternOption({ patternSpacing: storeLength(e.target.value, unit) })} />
+                <span className="muted">{unit}</span>
+              </label>
+            )}
+            <label className="tool-option">
+              {patternKind === "linear" ? "Direction" : "Spread over"}
+              <input value={patternAngle} spellCheck={false} aria-label={patternKind === "linear" ? "Pattern direction" : "Pattern angle"} onChange={(e) => setPatternOption({ patternAngle: e.target.value })} />
+              <span className="muted">°</span>
+            </label>
+            <p className="dialog-hint">
+              {patternKind === "linear"
+                ? "Direction 0° goes right, 90° goes up. The count includes the original."
+                : `Going round ${patternCentre === "origin" ? "the origin" : "the chosen point"} — click a point to go round that instead. 360° spreads them all the way round.`}
+            </p>
+            <button type="button" className="primary-button" onClick={() => makeSketchPattern()} disabled={selectionCount === 0}>
+              Make pattern
+            </button>
+          </div>
         )}
         {tool === "useEdge" && <p className="dialog-hint">Click edges of a part to copy them into this sketch.</p>}
         {tool === "sketchFillet" && (
