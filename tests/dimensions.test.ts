@@ -189,3 +189,19 @@ describe("moving just a dimension's number (Shift-drag)", () => {
     expect(dragDimensionText(dim, [0, 0], [40, 0], [20, 12.5]).textAcross).toBe(0);
   });
 });
+
+describe("tolerances and extra text", () => {
+  const dim: Dimension = { id: "d", view: "front", type: "horizontal", a: { at: [0, 0], rel: [0, 0] }, b: { at: [40, 0], rel: [1, 0] }, offset: 10 };
+  it("adds ± or +/− after the number, and text either side", () => {
+    expect(dimLabel({ ...dim, tolerance: { plus: 0.1, minus: 0.1 } }, 40)).toBe("40 ±0.1");
+    expect(dimLabel({ ...dim, tolerance: { plus: 0.2, minus: 0.05 } }, 40)).toBe("40 +0.2/−0.05");
+    expect(dimLabel({ ...dim, type: "diameter", prefix: "4× ", suffix: " THRU" }, 6)).toBe("4× Ø6 THRU");
+  });
+  it("are kept when the drawing is saved and opened again", () => {
+    const doc = addDrawing(emptyDocument(), "dr", null);
+    const d = putDimension(doc.drawings![0], { ...dim, tolerance: { plus: 0.2, minus: 0.05 }, prefix: "2× " });
+    const back = parseDrawings(JSON.parse(JSON.stringify([d])))[0].dimensions![0];
+    expect(back.tolerance).toEqual({ plus: 0.2, minus: 0.05 });
+    expect(back.prefix).toBe("2× ");
+  });
+});

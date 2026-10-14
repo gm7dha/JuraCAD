@@ -122,7 +122,10 @@ export function measureDim(dim: Dimension, r: ResolvedDim): number {
 }
 
 export function dimLabel(dim: Dimension, value: number): string {
-  return dim.type === "diameter" ? `Ø${formatSize(value)}` : dim.type === "radius" ? `R${formatSize(value)}` : formatSize(value);
+  const base = dim.type === "diameter" ? `Ø${formatSize(value)}` : dim.type === "radius" ? `R${formatSize(value)}` : formatSize(value);
+  const t = dim.tolerance;
+  const tol = !t ? "" : Math.abs(t.plus - t.minus) < 1e-9 ? ` ±${formatSize(t.plus)}` : ` +${formatSize(t.plus)}/−${formatSize(t.minus)}`;
+  return `${dim.prefix ?? ""}${base}${tol}${dim.suffix ?? ""}`;
 }
 
 /** How far (paper mm) a number has to be lifted off its line before it counts as moved off it. */

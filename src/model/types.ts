@@ -250,6 +250,11 @@ export interface Dimension {
   textAlong?: number;
   /** Lengths: how far the number has been lifted off the dimension line (paper mm, + = above as read; joined by a leader). */
   textAcross?: number;
+  /** Tolerance: how much bigger (plus) or smaller (minus) it may be, mm. Equal → "±". */
+  tolerance?: { plus: number; minus: number };
+  /** Text before and after the number, e.g. "4× " or " TYP". */
+  prefix?: string;
+  suffix?: string;
   /** Ordinate dimensions: measured across ("h") or up-and-down ("v"). */
   axis?: "h" | "v";
 }
