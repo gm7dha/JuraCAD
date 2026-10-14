@@ -11,7 +11,8 @@ import type { Assembly } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
 import type { Feature } from "../model/types";
 import { SketchController } from "../sketch/controller";
-import { planeOnFace, type SketchPlane } from "../sketch/planes";
+import { planeFrame, planeOnFace, type SketchPlane } from "../sketch/planes";
+import { copyEdge } from "../sketch/tools";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
 import { SceneManager, type PickTarget, type ScreenRay } from "./SceneManager";
@@ -112,6 +113,23 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       const plane = planeForFace(target.item);
       if (plane) s.setSketchPlane(plane);
       else s.setSketchMessage("That face is curved. Pick a flat face or one of the planes.", "error");
+    }
+    return;
+  }
+  // Copying part edges into the open sketch ("Use").
+  if (s.sketch?.tool === "useEdge" && s.editing?.draft.sketch?.plane) {
+    if (target?.kind !== "part") return;
+    if (target.item.kind !== "edge") {
+      s.setSketchMessage("Click an edge (not a face) to copy it into the sketch.", "info");
+      return;
+    }
+    const ref = s.parts.find((p) => p.id === target.item.partId)?.edgeRefs?.[target.item.index];
+    if (!ref) return;
+    const r = copyEdge(s.editing.draft.sketch.data, planeFrame(s.editing.draft.sketch.plane), ref);
+    if (r.error) s.setSketchMessage(r.error, "error");
+    else {
+      s.updateSketch(r.sketch, { selection: r.curveIds });
+      s.setSketchMessage(null);
     }
     return;
   }
@@ -337,6 +355,9 @@ export function Viewport() {
     () => viewportApi.current?.setDatums({ selected: selectedPlane, listHover: listHoverPlane, hidden: hiddenDatums }),
     [selectedPlane, listHoverPlane, hiddenDatums],
   );
+
+  const usingEdges = useStore((s) => s.sketch?.tool === "useEdge");
+  useEffect(() => viewportApi.current?.setSketchPicksParts(usingEdges), [usingEdges]);
 
   // Sketch tools are active while a sketch with a plane is open.
   const sketching = !!draft && !!plane;

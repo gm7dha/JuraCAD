@@ -118,7 +118,12 @@ export class SceneManager {
   private readonly callbacks: SceneCallbacks;
   private readonly sketchLayer = new SketchLayer();
   /** Set while a sketch is being edited: left-button input goes to the sketch tools. */
-  private sketchController: SketchController | null = null;
+  private sketchControllerRaw: SketchController | null = null;
+  /** While sketching, clicks pick part edges instead (the sketch's "Use" tool). */
+  private sketchPicksParts = false;
+  private get sketchController(): SketchController | null {
+    return this.sketchPicksParts ? null : this.sketchControllerRaw;
+  }
   private readonly frameListeners = new Set<() => void>();
 
   private width = 1;
@@ -518,8 +523,13 @@ export class SceneManager {
   }
 
   /** Route left-button input to sketch tools (or back to normal picking with null). */
+  /** While sketching, let clicks pick part edges (true) or go to the sketch tools (false). */
+  setSketchPicksParts(on: boolean): void {
+    this.sketchPicksParts = on;
+  }
+
   setSketchController(controller: SketchController | null): void {
-    this.sketchController = controller;
+    this.sketchControllerRaw = controller;
     if (controller && this.hover) {
       this.hover = null;
       this.applyHighlights();

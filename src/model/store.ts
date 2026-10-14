@@ -70,7 +70,9 @@ export type SketchTool =
   | "slot"
   | "polygon"
   | "sketchFillet"
-  | "trim";
+  | "trim"
+  | "offset"
+  | "useEdge";
 
 /** State while a sketch is open for editing. */
 export interface SketchSession {
@@ -90,6 +92,8 @@ export interface SketchSession {
   polygonSides: number;
   /** Corner-rounding tool: radius as typed. */
   filletRadius: string;
+  /** Offset tool: distance as typed. */
+  offsetDistance: string;
 }
 
 /** Section view (display only — not saved): cut the view along a default plane. */
@@ -184,7 +188,7 @@ export interface AppState {
   setSketchMessage: (text: string | null, tone?: "info" | "error") => void;
   setSketchConstruction: (on: boolean) => void;
   setEditingDimension: (id: string | null) => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius" | "offsetDistance">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   deleteFeature: (id: string) => void;
@@ -317,6 +321,7 @@ const newSession = (): SketchSession => ({
   editingDimension: null,
   polygonSides: 6,
   filletRadius: "2",
+  offsetDistance: "2",
 });
 
 /** Is this id (point, curve or constraint) still in the sketch? */

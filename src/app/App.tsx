@@ -69,6 +69,8 @@ function sketchShortcut(e: KeyboardEvent): boolean {
     s: "slot",
     g: "polygon",
     t: "trim",
+    o: "offset",
+    u: "useEdge",
   };
   const key = e.key.toLowerCase();
   if (!s.editing?.draft.sketch?.plane) return false;

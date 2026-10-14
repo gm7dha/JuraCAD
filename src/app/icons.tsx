@@ -377,4 +377,16 @@ export const Icons = {
       <rect x="6" y="7" width="5" height="4" />
     </Svg>
   ),
+  Offset: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="7" y="7" width="10" height="10" rx="1" />
+      <rect x="3.5" y="3.5" width="17" height="17" rx="3" strokeDasharray="2.5 2" />
+    </Svg>
+  ),
+  UseEdge: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 16 12 20l8-4V8l-8-4-8 4z" />
+      <path d="M4 16 12 20l8-4" strokeWidth={2.6} />
+    </Svg>
+  ),
 };
