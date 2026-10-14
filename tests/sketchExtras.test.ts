@@ -5,13 +5,9 @@ import { findRegions } from "../src/sketch/regions";
 import { solveSketch } from "../src/sketch/solver";
 import { addCentreRectangle, addTangentArc, patternCurves, tangentArcCentre, tangentAt } from "../src/sketch/tools";
 import { addCircle } from "../src/sketch/ops";
-import { emptySketch, type SketchArc, type SketchData, type SketchLine } from "../src/sketch/types";
+import { emptySketch, type SketchArc, type SketchLine } from "../src/sketch/types";
 
 const at = (x: number, y: number): Placed => ({ x, y, snap: null });
-const on = (id: string, s: SketchData): Placed => {
-  const [x, y] = pointPos(s, id);
-  return { x, y, snap: { kind: "point", id } };
-};
 const near = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
 
 describe("centre-point rectangle", () => {
