@@ -108,7 +108,7 @@ Each phase ends with a working version on the live site.
 | **P3 Part features** ✅ (topological naming: step 1) | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real parts and change them later |
 | **P4 Save, check, export** ✅ | `.partsmith` save/open, fuller model check (thinnest wall, overlapping parts), STEP/STL/3MF export, install as an offline app | keep projects and trust exports |
 | P4b More modelling ✅ v0.5 (done: sketch slot/polygon/round/trim, through all, hole tool, move/copy, measure, section view, part colours, import STEP/STL; later: offset, use part edges, up to face, draft) | Sketch trim/extend/offset/fillet, slots and polygons, use part edges in sketches; extrude through all / up to face / draft; hole tool (counterbore, countersink, tapped); move/rotate/copy parts; measure; section view; part colours; import STEP/STL | model real parts quickly |
-| P5 Assemblies | Instances, mate connectors, Onshape mate types, BOM | check multi-part designs fit together |
+| **P5 Assemblies** ✅ v0.6 (also several Part Studios, rename parts; later: mate loops, mate limits, exploded views) | Instances, mate connectors, Onshape mate types, BOM | check multi-part designs fit together |
 | P6 2D drawings | ISO sheets, first-angle views, hidden lines, dimensions, PDF/SVG/DXF | print a dimensioned drawing |
 | P7 Extras | Patterns, holes, text, sweep/loft, sections, import, inches, optional print-bed preview, dark mode | as needed |
 
