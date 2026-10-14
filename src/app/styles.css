@@ -413,6 +413,13 @@ button:disabled {
   background: var(--accent-soft);
 }
 
+/* Features that made the picked part(s), and the part(s) a picked feature made. */
+.feature-row.linked,
+.part-row.linked {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .part-row.selected .feature-name {
   color: var(--accent-dark);
   font-weight: 550;
@@ -420,8 +427,9 @@ button:disabled {
 
 .parts-selection-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
   margin: 0 8px 8px;
   padding: 4px 8px;
   border: 1px solid var(--accent-line);
@@ -430,8 +438,18 @@ button:disabled {
   font-size: 12px;
 }
 
+/* The count (and the ✕, which comes right after it) on the first line; the buttons below if there's no room. */
 .parts-selection-bar span {
-  flex: 1;
+  flex: 1 1 auto;
+  order: 0;
+}
+
+.parts-selection-bar .icon-button {
+  order: 1;
+}
+
+.parts-selection-bar .text-button {
+  order: 2;
 }
 
 .feature-row.editing {

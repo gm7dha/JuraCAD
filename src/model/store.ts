@@ -22,11 +22,12 @@ import { sameRef, type TopoPick } from "../geometry/topoRef";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { setCurrentScope } from "./expr";
-import { setLengthUnit, type LengthUnit } from "./units";
+import { setLengthUnit, startingLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
 import type { Assembly, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateType, PartSmithDocument } from "./types";
+import { boundsOfVertices } from "../assembly/assembly";
 import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
@@ -263,6 +264,11 @@ export interface AppState {
   setSelection: (items: SelectionItem[]) => void;
   toggleHidden: (partId: string) => void;
   setSelectedParts: (ids: string[]) => void;
+  /**
+   * Copy parts (a Move/copy feature with "copy" ticked), placed just to the
+   * side. One part opens the Move/copy dialog to adjust; several are copied straight away.
+   */
+  duplicateParts: (ids: string[]) => void;
   /** Hide or show several parts at once. */
   setPartsHidden: (ids: string[], hidden: boolean) => void;
   selectPlane: (plane: PlaneName | null) => void;
@@ -872,10 +878,35 @@ export const useStore = create<AppState>((set, get) => {
     // (While sketching, Ctrl+Z goes to sketchUndo instead — see App shortcuts.)
     redo: () => set((s) => (s.editing || s.mateDraft ? {} : { history: redoHistory(s.history), selection: [] })),
 
-    selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane })),
+    // Picking a feature or picking parts: one at a time (the other side is then shown as "linked").
+    selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane, selectedParts: id ? [] : s.selectedParts })),
     setSelection: (items) =>
       set((s) => ({ selection: items, selectedPlane: items.length > 0 ? null : s.selectedPlane })),
-    setSelectedParts: (selectedParts) => set({ selectedParts }),
+    duplicateParts: (ids) => {
+      const s = get();
+      if (s.editing || ids.length === 0) return;
+      const drafts = ids.flatMap((partId) => {
+        const part = s.parts.find((p) => p.id === partId);
+        if (!part) return [];
+        const box = boundsOfVertices(part.vertices);
+        const width = box ? box.max[0] - box.min[0] : 20;
+        const draft = createFeature(view(), "transform");
+        draft.name = `Copy of ${part.name}`;
+        draft.transform = { axis: "z", about: "centre", copy: true, partId };
+        draft.params = { ...draft.params, dx: startingLength(width + 10) };
+        return [draft];
+      });
+      if (drafts.length === 1) {
+        set({ editing: { mode: "create", draft: drafts[0] }, sketch: null, selectedFeatureId: null, selection: [], selectedParts: [], selectedPlane: null });
+        return;
+      }
+      // Several: add them one after another.
+      const added: Feature[] = drafts;
+      changeStudio((d) => added.reduce((acc, f) => addFeature(acc, f), d));
+      set({ selectedParts: [] });
+      s.showToast(`Copied ${added.length} parts — each copy is a Move/copy feature you can edit.`, "success");
+    },
+    setSelectedParts: (selectedParts) => set((s) => ({ selectedParts, selectedFeatureId: selectedParts.length ? null : s.selectedFeatureId })),
     setPartsHidden: (ids, hidden) =>
       set((s) => ({ hiddenParts: hidden ? [...s.hiddenParts.filter((p) => !ids.includes(p)), ...ids] : s.hiddenParts.filter((p) => !ids.includes(p)) })),
     toggleHidden: (partId) =>
