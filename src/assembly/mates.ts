@@ -6,11 +6,11 @@
  *
  * Solving works outwards from the fixed parts: a part joined by a mate to an
  * already placed part is placed by that mate. Closed loops of mates (where a
- * part is reached two ways) are checked, and reported if they disagree.
+ * part is reached two ways) are closed by adjusting the mates' movements.
  */
 import { evaluate } from "../model/expr";
 import type { Assembly, Mate, MateType } from "../model/types";
-import { compose, invert, quatFromAxisAngle, quatFromEulerDeg, samePlacement, type Placement } from "./math";
+import { compose, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement } from "./math";
 import { frameOnParts, framePlacement, type Frame } from "./connectors";
 import type { PartMesh } from "../kernel/protocol";
 
@@ -158,24 +158,34 @@ export interface SolveResult {
   mateErrors: Record<string, string>;
   /** Instances placed by a mate (instance id → mate id); the rest sit where they were put. */
   drivenBy: Record<string, string>;
+  /** Movements changed to close loops of mates (mate id → amount key → value). */
+  adjusted?: Record<string, Record<string, number>>;
 }
 
-/** Place every instance, starting from the fixed ones and following the mates. */
+/** How much a turn counts against a gap when closing loops: 1 radian ≈ this many mm. */
+const TURN_WEIGHT = 20;
+
+/**
+ * Place every instance, starting from the fixed ones and following the mates.
+ * When mates form a closed loop (a part reached two ways, like a four-bar
+ * linkage), the movements the mates allow (hinge angles, slider distances…)
+ * are adjusted until the loop closes; only if it can't be closed is a mate
+ * reported as disagreeing.
+ */
 export function solveAssembly(assembly: Assembly, frameOf: FrameLookup): SolveResult {
-  const placements: Record<string, Placement> = {};
-  const mateErrors: Record<string, string> = {};
-  const drivenBy: Record<string, string> = {};
   const instances = new Map(assembly.instances.map((i) => [i.id, i]));
+  const mateErrors: Record<string, string> = {};
 
   // Mates that can be used: both parts present, connectors found, values readable.
-  interface Link {
+  interface Usable {
     mate: Mate;
     a: string;
     b: string;
-    /** b's placement from a's: T_b = T_a ∘ rel. */
-    rel: Placement;
+    fa: Frame;
+    fb: Frame;
+    values: Record<string, number>;
   }
-  const links: Link[] = [];
+  const usable: Usable[] = [];
   for (const mate of assembly.mates ?? []) {
     if (mate.suppressed) continue;
     const ia = instances.get(mate.a.instanceId);
@@ -200,49 +210,169 @@ export function solveAssembly(assembly: Assembly, frameOf: FrameLookup): SolveRe
       mateErrors[mate.id] = `${MATE_TYPES[mate.type].values.find((d) => d.key === bad)?.label ?? bad}: ${errors[bad]}`;
       continue;
     }
-    const rel = compose(compose(framePlacement(fa), mateOffset(mate.type, values, mate.flip)), invert(framePlacement(fb)));
-    links.push({ mate, a: ia.id, b: ib.id, rel });
+    usable.push({ mate, a: ia.id, b: ib.id, fa, fb, values });
   }
 
-  const conflict = (link: Link) => {
-    mateErrors[link.mate.id] =
-      instances.get(link.a)?.fixed && instances.get(link.b)?.fixed
-        ? "Both parts are fixed, so this mate can't move either of them. Unfix one."
-        : "This mate disagrees with other mates on the same parts (PartSmith can't solve loops of mates yet). Suppress or delete one.";
-  };
-
-  // Spread outwards from each starting part: fixed ones first, then any others not yet reached.
-  const starts = [...assembly.instances.filter((i) => i.fixed), ...assembly.instances.filter((i) => !i.fixed)];
-  for (const start of starts) {
-    if (placements[start.id]) continue;
-    placements[start.id] = start.placement;
-    const queue = [start.id];
-    while (queue.length) {
-      const id = queue.shift()!;
-      for (const link of links) {
-        if (link.a !== id && link.b !== id) continue;
-        const other = link.a === id ? link.b : link.a;
-        const target = link.a === id ? compose(placements[id], link.rel) : compose(placements[id], invert(link.rel));
-        const already = placements[other];
-        if (already) {
-          if (!samePlacement(already, target, 1e-4) && !mateErrors[link.mate.id]) conflict(link);
-          continue;
-        }
-        const o = instances.get(other)!;
-        if (o.fixed) {
-          // Reached a second fixed part: it stays put; the mate is satisfied only if it already fits.
-          placements[other] = o.placement;
-          if (!samePlacement(o.placement, target, 1e-4)) conflict(link);
-          queue.push(other);
-          continue;
-        }
-        placements[other] = target;
-        drivenBy[other] = link.mate.id;
-        queue.push(other);
-      }
+  // The movements loops may adjust: every free amount of every usable mate, within its limits.
+  const free: { u: Usable; key: string; min: number; max: number }[] = [];
+  for (const u of usable) {
+    const { limits } = mateLimits(u.mate);
+    for (const def of MATE_TYPES[u.mate.type].values) {
+      if (!def.free) continue;
+      const l = limits[def.key];
+      free.push({ u, key: def.key, min: l ? l.min : -Infinity, max: l ? l.max : Infinity });
     }
   }
-  return { placements, mateErrors, drivenBy };
+  const start = free.map((f) => f.u.values[f.key]);
+
+  /** One pass outwards from the fixed parts with these free amounts; closures = links reaching a part already placed. */
+  const spread = (x: number[]) => {
+    const values = new Map(usable.map((u) => [u, { ...u.values }]));
+    free.forEach((f, i) => (values.get(f.u)![f.key] = x[i]));
+    const links = usable.map((u) => ({
+      u,
+      rel: compose(compose(framePlacement(u.fa), mateOffset(u.mate.type, values.get(u)!, u.mate.flip)), invert(framePlacement(u.fb))),
+    }));
+    const placements: Record<string, Placement> = {};
+    const drivenBy: Record<string, string> = {};
+    const closures: { u: Usable; target: Placement; already: Placement; fixedPair: boolean }[] = [];
+    const starts = [...assembly.instances.filter((i) => i.fixed), ...assembly.instances.filter((i) => !i.fixed)];
+    for (const st of starts) {
+      if (placements[st.id]) continue;
+      placements[st.id] = st.placement;
+      const queue = [st.id];
+      const used = new Set<Usable>();
+      while (queue.length) {
+        const id = queue.shift()!;
+        for (const { u, rel } of links) {
+          if ((u.a !== id && u.b !== id) || used.has(u)) continue;
+          used.add(u);
+          const other = u.a === id ? u.b : u.a;
+          const target = u.a === id ? compose(placements[id], rel) : compose(placements[id], invert(rel));
+          const already = placements[other];
+          if (already) {
+            closures.push({ u, target, already, fixedPair: !!instances.get(u.a)?.fixed && !!instances.get(u.b)?.fixed });
+            continue;
+          }
+          const o = instances.get(other)!;
+          if (o.fixed) {
+            // Reached a second fixed part: it stays put; the mate closes the loop only if it fits.
+            placements[other] = o.placement;
+            closures.push({ u, target, already: o.placement, fixedPair: !!instances.get(id)?.fixed });
+            queue.push(other);
+            continue;
+          }
+          placements[other] = target;
+          drivenBy[other] = u.mate.id;
+          queue.push(other);
+        }
+      }
+    }
+    return { placements, drivenBy, closures, values };
+  };
+
+  /** How far each closing mate is from fitting: position gap (mm) and turn (weighted), 6 numbers per closure. */
+  const residual = (x: number[]): number[] => {
+    const out: number[] = [];
+    for (const c of spread(x).closures) {
+      const d = sub(c.target.position, c.already.position);
+      let q = quatMultiply(quatConjugate(c.already.rotation), c.target.rotation);
+      if (q[3] < 0) q = [-q[0], -q[1], -q[2], -q[3]];
+      out.push(d[0], d[1], d[2], 2 * TURN_WEIGHT * q[0], 2 * TURN_WEIGHT * q[1], 2 * TURN_WEIGHT * q[2]);
+    }
+    return out;
+  };
+  const size = (r: number[]) => Math.sqrt(r.reduce((t, v) => t + v * v, 0));
+  const clampX = (x: number[]) => x.map((v, i) => Math.max(free[i].min, Math.min(free[i].max, v)));
+
+  let x = start;
+  let r = residual(x);
+  if (r.length && free.length && size(r) > 1e-6) x = closeLoops(start, residual, clampX);
+  const result = spread(x);
+  r = residual(x);
+  // Report the closing mates that still don't fit.
+  result.closures.forEach((c, i) => {
+    const bad = r.slice(6 * i, 6 * i + 6).some((v) => Math.abs(v) > 1e-3);
+    if (bad && !mateErrors[c.u.mate.id]) {
+      mateErrors[c.u.mate.id] = c.fixedPair
+        ? "Both parts are fixed, so this mate can't move either of them. Unfix one."
+        : "This mate can't be met together with the other mates on the same parts — they pull against each other. Suppress or delete one, or let one of them move (a Hinge or Slider instead of Fasten).";
+    }
+  });
+  // Movements the loop solver changed, so the mate dialogs can show where things ended up.
+  const adjusted: Record<string, Record<string, number>> = {};
+  free.forEach((f, i) => {
+    if (Math.abs(x[i] - start[i]) > 1e-9) (adjusted[f.u.mate.id] ??= {})[f.key] = x[i];
+  });
+  return { placements: result.placements, mateErrors, drivenBy: result.drivenBy, adjusted };
+}
+
+/**
+ * Close loops of mates: find movement amounts near `start` that make every
+ * residual zero (damped least squares — Levenberg–Marquardt — with numerical
+ * slopes), keeping each amount within its limits. Small changes are preferred,
+ * so dragging one part of a linkage moves the rest as little as needed.
+ */
+export function closeLoops(start: number[], residual: (x: number[]) => number[], clamp: (x: number[]) => number[] = (x) => x): number[] {
+  let x = [...start];
+  let r = residual(x);
+  const cost = (v: number[]) => v.reduce((t, a) => t + a * a, 0);
+  let c = cost(r);
+  let lambda = 1e-3;
+  const n = x.length;
+  for (let iter = 0; iter < 100 && c > 1e-12; iter++) {
+    // Numerical slopes of each residual against each amount.
+    const J: number[][] = [];
+    for (let j = 0; j < n; j++) {
+      const h = 1e-5 * Math.max(1, Math.abs(x[j]));
+      const xp = [...x];
+      xp[j] += h;
+      const rp = residual(xp);
+      J.push(rp.map((v, i) => (v - r[i]) / h));
+    }
+    // (JᵀJ + λ diag) δ = −Jᵀ r
+    const A = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, k) => J[i].reduce((t, v, m) => t + v * J[k][m], 0)));
+    const g = Array.from({ length: n }, (_, i) => J[i].reduce((t, v, m) => t + v * r[m], 0));
+    let improved = false;
+    for (let tries = 0; tries < 10 && !improved; tries++) {
+      const M = A.map((row, i) => row.map((v, k) => (i === k ? v + lambda * (v + 1e-9) + lambda * 1e-6 : v)));
+      const step = solveLinear(M, g.map((v) => -v));
+      if (!step) {
+        lambda *= 10;
+        continue;
+      }
+      const xn = clamp(x.map((v, i) => v + step[i]));
+      const rn = residual(xn);
+      const cn = cost(rn);
+      if (cn < c) {
+        x = xn;
+        r = rn;
+        c = cn;
+        lambda = Math.max(lambda / 10, 1e-9);
+        improved = true;
+      } else lambda *= 10;
+    }
+    if (!improved) break;
+  }
+  return x;
+}
+
+/** Solve M x = b (Gaussian elimination with partial pivoting); null if M is singular. */
+function solveLinear(M: number[][], b: number[]): number[] | null {
+  const n = b.length;
+  const a = M.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let piv = col;
+    for (let i = col + 1; i < n; i++) if (Math.abs(a[i][col]) > Math.abs(a[piv][col])) piv = i;
+    if (Math.abs(a[piv][col]) < 1e-14) return null;
+    [a[col], a[piv]] = [a[piv], a[col]];
+    for (let i = 0; i < n; i++) {
+      if (i === col) continue;
+      const f = a[i][col] / a[col][col];
+      for (let k = col; k <= n; k++) a[i][k] -= f * a[col][k];
+    }
+  }
+  return a.map((row, i) => row[n] / row[i]);
 }
 
 /** Solve using the parts as built now. */
