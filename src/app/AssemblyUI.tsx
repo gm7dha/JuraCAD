@@ -125,6 +125,8 @@ export function AssemblyToolbar() {
             const s = useStore.getState();
             s.setExplode(asm?.explode ? null : 1);
             s.setAsmSelection([]);
+            // Zoom to show the parts in their new places.
+            setTimeout(() => viewportApi.current?.fit(), 50);
           }}
           disabled={(asm?.instances.length ?? 0) < 2 || draftType !== null}
           active={!!asm?.explode}
@@ -505,7 +507,10 @@ export function ExplodePanel() {
   const amount = preview ?? asm.explode;
   const commit = () => {
     const p = useStore.getState().explodePreview;
-    if (p !== null) useStore.getState().setExplode(p);
+    if (p !== null) {
+      useStore.getState().setExplode(p);
+      setTimeout(() => viewportApi.current?.fit(), 50);
+    }
   };
   return (
     <div className="feature-dialog instance-panel" role="region" aria-label="Exploded view">
