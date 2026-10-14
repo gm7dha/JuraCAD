@@ -918,7 +918,7 @@ export class GeometryEngine {
       placed.forEach((p) => p.shape.delete());
       return views.map((kind) => ({ kind, visible: [], hidden: [], circles: [], points: [], bounds: null }));
     }
-    const whole = shapes.length === 1 ? shapes[0] : makeCompound(shapes);
+    const whole = (shapes.length === 1 ? shapes[0] : makeCompound(shapes)) as Shape3D;
     let wholeAxes: [Vec3, Vec3][] | null = null;
     const toFree: Shape3D[] = [];
     try {
