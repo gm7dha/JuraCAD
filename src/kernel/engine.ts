@@ -162,7 +162,7 @@ function sectionCut(
   const box = makeBox([lo[0] - pad, lo[1] - pad, lo[2] - pad], [hi[0] + pad, y, hi[2] + pad]);
   let cut: Shape3D;
   try {
-    cut = shape.cut(box);
+    cut = shape.cut(box) as Shape3D;
   } finally {
     box.delete();
   }

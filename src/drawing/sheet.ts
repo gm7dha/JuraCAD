@@ -338,7 +338,7 @@ export function toSheet(view: PlacedView, projection: ViewProjection, scale: num
 const rect = (x0: number, y0: number, x1: number, y1: number, style: LineStyle): Prim => ({ kind: "path", points: [x0, y0, x1, y0, x1, y1, x0, y1], closed: true, style });
 const line = (x0: number, y0: number, x1: number, y1: number, style: LineStyle = "thin"): Prim => ({ kind: "path", points: [x0, y0, x1, y1], style });
 
-function circle(cx: number, cy: number, r: number, style: LineStyle): Prim {
+function circle(cx: number, cy: number, r: number, style: LineStyle): Extract<Prim, { kind: "path" }> {
   const points: number[] = [];
   for (let i = 0; i < 36; i++) points.push(cx + r * Math.cos((i / 36) * 2 * Math.PI), cy + r * Math.sin((i / 36) * 2 * Math.PI));
   return { kind: "path", points, closed: true, style };
