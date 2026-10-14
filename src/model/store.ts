@@ -31,6 +31,7 @@ import type { Assembly, Drawing, Feature, FeatureType, ImportedFile, Instance, M
 import { boundsOfVertices } from "../assembly/assembly";
 import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
+import { moveFeature as moveFeatureIn } from "./reorder";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
@@ -219,6 +220,8 @@ export interface AppState {
    */
   suppressThenFinish: (ids: string[], commit: boolean) => void;
   deleteFeature: (id: string) => void;
+  /** Move a feature to just before another (null = the end), if what it uses stays above it. One undo step. */
+  moveFeature: (id: string, beforeId: string | null) => void;
   toggleSuppressed: (id: string) => void;
   renameFeature: (id: string, name: string) => void;
   renameDocument: (name: string) => void;
@@ -673,6 +676,15 @@ export const useStore = create<AppState>((set, get) => {
       }
       changeStudio(off);
       set({ editing: null, sketch: null });
+    },
+
+    moveFeature: (id, beforeId) => {
+      const r = moveFeatureIn(view().features, id, beforeId);
+      if (typeof r === "string") {
+        get().showToast(r, "info");
+        return;
+      }
+      changeStudio((doc) => ({ ...doc, features: r }));
     },
 
     deleteFeature: (id) => {
