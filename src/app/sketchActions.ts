@@ -1,6 +1,7 @@
 /** Actions used by both the sketch toolbar and keyboard shortcuts. */
 import { useStore, type SketchTool } from "../model/store";
 import { applyRelation, deleteItems, RELATION_LABELS, toggleConstruction, type RelationTool } from "../sketch/ops";
+import { patternCurves, readPatternSettings } from "../sketch/tools";
 import { viewportApi } from "../viewport/Viewport";
 
 const sketchData = () => useStore.getState().editing?.draft.sketch?.data ?? null;
@@ -8,7 +9,38 @@ const sketchData = () => useStore.getState().editing?.draft.sketch?.data ?? null
 export function setSketchTool(tool: SketchTool) {
   viewportApi.sketch?.cancel();
   useStore.getState().setSketchTool(tool);
-  if (tool === "mirror") useStore.getState().setSketchMessage("Click the straight line to mirror about (a construction line works well).", "info");
+  const st = useStore.getState();
+  if (tool === "mirror") st.setSketchMessage("Click the straight line to mirror about (a construction line works well).", "info");
+  if (tool === "tangentArc") st.setSketchMessage("Click the end of a line or arc to carry on from.", "info");
+  if (tool === "sketchPattern") {
+    st.setSketchMessage("Click the lines, arcs and circles to repeat (or keep what's selected), then Make pattern.", "info");
+    viewportApi.sketch?.refreshPreview();
+  }
+}
+
+/** Pattern tool's "Make pattern" button: repeat the selected shapes. */
+export function makeSketchPattern(): boolean {
+  const s = useStore.getState();
+  const data = sketchData();
+  if (!data || !s.sketch) return false;
+  const curves = s.sketch.selection.filter((id) => data.curves.some((c) => c.id === id));
+  const opts = readPatternSettings(data, s.sketch);
+  const r = typeof opts === "string" ? { sketch: data, error: opts, curveIds: [] } : patternCurves(data, curves, opts);
+  if (r.error) {
+    s.setSketchMessage(r.error, "error");
+    return false;
+  }
+  s.updateSketch(r.sketch, { record: true, selection: [] });
+  const copies = Math.round(s.sketch.patternCount) - 1;
+  s.setSketchMessage(`Made ${copies} ${copies === 1 ? "copy" : "copies"}. Click more shapes to make another pattern.`, "info");
+  viewportApi.sketch?.refreshPreview();
+  return true;
+}
+
+/** Change a pattern setting and redraw the preview. */
+export function setPatternOption(patch: Parameters<ReturnType<typeof useStore.getState>["setSketchOptions"]>[0]) {
+  useStore.getState().setSketchOptions(patch);
+  viewportApi.sketch?.refreshPreview();
 }
 
 export function applySketchRelation(tool: RelationTool) {

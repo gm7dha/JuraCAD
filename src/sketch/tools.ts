@@ -5,8 +5,8 @@
  */
 import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
-import { curveById, deleteItems, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
-import type { SketchArc, SketchCircle, SketchConstraint, SketchCurve, SketchData, SketchLine, SketchPoint } from "./types";
+import { addRectangle, curveById, deleteItems, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
+import { ORIGIN_ID, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
 import type { EdgeRef } from "../geometry/topoRef";
 
@@ -667,4 +667,181 @@ export function mirrorCurves(s: SketchData, axisId: string, curveIds: string[]):
   const r = solveSketch(next);
   if (!r.ok) return fail("The mirrored copy would conflict with the sketch's other constraints or dimensions.");
   return { sketch: r.sketch, curveIds: unique.map((c) => c.id) };
+}
+
+// ---------------------------------------------------------------------------
+// Centre-point rectangle
+
+/**
+ * A rectangle drawn out from its centre: the centre point sits halfway along a
+ * construction diagonal, so it stays in the middle when the rectangle is resized.
+ */
+export function addCentreRectangle(s: SketchData, centre: Placed, corner: Placed, construction = false): EditResult & { lineIds: string[] } {
+  const opposite: Placed = { x: 2 * centre.x - corner.x, y: 2 * centre.y - corner.y, snap: null };
+  const r = addRectangle(s, opposite, corner, construction);
+  if (r.error) return { sketch: s, lineIds: [], error: "Move the pointer away from the centre to give the rectangle a width and height." };
+  const first = curveById(r.sketch, r.lineIds[0]) as SketchLine;
+  const second = curveById(r.sketch, r.lineIds[1]) as SketchLine;
+  const atOrigin = centre.snap?.kind === "origin" || (centre.snap?.kind === "point" && centre.snap.id === ORIGIN_ID);
+  const c = atOrigin ? { sketch: r.sketch, id: ORIGIN_ID } : placePoint(r.sketch, centre);
+  const isNew = !r.sketch.points.some((p) => p.id === c.id);
+  const sk = c.sketch;
+  const diagonal = sketchId("l");
+  return {
+    ...settle({
+      points: sk.points.map((p) => (isNew && p.id === c.id ? { ...p, standalone: true } : p)),
+      curves: [...sk.curves, { id: diagonal, type: "line", p1: first.p1, p2: second.p2, construction: true }],
+      constraints: [...sk.constraints, con("midpoint", [c.id, diagonal])],
+    }),
+    lineIds: r.lineIds,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tangent arc
+
+/**
+ * Which way a line or arc is heading as it leaves the point `pointId` at one
+ * of its ends (so a tangent arc can carry on smoothly), or null if no line or
+ * arc ends there. The most recently drawn one wins.
+ */
+export function tangentAt(s: SketchData, pointId: string): { dir: P2; curveId: string } | null {
+  for (const c of [...s.curves].reverse()) {
+    if (c.type === "line" && (c.p1 === pointId || c.p2 === pointId)) {
+      const p = pointPos(s, pointId);
+      const o = pointPos(s, c.p1 === pointId ? c.p2 : c.p1);
+      if (len(sub(p, o)) < 1e-9) continue;
+      return { dir: unit(sub(p, o)), curveId: c.id };
+    }
+    if (c.type === "arc" && (c.start === pointId || c.end === pointId)) {
+      const r = sub(pointPos(s, pointId), pointPos(s, c.center));
+      // Arcs run anticlockwise from start to end.
+      const dir: P2 = c.end === pointId ? [-r[1], r[0]] : [r[1], -r[0]];
+      if (len(dir) < 1e-9) continue;
+      return { dir: unit(dir), curveId: c.id };
+    }
+  }
+  return null;
+}
+
+/** Centre of the arc leaving `start` heading along `dir` and ending at `end` (null if `end` is straight ahead). */
+export function tangentArcCentre(start: P2, dir: P2, end: P2): P2 | null {
+  const d = sub(end, start);
+  const n: P2 = [-dir[1], dir[0]];
+  const nd = dot(n, d);
+  if (len(d) < 1e-9 || Math.abs(nd) < 1e-6 * len(d)) return null;
+  return add(start, mul(n, dot(d, d) / (2 * nd)));
+}
+
+/** An arc that carries on smoothly from the end of a line or arc at `startId`, finishing at `end`. */
+export function addTangentArc(s: SketchData, startId: string, end: Placed, construction = false): EditResult & { arcId: string } {
+  const fail = (error: string) => ({ sketch: s, arcId: "", error });
+  const t = tangentAt(s, startId);
+  if (!t) return fail("Start a tangent arc at the end of a line or arc.");
+  const P = pointPos(s, startId);
+  const centre = tangentArcCentre(P, t.dir, [end.x, end.y]);
+  if (!centre) return fail("That's straight ahead — move the pointer to one side to bend the arc.");
+  const pe = placePoint(s, end);
+  if (pe.id === startId) return fail("An arc needs two different ends.");
+  const cid = sketchId("p");
+  const anticlockwise = cross(t.dir, sub([end.x, end.y], P)) > 0;
+  const id = sketchId("a");
+  const arc: SketchArc = { id, type: "arc", center: cid, start: anticlockwise ? startId : pe.id, end: anticlockwise ? pe.id : startId, construction };
+  const from = curveById(s, t.curveId)!;
+  const tangent: SketchConstraint = con("tangent", [from.id, id]);
+  if (from.type === "arc") {
+    // Both centres on the same side of the joint: one arc sits inside the other.
+    const internal = dot(sub(pointPos(s, from.center), P), sub(centre, P)) > 0;
+    tangent.extra = [internal ? 1 : 0];
+  }
+  const sk = pe.sketch;
+  return {
+    ...settle({ points: [...sk.points, { id: cid, x: centre[0], y: centre[1] }], curves: [...sk.curves, arc], constraints: [...sk.constraints, tangent] }),
+    arcId: id,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Sketch patterns
+
+export type SketchPatternOptions =
+  /** `count` copies in a row (including the original), `spacing` mm apart, heading `angle` degrees from the X direction. */
+  | { kind: "linear"; count: number; spacing: number; angle: number }
+  /** `count` copies (including the original) spread over `angle` degrees around `centre` (360 = all the way round). */
+  | { kind: "circular"; count: number; angle: number; centre: P2 };
+
+/** Where each copy of a point goes: copy i (1 … count-1). */
+export function patternTransform(opts: SketchPatternOptions, i: number): (p: P2) => P2 {
+  if (opts.kind === "linear") {
+    const a = (opts.angle * Math.PI) / 180;
+    const off: P2 = [Math.cos(a) * opts.spacing * i, Math.sin(a) * opts.spacing * i];
+    return (p) => add(p, off);
+  }
+  const full = Math.abs(Math.abs(opts.angle) - 360) < 1e-9;
+  const step = full ? opts.angle / opts.count : opts.angle / Math.max(1, opts.count - 1);
+  const t = (step * i * Math.PI) / 180;
+  const c = Math.cos(t);
+  const sn = Math.sin(t);
+  const C = opts.centre;
+  return (p) => {
+    const [x, y] = sub(p, C);
+    return add(C, [x * c - y * sn, x * sn + y * c]);
+  };
+}
+
+/** Copy lines, arcs and circles in a row or around a centre (Onshape's sketch linear / circular pattern). */
+export function patternCurves(s: SketchData, curveIds: string[], opts: SketchPatternOptions): EditResult & { curveIds: string[] } {
+  const fail = (error: string) => ({ sketch: s, error, curveIds: [] });
+  const sources = curveIds.map((id) => curveById(s, id)).filter((c): c is SketchCurve => !!c);
+  if (!sources.length) return fail("Click the lines, arcs and circles to repeat first.");
+  const count = Math.round(opts.count);
+  if (!(count >= 2 && count <= 200)) return fail("The number of copies must be between 2 and 200.");
+  if (opts.kind === "linear" && !(Math.abs(opts.spacing) > 1e-9)) return fail("Give the copies some spacing.");
+  if (opts.kind === "circular" && !(Math.abs(opts.angle) > 1e-9)) return fail("Give the pattern an angle to spread over.");
+  const points: SketchPoint[] = [];
+  const curves: SketchCurve[] = [];
+  for (let i = 1; i < count; i++) {
+    const move = patternTransform(opts, i);
+    const copies = new Map<string, string>();
+    const copyOf = (id: string): string => {
+      const known = copies.get(id);
+      if (known) return known;
+      const at = pointPos(s, id);
+      const to = move(at);
+      // A point that doesn't move (the centre of a circular pattern) is shared.
+      if (len(sub(to, at)) < 1e-9) return id;
+      const nid = sketchId("p");
+      points.push({ id: nid, x: to[0], y: to[1] });
+      copies.set(id, nid);
+      return nid;
+    };
+    for (const c of sources) {
+      if (c.type === "line") curves.push({ id: sketchId("l"), type: "line", p1: copyOf(c.p1), p2: copyOf(c.p2), construction: c.construction });
+      else if (c.type === "circle") curves.push({ id: sketchId("k"), type: "circle", center: copyOf(c.center), radius: c.radius, construction: c.construction });
+      else curves.push({ id: sketchId("a"), type: "arc", center: copyOf(c.center), start: copyOf(c.start), end: copyOf(c.end), construction: c.construction });
+    }
+  }
+  return { ...settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: s.constraints }), curveIds: curves.map((c) => c.id) };
+}
+
+/** The pattern tool's settings as typed (from the sketch panel). */
+export interface PatternSettings {
+  patternKind: "linear" | "circular";
+  patternCount: number;
+  patternSpacing: string;
+  patternAngle: string;
+  patternCentre: string;
+}
+
+/** Turn the typed pattern settings into numbers, or say what's wrong with them. */
+export function readPatternSettings(s: SketchData, set: PatternSettings): SketchPatternOptions | string {
+  const angle = evaluate(set.patternAngle);
+  if (!angle.ok) return `Angle: ${angle.error}`;
+  if (set.patternKind === "linear") {
+    const spacing = evaluate(set.patternSpacing);
+    if (!spacing.ok) return `Spacing: ${spacing.error}`;
+    return { kind: "linear", count: set.patternCount, spacing: spacing.value, angle: angle.value };
+  }
+  const known = set.patternCentre === ORIGIN_ID || s.points.some((p) => p.id === set.patternCentre);
+  return { kind: "circular", count: set.patternCount, angle: angle.value, centre: pointPos(s, known ? set.patternCentre : ORIGIN_ID) };
 }
