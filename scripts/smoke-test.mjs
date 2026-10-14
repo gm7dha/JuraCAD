@@ -244,6 +244,17 @@ try {
     }
   }
 
+  step = "the Help screen's surprise";
+  {
+    await page.getByRole("button", { name: "Help and shortcuts" }).click();
+    const win = page.getByRole("radio", { name: "Windows" });
+    for (let i = 0; i < 10; i++) await win.click();
+    await page.locator(".easter-egg img").waitFor({ timeout: 5_000 });
+    await page.locator(".easter-egg").click();
+    await page.locator(".easter-egg").waitFor({ state: "detached", timeout: 5_000 });
+    await page.keyboard.press("Escape");
+  }
+
   step = "starting a sketch and picking the Top plane";
   await page.getByRole("button", { name: "Sketch", exact: true }).click();
   await page.waitForSelector(".sketch-panel");

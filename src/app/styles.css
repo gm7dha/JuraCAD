@@ -2311,3 +2311,30 @@ kbd {
   background: color-mix(in srgb, #2e9d4f 10%, transparent);
   border-color: #2e9d4f;
 }
+
+/* The Help screen's surprise: a photo over everything; any click closes it. */
+.easter-egg {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  cursor: pointer;
+  animation: egg-in 0.35s ease-out;
+}
+
+.easter-egg img {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 12px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes egg-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
