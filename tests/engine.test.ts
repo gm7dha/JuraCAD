@@ -1114,3 +1114,36 @@ describe("extrude up to a face, and with draft", () => {
     expect(build([sk, { ...ex, params: { depth: "10", draft: "60" } }]).featureErrors[ex.id]).toMatch(/less than 45/);
   });
 });
+
+describe("sweep and loft", () => {
+  it("sweeps a circle along an L-shaped path into a bent pipe", () => {
+    // Path on Top: along +X for 40, then a 10 mm bend, then along +Y for 30.
+    let path = emptySketch();
+    path = addLine(path, { x: 0, y: 0 }, { x: 40, y: 0 }).sketch;
+    const pathSk = sketchFeature({ kind: "default", name: "Top" }, path);
+    // Profile on Right (the YZ plane) at the start of the path: a 6 mm circle round the origin.
+    const profile = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 0, y: 0 }, 3).sketch);
+    const sweep: Feature = { ...feature("sweep", {}), sketchRef: profile.id, pathRef: pathSk.id };
+    const r = build([pathSk, profile, sweep]);
+    expect(r.featureErrors).toEqual({});
+    const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    expect(a.watertight).toBe(true);
+    expect(relativeError(a.volume, Math.PI * 9 * 40)).toBeLessThan(0.02);
+    expect(a.bounds?.max[0]).toBeCloseTo(40, 1);
+    // Same sketch for both: explained.
+    expect(build([pathSk, { ...sweep, sketchRef: pathSk.id }]).featureErrors[sweep.id]).toMatch(/different sketches/);
+  });
+
+  it("lofts from a square on Top to a smaller square higher up", () => {
+    const base = sketchFeature({ kind: "default", name: "Top" }, rectSketch(-10, -10, 20, 20));
+    const top = sketchFeature(planeOnFace([0, 0, 1], [0, 0, 10], "10 mm up"), rectSketch(-5, -5, 10, 10));
+    const loftF: Feature = { ...feature("loft", {}), sections: [base.id, top.id] };
+    const r = build([base, top, loftF]);
+    expect(r.featureErrors).toEqual({});
+    const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    expect(a.watertight).toBe(true);
+    // A straight-sided frustum: h/3 (A1 + A2 + √(A1·A2)).
+    expect(relativeError(a.volume, (10 / 3) * (400 + 100 + 200))).toBeLessThan(0.01);
+    expect(build([base, { ...loftF, sections: [base.id] }]).featureErrors[loftF.id]).toMatch(/at least two/);
+  });
+});

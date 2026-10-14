@@ -15,6 +15,7 @@ import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operat
 import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
+import { loftSketches, sweepSketch } from "./sweep";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { dropCoveredHidden } from "../drawing/hidden";
@@ -248,6 +249,32 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: Math.abs(d), end: "blind", flip: d < 0, draft: v.draft });
       }
       return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip, draft: v.draft });
+    }
+    case "sweep": {
+      const need = (id: string | undefined, what: string) => {
+        if (!id) throw new Error(`Choose the ${what} sketch.`);
+        const sk = sketches.get(id);
+        if (!sk?.sketch?.plane) {
+          const exists = all.find((f) => f.id === id);
+          if (!exists) throw new Error(`Its ${what} sketch has been deleted. Pick another.`);
+          if (all.indexOf(exists) > all.indexOf(feature)) throw new Error(`${exists.name} comes after this sweep in the list.`);
+          throw new Error(`${exists.name} couldn't be used.`);
+        }
+        return sk.sketch;
+      };
+      if (feature.sketchRef && feature.sketchRef === feature.pathRef) throw new Error("The profile and the path must be different sketches.");
+      const profile = need(feature.sketchRef, "profile");
+      const path = need(feature.pathRef, "path");
+      return sweepSketch(profile.plane!, profile.data, path.plane!, path.data);
+    }
+    case "loft": {
+      const sections = (feature.sections ?? []).map((id) => {
+        const sk = sketches.get(id);
+        const f = all.find((x) => x.id === id);
+        if (!sk?.sketch?.plane) throw new Error(f ? `${f.name} can't be used (it's suppressed, comes later in the list, or has no plane).` : "One of its sketches has been deleted. Edit the loft.");
+        return { plane: sk.sketch.plane, data: sk.sketch.data, name: sk.name };
+      });
+      return loftSketches(sections);
     }
     case "hole": {
       const h = feature.hole;
