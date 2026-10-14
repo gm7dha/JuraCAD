@@ -6,9 +6,10 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 
 import { arrangeViews, putDimension, removeDimension, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
-import { fitScale, layoutSheet, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { bottomReserve, fitScale, layoutSheet, type BomLine, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { dimPoint, dragDimension, drawDimension, measureDim, placeLength, resolveDim, snapPoints } from "../drawing/dimensions";
 import { newId } from "../model/document";
+import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh, ViewProjection } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useStore } from "../model/store";
@@ -37,6 +38,15 @@ function drawingSubject(
   if (!asm) return null;
   const instances = instancesForKernel(asm, parts);
   return { name: asm.name, partIds: [], instances, key: [JSON.stringify(instances), ...parts.filter((p) => instances.some((i) => i.partId === p.id))] };
+}
+
+/** The parts list for an assembly drawing (none for a part). */
+function bomFor(drawing: Drawing, doc: PartSmithDocument, parts: PartMesh[]): BomLine[] | undefined {
+  if (drawing.source?.kind !== "assembly") return undefined;
+  const asm = doc.assemblies?.find((a) => a.id === drawing.source!.id);
+  if (!asm) return undefined;
+  const names = Object.fromEntries(parts.map((p) => [p.id, p.name]));
+  return billOfMaterials(asm, names).map((r, i) => ({ item: i + 1, name: r.name, quantity: r.quantity }));
 }
 
 /** Projections already worked out, by drawing (kept while switching tabs). */
@@ -204,7 +214,9 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   const parts = useStore((s) => s.parts);
   const change = useStore((s) => s.changeDrawing);
   const { projections, subject } = useProjections(drawing);
-  const auto = projections ? fitScale(projections, drawing.views.map((v) => v.kind), drawing.sheet) : null;
+  const auto = projections
+    ? fitScale(projections, drawing.views.map((v) => v.kind), drawing.sheet, bottomReserve(drawing, bomFor(drawing, doc, parts)))
+    : null;
   const studios = studiosOf(doc);
   const sourceValue = drawing.source ? `${drawing.source.kind}:${drawing.source.id}` : "";
 
@@ -372,6 +384,9 @@ type Pending = { view: ViewKind; a: P2; b?: P2 };
 /** The sheet itself, with views you can drag about. Scroll to zoom, middle- or right-drag to pan. */
 export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const docName = useStore((s) => s.history.present.name);
+  const doc = useStore((s) => s.history.present);
+  const allParts = useStore((s) => s.parts);
+  const bom = useMemo(() => bomFor(drawing, doc, allParts), [drawing, doc, allParts]);
   const change = useStore((s) => s.changeDrawing);
   const tool = useStore((s) => s.drawingTool);
   const selectedDim = useStore((s) => s.selectedDim);
@@ -396,8 +411,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     return d;
   }, [drawing, drag, dimDrag]);
   const layout = useMemo(
-    () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today() }) : null),
-    [shown, projections, docName, subject],
+    () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today(), bom }) : null),
+    [shown, projections, docName, subject, bom],
   );
   useEffect(() => {
     if (layout && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name };

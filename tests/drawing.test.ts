@@ -159,3 +159,19 @@ describe("drawing files", () => {
     expect(textWidth("MM", 10)).toBeGreaterThan(textWidth("ii", 10));
   });
 });
+
+describe("assembly drawings", () => {
+  it("show a parts list above the title block, and keep views clear of it", () => {
+    const d = newDrawing();
+    const bom = [
+      { item: 1, name: "Base", quantity: 1 },
+      { item: 2, name: "Bolt M4", quantity: 4 },
+    ];
+    const l = layoutSheet({ ...d, title: { notes: "Deburr" } }, block, { ...info, bom });
+    const texts = l.prims.filter((p) => p.kind === "text").map((p) => (p.kind === "text" ? p.text : ""));
+    for (const t of ["ITEM", "PART", "QTY", "Base", "Bolt M4", "4", "NOTES", "Deburr"]) expect(texts).toContain(t);
+    // Title block (36) + parts list (3 rows of 6, plus a gap) + notes (2 lines, plus a gap) are kept free.
+    const lowest = Math.min(...l.views.map((v) => v.box[1]));
+    expect(lowest).toBeGreaterThanOrEqual(10 + 36 + 21 + 12 + 5 - 1e-9);
+  });
+});
