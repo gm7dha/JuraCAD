@@ -125,6 +125,8 @@ function SettingsMenu() {
   const [open, setOpen] = useState(false);
   const unit = useLengthUnit();
   const [choice, setChoice] = useState<ThemeChoice>(themeChoice);
+  // The menu is placed on the page itself (fixed), so the top bar's edge can't cut it off.
+  const [at, setAt] = useState<{ top: number; right: number } | null>(null);
   useEffect(() => {
     if (!open) return;
     const close = (e: PointerEvent) => {
@@ -140,11 +142,21 @@ function SettingsMenu() {
   }, [open]);
   return (
     <div className="settings-wrap">
-      <button className={`icon-button settings-button${open ? " active" : ""}`} onClick={() => setOpen(!open)} aria-label="Settings" aria-expanded={open} title="Settings — units, light or dark">
+      <button
+        className={`icon-button settings-button${open ? " active" : ""}`}
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setAt({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+          setOpen(!open);
+        }}
+        aria-label="Settings"
+        aria-expanded={open}
+        title="Settings — units, light or dark"
+      >
         <Icons.Settings />
       </button>
       {open && (
-        <div className="settings-menu" role="dialog" aria-label="Settings">
+        <div className="settings-menu" role="dialog" aria-label="Settings" style={at ? { top: at.top, right: at.right } : undefined}>
           <div className="field-label">Units for this design</div>
           <div className="segmented" role="radiogroup" aria-label="Units">
             {(

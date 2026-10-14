@@ -629,8 +629,16 @@ try {
   await page.mouse.click(frontBox.x + frontBox.width - inset, bottom);
   await page.mouse.move(frontBox.x + frontBox.width / 2, bottom + 12 * mm, { steps: 3 });
   await page.mouse.click(frontBox.x + frontBox.width / 2, bottom + 12 * mm);
+  // Smart dimension: the left edge, then the right edge, gives the distance between them.
+  const midY = frontBox.y + frontBox.height / 2;
+  await page.mouse.click(frontBox.x + inset, midY);
+  await page.mouse.click(frontBox.x + frontBox.width - inset, midY);
+  await page.mouse.move(frontBox.x + frontBox.width / 2, frontBox.y - 10 * mm, { steps: 3 });
+  await page.mouse.click(frontBox.x + frontBox.width / 2, frontBox.y - 10 * mm);
   await page.keyboard.press("Escape");
   await page.waitForSelector(".drawing-dim-handle", { timeout: 5_000 });
+  const dimCount = await page.locator(".drawing-dim-handle").count();
+  if (dimCount !== 2) throw new Error(`expected 2 dimensions (corner to corner, edge to edge), found ${dimCount}`);
   const dimTexts = await page.locator(".drawing-text").evaluateAll((els) => els.map((e) => e.textContent ?? ""));
   const dimValue = dimTexts.find((t) => /^\d+(\.\d+)?$/.test(t));
   if (!dimValue) throw new Error(`no dimension on the drawing (texts: ${dimTexts.slice(0, 30).join(", ")})`);
@@ -663,6 +671,14 @@ try {
   await shot("asmdrawing");
   step = "switching to inches";
   await page.getByRole("button", { name: "Settings" }).click();
+  // The menu must really be on show (not cut off by the top bar).
+  const menuShows = await page.evaluate(() => {
+    const r = document.querySelector('[role="radio"][aria-checked]')?.closest(".settings-menu")?.querySelector("button")?.getBoundingClientRect();
+    if (!r) return false;
+    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return !!hit?.closest(".settings-menu");
+  });
+  if (!menuShows) throw new Error("the Settings menu is hidden behind something");
   await page.getByRole("radio", { name: "Inches" }).click();
   await page.keyboard.press("Escape");
   // The title block now says inches.

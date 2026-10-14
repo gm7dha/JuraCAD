@@ -9,7 +9,7 @@ import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { applyPlacement } from "../assembly/math";
 import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
-import { dimPoint, dragDimension, drawDimension, measureDim, placeLength, resolveDim, snapPoints } from "../drawing/dimensions";
+import { dimPoint, dragDimension, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
@@ -496,8 +496,15 @@ function findSnap(snaps: Snap[], at: P2, tol: number): Snap | null {
   return best;
 }
 
-/** A dimension being made: its view and first point, then its second. */
-type Pending = { view: string; a: P2; b?: P2 };
+/**
+ * A dimension being made: the first thing clicked on its view (a corner, an
+ * edge or a circle), then — once a second thing is clicked — the two points
+ * it measures between, ready to place.
+ */
+type Pending = { view: string; first: DimTarget; a?: P2; b?: P2; force?: "horizontal" | "vertical" };
+
+const targetOf = (s: Snap): DimTarget =>
+  s.kind === "point" ? { kind: "point", at: s.at } : s.kind === "line" ? { kind: "line", a: s.a, b: s.b } : { kind: "circle", centre: s.centre, r: s.r, full: s.full };
 
 /** The sheet itself, with views you can drag about. Scroll to zoom, middle- or right-drag to pan. */
 export function DrawingSheet({ drawing }: { drawing: Drawing }) {
@@ -591,40 +598,63 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     return v && p && layout ? (q: P2) => toSheetPoint(v, p, layout.scale, q[0], q[1]) : null;
   };
 
-  /** The length dimension the pending points and the pointer would make. */
+  /**
+   * The dimension the pending clicks and the pointer would make (like
+   * Onshape's single Dimension tool): a circle on its own gives its diameter
+   * (or an arc's radius), an edge on its own its length, and two things the
+   * distance between them.
+   */
   const previewDim = (): Dimension | null => {
-    if (!pending?.b || !cursor || !projections?.[pending.view]) return null;
+    if (!pending || !cursor || !projections?.[pending.view]) return null;
     const at = viewAt(pending.view);
     if (!at) return null;
     const p = projections[pending.view]!;
-    const place = placeLength(at(pending.a), at(pending.b), cursor);
-    return { id: "preview", view: pending.view, type: place.type, a: dimPoint(pending.a, p), b: dimPoint(pending.b, p), offset: place.offset };
+    const f = pending.first;
+    if (!pending.b && f.kind === "circle") {
+      const c = at(f.centre);
+      const angle = Math.round((Math.atan2(cursor[1] - c[1], cursor[0] - c[0]) * 180) / Math.PI);
+      const offset = Math.max(2, Math.round((Math.hypot(cursor[0] - c[0], cursor[1] - c[1]) - f.r * (layout?.scale ?? 1)) * 10) / 10);
+      return { id: "preview", view: pending.view, type: f.full ? "diameter" : "radius", a: dimPoint(f.centre, p), r: f.r, offset, angle };
+    }
+    const [a, b] = pending.b && pending.a ? [pending.a, pending.b] : f.kind === "line" ? [f.a, f.b] : [null, null];
+    if (!a || !b) return null;
+    const place = placeLength(at(a), at(b), cursor, pending.force);
+    return { id: "preview", view: pending.view, type: place.type, a: dimPoint(a, p), b: dimPoint(b, p), offset: place.offset };
   };
 
   const dimensionClick = (e: ReactPointerEvent<SVGSVGElement>) => {
     const here = toSheet(e);
-    const preview = previewDim();
-    if (preview) {
+    const s = useStore.getState();
+    const placeIt = () => {
+      const preview = previewDim();
+      if (!preview) return false;
       change((d) => putDimension(d, { ...preview, id: newId("dm") }));
       setPending(null);
+      return true;
+    };
+    // Two things picked: this click places the dimension.
+    if (pending?.b) {
+      placeIt();
       return;
     }
     const snap = findSnap(snaps, here, tolerance());
-    if (!snap) return;
-    const p = projections?.[snap.view];
-    if (!p) return;
-    if (snap.kind === "circle" && !pending) {
-      const angle = Math.round((Math.atan2(here[1] - snap.sheet[1], here[0] - snap.sheet[0]) * 180) / Math.PI);
-      change((d) => putDimension(d, { id: newId("dm"), view: snap.view, type: snap.full ? "diameter" : "radius", a: dimPoint(snap.centre, p), r: snap.r, offset: 8, angle }));
+    if (!pending) {
+      if (snap) setPending({ view: snap.view, first: targetOf(snap) });
       return;
     }
-    if (snap.kind === "line") {
-      setPending({ view: snap.view, a: snap.a, b: snap.b });
+    // A click away from the drawing places a circle's diameter or an edge's length.
+    if (!snap || snap.view !== pending.view || sameTarget(pending.first, targetOf(snap))) {
+      if (pending.first.kind !== "point" && placeIt()) return;
+      if (snap && snap.view !== pending.view) setPending({ view: snap.view, first: targetOf(snap) });
       return;
     }
-    const point = snap.kind === "point" ? snap.at : snap.centre;
-    if (pending && pending.view === snap.view && Math.hypot(point[0] - pending.a[0], point[1] - pending.a[1]) > 1e-9) setPending({ ...pending, b: point });
-    else setPending({ view: snap.view, a: point });
+    // A second thing: the distance between them.
+    const pair = pairFor(pending.first, targetOf(snap));
+    if ("error" in pair) {
+      s.showToast(pair.error, "info");
+      return;
+    }
+    setPending({ ...pending, a: pair.a, b: pair.b, force: pair.force });
   };
 
   /** Where the section tool would put a point: on a front/top/side view, snapped to corners and hole centres. */
@@ -735,16 +765,28 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   else if (drawing.views.length === 0) message = "Tick some views in the panel on the left.";
   else if (tool === "dimension")
     message = pending?.b
-      ? "Move to place the dimension (above or below for across, beside for up-and-down), then click."
-      : pending
-        ? "Now click a second point (or click a circle for its diameter). Esc to start again."
-        : "Click a corner, then another — or click an edge for its length, or a circle for its diameter.";
+      ? "Move to place the dimension, then click."
+      : pending?.first.kind === "circle"
+        ? "Click to place the size of the circle — or click an edge, corner or another circle to measure to its centre."
+        : pending?.first.kind === "line"
+          ? "Click to place the edge's length — or click a hole, corner or parallel edge to measure the distance to it."
+          : pending
+            ? "Now click a second corner, an edge or a circle. Esc to start again."
+            : "Click a circle, an edge or a corner. Then click to place it, or click a second thing to measure between them.";
   else if (tool === "section")
     message = cutStart
       ? "Click where the cutting line ends (it straightens when nearly across or up-and-down). Esc to start again."
       : "Click where the cutting line starts, on the front, top or a side view (corners and hole centres snap).";
 
   const hover = tool === "dimension" && cursor && !pending?.b ? findSnap(snaps, cursor, tolerance()) : null;
+  const firstMark = (() => {
+    if (tool !== "dimension" || !pending || pending.b) return null;
+    const at = viewAt(pending.view);
+    const f = pending.first;
+    if (!at) return null;
+    if (f.kind === "line") return { line: [at(f.a), at(f.b)] as [P2, P2] };
+    return { point: at(f.kind === "point" ? f.at : f.centre) };
+  })();
   const cutHover = tool === "section" && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor)) : null;
   const cutFrom = cutStart ? viewAt(cutStart.view)?.(cutStart.at) : null;
   const preview = previewDim();
@@ -850,8 +892,9 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
             </circle>
           ))}
         {previewPrims.map((p, i) => renderPrim(p, -1 - i, "#1f6fd1"))}
-        {pending && viewAt(pending.view) && (
-          <circle cx={viewAt(pending.view)!(pending.a)[0]} cy={H - viewAt(pending.view)!(pending.a)[1]} r={1.2} className="drawing-snap picked" />
+        {firstMark?.point && <circle cx={firstMark.point[0]} cy={H - firstMark.point[1]} r={1.2} className="drawing-snap picked" />}
+        {firstMark?.line && (
+          <line x1={firstMark.line[0][0]} y1={H - firstMark.line[0][1]} x2={firstMark.line[1][0]} y2={H - firstMark.line[1][1]} className="drawing-snap-line picked" />
         )}
         {hover && (
           <circle
