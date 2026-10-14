@@ -1,6 +1,6 @@
 import type { TopoPick } from "../geometry/topoRef";
-import type { MeshQuality } from "../model/types";
-import type { CheckResult, ExportResult, InstanceInput, Measurement, StepResult, StudioInput, ThreeMfResult, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { MeshQuality, ViewKind } from "../model/types";
+import type { CheckResult, ExportResult, InstanceInput, Measurement, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -114,6 +114,11 @@ export class KernelClient {
 
   exportStep(partIds: string[], colours?: Record<string, string>, instances?: InstanceInput[]): Promise<StepResult> {
     return this.send({ type: "exportStep", partIds, colours, instances }).then((body) => body.result as StepResult);
+  }
+
+  /** Drawing views of parts (or an assembly's placed copies). */
+  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], hidden: boolean): Promise<ViewProjection[]> {
+    return this.send({ type: "project", partIds, instances, views, hidden }).then((body) => body.result as ViewProjection[]);
   }
 
   /** Pairs of assembly instances that occupy the same space. */

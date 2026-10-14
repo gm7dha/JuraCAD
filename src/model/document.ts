@@ -6,6 +6,7 @@ import { FEATURE_DEFS, defaultParams, isSolidFeature } from "./features";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
 import { parseAssemblies } from "../assembly/assembly";
+import { parseDrawings } from "../drawing/drawing";
 import type { Feature, FeatureType, ImportedFile, Operation, PartSmithDocument, PartStudio } from "./types";
 import { MAIN_STUDIO } from "./studios";
 
@@ -306,5 +307,6 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     ...(partStudios.length ? { partStudios } : {}),
     ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),
     ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
+    ...(parseDrawings(d.drawings).length ? { drawings: parseDrawings(d.drawings) } : {}),
   };
 }

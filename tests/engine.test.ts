@@ -1045,3 +1045,32 @@ describe("assembly exports and clashes", () => {
     expect(engine.check("coarse").parts).toHaveLength(1);
   });
 });
+
+describe("drawing views", () => {
+  it("projects a part from each side, with hidden lines", () => {
+    engine = new GeometryEngine();
+    // A 40 × 30 × 20 block with a 10 mm blind hole from the top, at x = 10, y = 15.
+    const block = feature("box", { width: 40, depth: 30, height: 20 });
+    const hole = feature("cylinder", { diameter: 10, height: 15, x: 10, y: 15, z: 10 }, "remove");
+    engine.rebuild([block, hole]);
+    const [front, top, right, iso] = engine.project([], undefined, ["front", "top", "right", "iso"], true);
+    const near = (b: number[] | null, want: number[]) => b!.forEach((v, i) => expect(v).toBeCloseTo(want[i], 3));
+    near(front.bounds, [0, 0, 40, 20]);
+    near(top.bounds, [0, 0, 40, 30]);
+    near(right.bounds, [0, 0, 30, 20]);
+    expect(iso.bounds).not.toBeNull();
+    // Seen from the top, the hole is a visible circle on the left.
+    const c = top.circles.find((x) => !x.hidden && x.full);
+    expect(c).toBeDefined();
+    expect([c!.cx, c!.cy, c!.r].map((v) => Math.round(v * 1000) / 1000)).toEqual([10, 15, 5]);
+    // From the front it's hidden inside: dashed lines between x = 5 and 15, from z = 10 up.
+    expect(front.hidden.length).toBeGreaterThan(0);
+    const hx = front.hidden.flatMap((l) => l.filter((_, i) => i % 2 === 0));
+    expect(Math.min(...hx)).toBeCloseTo(5, 3);
+    expect(Math.max(...hx)).toBeCloseTo(15, 3);
+    const hy = front.hidden.flatMap((l) => l.filter((_, i) => i % 2 === 1));
+    expect(Math.min(...hy)).toBeCloseTo(10, 3);
+    // Without hidden lines there are none.
+    expect(engine.project([], undefined, ["front"], false)[0].hidden).toEqual([]);
+  });
+});

@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
-import { activeAssembly, activeFeatures, studioParts, useStore } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, studioParts, useStore } from "../model/store";
+import { DrawingPanel, DrawingSheet, DrawingToolbar } from "./DrawingUI";
 import { AssemblyPanel, AssemblyToolbar, InsertPanel, InstancePanel, MateDialog } from "./AssemblyUI";
 import { Viewport, viewportApi } from "../viewport/Viewport";
 import type { StandardView } from "../viewport/ViewCube";
@@ -132,6 +133,10 @@ function useShortcuts() {
         viewportApi.current?.setView(SHIFT_VIEWS[e.code]);
         return;
       }
+      if (activeDrawing(s)) {
+        if (e.key === "?") s.openDialog("help");
+        return;
+      }
       const asm = activeAssembly(s);
       if (asm) {
         if (e.key === "Escape") {
@@ -202,6 +207,7 @@ export function App() {
   const dialog = useStore((s) => s.dialog);
   const sketching = useStore((s) => s.sketch !== null);
   const assembly = useStore(activeAssembly);
+  const drawing = useStore(activeDrawing);
 
   useEffect(() => connectKernel(), []);
   useShortcuts();
@@ -228,11 +234,12 @@ export function App() {
   return (
     <div className="app">
       <TopBar />
-      {assembly ? <AssemblyToolbar /> : sketching ? <SketchToolbar /> : <Toolbar />}
+      {drawing ? <DrawingToolbar /> : assembly ? <AssemblyToolbar /> : sketching ? <SketchToolbar /> : <Toolbar />}
       <div className="workspace">
-        {assembly ? <AssemblyPanel assembly={assembly} /> : <FeaturePanel />}
+        {drawing ? <DrawingPanel drawing={drawing} /> : assembly ? <AssemblyPanel assembly={assembly} /> : <FeaturePanel />}
         <main className="viewport-area">
           <Viewport />
+          {drawing && <DrawingSheet drawing={drawing} />}
           {assembly ? (
             <>
               <InsertPanel />
@@ -248,9 +255,13 @@ export function App() {
             </>
           )}
           <EngineStatus />
-          <EmptyHint />
-          <SelectionInfo />
-          <SectionPanel />
+          {!drawing && (
+            <>
+              <EmptyHint />
+              <SelectionInfo />
+              <SectionPanel />
+            </>
+          )}
         </main>
       </div>
       <BottomTabs />

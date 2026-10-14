@@ -370,4 +370,11 @@ export const Icons = {
       <path d="M12 14v7M8 21h8" />
     </Svg>
   ),
+  Drawing: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="3" y="4" width="18" height="16" rx="1" />
+      <path d="M13 15h7M13 17.5h7M13 15v5" />
+      <rect x="6" y="7" width="5" height="4" />
+    </Svg>
+  ),
 };

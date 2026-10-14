@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-import { activeAssembly, useDocument, useStore } from "../model/store";
+import { activeAssembly, activeDrawing, useDocument, useStore } from "../model/store";
+import { exportDrawing } from "./DrawingUI";
 import { allFeatures } from "../model/studios";
 import { Icons } from "./icons";
 import { forgetFile, openFromFile, saveToFile } from "./fileActions";
@@ -16,6 +17,7 @@ export function TopBar() {
   const newDocument = useStore((s) => s.newDocument);
   const hasParts = useStore((s) => s.parts.length > 0);
   const inAssembly = useStore((s) => activeAssembly(s) !== null);
+  const inDrawing = useStore((s) => activeDrawing(s) !== null);
   const fileName = useStore((s) => s.fileName);
   const unsaved = useStore((s) => s.savedDoc !== s.history.present && allFeatures(s.history.present).length > 0);
   const platform = detectPlatform();
@@ -88,10 +90,15 @@ export function TopBar() {
       >
         <Icons.Save size={18} /> <span className="button-label">Save</span>
       </button>
-      <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts} title={inAssembly ? "Check the assembly: do any parts clash, and are all the mates working?" : "Check the model is a sound, closed solid before you export it"}>
+      <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts || inDrawing} title={inAssembly ? "Check the assembly: do any parts clash, and are all the mates working?" : "Check the model is a sound, closed solid before you export it"}>
         <Icons.Check size={18} /> <span className="button-label">Check model</span>
       </button>
-      <button className="primary-button" onClick={() => openDialog("export")} disabled={!hasParts} title="Download a STEP or STL file to send to a manufacturer or 3D printer">
+      <button
+        className="primary-button"
+        onClick={() => (inDrawing ? exportDrawing("pdf") : openDialog("export"))}
+        disabled={!hasParts}
+        title={inDrawing ? "Save this drawing as a PDF (the toolbar also offers SVG)" : "Download a STEP or STL file to send to a manufacturer or 3D printer"}
+      >
         <Icons.Export size={18} /> <span className="button-label">Export</span>
       </button>
       <button className="icon-button" onClick={() => openDialog("help")} aria-label="Help and shortcuts" title="Help and shortcuts (?)">

@@ -1212,6 +1212,102 @@ kbd {
   flex: 1;
 }
 
+/* ------------------------------------------------------------------ drawings */
+
+.drawing-area {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: #e4e8ed;
+}
+
+.drawing-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.drawing-paper {
+  fill: #fff;
+  stroke: #c9d0d8;
+  stroke-width: 0.3;
+  filter: drop-shadow(0 1px 3px rgba(20, 30, 45, 0.2));
+}
+
+.drawing-text {
+  font-family: Helvetica, Arial, sans-serif;
+  fill: #111;
+  user-select: none;
+}
+
+.drawing-view-handle {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 0.4;
+  cursor: move;
+}
+
+.drawing-view-handle:hover,
+.drawing-view-handle.dragging {
+  stroke: var(--accent);
+  stroke-dasharray: 2 1;
+}
+
+.drawing-message {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+
+.drawing-message.warn {
+  top: auto;
+  bottom: 16px;
+  color: #8a5a00;
+}
+
+.drawing-busy {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.drawing-fields,
+.drawing-views {
+  padding: 0 12px 10px;
+}
+
+.drawing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.drawing-field input,
+.drawing-field select,
+.drawing-field textarea {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: inherit;
+}
+
+.drawing-panel {
+  overflow-y: auto;
+}
+
 .connector-slot {
   display: flex;
   align-items: center;

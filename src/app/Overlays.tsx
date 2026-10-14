@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { activeAssembly, activeFeatures, activeStudioId, useStore } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, activeStudioId, useStore } from "../model/store";
 import { Icons } from "./icons";
 import { MAIN_STUDIO, MAIN_STUDIO_NAME } from "../model/studios";
 
@@ -105,7 +105,7 @@ function DocTab({
 }: {
   id: string | null;
   name: string;
-  kind: "studio" | "assembly";
+  kind: "studio" | "assembly" | "drawing";
   active: boolean;
   disabled: boolean;
   canDelete: boolean;
@@ -116,11 +116,12 @@ function DocTab({
   useEffect(() => {
     if (renaming) input.current?.select();
   }, [renaming]);
-  const Icon = kind === "studio" ? Icons.Part : Icons.Assembly;
+  const Icon = kind === "studio" ? Icons.Part : kind === "assembly" ? Icons.Assembly : Icons.Drawing;
   const finish = (keep: boolean) => {
     const st = useStore.getState();
     if (keep) {
       if (kind === "assembly" && id) st.renameAssembly(id, text);
+      else if (kind === "drawing" && id) st.renameDrawing(id, text);
       else st.renamePartStudio(id ?? MAIN_STUDIO, text);
     }
     setRenaming(false);
@@ -133,7 +134,7 @@ function DocTab({
           ref={input}
           className="tab-rename"
           value={text}
-          aria-label={kind === "studio" ? "Part Studio name" : "Assembly name"}
+          aria-label={kind === "studio" ? "Part Studio name" : kind === "assembly" ? "Assembly name" : "Drawing name"}
           onChange={(e) => setText(e.target.value)}
           onBlur={() => finish(true)}
           onKeyDown={(e) => {
@@ -161,6 +162,7 @@ function DocTab({
         if (!canDelete || disabled) return;
         if (!window.confirm(`Delete ${name}? (Undo brings it back.)`)) return;
         if (kind === "assembly" && id) useStore.getState().removeAssembly(id);
+        else if (kind === "drawing" && id) useStore.getState().removeDrawing(id);
         else if (id) useStore.getState().removePartStudio(id);
       }}
       title={`${name} — double-click to rename${canDelete ? ", right-click to delete" : ""}`}
@@ -180,10 +182,11 @@ function AddTabMenu({ disabled }: { disabled: boolean }) {
     window.addEventListener("mousedown", close);
     return () => window.removeEventListener("mousedown", close);
   }, [open]);
-  const pick = (what: "studio" | "assembly") => {
+  const pick = (what: "studio" | "assembly" | "drawing") => {
     setOpen(false);
     if (what === "studio") useStore.getState().addPartStudio();
-    else useStore.getState().addAssembly();
+    else if (what === "assembly") useStore.getState().addAssembly();
+    else useStore.getState().addDrawing();
   };
   return (
     <div className="add-tab" ref={ref}>
@@ -191,7 +194,7 @@ function AddTabMenu({ disabled }: { disabled: boolean }) {
         className="tab add"
         onClick={() => setOpen((o) => !o)}
         disabled={disabled}
-        title={disabled ? "Finish or cancel the open feature first" : "Add a Part Studio or an assembly"}
+        title={disabled ? "Finish or cancel the open feature first" : "Add a Part Studio, an assembly or a drawing"}
         aria-label="Add a tab"
         aria-expanded={open}
       >
@@ -205,6 +208,9 @@ function AddTabMenu({ disabled }: { disabled: boolean }) {
           <button role="menuitem" className="menu-item" onClick={() => pick("assembly")}>
             <Icons.Assembly size={16} /> Assembly
           </button>
+          <button role="menuitem" className="menu-item" onClick={() => pick("drawing")}>
+            <Icons.Drawing size={16} /> Drawing
+          </button>
         </div>
       )}
     </div>
@@ -216,6 +222,7 @@ export function BottomTabs() {
   const doc = useStore((s) => s.history.present);
   const studio = useStore(activeStudioId);
   const asm = useStore(activeAssembly);
+  const drawingId = useStore((s) => activeDrawing(s)?.id ?? null);
   const editing = useStore((s) => s.editing !== null);
   return (
     <nav className="bottom-tabs" aria-label="Document tabs">
@@ -225,6 +232,9 @@ export function BottomTabs() {
       ))}
       {(doc.assemblies ?? []).map((a) => (
         <DocTab key={a.id} id={a.id} name={a.name} kind="assembly" active={asm?.id === a.id} disabled={editing} canDelete />
+      ))}
+      {(doc.drawings ?? []).map((d) => (
+        <DocTab key={d.id} id={d.id} name={d.name} kind="drawing" active={drawingId === d.id} disabled={editing} canDelete />
       ))}
       <AddTabMenu disabled={editing} />
     </nav>
