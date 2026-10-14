@@ -129,6 +129,15 @@ function useShortcuts() {
           s.redo();
           return;
         }
+        // Ctrl/⌘ + D: duplicate the selected parts (Part Studio).
+        if (key === "d" && !e.shiftKey && !activeDrawing(s) && !activeAssembly(s)) {
+          const ids = s.selectedParts.length ? s.selectedParts : [...new Set(s.selection.map((x) => x.partId))];
+          if (ids.length) {
+            e.preventDefault();
+            s.duplicateParts(ids);
+            return;
+          }
+        }
       }
       if (mod || e.altKey || isTyping(e.target) || (s.dialog && s.dialog !== "insert")) return;
 
