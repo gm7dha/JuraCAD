@@ -3,6 +3,16 @@ import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
 import type { Feature, MeshQuality } from "../model/types";
 
+/** A copy of a part placed in an assembly, for exports and clash checks. */
+export interface InstanceInput {
+  id: string;
+  partId: string;
+  name: string;
+  position: [number, number, number];
+  /** Quaternion x, y, z, w. */
+  rotation: [number, number, number, number];
+}
+
 /** One Part Studio's features, for a rebuild. */
 export interface StudioInput {
   id: string;
@@ -85,10 +95,11 @@ export type { Measurement } from "../geometry/measureMath";
 export type KernelRequest =
   | { type: "rebuild"; studios: StudioInput[]; variables: Record<string, number>; partNames?: Record<string, string> }
   | { type: "check"; quality: MeshQuality; partIds?: string[] }
-  | { type: "exportStl"; partIds: string[]; quality: MeshQuality }
-  | { type: "exportStep"; partIds: string[]; colours?: Record<string, string> }
+  | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
+  | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[] }
+  | { type: "clashes"; instances: InstanceInput[] }
   | { type: "measure"; picks: TopoPick[] }
-  | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string> };
+  | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
 
 export type KernelResponseBody =
   | { type: "rebuild"; result: RebuildResult }
@@ -96,7 +107,8 @@ export type KernelResponseBody =
   | { type: "exportStl"; result: ExportResult }
   | { type: "exportStep"; result: StepResult }
   | { type: "measure"; result: Measurement }
-  | { type: "export3mf"; result: ThreeMfResult };
+  | { type: "export3mf"; result: ThreeMfResult }
+  | { type: "clashes"; result: NonNullable<CheckResult["overlaps"]> };
 
 /** Messages sent from the main thread to the worker. */
 export type ToWorker = { id: number; request: KernelRequest };

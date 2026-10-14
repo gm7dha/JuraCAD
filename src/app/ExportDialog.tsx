@@ -1,13 +1,14 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { getKernel } from "../kernel/connect";
 import type { CheckReport } from "../model/checkReport";
-import { useDocument, activeStudioId, studioParts, useStore } from "../model/store";
+import { useDocument, activeAssembly, studioParts, useStore } from "../model/store";
 import type { MeshQuality } from "../model/types";
 import { runCheck, ReportView } from "./CheckDialog";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
+import { instancesForKernel } from "./assemblySolve";
 
 const QUALITY: { value: MeshQuality; label: string; hint: string }[] = [
   { value: "coarse", label: "Coarse", hint: "Small file, visible facets on curves" },
@@ -39,36 +40,43 @@ type Stage = { kind: "options" } | { kind: "working"; text: string } | { kind: "
 
 export function ExportDialog() {
   const doc = useDocument();
-  // The Part Studio on show (all parts while an assembly is on show).
-  const parts = useStore((s) => (activeStudioId(s) ? studioParts(s) : s.parts));
+  const asm0 = activeAssembly(useStore.getState());
+  // The Part Studio on show, or the copies placed in the assembly on show.
+  const asm = useStore(activeAssembly);
+  const allParts = useStore((s) => s.parts);
+  const studio = useStore(studioParts);
+  const instances = useMemo(() => (asm ? instancesForKernel(asm, allParts) : null), [asm, allParts]);
+  const parts = instances ?? studio;
   const openDialog = useStore((s) => s.openDialog);
   const showToast = useStore((s) => s.showToast);
   const [which, setWhich] = useState<string>("all");
   const [quality, setQuality] = useState<MeshQuality>("normal");
   const [format, setFormat] = useState<ExportFormat>("step");
-  const [fileName, setFileName] = useState(() => safeFileName(doc.name));
+  const [fileName, setFileName] = useState(() => safeFileName(asm0 ? `${doc.name} ${asm0.name}` : doc.name));
   const [stage, setStage] = useState<Stage>({ kind: "options" });
   const [error, setError] = useState<string | null>(null);
 
   const close = () => openDialog(null);
-  const partIds = which === "all" ? parts.map((p) => p.id) : [which];
+  const partIds = instances ? [] : which === "all" ? parts.map((p) => p.id) : [which];
+  // In an assembly: every copy, or just the one chosen.
+  const chosenInstances = instances ? (which === "all" ? instances : instances.filter((i) => i.id === which)) : undefined;
 
   const doExport = async () => {
     setError(null);
     setStage({ kind: "working", text: `Creating ${format.toUpperCase()}…` });
     try {
       if (format === "step") {
-        const { step, partCount } = await getKernel().exportStep(partIds, doc.appearance);
+        const { step, partCount } = await getKernel().exportStep(partIds, doc.appearance, chosenInstances);
         const name = `${safeFileName(fileName, "partsmith")}.step`;
         downloadFile(step, name, "model/step");
         showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})`, "success");
       } else if (format === "3mf") {
-        const { data, triangleCount } = await getKernel().export3mf(partIds, quality, doc.name, doc.appearance);
+        const { data, triangleCount } = await getKernel().export3mf(partIds, quality, doc.name, doc.appearance, chosenInstances);
         const name = `${safeFileName(fileName, "partsmith")}.3mf`;
         downloadFile(data, name, "model/3mf");
         showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
       } else {
-        const { stl, triangleCount } = await getKernel().exportStl(partIds, quality);
+        const { stl, triangleCount } = await getKernel().exportStl(partIds, quality, chosenInstances);
         const name = `${safeFileName(fileName, "partsmith")}.stl`;
         downloadFile(stl, name, "model/stl");
         showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
@@ -86,7 +94,7 @@ export function ExportDialog() {
     setStage({ kind: "working", text: "Checking the model…" });
     try {
       const report = await runCheck();
-      const relevant = which === "all" ? report : { ...report, parts: report.parts.filter((p) => p.partId === which) };
+      const relevant = which === "all" || instances ? report : { ...report, parts: report.parts.filter((p) => p.partId === which) };
       const level = relevant.parts.some((p) => p.level === "error")
         ? "error"
         : relevant.parts.some((p) => p.level === "warn") || report.level === "warn"
@@ -140,7 +148,7 @@ export function ExportDialog() {
       <div className="form-grid">
         <label htmlFor="export-parts">Parts</label>
         <select id="export-parts" value={which} onChange={(e) => setWhich(e.target.value)} disabled={working}>
-          <option value="all">All parts ({parts.length}) in one file</option>
+          <option value="all">{asm ? `The whole assembly (${parts.length} parts, in place) in one file` : `All parts (${parts.length}) in one file`}</option>
           {parts.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name} only

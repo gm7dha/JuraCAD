@@ -15,7 +15,7 @@ import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operat
 import { extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
-import type { CheckResult, ExportResult, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult } from "./protocol";
+import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult } from "./protocol";
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep } from "./stepExport";
@@ -729,10 +729,56 @@ export class GeometryEngine {
   }
 
   /** One binary STL containing the chosen parts (all parts when the list is empty). */
-  exportStl(partIds: string[], quality: MeshQuality): ExportResult {
+  /**
+   * The shapes to export: the chosen parts (all when the list is empty), or —
+   * for an assembly — a copy of each instance's part moved into place.
+   * Copies are freed after `fn` runs.
+   */
+  private withChosen<T>(partIds: string[], instances: InstanceInput[] | undefined, fn: (items: { id: string; name: string; shape: Shape3D }[]) => T): T {
+    if (!instances?.length) {
+      const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
+      if (chosen.length === 0) throw new Error("There's nothing to export yet.");
+      return fn(chosen.map((p) => ({ id: p.id, name: p.name, shape: p.shape })));
+    }
+    const placed = this.placeInstances(instances);
+    try {
+      if (placed.length === 0) throw new Error("There's nothing in this assembly to export yet.");
+      return fn(placed.map((p) => ({ id: p.partId, name: p.name, shape: p.shape })));
+    } finally {
+      placed.forEach((p) => p.shape.delete());
+    }
+  }
+
+  /** A copy of each instance's part, turned and moved into its place in the assembly (caller frees them). */
+  private placeInstances(instances: InstanceInput[]): { id: string; partId: string; name: string; shape: Shape3D }[] {
+    const out: { id: string; partId: string; name: string; shape: Shape3D }[] = [];
+    for (const i of instances) {
+      const part = this.parts.find((p) => p.id === i.partId);
+      if (!part) continue;
+      let shape = part.shape.clone();
+      const [x, y, z, w] = i.rotation;
+      const s = Math.sqrt(Math.max(0, 1 - w * w));
+      const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
+      if (s > 1e-9 && Math.abs(angle) > 1e-9) shape = shape.rotate(angle, [0, 0, 0], [x / s, y / s, z / s]);
+      if (Math.abs(i.position[0]) + Math.abs(i.position[1]) + Math.abs(i.position[2]) > 0) shape = shape.translate(i.position);
+      out.push({ id: i.id, partId: i.partId, name: i.name, shape });
+    }
+    return out;
+  }
+
+  /** Pairs of assembly instances that occupy the same space. */
+  clashes(instances: InstanceInput[]): NonNullable<CheckResult["overlaps"]> {
+    const placed = this.placeInstances(instances);
+    try {
+      return this.findOverlaps(placed.map((p) => ({ id: p.id, name: p.name, featureIds: [], shape: p.shape })));
+    } finally {
+      placed.forEach((p) => p.shape.delete());
+    }
+  }
+
+  exportStl(partIds: string[], quality: MeshQuality, instances?: InstanceInput[]): ExportResult {
     const tol = MESH_TOLERANCES[quality];
-    const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
-    if (chosen.length === 0) throw new Error("There's nothing to export yet.");
+    return this.withChosen(partIds, instances, (chosen) => {
     const meshes = chosen.map((p) => {
       const m = p.shape.mesh(tol);
       return { vertices: m.vertices, triangles: withoutDegenerateTriangles(m.vertices, m.triangles) };
@@ -740,6 +786,7 @@ export class GeometryEngine {
     const triangleCount = meshes.reduce((n, m) => n + m.triangles.length / 3, 0);
     const names = chosen.map((p) => p.name).join(", ");
     return { stl: writeBinaryStl(meshes, `PartSmith export: ${names}`), triangleCount };
+    });
   }
 
   /** Measure one or two picked edges/faces: lengths, areas, round sizes, and the gap and angle between them. */
@@ -800,10 +847,9 @@ export class GeometryEngine {
   }
 
   /** One 3MF file with each chosen part as a separate, named object. */
-  export3mf(partIds: string[], quality: MeshQuality, title: string, colours: Record<string, string> = {}): ThreeMfResult {
+  export3mf(partIds: string[], quality: MeshQuality, title: string, colours: Record<string, string> = {}, instances?: InstanceInput[]): ThreeMfResult {
     const tol = MESH_TOLERANCES[quality];
-    const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
-    if (chosen.length === 0) throw new Error("There's nothing to export yet.");
+    return this.withChosen(partIds, instances, (chosen) => {
     const meshes = chosen.map((p) => {
       const m = p.shape.mesh(tol);
       return { name: p.name, vertices: m.vertices, triangles: withoutDegenerateTriangles(m.vertices, m.triangles), colour: colours[p.id] };
@@ -811,6 +857,7 @@ export class GeometryEngine {
     const bytes = write3mf(meshes, title);
     const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     return { data, triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0) };
+    });
   }
 
   /**
@@ -818,11 +865,11 @@ export class GeometryEngine {
    * STEP keeps the exact shape — curves stay curves — which is what most
    * manufacturers (machining, sheet metal, injection moulding) ask for.
    */
-  async exportStep(partIds: string[], colours: Record<string, string> = {}): Promise<StepResult> {
-    const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
-    if (chosen.length === 0) throw new Error("There's nothing to export yet.");
-    const bytes = writeStep(chosen.map((p) => ({ shape: p.shape, name: p.name, colour: colours[p.id] ?? DEFAULT_PART_COLOUR })));
-    return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: chosen.length };
+  async exportStep(partIds: string[], colours: Record<string, string> = {}, instances?: InstanceInput[]): Promise<StepResult> {
+    return this.withChosen(partIds, instances, (chosen) => {
+      const bytes = writeStep(chosen.map((p) => ({ shape: p.shape, name: p.name, colour: colours[p.id] ?? DEFAULT_PART_COLOUR })));
+      return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: chosen.length };
+    });
   }
 
   get partCount(): number {

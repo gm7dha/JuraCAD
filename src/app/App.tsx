@@ -254,7 +254,7 @@ export function App() {
         </main>
       </div>
       <BottomTabs />
-      {dialog === "check" && !assembly && <CheckDialog />}
+      {dialog === "check" && <CheckDialog />}
       {dialog === "export" && <ExportDialog />}
       {dialog === "help" && <HelpDialog />}
       {dialog === "variables" && <VariablesDialog />}

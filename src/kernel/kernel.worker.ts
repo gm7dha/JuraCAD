@@ -49,22 +49,25 @@ ctx.onmessage = (event) => {
           body = { type: "check", result: engine.check(request.quality, request.partIds) };
           break;
         case "exportStl": {
-          const result = engine.exportStl(request.partIds, request.quality);
+          const result = engine.exportStl(request.partIds, request.quality, request.instances);
           transfer.push(result.stl);
           body = { type: "exportStl", result };
           break;
         }
         case "export3mf": {
-          const result = engine.export3mf(request.partIds, request.quality, request.title, request.colours);
+          const result = engine.export3mf(request.partIds, request.quality, request.title, request.colours, request.instances);
           transfer.push(result.data);
           body = { type: "export3mf", result };
           break;
         }
+        case "clashes":
+          body = { type: "clashes", result: engine.clashes(request.instances) };
+          break;
         case "measure":
           body = { type: "measure", result: engine.measure(request.picks) };
           break;
         case "exportStep": {
-          const result = await engine.exportStep(request.partIds, request.colours);
+          const result = await engine.exportStep(request.partIds, request.colours, request.instances);
           transfer.push(result.step);
           body = { type: "exportStep", result };
           break;
