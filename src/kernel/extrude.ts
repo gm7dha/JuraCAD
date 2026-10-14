@@ -25,7 +25,7 @@ import {
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { findRegions, type Loop } from "../sketch/regions";
 import type { SketchData } from "../sketch/types";
-import { edgesOf as edgesOfShape, facesOf } from "./topology";
+import { edgesOf as edgesOfShape, facesOf, wiresOf } from "./topology";
 
 export interface ExtrudeOptions {
   depth: number;
@@ -228,13 +228,21 @@ function deleteLoopFaces(shape: Shape3D, picked: Face[]): Shape3D {
   try {
     for (const f of kept) {
       stage = "outer wire";
-      const outer = f.outerWire();
+      // The outer loop is the one with the biggest extent; the rest are holes in the face.
+      const wires = wiresOf(f);
+      const size = (w: Wire) => {
+        const b = w.boundingBox;
+        const [lo, hi] = b.bounds as [number[], number[]];
+        b.delete();
+        return Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+      };
+      const outer = wires.reduce((m, w) => (size(w) > size(m) ? w : m), wires[0]);
       stage = "touches";
       if (touches(outer)) {
         throw new Error("Only holes and bosses (faces in a loop of their own) can be deleted for now — a fillet or chamfer blends into the faces next to it.");
       }
       stage = "inner wires";
-      const inner = f.innerWires();
+      const inner = wires.filter((w) => w !== outer);
       const keep = inner.filter((w) => !touches(w));
       if (keep.length === inner.length) {
         stage = "clone";

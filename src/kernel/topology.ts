@@ -5,7 +5,7 @@
  * skip repeats, which gets very slow on shapes with thousands of faces (such
  * as imported STL files). Here repeats are found by hash first.
  */
-import { cast, getOC, type Edge, type Face, type Shape3D } from "replicad";
+import { cast, getOC, type Edge, type Face, type Wire, type Shape3D } from "replicad";
 
 const HASH_MAX = 2147483647;
 
@@ -34,4 +34,5 @@ function list<T>(shape: { wrapped: unknown }, kind: "TopAbs_FACE" | "TopAbs_EDGE
 
 export const facesOf = (shape: { wrapped: unknown }): Face[] => list<Face>(shape, "TopAbs_FACE");
 export const edgesOf = (shape: { wrapped: unknown }): Edge[] => list<Edge>(shape, "TopAbs_EDGE");
+export const wiresOf = (shape: { wrapped: unknown }): Wire[] => list<Wire>(shape, "TopAbs_WIRE");
 export const solidsOf = (shape: { wrapped: unknown }): Shape3D[] => list<Shape3D>(shape, "TopAbs_SOLID");
