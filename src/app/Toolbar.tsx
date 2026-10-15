@@ -41,6 +41,7 @@ const SOLIDS: { type: FeatureType; label: string; icon: ReactNode }[] = [
   { type: "box", label: "Box", icon: <Icons.Box /> },
   { type: "cylinder", label: "Cylinder", icon: <Icons.Cylinder /> },
   { type: "sphere", label: "Sphere", icon: <Icons.Sphere /> },
+  { type: "coil", label: "Coil", icon: <Icons.Coil /> },
 ];
 
 

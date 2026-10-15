@@ -382,6 +382,11 @@ export const Icons = {
       <circle cx="21" cy="7" r="1.4" fill="currentColor" />
     </Svg>
   ),
+  Coil: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M6 4c4 0 12 1 12 3s-12 1-12 3 12 1 12 3-12 1-12 3 12 1 12 3-8 1-12 1" />
+    </Svg>
+  ),
   ChevronLeft: (p: IconProps) => (
     <Svg {...p}>
       <path d="M15 5l-7 7 7 7" />

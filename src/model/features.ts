@@ -275,6 +275,21 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "angle", label: "Tilt", defaultValue: "30", group: "size", unit: "°" },
     ],
   },
+  coil: {
+    type: "coil",
+    label: "Coil",
+    namePrefix: "Coil",
+    description: "A spring or coil: round wire wound in a helix. Its bottom sits at the position you give, winding up.",
+    params: [
+      { key: "diameter", label: "Coil diameter", defaultValue: "20", positive: true, group: "size" },
+      { key: "wire", label: "Wire thickness", defaultValue: "2", positive: true, group: "size" },
+      { key: "pitch", label: "Pitch (rise per turn)", defaultValue: "5", positive: true, group: "size" },
+      { key: "turns", label: "Turns", defaultValue: "5", positive: true, group: "size" },
+      { key: "x", label: "Centre X", defaultValue: "0", group: "position" },
+      { key: "y", label: "Centre Y", defaultValue: "0", group: "position" },
+      { key: "z", label: "Bottom Z", defaultValue: "0", group: "position" },
+    ],
+  },
   sphere: {
     type: "sphere",
     label: "Sphere",
