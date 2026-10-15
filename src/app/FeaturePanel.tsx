@@ -506,6 +506,7 @@ function PartsList({
         : { label: `Make these ${n} see-through`, action: () => st().setPartsTransparent(group, true) },
       "divider",
       { label: `Duplicate these ${n} parts`, action: () => st().duplicateParts(group) },
+      { label: `Merge these ${n} parts into one`, action: () => st().mergeParts(group) },
       { label: `Delete these ${n} parts…`, action: () => st().startCreate("deletePart") },
       { label: `Export these ${n} parts…`, action: () => st().openDialog("export") },
       { label: "Clear selection", action: () => st().setSelectedParts([]) },
@@ -546,6 +547,11 @@ function PartsList({
           <button type="button" className="text-button small-text" onClick={() => st().duplicateParts(selected)}>
             Duplicate
           </button>
+          {selected.length > 1 && (
+            <button type="button" className="text-button small-text" onClick={() => st().mergeParts(selected)} title="Join the selected parts into one part">
+              Merge
+            </button>
+          )}
           <button type="button" className="text-button small-text" onClick={() => st().openDialog("export")}>
             Export…
           </button>
