@@ -142,6 +142,14 @@ export const Icons = {
       <path d="M17 3v1.5" strokeDasharray="1 1.5" />
     </Svg>
   ),
+  CurvePattern: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 19c4-10 14-10 18-14" strokeDasharray="2 2" />
+      <rect x="2" y="16" width="4" height="4" />
+      <rect x="9.5" y="9.5" width="4" height="4" />
+      <rect x="17" y="3" width="4" height="4" />
+    </Svg>
+  ),
   Configurations: (p: IconProps) => (
     <Svg {...p}>
       <rect x="3" y="4" width="18" height="16" rx="1.5" />

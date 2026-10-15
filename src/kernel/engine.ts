@@ -21,6 +21,7 @@ import { textSolid, wrappedTextSolid, wrapStart, type Cylinder } from "./textSol
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
+import { pathStations, walkPath } from "../sketch/pathSample";
 import { fastenerName, fastenerSize } from "../model/fasteners";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
@@ -833,6 +834,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
     case "mirror":
     case "linearPattern":
     case "circularPattern":
+    case "curvePattern":
       throw new Error("This feature doesn't make a solid of its own.");
     case "import": {
       if (!feature.import) throw new Error("This import has lost its file. Delete it and import the file again.");
@@ -1667,7 +1669,36 @@ export class GeometryEngine {
       const axis = AXES[feature.pattern?.axis ?? "x"];
       const sign = feature.pattern?.flip ? -1 : 1;
       const count = values.count;
-      if (feature.type === "linearPattern") {
+      if (feature.type === "curvePattern") {
+        const sk = all.find((f) => f.id === feature.pathRef);
+        if (!feature.pathRef || !sk) return "Choose the sketch with the path to follow.";
+        if (all.indexOf(sk) > all.indexOf(feature)) return `${sk.name} comes after this curve pattern in the list.`;
+        if (sk.suppressed || !sk.sketch?.plane) return `${sk.name} can't be used as the path.`;
+        const walk = walkPath(sk.sketch.plane, sk.sketch.data);
+        if (typeof walk === "string") return walk;
+        const stations = pathStations(walk, count);
+        const first = walk.at(0);
+        const flipped = !!feature.pattern?.flip;
+        // From the end instead of the start.
+        const along = (d: number) => walk.at(flipped ? walk.length - d : d);
+        const origin = flipped ? walk.at(walk.length) : first;
+        for (const d of stations.slice(1)) {
+          const here = along(d);
+          const move: Vec3 = [here.point[0] - origin.point[0], here.point[1] - origin.point[1], here.point[2] - origin.point[2]];
+          if (feature.pattern?.follow) {
+            // Turn with the path: by the angle between the directions at the start and here, about the start.
+            const t0 = origin.tangent;
+            const t1 = here.tangent;
+            const axis = cross3(t0, t1);
+            const sin = Math.hypot(...axis);
+            const angle = (Math.atan2(sin, dot3(t0, t1)) * 180) / Math.PI;
+            placements.push((s) => {
+              const turned = sin > 1e-9 ? s.rotate(angle, origin.point, axis) : s;
+              return turned.translate(move);
+            });
+          } else placements.push((s) => s.translate(move));
+        }
+      } else if (feature.type === "linearPattern") {
         for (let i = 1; i < count; i++) {
           const d = values.spacing * i * sign;
           placements.push((s) => s.translate([axis[0] * d, axis[1] * d, axis[2] * d]));

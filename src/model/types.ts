@@ -7,7 +7,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -137,7 +137,7 @@ export interface Feature {
   /** Transform: move and/or turn a part (or a copy of it). */
   transform?: { partId?: string; axis: Axis; about: "origin" | "centre"; copy: boolean };
   /** Linear and circular patterns: the features to repeat, and along or around which axis. */
-  pattern?: { sources: string[]; axis: Axis; flip: boolean };
+  pattern?: { sources: string[]; axis: Axis; flip: boolean; follow?: boolean };
   /** Mirror: the features to mirror, and the plane to mirror them across. */
   mirror?: { sources: string[]; plane: SketchPlane };
   /** Import: the file, stored in the design. */

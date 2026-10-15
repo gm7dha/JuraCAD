@@ -98,12 +98,16 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.operation = "remove";
     feature.hole = { sketchRef: sketches[sketches.length - 1]?.id, kind: "simple", standard: "M3", fit: "clearance", end: "throughAll", flip: false };
   }
-  if (type === "mirror" || type === "linearPattern" || type === "circularPattern") {
+  if (type === "mirror" || type === "linearPattern" || type === "circularPattern" || type === "curvePattern") {
     feature.operation = "add";
     const solids = doc.features.filter((f) => isSolidFeature(f.type) && !f.suppressed);
     const sources = solids.length ? [solids[solids.length - 1].id] : [];
     if (type === "mirror") feature.mirror = { sources, plane: { kind: "default", name: "Right" } };
     else feature.pattern = { sources, axis: type === "circularPattern" ? "z" : "x", flip: false };
+    if (type === "curvePattern") {
+      const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+      feature.pathRef = sketches[sketches.length - 1]?.id;
+    }
   }
   if (type === "fillet" || type === "chamfer" || type === "shell") {
     feature.operation = "add";
@@ -290,10 +294,11 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       };
     }
     const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
-    if (feature.type === "linearPattern" || feature.type === "circularPattern") {
+    if (feature.type === "linearPattern" || feature.type === "circularPattern" || feature.type === "curvePattern") {
       const pt = f.pattern as Record<string, unknown> | undefined;
       const axis = pt?.axis === "y" || pt?.axis === "z" ? pt.axis : pt?.axis === "x" ? "x" : feature.type === "circularPattern" ? "z" : "x";
-      feature.pattern = { sources: ids(pt?.sources), axis, flip: pt?.flip === true };
+      feature.pattern = { sources: ids(pt?.sources), axis, flip: pt?.flip === true, ...(pt?.follow === true ? { follow: true } : {}) };
+      if (feature.type === "curvePattern" && typeof f.pathRef === "string") feature.pathRef = f.pathRef;
     }
     if (feature.type === "mirror") {
       const mr = f.mirror as Record<string, unknown> | undefined;

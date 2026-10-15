@@ -25,6 +25,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   transform: Icons.Move,
   linearPattern: Icons.LinearPattern,
   circularPattern: Icons.CircularPattern,
+  curvePattern: Icons.CurvePattern,
   chamfer: Icons.Chamfer,
   import: Icons.Import,
   sweep: Icons.Sweep,

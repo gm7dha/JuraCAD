@@ -785,6 +785,29 @@ function PatternOptions() {
           </select>
           <p className="dialog-hint field-hint">Or click a plane or flat face in the 3D view.</p>
         </fieldset>
+      ) : draft.type === "curvePattern" ? (
+        <fieldset className="param-group">
+          <legend>Along the path</legend>
+          <select className="full-select" aria-label="Path sketch" value={draft.pathRef ?? ""} onChange={(e) => setDraftField({ pathRef: e.target.value || undefined })}>
+            <option value="">Choose a sketch…</option>
+            {features
+              .filter((f) => f.type === "sketch" && f.id !== draft.id)
+              .map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+          </select>
+          <label className="check-row">
+            <input type="checkbox" checked={!!pattern.follow} onChange={(e) => setDraftField({ pattern: { ...pattern, follow: e.target.checked } })} />
+            Turn the copies to follow the path
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={pattern.flip} onChange={(e) => setDraftField({ pattern: { ...pattern, flip: e.target.checked } })} />
+            Start from the other end
+          </label>
+          <p className="dialog-hint field-hint">The copies are spaced evenly from one end of the path to the other (or all the way round a closed one). Put the original at the start of the path.</p>
+        </fieldset>
       ) : (
         <fieldset className="param-group">
           <legend>{draft.type === "circularPattern" ? "Around the axis" : "Along the axis"}</legend>
