@@ -212,6 +212,8 @@ export interface Drawing {
   sections?: SectionCut[];
   /** False hides centre marks and centre lines (missing = shown). */
   centreLines?: boolean;
+  /** Revision history, oldest first (shown in a table above the title block). */
+  revisions?: DrawingRevision[];
   /** Tag the holes on one view and list their positions and sizes in a table. */
   holeTable?: boolean;
   /** False hides the numbered balloons on assembly drawings (missing = shown). */
@@ -297,6 +299,14 @@ export interface DimPoint {
   at: [number, number];
   /** Where it is as a fraction of the view's width and height. */
   rel: [number, number];
+}
+
+/** One change to a drawing: its letter (or number), what changed, and when. */
+export interface DrawingRevision {
+  id: string;
+  rev: string;
+  description: string;
+  date: string;
 }
 
 /** A Part Studio tab after the first: its own list of features, making its own parts. */

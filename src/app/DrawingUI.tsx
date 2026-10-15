@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
-import { arrangeViews, putDimension, putNote, removeDimension, removeNote, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
+import { arrangeViews, nextRevision, putDimension, putNote, removeDimension, removeNote, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
@@ -20,7 +20,7 @@ import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { DetailView, Dimension, Drawing, PartSmithDocument, SectionCut } from "../model/types";
+import type { DetailView, Dimension, Drawing, DrawingRevision, PartSmithDocument, SectionCut } from "../model/types";
 import { addSection, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
@@ -584,6 +584,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
       </section>
       <SectionsList drawing={drawing} change={change} />
       <DetailsList drawing={drawing} change={change} />
+      <RevisionsList drawing={drawing} change={change} />
       <section className="panel-section">
         <h3>Title block</h3>
         <div className="drawing-fields">
@@ -594,6 +595,48 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
         </div>
       </section>
     </aside>
+  );
+}
+
+/** The drawing's revision history: add a revision (next letter, today's date), edit or remove one. */
+function RevisionsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
+  const revs = drawing.revisions ?? [];
+  const put = (list: DrawingRevision[]) =>
+    change((d) => {
+      const { revisions: _old, ...rest } = d;
+      return list.length ? { ...rest, revisions: list } : rest;
+    });
+  const edit = (id: string, patch: Partial<DrawingRevision>) => put(revs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  return (
+    <section className="panel-section">
+      <h3>
+        Revisions
+        <button
+          type="button"
+          className="text-button small-text"
+          onClick={() => put([...revs, { id: newId("rv"), rev: nextRevision(drawing), description: revs.length ? "" : "First issue", date: today() }])}
+          title="Add a revision (shown in a table above the title block)"
+        >
+          + Add
+        </button>
+      </h3>
+      {revs.length === 0 ? (
+        <p className="panel-hint">Record changes to the drawing: each revision gets a letter, a description and a date.</p>
+      ) : (
+        <ul className="revision-list">
+          {[...revs].reverse().map((r) => (
+            <li key={r.id} className="revision-row">
+              <input className="revision-rev" value={r.rev} aria-label="Revision" onChange={(e) => edit(r.id, { rev: e.target.value.slice(0, 8) })} />
+              <input value={r.description} aria-label={`Revision ${r.rev} description`} placeholder="What changed" onChange={(e) => edit(r.id, { description: e.target.value.slice(0, 200) })} />
+              <input className="revision-date" value={r.date} aria-label={`Revision ${r.rev} date`} onChange={(e) => edit(r.id, { date: e.target.value.slice(0, 20) })} />
+              <button type="button" className="icon-button small" onClick={() => put(revs.filter((x) => x.id !== r.id))} aria-label={`Remove revision ${r.rev}`} title="Remove">
+                <Icons.Cross size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
