@@ -1,3 +1,4 @@
+import { deleteItems } from "../sketch/ops";
 import { create } from "zustand";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -101,6 +102,8 @@ export interface SketchSession {
   message: { text: string; tone: "info" | "error" } | null;
   /** Dimension whose value box is open. */
   editingDimension: string | null;
+  /** Dimensions offered just after drawing a shape (their value box opens straight away): Enter keeps one, Esc drops them. */
+  provisional: string[];
   /** Polygon tool: number of sides. */
   polygonSides: number;
   /** Corner-rounding tool: radius as typed. */
@@ -220,6 +223,12 @@ export interface AppState {
   setSketchMessage: (text: string | null, tone?: "info" | "error") => void;
   setSketchConstruction: (on: boolean) => void;
   setEditingDimension: (id: string | null) => void;
+  /** Offer these new dimensions (see SketchSession.provisional); the first one's box opens. */
+  offerDimensions: (ids: string[]) => void;
+  /** Keep the offered dimension being edited, and move on to the next one offered (if any). */
+  keepOfferedDimension: (id: string) => void;
+  /** Drop any offered dimensions not kept yet. */
+  discardOfferedDimensions: () => void;
   setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
@@ -391,6 +400,7 @@ const newSession = (): SketchSession => ({
   construction: false,
   message: null,
   editingDimension: null,
+  provisional: [],
   polygonSides: 6,
   filletRadius: "2",
   offsetDistance: "2",
@@ -632,14 +642,31 @@ export const useStore = create<AppState>((set, get) => {
         };
       }),
 
-    setSketchTool: (tool) =>
-      set((s) => (s.sketch ? { sketch: { ...s.sketch, tool, message: null, editingDimension: null } } : {})),
+    setSketchTool: (tool) => {
+      get().discardOfferedDimensions();
+      set((s) => (s.sketch ? { sketch: { ...s.sketch, tool, message: null, editingDimension: null } } : {}));
+    },
     setSketchSelection: (selection) => set((s) => (s.sketch ? { sketch: { ...s.sketch, selection } } : {})),
     setSketchMessage: (text, tone = "info") =>
       set((s) => (s.sketch ? { sketch: { ...s.sketch, message: text ? { text, tone } : null } } : {})),
     setSketchConstruction: (construction) => set((s) => (s.sketch ? { sketch: { ...s.sketch, construction } } : {})),
     setSketchOptions: (patch) => set((s) => (s.sketch ? { sketch: { ...s.sketch, ...patch } } : {})),
     setEditingDimension: (editingDimension) => set((s) => (s.sketch ? { sketch: { ...s.sketch, editingDimension } } : {})),
+    offerDimensions: (ids) => set((s) => (s.sketch ? { sketch: { ...s.sketch, provisional: ids, editingDimension: ids[0] ?? null } } : {})),
+    keepOfferedDimension: (id) =>
+      set((s) => {
+        if (!s.sketch) return {};
+        const provisional = s.sketch.provisional.filter((x) => x !== id);
+        return { sketch: { ...s.sketch, provisional, editingDimension: provisional[0] ?? null } };
+      }),
+    discardOfferedDimensions: () => {
+      const s = get();
+      const data = s.editing?.draft.sketch?.data;
+      if (!s.sketch || !data || s.sketch.provisional.length === 0) return;
+      const gone = s.sketch.provisional.filter((id) => data.constraints.some((c) => c.id === id));
+      set({ sketch: { ...s.sketch, provisional: [], editingDimension: null } });
+      if (gone.length) get().updateSketch(deleteItems(data, gone), { record: false });
+    },
 
     setDraftParam: (key, value) =>
       set((s) =>
@@ -674,6 +701,8 @@ export const useStore = create<AppState>((set, get) => {
       ),
 
     commitDraft: () => {
+      // Dimensions offered but not kept aren't part of the sketch.
+      get().discardOfferedDimensions();
       const { editing } = get();
       if (!editing) return false;
       if (editing.draft.type === "sketch" && !editing.draft.sketch?.plane) {

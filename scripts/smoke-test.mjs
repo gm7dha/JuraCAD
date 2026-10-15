@@ -271,6 +271,10 @@ try {
   await page.mouse.move(cx + 40, cy - 20, { steps: 4 });
   await page.mouse.click(cx + 90, cy - 60);
   await page.waitForFunction(() => document.querySelector(".sketch-status")?.textContent?.includes("1 closed shape"));
+  // Its sizes are offered straight away; Esc skips them.
+  await page.locator(".dimension-editor input").waitFor({ timeout: 5_000 });
+  await page.keyboard.press("Escape");
+  await page.locator(".dimension-editor").waitFor({ state: "detached", timeout: 5_000 });
 
   step = "dimensioning the rectangle's width by typing";
   await page.keyboard.press("d");
@@ -862,6 +866,16 @@ try {
     await page.mouse.click(mx - 100, my - 50);
     let now = await curves();
     if (now.filter((c) => c === "line").length !== 4 || !now.includes("line*")) throw new Error(`centre rectangle made ${now.join(",")}`);
+    // Type its width as soon as it's drawn (Enter), then skip the height (Esc).
+    const sizeBox = page.locator(".dimension-editor input");
+    await sizeBox.waitFor({ timeout: 5_000 });
+    await sizeBox.fill("30");
+    await sizeBox.press("Enter");
+    await sizeBox.waitFor({ timeout: 5_000 });
+    await page.keyboard.press("Escape");
+    await page.locator(".dimension-editor").waitFor({ state: "detached", timeout: 5_000 });
+    const kept = await page.evaluate(() => window.partsmithStore.getState().editing.draft.sketch.data.constraints.filter((c) => c.value !== undefined).map((c) => c.value));
+    if (kept.length !== 1 || !/^30( in)?$/.test(kept[0])) throw new Error(`typing the width straight after drawing kept ${JSON.stringify(kept)}`);
 
     await page.keyboard.press("l");
     await page.mouse.click(mx - 150, my + 80);

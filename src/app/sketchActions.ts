@@ -83,6 +83,10 @@ export function toggleSketchConstruction() {
 export function sketchEscape() {
   const s = useStore.getState();
   if (!s.sketch) return;
+  if (s.sketch.provisional.length) {
+    s.discardOfferedDimensions();
+    return;
+  }
   if (s.sketch.editingDimension) {
     s.setEditingDimension(null);
     return;
