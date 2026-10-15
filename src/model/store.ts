@@ -30,7 +30,7 @@ import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolve
 import { defaultAxis } from "../sketch/axis";
 import type { Assembly, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
-import { addAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removeRelation, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
+import { addAssembly, applyPosition, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
@@ -286,6 +286,10 @@ export interface AppState {
   /** Add or change a mate relation in the assembly on show (one undo step). */
   putRelation: (relation: MateRelation) => void;
   removeRelation: (id: string) => void;
+  /** Named positions in the assembly on show: save the mates' amounts now, go back to one, or forget one. */
+  savePosition: (name: string) => void;
+  applyPosition: (id: string) => void;
+  removePosition: (id: string) => void;
   /** Show and type lengths in millimetres or inches. */
   setUnits: (unit: LengthUnit) => void;
   /** Light or dark appearance (see app/theme.ts; not saved in designs). */
@@ -990,6 +994,18 @@ export const useStore = create<AppState>((set, get) => {
         const { units: _old, ...rest } = doc;
         return unit === "in" ? { ...rest, units: "in" } : rest;
       }),
+    savePosition: (name) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => savePosition(doc, asm.id, newId("np"), name));
+    },
+    applyPosition: (id) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => applyPosition(doc, asm.id, id));
+    },
+    removePosition: (id) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => removePosition(doc, asm.id, id));
+    },
     putRelation: (relation) => {
       const asm = activeAssembly(get());
       if (asm) change((doc) => putRelation(doc, asm.id, relation));
