@@ -6,6 +6,15 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.13 — Replicate, configured parts, GD&T and more sketch tools · commit `32d8dda`
+
+- Assemblies: **Replicate** (a part copied into every matching hole, each with its own mate) and parts shown in
+  **any configuration** (a Small and a Large bracket side by side; counted separately in the parts list).
+- Sketch: **3-point circle**, **centre-point arc** and **aligned rectangle**.
+- Part Studio: **curve pattern** (repeat along a sketched path) and **variable fillets** (a different radius at
+  each end).
+- Drawings: **datum symbols**, **GD&T feature control frames** and **surface finish** marks.
+
 ## v0.12 — Springs, curves, hole callouts, patterns and configurations · commit `d38571a`
 
 - Part Studio: **Coil** (springs), **merge parts** into one, **configurations** (versions of a design — variable
