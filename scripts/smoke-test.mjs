@@ -820,6 +820,15 @@ try {
     });
     await shot("measureparts");
     await page.keyboard.press("Escape");
+    // Whole parts picked in the Parts list are measured too.
+    await page.locator(".part-row .feature-name").nth(0).click();
+    await page.locator(".part-row .feature-name").nth(1).click({ modifiers: ["Control"] });
+    await page.waitForFunction(() => document.querySelector(".measure-panel")?.textContent?.includes("volume"), null, { timeout: 10_000 }).catch(async () => {
+      const panel = await page.locator(".measure-panel").innerText().catch(() => "(no measure panel)");
+      throw new Error(`two parts picked in the Parts list showed no measurements: ${panel.replace(/\n/g, " | ")}`);
+    });
+    const clearParts = page.getByRole("button", { name: "Clear selection" });
+    if (await clearParts.count()) await clearParts.click();
   }
 
   step = "selecting parts by dragging a box in the 3D view";

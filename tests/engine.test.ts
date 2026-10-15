@@ -996,6 +996,22 @@ describe("measuring between parts", () => {
     expect(m2.items).toHaveLength(2);
     expect(m2.distance).toBeCloseTo(0, 6);
   });
+
+  it("measures whole parts: their volumes, the gap, and how much they overlap", () => {
+    const a = feature("box", { width: 10, depth: 10, height: 10 });
+    const apart = feature("box", { width: 10, depth: 10, height: 10, x: 25, y: 0, z: 0 });
+    const r = build([a, apart]);
+    const m = engine.measureParts(r.parts.map((p) => p.id));
+    expect(m.items.map((i) => Math.round(i.volume!))).toEqual([1000, 1000]);
+    expect(m.distance).toBeCloseTo(15, 6);
+    expect(m.overlap).toBe(undefined);
+    expect(m.centreDistance!.total).toBeCloseTo(25, 6);
+    const over = feature("box", { width: 10, depth: 10, height: 10, x: 5, y: 0, z: 0 });
+    const r2 = build([a, over]);
+    const m2 = engine.measureParts(r2.parts.map((p) => p.id));
+    expect(m2.distance).toBeCloseTo(0, 6);
+    expect(m2.overlap).toBeCloseTo(500, 3);
+  });
 });
 
 describe("delete part", () => {

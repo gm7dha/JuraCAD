@@ -1786,6 +1786,45 @@ export class GeometryEngine {
     return result;
   }
 
+  /** Measure whole parts: each one's size, and between two of them the gap (0 if touching) and any overlap. */
+  measureParts(partIds: string[]): Measurement {
+    const chosen = partIds.slice(0, 2).map((id) => this.parts.find((p) => p.id === id)).filter((p): p is BuiltPart => !!p);
+    const items: MeasuredItem[] = chosen.map((p) => {
+      const b = boundsOf(p.shape);
+      const centre: Vec3 = [(b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2, (b[0][2] + b[1][2]) / 2];
+      let volume: number | undefined;
+      try {
+        volume = measureVolume(p.shape);
+      } catch {
+        // leave it out
+      }
+      return { label: p.name, centre, ...(volume !== undefined ? { volume } : {}) };
+    });
+    const result: Measurement = { items };
+    if (chosen.length === 2) {
+      try {
+        result.distance = measureDistanceBetween(chosen[0].shape, chosen[1].shape);
+      } catch {
+        // leave it out
+      }
+      if (result.distance !== undefined && result.distance < 1e-6) {
+        try {
+          const common = chosen[0].shape.intersect(chosen[1].shape) as Shape3D;
+          try {
+            result.overlap = Math.max(0, measureVolume(common));
+          } finally {
+            common.delete();
+          }
+        } catch {
+          // leave it out
+        }
+      }
+      const [a, b] = items.map((i) => i.centre!);
+      result.centreDistance = centreGap(a, b);
+    }
+    return result;
+  }
+
   /** One 3MF file with each chosen part as a separate, named object. */
   export3mf(partIds: string[], quality: MeshQuality, title: string, colours: Record<string, string> = {}, instances?: InstanceInput[]): ThreeMfResult {
     const tol = MESH_TOLERANCES[quality];
