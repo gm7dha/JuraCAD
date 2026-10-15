@@ -165,6 +165,9 @@ describe("assembly patterns", () => {
     expect(asm().instances).toHaveLength(2);
     expect(asm().patterns).toBe(undefined);
     expect(s().editingPattern).toBe(null);
+  });
+});
+
 describe("configurations", () => {
   it("switches between saved versions, one undo step each", () => {
     s().setVariables([{ id: "v1", name: "w", value: "20" }]);
