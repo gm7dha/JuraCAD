@@ -245,17 +245,31 @@ export function Toolbar() {
           active={editingType === "fastener"}
           title="Fastener — a standard hex bolt, nut or washer (M3–M12) as a new part, optionally with its thread"
         />
-        <ToolButton
-          label="Hole"
-          icon={<Icons.Hole />}
-          onClick={() => startCreate("hole")}
-          disabled={!ready || !hasSketch || !hasPart}
-          active={editingType === "hole"}
-          title={
-            hasSketch && hasPart
+        <ToolGroupButton
+          id="holes"
+          name="hole"
+          items={[
+            {
+              key: "hole",
+              label: "Hole",
+              icon: <Icons.Hole />,
+              onClick: () => startCreate("hole"),
+              disabled: !ready || !hasSketch || !hasPart,
+              active: editingType === "hole",
+              title: hasSketch && hasPart
               ? "Hole — drill plain, counterbored, countersunk or tapped holes at a sketch's points"
-              : "Make a part, then sketch points on it where the holes go"
-          }
+              : "Make a part, then sketch points on it where the holes go",
+            },
+            {
+              key: "thread",
+              label: "Thread",
+              icon: <Icons.Thread />,
+              onClick: () => startCreate("thread"),
+              disabled: !ready || !hasPart,
+              active: editingType === "thread",
+              title: hasPart ? "Thread — cut a screw thread round a rod (bolt) or inside a hole (nut)" : "Make a part first",
+            },
+          ]}
         />
       </div>
       <div className="tool-divider" />
@@ -325,14 +339,6 @@ export function Toolbar() {
             },
           ]}
         />
-        <ToolButton
-          label="Thread"
-          icon={<Icons.Thread />}
-          onClick={() => startCreate("thread")}
-          disabled={!ready || !hasPart}
-          active={editingType === "thread"}
-          title={hasPart ? "Thread — cut a screw thread round a rod (bolt) or inside a hole (nut)" : "Make a part first"}
-        />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
@@ -343,14 +349,6 @@ export function Toolbar() {
           disabled={!ready || !hasPart}
           active={editingType === "transform"}
           title={hasPart ? "Move / copy — move or turn a part, or a copy of it. Select the part first, or pick it after" : "Make a part first, then move it"}
-        />
-        <ToolButton
-          label="Mirror"
-          icon={<Icons.Mirror />}
-          onClick={() => startCreate("mirror")}
-          disabled={!ready || !hasPart}
-          active={editingType === "mirror"}
-          title={hasPart ? "Mirror — copy features to the other side of a plane" : "Make a part first, then mirror its features"}
         />
         <ToolGroupButton
           id="patterns"
@@ -383,24 +381,43 @@ export function Toolbar() {
               active: editingType === "curvePattern",
               title: hasPart && hasSketch ? "Curve pattern — repeat features along a path drawn in a sketch" : "Make a part and sketch a path first",
             },
+            {
+              key: "mirror",
+              label: "Mirror",
+              icon: <Icons.Mirror />,
+              onClick: () => startCreate("mirror"),
+              disabled: !ready || !hasPart,
+              active: editingType === "mirror",
+              title: hasPart ? "Mirror — copy features to the other side of a plane" : "Make a part first, then mirror its features",
+            },
           ]}
         />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
-        <ToolButton
-          label="Variables"
-          icon={<Icons.Variables />}
-          onClick={() => useStore.getState().openDialog("variables")}
-          disabled={editing}
-          title={editing ? "Finish or cancel the open feature first" : "Variables — name sizes (like wall = 2) and use them in any box"}
-        />
-        <ToolButton
-          label="Configurations"
-          icon={<Icons.Configurations />}
-          onClick={() => useStore.getState().openDialog("configurations")}
-          disabled={editing}
-          title={editing ? "Finish or cancel the open feature first" : "Configurations — keep different versions of the design (e.g. Small and Large) and switch between them"}
+        <ToolGroupButton
+          id="settings-tables"
+          name="table"
+          items={[
+            {
+              key: "variables",
+              label: "Variables",
+              icon: <Icons.Variables />,
+              onClick: () => useStore.getState().openDialog("variables"),
+              disabled: editing,
+              active: false,
+              title: editing ? "Finish or cancel the open feature first" : "Variables — name sizes (like wall = 2) and use them in any box",
+            },
+            {
+              key: "configurations",
+              label: "Configurations",
+              icon: <Icons.Configurations />,
+              onClick: () => useStore.getState().openDialog("configurations"),
+              disabled: editing,
+              active: false,
+              title: editing ? "Finish or cancel the open feature first" : "Configurations — keep different versions of the design (e.g. Small and Large) and switch between them",
+            },
+          ]}
         />
       </div>
       <div className="toolbar-spacer" />
