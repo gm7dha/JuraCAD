@@ -4,7 +4,8 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
-import type { Assembly, Instance, Mate, MateConnector, MateType, PartSmithDocument } from "../model/types";
+import type { Assembly, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "../model/types";
+import { parseRelation } from "./relations";
 import { applyPlacement, IDENTITY, quatNormalize, type Placement, type Quat, type Vec3 } from "./math";
 
 const assembliesOf = (doc: PartSmithDocument) => doc.assemblies ?? [];
@@ -82,6 +83,23 @@ export function updateInstance(
     ...a,
     instances: a.instances.map((i) => (i.id === instanceId ? { ...i, ...patch, name: patch.name?.trim() || i.name } : i)),
   }));
+}
+
+/** Add or replace a relation. */
+export function putRelation(doc: PartSmithDocument, assemblyId: string, relation: MateRelation): PartSmithDocument {
+  return updateAssembly(doc, assemblyId, (a) => {
+    const list = a.relations ?? [];
+    return { ...a, relations: list.some((r) => r.id === relation.id) ? list.map((r) => (r.id === relation.id ? relation : r)) : [...list, relation] };
+  });
+}
+
+/** Remove a relation. */
+export function removeRelation(doc: PartSmithDocument, assemblyId: string, id: string): PartSmithDocument {
+  return updateAssembly(doc, assemblyId, (a) => {
+    const { relations: _old, ...rest } = a;
+    const left = (a.relations ?? []).filter((r) => r.id !== id);
+    return left.length ? { ...rest, relations: left } : rest;
+  });
 }
 
 /** Remove instances, and the mates that joined them to anything. */
@@ -260,7 +278,11 @@ export function parseAssemblies(raw: unknown): Assembly[] {
       instances,
       ...(typeof r.explode === "number" && Number.isFinite(r.explode) && r.explode > 0 ? { explode: Math.min(r.explode, 10) } : {}),
     };
-    out.push(mates.length ? { ...assembly, mates } : assembly);
+    const mateIds = new Set(mates.map((m) => m.id));
+    const relations = (Array.isArray(r.relations) ? r.relations : [])
+      .map(parseRelation)
+      .filter((x): x is MateRelation => !!x && mateIds.has(x.driver) && mateIds.has(x.driven));
+    out.push({ ...(mates.length ? { ...assembly, mates } : assembly), ...(relations.length ? { relations } : {}) });
   }
   return out;
 }

@@ -2,6 +2,7 @@
  * The assembly tab: its toolbar, the list of instances and parts, the Insert
  * panel and the panel for placing the selected instance.
  */
+import { canBeDriven, canDrive, nextRelationName, RELATION_KINDS } from "../assembly/relations";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { billOfMaterials, bomCsv, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
@@ -11,7 +12,8 @@ import { evaluate } from "../model/expr";
 import { activeAssembly, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber, showLength, storeLength } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { Assembly, Instance, Mate, MateConnector, MateType } from "../model/types";
+import type { Assembly, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
+import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
 import { partBox, useSolvedAssembly } from "./assemblySolve";
 import type { PartMesh } from "../kernel/protocol";
@@ -266,6 +268,115 @@ function MatesSection({ assembly }: { assembly: Assembly }) {
   );
 }
 
+/** Relations: one mate driving another (gears, rack and pinion, screws). */
+function RelationsSection({ assembly }: { assembly: Assembly }) {
+  const { solved } = useSolvedAssembly();
+  const [adding, setAdding] = useState(false);
+  const mates = assembly.mates ?? [];
+  const relations = assembly.relations ?? [];
+  if (mates.length < 2 && !relations.length) return null;
+  const st = useStore.getState;
+  const add = (kind: MateRelation["kind"]) => {
+    setAdding(false);
+    const driver = mates.find(canDrive);
+    const driven = mates.find((m) => m !== driver && canBeDriven(m, kind));
+    if (!driver || !driven) {
+      st().showToast(
+        kind === "gear" ? "A gear relation needs two Hinge (or Cylindrical) mates." : "This needs a Hinge mate to drive it and a Slider (or Cylindrical) mate to move.",
+        "info",
+      );
+      return;
+    }
+    st().putRelation({ id: newId("rl"), name: nextRelationName(assembly, kind), kind, driver: driver.id, driven: driven.id, ratio: RELATION_KINDS[kind].defaultRatio });
+  };
+  return (
+    <section className="panel-section relations">
+      <h3>
+        Relations <span className="count">({relations.length})</span>
+        <button type="button" className="text-button small-text" onClick={() => setAdding(!adding)} title="Make one mate drive another: gears, rack and pinion, screws">
+          + Add
+        </button>
+      </h3>
+      {adding && (
+        <ul className="relation-kinds">
+          {(Object.keys(RELATION_KINDS) as MateRelation["kind"][]).map((k) => (
+            <li key={k}>
+              <button type="button" className="text-button" onClick={() => add(k)} title={RELATION_KINDS[k].hint}>
+                {RELATION_KINDS[k].label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <ul className="relation-list">
+        {relations.map((r) => {
+          const kind = RELATION_KINDS[r.kind];
+          const update = (patch: Partial<MateRelation>) => st().putRelation({ ...r, ...patch });
+          const error = solved?.mateErrors[r.id];
+          return (
+            <li key={r.id} className={`relation-row${error ? " failed" : ""}`}>
+              <div className="relation-head">
+                <strong>{r.name}</strong>
+                <button type="button" className="icon-button small" onClick={() => st().removeRelation(r.id)} aria-label={`Delete ${r.name}`} title="Delete">
+                  <Icons.Cross size={14} />
+                </button>
+              </div>
+              <label>
+                Turning
+                <select value={r.driver} aria-label={`${r.name} driver`} onChange={(e) => update({ driver: e.target.value })}>
+                  {mates.filter(canDrive).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {r.kind === "gear" ? "Turns" : "Moves"}
+                <select value={r.driven} aria-label={`${r.name} driven`} onChange={(e) => update({ driven: e.target.value })}>
+                  {mates.filter((m) => m.id !== r.driver && canBeDriven(m, r.kind)).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {kind.ratioLabel}
+                <RatioBox value={r.ratio} label={`${r.name} ${kind.ratioLabel}`} onCommit={(ratio) => update({ ratio })} />
+                <span className="muted">{kind.ratioUnit}</span>
+              </label>
+              <label className="check-row">
+                <input type="checkbox" checked={!!r.reverse} onChange={(e) => update({ reverse: e.target.checked || undefined })} />
+                The other way
+              </label>
+              {error && <p className="dialog-error">{error}</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** A box for a relation's ratio, applied on Enter or when you leave it. */
+function RatioBox({ value, label, onCommit }: { value: string; label: string; onCommit: (v: string) => void }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  return (
+    <input
+      value={text}
+      aria-label={label}
+      spellCheck={false}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => text.trim() && text !== value && onCommit(text.trim())}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+    />
+  );
+}
+
 /** Left panel in an assembly: its instances, then the bill of materials. */
 export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
   const parts = useStore((s) => s.parts);
@@ -296,6 +407,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
         {assembly.instances.length === 0 && <p className="panel-hint">Click Insert to bring in parts from the Part Studio.</p>}
       </section>
       <MatesSection assembly={assembly} />
+      <RelationsSection assembly={assembly} />
       <section className="panel-section parts">
         <h3>
           Parts list <span className="count">({bom.reduce((n, r) => n + r.quantity, 0)})</span>
