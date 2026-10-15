@@ -21,7 +21,8 @@ const norm = (a: V3): V3 => {
 export const SECTION_HOSTS: ViewKind[] = ["front", "top", "right", "left", "back", "bottom"];
 
 /** The key a view's lines are kept under: its kind, or "section:<id>" for a section. */
-export function viewKey(v: Pick<DrawingView, "kind" | "section">): string {
+export function viewKey(v: Pick<DrawingView, "kind" | "section" | "detail">): string {
+  if (v.kind === "detail" && v.detail) return `detail:${v.detail}`;
   return v.kind === "section" && v.section ? `section:${v.section}` : v.kind;
 }
 
@@ -80,7 +81,7 @@ export function sectionGeometry(host: ViewKind, a: P2, b: P2, flip = false): Sec
 
 /** The next free section letter (I, O and Q are skipped, as they look like numbers). */
 export function nextSectionLetter(d: Drawing): string {
-  const used = new Set((d.sections ?? []).map((s) => s.letter));
+  const used = new Set([...(d.sections ?? []), ...(d.details ?? [])].map((s) => s.letter));
   for (const ch of "ABCDEFGHJKLMNPRSTUVWXYZ") if (!used.has(ch)) return ch;
   let n = 1;
   while (used.has(`A${n}`)) n++;

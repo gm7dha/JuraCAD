@@ -326,10 +326,33 @@ export const Icons = {
       <path d="M2 20h18" />
     </Svg>
   ),
+  Detail: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="4" />
+      <circle cx="15" cy="15" r="6" />
+      <path d="M11 11l1 1" />
+    </Svg>
+  ),
+  Note: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M8 9h8M8 13h8M8 17h5" />
+    </Svg>
+  ),
   Thread: (p: IconProps) => (
     <Svg {...p}>
       <path d="M8 3v18M16 3v18" />
       <path d="M8 5l8 2M8 9l8 2M8 13l8 2M8 17l8 2" />
+    </Svg>
+  ),
+  Play: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M8 5l11 7-11 7z" fill="currentColor" />
+    </Svg>
+  ),
+  Stop: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />
     </Svg>
   ),
   ChevronLeft: (p: IconProps) => (

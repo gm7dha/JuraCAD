@@ -32,6 +32,7 @@ import { boundsOfVertices } from "../assembly/assembly";
 import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import { moveFeature as moveFeatureIn } from "./reorder";
+import { DEFAULT_MATERIAL } from "./materials";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
@@ -64,7 +65,7 @@ export interface Editing {
 }
 
 /** Drawing tools: select, the smart Dimension, baseline / chain / ordinate runs, and section. */
-export type DrawingTool = "select" | "dimension" | "baseline" | "chain" | "ordinate" | "section";
+export type DrawingTool = "select" | "dimension" | "baseline" | "chain" | "ordinate" | "section" | "note" | "detail";
 
 export type SketchTool =
   | "select"
@@ -179,6 +180,9 @@ export interface AppState {
   selectedDim: string | null;
   /** What a mouse drag in an assembly is changing, while the button is held. */
   dragPreview: DragChange | null;
+  /** Mate whose movement is being animated in the 3D view. */
+  animatingMate: string | null;
+  setAnimatingMate: (id: string | null) => void;
   /** The design as last saved to (or opened from) a file; compare with history.present to see unsaved changes. */
   savedDoc: PartSmithDocument | null;
   /** Name of that file, e.g. "Bracket.partsmith". */
@@ -227,6 +231,8 @@ export interface AppState {
   renameDocument: (name: string) => void;
   /** Name a part (blank goes back to "Part N"). One undo step. */
   renamePart: (partId: string, name: string) => void;
+  /** Set what a part is made of (null = back to PLA). One undo step. */
+  setPartMaterial: (partId: string, material: string | null) => void;
   /** Colour a part (null = back to the default grey). One undo step. */
   setPartColour: (partId: string, colour: string | null) => void;
   /** Replace the variable list (one undo step); renames are followed everywhere. */
@@ -427,6 +433,8 @@ export const useStore = create<AppState>((set, get) => {
     hiddenInstances: [],
     mateDraft: null,
     dragPreview: null,
+    animatingMate: null,
+    setAnimatingMate: (animatingMate) => set({ animatingMate }),
     drawingTool: "select",
     selectedDim: null,
 
@@ -703,6 +711,15 @@ export const useStore = create<AppState>((set, get) => {
 
     renameFeature: (id, name) => changeStudio((doc) => renameFeature(doc, id, name)),
 
+    setPartMaterial: (partId, material) =>
+      change((doc) => {
+        const materials = { ...(doc.materials ?? {}) };
+        if (material && material !== DEFAULT_MATERIAL) materials[partId] = material;
+        else delete materials[partId];
+        const { materials: _old, ...rest } = doc;
+        return Object.keys(materials).length ? { ...rest, materials } : rest;
+      }),
+
     setPartColour: (partId, colour) =>
       change((doc) => {
         const appearance = { ...(doc.appearance ?? {}) };
@@ -776,7 +793,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveTab: (activeTab) => {
       if (get().editing) return;
-      set({ activeTab, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
+      set({ activeTab, animatingMate: null, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
     },
 
     removeAssembly: (id) => {

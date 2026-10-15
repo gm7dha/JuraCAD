@@ -30,6 +30,8 @@ export interface ViewProjection {
   bounds: [number, number, number, number] | null;
   /** Centre lines of round faces seen from the side: x0, y0, x1, y1 each. */
   axes?: number[][];
+  /** Detail views: drawn this many times bigger than the sheet's scale. */
+  zoom?: number;
   /** Section views: the faces made by the cut, as triangles (x, y × 3 each). */
   cutFaces?: number[];
 }

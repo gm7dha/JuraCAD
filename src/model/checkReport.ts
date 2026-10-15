@@ -15,6 +15,8 @@ export interface PartReport {
   findings: Finding[];
   size: string;
   volume: string;
+  /** Volume in mm³ (for working out the mass). */
+  volumeMm3: number;
 }
 
 export interface CheckReport {
@@ -84,7 +86,7 @@ export function reportPart(p: PartCheck): PartReport {
   const volumeMm3 = p.exactVolume ?? m.volume;
   const volume = lengthUnit() === "in" ? formatVolume(volumeMm3, "in") : `${round(volumeMm3 / 1000, 2)} cm³`;
 
-  return { partId: p.partId, name: p.name, level: worst(findings.map((f) => f.level)), findings, size, volume };
+  return { partId: p.partId, name: p.name, level: worst(findings.map((f) => f.level)), findings, size, volume, volumeMm3 };
 }
 
 /** Walls thinner than this get a warning (most processes struggle below about half a millimetre). */

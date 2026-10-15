@@ -21,6 +21,8 @@ export const VIEW_CAMERAS: Record<ViewKind, { toward: V3; right: V3 }> = {
   iso: { toward: unit([1, -1, 1]), right: unit([1, 1, 0]) },
   // The front view of the part cut through, with the front part taken away.
   section: { toward: [0, -1, 0], right: [1, 0, 0] },
+  // Detail views are worked out from their host view's lines, not seen from a camera of their own.
+  detail: { toward: [0, -1, 0], right: [1, 0, 0] },
 };
 
 /** Up on the paper for a view. */

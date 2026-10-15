@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addDrawing, arrangeViews, parseDrawings, removeDrawing, renameDrawing, toggleView, updateDrawing } from "../src/drawing/drawing";
+import { addDrawing, arrangeViews, parseDrawings, putNote, removeNote, removeDrawing, renameDrawing, toggleView, updateDrawing } from "../src/drawing/drawing";
 import { sheetPdf, sheetSvg, textWidth } from "../src/drawing/export";
 import { fitScale, layoutSheet, scaleLabel, SHEETS, toSheet } from "../src/drawing/sheet";
 import { projectPoint, viewUp } from "../src/drawing/cameras";
@@ -173,5 +173,19 @@ describe("assembly drawings", () => {
     // Title block (36) + parts list (3 rows of 6, plus a gap) + notes (2 lines, plus a gap) are kept free.
     const lowest = Math.min(...l.views.map((v) => v.box[1]));
     expect(lowest).toBeGreaterThanOrEqual(10 + 36 + 21 + 12 + 5 - 1e-9);
+  });
+});
+
+describe("notes on the sheet", () => {
+  it("are drawn line by line from their corner, kept when saved, and can be removed", () => {
+    const d = putNote(newDrawing(), { id: "n1", at: [30, 150], text: "Deburr all edges\nMaterial: PLA" });
+    const l = layoutSheet(d, block, info);
+    const texts = l.prims.filter((p) => p.kind === "text" && (p.text === "Deburr all edges" || p.text === "Material: PLA"));
+    expect(texts.length).toBe(2);
+    expect(l.notes[0].id).toBe("n1");
+    expect(l.notes[0].box[3]).toBe(150);
+    const back = parseDrawings(JSON.parse(JSON.stringify([d])))[0];
+    expect(back.notes).toEqual([{ id: "n1", at: [30, 150], text: "Deburr all edges\nMaterial: PLA" }]);
+    expect(removeNote(d, "n1").notes).toBe(undefined);
   });
 });
