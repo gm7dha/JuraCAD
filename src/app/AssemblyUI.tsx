@@ -103,6 +103,13 @@ export function AssemblyToolbar() {
           onClick={() => useStore.getState().removeInstances(selected.map((i) => i.id))}
           title={selected.length ? "Remove the selected parts from this assembly (Delete)" : "Select a part first"}
         />
+        <ToolButton
+          label="Pattern"
+          icon={<Icons.LinearPattern />}
+          disabled={!selected.some((i) => !i.copyOf)}
+          onClick={() => useStore.getState().createPattern()}
+          title={selected.some((i) => !i.copyOf) ? "Pattern — repeat the selected parts in a row or round an axis (the copies follow the originals)" : "Select the parts to repeat first"}
+        />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
@@ -265,6 +272,137 @@ function MatesSection({ assembly }: { assembly: Assembly }) {
         <p className="panel-hint">Join parts with a mate: choose Fasten, Hinge, Slider… in the toolbar, then click a face or edge on each part.</p>
       )}
     </section>
+  );
+}
+
+/** Patterns: copies of instances repeated in a row or round an axis. */
+function PatternsSection({ assembly }: { assembly: Assembly }) {
+  const { solved } = useSolvedAssembly();
+  const editing = useStore((s) => s.editingPattern);
+  const patterns = assembly.patterns ?? [];
+  if (!patterns.length) return null;
+  return (
+    <section className="panel-section patterns">
+      <h3>
+        Patterns <span className="count">({patterns.length})</span>
+      </h3>
+      <ul className="feature-list">
+        {patterns.map((p) => {
+          const error = solved?.patternErrors?.[p.id];
+          return (
+            <li
+              key={p.id}
+              className={["feature-row", editing === p.id && "editing", error && "failed"].filter(Boolean).join(" ")}
+              onDoubleClick={() => useStore.getState().setEditingPattern(p.id)}
+              title={error ? `Problem: ${error}` : `${p.count} in ${p.kind === "linear" ? "a row" : "a circle"}. Double-click to edit.`}
+            >
+              <span className="feature-icon">{p.kind === "linear" ? <Icons.LinearPattern size={18} /> : <Icons.CircularPattern size={18} />}</span>
+              <span className="feature-name">{p.name}</span>
+              {error && (
+                <span className="feature-error-icon" aria-label="Problem">
+                  <Icons.Warning size={16} />
+                </span>
+              )}
+              <span className="row-actions">
+                <button className="icon-button small" onClick={() => useStore.getState().setEditingPattern(p.id)} aria-label={`Edit ${p.name}`} title="Edit">
+                  <Icons.Sketch size={15} />
+                </button>
+                <button className="icon-button small" onClick={() => useStore.getState().deletePattern(p.id)} aria-label={`Delete ${p.name}`} title="Delete (and its copies)">
+                  <Icons.Trash size={15} />
+                </button>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** Settings of the pattern being edited; each change applies straight away (and can be undone). */
+export function PatternPanel() {
+  const asm = useStore(activeAssembly);
+  const id = useStore((s) => s.editingPattern);
+  const { solved } = useSolvedAssembly();
+  const busy = useStore((s) => s.asmSelection.length > 0 || s.dialog === "insert" || s.mateDraft !== null);
+  const p = asm?.patterns?.find((x) => x.id === id);
+  if (!asm || !p || busy) return null;
+  const st = useStore.getState();
+  const update = (patch: Parameters<typeof st.updatePattern>[1]) => st.updatePattern(p.id, patch);
+  const amount = evaluate(p.amount);
+  const error = solved?.patternErrors?.[p.id];
+  const names = p.seeds.map((s) => asm.instances.find((i) => i.id === s)?.name ?? "?").join(", ");
+  const centre = p.centre ?? [0, 0, 0];
+  return (
+    <div className="feature-dialog instance-panel" role="region" aria-label={`Pattern ${p.name}`}>
+      <header className="feature-dialog-header">
+        <span className="feature-dialog-title">{p.name}</span>
+        <span className="feature-dialog-actions">
+          <button type="button" className="dialog-cancel" onClick={() => st.setEditingPattern(null)} title="Close (Esc)" aria-label="Close pattern">
+            <Icons.Cross size={18} />
+          </button>
+        </span>
+      </header>
+      <div className="feature-dialog-body">
+        <p className="dialog-hint">Repeating {names}.</p>
+        <div className="segmented two" role="radiogroup" aria-label="Pattern kind">
+          {(["linear", "circular"] as const).map((k) => (
+            <button
+              type="button"
+              key={k}
+              role="radio"
+              aria-checked={p.kind === k}
+              className={p.kind === k ? "selected" : ""}
+              onClick={() =>
+                p.kind !== k && update(k === "linear" ? { kind: k, amount: "20" } : { kind: k, amount: "360", axis: "z", count: Math.max(p.count, 4) })
+              }
+            >
+              {k === "linear" ? "In a row" : "Round an axis"}
+            </button>
+          ))}
+        </div>
+        <NumberBox label="How many (including the original)" value={p.count} unit="" onCommit={(v) => update({ count: Math.max(2, Math.min(100, Math.round(v))) })} />
+        {p.kind === "linear" ? (
+          <NumberBox label="Spacing" value={amount.ok ? amount.value : 0} unit="mm" onCommit={(v) => update({ amount: String(v) })} />
+        ) : (
+          <NumberBox label="Spread over" value={amount.ok ? amount.value : 0} unit="°" onCommit={(v) => update({ amount: String(v) })} />
+        )}
+        <div className="param-field compact">
+          <label htmlFor="asm-pattern-axis">{p.kind === "linear" ? "Direction" : "Axis"}</label>
+          <select id="asm-pattern-axis" value={p.axis} onChange={(e) => update({ axis: e.target.value as "x" | "y" | "z" })}>
+            <option value="x">X (red)</option>
+            <option value="y">Y (green)</option>
+            <option value="z">Z (blue)</option>
+          </select>
+        </div>
+        <label className="check-row">
+          <input type="checkbox" checked={!!p.flip} onChange={(e) => update({ flip: e.target.checked })} />
+          {p.kind === "linear" ? "The other way" : "Turn the other way"}
+        </label>
+        {p.kind === "circular" && (
+          <fieldset className="param-group">
+            <legend>Axis goes through</legend>
+            {(["X", "Y", "Z"] as const).map((l, k) => (
+              <NumberBox
+                key={l}
+                label={`Centre ${l}`}
+                value={centre[k]}
+                unit="mm"
+                onCommit={(v) => {
+                  const c: [number, number, number] = [...centre];
+                  c[k] = v;
+                  update({ centre: c });
+                }}
+              />
+            ))}
+          </fieldset>
+        )}
+        {error && <p className="param-message error">{error}</p>}
+        <button type="button" className="text-button" onClick={() => st.deletePattern(p.id)}>
+          Delete pattern (and its copies)
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -444,6 +582,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
         {assembly.instances.length === 0 && <p className="panel-hint">Click Insert to bring in parts from the Part Studio.</p>}
       </section>
       <MatesSection assembly={assembly} />
+      <PatternsSection assembly={assembly} />
       <RelationsSection assembly={assembly} />
       <PositionsSection assembly={assembly} />
       <section className="panel-section parts">
@@ -603,6 +742,8 @@ export function InstancePanel() {
   if (!instance || insertOpen || mating) return null;
   const drivenBy = solved?.drivenBy[instance.id];
   const driver = drivenBy ? asm?.mates?.find((m) => m.id === drivenBy) : undefined;
+  const copyPattern = instance.copyOf ? asm?.patterns?.find((p) => p.id === instance.copyOf!.pattern) : undefined;
+  const copyOriginal = instance.copyOf ? asm?.instances.find((i) => i.id === instance.copyOf!.seed) : undefined;
   const update = useStore.getState().updateInstance;
   const { position, rotation } = instance.placement;
   const turn = eulerDegFromQuat(rotation);
@@ -632,7 +773,16 @@ export function InstancePanel() {
           <input type="checkbox" checked={instance.fixed} onChange={(e) => update(instance.id, { fixed: e.target.checked })} />
           Fixed (stays where it is)
         </label>
-        {driver ? (
+        {copyPattern ? (
+          <>
+            <p className="dialog-hint">
+              A copy made by <strong>{copyPattern.name}</strong>: it follows {copyOriginal?.name ?? "its original"}. To move it, move the original or change the pattern.
+            </p>
+            <button type="button" className="text-button" onClick={() => useStore.getState().setEditingPattern(copyPattern.id)}>
+              Edit {copyPattern.name}
+            </button>
+          </>
+        ) : driver ? (
           <p className="dialog-hint">
             Placed by <strong>{driver.name}</strong>. To move it, change the mate's amounts (double-click the mate), or delete the mate.
           </p>
