@@ -16,6 +16,7 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "arc", label: "Arc", key: "A", icon: <Icons.Arc />, hint: "Click both ends, then a point the arc passes through" },
   { tool: "tangentArc", label: "Tangent arc", key: "", icon: <Icons.TangentArc />, hint: "Click the end of a line or arc, then where the arc should finish — it carries on smoothly" },
   { tool: "spline", label: "Spline", key: "", icon: <Icons.Spline />, hint: "Click points for a smooth curve to pass through. Click the first point again to close it, or Esc to finish" },
+  { tool: "ellipse", label: "Ellipse", key: "", icon: <Icons.Ellipse />, hint: "Click the centre, then the end of its length, then how wide it is" },
   { tool: "slot", label: "Slot", key: "S", icon: <Icons.Slot />, hint: "Click both end centres, then move out to set the width" },
   { tool: "polygon", label: "Polygon", key: "G", icon: <Icons.Polygon />, hint: "Click the centre, then a corner (set the number of sides in the sketch panel)" },
   { tool: "point", label: "Point", key: "P", icon: <Icons.Point />, hint: "Click to place a point" },

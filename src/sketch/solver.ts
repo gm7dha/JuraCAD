@@ -60,7 +60,7 @@ function buildSystem(sketch: SketchData): System {
   /** Centre and radius accessors for a circle or arc. */
   const circular = (id: string) => {
     const c = curves.get(id);
-    if (!c || c.type === "line" || c.type === "spline") throw new Error(`${id} is not a circle or arc`);
+    if (!c || c.type === "line" || c.type === "spline" || c.type === "ellipse") throw new Error(`${id} is not a circle or arc`);
     const centre = P(c.center);
     if (c.type === "circle") {
       const ri = radiusVar.get(c.id)!;
@@ -103,6 +103,27 @@ function buildSystem(sketch: SketchData): System {
         const [sx, sy] = s(x);
         const [ex, ey] = e(x);
         out.push(Math.hypot(sx - cx, sy - cy) - Math.hypot(ex - cx, ey - cy));
+      },
+    });
+  }
+
+  // Every ellipse keeps its two axes square to each other.
+  for (const c of sketch.curves) {
+    if (c.type !== "ellipse") continue;
+    const cen = P(c.center);
+    const ma = P(c.major);
+    const mi = P(c.minor);
+    blocks.push({
+      id: null,
+      size: 1,
+      eval: (x, out) => {
+        const [cx, cy] = cen(x);
+        const [ax, ay] = ma(x);
+        const [bx, by] = mi(x);
+        const u: Vec = [ax - cx, ay - cy];
+        const w: Vec = [bx - cx, by - cy];
+        // Scaled to millimetres, so it weighs the same as the other constraints.
+        out.push((u[0] * w[0] + u[1] * w[1]) / (Math.hypot(...u) + Math.hypot(...w) || 1));
       },
     });
   }
@@ -597,6 +618,8 @@ export function analyzeSketch(sketch: SketchData): SketchAnalysis {
         ? definedPoints.has(c.p1) && definedPoints.has(c.p2)
         : c.type === "spline"
           ? c.points.every((p) => definedPoints.has(p))
+          : c.type === "ellipse"
+          ? [c.center, c.major, c.minor].every((p) => definedPoints.has(p))
           : c.type === "circle"
           ? definedPoints.has(c.center) && determined[sys.radiusVar.get(c.id)!]
           : definedPoints.has(c.center) && definedPoints.has(c.start) && definedPoints.has(c.end);

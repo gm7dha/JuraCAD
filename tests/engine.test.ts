@@ -16,6 +16,7 @@ import type { Feature, FeatureType, Operation } from "../src/model/types";
 import { defaultAxis } from "../src/sketch/axis";
 import { addArc, addCircle, addLine, addPoint, addRectangle } from "../src/sketch/ops";
 import { holeVolume, type HoleSize } from "../src/model/holes";
+import { addEllipse, addSpline } from "../src/sketch/tools";
 import { planeOnFace, type SketchPlane } from "../src/sketch/planes";
 import { emptySketch, type SketchData } from "../src/sketch/types";
 
@@ -1574,5 +1575,36 @@ describe("text", () => {
     const v = analyzeMesh(e.parts[0].vertices, e.parts[0].triangles).volume;
     expect(v).toBeLessThan(solidVolume - 5);
     expect(v).toBeGreaterThan(solidVolume - 300);
+  });
+});
+
+describe("splines and ellipses", () => {
+  it("extrudes an ellipse, turned and tall or wide", () => {
+    const turn = Math.PI / 6;
+    const el = addEllipse(emptySketch(), { x: 5, y: 0 }, { x: 5 + 20 * Math.cos(turn), y: 20 * Math.sin(turn) }, [5 - 8 * Math.sin(turn), 8 * Math.cos(turn)]);
+    expect(el.error).toBe(undefined);
+    const sk = sketchFeature({ kind: "default", name: "Top" }, el.sketch);
+    const r = build([sk, extrudeFeature(sk.id, 5)]);
+    expect(r.featureErrors).toEqual({});
+    const a = meshOf(r);
+    expect(a.watertight).toBe(true);
+    expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(Math.PI * 20 * 8 * 5, 1);
+    // Width across x: 2·√((20 cos30)² + (8 sin30)²).
+    expect(a.bounds!.max[0] - a.bounds!.min[0]).toBeCloseTo(2 * Math.hypot(20 * Math.cos(turn), 8 * Math.sin(turn)), 1);
+    // The short axis drawn first works too.
+    const tall = addEllipse(emptySketch(), { x: 0, y: 0 }, { x: 4, y: 0 }, [0, 10]);
+    const sk2 = sketchFeature({ kind: "default", name: "Front" }, tall.sketch);
+    const r2 = build([sk2, extrudeFeature(sk2.id, 2)]);
+    expect(r2.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(Math.PI * 4 * 10 * 2, 1);
+  });
+
+  it("extrudes a closed spline", () => {
+    const sp = addSpline(emptySketch(), [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 25, y: 15 }, { x: 5, y: 20 }].map((q) => ({ ...q, snap: null })), true);
+    const sk = sketchFeature({ kind: "default", name: "Top" }, sp.sketch);
+    const r = build([sk, extrudeFeature(sk.id, 3)]);
+    expect(r.featureErrors).toEqual({});
+    expect(meshOf(r).watertight).toBe(true);
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
   });
 });

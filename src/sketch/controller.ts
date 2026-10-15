@@ -28,6 +28,7 @@ import {
 import {
   addCentreRectangle,
   addPolygon,
+  addEllipse,
   addSlot,
   addSpline,
   addTangentArc,
@@ -42,6 +43,7 @@ import {
 } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
 import { splinePolyline } from "./spline";
+import { ellipseFrom, ellipsePolyline, minorPointFor } from "./ellipse";
 import { rectOf, sketchItemsInBox } from "../viewport/boxSelect";
 
 export interface SketchPointer {
@@ -240,8 +242,8 @@ export class SketchController {
       for (const c of sources) {
         if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
         else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius });
-        else if (c.type === "spline") {
-          const pts = splinePolyline(c.points.map(at), c.closed);
+        else if (c.type === "spline" || c.type === "ellipse") {
+          const pts = c.type === "spline" ? splinePolyline(c.points.map(at), c.closed) : ellipsePolyline(ellipseFrom(at(c.center), at(c.major), at(c.minor)));
           for (let k = 0; k + 1 < pts.length; k++) out.push({ kind: "line", a: pts[k], b: pts[k + 1] });
         } else {
           const cc = at(c.center);
@@ -290,8 +292,8 @@ export class SketchController {
         const dx = bx - ax, dy = by - ay;
         const t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1);
         [x, y] = [ax + t * dx, ay + t * dy];
-      } else if (c.type === "spline") {
-        // No "on the spline" constraint: just the pointer, with no snap.
+      } else if (c.type === "spline" || c.type === "ellipse") {
+        // No "on the spline/ellipse" constraint: just the pointer, with no snap.
         return { x: e.x, y: e.y, snap: null };
       } else {
         const [cx, cy] = pointPos(d, c.center);
@@ -447,6 +449,23 @@ export class SketchController {
         this.emit({ preview: [] });
         return;
       }
+      case "ellipse": {
+        if (this.placed.length < 2) {
+          this.placed = [...this.placed, p];
+          if (this.placed.length === 2) this.state.setSketchMessage("Now click to set how wide it is.", "info");
+          return;
+        }
+        const [centre, major] = this.placed;
+        const r = addEllipse(d, centre, major, [p.x, p.y], construction);
+        if (this.commit(r, [r.ellipseId])) {
+          this.placed = [];
+          this.state.setSketchMessage(null);
+          const el = r.sketch.curves.find((c) => c.id === r.ellipseId);
+          if (!construction && el?.type === "ellipse") this.offerDimensions([[el.center, el.major], [el.center, el.minor]]);
+        }
+        this.emit({ preview: [] });
+        return;
+      }
       case "circle": {
         if (this.placed.length === 0) {
           this.placed = [p];
@@ -576,6 +595,18 @@ export class SketchController {
       const a0 = Math.atan2(p.y - first.y, p.x - first.x);
       const corner = (i: number): [number, number] => [first.x + R * Math.cos(a0 + (2 * Math.PI * i) / n), first.y + R * Math.sin(a0 + (2 * Math.PI * i) / n)];
       for (let i = 0; i < n; i++) preview.push({ kind: "line", a: corner(i), b: corner(i + 1) });
+    } else if (tool === "ellipse" && first) {
+      const c: [number, number] = [first.x, first.y];
+      const second = this.placed[1];
+      if (!second) {
+        const r = Math.hypot(p.x - first.x, p.y - first.y);
+        preview.push({ kind: "line", a: c, b: [p.x, p.y] }, { kind: "circle", c, r });
+      } else {
+        const m: [number, number] = [second.x, second.y];
+        const pts = ellipsePolyline(ellipseFrom(c, m, minorPointFor(c, m, [p.x, p.y])));
+        for (let i = 0; i + 1 < pts.length; i++) preview.push({ kind: "line", a: pts[i], b: pts[i + 1] });
+        preview.push({ kind: "guide", a: c, b: m });
+      }
     } else if (tool === "circle" && first) {
       preview.push({ kind: "circle", c: [first.x, first.y], r: Math.hypot(p.x - first.x, p.y - first.y) });
     } else if (tool === "arc" && first) {
