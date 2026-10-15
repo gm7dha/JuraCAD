@@ -2387,23 +2387,6 @@ kbd {
   stroke-dasharray: 1 0.8;
 }
 
-/* Drawing revisions list in the panel. */
-.revision-list {
-  list-style: none;
-  margin: 0;
-  padding: 0 8px 6px;
-}
-
-.revision-row {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.revision-row input {
-}
-
 /* Mate relations (gears, rack and pinion, screws) in the assembly panel. */
 .relations h3 {
   display: flex;
@@ -2444,6 +2427,36 @@ kbd {
   height: 24px;
   border: 1px solid var(--line);
   border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.relation-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Drawing revisions list in the panel. */
+.revision-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 6px;
+}
+
+.revision-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.revision-row input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
   padding: 0 4px;
   background: var(--panel);
   color: var(--ink);
@@ -2457,14 +2470,4 @@ kbd {
 
 .revision-row .revision-date {
   flex: 0 0 74px;
-}
-
-  background: var(--panel);
-  color: var(--ink);
-}
-
-.relation-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
 }
