@@ -978,3 +978,88 @@ export function addAlignedRectangle(s: SketchData, a: Placed, b: Placed, p: P2, 
   sk = { ...sk, curves: [...sk.curves, ...lines], constraints: [...sk.constraints, ...constraints] };
   return { ...settle(sk), lineIds };
 }
+
+// ---------------------------------------------------------------------------
+// Extend and split
+
+/**
+ * Extend a line from the end nearest the click until it meets another line,
+ * arc or circle (the nearest one ahead). Its length dimension, if any, goes,
+ * since the length changes; the end is held on what it now meets.
+ */
+export function extendAt(s: SketchData, curveId: string, at: { x: number; y: number }): EditResult {
+  const line = curveById(s, curveId);
+  if (line?.type !== "line") return { sketch: s, error: "Click near the end of a line to extend it." };
+  const A = pointPos(s, line.p1);
+  const B = pointPos(s, line.p2);
+  const click: P2 = [at.x, at.y];
+  const fromEnd = len(sub(click, B)) <= len(sub(click, A));
+  const [start, end, endId] = fromEnd ? [A, B, line.p2] : [B, A, line.p1];
+  const dir = unit(sub(end, start));
+  if (len(sub(end, start)) < 1e-9) return { sketch: s, error: "That line has no length." };
+  // The nearest crossing ahead of the end, along the line carried on.
+  let best: { t: number; point: P2; by: string } | null = null;
+  const consider = (t: number, point: P2, by: string) => {
+    if (t > 1e-6 && (!best || t < best.t)) best = { t, point, by };
+  };
+  for (const other of s.curves) {
+    if (other.id === line.id) continue;
+    if (other.type === "line") {
+      const C = pointPos(s, other.p1);
+      const D = pointPos(s, other.p2);
+      const e = sub(D, C);
+      const den = cross(dir, e);
+      if (Math.abs(den) < 1e-12) continue;
+      const w = sub(C, end);
+      const t = cross(w, e) / den;
+      const u = cross(w, dir) / den;
+      if (u >= -1e-9 && u <= 1 + 1e-9) consider(t, add(end, mul(dir, t)), other.id);
+    } else if (other.type === "circle" || other.type === "arc") {
+      const { c, r } = circleOf(s, other);
+      const f = sub(end, c);
+      const b = dot(f, dir);
+      const disc = b * b - (dot(f, f) - r * r);
+      if (disc < 0) continue;
+      for (const t of [-b - Math.sqrt(disc), -b + Math.sqrt(disc)]) {
+        const p = add(end, mul(dir, t));
+        if (other.type === "circle" || onArc(s, other, p)) consider(t, p, other.id);
+      }
+    }
+  }
+  const hit = best as { t: number; point: P2; by: string } | null;
+  if (!hit) return { sketch: s, error: "There's nothing ahead of that end for the line to reach." };
+  const target = curveById(s, hit.by)!;
+  const points = s.points.map((p) => (p.id === endId ? { ...p, x: hit.point[0], y: hit.point[1] } : p));
+  const constraints = s.constraints
+    .filter((c) => !(c.type === "length" && c.refs[0] === line.id))
+    .concat([con(target.type === "line" ? "pointOnLine" : "pointOnCircle", [endId, target.id])]);
+  return settle({ ...s, points, constraints });
+}
+
+/** Split a line in two where it's clicked; the two halves stay in line with each other. */
+export function splitAt(s: SketchData, curveId: string, at: { x: number; y: number }): EditResult & { lineIds: string[] } {
+  const line = curveById(s, curveId);
+  if (line?.type !== "line") return { sketch: s, lineIds: [], error: "Click a line where you want to split it." };
+  const A = pointPos(s, line.p1);
+  const B = pointPos(s, line.p2);
+  const d = sub(B, A);
+  const t = dot(sub([at.x, at.y], A), d) / (dot(d, d) || 1);
+  if (t <= 0.02 || t >= 0.98) return { sketch: s, lineIds: [], error: "Click further from the line's ends to split it." };
+  const mid: P2 = add(A, mul(d, t));
+  const pid = sketchId("p");
+  const second = sketchId("l");
+  const first: SketchLine = { ...line, p2: pid };
+  const rest: SketchLine = { id: second, type: "line", p1: pid, p2: line.p2, construction: line.construction };
+  // Relations on the whole line carry on to both halves; its length goes (each half has its own now).
+  const extra: SketchConstraint[] = [con("parallel", [line.id, second])];
+  const constraints: SketchConstraint[] = [];
+  for (const c of s.constraints) {
+    if (c.type === "length" && c.refs[0] === line.id) continue;
+    // Something that was on the far end now belongs to the second half.
+    if ((c.type === "horizontal" || c.type === "vertical") && c.refs.length === 1 && c.refs[0] === line.id) extra.push(con(c.type, [second]));
+    constraints.push(c);
+  }
+  const points = [...s.points, { id: pid, x: mid[0], y: mid[1] }];
+  const curves = s.curves.flatMap((c) => (c.id === line.id ? [first, rest] : [c]));
+  return { ...settle({ points, curves, constraints: [...constraints, ...extra] }), lineIds: [line.id, second] };
+}

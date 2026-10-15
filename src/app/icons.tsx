@@ -150,6 +150,21 @@ export const Icons = {
       <rect x="17" y="3" width="4" height="4" />
     </Svg>
   ),
+  Extend: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M20 4v16" />
+      <path d="M4 12h9" />
+      <path d="M13 12h6" strokeDasharray="2 1.6" />
+      <path d="M16 9l3 3-3 3" />
+    </Svg>
+  ),
+  SplitLine: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 12h7M14 12h7" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+      <path d="M12 6v2.5M12 15.5V18" />
+    </Svg>
+  ),
   Configurations: (p: IconProps) => (
     <Svg {...p}>
       <rect x="3" y="4" width="18" height="16" rx="1.5" />
