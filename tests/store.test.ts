@@ -144,6 +144,27 @@ describe("merging parts", () => {
   });
 });
 
+describe("assembly patterns", () => {
+  it("repeats the selected parts, changes and deletes the pattern", () => {
+    s().addAssembly();
+    const part = { id: "p1", name: "Bolt" };
+    s().insertInstance(part);
+    s().insertInstance(part);
+    const asm = () => s().history.present.assemblies![0];
+    const bolt = asm().instances[1];
+    s().setAsmSelection([bolt.id]);
+    s().createPattern();
+    const p = asm().patterns![0];
+    expect(s().editingPattern).toBe(p.id);
+    expect(asm().instances.filter((i) => i.copyOf?.seed === bolt.id)).toHaveLength(2);
+    s().updatePattern(p.id, { count: 5 });
+    expect(asm().instances).toHaveLength(6);
+    s().undo();
+    expect(asm().instances).toHaveLength(4);
+    s().deletePattern(p.id);
+    expect(asm().instances).toHaveLength(2);
+    expect(asm().patterns).toBe(undefined);
+    expect(s().editingPattern).toBe(null);
 describe("configurations", () => {
   it("switches between saved versions, one undo step each", () => {
     s().setVariables([{ id: "v1", name: "w", value: "20" }]);

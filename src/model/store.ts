@@ -30,9 +30,10 @@ import { setLengthUnit, startingLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "./types";
+import type { Assembly, AssemblyPattern, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
-import { addAssembly, applyPosition, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
+import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
+import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
@@ -315,6 +316,13 @@ export interface AppState {
   /** The exploded view's spread while its slider is being dragged (not saved until let go). */
   explodePreview: number | null;
   setExplodePreview: (amount: number | null) => void;
+  /** The assembly pattern whose settings are open (changes apply straight away). */
+  editingPattern: string | null;
+  setEditingPattern: (id: string | null) => void;
+  /** Repeat the selected instances (a linear pattern to start with) and open its settings. */
+  createPattern: () => void;
+  updatePattern: (id: string, patch: Partial<Omit<AssemblyPattern, "id">>) => void;
+  deletePattern: (id: string) => void;
   setDragPreview: (change: DragChange | null) => void;
   setDrawingTool: (tool: DrawingTool) => void;
   selectDim: (id: string | null) => void;
@@ -866,7 +874,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveTab: (activeTab) => {
       if (get().editing) return;
-      set({ activeTab, rollbackTo: null, animatingMate: null, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
+      set({ activeTab, rollbackTo: null, animatingMate: null, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, editingPattern: null, drawingTool: "select", selectedDim: null });
     },
 
     removeAssembly: (id) => {
@@ -880,7 +888,7 @@ export const useStore = create<AppState>((set, get) => {
       if (get().editing) return;
       const id = newId("s");
       change((doc) => addStudio(doc, id));
-      set({ activeTab: id, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null });
+      set({ activeTab: id, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, editingPattern: null });
     },
 
     renamePartStudio: (id, name) => change((doc) => renameStudio(doc, id, name)),
@@ -895,7 +903,7 @@ export const useStore = create<AppState>((set, get) => {
       const source = asm ? { kind: "assembly" as const, id: asm.id } : partId ? { kind: "part" as const, id: partId } : null;
       const id = newId("d");
       change((doc) => addDrawingTo(doc, id, source));
-      set({ activeTab: id, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, dialog: null });
+      set({ activeTab: id, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, editingPattern: null, dialog: null });
     },
 
     changeDrawing: (fn) => {
@@ -1064,6 +1072,43 @@ export const useStore = create<AppState>((set, get) => {
     },
     explodePreview: null,
     setExplodePreview: (amount) => set({ explodePreview: amount }),
+    editingPattern: null,
+    setEditingPattern: (editingPattern) => set({ editingPattern, ...(editingPattern ? { asmSelection: [], mateDraft: null, dialog: null } : {}) }),
+    createPattern: () => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm) return;
+      const seeds = asm.instances.filter((i) => s.asmSelection.includes(i.id) && !i.copyOf);
+      if (!seeds.length) return;
+      // Spaced a little more than the first part is wide, so the copies don't overlap.
+      const part = s.parts.find((p) => p.id === seeds[0].partId);
+      const box = part ? boundsOfVertices(part.vertices) : null;
+      const width = box ? box.max[0] - box.min[0] : 10;
+      const pattern: AssemblyPattern = {
+        id: newId("pt"),
+        name: nextPatternName(asm),
+        kind: "linear",
+        seeds: seeds.map((i) => i.id),
+        count: 3,
+        amount: String(Math.ceil(width + 5)),
+        axis: "x",
+      };
+      change((doc) => updateAssembly(doc, asm.id, (a) => syncPattern(a, pattern, () => newId("i"))));
+      set({ editingPattern: pattern.id, asmSelection: [] });
+    },
+    updatePattern: (id, patch) => {
+      const asm = activeAssembly(get());
+      const p = asm?.patterns?.find((x) => x.id === id);
+      if (!asm || !p) return;
+      const next: AssemblyPattern = { ...p, ...patch, name: (patch.name ?? p.name).trim() || p.name };
+      change((doc) => updateAssembly(doc, asm.id, (a) => syncPattern(a, next, () => newId("i"))));
+    },
+    deletePattern: (id) => {
+      const asm = activeAssembly(get());
+      if (!asm) return;
+      change((doc) => updateAssembly(doc, asm.id, (a) => removePattern(a, id)));
+      if (get().editingPattern === id) set({ editingPattern: null });
+    },
     toggleMateSuppressed: (id) => {
       const s = get();
       const asm = activeAssembly(s);

@@ -11,8 +11,9 @@
 import { applyRelations } from "./relations";
 import { evaluate } from "../model/expr";
 import type { Assembly, Mate, MateType } from "../model/types";
-import { compose, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement } from "./math";
+import { compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement } from "./math";
 import { frameOnParts, framePlacement, type Frame } from "./connectors";
+import { patternStep, placeCopy } from "./patterns";
 import type { PartMesh } from "../kernel/protocol";
 
 export interface MateValueDef {
@@ -178,6 +179,8 @@ export interface SolveResult {
   drivenBy: Record<string, string>;
   /** Movements changed to close loops of mates (mate id → amount key → value). */
   adjusted?: Record<string, Record<string, number>>;
+  /** Pattern id → plain-English reason its copies couldn't be placed. */
+  patternErrors?: Record<string, string>;
 }
 
 /** How much a turn counts against a gap when closing loops: 1 radian ≈ this many mm. */
@@ -205,6 +208,15 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
     fa: Frame;
     fb: Frame;
     values: Record<string, number>;
+  }
+  /** A join between two instances: a mate, or a pattern copy following its original (a → b, and back). */
+  interface Link {
+    u: Usable | null;
+    patternId: string | null;
+    a: string;
+    b: string;
+    fwd: (p: Placement) => Placement;
+    back: (p: Placement) => Placement;
   }
   const usable: Usable[] = [];
   for (const mate of assembly.mates ?? []) {
@@ -246,45 +258,67 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
   }
   const start = free.map((f) => f.u.values[f.key]);
 
+  // Pattern copies are held to their originals: each copy is the original moved on by a fixed step.
+  const patternErrors: Record<string, string> = {};
+  const copyLinks: Link[] = [];
+  for (const p of assembly.patterns ?? []) {
+    const step = patternStep(p);
+    if ("error" in step) {
+      patternErrors[p.id] = step.error;
+      continue;
+    }
+    for (const i of assembly.instances) {
+      if (i.copyOf?.pattern !== p.id || !instances.has(i.copyOf.seed)) continue;
+      const shift = placeCopy(p, step.step, IDENTITY, i.copyOf.index);
+      const back = invert(shift);
+      copyLinks.push({ u: null, patternId: p.id, a: i.copyOf.seed, b: i.id, fwd: (q) => compose(shift, q), back: (q) => compose(back, q) });
+    }
+  }
+
   /** One pass outwards from the fixed parts with these free amounts; closures = links reaching a part already placed. */
   const spread = (x: number[]) => {
     const values = new Map(usable.map((u) => [u, { ...u.values }]));
     free.forEach((f, i) => (values.get(f.u)![f.key] = x[i]));
-    const links = usable.map((u) => ({
-      u,
-      rel: compose(compose(framePlacement(u.fa), mateOffset(u.mate.type, values.get(u)!, u.mate.flip)), invert(framePlacement(u.fb))),
-    }));
+    const links: Link[] = [
+      ...usable.map((u): Link => {
+        const rel = compose(compose(framePlacement(u.fa), mateOffset(u.mate.type, values.get(u)!, u.mate.flip)), invert(framePlacement(u.fb)));
+        const inv = invert(rel);
+        return { u, patternId: null, a: u.a, b: u.b, fwd: (q) => compose(q, rel), back: (q) => compose(q, inv) };
+      }),
+      ...copyLinks,
+    ];
     const placements: Record<string, Placement> = {};
     const drivenBy: Record<string, string> = {};
-    const closures: { u: Usable; target: Placement; already: Placement; fixedPair: boolean }[] = [];
+    const closures: { link: Link; target: Placement; already: Placement; fixedPair: boolean }[] = [];
     const starts = [...assembly.instances.filter((i) => i.fixed), ...assembly.instances.filter((i) => !i.fixed)];
     for (const st of starts) {
       if (placements[st.id]) continue;
       placements[st.id] = st.placement;
       const queue = [st.id];
-      const used = new Set<Usable>();
+      const used = new Set<Link>();
       while (queue.length) {
         const id = queue.shift()!;
-        for (const { u, rel } of links) {
-          if ((u.a !== id && u.b !== id) || used.has(u)) continue;
-          used.add(u);
-          const other = u.a === id ? u.b : u.a;
-          const target = u.a === id ? compose(placements[id], rel) : compose(placements[id], invert(rel));
+        for (const link of links) {
+          if ((link.a !== id && link.b !== id) || used.has(link)) continue;
+          used.add(link);
+          const other = link.a === id ? link.b : link.a;
+          const target = link.a === id ? link.fwd(placements[id]) : link.back(placements[id]);
           const already = placements[other];
           if (already) {
-            closures.push({ u, target, already, fixedPair: !!instances.get(u.a)?.fixed && !!instances.get(u.b)?.fixed });
+            closures.push({ link, target, already, fixedPair: !!instances.get(link.a)?.fixed && !!instances.get(link.b)?.fixed });
             continue;
           }
           const o = instances.get(other)!;
           if (o.fixed) {
-            // Reached a second fixed part: it stays put; the mate closes the loop only if it fits.
+            // Reached a second fixed part: it stays put; the link closes the loop only if it fits.
             placements[other] = o.placement;
-            closures.push({ u, target, already: o.placement, fixedPair: !!instances.get(id)?.fixed });
+            closures.push({ link, target, already: o.placement, fixedPair: !!instances.get(id)?.fixed });
             queue.push(other);
             continue;
           }
           placements[other] = target;
-          drivenBy[other] = u.mate.id;
+          if (link.u) drivenBy[other] = link.u.mate.id;
+          else if (link.b === other) drivenBy[other] = `pattern:${link.patternId}`;
           queue.push(other);
         }
       }
@@ -314,8 +348,13 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
   // Report the closing mates that still don't fit.
   result.closures.forEach((c, i) => {
     const bad = r.slice(6 * i, 6 * i + 6).some((v) => Math.abs(v) > 1e-3);
-    if (bad && !mateErrors[c.u.mate.id]) {
-      mateErrors[c.u.mate.id] = c.fixedPair
+    if (bad && !c.link.u && c.link.patternId && !patternErrors[c.link.patternId]) {
+      patternErrors[c.link.patternId] = c.fixedPair
+        ? "A copy and its original are both fixed — unfix one, so the copy can follow the original."
+        : "A copy is held by a mate somewhere other than where the pattern puts it. Delete that mate, or mate the original instead.";
+    }
+    if (bad && c.link.u && !mateErrors[c.link.u.mate.id]) {
+      mateErrors[c.link.u.mate.id] = c.fixedPair
         ? "Both parts are fixed, so this mate can't move either of them. Unfix one."
         : "This mate can't be met together with the other mates on the same parts — they pull against each other. Suppress or delete one, or let one of them move (a Hinge or Slider instead of Fasten).";
     }
@@ -325,7 +364,7 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
   free.forEach((f, i) => {
     if (Math.abs(x[i] - start[i]) > 1e-9) (adjusted[f.u.mate.id] ??= {})[f.key] = x[i];
   });
-  return { placements: result.placements, mateErrors, drivenBy: result.drivenBy, adjusted };
+  return { placements: result.placements, mateErrors, drivenBy: result.drivenBy, adjusted, ...(Object.keys(patternErrors).length ? { patternErrors } : {}) };
 }
 
 /**

@@ -4,8 +4,9 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
-import type { Assembly, Instance, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
+import type { Assembly, AssemblyPattern, Instance, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
 import { parseRelation } from "./relations";
+import { parsePattern, tidyPatterns } from "./patterns";
 import { applyPlacement, IDENTITY, quatNormalize, type Placement, type Quat, type Vec3 } from "./math";
 
 const assembliesOf = (doc: PartSmithDocument) => doc.assemblies ?? [];
@@ -139,9 +140,11 @@ export function removeRelation(doc: PartSmithDocument, assemblyId: string, id: s
 export function removeInstances(doc: PartSmithDocument, assemblyId: string, ids: string[]): PartSmithDocument {
   const gone = new Set(ids);
   return updateAssembly(doc, assemblyId, (a) =>
-    withMates(
-      { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
-      (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
+    tidyPatterns(
+      withMates(
+        { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
+        (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
+      ),
     ),
   );
 }
@@ -292,12 +295,16 @@ export function parseAssemblies(raw: unknown): Assembly[] {
       const ri = i as Record<string, unknown>;
       if (typeof ri.id !== "string" || typeof ri.partId !== "string" || ids.has(ri.id)) continue;
       ids.add(ri.id);
+      const copy = (ri.copyOf ?? null) as Record<string, unknown> | null;
       instances.push({
         id: ri.id,
         partId: ri.partId,
         name: typeof ri.name === "string" && ri.name.trim() ? ri.name : "Part",
         placement: parsePlacement(ri.placement),
         fixed: ri.fixed === true,
+        ...(copy && typeof copy.pattern === "string" && typeof copy.seed === "string" && typeof copy.index === "number" && Number.isInteger(copy.index) && copy.index > 0
+          ? { copyOf: { pattern: copy.pattern, seed: copy.seed, index: copy.index }, fixed: false }
+          : {}),
       });
     }
     const mates: Mate[] = [];
@@ -326,7 +333,16 @@ export function parseAssemblies(raw: unknown): Assembly[] {
       }
       positions.push({ id: p.id, name: typeof p.name === "string" && p.name.trim() ? p.name.slice(0, 80) : "Position", values });
     }
-    out.push({ ...(mates.length ? { ...assembly, mates } : assembly), ...(relations.length ? { relations } : {}), ...(positions.length ? { positions } : {}) });
+    const instanceIds = new Set(instances.map((i) => i.id));
+    const patterns = (Array.isArray(r.patterns) ? r.patterns : []).map((p) => parsePattern(p, instanceIds)).filter((p): p is AssemblyPattern => !!p);
+    out.push(
+      tidyPatterns({
+        ...(mates.length ? { ...assembly, mates } : assembly),
+        ...(relations.length ? { relations } : {}),
+        ...(positions.length ? { positions } : {}),
+        ...(patterns.length ? { patterns } : {}),
+      }),
+    );
   }
   return out;
 }
