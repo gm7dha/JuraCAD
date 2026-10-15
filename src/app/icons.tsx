@@ -397,6 +397,28 @@ export const Icons = {
       <path d="M10 12l4 1.5M10 15l4 1.5M10 18l4 1.5" />
     </Svg>
   ),
+  AlignedRectangle: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 15l9-9 7 7-9 9z" />
+      <circle cx="4" cy="15" r="1.3" fill="currentColor" />
+      <circle cx="13" cy="6" r="1.3" fill="currentColor" />
+    </Svg>
+  ),
+  Circle3: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="4" r="1.4" fill="currentColor" />
+      <circle cx="5.1" cy="16" r="1.4" fill="currentColor" />
+      <circle cx="18.9" cy="16" r="1.4" fill="currentColor" />
+    </Svg>
+  ),
+  CentreArc: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M20 12a8 8 0 0 0-8-8" />
+      <path d="M12 12h8M12 12V4" strokeDasharray="2 2" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+    </Svg>
+  ),
   Ellipse: (p: IconProps) => (
     <Svg {...p}>
       <ellipse cx="12" cy="12" rx="9" ry="5.5" transform="rotate(-20 12 12)" />
