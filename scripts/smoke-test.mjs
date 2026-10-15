@@ -812,7 +812,9 @@ try {
     if (spots.length < 2) throw new Error("couldn't find two parts' top faces to measure between");
     const cvs = await page.locator(".viewport canvas").first().boundingBox();
     await page.mouse.click(cvs.x + spots[0].at.x, cvs.y + spots[0].at.y);
-    await page.mouse.click(cvs.x + spots[1].at.x, cvs.y + spots[1].at.y, { modifiers: ["Shift"] });
+    await page.keyboard.down("Shift");
+    await page.mouse.click(cvs.x + spots[1].at.x, cvs.y + spots[1].at.y);
+    await page.keyboard.up("Shift");
     await page.waitForFunction(() => document.querySelector(".measure-panel")?.textContent?.includes("Closest distance"), null, { timeout: 10_000 }).catch(async () => {
       const sel = await page.evaluate(() => JSON.stringify(window.partsmithStore.getState().selection));
       const panel = await page.locator(".measure-panel").innerText().catch(() => "(no measure panel)");
