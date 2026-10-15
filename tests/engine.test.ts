@@ -355,6 +355,19 @@ describe("fillet and chamfer", () => {
     expect(check.mesh.watertight).toBe(true);
   });
 
+  it("can grow the radius along the edge (variable fillet)", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const pick = pickAt(build([box]), "edge", [5, 0, 10]);
+    const r = build([box, { ...feature("fillet", { radius: 1, endRadius: 3 }, "add"), picks: [pick] }]);
+    expect(r.featureErrors).toEqual({});
+    const check = engine.check("normal").parts[0];
+    expect(check.geometryValid).toBe(true);
+    // More is taken away than a 1 mm fillet, less than a 3 mm one.
+    const v = exactVolume();
+    expect(v).toBeLessThan(1000 - (1 - Math.PI / 4) * 10);
+    expect(v).toBeGreaterThan(1000 - (9 - (9 * Math.PI) / 4) * 10);
+  });
+
   it("bevels one edge with a chamfer", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });
     const pick = pickAt(build([box]), "edge", [5, 0, 10]);

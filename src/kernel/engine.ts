@@ -1813,14 +1813,17 @@ export class GeometryEngine {
       for (const partId of partIds) {
         const part = this.parts.find((p) => p.id === partId)!;
         const chosen = findPickedEdges(part.shape, picks.filter((p) => p.partId === partId));
-        const pick = (e: Edge) => (chosen.some((c) => c.isSame(e)) ? size : null);
+        // A variable fillet runs from one radius at the start of each edge to another at its end.
+        const end = feature.type === "fillet" ? (values.endRadius ?? 0) : 0;
+        const radius: number | [number, number] = end > 0 && Math.abs(end - size) > 1e-9 ? [size, end] : size;
+        const pick = (e: Edge) => (chosen.some((c) => c.isSame(e)) ? radius : null);
         const failed =
           feature.type === "fillet"
             ? "Couldn't round these edges. Try a smaller radius — it has to fit on the faces next to each edge."
             : "Couldn't bevel these edges. Try a smaller distance — it has to fit on the faces next to each edge.";
         let shape: Shape3D;
         try {
-          shape = feature.type === "fillet" ? part.shape.fillet(pick) : part.shape.chamfer(pick);
+          shape = feature.type === "fillet" ? part.shape.fillet(pick) : part.shape.chamfer((e: Edge) => (chosen.some((c) => c.isSame(e)) ? size : null));
         } catch {
           throw new Error(failed);
         } finally {
