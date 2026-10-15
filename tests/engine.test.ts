@@ -980,6 +980,24 @@ describe("threads", () => {
   });
 });
 
+describe("measuring between parts", () => {
+  it("measures between faces of two different parts, apart or overlapping", () => {
+    const a = feature("box", { width: 10, depth: 10, height: 10 });
+    const b = feature("box", { width: 10, depth: 10, height: 10, x: 25, y: 0, z: 0 });
+    const r = build([a, b]);
+    const side = (id: string, nx: number) => ({ partId: id, ref: r.parts.find((p) => p.id === id)!.faceRefs.find((f) => f.kind === "face" && f.normal[0] === nx)! });
+    const m = engine.measure([side(a.id, 1), side(b.id, -1)]);
+    expect(m.items).toHaveLength(2);
+    expect(m.distance).toBeCloseTo(15, 6);
+    const c = feature("box", { width: 10, depth: 10, height: 10, x: 5, y: 0, z: 0 });
+    const r2 = build([a, c]);
+    const tops = r2.parts.map((p) => ({ partId: p.id, ref: p.faceRefs.find((f) => f.kind === "face" && f.normal[2] === 1)! }));
+    const m2 = engine.measure(tops);
+    expect(m2.items).toHaveLength(2);
+    expect(m2.distance).toBeCloseTo(0, 6);
+  });
+});
+
 describe("delete part", () => {
   it("removes whole parts from that point on", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });

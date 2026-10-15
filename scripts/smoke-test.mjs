@@ -789,6 +789,34 @@ try {
     await page.waitForFunction((n) => document.querySelectorAll(".part-row").length === n, before, { timeout: 30_000 });
   }
 
+  step = "measuring between two parts";
+  {
+    await page.keyboard.press("Escape");
+    const spots = await page.evaluate(() => {
+      const v = window.partsmithViewport.current;
+      const shown = v.shownParts();
+      const out = [];
+      for (const p of shown) {
+        const i = p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99);
+        const at = i >= 0 ? v.screenPointOnFace(p.id, i) : null;
+        if (at) out.push({ id: p.id, at });
+        if (out.length === 2) break;
+      }
+      return out;
+    });
+    if (spots.length < 2) throw new Error("couldn't find two parts' top faces to measure between");
+    const cvs = await page.locator(".viewport canvas").first().boundingBox();
+    await page.mouse.click(cvs.x + spots[0].at.x, cvs.y + spots[0].at.y);
+    await page.mouse.click(cvs.x + spots[1].at.x, cvs.y + spots[1].at.y, { modifiers: ["Shift"] });
+    await page.waitForFunction(() => document.querySelector(".measure-panel")?.textContent?.includes("Closest distance"), null, { timeout: 10_000 }).catch(async () => {
+      const sel = await page.evaluate(() => JSON.stringify(window.partsmithStore.getState().selection));
+      const panel = await page.locator(".measure-panel").innerText().catch(() => "(no measure panel)");
+      throw new Error(`measuring between ${spots[0].id} and ${spots[1].id} showed no distance. Selection ${sel}; panel: ${panel.replace(/\n/g, " | ")}`);
+    });
+    await shot("measureparts");
+    await page.keyboard.press("Escape");
+  }
+
   step = "selecting parts by dragging a box in the 3D view";
   {
     await page.keyboard.press("Escape");
