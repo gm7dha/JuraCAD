@@ -5,7 +5,7 @@
 import { canBeDriven, canDrive, nextRelationName, RELATION_KINDS } from "../assembly/relations";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { billOfMaterials, bomCsv, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
+import { billOfMaterials, bomCsv, nextPositionName, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
 import { eulerDegFromQuat, quatFromEulerDeg, type Placement } from "../assembly/math";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { evaluate } from "../model/expr";
@@ -359,6 +359,43 @@ function RelationsSection({ assembly }: { assembly: Assembly }) {
   );
 }
 
+/** Named positions: save how the mates are set now, and go back to it with one click. */
+function PositionsSection({ assembly }: { assembly: Assembly }) {
+  const positions = assembly.positions ?? [];
+  const st = useStore.getState;
+  if (!(assembly.mates ?? []).length && !positions.length) return null;
+  const save = () => {
+    const name = window.prompt("Name for this position", nextPositionName(assembly));
+    if (name !== null && name.trim()) st().savePosition(name.trim().slice(0, 80));
+  };
+  return (
+    <section className="panel-section positions">
+      <h3>
+        Positions <span className="count">({positions.length})</span>
+        <button type="button" className="text-button small-text" onClick={save} title="Save how the mates are set now (hinge angles, slider distances…) to come back to">
+          + Save current
+        </button>
+      </h3>
+      {positions.length === 0 ? (
+        <p className="panel-hint">Save the mechanism's position (open, closed…) to switch between them later.</p>
+      ) : (
+        <ul className="position-list">
+          {positions.map((p) => (
+            <li key={p.id}>
+              <button type="button" className="text-button" onClick={() => st().applyPosition(p.id)} title={`Move the parts to ${p.name}`}>
+                {p.name}
+              </button>
+              <button type="button" className="icon-button small" onClick={() => st().removePosition(p.id)} aria-label={`Forget ${p.name}`} title="Forget this position">
+                <Icons.Cross size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /** A box for a relation's ratio, applied on Enter or when you leave it. */
 function RatioBox({ value, label, onCommit }: { value: string; label: string; onCommit: (v: string) => void }) {
   const [text, setText] = useState(value);
@@ -408,6 +445,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
       </section>
       <MatesSection assembly={assembly} />
       <RelationsSection assembly={assembly} />
+      <PositionsSection assembly={assembly} />
       <section className="panel-section parts">
         <h3>
           Parts list <span className="count">({bom.reduce((n, r) => n + r.quantity, 0)})</span>

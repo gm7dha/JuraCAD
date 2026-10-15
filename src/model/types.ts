@@ -341,6 +341,13 @@ export interface Mate {
   suppressed?: boolean;
 }
 
+/** A saved arrangement of an assembly: each mate's amounts as they were. */
+export interface NamedPosition {
+  id: string;
+  name: string;
+  values: Record<string, Record<string, string>>;
+}
+
 /** One mate's movement driving another's (gears, rack and pinion, screws). */
 export interface MateRelation {
   id: string;
@@ -362,6 +369,8 @@ export interface Assembly {
   instances: Instance[];
   /** How the parts are joined (optional: older saves have none). */
   mates?: Mate[];
+  /** Saved positions: each mate's amounts, to go back to (Onshape's named positions). */
+  positions?: NamedPosition[];
   /** Mates driving other mates (gears, rack and pinion, screws). */
   relations?: MateRelation[];
   /** Exploded view: how far the parts are spread apart (1 = their distance from the middle again); missing = together. */

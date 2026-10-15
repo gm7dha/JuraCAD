@@ -4,7 +4,7 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
-import type { Assembly, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "../model/types";
+import type { Assembly, Instance, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
 import { parseRelation } from "./relations";
 import { applyPlacement, IDENTITY, quatNormalize, type Placement, type Quat, type Vec3 } from "./math";
 
@@ -91,6 +91,39 @@ export function putRelation(doc: PartSmithDocument, assemblyId: string, relation
     const list = a.relations ?? [];
     return { ...a, relations: list.some((r) => r.id === relation.id) ? list.map((r) => (r.id === relation.id ? relation : r)) : [...list, relation] };
   });
+}
+
+/** Save the mates' amounts as they are now under a name (Onshape's named positions). */
+export function savePosition(doc: PartSmithDocument, assemblyId: string, id: string, name: string): PartSmithDocument {
+  return updateAssembly(doc, assemblyId, (a) => {
+    const values = Object.fromEntries((a.mates ?? []).map((m) => [m.id, { ...m.values }]));
+    return { ...a, positions: [...(a.positions ?? []), { id, name, values }] };
+  });
+}
+
+/** Put the mates back to a saved position (mates made since then stay as they are). */
+export function applyPosition(doc: PartSmithDocument, assemblyId: string, id: string): PartSmithDocument {
+  return updateAssembly(doc, assemblyId, (a) => {
+    const pos = a.positions?.find((p) => p.id === id);
+    if (!pos || !a.mates) return a;
+    return { ...a, mates: a.mates.map((m) => (pos.values[m.id] ? { ...m, values: { ...m.values, ...pos.values[m.id] } } : m)) };
+  });
+}
+
+export function removePosition(doc: PartSmithDocument, assemblyId: string, id: string): PartSmithDocument {
+  return updateAssembly(doc, assemblyId, (a) => {
+    const { positions: _old, ...rest } = a;
+    const left = (a.positions ?? []).filter((p) => p.id !== id);
+    return left.length ? { ...rest, positions: left } : rest;
+  });
+}
+
+/** Next free name: "Position 1", "Position 2"… */
+export function nextPositionName(a: Assembly): string {
+  const used = new Set((a.positions ?? []).map((p) => p.name));
+  let n = 1;
+  while (used.has(`Position ${n}`)) n++;
+  return `Position ${n}`;
 }
 
 /** Remove a relation. */
@@ -282,7 +315,18 @@ export function parseAssemblies(raw: unknown): Assembly[] {
     const relations = (Array.isArray(r.relations) ? r.relations : [])
       .map(parseRelation)
       .filter((x): x is MateRelation => !!x && mateIds.has(x.driver) && mateIds.has(x.driven));
-    out.push({ ...(mates.length ? { ...assembly, mates } : assembly), ...(relations.length ? { relations } : {}) });
+    const positions: NamedPosition[] = [];
+    for (const raw of Array.isArray(r.positions) ? r.positions : []) {
+      const p = (raw ?? {}) as Record<string, unknown>;
+      if (typeof p.id !== "string" || !p.values || typeof p.values !== "object") continue;
+      const values: Record<string, Record<string, string>> = {};
+      for (const [mid, v] of Object.entries(p.values as Record<string, unknown>)) {
+        if (!mateIds.has(mid) || !v || typeof v !== "object") continue;
+        values[mid] = Object.fromEntries(Object.entries(v as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
+      }
+      positions.push({ id: p.id, name: typeof p.name === "string" && p.name.trim() ? p.name.slice(0, 80) : "Position", values });
+    }
+    out.push({ ...(mates.length ? { ...assembly, mates } : assembly), ...(relations.length ? { relations } : {}), ...(positions.length ? { positions } : {}) });
   }
   return out;
 }
