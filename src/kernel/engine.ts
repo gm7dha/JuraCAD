@@ -409,20 +409,29 @@ export function findHoles(shape: Shape3D): FoundHole[] {
     }
     const { origin, axis } = g.bits[0];
     const at = (t: number): Vec3 => [origin[0] + axis[0] * t, origin[1] + axis[1] * t, origin[2] + axis[2] * t];
-    // Is there material just past this end? (A blind hole's bottom, or the tip of the drill.)
+    // The tip a drill leaves at the bottom of a blind hole (a narrower cone on the end) counts as part of it here.
+    let tipLo = lo;
+    let tipHi = hi;
+    for (const b of g.bits) {
+      if (b.kind !== "cone" || extras.includes(b)) continue;
+      if (near(b.hi, tipLo)) tipLo = b.lo;
+      else if (near(b.lo, tipHi)) tipHi = b.hi;
+    }
+    // Is there material just past this end? Past a blind hole's bottom the part is within `step`
+    // (or all round); past an open end the nearest material is the rim, further away than that.
     const step = Math.min(0.5, r * 0.5);
     const open = (t: number, out: number) => {
       const v = makeVertex(at(t + out * step));
       try {
-        return measureDistanceBetween(shape, v) > step * 1.05;
+        return measureDistanceBetween(shape, v) > (step + Math.hypot(step, r)) / 2;
       } catch {
         return false;
       } finally {
         v.delete();
       }
     };
-    const openHi = open(hi, 1);
-    const openLo = open(lo, -1);
+    const openHi = open(tipHi, 1);
+    const openLo = open(tipLo, -1);
     if (!openHi && !openLo) continue; // a closed-off space, not a hole
     const mid = (holeLo + holeHi) / 2;
     const wideAtHi = extras.some((b) => (b.lo + b.hi) / 2 > mid);
