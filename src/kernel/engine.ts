@@ -188,6 +188,44 @@ function cutThread(start: Shape3D, cyl: Cylinder, from: number, to: number, lo: 
   return shape;
 }
 
+/**
+ * Edges that only one face uses — the seam down the side of a cylinder, cone
+ * or sphere, where the surface meets itself. Onshape doesn't show those (they
+ * aren't real edges of the shape), and clicking one would get in the way of
+ * picking the round face.
+ */
+export function seamEdgeIds(shape: Shape3D): Set<number> {
+  const faceCount = new Map<number, number>();
+  for (const f of facesOf(shape)) {
+    try {
+      const mine = new Set<number>();
+      for (const e of edgesOf(f)) {
+        mine.add(e.hashCode);
+        e.delete();
+      }
+      for (const h of mine) faceCount.set(h, (faceCount.get(h) ?? 0) + 1);
+    } finally {
+      f.delete();
+    }
+  }
+  return new Set([...faceCount].filter(([, n]) => n === 1).map(([h]) => h));
+}
+
+/** A part's edge lines without its seams (see seamEdgeIds). */
+function withoutSeams(shape: Shape3D, edges: { lines: number[]; edgeGroups: { start: number; count: number; edgeId: number }[] }) {
+  const seams = seamEdgeIds(shape);
+  if (!seams.size) return edges;
+  const lines: number[] = [];
+  const edgeGroups: { start: number; count: number; edgeId: number }[] = [];
+  for (const g of edges.edgeGroups) {
+    if (seams.has(g.edgeId)) continue;
+    const start = lines.length / 3;
+    for (let i = g.start * 3; i < (g.start + g.count) * 3; i++) lines.push(edges.lines[i]);
+    edgeGroups.push({ start, count: g.count, edgeId: g.edgeId });
+  }
+  return { ...edges, lines, edgeGroups };
+}
+
 /** A round face's cylinder, worked out from one of its round edges (null if it has none). */
 function cylinderOfFace(face: Face): Cylinder | null {
   if (face.geomType !== "CYLINDRE") return null;
@@ -1846,7 +1884,7 @@ export class GeometryEngine {
 
   private makePartMesh(p: BuiltPart): PartMesh {
     const faces = p.shape.mesh(MESH_TOLERANCES.display);
-    const edges = p.shape.meshEdges(MESH_TOLERANCES.display);
+    const edges = withoutSeams(p.shape, p.shape.meshEdges(MESH_TOLERANCES.display));
     // Describe each face and edge so picks can be found again after the next rebuild.
     const bounds = boundsOf(p.shape);
     const faceById = new Map<number, Face[]>();

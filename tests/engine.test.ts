@@ -939,6 +939,17 @@ describe("threads", () => {
     ref: r.parts.find((p) => p.id === partId)!.faceRefs.find((f) => f.kind === "face" && f.surface === "CYLINDRE")!,
   });
 
+  it("doesn't show the seam down a cylinder's side (so clicking there picks the round face)", () => {
+    const rod = build([feature("cylinder", { diameter: 8, height: 12, x: 0, y: 0, z: 0 })]);
+    const edges = rod.parts[0].edgeRefs;
+    // Just the round edges at the top and bottom.
+    expect(edges.map((e) => e.curve)).toEqual(["CIRCLE", "CIRCLE"]);
+    expect(rod.parts[0].edgeGroups).toHaveLength(2);
+    expect(rod.parts[0].lines.length / 3).toBe(rod.parts[0].edgeGroups.reduce((n, g) => n + g.count, 0));
+    // A box keeps all twelve.
+    expect(build([feature("box", { width: 5, depth: 5, height: 5 })]).parts[0].edgeRefs).toHaveLength(12);
+  });
+
   it("cuts a bolt thread round a rod", () => {
     const rod = feature("cylinder", { diameter: 8, height: 12, x: 0, y: 0, z: 0 });
     const first = build([rod]);
