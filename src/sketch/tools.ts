@@ -5,7 +5,7 @@
  */
 import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
-import { addRectangle, curveById, deleteItems, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
+import { addArc, addCircle, addRectangle, circleThrough, curveById, deleteItems, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
 import { minorPointFor } from "./ellipse";
 import { ORIGIN_ID, type SketchEllipse, type SketchSpline, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
@@ -908,4 +908,73 @@ export function addEllipse(s: SketchData, centre: Placed, major: Placed, side: P
   const id = sketchId("el");
   const ellipse: SketchEllipse = { id, type: "ellipse", center: a.id, major: b.id, minor: mid, construction };
   return { ...settle({ ...sk, points: [...sk.points, { id: mid, x: minor[0], y: minor[1] }], curves: [...sk.curves, ellipse] }), ellipseId: id };
+}
+
+// ---------------------------------------------------------------------------
+// More ways to draw circles, arcs and rectangles
+
+const snappedPoint = (p: Placed): string | null => (p.snap?.kind === "point" ? p.snap.id : p.snap?.kind === "origin" ? ORIGIN_ID : null);
+
+/** A circle through three clicked points (any clicked on existing points stay on the circle). */
+export function addThreePointCircle(s: SketchData, a: Placed, b: Placed, c: Placed, construction = false): EditResult & { circleId: string } {
+  const centre = circleThrough([a.x, a.y], [b.x, b.y], [c.x, c.y]);
+  if (!centre) return { sketch: s, circleId: "", error: "Those three points are in a line — move the last one to make a circle." };
+  const r = addCircle(s, { x: centre[0], y: centre[1], snap: null }, len(sub([a.x, a.y], centre)), construction);
+  if (r.error) return r;
+  const on = [a, b, c].map(snappedPoint).filter((id): id is string => !!id);
+  if (!on.length) return r;
+  const constraints = [...r.sketch.constraints, ...on.map((id) => con("pointOnCircle", [id, r.circleId]))];
+  return { ...settle({ ...r.sketch, constraints }), circleId: r.circleId };
+}
+
+/** An arc from its centre, a start point and where it ends (the shorter way round from the start). */
+export function addCentreArc(s: SketchData, centre: Placed, start: Placed, end: Placed, construction = false): EditResult & { arcId: string } {
+  const c: P2 = [centre.x, centre.y];
+  const r = len(sub([start.x, start.y], c));
+  const towards = sub([end.x, end.y], c);
+  if (r < 1e-6 || len(towards) < 1e-6) return { sketch: s, arcId: "", error: "Click the centre, then where the arc starts, then where it ends." };
+  const a0 = Math.atan2(start.y - c[1], start.x - c[0]);
+  let sweep = Math.atan2(towards[1], towards[0]) - a0;
+  while (sweep > Math.PI) sweep -= TAU;
+  while (sweep <= -Math.PI) sweep += TAU;
+  if (Math.abs(sweep) < 1e-6) return { sketch: s, arcId: "", error: "Move round from the start to make the arc." };
+  const at = (ang: number): Placed => ({ x: c[0] + r * Math.cos(ang), y: c[1] + r * Math.sin(ang), snap: null });
+  const endPoint: Placed = end.snap?.kind === "point" && Math.abs(len(towards) - r) < 1e-6 ? end : at(a0 + sweep);
+  const made = addArc(s, start, endPoint, at(a0 + sweep / 2), construction);
+  if (made.error) return made;
+  const id = snappedPoint(centre);
+  if (!id) return made;
+  const arc = made.sketch.curves.find((x) => x.id === made.arcId);
+  if (arc?.type !== "arc") return made;
+  return { ...settle({ ...made.sketch, constraints: [...made.sketch.constraints, con("coincident", [arc.center, id])] }), arcId: made.arcId };
+}
+
+/** Where a rectangle on edge a–b reaches across to, for a third click at `p`: how far from that edge (signed). */
+export function alignedWidth(a: P2, b: P2, p: P2): number {
+  const d = unit(sub(b, a));
+  return cross(d, sub(p, a));
+}
+
+/** A rectangle at any angle: two clicks for one side, a third for how wide it is. */
+export function addAlignedRectangle(s: SketchData, a: Placed, b: Placed, p: P2, construction = false): EditResult & { lineIds: string[] } {
+  const A: P2 = [a.x, a.y];
+  const B: P2 = [b.x, b.y];
+  const d = unit(sub(B, A));
+  const w = alignedWidth(A, B, p);
+  if (len(sub(B, A)) < 1e-6 || Math.abs(w) < 1e-6) return { sketch: s, lineIds: [], error: "Click two corners along one side, then move out to set the width." };
+  const n: P2 = [-d[1] * w, d[0] * w];
+  const pa = placePoint(s, a);
+  const pb = placePoint(pa.sketch, b);
+  if (pa.id === pb.id) return { sketch: s, lineIds: [], error: "Click two different corners." };
+  const c3 = sketchId("p");
+  const c4 = sketchId("p");
+  const C = add(B, n);
+  const D = add(A, n);
+  let sk: SketchData = { ...pb.sketch, points: [...pb.sketch.points, { id: c3, x: C[0], y: C[1] }, { id: c4, x: D[0], y: D[1] }] };
+  const corners = [pa.id, pb.id, c3, c4];
+  const lineIds = corners.map(() => sketchId("l"));
+  const lines: SketchLine[] = corners.map((q, i) => ({ id: lineIds[i], type: "line", p1: q, p2: corners[(i + 1) % 4], construction }));
+  const constraints = [con("parallel", [lineIds[0], lineIds[2]]), con("parallel", [lineIds[1], lineIds[3]]), con("perpendicular", [lineIds[0], lineIds[1]])];
+  sk = { ...sk, curves: [...sk.curves, ...lines], constraints: [...sk.constraints, ...constraints] };
+  return { ...settle(sk), lineIds };
 }

@@ -13,8 +13,11 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "line", label: "Line", key: "L", icon: <Icons.Line />, hint: "Click to start, keep clicking to chain lines, Esc to stop" },
   { tool: "rectangle", label: "Rectangle", key: "R", icon: <Icons.Rectangle />, hint: "Click two opposite corners" },
   { tool: "centreRectangle", label: "Centre rect", key: "", icon: <Icons.CentreRectangle />, hint: "Click the centre, then a corner" },
+  { tool: "alignedRectangle", label: "Aligned rect", key: "", icon: <Icons.AlignedRectangle />, hint: "Click two corners along one side (at any angle), then move out to set the width" },
   { tool: "circle", label: "Circle", key: "C", icon: <Icons.Circle />, hint: "Click the centre, then a point on the edge" },
+  { tool: "circle3", label: "3-point circle", key: "", icon: <Icons.Circle3 />, hint: "Click three points the circle passes through" },
   { tool: "arc", label: "Arc", key: "A", icon: <Icons.Arc />, hint: "Click both ends, then a point the arc passes through" },
+  { tool: "centreArc", label: "Centre arc", key: "", icon: <Icons.CentreArc />, hint: "Click the centre, then where the arc starts, then where it ends" },
   { tool: "tangentArc", label: "Tangent arc", key: "", icon: <Icons.TangentArc />, hint: "Click the end of a line or arc, then where the arc should finish — it carries on smoothly" },
   { tool: "spline", label: "Spline", key: "", icon: <Icons.Spline />, hint: "Click points for a smooth curve to pass through. Click the first point again to close it, or Esc to finish" },
   { tool: "ellipse", label: "Ellipse", key: "", icon: <Icons.Ellipse />, hint: "Click the centre, then the end of its length, then how wide it is" },
@@ -32,9 +35,9 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
 
 /** Tools shown as one button with a ▾ list (the first is shown until another is used). */
 const FAMILIES: { name: string; tools: SketchTool[] }[] = [
-  { name: "rectangle", tools: ["rectangle", "centreRectangle"] },
-  { name: "circle", tools: ["circle", "ellipse"] },
-  { name: "arc", tools: ["arc", "tangentArc"] },
+  { name: "rectangle", tools: ["rectangle", "centreRectangle", "alignedRectangle"] },
+  { name: "circle", tools: ["circle", "circle3", "ellipse"] },
+  { name: "arc", tools: ["arc", "centreArc", "tangentArc"] },
 ];
 
 const RELATIONS: RelationTool[] = [
