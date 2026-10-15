@@ -40,6 +40,8 @@ import {
   mirrorCurves,
   offsetCurves,
   patternTransform,
+  readTransformSettings,
+  transformMove,
   readPatternSettings,
   tangentArcCentre,
   tangentAt,
@@ -219,7 +221,8 @@ export class SketchController {
   private patternClick(e: SketchPointer): void {
     const hit = this.hitAt(e);
     const st = this.state;
-    if (hit?.kind === "point" && st.sketch?.patternKind === "circular") {
+    const moving = this.tool === "sketchTransform";
+    if (hit?.kind === "point" && !moving && st.sketch?.patternKind === "circular") {
       st.setSketchOptions({ patternCentre: hit.id });
       st.setSketchMessage("Centre chosen. Click the shapes to repeat, then Make pattern in the sketch panel.", "info");
     } else if (hit?.kind === "curve") {
@@ -227,7 +230,10 @@ export class SketchController {
       st.setSketchSelection(sel.includes(hit.id) ? sel.filter((x) => x !== hit.id) : [...sel, hit.id]);
       st.setSketchMessage(null);
     } else {
-      st.setSketchMessage("Click the lines, arcs and circles to repeat, then Make pattern in the sketch panel.", "info");
+      st.setSketchMessage(
+        moving ? "Click the lines, arcs and circles to move, then Move (or Copy) in the sketch panel." : "Click the lines, arcs and circles to repeat, then Make pattern in the sketch panel.",
+        "info",
+      );
       return;
     }
     this.emit({ preview: this.patternPreview() });
@@ -239,11 +245,19 @@ export class SketchController {
     const session = this.state.sketch;
     if (!d || !session) return [];
     const sources = session.selection.map((id) => curveById(d, id)).filter((c) => !!c);
-    const opts = readPatternSettings(d, session);
-    if (!sources.length || typeof opts === "string" || !(opts.count >= 2 && opts.count <= 200)) return [];
+    if (!sources.length) return [];
+    let moves: ((p: [number, number]) => [number, number])[];
+    if (this.tool === "sketchTransform") {
+      const t = readTransformSettings(session);
+      if (typeof t === "string") return [];
+      moves = [transformMove(d, sources, t)];
+    } else {
+      const opts = readPatternSettings(d, session);
+      if (typeof opts === "string" || !(opts.count >= 2 && opts.count <= 200)) return [];
+      moves = Array.from({ length: Math.round(opts.count) - 1 }, (_, i) => patternTransform(opts, i + 1));
+    }
     const out: PreviewShape[] = [];
-    for (let i = 1; i < Math.round(opts.count); i++) {
-      const move = patternTransform(opts, i);
+    for (const move of moves) {
       const at = (id: string) => move(pointPos(d, id));
       for (const c of sources) {
         if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
@@ -264,7 +278,7 @@ export class SketchController {
 
   /** Redraw the pattern preview (after its settings change in the panel). */
   refreshPreview(): void {
-    if (this.tool === "sketchPattern") this.emit({ preview: this.patternPreview() });
+    if (this.tool === "sketchPattern" || this.tool === "sketchTransform") this.emit({ preview: this.patternPreview() });
   }
 
   // ---------------------------------------------------------------------------
@@ -358,7 +372,7 @@ export class SketchController {
     }
     if (tool === "useEdge") return;
     if (tool === "mirror") return this.mirrorClick(e);
-    if (tool === "sketchPattern") return this.patternClick(e);
+    if (tool === "sketchPattern" || tool === "sketchTransform") return this.patternClick(e);
     if (tool === "sketchFillet") {
       const hit = this.hitAt(e);
       if (hit?.kind !== "point" || hit.id === ORIGIN_ID) {
@@ -574,9 +588,9 @@ export class SketchController {
       return;
     }
     if (tool === "useEdge") return;
-    if (tool === "sketchPattern") {
+    if (tool === "sketchPattern" || tool === "sketchTransform") {
       const hit = this.hitAt(e);
-      const circular = this.state.sketch?.patternKind === "circular";
+      const circular = tool === "sketchPattern" && this.state.sketch?.patternKind === "circular";
       this.emit({ hover: hit?.kind === "curve" || (circular && hit?.kind === "point") ? hit : null, snap: null, preview: this.patternPreview() });
       return;
     }

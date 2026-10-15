@@ -31,6 +31,7 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "trim", label: "Trim", key: "T", icon: <Icons.Trim />, hint: "Click a piece of a line, arc or circle to cut it away up to where other lines cross it" },
   { tool: "offset", label: "Offset", key: "O", icon: <Icons.Offset />, hint: "Click a shape's edge on the side to offset towards — a copy that far away (set the distance in the sketch panel)" },
   { tool: "mirror", label: "Mirror", key: "M", icon: <Icons.Mirror />, hint: "Click the line to mirror about, then the shapes to copy across (or select the shapes first). The copies follow the originals" },
+  { tool: "sketchTransform", label: "Move / copy", key: "", icon: <Icons.Move />, hint: "Click shapes, then move, turn or copy them by the amounts in the sketch panel" },
   { tool: "sketchPattern", label: "Pattern", key: "", icon: <Icons.SketchPattern />, hint: "Click shapes to repeat them in a row or round a centre (set how many and how far apart in the sketch panel)" },
   { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part to copy them into the sketch (they stay fixed where they are)" },
 ];
@@ -41,6 +42,7 @@ const FAMILIES: { name: string; tools: SketchTool[] }[] = [
   { name: "circle", tools: ["circle", "circle3", "ellipse"] },
   { name: "arc", tools: ["arc", "centreArc", "tangentArc"] },
   { name: "trim", tools: ["trim", "extend", "split"] },
+  { name: "copy", tools: ["mirror", "sketchPattern", "sketchTransform"] },
 ];
 
 const RELATIONS: RelationTool[] = [
