@@ -4,6 +4,7 @@ import { activeFeatures, studioParts, useStore } from "../model/store";
 import type { FeatureType } from "../model/types";
 import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
+import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
 import { chooseImportFile } from "./fileActions";
@@ -92,17 +93,19 @@ export function Toolbar() {
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
-        {SOLIDS.map((s) => (
-          <ToolButton
-            key={s.type}
-            label={s.label}
-            icon={s.icon}
-            onClick={() => startCreate(s.type)}
-            disabled={!ready}
-            active={editingType === s.type}
-            title={`Add a ${s.label.toLowerCase()}`}
-          />
-        ))}
+        <ToolGroupButton
+          id="solids"
+          name="shape"
+          items={SOLIDS.map((x) => ({
+            key: x.type,
+            label: x.label,
+            icon: x.icon,
+            title: `Add a ${x.label.toLowerCase()}`,
+            onClick: () => startCreate(x.type),
+            disabled: !ready,
+            active: editingType === x.type,
+          }))}
+        />
         <ToolButton
           label="Import"
           icon={<Icons.Import />}
@@ -232,21 +235,29 @@ export function Toolbar() {
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
-        <ToolButton
-          label="Fillet"
-          icon={<Icons.Fillet />}
-          onClick={() => startCreate("fillet")}
-          disabled={!ready || !hasPart}
-          active={editingType === "fillet"}
-          title={hasPart ? "Fillet (Shift+F) — round off edges. Select edges first, or pick them after" : "Make a part first, then round its edges"}
-        />
-        <ToolButton
-          label="Chamfer"
-          icon={<Icons.Chamfer />}
-          onClick={() => startCreate("chamfer")}
-          disabled={!ready || !hasPart}
-          active={editingType === "chamfer"}
-          title={hasPart ? "Chamfer — bevel edges with a flat cut. Select edges first, or pick them after" : "Make a part first, then bevel its edges"}
+        <ToolGroupButton
+          id="edges"
+          name="edge"
+          items={[
+            {
+              key: "fillet",
+              label: "Fillet",
+              icon: <Icons.Fillet />,
+              onClick: () => startCreate("fillet"),
+              disabled: !ready || !hasPart,
+              active: editingType === "fillet",
+              title: hasPart ? "Fillet (Shift+F) — round off edges. Select edges first, or pick them after" : "Make a part first, then round its edges",
+            },
+            {
+              key: "chamfer",
+              label: "Chamfer",
+              icon: <Icons.Chamfer />,
+              onClick: () => startCreate("chamfer"),
+              disabled: !ready || !hasPart,
+              active: editingType === "chamfer",
+              title: hasPart ? "Chamfer — bevel edges with a flat cut. Select edges first, or pick them after" : "Make a part first, then bevel its edges",
+            },
+          ]}
         />
         <ToolButton
           label="Shell"
@@ -256,21 +267,38 @@ export function Toolbar() {
           active={editingType === "shell"}
           title={hasPart ? "Shell — hollow out a part. Click the face to leave open (usually the top)" : "Make a part first, then hollow it out"}
         />
-        <ToolButton
-          label="Draft"
-          icon={<Icons.Draft />}
-          onClick={() => startCreate("draft")}
-          disabled={!ready || !hasPart}
-          active={editingType === "draft"}
-          title={hasPart ? "Draft — taper faces so the part pulls out of a mould" : "Make a part first"}
-        />
-        <ToolButton
-          label="Move face"
-          icon={<Icons.MoveFace />}
-          onClick={() => startCreate("moveFace")}
-          disabled={!ready || !hasPart}
-          active={editingType === "moveFace"}
-          title={hasPart ? "Move face — push flat faces out or in by a distance" : "Make a part first"}
+        <ToolGroupButton
+          id="faces"
+          name="face"
+          items={[
+            {
+              key: "moveFace",
+              label: "Move face",
+              icon: <Icons.MoveFace />,
+              onClick: () => startCreate("moveFace"),
+              disabled: !ready || !hasPart,
+              active: editingType === "moveFace",
+              title: hasPart ? "Move face — push flat faces out or in by a distance" : "Make a part first",
+            },
+            {
+              key: "deleteFace",
+              label: "Delete face",
+              icon: <Icons.DeleteFace />,
+              onClick: () => startCreate("deleteFace"),
+              disabled: !ready || !hasPart,
+              active: editingType === "deleteFace",
+              title: hasPart ? "Delete face — remove fillets, chamfers, holes or bosses and close the gap" : "Make a part first",
+            },
+            {
+              key: "draft",
+              label: "Draft",
+              icon: <Icons.Draft />,
+              onClick: () => startCreate("draft"),
+              disabled: !ready || !hasPart,
+              active: editingType === "draft",
+              title: hasPart ? "Draft — taper faces so the part pulls out of a mould" : "Make a part first",
+            },
+          ]}
         />
         <ToolButton
           label="Thread"
@@ -279,14 +307,6 @@ export function Toolbar() {
           disabled={!ready || !hasPart}
           active={editingType === "thread"}
           title={hasPart ? "Thread — cut a screw thread round a rod (bolt) or inside a hole (nut)" : "Make a part first"}
-        />
-        <ToolButton
-          label="Delete face"
-          icon={<Icons.DeleteFace />}
-          onClick={() => startCreate("deleteFace")}
-          disabled={!ready || !hasPart}
-          active={editingType === "deleteFace"}
-          title={hasPart ? "Delete face — remove fillets, chamfers, holes or bosses and close the gap" : "Make a part first"}
         />
       </div>
       <div className="tool-divider" />
@@ -307,21 +327,29 @@ export function Toolbar() {
           active={editingType === "mirror"}
           title={hasPart ? "Mirror — copy features to the other side of a plane" : "Make a part first, then mirror its features"}
         />
-        <ToolButton
-          label="Pattern"
-          icon={<Icons.LinearPattern />}
-          onClick={() => startCreate("linearPattern")}
-          disabled={!ready || !hasPart}
-          active={editingType === "linearPattern"}
-          title={hasPart ? "Linear pattern — repeat features in a row, evenly spaced" : "Make a part first, then repeat its features"}
-        />
-        <ToolButton
-          label="Circular"
-          icon={<Icons.CircularPattern />}
-          onClick={() => startCreate("circularPattern")}
-          disabled={!ready || !hasPart}
-          active={editingType === "circularPattern"}
-          title={hasPart ? "Circular pattern — repeat features around an axis, e.g. a ring of holes" : "Make a part first, then repeat its features"}
+        <ToolGroupButton
+          id="patterns"
+          name="pattern"
+          items={[
+            {
+              key: "linearPattern",
+              label: "Pattern",
+              icon: <Icons.LinearPattern />,
+              onClick: () => startCreate("linearPattern"),
+              disabled: !ready || !hasPart,
+              active: editingType === "linearPattern",
+              title: hasPart ? "Linear pattern — repeat features in a row, evenly spaced" : "Make a part first, then repeat its features",
+            },
+            {
+              key: "circularPattern",
+              label: "Circular",
+              icon: <Icons.CircularPattern />,
+              onClick: () => startCreate("circularPattern"),
+              disabled: !ready || !hasPart,
+              active: editingType === "circularPattern",
+              title: hasPart ? "Circular pattern — repeat features around an axis, e.g. a ring of holes" : "Make a part first, then repeat its features",
+            },
+          ]}
         />
       </div>
       <div className="tool-divider" />

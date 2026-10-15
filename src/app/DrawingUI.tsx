@@ -27,6 +27,7 @@ import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
+import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
 
 
@@ -212,45 +213,27 @@ export function DrawingToolbar() {
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
-        <button
-          className={`tool-button${tool === "dimension" ? " active" : ""}`}
-          onClick={() => useStore.getState().setDrawingTool(tool === "dimension" ? "select" : "dimension")}
-          title="Dimension (D) — click two corners, an edge, or a circle. Drag a dimension's number to move it (hold Shift to move just the number, anywhere); Delete removes it"
-          aria-label="Dimension"
-          aria-pressed={tool === "dimension"}
-        >
-          <Icons.Dimension />
-          <span>Dimension</span>
-        </button>
-        {(
-          [
-            ["baseline", "Baseline", <Icons.BaselineDim key="b" />, "Baseline — click a datum corner, then the next point, the next… each measured from the datum, stacked outwards. Esc to finish"],
-            ["chain", "Chain", <Icons.ChainDim key="c" />, "Chain — click a starting corner, then the next point, the next… each measured from the one before, end to end. Esc to finish"],
-            ["ordinate", "Ordinate", <Icons.OrdinateDim key="o" />, "Ordinate — click a datum corner (0), then the points to label with their distance from it. Esc to finish"],
-          ] as const
-        ).map(([t, label, icon, title]) => (
-          <button
-            key={t}
-            className={`tool-button${tool === t ? " active" : ""}`}
-            onClick={() => useStore.getState().setDrawingTool(tool === t ? "select" : t)}
-            title={title}
-            aria-label={label}
-            aria-pressed={tool === t}
-          >
-            {icon}
-            <span>{label}</span>
-          </button>
-        ))}
-        <button
-          className={`tool-button${tool === "holeCallout" ? " active" : ""}`}
-          onClick={() => useStore.getState().setDrawingTool(tool === "holeCallout" ? "select" : "holeCallout")}
-          title="Hole callout — click a hole to label it with its size, depth, counterbore or countersink, thread and how many there are (e.g. 4× Ø6.6 THRU)"
-          aria-label="Hole callout"
-          aria-pressed={tool === "holeCallout"}
-        >
-          <Icons.HoleCallout />
-          <span>Hole callout</span>
-        </button>
+        <ToolGroupButton
+          id="drawing-dimensions"
+          name="dimension"
+          items={(
+            [
+              ["dimension", "Dimension", <Icons.Dimension key="d" />, "Dimension (D) — click two corners, an edge, or a circle. Drag a dimension's number to move it (hold Shift to move just the number, anywhere); Delete removes it", "D"],
+              ["baseline", "Baseline", <Icons.BaselineDim key="b" />, "Baseline — click a datum corner, then the next point, the next… each measured from the datum, stacked outwards. Esc to finish", ""],
+              ["chain", "Chain", <Icons.ChainDim key="c" />, "Chain — click a starting corner, then the next point, the next… each measured from the one before, end to end. Esc to finish", ""],
+              ["ordinate", "Ordinate", <Icons.OrdinateDim key="o" />, "Ordinate — click a datum corner (0), then the points to label with their distance from it. Esc to finish", ""],
+              ["holeCallout", "Hole callout", <Icons.HoleCallout key="h" />, "Hole callout — click a hole to label it with its size, depth, counterbore or countersink, thread and how many there are (e.g. 4× Ø6.6 THRU)", ""],
+            ] as const
+          ).map(([t, label, icon, title, key]) => ({
+            key: t,
+            label,
+            icon,
+            title,
+            shortcut: key || undefined,
+            active: tool === t,
+            onClick: () => useStore.getState().setDrawingTool(tool === t ? "select" : t),
+          }))}
+        />
         <button
           className={`tool-button${tool === "detail" ? " active" : ""}`}
           onClick={() => useStore.getState().setDrawingTool(tool === "detail" ? "select" : "detail")}

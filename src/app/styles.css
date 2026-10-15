@@ -2491,6 +2491,90 @@ kbd {
   flex: 0 0 74px;
 }
 
+/* Toolbar buttons standing for a family of tools, with a ▾ list of the others */
+.tool-split {
+  display: flex;
+  align-items: stretch;
+}
+.tool-split .tool-button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.tool-split-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-left: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: transparent;
+  color: var(--ink-2);
+}
+.tool-split-arrow:hover:not(:disabled),
+.tool-split-arrow.open {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+.tool-split-arrow:disabled {
+  opacity: 0.38;
+}
+.tool-menu {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.tool-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+}
+.tool-menu button:hover:not(:disabled),
+.tool-menu button:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  outline: none;
+}
+.tool-menu button.active {
+  color: var(--accent-dark);
+  font-weight: 600;
+}
+.tool-menu button:disabled {
+  opacity: 0.4;
+}
+.tool-menu-icon {
+  display: flex;
+  width: 22px;
+  justify-content: center;
+}
+.tool-menu-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.tool-menu-label {
+  flex: 1;
+}
+.tool-menu kbd {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
 /* Configurations */
 .configuration-picker {
   display: flex;
