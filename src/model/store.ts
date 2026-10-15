@@ -27,9 +27,9 @@ import { setLengthUnit, startingLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateType, PartSmithDocument } from "./types";
+import type { Assembly, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
-import { addAssembly, insertInstance, putMate, removeAssembly, removeInstances, removeMate, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
+import { addAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removeRelation, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
@@ -276,6 +276,9 @@ export interface AppState {
   toggleMateSuppressed: (id: string) => void;
   /** Exploded view of the assembly on show: how far apart (null = together). */
   setExplode: (amount: number | null) => void;
+  /** Add or change a mate relation in the assembly on show (one undo step). */
+  putRelation: (relation: MateRelation) => void;
+  removeRelation: (id: string) => void;
   /** Show and type lengths in millimetres or inches. */
   setUnits: (unit: LengthUnit) => void;
   /** Light or dark appearance (see app/theme.ts; not saved in designs). */
@@ -964,6 +967,14 @@ export const useStore = create<AppState>((set, get) => {
         const { units: _old, ...rest } = doc;
         return unit === "in" ? { ...rest, units: "in" } : rest;
       }),
+    putRelation: (relation) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => putRelation(doc, asm.id, relation));
+    },
+    removeRelation: (id) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => removeRelation(doc, asm.id, id));
+    },
     setExplode: (amount) => {
       const asm = activeAssembly(get());
       if (asm) change((doc) => setExplode(doc, asm.id, amount));

@@ -2368,3 +2368,53 @@ kbd {
   stroke: #1f6fd1;
   stroke-dasharray: 1 0.8;
 }
+
+/* Mate relations (gears, rack and pinion, screws) in the assembly panel. */
+.relations h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.relation-kinds,
+.relation-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0 8px;
+}
+
+.relation-row {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.relation-row.failed {
+  border-color: var(--danger, #c0392b);
+}
+
+.relation-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0;
+}
+
+.relation-row select,
+.relation-row input:not([type="checkbox"]) {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.relation-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}

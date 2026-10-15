@@ -337,6 +337,20 @@ export interface Mate {
   suppressed?: boolean;
 }
 
+/** One mate's movement driving another's (gears, rack and pinion, screws). */
+export interface MateRelation {
+  id: string;
+  name: string;
+  kind: "gear" | "rack" | "screw";
+  /** The mate that turns (a hinge). */
+  driver: string;
+  /** The mate it moves. */
+  driven: string;
+  /** Gear ratio, pinion radius (mm) or travel per turn (mm), as typed. */
+  ratio: string;
+  reverse?: boolean;
+}
+
 /** An assembly tab: parts placed together. */
 export interface Assembly {
   id: string;
@@ -344,6 +358,8 @@ export interface Assembly {
   instances: Instance[];
   /** How the parts are joined (optional: older saves have none). */
   mates?: Mate[];
+  /** Mates driving other mates (gears, rack and pinion, screws). */
+  relations?: MateRelation[];
   /** Exploded view: how far the parts are spread apart (1 = their distance from the middle again); missing = together. */
   explode?: number;
 }
