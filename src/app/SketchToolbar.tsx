@@ -4,6 +4,7 @@ import { useStore, type SketchTool } from "../model/store";
 import { RELATION_HINTS, RELATION_LABELS, type RelationTool } from "../sketch/ops";
 import { RELATION_SYMBOLS } from "../sketch/layout";
 import { Icons } from "./icons";
+import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
 import { applySketchRelation, deleteSketchSelection, setSketchTool, toggleSketchConstruction } from "./sketchActions";
 
@@ -27,6 +28,13 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "mirror", label: "Mirror", key: "M", icon: <Icons.Mirror />, hint: "Click the line to mirror about, then the shapes to copy across (or select the shapes first). The copies follow the originals" },
   { tool: "sketchPattern", label: "Pattern", key: "", icon: <Icons.SketchPattern />, hint: "Click shapes to repeat them in a row or round a centre (set how many and how far apart in the sketch panel)" },
   { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part to copy them into the sketch (they stay fixed where they are)" },
+];
+
+/** Tools shown as one button with a ▾ list (the first is shown until another is used). */
+const FAMILIES: { name: string; tools: SketchTool[] }[] = [
+  { name: "rectangle", tools: ["rectangle", "centreRectangle"] },
+  { name: "circle", tools: ["circle", "ellipse"] },
+  { name: "arc", tools: ["arc", "tangentArc"] },
 ];
 
 const RELATIONS: RelationTool[] = [
@@ -63,17 +71,42 @@ export function SketchToolbar() {
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
-        {TOOLS.map((t) => (
-          <ToolBtn
-            key={t.tool}
-            label={t.label}
-            icon={t.icon}
-            active={tool === t.tool}
-            disabled={!hasPlane}
-            onClick={() => setSketchTool(t.tool)}
-            title={`${t.label}${t.key ? ` (${t.key})` : ""} — ${t.hint}`}
-          />
-        ))}
+        {TOOLS.map((t) => {
+          const family = FAMILIES.find((f) => f.tools.includes(t.tool));
+          if (family && family.tools[0] !== t.tool) return null;
+          if (family)
+            return (
+              <ToolGroupButton
+                key={family.name}
+                id={`sketch-${family.name}`}
+                name={family.name}
+                items={family.tools.map((k) => {
+                  const d = TOOLS.find((x) => x.tool === k)!;
+                  return {
+                    key: d.tool,
+                    label: d.label,
+                    icon: d.icon,
+                    title: `${d.label}${d.key ? ` (${d.key})` : ""} — ${d.hint}`,
+                    shortcut: d.key || undefined,
+                    active: tool === d.tool,
+                    disabled: !hasPlane,
+                    onClick: () => setSketchTool(d.tool),
+                  };
+                })}
+              />
+            );
+          return (
+            <ToolBtn
+              key={t.tool}
+              label={t.label}
+              icon={t.icon}
+              active={tool === t.tool}
+              disabled={!hasPlane}
+              onClick={() => setSketchTool(t.tool)}
+              title={`${t.label}${t.key ? ` (${t.key})` : ""} — ${t.hint}`}
+            />
+          );
+        })}
         <ToolBtn
           label="Construction"
           icon={<Icons.Construction />}
