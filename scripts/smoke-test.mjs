@@ -436,7 +436,7 @@ try {
   await page.getByRole("button", { name: "Configurations", exact: true }).click();
   await page.getByLabel("New configuration name").fill("Wide gap");
   await page.getByRole("button", { name: "+ Add configuration" }).click();
-  await page.waitForSelector(".configurations-table >> text=Default");
+  await page.waitForFunction(() => document.querySelectorAll('.configurations-table input[aria-label="Configuration name"]').length === 2, null, { timeout: 5_000 });
   await page.getByRole("button", { name: "Done" }).click();
   // In "Wide gap", gap = 2 mm; back in Default it's 1/4 in again.
   await page.getByRole("button", { name: "Variables", exact: true }).click();
