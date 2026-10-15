@@ -1701,7 +1701,7 @@ describe("parts in other configurations (for assemblies)", () => {
 
 describe("curve pattern", () => {
   it("repeats a feature along a sketched path", () => {
-    const plate = feature("box", { width: 100, depth: 100, height: 5, x: 50, y: 50, z: 0 });
+    const plate = feature("box", { width: 100, depth: 100, height: 5, x: 0, y: 0, z: 0 });
     const peg = feature("cylinder", { diameter: 4, height: 10, x: 10, y: 10, z: 5 }, "add");
     const path = addLine(emptySketch(), { x: 10, y: 10 }, { x: 90, y: 10 });
     const bend = addLine(path.sketch, { x: 90, y: 10, snap: { kind: "point", id: path.endId } }, { x: 90, y: 90 });
