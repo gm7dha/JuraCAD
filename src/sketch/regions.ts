@@ -8,6 +8,7 @@
  * Shapes that cross each other aren't split up yet — the loops should touch
  * only at their ends (the normal case for hobby parts).
  */
+import { splineBeziers, splinePolyline } from "./spline";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
 
 export type Pt = [number, number];
@@ -16,7 +17,9 @@ export type Pt = [number, number];
 export type Segment =
   | { kind: "line"; from: Pt; to: Pt }
   | { kind: "arc"; from: Pt; mid: Pt; to: Pt }
-  | { kind: "circle"; center: Pt; radius: number };
+  | { kind: "circle"; center: Pt; radius: number }
+  /** A piece of a spline: a cubic Bézier curve. */
+  | { kind: "bezier"; from: Pt; c1: Pt; c2: Pt; to: Pt };
 
 export interface Loop {
   segments: Segment[];
@@ -105,9 +108,19 @@ export function findRegions(sketch: SketchData): RegionResult {
     loops.push(makeLoop([{ kind: "circle", center, radius: c.radius }], poly));
   }
 
-  // Join lines and arcs at shared end points (merged by position, so separate
+  // Closed splines are complete loops by themselves too.
+  for (const c of solid) {
+    if (c.type !== "spline" || !c.closed || c.points.length < 3) continue;
+    const ps = c.points.map((id) => pts.get(id)!);
+    const segs: Segment[] = splineBeziers(ps, true).map(([from, c1, c2, to]) => ({ kind: "bezier", from, c1, c2, to }));
+    loops.push(makeLoop(segs, splinePolyline(ps, true)));
+  }
+
+  // Join lines, arcs and open splines at shared end points (merged by position, so separate
   // but coincident points count as joined).
-  const ends = solid.filter((c): c is Exclude<SketchCurve, { type: "circle" }> => c.type !== "circle");
+  const ends = solid.filter(
+    (c): c is Exclude<SketchCurve, { type: "circle" }> => c.type !== "circle" && !(c.type === "spline" && (c.closed || c.points.length < 2)),
+  );
   const keyOf = (p: Pt) => `${Math.round(p[0] * 1e5)},${Math.round(p[1] * 1e5)}`;
   const nodeOf = new Map<string, number>();
   const nodePos: Pt[] = [];
@@ -128,7 +141,12 @@ export function findRegions(sketch: SketchData): RegionResult {
   }
   const edges: GraphEdge[] = [];
   for (const c of ends) {
-    const [p, q] = c.type === "line" ? [pts.get(c.p1)!, pts.get(c.p2)!] : [pts.get(c.start)!, pts.get(c.end)!];
+    const [p, q] =
+      c.type === "line"
+        ? [pts.get(c.p1)!, pts.get(c.p2)!]
+        : c.type === "spline"
+          ? [pts.get(c.points[0])!, pts.get(c.points[c.points.length - 1])!]
+          : [pts.get(c.start)!, pts.get(c.end)!];
     const a = node(p);
     const b = node(q);
     if (a === b) continue; // zero-length
@@ -187,6 +205,12 @@ export function findRegions(sketch: SketchData): RegionResult {
       if (e.curve.type === "line") {
         segments.push({ kind: "line", from, to });
         polygon.push(from);
+      } else if (e.curve.type === "spline") {
+        // Its pieces, the other way round when walking it backwards.
+        const ps = e.curve.points.map((id) => pts.get(id)!);
+        const pieces = splineBeziers(forward ? ps : [...ps].reverse(), false);
+        for (const [f, c1, c2, t] of pieces) segments.push({ kind: "bezier", from: f, c1, c2, to: t });
+        polygon.push(...splinePolyline(forward ? ps : [...ps].reverse(), false).slice(0, -1));
       } else {
         const center = pts.get(e.curve.center)!;
         const s = pts.get(e.curve.start)!;

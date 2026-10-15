@@ -57,6 +57,8 @@ export function parseSketchData(raw: unknown): SketchData | null {
     else if (c.type === "circle" && str(c.center) && num(c.radius)) curves.push({ id: c.id, type: "circle", center: c.center, radius: c.radius, construction });
     else if (c.type === "arc" && str(c.center) && str(c.start) && str(c.end))
       curves.push({ id: c.id, type: "arc", center: c.center, start: c.start, end: c.end, construction });
+    else if (c.type === "spline" && Array.isArray(c.points) && c.points.length >= 2 && c.points.every(str))
+      curves.push({ id: c.id, type: "spline", points: c.points as string[], closed: c.closed === true && c.points.length >= 3, construction });
     else return null;
   }
   const constraints: SketchConstraint[] = [];

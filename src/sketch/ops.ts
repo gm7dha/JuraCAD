@@ -18,6 +18,7 @@ import {
   type SketchCurve,
   type SketchData,
   type SketchLine,
+  type SketchSpline,
 } from "./types";
 
 let counter = 0;
@@ -67,7 +68,7 @@ export function radiusOf(s: SketchData, c: SketchCircle | SketchArc): number {
 
 /** Points that define a curve (moving these moves the curve). */
 export function curvePoints(c: SketchCurve): string[] {
-  return c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : [c.center, c.start, c.end];
+  return c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : c.type === "spline" ? [...c.points] : [c.center, c.start, c.end];
 }
 
 function lineDir(s: SketchData, l: SketchLine): [number, number] {
@@ -131,7 +132,8 @@ function collapsed(s: SketchData): Set<string> {
     if (c.type === "line") {
       const [dx, dy] = lineDir(s, c);
       if (Math.hypot(dx, dy) < 1e-6) out.add(c.id);
-    } else if (radiusOf(s, c) < 1e-6) out.add(c.id);
+    } else if (c.type === "spline") continue;
+    else if (radiusOf(s, c) < 1e-6) out.add(c.id);
   }
   return out;
 }
@@ -448,6 +450,7 @@ export function dimensionFor(s: SketchData, sel: string[]): { type: ConstraintTy
     const c = crv[0];
     if (c.type === "line") return { type: "length", refs: [c.id] };
     if (c.type === "circle") return { type: "diameter", refs: [c.id] };
+    if (c.type === "spline") return "A spline can't be dimensioned as a whole — dimension its points instead.";
     return { type: "radius", refs: [c.id] };
   }
   if (sel.length === 2 && pts.length === 2) return { type: "distance", refs: pts };
@@ -550,4 +553,9 @@ export function dragCircleRim(start: SketchData, circleId: string, radius: numbe
   if (radius <= 1e-6) return start;
   const r = solveSketch(start, { resize: { circleId, radius } });
   return r.ok ? r.sketch : start;
+}
+
+/** A spline's points where they are now. */
+export function splinePoints(s: SketchData, c: SketchSpline): [number, number][] {
+  return c.points.map((id) => pointPos(s, id));
 }
