@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
-import { arrangeViews, putDimension, removeDimension, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
+import { arrangeViews, putDimension, putNote, removeDimension, removeNote, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
@@ -19,8 +19,9 @@ import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { Dimension, Drawing, PartSmithDocument, SectionCut } from "../model/types";
+import type { DetailView, Dimension, Drawing, PartSmithDocument, SectionCut } from "../model/types";
 import { addSection, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
+import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
@@ -82,7 +83,8 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
   const parts = useStore((s) => s.parts);
   const ready = useStore((s) => s.kernelStatus === "ready");
   const subject = drawingSubject(drawing, doc, parts);
-  const kinds = drawing.views.map((v) => v.kind).filter((k) => k !== "section");
+  // (Sections are asked for separately; details are worked out here from their host views.)
+  const kinds = drawing.views.map((v) => v.kind).filter((k) => k !== "section" && k !== "detail");
   const sections = sectionRequests(drawing);
   // The same key object while nothing it's made of changes, so the effect below only runs on real changes.
   const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines, JSON.stringify(sections)] : null;
@@ -132,7 +134,11 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, ready, drawing.id]);
 
-  return { projections: state.result ?? fresh, subject: subject?.name ?? null, instances: subject?.instances, busy: state.busy, error: state.error };
+  const base = state.result ?? fresh;
+  const detailsKey = JSON.stringify(drawing.details ?? []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const projections = useMemo(() => (base ? withDetails(base, drawing) : null), [base, detailsKey]);
+  return { projections, subject: subject?.name ?? null, instances: subject?.instances, busy: state.busy, error: state.error };
 }
 
 /** The sheet as last laid out on screen (for saving). */
@@ -234,6 +240,26 @@ export function DrawingToolbar() {
           </button>
         ))}
         <button
+          className={`tool-button${tool === "detail" ? " active" : ""}`}
+          onClick={() => useStore.getState().setDrawingTool(tool === "detail" ? "select" : "detail")}
+          title="Detail — click the middle of a small area on a view, then the circle's size: it's shown again bigger"
+          aria-label="Detail"
+          aria-pressed={tool === "detail"}
+        >
+          <Icons.Detail />
+          <span>Detail</span>
+        </button>
+        <button
+          className={`tool-button${tool === "note" ? " active" : ""}`}
+          onClick={() => useStore.getState().setDrawingTool(tool === "note" ? "select" : "note")}
+          title="Note — click on the sheet to add text (edit it in the panel; drag to move)"
+          aria-label="Note"
+          aria-pressed={tool === "note"}
+        >
+          <Icons.Note />
+          <span>Note</span>
+        </button>
+        <button
           className={`tool-button${tool === "section" ? " active" : ""}`}
           onClick={() => useStore.getState().setDrawingTool(tool === "section" ? "select" : "section")}
           title="Section — click two points across the front, top or a side view to cut the part open there. Flip or remove sections in the panel"
@@ -261,6 +287,22 @@ export function DrawingToolbar() {
 }
 
 /** A text box that saves on Enter or when you leave it (one undo step). */
+/** The selected note: its text. */
+function NoteProperties({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
+  const selected = useStore((s) => s.selectedDim);
+  const note = drawing.notes?.find((n) => n.id === selected);
+  if (!note) return null;
+  return (
+    <section className="panel-section">
+      <h3>Selected note</h3>
+      <div className="drawing-fields">
+        <TitleField label="Note text" value={note.text} multiline onCommit={(v) => change((d) => (v.trim() ? putNote(d, { ...note, text: v }) : removeNote(d, note.id)))} />
+      </div>
+      <p className="dialog-hint">One line per row. Drag the note to move it; Delete removes it.</p>
+    </section>
+  );
+}
+
 /** The selected dimension: text before and after its number, and its tolerance. */
 function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
   const selectedDim = useStore((s) => s.selectedDim);
@@ -382,6 +424,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   return (
     <aside className="side-panel drawing-panel" aria-label="Drawing settings">
       <DimensionProperties drawing={drawing} change={change} />
+      <NoteProperties drawing={drawing} change={change} />
       <section className="panel-section">
         <h3>Drawing</h3>
         <div className="drawing-fields">
@@ -519,6 +562,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
         </div>
       </section>
       <SectionsList drawing={drawing} change={change} />
+      <DetailsList drawing={drawing} change={change} />
       <section className="panel-section">
         <h3>Title block</h3>
         <div className="drawing-fields">
@@ -533,6 +577,51 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
 }
 
 /** The drawing's section cuts: flip which way each looks, or remove it. */
+function DetailsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
+  const details = drawing.details ?? [];
+  return (
+    <section className="panel-section">
+      <h3>Details</h3>
+      <div className="drawing-views">
+        {details.length === 0 && (
+          <p className="panel-hint">
+            To show a small area bigger, choose <strong>Detail</strong> in the toolbar, click the middle of the area on a view, then click to set the circle&apos;s size.
+          </p>
+        )}
+        {details.map((x) => (
+          <div className="section-row" key={x.id}>
+            <span>
+              Detail {x.letter} <span className="muted small">(on {VIEW_LABELS[x.host]})</span>
+            </span>
+            <span className="row-actions-inline">
+              <select
+                aria-label={`Detail ${x.letter} enlargement`}
+                value={String(x.zoom)}
+                onChange={(e) => change((d) => updateDetail(d, x.id, (v) => ({ ...v, zoom: Number(e.target.value) })))}
+              >
+                {[...new Set([...DETAIL_ZOOMS, x.zoom])].sort((a, b) => a - b).map((z) => (
+                  <option key={z} value={String(z)}>
+                    {z}×
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="text-button small-text danger-text"
+                onClick={() => change((d) => removeDetail(d, x.id))}
+                title="Remove this detail and its view"
+                aria-label={`Remove detail ${x.letter}`}
+              >
+                Remove
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function SectionsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
   const sections = drawing.sections ?? [];
   return (
@@ -652,8 +741,12 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const [drag, setDrag] = useState<{ viewId: string; start: P2; from: P2; at: P2 } | null>(null);
   const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number; textAlong?: number; textAcross?: number } } | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  /** A note being dragged: where the pointer started and where the note was. */
+  const [noteDrag, setNoteDrag] = useState<{ id: string; start: P2; from: P2; at: P2 } | null>(null);
   /** Section tool: the cutting line's first point (view mm), on its view. */
   const [cutStart, setCutStart] = useState<{ view: string; at: P2 } | null>(null);
+  /** Detail tool: the circle's middle (view mm), on its view. */
+  const [detailStart, setDetailStart] = useState<{ view: string; at: P2 } | null>(null);
   const [cursor, setCursor] = useState<P2 | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [W, H] = SHEETS[drawing.sheet];
@@ -667,6 +760,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   useEffect(() => {
     setPending(null);
     setCutStart(null);
+    setDetailStart(null);
     setRun(null);
   }, [tool, drawing.id]);
 
@@ -675,8 +769,9 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     let d = drawing;
     if (drag) d = { ...d, views: d.views.map((v) => (v.id === drag.viewId ? { ...v, at: drag.at } : v)) };
     if (dimDrag) d = { ...d, dimensions: d.dimensions?.map((x) => (x.id === dimDrag.id ? { ...x, ...dimDrag.patch } : x)) };
+    if (noteDrag) d = { ...d, notes: d.notes?.map((x) => (x.id === noteDrag.id ? { ...x, at: noteDrag.at } : x)) };
     return d;
-  }, [drawing, drag, dimDrag]);
+  }, [drawing, drag, dimDrag, noteDrag]);
   const unit = useLengthUnit();
   const layout = useMemo(
     () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today(), bom, balloons }) : null),
@@ -698,10 +793,11 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       if ((e.key === "Delete" || e.key === "Backspace") && s.selectedDim) {
         e.preventDefault();
         const id = s.selectedDim;
-        s.changeDrawing((d) => removeDimension(d, id));
+        s.changeDrawing((d) => removeNote(removeDimension(d, id), id));
         s.selectDim(null);
       } else if (e.key === "Escape") {
         if (cutStart) setCutStart(null);
+        else if (detailStart) setDetailStart(null);
         else if (pending) setPending(null);
         else if (run) setRun(null);
         else if (s.selectedDim) s.selectDim(null);
@@ -712,7 +808,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending, cutStart, run]);
+  }, [pending, cutStart, run, detailStart]);
 
   const toSheet = (e: { clientX: number; clientY: number }): P2 => {
     const svg = svgRef.current;
@@ -851,6 +947,30 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const at = viewAt(cutStart.view);
     return at ? { at: [bx, by], sheet: at([bx, by]) } : null;
   };
+  /** Detail tool: radius (view mm) of the circle for the pointer, from its middle. */
+  const detailRadius = (here: P2): number | null => {
+    if (!detailStart || !layout) return null;
+    const at = viewAt(detailStart.view);
+    if (!at) return null;
+    const c = at(detailStart.at);
+    return Math.hypot(here[0] - c[0], here[1] - c[1]) / layout.scale;
+  };
+  const detailClick = (here: P2) => {
+    if (!detailStart) {
+      const p = cutPoint(here);
+      if (p) setDetailStart({ view: p.view, at: p.at });
+      return;
+    }
+    const r = detailRadius(here);
+    const p = projections?.[detailStart.view];
+    if (!r || !p?.bounds || !layout || r * layout.scale < 2) return;
+    const host = detailStart.view as DetailView["host"];
+    const centre = toRel(p.bounds, detailStart.at);
+    change((d) => addDetail(d, { id: newId("dt"), host, centre, radius: Math.round(r * 100) / 100, zoom: 2 }));
+    setDetailStart(null);
+    useStore.getState().setDrawingTool("select");
+  };
+
   const sectionClick = (here: P2) => {
     if (!cutStart) {
       const p = cutPoint(here);
@@ -886,9 +1006,18 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       return;
     }
     if (e.button !== 0) return;
+    if (tool === "note") {
+      const at = toSheet(e);
+      const id = newId("nt");
+      change((d) => putNote(d, { id, at: [Math.round(at[0] * 10) / 10, Math.round(at[1] * 10) / 10], text: "Note" }));
+      useStore.getState().setDrawingTool("select");
+      useStore.getState().selectDim(id);
+      return;
+    }
     if (tool === "dimension") dimensionClick(e);
     else if (linear) linearClick(toSheet(e));
     else if (tool === "section") sectionClick(toSheet(e));
+    else if (tool === "detail") detailClick(toSheet(e));
     else useStore.getState().selectDim(null);
   };
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
@@ -901,6 +1030,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const here = toSheet(e);
     if (tool !== "select") setCursor(here);
     if (drag) setDrag({ ...drag, at: [drag.from[0] + here[0] - drag.start[0], drag.from[1] + here[1] - drag.start[1]] });
+    if (noteDrag) setNoteDrag({ ...noteDrag, at: [noteDrag.from[0] + here[0] - noteDrag.start[0], noteDrag.from[1] + here[1] - noteDrag.start[1]] });
     if (dimDrag) {
       const dim = drawing.dimensions?.find((x) => x.id === dimDrag.id);
       const placed = layout?.dims.find((x) => x.id === dimDrag.id);
@@ -920,6 +1050,13 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       setDrag(null);
       if (Math.hypot(at[0] - drag.from[0], at[1] - drag.from[1]) > 0.2) {
         change((d) => ({ ...d, views: d.views.map((v) => (v.id === viewId ? { ...v, at: [Math.round(at[0] * 10) / 10, Math.round(at[1] * 10) / 10] } : v)) }));
+      }
+    }
+    if (noteDrag) {
+      const { id, at, from } = noteDrag;
+      setNoteDrag(null);
+      if (Math.hypot(at[0] - from[0], at[1] - from[1]) > 0.2) {
+        change((d) => ({ ...d, notes: d.notes?.map((x) => (x.id === id ? { ...x, at: [Math.round(at[0] * 10) / 10, Math.round(at[1] * 10) / 10] } : x)) }));
       }
     }
     if (dimDrag) {
@@ -945,12 +1082,17 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
           : pending
             ? "Now click a second corner, an edge or a circle. Esc to start again."
             : "Click a circle, an edge or a corner. Then click to place it, or click a second thing to measure between them.";
+  else if (tool === "note") message = "Click where the note goes (its top-left corner). Then type its text in the panel on the left.";
   else if (linear) {
     const what = tool === "baseline" ? "each measured from it" : tool === "chain" ? "each measured from the one before" : "each labelled with its distance from it";
     message = run
       ? `Click the next corner or hole centre (${what}). Esc to finish, or click another view's point to start again there.`
       : "Click the datum: the corner or hole centre to measure from.";
-  } else if (tool === "section")
+  } else if (tool === "detail")
+    message = detailStart
+      ? "Click to set the size of the circle — everything inside it is shown bigger. Esc to start again."
+      : "Click the middle of the area to show bigger, on the front, top or a side view.";
+  else if (tool === "section")
     message = cutStart
       ? "Click where the cutting line ends (it straightens when nearly across or up-and-down). Esc to start again."
       : "Click where the cutting line starts, on the front, top or a side view (corners and hole centres snap).";
@@ -968,7 +1110,13 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (f.kind === "line") return { line: [at(f.a), at(f.b)] as [P2, P2] };
     return { point: at(f.kind === "point" ? f.at : f.centre) };
   })();
-  const cutHover = tool === "section" && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor)) : null;
+  const cutHover = (tool === "section" || (tool === "detail" && !detailStart)) && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor)) : null;
+  const detailCircle = (() => {
+    if (tool !== "detail" || !detailStart || !cursor || !layout) return null;
+    const at = viewAt(detailStart.view);
+    const r = detailRadius(cursor);
+    return at && r ? { c: at(detailStart.at), r: r * layout.scale } : null;
+  })();
   const cutFrom = cutStart ? viewAt(cutStart.view)?.(cutStart.at) : null;
   const preview = previewDim();
   const previewPrims = (() => {
@@ -1057,7 +1205,28 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
                 setDrag({ viewId: v.id, start, from: v.centre, at: v.centre });
               }}
             >
-              <title>{`${v.kind === "section" ? `Section ${drawing.sections?.find((c) => `section:${c.id}` === v.key)?.letter ?? ""}` : VIEW_LABELS[v.kind]} view — drag to move`}</title>
+              <title>{`${v.kind === "section" ? `Section ${drawing.sections?.find((c) => `section:${c.id}` === v.key)?.letter ?? ""}` : v.kind === "detail" ? `Detail ${drawing.details?.find((c) => `detail:${c.id}` === v.key)?.letter ?? ""}` : VIEW_LABELS[v.kind]} view — drag to move`}</title>
+            </rect>
+          ))}
+        {tool === "select" &&
+          layout?.notes.map((n) => (
+            <rect
+              key={n.id}
+              className={`drawing-note-handle${n.id === selectedDim ? " selected" : ""}`}
+              x={n.box[0] - 1}
+              y={H - n.box[3] - 1}
+              width={n.box[2] - n.box[0] + 2}
+              height={n.box[3] - n.box[1] + 2}
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                useStore.getState().selectDim(n.id);
+                (e.target as Element).setPointerCapture(e.pointerId);
+                const note = drawing.notes?.find((x) => x.id === n.id);
+                if (note) setNoteDrag({ id: n.id, start: toSheet(e), from: note.at, at: note.at });
+              }}
+            >
+              <title>Drag to move this note; edit its text in the panel; Delete removes it</title>
             </rect>
           ))}
         {tool === "select" &&
@@ -1099,6 +1268,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         {cutFrom && <circle cx={cutFrom[0]} cy={H - cutFrom[1]} r={1.2} className="drawing-snap picked" />}
         {cutFrom && cutHover && <line x1={cutFrom[0]} y1={H - cutFrom[1]} x2={cutHover.sheet[0]} y2={H - cutHover.sheet[1]} className="drawing-cut-preview" />}
         {cutHover && <circle cx={cutHover.sheet[0]} cy={H - cutHover.sheet[1]} r={1.2} className="drawing-snap point" />}
+        {detailCircle && <circle cx={detailCircle.c[0]} cy={H - detailCircle.c[1]} r={detailCircle.r} className="drawing-cut-preview" fill="none" />}
       </svg>
       {message && <div className="drawing-message">{message}</div>}
       {layout?.tooBig && <div className="drawing-message warn">The part is too big for this sheet even at {scaleLabel(layout.scale)}. Try a bigger sheet.</div>}

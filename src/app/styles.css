@@ -2361,3 +2361,17 @@ kbd {
   font-size: 12px;
   color: var(--ink-2);
 }
+
+/* Notes on a drawing: an invisible box to grab, outlined when hovered or selected. */
+.drawing-note-handle {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 0.3;
+  cursor: move;
+}
+
+.drawing-note-handle:hover,
+.drawing-note-handle.selected {
+  stroke: #1f6fd1;
+  stroke-dasharray: 1 0.8;
+}

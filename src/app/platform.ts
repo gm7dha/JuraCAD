@@ -63,6 +63,7 @@ export function helpRows(p: Platform) {
     [`${k.mod} + S`, "Save to a .partsmith file"],
     [`${k.mod} + ${k.shift} + S`, "Save a copy under a new name"],
     [`${k.mod} + O`, "Open a .partsmith file (or drag one onto the window)"],
+    [`${k.mod} + D`, "Duplicate the selected parts"],
     ["?", "Show this help"],
     [`${k.shift} + S`, "Start a sketch on the selected plane or flat face"],
     [`${k.shift} + E`, "Extrude a sketch"],
