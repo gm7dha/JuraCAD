@@ -109,6 +109,11 @@ export class KernelClient {
     return this.send({ type: "export3mf", partIds, quality, title, colours, instances }).then((body) => body.result as ThreeMfResult);
   }
 
+  /** Whole parts: their sizes, and the gap and overlap between two of them. */
+  measureParts(partIds: string[]): Promise<Measurement> {
+    return this.send({ type: "measureParts", partIds }).then((body) => body.result as Measurement);
+  }
+
   measure(picks: TopoPick[]): Promise<Measurement> {
     return this.send({ type: "measure", picks }).then((body) => body.result as Measurement);
   }

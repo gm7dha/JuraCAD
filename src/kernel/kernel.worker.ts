@@ -69,6 +69,9 @@ ctx.onmessage = (event) => {
         case "deleteFaceBlockers":
           body = { type: "deleteFaceBlockers", result: engine.deleteFaceBlockers(request.features, request.featureId, request.variables) };
           break;
+        case "measureParts":
+          body = { type: "measure", result: engine.measureParts(request.partIds) };
+          break;
         case "measure":
           body = { type: "measure", result: engine.measure(request.picks) };
           break;

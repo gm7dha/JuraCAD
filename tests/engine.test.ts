@@ -991,6 +991,40 @@ describe("threads", () => {
   });
 });
 
+describe("measuring between parts", () => {
+  it("measures between faces of two different parts, apart or overlapping", () => {
+    const a = feature("box", { width: 10, depth: 10, height: 10 });
+    const b = feature("box", { width: 10, depth: 10, height: 10, x: 25, y: 0, z: 0 });
+    const r = build([a, b]);
+    const side = (id: string, nx: number) => ({ partId: id, ref: r.parts.find((p) => p.id === id)!.faceRefs.find((f) => f.kind === "face" && f.normal[0] === nx)! });
+    const m = engine.measure([side(a.id, 1), side(b.id, -1)]);
+    expect(m.items).toHaveLength(2);
+    expect(m.distance).toBeCloseTo(15, 6);
+    const c = feature("box", { width: 10, depth: 10, height: 10, x: 5, y: 0, z: 0 });
+    const r2 = build([a, c]);
+    const tops = r2.parts.map((p) => ({ partId: p.id, ref: p.faceRefs.find((f) => f.kind === "face" && f.normal[2] === 1)! }));
+    const m2 = engine.measure(tops);
+    expect(m2.items).toHaveLength(2);
+    expect(m2.distance).toBeCloseTo(0, 6);
+  });
+
+  it("measures whole parts: their volumes, the gap, and how much they overlap", () => {
+    const a = feature("box", { width: 10, depth: 10, height: 10 });
+    const apart = feature("box", { width: 10, depth: 10, height: 10, x: 25, y: 0, z: 0 });
+    const r = build([a, apart]);
+    const m = engine.measureParts(r.parts.map((p) => p.id));
+    expect(m.items.map((i) => Math.round(i.volume!))).toEqual([1000, 1000]);
+    expect(m.distance).toBeCloseTo(15, 6);
+    expect(m.overlap).toBe(undefined);
+    expect(m.centreDistance!.total).toBeCloseTo(25, 6);
+    const over = feature("box", { width: 10, depth: 10, height: 10, x: 5, y: 0, z: 0 });
+    const r2 = build([a, over]);
+    const m2 = engine.measureParts(r2.parts.map((p) => p.id));
+    expect(m2.distance).toBeCloseTo(0, 6);
+    expect(m2.overlap).toBeCloseTo(500, 3);
+  });
+});
+
 describe("delete part", () => {
   it("removes whole parts from that point on", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });

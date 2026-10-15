@@ -129,6 +129,7 @@ export type KernelRequest =
   | { type: "clashes"; instances: InstanceInput[] }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[] }
   | { type: "measure"; picks: TopoPick[] }
+  | { type: "measureParts"; partIds: string[] }
   | { type: "deleteFaceBlockers"; features: Feature[]; featureId: string; variables: Record<string, number> }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
 

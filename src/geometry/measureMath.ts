@@ -63,6 +63,8 @@ export interface MeasuredItem {
   area?: number;
   radius?: number;
   centre?: Vec3;
+  /** Whole parts: how much space they take up (mm³). */
+  volume?: number;
 }
 
 export interface Measurement {
@@ -72,6 +74,8 @@ export interface Measurement {
   /** For two round edges (e.g. hole rims): distance between their centres, and its X/Y/Z parts. */
   centreDistance?: { total: number; dx: number; dy: number; dz: number };
   angle?: number;
+  /** Two whole parts: how much of them overlaps (mm³; 0 when they only touch or are apart). */
+  overlap?: number;
 }
 
 /** Fill in what can be worked out without the geometry engine. */

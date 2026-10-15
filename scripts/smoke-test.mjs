@@ -793,6 +793,50 @@ try {
     await page.waitForFunction((n) => document.querySelectorAll(".part-row").length === n, before, { timeout: 30_000 });
   }
 
+  step = "measuring between two parts";
+  {
+    await page.keyboard.press("Escape");
+    const spots = await page.evaluate(() => {
+      const v = window.partsmithViewport.current;
+      // A spot on each of two parts that really is that part when clicked (not hidden behind another).
+      const out = [];
+      for (const p of v.shownParts()) {
+        for (let i = 0; i < p.faceRefs.length && out.length < 2; i++) {
+          const at = v.screenPointOnFace(p.id, i);
+          const hit = at && v.pickAt(at.x, at.y);
+          if (hit?.kind === "part" && hit.item.partId === p.id && hit.item.kind === "face") {
+            out.push({ id: p.id, at });
+            break;
+          }
+        }
+        if (out.length === 2) break;
+      }
+      return out;
+    });
+    if (spots.length < 2) throw new Error("couldn't find two parts' top faces to measure between");
+    const cvs = await page.locator(".viewport canvas").first().boundingBox();
+    await page.mouse.click(cvs.x + spots[0].at.x, cvs.y + spots[0].at.y);
+    await page.keyboard.down("Shift");
+    await page.mouse.click(cvs.x + spots[1].at.x, cvs.y + spots[1].at.y);
+    await page.keyboard.up("Shift");
+    await page.waitForFunction(() => document.querySelector(".measure-panel")?.textContent?.includes("Closest distance"), null, { timeout: 10_000 }).catch(async () => {
+      const sel = await page.evaluate(() => JSON.stringify(window.partsmithStore.getState().selection));
+      const panel = await page.locator(".measure-panel").innerText().catch(() => "(no measure panel)");
+      throw new Error(`measuring between ${spots[0].id} and ${spots[1].id} showed no distance. Selection ${sel}; panel: ${panel.replace(/\n/g, " | ")}`);
+    });
+    await shot("measureparts");
+    await page.keyboard.press("Escape");
+    // Whole parts picked in the Parts list are measured too.
+    await page.locator(".part-row .feature-name").nth(0).click();
+    await page.locator(".part-row .feature-name").nth(1).click({ modifiers: ["Control"] });
+    await page.waitForFunction(() => document.querySelector(".measure-panel")?.textContent?.includes("volume"), null, { timeout: 10_000 }).catch(async () => {
+      const panel = await page.locator(".measure-panel").innerText().catch(() => "(no measure panel)");
+      throw new Error(`two parts picked in the Parts list showed no measurements: ${panel.replace(/\n/g, " | ")}`);
+    });
+    const clearParts = page.getByRole("button", { name: "Clear selection" });
+    if (await clearParts.count()) await clearParts.click();
+  }
+
   step = "selecting parts by dragging a box in the 3D view";
   {
     await page.keyboard.press("Escape");
