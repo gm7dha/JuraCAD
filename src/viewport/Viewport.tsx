@@ -409,6 +409,7 @@ export function Viewport() {
   const hiddenInstances = useStore((s) => s.hiddenInstances);
   // In an assembly the meshes only change when parts are rebuilt or instances added/removed, not when they move.
   const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${meshIdOf(i)}`).join(",") : null;
+  const hadNothing = useRef(true);
   const display = useMemo(
     () => (assembly ? instanceMeshes(parts, assembly) : shownParts),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -513,6 +514,9 @@ export function Viewport() {
     // Placements first, so the parts arrive already in position.
     viewportApi.current?.setPlacements(placements);
     viewportApi.current?.setParts(display);
+    // The first part in an empty Part Studio: zoom to show it.
+    if (hadNothing.current && display.length > 0 && !assembly && !useStore.getState().editing) viewportApi.current?.fit();
+    hadNothing.current = display.length === 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [display]);
   useEffect(() => viewportApi.current?.setPlacements(placements), [placements]);
@@ -542,6 +546,8 @@ export function Viewport() {
   useEffect(() => {
     const manager = viewportApi.current;
     if (!sketching || !manager) return;
+    // Go back to how the model was being looked at when the sketch closes.
+    const before = manager.saveView();
     const controller = new SketchController();
     viewportApi.sketch = controller;
     manager.setSketchController(controller);
@@ -551,6 +557,7 @@ export function Viewport() {
       manager.setSketchController(null);
       manager.setSketchTransient(null);
       viewportApi.sketch = null;
+      manager.restoreView(before);
     };
   }, [sketching]);
 

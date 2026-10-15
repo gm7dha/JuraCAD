@@ -86,6 +86,9 @@ function findCircle(want: DimPoint, r: number, p: ViewProjection): { at: P2; r: 
 export interface ResolvedDim {
   a: P2;
   b?: P2;
+  /** Angles: the second edge's ends. */
+  c?: P2;
+  d?: P2;
   r?: number;
   /** False when what it measured can't be found any more (it's drawn where it was). */
   found: boolean;
@@ -99,6 +102,11 @@ export function resolveDim(dim: Dimension, p: ViewProjection): ResolvedDim {
   }
   const a = findPoint(dim.a, p);
   const b = dim.b ? findPoint(dim.b, p) : a;
+  if (dim.type === "angle" && dim.c && dim.d) {
+    const c = findPoint(dim.c, p);
+    const d = findPoint(dim.d, p);
+    return { a: a.at, b: b.at, c: c.at, d: d.at, found: a.found && b.found && c.found && d.found };
+  }
   return { a: a.at, b: b.at, found: a.found && b.found };
 }
 
@@ -118,11 +126,51 @@ export function measureDim(dim: Dimension, r: ResolvedDim): number {
       return r.r ?? 0;
     case "ordinate":
       return dim.axis === "v" ? Math.abs(b[1] - r.a[1]) : Math.abs(b[0] - r.a[0]);
+    case "angle": {
+      const g = r.c && r.d ? angleGeometry(r.a, b, r.c, r.d, dim.rays) : null;
+      return g ? g.degrees : 0;
+    }
   }
 }
 
+/**
+ * Where two edges (a–b and c–d) meet and the directions of the two arms of
+ * the angle measured between them (`rays` picks which of the four angles).
+ */
+export function angleGeometry(a: P2, b: P2, c: P2, d: P2, rays: [number, number] = [1, 1]): { vertex: P2; u1: P2; u2: P2; degrees: number } | null {
+  const d1: P2 = [b[0] - a[0], b[1] - a[1]];
+  const d2: P2 = [d[0] - c[0], d[1] - c[1]];
+  const l1 = Math.hypot(...d1);
+  const l2 = Math.hypot(...d2);
+  if (l1 < EPS || l2 < EPS) return null;
+  const cr = d1[0] * d2[1] - d1[1] * d2[0];
+  if (Math.abs(cr) < 1e-9 * l1 * l2) return null;
+  const t = ((c[0] - a[0]) * d2[1] - (c[1] - a[1]) * d2[0]) / cr;
+  const vertex: P2 = [a[0] + d1[0] * t, a[1] + d1[1] * t];
+  const u1: P2 = [(d1[0] / l1) * rays[0], (d1[1] / l1) * rays[0]];
+  const u2: P2 = [(d2[0] / l2) * rays[1], (d2[1] / l2) * rays[1]];
+  const degrees = (Math.acos(Math.max(-1, Math.min(1, u1[0] * u2[0] + u1[1] * u2[1]))) * 180) / Math.PI;
+  return { vertex, u1, u2, degrees };
+}
+
+/** An angle dimension's arms and arc radius (paper mm) for the pointer at `cursor` (all in sheet mm): the angle the pointer is in. */
+export function placeAngle(a: P2, b: P2, c: P2, d: P2, cursor: P2): { rays: [number, number]; offset: number } | null {
+  const g = angleGeometry(a, b, c, d);
+  if (!g) return null;
+  const w: P2 = [cursor[0] - g.vertex[0], cursor[1] - g.vertex[1]];
+  const s = (u: P2) => (u[0] * w[0] + u[1] * w[1] >= 0 ? 1 : -1);
+  return { rays: [s(g.u1), s(g.u2)], offset: Math.max(4, Math.round(Math.hypot(...w) * 10) / 10) };
+}
+
 export function dimLabel(dim: Dimension, value: number): string {
-  const base = dim.type === "diameter" ? `Ø${formatSize(value)}` : dim.type === "radius" ? `R${formatSize(value)}` : formatSize(value);
+  const base =
+    dim.type === "angle"
+      ? `${Math.round(value * 10) / 10}°`
+      : dim.type === "diameter"
+        ? `Ø${formatSize(value)}`
+        : dim.type === "radius"
+          ? `R${formatSize(value)}`
+          : formatSize(value);
   const t = dim.tolerance;
   const tol = !t ? "" : Math.abs(t.plus - t.minus) < 1e-9 ? ` ±${formatSize(t.plus)}` : ` +${formatSize(t.plus)}/−${formatSize(t.minus)}`;
   return `${dim.prefix ?? ""}${base}${tol}${dim.suffix ?? ""}`;
@@ -226,6 +274,48 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
     const label: P2 = [(elbow[0] + end[0]) / 2, elbow[1] + 1];
     lines.forEach((l, i) => prims.push({ kind: "text", x: label[0], y: label[1] + (lines.length - 1 - i) * TEXT_SIZE * 1.5, text: l, size: TEXT_SIZE, anchor: "middle" }));
     return { prims, label };
+  }
+
+  if (dim.type === "angle" && r.b && r.c && r.d) {
+    const [pa0, pb0, pc0, pd0] = [at(r.a), at(r.b), at(r.c), at(r.d)];
+    const g = angleGeometry(pa0, pb0, pc0, pd0, dim.rays);
+    if (g) {
+      const R = Math.max(dim.offset, 4);
+      let a1 = Math.atan2(g.u1[1], g.u1[0]);
+      let a2 = Math.atan2(g.u2[1], g.u2[0]);
+      // The shorter way round from one arm to the other.
+      let sweep = a2 - a1;
+      while (sweep > Math.PI) sweep -= 2 * Math.PI;
+      while (sweep < -Math.PI) sweep += 2 * Math.PI;
+      if (sweep < 0) [a1, a2, sweep] = [a2, a1, -sweep];
+      const pts: number[] = [];
+      const n = Math.max(6, Math.ceil(sweep / 0.08));
+      for (let i = 0; i <= n; i++) {
+        const t = a1 + (sweep * i) / n;
+        pts.push(g.vertex[0] + R * Math.cos(t), g.vertex[1] + R * Math.sin(t));
+      }
+      prims.push({ kind: "path", points: pts, style: "thin" });
+      const end1: P2 = [g.vertex[0] + R * Math.cos(a1), g.vertex[1] + R * Math.sin(a1)];
+      const end2: P2 = [g.vertex[0] + R * Math.cos(a2), g.vertex[1] + R * Math.sin(a2)];
+      prims.push(arrow(end1, [Math.sin(a1), -Math.cos(a1)]), arrow(end2, [-Math.sin(a2), Math.cos(a2)]));
+      // Extension lines from each edge out to the arc where the arc passes beyond it.
+      const extend = (p: P2, q: P2, end: P2, u: P2) => {
+        const reach = Math.max(...[p, q].map((x) => (x[0] - g.vertex[0]) * u[0] + (x[1] - g.vertex[1]) * u[1]));
+        if (reach < R - GAP) {
+          const from: P2 = [g.vertex[0] + u[0] * (Math.max(reach, 0) + GAP), g.vertex[1] + u[1] * (Math.max(reach, 0) + GAP)];
+          prims.push({ kind: "path", points: [from[0], from[1], end[0] + u[0] * 1.5, end[1] + u[1] * 1.5], style: "thin" });
+        }
+      };
+      const arm1: P2 = [Math.cos(a1), Math.sin(a1)];
+      const arm2: P2 = [Math.cos(a2), Math.sin(a2)];
+      const firstIs1 = Math.abs(Math.atan2(g.u1[1], g.u1[0]) - a1) < 1e-9 || Math.abs(Math.abs(Math.atan2(g.u1[1], g.u1[0]) - a1) - 2 * Math.PI) < 1e-9;
+      extend(firstIs1 ? pa0 : pc0, firstIs1 ? pb0 : pd0, end1, arm1);
+      extend(firstIs1 ? pc0 : pa0, firstIs1 ? pd0 : pb0, end2, arm2);
+      const mid = a1 + sweep / 2;
+      const label: P2 = [g.vertex[0] + (R + 3) * Math.cos(mid), g.vertex[1] + (R + 3) * Math.sin(mid) - TEXT_SIZE * 0.35];
+      prims.push({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle" });
+      return { prims, label };
+    }
   }
 
   const pa = at(r.a);
@@ -336,7 +426,18 @@ export function placeLength(a: P2, b: P2, cursor: P2, force?: "horizontal" | "ve
 }
 
 /** New offset (and leader angle for circles) when a dimension's number is dragged to `cursor` (sheet mm). */
-export function dragDimension(dim: Dimension, a: P2, b: P2 | null, rad: number, cursor: P2): { offset: number; angle?: number; textAlong?: number } {
+export function dragDimension(
+  dim: Dimension,
+  a: P2,
+  b: P2 | null,
+  rad: number,
+  cursor: P2,
+  cd?: [P2, P2] | null,
+): { offset: number; angle?: number; textAlong?: number; rays?: [number, number] } {
+  if (dim.type === "angle" && b && cd) {
+    const p = placeAngle(a, b, cd[0], cd[1], cursor);
+    if (p) return p;
+  }
   if (dim.type === "diameter" || dim.type === "radius") {
     const angle = (Math.atan2(cursor[1] - a[1], cursor[0] - a[0]) * 180) / Math.PI;
     return { offset: Math.max(2, Math.round((dist(cursor, a) - rad) * 10) / 10), angle: Math.round(angle) };

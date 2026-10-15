@@ -1589,7 +1589,7 @@ kbd {
   align-items: center;
   justify-content: center;
   gap: 1px;
-  min-width: 52px;
+  min-width: 34px;
   height: 48px;
   padding: 2px 4px;
   border: 1px solid transparent;
@@ -2599,4 +2599,9 @@ kbd {
 }
 .configuration-add input {
   flex: 1;
+}
+
+/* Sketch relations show just their symbol (the name is in the tooltip), so the whole sketch toolbar fits. */
+.relation-button > span:not(.relation-symbol) {
+  display: none;
 }

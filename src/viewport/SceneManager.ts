@@ -531,6 +531,11 @@ export class SceneManager {
 
   /** Zoom and centre so everything visible fits on screen. */
   fit(animate = true): void {
+    this.animateTo(this.fitGoal(), animate);
+  }
+
+  /** Where the camera looks and how far it's zoomed for everything visible to fit. */
+  private fitGoal(): { target: THREE.Vector3; zoom: number } {
     const box = new THREE.Box3();
     for (const p of this.parts.values()) if (p.mesh.visible) box.expandByObject(p.mesh);
     if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(this.planeSize, this.planeSize, this.planeSize));
@@ -538,8 +543,18 @@ export class SceneManager {
     const radius = Math.max(sphere.radius, 1);
     const aspect = this.width / this.height;
     const visible = Math.min(FRUSTUM_HEIGHT, FRUSTUM_HEIGHT * aspect);
-    const zoom = visible / (radius * 2.5);
-    this.animateTo({ target: sphere.center, zoom }, animate);
+    return { target: sphere.center, zoom: visible / (radius * 2.5) };
+  }
+
+  /** The current view (to come back to later). */
+  saveView(): { dir: THREE.Vector3; target: THREE.Vector3; zoom: number } {
+    const a = this.animation;
+    if (a) return { dir: a.toDir.clone(), target: a.toTarget.clone(), zoom: a.toZoom };
+    return { dir: this.camera.position.clone().sub(this.controls.target).normalize(), target: this.controls.target.clone(), zoom: this.camera.zoom };
+  }
+
+  restoreView(v: { dir: THREE.Vector3; target: THREE.Vector3; zoom: number }): void {
+    this.animateTo(v, true);
   }
 
   setView(view: StandardView, animate = true): void {
@@ -627,7 +642,9 @@ export class SceneManager {
     const f = planeFrame(plane);
     const dir = new THREE.Vector3(...f.n);
     if (Math.abs(dir.z) > 0.9999) dir.set(0, -1e-4 * Math.sign(dir.z), Math.sign(dir.z)).normalize();
-    this.animateTo({ dir }, true);
+    // With the whole model in view, so a sketch on a face shows all of it.
+    const hasParts = [...this.parts.values()].some((p) => p.mesh.visible);
+    this.animateTo(hasParts ? { dir, ...this.fitGoal() } : { dir }, true);
   }
 
   /** Screen position (CSS px within the viewport) of a point on the active sketch, or null. */

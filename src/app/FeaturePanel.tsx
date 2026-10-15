@@ -706,7 +706,7 @@ export function FeaturePanel() {
           )}
         </ul>
         {features.length === 0 && !draftIsNew && (
-          <p className="panel-hint">Pick Box, Cylinder or Sphere from the toolbar to add your first solid.</p>
+          <p className="panel-hint">Start with a Sketch (then Extrude it), or add a Box, Cylinder, Sphere or Coil from the toolbar.</p>
         )}
       </section>
 
