@@ -139,6 +139,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "angle", label: "Spread over", defaultValue: "360", positive: true, group: "size", unit: "°" },
     ],
   },
+  curvePattern: {
+    type: "curvePattern",
+    label: "Curve pattern",
+    namePrefix: "Curve pattern",
+    description: "Repeats features along a path drawn in a sketch, evenly spaced.",
+    params: [{ key: "count", label: "How many (including the original)", defaultValue: "5", positive: true, integer: true, min: 2, group: "size", unit: "" }],
+  },
   sweep: {
     type: "sweep",
     label: "Sweep",
@@ -322,8 +329,8 @@ export function isPickFeature(type: FeatureType): type is "fillet" | "chamfer" |
 }
 
 /** Features that repeat earlier features (no New/Add/Remove of their own: each copy does what the original did). */
-export function isPatternFeature(type: FeatureType): type is "mirror" | "linearPattern" | "circularPattern" {
-  return type === "mirror" || type === "linearPattern" || type === "circularPattern";
+export function isPatternFeature(type: FeatureType): type is "mirror" | "linearPattern" | "circularPattern" | "curvePattern" {
+  return type === "mirror" || type === "linearPattern" || type === "circularPattern" || type === "curvePattern";
 }
 
 /** Features that build a solid of their own, so they can be patterned or mirrored. */

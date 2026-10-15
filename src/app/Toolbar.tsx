@@ -349,6 +349,15 @@ export function Toolbar() {
               active: editingType === "circularPattern",
               title: hasPart ? "Circular pattern — repeat features around an axis, e.g. a ring of holes" : "Make a part first, then repeat its features",
             },
+            {
+              key: "curvePattern",
+              label: "Curve",
+              icon: <Icons.CurvePattern />,
+              onClick: () => startCreate("curvePattern"),
+              disabled: !ready || !hasPart || !hasSketch,
+              active: editingType === "curvePattern",
+              title: hasPart && hasSketch ? "Curve pattern — repeat features along a path drawn in a sketch" : "Make a part and sketch a path first",
+            },
           ]}
         />
       </div>

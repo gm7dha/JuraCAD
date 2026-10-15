@@ -1698,3 +1698,27 @@ describe("parts in other configurations (for assemblies)", () => {
     expect(step.partCount).toBe(2);
   });
 });
+
+describe("curve pattern", () => {
+  it("repeats a feature along a sketched path", () => {
+    const plate = feature("box", { width: 100, depth: 100, height: 5, x: 50, y: 50, z: 0 });
+    const peg = feature("cylinder", { diameter: 4, height: 10, x: 10, y: 10, z: 5 }, "add");
+    const path = addLine(emptySketch(), { x: 10, y: 10 }, { x: 90, y: 10 });
+    const bend = addLine(path.sketch, { x: 90, y: 10, snap: { kind: "point", id: path.endId } }, { x: 90, y: 90 });
+    const sk = sketchFeature({ kind: "default", name: "Top" }, bend.sketch);
+    const pattern: Feature = { ...feature("curvePattern", { count: 5 }), operation: "add", pattern: { sources: [peg.id], axis: "x", flip: false }, pathRef: sk.id };
+    const r = build([plate, peg, sk, pattern]);
+    expect(r.featureErrors).toEqual({});
+    const peg1 = Math.PI * 4 * 10;
+    expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(100 * 100 * 5 + 5 * peg1, 0);
+    // The last peg is at the far end of the path.
+    const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    expect(a.bounds!.max[1]).toBeCloseTo(100, 3);
+    const tops: number[] = [];
+    const v = r.parts[0].vertices;
+    for (let i = 0; i < v.length; i += 3) if (Math.abs(v[i + 2] - 15) < 1e-3) tops.push(v[i + 1]);
+    expect(Math.max(...tops)).toBeCloseTo(92, 1);
+    // Without a path it says so.
+    expect(build([plate, peg, { ...pattern, pathRef: undefined }]).featureErrors[pattern.id]).toMatch(/path/);
+  });
+});
