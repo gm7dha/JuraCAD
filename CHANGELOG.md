@@ -6,6 +6,19 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.12 — Springs, curves, hole callouts, patterns and configurations · commit `d38571a`
+
+- Part Studio: **Coil** (springs), **merge parts** into one, **configurations** (versions of a design — variable
+  values and suppressed features — to switch between), and threads now work on any cylinder (the seam line no
+  longer gets in the way).
+- Sketch: **Spline** and **Ellipse** tools, and a shape's size boxes pop up as soon as it's drawn (Enter keeps,
+  Esc skips).
+- Measure between **whole parts**: the gap, whether they touch, and how much they overlap.
+- Assemblies: **patterns** of parts, in a row or round an axis, that follow their originals.
+- Drawings: **hole callouts** (e.g. 4× Ø6.6 THRU, with counterbore, countersink or thread), also used by Auto
+  dimension.
+- Toolbars: similar tools share one button with a **▾** list.
+
 ## v0.11 — Threads, fasteners, mechanisms and drawing tables · commit `b7e163f`
 
 - Part Studio: **Thread** (metric screw threads), **Fastener** (hex bolts, nuts and washers, M3–M12, optionally
