@@ -44,6 +44,8 @@ import {
   tangentArcCentre,
   tangentAt,
   trimAt,
+  extendAt,
+  splitAt,
 } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
 import { splinePolyline } from "./spline";
@@ -323,6 +325,16 @@ export class SketchController {
     const tool = this.tool;
     if (tool === "select") return this.selectDown(e);
     if (tool === "dimension") return this.dimensionClick(e);
+    if (tool === "extend" || tool === "split") {
+      const hit = this.hitAt(e);
+      if (hit?.kind !== "curve") {
+        this.state.setSketchMessage(tool === "extend" ? "Click near the end of a line you want to lengthen." : "Click a line where you want to split it.", "info");
+        return;
+      }
+      this.commit(tool === "extend" ? extendAt(d, hit.id, { x: e.x, y: e.y }) : splitAt(d, hit.id, { x: e.x, y: e.y }), []);
+      this.emit({ hover: null });
+      return;
+    }
     if (tool === "trim") {
       const hit = this.hitAt(e);
       if (hit?.kind !== "curve") {
@@ -568,9 +580,9 @@ export class SketchController {
       this.emit({ hover: hit?.kind === "curve" || (circular && hit?.kind === "point") ? hit : null, snap: null, preview: this.patternPreview() });
       return;
     }
-    if (tool === "dimension" || tool === "trim" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
+    if (tool === "dimension" || tool === "trim" || tool === "extend" || tool === "split" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
       const hit = this.hitAt(e);
-      this.emit({ hover: (tool === "trim" || tool === "offset" || tool === "mirror") && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
+      this.emit({ hover: (tool === "trim" || tool === "extend" || tool === "split" || tool === "offset" || tool === "mirror") && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
       return;
     }
 

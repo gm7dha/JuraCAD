@@ -93,6 +93,8 @@ export type SketchTool =
   | "polygon"
   | "sketchFillet"
   | "trim"
+  | "extend"
+  | "split"
   | "offset"
   | "mirror"
   | "sketchPattern"
