@@ -2490,3 +2490,29 @@ kbd {
 .revision-row .revision-date {
   flex: 0 0 74px;
 }
+
+/* Configurations */
+.configuration-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.configuration-picker select {
+  flex: 1;
+  min-width: 0;
+}
+.configurations-table tr.active td {
+  background: var(--accent-soft);
+}
+.configuration-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.configuration-add input {
+  flex: 1;
+}

@@ -4,6 +4,7 @@ import { parsePlane, parseSketchData } from "../sketch/validate";
 import { defaultAxis } from "../sketch/axis";
 import { emptySketch } from "../sketch/types";
 import { FEATURE_DEFS, defaultParams, isSolidFeature } from "./features";
+import { parseConfigurations } from "./configurations";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
 import { parseMaterials } from "./materials";
@@ -399,6 +400,14 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
 }
 
 /** Check untrusted JSON (e.g. from browser storage) and return a clean document, or null. */
+/** Saved configurations, and which is on show. */
+function configurationsOf(d: Record<string, unknown>): Pick<PartSmithDocument, "configurations" | "activeConfiguration"> {
+  const configurations = parseConfigurations(d.configurations);
+  if (!configurations.length) return {};
+  const active = configurations.find((c) => c.id === d.activeConfiguration)?.id ?? configurations[0].id;
+  return { configurations, activeConfiguration: active };
+}
+
 export function parseDocument(data: unknown): PartSmithDocument | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
@@ -428,5 +437,6 @@ export function parseDocument(data: unknown): PartSmithDocument | null {
     ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),
     ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
     ...(parseDrawings(d.drawings).length ? { drawings: parseDrawings(d.drawings) } : {}),
+    ...configurationsOf(d),
   };
 }

@@ -615,6 +615,7 @@ export function FeaturePanel() {
 
   return (
     <aside className="side-panel" aria-label="Feature list">
+      <ConfigurationPicker />
       <section className="panel-section features">
         <h3 className="panel-heading-row">
           <span>
@@ -718,5 +719,35 @@ export function FeaturePanel() {
 
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </aside>
+  );
+}
+
+/** Which configuration is on show (only when the design has some). */
+function ConfigurationPicker() {
+  const list = useStore((s) => s.history.present.configurations);
+  const activeId = useStore((s) => s.history.present.activeConfiguration);
+  const editing = useStore((s) => !!s.editing);
+  if (!list?.length) return null;
+  const shown = list.find((c) => c.id === activeId) ?? list[0];
+  return (
+    <div className="configuration-picker">
+      <label htmlFor="configuration-select">Configuration</label>
+      <select
+        id="configuration-select"
+        value={shown.id}
+        disabled={editing}
+        title={editing ? "Finish or cancel the open feature first" : "Show another version of the design"}
+        onChange={(e) => useStore.getState().switchConfiguration(e.target.value)}
+      >
+        {list.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      <button className="icon-button small" onClick={() => useStore.getState().openDialog("configurations")} title="Edit configurations" aria-label="Edit configurations">
+        <Icons.Configurations size={15} />
+      </button>
+    </div>
   );
 }

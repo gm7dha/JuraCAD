@@ -133,6 +133,13 @@ export const Icons = {
       <path d="M4 20V10l6-6h10" />
     </Svg>
   ),
+  Configurations: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="3" y="4" width="18" height="16" rx="1.5" />
+      <path d="M3 9h18M9 9v11" />
+      <circle cx="6" cy="14.5" r="1.2" fill="currentColor" />
+    </Svg>
+  ),
   Variables: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 7c2 0 2 10 4 10M4 17c2 0 4-10 6-10" />

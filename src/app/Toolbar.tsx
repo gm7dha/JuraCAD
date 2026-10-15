@@ -333,6 +333,13 @@ export function Toolbar() {
           disabled={editing}
           title={editing ? "Finish or cancel the open feature first" : "Variables — name sizes (like wall = 2) and use them in any box"}
         />
+        <ToolButton
+          label="Configurations"
+          icon={<Icons.Configurations />}
+          onClick={() => useStore.getState().openDialog("configurations")}
+          disabled={editing}
+          title={editing ? "Finish or cancel the open feature first" : "Configurations — keep different versions of the design (e.g. Small and Large) and switch between them"}
+        />
       </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">

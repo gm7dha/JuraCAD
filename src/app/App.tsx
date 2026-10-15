@@ -12,6 +12,7 @@ import { FeatureDialog } from "./FeatureDialog";
 import { FeaturePanel } from "./FeaturePanel";
 import { HelpDialog } from "./HelpDialog";
 import { VariablesDialog } from "./VariablesDialog";
+import { ConfigurationsDialog } from "./ConfigurationsDialog";
 import { MeasurePanel } from "./MeasurePanel";
 import { SectionPanel } from "./SectionPanel";
 import { openFile, openFromFile, saveToFile } from "./fileActions";
@@ -283,6 +284,7 @@ export function App() {
       {dialog === "export" && <ExportDialog />}
       {dialog === "help" && <HelpDialog />}
       {dialog === "variables" && <VariablesDialog />}
+      {dialog === "configurations" && <ConfigurationsDialog />}
       <ToastView />
     </div>
   );
