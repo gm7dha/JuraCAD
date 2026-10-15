@@ -179,6 +179,9 @@ export interface AppState {
   selectedDim: string | null;
   /** What a mouse drag in an assembly is changing, while the button is held. */
   dragPreview: DragChange | null;
+  /** Mate whose movement is being animated in the 3D view. */
+  animatingMate: string | null;
+  setAnimatingMate: (id: string | null) => void;
   /** The design as last saved to (or opened from) a file; compare with history.present to see unsaved changes. */
   savedDoc: PartSmithDocument | null;
   /** Name of that file, e.g. "Bracket.partsmith". */
@@ -427,6 +430,8 @@ export const useStore = create<AppState>((set, get) => {
     hiddenInstances: [],
     mateDraft: null,
     dragPreview: null,
+    animatingMate: null,
+    setAnimatingMate: (animatingMate) => set({ animatingMate }),
     drawingTool: "select",
     selectedDim: null,
 
@@ -776,7 +781,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveTab: (activeTab) => {
       if (get().editing) return;
-      set({ activeTab, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
+      set({ activeTab, animatingMate: null, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
     },
 
     removeAssembly: (id) => {
