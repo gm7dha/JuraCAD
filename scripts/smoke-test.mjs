@@ -794,12 +794,17 @@ try {
     await page.keyboard.press("Escape");
     const spots = await page.evaluate(() => {
       const v = window.partsmithViewport.current;
-      const shown = v.shownParts();
+      // A spot on each of two parts that really is that part when clicked (not hidden behind another).
       const out = [];
-      for (const p of shown) {
-        const i = p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99);
-        const at = i >= 0 ? v.screenPointOnFace(p.id, i) : null;
-        if (at) out.push({ id: p.id, at });
+      for (const p of v.shownParts()) {
+        for (let i = 0; i < p.faceRefs.length && out.length < 2; i++) {
+          const at = v.screenPointOnFace(p.id, i);
+          const hit = at && v.pickAt(at.x, at.y);
+          if (hit?.kind === "part" && hit.item.partId === p.id && hit.item.kind === "face") {
+            out.push({ id: p.id, at });
+            break;
+          }
+        }
         if (out.length === 2) break;
       }
       return out;
