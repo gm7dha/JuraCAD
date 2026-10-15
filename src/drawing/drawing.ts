@@ -2,7 +2,7 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingView, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
+import type { DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { SECTION_HOSTS, viewKey } from "./sections";
 
 const drawingsOf = (doc: PartSmithDocument) => doc.drawings ?? [];
@@ -205,7 +205,10 @@ export function parseDrawings(raw: unknown): Drawing[] {
       .map((raw): DrawingNote | null => {
         const n = (raw ?? {}) as Record<string, unknown>;
         const at = Array.isArray(n.at) && n.at.length === 2 && n.at.every(num) ? (n.at as [number, number]) : null;
-        return typeof n.id === "string" && at && typeof n.text === "string" ? { id: n.id, at, text: n.text.slice(0, 2000) } : null;
+        if (typeof n.id !== "string" || !at || typeof n.text !== "string") return null;
+        const leader = Array.isArray(n.leader) && n.leader.length === 2 && n.leader.every(num) ? (n.leader as [number, number]) : null;
+        const symbol = parseSymbol(n.symbol);
+        return { id: n.id, at, text: n.text.slice(0, 2000), ...(symbol ? { symbol } : {}), ...(leader ? { leader } : {}) };
       })
       .filter((x): x is DrawingNote => x !== null);
     const revisions = (Array.isArray(r.revisions) ? r.revisions : [])
@@ -283,4 +286,35 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(typeof r.suffix === "string" && r.suffix ? { suffix: r.suffix.slice(0, 40) } : {}),
     ...(r.callout === true && type === "diameter" ? { callout: true } : {}),
   };
+}
+
+const CHARACTERISTICS = new Set<GdtCharacteristic>([
+  "straightness",
+  "flatness",
+  "circularity",
+  "cylindricity",
+  "profileLine",
+  "profileSurface",
+  "perpendicularity",
+  "parallelism",
+  "angularity",
+  "position",
+  "concentricity",
+  "symmetry",
+  "runout",
+  "totalRunout",
+]);
+
+/** A saved drawing symbol (null if it isn't one). */
+function parseSymbol(raw: unknown): DrawingSymbol | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const str = (v: unknown, n: number) => (typeof v === "string" ? v.slice(0, n) : "");
+  if (r.kind === "datum") return { kind: "datum", letter: str(r.letter, 3) || "A" };
+  if (r.kind === "finish") return { kind: "finish", ra: str(r.ra, 12), ...(r.machined === false ? { machined: false } : {}) };
+  if (r.kind === "fcf" && CHARACTERISTICS.has(r.characteristic as GdtCharacteristic)) {
+    const datums = (Array.isArray(r.datums) ? r.datums : []).slice(0, 3).map((d) => str(d, 6));
+    return { kind: "fcf", characteristic: r.characteristic as GdtCharacteristic, tolerance: str(r.tolerance, 16), datums, ...(r.diameter === true ? { diameter: true } : {}) };
+  }
+  return null;
 }

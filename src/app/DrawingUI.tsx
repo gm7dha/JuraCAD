@@ -10,6 +10,7 @@ import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
 import { holeRows, holeTableView } from "../drawing/holeTable";
 import { holeOfCircle, tapSizes } from "../drawing/holeCallouts";
+import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } from "../drawing/symbols";
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
@@ -22,7 +23,7 @@ import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { DetailView, Dimension, Drawing, DrawingRevision, PartSmithDocument, SectionCut } from "../model/types";
+import type { DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, PartSmithDocument, SectionCut } from "../model/types";
 import { addSection, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
@@ -246,16 +247,25 @@ export function DrawingToolbar() {
           <Icons.Detail />
           <span>Detail</span>
         </button>
-        <button
-          className={`tool-button${tool === "note" ? " active" : ""}`}
-          onClick={() => useStore.getState().setDrawingTool(tool === "note" ? "select" : "note")}
-          title="Note — click on the sheet to add text (edit it in the panel; drag to move)"
-          aria-label="Note"
-          aria-pressed={tool === "note"}
-        >
-          <Icons.Note />
-          <span>Note</span>
-        </button>
+        <ToolGroupButton
+          id="drawing-notes"
+          name="note"
+          items={(
+            [
+              ["note", "Note", <Icons.Note key="n" />, "Note — click on the sheet to add text (edit it in the panel; drag to move)"],
+              ["datum", "Datum", <Icons.Datum key="d" />, "Datum — click the edge or surface it marks, then where the lettered box goes"],
+              ["fcf", "Tolerance frame", <Icons.Fcf key="f" />, "Feature control frame (GD&T) — click what it applies to, then where the frame goes; set flatness, position… in the panel"],
+              ["finish", "Surface finish", <Icons.SurfaceFinish key="s" />, "Surface finish — click the surface, then where the mark goes; set the roughness (Ra) in the panel"],
+            ] as const
+          ).map(([t, label, icon, title]) => ({
+            key: t,
+            label,
+            icon,
+            title,
+            active: tool === t,
+            onClick: () => useStore.getState().setDrawingTool(tool === t ? "select" : t),
+          }))}
+        />
         <button
           className={`tool-button${tool === "section" ? " active" : ""}`}
           onClick={() => useStore.getState().setDrawingTool(tool === "section" ? "select" : "section")}
@@ -284,11 +294,71 @@ export function DrawingToolbar() {
 }
 
 /** A text box that saves on Enter or when you leave it (one undo step). */
-/** The selected note: its text. */
+/** The selected note: its text — or, for a symbol, its settings. */
 function NoteProperties({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
   const selected = useStore((s) => s.selectedDim);
   const note = drawing.notes?.find((n) => n.id === selected);
   if (!note) return null;
+  if (note.symbol) {
+    const sym = note.symbol;
+    const set = (s: DrawingSymbol) => change((d) => putNote(d, { ...note, symbol: s }));
+    return (
+      <section className="panel-section">
+        <h3>{describeSymbol(sym)}</h3>
+        <div className="drawing-fields">
+          {sym.kind === "datum" && <TitleField label="Letter" value={sym.letter} onCommit={(v) => set({ ...sym, letter: v.trim().toUpperCase().slice(0, 3) || sym.letter })} />}
+          {sym.kind === "finish" && (
+            <>
+              <TitleField label="Roughness Ra (µm)" value={sym.ra} placeholder="e.g. 1.6" onCommit={(v) => set({ ...sym, ra: v.trim() })} />
+              <label className="check-row">
+                <input type="checkbox" checked={sym.machined !== false} onChange={(e) => set(e.target.checked ? { kind: "finish", ra: sym.ra } : { ...sym, machined: false })} />
+                Machined (material removed)
+              </label>
+            </>
+          )}
+          {sym.kind === "fcf" && (
+            <>
+              <label className="field-label" htmlFor="fcf-characteristic">
+                Tolerance
+              </label>
+              <select id="fcf-characteristic" value={sym.characteristic} onChange={(e) => set({ ...sym, characteristic: e.target.value as GdtCharacteristic })}>
+                {GDT_CHARACTERISTICS.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <TitleField label="Tolerance (mm)" value={sym.tolerance} onCommit={(v) => set({ ...sym, tolerance: v.trim() })} />
+              <label className="check-row">
+                <input type="checkbox" checked={!!sym.diameter} onChange={(e) => set(e.target.checked ? { ...sym, diameter: true } : (({ diameter: _d, ...rest }) => rest)(sym))} />
+                Round zone (Ø)
+              </label>
+              {GDT_CHARACTERISTICS.find((c) => c.key === sym.characteristic)?.datums &&
+                ["Primary datum", "Secondary datum", "Tertiary datum"].map((label, i) => (
+                  <TitleField
+                    key={label}
+                    label={label}
+                    value={sym.datums[i] ?? ""}
+                    placeholder={i === 0 ? "e.g. A" : "optional"}
+                    onCommit={(v) => {
+                      const datums = [...sym.datums];
+                      datums[i] = v.trim().toUpperCase();
+                      set({ ...sym, datums: datums.slice(0, 3) });
+                    }}
+                  />
+                ))}
+            </>
+          )}
+        </div>
+        {note.leader && (
+          <button className="text-button" onClick={() => change((d) => putNote(d, (({ leader: _l, ...rest }) => rest)(note)))}>
+            Remove the leader line
+          </button>
+        )}
+        <p className="dialog-hint">Drag it to move it; Delete removes it.</p>
+      </section>
+    );
+  }
   return (
     <section className="panel-section">
       <h3>Selected note</h3>
@@ -803,6 +873,9 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const [pending, setPending] = useState<Pending | null>(null);
   /** A note being dragged: where the pointer started and where the note was. */
   const [noteDrag, setNoteDrag] = useState<{ id: string; start: P2; from: P2; at: P2 } | null>(null);
+  /** Datum, tolerance frame or finish mark being placed: the point it's for (its leader's end). */
+  const [symbolStart, setSymbolStart] = useState<P2 | null>(null);
+  useEffect(() => setSymbolStart(null), [tool]);
   /** Section tool: the cutting line's first point (view mm), on its view. */
   const [cutStart, setCutStart] = useState<{ view: string; at: P2 } | null>(null);
   /** Detail tool: the circle's middle (view mm), on its view. */
@@ -857,7 +930,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         s.changeDrawing((d) => removeNote(removeDimension(d, id), id));
         s.selectDim(null);
       } else if (e.key === "Escape") {
-        if (cutStart) setCutStart(null);
+        if (symbolStart) setSymbolStart(null);
+        else if (cutStart) setCutStart(null);
         else if (detailStart) setDetailStart(null);
         else if (pending) setPending(null);
         else if (run) setRun(null);
@@ -869,7 +943,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending, cutStart, run, detailStart]);
+  }, [pending, cutStart, run, detailStart, symbolStart]);
 
   const toSheet = (e: { clientX: number; clientY: number }): P2 => {
     const svg = svgRef.current;
@@ -947,6 +1021,39 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       return;
     }
     setPending({ ...pending, a: pair.a, b: pair.b, force: pair.force });
+  };
+
+  /** Symbols: the first click is what it points at (snapping to corners and edges), the second where it goes. */
+  const snapped = (here: P2): P2 => {
+    const snap = findSnap(snaps, here, tolerance());
+    if (!snap) return here;
+    if (snap.kind === "point") return snap.sheet;
+    if (snap.kind === "circle") {
+      const d = Math.hypot(here[0] - snap.sheet[0], here[1] - snap.sheet[1]) || 1;
+      return [snap.sheet[0] + ((here[0] - snap.sheet[0]) / d) * snap.sheetR, snap.sheet[1] + ((here[1] - snap.sheet[1]) / d) * snap.sheetR];
+    }
+    // Onto the edge.
+    const [a, b] = [snap.sheetA, snap.sheetB];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((here[0] - a[0]) * dx + (here[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    return [a[0] + t * dx, a[1] + t * dy];
+  };
+  const newSymbol = (): DrawingSymbol =>
+    tool === "datum" ? { kind: "datum", letter: nextDatumLetter(drawing.notes) } : tool === "fcf" ? { kind: "fcf", characteristic: "flatness", tolerance: "0.1", datums: [] } : { kind: "finish", ra: "3.2" };
+  const symbolClick = (here: P2) => {
+    if (!symbolStart) {
+      setSymbolStart(snapped(here));
+      return;
+    }
+    const id = newId("nt");
+    const r = (v: number) => Math.round(v * 10) / 10;
+    const at: P2 = [r(here[0]), r(here[1])];
+    const leader: P2 = [r(symbolStart[0]), r(symbolStart[1])];
+    change((d) => putNote(d, { id, at, text: "", symbol: newSymbol(), leader }));
+    setSymbolStart(null);
+    useStore.getState().setDrawingTool("select");
+    useStore.getState().selectDim(id);
   };
 
   /** Hole callout: label the clicked hole, its leader pointing away from the middle of the view. */
@@ -1097,6 +1204,10 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       useStore.getState().selectDim(id);
       return;
     }
+    if (tool === "datum" || tool === "fcf" || tool === "finish") {
+      symbolClick(toSheet(e));
+      return;
+    }
     if (tool === "dimension") dimensionClick(e);
     else if (tool === "holeCallout") calloutClick(toSheet(e));
     else if (linear) linearClick(toSheet(e));
@@ -1166,6 +1277,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
           : pending
             ? "Now click a second corner, an edge or a circle. Esc to start again."
             : "Click a circle, an edge or a corner. Then click to place it, or click a second thing to measure between them.";
+  else if (tool === "datum" || tool === "fcf" || tool === "finish")
+    message = symbolStart ? "Now click where the symbol goes. Esc to start again." : "Click the edge or surface it's for (corners and edges snap).";
   else if (tool === "holeCallout") message = "Click a hole to label it (size, depth, counterbore, thread and how many). Drag the label to move it.";
   else if (tool === "note") message = "Click where the note goes (its top-left corner). Then type its text in the panel on the left.";
   else if (linear) {
@@ -1211,6 +1324,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const cutFrom = cutStart ? viewAt(cutStart.view)?.(cutStart.at) : null;
   const preview = previewDim();
   const previewPrims = (() => {
+    if (symbolStart && cursor && (tool === "datum" || tool === "fcf" || tool === "finish")) return symbolPrims({ at: cursor, leader: symbolStart }, newSymbol()).prims;
     if (linear && projections) {
       const at = run && viewAt(run.view);
       const p = run && projections[run.view];
