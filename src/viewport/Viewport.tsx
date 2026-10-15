@@ -114,6 +114,8 @@ function customPlaneAt(id: string): SketchPlane | null {
   return f && frame ? planeAsSketchPlane(f, frame) : null;
 }
 
+const NO_IDS: string[] = [];
+
 /** Apply a click in the viewport to the selection, like Onshape. */
 function handlePick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
@@ -438,6 +440,8 @@ export function Viewport() {
   }, [assembly, mateDraft, parts, solved]);
 
   useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenInstances : hiddenParts), [hiddenParts, hiddenInstances, assembly]);
+  const transparentParts = useStore((s) => s.transparentParts);
+  useEffect(() => viewportApi.current?.setTransparent(assembly ? NO_IDS : transparentParts), [transparentParts, assembly]);
   // Plane features (and the one being made), drawn as squares you can click to sketch on.
   const planeDraft = useStore((s) => (s.editing?.draft.type === "plane" ? s.editing.draft : null));
   const listFeatures = useStore(activeFeatures);

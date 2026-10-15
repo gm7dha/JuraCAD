@@ -149,6 +149,8 @@ export interface AppState {
   /** Faces and edges picked in the viewport. */
   selection: SelectionItem[];
   hiddenParts: string[];
+  /** Parts drawn see-through (display only, not saved). */
+  transparentParts: string[];
   /** Whole parts picked in the Parts list (for hiding, colouring or exporting several at once). */
   selectedParts: string[];
   /** Default plane picked in the list or viewport (planes and faces aren't selected together). */
@@ -301,6 +303,8 @@ export interface AppState {
   duplicateParts: (ids: string[]) => void;
   /** Hide or show several parts at once. */
   setPartsHidden: (ids: string[], hidden: boolean) => void;
+  /** Draw parts see-through, or solid again. */
+  setPartsTransparent: (ids: string[], on: boolean) => void;
   selectPlane: (plane: PlaneName | null) => void;
   setListHoverPlane: (plane: PlaneName | null) => void;
   toggleDatum: (datum: DatumName) => void;
@@ -411,6 +415,7 @@ export const useStore = create<AppState>((set, get) => {
     selection: [],
     section: null,
     hiddenParts: [],
+    transparentParts: [],
     selectedParts: [],
     selectedPlane: null,
     listHoverPlane: null,
@@ -738,6 +743,7 @@ export const useStore = create<AppState>((set, get) => {
         selectedFeatureId: null,
         selection: [],
         hiddenParts: [],
+        transparentParts: [],
         selectedParts: [],
         activeTab: null,
         asmSelection: [],
@@ -757,6 +763,7 @@ export const useStore = create<AppState>((set, get) => {
         selection: [],
         selectedPlane: null,
         hiddenParts: [],
+        transparentParts: [],
         selectedParts: [],
         activeTab: null,
         asmSelection: [],
@@ -1015,6 +1022,8 @@ export const useStore = create<AppState>((set, get) => {
         return { editing: { ...s.editing, draft: { ...d, booleanDef } } };
       }),
     setSelectedParts: (selectedParts) => set((s) => ({ selectedParts, selectedFeatureId: selectedParts.length ? null : s.selectedFeatureId })),
+    setPartsTransparent: (ids, on) =>
+      set((s) => ({ transparentParts: on ? [...s.transparentParts.filter((p) => !ids.includes(p)), ...ids] : s.transparentParts.filter((p) => !ids.includes(p)) })),
     setPartsHidden: (ids, hidden) =>
       set((s) => ({ hiddenParts: hidden ? [...s.hiddenParts.filter((p) => !ids.includes(p)), ...ids] : s.hiddenParts.filter((p) => !ids.includes(p)) })),
     toggleHidden: (partId) =>
@@ -1066,6 +1075,7 @@ export const useStore = create<AppState>((set, get) => {
           // Drop picks and hidden flags for parts that no longer exist.
           selection: s.selection.filter((x) => ids.has(x.partId)),
           hiddenParts: s.hiddenParts.filter((p) => ids.has(p)),
+          transparentParts: s.transparentParts.filter((p) => ids.has(p)),
           selectedParts: s.selectedParts.filter((p) => ids.has(p)),
         };
       }),
