@@ -133,9 +133,16 @@ function notesOf(drawing: Drawing): string[] {
 }
 
 /** Height kept free at the bottom for the title block, parts list and notes. */
-export function bottomReserve(drawing: Pick<Drawing, "title"> | null, bom: BomLine[] | undefined, holes = 0): number {
+export function bottomReserve(drawing: (Pick<Drawing, "title"> & Partial<Pick<Drawing, "revisions">>) | null, bom: BomLine[] | undefined, holes = 0): number {
   const notes = drawing ? notesOf(drawing as Drawing).length : 0;
-  return TITLE_H + (bom?.length ? (bom.length + 1) * BOM_ROW + 3 : 0) + (holes ? (holes + 1) * BOM_ROW + 3 : 0) + (notes ? (notes + 1) * NOTE_LINE + 3 : 0);
+  const revs = drawing?.revisions?.length ?? 0;
+  return (
+    TITLE_H +
+    (bom?.length ? (bom.length + 1) * BOM_ROW + 3 : 0) +
+    (holes ? (holes + 1) * BOM_ROW + 3 : 0) +
+    (revs ? (revs + 1) * BOM_ROW + 3 : 0) +
+    (notes ? (notes + 1) * NOTE_LINE + 3 : 0)
+  );
 }
 
 function viewArea(size: [number, number], reserve = TITLE_H): { x0: number; y0: number; x1: number; y1: number } {
@@ -513,6 +520,27 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
     out.push({ kind: "text", x: (cols[0] + cols[1]) / 2, y: hy, text: "X", size: 2.5, anchor: "middle", bold: true });
     out.push({ kind: "text", x: (cols[1] + cols[2]) / 2, y: hy, text: "Y", size: 2.5, anchor: "middle", bold: true });
     out.push({ kind: "text", x: (cols[2] + x1) / 2, y: hy, text: "SIZE", size: 2.5, anchor: "middle", bold: true });
+    top += h;
+  }
+
+  // Revisions, above that: letter, what changed, date (newest at the top).
+  const revs = drawing.revisions ?? [];
+  if (revs.length) {
+    const h = (revs.length + 1) * BOM_ROW;
+    const cols = [x0 + 15, x1 - 25];
+    out.push(rect(x0, top, x1, top + h, "border"));
+    for (let i = 1; i <= revs.length; i++) out.push(line(x0, top + i * BOM_ROW, x1, top + i * BOM_ROW));
+    for (const cx of cols) out.push(line(cx, top, cx, top + h));
+    revs.forEach((r, i) => {
+      const y = top + i * BOM_ROW + 1.8;
+      out.push({ kind: "text", x: x0 + 7.5, y, text: r.rev, size: 3, anchor: "middle" });
+      out.push({ kind: "text", x: cols[0] + 2, y, text: r.description, size: 3, anchor: "start" });
+      out.push({ kind: "text", x: (cols[1] + x1) / 2, y, text: r.date, size: 3, anchor: "middle" });
+    });
+    const hy = top + revs.length * BOM_ROW + 1.8;
+    out.push({ kind: "text", x: x0 + 7.5, y: hy, text: "REV", size: 2.5, anchor: "middle", bold: true });
+    out.push({ kind: "text", x: cols[0] + 2, y: hy, text: "DESCRIPTION", size: 2.5, anchor: "start", bold: true });
+    out.push({ kind: "text", x: (cols[1] + x1) / 2, y: hy, text: "DATE", size: 2.5, anchor: "middle", bold: true });
     top += h;
   }
 

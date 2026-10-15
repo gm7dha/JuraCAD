@@ -2,7 +2,7 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { DetailView, Dimension, DrawingNote, DimPoint, Drawing, DrawingView, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
+import type { DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingView, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { SECTION_HOSTS, viewKey } from "./sections";
 
 const drawingsOf = (doc: PartSmithDocument) => doc.drawings ?? [];
@@ -96,6 +96,18 @@ export function removeDimension(d: Drawing, id: string): Drawing {
 export function putNote(d: Drawing, note: DrawingNote): Drawing {
   const notes = d.notes ?? [];
   return { ...d, notes: notes.some((x) => x.id === note.id) ? notes.map((x) => (x.id === note.id ? note : x)) : [...notes, note] };
+}
+
+/** The next revision letter: A, B, … Z, then AA, AB… */
+export function nextRevision(d: Pick<Drawing, "revisions">): string {
+  const last = d.revisions?.[d.revisions.length - 1]?.rev ?? "";
+  if (!/^[A-Z]+$/.test(last)) return "A";
+  const chars = last.split("");
+  let i = chars.length - 1;
+  while (i >= 0 && chars[i] === "Z") chars[i--] = "A";
+  if (i < 0) chars.unshift("A");
+  else chars[i] = String.fromCharCode(chars[i].charCodeAt(0) + 1);
+  return chars.join("");
 }
 
 export function removeNote(d: Drawing, id: string): Drawing {
@@ -196,9 +208,19 @@ export function parseDrawings(raw: unknown): Drawing[] {
         return typeof n.id === "string" && at && typeof n.text === "string" ? { id: n.id, at, text: n.text.slice(0, 2000) } : null;
       })
       .filter((x): x is DrawingNote => x !== null);
+    const revisions = (Array.isArray(r.revisions) ? r.revisions : [])
+      .map((raw): DrawingRevision | null => {
+        const v = (raw ?? {}) as Record<string, unknown>;
+        if (typeof v.id !== "string") return null;
+        const str = (x: unknown, n: number) => (typeof x === "string" ? x.slice(0, n) : "");
+        return { id: v.id, rev: str(v.rev, 8), description: str(v.description, 200), date: str(v.date, 20) };
+      })
+      .filter((x): x is DrawingRevision => x !== null)
+      .slice(0, 20);
     out.push({
       ...(dimensions.length ? { dimensions } : {}),
       ...(notes.length ? { notes } : {}),
+      ...(revisions.length ? { revisions } : {}),
       id: r.id,
       name: text(r.name, 80)?.trim() || "Drawing",
       source,
