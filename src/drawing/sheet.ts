@@ -13,7 +13,7 @@ import type { Drawing, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { centreLines, centreMarks, hatchLines, placeBalloons } from "./annotations";
 import { holeRows, holeTableView, type HoleRow } from "./holeTable";
 import { projectPoint } from "./cameras";
-import { fromRel, sectionGeometry, viewKey } from "./sections";
+import { fromRel, sectionGeometry, sectionTitle, viewKey } from "./sections";
 import { drawDimension, measureDim, resolveDim } from "./dimensions";
 import { calloutText, type TapSize } from "./holeCallouts";
 import { symbolPrims } from "./symbols";
@@ -289,7 +289,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     const [w, h] = sizeOf(p).map((d) => d * scale);
     const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
     const cut = v.kind === "section" ? drawing.sections?.find((c) => c.id === v.section) : undefined;
-    if (cut) prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: `SECTION ${cut.letter}-${cut.letter}`, size: 3.5, anchor: "middle", bold: true });
+    if (cut) prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: sectionTitle(cut), size: 3.5, anchor: "middle", bold: true });
     const detail = v.kind === "detail" ? drawing.details?.find((x) => x.id === v.detail) : undefined;
     if (detail) {
       // The detail's circle, and its name with its own scale.
@@ -395,6 +395,7 @@ export function cuttingPlane(host: PlacedView, p: ViewProjection, scale: number,
   const d: [number, number] = [(x1 - x0) / len, (y1 - y0) / len];
   const ll = Math.hypot(geo.look[0], geo.look[1]) || 1;
   const look: [number, number] = [geo.look[0] / ll, geo.look[1] / ll];
+  if (cut.aux) return viewArrow([(x0 + x1) / 2, (y0 + y1) / 2], look, cut.letter);
   const over = 5;
   const a: [number, number] = [x0 - d[0] * over, y0 - d[1] * over];
   const z: [number, number] = [x1 + d[0] * over, y1 + d[1] * over];
@@ -415,6 +416,27 @@ export function cuttingPlane(host: PlacedView, p: ViewProjection, scale: number,
     out.push({ kind: "text", x: tip[0] + look[0] * 2.5 - d[0] * 2.5 * sign, y: tip[1] + look[1] * 2.5 - d[1] * 2.5 * sign - 1.2, text: cut.letter, size: 3.5, anchor: "middle", bold: true });
   }
   return out;
+}
+
+/**
+ * An auxiliary view's arrow: pointing at the middle of the line it looks
+ * square-on to, from the side it's seen from, with its letter at the tail.
+ */
+export function viewArrow(mid: [number, number], look: [number, number], letter: string): Prim[] {
+  const tip: [number, number] = [mid[0] - look[0] * 3, mid[1] - look[1] * 3];
+  const tail: [number, number] = [mid[0] - look[0] * 15, mid[1] - look[1] * 15];
+  const side: [number, number] = [-look[1], look[0]];
+  return [
+    line(tail[0], tail[1], tip[0], tip[1]),
+    {
+      kind: "path",
+      points: [tip[0], tip[1], tip[0] - look[0] * 2.5 + side[0] * 0.9, tip[1] - look[1] * 2.5 + side[1] * 0.9, tip[0] - look[0] * 2.5 - side[0] * 0.9, tip[1] - look[1] * 2.5 - side[1] * 0.9],
+      closed: true,
+      fill: true,
+      style: "thin",
+    },
+    { kind: "text", x: tail[0] - look[0] * 3, y: tail[1] - look[1] * 3 - 1.2, text: letter, size: 3.5, anchor: "middle", bold: true },
+  ];
 }
 
 /** Numbered balloons around a view, with leader lines to the parts. */

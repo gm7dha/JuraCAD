@@ -365,6 +365,13 @@ export const Icons = {
       <path d="M2 20h18" />
     </Svg>
   ),
+  AuxView: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 17 13 7h5v5L8 22z" />
+      <path d="M21 3l-5 5" />
+      <path d="m16 8 .5-3M16 8l3-.5" />
+    </Svg>
+  ),
   Detail: (p: IconProps) => (
     <Svg {...p}>
       <circle cx="8" cy="8" r="4" />

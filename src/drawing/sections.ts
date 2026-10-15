@@ -103,6 +103,11 @@ export function updateSection(d: Drawing, id: string, fn: (s: SectionCut) => Sec
   return { ...d, sections: (d.sections ?? []).map((s) => (s.id === id ? fn(s) : s)) };
 }
 
+/** A section's name on the sheet: "SECTION A-A", or "VIEW A" for an auxiliary view. */
+export function sectionTitle(s: Pick<SectionCut, "letter" | "aux">): string {
+  return s.aux ? `VIEW ${s.letter}` : `SECTION ${s.letter}-${s.letter}`;
+}
+
 /** Remove a section, its view, and the dimensions on it. */
 export function removeSection(d: Drawing, id: string): Drawing {
   const key = `section:${id}`;
@@ -124,10 +129,12 @@ export interface SectionRequest {
   a: P2;
   b: P2;
   flip: boolean;
+  /** An auxiliary view: look square-on to the line without cutting. */
+  aux?: boolean;
 }
 
 export function sectionRequests(d: Drawing): SectionRequest[] {
   return (d.sections ?? [])
     .filter((s) => d.views.some((v) => v.kind === "section" && v.section === s.id))
-    .map((s) => ({ key: `section:${s.id}`, host: s.host, a: s.a, b: s.b, flip: !!s.flip }));
+    .map((s) => ({ key: `section:${s.id}`, host: s.host, a: s.a, b: s.b, flip: !!s.flip, aux: !!s.aux }));
 }

@@ -258,6 +258,11 @@ export interface SectionCut {
   b: [number, number];
   /** Look the other way (keep the other side of the cut). */
   flip?: boolean;
+  /**
+   * An auxiliary view instead: the whole part seen square-on to the line
+   * (for showing a sloping face at its true size), not cut. Shown as "VIEW A".
+   */
+  aux?: boolean;
 }
 
 /**
