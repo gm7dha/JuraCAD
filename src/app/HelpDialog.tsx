@@ -56,6 +56,12 @@ export function HelpDialog() {
         Install (top bar) makes PartSmith a desktop app with its own window that works offline; in Safari on a Mac,
         use File › Add to Dock.
       </p>
+      <h3 className="help-heading">Finding tools</h3>
+      <p className="small">
+        Similar tools share one toolbar button. Click the small <kbd>▾</kbd> beside a button to see the others in its
+        group (for example Centre rectangle under Rectangle, or Chamfer under Fillet); the button then remembers the one
+        you picked last. Hover over any button to see its name. Right-click a feature in the list for more options.
+      </p>
       <div className="platform-row">
         <span className="muted small">Shortcuts shown for</span>
         <div className="segmented two" role="radiogroup" aria-label="Keyboard type">
