@@ -237,16 +237,6 @@ export function DrawingToolbar() {
             onClick: () => useStore.getState().setDrawingTool(tool === t ? "select" : t),
           }))}
         />
-        <button
-          className={`tool-button${tool === "detail" ? " active" : ""}`}
-          onClick={() => useStore.getState().setDrawingTool(tool === "detail" ? "select" : "detail")}
-          title="Detail — click the middle of a small area on a view, then the circle's size: it's shown again bigger"
-          aria-label="Detail"
-          aria-pressed={tool === "detail"}
-        >
-          <Icons.Detail />
-          <span>Detail</span>
-        </button>
         <ToolGroupButton
           id="drawing-notes"
           name="note"
@@ -266,16 +256,24 @@ export function DrawingToolbar() {
             onClick: () => useStore.getState().setDrawingTool(tool === t ? "select" : t),
           }))}
         />
-        <button
-          className={`tool-button${tool === "section" ? " active" : ""}`}
-          onClick={() => useStore.getState().setDrawingTool(tool === "section" ? "select" : "section")}
-          title="Section — click two points across the front, top or a side view to cut the part open there. Flip or remove sections in the panel"
-          aria-label="Section"
-          aria-pressed={tool === "section"}
-        >
-          <Icons.Section />
-          <span>Section</span>
-        </button>
+        <ToolGroupButton
+          id="drawing-views"
+          name="section"
+          items={(
+            [
+              ["section", "Section", <Icons.Section key="s" />, "Section — click two points across the front, top or a side view to cut the part open there. Flip or remove sections in the panel"],
+              ["auxiliary", "Auxiliary view", <Icons.AuxView key="a" />, "Auxiliary view — click two points along a sloping edge on the front, top or a side view: the part is shown looking square-on to it, so the sloping face is drawn at its true size"],
+              ["detail", "Detail", <Icons.Detail key="d" />, "Detail — click the middle of a small area on a view, then the circle's size: it's shown again bigger"],
+            ] as const
+          ).map(([t, label, icon, title]) => ({
+            key: t,
+            label,
+            icon,
+            title,
+            active: tool === t,
+            onClick: () => useStore.getState().setDrawingTool(tool === t ? "select" : t),
+          }))}
+        />
         <ToolButton
           label="Auto dimension"
           icon={<Icons.AutoDimension />}
@@ -761,19 +759,20 @@ function SectionsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: 
         {sections.length === 0 && (
           <p className="panel-hint">
             To cut the part open, choose <strong>Section</strong> in the toolbar, then click two points across the front, top or side view.
+            <strong> Auxiliary view</strong> (under Section's ▾) shows a sloping face square-on instead.
           </p>
         )}
         {sections.map((s: SectionCut) => (
           <div className="section-row" key={s.id}>
             <span>
-              Section {s.letter}-{s.letter} <span className="muted small">(on {VIEW_LABELS[s.host]})</span>
+              {s.aux ? `View ${s.letter} (auxiliary)` : `Section ${s.letter}-${s.letter}`} <span className="muted small">(on {VIEW_LABELS[s.host]})</span>
             </span>
             <span className="row-actions-inline">
               <button
                 type="button"
                 className="text-button small-text"
                 onClick={() => change((d) => updateSection(d, s.id, (c) => ({ ...c, flip: !c.flip })))}
-                title="Look the other way (keep the other side of the cut)"
+                title={s.aux ? "Look from the other side" : "Look the other way (keep the other side of the cut)"}
                 aria-label={`Flip section ${s.letter}`}
               >
                 Flip
@@ -1185,7 +1184,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const host = cutStart.view as SectionCut["host"];
     const a = toRel(p.bounds, cutStart.at);
     const b = toRel(p.bounds, end.at);
-    change((d) => addSection(d, { id: newId("sc"), host, a, b }));
+    const aux = useStore.getState().drawingTool === "auxiliary";
+    change((d) => addSection(d, { id: newId("sc"), host, a, b, ...(aux ? { aux: true } : {}) }));
     setCutStart(null);
     useStore.getState().setDrawingTool("select");
   };
@@ -1223,7 +1223,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (tool === "dimension") dimensionClick(e);
     else if (tool === "holeCallout") calloutClick(toSheet(e));
     else if (linear) linearClick(toSheet(e));
-    else if (tool === "section") sectionClick(toSheet(e));
+    else if (tool === "section" || tool === "auxiliary") sectionClick(toSheet(e));
     else if (tool === "detail") detailClick(toSheet(e));
     else useStore.getState().selectDim(null);
   };
@@ -1306,6 +1306,10 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     message = cutStart
       ? "Click where the cutting line ends (it straightens when nearly across or up-and-down). Esc to start again."
       : "Click where the cutting line starts, on the front, top or a side view (corners and hole centres snap).";
+  else if (tool === "auxiliary")
+    message = cutStart
+      ? "Click the other end of the sloping edge. The new view looks square-on to it. Esc to start again."
+      : "Click one end of a sloping edge on the front, top or a side view (corners snap).";
 
   const hover =
     (tool === "dimension" && cursor && !pending?.b) || (linear && cursor) ? findSnap(snaps, cursor!, tolerance()) : tool === "holeCallout" && cursor ? holeHover(cursor) : null;
@@ -1321,7 +1325,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (f.kind === "line") return { line: [at(f.a), at(f.b)] as [P2, P2] };
     return { point: at(f.kind === "point" ? f.at : f.centre) };
   })();
-  const cutHover = (tool === "section" || (tool === "detail" && !detailStart)) && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor)) : null;
+  const cutHover = (tool === "section" || tool === "auxiliary" || (tool === "detail" && !detailStart)) && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor)) : null;
   const detailCircle = (() => {
     if (tool !== "detail" || !detailStart || !cursor || !layout) return null;
     const at = viewAt(detailStart.view);
@@ -1422,7 +1426,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
                 setDrag({ viewId: v.id, start, from: v.centre, at: v.centre });
               }}
             >
-              <title>{`${v.kind === "section" ? `Section ${drawing.sections?.find((c) => `section:${c.id}` === v.key)?.letter ?? ""}` : v.kind === "detail" ? `Detail ${drawing.details?.find((c) => `detail:${c.id}` === v.key)?.letter ?? ""}` : VIEW_LABELS[v.kind]} view — drag to move`}</title>
+              <title>{`${v.kind === "section" ? (() => { const c = drawing.sections?.find((x) => `section:${x.id}` === v.key); return c?.aux ? `Auxiliary ${c.letter}` : `Section ${c?.letter ?? ""}`; })() : v.kind === "detail" ? `Detail ${drawing.details?.find((c) => `detail:${c.id}` === v.key)?.letter ?? ""}` : VIEW_LABELS[v.kind]} view — drag to move`}</title>
             </rect>
           ))}
         {tool === "select" &&

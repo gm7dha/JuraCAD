@@ -146,7 +146,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       if (typeof rs.id !== "string" || sections.some((x) => x.id === rs.id) || !SECTION_HOSTS.includes(rs.host as ViewKind) || !a || !b) continue;
       if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9) continue;
       const letter = typeof rs.letter === "string" && rs.letter.trim() ? rs.letter.trim().slice(0, 3) : "A";
-      sections.push({ id: rs.id, letter, host: rs.host as ViewKind, a, b, ...(rs.flip === true ? { flip: true } : {}) });
+      sections.push({ id: rs.id, letter, host: rs.host as ViewKind, a, b, ...(rs.flip === true ? { flip: true } : {}), ...(rs.aux === true ? { aux: true } : {}) });
     }
     const details: DetailView[] = [];
     for (const x of Array.isArray(r.details) ? r.details : []) {

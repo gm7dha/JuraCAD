@@ -784,7 +784,7 @@ try {
   step = "adding a section view";
   // Draw a cutting line across the top view (the second view), left to right through its middle.
   const topBox = await page.locator(".drawing-view-handle").nth(1).boundingBox();
-  await page.getByRole("button", { name: "Section", exact: true }).click();
+  await tool("Section");
   const cutY = topBox.y + topBox.height * 0.5;
   await page.mouse.click(topBox.x + topBox.width * 0.06, cutY);
   await page.mouse.click(topBox.x + topBox.width * 0.94, cutY + 1);
@@ -793,7 +793,7 @@ try {
   step = "adding a detail view";
   {
     const frontNow = await page.locator(".drawing-view-handle").first().boundingBox();
-    await page.getByRole("button", { name: "Detail", exact: true }).click();
+    await tool("Detail");
     const cxp = frontNow.x + frontNow.width * 0.8;
     const cyp = frontNow.y + frontNow.height * 0.3;
     await page.mouse.click(cxp, cyp);
@@ -801,6 +801,16 @@ try {
     await page.mouse.click(cxp + 15, cyp);
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^DETAIL [A-Z]/.test(t.textContent ?? "")), null, { timeout: 10_000 });
     await shot("detail");
+  }
+  step = "adding an auxiliary view";
+  {
+    // Look square-on to a slanted line across the front view.
+    const frontNow = await page.locator(".drawing-view-handle").first().boundingBox();
+    await tool("Auxiliary view");
+    await page.mouse.click(frontNow.x + frontNow.width * 0.2, frontNow.y + frontNow.height * 0.8);
+    await page.mouse.click(frontNow.x + frontNow.width * 0.8, frontNow.y + frontNow.height * 0.2);
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^VIEW [A-Z]$/.test(t.textContent ?? "")), null, { timeout: 60_000 });
+    await shot("auxview");
   }
   step = "drawing the assembly";
   await page.locator("#drawing-source").selectOption({ label: "Assembly 1" });

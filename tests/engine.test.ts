@@ -1527,6 +1527,19 @@ describe("drawing views", () => {
     expect(area(c.cutFaces!)).toBeCloseTo(800, 1);
   });
 
+  it("draws auxiliary views square-on to a sloping line, without cutting", () => {
+    engine.rebuild([feature("box", { width: 40, depth: 30, height: 20 })]);
+    // Corner to corner across the front view (40 × 20): the view looks square-on to that diagonal.
+    const [aux] = engine.project([], undefined, [], true, [{ key: "section:A", host: "front", a: [0, 0], b: [1, 1], flip: false, aux: true }]);
+    expect(aux.kind).toBe("section:A");
+    expect(aux.cutFaces).toBeUndefined();
+    const [x0, y0, x1, y1] = aux.bounds!;
+    // Across: the block's 30 mm depth. Up: the block's outline along the diagonal, 40·cos + 20·sin.
+    const t = Math.atan2(20, 40);
+    expect(x1 - x0).toBeCloseTo(30, 3);
+    expect(y1 - y0).toBeCloseTo(40 * Math.cos(t) + 20 * Math.sin(t), 3);
+  });
+
 });
 
 describe("extrude up to a face, and with draft", () => {

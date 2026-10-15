@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { centreLines, centreMarks, hatchLines, mergeSegments, placeBalloons, surfacePointNearCentre } from "../src/drawing/annotations";
 import { addDrawing, parseDrawings } from "../src/drawing/drawing";
-import { addSection, nextSectionLetter, removeSection, sectionGeometry } from "../src/drawing/sections";
+import { addSection, nextSectionLetter, removeSection, sectionGeometry, sectionRequests } from "../src/drawing/sections";
 import { sheetDxf } from "../src/drawing/export";
 import { layoutSheet } from "../src/drawing/sheet";
 import type { ViewProjection } from "../src/kernel/protocol";
@@ -147,6 +147,23 @@ describe("drawing extras on the sheet", () => {
     const saved = parseDrawings(JSON.parse(JSON.stringify([{ ...d, centreLines: false, balloons: false }])))[0];
     expect([saved.sections, saved.centreLines, saved.balloons, saved.views.some((v) => v.kind === "section" && v.section === "A")]).toEqual([d.sections, false, false, true]);
     expect(sheetDxf(l.prims)).toContain("\nLINE\n8\nCENTRE\n");
+  });
+
+  it("adds an auxiliary view: named VIEW A, with one arrow and no cutting line or hatching", () => {
+    const d = addSection(base(), { id: "A", host: "front", a: [0, 0], b: [1, 1], aux: true });
+    expect(sectionRequests(d)[0].aux).toBe(true);
+    const l = layoutSheet(d, { ...holed, "section:A": rectView("section", 30, 20) }, info);
+    const texts = l.prims.filter((p) => p.kind === "text").map((p) => (p.kind === "text" ? p.text : ""));
+    expect(texts).toContain("VIEW A");
+    expect(texts.includes("SECTION A-A")).toBe(false);
+    expect(texts.filter((t) => t === "A")).toHaveLength(1);
+    // No cutting line drawn on the front view.
+    const front = l.views.find((v) => v.kind === "front")!;
+    const centreOnFront = l.prims.filter((p) => p.kind === "path" && p.style === "centre" && p.points.length === 4 && p.points[0] < front.box[0] - 1);
+    expect(centreOnFront).toHaveLength(0);
+    // Kept when saved and read back.
+    const saved = parseDrawings(JSON.parse(JSON.stringify([d])))[0];
+    expect(saved.sections![0].aux).toBe(true);
   });
 
   it("takes several sections, each with its own letter, view and cutting line", () => {

@@ -1994,6 +1994,11 @@ export class GeometryEngine {
           out.push(empty(req.key));
           continue;
         }
+        if (req.aux) {
+          // Auxiliary view: the whole part, looked at square-on to the line.
+          out.push(projectView(whole, req.key, geo.toward, geo.right, withHidden, (wholeAxes ??= cylinderAxes(whole))));
+          continue;
+        }
         const up = cross3(geo.toward, geo.right);
         const flat = (p: Vec3): [number, number] => [dot3(p, geo.right), dot3(p, up)];
         const cut = sectionCut(whole, geo.origin, geo.normal, flat);
