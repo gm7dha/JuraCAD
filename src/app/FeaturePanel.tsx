@@ -364,6 +364,11 @@ function PartRow({
           { label: "Rename…", action: start },
           { label: "Duplicate…", action: () => useStore.getState().duplicateParts([id]) },
           { label: hidden ? "Show" : "Hide", action: onToggle },
+          { label: "Show only this part", action: () => isolate([id]) },
+          { label: "Show all parts", action: () => isolate(null) },
+          useStore.getState().transparentParts.includes(id)
+            ? { label: "Make solid", action: () => useStore.getState().setPartsTransparent([id], false) }
+            : { label: "Make see-through", action: () => useStore.getState().setPartsTransparent([id], true) },
         ])
       }
       title="Click to select (drag, Shift or Ctrl for several); double-click to rename; right-click for more"
@@ -464,8 +469,11 @@ function PartsList({
     return [
       { label: `Hide these ${n} parts`, action: () => st().setPartsHidden(group, true) },
       { label: `Show these ${n} parts`, action: () => st().setPartsHidden(group, false) },
-      { label: "Show only these", action: () => st().setPartsHidden(order.filter((x) => !group.includes(x)), true) },
-      { label: "Show all parts", action: () => st().setPartsHidden(order, false) },
+      { label: "Show only these", action: () => isolate(group) },
+      { label: "Show all parts", action: () => isolate(null) },
+      group.every((x) => st().transparentParts.includes(x))
+        ? { label: `Make these ${n} solid`, action: () => st().setPartsTransparent(group, false) }
+        : { label: `Make these ${n} see-through`, action: () => st().setPartsTransparent(group, true) },
       "divider",
       { label: `Duplicate these ${n} parts`, action: () => st().duplicateParts(group) },
       { label: `Export these ${n} parts…`, action: () => st().openDialog("export") },
@@ -517,6 +525,14 @@ function PartsList({
       )}
     </>
   );
+}
+
+/** Show only these parts of the Part Studio on show (null: show them all again). */
+function isolate(ids: string[] | null) {
+  const s = useStore.getState();
+  const all = studioParts(s).map((p) => p.id);
+  s.setPartsHidden(all, false);
+  if (ids) s.setPartsHidden(all.filter((x) => !ids.includes(x)), true);
 }
 
 const DATUMS: DatumName[] = ["Origin", "Top", "Front", "Right"];

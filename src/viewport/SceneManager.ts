@@ -454,18 +454,32 @@ export class SceneManager {
     for (const [id, p] of this.parts) p.mesh.material = this.faceMaterialsFor(id);
   }
 
+  /** Parts drawn see-through, so you can see inside or behind them. */
+  setTransparent(ids: string[]): void {
+    this.transparent = new Set(ids);
+    for (const [id, p] of this.parts) p.mesh.material = this.faceMaterialsFor(id);
+  }
+  private transparent = new Set<string>();
+
   /** Normal, hover and selected materials for a part: its own colour, then the shared highlights. */
   private faceMaterialsFor(partId: string): THREE.Material[] {
-    const colour = this.colours[partId];
+    const see = this.transparent.has(partId);
+    const colour = this.colours[partId] ?? (see ? COLOURS.part : undefined);
     if (!colour) return this.materials.faces;
-    let m = this.colourMaterials.get(colour);
+    const key = see ? `${colour}|see` : colour;
+    let m = this.colourMaterials.get(key);
     if (!m) {
       m = this.makeFaceMaterial(colour);
+      if (see) {
+        m.transparent = true;
+        m.opacity = 0.3;
+        m.depthWrite = false;
+      }
       m.clippingPlanes = this.section ? [this.section] : [];
       m.side = this.section ? THREE.FrontSide : THREE.DoubleSide;
-      this.colourMaterials.set(colour, m);
+      this.colourMaterials.set(key, m);
     }
-    return [m, this.materials.faces[1], this.materials.faces[2]];
+    return see ? [m, m, this.materials.faces[2]] : [m, this.materials.faces[1], this.materials.faces[2]];
   }
 
   /** The model's extent along a direction (for the section slider). */
