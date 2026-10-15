@@ -6,6 +6,17 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.11 — Threads, fasteners, mechanisms and drawing tables · commit `b7e163f`
+
+- Part Studio: **Thread** (metric screw threads), **Fastener** (hex bolts, nuts and washers, M3–M12, optionally
+  threaded), **Delete part**, **materials and part weights**, drag features to **reorder** them, a **rollback
+  bar**, **show only this / show all / see-through** parts, and Ctrl+D to duplicate.
+- Assemblies: **closed loops** of mates, **Pin slot** and **Parallel** mates, **▶ Animate**, **gear,
+  rack-and-pinion and screw relations**, and saved **positions**.
+- Drawings: **tolerances** and extra text on dimensions, **notes**, **detail views**, a **hole table** and a
+  **revision table**; Auto dimension picks baseline, chain or ordinate per row; Shift-drag a dimension's number
+  anywhere.
+
 ## v0.10 — More Onshape: Part Studio tools, sketching and drawings · commit `bdb0382`
 
 - Part Studio: **Plane** features, **Boolean** (join, subtract, intersect), **Split**, **Thicken**, **Rib**,
