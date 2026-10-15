@@ -6,7 +6,7 @@ import { planeLabel } from "../sketch/planes";
 import { findRegions } from "../sketch/regions";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
-import { makeSketchPattern, setPatternOption } from "./sketchActions";
+import { makeSketchPattern, makeSketchTransform, setPatternOption } from "./sketchActions";
 
 /** The sketch's feature panel (top-left of the viewport), like Onshape's sketch dialog. */
 export function SketchPanel() {
@@ -22,6 +22,10 @@ export function SketchPanel() {
   const patternSpacing = useStore((s) => s.sketch?.patternSpacing ?? "10");
   const patternAngle = useStore((s) => s.sketch?.patternAngle ?? "0");
   const patternCentre = useStore((s) => s.sketch?.patternCentre ?? "origin");
+  const moveDx = useStore((s) => s.sketch?.moveDx ?? "10");
+  const moveDy = useStore((s) => s.sketch?.moveDy ?? "0");
+  const moveAngle = useStore((s) => s.sketch?.moveAngle ?? "0");
+  const moveCopy = useStore((s) => s.sketch?.moveCopy ?? false);
   const unit = useLengthUnit();
   const theme = useStore((s) => s.theme);
   const setSketchOptions = useStore((s) => s.setSketchOptions);
@@ -137,6 +141,33 @@ export function SketchPanel() {
             </p>
             <button type="button" className="primary-button" onClick={() => makeSketchPattern()} disabled={selectionCount === 0}>
               Make pattern
+            </button>
+          </div>
+        )}
+        {tool === "sketchTransform" && (
+          <div className="pattern-options">
+            <label className="tool-option">
+              Across
+              <input value={showLength(moveDx, unit)} spellCheck={false} aria-label="Move across" onChange={(e) => setPatternOption({ moveDx: storeLength(e.target.value, unit) })} />
+              <span className="muted">{unit}</span>
+            </label>
+            <label className="tool-option">
+              Up
+              <input value={showLength(moveDy, unit)} spellCheck={false} aria-label="Move up" onChange={(e) => setPatternOption({ moveDy: storeLength(e.target.value, unit) })} />
+              <span className="muted">{unit}</span>
+            </label>
+            <label className="tool-option">
+              Turn
+              <input value={moveAngle} spellCheck={false} aria-label="Turn by" onChange={(e) => setPatternOption({ moveAngle: e.target.value })} />
+              <span className="muted">°</span>
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={moveCopy} onChange={(e) => setPatternOption({ moveCopy: e.target.checked })} />
+              Make a copy (leave the original)
+            </label>
+            <p className="dialog-hint">Click the shapes to move. Turning goes round their middle (anticlockwise for plus).</p>
+            <button type="button" className="primary-button" onClick={() => makeSketchTransform()} disabled={selectionCount === 0}>
+              {moveCopy ? "Copy" : "Move"}
             </button>
           </div>
         )}

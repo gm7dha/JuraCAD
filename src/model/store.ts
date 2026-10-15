@@ -14,6 +14,8 @@ import {
   redo as redoHistory,
   removeFeature,
   renameFeature,
+  renameFolder,
+  setFolder,
   renamePart,
   replaceFeature,
   setSuppressed,
@@ -98,6 +100,7 @@ export type SketchTool =
   | "offset"
   | "mirror"
   | "sketchPattern"
+  | "sketchTransform"
   | "useEdge";
 
 /** State while a sketch is open for editing. */
@@ -132,6 +135,11 @@ export interface SketchSession {
   patternAngle: string;
   /** Circular pattern: the point to go round. */
   patternCentre: string;
+  /** Move / copy tool: how far across and up (as typed), the turn (degrees, about the selection's middle), and whether to copy. */
+  moveDx: string;
+  moveDy: string;
+  moveAngle: string;
+  moveCopy: boolean;
 }
 
 /** Section view (display only — not saved): cut the view along a default plane. */
@@ -241,7 +249,7 @@ export interface AppState {
   keepOfferedDimension: (id: string) => void;
   /** Drop any offered dimensions not kept yet. */
   discardOfferedDimensions: () => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**
@@ -256,6 +264,9 @@ export interface AppState {
   moveFeature: (id: string, beforeId: string | null) => void;
   toggleSuppressed: (id: string) => void;
   renameFeature: (id: string, name: string) => void;
+  /** Feature list folders: put features in one (null takes them out), or rename one. */
+  setFeatureFolder: (ids: string[], folder: string | null) => void;
+  renameFeatureFolder: (from: string, to: string) => void;
   renameDocument: (name: string) => void;
   /** Name a part (blank goes back to "Part N"). One undo step. */
   renamePart: (partId: string, name: string) => void;
@@ -440,6 +451,10 @@ const newSession = (): SketchSession => ({
   patternSpacing: "10",
   patternAngle: "0",
   patternCentre: "origin",
+  moveDx: "10",
+  moveDy: "0",
+  moveAngle: "0",
+  moveCopy: false,
 });
 
 /** Is this id (point, curve or constraint) still in the sketch? */
@@ -798,6 +813,8 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     renameFeature: (id, name) => changeStudio((doc) => renameFeature(doc, id, name)),
+    setFeatureFolder: (ids, folder) => changeStudio((doc) => setFolder(doc, ids, folder)),
+    renameFeatureFolder: (from, to) => changeStudio((doc) => renameFolder(doc, from, to)),
 
     setPartMaterial: (partId, material) =>
       change((doc) => {

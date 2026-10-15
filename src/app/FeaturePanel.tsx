@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
 import { activeFeatures, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
+import { nextFolderName } from "../model/document";
 import type { Feature, FeatureType } from "../model/types";
 import { viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -243,6 +244,19 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
     },
     { label: feature.suppressed ? "Unsuppress" : "Suppress", action: () => toggleSuppressed(feature.id) },
     { label: "Roll back to here", action: () => useStore.getState().setRollback(feature.id) },
+    feature.folder
+      ? { label: `Take out of "${feature.folder}"`, action: () => useStore.getState().setFeatureFolder([feature.id], null) }
+      : {
+          label: "Put in a folder…",
+          action: () => {
+            const list = activeFeatures(useStore.getState());
+            const at = list.findIndex((f) => f.id === feature.id);
+            // Next to a folder already: offer to join it.
+            const near = list[at - 1]?.folder ?? list[at + 1]?.folder;
+            const name = window.prompt("Folder name (features next to each other with the same folder name are shown together)", near ?? nextFolderName(list));
+            if (name !== null && name.trim()) useStore.getState().setFeatureFolder([feature.id], name);
+          },
+        },
     "divider",
     { label: "Delete", action: () => deleteFeature(feature.id), danger: true },
   ];
@@ -632,10 +646,56 @@ export function FeaturePanel() {
             <DatumRow key={d} name={d} onMenu={onMenu} />
           ))}
           {!grouped &&
-            features.flatMap((f) => [
-              <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} draggable />,
-              ...(f.id === rollbackTo ? [<RollbackBar key="rollback" />] : []),
-            ])}
+            folderRuns(features).map((run) => {
+              const rows = run.features.flatMap((f) => [
+                <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} draggable />,
+                ...(f.id === rollbackTo ? [<RollbackBar key="rollback" />] : []),
+              ]);
+              if (!run.folder) return rows;
+              const key = `folder:${run.folder}:${run.features[0].id}`;
+              const shut = collapsed.includes(key);
+              const folder = run.folder;
+              const ids = run.features.map((f) => f.id);
+              const menu: MenuEntry[] = [
+                {
+                  label: "Rename folder…",
+                  action: () => {
+                    const name = window.prompt("Rename folder", folder);
+                    if (name !== null) useStore.getState().renameFeatureFolder(folder, name);
+                  },
+                },
+                { label: "Suppress all", action: () => ids.forEach((id) => features.find((f) => f.id === id && !f.suppressed) && useStore.getState().toggleSuppressed(id)) },
+                { label: "Unsuppress all", action: () => ids.forEach((id) => features.find((f) => f.id === id && f.suppressed) && useStore.getState().toggleSuppressed(id)) },
+                "divider",
+                { label: "Remove the folder (keep its features)", action: () => useStore.getState().setFeatureFolder(ids, null) },
+              ];
+              return [
+                <li key={key} className="feature-group feature-folder" role="treeitem" aria-expanded={!shut}>
+                  <button
+                    type="button"
+                    className="feature-group-head"
+                    onClick={() => setCollapsed((c) => (c.includes(key) ? c.filter((x) => x !== key) : [...c, key]))}
+                    onDoubleClick={() => {
+                      const name = window.prompt("Rename folder", folder);
+                      if (name !== null) useStore.getState().renameFeatureFolder(folder, name);
+                    }}
+                    onContextMenu={(e) => onMenu(e, menu)}
+                    aria-label={`Folder ${folder} — click to ${shut ? "open" : "close"}, double-click to rename`}
+                    title="Click to open or close; double-click to rename; right-click for more"
+                  >
+                    <span className={`caret${shut ? "" : " open"}`}>▸</span>
+                    <Icons.Folder size={15} />
+                    <span className="feature-name">{folder}</span>
+                    <span className="count">({run.features.length})</span>
+                  </button>
+                  {!shut && (
+                    <ul className="feature-list nested" role="group">
+                      {rows}
+                    </ul>
+                  )}
+                </li>,
+              ];
+            })}
           {!grouped && features.length > 1 && (
             <li
               className="feature-drop-end"
@@ -751,4 +811,16 @@ function ConfigurationPicker() {
       </button>
     </div>
   );
+}
+
+/** The feature list in runs: features next to each other in the same folder go together. */
+function folderRuns(features: Feature[]): { folder: string | null; features: Feature[] }[] {
+  const runs: { folder: string | null; features: Feature[] }[] = [];
+  for (const f of features) {
+    const folder = f.folder ?? null;
+    const last = runs[runs.length - 1];
+    if (last && folder && last.folder === folder) last.features.push(f);
+    else runs.push({ folder, features: [f] });
+  }
+  return runs;
 }

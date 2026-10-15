@@ -1009,7 +1009,7 @@ try {
     await page.mouse.click(mx + 120, my);
     await page.mouse.click(mx + 135, my);
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Pattern", exact: true }).click();
+    await tool("Pattern");
     await page.getByRole("button", { name: "Round a centre" }).click();
     // A shape just drawn stays selected, so the pattern tool starts with the circle; clicking it would deselect it.
     const already = await page.evaluate(() => window.partsmithStore.getState().sketch.selection.length);

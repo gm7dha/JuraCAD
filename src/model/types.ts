@@ -95,6 +95,8 @@ export interface Feature {
   operation: Operation;
   /** When true the feature is skipped during rebuild (greyed out in the list). */
   suppressed: boolean;
+  /** The folder it's shown in, in the feature list (just for tidiness; doesn't change the model). */
+  folder?: string;
   /** Parameter values as typed, e.g. { width: "20", height: "10 + 5" }. */
   params: Record<string, string>;
   /** Sketch features: where the sketch is and what's drawn. A null plane means "not chosen yet". */

@@ -7,7 +7,7 @@ let storageWarned = false;
 import { activeStudioId } from "../model/store";
 import { studiosOf } from "../model/studios";
 import type { StudioInput } from "./protocol";
-import type { PartSmithDocument } from "../model/types";
+import type { Feature, PartSmithDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
 import { switchConfiguration } from "../model/configurations";
 import { setCurrentScope } from "../model/expr";
@@ -25,7 +25,7 @@ function currentStudios(): StudioInput[] {
   const s = useStore.getState();
   const here = activeStudioId(s);
   const editingIn = s.editing ? here : null;
-  return [...studiosOf(s.history.present).map((st) => ({
+  return [...studiosOf(s.history.present).map((st) => ({ ...st, features: withoutFolders(st.features) })).map((st) => ({
     id: st.id,
     features:
       st.id === here && s.rollbackTo
@@ -34,6 +34,18 @@ function currentStudios(): StudioInput[] {
           ? featuresWithDraft(st.features, s.editing?.draft ?? null)
           : st.features,
   })), ...configuredStudios(s.history.present)];
+}
+
+/** Folders are only for the feature list: leave them out so moving features between folders doesn't rebuild anything. */
+const foldersCache = new WeakMap<Feature[], Feature[]>();
+function withoutFolders(list: Feature[]): Feature[] {
+  if (!list.some((f) => f.folder)) return list;
+  let out = foldersCache.get(list);
+  if (!out) {
+    out = list.map((f) => (f.folder ? (({ folder: _f, ...rest }) => rest)(f) : f));
+    foldersCache.set(list, out);
+  }
+  return out;
 }
 
 /** Part Studios that assemblies show in another configuration, built again in it ("<studio>@<configuration>"). */
