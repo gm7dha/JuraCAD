@@ -17,6 +17,7 @@ import { defaultAxis } from "../src/sketch/axis";
 import { addArc, addCircle, addLine, addPoint, addRectangle } from "../src/sketch/ops";
 import { holeVolume, type HoleSize } from "../src/model/holes";
 import { addEllipse, addSpline } from "../src/sketch/tools";
+import { matchingConnectors } from "../src/assembly/connectors";
 import { planeOnFace, type SketchPlane } from "../src/sketch/planes";
 import { emptySketch, type SketchData } from "../src/sketch/types";
 
@@ -770,6 +771,31 @@ describe("holes", () => {
     // A round boss isn't a hole.
     build([feature("cylinder", { diameter: 10, height: 5, x: 0, y: 0, z: 0 })]);
     expect(engine.project([], undefined, ["top"], false)[0].holes).toEqual([]);
+  });
+
+  it("finds the other holes like one picked (for Replicate)", () => {
+    const block = feature("box", { width: 40, depth: 40, height: 20, z: -20 });
+    let data = emptySketch();
+    for (const [x, y] of [
+      [10, 10],
+      [30, 10],
+      [10, 30],
+      [30, 30],
+    ])
+      data = addPoint(data, { x, y }).sketch;
+    data = addPoint(data, { x: 20, y: 20 }).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+    const four = holeFeature(sk.id, {}, { diameter: 4.5 });
+    const r = build([block, sk, four]);
+    expect(r.featureErrors).toEqual({});
+    const part = r.parts[0];
+    // A round edge at the top of the hole at (10, 10).
+    const i = part.edgeRefs.findIndex((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2]) < 1e-3 && Math.hypot(e.mid[0] - 10, e.mid[1] - 10) < 3);
+    expect(i).toBeGreaterThanOrEqual(0);
+    const found = matchingConnectors(part, { partId: part.id, ref: part.edgeRefs[i] });
+    // The other four holes' top edges: not their bottom edges, nor the bottom of this one.
+    expect(found).toHaveLength(4);
+    expect(found.every((p) => p.ref.kind === "edge" && Math.abs(p.ref.mid[2]) < 1e-3)).toBe(true);
   });
 
   it("uses circle centres too, and can be patterned", () => {

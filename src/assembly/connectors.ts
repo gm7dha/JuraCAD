@@ -272,3 +272,43 @@ export function frameOnParts(parts: PartMesh[], pick: TopoPick): Frame | null {
   const index = findPick(part, pick);
   return index >= 0 ? connectorFrame(part, pick.ref.kind, index) : null;
 }
+
+/**
+ * Other faces or edges on a part just like the picked one — the same kind of
+ * face or edge, the same size, pointing the same way (every other hole of the
+ * same size drilled from the same side). For Replicate.
+ */
+export function matchingConnectors(part: PartMesh, pick: TopoPick): TopoPick[] {
+  const index = findPick(part, pick);
+  if (index < 0) return [];
+  const kind = pick.ref.kind;
+  const want = connectorFrame(part, kind, index);
+  if (!want) return [];
+  const sizeOf = (i: number): number | null => {
+    if (kind === "face") return faceVertices(part, i)?.area ?? null;
+    const f = edgeFrame(part, i);
+    const ref = part.edgeRefs[i];
+    return f && ref ? length(sub(ref.mid, f.origin)) : null;
+  };
+  const typeOf = (i: number) => (kind === "face" ? part.faceRefs[i]?.surface : part.edgeRefs[i]?.curve);
+  const size = sizeOf(index);
+  if (size === null) return [];
+  const count = kind === "face" ? part.faceRefs.length : part.edgeRefs.length;
+  const out: TopoPick[] = [];
+  const seen: Vec3[] = [];
+  for (let i = 0; i < count; i++) {
+    if (i === index || typeOf(i) !== typeOf(index)) continue;
+    const f = connectorFrame(part, kind, i);
+    const s = sizeOf(i);
+    if (!f || s === null || Math.abs(dot(f.z, want.z)) < 0.999) continue;
+    if (Math.abs(s - size) > Math.max(1e-3, size * 1e-3)) continue;
+    // Somewhere else at the same level (not the other end of the same hole, or a piece of the same face).
+    const offset = sub(f.origin, want.origin);
+    if (Math.abs(dot(offset, want.z)) > 1e-3 || length(offset) < 1e-4) continue;
+    // Each hole once (a round face can come in two halves).
+    if (seen.some((o) => length(sub(o, f.origin)) < 1e-4)) continue;
+    seen.push(f.origin);
+    out.push({ partId: part.id, ref: kind === "face" ? part.faceRefs[i] : part.edgeRefs[i] });
+  }
+  return out;
+}

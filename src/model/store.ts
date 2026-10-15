@@ -30,9 +30,12 @@ import { setLengthUnit, startingLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, AssemblyPattern, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "./types";
+import type { Assembly, AssemblyPattern, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
+import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
+import { matchingConnectors } from "../assembly/connectors";
+import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import { moveFeature as moveFeatureIn } from "./reorder";
@@ -323,6 +326,11 @@ export interface AppState {
   createPattern: () => void;
   updatePattern: (id: string, patch: Partial<Omit<AssemblyPattern, "id">>) => void;
   deletePattern: (id: string) => void;
+  /** Replicate: copy the selected part into every hole matching the one it's mated into. */
+  createReplicate: () => void;
+  /** Look for matching holes again (after the part changed). */
+  refreshReplicate: (id: string) => void;
+  deleteReplicate: (id: string) => void;
   setDragPreview: (change: DragChange | null) => void;
   setDrawingTool: (tool: DrawingTool) => void;
   selectDim: (id: string | null) => void;
@@ -1103,6 +1111,40 @@ export const useStore = create<AppState>((set, get) => {
       const next: AssemblyPattern = { ...p, ...patch, name: (patch.name ?? p.name).trim() || p.name };
       change((doc) => updateAssembly(doc, asm.id, (a) => syncPattern(a, next, () => newId("i"))));
     },
+    createReplicate: () => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm || s.asmSelection.length !== 1) return s.showToast("Select one part — one that's mated into a hole.", "info");
+      const source = replicateSource(asm, s.asmSelection[0]);
+      if (typeof source === "string") return s.showToast(source, "info");
+      const rep: Replicate = { id: newId("rp"), name: nextReplicateName(asm), seed: s.asmSelection[0], mate: source.mate.id };
+      const holes = replicateHoles(asm, rep, s.parts);
+      if (!holes.length) return s.showToast("No other holes like that one were found on the part it's mated to.", "info");
+      change((doc) => {
+        const next = updateAssembly(doc, asm.id, (a) => syncReplicate(a, rep, holes, () => newId("i")));
+        const solved = next.assemblies?.find((a) => a.id === asm.id);
+        return solved ? settlePlacements(next, asm.id, solveWithParts(solved, s.parts).placements) : next;
+      });
+      set({ asmSelection: [] });
+      s.showToast(`Copied into ${holes.length} more hole${holes.length === 1 ? "" : "s"}.`, "success");
+    },
+    refreshReplicate: (id) => {
+      const s = get();
+      const asm = activeAssembly(s);
+      const rep = asm?.replicates?.find((r) => r.id === id);
+      if (!asm || !rep) return;
+      const holes = replicateHoles(asm, rep, s.parts);
+      change((doc) => {
+        const next = updateAssembly(doc, asm.id, (a) => syncReplicate(a, rep, holes, () => newId("i")));
+        const solved = next.assemblies?.find((a) => a.id === asm.id);
+        return solved ? settlePlacements(next, asm.id, solveWithParts(solved, s.parts).placements) : next;
+      });
+      s.showToast(`${rep.name}: ${holes.length} cop${holes.length === 1 ? "y" : "ies"}.`, "success");
+    },
+    deleteReplicate: (id) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => updateAssembly(doc, asm.id, (a) => removeReplicate(a, id)));
+    },
     deletePattern: (id) => {
       const asm = activeAssembly(get());
       if (!asm) return;
@@ -1307,3 +1349,14 @@ function syncScope(variables: Variable[] | undefined) {
 }
 syncScope(useStore.getState().history.present.variables);
 useStore.subscribe((s) => syncScope(s.history.present.variables));
+
+/** The holes a replicate's copies go in: every hole like the original's on the part it's mated to (as built now). */
+function replicateHoles(a: Assembly, rep: Replicate, parts: PartMesh[]) {
+  const mate = a.mates?.find((m) => m.id === rep.mate);
+  if (!mate) return [];
+  const target = mate.a.instanceId === rep.seed ? mate.b : mate.a;
+  const instance = a.instances.find((i) => i.id === target.instanceId);
+  const part = instance && findMesh(parts, meshIdOf(instance));
+  // Picks name the part itself, whichever configuration it's shown in.
+  return part && instance ? matchingConnectors(part, { ...target.pick, partId: part.id }).map((p) => ({ ...p, partId: instance.partId })) : [];
+}
