@@ -980,6 +980,19 @@ describe("threads", () => {
   });
 });
 
+describe("delete part", () => {
+  it("removes whole parts from that point on", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const rod = feature("cylinder", { diameter: 4, height: 20, x: 30, y: 0, z: 0 });
+    expect(build([box, rod]).parts).toHaveLength(2);
+    const del: Feature = { ...feature("deletePart", {}), deleteParts: [rod.id] };
+    const r = build([box, rod, del]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => p.id)).toEqual([box.id]);
+    expect(build([box, rod, { ...del, deleteParts: [] }]).featureErrors[del.id]).toMatch(/Click the parts/);
+  });
+});
+
 describe("plane features", () => {
   it("build nothing, but say when they can't be placed", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });

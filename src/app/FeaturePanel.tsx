@@ -31,6 +31,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   text: Icons.Text,
   plane: Icons.Plane,
   boolean: Icons.Boolean,
+  deletePart: Icons.Trash,
   split: Icons.Split,
   thicken: Icons.Thicken,
   rib: Icons.Rib,
@@ -343,6 +344,13 @@ function PartRow({
         onMenu(e, [
           { label: "Rename…", action: start },
           { label: "Duplicate…", action: () => useStore.getState().duplicateParts([id]) },
+          {
+            label: "Delete part…",
+            action: () => {
+              useStore.getState().setSelectedParts([id]);
+              useStore.getState().startCreate("deletePart");
+            },
+          },
           { label: hidden ? "Show" : "Hide", action: onToggle },
         ])
       }
@@ -448,6 +456,7 @@ function PartsList({
       { label: "Show all parts", action: () => st().setPartsHidden(order, false) },
       "divider",
       { label: `Duplicate these ${n} parts`, action: () => st().duplicateParts(group) },
+      { label: `Delete these ${n} parts…`, action: () => st().startCreate("deletePart") },
       { label: `Export these ${n} parts…`, action: () => st().openDialog("export") },
       { label: "Clear selection", action: () => st().setSelectedParts([]) },
     ];

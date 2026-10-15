@@ -916,6 +916,34 @@ function PicksField() {
   );
 }
 
+/** Delete part: the parts it removes. */
+function DeletePartOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const parts = useStore(studioParts);
+  if (draft?.type !== "deletePart") return null;
+  const ids = draft.deleteParts ?? [];
+  const nameOf = (id: string) => parts.find((p) => p.id === id)?.name ?? "(missing part)";
+  return (
+    <fieldset className="param-group">
+      <legend>Parts to delete</legend>
+      {ids.length ? (
+        <ul className="pick-list" aria-label="Parts to delete">
+          {ids.map((id) => (
+            <li key={id}>
+              <span>{nameOf(id)}</span>
+              <button type="button" className="icon-button small" onClick={() => setDraftField({ deleteParts: ids.filter((x) => x !== id) })} title="Keep this part" aria-label={`Keep ${nameOf(id)}`}>
+                <Icons.Cross size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="dialog-hint pick-hint">Click the parts to delete (click one again to keep it). Features after this one can't use them.</p>
+    </fieldset>
+  );
+}
+
 /** The floating feature dialog (top-left of the viewport), like Onshape's. */
 export function FeatureDialog() {
   const editing = useStore((s) => s.editing);
@@ -985,7 +1013,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "deleteFace" && draft.type !== "thread" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "deleteFace" && draft.type !== "thread" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -1005,6 +1033,7 @@ export function FeatureDialog() {
 
         <PlaneDefOptions />
         <BooleanOptionsField />
+        <DeletePartOptions />
         <SplitOptionsField />
         <RibThickenOptions />
         <DraftOptions />

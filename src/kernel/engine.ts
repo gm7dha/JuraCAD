@@ -745,6 +745,24 @@ export class GeometryEngine {
         if (err) featureErrors[feature.id] = err;
         continue;
       }
+      if (feature.type === "deletePart") {
+        const ids = feature.deleteParts ?? [];
+        if (!ids.length) {
+          featureErrors[feature.id] = "Click the parts to delete.";
+          continue;
+        }
+        const missing = ids.filter((id) => !this.parts.some((p) => p.id === id));
+        for (const p of this.parts.filter((x) => ids.includes(x.id))) {
+          try {
+            p.shape.delete();
+          } catch {
+            // already freed
+          }
+        }
+        this.parts = this.parts.filter((p) => !ids.includes(p.id));
+        if (missing.length) featureErrors[feature.id] = `${missing.length === 1 ? "One of its parts no longer exists" : "Some of its parts no longer exist"}. Edit this feature and pick again.`;
+        continue;
+      }
       if (feature.type === "boolean") {
         const err = this.applyBoolean(feature);
         if (err) featureErrors[feature.id] = err;
