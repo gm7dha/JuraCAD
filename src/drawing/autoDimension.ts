@@ -10,7 +10,8 @@
  * Points are the views' own corner and centre points, so the dimensions
  * follow the part when it changes. What's already dimensioned isn't repeated.
  */
-import type { ViewProjection } from "../kernel/protocol";
+import type { ViewHole, ViewProjection } from "../kernel/protocol";
+import { holeAt, holeOfCircle, matchingHoles } from "./holeCallouts";
 import type { Dimension, ViewKind } from "../model/types";
 import { dimPoint } from "./dimensions";
 import type { Projections } from "./sheet";
@@ -214,6 +215,12 @@ function baseline(p: ViewProjection, row: Row, existing: Dimension[], scale: num
   return targets.map((q, n) => dim(datum, q, firstRow + n));
 }
 
+/** Is a callout already describing a hole just like this one (same sizes, so its "N×" covers it)? */
+function sameHole(p: ViewProjection, d: Dimension, h: ViewHole): boolean {
+  const other = holeAt(p, d.a.at);
+  return !!other && matchingHoles(p, other) === matchingHoles(p, h) && same(other.d, h.d) && other.through === h.through && same(other.depth, h.depth) && same(other.cbore?.diameter ?? 0, h.cbore?.diameter ?? 0) && same(other.csk?.diameter ?? 0, h.csk?.diameter ?? 0);
+}
+
 /** One diameter for each hole / boss size, and one radius for each rounded-corner size. */
 function circleSizes(projections: Projections, views: ViewKind[], existing: Dimension[], newId: () => string): Dimension[] {
   const out: Dimension[] = [];
@@ -225,11 +232,15 @@ function circleSizes(projections: Projections, views: ViewKind[], existing: Dime
     for (const c of p.circles) {
       if (c.hidden) continue;
       const type = c.full ? "diameter" : "radius";
-      if (has(type, c.r)) continue;
+      // A drilled hole gets a callout (size, depth, counterbore… and how many) — its counterbore or countersink circle needs nothing more.
+      const hole = c.full ? holeOfCircle(p, [c.cx, c.cy], c.r) : null;
+      if (hole && !same(hole.d / 2, c.r)) continue;
+      if (hole && [...existing, ...out].some((d) => d.callout && d.view === k && d.r !== undefined && same(d.r, c.r) && sameHole(p, d, hole))) continue;
+      if (!hole && has(type, c.r)) continue;
       // Leader pointing away from the middle of the view, so it ends up outside the part.
       const away = Math.atan2(c.cy - mid[1], c.cx - mid[0]);
       const angle = Math.hypot(c.cx - mid[0], c.cy - mid[1]) < 1e-6 ? 45 : Math.round((away * 180) / Math.PI);
-      out.push({ id: newId(), view: k, type, a: dimPoint([c.cx, c.cy], p), r: c.r, offset: type === "diameter" ? 8 : 6, angle });
+      out.push({ id: newId(), view: k, type, a: dimPoint([c.cx, c.cy], p), r: c.r, offset: type === "diameter" ? 8 : 6, angle, ...(hole ? { callout: true } : {}) });
     }
   }
   return out;

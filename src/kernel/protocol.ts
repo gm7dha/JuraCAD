@@ -34,6 +34,19 @@ export interface ViewProjection {
   zoom?: number;
   /** Section views: the faces made by the cut, as triangles (x, y × 3 each). */
   cutFaces?: number[];
+  /** Holes seen end-on (centre of the opening), for hole callouts. */
+  holes?: ViewHole[];
+}
+
+/** A hole as seen on a view: where its opening is and its sizes (mm; angle in degrees). */
+export interface ViewHole {
+  cx: number;
+  cy: number;
+  d: number;
+  through: boolean;
+  depth: number;
+  cbore?: { diameter: number; depth: number };
+  csk?: { diameter: number; angle: number };
 }
 
 /** One Part Studio's features, for a rebuild. */

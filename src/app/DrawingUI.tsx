@@ -9,6 +9,7 @@ import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
 import { holeRows, holeTableView } from "../drawing/holeTable";
+import { holeOfCircle, tapSizes } from "../drawing/holeCallouts";
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
@@ -240,6 +241,16 @@ export function DrawingToolbar() {
             <span>{label}</span>
           </button>
         ))}
+        <button
+          className={`tool-button${tool === "holeCallout" ? " active" : ""}`}
+          onClick={() => useStore.getState().setDrawingTool(tool === "holeCallout" ? "select" : "holeCallout")}
+          title="Hole callout — click a hole to label it with its size, depth, counterbore or countersink, thread and how many there are (e.g. 4× Ø6.6 THRU)"
+          aria-label="Hole callout"
+          aria-pressed={tool === "holeCallout"}
+        >
+          <Icons.HoleCallout />
+          <span>Hole callout</span>
+        </button>
         <button
           className={`tool-button${tool === "detail" ? " active" : ""}`}
           onClick={() => useStore.getState().setDrawingTool(tool === "detail" ? "select" : "detail")}
@@ -837,11 +848,12 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     return d;
   }, [drawing, drag, dimDrag, noteDrag]);
   const unit = useLengthUnit();
+  const taps = useMemo(() => tapSizes(doc, drawing), [doc, drawing]);
   const layout = useMemo(
-    () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today(), bom, balloons }) : null),
+    () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today(), bom, balloons, taps }) : null),
     // The units change the dimension numbers and the title block.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [shown, projections, docName, subject, bom, balloons, unit],
+    [shown, projections, docName, subject, bom, balloons, unit, taps],
   );
   useEffect(() => {
     if (layout && projections && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name, projections };
@@ -950,6 +962,28 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       return;
     }
     setPending({ ...pending, a: pair.a, b: pair.b, force: pair.force });
+  };
+
+  /** Hole callout: label the clicked hole, its leader pointing away from the middle of the view. */
+  const calloutClick = (here: P2) => {
+    const s = useStore.getState();
+    const snap = findSnap(snaps, here, tolerance());
+    const p = snap && projections?.[snap.view];
+    if (!snap || snap.kind !== "circle" || !p) {
+      s.showToast("Click the edge of a hole (a circle on a view).", "info");
+      return;
+    }
+    const hole = holeOfCircle(p, snap.centre, snap.r);
+    if (!hole) {
+      s.showToast("That circle isn't a hole seen end-on — click a hole on a view looking straight into it.", "info");
+      return;
+    }
+    const [x0, y0, x1, y1] = p.bounds ?? [0, 0, 0, 0];
+    const away = Math.atan2(hole.cy - (y0 + y1) / 2, hole.cx - (x0 + x1) / 2);
+    const angle = Math.hypot(hole.cx - (x0 + x1) / 2, hole.cy - (y0 + y1) / 2) < 1e-6 ? 45 : Math.round((away * 180) / Math.PI);
+    const id = newId("dm");
+    change((d) => putDimension(d, { id, view: snap.view, type: "diameter", callout: true, a: dimPoint([hole.cx, hole.cy], p), r: hole.d / 2, offset: 8, angle }));
+    s.selectDim(id);
   };
 
   /** Baseline / chain / ordinate: a corner or hole centre under the pointer, as a point on its view. */
@@ -1079,6 +1113,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       return;
     }
     if (tool === "dimension") dimensionClick(e);
+    else if (tool === "holeCallout") calloutClick(toSheet(e));
     else if (linear) linearClick(toSheet(e));
     else if (tool === "section") sectionClick(toSheet(e));
     else if (tool === "detail") detailClick(toSheet(e));
@@ -1146,6 +1181,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
           : pending
             ? "Now click a second corner, an edge or a circle. Esc to start again."
             : "Click a circle, an edge or a corner. Then click to place it, or click a second thing to measure between them.";
+  else if (tool === "holeCallout") message = "Click a hole to label it (size, depth, counterbore, thread and how many). Drag the label to move it.";
   else if (tool === "note") message = "Click where the note goes (its top-left corner). Then type its text in the panel on the left.";
   else if (linear) {
     const what = tool === "baseline" ? "each measured from it" : tool === "chain" ? "each measured from the one before" : "each labelled with its distance from it";
@@ -1161,7 +1197,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       ? "Click where the cutting line ends (it straightens when nearly across or up-and-down). Esc to start again."
       : "Click where the cutting line starts, on the front, top or a side view (corners and hole centres snap).";
 
-  const hover = (tool === "dimension" && cursor && !pending?.b) || (linear && cursor) ? findSnap(snaps, cursor!, tolerance()) : null;
+  const hover =
+    (tool === "dimension" && cursor && !pending?.b) || (linear && cursor) ? findSnap(snaps, cursor!, tolerance()) : tool === "holeCallout" && cursor ? holeHover(cursor) : null;
   const firstMark = (() => {
     if (linear && run) {
       const at = viewAt(run.view);
@@ -1181,6 +1218,11 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const r = detailRadius(cursor);
     return at && r ? { c: at(detailStart.at), r: r * layout.scale } : null;
   })();
+  function holeHover(at: P2) {
+    const snap = findSnap(snaps, at, tolerance());
+    const p = snap?.kind === "circle" ? projections?.[snap.view] : null;
+    return snap?.kind === "circle" && p && holeOfCircle(p, snap.centre, snap.r) ? snap : null;
+  }
   const cutFrom = cutStart ? viewAt(cutStart.view)?.(cutStart.at) : null;
   const preview = previewDim();
   const previewPrims = (() => {

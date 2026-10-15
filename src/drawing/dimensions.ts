@@ -202,10 +202,12 @@ export interface DimDrawing {
  * Draw a dimension on the sheet. `at` turns a view point into sheet
  * millimetres; `value` is what it measures.
  */
-export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: number): DimDrawing {
+export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: number, callout?: string[] | null): DimDrawing {
   const text = dimLabel(dim, value);
   const prims: Prim[] = [];
   if (dim.type === "diameter" || dim.type === "radius") {
+    // A hole callout: several lines stacked above the leader's shoulder (prefix on the first, suffix on the last).
+    const lines = callout?.length ? callout.map((l, i, all) => `${i === 0 ? (dim.prefix ?? "") : ""}${l}${i === all.length - 1 ? (dim.suffix ?? "") : ""}`) : [text];
     const c = at(r.a);
     const edge = at([r.a[0] + (r.r ?? 0), r.a[1]]);
     const rad = dist(c, edge);
@@ -215,14 +217,14 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
     const out = Math.max(dim.offset, 2);
     const elbow: P2 = [onCircle[0] + u[0] * out, onCircle[1] + u[1] * out];
     const side = u[0] >= 0 ? 1 : -1;
-    const shoulder = 2 + text.length * TEXT_SIZE * 0.55;
+    const shoulder = 2 + Math.max(...lines.map((l) => l.length)) * TEXT_SIZE * 0.55;
     const end: P2 = [elbow[0] + side * shoulder, elbow[1]];
     const start: P2 = dim.type === "diameter" ? [c[0] - u[0] * rad, c[1] - u[1] * rad] : c;
     prims.push({ kind: "path", points: [start[0], start[1], elbow[0], elbow[1], end[0], end[1]], style: "thin" });
     prims.push(arrow(onCircle, [-u[0], -u[1]]));
     if (dim.type === "diameter") prims.push(arrow(start, u));
     const label: P2 = [(elbow[0] + end[0]) / 2, elbow[1] + 1];
-    prims.push({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle" });
+    lines.forEach((l, i) => prims.push({ kind: "text", x: label[0], y: label[1] + (lines.length - 1 - i) * TEXT_SIZE * 1.5, text: l, size: TEXT_SIZE, anchor: "middle" }));
     return { prims, label };
   }
 
