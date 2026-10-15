@@ -1,7 +1,7 @@
 /**
  * Where to draw dimension lines/labels and constraint badges, in sketch mm.
  */
-import { curveById, pointPos, radiusOf, splinePoints } from "./ops";
+import { curveById, ellipsePoints, pointPos, radiusOf, splinePoints } from "./ops";
 import { splinePolyline } from "./spline";
 import { isDimension, type SketchArc, type SketchCircle, type SketchConstraint, type SketchData, type SketchLine } from "./types";
 
@@ -140,6 +140,7 @@ export function badgeAnchors(s: SketchData, c: SketchConstraint): Pt[] {
       const pts = splinePolyline(splinePoints(s, curve), curve.closed);
       return pts[Math.floor(pts.length / 2)];
     }
+    if (curve.type === "ellipse") return ellipsePoints(s, curve, 8)[1];
     const centre = pointPos(s, curve.center);
     const r = radiusOf(s, curve);
     if (curve.type === "circle") return add(centre, scale([Math.SQRT1_2, Math.SQRT1_2], r));

@@ -8,6 +8,7 @@
  * Shapes that cross each other aren't split up yet — the loops should touch
  * only at their ends (the normal case for hobby parts).
  */
+import { ellipseFrom, ellipsePolyline } from "./ellipse";
 import { splineBeziers, splinePolyline } from "./spline";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
 
@@ -19,7 +20,9 @@ export type Segment =
   | { kind: "arc"; from: Pt; mid: Pt; to: Pt }
   | { kind: "circle"; center: Pt; radius: number }
   /** A piece of a spline: a cubic Bézier curve. */
-  | { kind: "bezier"; from: Pt; c1: Pt; c2: Pt; to: Pt };
+  | { kind: "bezier"; from: Pt; c1: Pt; c2: Pt; to: Pt }
+  /** A whole ellipse: half-lengths along its turned x and y axes. */
+  | { kind: "ellipse"; center: Pt; rx: number; ry: number; angle: number };
 
 export interface Loop {
   segments: Segment[];
@@ -108,6 +111,14 @@ export function findRegions(sketch: SketchData): RegionResult {
     loops.push(makeLoop([{ kind: "circle", center, radius: c.radius }], poly));
   }
 
+  // So are ellipses.
+  for (const c of solid) {
+    if (c.type !== "ellipse") continue;
+    const g = ellipseFrom(pts.get(c.center)!, pts.get(c.major)!, pts.get(c.minor)!);
+    if (g.rx <= 1e-9 || g.ry <= 1e-9) continue;
+    loops.push(makeLoop([{ kind: "ellipse", center: g.centre, rx: g.rx, ry: g.ry, angle: g.angle }], ellipsePolyline(g).slice(0, -1)));
+  }
+
   // Closed splines are complete loops by themselves too.
   for (const c of solid) {
     if (c.type !== "spline" || !c.closed || c.points.length < 3) continue;
@@ -119,7 +130,8 @@ export function findRegions(sketch: SketchData): RegionResult {
   // Join lines, arcs and open splines at shared end points (merged by position, so separate
   // but coincident points count as joined).
   const ends = solid.filter(
-    (c): c is Exclude<SketchCurve, { type: "circle" }> => c.type !== "circle" && !(c.type === "spline" && (c.closed || c.points.length < 2)),
+    (c): c is Exclude<SketchCurve, { type: "circle" | "ellipse" }> =>
+      c.type !== "circle" && c.type !== "ellipse" && !(c.type === "spline" && (c.closed || c.points.length < 2)),
   );
   const keyOf = (p: Pt) => `${Math.round(p[0] * 1e5)},${Math.round(p[1] * 1e5)}`;
   const nodeOf = new Map<string, number>();

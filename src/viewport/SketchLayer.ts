@@ -5,7 +5,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 
 import type { PreviewShape, SketchTransient } from "../sketch/controller";
 import { dimensionLayout } from "../sketch/layout";
-import { pointPos, radiusOf, splinePoints } from "../sketch/ops";
+import { ellipsePoints, pointPos, radiusOf, splinePoints } from "../sketch/ops";
 import { splinePolyline } from "../sketch/spline";
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import type { SketchAnalysis } from "../sketch/solver";
@@ -45,8 +45,8 @@ type Pt = [number, number];
 /** Sample a curve into 2D line segments. */
 function curveSegments(s: SketchData, c: SketchCurve): [Pt, Pt][] {
   if (c.type === "line") return [[pointPos(s, c.p1), pointPos(s, c.p2)]];
-  if (c.type === "spline") {
-    const pts = splinePolyline(splinePoints(s, c), c.closed);
+  if (c.type === "spline" || c.type === "ellipse") {
+    const pts = c.type === "spline" ? splinePolyline(splinePoints(s, c), c.closed) : ellipsePoints(s, c);
     return pts.slice(1).map((q, i) => [pts[i], q] as [Pt, Pt]);
   }
   const [cx, cy] = pointPos(s, c.center);

@@ -12,6 +12,7 @@ import {
   basicFaceExtrusion,
   makeBezierCurve,
   makeCircle,
+  makeEllipse,
   makeFace,
   makeLine,
   makeSolid,
@@ -52,6 +53,15 @@ export function loopWire(loop: Loop, frame: PlaneFrame, offset: number): Wire {
         return makeCircle(seg.radius, P(seg.center), frame.n);
       case "bezier":
         return makeBezierCurve([P(seg.from), P(seg.c1), P(seg.c2), P(seg.to)]);
+      case "ellipse": {
+        // OpenCascade wants the longer axis first.
+        const long = seg.rx >= seg.ry;
+        const a = seg.angle + (long ? 0 : Math.PI / 2);
+        const { u, v } = frame;
+        const [ca, sa] = [Math.cos(a), Math.sin(a)];
+        const dir: [number, number, number] = [u[0] * ca + v[0] * sa, u[1] * ca + v[1] * sa, u[2] * ca + v[2] * sa];
+        return makeEllipse(Math.max(seg.rx, seg.ry), Math.min(seg.rx, seg.ry), P(seg.center), frame.n, dir);
+      }
     }
   });
   try {

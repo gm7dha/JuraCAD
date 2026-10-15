@@ -5,6 +5,7 @@
  * the caller keeps the old sketch.
  */
 import { evaluate } from "../model/expr";
+import { ellipseFrom, ellipsePolyline, type EllipseGeom } from "./ellipse";
 import { startingLength } from "../model/units";
 import { analyzeSketch, solveSketch } from "./solver";
 import {
@@ -18,6 +19,7 @@ import {
   type SketchCurve,
   type SketchData,
   type SketchLine,
+  type SketchEllipse,
   type SketchSpline,
 } from "./types";
 
@@ -66,9 +68,22 @@ export function radiusOf(s: SketchData, c: SketchCircle | SketchArc): number {
   return Math.hypot(sx - cx, sy - cy);
 }
 
+/** An ellipse's centre, half-lengths and turn. */
+export function ellipseGeom(s: SketchData, c: SketchEllipse): EllipseGeom {
+  return ellipseFrom(pointPos(s, c.center), pointPos(s, c.major), pointPos(s, c.minor));
+}
+
 /** Points that define a curve (moving these moves the curve). */
 export function curvePoints(c: SketchCurve): string[] {
-  return c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : c.type === "spline" ? [...c.points] : [c.center, c.start, c.end];
+  return c.type === "line"
+    ? [c.p1, c.p2]
+    : c.type === "circle"
+      ? [c.center]
+      : c.type === "spline"
+        ? [...c.points]
+        : c.type === "ellipse"
+          ? [c.center, c.major, c.minor]
+          : [c.center, c.start, c.end];
 }
 
 function lineDir(s: SketchData, l: SketchLine): [number, number] {
@@ -133,6 +148,10 @@ function collapsed(s: SketchData): Set<string> {
       const [dx, dy] = lineDir(s, c);
       if (Math.hypot(dx, dy) < 1e-6) out.add(c.id);
     } else if (c.type === "spline") continue;
+    else if (c.type === "ellipse") {
+      const g = ellipseGeom(s, c);
+      if (g.rx < 1e-6 || g.ry < 1e-6) out.add(c.id);
+    }
     else if (radiusOf(s, c) < 1e-6) out.add(c.id);
   }
   return out;
@@ -371,8 +390,10 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
   switch (tool) {
     case "coincident":
       if (only(2) && pts.length === 2) return [mk("coincident", pts)];
-      if (only(2) && pts.length === 1 && crv.length === 1)
+      if (only(2) && pts.length === 1 && crv.length === 1) {
+        if (!isLine(crv[0]) && !isRound(crv[0])) return "Points can't be held on a spline or ellipse yet — put them on a line, circle or arc.";
         return [mk(isLine(crv[0]) ? "pointOnLine" : "pointOnCircle", [pts[0], crv[0].id])];
+      }
       break;
     case "horizontal":
     case "vertical":
@@ -451,6 +472,7 @@ export function dimensionFor(s: SketchData, sel: string[]): { type: ConstraintTy
     if (c.type === "line") return { type: "length", refs: [c.id] };
     if (c.type === "circle") return { type: "diameter", refs: [c.id] };
     if (c.type === "spline") return "A spline can't be dimensioned as a whole — dimension its points instead.";
+    if (c.type === "ellipse") return "Dimension an ellipse from its centre to the points at the ends of its axes.";
     return { type: "radius", refs: [c.id] };
   }
   if (sel.length === 2 && pts.length === 2) return { type: "distance", refs: pts };
@@ -558,4 +580,9 @@ export function dragCircleRim(start: SketchData, circleId: string, radius: numbe
 /** A spline's points where they are now. */
 export function splinePoints(s: SketchData, c: SketchSpline): [number, number][] {
   return c.points.map((id) => pointPos(s, id));
+}
+
+/** An ellipse as short straight pieces (closed: the last point repeats the first). */
+export function ellipsePoints(s: SketchData, c: SketchEllipse, steps = 64): [number, number][] {
+  return ellipsePolyline(ellipseGeom(s, c), steps);
 }

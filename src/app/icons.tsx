@@ -374,6 +374,12 @@ export const Icons = {
       <path d="M10 12l4 1.5M10 15l4 1.5M10 18l4 1.5" />
     </Svg>
   ),
+  Ellipse: (p: IconProps) => (
+    <Svg {...p}>
+      <ellipse cx="12" cy="12" rx="9" ry="5.5" transform="rotate(-20 12 12)" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+    </Svg>
+  ),
   Spline: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 17c3-9 6-10 9-5s6 4 9-5" />

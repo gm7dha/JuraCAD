@@ -52,7 +52,17 @@ export interface SketchSpline {
   construction: boolean;
 }
 
-export type SketchCurve = SketchLine | SketchCircle | SketchArc | SketchSpline;
+/** An ellipse: its centre and the ends of its two axes (kept square to each other). */
+export interface SketchEllipse {
+  id: string;
+  type: "ellipse";
+  center: string;
+  major: string;
+  minor: string;
+  construction: boolean;
+}
+
+export type SketchCurve = SketchLine | SketchCircle | SketchArc | SketchSpline | SketchEllipse;
 
 /** Geometric relationships (no value). */
 export type RelationType =
