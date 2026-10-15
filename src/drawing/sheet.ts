@@ -15,6 +15,7 @@ import { holeRows, holeTableView, type HoleRow } from "./holeTable";
 import { projectPoint } from "./cameras";
 import { fromRel, sectionGeometry, viewKey } from "./sections";
 import { drawDimension, measureDim, resolveDim } from "./dimensions";
+import { calloutText, type TapSize } from "./holeCallouts";
 
 /** "centre" is the long-and-short dashed line for centre lines and cutting planes. */
 export type LineStyle = "border" | "visible" | "hidden" | "thin" | "centre";
@@ -114,6 +115,8 @@ export interface SheetInfo {
   date: string;
   /** Assembly drawings: a spot on one copy of each listed part (model mm), for numbered balloons. */
   balloons?: { item: number; at: [number, number, number] }[];
+  /** Tapped hole sizes in the design, so hole callouts can name the thread. */
+  taps?: TapSize[];
 }
 
 /** A view's size on paper at scale 1 (detail views are drawn `zoom` times bigger). */
@@ -338,7 +341,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     if (!view || !p) continue;
     const resolved = resolveDim(dim, p);
     const at = ([x, y]: [number, number]) => toSheet(view, p, scale, x, y);
-    const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved));
+    const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved), dim.callout ? calloutText(p, resolved.a, info.taps ?? []) : null);
     const from = prims.length;
     prims.push(...drawn.prims);
     dims.push({

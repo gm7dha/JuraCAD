@@ -739,6 +739,38 @@ describe("holes", () => {
     expect(volume()).toBeCloseTo(32000 - 2 * holeVolume(size({ kind: "countersink", throughAll: true, throughLength: 20 })), 2);
   });
 
+  it("finds the holes for drawing callouts", () => {
+    const { block, sk } = setup();
+    build([block, sk, holeFeature(sk.id, { kind: "counterbore", end: "blind" }, { diameter: 4.5, depth: 10, cboreDiameter: 8, cboreDepth: 4.4 })]);
+    const [top, bottom, front] = engine.project([], undefined, ["top", "bottom", "front"], false);
+    expect(top.holes).toHaveLength(2);
+    const h = [...top.holes!].sort((a, b) => a.cx - b.cx)[0];
+    expect([h.cx, h.cy].map((v) => Math.round(v * 1000) / 1000)).toEqual([10, 10]);
+    expect(h.d).toBeCloseTo(4.5, 4);
+    expect(h.through).toBe(false);
+    expect(h.depth).toBeCloseTo(10, 3);
+    expect(h.cbore!.diameter).toBeCloseTo(8, 4);
+    expect(h.cbore!.depth).toBeCloseTo(4.4, 4);
+    expect(h.csk).toBe(undefined);
+    // Not seen from underneath (it doesn't come out there), nor from the side.
+    expect(bottom.holes).toEqual([]);
+    expect(front.holes).toEqual([]);
+
+    build([block, sk, holeFeature(sk.id, { kind: "countersink" }, { diameter: 4.5, cskDiameter: 9.4, cskAngle: 90 })]);
+    const [t2, b2] = engine.project([], undefined, ["top", "bottom"], false);
+    expect(t2.holes).toHaveLength(2);
+    expect(t2.holes![0].through).toBe(true);
+    expect(t2.holes![0].csk!.diameter).toBeCloseTo(9.4, 3);
+    expect(t2.holes![0].csk!.angle).toBeCloseTo(90, 1);
+    expect(t2.holes![0].cbore).toBe(undefined);
+    // Through holes show from either side.
+    expect(b2.holes).toHaveLength(2);
+
+    // A round boss isn't a hole.
+    build([feature("cylinder", { diameter: 10, height: 5, x: 0, y: 0, z: 0 })]);
+    expect(engine.project([], undefined, ["top"], false)[0].holes).toEqual([]);
+  });
+
   it("uses circle centres too, and can be patterned", () => {
     const block = feature("box", { width: 60, depth: 20, height: 10, z: -10 });
     const sk = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 10, y: 10 }, 1).sketch);
