@@ -1,4 +1,4 @@
-import { featuresWithDraft } from "../model/document";
+import { featuresToBuild, featuresWithDraft } from "../model/document";
 import { resolveVariables } from "../model/variables";
 import { STORAGE_KEY, useStore } from "../model/store";
 
@@ -19,10 +19,16 @@ export function getKernel(): KernelClient {
 /** What to build right now: every Part Studio, with the feature being edited swapped into the one on show. */
 function currentStudios(): StudioInput[] {
   const s = useStore.getState();
-  const editingIn = s.editing ? activeStudioId(s) : null;
+  const here = activeStudioId(s);
+  const editingIn = s.editing ? here : null;
   return studiosOf(s.history.present).map((st) => ({
     id: st.id,
-    features: st.id === editingIn ? featuresWithDraft(st.features, s.editing?.draft ?? null) : st.features,
+    features:
+      st.id === here && s.rollbackTo
+        ? featuresToBuild(st.features, st.id === editingIn ? (s.editing?.draft ?? null) : null, s.rollbackTo)
+        : st.id === editingIn
+          ? featuresWithDraft(st.features, s.editing?.draft ?? null)
+          : st.features,
   }));
 }
 
@@ -64,12 +70,14 @@ export function connectKernel(): () => void {
   let lastStudios = useStore.getState().history.present.partStudios;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
+  let lastRollback = useStore.getState().rollbackTo;
 
   const unsubscribe = useStore.subscribe((s) => {
     const draft = s.editing?.draft ?? null;
     if (
       s.history.present.features !== lastFeatures ||
       draft !== lastDraft ||
+      s.rollbackTo !== lastRollback ||
       s.history.present.variables !== lastVariables ||
       s.history.present.partNames !== lastPartNames ||
       s.history.present.partStudios !== lastStudios
@@ -79,6 +87,7 @@ export function connectKernel(): () => void {
       lastFeatures = s.history.present.features;
       lastVariables = s.history.present.variables;
       lastDraft = draft;
+      lastRollback = s.rollbackTo;
       if (s.kernelStatus === "ready") rebuild();
     }
     if (s.history.present !== lastDoc) {

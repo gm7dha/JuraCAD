@@ -3,6 +3,7 @@ import { create } from "zustand";
 import type { PartMesh } from "../kernel/protocol";
 import {
   addFeature,
+  insertFeatureAfter,
   newId,
   commit,
   createFeature,
@@ -180,6 +181,8 @@ export interface AppState {
   /** Drawing tab: what clicks on the sheet do, and the selected dimension. */
   drawingTool: DrawingTool;
   selectedDim: string | null;
+  /** Part Studio rolled back to just after this feature (Onshape's rollback bar); null = showing everything. */
+  rollbackTo: string | null;
   /** What a mouse drag in an assembly is changing, while the button is held. */
   dragPreview: DragChange | null;
   /** Mate whose movement is being animated in the 3D view. */
@@ -226,6 +229,8 @@ export interface AppState {
    */
   suppressThenFinish: (ids: string[], commit: boolean) => void;
   deleteFeature: (id: string) => void;
+  /** Roll the Part Studio back to just after a feature (null = roll to the end). */
+  setRollback: (id: string | null) => void;
   /** Move a feature to just before another (null = the end), if what it uses stays above it. One undo step. */
   moveFeature: (id: string, beforeId: string | null) => void;
   toggleSuppressed: (id: string) => void;
@@ -442,6 +447,7 @@ export const useStore = create<AppState>((set, get) => {
     setAnimatingMate: (animatingMate) => set({ animatingMate }),
     drawingTool: "select",
     selectedDim: null,
+    rollbackTo: null,
 
     startCreate: (type) => {
       const s = get();
@@ -670,12 +676,20 @@ export const useStore = create<AppState>((set, get) => {
       const { errors } = resolveParams(editing.draft);
       if (Object.keys(errors).length > 0) return false;
       const draft = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
-      changeStudio((doc) => (editing.mode === "create" ? addFeature(doc, draft) : replaceFeature(doc, draft)));
-      set({ editing: null, sketch: null, selectedFeatureId: draft.id });
+      // Rolled back: a new feature goes in at the rollback point, and the bar moves down past it.
+      const at = get().rollbackTo;
+      changeStudio((doc) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, draft)));
+      set({ editing: null, sketch: null, selectedFeatureId: draft.id, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
       return true;
     },
 
     cancelDraft: () => set({ editing: null, sketch: null }),
+
+    setRollback: (id) => {
+      if (get().editing) return;
+      const last = view().features[view().features.length - 1];
+      set({ rollbackTo: id && id !== last?.id ? id : null });
+    },
 
     suppressThenFinish: (ids, commit) => {
       const { editing } = get();
@@ -802,7 +816,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveTab: (activeTab) => {
       if (get().editing) return;
-      set({ activeTab, animatingMate: null, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
+      set({ activeTab, rollbackTo: null, animatingMate: null, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, drawingTool: "select", selectedDim: null });
     },
 
     removeAssembly: (id) => {
