@@ -208,6 +208,8 @@ export interface Drawing {
   sections?: SectionCut[];
   /** False hides centre marks and centre lines (missing = shown). */
   centreLines?: boolean;
+  /** Tag the holes on one view and list their positions and sizes in a table. */
+  holeTable?: boolean;
   /** False hides the numbered balloons on assembly drawings (missing = shown). */
   balloons?: boolean;
   /** Assembly drawings: show the parts spread apart (the assembly's exploded view). */

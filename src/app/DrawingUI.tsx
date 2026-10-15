@@ -8,6 +8,7 @@ import { arrangeViews, putDimension, putNote, removeDimension, removeNote, SHEET
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
+import { holeRows, holeTableView } from "../drawing/holeTable";
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
@@ -410,13 +411,20 @@ function TitleField({ label, value, placeholder, multiline, onCommit }: { label:
   );
 }
 
+/** How many rows the hole table has (for fitting the views above it). */
+function holeCount(drawing: Drawing, projections: Projections): number {
+  if (!drawing.holeTable) return 0;
+  const key = holeTableView(drawing, projections);
+  return key ? holeRows(projections[key]!).length : 0;
+}
+
 export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   const doc = useStore((s) => s.history.present);
   const parts = useStore((s) => s.parts);
   const change = useStore((s) => s.changeDrawing);
   const { projections, subject } = useProjections(drawing);
   const auto = projections
-    ? fitScale(projections, drawingViewKeys(drawing), drawing.sheet, bottomReserve(drawing, bomFor(drawing, doc, parts)))
+    ? fitScale(projections, drawingViewKeys(drawing), drawing.sheet, bottomReserve(drawing, bomFor(drawing, doc, parts), holeCount(drawing, projections)))
     : null;
   const studios = studiosOf(doc);
   const sourceValue = drawing.source ? `${drawing.source.kind}:${drawing.source.id}` : "";
@@ -528,6 +536,19 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
               }
             />
             Centre lines on holes and round parts
+          </label>
+          <label className="check-row" title="Tag each hole on the top view (or the first view showing holes) and list where it is and its size in a table">
+            <input
+              type="checkbox"
+              checked={drawing.holeTable === true}
+              onChange={(e) =>
+                change((d) => {
+                  const { holeTable: _old, ...rest } = d;
+                  return e.target.checked ? { ...rest, holeTable: true } : rest;
+                })
+              }
+            />
+            Hole table
           </label>
           {drawing.source?.kind === "assembly" && (
             <label className="check-row">

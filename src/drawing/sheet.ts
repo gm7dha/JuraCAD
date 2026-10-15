@@ -7,10 +7,11 @@
  * the view from the top goes below the front view, the view from the right
  * goes to its left.
  */
-import { lengthUnit } from "../model/units";
+import { lengthNumber, lengthUnit } from "../model/units";
 import type { ViewProjection } from "../kernel/protocol";
 import type { Drawing, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { centreLines, centreMarks, hatchLines, placeBalloons } from "./annotations";
+import { holeRows, holeTableView, type HoleRow } from "./holeTable";
 import { projectPoint } from "./cameras";
 import { fromRel, sectionGeometry, viewKey } from "./sections";
 import { drawDimension, measureDim, resolveDim } from "./dimensions";
@@ -132,9 +133,9 @@ function notesOf(drawing: Drawing): string[] {
 }
 
 /** Height kept free at the bottom for the title block, parts list and notes. */
-export function bottomReserve(drawing: Pick<Drawing, "title"> | null, bom: BomLine[] | undefined): number {
+export function bottomReserve(drawing: Pick<Drawing, "title"> | null, bom: BomLine[] | undefined, holes = 0): number {
   const notes = drawing ? notesOf(drawing as Drawing).length : 0;
-  return TITLE_H + (bom?.length ? (bom.length + 1) * BOM_ROW + 3 : 0) + (notes ? (notes + 1) * NOTE_LINE + 3 : 0);
+  return TITLE_H + (bom?.length ? (bom.length + 1) * BOM_ROW + 3 : 0) + (holes ? (holes + 1) * BOM_ROW + 3 : 0) + (notes ? (notes + 1) * NOTE_LINE + 3 : 0);
 }
 
 function viewArea(size: [number, number], reserve = TITLE_H): { x0: number; y0: number; x1: number; y1: number } {
@@ -199,7 +200,10 @@ export function drawingViewKeys(drawing: Pick<Drawing, "views">): string[] {
 export function layoutSheet(drawing: Drawing, projections: Projections, info: SheetInfo): SheetLayout {
   const size = SHEETS[drawing.sheet];
   const keys = drawingViewKeys(drawing).filter((k) => projections[k]?.bounds);
-  const reserve = bottomReserve(drawing, info.bom);
+  // Hole table: the holes on one view, tagged, with a table above the title block.
+  const holeKey = drawing.holeTable ? holeTableView(drawing, projections) : null;
+  const holes = holeKey ? holeRows(projections[holeKey]!) : [];
+  const reserve = bottomReserve(drawing, info.bom, holes.length);
   const auto = fitScale(projections, keys, drawing.sheet, reserve);
   const scale = drawing.scale ?? auto.scale;
   const area = viewArea(size, reserve);
@@ -309,6 +313,16 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     if (host) prims.push(...balloonPrims(host, projections[host.key]!, scale, info.balloons));
   }
 
+  // Hole tags next to each hole on the hole table's view.
+  const holeHost = holeKey ? views.find((v) => v.key === holeKey) : undefined;
+  if (holeHost) {
+    for (const h of holes) {
+      const [x, y] = toSheet(holeHost, projections[holeKey!]!, scale, h.at[0], h.at[1]);
+      const r = (h.diameter / 2) * scale;
+      prims.push({ kind: "text", x: x + r * 0.7 + 0.8, y: y + r * 0.7 + 0.8, text: h.tag, size: 2.5, anchor: "start" });
+    }
+  }
+
   // Dimensions, on the views they belong to.
   const dims: PlacedDim[] = [];
   for (const dim of drawing.dimensions ?? []) {
@@ -345,7 +359,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     notes.push({ id: note.id, box: [x, y - h, x + w, y] });
   }
 
-  prims.push(...frameAndTitle(size, drawing, scale, info));
+  prims.push(...frameAndTitle(size, drawing, scale, info, holeHost ? holes : []));
   return { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, notes, prims };
 }
 
@@ -420,7 +434,7 @@ function circle(cx: number, cy: number, r: number, style: LineStyle): Extract<Pr
 }
 
 /** The border, the title block and the first-angle projection symbol. */
-function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, info: SheetInfo): Prim[] {
+function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, info: SheetInfo, holes: HoleRow[] = []): Prim[] {
   const [W, H] = size;
   const out: Prim[] = [rect(MARGIN, MARGIN, W - MARGIN, H - MARGIN, "border")];
   const x0 = W - MARGIN - TITLE_W;
@@ -476,6 +490,29 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
     out.push({ kind: "text", x: x0 + 7.5, y: hy, text: "ITEM", size: 2.5, anchor: "middle", bold: true });
     out.push({ kind: "text", x: x0 + 17, y: hy, text: "PART", size: 2.5, anchor: "start", bold: true });
     out.push({ kind: "text", x: x1 - 10, y: hy, text: "QTY", size: 2.5, anchor: "middle", bold: true });
+    top += h;
+  }
+
+  // Hole table, above that: tag, position from the corner, size.
+  if (holes.length) {
+    const rows = [...holes].reverse();
+    const h = (rows.length + 1) * BOM_ROW;
+    const cols = [x0 + 15, x0 + 50, x0 + 85];
+    out.push(rect(x0, top, x1, top + h, "border"));
+    for (let i = 1; i <= rows.length; i++) out.push(line(x0, top + i * BOM_ROW, x1, top + i * BOM_ROW));
+    for (const cx of cols) out.push(line(cx, top, cx, top + h));
+    rows.forEach((r, i) => {
+      const y = top + i * BOM_ROW + 1.8;
+      out.push({ kind: "text", x: x0 + 7.5, y, text: r.tag, size: 3, anchor: "middle" });
+      out.push({ kind: "text", x: (cols[0] + cols[1]) / 2, y, text: lengthNumber(r.x), size: 3, anchor: "middle" });
+      out.push({ kind: "text", x: (cols[1] + cols[2]) / 2, y, text: lengthNumber(r.y), size: 3, anchor: "middle" });
+      out.push({ kind: "text", x: (cols[2] + x1) / 2, y, text: `Ø${lengthNumber(r.diameter)}`, size: 3, anchor: "middle" });
+    });
+    const hy = top + rows.length * BOM_ROW + 1.8;
+    out.push({ kind: "text", x: x0 + 7.5, y: hy, text: "HOLE", size: 2.5, anchor: "middle", bold: true });
+    out.push({ kind: "text", x: (cols[0] + cols[1]) / 2, y: hy, text: "X", size: 2.5, anchor: "middle", bold: true });
+    out.push({ kind: "text", x: (cols[1] + cols[2]) / 2, y: hy, text: "Y", size: 2.5, anchor: "middle", bold: true });
+    out.push({ kind: "text", x: (cols[2] + x1) / 2, y: hy, text: "SIZE", size: 2.5, anchor: "middle", bold: true });
     top += h;
   }
 
