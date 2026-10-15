@@ -635,6 +635,20 @@ try {
   await page.locator("#explode-spread").dispatchEvent("pointerup");
   await page.waitForFunction(() => document.querySelector('[aria-label="Exploded view"] .field-label')?.textContent?.includes("200%"));
   await shot("exploded");
+  step = "patterning a part in the assembly";
+  await page.getByRole("button", { name: "Explode", exact: true }).click();
+  await page.locator(".feature-row >> text=Part 2 <1>").click();
+  await page.getByRole("button", { name: "Pattern", exact: true }).click();
+  await page.waitForSelector('[aria-label="Pattern Pattern 1"]', { timeout: 5_000 });
+  await page.getByLabel("How many (including the original)").fill("4");
+  await page.getByLabel("How many (including the original)").press("Enter");
+  await page.waitForSelector(".feature-row >> text=Part 2 <4>", { timeout: 5_000 });
+  if (!/Part 2\s+4\b/.test(await page.locator(".bom-table").innerText())) throw new Error("the parts list didn't count the pattern's copies");
+  await page.keyboard.press("f");
+  await page.waitForTimeout(400);
+  await shot("pattern");
+  await page.getByRole("button", { name: "Delete pattern (and its copies)" }).click();
+  await page.waitForFunction(() => ![...document.querySelectorAll(".feature-row")].some((r) => r.textContent?.includes("Part 2 <2>")), null, { timeout: 5_000 });
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
   step = "adding a second Part Studio";
@@ -971,7 +985,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
