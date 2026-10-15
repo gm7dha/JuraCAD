@@ -68,6 +68,23 @@ export const MATE_TYPES: Record<MateType, MateTypeDef> = {
       gap,
     ],
   },
+  pinSlot: {
+    type: "pinSlot",
+    label: "Pin slot",
+    description: "A pin in a slot: the part slides along the slot (the connector's X direction) and turns about the pin.",
+    values: [{ key: "dx", label: "Along the slot", unit: "mm", free: true }, angle(true, "Angle"), gap],
+  },
+  parallel: {
+    type: "parallel",
+    label: "Parallel",
+    description: "Keeps the connectors' Z axes pointing the same way; the part can move anywhere and turn about that axis.",
+    values: [
+      { key: "dx", label: "Move X", unit: "mm", free: true },
+      { key: "dy", label: "Move Y", unit: "mm", free: true },
+      { key: "distance", label: "Move Z", unit: "mm", free: true },
+      angle(true, "Angle"),
+    ],
+  },
   ball: {
     type: "ball",
     label: "Ball",
@@ -80,7 +97,7 @@ export const MATE_TYPES: Record<MateType, MateTypeDef> = {
   },
 };
 
-export const MATE_ORDER: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "ball"];
+export const MATE_ORDER: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "pinSlot", "parallel", "ball"];
 
 /**
  * The limits on a mate's movements, worked out from what's typed (missing

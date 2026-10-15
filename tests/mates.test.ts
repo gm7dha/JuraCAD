@@ -53,6 +53,21 @@ describe("closing loops of mates", () => {
   });
 });
 
+describe("pin slot and parallel mates", () => {
+  it("slide along the slot, or move anywhere keeping the axes parallel", () => {
+    const base = inst("base", true);
+    const arm = inst("arm");
+    const slot = solveAssembly({ id: "a", name: "A", instances: [base, arm], mates: [mate("m", "pinSlot", "base", "arm", { dx: "7" })] }, lookup({ m: [top, bottom] }));
+    close(slot.placements.arm.position, [7, 0, 10]);
+    const par = solveAssembly(
+      { id: "a", name: "A", instances: [base, arm], mates: [mate("m", "parallel", "base", "arm", { dx: "1", dy: "2", distance: "3" })] },
+      lookup({ m: [top, bottom] }),
+    );
+    close(par.placements.arm.position, [1, 2, 13]);
+    expect(MATE_TYPES.pinSlot.values.filter((v) => v.free).map((v) => v.key)).toEqual(["dx", "angle"]);
+  });
+});
+
 describe("solving mates", () => {
   it("fastens one part on top of another, face to face", () => {
     const asm: Assembly = { id: "a", name: "A", instances: [inst("base", true), inst("lid")], mates: [mate("m1", "fastened", "base", "lid")] };
@@ -155,7 +170,7 @@ describe("solving mates", () => {
 
   it("works out values with maths and units, blank as 0", () => {
     expect(mateValues({ type: "cylindrical", values: { distance: "1 in", angle: "" } }).values).toEqual({ distance: 25.4, angle: 0 });
-    expect(Object.keys(MATE_TYPES)).toHaveLength(6);
+    expect(Object.keys(MATE_TYPES)).toHaveLength(8);
   });
 });
 
