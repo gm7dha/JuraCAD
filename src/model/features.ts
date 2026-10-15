@@ -239,6 +239,18 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "A thin strengthening wall from the lines of a sketch, filling the space up to the part (gussets, webs).",
     params: [{ key: "thickness", label: "Thickness", defaultValue: "3", positive: true, group: "size" }],
   },
+  fastener: {
+    type: "fastener",
+    label: "Fastener",
+    namePrefix: "Fastener",
+    description: "A standard metric hex bolt, nut or washer (M3–M12), as a new part — optionally with its thread modelled.",
+    params: [
+      { key: "length", label: "Length", defaultValue: "20", positive: true, group: "size" },
+      { key: "x", label: "X", defaultValue: "0", group: "position" },
+      { key: "y", label: "Y", defaultValue: "0", group: "position" },
+      { key: "z", label: "Z", defaultValue: "0", group: "position" },
+    ],
+  },
   deletePart: {
     type: "deletePart",
     label: "Delete part",
@@ -316,10 +328,11 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef">): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener">): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   if (f.type === "extrude" && (f.extrude?.end === "throughAll" || f.extrude?.end === "upToFace")) keys.delete("depth");
   if (f.type === "plane" && f.planeDef?.mode !== "angle") keys.delete("angle");
+  if (f.type === "fastener" && f.fastener?.kind !== "bolt") keys.delete("length");
   if (f.type === "hole" && f.hole) {
     if (f.hole.end === "throughAll") keys.delete("depth");
     if (f.hole.kind !== "counterbore") ["cboreDiameter", "cboreDepth"].forEach((k) => keys.delete(k));

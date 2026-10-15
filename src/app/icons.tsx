@@ -367,6 +367,13 @@ export const Icons = {
       <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />
     </Svg>
   ),
+  Bolt: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M7 3h10l1.5 3-1.5 3H7L5.5 6z" />
+      <path d="M10 9v12h4V9" />
+      <path d="M10 12l4 1.5M10 15l4 1.5M10 18l4 1.5" />
+    </Svg>
+  ),
   ChevronLeft: (p: IconProps) => (
     <Svg {...p}>
       <path d="M15 5l-7 7 7 7" />

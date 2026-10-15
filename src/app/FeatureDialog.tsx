@@ -15,6 +15,7 @@ import { activeFeatures, studioParts, useLengthUnit, useStore } from "../model/s
 import type { Operation } from "../model/types";
 import { DeleteFaceHelp } from "./DeleteFaceHelp";
 import { Icons } from "./icons";
+import { FASTENER_LABELS, FASTENER_SIZES } from "../model/fasteners";
 import { ISO_COARSE } from "../kernel/thread";
 import { importedSize } from "../model/importFile";
 import { chooseImportFile } from "./fileActions";
@@ -916,6 +917,46 @@ function PicksField() {
   );
 }
 
+/** Fastener: bolt, nut or washer; the size; whether to model the thread. */
+function FastenerOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (draft?.type !== "fastener" || !draft.fastener) return null;
+  const f = draft.fastener;
+  const update = (patch: Partial<typeof f>) => setDraftField({ fastener: { ...f, ...patch } });
+  return (
+    <fieldset className="param-group">
+      <legend>Fastener</legend>
+      <div className="segmented" role="group" aria-label="Kind of fastener">
+        {(["bolt", "nut", "washer"] as const).map((k) => (
+          <button type="button" key={k} className={f.kind === k ? "selected" : ""} aria-pressed={f.kind === k} onClick={() => update({ kind: k })}>
+            {FASTENER_LABELS[k]}
+          </button>
+        ))}
+      </div>
+      <label className="field-label" htmlFor="fastener-size">
+        Size
+      </label>
+      <select id="fastener-size" className="full-select" value={f.size} onChange={(e) => update({ size: e.target.value })}>
+        {FASTENER_SIZES.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.name} ({s.name} × {s.pitch})
+          </option>
+        ))}
+      </select>
+      {f.kind !== "washer" && (
+        <label className="check-row">
+          <input type="checkbox" checked={f.threaded} onChange={(e) => update({ threaded: e.target.checked })} />
+          Model the thread (slower; for 3D printing)
+        </label>
+      )}
+      <p className="dialog-hint field-hint">
+        {f.kind === "bolt" ? "X, Y, Z is the middle of the underside of the head; the shank points down." : "X, Y, Z is the middle of its underside."}
+      </p>
+    </fieldset>
+  );
+}
+
 /** Delete part: the parts it removes. */
 function DeletePartOptions() {
   const draft = useStore((s) => s.editing?.draft);
@@ -1013,7 +1054,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "deleteFace" && draft.type !== "thread" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "deleteFace" && draft.type !== "thread" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -1034,6 +1075,7 @@ export function FeatureDialog() {
         <PlaneDefOptions />
         <BooleanOptionsField />
         <DeletePartOptions />
+        <FastenerOptions />
         <SplitOptionsField />
         <RibThickenOptions />
         <DraftOptions />

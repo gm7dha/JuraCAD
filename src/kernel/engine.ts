@@ -19,6 +19,8 @@ import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapStart, type Cylinder } from "./textSolid";
 import { grooveVolume, threadPieces } from "./thread";
+import { fastenerSolid } from "./fastener";
+import { fastenerName, fastenerSize } from "../model/fasteners";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type SectionRequest } from "../drawing/sections";
@@ -147,6 +149,44 @@ function cylinderAxes(shape: Shape3D): [Vec3, Vec3][] {
 }
 
 const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+/**
+ * Cut a thread groove into `start` from `from` to `to` along the cylinder's
+ * axis (the face itself runs from `lo` to `hi`). Two turns at a time; a piece
+ * that cuts the wrong amount (or leaves the part broken) is tried again a
+ * turn at a time. Returns the new shape (`start` is left as it is).
+ */
+function cutThread(start: Shape3D, cyl: Cylinder, from: number, to: number, lo: number, hi: number, pitch: number, external: boolean): Shape3D {
+  let shape = start;
+  const cutPiece = (pieces: { shape: Shape3D; from: number; to: number }[], retry: boolean) => {
+    for (const piece of pieces) {
+      try {
+        const before = measureVolume(shape);
+        const next: Shape3D = shape.cut(piece.shape);
+        const removed = before - measureVolume(next);
+        const expected = grooveVolume(cyl, pitch, external, piece.from, piece.to, lo, hi);
+        const ok = isValidSolid(next) && (expected < 1e-6 || (removed > 0.5 * expected && removed < 1.6 * expected));
+        if (!ok) {
+          next.delete();
+          if (retry) cutPiece(threadPieces(cyl, piece.from, piece.to, pitch, external, 1), false);
+          else throw new Error("The thread couldn't be cut cleanly here — try a slightly different pitch or length.");
+          continue;
+        }
+        if (shape !== start) shape.delete();
+        shape = next;
+      } finally {
+        piece.shape.delete();
+      }
+    }
+  };
+  try {
+    cutPiece(threadPieces(cyl, from, to, pitch, external), true);
+  } catch (e) {
+    if (shape !== start) shape.delete();
+    throw e;
+  }
+  return shape;
+}
 
 /** A round face's cylinder, worked out from one of its round edges (null if it has none). */
 function cylinderOfFace(face: Face): Cylinder | null {
@@ -553,6 +593,28 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       return makeBox([v.x, v.y, v.z], [v.x + v.width, v.y + v.depth, v.z + v.height]);
     case "cylinder":
       return makeCylinder(v.diameter / 2, v.height, [v.x, v.y, v.z], [0, 0, 1]);
+    case "fastener": {
+      const f = feature.fastener ?? { kind: "bolt" as const, size: "M6", threaded: false };
+      const solid = fastenerSolid(f.kind, f.size, v.length, v.x, v.y, v.z, f.threaded);
+      const s = fastenerSize(f.size);
+      if (!f.threaded || f.kind === "washer" || !s) return solid;
+      try {
+        if (f.kind === "bolt") {
+          // Along the shank, leaving a pitch plain under the head; the groove runs out past the tip.
+          const cyl: Cylinder = { origin: [v.x, v.y, v.z - v.length], axis: [0, 0, 1], radius: s.d / 2 };
+          const out = cutThread(solid, cyl, -s.pitch, Math.max(v.length - s.pitch, s.pitch), 0, v.length, s.pitch, true);
+          if (out !== solid) solid.delete();
+          return out;
+        }
+        const cyl: Cylinder = { origin: [v.x, v.y, v.z], axis: [0, 0, 1], radius: s.d / 2 - 0.5413 * s.pitch };
+        const out = cutThread(solid, cyl, -s.pitch, s.nut + s.pitch, 0, s.nut, s.pitch, false);
+        if (out !== solid) solid.delete();
+        return out;
+      } catch (e) {
+        solid.delete();
+        throw e;
+      }
+    }
     case "sphere":
       return makeSphere(v.diameter / 2).translate([v.x, v.y, v.z]);
     default:
@@ -822,7 +884,9 @@ export class GeometryEngine {
       if (feature.operation === "new") {
         partCounter++;
         this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
-        this.parts.push({ id: feature.id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: tool });
+        // Fasteners are named for what they are ("M6 × 20 hex bolt").
+        const name = feature.type === "fastener" && feature.fastener ? fastenerName(feature.fastener.kind, feature.fastener.size, values.length) : `Part ${partCounter}`;
+        this.parts.push({ id: feature.id, name, featureIds: [feature.id], shape: tool });
         continue;
       }
 
@@ -1019,29 +1083,9 @@ export class GeometryEngine {
         const full = !(values.length > 0) || values.length >= hi - lo - 1e-6;
         // Runs out past the open end (and past the far end too when it's the full length), so the groove ends cleanly.
         const from = full ? lo - pitch : hi - values.length;
-        // Two turns at a time; a piece that cuts the wrong amount (or leaves the part broken) is tried again a turn at a time.
-        const cutPiece = (pieces: { shape: Shape3D; from: number; to: number }[], retry: boolean) => {
-          for (const piece of pieces) {
-            try {
-              const before = measureVolume(shape);
-              const next: Shape3D = shape.cut(piece.shape);
-              const removed = before - measureVolume(next);
-              const expected = grooveVolume(cyl, pitch, external, piece.from, piece.to, lo, hi);
-              const ok = isValidSolid(next) && (expected < 1e-6 || (removed > 0.5 * expected && removed < 1.6 * expected));
-              if (!ok) {
-                next.delete();
-                if (retry) cutPiece(threadPieces(cyl, piece.from, piece.to, pitch, external, 1), false);
-                else throw new Error("The thread couldn't be cut cleanly here — try a slightly different pitch or length.");
-                continue;
-              }
-              if (shape !== part.shape) shape.delete();
-              shape = next;
-            } finally {
-              piece.shape.delete();
-            }
-          }
-        };
-        cutPiece(threadPieces(cyl, from, hi + pitch, pitch, external), true);
+        const next = cutThread(shape, cyl, from, hi + pitch, lo, hi, pitch, external);
+        if (shape !== part.shape) shape.delete();
+        shape = next;
       }
       const solids = solidsOf(shape);
       solids.forEach((x) => x.delete());
