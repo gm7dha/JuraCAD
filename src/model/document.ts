@@ -83,6 +83,7 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.picks = [];
     feature.neutral = { kind: "default", name: "Top" };
   }
+  if (type === "deletePart") feature.deleteParts = [];
   if (type === "boolean") feature.booleanDef = { op: "union", targets: [], tools: [], keepTools: false, picking: "targets" };
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
   if (type === "transform") {
@@ -321,6 +322,9 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     }
     if (feature.type === "rib" && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
+    if (feature.type === "deletePart") {
+      feature.deleteParts = Array.isArray(f.deleteParts) ? (f.deleteParts as unknown[]).filter((x): x is string => typeof x === "string") : [];
+    }
     if (feature.type === "boolean") {
       const b = (f.booleanDef ?? {}) as Record<string, unknown>;
       feature.booleanDef = {

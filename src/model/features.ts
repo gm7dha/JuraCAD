@@ -239,6 +239,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "A thin strengthening wall from the lines of a sketch, filling the space up to the part (gussets, webs).",
     params: [{ key: "thickness", label: "Thickness", defaultValue: "3", positive: true, group: "size" }],
   },
+  deletePart: {
+    type: "deletePart",
+    label: "Delete part",
+    namePrefix: "Delete part",
+    description: "Removes whole parts from the Part Studio (from this point on in the feature list).",
+    params: [],
+  },
   boolean: {
     type: "boolean",
     label: "Boolean",

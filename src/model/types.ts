@@ -6,7 +6,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "deleteFace" | "thread";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "deleteFace" | "thread" | "deletePart";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -122,6 +122,8 @@ export interface Feature {
   /** Plane features: where the plane is. */
   planeDef?: PlaneOptions;
   /** Boolean features: which parts, and what to do with them. */
+  /** Delete part: the parts it removes from the Part Studio. */
+  deleteParts?: string[];
   booleanDef?: BooleanOptions;
   /** Split: which part, and the plane that cuts it in two. */
   splitDef?: SplitOptions;

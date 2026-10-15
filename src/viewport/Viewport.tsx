@@ -220,6 +220,15 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     if (pick) s.toggleDraftPick(pick);
     return;
   }
+  // Picking parts to delete (click again to keep one).
+  if (s.editing?.draft.type === "deletePart") {
+    if (target?.kind === "part") {
+      const list = s.editing.draft.deleteParts ?? [];
+      const id = target.item.partId;
+      s.setDraftField({ deleteParts: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] });
+    }
+    return;
+  }
   // Picking parts for a Boolean.
   if (s.editing?.draft.type === "boolean") {
     if (target?.kind === "part") s.toggleBooleanPart(target.item.partId);
@@ -469,10 +478,13 @@ export function Viewport() {
   const studioFeatures = useStore(activeFeatures);
   // Picked parts, or the parts a picked feature made (or a Boolean being set up uses), light up.
   const booleanDef = useStore((s) => (s.editing?.draft.type === "boolean" ? s.editing.draft.booleanDef ?? null : null));
+  const deleting = useStore((s) => (s.editing?.draft.type === "deletePart" ? s.editing.draft.deleteParts ?? NO_IDS : null));
   useEffect(() => {
     const lit = assembly
       ? []
-      : booleanDef
+      : deleting
+        ? deleting
+        : booleanDef
         ? [...booleanDef.targets, ...booleanDef.tools]
         : selectedParts.length
           ? selectedParts
@@ -480,7 +492,7 @@ export function Viewport() {
             ? partsOfFeature(parts, pickedFeature, studioFeatures)
             : [];
     viewportApi.current?.setSelectedParts(lit);
-  }, [selectedParts, assembly, pickedFeature, parts, studioFeatures, booleanDef]);
+  }, [selectedParts, assembly, pickedFeature, parts, studioFeatures, booleanDef, deleting]);
   const section = useStore((s) => s.section);
   const appearance = useStore((s) => s.history.present.appearance ?? NO_COLOURS);
   const colours = useMemo(() => {

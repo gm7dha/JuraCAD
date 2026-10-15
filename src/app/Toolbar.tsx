@@ -201,6 +201,14 @@ export function Toolbar() {
           title={partCount >= 2 ? "Boolean — join parts into one, cut parts with others, or keep just where they overlap" : "Make at least two parts first"}
         />
         <ToolButton
+          label="Delete part"
+          icon={<Icons.Trash />}
+          onClick={() => startCreate("deletePart")}
+          disabled={!ready || partCount < 1}
+          active={editingType === "deletePart"}
+          title={partCount ? "Delete part — remove whole parts from here on (select them in the Parts list first, or click them)" : "Make a part first"}
+        />
+        <ToolButton
           label="Hole"
           icon={<Icons.Hole />}
           onClick={() => startCreate("hole")}
