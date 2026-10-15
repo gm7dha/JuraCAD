@@ -167,3 +167,19 @@ describe("assembly patterns", () => {
     expect(s().editingPattern).toBe(null);
   });
 });
+
+describe("configurations", () => {
+  it("switches between saved versions, one undo step each", () => {
+    s().setVariables([{ id: "v1", name: "w", value: "20" }]);
+    s().addConfiguration("Large");
+    s().setVariables([{ id: "v1", name: "w", value: "40" }]);
+    const doc = () => s().history.present;
+    const def = doc().configurations![0];
+    s().switchConfiguration(def.id);
+    expect(doc().variables![0].value).toBe("20");
+    s().undo();
+    expect(doc().variables![0].value).toBe("40");
+    s().removeConfiguration(def.id);
+    expect(doc().configurations).toBe(undefined);
+  });
+});

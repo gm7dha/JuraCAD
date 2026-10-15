@@ -1,5 +1,6 @@
 import type { TopoPick } from "../geometry/topoRef";
 import type { Variable } from "./variables";
+import type { Configuration } from "./configurations";
 import type { HoleFit, HoleKind } from "./holes";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
@@ -169,6 +170,10 @@ export interface PartSmithDocument {
   assemblies?: Assembly[];
   /** Drawing tabs (optional: older saves have none). */
   drawings?: Drawing[];
+  /** Versions of the design (variable values and suppressed features); at least two when present. */
+  configurations?: Configuration[];
+  /** The configuration on show (its id). */
+  activeConfiguration?: string;
 }
 
 /** Which way a drawing view looks at the part. */

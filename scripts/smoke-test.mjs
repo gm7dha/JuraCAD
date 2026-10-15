@@ -445,6 +445,25 @@ try {
   await page.getByRole("button", { name: "Done" }).click();
   await page.waitForSelector(".variables-table", { state: "detached" });
 
+  step = "configurations";
+  await page.getByRole("button", { name: "Configurations", exact: true }).click();
+  await page.getByLabel("New configuration name").fill("Wide gap");
+  await page.getByRole("button", { name: "+ Add configuration" }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.configurations-table input[aria-label="Configuration name"]').length === 2, null, { timeout: 5_000 });
+  await page.getByRole("button", { name: "Done" }).click();
+  // In "Wide gap", gap = 2 mm; back in Default it's 1/4 in again.
+  await page.getByRole("button", { name: "Variables", exact: true }).click();
+  await page.getByRole("textbox", { name: "Value of gap" }).fill("2");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.waitForSelector(".variables-table", { state: "detached" });
+  const defaultId = await page.locator("#configuration-select option", { hasText: "Default" }).getAttribute("value");
+  await page.locator("#configuration-select").selectOption(defaultId);
+  await page.getByRole("button", { name: "Variables", exact: true }).click();
+  const gapNow = await page.getByRole("textbox", { name: "Value of gap" }).inputValue();
+  if (gapNow !== "1/4 in") throw new Error(`back in Default, gap is "${gapNow}"`);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.waitForSelector(".variables-table", { state: "detached" });
+
   step = "saving the design to a file";
   const featureCount = await page.locator(".feature-row:not(.datum)").count();
   const savePromise = page.waitForEvent("download", { timeout: 30_000 });
@@ -998,7 +1017,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

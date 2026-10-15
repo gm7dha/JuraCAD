@@ -24,6 +24,7 @@ import { sameRef, type TopoPick } from "../geometry/topoRef";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { setCurrentScope } from "./expr";
+import { addConfiguration, removeConfiguration, renameConfiguration, switchConfiguration } from "./configurations";
 import { framesOf, planeAsSketchPlane, refreshDocumentPlanes } from "../sketch/planeFeature";
 import { setLengthUnit, startingLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
@@ -137,7 +138,7 @@ export interface SectionView {
 /** A mate being made or changed; its two connectors may not be picked yet. */
 export type MateDraft = Omit<Mate, "a" | "b"> & { a?: MateConnector; b?: MateConnector };
 
-export type DialogName = "check" | "export" | "help" | "variables" | "insert" | null;
+export type DialogName = "check" | "export" | "help" | "variables" | "configurations" | "insert" | null;
 
 export interface Toast {
   id: number;
@@ -256,6 +257,11 @@ export interface AppState {
   setPartColour: (partId: string, colour: string | null) => void;
   /** Replace the variable list (one undo step); renames are followed everywhere. */
   setVariables: (variables: Variable[]) => void;
+  /** Configurations: keep the current state as a new one (and show it), show another, rename or forget one. */
+  addConfiguration: (name: string) => void;
+  switchConfiguration: (id: string) => void;
+  renameConfiguration: (id: string, name: string) => void;
+  removeConfiguration: (id: string) => void;
   newDocument: () => void;
   /** Replace the design with one opened from a file (undoable). */
   openDocument: (doc: PartSmithDocument, fileName: string) => void;
@@ -799,6 +805,10 @@ export const useStore = create<AppState>((set, get) => {
       }),
 
     setVariables: (variables) => change((doc) => applyVariables(doc, variables)),
+    addConfiguration: (name) => change((doc) => addConfiguration(doc, name)),
+    switchConfiguration: (id) => change((doc) => switchConfiguration(doc, id)),
+    renameConfiguration: (id, name) => change((doc) => renameConfiguration(doc, id, name)),
+    removeConfiguration: (id) => change((doc) => removeConfiguration(doc, id)),
 
     renamePart: (partId, name) => {
       const old = get().parts.find((p) => p.id === partId)?.name ?? "";
