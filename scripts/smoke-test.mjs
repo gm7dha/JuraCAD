@@ -40,6 +40,14 @@ const consoleErrors = [];
 page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text()));
 page.on("pageerror", (e) => consoleErrors.push(e.message));
 
+/** Click a toolbar tool by name — straight away, or from the ▾ list of its family when another of them is showing. */
+async function tool(name) {
+  const direct = page.getByRole("button", { name, exact: true });
+  if (await direct.count()) return direct.first().click();
+  await page.locator(`.tool-split-arrow[data-items*="|${name}|"]`).first().click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
+
 let shotNumber = 0;
 async function shot(name) {
   shotNumber++;
@@ -73,7 +81,7 @@ try {
   await page.waitForSelector(".engine-status", { state: "detached", timeout: 120_000 });
 
   step = "adding a box";
-  await page.getByRole("button", { name: "Box", exact: true }).click();
+  await tool("Box");
   await page.locator("#param-width").fill("40");
   await page.getByRole("button", { name: "Accept" }).click();
   await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 1"), null, {
@@ -81,7 +89,12 @@ try {
   });
 
   step = "drilling a hole with a cylinder";
-  await page.getByRole("button", { name: "Cylinder", exact: true }).click();
+  await page.locator('.tool-split-arrow[data-items*="|Cylinder|"]').click();
+  await page.waitForSelector('[role="menu"] >> text=Coil');
+  await shot("toolmenu");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector('[role="menu"]', { state: "detached" });
+  await tool("Cylinder");
   await page.getByRole("radio", { name: "Remove" }).click();
   await page.locator("#param-diameter").fill("10");
   await page.locator("#param-height").fill("20");
@@ -656,7 +669,7 @@ try {
   await page.getByRole("menuitem", { name: "Part Studio" }).click();
   await page.waitForSelector(".tab.active >> text=Part Studio 2");
   if ((await page.locator(".feature-row:not(.datum)").count()) !== 0) throw new Error("the new Part Studio isn't empty");
-  await page.getByRole("button", { name: "Box", exact: true }).click();
+  await tool("Box");
   await page.getByRole("button", { name: "Accept" }).click();
   await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
   await page.getByRole("button", { name: "Assembly 1" }).click();
@@ -684,7 +697,7 @@ try {
   const frontBox = await page.locator(".drawing-view-handle").first().boundingBox();
   const mm = frontBox.width / (await page.locator(".drawing-view-handle").first().evaluate((el) => el.getBBox().width));
   const inset = 3 * mm;
-  await page.getByRole("button", { name: "Dimension", exact: true }).click();
+  await tool("Dimension");
   const bottom = frontBox.y + frontBox.height - inset;
   await page.mouse.click(frontBox.x + inset, bottom);
   await page.mouse.click(frontBox.x + frontBox.width - inset, bottom);
@@ -733,7 +746,7 @@ try {
   }
   step = "baseline, chain and ordinate tools";
   for (const name of ["Baseline", "Chain", "Ordinate"]) {
-    await page.getByRole("button", { name, exact: true }).click();
+    await tool(name);
     await page.waitForFunction(() => document.body.textContent?.includes("Click the datum"), null, { timeout: 5_000 });
   }
   await page.keyboard.press("Escape");
@@ -781,7 +794,7 @@ try {
   // The title block now says inches.
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "in"), null, { timeout: 10_000 });
   await page.getByRole("button", { name: "Part Studio 1" }).click();
-  await page.getByRole("button", { name: "Box", exact: true }).click();
+  await tool("Box");
   const widthBox = await page.locator("#param-width").inputValue();
   if (widthBox !== "1.5") throw new Error(`a new box in inches starts ${widthBox} wide, not 1.5`);
   await shot("inches");
@@ -923,7 +936,7 @@ try {
     const my = box.y + box.height / 2;
     const curves = () => page.evaluate(() => window.partsmithStore.getState().editing?.draft.sketch?.data.curves.map((c) => c.type + (c.construction ? "*" : "")) ?? []);
 
-    await page.getByRole("button", { name: "Centre rect", exact: true }).click();
+    await tool("Centre rect");
     await page.mouse.click(mx - 150, my - 80);
     await page.mouse.click(mx - 100, my - 50);
     let now = await curves();
@@ -943,7 +956,7 @@ try {
     await page.mouse.click(mx - 150, my + 80);
     await page.mouse.click(mx - 60, my + 80);
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Tangent arc", exact: true }).click();
+    await tool("Tangent arc");
     await page.mouse.click(mx - 60, my + 80);
     await page.mouse.move(mx - 40, my + 120, { steps: 3 });
     await page.mouse.click(mx - 60, my + 140);
