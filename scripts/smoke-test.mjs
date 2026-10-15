@@ -397,7 +397,7 @@ try {
   await shot("revolved");
 
   step = "repeating the revolve with a linear pattern";
-  await page.getByRole("button", { name: "Pattern", exact: true }).click();
+  await tool("Pattern");
   await page.waitForSelector(".feature-dialog .pick-list li", { timeout: 5_000 });
   const patternSource = await page.locator(".feature-dialog .pick-list li").first().innerText();
   await page.locator("#param-count").fill("2");
@@ -415,7 +415,7 @@ try {
   await shot("patterned");
 
   step = "opening the hole tool";
-  await page.getByRole("button", { name: "Hole", exact: true }).click();
+  await tool("Hole");
   await page.waitForSelector(".feature-dialog >> text=Where and what");
   await page.locator("#hole-standard").selectOption("M4");
   if ((await page.locator("#param-diameter").inputValue()) !== "4.5") throw new Error("choosing M4 didn't fill in the 4.5 mm clearance size");
@@ -436,7 +436,7 @@ try {
   }
 
   step = "adding a variable";
-  await page.getByRole("button", { name: "Variables", exact: true }).click();
+  await tool("Variables");
   await page.getByRole("button", { name: "+ Add variable" }).click();
   await page.getByRole("textbox", { name: "Variable name" }).fill("gap");
   await page.getByRole("textbox", { name: "Value of gap" }).fill("1/4 in");
@@ -446,19 +446,19 @@ try {
   await page.waitForSelector(".variables-table", { state: "detached" });
 
   step = "configurations";
-  await page.getByRole("button", { name: "Configurations", exact: true }).click();
+  await tool("Configurations");
   await page.getByLabel("New configuration name").fill("Wide gap");
   await page.getByRole("button", { name: "+ Add configuration" }).click();
   await page.waitForFunction(() => document.querySelectorAll('.configurations-table input[aria-label="Configuration name"]').length === 2, null, { timeout: 5_000 });
   await page.getByRole("button", { name: "Done" }).click();
   // In "Wide gap", gap = 2 mm; back in Default it's 1/4 in again.
-  await page.getByRole("button", { name: "Variables", exact: true }).click();
+  await tool("Variables");
   await page.getByRole("textbox", { name: "Value of gap" }).fill("2");
   await page.getByRole("button", { name: "Done" }).click();
   await page.waitForSelector(".variables-table", { state: "detached" });
   const defaultId = await page.locator("#configuration-select option", { hasText: "Default" }).getAttribute("value");
   await page.locator("#configuration-select").selectOption(defaultId);
-  await page.getByRole("button", { name: "Variables", exact: true }).click();
+  await tool("Variables");
   const gapNow = await page.getByRole("textbox", { name: "Value of gap" }).inputValue();
   if (gapNow !== "1/4 in") throw new Error(`back in Default, gap is "${gapNow}"`);
   await page.getByRole("button", { name: "Cancel" }).click();
