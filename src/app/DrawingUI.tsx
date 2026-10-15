@@ -15,7 +15,7 @@ import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } fro
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
 import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
-import { dimPoint, dragDimension, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
+import { angleGeometry, dimPoint, dragDimension, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
@@ -850,7 +850,7 @@ function findSnap(snaps: Snap[], at: P2, tol: number): Snap | null {
  * edge or a circle), then — once a second thing is clicked — the two points
  * it measures between, ready to place.
  */
-type Pending = { view: string; first: DimTarget; a?: P2; b?: P2; force?: "horizontal" | "vertical" };
+type Pending = { view: string; first: DimTarget; a?: P2; b?: P2; force?: "horizontal" | "vertical"; angle?: { a: P2; b: P2; c: P2; d: P2 } };
 
 const targetOf = (s: Snap): DimTarget =>
   s.kind === "point" ? { kind: "point", at: s.at } : s.kind === "line" ? { kind: "line", a: s.a, b: s.b } : { kind: "circle", centre: s.centre, r: s.r, full: s.full };
@@ -982,6 +982,12 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       const offset = Math.max(2, Math.round((Math.hypot(cursor[0] - c[0], cursor[1] - c[1]) - f.r * (layout?.scale ?? 1)) * 10) / 10);
       return { id: "preview", view: pending.view, type: f.full ? "diameter" : "radius", a: dimPoint(f.centre, p), r: f.r, offset, angle };
     }
+    if (pending.angle) {
+      const g = pending.angle;
+      const place = placeAngle(at(g.a), at(g.b), at(g.c), at(g.d), cursor);
+      if (!place) return null;
+      return { id: "preview", view: pending.view, type: "angle", a: dimPoint(g.a, p), b: dimPoint(g.b, p), c: dimPoint(g.c, p), d: dimPoint(g.d, p), ...place };
+    }
     const [a, b] = pending.b && pending.a ? [pending.a, pending.b] : f.kind === "line" ? [f.a, f.b] : [null, null];
     if (!a || !b) return null;
     const place = placeLength(at(a), at(b), cursor, pending.force);
@@ -1012,6 +1018,12 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (!snap || snap.view !== pending.view || sameTarget(pending.first, targetOf(snap))) {
       if (pending.first.kind !== "point" && placeIt()) return;
       if (snap && snap.view !== pending.view) setPending({ view: snap.view, first: targetOf(snap) });
+      return;
+    }
+    // Two edges at an angle: the angle between them.
+    const second = targetOf(snap);
+    if (pending.first.kind === "line" && second.kind === "line" && angleGeometry(pending.first.a, pending.first.b, second.a, second.b)) {
+      setPending({ ...pending, a: pending.first.a, b: pending.first.b, angle: { a: pending.first.a, b: pending.first.b, c: second.a, d: second.b } });
       return;
     }
     // A second thing: the distance between them.
@@ -1230,11 +1242,11 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       const dim = drawing.dimensions?.find((x) => x.id === dimDrag.id);
       const placed = layout?.dims.find((x) => x.id === dimDrag.id);
       // Shift: move just the number (anywhere, off the line too); otherwise move the dimension.
-      const lengthDim = dim && dim.type !== "diameter" && dim.type !== "radius" && dim.type !== "ordinate";
+      const lengthDim = dim && dim.type !== "diameter" && dim.type !== "radius" && dim.type !== "ordinate" && dim.type !== "angle";
       if (dim && placed && e.shiftKey && lengthDim && placed.b) {
         setDimDrag({ id: dim.id, patch: { offset: dim.offset, ...dragDimensionText(dim, placed.a, placed.b, here) } });
       } else if (dim && placed) {
-        setDimDrag({ id: dim.id, patch: { ...dragDimension(dim, placed.a, placed.b, placed.rad, here), textAcross: 0 } });
+        setDimDrag({ id: dim.id, patch: { ...dragDimension(dim, placed.a, placed.b, placed.rad, here, placed.cd), textAcross: 0 } });
       }
     }
   };
@@ -1273,7 +1285,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       : pending?.first.kind === "circle"
         ? "Click to place the size of the circle — or click an edge, corner or another circle to measure to its centre."
         : pending?.first.kind === "line"
-          ? "Click to place the edge's length — or click a hole, corner or parallel edge to measure the distance to it."
+          ? "Click to place the edge's length — or click a hole, corner or parallel edge to measure the distance to it, or a slanted edge for the angle between them."
           : pending
             ? "Now click a second corner, an edge or a circle. Esc to start again."
             : "Click a circle, an edge or a corner. Then click to place it, or click a second thing to measure between them.";

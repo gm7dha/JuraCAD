@@ -79,6 +79,8 @@ export interface PlacedDim {
   a: [number, number];
   b: [number, number] | null;
   rad: number;
+  /** Angles: the second edge's ends on the sheet. */
+  cd?: [[number, number], [number, number]];
 }
 
 export interface SheetLayout {
@@ -354,6 +356,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
       a: at(resolved.a),
       b: resolved.b ? at(resolved.b) : null,
       rad: (resolved.r ?? 0) * scale * (p.zoom ?? 1),
+      ...(resolved.c && resolved.d ? { cd: [at(resolved.c), at(resolved.d)] as [[number, number], [number, number]] } : {}),
     });
   }
 
