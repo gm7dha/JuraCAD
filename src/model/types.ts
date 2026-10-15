@@ -335,6 +335,20 @@ export interface Instance {
   fixed: boolean;
   /** A copy made by a pattern: which pattern, the instance it copies, and which copy it is (1 = next to the original). */
   copyOf?: { pattern: string; seed: string; index: number };
+  /** A copy made by Replicate: which replicate, and which of its copies (1, 2…). */
+  replicaOf?: { replicate: string; index: number };
+}
+
+/**
+ * Replicate (as in Onshape): a part mated into one hole, copied into every
+ * other matching hole of the part it's mated to — each copy with its own mate.
+ */
+export interface Replicate {
+  id: string;
+  name: string;
+  /** The original instance and the mate holding it in its hole. */
+  seed: string;
+  mate: string;
 }
 
 /**
@@ -383,6 +397,8 @@ export interface Mate {
   /** How far each movement may go (typed like the amounts; blank = no limit). */
   limits?: Record<string, { min?: string; max?: string }>;
   suppressed?: boolean;
+  /** Made by Replicate (its id) for one of its copies. */
+  replicateOf?: string;
 }
 
 /** A saved arrangement of an assembly: each mate's amounts as they were. */
@@ -421,6 +437,8 @@ export interface Assembly {
   explode?: number;
   /** Patterns of instances (optional: older saves have none). */
   patterns?: AssemblyPattern[];
+  /** Parts copied into matching holes (optional: older saves have none). */
+  replicates?: Replicate[];
 }
 
 /** How finely curved surfaces are turned into triangles. */

@@ -4,9 +4,10 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
-import type { Assembly, AssemblyPattern, Instance, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
+import type { Assembly, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
 import { parseRelation } from "./relations";
 import { parsePattern, tidyPatterns } from "./patterns";
+import { parseReplicate, tidyReplicates } from "./replicate";
 import { applyPlacement, IDENTITY, quatNormalize, type Placement, type Quat, type Vec3 } from "./math";
 
 const assembliesOf = (doc: PartSmithDocument) => doc.assemblies ?? [];
@@ -140,10 +141,12 @@ export function removeRelation(doc: PartSmithDocument, assemblyId: string, id: s
 export function removeInstances(doc: PartSmithDocument, assemblyId: string, ids: string[]): PartSmithDocument {
   const gone = new Set(ids);
   return updateAssembly(doc, assemblyId, (a) =>
-    tidyPatterns(
-      withMates(
-        { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
-        (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
+    tidyReplicates(
+      tidyPatterns(
+        withMates(
+          { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
+          (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
+        ),
       ),
     ),
   );
@@ -163,7 +166,7 @@ export function putMate(doc: PartSmithDocument, assemblyId: string, mate: Mate):
 }
 
 export function removeMate(doc: PartSmithDocument, assemblyId: string, mateId: string): PartSmithDocument {
-  return updateAssembly(doc, assemblyId, (a) => withMates(a, (a.mates ?? []).filter((m) => m.id !== mateId)));
+  return updateAssembly(doc, assemblyId, (a) => tidyReplicates(withMates(a, (a.mates ?? []).filter((m) => m.id !== mateId))));
 }
 
 /** Spread the parts apart for an exploded view (null or 0 puts them back together). */
@@ -276,6 +279,7 @@ function parseMate(raw: unknown, ids: Set<string>): Mate | null {
     values,
     ...(limits ? { limits } : {}),
     ...(m.suppressed === true ? { suppressed: true } : {}),
+    ...(typeof m.replicateOf === "string" ? { replicateOf: m.replicateOf } : {}),
   };
 }
 
@@ -302,6 +306,9 @@ export function parseAssemblies(raw: unknown): Assembly[] {
         name: typeof ri.name === "string" && ri.name.trim() ? ri.name : "Part",
         placement: parsePlacement(ri.placement),
         fixed: ri.fixed === true,
+        ...(ri.replicaOf && typeof (ri.replicaOf as Record<string, unknown>).replicate === "string" && Number.isInteger((ri.replicaOf as Record<string, unknown>).index)
+          ? { replicaOf: { replicate: (ri.replicaOf as { replicate: string }).replicate, index: (ri.replicaOf as { index: number }).index }, fixed: false }
+          : {}),
         ...(copy && typeof copy.pattern === "string" && typeof copy.seed === "string" && typeof copy.index === "number" && Number.isInteger(copy.index) && copy.index > 0
           ? { copyOf: { pattern: copy.pattern, seed: copy.seed, index: copy.index }, fixed: false }
           : {}),
@@ -335,13 +342,15 @@ export function parseAssemblies(raw: unknown): Assembly[] {
     }
     const instanceIds = new Set(instances.map((i) => i.id));
     const patterns = (Array.isArray(r.patterns) ? r.patterns : []).map((p) => parsePattern(p, instanceIds)).filter((p): p is AssemblyPattern => !!p);
+    const replicates = (Array.isArray(r.replicates) ? r.replicates : []).map(parseReplicate).filter((x): x is Replicate => !!x);
     out.push(
-      tidyPatterns({
+      tidyReplicates(tidyPatterns({
         ...(mates.length ? { ...assembly, mates } : assembly),
         ...(relations.length ? { relations } : {}),
         ...(positions.length ? { positions } : {}),
         ...(patterns.length ? { patterns } : {}),
-      }),
+        ...(replicates.length ? { replicates } : {}),
+      })),
     );
   }
   return out;
