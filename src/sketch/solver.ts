@@ -60,7 +60,7 @@ function buildSystem(sketch: SketchData): System {
   /** Centre and radius accessors for a circle or arc. */
   const circular = (id: string) => {
     const c = curves.get(id);
-    if (!c || c.type === "line") throw new Error(`${id} is not a circle or arc`);
+    if (!c || c.type === "line" || c.type === "spline") throw new Error(`${id} is not a circle or arc`);
     const centre = P(c.center);
     if (c.type === "circle") {
       const ri = radiusVar.get(c.id)!;
@@ -595,7 +595,9 @@ export function analyzeSketch(sketch: SketchData): SketchAnalysis {
     const ok =
       c.type === "line"
         ? definedPoints.has(c.p1) && definedPoints.has(c.p2)
-        : c.type === "circle"
+        : c.type === "spline"
+          ? c.points.every((p) => definedPoints.has(p))
+          : c.type === "circle"
           ? definedPoints.has(c.center) && determined[sys.radiusVar.get(c.id)!]
           : definedPoints.has(c.center) && definedPoints.has(c.start) && definedPoints.has(c.end);
     if (ok) definedCurves.add(c.id);

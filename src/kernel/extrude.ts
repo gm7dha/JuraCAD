@@ -10,6 +10,7 @@ import {
   makePln,
   assembleWire,
   basicFaceExtrusion,
+  makeBezierCurve,
   makeCircle,
   makeFace,
   makeLine,
@@ -49,6 +50,8 @@ export function loopWire(loop: Loop, frame: PlaneFrame, offset: number): Wire {
         return makeThreePointArc(P(seg.from), P(seg.mid), P(seg.to));
       case "circle":
         return makeCircle(seg.radius, P(seg.center), frame.n);
+      case "bezier":
+        return makeBezierCurve([P(seg.from), P(seg.c1), P(seg.c2), P(seg.to)]);
     }
   });
   try {

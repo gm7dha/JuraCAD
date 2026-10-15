@@ -6,7 +6,7 @@
 import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
 import { addRectangle, curveById, deleteItems, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
-import { ORIGIN_ID, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
+import { ORIGIN_ID, type SketchSpline, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
 import type { EdgeRef } from "../geometry/topoRef";
 
@@ -185,6 +185,8 @@ function onArc(s: SketchData, c: SketchCircle | SketchArc, p: P2): boolean {
 
 /** Points where curves `a` and `b` cross (each within its own extent). */
 export function intersections(s: SketchData, a: SketchCurve, b: SketchCurve): P2[] {
+  // Splines aren't cut where things cross them (yet).
+  if (a.type === "spline" || b.type === "spline") return [];
   const seg = (l: SketchLine) => [pointPos(s, l.p1), pointPos(s, l.p2)] as [P2, P2];
   const onSeg = (l: SketchLine, p: P2) => {
     const [A, B] = seg(l);
@@ -231,6 +233,7 @@ export function intersections(s: SketchData, a: SketchCurve, b: SketchCurve): P2
 
 /** Position of a point along a curve (line: 0–1; arc/circle: angle from its start). */
 function paramOf(s: SketchData, c: SketchCurve, p: P2): number {
+  if (c.type === "spline") return 0;
   if (c.type === "line") {
     const A = pointPos(s, c.p1);
     const B = pointPos(s, c.p2);
@@ -250,6 +253,7 @@ const KEEPS_WHEN_TRIMMED = new Set(["horizontal", "vertical", "parallel", "perpe
 export function trimAt(s: SketchData, curveId: string, at: { x: number; y: number }): EditResult {
   const target = curveById(s, curveId);
   if (!target) return { sketch: s, error: "Click a line, arc or circle to trim." };
+  if (target.type === "spline") return { sketch: s, error: "Splines can't be trimmed — delete it, or drag its points to reshape it." };
   const cuts: Cut[] = [];
   for (const other of s.curves) {
     if (other.id === target.id) continue;
@@ -430,6 +434,7 @@ export function offsetCurves(s: SketchData, curveId: string, at: { x: number; y:
   const dist = r.value;
   const clicked = curveById(s, curveId);
   if (!clicked) return fail("Click a line, arc or circle to offset.");
+  if (clicked.type === "spline") return fail("Splines can't be offset yet — offset lines, arcs and circles.");
   const P: P2 = [at.x, at.y];
 
   if (clicked.type === "circle") {
@@ -653,6 +658,8 @@ export function mirrorCurves(s: SketchData, axisId: string, curveIds: string[]):
       const id = sketchId("ci");
       curves.push({ id, type: "circle", center: copyOf(c.center), radius: c.radius, construction: c.construction });
       constraints.push({ id: sketchId("c"), type: "equal", refs: [c.id, id] });
+    } else if (c.type === "spline") {
+      curves.push({ id: sketchId("sp"), type: "spline", points: c.points.map(copyOf), closed: c.closed, construction: c.construction });
     } else {
       // A mirror image runs the other way round, so its start and end swap.
       curves.push({ id: sketchId("a"), type: "arc", center: copyOf(c.center), start: copyOf(c.end), end: copyOf(c.start), construction: c.construction });
@@ -818,6 +825,7 @@ export function patternCurves(s: SketchData, curveIds: string[], opts: SketchPat
     for (const c of sources) {
       if (c.type === "line") curves.push({ id: sketchId("l"), type: "line", p1: copyOf(c.p1), p2: copyOf(c.p2), construction: c.construction });
       else if (c.type === "circle") curves.push({ id: sketchId("k"), type: "circle", center: copyOf(c.center), radius: c.radius, construction: c.construction });
+      else if (c.type === "spline") curves.push({ id: sketchId("sp"), type: "spline", points: c.points.map(copyOf), closed: c.closed, construction: c.construction });
       else curves.push({ id: sketchId("a"), type: "arc", center: copyOf(c.center), start: copyOf(c.start), end: copyOf(c.end), construction: c.construction });
     }
   }
@@ -844,4 +852,28 @@ export function readPatternSettings(s: SketchData, set: PatternSettings): Sketch
   }
   const known = set.patternCentre === ORIGIN_ID || s.points.some((p) => p.id === set.patternCentre);
   return { kind: "circular", count: set.patternCount, angle: angle.value, centre: pointPos(s, known ? set.patternCentre : ORIGIN_ID) };
+}
+
+// ---------------------------------------------------------------------------
+// Spline
+
+/** A smooth curve through the clicked points (closed: back round to the first). */
+export function addSpline(s: SketchData, placed: Placed[], closed: boolean, construction = false): EditResult & { splineId: string } {
+  const fail = (error: string) => ({ sketch: s, splineId: "", error });
+  let sk = s;
+  const ids: string[] = [];
+  for (const p of placed) {
+    const r = placePoint(sk, p);
+    sk = r.sketch;
+    if (ids[ids.length - 1] !== r.id) ids.push(r.id);
+  }
+  // Clicking the first point again closes it.
+  if (ids.length > 2 && ids[0] === ids[ids.length - 1]) {
+    ids.pop();
+    closed = true;
+  }
+  if (ids.length < 2 || (closed && ids.length < 3)) return fail(closed ? "A closed spline needs at least three points." : "Click at least two points for a spline.");
+  const id = sketchId("sp");
+  const spline: SketchSpline = { id, type: "spline", points: ids, closed, construction };
+  return { ...settle({ ...sk, curves: [...sk.curves, spline] }), splineId: id };
 }

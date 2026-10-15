@@ -77,6 +77,7 @@ export type SketchTool =
   | "circle"
   | "arc"
   | "tangentArc"
+  | "spline"
   | "point"
   | "dimension"
   | "slot"

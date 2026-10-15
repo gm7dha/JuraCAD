@@ -43,7 +43,16 @@ export interface SketchArc {
   construction: boolean;
 }
 
-export type SketchCurve = SketchLine | SketchCircle | SketchArc;
+/** A smooth curve through its points, in order (closed: joined back to the first). */
+export interface SketchSpline {
+  id: string;
+  type: "spline";
+  points: string[];
+  closed: boolean;
+  construction: boolean;
+}
+
+export type SketchCurve = SketchLine | SketchCircle | SketchArc | SketchSpline;
 
 /** Geometric relationships (no value). */
 export type RelationType =

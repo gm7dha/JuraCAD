@@ -3,7 +3,8 @@
  * vertical inference). All distances are in sketch millimetres; callers
  * convert their pixel tolerances using the current zoom.
  */
-import { curvePoints, pointPos, radiusOf } from "./ops";
+import { curvePoints, pointPos, radiusOf, splinePoints } from "./ops";
+import { splinePolyline } from "./spline";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
 
 export type Hit = { kind: "point"; id: string } | { kind: "curve"; id: string };
@@ -29,6 +30,12 @@ export function distToCurve(s: SketchData, c: SketchCurve, x: number, y: number)
     const [ax, ay] = pointPos(s, c.p1);
     const [bx, by] = pointPos(s, c.p2);
     return distToSegment(x, y, ax, ay, bx, by);
+  }
+  if (c.type === "spline") {
+    const pts = splinePolyline(splinePoints(s, c), c.closed);
+    let best = Infinity;
+    for (let i = 0; i + 1 < pts.length; i++) best = Math.min(best, distToSegment(x, y, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]));
+    return best;
   }
   const [cx, cy] = pointPos(s, c.center);
   const r = radiusOf(s, c);

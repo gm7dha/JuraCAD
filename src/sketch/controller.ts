@@ -29,6 +29,7 @@ import {
   addCentreRectangle,
   addPolygon,
   addSlot,
+  addSpline,
   addTangentArc,
   filletCorner,
   mirrorCurves,
@@ -40,6 +41,7 @@ import {
   trimAt,
 } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
+import { splinePolyline } from "./spline";
 import { rectOf, sketchItemsInBox } from "../viewport/boxSelect";
 
 export interface SketchPointer {
@@ -238,7 +240,10 @@ export class SketchController {
       for (const c of sources) {
         if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
         else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius });
-        else {
+        else if (c.type === "spline") {
+          const pts = splinePolyline(c.points.map(at), c.closed);
+          for (let k = 0; k + 1 < pts.length; k++) out.push({ kind: "line", a: pts[k], b: pts[k + 1] });
+        } else {
           const cc = at(c.center);
           const s0 = at(c.start);
           const s1 = at(c.end);
@@ -285,6 +290,9 @@ export class SketchController {
         const dx = bx - ax, dy = by - ay;
         const t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1);
         [x, y] = [ax + t * dx, ay + t * dy];
+      } else if (c.type === "spline") {
+        // No "on the spline" constraint: just the pointer, with no snap.
+        return { x: e.x, y: e.y, snap: null };
       } else {
         const [cx, cy] = pointPos(d, c.center);
         const r = radiusOf(d, c);
@@ -425,6 +433,20 @@ export class SketchController {
         this.emit({ preview: [] });
         return;
       }
+      case "spline": {
+        // Each click adds a point; clicking the first point again closes it, Esc finishes an open one.
+        const first = this.placed[0];
+        const closing = this.placed.length >= 3 && !!first && Math.hypot(p.x - first.x, p.y - first.y) < POINT_PX * e.mmPerPx;
+        if (!closing) {
+          this.placed = [...this.placed, p];
+          if (this.placed.length === 1) this.state.setSketchMessage("Click more points for the curve to pass through. Click the first point to close it, or Esc to finish.", "info");
+          return;
+        }
+        const r = addSpline(d, this.placed, true, construction);
+        if (this.commit(r, [r.splineId])) this.placed = [];
+        this.emit({ preview: [] });
+        return;
+      }
       case "circle": {
         if (this.placed.length === 0) {
           this.placed = [p];
@@ -520,6 +542,9 @@ export class SketchController {
         }
       }
       preview.push({ kind: "line", a: [first.x, first.y], b: end });
+    } else if (tool === "spline" && first) {
+      const pts = splinePolyline([...this.placed.map((q): [number, number] => [q.x, q.y]), [p.x, p.y]], false);
+      for (let i = 0; i + 1 < pts.length; i++) preview.push({ kind: "line", a: pts[i], b: pts[i + 1] });
     } else if (tool === "rectangle" && first) {
       const a: [number, number] = [first.x, first.y];
       const c: [number, number] = [p.x, p.y];
@@ -616,6 +641,14 @@ export class SketchController {
 
   /** Esc: abandon a half-drawn shape. Returns true if there was one. */
   cancel(): boolean {
+    // Esc finishes a spline that has enough points (rather than throwing it away).
+    if (this.tool === "spline" && this.placed.length >= 2 && this.data) {
+      const r = addSpline(this.data, this.placed, false, this.state.sketch?.construction ?? false);
+      this.placed = [];
+      this.emit({ preview: [] });
+      this.commit(r, r.splineId ? [r.splineId] : []);
+      return true;
+    }
     const had = this.placed.length > 0 || this.transient.pending.length > 0 || this.drag !== null;
     if (this.drag?.moved) this.state.updateSketch(this.drag.start, { record: false });
     this.placed = [];
