@@ -28,8 +28,12 @@ import {
 import {
   addCentreRectangle,
   addPolygon,
+  addAlignedRectangle,
+  addCentreArc,
   addEllipse,
   addSlot,
+  addThreePointCircle,
+  alignedWidth,
   addSpline,
   addTangentArc,
   filletCorner,
@@ -480,6 +484,37 @@ export class SketchController {
         this.emit({ preview: [] });
         return;
       }
+      case "circle3":
+      case "centreArc":
+      case "alignedRectangle": {
+        if (this.placed.length < 2) {
+          this.placed = [...this.placed, p];
+          return;
+        }
+        const [a, b] = this.placed;
+        let ids: string[] = [];
+        let offer: string[][] = [];
+        let r;
+        if (tool === "circle3") {
+          r = addThreePointCircle(d, a, b, p, construction);
+          ids = [r.circleId];
+          offer = [[r.circleId]];
+        } else if (tool === "centreArc") {
+          r = addCentreArc(d, a, b, p, construction);
+          ids = [r.arcId];
+          offer = [[r.arcId]];
+        } else {
+          r = addAlignedRectangle(d, a, b, [p.x, p.y], construction);
+          ids = r.lineIds;
+          offer = [[r.lineIds[0]], [r.lineIds[1]]];
+        }
+        if (this.commit(r, ids)) {
+          this.placed = [];
+          if (!construction) this.offerDimensions(offer);
+        }
+        this.emit({ preview: [] });
+        return;
+      }
       case "slot": {
         if (this.placed.length < 2) {
           this.placed = [...this.placed, p];
@@ -586,6 +621,41 @@ export class SketchController {
         const [from, to] = left ? [[first.x, first.y], [p.x, p.y]] : [[p.x, p.y], [first.x, first.y]];
         preview.push({ kind: "arc", c: centre, r, a0: Math.atan2(from[1] - centre[1], from[0] - centre[0]), a1: Math.atan2(to[1] - centre[1], to[0] - centre[0]) });
       } else preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
+    } else if (tool === "circle3" && first) {
+      const second = this.placed[1];
+      if (!second) preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
+      else {
+        const c = circleThrough([first.x, first.y], [second.x, second.y], [p.x, p.y]);
+        if (c) preview.push({ kind: "circle", c, r: Math.hypot(first.x - c[0], first.y - c[1]) });
+        else preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
+      }
+    } else if (tool === "centreArc" && first) {
+      const second = this.placed[1];
+      if (!second) {
+        const r = Math.hypot(p.x - first.x, p.y - first.y);
+        preview.push({ kind: "guide", a: [first.x, first.y], b: [p.x, p.y] }, { kind: "circle", c: [first.x, first.y], r });
+      } else {
+        const r = Math.hypot(second.x - first.x, second.y - first.y);
+        const a0 = Math.atan2(second.y - first.y, second.x - first.x);
+        let sweep = Math.atan2(p.y - first.y, p.x - first.x) - a0;
+        while (sweep > Math.PI) sweep -= 2 * Math.PI;
+        while (sweep <= -Math.PI) sweep += 2 * Math.PI;
+        const [s0, s1] = sweep >= 0 ? [a0, a0 + sweep] : [a0 + sweep, a0];
+        preview.push({ kind: "arc", c: [first.x, first.y], r, a0: s0, a1: s1 }, { kind: "guide", a: [first.x, first.y], b: [second.x, second.y] });
+      }
+    } else if (tool === "alignedRectangle" && first) {
+      const second = this.placed[1];
+      if (!second) preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
+      else {
+        const A: [number, number] = [first.x, first.y];
+        const B: [number, number] = [second.x, second.y];
+        const l = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1;
+        const w = alignedWidth(A, B, [p.x, p.y]);
+        const n: [number, number] = [(-(B[1] - A[1]) / l) * w, ((B[0] - A[0]) / l) * w];
+        const C: [number, number] = [B[0] + n[0], B[1] + n[1]];
+        const D: [number, number] = [A[0] + n[0], A[1] + n[1]];
+        preview.push({ kind: "line", a: A, b: B }, { kind: "line", a: B, b: C }, { kind: "line", a: C, b: D }, { kind: "line", a: D, b: A });
+      }
     } else if (tool === "slot" && first) {
       if (this.placed.length === 1) preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
       else preview.push(...slotPreview(first, this.placed[1], slotRadius(first, this.placed[1], p)));
