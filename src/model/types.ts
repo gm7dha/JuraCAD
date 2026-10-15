@@ -270,7 +270,7 @@ export interface Dimension {
   /** The view it's on: its kind, or "section:<id>" for a section view. */
   view: string;
   /** "ordinate": just the distance from datum `a` to point `b`, along `axis`, at the end of a leader. */
-  type: "horizontal" | "vertical" | "aligned" | "diameter" | "radius" | "ordinate";
+  type: "horizontal" | "vertical" | "aligned" | "diameter" | "radius" | "ordinate" | "angle";
   a: DimPoint;
   /** Second point (lengths). */
   b?: DimPoint;
@@ -293,6 +293,11 @@ export interface Dimension {
   axis?: "h" | "v";
   /** Diameters: a hole callout — the hole's full description (count, depth, counterbore…) instead of just its size. */
   callout?: boolean;
+  /** Angles: the second edge's ends (the first edge is a–b). */
+  c?: DimPoint;
+  d?: DimPoint;
+  /** Angles: which way along each edge the measured angle opens (1 = towards its second end, -1 = away). */
+  rays?: [number, number];
 }
 
 /** A note on a drawing sheet: its top-left corner (sheet mm, y up) and its lines of text. */

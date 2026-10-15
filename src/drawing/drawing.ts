@@ -245,7 +245,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
   return out;
 }
 
-const DIM_TYPES = new Set(["horizontal", "vertical", "aligned", "diameter", "radius", "ordinate"]);
+const DIM_TYPES = new Set(["horizontal", "vertical", "aligned", "diameter", "radius", "ordinate", "angle"]);
 
 function parseDimPoint(raw: unknown): DimPoint | null {
   const p = (raw ?? {}) as Record<string, unknown>;
@@ -253,6 +253,14 @@ function parseDimPoint(raw: unknown): DimPoint | null {
   const at = pair(p.at);
   const rel = pair(p.rel);
   return at && rel ? { at, rel } : null;
+}
+
+/** An angle dimension's second edge and which way its arms open. */
+function angleParts(r: Record<string, unknown>): Pick<Dimension, "c" | "d" | "rays"> {
+  const c = parseDimPoint(r.c);
+  const d = parseDimPoint(r.d);
+  const rays = Array.isArray(r.rays) && r.rays.length === 2 ? (r.rays.map((v) => (v === -1 ? -1 : 1)) as [number, number]) : undefined;
+  return { ...(c ? { c } : {}), ...(d ? { d } : {}), ...(rays ? { rays } : {}) };
 }
 
 function parseDimension(raw: unknown): Dimension | null {
@@ -267,6 +275,7 @@ function parseDimension(raw: unknown): Dimension | null {
   const b = round ? null : parseDimPoint(r.b);
   if (!round && !b) return null;
   if (round && !(num(r.r) && (r.r as number) > 0)) return null;
+  if (type === "angle" && !(parseDimPoint(r.c) && parseDimPoint(r.d))) return null;
   return {
     id: r.id,
     view: r.view,
@@ -285,6 +294,7 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(typeof r.prefix === "string" && r.prefix ? { prefix: r.prefix.slice(0, 40) } : {}),
     ...(typeof r.suffix === "string" && r.suffix ? { suffix: r.suffix.slice(0, 40) } : {}),
     ...(r.callout === true && type === "diameter" ? { callout: true } : {}),
+    ...(type === "angle" ? angleParts(r) : {}),
   };
 }
 
