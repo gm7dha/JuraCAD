@@ -170,8 +170,11 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "fillet",
     label: "Fillet",
     namePrefix: "Fillet",
-    description: "Rounds off sharp edges.",
-    params: [{ key: "radius", label: "Radius", defaultValue: "2", positive: true, group: "size" }],
+    description: "Rounds off sharp edges — the same all along, or growing from one radius to another.",
+    params: [
+      { key: "radius", label: "Radius", defaultValue: "2", positive: true, group: "size" },
+      { key: "endRadius", label: "Radius at the far end (0 = the same all along)", defaultValue: "0", min: 0, group: "size" },
+    ],
   },
   chamfer: {
     type: "chamfer",
