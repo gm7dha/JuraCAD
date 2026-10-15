@@ -115,6 +115,7 @@ function customPlaneAt(id: string): SketchPlane | null {
 }
 
 const NO_IDS: string[] = [];
+const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "deleteFace", "thread"]);
 
 /** Apply a click in the viewport to the selection, like Onshape. */
 function handlePick(target: PickTarget | null, additive: boolean) {
@@ -425,6 +426,9 @@ export function Viewport() {
 
   useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft && !(explode > 0)), [assembly, mateDraft, explode]);
   const editingAnything = useStore((s) => !!s.editing);
+  // Tools that only take faces: clicking near an edge picks the face it's on.
+  const facesOnly = useStore((s) => FACE_TOOLS.has(s.editing?.draft.type ?? ""));
+  useEffect(() => viewportApi.current?.setFacesOnly(facesOnly), [facesOnly]);
   useEffect(() => viewportApi.current?.setBoxSelectEnabled(!assembly && !editingAnything), [assembly, editingAnything]);
 
   // Arrows showing the mate connectors picked so far.

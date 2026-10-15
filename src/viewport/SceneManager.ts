@@ -354,6 +354,12 @@ export class SceneManager {
     return [...this.parts.values()].map((p) => ({ id: p.data.id, faceRefs: p.data.faceRefs }));
   }
 
+  /** While a tool only takes faces (Thread, Draft…): clicks and hovering go to the face, never an edge on it. */
+  setFacesOnly(on: boolean): void {
+    this.facesOnly = on;
+  }
+  private facesOnly = false;
+
   /** Let left-drags on empty space draw a selection box. */
   setBoxSelectEnabled(on: boolean): void {
     this.boxEnabled = on;
@@ -949,8 +955,8 @@ export class SceneManager {
     const faceHit = this.raycaster.intersectObjects(meshes, false).find(kept);
     const edgeHit = this.raycaster.intersectObjects(lines, false).find(kept);
 
-    // Prefer an edge when it's not hidden behind the face we hit.
-    if (edgeHit && (!faceHit || edgeHit.distance <= faceHit.distance + threshold * 2)) {
+    // Prefer an edge when it's not hidden behind the face we hit (unless only faces are wanted).
+    if (edgeHit && !this.facesOnly && (!faceHit || edgeHit.distance <= faceHit.distance + threshold * 2)) {
       const partId = edgeHit.object.userData.partId as string;
       const groups = this.parts.get(partId)?.data.edgeGroups ?? [];
       const vertex = edgeHit.index ?? -1;
