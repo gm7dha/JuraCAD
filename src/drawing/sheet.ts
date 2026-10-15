@@ -16,6 +16,7 @@ import { projectPoint } from "./cameras";
 import { fromRel, sectionGeometry, viewKey } from "./sections";
 import { drawDimension, measureDim, resolveDim } from "./dimensions";
 import { calloutText, type TapSize } from "./holeCallouts";
+import { symbolPrims } from "./symbols";
 
 /** "centre" is the long-and-short dashed line for centre lines and cutting planes. */
 export type LineStyle = "border" | "visible" | "hidden" | "thin" | "centre";
@@ -359,6 +360,12 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   // Notes: lines of text from their top-left corner.
   const notes: SheetLayout["notes"] = [];
   for (const note of drawing.notes ?? []) {
+    if (note.symbol) {
+      const drawn = symbolPrims(note, note.symbol);
+      prims.push(...drawn.prims);
+      notes.push({ id: note.id, box: drawn.box });
+      continue;
+    }
     const lines = note.text.split("\n");
     const [x, y] = note.at;
     lines.forEach((line, i) => {

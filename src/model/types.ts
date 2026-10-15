@@ -300,7 +300,36 @@ export interface DrawingNote {
   id: string;
   at: [number, number];
   text: string;
+  /** A drawing symbol (datum, feature control frame, surface finish) instead of plain text. */
+  symbol?: DrawingSymbol;
+  /** Where its leader line points (sheet mm). */
+  leader?: [number, number];
 }
+
+/** Geometric tolerance characteristics (GD&T). */
+export type GdtCharacteristic =
+  | "straightness"
+  | "flatness"
+  | "circularity"
+  | "cylindricity"
+  | "profileLine"
+  | "profileSurface"
+  | "perpendicularity"
+  | "parallelism"
+  | "angularity"
+  | "position"
+  | "concentricity"
+  | "symmetry"
+  | "runout"
+  | "totalRunout";
+
+export type DrawingSymbol =
+  /** A datum feature symbol: a letter in a box, on a triangle touching the surface. */
+  | { kind: "datum"; letter: string }
+  /** A feature control frame: the characteristic, its tolerance (Ø for a round zone) and the datums it's measured from. */
+  | { kind: "fcf"; characteristic: GdtCharacteristic; tolerance: string; diameter?: boolean; datums: string[] }
+  /** A surface finish mark: the roughness (Ra, µm), and whether it's machined (the bar across). */
+  | { kind: "finish"; ra: string; machined?: boolean };
 
 export interface DimPoint {
   at: [number, number];

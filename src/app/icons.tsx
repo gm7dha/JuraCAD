@@ -349,6 +349,26 @@ export const Icons = {
       <path d="M11 11l1 1" />
     </Svg>
   ),
+  Datum: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="7" y="3" width="10" height="9" />
+      <path d="M10.5 9.5l1.5-4 1.5 4M11 8h2" />
+      <path d="M12 12v4M8.5 20h7l-3.5-4z" />
+    </Svg>
+  ),
+  Fcf: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="2" y="8" width="20" height="8" />
+      <path d="M8 8v8M16 8v8" />
+      <path d="M3.5 13.5h3l.5-3h-3z" />
+    </Svg>
+  ),
+  SurfaceFinish: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 11l4 8 7-14h6" />
+      <path d="M5 11h8" />
+    </Svg>
+  ),
   HoleCallout: (p: IconProps) => (
     <Svg {...p}>
       <circle cx="7" cy="16" r="4" />
