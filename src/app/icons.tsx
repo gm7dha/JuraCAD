@@ -165,6 +165,11 @@ export const Icons = {
       <path d="M12 6v2.5M12 15.5V18" />
     </Svg>
   ),
+  Folder: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 6.5h6l2 2h10v10H3z" />
+    </Svg>
+  ),
   Configurations: (p: IconProps) => (
     <Svg {...p}>
       <rect x="3" y="4" width="18" height="16" rx="1.5" />

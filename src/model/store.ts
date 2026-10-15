@@ -14,6 +14,8 @@ import {
   redo as redoHistory,
   removeFeature,
   renameFeature,
+  renameFolder,
+  setFolder,
   renamePart,
   replaceFeature,
   setSuppressed,
@@ -256,6 +258,9 @@ export interface AppState {
   moveFeature: (id: string, beforeId: string | null) => void;
   toggleSuppressed: (id: string) => void;
   renameFeature: (id: string, name: string) => void;
+  /** Feature list folders: put features in one (null takes them out), or rename one. */
+  setFeatureFolder: (ids: string[], folder: string | null) => void;
+  renameFeatureFolder: (from: string, to: string) => void;
   renameDocument: (name: string) => void;
   /** Name a part (blank goes back to "Part N"). One undo step. */
   renamePart: (partId: string, name: string) => void;
@@ -798,6 +803,8 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     renameFeature: (id, name) => changeStudio((doc) => renameFeature(doc, id, name)),
+    setFeatureFolder: (ids, folder) => changeStudio((doc) => setFolder(doc, ids, folder)),
+    renameFeatureFolder: (from, to) => changeStudio((doc) => renameFolder(doc, from, to)),
 
     setPartMaterial: (partId, material) =>
       change((doc) => {
