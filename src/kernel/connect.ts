@@ -7,6 +7,10 @@ let storageWarned = false;
 import { activeStudioId } from "../model/store";
 import { studiosOf } from "../model/studios";
 import type { StudioInput } from "./protocol";
+import type { PartSmithDocument } from "../model/types";
+import { configurationsInUse } from "../assembly/configured";
+import { switchConfiguration } from "../model/configurations";
+import { setCurrentScope } from "../model/expr";
 import { KernelClient } from "./client";
 
 let client: KernelClient | null = null;
@@ -21,7 +25,7 @@ function currentStudios(): StudioInput[] {
   const s = useStore.getState();
   const here = activeStudioId(s);
   const editingIn = s.editing ? here : null;
-  return studiosOf(s.history.present).map((st) => ({
+  return [...studiosOf(s.history.present).map((st) => ({
     id: st.id,
     features:
       st.id === here && s.rollbackTo
@@ -29,7 +33,30 @@ function currentStudios(): StudioInput[] {
         : st.id === editingIn
           ? featuresWithDraft(st.features, s.editing?.draft ?? null)
           : st.features,
-  }));
+  })), ...configuredStudios(s.history.present)];
+}
+
+/** Part Studios that assemblies show in another configuration, built again in it ("<studio>@<configuration>"). */
+let configuredCache: { doc: PartSmithDocument; list: StudioInput[] } | null = null;
+function configuredStudios(doc: PartSmithDocument): StudioInput[] {
+  if (configuredCache?.doc === doc) return configuredCache.list;
+  const list: StudioInput[] = [];
+  for (const { studioId, configurationId } of configurationsInUse(doc)) {
+    const shown = switchConfiguration(doc, configurationId);
+    const studio = studiosOf(shown).find((x) => x.id === studioId);
+    if (!studio) continue;
+    list.push({ id: `${studioId}@${configurationId}`, features: studio.features, variables: resolveVariables(shown.variables).values, partSuffix: `@${configurationId}` });
+  }
+  // Working out another configuration changes the values boxes use: put the ones on show back.
+  if (list.length) setCurrentScope(resolveVariables(doc.variables).values);
+  configuredCache = { doc, list };
+  return list;
+}
+
+/** What decides the configured builds (so a rebuild happens when it changes). */
+function configuredKey(doc: PartSmithDocument): string {
+  const used = configurationsInUse(doc);
+  return used.length ? JSON.stringify([used, doc.configurations, doc.activeConfiguration]) : "";
 }
 
 /**
@@ -71,6 +98,7 @@ export function connectKernel(): () => void {
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
   let lastRollback = useStore.getState().rollbackTo;
+  let lastConfigured = configuredKey(useStore.getState().history.present);
 
   const unsubscribe = useStore.subscribe((s) => {
     const draft = s.editing?.draft ?? null;
@@ -80,8 +108,10 @@ export function connectKernel(): () => void {
       s.rollbackTo !== lastRollback ||
       s.history.present.variables !== lastVariables ||
       s.history.present.partNames !== lastPartNames ||
-      s.history.present.partStudios !== lastStudios
+      s.history.present.partStudios !== lastStudios ||
+      configuredKey(s.history.present) !== lastConfigured
     ) {
+      lastConfigured = configuredKey(s.history.present);
       lastStudios = s.history.present.partStudios;
       lastPartNames = s.history.present.partNames;
       lastFeatures = s.history.present.features;

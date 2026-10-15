@@ -6,6 +6,7 @@ import { boundsOfVertices, type Box3 } from "../assembly/assembly";
 import { explodedPlacements, explodeOffsets } from "../assembly/explode";
 import type { Placement } from "../assembly/math";
 import { withDragChange } from "../assembly/drag";
+import { findMesh, meshIdOf } from "../assembly/configured";
 import { activeAssembly, useStore, type MateDraft } from "../model/store";
 import type { Assembly, Mate } from "../model/types";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
@@ -40,7 +41,7 @@ export function partBox(p: PartMesh): Box3 | null {
 export function explodeAssembly(assembly: Assembly, parts: PartMesh[], placements: Record<string, Placement>, amount: number): Record<string, Placement> {
   if (!(amount > 0)) return placements;
   const items = assembly.instances.map((i) => {
-    const part = parts.find((p) => p.id === i.partId);
+    const part = findMesh(parts, meshIdOf(i));
     return { id: i.id, placement: placements[i.id] ?? i.placement, box: part ? partBox(part) : null, fixed: i.fixed };
   });
   return explodedPlacements(placements, explodeOffsets(items, amount));
@@ -49,9 +50,9 @@ export function explodeAssembly(assembly: Assembly, parts: PartMesh[], placement
 /** Each instance in its solved place, for exports and clash checks (copies of missing parts are left out). */
 export function instancesForKernel(assembly: Assembly, parts: PartMesh[], solved: SolveResult = solveWithParts(assembly, parts)): InstanceInput[] {
   return assembly.instances
-    .filter((i) => parts.some((p) => p.id === i.partId))
+    .filter((i) => findMesh(parts, meshIdOf(i)))
     .map((i) => {
       const p = solved.placements[i.id] ?? i.placement;
-      return { id: i.id, partId: i.partId, name: i.name, position: p.position, rotation: p.rotation };
+      return { id: i.id, partId: meshIdOf(i), name: i.name, position: p.position, rotation: p.rotation };
     });
 }

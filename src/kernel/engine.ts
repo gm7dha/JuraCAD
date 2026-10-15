@@ -38,6 +38,8 @@ import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredIt
 const MAIN_STUDIO_ID = "main";
 
 interface BuiltPart {
+  /** Built in another configuration, only for assemblies (left out when "all parts" are meant). */
+  configured?: boolean;
   id: string;
   name: string;
   featureIds: string[];
@@ -922,21 +924,27 @@ export class GeometryEngine {
     const featureErrors: Record<string, string> = {};
     const shared = JSON.stringify([variables, partNames]);
     for (const studio of studios) {
-      const key = JSON.stringify(studio.features) + shared;
+      const key = JSON.stringify(studio.features) + shared + (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "");
       let b = this.builds.get(studio.id);
       if (!b || b.key !== key) {
         if (b) this.disposeBuild(b);
         this.parts = [];
         this.tools = new Map();
+        setCurrentScope(studio.variables ?? variables);
         const errors = this.buildFeatures(studio.features);
+        setCurrentScope(variables);
         // Names the user gave parts (used in the lists and in exported files).
         for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
+        // Another configuration's copies of the parts (for assemblies).
+        if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
         b = { key, parts: this.parts, tools: this.tools, errors };
         this.builds.set(studio.id, b);
         rebuilt.push(studio.id);
-        for (const p of b.parts) meshes.push({ ...this.meshPart(p), studioId: studio.id });
+        const configuration = studio.partSuffix?.replace(/^@/, "");
+        for (const p of b.parts) meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}) });
       }
-      Object.assign(featureErrors, b.errors);
+      // Problems are shown for the configuration on show only.
+      if (!studio.partSuffix) Object.assign(featureErrors, b.errors);
     }
     this.parts = studios.flatMap((s) => this.builds.get(s.id)?.parts ?? []);
     this.tools = new Map();
@@ -1810,7 +1818,7 @@ export class GeometryEngine {
   check(quality: MeshQuality, partIds: string[] = []): CheckResult {
     const oc = getOC();
     const tol = MESH_TOLERANCES[quality];
-    const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
+    const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts.filter((p) => !p.configured);
     return {
       overlaps: this.findOverlaps(chosen),
       parts: chosen.map((p) => {
@@ -1866,7 +1874,7 @@ export class GeometryEngine {
    */
   private withChosen<T>(partIds: string[], instances: InstanceInput[] | undefined, fn: (items: { id: string; name: string; shape: Shape3D }[]) => T): T {
     if (!instances?.length) {
-      const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts;
+      const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts.filter((p) => !p.configured);
       if (chosen.length === 0) throw new Error("There's nothing to export yet.");
       return fn(chosen.map((p) => ({ id: p.id, name: p.name, shape: p.shape })));
     }
@@ -1883,7 +1891,8 @@ export class GeometryEngine {
   private placeInstances(instances: InstanceInput[]): { id: string; partId: string; name: string; shape: Shape3D }[] {
     const out: { id: string; partId: string; name: string; shape: Shape3D }[] = [];
     for (const i of instances) {
-      const part = this.parts.find((p) => p.id === i.partId);
+      // A part in another configuration, or (in the one on show) the ordinary part.
+      const part = this.parts.find((p) => p.id === i.partId) ?? this.parts.find((p) => p.id === i.partId.split("@")[0]);
       if (!part) continue;
       let shape = part.shape.clone();
       const [x, y, z, w] = i.rotation;
@@ -1902,7 +1911,7 @@ export class GeometryEngine {
    */
   project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sections: SectionRequest[] = []): ViewProjection[] {
     const placed = instances?.length ? this.placeInstances(instances) : [];
-    const shapes = placed.length ? placed.map((p) => p.shape) : (partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts).map((p) => p.shape);
+    const shapes = placed.length ? placed.map((p) => p.shape) : (partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts.filter((p) => !p.configured)).map((p) => p.shape);
     const empty = (kind: string): ViewProjection => ({ kind, visible: [], hidden: [], circles: [], points: [], bounds: null });
     const standard = views.filter((k) => k !== "section");
     if (shapes.length === 0) {

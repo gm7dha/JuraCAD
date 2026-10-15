@@ -12,6 +12,7 @@ import { holeRows, holeTableView } from "../drawing/holeTable";
 import { holeOfCircle, tapSizes } from "../drawing/holeCallouts";
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
+import { findMesh } from "../assembly/configured";
 import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { dimPoint, dragDimension, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
@@ -50,7 +51,7 @@ function drawingSubject(
     const spread = explodeAssembly(asm, parts, Object.fromEntries(instances.map((i) => [i.id, { position: i.position, rotation: i.rotation }])), asm.explode ?? 1);
     instances = instances.map((i) => ({ ...i, position: spread[i.id]?.position ?? i.position }));
   }
-  return { name: asm.name, partIds: [], instances, key: [JSON.stringify(instances), ...parts.filter((p) => instances.some((i) => i.partId === p.id))] };
+  return { name: asm.name, partIds: [], instances, key: [JSON.stringify(instances), ...instances.map((i) => findMesh(parts, i.partId))] };
 }
 
 /** The parts list for an assembly drawing (none for a part). */
@@ -59,7 +60,8 @@ function bomFor(drawing: Drawing, doc: PartSmithDocument, parts: PartMesh[]): Bo
   const asm = doc.assemblies?.find((a) => a.id === drawing.source!.id);
   if (!asm) return undefined;
   const names = Object.fromEntries(parts.map((p) => [p.id, p.name]));
-  return billOfMaterials(asm, names).map((r, i) => ({ item: i + 1, name: r.name, quantity: r.quantity, partId: r.partId }));
+  const configurations = Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name]));
+  return billOfMaterials(asm, names, configurations).map((r, i) => ({ item: i + 1, name: r.name, quantity: r.quantity, partId: r.partId }));
 }
 
 /** A spot on one copy of each listed part, for the balloons to point at. */
@@ -68,7 +70,7 @@ function balloonsFor(bom: BomLine[] | undefined, instances: InstanceInput[] | un
   const out: NonNullable<SheetInfo["balloons"]> = [];
   for (const row of bom) {
     const inst = instances.find((i) => i.partId === row.partId);
-    const mesh = parts.find((p) => p.id === row.partId);
+    const mesh = row.partId ? findMesh(parts, row.partId) : undefined;
     const spot = mesh ? surfacePointNearCentre(mesh.vertices) : null;
     if (inst && spot) out.push({ item: row.item, at: applyPlacement({ position: inst.position, rotation: inst.rotation }, spot) });
   }

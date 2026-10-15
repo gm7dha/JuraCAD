@@ -1640,3 +1640,35 @@ describe("splines and ellipses", () => {
     expect(engine.check("normal").parts[0].geometryValid).toBe(true);
   });
 });
+
+describe("parts in other configurations (for assemblies)", () => {
+  it("builds a Part Studio again with another configuration's sizes", async () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: "w", depth: 10, height: 10 });
+    const r = engine.rebuildStudios(
+      [
+        { id: "main", features: [box] },
+        { id: "main@big", features: [box], variables: { w: 30 }, partSuffix: "@big" },
+      ],
+      { w: 10 },
+    );
+    expect(r.featureErrors).toEqual({});
+    const plain = r.parts.find((p) => p.id === box.id)!;
+    const big = r.parts.find((p) => p.id === `${box.id}@big`)!;
+    expect(big.configuration).toBe("big");
+    const width = (p: typeof plain) => {
+      const a = analyzeMesh(p.vertices, p.triangles);
+      return a.bounds!.max[0] - a.bounds!.min[0];
+    };
+    expect(width(plain)).toBeCloseTo(10, 4);
+    expect(width(big)).toBeCloseTo(30, 4);
+    // "All parts" (checks, exports, drawings of the Part Studio) means the ordinary ones.
+    expect(engine.check("normal").parts.map((p) => p.partId)).toEqual([box.id]);
+    // An assembly can place either.
+    const step = await engine.exportStep([], undefined, [
+      { id: "i1", partId: box.id, name: "Box <1>", position: [0, 0, 0], rotation: [0, 0, 0, 1] },
+      { id: "i2", partId: `${box.id}@big`, name: "Box <2>", position: [0, 50, 0], rotation: [0, 0, 0, 1] },
+    ]);
+    expect(step.partCount).toBe(2);
+  });
+});

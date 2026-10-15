@@ -55,7 +55,9 @@ export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string
       const copy: Instance = was
         ? { ...was, placement }
         : { id: newId(), partId: seed.partId, name: nextInstanceName({ ...a, instances: [...instances, ...keep] }, seed.name.replace(/ <\d+>$/, "")), placement, fixed: false, copyOf: { pattern: p.id, seed: seed.id, index: k } };
-      keep.push(copy);
+      // Copies show the part in the same configuration as their original.
+      const { configuration: _old, ...plain } = copy;
+      keep.push(seed.configuration ? { ...plain, configuration: seed.configuration } : plain);
     }
   }
   // Copies go straight after their pattern's last original, so the list reads naturally.

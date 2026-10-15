@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 
+import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
 import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
@@ -32,7 +33,7 @@ const NO_PLACEMENTS: Record<string, number[]> = {};
 function instanceMeshes(parts: PartMesh[], assembly: Assembly): PartMesh[] {
   const out: PartMesh[] = [];
   for (const i of assembly.instances) {
-    const part = parts.find((p) => p.id === i.partId);
+    const part = findMesh(parts, meshIdOf(i));
     if (part) out.push({ ...part, id: i.id, name: i.name, featureIds: [] });
   }
   return out;
@@ -44,7 +45,7 @@ function connectorItems(parts: PartMesh[], assembly: Assembly, connectors: (Mate
   for (const c of connectors) {
     if (!c) continue;
     const instance = assembly.instances.find((i) => i.id === c.instanceId);
-    const part = instance && parts.find((p) => p.id === instance.partId);
+    const part = instance && findMesh(parts, meshIdOf(instance));
     const index = part ? findPick(part, c.pick) : -1;
     if (instance && index >= 0) items.push({ partId: instance.id, kind: c.pick.ref.kind, index });
   }
@@ -65,11 +66,12 @@ function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
     if (target?.kind !== "part") return;
     const asm = activeAssembly(s);
     const instance = asm?.instances.find((i) => i.id === target.item.partId);
-    const part = instance && s.parts.find((p) => p.id === instance.partId);
+    const part = instance && findMesh(s.parts, meshIdOf(instance));
     if (!instance || !part) return;
     const ref = target.item.kind === "edge" ? part.edgeRefs?.[target.item.index] : part.faceRefs?.[target.item.index];
     if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return;
-    s.pickMateConnector({ instanceId: instance.id, pick: { partId: part.id, ref } });
+    // Picks name the part itself, whichever configuration it's shown in.
+    s.pickMateConnector({ instanceId: instance.id, pick: { partId: instance.partId, ref } });
     return;
   }
   const id = target?.kind === "part" ? target.item.partId : null;
@@ -406,7 +408,7 @@ export function Viewport() {
   const asmSelection = useStore((s) => s.asmSelection);
   const hiddenInstances = useStore((s) => s.hiddenInstances);
   // In an assembly the meshes only change when parts are rebuilt or instances added/removed, not when they move.
-  const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${i.partId}`).join(",") : null;
+  const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${meshIdOf(i)}`).join(",") : null;
   const display = useMemo(
     () => (assembly ? instanceMeshes(parts, assembly) : shownParts),
     // eslint-disable-next-line react-hooks/exhaustive-deps

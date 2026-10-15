@@ -78,11 +78,16 @@ export function updateInstance(
   doc: PartSmithDocument,
   assemblyId: string,
   instanceId: string,
-  patch: Partial<Pick<Instance, "name" | "placement" | "fixed">>,
+  patch: Partial<Pick<Instance, "name" | "placement" | "fixed" | "configuration">>,
 ): PartSmithDocument {
   return updateAssembly(doc, assemblyId, (a) => ({
     ...a,
-    instances: a.instances.map((i) => (i.id === instanceId ? { ...i, ...patch, name: patch.name?.trim() || i.name } : i)),
+    instances: a.instances.map((i) => {
+      if (i.id !== instanceId) return i;
+      const next = { ...i, ...patch, name: patch.name?.trim() || i.name };
+      if ("configuration" in patch && !patch.configuration) delete next.configuration;
+      return next;
+    }),
   }));
 }
 
@@ -196,14 +201,18 @@ export interface BomRow {
 }
 
 /** Bill of materials: each part once, with how many copies are in the assembly (in order of first use). */
-export function billOfMaterials(assembly: Assembly, partNames: Record<string, string>): BomRow[] {
+export function billOfMaterials(assembly: Assembly, partNames: Record<string, string>, configurationNames: Record<string, string> = {}): BomRow[] {
   const rows = new Map<string, BomRow>();
   for (const i of assembly.instances) {
-    const row = rows.get(i.partId);
+    // A part in another configuration is a different line ("Bracket (Large)").
+    const key = i.configuration && configurationNames[i.configuration] ? `${i.partId}@${i.configuration}` : i.partId;
+    const row = rows.get(key);
     if (row) row.quantity++;
     else {
       const name = partNames[i.partId];
-      rows.set(i.partId, { partId: i.partId, name: name ?? i.name.replace(/\s*<\d+>$/, ""), quantity: 1, missing: name === undefined });
+      const base = name ?? i.name.replace(/\s*<\d+>$/, "");
+      const cfg = key !== i.partId ? ` (${configurationNames[i.configuration!]})` : "";
+      rows.set(key, { partId: key, name: base + cfg, quantity: 1, missing: name === undefined });
     }
   }
   return [...rows.values()];
@@ -302,6 +311,7 @@ export function parseAssemblies(raw: unknown): Assembly[] {
         name: typeof ri.name === "string" && ri.name.trim() ? ri.name : "Part",
         placement: parsePlacement(ri.placement),
         fixed: ri.fixed === true,
+        ...(typeof ri.configuration === "string" && ri.configuration ? { configuration: ri.configuration } : {}),
         ...(copy && typeof copy.pattern === "string" && typeof copy.seed === "string" && typeof copy.index === "number" && Number.isInteger(copy.index) && copy.index > 0
           ? { copyOf: { pattern: copy.pattern, seed: copy.seed, index: copy.index }, fixed: false }
           : {}),

@@ -285,7 +285,7 @@ export interface AppState {
   renameAssembly: (id: string, name: string) => void;
   /** Put a copy of a part into the assembly on show. */
   insertInstance: (part: { id: string; name: string }, placement?: Placement) => void;
-  updateInstance: (id: string, patch: Partial<Pick<Instance, "name" | "placement" | "fixed">>) => void;
+  updateInstance: (id: string, patch: Partial<Pick<Instance, "name" | "placement" | "fixed" | "configuration">>) => void;
   removeInstances: (ids: string[]) => void;
   setAsmSelection: (ids: string[]) => void;
   toggleInstanceHidden: (id: string) => void;

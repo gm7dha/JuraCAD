@@ -335,6 +335,8 @@ export interface Instance {
   fixed: boolean;
   /** A copy made by a pattern: which pattern, the instance it copies, and which copy it is (1 = next to the original). */
   copyOf?: { pattern: string; seed: string; index: number };
+  /** Show the part in this configuration (its id) instead of the one on show in the Part Studio. */
+  configuration?: string;
 }
 
 /**

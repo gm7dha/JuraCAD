@@ -14,6 +14,7 @@ import type { Assembly, Mate, MateType } from "../model/types";
 import { compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement } from "./math";
 import { frameOnParts, framePlacement, type Frame } from "./connectors";
 import { patternStep, placeCopy } from "./patterns";
+import { findMesh, meshIdOf } from "./configured";
 import type { PartMesh } from "../kernel/protocol";
 
 export interface MateValueDef {
@@ -437,7 +438,12 @@ function solveLinear(M: number[][], b: number[]): number[] | null {
 
 /** Solve using the parts as built now. */
 export function solveWithParts(assembly: Assembly, parts: PartMesh[]): SolveResult {
-  return solveAssembly(assembly, (mate, side) => frameOnParts(parts, mate[side].pick));
+  return solveAssembly(assembly, (mate, side) => {
+    // On the part as the instance shows it (which may be another configuration).
+    const instance = assembly.instances.find((i) => i.id === mate[side].instanceId);
+    const mesh = instance?.configuration ? findMesh(parts, meshIdOf(instance)) : undefined;
+    return mesh ? frameOnParts([mesh], { ...mate[side].pick, partId: mesh.id }) : frameOnParts(parts, mate[side].pick);
+  });
 }
 
 /** Next free mate name, e.g. "Hinge 2". */

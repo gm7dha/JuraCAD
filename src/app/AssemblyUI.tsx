@@ -565,7 +565,10 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
     };
     return Object.fromEntries(parts.map((p) => [p.id, label(p)]));
   }, [parts, doc]);
-  const bom = useMemo(() => billOfMaterials(assembly, partNames), [assembly, partNames]);
+  const bom = useMemo(
+    () => billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name]))),
+    [assembly, partNames, doc.configurations],
+  );
   const kernelReady = useStore((s) => s.kernelStatus === "ready");
 
   return (
@@ -734,6 +737,7 @@ function NumberBox({ label, value, unit, onCommit }: { label: string; value: num
 /** Position and turn of the one selected instance. */
 export function InstancePanel() {
   const asm = useStore(activeAssembly);
+  const doc = useStore((s) => s.history.present);
   const selection = useStore((s) => s.asmSelection);
   const insertOpen = useStore((s) => s.dialog === "insert");
   const mating = useStore((s) => s.mateDraft !== null);
@@ -746,6 +750,8 @@ export function InstancePanel() {
   const copyOriginal = instance.copyOf ? asm?.instances.find((i) => i.id === instance.copyOf!.seed) : undefined;
   const update = useStore.getState().updateInstance;
   const { position, rotation } = instance.placement;
+  const configurations = doc.configurations ?? [];
+  const shownConfiguration = doc.activeConfiguration;
   const turn = eulerDegFromQuat(rotation);
   const setPosition = (k: number, v: number) => {
     const p = [...position] as Placement["position"];
@@ -773,6 +779,29 @@ export function InstancePanel() {
           <input type="checkbox" checked={instance.fixed} onChange={(e) => update(instance.id, { fixed: e.target.checked })} />
           Fixed (stays where it is)
         </label>
+        {configurations.length > 0 && !instance.copyOf && (
+          <div className="param-field compact">
+            <label htmlFor="instance-configuration">Configuration</label>
+            <select
+              id="instance-configuration"
+              value={instance.configuration ?? ""}
+              onChange={(e) => {
+                update(instance.id, { configuration: e.target.value || undefined });
+                // Its pattern copies show the same configuration.
+                const pattern = asm?.patterns?.find((p) => p.seeds.includes(instance.id));
+                if (pattern) useStore.getState().updatePattern(pattern.id, {});
+              }}
+              title="Show this part as it is in one of the design's configurations"
+            >
+              <option value="">As in the Part Studio ({configurations.find((c) => c.id === shownConfiguration)?.name ?? configurations[0].name})</option>
+              {configurations.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         {copyPattern ? (
           <>
             <p className="dialog-hint">

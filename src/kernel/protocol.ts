@@ -53,6 +53,9 @@ export interface ViewHole {
 export interface StudioInput {
   id: string;
   features: Feature[];
+  /** A Part Studio built again in another configuration: its variables, and what's added to its parts' ids ("@<configuration>"). */
+  variables?: Record<string, number>;
+  partSuffix?: string;
 }
 
 /** Display mesh for one part, ready to hand to three.js. */
@@ -61,6 +64,8 @@ export interface PartMesh {
   name: string;
   /** The Part Studio it belongs to. */
   studioId?: string;
+  /** Built in another configuration (for assemblies): that configuration's id. */
+  configuration?: string;
   /** IDs of the features that built or changed this part. */
   featureIds: string[];
   vertices: Float32Array;
