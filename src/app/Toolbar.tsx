@@ -148,21 +148,29 @@ export function Toolbar() {
           active={editingType === "revolve"}
           title={hasSketch ? "Revolve — spin a sketch's closed shapes around a line, for round parts" : "Draw a sketch first, then revolve it"}
         />
-        <ToolButton
-          label="Sweep"
-          icon={<Icons.Sweep />}
-          onClick={() => startCreate("sweep")}
-          disabled={!ready || sketchCount < 2}
-          active={editingType === "sweep"}
-          title={sketchCount >= 2 ? "Sweep — carry a sketch's shape along a path drawn in another sketch (pipes, handles, rails)" : "Draw two sketches first: the shape, and the path for it to follow"}
-        />
-        <ToolButton
-          label="Loft"
-          icon={<Icons.Loft />}
-          onClick={() => startCreate("loft")}
-          disabled={!ready || sketchCount < 2}
-          active={editingType === "loft"}
-          title={sketchCount >= 2 ? "Loft — a smooth solid joining shapes on different sketches" : "Draw shapes on two or more sketches (on different planes) first"}
+        <ToolGroupButton
+          id="sweeps"
+          name="sweep"
+          items={[
+            {
+              key: "sweep",
+              label: "Sweep",
+              icon: <Icons.Sweep />,
+              onClick: () => startCreate("sweep"),
+              disabled: !ready || sketchCount < 2,
+              active: editingType === "sweep",
+              title: sketchCount >= 2 ? "Sweep — carry a sketch's shape along a path drawn in another sketch (pipes, handles, rails)" : "Draw two sketches first: the shape, and the path for it to follow",
+            },
+            {
+              key: "loft",
+              label: "Loft",
+              icon: <Icons.Loft />,
+              onClick: () => startCreate("loft"),
+              disabled: !ready || sketchCount < 2,
+              active: editingType === "loft",
+              title: sketchCount >= 2 ? "Loft — a smooth solid joining shapes on different sketches" : "Draw shapes on two or more sketches (on different planes) first",
+            },
+          ]}
         />
         <ToolButton
           label="Text"
@@ -172,37 +180,62 @@ export function Toolbar() {
           active={editingType === "text"}
           title="Text — raised or engraved lettering on a plane or flat face"
         />
-        <ToolButton
-          label="Split"
-          icon={<Icons.Split />}
-          onClick={() => startCreate("split")}
-          disabled={!ready || !hasPart}
-          active={editingType === "split"}
-          title={hasPart ? "Split — cut a part in two along a plane or flat face" : "Make a part first"}
+        <ToolGroupButton
+          id="thicken"
+          name="wall"
+          items={[
+            {
+              key: "thicken",
+              label: "Thicken",
+              icon: <Icons.Thicken />,
+              onClick: () => startCreate("thicken"),
+              disabled: !ready || !hasPart,
+              active: editingType === "thicken",
+              title: hasPart ? "Thicken — grow flat faces into a solid of a set thickness" : "Make a part first",
+            },
+            {
+              key: "rib",
+              label: "Rib",
+              icon: <Icons.Rib />,
+              onClick: () => startCreate("rib"),
+              disabled: !ready || !hasPart || !hasSketch,
+              active: editingType === "rib",
+              title: hasPart && hasSketch ? "Rib — a thin strengthening wall along a sketch's lines, filling the space up to the part" : "Make a part, then sketch the rib's line(s)",
+            },
+          ]}
         />
-        <ToolButton
-          label="Thicken"
-          icon={<Icons.Thicken />}
-          onClick={() => startCreate("thicken")}
-          disabled={!ready || !hasPart}
-          active={editingType === "thicken"}
-          title={hasPart ? "Thicken — grow flat faces into a solid of a set thickness" : "Make a part first"}
-        />
-        <ToolButton
-          label="Rib"
-          icon={<Icons.Rib />}
-          onClick={() => startCreate("rib")}
-          disabled={!ready || !hasPart || !hasSketch}
-          active={editingType === "rib"}
-          title={hasPart && hasSketch ? "Rib — a thin strengthening wall along a sketch's lines, filling the space up to the part" : "Make a part, then sketch the rib's line(s)"}
-        />
-        <ToolButton
-          label="Boolean"
-          icon={<Icons.Boolean />}
-          onClick={() => startCreate("boolean")}
-          disabled={!ready || partCount < 2}
-          active={editingType === "boolean"}
-          title={partCount >= 2 ? "Boolean — join parts into one, cut parts with others, or keep just where they overlap" : "Make at least two parts first"}
+        <ToolGroupButton
+          id="parts"
+          name="part"
+          items={[
+            {
+              key: "boolean",
+              label: "Boolean",
+              icon: <Icons.Boolean />,
+              onClick: () => startCreate("boolean"),
+              disabled: !ready || partCount < 2,
+              active: editingType === "boolean",
+              title: partCount >= 2 ? "Boolean — join parts into one, cut parts with others, or keep just where they overlap" : "Make at least two parts first",
+            },
+            {
+              key: "split",
+              label: "Split",
+              icon: <Icons.Split />,
+              onClick: () => startCreate("split"),
+              disabled: !ready || !hasPart,
+              active: editingType === "split",
+              title: hasPart ? "Split — cut a part in two along a plane or flat face" : "Make a part first",
+            },
+            {
+              key: "deletePart",
+              label: "Delete part",
+              icon: <Icons.Trash />,
+              onClick: () => startCreate("deletePart"),
+              disabled: !ready || partCount < 1,
+              active: editingType === "deletePart",
+              title: partCount ? "Delete part — remove whole parts from here on (select them in the Parts list first, or click them)" : "Make a part first",
+            },
+          ]}
         />
         <ToolButton
           label="Fastener"
@@ -211,14 +244,6 @@ export function Toolbar() {
           disabled={!ready}
           active={editingType === "fastener"}
           title="Fastener — a standard hex bolt, nut or washer (M3–M12) as a new part, optionally with its thread"
-        />
-        <ToolButton
-          label="Delete part"
-          icon={<Icons.Trash />}
-          onClick={() => startCreate("deletePart")}
-          disabled={!ready || partCount < 1}
-          active={editingType === "deletePart"}
-          title={partCount ? "Delete part — remove whole parts from here on (select them in the Parts list first, or click them)" : "Make a part first"}
         />
         <ToolButton
           label="Hole"
