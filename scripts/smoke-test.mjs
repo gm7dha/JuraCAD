@@ -937,7 +937,7 @@ try {
     const before = await page.locator(".part-row").count();
     await page.locator(".part-row .feature-name").nth(1).click();
     await page.locator(".part-row .feature-name").nth(2).click({ modifiers: ["Shift"] });
-    await page.getByRole("button", { name: "Boolean", exact: true }).click();
+    await tool("Boolean");
     await page.waitForSelector('[aria-label="Parts"] li >> nth=1');
     await page.getByRole("button", { name: "Accept" }).click();
     await page.waitForFunction((n) => document.querySelectorAll(".part-row").length === n - 1, before, { timeout: 30_000 });
