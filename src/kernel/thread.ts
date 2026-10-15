@@ -3,7 +3,7 @@
  * face, cut into a rod (external thread, for bolts) or into the wall of a
  * hole (internal thread, for nuts).
  */
-import { assembleWire, genericSweep, makeHelix, makeLine, type Shape3D, type Wire } from "replicad";
+import { assembleWire, genericSweep, makeCircle, makeHelix, makeLine, type Shape3D, type Wire } from "replicad";
 
 import { release } from "./extrude";
 import type { Cylinder } from "./textSolid";
@@ -96,5 +96,35 @@ export function threadGroove(cyl: Cylinder, from: number, to: number, pitch: num
     return genericSweep(profile, helix, { frenet: true }) as Shape3D;
   } finally {
     release(...edges, helix, ...(profile ? [profile] : []));
+  }
+}
+
+/**
+ * A coil spring: round wire of radius `wire` wound in a helix of radius `R`
+ * (to the wire's centre) round the vertical axis through `base`, rising
+ * `pitch` per turn for `turns` turns (left-handed if asked).
+ */
+export function coilSolid(R: number, wire: number, pitch: number, turns: number, base: Vec3, leftHand: boolean): Shape3D {
+  if (!(pitch > 2 * wire)) throw new Error("The pitch must be more than the wire thickness, or the turns would run into each other.");
+  if (!(R > wire)) throw new Error("The coil diameter must be bigger than the wire thickness.");
+  if (!(turns > 0) || turns > 200) throw new Error("Enter between a part of a turn and 200 turns.");
+  const helix = makeHelix(pitch, pitch * turns, R, base, [0, 0, 1], leftHand);
+  const sp = helix.startPoint;
+  const start: Vec3 = [sp.x, sp.y, sp.z];
+  sp.delete();
+  // Which way the wire sets off: round the axis and up by the pitch.
+  const radial: Vec3 = [start[0] - base[0], start[1] - base[1], 0];
+  const rl = Math.hypot(radial[0], radial[1]) || 1;
+  const round: Vec3 = leftHand ? [radial[1] / rl, -radial[0] / rl, 0] : [-radial[1] / rl, radial[0] / rl, 0];
+  const run = 2 * Math.PI * R;
+  const tl = Math.hypot(run, pitch);
+  const tangent: Vec3 = [(round[0] * run) / tl, (round[1] * run) / tl, pitch / tl];
+  const circle = makeCircle(wire, start, tangent);
+  let profile: Wire | null = null;
+  try {
+    profile = assembleWire([circle]);
+    return genericSweep(profile, helix, { frenet: true }) as Shape3D;
+  } finally {
+    release(circle, helix, ...(profile ? [profile] : []));
   }
 }

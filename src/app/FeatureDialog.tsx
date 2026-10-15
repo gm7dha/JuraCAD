@@ -1076,6 +1076,12 @@ export function FeatureDialog() {
         <BooleanOptionsField />
         <DeletePartOptions />
         <FastenerOptions />
+        {draft.type === "coil" && (
+          <label className="check-row">
+            <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked || undefined })} />
+            Left-handed (winds the other way)
+          </label>
+        )}
         <SplitOptionsField />
         <RibThickenOptions />
         <DraftOptions />

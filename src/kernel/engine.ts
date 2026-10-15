@@ -20,6 +20,7 @@ import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapStart, type Cylinder } from "./textSolid";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
+import { coilSolid } from "./thread";
 import { fastenerName, fastenerSize } from "../model/fasteners";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
@@ -631,6 +632,8 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       return makeBox([v.x, v.y, v.z], [v.x + v.width, v.y + v.depth, v.z + v.height]);
     case "cylinder":
       return makeCylinder(v.diameter / 2, v.height, [v.x, v.y, v.z], [0, 0, 1]);
+    case "coil":
+      return coilSolid(v.diameter / 2, v.wire / 2, v.pitch, v.turns, [v.x, v.y, v.z], !!feature.flipSide);
     case "fastener": {
       const f = feature.fastener ?? { kind: "bolt" as const, size: "M6", threaded: false };
       const solid = fastenerSolid(f.kind, f.size, v.length, v.x, v.y, v.z, f.threaded);

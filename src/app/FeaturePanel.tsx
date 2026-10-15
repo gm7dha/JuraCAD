@@ -14,6 +14,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
   cylinder: Icons.Cylinder,
   sphere: Icons.Sphere,
+  coil: Icons.Coil,
   sketch: Icons.Sketch,
   extrude: Icons.Extrude,
   revolve: Icons.Revolve,
