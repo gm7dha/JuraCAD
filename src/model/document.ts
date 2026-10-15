@@ -136,6 +136,35 @@ export function renameFeature(doc: PartSmithDocument, id: string, name: string):
   return replaceFeature(doc, { ...f, name: trimmed });
 }
 
+/** Put features in a folder of the feature list (or, with null, take them out). */
+export function setFolder(doc: PartSmithDocument, ids: string[], folder: string | null): PartSmithDocument {
+  const name = folder?.trim().slice(0, 60) || null;
+  const set = new Set(ids);
+  return {
+    ...doc,
+    features: doc.features.map((f) => {
+      if (!set.has(f.id)) return f;
+      const { folder: _old, ...rest } = f;
+      return name ? { ...rest, folder: name } : rest;
+    }),
+  };
+}
+
+/** Rename a folder (every feature in it). */
+export function renameFolder(doc: PartSmithDocument, from: string, to: string): PartSmithDocument {
+  const name = to.trim().slice(0, 60);
+  if (!name || name === from) return doc;
+  return { ...doc, features: doc.features.map((f) => (f.folder === from ? { ...f, folder: name } : f)) };
+}
+
+/** A free folder name: "Folder 1", "Folder 2"… */
+export function nextFolderName(features: readonly Feature[]): string {
+  const used = new Set(features.map((f) => f.folder).filter(Boolean));
+  let n = 1;
+  while (used.has(`Folder ${n}`)) n++;
+  return `Folder ${n}`;
+}
+
 export function setSuppressed(doc: PartSmithDocument, id: string, suppressed: boolean): PartSmithDocument {
   const f = doc.features.find((x) => x.id === id);
   if (!f) return doc;
@@ -276,6 +305,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       operation: f.operation === "add" || f.operation === "remove" || f.operation === "intersect" ? f.operation : "new",
       suppressed: f.suppressed === true,
       params: { ...defaultParams(f.type as FeatureType), ...params },
+      ...(typeof f.folder === "string" && f.folder.trim() ? { folder: f.folder.trim().slice(0, 60) } : {}),
     };
     if (feature.type === "sketch") {
       const sk = f.sketch as Record<string, unknown> | undefined;
