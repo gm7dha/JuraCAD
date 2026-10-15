@@ -357,6 +357,16 @@ export const Icons = {
       <path d="M4 7l3-3 3 3M14 7l3-3 3 3" />
     </Svg>
   ),
+  Play: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M8 5l11 7-11 7z" fill="currentColor" />
+    </Svg>
+  ),
+  Stop: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />
+    </Svg>
+  ),
   ChevronLeft: (p: IconProps) => (
     <Svg {...p}>
       <path d="M15 5l-7 7 7 7" />

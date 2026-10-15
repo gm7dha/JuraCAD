@@ -18,6 +18,7 @@ import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
+import { toggleMateAnimation } from "./animateMate";
 import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
 
@@ -196,6 +197,8 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
 function MateRow({ mate, error, instanceNames }: { mate: Mate; error?: string; instanceNames: Record<string, string> }) {
   const editing = useStore((s) => s.mateDraft?.mate.id === mate.id);
   const Icon = MATE_ICONS[mate.type];
+  const playing = useStore((s) => s.animatingMate === mate.id);
+  const canAnimate = !mate.suppressed && MATE_TYPES[mate.type].values.some((d) => d.free);
   const between = `${instanceNames[mate.a.instanceId] ?? "?"} and ${instanceNames[mate.b.instanceId] ?? "?"}`;
   return (
     <li
@@ -213,6 +216,16 @@ function MateRow({ mate, error, instanceNames }: { mate: Mate; error?: string; i
         </span>
       )}
       <span className="row-actions">
+        {canAnimate && (
+          <button
+            className={`icon-button small${playing ? " active" : ""}`}
+            onClick={() => toggleMateAnimation(mate.id)}
+            aria-label={playing ? `Stop animating ${mate.name}` : `Animate ${mate.name}`}
+            title={playing ? "Stop" : "Animate — sweep its movement back and forth to see it work"}
+          >
+            {playing ? <Icons.Stop size={15} /> : <Icons.Play size={15} />}
+          </button>
+        )}
         <button className="icon-button small" onClick={() => useStore.getState().editMate(mate.id)} aria-label={`Edit ${mate.name}`} title="Edit">
           <Icons.Sketch size={15} />
         </button>
