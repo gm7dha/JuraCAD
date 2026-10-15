@@ -340,6 +340,13 @@ export const Icons = {
       <path d="M11 11l1 1" />
     </Svg>
   ),
+  HoleCallout: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="7" cy="16" r="4" />
+      <path d="M10 13l5-6h7" />
+      <path d="M14 4h7" />
+    </Svg>
+  ),
   Note: (p: IconProps) => (
     <Svg {...p}>
       <rect x="4" y="4" width="16" height="16" rx="2" />

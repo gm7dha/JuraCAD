@@ -291,6 +291,8 @@ export interface Dimension {
   suffix?: string;
   /** Ordinate dimensions: measured across ("h") or up-and-down ("v"). */
   axis?: "h" | "v";
+  /** Diameters: a hole callout — the hole's full description (count, depth, counterbore…) instead of just its size. */
+  callout?: boolean;
 }
 
 /** A note on a drawing sheet: its top-left corner (sheet mm, y up) and its lines of text. */
