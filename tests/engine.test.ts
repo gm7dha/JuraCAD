@@ -993,6 +993,36 @@ describe("delete part", () => {
   });
 });
 
+describe("fasteners", () => {
+  const fastener = (kind: "bolt" | "nut" | "washer", threaded = false, length = 12): Feature => ({
+    ...feature("fastener", { length, x: 0, y: 0, z: 0 }),
+    fastener: { kind, size: "M6", threaded },
+  });
+  const volumeOf = (r: ReturnType<typeof build>) => analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).volume;
+  const hexArea = (flats: number) => (Math.sqrt(3) / 2) * flats * flats;
+
+  it("makes a hex bolt, nut and washer, named for what they are", () => {
+    const bolt = build([fastener("bolt")]);
+    expect(bolt.featureErrors).toEqual({});
+    expect(bolt.parts[0].name).toBe("M6 × 12 hex bolt");
+    expect(volumeOf(bolt)).toBeCloseTo(hexArea(10) * 4 + Math.PI * 9 * 12, -1);
+    const nut = build([fastener("nut")]);
+    expect(nut.parts[0].name).toBe("M6 hex nut");
+    expect(volumeOf(nut)).toBeCloseTo((hexArea(10) - Math.PI * 9) * 5.2, -1);
+    const washer = build([fastener("washer")]);
+    expect(volumeOf(washer)).toBeCloseTo(Math.PI * (36 - 3.2 * 3.2) * 1.6, -1);
+  });
+
+  it("cuts the thread when asked", () => {
+    const plain = volumeOf(build([fastener("bolt", false, 8)]));
+    const threaded = build([fastener("bolt", true, 8)]);
+    expect(threaded.featureErrors).toEqual({});
+    const v = volumeOf(threaded);
+    expect(v).toBeLessThan(plain - 10);
+    expect(v).toBeGreaterThan(plain - 80);
+  }, 60_000);
+});
+
 describe("plane features", () => {
   it("build nothing, but say when they can't be placed", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });

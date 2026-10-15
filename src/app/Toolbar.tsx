@@ -201,6 +201,14 @@ export function Toolbar() {
           title={partCount >= 2 ? "Boolean — join parts into one, cut parts with others, or keep just where they overlap" : "Make at least two parts first"}
         />
         <ToolButton
+          label="Fastener"
+          icon={<Icons.Bolt />}
+          onClick={() => startCreate("fastener")}
+          disabled={!ready}
+          active={editingType === "fastener"}
+          title="Fastener — a standard hex bolt, nut or washer (M3–M12) as a new part, optionally with its thread"
+        />
+        <ToolButton
           label="Delete part"
           icon={<Icons.Trash />}
           onClick={() => startCreate("deletePart")}

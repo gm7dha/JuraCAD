@@ -6,7 +6,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "deleteFace" | "thread" | "deletePart";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "deleteFace" | "thread" | "deletePart" | "fastener";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -124,6 +124,8 @@ export interface Feature {
   /** Boolean features: which parts, and what to do with them. */
   /** Delete part: the parts it removes from the Part Studio. */
   deleteParts?: string[];
+  /** Fastener: which standard part, and whether its thread is modelled. */
+  fastener?: { kind: "bolt" | "nut" | "washer"; size: string; threaded: boolean };
   booleanDef?: BooleanOptions;
   /** Split: which part, and the plane that cuts it in two. */
   splitDef?: SplitOptions;
