@@ -122,3 +122,24 @@ describe("fillet picks", () => {
     expect(saved.picks).toHaveLength(1);
   });
 });
+
+describe("merging parts", () => {
+  it("adds one Boolean join feature with the selected parts", async () => {
+    const { activeFeatures } = await import("../src/model/store");
+    useStore.getState().newDocument();
+    useStore.setState({
+      parts: [
+        { id: "a", name: "Part 1" },
+        { id: "b", name: "Part 2" },
+      ] as never,
+    });
+    const before = activeFeatures(useStore.getState()).length;
+    useStore.getState().mergeParts(["a", "b"]);
+    const features = activeFeatures(useStore.getState());
+    expect(features.length).toBe(before + 1);
+    const f = features[features.length - 1];
+    expect(f.type).toBe("boolean");
+    expect(f.booleanDef?.op).toBe("union");
+    expect(f.booleanDef?.targets).toEqual(["a", "b"]);
+  });
+});

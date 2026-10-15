@@ -318,6 +318,8 @@ export interface AppState {
   duplicateParts: (ids: string[]) => void;
   /** Hide or show several parts at once. */
   setPartsHidden: (ids: string[], hidden: boolean) => void;
+  /** Join parts into one (adds a Boolean join feature, one undo step). */
+  mergeParts: (ids: string[]) => void;
   /** Draw parts see-through, or solid again. */
   setPartsTransparent: (ids: string[], on: boolean) => void;
   selectPlane: (plane: PlaneName | null) => void;
@@ -1041,6 +1043,21 @@ export const useStore = create<AppState>((set, get) => {
     selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane, selectedParts: id ? [] : s.selectedParts })),
     setSelection: (items) =>
       set((s) => ({ selection: items, selectedPlane: items.length > 0 ? null : s.selectedPlane })),
+    mergeParts: (ids) => {
+      const s = get();
+      if (s.editing) return;
+      const names = ids.map((id) => s.parts.find((p) => p.id === id)?.name).filter((n): n is string => !!n);
+      if (names.length < 2) {
+        s.showToast("Select two or more parts to merge.", "info");
+        return;
+      }
+      const draft = createFeature(view(), "boolean");
+      draft.name = `Merge ${names.length} parts`;
+      draft.booleanDef = { op: "union", targets: [...ids], tools: [], keepTools: false, picking: "targets" };
+      changeStudio((d) => addFeature(d, draft));
+      set({ selectedParts: [ids[0]], selectedFeatureId: null });
+      s.showToast(`Merged ${names.join(", ")} into one part. Undo to separate them again.`, "success");
+    },
     duplicateParts: (ids) => {
       const s = get();
       if (s.editing || ids.length === 0) return;
