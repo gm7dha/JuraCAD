@@ -240,7 +240,10 @@ export class SketchController {
       for (const c of sources) {
         if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
         else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius });
-        else {
+        else if (c.type === "spline") {
+          const pts = splinePolyline(c.points.map(at), c.closed);
+          for (let k = 0; k + 1 < pts.length; k++) out.push({ kind: "line", a: pts[k], b: pts[k + 1] });
+        } else {
           const cc = at(c.center);
           const s0 = at(c.start);
           const s1 = at(c.end);
