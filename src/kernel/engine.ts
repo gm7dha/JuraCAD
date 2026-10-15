@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { basicFaceExtrusion, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { basicFaceExtrusion, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -248,6 +248,215 @@ function cylinderOfFace(face: Face): Cylinder | null {
   return null;
 }
 const cross3 = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+/** A drilled hole found in a part: where it starts, which way it goes in, and its sizes (for hole callouts). */
+export interface FoundHole {
+  /** Centre of the opening, and the direction into the part (unit). */
+  entry: Vec3;
+  into: Vec3;
+  diameter: number;
+  through: boolean;
+  /** Blind holes: from the opening to the bottom. */
+  depth: number;
+  cbore?: { diameter: number; depth: number };
+  csk?: { diameter: number; angle: number };
+}
+
+/** One round face along an axis: from height lo to hi, its radius at each end (equal for a cylinder). */
+interface RoundBit {
+  kind: "cyl" | "cone";
+  origin: Vec3;
+  axis: Vec3;
+  lo: number;
+  hi: number;
+  rLo: number;
+  rHi: number;
+  inside: boolean;
+}
+
+/** The round (cylinder and cone) faces of a shape, each as heights and radii along its axis. */
+function roundBits(shape: Shape3D): RoundBit[] {
+  const out: RoundBit[] = [];
+  for (const face of facesOf(shape)) {
+    try {
+      const type = face.geomType;
+      if (type !== "CYLINDRE" && type !== "CONE") continue;
+      // Its round edges: centres and radii (only those going at least half way round count).
+      const circles: { centre: Vec3; radius: number; normal: Vec3 }[] = [];
+      const ends: Vec3[] = [];
+      for (const e of edgesOf(face)) {
+        try {
+          const p0 = take(e.pointAt(0));
+          const p1 = take(e.pointAt(1 / 3));
+          const p2 = take(e.pointAt(2 / 3));
+          ends.push(p0, take(e.pointAt(1)));
+          if (e.geomType !== "CIRCLE") continue;
+          const c = circleThrough3D(p0, p1, p2);
+          const n = cross3([p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]], [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]]);
+          const l = Math.hypot(...n);
+          if (c && l > 1e-12 && measureLength(e) >= 0.99 * Math.PI * c.radius) circles.push({ ...c, normal: [n[0] / l, n[1] / l, n[2] / l] });
+        } finally {
+          e.delete();
+        }
+      }
+      if (!circles.length) continue;
+      let axis = circles[0].normal;
+      // One way round for every axis, so matching ones compare equal.
+      const big = [0, 1, 2].reduce((a, b) => (Math.abs(axis[b]) > Math.abs(axis[a]) ? b : a), 0);
+      if (axis[big] < 0) axis = [-axis[0], -axis[1], -axis[2]];
+      const origin = circles[0].centre;
+      const h = (p: Vec3) => dot3([p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]], axis);
+      let lo: number;
+      let hi: number;
+      let rLo: number;
+      let rHi: number;
+      if (type === "CYLINDRE") {
+        const hs = ends.map(h);
+        lo = Math.min(...hs);
+        hi = Math.max(...hs);
+        rLo = rHi = circles[0].radius;
+      } else {
+        // A cone: between two circles, or a circle and a point.
+        const placed = circles.map((c) => ({ t: h(c.centre), r: c.radius }));
+        const tips = ends.map(h);
+        const a = placed[0];
+        const b = placed.length > 1 ? placed.reduce((m, c) => (Math.abs(c.t - a.t) > Math.abs(m.t - a.t) ? c : m), placed[0]) : { t: tips.reduce((m, t) => (Math.abs(t - a.t) > Math.abs(m - a.t) ? t : m), a.t), r: 0 };
+        if (Math.abs(b.t - a.t) < 1e-6) continue;
+        [lo, rLo, hi, rHi] = a.t < b.t ? [a.t, a.r, b.t, b.r] : [b.t, b.r, a.t, a.r];
+      }
+      // Inside a hole the face points towards the axis.
+      let inside = false;
+      try {
+        const mid = (lo + hi) / 2;
+        const r = (rLo + rHi) / 2;
+        const side: Vec3 = Math.abs(axis[2]) < 0.9 ? cross3(axis, [0, 0, 1]) : cross3(axis, [1, 0, 0]);
+        const sl = Math.hypot(...side);
+        const radial: Vec3 = [side[0] / sl, side[1] / sl, side[2] / sl];
+        // A point on the face itself (it may not go all the way round): the middle of one of its circles, pushed out.
+        const c0 = circles[0];
+        const toEdge = take(face.center);
+        const off: Vec3 = [toEdge[0] - origin[0] - axis[0] * h(toEdge), toEdge[1] - origin[1] - axis[1] * h(toEdge), toEdge[2] - origin[2] - axis[2] * h(toEdge)];
+        const ol = Math.hypot(...off);
+        const dir: Vec3 = ol > 1e-6 * c0.radius ? [off[0] / ol, off[1] / ol, off[2] / ol] : radial;
+        const on: Vec3 = [origin[0] + axis[0] * mid + dir[0] * r, origin[1] + axis[1] * mid + dir[1] * r, origin[2] + axis[2] * mid + dir[2] * r];
+        inside = dot3(take(face.normalAt(on)), dir) < 0;
+      } catch {
+        inside = false;
+      }
+      out.push({ kind: type === "CYLINDRE" ? "cyl" : "cone", origin, axis, lo, hi, rLo, rHi, inside });
+    } finally {
+      face.delete();
+    }
+  }
+  return out;
+}
+
+/**
+ * Drilled holes in a shape: each run of round faces inside the part along one
+ * axis — the narrowest cylinder is the hole, a wider cylinder at one end a
+ * counterbore and a cone a countersink. A hole is through when there's no
+ * material just past either end.
+ */
+export function findHoles(shape: Shape3D): FoundHole[] {
+  const bits = roundBits(shape).filter((b) => b.inside);
+  // Group the bits that share an axis line.
+  const groups: { bits: RoundBit[] }[] = [];
+  const foot = (b: RoundBit): Vec3 => {
+    const t = dot3(b.origin, b.axis);
+    return [b.origin[0] - b.axis[0] * t, b.origin[1] - b.axis[1] * t, b.origin[2] - b.axis[2] * t];
+  };
+  for (const b of bits) {
+    const f = foot(b);
+    const g = groups.find((x) => {
+      const o = x.bits[0];
+      if (dot3(o.axis, b.axis) < 1 - 1e-7) return false;
+      const fo = foot(o);
+      return Math.hypot(f[0] - fo[0], f[1] - fo[1], f[2] - fo[2]) < 1e-4;
+    });
+    // Heights measured from the group's own origin.
+    if (g) {
+      const base = g.bits[0];
+      const shift = dot3([b.origin[0] - base.origin[0], b.origin[1] - base.origin[1], b.origin[2] - base.origin[2]], base.axis);
+      g.bits.push({ ...b, origin: base.origin, lo: b.lo + shift, hi: b.hi + shift });
+    } else groups.push({ bits: [b] });
+  }
+  const out: FoundHole[] = [];
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-4;
+  for (const g of groups) {
+    const cyls = g.bits.filter((b) => b.kind === "cyl");
+    if (!cyls.length) continue;
+    const r = Math.min(...cyls.map((c) => c.rLo));
+    // The hole: the narrowest cylinder (its pieces joined up).
+    const pieces = cyls.filter((c) => near(c.rLo, r));
+    let lo = Math.min(...pieces.map((c) => c.lo));
+    let hi = Math.max(...pieces.map((c) => c.hi));
+    const holeLo = lo;
+    const holeHi = hi;
+    // Wider bits joined on to its ends: counterbore and countersink.
+    const extras: RoundBit[] = [];
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const b of g.bits) {
+        if (pieces.includes(b) || extras.includes(b) || Math.max(b.rLo, b.rHi) <= r + 1e-6) continue;
+        if (near(b.hi, lo) || near(b.lo, hi) || (b.lo > lo - 1e-4 && b.hi < hi + 1e-4)) {
+          extras.push(b);
+          lo = Math.min(lo, b.lo);
+          hi = Math.max(hi, b.hi);
+          grew = true;
+        }
+      }
+    }
+    const { origin, axis } = g.bits[0];
+    const at = (t: number): Vec3 => [origin[0] + axis[0] * t, origin[1] + axis[1] * t, origin[2] + axis[2] * t];
+    // The tip a drill leaves at the bottom of a blind hole (a narrower cone on the end) counts as part of it here.
+    let tipLo = lo;
+    let tipHi = hi;
+    for (const b of g.bits) {
+      if (b.kind !== "cone" || extras.includes(b)) continue;
+      if (near(b.hi, tipLo)) tipLo = b.lo;
+      else if (near(b.lo, tipHi)) tipHi = b.hi;
+    }
+    // Is there material just past this end? Past a blind hole's bottom the part is within `step`
+    // (or all round); past an open end the nearest material is the rim, further away than that.
+    const step = Math.min(0.5, r * 0.5);
+    const open = (t: number, out: number) => {
+      const v = makeVertex(at(t + out * step));
+      try {
+        return measureDistanceBetween(shape, v) > (step + Math.hypot(step, r)) / 2;
+      } catch {
+        return false;
+      } finally {
+        v.delete();
+      }
+    };
+    const openHi = open(tipHi, 1);
+    const openLo = open(tipLo, -1);
+    if (!openHi && !openLo) continue; // a closed-off space, not a hole
+    const mid = (holeLo + holeHi) / 2;
+    const wideAtHi = extras.some((b) => (b.lo + b.hi) / 2 > mid);
+    const wideAtLo = extras.some((b) => (b.lo + b.hi) / 2 < mid);
+    const fromHi = wideAtHi || (!wideAtLo && openHi);
+    const into: Vec3 = fromHi ? [-axis[0], -axis[1], -axis[2]] : axis;
+    const cbores = extras.filter((b) => b.kind === "cyl").sort((a, b) => b.rLo - a.rLo);
+    const cone = extras.find((b) => b.kind === "cone");
+    const hole: FoundHole = {
+      entry: at(fromHi ? hi : lo),
+      into,
+      diameter: 2 * r,
+      through: openHi && openLo,
+      depth: hi - lo,
+    };
+    if (cbores.length) hole.cbore = { diameter: 2 * cbores[0].rLo, depth: cbores[0].hi - cbores[0].lo };
+    if (cone) {
+      const rMax = Math.max(cone.rLo, cone.rHi);
+      const rMin = Math.min(cone.rLo, cone.rHi);
+      hole.csk = { diameter: 2 * rMax, angle: (2 * Math.atan2(rMax - rMin, cone.hi - cone.lo) * 180) / Math.PI };
+    }
+    out.push(hole);
+  }
+  return out;
+}
 
 /**
  * One drawing view: the shape seen along `toward`, with the lines hidden
@@ -1708,6 +1917,29 @@ export class GeometryEngine {
         // Centre lines of round faces seen from the side (not in the 3D view).
         return projectView(whole, kind, toward, right, withHidden, kind === "iso" ? [] : (wholeAxes ??= cylinderAxes(whole)));
       });
+      // Holes seen end-on, for hole callouts (single parts only).
+      if (!placed.length) {
+        let found: FoundHole[] | null = null;
+        out.forEach((view, i) => {
+          const kind = standard[i];
+          if (kind === "iso") return;
+          found ??= findHoles(whole);
+          const { toward, right } = VIEW_CAMERAS[kind];
+          const up = cross3(toward, right);
+          view.holes = found
+            // Seen end-on, from the side it's drilled from (through holes from either side).
+            .filter((h) => Math.abs(dot3(h.into, toward)) > 0.999 && (h.through || dot3(h.into, toward) < 0))
+            .map((h) => ({
+              cx: dot3(h.entry, right),
+              cy: dot3(h.entry, up),
+              d: h.diameter,
+              through: h.through,
+              depth: h.depth,
+              ...(h.cbore ? { cbore: h.cbore } : {}),
+              ...(h.csk ? { csk: h.csk } : {}),
+            }));
+        });
+      }
       for (const req of sections) {
         let host = out.find((p) => p.kind === req.host);
         if (!host) {

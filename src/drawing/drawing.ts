@@ -281,5 +281,6 @@ function parseDimension(raw: unknown): Dimension | null {
       : {}),
     ...(typeof r.prefix === "string" && r.prefix ? { prefix: r.prefix.slice(0, 40) } : {}),
     ...(typeof r.suffix === "string" && r.suffix ? { suffix: r.suffix.slice(0, 40) } : {}),
+    ...(r.callout === true && type === "diameter" ? { callout: true } : {}),
   };
 }
