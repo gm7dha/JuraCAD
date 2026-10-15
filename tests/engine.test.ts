@@ -1038,6 +1038,22 @@ describe("delete part", () => {
   });
 });
 
+describe("coil", () => {
+  it("winds round wire into a spring", () => {
+    const coil = feature("coil", { diameter: 20, wire: 2, pitch: 5, turns: 3, x: 0, y: 0, z: 0 });
+    const r = build([coil]);
+    expect(r.featureErrors).toEqual({});
+    const check = engine.check("normal").parts[0];
+    expect(check.geometryValid).toBe(true);
+    // Wire volume ≈ π r² × length of the helix (3 turns of √((π·20)² + 5²)).
+    const length = 3 * Math.hypot(Math.PI * 20, 5);
+    expect(check.exactVolume!).toBeCloseTo(Math.PI * 1 * length, -1);
+    const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    expect(a.bounds!.max[0]).toBeCloseTo(11, 0);
+    expect(build([{ ...coil, params: { ...coil.params, pitch: "1.5" } }]).featureErrors[coil.id]).toMatch(/pitch/i);
+  });
+});
+
 describe("fasteners", () => {
   const fastener = (kind: "bolt" | "nut" | "washer", threaded = false, length = 12): Feature => ({
     ...feature("fastener", { length, x: 0, y: 0, z: 0 }),

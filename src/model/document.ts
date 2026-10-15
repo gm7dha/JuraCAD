@@ -389,6 +389,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     }
     if (feature.type === "draft") feature.neutral = parsePlane(f.neutral) ?? { kind: "default", name: "Top" };
     if (feature.type === "draft" && f.flipSide === true) feature.flipSide = true;
+    if (feature.type === "coil" && f.flipSide === true) feature.flipSide = true;
     if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "deleteFace", "thread"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
