@@ -50,9 +50,11 @@ export function syncReplicate(a: Assembly, rep: Replicate, holes: TopoPick[], ne
       fixed: false,
       replicaOf: { replicate: rep.id, index },
     };
-    copies.push(copy);
+    // Copies show the part in the same configuration as the original.
+    const { configuration: _old, ...plain } = copy;
+    copies.push(seed.configuration ? { ...plain, configuration: seed.configuration } : plain);
     const before = oldMates.find((m) => (m.a.instanceId === copy.id || m.b.instanceId === copy.id) && m.replicateOf === rep.id);
-    const own = { instanceId: copy.id, pick: (side === "a" ? mate.a : mate.b).pick };
+    const own = { instanceId: copies[copies.length - 1].id, pick: (side === "a" ? mate.a : mate.b).pick };
     const into = { instanceId: target.instanceId, pick: hole };
     mates.push({
       ...mate,

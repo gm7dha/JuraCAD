@@ -35,6 +35,7 @@ import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
 import { matchingConnectors } from "../assembly/connectors";
+import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
 import { moveFeature as moveFeatureIn } from "./reorder";
@@ -287,7 +288,7 @@ export interface AppState {
   renameAssembly: (id: string, name: string) => void;
   /** Put a copy of a part into the assembly on show. */
   insertInstance: (part: { id: string; name: string }, placement?: Placement) => void;
-  updateInstance: (id: string, patch: Partial<Pick<Instance, "name" | "placement" | "fixed">>) => void;
+  updateInstance: (id: string, patch: Partial<Pick<Instance, "name" | "placement" | "fixed" | "configuration">>) => void;
   removeInstances: (ids: string[]) => void;
   setAsmSelection: (ids: string[]) => void;
   toggleInstanceHidden: (id: string) => void;
@@ -1355,6 +1356,7 @@ function replicateHoles(a: Assembly, rep: Replicate, parts: PartMesh[]) {
   if (!mate) return [];
   const target = mate.a.instanceId === rep.seed ? mate.b : mate.a;
   const instance = a.instances.find((i) => i.id === target.instanceId);
-  const part = instance && parts.find((p) => p.id === instance.partId);
-  return part ? matchingConnectors(part, target.pick) : [];
+  const part = instance && findMesh(parts, meshIdOf(instance));
+  // Picks name the part itself, whichever configuration it's shown in.
+  return part && instance ? matchingConnectors(part, { ...target.pick, partId: part.id }).map((p) => ({ ...p, partId: instance.partId })) : [];
 }
