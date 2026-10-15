@@ -176,12 +176,19 @@ function DimensionLabel({
     }
   }, [editing, shownValue]);
 
+  // A size offered just after drawing (Enter keeps it, Esc drops it).
+  const offered = () => useStore.getState().sketch?.provisional.includes(c.id) ?? false;
+  const done = () => {
+    const s = useStore.getState();
+    if (offered()) s.keepOfferedDimension(c.id);
+    else s.setEditingDimension(null);
+  };
   const apply = () => {
     const s = useStore.getState();
     const current = s.editing?.draft.sketch?.data;
     if (!current) return;
     if (text.trim() === shownValue.trim()) {
-      s.setEditingDimension(null);
+      done();
       return;
     }
     const r = setDimensionValue(current, c.id, c.type === "angle" ? text.trim() : storeLength(text.trim(), unit));
@@ -190,7 +197,7 @@ function DimensionLabel({
       return;
     }
     s.updateSketch(r.sketch, { record: true });
-    s.setEditingDimension(null);
+    done();
   };
 
   if (editing) {
@@ -209,9 +216,16 @@ function DimensionLabel({
           onKeyDown={(e) => {
             e.stopPropagation();
             if (e.key === "Enter") apply();
-            if (e.key === "Escape") useStore.getState().setEditingDimension(null);
+            if (e.key === "Escape") {
+              if (offered()) useStore.getState().discardOfferedDimensions();
+              else useStore.getState().setEditingDimension(null);
+            }
           }}
-          onBlur={() => !error && apply()}
+          onBlur={() => {
+            // Leaving an offered size without typing anything drops it.
+            if (offered() && text.trim() === shownValue.trim()) useStore.getState().discardOfferedDimensions();
+            else if (!error) apply();
+          }}
         />
         <span className="unit">{c.type === "angle" ? "°" : unit}</span>
         {error && <div className="dimension-error">{error}</div>}

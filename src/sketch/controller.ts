@@ -148,6 +148,26 @@ export class SketchController {
   }
 
   /**
+   * Just after a shape is drawn, offer its sizes (like Onshape): add each
+   * dimension and open the first one's value box. Enter keeps it (with
+   * whatever was typed), Esc or carrying on drawing drops it.
+   */
+  private offerDimensions(groups: string[][]): void {
+    let data = this.data;
+    if (!data) return;
+    const ids: string[] = [];
+    for (const refs of groups) {
+      const r = addDimension(data, refs);
+      if (r.error) continue;
+      data = r.sketch;
+      ids.push(r.dimensionId);
+    }
+    if (!ids.length) return;
+    this.state.updateSketch(data, { record: false });
+    this.state.offerDimensions(ids);
+  }
+
+  /**
    * Mirror tool: the first click picks the line to mirror about (if shapes
    * were already selected, they're mirrored straight away); each click after
    * that mirrors the clicked line, arc or circle. Esc finishes.
@@ -324,6 +344,8 @@ export class SketchController {
       return;
     }
 
+    // Drawing on: any size offered for the last shape and not typed is dropped.
+    this.state.discardOfferedDimensions();
     const p = this.placeAt(e);
     const construction = this.state.sketch?.construction ?? false;
 
@@ -348,6 +370,7 @@ export class SketchController {
         }
         const r = addLine(d, start, end, { construction, orientation });
         if (!this.commit(r)) return;
+        if (!construction) this.offerDimensions([[r.lineId]]);
         // Keep drawing from the new end, unless we just closed the shape.
         const closed = p.snap?.kind === "point" || p.snap?.kind === "origin";
         this.placed = closed ? [] : [{ ...end, snap: { kind: "point", id: r.endId } }];
@@ -360,7 +383,10 @@ export class SketchController {
           return;
         }
         const r = addRectangle(d, this.placed[0], p, construction);
-        if (this.commit(r)) this.placed = [];
+        if (this.commit(r)) {
+          this.placed = [];
+          if (!construction) this.offerDimensions([[r.lineIds[0]], [r.lineIds[1]]]);
+        }
         this.emit({ preview: [] });
         return;
       }
@@ -370,7 +396,10 @@ export class SketchController {
           return;
         }
         const r = addCentreRectangle(d, this.placed[0], p, construction);
-        if (this.commit(r)) this.placed = [];
+        if (this.commit(r)) {
+          this.placed = [];
+          if (!construction) this.offerDimensions([[r.lineIds[0]], [r.lineIds[1]]]);
+        }
         this.emit({ preview: [] });
         return;
       }
@@ -403,7 +432,10 @@ export class SketchController {
         }
         const c = this.placed[0];
         const r = addCircle(d, c, Math.hypot(p.x - c.x, p.y - c.y), construction);
-        if (this.commit(r, [r.circleId])) this.placed = [];
+        if (this.commit(r, [r.circleId])) {
+          this.placed = [];
+          if (!construction) this.offerDimensions([[r.circleId]]);
+        }
         this.emit({ preview: [] });
         return;
       }
@@ -434,7 +466,10 @@ export class SketchController {
           return;
         }
         const r = addArc(d, this.placed[0], this.placed[1], { x: p.x, y: p.y }, construction);
-        if (this.commit(r, [r.arcId])) this.placed = [];
+        if (this.commit(r, [r.arcId])) {
+          this.placed = [];
+          if (!construction) this.offerDimensions([[r.arcId]]);
+        }
         this.emit({ preview: [] });
         return;
       }
