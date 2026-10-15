@@ -6,6 +6,15 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.14 — Polish: tidier toolbars, folders, more sketch and drawing tools · commit `4f3732a`
+
+- Toolbars: every toolbar fits on one row; similar tools share a button (click the **▾** for the others), and
+  Help explains how.
+- The first part you make is zoomed to fit, and closing a sketch puts the view back where it was.
+- Feature list: **folders** to keep long lists tidy (right-click a feature › Put in a folder…).
+- Sketch: **Extend** and **Split** lines, and **Move / copy** (move, turn or copy picked lines).
+- Drawings: **angle dimensions** (click two edges) and **auxiliary views** (a sloping face seen square-on).
+
 ## v0.13 — Replicate, configured parts, GD&T and more sketch tools · commit `32d8dda`
 
 - Assemblies: **Replicate** (a part copied into every matching hole, each with its own mate) and parts shown in
