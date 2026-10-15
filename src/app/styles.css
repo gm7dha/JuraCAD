@@ -2264,8 +2264,12 @@ kbd {
   min-width: 0;
 }
 
+/* No scrollbar: the arrows and the mouse wheel scroll it. */
 .toolbar-scroller > .toolbar {
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+.toolbar-scroller > .toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .toolbar-arrow {
