@@ -5,7 +5,7 @@
  */
 import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
-import { addArc, addCircle, addRectangle, circleThrough, curveById, deleteItems, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
+import { addArc, addCircle, addRectangle, circleThrough, curveById, curvePoints, deleteItems, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
 import { minorPointFor } from "./ellipse";
 import { ORIGIN_ID, type SketchEllipse, type SketchSpline, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
@@ -811,8 +811,13 @@ export function patternCurves(s: SketchData, curveIds: string[], opts: SketchPat
   if (opts.kind === "circular" && !(Math.abs(opts.angle) > 1e-9)) return fail("Give the pattern an angle to spread over.");
   const points: SketchPoint[] = [];
   const curves: SketchCurve[] = [];
-  for (let i = 1; i < count; i++) {
-    const move = patternTransform(opts, i);
+  for (let i = 1; i < count; i++) copyCurvesWith(s, sources, patternTransform(opts, i), points, curves);
+  return { ...settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: s.constraints }), curveIds: curves.map((c) => c.id) };
+}
+
+/** Copies of `sources` with every point moved by `move` (points that don't move are shared); added to `points` and `curves`. */
+function copyCurvesWith(s: SketchData, sources: SketchCurve[], move: (p: P2) => P2, points: SketchPoint[], curves: SketchCurve[]): void {
+  {
     const copies = new Map<string, string>();
     const copyOf = (id: string): string => {
       const known = copies.get(id);
@@ -835,7 +840,57 @@ export function patternCurves(s: SketchData, curveIds: string[], opts: SketchPat
       else curves.push({ id: sketchId("a"), type: "arc", center: copyOf(c.center), start: copyOf(c.start), end: copyOf(c.end), construction: c.construction });
     }
   }
-  return { ...settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: s.constraints }), curveIds: curves.map((c) => c.id) };
+}
+
+/** Move / copy settings as numbers (mm and degrees). */
+export interface SketchTransformOptions {
+  dx: number;
+  dy: number;
+  angle: number;
+  copy: boolean;
+}
+
+/** Where a point goes: turned by `angle` about the shapes' middle, then moved by (dx, dy). */
+export function transformMove(s: SketchData, sources: SketchCurve[], t: Pick<SketchTransformOptions, "dx" | "dy" | "angle">): (p: P2) => P2 {
+  const ids = [...new Set(sources.flatMap(curvePoints))];
+  const pts = ids.map((id) => pointPos(s, id));
+  const c: P2 = pts.length ? [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length] : [0, 0];
+  const r = (t.angle * Math.PI) / 180;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  return (p) => {
+    const [x, y] = sub(p, c);
+    return [c[0] + x * cos - y * sin + t.dx, c[1] + x * sin + y * cos + t.dy];
+  };
+}
+
+/** Move (or copy) lines, arcs and circles by a distance and/or a turn. */
+export function transformCurves(s: SketchData, curveIds: string[], t: SketchTransformOptions): EditResult & { curveIds: string[] } {
+  const sources = curveIds.map((id) => curveById(s, id)).filter((c): c is SketchCurve => !!c);
+  if (!sources.length) return { sketch: s, error: "Click the lines, arcs and circles to move first.", curveIds: [] };
+  if (Math.abs(t.dx) < 1e-9 && Math.abs(t.dy) < 1e-9 && Math.abs(t.angle) < 1e-9) return { sketch: s, error: "Type how far to move or turn them.", curveIds: [] };
+  const move = transformMove(s, sources, t);
+  if (t.copy) {
+    const points: SketchPoint[] = [];
+    const curves: SketchCurve[] = [];
+    copyCurvesWith(s, sources, move, points, curves);
+    return { ...settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: s.constraints }), curveIds: curves.map((c) => c.id) };
+  }
+  const moving = new Set(sources.flatMap(curvePoints).filter((id) => id !== ORIGIN_ID));
+  const points = s.points.map((p) => {
+    if (!moving.has(p.id)) return p;
+    const [x, y] = move([p.x, p.y]);
+    return { ...p, x, y };
+  });
+  const r = settle({ ...s, points });
+  // Constraints (a fix, a dimension to something that stays) may hold them where they were.
+  const before = pointPos(s, [...moving][0]);
+  const after = pointPos(r.sketch, [...moving][0]);
+  const wanted = move(before);
+  if (len(sub(after, wanted)) > 1e-3 && len(sub(after, before)) < 1e-3) {
+    return { sketch: s, error: "They're held where they are by their constraints (a fix or a dimension) — remove those to move them.", curveIds: [] };
+  }
+  return { ...r, curveIds: sources.map((c) => c.id) };
 }
 
 /** The pattern tool's settings as typed (from the sketch panel). */
@@ -1062,4 +1117,15 @@ export function splitAt(s: SketchData, curveId: string, at: { x: number; y: numb
   const points = [...s.points, { id: pid, x: mid[0], y: mid[1] }];
   const curves = s.curves.flatMap((c) => (c.id === line.id ? [first, rest] : [c]));
   return { ...settle({ points, curves, constraints: [...constraints, ...extra] }), lineIds: [line.id, second] };
+}
+
+/** The move / copy tool's settings as typed (from the sketch panel), as numbers — or what's wrong with them. */
+export function readTransformSettings(set: { moveDx: string; moveDy: string; moveAngle: string; moveCopy: boolean }): SketchTransformOptions | string {
+  const dx = evaluate(set.moveDx || "0");
+  if (!dx.ok) return `Across: ${dx.error}`;
+  const dy = evaluate(set.moveDy || "0");
+  if (!dy.ok) return `Up: ${dy.error}`;
+  const angle = evaluate(set.moveAngle || "0");
+  if (!angle.ok) return `Turn: ${angle.error}`;
+  return { dx: dx.value, dy: dy.value, angle: angle.value, copy: set.moveCopy };
 }
