@@ -1,4 +1,5 @@
 import { parsePick } from "../geometry/topoRef";
+import { FASTENER_SIZES } from "./fasteners";
 import { parsePlane, parseSketchData } from "../sketch/validate";
 import { defaultAxis } from "../sketch/axis";
 import { emptySketch } from "../sketch/types";
@@ -84,6 +85,7 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.neutral = { kind: "default", name: "Top" };
   }
   if (type === "deletePart") feature.deleteParts = [];
+  if (type === "fastener") feature.fastener = { kind: "bolt", size: "M6", threaded: false };
   if (type === "boolean") feature.booleanDef = { op: "union", targets: [], tools: [], keepTools: false, picking: "targets" };
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
   if (type === "transform") {
@@ -343,6 +345,14 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     }
     if (feature.type === "rib" && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
+    if (feature.type === "fastener") {
+      const fa = (f.fastener ?? {}) as Record<string, unknown>;
+      feature.fastener = {
+        kind: fa.kind === "nut" || fa.kind === "washer" ? fa.kind : "bolt",
+        size: typeof fa.size === "string" && FASTENER_SIZES.some((s) => s.name === fa.size) ? fa.size : "M6",
+        threaded: fa.threaded === true,
+      };
+    }
     if (feature.type === "deletePart") {
       feature.deleteParts = Array.isArray(f.deleteParts) ? (f.deleteParts as unknown[]).filter((x): x is string => typeof x === "string") : [];
     }

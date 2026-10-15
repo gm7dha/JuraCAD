@@ -8,6 +8,7 @@
  * already placed part is placed by that mate. Closed loops of mates (where a
  * part is reached two ways) are closed by adjusting the mates' movements.
  */
+import { applyRelations } from "./relations";
 import { evaluate } from "../model/expr";
 import type { Assembly, Mate, MateType } from "../model/types";
 import { compose, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement } from "./math";
@@ -189,9 +190,12 @@ const TURN_WEIGHT = 20;
  * are adjusted until the loop closes; only if it can't be closed is a mate
  * reported as disagreeing.
  */
-export function solveAssembly(assembly: Assembly, frameOf: FrameLookup): SolveResult {
+export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResult {
+  // Relations (gears, rack and pinion, screws) set the amounts of the mates they drive.
+  const related = applyRelations(input);
+  const assembly = related.assembly;
   const instances = new Map(assembly.instances.map((i) => [i.id, i]));
-  const mateErrors: Record<string, string> = {};
+  const mateErrors: Record<string, string> = { ...related.errors };
 
   // Mates that can be used: both parts present, connectors found, values readable.
   interface Usable {
@@ -235,7 +239,7 @@ export function solveAssembly(assembly: Assembly, frameOf: FrameLookup): SolveRe
   for (const u of usable) {
     const { limits } = mateLimits(u.mate);
     for (const def of MATE_TYPES[u.mate.type].values) {
-      if (!def.free) continue;
+      if (!def.free || related.driven.has(`${u.mate.id}:${def.key}`)) continue;
       const l = limits[def.key];
       free.push({ u, key: def.key, min: l ? l.min : -Infinity, max: l ? l.max : Infinity });
     }

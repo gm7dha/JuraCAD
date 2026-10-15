@@ -32,6 +32,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   plane: Icons.Plane,
   boolean: Icons.Boolean,
   deletePart: Icons.Trash,
+  fastener: Icons.Bolt,
   split: Icons.Split,
   thicken: Icons.Thicken,
   rib: Icons.Rib,
