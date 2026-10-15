@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { connectKernel } from "../kernel/connect";
 import { activeAssembly, activeDrawing, activeFeatures, studioParts, useStore } from "../model/store";
 import { DrawingPanel, DrawingSheet, DrawingToolbar } from "./DrawingUI";
-import { AssemblyPanel, AssemblyToolbar, ExplodePanel, InsertPanel, InstancePanel, MateDialog } from "./AssemblyUI";
+import { AssemblyPanel, AssemblyToolbar, ExplodePanel, InsertPanel, InstancePanel, MateDialog, PatternPanel } from "./AssemblyUI";
 import { Viewport, viewportApi } from "../viewport/Viewport";
 import type { StandardView } from "../viewport/ViewCube";
 import { CheckDialog } from "./CheckDialog";
@@ -257,6 +257,7 @@ export function App() {
             <>
               <InsertPanel />
               <InstancePanel />
+              <PatternPanel />
               <ExplodePanel />
               <MateDialog />
             </>

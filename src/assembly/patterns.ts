@@ -1,0 +1,164 @@
+/**
+ * Patterns in an assembly: copies of some instances repeated in a straight
+ * line or round an axis. The copies are real instances (so they're in the
+ * parts list, drawings, exports and clash checks) that always follow their
+ * original: wherever the original is put — by a mate, a drag or typed — each
+ * copy sits one step further along.
+ */
+import { evaluate } from "../model/expr";
+import type { Assembly, AssemblyPattern, Instance } from "../model/types";
+import { compose, quatFromAxisAngle, rotate, type Placement, type Vec3 } from "./math";
+import { nextInstanceName } from "./assembly";
+
+const AXES: Record<AssemblyPattern["axis"], Vec3> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+
+/** The pattern's step as a number (mm, or degrees between copies), or what's wrong with it. */
+export function patternStep(p: AssemblyPattern): { step: number } | { error: string } {
+  if (!Number.isInteger(p.count) || p.count < 2 || p.count > 100) return { error: "How many: enter a whole number from 2 to 100." };
+  const v = evaluate(p.amount);
+  if (!v.ok) return { error: `${p.kind === "linear" ? "Spacing" : "Spread over"}: ${v.error}` };
+  if (p.kind === "linear") {
+    if (!(v.value > 0)) return { error: "Spacing: must be more than 0." };
+    return { step: v.value };
+  }
+  if (!(v.value > 0) || v.value > 360) return { error: "Spread over: enter an angle above 0° and up to 360°." };
+  return { step: v.value >= 360 - 1e-9 ? 360 / p.count : v.value / (p.count - 1) };
+}
+
+/** Where copy number `k` (1, 2…) goes, given where the original is. */
+export function placeCopy(p: AssemblyPattern, step: number, original: Placement, k: number): Placement {
+  const dir = AXES[p.axis];
+  const sign = p.flip ? -1 : 1;
+  if (p.kind === "linear") {
+    const d = sign * step * k;
+    return { position: [original.position[0] + dir[0] * d, original.position[1] + dir[1] * d, original.position[2] + dir[2] * d], rotation: original.rotation };
+  }
+  // Turn about the axis through the centre: move the centre to the origin, turn, move back.
+  const c = p.centre ?? [0, 0, 0];
+  const turn: Placement = { position: [0, 0, 0], rotation: quatFromAxisAngle(dir, (sign * step * k * Math.PI) / 180) };
+  const toOrigin: Placement = { position: [-c[0], -c[1], -c[2]], rotation: [0, 0, 0, 1] };
+  const back: Placement = { position: c, rotation: [0, 0, 0, 1] };
+  return compose(back, compose(turn, compose(toOrigin, original)));
+}
+
+/** Make the copies match the pattern: add the missing ones, drop extras, and put each in place. */
+export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string): Assembly {
+  const step = patternStep(p);
+  const seeds = p.seeds.map((id) => a.instances.find((i) => i.id === id)).filter((i): i is Instance => !!i && !i.copyOf);
+  const keep: Instance[] = [];
+  let instances = a.instances.filter((i) => i.copyOf?.pattern !== p.id);
+  const old = a.instances.filter((i) => i.copyOf?.pattern === p.id);
+  for (const seed of seeds) {
+    for (let k = 1; k < p.count; k++) {
+      const placement = "step" in step ? placeCopy(p, step.step, seed.placement, k) : seed.placement;
+      const was = old.find((i) => i.copyOf!.seed === seed.id && i.copyOf!.index === k && i.partId === seed.partId);
+      const copy: Instance = was
+        ? { ...was, placement }
+        : { id: newId(), partId: seed.partId, name: nextInstanceName({ ...a, instances: [...instances, ...keep] }, seed.name.replace(/ <\d+>$/, "")), placement, fixed: false, copyOf: { pattern: p.id, seed: seed.id, index: k } };
+      keep.push(copy);
+    }
+  }
+  // Copies go straight after their pattern's last original, so the list reads naturally.
+  const lastSeed = Math.max(-1, ...seeds.map((s) => instances.findIndex((i) => i.id === s.id)));
+  instances = [...instances.slice(0, lastSeed + 1), ...keep, ...instances.slice(lastSeed + 1)];
+  const gone = new Set(old.filter((i) => !keep.includes(i) && !keep.some((k) => k.id === i.id)).map((i) => i.id));
+  const patterns = a.patterns ?? [];
+  const next = patterns.some((x) => x.id === p.id) ? patterns.map((x) => (x.id === p.id ? p : x)) : [...patterns, p];
+  return {
+    ...a,
+    instances,
+    patterns: next,
+    ...(a.mates ? { mates: a.mates.filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)) } : {}),
+  };
+}
+
+/** Remove a pattern and its copies. */
+export function removePattern(a: Assembly, id: string): Assembly {
+  const gone = new Set(a.instances.filter((i) => i.copyOf?.pattern === id).map((i) => i.id));
+  const { patterns: _old, mates: _m, ...rest } = a;
+  const patterns = (a.patterns ?? []).filter((p) => p.id !== id);
+  const mates = (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId));
+  return { ...rest, instances: a.instances.filter((i) => !gone.has(i.id)), ...(mates.length ? { mates } : {}), ...(patterns.length ? { patterns } : {}) };
+}
+
+/**
+ * After instances are removed: patterns lose those originals (and their copies);
+ * a pattern with no originals left goes. Removed copies just stay removed until
+ * the pattern is next changed.
+ */
+export function tidyPatterns(a: Assembly): Assembly {
+  if (!a.patterns?.length) return a;
+  const present = new Set(a.instances.map((i) => i.id));
+  const patterns = a.patterns.map((p) => ({ ...p, seeds: p.seeds.filter((s) => present.has(s)) })).filter((p) => p.seeds.length);
+  const live = new Map(patterns.map((p) => [p.id, new Set(p.seeds)]));
+  const orphan = new Set(a.instances.filter((i) => i.copyOf && !live.get(i.copyOf.pattern)?.has(i.copyOf.seed)).map((i) => i.id));
+  const { patterns: _old, ...rest } = a;
+  const out: Assembly = { ...rest, instances: a.instances.filter((i) => !orphan.has(i.id)), ...(patterns.length ? { patterns } : {}) };
+  if (orphan.size && a.mates) {
+    const mates = a.mates.filter((m) => !orphan.has(m.a.instanceId) && !orphan.has(m.b.instanceId));
+    if (mates.length) out.mates = mates;
+    else delete out.mates;
+  }
+  return out;
+}
+
+/** Put every copy one step on from where its original ended up. Returns the problems by pattern id. */
+export function placeCopies(a: Assembly, placements: Record<string, Placement>): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const p of a.patterns ?? []) {
+    const step = patternStep(p);
+    if ("error" in step) {
+      errors[p.id] = step.error;
+      continue;
+    }
+    for (const i of a.instances) {
+      if (i.copyOf?.pattern !== p.id) continue;
+      const original = placements[i.copyOf.seed];
+      if (original) placements[i.id] = placeCopy(p, step.step, original, i.copyOf.index);
+    }
+  }
+  return errors;
+}
+
+/** "Pattern 1", "Pattern 2"… */
+export function nextPatternName(a: Assembly): string {
+  const used = new Set((a.patterns ?? []).map((p) => p.name));
+  let n = 1;
+  while (used.has(`Pattern ${n}`)) n++;
+  return `Pattern ${n}`;
+}
+
+/** Read a saved pattern (null if it's unusable). */
+export function parsePattern(raw: unknown, instanceIds: Set<string>): AssemblyPattern | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.id !== "string" || (r.kind !== "linear" && r.kind !== "circular")) return null;
+  const seeds = (Array.isArray(r.seeds) ? r.seeds : []).filter((s): s is string => typeof s === "string" && instanceIds.has(s));
+  if (!seeds.length) return null;
+  const count = typeof r.count === "number" && Number.isInteger(r.count) ? Math.max(2, Math.min(100, r.count)) : 2;
+  const centre = Array.isArray(r.centre) && r.centre.length === 3 && r.centre.every((v) => typeof v === "number" && Number.isFinite(v)) ? (r.centre as [number, number, number]) : undefined;
+  return {
+    id: r.id,
+    name: typeof r.name === "string" && r.name.trim() ? r.name.slice(0, 80) : "Pattern",
+    kind: r.kind,
+    seeds,
+    count,
+    amount: typeof r.amount === "string" ? r.amount : r.kind === "linear" ? "20" : "360",
+    axis: r.axis === "x" || r.axis === "y" ? r.axis : "z",
+    ...(r.flip === true ? { flip: true } : {}),
+    ...(centre ? { centre } : {}),
+  };
+}
+
+/** Where a point (mm) ends up on copy number `k`. */
+export const turnPoint = (p: AssemblyPattern, step: number, v: Vec3, k: number): Vec3 => {
+  const c = p.centre ?? [0, 0, 0];
+  if (p.kind === "linear") {
+    const dir = AXES[p.axis];
+    const d = (p.flip ? -1 : 1) * step * k;
+    return [v[0] + dir[0] * d, v[1] + dir[1] * d, v[2] + dir[2] * d];
+  }
+  const q = quatFromAxisAngle(AXES[p.axis], ((p.flip ? -1 : 1) * step * k * Math.PI) / 180);
+  const r = rotate(q, [v[0] - c[0], v[1] - c[1], v[2] - c[2]]);
+  return [r[0] + c[0], r[1] + c[1], r[2] + c[2]];
+};

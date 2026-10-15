@@ -326,6 +326,31 @@ export interface Instance {
   placement: Placement;
   /** Fixed instances stay where they are; others move to satisfy mates. */
   fixed: boolean;
+  /** A copy made by a pattern: which pattern, the instance it copies, and which copy it is (1 = next to the original). */
+  copyOf?: { pattern: string; seed: string; index: number };
+}
+
+/**
+ * Copies of some instances, repeated in a line or round an axis (Onshape's
+ * linear and circular patterns in an assembly). The copies are ordinary
+ * instances (`copyOf` says where they came from) that follow their original.
+ */
+export interface AssemblyPattern {
+  id: string;
+  name: string;
+  kind: "linear" | "circular";
+  /** The instances repeated. */
+  seeds: string[];
+  /** How many in each row, including the original. */
+  count: number;
+  /** Linear: the gap from one copy to the next (mm); circular: the angle they're spread over (360 = evenly all the way round). Typed values. */
+  amount: string;
+  /** The direction (linear) or the axis turned about (circular). */
+  axis: "x" | "y" | "z";
+  /** Go the other way. */
+  flip?: boolean;
+  /** Circular: a point the axis passes through (mm). */
+  centre?: [number, number, number];
 }
 
 /** Kinds of mate (Onshape names in brackets where they differ): Fasten, Hinge (revolute), Slider, Cylindrical, Planar, Ball. */
@@ -387,6 +412,8 @@ export interface Assembly {
   relations?: MateRelation[];
   /** Exploded view: how far the parts are spread apart (1 = their distance from the middle again); missing = together. */
   explode?: number;
+  /** Patterns of instances (optional: older saves have none). */
+  patterns?: AssemblyPattern[];
 }
 
 /** How finely curved surfaces are turned into triangles. */
