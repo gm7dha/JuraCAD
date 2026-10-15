@@ -201,7 +201,10 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
   );
 }
 
-function FeatureRow({ feature, onMenu, linked }: { feature: Feature; onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void; linked: boolean }) {
+/** Drag-and-drop data type for moving features up and down the list. */
+const FEATURE_DRAG = "application/x-partsmith-feature";
+
+function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void; linked: boolean; draggable?: boolean }) {
   const kernelError = useStore((s) => s.featureErrors[feature.id]);
   const selected = useStore((s) => s.selectedFeatureId === feature.id);
   const editing = useStore((s) => s.editing?.draft.id === feature.id);
@@ -276,6 +279,23 @@ function FeatureRow({ feature, onMenu, linked }: { feature: Feature; onMenu: (e:
       }}
       onDoubleClick={() => startEdit(feature.id)}
       onContextMenu={(e) => onMenu(e, entries)}
+      // Drag a feature up or down the list to move it (it's dropped above the row it's let go on).
+      draggable={draggable && !useStore.getState().editing}
+      onDragStart={(e) => {
+        e.dataTransfer.setData(FEATURE_DRAG, feature.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(e) => {
+        if (!draggable || !e.dataTransfer.types.includes(FEATURE_DRAG)) return;
+        e.preventDefault();
+        e.currentTarget.classList.add("drop-before");
+      }}
+      onDragLeave={(e) => e.currentTarget.classList.remove("drop-before")}
+      onDrop={(e) => {
+        e.currentTarget.classList.remove("drop-before");
+        const id = e.dataTransfer.getData(FEATURE_DRAG);
+        if (id && id !== feature.id) useStore.getState().moveFeature(id, feature.id);
+      }}
       title={
         feature.suppressed
           ? "Suppressed — skipped when building"
@@ -578,9 +598,26 @@ export function FeaturePanel() {
           ))}
           {!grouped &&
             features.flatMap((f) => [
-              <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} />,
+              <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} draggable />,
               ...(f.id === rollbackTo ? [<RollbackBar key="rollback" />] : []),
             ])}
+          {!grouped && features.length > 1 && (
+            <li
+              className="feature-drop-end"
+              aria-hidden
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes(FEATURE_DRAG)) return;
+                e.preventDefault();
+                e.currentTarget.classList.add("drop-before");
+              }}
+              onDragLeave={(e) => e.currentTarget.classList.remove("drop-before")}
+              onDrop={(e) => {
+                e.currentTarget.classList.remove("drop-before");
+                const id = e.dataTransfer.getData(FEATURE_DRAG);
+                if (id) useStore.getState().moveFeature(id, null);
+              }}
+            />
+          )}
           {grouped &&
             groups.groups.map((g) => (
               <li key={g.partId} className="feature-group" role="treeitem" aria-expanded={!collapsed.includes(g.partId)}>

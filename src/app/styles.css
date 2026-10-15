@@ -2362,6 +2362,17 @@ kbd {
   color: var(--ink-2);
 }
 
+/* Moving features: a line shows where the dragged feature will go. */
+.feature-row.drop-before,
+.feature-drop-end.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.feature-drop-end {
+  list-style: none;
+  height: 10px;
+}
+
 /* Notes on a drawing: an invisible box to grab, outlined when hovered or selected. */
 .drawing-note-handle {
   fill: transparent;
