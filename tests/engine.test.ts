@@ -1050,7 +1050,7 @@ describe("coil", () => {
     expect(check.exactVolume!).toBeCloseTo(Math.PI * 1 * length, -1);
     const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
     expect(a.bounds!.max[0]).toBeCloseTo(11, 0);
-    expect(build([{ ...coil, params: { ...coil.params, pitch: "3" } }]).featureErrors[coil.id]).toMatch(/pitch/);
+    expect(build([{ ...coil, params: { ...coil.params, pitch: "1.5" } }]).featureErrors[coil.id]).toMatch(/pitch/i);
   });
 });
 
