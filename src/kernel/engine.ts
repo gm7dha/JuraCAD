@@ -1792,7 +1792,7 @@ export class GeometryEngine {
             : "Couldn't bevel these edges. Try a smaller distance — it has to fit on the faces next to each edge.";
         let shape: Shape3D;
         try {
-          shape = feature.type === "fillet" ? part.shape.fillet(pick) : part.shape.chamfer(pick);
+          shape = feature.type === "fillet" ? part.shape.fillet(pick) : part.shape.chamfer((e: Edge) => (chosen.some((c) => c.isSame(e)) ? size : null));
         } catch {
           throw new Error(failed);
         } finally {
