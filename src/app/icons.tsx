@@ -133,6 +133,15 @@ export const Icons = {
       <path d="M4 20V10l6-6h10" />
     </Svg>
   ),
+  Replicate: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="2.5" y="13" width="19" height="7" rx="1" />
+      <circle cx="7" cy="16.5" r="1.6" />
+      <circle cx="17" cy="16.5" r="1.6" />
+      <path d="M7 3v9M5 5h4M17 6v6" />
+      <path d="M17 3v1.5" strokeDasharray="1 1.5" />
+    </Svg>
+  ),
   Configurations: (p: IconProps) => (
     <Svg {...p}>
       <rect x="3" y="4" width="18" height="16" rx="1.5" />

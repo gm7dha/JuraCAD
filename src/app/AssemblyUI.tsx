@@ -110,6 +110,17 @@ export function AssemblyToolbar() {
           onClick={() => useStore.getState().createPattern()}
           title={selected.some((i) => !i.copyOf) ? "Pattern — repeat the selected parts in a row or round an axis (the copies follow the originals)" : "Select the parts to repeat first"}
         />
+        <ToolButton
+          label="Replicate"
+          icon={<Icons.Replicate />}
+          disabled={selected.length !== 1}
+          onClick={() => useStore.getState().createReplicate()}
+          title={
+            selected.length === 1
+              ? "Replicate — copy this part into every other hole like the one it's mated into (e.g. a bolt into all the matching holes)"
+              : "Select one part that's mated into a hole first"
+          }
+        />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
@@ -280,13 +291,36 @@ function PatternsSection({ assembly }: { assembly: Assembly }) {
   const { solved } = useSolvedAssembly();
   const editing = useStore((s) => s.editingPattern);
   const patterns = assembly.patterns ?? [];
-  if (!patterns.length) return null;
+  const replicates = assembly.replicates ?? [];
+  if (!patterns.length && !replicates.length) return null;
   return (
     <section className="panel-section patterns">
       <h3>
-        Patterns <span className="count">({patterns.length})</span>
+        Patterns <span className="count">({patterns.length + replicates.length})</span>
       </h3>
       <ul className="feature-list">
+        {replicates.map((r) => {
+          const copies = assembly.instances.filter((i) => i.replicaOf?.replicate === r.id).length;
+          const seed = assembly.instances.find((i) => i.id === r.seed);
+          return (
+            <li key={r.id} className="feature-row" title={`${seed?.name ?? "A part"} copied into ${copies} more matching hole${copies === 1 ? "" : "s"}.`}>
+              <span className="feature-icon">
+                <Icons.Replicate size={18} />
+              </span>
+              <span className="feature-name">
+                {r.name} <span className="muted">({copies + 1})</span>
+              </span>
+              <span className="row-actions">
+                <button className="icon-button small" onClick={() => useStore.getState().refreshReplicate(r.id)} aria-label={`Update ${r.name}`} title="Look for matching holes again (after the part has changed)">
+                  <Icons.Redo size={15} />
+                </button>
+                <button className="icon-button small" onClick={() => useStore.getState().deleteReplicate(r.id)} aria-label={`Delete ${r.name}`} title="Delete (and its copies)">
+                  <Icons.Trash size={15} />
+                </button>
+              </span>
+            </li>
+          );
+        })}
         {patterns.map((p) => {
           const error = solved?.patternErrors?.[p.id];
           return (
