@@ -81,6 +81,11 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.operation = "new";
   }
   if (type === "flange" || type === "hem") feature.picks = [];
+  if (type === "tab") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    feature.sketchRef = sketches[sketches.length - 1]?.id;
+    feature.operation = "add";
+  }
   if (type === "rib") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
     feature.sketchRef = sketches[sketches.length - 1]?.id;
@@ -398,7 +403,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       const rd = (f.replaceDef ?? {}) as Record<string, unknown>;
       feature.replaceDef = { target: rd.target ? parsePlane(rd.target) ?? null : null, picking: rd.picking === "target" ? "target" : "faces" };
     }
-    if ((feature.type === "rib" || feature.type === "sheetMetal") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+    if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
     if ((feature.type === "sheetMetal" || feature.type === "flange" || feature.type === "hem") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "flange" && f.closeCorners === true) feature.closeCorners = true;
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;

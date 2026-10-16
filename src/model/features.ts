@@ -275,6 +275,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "inset", label: "Shorten each end by (a relief is cut so it can bend)", defaultValue: "0", min: 0, group: "size" },
     ],
   },
+  tab: {
+    type: "tab",
+    label: "Tab",
+    namePrefix: "Tab",
+    description: "Joins flat shapes onto a sheet metal wall: sketch them on the wall's face, overlapping or meeting its edge.",
+    params: [],
+  },
   hem: {
     type: "hem",
     label: "Hem",

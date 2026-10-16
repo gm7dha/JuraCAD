@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { findSheetEdge, flatPattern, flatPoint, foldSheet, unfoldMoves, wallPoint, type Frame3, type SheetSpec, type V3 } from "../src/sheetmetal/sheet";
+import { findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, unfoldMoves, wallOnPlane, wallPoint, type Frame3, type P2, type SheetSpec, type V3 } from "../src/sheetmetal/sheet";
+import { outsideOnly } from "../src/sheetmetal/flatExport";
 import type { Segment } from "../src/sketch/regions";
 
 const close = (a: number[], b: number[], digits = 6) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], digits));
@@ -195,5 +196,41 @@ describe("unfolding", () => {
       expect(u[0] * v[1] * n[2] + u[1] * v[2] * n[0] + u[2] * v[0] * n[1] - u[2] * v[1] * n[0] - u[1] * v[0] * n[2] - u[0] * v[2] * n[1]).toBeCloseTo(1, 9);
       expect(s.frame.origin[2]).toBeCloseTo(0, 9);
     }
+  });
+});
+
+describe("tabs", () => {
+  it("finds the wall a sketch lies on, moves its shape into the wall, and joins it on", () => {
+    const f = foldSheet(spec([{ id: "r", wall: "base", edge: 1, length: 30, angle: 90, down: false }]));
+    // The base's top face, sketched facing down: still the base.
+    expect(wallOnPlane(f, 2, [5, 5, 2], [0, 0, -1])?.id).toBe("base");
+    // The flange's outside face (x = 104).
+    expect(wallOnPlane(f, 2, [104, 10, 10], [1, 0, 0])?.id).toBe("r");
+    expect(wallOnPlane(f, 2, [5, 5, 7], [0, 0, 1])).toBe(null);
+    const moved = mapSegments([{ kind: "line", from: [0, 0], to: [10, 0] }], (p) => [p[0] + 1, -p[1]]);
+    expect(moved).toEqual([{ kind: "line", from: [1, -0], to: [11, -0] }]);
+    const tab: Segment[] = [
+      { kind: "line", from: [10, -20], to: [30, -20] },
+      { kind: "line", from: [30, -20], to: [30, 5] },
+      { kind: "line", from: [30, 5], to: [10, 5] },
+      { kind: "line", from: [10, 5], to: [10, -20] },
+    ];
+    const withTab = foldSheet({ ...spec([]), tabs: [{ id: "t", wall: "base", outline: tab, holes: [] }] });
+    expect(withTab.errors).toEqual({});
+    expect(withTab.walls[0].tabs).toHaveLength(1);
+    expect(foldSheet({ ...spec([]), tabs: [{ id: "t", wall: "gone", outline: tab, holes: [] }] }).errors.t).toMatch(/can't be found/);
+  });
+
+  it("keeps only the outside edges of a flat face made of pieces", () => {
+    // Two squares side by side share the line x = 10.
+    const sq = (x: number): [P2, P2][] => [
+      [[x, 0], [x + 10, 0]],
+      [[x + 10, 0], [x + 10, 10]],
+      [[x + 10, 10], [x, 10]],
+      [[x, 10], [x, 0]],
+    ];
+    const out = outsideOnly([...sq(0), ...sq(10)]);
+    expect(out).toHaveLength(6);
+    expect(out.some(([a, b]) => a[0] === 10 && b[0] === 10)).toBe(false);
   });
 });

@@ -7,6 +7,7 @@ import { facesOf } from "./topology";
 
 import type { Bend, FoldedSheet, P2, Wall } from "../sheetmetal/sheet";
 import { unfoldMoves } from "../sheetmetal/sheet";
+import { outsideOnly } from "../sheetmetal/flatExport";
 import type { Loop, Segment } from "../sketch/regions";
 import { loopFace, release } from "./extrude";
 
@@ -38,7 +39,10 @@ function prism(outer: Segment[], holes: Segment[][], frame: { origin: V3; u: V3;
 /** A wall as a solid: its outline, the sheet's thickness thick. */
 export function wallSolid(wall: Wall, thickness: number): Shape3D {
   const n = wall.frame.n;
-  return prism(wall.outline, wall.holes, wall.frame, [n[0] * thickness, n[1] * thickness, n[2] * thickness]);
+  const v: V3 = [n[0] * thickness, n[1] * thickness, n[2] * thickness];
+  const main = prism(wall.outline, wall.holes, wall.frame, v);
+  if (!wall.tabs?.length) return main;
+  return fusePieces([main, ...wall.tabs.map((t) => prism(t.outline, t.holes, wall.frame, v))])!;
 }
 
 /** A bend as a solid: its curved cross-section swept along the edge. */
@@ -152,3 +156,35 @@ export function unfoldedSolid(part: Shape3D, folded: FoldedSheet, thickness: num
   }
   return fusePieces(pieces);
 }
+
+/**
+ * The lines to cut for a part laid out flat: the edges round its underside
+ * (the face on the base's plane, facing away from the sheet), in the base's
+ * coordinates. Edges shared by two pieces of that face are inside it and left out.
+ */
+export function flatBoundary(unfolded: Shape3D, base: { origin: V3; u: V3; v: V3; n: V3 }): [P2, P2][] {
+  const local = (p: V3): P2 => {
+    const d: V3 = [p[0] - base.origin[0], p[1] - base.origin[1], p[2] - base.origin[2]];
+    return [dot(d, base.u), dot(d, base.v)];
+  };
+  const pieces: [P2, P2][] = [];
+  for (const face of facesOf(unfolded)) {
+    try {
+      if (face.geomType !== "PLANE") continue;
+      const c = face.center;
+      const h = dot([c.x - base.origin[0], c.y - base.origin[1], c.z - base.origin[2]], base.n);
+      c.delete();
+      if (Math.abs(h) > 1e-4) continue;
+      const { lines, edgeGroups } = face.meshEdges({ tolerance: 0.01, angularTolerance: 0.1 });
+      for (const g of edgeGroups) {
+        for (let i = g.start; i + 1 < g.start + g.count; i += 2) {
+          pieces.push([local([lines[3 * i], lines[3 * i + 1], lines[3 * i + 2]]), local([lines[3 * i + 3], lines[3 * i + 4], lines[3 * i + 5]])]);
+        }
+      }
+    } finally {
+      face.delete();
+    }
+  }
+  return outsideOnly(pieces);
+}
+
