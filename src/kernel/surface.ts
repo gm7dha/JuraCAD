@@ -12,7 +12,7 @@ import { findChains, type Chain } from "../sketch/regions";
 import { axisInSketch, type RevolveAxis } from "../sketch/axis";
 import type { SketchData } from "../sketch/types";
 import { release, segmentsWire } from "./extrude";
-import { pathWire } from "./sweep";
+import { loopStart, pathWire } from "./sweep";
 import { edgesOf, facesOf } from "./topology";
 
 type Vec3 = [number, number, number];
@@ -135,12 +135,15 @@ export function loftSurface(sections: { plane: SketchPlane; data: SketchData; na
   const wires: Wire[] = [];
   try {
     let closed: boolean | null = null;
+    let start: [number, number, number] | undefined;
     for (const s of sections) {
       const { chains } = findChains(s.data);
       if (chains.length !== 1) throw new Error(`${s.name} needs exactly one run of lines or curves to loft through (it has ${chains.length}).`);
       if (closed !== null && chains[0].closed !== closed) throw new Error("The sketches must all be closed shapes, or all open outlines.");
       closed = chains[0].closed;
-      wires.push(segmentsWire(chains[0].segments, planeFrame(s.plane), 0));
+      const frame = planeFrame(s.plane);
+      start ??= loopStart(chains[0].segments, frame);
+      wires.push(segmentsWire(chains[0].segments, frame, 0, start));
     }
     try {
       return loft(wires, { ruled: false }, true);

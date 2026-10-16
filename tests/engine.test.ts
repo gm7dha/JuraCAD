@@ -1245,6 +1245,41 @@ describe("fasteners", () => {
   }, 60_000);
 });
 
+describe("thread symbols on drawings", () => {
+  it("marks a bolt's and a nut's thread on their views, and a Thread feature's on a rod", () => {
+    // An M6 × 20 bolt at the origin: shank down to z = −20; root diameter 6 − 1.0825 = 4.9175.
+    const bolt: Feature = { ...feature("fastener", { length: 20, x: 0, y: 0, z: 0 }), fastener: { kind: "socketCap", size: "M6", threaded: false } };
+    build([bolt]);
+    const [front, top] = engine.project([], undefined, ["front", "top"], true);
+    expect(front.threadMarks).toHaveLength(2);
+    const xs = front.threadMarks!.map((m) => Math.abs(m.line[0]));
+    xs.forEach((x) => expect(x).toBeCloseTo(4.9175 / 2, 4));
+    expect(front.threadMarks!.every((m) => !m.hidden)).toBe(true);
+    const ys = front.threadMarks![0].line.filter((_, i) => i % 2 === 1).sort((a, b) => a - b);
+    expect(ys[0]).toBeCloseTo(-20, 4);
+    expect(ys[1]).toBeCloseTo(0, 4);
+    // From above: a three-quarter circle at the root diameter.
+    expect(top.threadMarks).toHaveLength(1);
+    const arc = top.threadMarks![0].line;
+    expect(Math.hypot(arc[0], arc[1])).toBeCloseTo(4.9175 / 2, 4);
+    // A nut: dashed (inside the part) at the outside diameter, from the side.
+    build([{ ...bolt, fastener: { kind: "nut", size: "M6", threaded: false } }]);
+    const [nutFront] = engine.project([], undefined, ["front"], true);
+    expect(nutFront.threadMarks!.every((m) => m.hidden)).toBe(true);
+    expect(Math.abs(nutFront.threadMarks![0].line[0])).toBeCloseTo(3, 4);
+    // A Thread feature on a 10 mm rod (pitch 1.5): root 10 − 1.62375.
+    const rod = feature("cylinder", { diameter: 10, height: 30, x: 0, y: 0, z: 0 });
+    const first = build([rod]);
+    const side = first.parts[0].faceRefs.find((f) => f.surface === "CYLINDRE")!;
+    const thread: Feature = { ...feature("thread", { pitch: 1.5, length: 10 }), picks: [{ partId: rod.id, ref: side }] };
+    const r = build([rod, thread]);
+    expect(r.featureErrors).toEqual({});
+    const [rodFront] = engine.project([], undefined, ["front"], true);
+    expect(rodFront.threadMarks).toHaveLength(2);
+    expect(Math.abs(rodFront.threadMarks![0].line[0])).toBeCloseTo((10 - 1.62375) / 2, 3);
+  }, 120_000);
+});
+
 describe("plane features", () => {
   it("build nothing, but say when they can't be placed", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });
@@ -1754,6 +1789,29 @@ describe("extrude up to a face, and with draft", () => {
 });
 
 describe("sweep and loft", () => {
+  it("lofts between ellipses (and a circle) without cutting them in two", () => {
+    // An ellipse long along X at the bottom, one long along Y 20 up: one smooth side, a plain rim top and bottom.
+    const low = sketchFeature({ kind: "default", name: "Top" }, addEllipse(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 0 }, [0, 5]).sketch);
+    const high = sketchFeature(planeOnFace([0, 0, 1], [0, 0, 20], "up"), addEllipse(emptySketch(), { x: 0, y: 0 }, { x: 6, y: 0 }, [0, 12]).sketch);
+    const lo: Feature = { ...feature("loft", {}), sections: [low.id, high.id] };
+    const r = build([low, high, lo]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts[0].edgeRefs.map((e) => e.curve)).toEqual(["ELLIPSE", "ELLIPSE"]);
+    expect(r.parts[0].faceRefs).toHaveLength(3);
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    // A circle up to an ellipse, turned: the same.
+    const ring = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 0, y: 0 }, 8).sketch);
+    const r2 = build([ring, high, { ...lo, sections: [ring.id, high.id] }]);
+    expect(r2.featureErrors).toEqual({});
+    expect(r2.parts[0].edgeRefs).toHaveLength(2);
+    expect(r2.parts[0].faceRefs).toHaveLength(3);
+    // As a surface: one face, two rims.
+    const r3 = build([low, high, { ...lo, surface: true }]);
+    expect(r3.featureErrors).toEqual({});
+    expect(r3.parts[0].faceRefs).toHaveLength(1);
+    expect(r3.parts[0].edgeRefs).toHaveLength(2);
+  });
+
   it("sweeps a circle along an L-shaped path into a bent pipe", () => {
     // Path on Top: straight along +X for 40 mm.
     let path = emptySketch();

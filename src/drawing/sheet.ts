@@ -350,6 +350,10 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     if (drawing.centreLines !== false) {
       for (const seg of [...centreMarks(p, vs), ...centreLines(p, vs)]) draw(seg, "centre");
     }
+    // Threads on rods and in holes (Thread features, fasteners), drawn the standard way.
+    if (drawing.threadSymbols !== false) {
+      for (const m of p.threadMarks ?? []) if (!m.hidden || drawing.hiddenLines) draw(m.line, m.hidden ? "hidden" : "thin");
+    }
     // Tapped holes: the thread drawn the standard way.
     if (drawing.threadSymbols !== false && info.taps?.length) {
       const t = threadSymbols(p, info.taps);

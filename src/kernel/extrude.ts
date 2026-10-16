@@ -12,7 +12,9 @@ import {
   basicFaceExtrusion,
   makeBezierCurve,
   makeCircle,
+  makeAx2,
   makeEllipse,
+  makeEllipseArc,
   makeFace,
   makeLine,
   makeSolid,
@@ -41,13 +43,29 @@ export interface ExtrudeOptions {
 export const release = (...items: { delete(): void }[]) => items.forEach((i) => i.delete());
 
 /** The closed outline of one loop of the sketch, `offset` mm along the plane's normal. */
-export function loopWire(loop: Loop, frame: PlaneFrame, offset: number): Wire {
-  return segmentsWire(loop.segments, frame, offset);
+export function loopWire(loop: Loop, frame: PlaneFrame, offset: number, startDir?: Vec3): Wire {
+  return segmentsWire(loop.segments, frame, offset, startDir);
 }
 
-/** A run of sketch pieces (closed or open) as one wire, `offset` mm along the plane's normal. */
-export function segmentsWire(segments: Segment[], frame: PlaneFrame, offset: number): Wire {
+type Vec3 = [number, number, number];
+const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+/**
+ * A run of sketch pieces (closed or open) as one wire, `offset` mm along the
+ * plane's normal. A whole circle or ellipse starts (where its one edge begins
+ * and ends) towards `startDir` from its centre, when given — so the outlines of
+ * a loft line up instead of being cut in two to match.
+ */
+export function segmentsWire(segments: Segment[], frame: PlaneFrame, offset: number, startDir?: Vec3): Wire {
   const P = ([x, y]: [number, number]) => toWorld(frame, x, y, offset);
+  const n = frame.n;
+  // The start direction laid flat in this sketch's plane (none if it points straight out of it).
+  const flat = startDir ? ((): Vec3 | null => {
+    const k = dot(startDir, n);
+    const d: Vec3 = [startDir[0] - n[0] * k, startDir[1] - n[1] * k, startDir[2] - n[2] * k];
+    const l = Math.hypot(...d);
+    return l > 1e-6 ? [d[0] / l, d[1] / l, d[2] / l] : null;
+  })() : null;
   const edges: Edge[] = segments.map((seg) => {
     switch (seg.kind) {
       case "line":
@@ -55,7 +73,7 @@ export function segmentsWire(segments: Segment[], frame: PlaneFrame, offset: num
       case "arc":
         return makeThreePointArc(P(seg.from), P(seg.mid), P(seg.to));
       case "circle":
-        return makeCircle(seg.radius, P(seg.center), frame.n);
+        return flat ? circleFrom(seg.radius, P(seg.center), n, flat) : makeCircle(seg.radius, P(seg.center), frame.n);
       case "bezier":
         return makeBezierCurve([P(seg.from), P(seg.c1), P(seg.c2), P(seg.to)]);
       case "ellipse": {
@@ -65,7 +83,16 @@ export function segmentsWire(segments: Segment[], frame: PlaneFrame, offset: num
         const { u, v } = frame;
         const [ca, sa] = [Math.cos(a), Math.sin(a)];
         const dir: [number, number, number] = [u[0] * ca + v[0] * sa, u[1] * ca + v[1] * sa, u[2] * ca + v[2] * sa];
-        return makeEllipse(Math.max(seg.rx, seg.ry), Math.min(seg.rx, seg.ry), P(seg.center), frame.n, dir);
+        const major = Math.max(seg.rx, seg.ry);
+        const minor = Math.min(seg.rx, seg.ry);
+        if (flat) {
+          // The point on the ellipse in that direction from its centre: its angle round the ellipse, measured from the long axis.
+          const y: Vec3 = [n[1] * dir[2] - n[2] * dir[1], n[2] * dir[0] - n[0] * dir[2], n[0] * dir[1] - n[1] * dir[0]];
+          const phi = Math.atan2(dot(flat, y), dot(flat, dir));
+          const t = Math.atan2(major * Math.sin(phi), minor * Math.cos(phi));
+          return makeEllipseArc(major, minor, t, t + 2 * Math.PI, P(seg.center), frame.n, dir);
+        }
+        return makeEllipse(major, minor, P(seg.center), frame.n, dir);
       }
     }
   });
@@ -74,6 +101,23 @@ export function segmentsWire(segments: Segment[], frame: PlaneFrame, offset: num
   } finally {
     release(...edges);
   }
+}
+
+/** A whole circle starting towards `xDir` from its centre. */
+function circleFrom(radius: number, center: Vec3, normal: Vec3, xDir: Vec3): Edge {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const ax = makeAx2(center, normal, xDir) as any;
+  const circ = new oc.gp_Circ(ax, radius);
+  const maker = new oc.BRepBuilderAPI_MakeEdge(circ);
+  try {
+    return cast(maker.Edge()) as Edge;
+  } finally {
+    maker.delete();
+    circ.delete();
+    ax.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** A flat face for one closed loop of the sketch, `offset` mm along the plane's normal. */
