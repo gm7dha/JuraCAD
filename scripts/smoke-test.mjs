@@ -863,6 +863,19 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^VIEW [A-Z]$/.test(t.textContent ?? "")), null, { timeout: 60_000 });
     await shot("auxview");
   }
+  step = "shortening the front view";
+  {
+    const frontNow = await page.locator(".drawing-view-handle").first().boundingBox();
+    const before = frontNow.width;
+    await tool("Shortened view");
+    await page.mouse.click(frontNow.x + frontNow.width * 0.35, frontNow.y + frontNow.height * 0.5);
+    await page.mouse.click(frontNow.x + frontNow.width * 0.65, frontNow.y + frontNow.height * 0.5);
+    await page.waitForSelector('[aria-label="Remove break 1"]', { timeout: 10_000 });
+    await page.waitForTimeout(500);
+    const after = (await page.locator(".drawing-view-handle").first().boundingBox()).width;
+    if (!(after < before - 5)) throw new Error(`the front view didn't get shorter (${Math.round(before)} → ${Math.round(after)} px)`);
+    await shot("shortened");
+  }
   step = "drawing the assembly";
   await page.locator("#drawing-source").selectOption({ label: "Assembly 1" });
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "QTY"), null, { timeout: 60_000 });
