@@ -229,6 +229,15 @@ export function Toolbar() {
               title: hasPart ? "Flange — bend a wall up (or down) off straight edges of a sheet metal part" : "Make a sheet metal part first",
             },
             {
+              key: "tab",
+              label: "Tab",
+              icon: <Icons.Tab />,
+              onClick: () => startCreate("tab"),
+              disabled: !ready || !hasSheet || !hasSketch,
+              active: editingType === "tab",
+              title: hasSheet ? "Tab — join flat shapes onto a sheet metal wall: sketch them on its face, overlapping its edge" : "Make a sheet metal part first",
+            },
+            {
               key: "hem",
               label: "Hem",
               icon: <Icons.Hem />,

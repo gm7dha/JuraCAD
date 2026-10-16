@@ -270,6 +270,12 @@ export const Icons = {
       <path d="M3 15v1.5l8 4 10-5V14" />
     </Svg>
   ),
+  Tab: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 14l8 4 10-5-8-4z" />
+      <path d="M15 12l4-2 3 1.5-4 2" strokeDasharray="1.5 1.5" />
+    </Svg>
+  ),
   Hem: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 15h13a3 3 0 0 0 0-6H9" />

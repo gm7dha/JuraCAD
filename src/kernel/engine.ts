@@ -24,8 +24,8 @@ import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { openChain, profileSheet } from "../sheetmetal/profile";
-import { findSheetEdge, flatPattern, flatPoint, foldSheet, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
-import { bendSolid, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
+import { findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
+import { bendSolid, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
 import { flatProjection } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize } from "../model/fasteners";
 import type { CheckResult, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
@@ -1068,6 +1068,11 @@ export class GeometryEngine {
         if (r.newPart) partCounter++;
         continue;
       }
+      if (feature.type === "tab") {
+        const err = this.applyTab(feature, sketches);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "flange" || feature.type === "hem") {
         const err = this.applyFlange(feature);
         if (err) featureErrors[feature.id] = err;
@@ -1247,6 +1252,66 @@ export class GeometryEngine {
   }
 
   /** Grow picked flat faces into a solid, then make it a new part or add it to, cut it from or intersect it with their part. */
+  /** Tab: closed shapes sketched on a face of a sheet metal part, joined onto that wall as more sheet. */
+  private applyTab(feature: Feature, sketches: SketchMap): string | null {
+    if (!feature.sketchRef) return "Choose the sketch with the tab's shape.";
+    const sketch = sketches.get(feature.sketchRef);
+    if (!sketch?.sketch?.plane) return "The sketch it uses can't be found (deleted, suppressed, or after this in the list).";
+    const { regions, problems } = findRegions(sketch.sketch.data);
+    if (regions.length === 0) return `The sketch has no closed shape for the tab.${problems.length ? ` ${problems.join(" ")}` : ""}`;
+    const sf = planeFrame(sketch.sketch.plane);
+    // The sheet metal part (latest first) with a wall in the sketch's plane.
+    for (const part of [...this.parts].reverse()) {
+      if (!part.sheet) continue;
+      const spec = part.sheet;
+      const wall = wallOnPlane(foldSheet(spec), spec.thickness, sf.origin, sf.n);
+      if (!wall) continue;
+      const f = wall.frame;
+      const toWall = (p: [number, number]): [number, number] => {
+        const w = toWorld(sf, p[0], p[1]);
+        const d: Vec3 = [w[0] - f.origin[0], w[1] - f.origin[1], w[2] - f.origin[2]];
+        return [dot3(d, f.u), dot3(d, f.v)];
+      };
+      const tabs = regions.map((r, i) => ({
+        id: `${feature.id}:${i}`,
+        wall: wall.id,
+        outline: mapSegments(r.outer.segments, toWall),
+        holes: r.holes.map((h) => mapSegments(h.segments, toWall)),
+      }));
+      const next: SheetSpec = { ...spec, tabs: [...(spec.tabs ?? []), ...tabs] };
+      const folded = foldSheet(next);
+      const problem = tabs.map((t) => folded.errors[t.id]).find(Boolean);
+      if (problem) return problem;
+      const ids = new Set(tabs.map((t) => t.id));
+      // Just the new tabs, as solids on the wall.
+      const solids = folded.walls
+        .filter((w) => w.id === wall.id)
+        .flatMap((w) => (w.tabs ?? []).slice(-tabs.length).map((t) => wallSolid({ ...w, outline: t.outline, holes: t.holes, tabs: [] }, spec.thickness)));
+      const extra = fusePieces(solids);
+      if (!extra || ids.size === 0) return "The sketch has no closed shape for the tab.";
+      let result: Shape3D;
+      try {
+        result = part.shape.fuse(extra);
+      } catch (e) {
+        return describeError(e, "Couldn't join this tab onto the sheet.");
+      } finally {
+        extra.delete();
+      }
+      if (solidsOf(result).length !== 1) {
+        solidsOf(result).forEach((x) => x.delete());
+        result.delete();
+        return "The tab doesn't touch the sheet. Draw it so it overlaps or meets the wall's edge.";
+      }
+      part.shape.delete();
+      part.shape = result;
+      part.sheet = next;
+      part.featureIds.push(feature.id);
+      part.sheetFeatures = [...(part.sheetFeatures ?? []), feature.id];
+      return null;
+    }
+    return "Sketch the tab on a face of a sheet metal part (its top or bottom face, or a flange's face): use that face as the sketch's plane.";
+  }
+
   /** Sheet metal: a flat sheet from a closed sketch, kept as a sheet so flanges can be bent off it. */
   private applySheetMetal(feature: Feature, sketches: SketchMap, nextPartNumber: number): { error?: string; newPart?: boolean } {
     const { values, errors } = resolveParams(feature);
@@ -1390,7 +1455,7 @@ export class GeometryEngine {
         .filter((b) => ids.has(b.flangeId) && b.reliefs.length)
         .flatMap((b) => {
           const parent = folded.walls.find((w) => w.id === b.parent)!;
-          return b.reliefs.map((r) => wallSolid({ ...parent, outline: r, holes: [] }, spec.thickness));
+          return b.reliefs.map((r) => wallSolid({ ...parent, outline: r, holes: [], tabs: [] }, spec.thickness));
         });
       const notches = fusePieces(reliefs);
       if (notches) {
@@ -2455,7 +2520,19 @@ export class GeometryEngine {
         const wall = folded.walls.find((w) => w.id === c.wall);
         return wall ? c.lines.map(([a, b]): [[number, number], [number, number]] => [flatPoint(wall.flat, a), flatPoint(wall.flat, b)]) : [];
       });
-      return { ...flat, cuts, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) };
+      const out: FlatPatternData = { ...flat, cuts, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) };
+      // With tabs the outline isn't a simple walk round the walls: take it from the part laid out flat.
+      if (s.tabs?.length) {
+        const unfolded = unfoldedSolid(p.shape, folded, s.thickness);
+        if (unfolded) {
+          try {
+            out.boundary = flatBoundary(unfolded, folded.walls[0].frame);
+          } finally {
+            unfolded.delete();
+          }
+        }
+      }
+      return out;
     } catch {
       return null;
     }
