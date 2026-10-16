@@ -25,7 +25,7 @@ import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
-import { bendSolid, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
+import { bendSolid, cornerReliefSolid, cutFlatCornerReliefs, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
 import { flatProjection } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import type { CheckResult, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
@@ -1436,6 +1436,8 @@ export class GeometryEngine {
             down: !!feature.flipSide,
             ...(values.inset > 0 ? { inset: values.inset } : {}),
             ...(feature.closeCorners ? { closeCorners: true } : {}),
+            ...(feature.reliefShape && feature.reliefShape !== "rectangle" ? { reliefShape: feature.reliefShape } : {}),
+            ...(feature.cornerRelief ? { cornerRelief: feature.cornerRelief } : {}),
           };
       added.push(fl);
       spec = { ...spec, flanges: [...spec.flanges, fl] };
@@ -1466,6 +1468,12 @@ export class GeometryEngine {
           const parent = folded.walls.find((w) => w.id === b.parent)!;
           return b.reliefs.map((r) => wallSolid({ ...parent, outline: r, holes: [], tabs: [] }, spec.thickness));
         });
+      // Corner reliefs where the new flanges meet others.
+      for (const c of folded.cornerReliefs ?? []) {
+        if (!c.flanges.some((id) => ids.has(id))) continue;
+        const wall = folded.walls.find((w) => w.id === c.wall);
+        if (wall) reliefs.push(cornerReliefSolid(wall, c, spec.thickness));
+      }
       const notches = fusePieces(reliefs);
       if (notches) {
         try {
@@ -2716,9 +2724,10 @@ export class GeometryEngine {
         return wall ? c.lines.map(([a, b]): [[number, number], [number, number]] => [flatPoint(wall.flat, a), flatPoint(wall.flat, b)]) : [];
       });
       const out: FlatPatternData = { ...flat, cuts, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) };
-      // With tabs the outline isn't a simple walk round the walls: take it from the part laid out flat.
-      if (s.tabs?.length) {
-        const unfolded = unfoldedSolid(p.shape, folded, s.thickness);
+      // With tabs or corner reliefs the outline isn't a simple walk round the walls: take it from the part laid out flat.
+      if (s.tabs?.length || folded.cornerReliefs?.length) {
+        const laid = unfoldedSolid(p.shape, folded, s.thickness);
+        const unfolded = laid && folded.cornerReliefs?.length ? cutFlatCornerReliefs(laid, folded, s.thickness) : laid;
         if (unfolded) {
           try {
             out.boundary = flatBoundary(unfolded, folded.walls[0].frame);

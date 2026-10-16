@@ -137,6 +137,9 @@ export interface Feature {
   flipSide?: boolean;
   /** Flange: close the corners where these flanges meet other full-length right-angle flanges. */
   closeCorners?: boolean;
+  /** Flange: the shape of the bend relief notches (missing = rectangle) and the relief cut where flanges meet at a corner. */
+  reliefShape?: "rectangle" | "round" | "tear";
+  cornerRelief?: "round" | "square";
   /**
    * Replace face: the flat face or plane the picked faces are moved onto
    * (null until one is picked), and what a click in the 3D view picks.

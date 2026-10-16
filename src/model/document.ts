@@ -406,6 +406,8 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
     if ((feature.type === "sheetMetal" || feature.type === "flange" || feature.type === "hem") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "flange" && f.closeCorners === true) feature.closeCorners = true;
+    if (feature.type === "flange" && (f.reliefShape === "round" || f.reliefShape === "tear")) feature.reliefShape = f.reliefShape;
+    if (feature.type === "flange" && (f.cornerRelief === "round" || f.cornerRelief === "square")) feature.cornerRelief = f.cornerRelief;
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "fastener") {
       const fa = (f.fastener ?? {}) as Record<string, unknown>;
