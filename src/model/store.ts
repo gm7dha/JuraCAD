@@ -158,7 +158,7 @@ export interface SectionView {
 /** A mate being made or changed; its two connectors may not be picked yet. */
 export type MateDraft = Omit<Mate, "a" | "b"> & { a?: MateConnector; b?: MateConnector };
 
-export type DialogName = "check" | "export" | "help" | "flatPattern" | "variables" | "configurations" | "insert" | null;
+export type DialogName = "check" | "export" | "help" | "whatsNew" | "flatPattern" | "variables" | "configurations" | "insert" | null;
 
 export interface Toast {
   id: number;

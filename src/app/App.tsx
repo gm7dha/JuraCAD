@@ -12,6 +12,7 @@ import { FeatureDialog } from "./FeatureDialog";
 import { FeaturePanel } from "./FeaturePanel";
 import { HelpDialog } from "./HelpDialog";
 import { FlatPatternDialog } from "./FlatPatternDialog";
+import { WhatsNewDialog } from "./WhatsNewDialog";
 import { VariablesDialog } from "./VariablesDialog";
 import { ConfigurationsDialog } from "./ConfigurationsDialog";
 import { MeasurePanel } from "./MeasurePanel";
@@ -286,6 +287,7 @@ export function App() {
       {dialog === "export" && <ExportDialog />}
       {dialog === "help" && <HelpDialog />}
       {dialog === "flatPattern" && <FlatPatternDialog />}
+      {dialog === "whatsNew" && <WhatsNewDialog />}
       {dialog === "variables" && <VariablesDialog />}
       {dialog === "configurations" && <ConfigurationsDialog />}
       <ToastView />

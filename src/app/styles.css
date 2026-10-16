@@ -189,13 +189,63 @@ button:disabled {
 }
 
 .phase-badge {
+  font: inherit;
   font-size: 11.5px;
   font-weight: 600;
   color: var(--accent-dark);
   background: var(--accent-soft);
+  border: none;
   border-radius: 999px;
   padding: 3px 9px;
   white-space: nowrap;
+  cursor: pointer;
+  position: relative;
+}
+
+.phase-badge:hover {
+  filter: brightness(0.96);
+  text-decoration: underline;
+}
+
+.phase-badge .badge-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--error);
+  border: 1.5px solid var(--panel);
+}
+
+.whats-new-title {
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.whats-new-list {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.whats-new-list li {
+  margin: 4px 0;
+}
+
+.whats-new-earlier {
+  border-top: 1px solid var(--line);
+  padding: 6px 0;
+}
+
+.whats-new-earlier summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.whats-new-earlier .whats-new-list {
+  margin-top: 6px;
+  font-size: 13px;
 }
 
 .topbar-spacer,
@@ -1954,7 +2004,7 @@ kbd {
 }
 
 @media (max-width: 1300px) {
-  .phase-badge {
+  .phase-badge .badge-extra {
     display: none;
   }
 }
@@ -2636,4 +2686,10 @@ kbd {
   max-width: 100%;
   max-height: calc(55vh - 16px);
   object-fit: contain;
+.text-button.inline-link {
+  display: inline;
+  padding: 0;
+  height: auto;
+  font-size: inherit;
+  text-decoration: underline;
 }
