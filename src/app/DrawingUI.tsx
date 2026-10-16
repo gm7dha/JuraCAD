@@ -719,13 +719,10 @@ function BreakOutsList({ drawing, change }: { drawing: Drawing; change: (fn: (d:
           <div className="section-row" key={b.id}>
             <span>
               Cut {i + 1} <span className="muted small">(on {VIEW_LABELS[b.host]})</span>
+              <br />
+              <DepthBox value={b.depth} label={`Broken-out cut ${i + 1} depth`} onCommit={(depth) => change((d) => putBreakOut(d, { ...b, depth }))} />
             </span>
             <span className="row-actions-inline">
-              <DepthBox
-                value={b.depth}
-                label={`Broken-out cut ${i + 1} depth`}
-                onCommit={(depth) => change((d) => putBreakOut(d, { ...b, depth }))}
-              />
               <button
                 type="button"
                 className="text-button small-text danger-text"
@@ -754,8 +751,8 @@ function DepthBox({ value, label, onCommit }: { value: number; label: string; on
     else setText(lengthNumber(value, unit));
   };
   return (
-    <label className="small" title="How deep the cut goes, from the front of the part as this view sees it">
-      deep{" "}
+    <label className="small muted" title="How deep the cut goes, from the front of the part as this view sees it">
+      Depth{" "}
       <input className="short-input" aria-label={label} value={text} onChange={(e) => setText(e.target.value)} onBlur={take} onKeyDown={(e) => e.key === "Enter" && take()} />{" "}
       {unit}
     </label>
