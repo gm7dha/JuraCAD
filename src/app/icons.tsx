@@ -264,6 +264,18 @@ export const Icons = {
       <path d="M8 6l4-4 4 4" />
     </Svg>
   ),
+  SheetMetal: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 15l8 4 10-5-8-4z" />
+      <path d="M3 15v1.5l8 4 10-5V14" />
+    </Svg>
+  ),
+  Flange: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M2 17l8 4 8-4-8-4z" />
+      <path d="M18 17V6c0-1.5-.8-2.5-2-3l-8 4c1.2.5 2 1.5 2 3v11" />
+    </Svg>
+  ),
   ReplaceFace: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 21h18" />

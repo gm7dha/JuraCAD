@@ -233,15 +233,15 @@ function RibThickenOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
-  if (draft?.type !== "rib" && draft?.type !== "thicken") return null;
+  if (draft?.type !== "rib" && draft?.type !== "thicken" && draft?.type !== "sheetMetal" && draft?.type !== "flange") return null;
   const at = features.findIndex((f) => f.id === draft.id);
   const sketches = (at >= 0 ? features.slice(0, at) : features).filter((f) => f.type === "sketch" && !f.suppressed);
   return (
     <>
-      {draft.type === "rib" && (
+      {(draft.type === "rib" || draft.type === "sheetMetal") && (
         <fieldset className="param-group">
-          <legend>Rib lines</legend>
-          <select className="full-select" aria-label="Sketch with the rib lines" value={draft.sketchRef ?? ""} onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}>
+          <legend>{draft.type === "rib" ? "Rib lines" : "Shape of the sheet"}</legend>
+          <select className="full-select" aria-label={draft.type === "rib" ? "Sketch with the rib lines" : "Sketch with the sheet's shape"} value={draft.sketchRef ?? ""} onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}>
             {!draft.sketchRef && <option value="">Choose a sketch…</option>}
             {sketches.map((f) => (
               <option key={f.id} value={f.id}>
@@ -249,12 +249,22 @@ function RibThickenOptions() {
               </option>
             ))}
           </select>
-          <p className="dialog-hint field-hint">Draw the rib as a line (or lines) across the corner it braces, on a plane through the part.</p>
+          <p className="dialog-hint field-hint">
+            {draft.type === "rib"
+              ? "Draw the rib as a line (or lines) across the corner it braces, on a plane through the part."
+              : "A closed shape (holes in it are cut through the sheet). Flanges can then be bent up off its straight edges."}
+          </p>
         </fieldset>
       )}
       <label className="check-row">
         <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked })} />
-        {draft.type === "rib" ? "Flip (fill the other side of the line)" : "Flip (grow inwards)"}
+        {draft.type === "rib"
+          ? "Flip (fill the other side of the line)"
+          : draft.type === "sheetMetal"
+          ? "Flip (the sheet goes below the sketch)"
+          : draft.type === "flange"
+          ? "Bend down instead of up"
+          : "Flip (grow inwards)"}
       </label>
     </>
   );
@@ -923,7 +933,8 @@ function PicksField() {
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
   const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread"];
-  if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type))) return null;
+  const flange = draft?.type === "flange";
+  if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type) || flange)) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
   const thicken = faceTypes.includes(draft.type);
@@ -937,7 +948,9 @@ function PicksField() {
       onClick={() => replacing && replacing.picking === "target" && setDraftField({ replaceDef: { ...replacing, picking: "faces" } })}
     >
       <legend>
-        {draft.type === "thread"
+        {flange
+          ? "Edges to bend off"
+          : draft.type === "thread"
           ? "Round faces to thread"
           : draft.type === "thicken"
           ? "Faces to thicken"
@@ -951,7 +964,9 @@ function PicksField() {
       </legend>
       {picks.length === 0 ? (
         <p className="dialog-hint pick-hint">
-          {draft.type === "thread"
+          {flange
+            ? "Click straight edges of a sheet metal part (on its top or bottom face). Each gets a flange; you can also click a flange's own edges."
+            : draft.type === "thread"
             ? "Click the outside of a rod (for a bolt) or the inside of a hole (for a nut)."
             : draft.type === "thicken"
             ? "Click the flat faces to grow into a solid."
@@ -1131,7 +1146,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "thread" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "thread" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button

@@ -559,8 +559,15 @@ export const useStore = create<AppState>((set, get) => {
           .map((item) => pickFor(s.parts, item))
           .filter((p): p is TopoPick => p !== null);
       }
-      // A rib uses the sketch highlighted in the list, if any.
-      if (type === "rib") {
+      // A flange starts with the edges selected.
+      if (type === "flange") {
+        draft.picks = s.selection
+          .filter((item) => item.kind === "edge")
+          .map((item) => pickFor(s.parts, item))
+          .filter((p): p is TopoPick => p !== null);
+      }
+      // A rib (or sheet metal) uses the sketch highlighted in the list, if any.
+      if (type === "rib" || type === "sheetMetal") {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) draft.sketchRef = picked.id;
       }

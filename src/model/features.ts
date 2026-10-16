@@ -242,6 +242,27 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Cuts a part in two along a plane or flat face, making two parts (or keeping one side).",
     params: [],
   },
+  sheetMetal: {
+    type: "sheetMetal",
+    label: "Sheet metal",
+    namePrefix: "Sheet metal",
+    description: "A sheet metal part from a closed sketch: a flat plate of one thickness, ready for flanges to be bent up off its edges.",
+    params: [
+      { key: "thickness", label: "Thickness", defaultValue: "1.5", positive: true, group: "size" },
+      { key: "radius", label: "Bend radius (inside)", defaultValue: "1.5", positive: true, group: "size" },
+      { key: "kFactor", label: "K-factor (0.45 is usual)", defaultValue: "0.45", min: 0, group: "size", unit: "" },
+    ],
+  },
+  flange: {
+    type: "flange",
+    label: "Flange",
+    namePrefix: "Flange",
+    description: "Bends a wall up (or down) off straight edges of a sheet metal part.",
+    params: [
+      { key: "length", label: "Length (outside, to the tip)", defaultValue: "20", positive: true, group: "size" },
+      { key: "angle", label: "Bend angle", defaultValue: "90", positive: true, group: "size", unit: "°" },
+    ],
+  },
   thicken: {
     type: "thicken",
     label: "Thicken",

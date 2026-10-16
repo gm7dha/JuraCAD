@@ -205,6 +205,30 @@ export function Toolbar() {
           ]}
         />
         <ToolGroupButton
+          id="sheet-metal"
+          name="sheet metal"
+          items={[
+            {
+              key: "sheetMetal",
+              label: "Sheet metal",
+              icon: <Icons.SheetMetal />,
+              onClick: () => startCreate("sheetMetal"),
+              disabled: !ready || !hasSketch,
+              active: editingType === "sheetMetal",
+              title: hasSketch ? "Sheet metal — a flat sheet of one thickness from a closed sketch, ready to bend flanges off" : "Sketch the sheet's shape first (a closed outline)",
+            },
+            {
+              key: "flange",
+              label: "Flange",
+              icon: <Icons.Flange />,
+              onClick: () => startCreate("flange"),
+              disabled: !ready || !hasPart,
+              active: editingType === "flange",
+              title: hasPart ? "Flange — bend a wall up (or down) off straight edges of a sheet metal part" : "Make a sheet metal part first",
+            },
+          ]}
+        />
+        <ToolGroupButton
           id="parts"
           name="part"
           items={[
