@@ -129,7 +129,7 @@ export function viewNormalToPlaneFeature(id: string): boolean {
 }
 
 const NO_IDS: string[] = [];
-const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound"]);
+const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap"]);
 
 /** Apply a click in the viewport to the selection, like Onshape. */
 function handlePick(target: PickTarget | null, additive: boolean) {
@@ -260,14 +260,16 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
   // Thicken, Draft, Move face, Replace face, Delete face: faces.
   const faceFeature = s.editing?.draft.type;
-  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "replaceFace" || faceFeature === "deleteFace" || faceFeature === "fullRound" || faceFeature === "thread") {
+  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "replaceFace" || faceFeature === "deleteFace" || faceFeature === "fullRound" || faceFeature === "thread" || faceFeature === "wrap") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "face") {
       s.showToast("Click a face rather than an edge.");
       return;
     }
     const pick = pickFor(s.parts, target.item);
-    if (pick) s.toggleDraftPick(pick);
+    // Wrap goes round one face: a new click replaces the last.
+    if (pick && faceFeature === "wrap") s.setDraftField({ picks: [pick] });
+    else if (pick) s.toggleDraftPick(pick);
     return;
   }
   // Picking parts to delete (click again to keep one).

@@ -17,7 +17,7 @@ import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
-import { textSolid, wrappedTextSolid, wrapStart, type Cylinder } from "./textSolid";
+import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
@@ -773,6 +773,39 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       const path = need(feature.pathRef, "path");
       return sweepSketch(profile.plane!, profile.data, path.plane!, path.data);
     }
+    case "wrap": {
+      // A sketch's closed shapes wrapped round a round face, raised (Add) or engraved (Remove).
+      if (!feature.sketchRef) throw new Error("Choose a sketch with the shapes to wrap.");
+      const sketch = sketches.get(feature.sketchRef);
+      if (!sketch?.sketch) throw new Error("Its sketch has been deleted, or comes after this in the list. Pick another sketch.");
+      const pick = feature.picks?.find((p) => p.ref.kind === "face");
+      if (!pick) throw new Error("Click the round face to wrap the shapes round.");
+      const part = parts.find((p) => p.id === pick.partId);
+      if (!part) throw new Error("The part it was wrapped round no longer exists. Click a round face.");
+      const { regions } = findRegions(sketch.sketch.data);
+      if (!regions.length) throw new Error("The sketch has no closed shapes to wrap.");
+      const shapes = regions.map((r) => ({ outer: r.outer.polygon, holes: r.holes.map((h) => h.polygon) }));
+      const xs = shapes.flatMap((sh) => sh.outer.map((p) => p[0]));
+      const ys = shapes.flatMap((sh) => sh.outer.map((p) => p[1]));
+      const centre: [number, number] = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+      const [face] = findPickedFaces(part.shape, [pick]);
+      if (!face) throw new Error("The round face it was wrapped round can't be found any more. Click it again.");
+      try {
+        const cyl = cylinderOfFace(face);
+        if (!cyl) throw new Error("Wrap goes round a round (cylinder) face. Click the side of a rod, boss or hole.");
+        const start = wrapStart(cyl, take(face.center));
+        const onSurface: Vec3 = [0, 1, 2].map((i) => cyl.origin[i] + cyl.axis[i] * start.height + start.radial[i] * cyl.radius) as Vec3;
+        let convex = true;
+        try {
+          convex = dot3(take(face.normalAt(onSurface)), start.radial) > 0;
+        } catch {
+          // no normal there: assume the outside of a rod
+        }
+        return wrapShapes(cyl, start, convex, shapes, centre, { depth: v.depth, x: v.x, y: v.y, angle: v.angle, flip: feature.operation === "remove" }, "A shape is too wide to wrap round such a narrow face — make it smaller, or split it into narrower pieces.");
+      } finally {
+        face.delete();
+      }
+    }
     case "text": {
       const t = feature.text;
       if (t?.face) {
@@ -1144,7 +1177,9 @@ export class GeometryEngine {
         continue;
       }
 
-      const target = this.parts[this.parts.length - 1];
+      // Wrap goes on the part whose face it's wrapped round; everything else on the latest part.
+      const wrapOn = feature.type === "wrap" ? this.parts.find((p) => p.id === feature.picks?.find((x) => x.ref.kind === "face")?.partId) : undefined;
+      const target = wrapOn ?? this.parts[this.parts.length - 1];
       if (feature.operation !== "new" && !target) {
         featureErrors[feature.id] =
           feature.type === "hole"

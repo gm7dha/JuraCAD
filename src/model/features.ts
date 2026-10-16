@@ -176,6 +176,18 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "y", label: "Start Y (on the plane)", defaultValue: "0", group: "position" },
     ],
   },
+  wrap: {
+    type: "wrap",
+    label: "Wrap",
+    namePrefix: "Wrap",
+    description: "Wraps a sketch's closed shapes round a round face — a logo or pattern on a rod, boss or the inside of a hole — raised or engraved.",
+    params: [
+      { key: "depth", label: "Depth", defaultValue: "1", positive: true, group: "size" },
+      { key: "angle", label: "Turn", defaultValue: "0", group: "size", unit: "°" },
+      { key: "x", label: "Move round the face", defaultValue: "0", group: "position" },
+      { key: "y", label: "Move along the face", defaultValue: "0", group: "position" },
+    ],
+  },
   fillet: {
     type: "fillet",
     label: "Fillet",

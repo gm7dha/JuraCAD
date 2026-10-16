@@ -91,7 +91,12 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.sketchRef = sketches[sketches.length - 1]?.id;
     feature.operation = "add";
   }
-  if (type === "thicken" || type === "moveFace" || type === "deleteFace" || type === "thread" || type === "fullRound") feature.picks = [];
+  if (type === "thicken" || type === "moveFace" || type === "deleteFace" || type === "thread" || type === "fullRound" || type === "wrap") feature.picks = [];
+  if (type === "wrap") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    feature.sketchRef = sketches[sketches.length - 1]?.id;
+    feature.operation = "add";
+  }
   if (type === "replaceFace") {
     feature.picks = [];
     feature.replaceDef = { target: null, picking: "faces" };
@@ -403,7 +408,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       const rd = (f.replaceDef ?? {}) as Record<string, unknown>;
       feature.replaceDef = { target: rd.target ? parsePlane(rd.target) ?? null : null, picking: rd.picking === "target" ? "target" : "faces" };
     }
-    if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+    if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab" || feature.type === "wrap") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
     if ((feature.type === "sheetMetal" || feature.type === "flange" || feature.type === "hem") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "flange" && f.closeCorners === true) feature.closeCorners = true;
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
@@ -452,7 +457,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "draft") feature.neutral = parsePlane(f.neutral) ?? { kind: "default", name: "Top" };
     if (feature.type === "draft" && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "coil" && f.flipSide === true) feature.flipSide = true;
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound"].includes(feature.type)) {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);
