@@ -11,7 +11,8 @@ import { planeLabel } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import type { Axis } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
-import { activeFeatures, studioParts, useLengthUnit, useStore } from "../model/store";
+import { activeFeatures, activeStudioId, studioParts, useLengthUnit, useStore } from "../model/store";
+import { studiosOf } from "../model/studios";
 import type { Operation } from "../model/types";
 import { DeleteFaceHelp } from "./DeleteFaceHelp";
 import { Icons } from "./icons";
@@ -1095,6 +1096,50 @@ function FastenerOptions() {
   );
 }
 
+/** Derived: which part, from which other Part Studio. */
+function DerivedOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const parts = useStore((s) => s.parts);
+  const doc = useStore((s) => s.history.present);
+  const here = useStore(activeStudioId);
+  if (draft?.type !== "derived") return null;
+  const studios = studiosOf(doc).filter((st) => st.id !== here);
+  const choice = draft.derived ? `${draft.derived.studioId}|${draft.derived.partId}` : "";
+  return (
+    <fieldset className="param-group">
+      <legend>Part</legend>
+      <select
+        id="derived-part"
+        aria-label="Part to bring in"
+        className="full-select"
+        value={choice}
+        onChange={(e) => {
+          const [studioId, partId] = e.target.value.split("|");
+          if (studioId && partId) setDraftField({ derived: { studioId, partId } });
+        }}
+      >
+        <option value="" disabled>
+          Choose a part…
+        </option>
+        {studios.map((st) => {
+          const list = parts.filter((p) => p.studioId === st.id && !p.configuration);
+          return list.length ? (
+            <optgroup key={st.id} label={st.name}>
+              {list.map((p) => (
+                <option key={p.id} value={`${st.id}|${p.id}`}>
+                  {p.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : null;
+        })}
+      </select>
+      <p className="dialog-hint field-hint">It sits where it was made. Change the original in its own Part Studio and this updates.</p>
+    </fieldset>
+  );
+}
+
 /** Delete part: the parts it removes. */
 function DeletePartOptions() {
   const draft = useStore((s) => s.editing?.draft);
@@ -1214,6 +1259,7 @@ export function FeatureDialog() {
         <BooleanOptionsField />
         <DeletePartOptions />
         <FastenerOptions />
+        <DerivedOptions />
         {draft.type === "coil" && (
           <label className="check-row">
             <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked || undefined })} />

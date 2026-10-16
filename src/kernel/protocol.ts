@@ -12,6 +12,8 @@ export interface InstanceInput {
   position: [number, number, number];
   /** Quaternion x, y, z, w. */
   rotation: [number, number, number, number];
+  /** The part's mirror image (flipped across its own YZ plane before it's placed). */
+  mirrored?: boolean;
 }
 
 /** A drawing view's lines, in the view's own flat coordinates (mm; x right, y up on the paper). */

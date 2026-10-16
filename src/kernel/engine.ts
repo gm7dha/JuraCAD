@@ -939,8 +939,19 @@ export class GeometryEngine {
     const meshes: PartMesh[] = [];
     const featureErrors: Record<string, string> = {};
     const shared = JSON.stringify([variables, partNames]);
-    for (const studio of studios) {
-      const key = JSON.stringify(studio.features) + shared + (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "");
+    // Part Studios using parts from others (Derived) are built after them, and again whenever they change.
+    const sourcesOf = (s: StudioInput) => [...new Set(s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId))].filter((id) => id !== s.id);
+    const ordered: StudioInput[] = [];
+    const pending = [...studios];
+    while (pending.length) {
+      const i = pending.findIndex((s) => sourcesOf(s).every((id) => !pending.some((p) => p.id === id && p !== s) || ordered.some((o) => o.id === id)));
+      // A loop (two studios using each other's parts): build the rest as they are; Derived says what's wrong.
+      ordered.push(...pending.splice(i >= 0 ? i : 0, 1));
+    }
+    this.studiosBuilt = new Set();
+    for (const studio of ordered) {
+      const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"));
+      const key = JSON.stringify(studio.features) + shared + (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") + (deps.length ? JSON.stringify(deps) : "");
       let b = this.builds.get(studio.id);
       if (!b || b.key !== key) {
         if (b) this.disposeBuild(b);
@@ -961,6 +972,7 @@ export class GeometryEngine {
       }
       // Problems are shown for the configuration on show only.
       if (!studio.partSuffix) Object.assign(featureErrors, b.errors);
+      this.studiosBuilt.add(studio.id);
     }
     this.parts = studios.flatMap((s) => this.builds.get(s.id)?.parts ?? []);
     this.tools = new Map();
@@ -1019,6 +1031,29 @@ export class GeometryEngine {
     const old = this.builds.get(MAIN_STUDIO_ID);
     if (old) old.key = "";
     return this.rebuildStudios([{ id: MAIN_STUDIO_ID, features }], variables, partNames);
+  }
+
+  /** Part Studios built so far in this rebuild (Derived may only use those). */
+  private studiosBuilt = new Set<string>();
+
+  /** The part a Derived feature brings in, as built in its own Part Studio (null if it can't be found). */
+  private derivedSource(feature: Feature): BuiltPart | null {
+    const d = feature.derived;
+    if (!d || !this.studiosBuilt.has(d.studioId)) return null;
+    return this.builds.get(d.studioId)?.parts.find((p) => p.id === d.partId) ?? null;
+  }
+
+  /** A copy of the part a Derived feature brings in, moved by its X, Y, Z. */
+  private derivedSolid(feature: Feature, v: Record<string, number>): Shape3D {
+    const d = feature.derived;
+    if (!d) throw new Error("Choose a part from another Part Studio.");
+    if (!this.builds.has(d.studioId)) throw new Error("The Part Studio this part came from has been deleted.");
+    if (!this.studiosBuilt.has(d.studioId)) throw new Error("That Part Studio uses parts from this one, so this one can't use its parts too.");
+    const src = this.derivedSource(feature);
+    if (!src) throw new Error("That part isn't in its Part Studio any more. Edit this and choose another.");
+    let shape = src.shape.clone();
+    if (v.x || v.y || v.z) shape = shape.translate([v.x ?? 0, v.y ?? 0, v.z ?? 0]);
+    return shape;
   }
 
   /** Build one Part Studio's features into this.parts and this.tools; returns the features' problems. */
@@ -1157,7 +1192,7 @@ export class GeometryEngine {
 
       let tool: Shape3D;
       try {
-        tool = buildSolid(feature, values, sketches, features, this.parts);
+        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts);
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;
@@ -1179,8 +1214,13 @@ export class GeometryEngine {
       if (feature.operation === "new") {
         partCounter++;
         this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
-        // Fasteners are named for what they are ("M6 × 20 hex bolt").
-        const name = feature.type === "fastener" && feature.fastener ? fastenerName(feature.fastener.kind, feature.fastener.size, values.length) : `Part ${partCounter}`;
+        // Fasteners are named for what they are ("M6 × 20 hex bolt"); derived parts keep their name.
+        const name =
+          feature.type === "fastener" && feature.fastener
+            ? fastenerName(feature.fastener.kind, feature.fastener.size, values.length)
+            : feature.type === "derived" && feature.derived
+              ? (this.derivedSource(feature)?.name ?? `Part ${partCounter}`)
+              : `Part ${partCounter}`;
         this.parts.push({ id: feature.id, name, featureIds: [feature.id], shape: tool });
         continue;
       }
@@ -2354,6 +2394,8 @@ export class GeometryEngine {
       const part = this.parts.find((p) => p.id === i.partId) ?? this.parts.find((p) => p.id === i.partId.split("@")[0]);
       if (!part) continue;
       let shape = part.shape.clone();
+      // A mirrored copy: the part's mirror image, flipped across its own YZ plane.
+      if (i.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
       const [x, y, z, w] = i.rotation;
       const s = Math.sqrt(Math.max(0, 1 - w * w));
       const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;

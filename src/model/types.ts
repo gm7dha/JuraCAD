@@ -8,7 +8,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -129,6 +129,8 @@ export interface Feature {
   /** Delete part: the parts it removes from the Part Studio. */
   deleteParts?: string[];
   /** Fastener: which standard part, and whether its thread is modelled. */
+  /** Derived: a part from another Part Studio (its id there), brought into this one. */
+  derived?: { studioId: string; partId: string };
   fastener?: { kind: FastenerKind; size: string; threaded: boolean };
   booleanDef?: BooleanOptions;
   /** Split: which part, and the plane that cuts it in two. */
@@ -409,6 +411,8 @@ export interface Instance {
   configuration?: string;
   /** A copy made by Replicate: which replicate, and which of its copies (1, 2…). */
   replicaOf?: { replicate: string; index: number };
+  /** Shown as the part's mirror image (a copy made by a Mirror): the part is flipped across its own YZ plane, then placed. */
+  mirrored?: boolean;
 }
 
 /**
@@ -431,7 +435,8 @@ export interface Replicate {
 export interface AssemblyPattern {
   id: string;
   name: string;
-  kind: "linear" | "circular";
+  /** Mirror: one copy of each, mirrored across the plane square to `axis` through `centre`. */
+  kind: "linear" | "circular" | "mirror";
   /** The instances repeated. */
   seeds: string[];
   /** How many in each row, including the original. */
