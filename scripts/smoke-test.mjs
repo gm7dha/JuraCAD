@@ -1114,6 +1114,13 @@ try {
     await page.waitForFunction(() => (window.partsmithStore.getState().editing?.draft.picks?.length ?? 0) === 1, null, { timeout: 5_000 });
     await page.getByRole("button", { name: "Accept" }).click();
     await page.waitForFunction(() => !window.partsmithStore.getState().editing, null, { timeout: 30_000 });
+    await page.waitForFunction(() => document.querySelector(".status-rebuilding, .rebuilding") === null, null, { timeout: 30_000 }).catch(() => {});
+    const flangeProblem = await page.evaluate(() => {
+      const s = window.partsmithStore.getState();
+      const f = s.history.present.features.find((x) => x.type === "flange");
+      return f ? s.featureErrors[f.id] ?? "" : "no flange feature";
+    });
+    if (flangeProblem) throw new Error(`the flange didn't build: ${flangeProblem}`);
     await page.getByRole("button", { name: "Drawing 1" }).click();
     await page.locator("#drawing-source").selectOption({ label: sheetName.trim().split("\n")[0] });
     await page.getByLabel("Flat pattern (sheet metal)").check();
