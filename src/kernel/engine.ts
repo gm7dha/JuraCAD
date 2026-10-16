@@ -1336,7 +1336,15 @@ export class GeometryEngine {
       // Edges of flanges made earlier in this same feature count too.
       const where = findSheetEdge(foldSheet(spec), spec.thickness, ref.a, ref.b, 0.01);
       if (!where) return "One of the edges isn't a free straight edge along the sheet's top or bottom face (or it's already bent). Edit this flange and pick it again.";
-      const fl: FlangeSpec = { id: `${feature.id}:${i}`, wall: where.wall, edge: where.edge, length: values.length, angle: values.angle, down: !!feature.flipSide };
+      const fl: FlangeSpec = {
+        id: `${feature.id}:${i}`,
+        wall: where.wall,
+        edge: where.edge,
+        length: values.length,
+        angle: values.angle,
+        down: !!feature.flipSide,
+        ...(values.inset > 0 ? { inset: values.inset } : {}),
+      };
       added.push(fl);
       spec = { ...spec, flanges: [...spec.flanges, fl] };
     }
@@ -1358,6 +1366,23 @@ export class GeometryEngine {
         result = part.shape.fuse(extra);
       } finally {
         extra.delete();
+      }
+      // Bend reliefs: notches cut into the wall each shortened flange bends off.
+      const reliefs = folded.bends
+        .filter((b) => ids.has(b.flangeId) && b.reliefs.length)
+        .flatMap((b) => {
+          const parent = folded.walls.find((w) => w.id === b.parent)!;
+          return b.reliefs.map((r) => wallSolid({ ...parent, outline: r, holes: [] }, spec.thickness));
+        });
+      const notches = fusePieces(reliefs);
+      if (notches) {
+        try {
+          const cut: Shape3D = result.cut(notches);
+          result.delete();
+          result = cut;
+        } finally {
+          notches.delete();
+        }
       }
       if (!isValidSolid(result)) {
         result.delete();
