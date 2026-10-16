@@ -1867,7 +1867,7 @@ describe("sheet metal", () => {
     expect(vol()).toBeCloseTo(20 * 2 * (46 + 26) + (Math.PI / 4) * (16 - 4) * 20, 1);
     expect(r5.parts[0].flat!.bendLines).toHaveLength(1);
     // A tab sketched on the sheet's top face, reaching 20 mm past its right edge: 20 × 30 more sheet, in the flat pattern too.
-    const onTop = { kind: "face" as const, origin: [0, 0, 2] as Vec3, u: [1, 0, 0] as Vec3, v: [0, 1, 0] as Vec3, label: "Top face" };
+    const onTop = { kind: "face" as const, origin: [0, 0, 2] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number], label: "Top face" };
     const tsk = sketchFeature(onTop, rectSketch(90, 10, 30, 30));
     const tab: Feature = { id: "tb", name: "Tab 1", type: "tab", operation: "add", suppressed: false, params: {}, sketchRef: tsk.id };
     const r8 = build([sk, sheet(sk.id), tsk, tab]);
