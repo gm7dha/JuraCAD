@@ -772,6 +772,12 @@ describe("holes", () => {
     // Not seen from underneath (it doesn't come out there), nor from the side.
     expect(bottom.holes).toEqual([]);
     expect(front.holes).toEqual([]);
+    // From the side: where each hole runs (for thread symbols), 10 deep, down from the top.
+    expect(front.sideHoles).toHaveLength(2);
+    const sh = front.sideHoles![0];
+    expect(Math.abs(sh.a[1] - sh.b[1])).toBeCloseTo(10, 3);
+    expect(sh.a[0]).toBeCloseTo(sh.b[0], 6);
+    expect(sh.d).toBeCloseTo(4.5, 4);
 
     build([block, sk, holeFeature(sk.id, { kind: "countersink" }, { diameter: 4.5, cskDiameter: 9.4, cskAngle: 90 })]);
     const [t2, b2] = engine.project([], undefined, ["top", "bottom"], false);

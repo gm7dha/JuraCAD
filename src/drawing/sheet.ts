@@ -15,7 +15,7 @@ import { holeRows, holeTableView, type HoleRow } from "./holeTable";
 import { projectPoint } from "./cameras";
 import { fromRel, sectionGeometry, sectionTitle, viewKey } from "./sections";
 import { drawDimension, measureDim, resolveDim } from "./dimensions";
-import { calloutText, type TapSize } from "./holeCallouts";
+import { calloutText, threadSymbols, type TapSize } from "./holeCallouts";
 import { symbolPrims } from "./symbols";
 
 /** "centre" is the long-and-short dashed line for centre lines and cutting planes. */
@@ -289,6 +289,13 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     for (const line of p.breakLines ?? []) prims.push({ kind: "path", points: map(line), style: "thin" });
     if (drawing.centreLines !== false) {
       for (const seg of [...centreMarks(p, vs), ...centreLines(p, vs)]) prims.push({ kind: "path", points: map(seg), style: "centre" });
+    }
+    // Tapped holes: the thread drawn the standard way.
+    if (drawing.threadSymbols !== false && info.taps?.length) {
+      const t = threadSymbols(p, info.taps);
+      for (const arc of t.endOn) prims.push({ kind: "path", points: map(arc), style: "thin" });
+      // From the side they're inside the part, so shown with the hidden lines.
+      if (drawing.hiddenLines) for (const seg of t.side) prims.push({ kind: "path", points: map(seg), style: "hidden" });
     }
     const [w, h] = sizeOf(p).map((d) => d * scale);
     const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];

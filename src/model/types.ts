@@ -229,6 +229,8 @@ export interface Drawing {
   breakouts?: BreakOut[];
   /** False hides centre marks and centre lines (missing = shown). */
   centreLines?: boolean;
+  /** False hides the thread symbols on tapped holes (missing = shown). */
+  threadSymbols?: boolean;
   /** Revision history, oldest first (shown in a table above the title block). */
   revisions?: DrawingRevision[];
   /** Tag the holes on one view and list their positions and sizes in a table. */

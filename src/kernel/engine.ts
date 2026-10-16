@@ -2406,6 +2406,12 @@ export class GeometryEngine {
               ...(h.cbore ? { cbore: h.cbore } : {}),
               ...(h.csk ? { csk: h.csk } : {}),
             }));
+          // Seen from the side: the hole's length on the view, for thread symbols on tapped holes.
+          const flatP = (p: Vec3): [number, number] => [dot3(p, right), dot3(p, up)];
+          const side = found
+            .filter((h) => Math.abs(dot3(h.into, toward)) < 1e-3)
+            .map((h) => ({ a: flatP(h.entry), b: flatP([h.entry[0] + h.into[0] * h.depth, h.entry[1] + h.into[1] * h.depth, h.entry[2] + h.into[2] * h.depth]), d: h.diameter }));
+          if (side.length) view.sideHoles = side;
         });
       }
       // How deep each flat view sees the part (front to back), for broken-out cuts.

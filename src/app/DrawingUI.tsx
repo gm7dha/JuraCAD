@@ -628,6 +628,19 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
             />
             Centre lines on holes and round parts
           </label>
+          <label className="check-row" title="Tapped holes drawn the standard way: a thin three-quarter circle at the thread's size seen end-on, thin lines along the hole seen from the side">
+            <input
+              type="checkbox"
+              checked={drawing.threadSymbols !== false}
+              onChange={(e) =>
+                change((d) => {
+                  const { threadSymbols: _old, ...rest } = d;
+                  return e.target.checked ? rest : { ...rest, threadSymbols: false };
+                })
+              }
+            />
+            Thread symbols on tapped holes
+          </label>
           <label className="check-row" title="Tag each hole on the top view (or the first view showing holes) and list where it is and its size in a table">
             <input
               type="checkbox"
