@@ -53,6 +53,6 @@ export function instancesForKernel(assembly: Assembly, parts: PartMesh[], solved
     .filter((i) => findMesh(parts, meshIdOf(i)))
     .map((i) => {
       const p = solved.placements[i.id] ?? i.placement;
-      return { id: i.id, partId: meshIdOf(i), name: i.name, position: p.position, rotation: p.rotation };
+      return { id: i.id, partId: meshIdOf(i), name: i.name, position: p.position, rotation: p.rotation, ...(i.mirrored ? { mirrored: true } : {}) };
     });
 }
