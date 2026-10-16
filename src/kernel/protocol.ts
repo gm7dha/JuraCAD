@@ -99,6 +99,8 @@ export interface FlatPatternData {
   bends: { line: [[number, number], [number, number]]; angle: number; radius: number; up: boolean }[];
   /** Cuts made in the part after it was a sheet (holes, notches…), as line pieces. */
   cuts?: [[number, number], [number, number]][];
+  /** When present (sheets with tabs), every line to cut — outline, holes and cuts — instead of `outline`, `holes` and `cuts`. */
+  boundary?: [[number, number], [number, number]][];
   thickness: number;
   radius: number;
   k: number;

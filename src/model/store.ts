@@ -571,7 +571,7 @@ export const useStore = create<AppState>((set, get) => {
           .filter((p): p is TopoPick => p !== null);
       }
       // A rib (or sheet metal) uses the sketch highlighted in the list, if any.
-      if (type === "rib" || type === "sheetMetal") {
+      if (type === "rib" || type === "sheetMetal" || type === "tab") {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) draft.sketchRef = picked.id;
       }

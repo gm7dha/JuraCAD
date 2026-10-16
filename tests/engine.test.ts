@@ -1885,6 +1885,22 @@ describe("sheet metal", () => {
     expect(r5.featureErrors).toEqual({});
     expect(vol()).toBeCloseTo(20 * 2 * (46 + 26) + (Math.PI / 4) * (16 - 4) * 20, 1);
     expect(r5.parts[0].flat!.bendLines).toHaveLength(1);
+    // A tab sketched on the sheet's top face, reaching 20 mm past its right edge: 20 × 30 more sheet, in the flat pattern too.
+    const onTop = { kind: "face" as const, origin: [0, 0, 2] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number], label: "Top face" };
+    const tsk = sketchFeature(onTop, rectSketch(90, 10, 30, 30));
+    const tab: Feature = { id: "tb", name: "Tab 1", type: "tab", operation: "add", suppressed: false, params: {}, sketchRef: tsk.id };
+    const r8 = build([sk, sheet(sk.id), tsk, tab]);
+    expect(r8.featureErrors).toEqual({});
+    expect(r8.parts).toHaveLength(1);
+    expect(vol()).toBeCloseTo(10000 + 20 * 30 * 2, 1);
+    const tabFlat = r8.parts[0].flat!;
+    const tx = tabFlat.boundary!.flat().map((q) => q[0]);
+    expect(Math.max(...tx)).toBeCloseTo(120, 2);
+    // The line where the tab joins the sheet isn't one to cut.
+    expect(tabFlat.boundary!.some(([a, b]) => Math.abs(a[0] - 100) < 1e-3 && Math.abs(b[0] - 100) < 1e-3 && Math.min(a[1], b[1]) >= 10 - 1e-3 && Math.max(a[1], b[1]) <= 40 + 1e-3)).toBe(false);
+    // A tab off in mid-air.
+    const away = sketchFeature(onTop, rectSketch(200, 10, 10, 10));
+    expect(build([sk, sheet(sk.id), away, { ...tab, sketchRef: away.id }]).featureErrors.tb).toMatch(/doesn't touch/);
     // Not a sheet metal part: a clear message.
     const box = feature("box", { width: 10, depth: 10, height: 10 });
     const r3 = build([box]);
