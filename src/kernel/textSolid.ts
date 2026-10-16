@@ -282,7 +282,15 @@ function wrapWide(
     plate.delete();
   }
   if (!strips.length) throw new Error("Nothing to wrap.");
-  return strips.length === 1 ? strips[0] : (makeCompound(strips) as unknown as Shape3D);
+  // Joined into one solid: overlapping pieces left side by side would upset adding or cutting it later.
+  let joined = strips[0];
+  for (const piece of strips.slice(1)) {
+    const next = joined.fuse(piece) as Shape3D;
+    joined.delete();
+    piece.delete();
+    joined = next;
+  }
+  return joined;
 }
 
 /** Does a shape have any solid in it? */
