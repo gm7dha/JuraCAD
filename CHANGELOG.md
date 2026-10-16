@@ -6,6 +6,15 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.18 — Tabs, broken-out views, full round, more fasteners, free orbit · commit `6570e52`
+
+- Sheet metal: **tabs** — add a flat tab to a wall from a sketch.
+- Drawings: **broken-out views** — cut away part of a view to show what's inside.
+- Part Studio: **full round** — round a thin wall's end into a full half-circle.
+- **Fasteners**: socket cap, button head and countersunk screws (Allen key), pan head screws (cross) and grub screws,
+  as well as hex bolts, nuts and washers, all M3 to M12.
+- The 3D view **turns freely** — right over the top and underneath, with no stop.
+
 ## v0.17 — Hems, closed corners, unfolding, and turning about any axis · commit `29e085b`
 
 - Sheet metal: **hems** (an edge folded back on itself), **closed corners** where two flanges meet, a
