@@ -636,7 +636,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
             />
             Centre lines on holes and round parts
           </label>
-          <label className="check-row" title="Tapped holes drawn the standard way: a thin three-quarter circle at the thread's size seen end-on, thin lines along the hole seen from the side">
+          <label className="check-row" title="Threads drawn the standard way: a thin three-quarter circle seen end-on, thin lines along the thread seen from the side — on tapped holes, threaded rods and fasteners">
             <input
               type="checkbox"
               checked={drawing.threadSymbols !== false}
@@ -647,7 +647,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
                 })
               }
             />
-            Thread symbols on tapped holes
+            Thread symbols (bolts, rods, tapped holes)
           </label>
           <label className="check-row" title="Tag each hole on the top view (or the first view showing holes) and list where it is and its size in a table">
             <input

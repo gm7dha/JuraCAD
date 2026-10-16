@@ -1245,6 +1245,41 @@ describe("fasteners", () => {
   }, 60_000);
 });
 
+describe("thread symbols on drawings", () => {
+  it("marks a bolt's and a nut's thread on their views, and a Thread feature's on a rod", () => {
+    // An M6 × 20 bolt at the origin: shank down to z = −20; root diameter 6 − 1.0825 = 4.9175.
+    const bolt: Feature = { ...feature("fastener", { length: 20, x: 0, y: 0, z: 0 }), fastener: { kind: "socketCap", size: "M6", threaded: false } };
+    build([bolt]);
+    const [front, top] = engine.project([], undefined, ["front", "top"], true);
+    expect(front.threadMarks).toHaveLength(2);
+    const xs = front.threadMarks!.map((m) => Math.abs(m.line[0]));
+    xs.forEach((x) => expect(x).toBeCloseTo(4.9175 / 2, 4));
+    expect(front.threadMarks!.every((m) => !m.hidden)).toBe(true);
+    const ys = front.threadMarks![0].line.filter((_, i) => i % 2 === 1).sort((a, b) => a - b);
+    expect(ys[0]).toBeCloseTo(-20, 4);
+    expect(ys[1]).toBeCloseTo(0, 4);
+    // From above: a three-quarter circle at the root diameter.
+    expect(top.threadMarks).toHaveLength(1);
+    const arc = top.threadMarks![0].line;
+    expect(Math.hypot(arc[0], arc[1])).toBeCloseTo(4.9175 / 2, 4);
+    // A nut: dashed (inside the part) at the outside diameter, from the side.
+    build([{ ...bolt, fastener: { kind: "nut", size: "M6", threaded: false } }]);
+    const [nutFront] = engine.project([], undefined, ["front"], true);
+    expect(nutFront.threadMarks!.every((m) => m.hidden)).toBe(true);
+    expect(Math.abs(nutFront.threadMarks![0].line[0])).toBeCloseTo(3, 4);
+    // A Thread feature on a 10 mm rod (pitch 1.5): root 10 − 1.62375.
+    const rod = feature("cylinder", { diameter: 10, height: 30, x: 0, y: 0, z: 0 });
+    const first = build([rod]);
+    const side = first.parts[0].faceRefs.find((f) => f.surface === "CYLINDRE")!;
+    const thread: Feature = { ...feature("thread", { pitch: 1.5, length: 10 }), picks: [{ partId: rod.id, ref: side }] };
+    const r = build([rod, thread]);
+    expect(r.featureErrors).toEqual({});
+    const [rodFront] = engine.project([], undefined, ["front"], true);
+    expect(rodFront.threadMarks).toHaveLength(2);
+    expect(Math.abs(rodFront.threadMarks![0].line[0])).toBeCloseTo((10 - 1.62375) / 2, 3);
+  }, 120_000);
+});
+
 describe("plane features", () => {
   it("build nothing, but say when they can't be placed", () => {
     const box = feature("box", { width: 10, depth: 10, height: 10 });
