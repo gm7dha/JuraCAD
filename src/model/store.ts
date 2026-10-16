@@ -225,7 +225,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "flipSide" | "neutral" | "deleteParts" | "fastener">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "neutral" | "deleteParts" | "fastener">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -547,7 +547,7 @@ export const useStore = create<AppState>((set, get) => {
         if (s.selectedPlane) draft.splitDef = { ...draft.splitDef, plane: { kind: "default", name: s.selectedPlane } };
       }
       // Face features start with the faces selected.
-      if (type === "thicken" || type === "draft" || type === "moveFace" || type === "deleteFace" || type === "thread") {
+      if (type === "thicken" || type === "draft" || type === "moveFace" || type === "replaceFace" || type === "deleteFace" || type === "thread") {
         draft.picks = s.selection
           .filter((item) => item.kind === "face")
           .map((item) => pickFor(s.parts, item))

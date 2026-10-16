@@ -41,6 +41,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   rib: Icons.Rib,
   draft: Icons.Draft,
   moveFace: Icons.MoveFace,
+  replaceFace: Icons.ReplaceFace,
   deleteFace: Icons.DeleteFace,
   thread: Icons.Thread,
 };

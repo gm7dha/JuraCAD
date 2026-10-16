@@ -117,7 +117,7 @@ function customPlaneAt(id: string): SketchPlane | null {
 }
 
 const NO_IDS: string[] = [];
-const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "deleteFace", "thread"]);
+const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread"]);
 
 /** Apply a click in the viewport to the selection, like Onshape. */
 function handlePick(target: PickTarget | null, additive: boolean) {
@@ -134,6 +134,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     else if (d?.type === "plane" && d.planeDef && d.id !== target.id) s.setDraftField({ planeDef: { ...d.planeDef, ref: plane } });
     else if (d?.type === "split" && d.splitDef) s.setDraftField({ splitDef: { ...d.splitDef, plane } });
     else if (d?.type === "draft") s.setDraftField({ neutral: plane });
+    else if (d?.type === "replaceFace") s.setDraftField({ replaceDef: { target: plane, picking: "faces" } });
     else if (!s.editing) s.selectFeature(target.id);
     return;
   }
@@ -211,9 +212,23 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     s.setDraftField({ neutral: { kind: "default", name: target.plane } });
     return;
   }
-  // Thicken, Draft, Move face, Delete face: faces.
+  // Replace face: a plane, or (after "Move them onto") a flat face, is what the faces move onto.
+  if (s.editing?.draft.type === "replaceFace") {
+    const rd = s.editing.draft.replaceDef ?? { target: null };
+    if (target?.kind === "plane") {
+      s.setDraftField({ replaceDef: { target: { kind: "default", name: target.plane }, picking: "faces" } });
+      return;
+    }
+    if (rd.picking === "target" && target?.kind === "part" && target.item.kind === "face") {
+      const plane = planeForFace(target.item);
+      if (plane) s.setDraftField({ replaceDef: { target: plane, picking: "faces" } });
+      else s.showToast("That face is curved. Pick a flat face or one of the planes.");
+      return;
+    }
+  }
+  // Thicken, Draft, Move face, Replace face, Delete face: faces.
   const faceFeature = s.editing?.draft.type;
-  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "deleteFace" || faceFeature === "thread") {
+  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "replaceFace" || faceFeature === "deleteFace" || faceFeature === "thread") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "face") {
       s.showToast("Click a face rather than an edge.");

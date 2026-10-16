@@ -81,6 +81,10 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.operation = "add";
   }
   if (type === "thicken" || type === "moveFace" || type === "deleteFace" || type === "thread") feature.picks = [];
+  if (type === "replaceFace") {
+    feature.picks = [];
+    feature.replaceDef = { target: null, picking: "faces" };
+  }
   if (type === "draft") {
     feature.picks = [];
     feature.neutral = { kind: "default", name: "Top" };
@@ -379,6 +383,10 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         picking: sp.picking === "plane" ? "plane" : "part",
       };
     }
+    if (feature.type === "replaceFace") {
+      const rd = (f.replaceDef ?? {}) as Record<string, unknown>;
+      feature.replaceDef = { target: rd.target ? parsePlane(rd.target) ?? null : null, picking: rd.picking === "target" ? "target" : "faces" };
+    }
     if (feature.type === "rib" && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "fastener") {
@@ -426,7 +434,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "draft") feature.neutral = parsePlane(f.neutral) ?? { kind: "default", name: "Top" };
     if (feature.type === "draft" && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "coil" && f.flipSide === true) feature.flipSide = true;
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "deleteFace", "thread"].includes(feature.type)) {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);
