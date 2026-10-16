@@ -6,6 +6,13 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.17 — Hems, closed corners, unfolding, and turning about any axis · commit `29e085b`
+
+- Sheet metal: **hems** (an edge folded back on itself), **closed corners** where two flanges meet, a
+  **flat pattern view on drawings** (numbered bend lines and a bend list), and **Unfold** to show parts flat in the
+  3D view.
+- Part Studio: **Move / copy** turns about X, Y and Z in one go.
+
 ## v0.16 — Sheet metal, and what's new · commit `0171140`
 
 - **Sheet metal**: a flat sheet from a closed sketch, or a bent one from connected lines (an L, U or Z side view);
