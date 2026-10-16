@@ -45,6 +45,8 @@ export interface FlangeSpec {
   angle: number;
   /** Bend the other way (down instead of up). */
   down: boolean;
+  /** The flat part's length straight after the bend, instead of working it out from `length` (sheets from an open outline). */
+  straight?: number;
 }
 
 export interface SheetSpec {
@@ -253,9 +255,12 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       continue;
     }
     const theta = (fl.angle * Math.PI) / 180;
-    const straight = fl.length - (R + T) * Math.tan(theta / 2);
+    const straight = fl.straight ?? fl.length - (R + T) * Math.tan(theta / 2);
     if (straight < 0.01) {
-      errors[fl.id] = `Too short for its bend: make it longer than ${Math.ceil(((R + T) * Math.tan(theta / 2) + 0.01) * 100) / 100} mm, or use a smaller bend radius.`;
+      errors[fl.id] =
+        fl.straight !== undefined
+          ? "A line in the outline is too short for the bends at its ends. Make it longer, or use a smaller bend radius."
+          : `Too short for its bend: make it longer than ${Math.ceil(((R + T) * Math.tan(theta / 2) + 0.01) * 100) / 100} mm, or use a smaller bend radius.`;
       continue;
     }
     used.add(key);

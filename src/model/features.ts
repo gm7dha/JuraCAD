@@ -246,9 +246,11 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "sheetMetal",
     label: "Sheet metal",
     namePrefix: "Sheet metal",
-    description: "A sheet metal part from a closed sketch: a flat plate of one thickness, ready for flanges to be bent up off its edges.",
+    description:
+      "A sheet metal part from a sketch: a closed shape makes a flat sheet; connected lines (the side view of an L, U or Z…) make a bent sheet, its corners becoming bends. Then bend flanges off its edges.",
     params: [
       { key: "thickness", label: "Thickness", defaultValue: "1.5", positive: true, group: "size" },
+      { key: "depth", label: "Depth (for an outline of lines)", defaultValue: "30", positive: true, group: "size" },
       { key: "radius", label: "Bend radius (inside)", defaultValue: "1.5", positive: true, group: "size" },
       { key: "kFactor", label: "K-factor (0.45 is usual)", defaultValue: "0.45", min: 0, group: "size", unit: "" },
     ],

@@ -23,6 +23,7 @@ import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
+import { openChain, profileSheet } from "../sheetmetal/profile";
 import { findSheetEdge, flatPattern, flatPoint, foldSheet, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
 import { bendSolid, fusePieces, wallCutLines, wallSolid } from "./sheetMetal";
 import { fastenerName, fastenerSize } from "../model/fasteners";
@@ -1254,11 +1255,30 @@ export class GeometryEngine {
     if (!feature.sketchRef) return { error: "Choose the sketch with the sheet's shape." };
     const sketch = sketches.get(feature.sketchRef);
     if (!sketch?.sketch?.plane) return { error: "The sketch it uses can't be found (deleted, suppressed, or after this in the list)." };
-    const { regions, problems } = findRegions(sketch.sketch.data);
-    if (regions.length === 0) return { error: `The sketch has no closed shape for the sheet.${problems.length ? ` ${problems.join(" ")}` : ""}` };
+    const { regions } = findRegions(sketch.sketch.data);
     if (regions.length > 1) return { error: "Sheet metal needs one closed shape (holes inside it are fine). Put other shapes in another sketch." };
     const frame = planeFrame(sketch.sketch.plane);
     const T = values.thickness;
+    if (regions.length === 0) {
+      // Connected lines: a bent sheet, its corners the bends.
+      const chain = openChain(sketch.sketch.data);
+      if (typeof chain === "string") return { error: chain };
+      const spec = profileSheet(frame, chain, { depth: values.depth, thickness: T, radius: values.radius, k: values.kFactor, reverse: !!feature.flipSide, idPrefix: feature.id });
+      if (typeof spec === "string") return { error: spec };
+      const folded = foldSheet(spec);
+      const problem = Object.values(folded.errors)[0];
+      if (problem) return { error: problem };
+      let shape: Shape3D | null = null;
+      try {
+        shape = fusePieces([...folded.walls.map((w) => wallSolid(w, T)), ...folded.bends.map((b) => bendSolid(b))]);
+      } catch (e) {
+        return { error: describeError(e, "Couldn't make the sheet.") };
+      }
+      if (!shape) return { error: "Draw the sheet's side view as connected lines." };
+      this.tools.set(feature.id, { shape: shape.clone(), operation: "new", partId: feature.id });
+      this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, sheet: spec, sheetFeatures: [feature.id] });
+      return { newPart: true };
+    }
     // Flipped: the sheet sits below the sketch.
     const origin = feature.flipSide ? ([frame.origin[0] - frame.n[0] * T, frame.origin[1] - frame.n[1] * T, frame.origin[2] - frame.n[2] * T] as Vec3) : frame.origin;
     const spec: SheetSpec = {
