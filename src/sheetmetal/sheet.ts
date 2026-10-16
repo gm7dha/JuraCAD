@@ -61,6 +61,14 @@ export interface FlangeSpec {
   closeCorners?: boolean;
 }
 
+export interface TabSpec {
+  id: string;
+  wall: string;
+  /** In the wall's own coordinates. */
+  outline: Segment[];
+  holes: Segment[][];
+}
+
 export interface SheetSpec {
   thickness: number;
   /** Inside bend radius. */
@@ -69,6 +77,8 @@ export interface SheetSpec {
   k: number;
   base: { frame: Frame3; outer: Segment[]; holes: Segment[][] };
   flanges: FlangeSpec[];
+  /** Tabs: flat shapes sketched on a wall's face, joined onto that wall. */
+  tabs?: TabSpec[];
 }
 
 export interface Wall {
@@ -79,6 +89,8 @@ export interface Wall {
   flat: Flat2;
   /** Flange walls: edge 0 is the bend. */
   bendEdge?: number;
+  /** Tabs: extra flat shapes joined onto the wall (in its coordinates). */
+  tabs?: { outline: Segment[]; holes: Segment[][] }[];
 }
 
 export interface Bend {
@@ -388,6 +400,14 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     });
   }
   closeCorners(spec, walls, bends);
+  for (const t of spec.tabs ?? []) {
+    const w = walls.find((x) => x.id === t.wall);
+    if (!w) {
+      errors[t.id] = "The wall this tab was on can't be found any more. Edit the tab's sketch.";
+      continue;
+    }
+    w.tabs = [...(w.tabs ?? []), { outline: anticlockwise(t.outline), holes: t.holes.map((h) => anticlockwise(h, false)) }];
+  }
   return { walls, bends, errors };
 }
 
@@ -594,4 +614,39 @@ export function unfoldMoves(folded: FoldedSheet): {
     return { frame: { origin: inBase(corner), u: dirInBase(e), v: dirInBase(inward), n: base.n }, length: L, width: b.allowance };
   });
   return { walls, strips };
+}
+
+/**
+ * The wall a plane lies on (on either face of the sheet, facing either way),
+ * or null. `origin` and `n` are the plane's.
+ */
+export function wallOnPlane(folded: FoldedSheet, thickness: number, origin: V3, n: V3, tol = 1e-4): Wall | null {
+  for (const w of folded.walls) {
+    const f = w.frame;
+    if (Math.abs(Math.abs(dot3(f.n, n)) - 1) > 1e-6) continue;
+    const h = dot3(sub3(origin, f.origin), f.n);
+    if (Math.abs(h) < tol || Math.abs(h - thickness) < tol) return w;
+  }
+  return null;
+}
+
+/** Outline pieces moved by `map` (a point-by-point change of coordinates that keeps distances). */
+export function mapSegments(segments: Segment[], map: (p: P2) => P2): Segment[] {
+  return segments.map((s): Segment => {
+    switch (s.kind) {
+      case "line":
+        return { kind: "line", from: map(s.from), to: map(s.to) };
+      case "arc":
+        return { kind: "arc", from: map(s.from), mid: map(s.mid), to: map(s.to) };
+      case "bezier":
+        return { kind: "bezier", from: map(s.from), c1: map(s.c1), c2: map(s.c2), to: map(s.to) };
+      case "circle":
+        return { kind: "circle", center: map(s.center), radius: s.radius };
+      case "ellipse": {
+        const c = map(s.center);
+        const a = map([s.center[0] + Math.cos(s.angle), s.center[1] + Math.sin(s.angle)]);
+        return { kind: "ellipse", center: c, rx: s.rx, ry: s.ry, angle: Math.atan2(a[1] - c[1], a[0] - c[0]) };
+      }
+    }
+  });
 }
