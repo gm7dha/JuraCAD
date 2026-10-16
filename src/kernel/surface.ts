@@ -5,7 +5,7 @@
  * surface part can be thickened into a solid, or several can be closed up
  * into one (Enclose). All with OpenCascade.
  */
-import { basicFaceExtrusion, cast, genericSweep, getOC, loft, makeCompound, makeNonPlanarFace, makeSolid, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
+import { basicFaceExtrusion, cast, getOC, loft, makeCompound, makeNonPlanarFace, makeSolid, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, type Chain } from "../sketch/regions";
@@ -93,22 +93,28 @@ export function revolveSurface(plane: SketchPlane, data: SketchData, opts: { axi
 export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData): Shape3D {
   const { wires } = sketchWires(profilePlane, profile, "sweep");
   const spine = pathWire(pathPlane, path);
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
   try {
     return joined(
       wires.map((w) => {
+        // OpenCascade's plain pipe carries any outline (open or closed) along the path as a skin.
+        const pipe = new oc.BRepOffsetAPI_MakePipe_1(spine.wrapped, w.wrapped);
         try {
-          // In shell mode replicad hands back the skin with the two end wires.
-          const [skin, ...ends] = genericSweep(w, spine, { transitionMode: "round", forceProfileSpineOthogonality: false }, true) as unknown as [Shape3D, Wire, Wire];
-          release(...ends);
-          return skin;
+          pipe.Build(new oc.Message_ProgressRange_1());
+          if (!pipe.IsDone()) throw new Error("not done");
+          return cast(pipe.Shape()) as Shape3D;
         } catch {
           throw new Error("Couldn't sweep the outline along that path. Check it sits at the start of the path and is small enough for its bends.");
+        } finally {
+          pipe.delete();
         }
       }),
     );
   } finally {
     release(spine, ...wires);
   }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** A smooth skin through one run of curves (open or closed) on each sketch, in order. */
