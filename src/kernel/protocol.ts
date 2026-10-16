@@ -36,6 +36,8 @@ export interface ViewProjection {
   cutFaces?: number[];
   /** Holes seen end-on (centre of the opening), for hole callouts. */
   holes?: ViewHole[];
+  /** Flat pattern views: the bends, each a line across the pattern (x0, y0, x1, y1), its angle (degrees), inside radius, and whether it bends up. */
+  bends?: { line: [number, number, number, number]; angle: number; radius: number; up: boolean }[];
 }
 
 /** A hole as seen on a view: where its opening is and its sizes (mm; angle in degrees). */
@@ -90,6 +92,7 @@ export interface FlatPatternData {
   outline: [number, number][];
   holes: [number, number][][];
   bendLines: [[number, number], [number, number]][];
+  bends: { line: [[number, number], [number, number]]; angle: number; radius: number; up: boolean }[];
   /** Cuts made in the part after it was a sheet (holes, notches…), as line pieces. */
   cuts?: [[number, number], [number, number]][];
   thickness: number;

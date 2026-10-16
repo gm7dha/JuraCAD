@@ -349,6 +349,20 @@ export class SceneManager {
     return { x: ((c.x + 1) / 2) * this.width, y: ((1 - c.y) / 2) * this.height };
   }
 
+  /** Screen position (CSS px within the viewport) of the middle of one of a part's edges, or null. */
+  screenPointOnEdge(partId: string, edgeIndex: number): { x: number; y: number } | null {
+    const p = this.parts.get(partId);
+    const g = p?.data.edgeGroups[edgeIndex];
+    if (!p || !g) return null;
+    const l = p.data.lines;
+    // Halfway along: the middle of the middle segment (the points come in pairs, one segment each).
+    const seg = g.start + 2 * Math.floor(g.count / 4);
+    const c = new THREE.Vector3((l[3 * seg] + l[3 * seg + 3]) / 2, (l[3 * seg + 1] + l[3 * seg + 4]) / 2, (l[3 * seg + 2] + l[3 * seg + 5]) / 2)
+      .applyMatrix4(p.mesh.matrixWorld)
+      .project(this.camera);
+    return { x: ((c.x + 1) / 2) * this.width, y: ((1 - c.y) / 2) * this.height };
+  }
+
   /** Ids of the parts (or assembly instances) on show, and what their faces look like. */
   shownParts(): { id: string; faceRefs: PartMesh["faceRefs"] }[] {
     return [...this.parts.values()].map((p) => ({ id: p.data.id, faceRefs: p.data.faceRefs }));

@@ -23,6 +23,8 @@ export const VIEW_CAMERAS: Record<ViewKind, { toward: V3; right: V3 }> = {
   section: { toward: [0, -1, 0], right: [1, 0, 0] },
   // Detail views are worked out from their host view's lines, not seen from a camera of their own.
   detail: { toward: [0, -1, 0], right: [1, 0, 0] },
+  // The flat pattern of a sheet metal part is already flat: drawn as it is.
+  flat: { toward: [0, 0, 1], right: [1, 0, 0] },
 };
 
 /** Up on the paper for a view. */

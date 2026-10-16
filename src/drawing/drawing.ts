@@ -13,7 +13,7 @@ function withDrawings(doc: PartSmithDocument, drawings: Drawing[]): PartSmithDoc
 }
 
 /** Views that can be shown or hidden with a tick (sections are added by drawing a cutting line). */
-export const VIEW_KINDS: ViewKind[] = ["front", "top", "right", "left", "back", "bottom", "iso"];
+export const VIEW_KINDS: ViewKind[] = ["front", "top", "right", "left", "back", "bottom", "iso", "flat"];
 export const VIEW_LABELS: Record<ViewKind, string> = {
   front: "Front",
   top: "Top",
@@ -24,6 +24,7 @@ export const VIEW_LABELS: Record<ViewKind, string> = {
   iso: "3D (isometric)",
   section: "Section",
   detail: "Detail",
+  flat: "Flat pattern (sheet metal)",
 };
 export const SHEET_SIZES: SheetSize[] = ["A4", "A3", "A2"];
 

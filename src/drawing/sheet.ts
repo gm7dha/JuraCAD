@@ -161,7 +161,7 @@ export type Projections = Partial<Record<string, ViewProjection>>;
 const isSectionKey = (k: string) => k.startsWith("section:");
 const isDetailKey = (k: string) => k.startsWith("detail:");
 /** Views placed freely in the side column, with their names underneath. */
-const isLabelled = (k: string) => isSectionKey(k) || isDetailKey(k);
+const isLabelled = (k: string) => isSectionKey(k) || isDetailKey(k) || k === "flat";
 
 /** Width and height the arrangement needs on paper at a scale. */
 function needed(
@@ -181,7 +181,7 @@ function needed(
   const side = ["iso", ...keys.filter(isLabelled)]
     .map((key) => {
       const [w, h] = size(key);
-      return { key, w, h: h > 0 && isLabelled(key) ? h + LABEL_ROOM : h };
+      return { key, w, h: h > 0 && isLabelled(key) ? h + labelRoom(key, projections[key]) : h };
     })
     .filter((x) => x.w > 0);
   const sideW = Math.max(0, ...side.map((x) => x.w));
@@ -193,6 +193,9 @@ function needed(
 
 /** Room under a section view for its name (mm). */
 const LABEL_ROOM = 8;
+/** Room under a labelled view: its name, and for a flat pattern a line per bend. */
+const labelRoom = (key: string, p: ViewProjection | undefined) => LABEL_ROOM + (key === "flat" ? BEND_LINE_H * (p?.bends?.length ?? 0) : 0);
+const BEND_LINE_H = 4;
 
 /** The biggest standard scale at which all the views fit on the sheet. */
 export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H): { scale: number; fits: boolean } {
@@ -249,7 +252,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   const sideX = gridRight > left ? gridRight + GAP : left;
   let sideY = top;
   for (const item of n.side) {
-    const viewH = isLabelled(item.key) ? item.h - LABEL_ROOM : item.h;
+    const viewH = isLabelled(item.key) ? item.h - labelRoom(item.key, projections[item.key]) : item.h;
     autoCentre[item.key] = [sideX + item.w / 2, sideY - viewH / 2];
     sideY -= item.h + GAP;
   }
@@ -288,6 +291,25 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     }
     const [w, h] = sizeOf(p).map((d) => d * scale);
     const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
+    if (v.kind === "flat") {
+      // Bend lines, numbered, and a list of the bends under the view's name.
+      prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: "FLAT PATTERN", size: 3.5, anchor: "middle", bold: true });
+      (p.bends ?? []).forEach((b, i) => {
+        const [x0, y0, x1, y1] = map([...b.line]) as [number, number, number, number];
+        prims.push({ kind: "path", points: [x0, y0, x1, y1], style: "centre" });
+        // Its number just past one end of the line.
+        const L = Math.hypot(x1 - x0, y1 - y0) || 1;
+        prims.push({ kind: "text", x: x1 + ((x1 - x0) / L) * 2, y: y1 + ((y1 - y0) / L) * 2 - 1, text: `B${i + 1}`, size: 2.5, anchor: "start" });
+        prims.push({
+          kind: "text",
+          x: centre[0],
+          y: box[1] - 6 - BEND_LINE_H * (i + 1),
+          text: `B${i + 1}: ${b.up ? "UP" : "DOWN"} ${Math.round(b.angle * 10) / 10}°  R${Math.round(b.radius * 100) / 100}`,
+          size: 2.5,
+          anchor: "middle",
+        });
+      });
+    }
     const cut = v.kind === "section" ? drawing.sections?.find((c) => c.id === v.section) : undefined;
     if (cut) prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: sectionTitle(cut), size: 3.5, anchor: "middle", bold: true });
     const detail = v.kind === "detail" ? drawing.details?.find((x) => x.id === v.detail) : undefined;

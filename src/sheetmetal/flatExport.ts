@@ -4,7 +4,7 @@
  * lines (centre lines, on their own layer in the DXF).
  */
 import type { Prim } from "../drawing/sheet";
-import type { FlatPatternData } from "../kernel/protocol";
+import type { FlatPatternData, ViewProjection } from "../kernel/protocol";
 
 const MARGIN = 5;
 
@@ -29,3 +29,21 @@ export function flatPrims(flat: FlatPatternData): { prims: Prim[]; size: [number
   ];
   return { prims, size: [width + 2 * MARGIN, height + 2 * MARGIN] };
 }
+
+/** A flat pattern as a drawing view: its outline, holes and cuts as lines, with its bends. */
+export function flatProjection(flat: FlatPatternData): ViewProjection {
+  const closed = (pts: [number, number][]) => (pts.length ? [...pts, pts[0]].flat() : []);
+  const visible = [closed(flat.outline), ...flat.holes.map(closed), ...(flat.cuts ?? []).map(([a, b]) => [...a, ...b])].filter((l) => l.length >= 4);
+  const xs = visible.flatMap((l) => l.filter((_, i) => i % 2 === 0));
+  const ys = visible.flatMap((l) => l.filter((_, i) => i % 2 === 1));
+  return {
+    kind: "flat",
+    visible,
+    hidden: [],
+    circles: [],
+    points: flat.outline.flat(),
+    bounds: xs.length ? [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] : null,
+    bends: flat.bends.map((b) => ({ line: [...b.line[0], ...b.line[1]] as [number, number, number, number], angle: b.angle, radius: b.radius, up: b.up })),
+  };
+}
+
