@@ -178,6 +178,8 @@ export interface AppState {
   selectedFeatureId: string | null;
   /** The section view, when one is on. */
   section: SectionView | null;
+  /** The print bed preview, when on: which printer (or a custom size). */
+  printBed: { printer: string; custom?: [number, number, number] } | null;
   /** Faces and edges picked in the viewport. */
   selection: SelectionItem[];
   hiddenParts: string[];
@@ -350,7 +352,8 @@ export interface AppState {
   editingPattern: string | null;
   setEditingPattern: (id: string | null) => void;
   /** Repeat the selected instances (a linear pattern to start with) and open its settings. */
-  createPattern: () => void;
+  /** Pattern (or, with "mirror", Mirror) the selected instances. */
+  createPattern: (kind?: "mirror") => void;
   updatePattern: (id: string, patch: Partial<Omit<AssemblyPattern, "id">>) => void;
   deletePattern: (id: string) => void;
   /** Group: lock the selected parts together where they are. */
@@ -394,6 +397,7 @@ export interface AppState {
   toggleDatum: (datum: DatumName) => void;
   openDialog: (d: DialogName) => void;
   setSection: (section: SectionView | null) => void;
+  setPrintBed: (printBed: { printer: string; custom?: [number, number, number] } | null) => void;
   showToast: (text: string, tone?: Toast["tone"]) => void;
 
   // set by the kernel connection
@@ -503,6 +507,7 @@ export const useStore = create<AppState>((set, get) => {
     selectedFeatureId: null,
     selection: [],
     section: null,
+    printBed: null,
     hiddenParts: [],
     transparentParts: [],
     showFlat: false,
@@ -1142,7 +1147,7 @@ export const useStore = create<AppState>((set, get) => {
     setExplodePreview: (amount) => set({ explodePreview: amount }),
     editingPattern: null,
     setEditingPattern: (editingPattern) => set({ editingPattern, ...(editingPattern ? { asmSelection: [], mateDraft: null, dialog: null } : {}) }),
-    createPattern: () => {
+    createPattern: (kind) => {
       const s = get();
       const asm = activeAssembly(s);
       if (!asm) return;
@@ -1152,15 +1157,19 @@ export const useStore = create<AppState>((set, get) => {
       const part = s.parts.find((p) => p.id === seeds[0].partId);
       const box = part ? boundsOfVertices(part.vertices) : null;
       const width = box ? box.max[0] - box.min[0] : 10;
-      const pattern: AssemblyPattern = {
-        id: newId("pt"),
-        name: nextPatternName(asm),
-        kind: "linear",
-        seeds: seeds.map((i) => i.id),
-        count: 3,
-        amount: String(Math.ceil(width + 5)),
-        axis: "x",
-      };
+      const pattern: AssemblyPattern =
+        kind === "mirror"
+          ? // Across the Right plane, moved out past the parts so the copies don't land on them.
+            { id: newId("pt"), name: nextPatternName(asm, "Mirror"), kind: "mirror", seeds: seeds.map((i) => i.id), count: 2, amount: "0", axis: "x", centre: [Math.ceil((box ? box.max[0] : 0) + Math.max(...seeds.map((i) => i.placement.position[0])) + 5), 0, 0] }
+          : {
+              id: newId("pt"),
+              name: nextPatternName(asm),
+              kind: "linear",
+              seeds: seeds.map((i) => i.id),
+              count: 3,
+              amount: String(Math.ceil(width + 5)),
+              axis: "x",
+            };
       change((doc) => updateAssembly(doc, asm.id, (a) => syncPattern(a, pattern, () => newId("i"))));
       set({ editingPattern: pattern.id, asmSelection: [] });
     },
@@ -1336,6 +1345,7 @@ export const useStore = create<AppState>((set, get) => {
 
     openDialog: (dialog) => set({ dialog }),
     setSection: (section) => set({ section }),
+    setPrintBed: (printBed) => set({ printBed }),
 
     showToast: (text, tone = "info") => set({ toast: { id: ++toastCounter, text, tone } }),
 

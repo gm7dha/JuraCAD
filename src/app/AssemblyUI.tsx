@@ -119,6 +119,14 @@ export function AssemblyToolbar() {
               title: selected.some((i) => !i.copyOf) ? "Pattern — repeat the selected parts in a row or round an axis (the copies follow the originals)" : "Select the parts to repeat first",
             },
             {
+              key: "mirror",
+              label: "Mirror",
+              icon: <Icons.Mirror />,
+              disabled: !selected.some((i) => !i.copyOf),
+              onClick: () => useStore.getState().createPattern("mirror"),
+              title: selected.some((i) => !i.copyOf) ? "Mirror — a mirror-image copy of the selected parts across a plane (the copies follow the originals)" : "Select the parts to mirror first",
+            },
+            {
               key: "replicate",
               label: "Replicate",
               icon: <Icons.Replicate />,
@@ -421,7 +429,7 @@ function PatternsSection({ assembly }: { assembly: Assembly }) {
               onDoubleClick={() => useStore.getState().setEditingPattern(p.id)}
               title={error ? `Problem: ${error}` : `${p.count} in ${p.kind === "linear" ? "a row" : "a circle"}. Double-click to edit.`}
             >
-              <span className="feature-icon">{p.kind === "linear" ? <Icons.LinearPattern size={18} /> : <Icons.CircularPattern size={18} />}</span>
+              <span className="feature-icon">{p.kind === "linear" ? <Icons.LinearPattern size={18} /> : p.kind === "mirror" ? <Icons.Mirror size={18} /> : <Icons.CircularPattern size={18} />}</span>
               <span className="feature-name">{p.name}</span>
               {error && (
                 <span className="feature-error-icon" aria-label="Problem">
@@ -469,9 +477,9 @@ export function PatternPanel() {
         </span>
       </header>
       <div className="feature-dialog-body">
-        <p className="dialog-hint">Repeating {names}.</p>
-        <div className="segmented two" role="radiogroup" aria-label="Pattern kind">
-          {(["linear", "circular"] as const).map((k) => (
+        <p className="dialog-hint">{p.kind === "mirror" ? `Mirroring ${names}.` : `Repeating ${names}.`}</p>
+        <div className="segmented three" role="radiogroup" aria-label="Pattern kind">
+          {(["linear", "circular", "mirror"] as const).map((k) => (
             <button
               type="button"
               key={k}
@@ -479,13 +487,38 @@ export function PatternPanel() {
               aria-checked={p.kind === k}
               className={p.kind === k ? "selected" : ""}
               onClick={() =>
-                p.kind !== k && update(k === "linear" ? { kind: k, amount: "20" } : { kind: k, amount: "360", axis: "z", count: Math.max(p.count, 4) })
+                p.kind !== k &&
+                update(k === "linear" ? { kind: k, amount: "20", count: Math.max(p.count, 2) } : k === "mirror" ? { kind: k, axis: "x", count: 2 } : { kind: k, amount: "360", axis: "z", count: Math.max(p.count, 4) })
               }
             >
-              {k === "linear" ? "In a row" : "Round an axis"}
+              {k === "linear" ? "In a row" : k === "mirror" ? "Mirror" : "Round an axis"}
             </button>
           ))}
         </div>
+        {p.kind === "mirror" ? (
+          <>
+            <div className="param-field compact">
+              <label htmlFor="asm-mirror-plane">Mirror across</label>
+              <select id="asm-mirror-plane" value={p.axis} onChange={(e) => update({ axis: e.target.value as "x" | "y" | "z" })}>
+                <option value="x">Right plane (left ↔ right)</option>
+                <option value="y">Front plane (front ↔ back)</option>
+                <option value="z">Top plane (up ↔ down)</option>
+              </select>
+            </div>
+            <NumberBox
+              label={`Plane at ${p.axis.toUpperCase()} =`}
+              value={centre[p.axis === "x" ? 0 : p.axis === "y" ? 1 : 2]}
+              unit="mm"
+              onCommit={(v) => {
+                const c: [number, number, number] = [0, 0, 0];
+                c[p.axis === "x" ? 0 : p.axis === "y" ? 1 : 2] = v;
+                update({ centre: c });
+              }}
+            />
+            <p className="dialog-hint">The copies are mirror images — the opposite hand — so the parts list shows them as separate parts.</p>
+          </>
+        ) : (
+          <>
         <NumberBox label="How many (including the original)" value={p.count} unit="" onCommit={(v) => update({ count: Math.max(2, Math.min(100, Math.round(v))) })} />
         {p.kind === "linear" ? (
           <NumberBox label="Spacing" value={amount.ok ? amount.value : 0} unit="mm" onCommit={(v) => update({ amount: String(v) })} />
@@ -504,6 +537,8 @@ export function PatternPanel() {
           <input type="checkbox" checked={!!p.flip} onChange={(e) => update({ flip: e.target.checked })} />
           {p.kind === "linear" ? "The other way" : "Turn the other way"}
         </label>
+          </>
+        )}
         {p.kind === "circular" && (
           <fieldset className="param-group">
             <legend>Axis goes through</legend>

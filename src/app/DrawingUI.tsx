@@ -72,9 +72,13 @@ function balloonsFor(bom: BomLine[] | undefined, instances: InstanceInput[] | un
   if (!bom?.length || !instances?.length) return undefined;
   const out: NonNullable<SheetInfo["balloons"]> = [];
   for (const row of bom) {
-    const inst = instances.find((i) => i.partId === row.partId);
-    const mesh = row.partId ? findMesh(parts, row.partId) : undefined;
-    const spot = mesh ? surfacePointNearCentre(mesh.vertices) : null;
+    // Mirrored copies are their own line ("…~mirrored").
+    const mirrored = !!row.partId?.endsWith("~mirrored");
+    const partId = mirrored ? row.partId!.slice(0, -"~mirrored".length) : row.partId;
+    const inst = instances.find((i) => i.partId === partId && !!i.mirrored === mirrored);
+    const mesh = partId ? findMesh(parts, partId) : undefined;
+    const local = mesh ? surfacePointNearCentre(mesh.vertices) : null;
+    const spot = local && mirrored ? ([-local[0], local[1], local[2]] as typeof local) : local;
     if (inst && spot) out.push({ item: row.item, at: applyPlacement({ position: inst.position, rotation: inst.rotation }, spot) });
   }
   return out;
@@ -631,6 +635,19 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
               }
             />
             Centre lines on holes and round parts
+          </label>
+          <label className="check-row" title="Tapped holes drawn the standard way: a thin three-quarter circle at the thread's size seen end-on, thin lines along the hole seen from the side">
+            <input
+              type="checkbox"
+              checked={drawing.threadSymbols !== false}
+              onChange={(e) =>
+                change((d) => {
+                  const { threadSymbols: _old, ...rest } = d;
+                  return e.target.checked ? rest : { ...rest, threadSymbols: false };
+                })
+              }
+            />
+            Thread symbols on tapped holes
           </label>
           <label className="check-row" title="Tag each hole on the top view (or the first view showing holes) and list where it is and its size in a table">
             <input

@@ -2346,6 +2346,8 @@ export class GeometryEngine {
       const part = this.parts.find((p) => p.id === i.partId) ?? this.parts.find((p) => p.id === i.partId.split("@")[0]);
       if (!part) continue;
       let shape = part.shape.clone();
+      // A mirrored copy: the part's mirror image, flipped across its own YZ plane.
+      if (i.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
       const [x, y, z, w] = i.rotation;
       const s = Math.sqrt(Math.max(0, 1 - w * w));
       const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
@@ -2406,6 +2408,12 @@ export class GeometryEngine {
               ...(h.cbore ? { cbore: h.cbore } : {}),
               ...(h.csk ? { csk: h.csk } : {}),
             }));
+          // Seen from the side: the hole's length on the view, for thread symbols on tapped holes.
+          const flatP = (p: Vec3): [number, number] => [dot3(p, right), dot3(p, up)];
+          const side = found
+            .filter((h) => Math.abs(dot3(h.into, toward)) < 1e-3)
+            .map((h) => ({ a: flatP(h.entry), b: flatP([h.entry[0] + h.into[0] * h.depth, h.entry[1] + h.into[1] * h.depth, h.entry[2] + h.into[2] * h.depth]), d: h.diameter }));
+          if (side.length) view.sideHoles = side;
         });
       }
       // How deep each flat view sees the part (front to back), for broken-out cuts.

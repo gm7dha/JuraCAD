@@ -772,6 +772,12 @@ describe("holes", () => {
     // Not seen from underneath (it doesn't come out there), nor from the side.
     expect(bottom.holes).toEqual([]);
     expect(front.holes).toEqual([]);
+    // From the side: where each hole runs (for thread symbols), 10 deep, down from the top.
+    expect(front.sideHoles).toHaveLength(2);
+    const sh = front.sideHoles![0];
+    expect(Math.abs(sh.a[1] - sh.b[1])).toBeCloseTo(10, 3);
+    expect(sh.a[0]).toBeCloseTo(sh.b[0], 6);
+    expect(sh.d).toBeCloseTo(4.5, 4);
 
     build([block, sk, holeFeature(sk.id, { kind: "countersink" }, { diameter: 4.5, cskDiameter: 9.4, cskAngle: 90 })]);
     const [t2, b2] = engine.project([], undefined, ["top", "bottom"], false);
@@ -1557,6 +1563,22 @@ describe("assembly exports and clashes", () => {
     expect(step).toContain("PRODUCT('Box <3>'");
     // The part itself hasn't moved.
     expect(engine.check("coarse").parts).toHaveLength(1);
+  });
+
+  it("shows mirrored copies as the part's mirror image", () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    engine.rebuild([box]);
+    const id: [number, number, number, number] = [0, 0, 0, 1];
+    // Mirrored, the box spans x −10…0 instead of 0…10: next to the original, not on it.
+    const mirrored = [
+      { id: "i1", partId: box.id, name: "Box <1>", position: [0, 0, 0] as [number, number, number], rotation: id },
+      { id: "i2", partId: box.id, name: "Box <2>", position: [0, 0, 0] as [number, number, number], rotation: id, mirrored: true },
+    ];
+    expect(engine.clashes(mirrored)).toHaveLength(0);
+    const { vertices } = readBinaryStl(engine.exportStl([], "coarse", mirrored).stl);
+    const xs = Array.from(vertices).filter((_, k) => k % 3 === 0);
+    expect(Math.min(...xs)).toBeCloseTo(-10, 3);
   });
 });
 

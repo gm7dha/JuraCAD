@@ -12,6 +12,8 @@ export interface InstanceInput {
   position: [number, number, number];
   /** Quaternion x, y, z, w. */
   rotation: [number, number, number, number];
+  /** The part's mirror image (flipped across its own YZ plane before it's placed). */
+  mirrored?: boolean;
 }
 
 /** A drawing view's lines, in the view's own flat coordinates (mm; x right, y up on the paper). */
@@ -36,6 +38,8 @@ export interface ViewProjection {
   cutFaces?: number[];
   /** Holes seen end-on (centre of the opening), for hole callouts. */
   holes?: ViewHole[];
+  /** Holes seen from the side: where each starts and ends on the view, and its diameter (for thread symbols). */
+  sideHoles?: { a: [number, number]; b: [number, number]; d: number }[];
   /** How far the part reaches front to back as the view sees it (mm), for broken-out cuts' depths. */
   depth?: number;
   /** Broken-out cuts on this view: each one's outline (x0, y0, x1, y1…, closed). */

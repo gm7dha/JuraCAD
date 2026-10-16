@@ -1,3 +1,4 @@
+import { bedSize } from "../model/printBed";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { findMesh, meshIdOf } from "../assembly/configured";
@@ -495,7 +496,14 @@ export function Viewport() {
     if (!assembly) return NO_PLACEMENTS;
     const solvedPlaces = Object.fromEntries(assembly.instances.map((i) => [i.id, solved?.placements[i.id] ?? i.placement]));
     const shown = explodeAssembly(assembly, parts, solvedPlaces, explode);
-    return Object.fromEntries(assembly.instances.map((i) => [i.id, placementMatrix(shown[i.id])]));
+    return Object.fromEntries(
+      assembly.instances.map((i) => {
+        const m = placementMatrix(shown[i.id]);
+        // Mirrored copies: the part flipped across its own YZ plane first.
+        if (i.mirrored) for (const k of [0, 1, 2]) m[k] = -m[k];
+        return [i.id, m];
+      }),
+    );
   }, [assembly, solved, parts, explode]);
 
   useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft && !(explode > 0)), [assembly, mateDraft, explode]);
@@ -581,6 +589,8 @@ export function Viewport() {
   }, [appearance, assembly]);
   useEffect(() => viewportApi.current?.setPartColours(colours), [colours]);
   useEffect(() => viewportApi.current?.setSection(section ? sectionPlane(section) : null), [section]);
+  const printBed = useStore((s) => s.printBed);
+  useEffect(() => viewportApi.current?.setPrintBed(printBed ? bedSize(printBed.printer, printBed.custom) : null), [printBed]);
   useEffect(() => {
     // Placements first, so the parts arrive already in position.
     viewportApi.current?.setPlacements(placements);

@@ -258,6 +258,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
         ? { details: details.filter((x) => views.some((v) => v.kind === "detail" && v.detail === x.id)) }
         : {}),
       ...(r.centreLines === false ? { centreLines: false } : {}),
+      ...(r.threadSymbols === false ? { threadSymbols: false } : {}),
       ...(r.holeTable === true ? { holeTable: true } : {}),
       ...(r.balloons === false ? { balloons: false } : {}),
       ...(r.exploded === true ? { exploded: true } : {}),
