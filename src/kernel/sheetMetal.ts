@@ -5,7 +5,8 @@
 import { basicFaceExtrusion, Vector, type Shape3D } from "replicad";
 import { facesOf } from "./topology";
 
-import type { Bend, P2, Wall } from "../sheetmetal/sheet";
+import type { Bend, FoldedSheet, P2, Wall } from "../sheetmetal/sheet";
+import { unfoldMoves } from "../sheetmetal/sheet";
 import type { Loop, Segment } from "../sketch/regions";
 import { loopFace, release } from "./extrude";
 
@@ -108,4 +109,46 @@ export function wallCutLines(wall: Wall, thickness: number, tool: Shape3D): [P2,
     inside?.delete();
   }
   return out;
+}
+
+/**
+ * The part laid out flat: each wall's material (with whatever was cut from it)
+ * moved to where it lies in the flat pattern, and each bend unrolled into a
+ * flat strip. Null if nothing could be laid down.
+ */
+export function unfoldedSolid(part: Shape3D, folded: FoldedSheet, thickness: number): Shape3D | null {
+  const { walls, strips } = unfoldMoves(folded);
+  const pieces: Shape3D[] = [];
+  for (const w of folded.walls) {
+    const move = walls.find((m) => m.id === w.id)!;
+    const slab = wallSolid(w, thickness);
+    let piece: Shape3D;
+    try {
+      piece = part.intersect(slab) as Shape3D;
+    } finally {
+      slab.delete();
+    }
+    // To the origin, turn, then to its flat place (each step frees the one before).
+    piece = piece.translate([-move.from.origin[0], -move.from.origin[1], -move.from.origin[2]]);
+    if (move.angle > 1e-9) piece = piece.rotate(move.angle, [0, 0, 0], move.axis);
+    piece = piece.translate(move.to.origin);
+    pieces.push(piece);
+  }
+  for (const s of strips) {
+    const n = s.frame.n;
+    pieces.push(
+      prism(
+        [
+          { kind: "line", from: [0, 0], to: [s.length, 0] },
+          { kind: "line", from: [s.length, 0], to: [s.length, s.width] },
+          { kind: "line", from: [s.length, s.width], to: [0, s.width] },
+          { kind: "line", from: [0, s.width], to: [0, 0] },
+        ],
+        [],
+        s.frame,
+        [n[0] * thickness, n[1] * thickness, n[2] * thickness],
+      ),
+    );
+  }
+  return fusePieces(pieces);
 }

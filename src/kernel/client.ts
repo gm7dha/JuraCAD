@@ -1,7 +1,7 @@
 import type { TopoPick } from "../geometry/topoRef";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { SectionRequest } from "../drawing/sections";
-import type { CheckResult, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { CheckResult, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -112,6 +112,11 @@ export class KernelClient {
   /** Whole parts: their sizes, and the gap and overlap between two of them. */
   measureParts(partIds: string[]): Promise<Measurement> {
     return this.send({ type: "measureParts", partIds }).then((body) => body.result as Measurement);
+  }
+
+  /** A sheet metal part laid out flat, as a mesh to show in place of the folded one (null if it can't be). */
+  unfold(partId: string): Promise<PartMesh | null> {
+    return this.send({ type: "unfold", partId }).then((body) => (body.type === "unfold" ? body.result : null));
   }
 
   measure(picks: TopoPick[]): Promise<Measurement> {

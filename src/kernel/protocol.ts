@@ -167,6 +167,7 @@ export type KernelRequest =
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[] }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
+  | { type: "unfold"; partId: string }
   | { type: "deleteFaceBlockers"; features: Feature[]; featureId: string; variables: Record<string, number> }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
 
@@ -176,6 +177,7 @@ export type KernelResponseBody =
   | { type: "exportStl"; result: ExportResult }
   | { type: "exportStep"; result: StepResult }
   | { type: "measure"; result: Measurement }
+  | { type: "unfold"; result: PartMesh | null }
   | { type: "deleteFaceBlockers"; result: DeleteFaceBlockers }
   | { type: "export3mf"; result: ThreeMfResult }
   | { type: "clashes"; result: NonNullable<CheckResult["overlaps"]> }

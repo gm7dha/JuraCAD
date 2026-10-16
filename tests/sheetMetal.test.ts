@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { findSheetEdge, flatPattern, foldSheet, wallPoint, type Frame3, type SheetSpec, type V3 } from "../src/sheetmetal/sheet";
+import { findSheetEdge, flatPattern, flatPoint, foldSheet, unfoldMoves, wallPoint, type Frame3, type SheetSpec, type V3 } from "../src/sheetmetal/sheet";
 import type { Segment } from "../src/sketch/regions";
 
 const close = (a: number[], b: number[], digits = 6) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], digits));
@@ -155,5 +155,45 @@ describe("sheet metal", () => {
     ]));
     expect(Object.keys(f.errors).sort()).toEqual(["again", "flat", "lost", "short"]);
     expect(f.errors.short).toMatch(/longer than 4.01 mm/);
+  });
+});
+
+describe("unfolding", () => {
+  it("lays each wall down where it sits in the flat pattern, with a strip for each bend", () => {
+    const f = foldSheet(spec([
+      { id: "r", wall: "base", edge: 1, length: 30, angle: 90, down: false },
+      { id: "b", wall: "base", edge: 0, length: 20, angle: 60, down: true },
+    ]));
+    const { walls, strips } = unfoldMoves(f);
+    expect(walls[0].angle).toBeCloseTo(0, 9);
+    const flat = flatPattern(f);
+    for (const w of f.walls) {
+      const m = walls.find((x) => x.id === w.id)!;
+      // The turn takes the wall's own directions onto its flat ones.
+      const turn = (p: V3): V3 => {
+        const q = [p[0] - m.from.origin[0], p[1] - m.from.origin[1], p[2] - m.from.origin[2]] as V3;
+        const k = m.axis;
+        const c = Math.cos((m.angle * Math.PI) / 180);
+        const s = Math.sin((m.angle * Math.PI) / 180);
+        const kq = k[0] * q[0] + k[1] * q[1] + k[2] * q[2];
+        const kxq: V3 = [k[1] * q[2] - k[2] * q[1], k[2] * q[0] - k[0] * q[2], k[0] * q[1] - k[1] * q[0]];
+        return [0, 1, 2].map((i) => q[i] * c + kxq[i] * s + k[i] * kq * (1 - c) + m.to.origin[i]) as V3;
+      };
+      // A wall corner in 3D lands on its flat place.
+      const corner = w.outline[1].kind === "line" ? w.outline[1].to : [0, 0];
+      const landed = turn(wallPoint(w.frame, corner as [number, number]));
+      const want = flatPoint(w.flat, corner as [number, number]);
+      close(landed, [want[0], want[1], 0]);
+      // Thickness ends up pointing the same way as the base's.
+      close(turn(wallPoint(w.frame, [0, 0], 1)).map((v, i) => v - turn(wallPoint(w.frame, [0, 0]))[i]), [0, 0, 1]);
+    }
+    expect(strips).toHaveLength(2);
+    expect(strips[0].width).toBeCloseTo(flat.bends[0].line ? (Math.PI / 2) * 3 : 0, 6);
+    // Right-handed strip frames, lying in the base plane.
+    for (const s of strips) {
+      const { u, v, n } = s.frame;
+      expect(u[0] * v[1] * n[2] + u[1] * v[2] * n[0] + u[2] * v[0] * n[1] - u[2] * v[1] * n[0] - u[1] * v[0] * n[2] - u[0] * v[2] * n[1]).toBeCloseTo(1, 9);
+      expect(s.frame.origin[2]).toBeCloseTo(0, 9);
+    }
   });
 });

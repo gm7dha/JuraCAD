@@ -69,6 +69,12 @@ ctx.onmessage = (event) => {
         case "deleteFaceBlockers":
           body = { type: "deleteFaceBlockers", result: engine.deleteFaceBlockers(request.features, request.featureId, request.variables) };
           break;
+        case "unfold": {
+          const result = engine.unfold(request.partId);
+          if (result) transfer.push(result.vertices.buffer, result.normals.buffer, result.triangles.buffer, result.lines.buffer);
+          body = { type: "unfold", result };
+          break;
+        }
         case "measureParts":
           body = { type: "measure", result: engine.measureParts(request.partIds) };
           break;

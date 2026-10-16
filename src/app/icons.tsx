@@ -276,6 +276,14 @@ export const Icons = {
       <path d="M3 18h13a6 6 0 0 0 0-12H9" />
     </Svg>
   ),
+  Unfold: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 17h9V7" />
+      <path d="M12 17h9" strokeDasharray="2 2" />
+      <path d="M12 7c4 0 7 3 7 7" />
+      <path d="m17 12 2 2 2-2" />
+    </Svg>
+  ),
   FlatPattern: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 8h18v8H3z" />
