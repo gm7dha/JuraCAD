@@ -820,7 +820,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         } catch {
           // no normal there: assume the outside of a rod
         }
-        return wrapShapes(cyl, start, convex, shapes, centre, { depth: v.depth, x: v.x, y: v.y, angle: v.angle, flip: feature.operation === "remove" }, "A shape is too wide to wrap round such a narrow face — make it smaller, or split it into narrower pieces.");
+        return wrapShapes(cyl, start, convex, shapes, centre, { depth: v.depth, x: v.x, y: v.y, angle: v.angle, flip: feature.operation === "remove" }, "A shape is too wide to wrap — it would go more than once round the face. Make it smaller.");
       } finally {
         face.delete();
       }

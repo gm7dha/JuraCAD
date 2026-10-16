@@ -1857,9 +1857,22 @@ describe("text", () => {
     const cutVolume = solidVolume - analyzeMesh(engraved.parts[0].vertices, engraved.parts[0].triangles).volume;
     expect(cutVolume).toBeGreaterThan(20);
     expect(cutVolume).toBeLessThan(35);
-    // Too wide for the rod.
+    // A band 40 wide (229° round the 20 mm rod) and 4 tall, raised 1: laid on narrow strips, it hugs the rod —
+    // about the volume of that slice of a 1 mm thick ring (½ × 4 rad × (11² − 10²) × 4 = 168 mm³).
     const wide = sketchFeature({ kind: "default", name: "Top" }, addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 40, y: 4 }).sketch);
-    expect(build([rod, wide, { ...wrap, sketchRef: wide.id }]).featureErrors[wrap.id]).toMatch(/too wide/);
+    const band = build([rod, wide, { ...wrap, sketchRef: wide.id }]);
+    expect(band.featureErrors).toEqual({});
+    expect(band.parts).toHaveLength(1);
+    const bandMesh = analyzeMesh(band.parts[0].vertices, band.parts[0].triangles);
+    expect(bandMesh.volume - solidVolume).toBeGreaterThan(150);
+    expect(bandMesh.volume - solidVolume).toBeLessThan(190);
+    // It stays within 1 mm of the surface all round.
+    const radii: number[] = [];
+    for (let i = 0; i < band.parts[0].vertices.length; i += 3) radii.push(Math.hypot(band.parts[0].vertices[i], band.parts[0].vertices[i + 1]));
+    expect(Math.max(...radii)).toBeLessThan(11.05);
+    // More than once round: too wide.
+    const tooWide = sketchFeature({ kind: "default", name: "Top" }, addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 70, y: 4 }).sketch);
+    expect(build([rod, tooWide, { ...wrap, sketchRef: tooWide.id }]).featureErrors[wrap.id]).toMatch(/too wide/);
     expect(build([rod, sk, { ...wrap, picks: [] }]).featureErrors[wrap.id]).toMatch(/round face/);
   });
 });
