@@ -5,7 +5,7 @@
 import { genericSweep, loft, makeLine, makeThreePointArc, type Edge, type Shape3D, type Wire, assembleWire } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
-import { findRegions } from "../sketch/regions";
+import { findRegions, type Segment } from "../sketch/regions";
 import { chainOf } from "../sketch/tools";
 import { pointPos } from "../sketch/ops";
 import type { SketchArc, SketchData, SketchLine } from "../sketch/types";
@@ -86,16 +86,30 @@ export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, path
   }
 }
 
+/** Which way a lone circle or ellipse starts from its centre (an ellipse at its long axis; a circle along the sketch's X). */
+export function loopStart(segments: Segment[], frame: ReturnType<typeof planeFrame>): [number, number, number] | undefined {
+  if (segments.length !== 1) return undefined;
+  const s = segments[0];
+  const a = s.kind === "ellipse" ? s.angle + (s.rx >= s.ry ? 0 : Math.PI / 2) : s.kind === "circle" ? 0 : null;
+  if (a === null) return undefined;
+  const { u, v } = frame;
+  return [u[0] * Math.cos(a) + v[0] * Math.sin(a), u[1] * Math.cos(a) + v[1] * Math.sin(a), u[2] * Math.cos(a) + v[2] * Math.sin(a)];
+}
+
 /** A smooth solid passing through one closed shape on each of the sketches, in order. */
 export function loftSketches(sections: { plane: SketchPlane; data: SketchData; name: string }[]): Shape3D {
   if (sections.length < 2) throw new Error("Pick at least two sketches to loft between.");
   const wires: Wire[] = [];
   try {
+    let start: [number, number, number] | undefined;
     for (const s of sections) {
       const { regions } = findRegions(s.data);
       if (regions.length !== 1) throw new Error(`${s.name} needs exactly one closed shape to loft through (it has ${regions.length}).`);
       if (regions[0].holes.length) throw new Error(`${s.name}'s shape has a hole in it — lofts can only join plain outlines for now.`);
-      wires.push(loopWire(regions[0].outer, planeFrame(s.plane), 0));
+      const frame = planeFrame(s.plane);
+      // Whole circles and ellipses all start the same way round, so the loft doesn't cut them in two to line them up.
+      start ??= loopStart(regions[0].outer.segments, frame);
+      wires.push(loopWire(regions[0].outer, frame, 0, start));
     }
     try {
       return loft(wires, { ruled: false });
