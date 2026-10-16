@@ -1426,6 +1426,40 @@ kbd {
   pointer-events: none;
 }
 
+.print-bed-panel {
+  top: auto;
+  bottom: 12px;
+  width: 280px;
+}
+
+.print-bed-sizes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.print-bed-sizes label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.print-bed-sizes input {
+  width: 100%;
+  min-width: 0;
+}
+
+.print-bed-ok {
+  color: var(--ok, #2e7d32);
+  font-weight: 600;
+}
+
+.print-bed-bad {
+  color: var(--danger, #c0392b);
+  font-weight: 600;
+}
+
 .section-row {
   display: flex;
   align-items: center;

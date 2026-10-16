@@ -178,6 +178,8 @@ export interface AppState {
   selectedFeatureId: string | null;
   /** The section view, when one is on. */
   section: SectionView | null;
+  /** The print bed preview, when on: which printer (or a custom size). */
+  printBed: { printer: string; custom?: [number, number, number] } | null;
   /** Faces and edges picked in the viewport. */
   selection: SelectionItem[];
   hiddenParts: string[];
@@ -394,6 +396,7 @@ export interface AppState {
   toggleDatum: (datum: DatumName) => void;
   openDialog: (d: DialogName) => void;
   setSection: (section: SectionView | null) => void;
+  setPrintBed: (printBed: { printer: string; custom?: [number, number, number] } | null) => void;
   showToast: (text: string, tone?: Toast["tone"]) => void;
 
   // set by the kernel connection
@@ -503,6 +506,7 @@ export const useStore = create<AppState>((set, get) => {
     selectedFeatureId: null,
     selection: [],
     section: null,
+    printBed: null,
     hiddenParts: [],
     transparentParts: [],
     showFlat: false,
@@ -1336,6 +1340,7 @@ export const useStore = create<AppState>((set, get) => {
 
     openDialog: (dialog) => set({ dialog }),
     setSection: (section) => set({ section }),
+    setPrintBed: (printBed) => set({ printBed }),
 
     showToast: (text, tone = "info") => set({ toast: { id: ++toastCounter, text, tone } }),
 

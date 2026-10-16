@@ -17,6 +17,7 @@ import { VariablesDialog } from "./VariablesDialog";
 import { ConfigurationsDialog } from "./ConfigurationsDialog";
 import { MeasurePanel } from "./MeasurePanel";
 import { SectionPanel } from "./SectionPanel";
+import { PrintBedPanel } from "./PrintBedPanel";
 import { openFile, openFromFile, saveToFile } from "./fileActions";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
 import { SketchOverlay } from "./SketchOverlay";
@@ -281,6 +282,7 @@ export function App() {
               <EmptyHint />
               <SelectionInfo />
               <SectionPanel />
+              <PrintBedPanel />
             </>
           )}
         </main>

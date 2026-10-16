@@ -1,3 +1,4 @@
+import { bedSize } from "../model/printBed";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { findMesh, meshIdOf } from "../assembly/configured";
@@ -581,6 +582,8 @@ export function Viewport() {
   }, [appearance, assembly]);
   useEffect(() => viewportApi.current?.setPartColours(colours), [colours]);
   useEffect(() => viewportApi.current?.setSection(section ? sectionPlane(section) : null), [section]);
+  const printBed = useStore((s) => s.printBed);
+  useEffect(() => viewportApi.current?.setPrintBed(printBed ? bedSize(printBed.printer, printBed.custom) : null), [printBed]);
   useEffect(() => {
     // Placements first, so the parts arrive already in position.
     viewportApi.current?.setPlacements(placements);
