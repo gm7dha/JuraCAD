@@ -7,7 +7,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -134,6 +134,11 @@ export interface Feature {
   splitDef?: SplitOptions;
   /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
+  /**
+   * Replace face: the flat face or plane the picked faces are moved onto
+   * (null until one is picked), and what a click in the 3D view picks.
+   */
+  replaceDef?: { target: SketchPlane | null; picking?: "faces" | "target" };
   /** Draft: the neutral plane (the faces pivot where they meet it; the part pulls out along its normal). */
   neutral?: SketchPlane;
   /** Transform: move and/or turn a part (or a copy of it). */

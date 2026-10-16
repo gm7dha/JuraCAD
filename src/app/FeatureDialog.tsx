@@ -134,6 +134,54 @@ function SplitOptionsField() {
   );
 }
 
+/** Replace face: the face or plane the picked faces are moved onto. */
+function ReplaceFaceOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const features = useStore(activeFeatures);
+  if (draft?.type !== "replaceFace") return null;
+  const rd = draft.replaceDef ?? { target: null };
+  const picking = rd.picking === "target";
+  const planes = features.filter((f) => f.type === "plane");
+  const frames = framesOf(features);
+  const target = rd.target;
+  const value = !target ? "" : target.kind === "default" ? target.name : target.planeRef ? `plane:${target.planeRef}` : "face";
+  return (
+    <fieldset className={`param-group pick-slot${picking ? " active" : ""}`} onClick={() => !picking && setDraftField({ replaceDef: { ...rd, picking: "target" } })}>
+      <legend>Move them onto</legend>
+      <select
+        className="full-select"
+        aria-label="Face or plane to move them onto"
+        value={value}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "Top" || v === "Front" || v === "Right") setDraftField({ replaceDef: { target: { kind: "default", name: v }, picking: "faces" } });
+          else if (v.startsWith("plane:")) {
+            const f = planes.find((x) => `plane:${x.id}` === v);
+            const frame = f && frames.get(f.id);
+            if (f && frame) setDraftField({ replaceDef: { target: planeAsSketchPlane(f, frame), picking: "faces" } });
+          }
+        }}
+      >
+        {!target && <option value="">(not picked yet)</option>}
+        <option value="Top">Top plane</option>
+        <option value="Front">Front plane</option>
+        <option value="Right">Right plane</option>
+        {planes.map((f) => (
+          <option key={f.id} value={`plane:${f.id}`}>
+            {f.name}
+          </option>
+        ))}
+        {value === "face" && target && <option value="face">{planeLabel(target)}</option>}
+      </select>
+      <p className="dialog-hint field-hint">
+        {picking ? "Now click the flat face (on any part) to move them onto, or a plane." : "Click here, then a flat face in the 3D view, to move them onto it. It must be parallel to them."}
+      </p>
+    </fieldset>
+  );
+}
+
 /** Draft: the neutral plane, and which way the part pulls out. */
 function DraftOptions() {
   const draft = useStore((s) => s.editing?.draft);
@@ -874,7 +922,7 @@ function PicksField() {
   const parts = useStore(studioParts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
-  const faceTypes = ["thicken", "draft", "moveFace", "deleteFace", "thread"];
+  const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread"];
   if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type))) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
@@ -882,8 +930,12 @@ function PicksField() {
   const shell = draft.type === "shell" || thicken;
   const verb = draft.type === "fillet" ? "round" : "bevel";
 
+  const replacing = draft.type === "replaceFace" ? draft.replaceDef ?? { target: null } : null;
   return (
-    <fieldset className="param-group">
+    <fieldset
+      className={replacing ? `param-group pick-slot${replacing.picking !== "target" ? " active" : ""}` : "param-group"}
+      onClick={() => replacing && replacing.picking === "target" && setDraftField({ replaceDef: { ...replacing, picking: "faces" } })}
+    >
       <legend>
         {draft.type === "thread"
           ? "Round faces to thread"
@@ -891,7 +943,7 @@ function PicksField() {
           ? "Faces to thicken"
           : draft.type === "draft"
             ? "Faces to taper"
-            : draft.type === "moveFace"
+            : draft.type === "moveFace" || draft.type === "replaceFace"
               ? "Faces to move"
               : draft.type === "deleteFace" || shell
                 ? "Faces to remove"
@@ -907,6 +959,8 @@ function PicksField() {
             ? "Click the side faces to taper."
             : draft.type === "moveFace"
             ? "Click the flat faces to push out (or in, with a minus distance)."
+            : draft.type === "replaceFace"
+            ? "Click the flat faces to move."
             : draft.type === "deleteFace"
             ? "Click the faces to remove — all the faces of a fillet, hole or boss."
             : shell
@@ -1077,7 +1131,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "deleteFace" && draft.type !== "thread" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "thread" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -1108,6 +1162,7 @@ export function FeatureDialog() {
         <SplitOptionsField />
         <RibThickenOptions />
         <DraftOptions />
+        <ReplaceFaceOptions />
         <SketchSolidOptions />
         <SweepLoftOptions />
         <TextFeatureOptions />

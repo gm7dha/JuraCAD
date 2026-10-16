@@ -257,6 +257,14 @@ export const Icons = {
       <path d="M8 6l4-4 4 4" />
     </Svg>
   ),
+  ReplaceFace: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 21h18" />
+      <path d="M5 21V12h9v9" />
+      <path d="M5 12V8h9v4" strokeDasharray="2 2" />
+      <path d="M17 4v6m-2-2 2 2 2-2" />
+    </Svg>
+  ),
   DeleteFace: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 20V8a4 4 0 0 1 4-4h12" strokeDasharray="2 2" />

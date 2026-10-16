@@ -99,6 +99,10 @@ export function refreshPlaneRefs(features: Feature[], scope?: Scope): Feature[] 
       const plane = fix(f.neutral);
       if (plane && plane !== f.neutral) g = { ...g, neutral: plane };
     }
+    if (f.replaceDef?.target) {
+      const plane = fix(f.replaceDef.target);
+      if (plane && plane !== f.replaceDef.target) g = { ...g, replaceDef: { ...f.replaceDef, target: plane } };
+    }
     if (f.splitDef) {
       const plane = fix(f.splitDef.plane);
       if (plane && plane !== f.splitDef.plane) g = { ...g, splitDef: { ...f.splitDef, plane } };

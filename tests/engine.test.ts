@@ -943,6 +943,32 @@ describe("draft, move face and delete face", () => {
     expect(vol()).toBe(1400);
   });
 
+  it("replaces faces: moves them onto a parallel face or plane, with an offset", () => {
+    const box = feature("box", { width: 20, depth: 10, height: 10 });
+    const r1 = build([box]);
+    const top = faceOf(r1, (f) => f.surface === "PLANE" && f.normal[2] > 0.99);
+    const bottom = faceOf(r1, (f) => f.surface === "PLANE" && f.normal[2] < -0.99);
+    // Up to a face 15 mm up (its normal facing down, like another part's underside).
+    const high = { kind: "face" as const, origin: [3, 4, 15] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, -1, 0] as [number, number, number], label: "Face" };
+    const rep: Feature = { ...feature("replaceFace", { offset: 0 }), picks: top, replaceDef: { target: high } };
+    expect(build([box, rep]).featureErrors).toEqual({});
+    expect(vol()).toBe(3000);
+    // 2 mm short of it.
+    build([box, { ...rep, params: { offset: "-2" } }]);
+    expect(vol()).toBe(2600);
+    // The bottom moved up onto a face at z = 4: shrinks the part.
+    build([box, { ...rep, picks: bottom, replaceDef: { target: { ...high, origin: [0, 0, 4] } } }]);
+    expect(vol()).toBe(1200);
+    // The top onto the Top plane, 6 mm past it (up): 6 mm tall.
+    build([box, { ...rep, replaceDef: { target: { kind: "default", name: "Top" } }, params: { offset: "6" } }]);
+    expect(vol()).toBe(1200);
+    // Not parallel: a clear message.
+    const tilted = build([box, { ...rep, replaceDef: { target: { kind: "default", name: "Front" } } }]);
+    expect(tilted.featureErrors[rep.id]).toMatch(/parallel/);
+    // Nothing to move onto yet.
+    expect(build([box, { ...rep, replaceDef: { target: null } }]).featureErrors[rep.id]).toMatch(/Click the face/);
+  });
+
   it("tapers side faces about the neutral plane", () => {
     const box = feature("box", { width: 20, depth: 20, height: 10 });
     const r1 = build([box]);
