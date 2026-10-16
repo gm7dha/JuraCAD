@@ -12,7 +12,8 @@ import { emptySketch, type SketchData } from "../src/sketch/types";
 
 beforeAll(async () => setOC(await opencascade()));
 let n = 0;
-const sk = (plane: Feature["sketch"] extends infer T ? any : never, data: SketchData): Feature => ({ id: `s${++n}`, name: `Sketch ${n}`, type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane, data } });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sk = (plane: any, data: SketchData): Feature => ({ id: `s${++n}`, name: `Sketch ${n}`, type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane, data } });
 const f = (type: Feature["type"], params: Record<string, number>, extra: Partial<Feature> = {}): Feature => ({ id: `f${++n}`, name: `${type} ${n}`, type, operation: "new", suppressed: false, params: { ...defaultParams(type), ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])) }, ...extra });
 
 describe("probe", () => {
