@@ -2,7 +2,7 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
+import type { Shortening, BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { SECTION_HOSTS, viewKey } from "./sections";
 
 const drawingsOf = (doc: PartSmithDocument) => doc.drawings ?? [];
@@ -158,6 +158,15 @@ export function parseDrawings(raw: unknown): Drawing[] {
       if (typeof rx.id !== "string" || !SECTION_HOSTS.includes(rx.host as ViewKind) || !a || !b || !num(rx.depth) || (rx.depth as number) <= 0) continue;
       breakouts.push({ id: rx.id, host: rx.host as ViewKind, a, b, depth: rx.depth as number });
     }
+    const shortened: Shortening[] = [];
+    for (const x of Array.isArray(r.shortened) ? r.shortened : []) {
+      const rx = (x ?? {}) as Record<string, unknown>;
+      if (typeof rx.id !== "string" || !SECTION_HOSTS.includes(rx.host as ViewKind) || (rx.axis !== "x" && rx.axis !== "y") || !num(rx.from) || !num(rx.to)) continue;
+      const from = Math.max(0, Math.min(1, rx.from as number));
+      const to = Math.max(0, Math.min(1, rx.to as number));
+      if (Math.abs(to - from) < 1e-6) continue;
+      shortened.push({ id: rx.id, host: rx.host as ViewKind, axis: rx.axis, from: Math.min(from, to), to: Math.max(from, to) });
+    }
     const details: DetailView[] = [];
     for (const x of Array.isArray(r.details) ? r.details : []) {
       const rx = (x ?? {}) as Record<string, unknown>;
@@ -244,6 +253,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       title,
       ...(shownSections.length ? { sections: shownSections } : {}),
       ...(breakouts.length ? { breakouts } : {}),
+      ...(shortened.length ? { shortened } : {}),
       ...(details.some((x) => views.some((v) => v.kind === "detail" && v.detail === x.id))
         ? { details: details.filter((x) => views.some((v) => v.kind === "detail" && v.detail === x.id)) }
         : {}),

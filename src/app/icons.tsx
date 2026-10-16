@@ -196,6 +196,12 @@ export const Icons = {
       <path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" />
     </Svg>
   ),
+  Shorten: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 8h6M3 16h6M15 8h6M15 16h6M3 8v8M21 8v8" />
+      <path d="M9 6l-1 3 2 2-1 3 1 4M15 6l-1 3 2 2-1 3 1 4" />
+    </Svg>
+  ),
   Section: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 8 12 4l8 4v8l-8 4-8-4z" />

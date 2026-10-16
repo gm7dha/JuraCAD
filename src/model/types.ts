@@ -227,6 +227,8 @@ export interface Drawing {
   sections?: SectionCut[];
   /** Broken-out cuts on views (optional: older saves have none). */
   breakouts?: BreakOut[];
+  /** Shortened views: bands taken out of long views (optional: older saves have none). */
+  shortened?: Shortening[];
   /** False hides centre marks and centre lines (missing = shown). */
   centreLines?: boolean;
   /** Revision history, oldest first (shown in a table above the title block). */
@@ -246,6 +248,19 @@ export interface Drawing {
  * view it's drawn on, so the cut stays in the same place on the part when it
  * changes size.
  */
+/**
+ * A shortened (broken) view: a band taken out of the middle of a long view so
+ * it fits, along its width (x) or height (y). Dimensions still show real sizes.
+ */
+export interface Shortening {
+  id: string;
+  host: ViewKind;
+  axis: "x" | "y";
+  /** The band's two edges, as fractions of the host view's width (x) or height (y). */
+  from: number;
+  to: number;
+}
+
 /**
  * A broken-out view: a rectangle on a view where the part is cut away down to
  * a depth, to show what's inside (the cut face is hatched).

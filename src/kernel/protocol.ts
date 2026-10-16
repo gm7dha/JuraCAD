@@ -42,6 +42,8 @@ export interface ViewProjection {
   breakLines?: number[][];
   /** Flat pattern views: the bends, each a line across the pattern (x0, y0, x1, y1), its angle (degrees), inside radius, and whether it bends up. */
   bends?: { line: [number, number, number, number]; angle: number; radius: number; up: boolean }[];
+  /** Shortened views: bands taken out of the middle (added by the drawing, not the engine). */
+  shorten?: { axis: 0 | 1; from: number; to: number }[];
 }
 
 /** A hole as seen on a view: where its opening is and its sizes (mm; angle in degrees). */
