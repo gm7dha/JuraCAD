@@ -1114,7 +1114,8 @@ try {
     await page.waitForFunction(() => (window.partsmithStore.getState().editing?.draft.picks?.length ?? 0) === 1, null, { timeout: 5_000 });
     await page.getByRole("button", { name: "Accept" }).click();
     await page.waitForFunction(() => !window.partsmithStore.getState().editing, null, { timeout: 30_000 });
-    await page.waitForFunction(() => document.querySelector(".status-rebuilding, .rebuilding") === null, null, { timeout: 30_000 }).catch(() => {});
+    await page.waitForTimeout(500);
+    await page.waitForFunction(() => !window.partsmithStore.getState().rebuildBusy, null, { timeout: 60_000 });
     const flangeProblem = await page.evaluate(() => {
       const s = window.partsmithStore.getState();
       const f = s.history.present.features.find((x) => x.type === "flange");
