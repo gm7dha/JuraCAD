@@ -2134,6 +2134,39 @@ describe("surfaces", () => {
     expect(area(s.parts[0])).toBeCloseTo(320, 1);
   });
 
+  it("extends a surface past its edges, and splits (trims) one with a plane", () => {
+    // A flat wall 20 wide, 5 tall, from a line along X extruded up.
+    const sk = sketchFeature({ kind: "default", name: "Top" }, addLine(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 0 }).sketch);
+    const wall: Feature = { ...extrudeFeature(sk.id, 5), surface: true };
+    const first = build([sk, wall]);
+    const p = first.parts[0];
+    const topEdge = p.edgeRefs.find((e) => e.curve === "LINE" && Math.abs(e.a[2] - 5) < 1e-6 && Math.abs(e.b[2] - 5) < 1e-6)!;
+    expect(topEdge).toBeTruthy();
+    const ext: Feature = { ...feature("extendSurface", { distance: 3 }), picks: [{ partId: p.id, ref: topEdge }] };
+    const r = build([sk, wall, ext]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    expect(r.parts[0].surface).toBe(true);
+    // 20 × 8 now, in one piece (two faces sewn together).
+    expect(area(r.parts[0])).toBeCloseTo(160, 2);
+    const zs = Array.from(r.parts[0].vertices).filter((_, i) => i % 3 === 2);
+    expect(Math.max(...zs)).toBeCloseTo(8, 4);
+    expect(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).pieces).toBe(1);
+    // Split the wall at z = 2 with a plane, keeping the top: 20 × 3.
+    const split: Feature = { ...feature("split", {}), splitDef: { partId: p.id, plane: planeOnFace([0, 0, 1], [0, 0, 2], "cut"), keep: "front", picking: "plane" } };
+    const cut = build([sk, wall, split]);
+    expect(cut.featureErrors).toEqual({});
+    expect(cut.parts).toHaveLength(1);
+    expect(area(cut.parts[0])).toBeCloseTo(60, 2);
+    const both = build([sk, wall, { ...split, splitDef: { ...split.splitDef!, keep: "both" } }]);
+    expect(both.featureErrors).toEqual({});
+    expect(both.parts.map((x) => [!!x.surface, Math.round(area(x))])).toEqual([
+      [true, 40],
+      [true, 60],
+    ]);
+    expect(both.parts[1].name).toBe("Surface 1 (cut)");
+  });
+
   it("fills openings, encloses surfaces into a solid, and thickens or offsets a surface", () => {
     const box = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 10, 10));
     const skin: Feature = { ...extrudeFeature(box.id, 10), surface: true };

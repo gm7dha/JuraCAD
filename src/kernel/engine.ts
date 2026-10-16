@@ -18,7 +18,7 @@ import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
-import { encloseSurfaces, extrudeSurface, fillEdges, loftSurface, offsetSurface, revolveSurface, sweepSurface, thickenSurface } from "./surface";
+import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, loftSurface, offsetSurface, revolveSurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
@@ -1185,6 +1185,11 @@ export class GeometryEngine {
         if (r.newPart) partCounter++;
         continue;
       }
+      if (feature.type === "extendSurface") {
+        const err = this.applyExtendSurface(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "tab") {
         const err = this.applyTab(feature, sketches);
         if (err) featureErrors[feature.id] = err;
@@ -1373,9 +1378,10 @@ export class GeometryEngine {
       return { error: describeError(e, "Couldn't split this part.") };
     }
     const count = (s: Shape3D) => {
-      const solids = solidsOf(s);
-      solids.forEach((x) => x.delete());
-      return solids.length;
+      // A surface splits into faces rather than solids.
+      const pieces = part.surface ? facesOf(s) : solidsOf(s);
+      pieces.forEach((x) => x.delete());
+      return pieces.length;
     };
     if (count(front) === 0 || count(back) === 0) {
       front.delete();
@@ -1395,8 +1401,8 @@ export class GeometryEngine {
       return {};
     }
     part.shape = back;
-    this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [...part.featureIds], shape: front });
-    return { newPart: true };
+    this.parts.push({ id: feature.id, name: part.surface ? `${part.name} (cut)` : `Part ${nextPartNumber}`, featureIds: [...part.featureIds], shape: front, ...(part.surface ? { surface: true } : {}) });
+    return { newPart: !part.surface };
   }
 
   /** Grow picked flat faces into a solid, then make it a new part or add it to, cut it from or intersect it with their part. */
@@ -1639,6 +1645,32 @@ export class GeometryEngine {
     part.featureIds.push(feature.id);
     part.sheetFeatures = [...(part.sheetFeatures ?? []), feature.id];
     return null;
+  }
+
+  /** Extend surface: the surface grown out past the picked edges. */
+  private applyExtendSurface(feature: Feature): string | null {
+    const { values, errors } = resolveParams(feature);
+    if (errors.distance) return `Distance: ${errors.distance}`;
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
+    if (!picks.length) return "Click the edges of the surface to extend.";
+    const ids = [...new Set(picks.map((p) => p.partId))];
+    if (ids.length > 1) return "Extend one surface at a time. Remove the edges picked on the other.";
+    const part = this.parts.find((p) => p.id === ids[0]);
+    if (!part) return "The surface no longer exists. Edit this and pick the edges again.";
+    if (!part.surface) return "Extend surface works on surfaces (skins), not solid parts.";
+    let edges: Edge[] = [];
+    try {
+      edges = findPickedEdges(part.shape, picks);
+      const grown = extendSurface(part.shape, edges, values.distance);
+      part.shape.delete();
+      part.shape = grown;
+      part.featureIds.push(feature.id);
+      return null;
+    } catch (e) {
+      return describeError(e, "Couldn't extend this surface.");
+    } finally {
+      edges.forEach((e) => e.delete());
+    }
   }
 
   /** Enclose: the surfaces whose faces were picked, sewn and closed into one solid (the surfaces are used up). */

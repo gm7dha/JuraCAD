@@ -578,7 +578,7 @@ export const useStore = create<AppState>((set, get) => {
           .filter((p): p is TopoPick => p !== null);
       }
       // A flange (or Fill) starts with the edges selected.
-      if (type === "flange" || type === "hem" || type === "fill") {
+      if (type === "flange" || type === "hem" || type === "fill" || type === "extendSurface") {
         draft.picks = s.selection
           .filter((item) => item.kind === "edge")
           .map((item) => pickFor(s.parts, item))

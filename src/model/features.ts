@@ -197,6 +197,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "A copy of a surface moved a set distance along its normal everywhere (minus for the other side), as a new surface part.",
     params: [{ key: "distance", label: "Distance", defaultValue: "2", group: "size" }],
   },
+  extendSurface: {
+    type: "extendSurface",
+    label: "Extend surface",
+    namePrefix: "Extend",
+    description: "Grows a surface out past its edges: click the edges to extend and how far (straight on, along the surface).",
+    params: [{ key: "distance", label: "Distance", defaultValue: "5", positive: true, group: "size" }],
+  },
   wrap: {
     type: "wrap",
     label: "Wrap",

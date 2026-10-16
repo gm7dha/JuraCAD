@@ -249,6 +249,15 @@ export function Toolbar() {
               title: hasSurface ? "Enclose — close surfaces up into one solid (they must meet all the way round)" : "Make a surface first (tick Surface in Extrude, Revolve, Sweep or Loft, or use Fill)",
             },
             {
+              key: "extendSurface",
+              label: "Extend surface",
+              icon: <Icons.ExtendSurface />,
+              onClick: () => startCreate("extendSurface"),
+              disabled: !ready || !hasSurface,
+              active: editingType === "extendSurface",
+              title: hasSurface ? "Extend surface — grow a surface out past its edges, straight on. To trim a surface, use Split with a plane" : "Make a surface first",
+            },
+            {
               key: "offsetSurface",
               label: "Offset surface",
               icon: <Icons.OffsetSurface />,
