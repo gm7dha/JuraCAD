@@ -2098,10 +2098,13 @@ describe("surfaces", () => {
     const c = engine.check("coarse");
     expect(c.parts[0].surface).toBe(true);
     expect(c.parts[0].exactVolume).toBe(0);
-    // A solid made afterwards doesn't try to add to the surface.
-    const later = build([box, { ...extrudeFeature(box.id, 10), surface: true }, feature("box", { width: 5, depth: 5, height: 5, x: 30 }, "add")]);
-    expect(later.featureErrors).toEqual({});
-    expect(later.parts.map((p) => !!p.surface)).toEqual([true, false]);
+    // A solid made afterwards doesn't add to the surface: there's no solid yet.
+    const onto = feature("box", { width: 5, depth: 5, height: 5, x: 30 }, "add");
+    const later = build([box, { ...extrudeFeature(box.id, 10), surface: true }, onto]);
+    expect(later.featureErrors[onto.id]).toMatch(/no part to add to/);
+    const fresh = build([box, { ...extrudeFeature(box.id, 10), surface: true }, { ...onto, operation: "new" }]);
+    expect(fresh.featureErrors).toEqual({});
+    expect(fresh.parts.map((p) => !!p.surface)).toEqual([true, false]);
   });
 
   it("revolves, sweeps and lofts outlines into surfaces", () => {
@@ -2121,14 +2124,14 @@ describe("surfaces", () => {
     expect(l.featureErrors).toEqual({});
     expect(l.parts[0].surface).toBe(true);
     expect(area(l.parts[0])).toBeGreaterThan(400);
-    // Sweep: a line swept along an arc: a bent strip.
+    // Sweep: a line (up Z, on the Right plane at the start of the path) swept along a straight path: a flat strip 40 × 8.
     const prof = sketchFeature({ kind: "default", name: "Right" }, addLine(emptySketch(), { x: 0, y: 0 }, { x: 0, y: 8 }).sketch);
-    const path = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: 0, y: 0 }, { x: 30, y: 30 }, { x: 21, y: 9 }).sketch);
+    const path = sketchFeature({ kind: "default", name: "Top" }, addLine(emptySketch(), { x: 0, y: 0 }, { x: 40, y: 0 }).sketch);
     const sw: Feature = { ...feature("sweep", {}), sketchRef: prof.id, pathRef: path.id, surface: true };
     const s = build([prof, path, sw]);
     expect(s.featureErrors).toEqual({});
     expect(s.parts[0].surface).toBe(true);
-    expect(area(s.parts[0])).toBeGreaterThan(100);
+    expect(area(s.parts[0])).toBeCloseTo(320, 1);
   });
 
   it("fills openings, encloses surfaces into a solid, and thickens or offsets a surface", () => {
@@ -2138,7 +2141,7 @@ describe("surfaces", () => {
     const p = first.parts[0];
     // The four edges round the top opening (at z = 10) and the bottom (z = 0).
     const ring = (z: number) => p.edgeRefs.filter((e) => e.curve === "LINE" && Math.abs(e.a[2] - z) < 1e-6 && Math.abs(e.b[2] - z) < 1e-6).map((ref) => ({ partId: p.id, ref }));
-    expect(ring(10)).toHaveLength(4);
+    expect(ring(10), JSON.stringify(p.edgeRefs)).toHaveLength(4);
     const top: Feature = { ...feature("fill", {}), picks: ring(10) };
     const bottom: Feature = { ...feature("fill", {}), picks: ring(0) };
     const filled = build([box, skin, top, bottom]);
