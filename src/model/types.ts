@@ -8,7 +8,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "wrap";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -129,6 +129,8 @@ export interface Feature {
   /** Delete part: the parts it removes from the Part Studio. */
   deleteParts?: string[];
   /** Fastener: which standard part, and whether its thread is modelled. */
+  /** Derived: a part from another Part Studio (its id there), brought into this one. */
+  derived?: { studioId: string; partId: string };
   fastener?: { kind: FastenerKind; size: string; threaded: boolean };
   booleanDef?: BooleanOptions;
   /** Split: which part, and the plane that cuts it in two. */
@@ -137,6 +139,9 @@ export interface Feature {
   flipSide?: boolean;
   /** Flange: close the corners where these flanges meet other full-length right-angle flanges. */
   closeCorners?: boolean;
+  /** Flange: the shape of the bend relief notches (missing = rectangle) and the relief cut where flanges meet at a corner. */
+  reliefShape?: "rectangle" | "round" | "tear";
+  cornerRelief?: "round" | "square";
   /**
    * Replace face: the flat face or plane the picked faces are moved onto
    * (null until one is picked), and what a click in the 3D view picks.
@@ -227,6 +232,8 @@ export interface Drawing {
   sections?: SectionCut[];
   /** Broken-out cuts on views (optional: older saves have none). */
   breakouts?: BreakOut[];
+  /** Shortened views: bands taken out of long views (optional: older saves have none). */
+  shortened?: Shortening[];
   /** False hides centre marks and centre lines (missing = shown). */
   centreLines?: boolean;
   /** False hides the thread symbols on tapped holes (missing = shown). */
@@ -248,6 +255,19 @@ export interface Drawing {
  * view it's drawn on, so the cut stays in the same place on the part when it
  * changes size.
  */
+/**
+ * A shortened (broken) view: a band taken out of the middle of a long view so
+ * it fits, along its width (x) or height (y). Dimensions still show real sizes.
+ */
+export interface Shortening {
+  id: string;
+  host: ViewKind;
+  axis: "x" | "y";
+  /** The band's two edges, as fractions of the host view's width (x) or height (y). */
+  from: number;
+  to: number;
+}
+
 /**
  * A broken-out view: a rectangle on a view where the part is cut away down to
  * a depth, to show what's inside (the cut face is hatched).

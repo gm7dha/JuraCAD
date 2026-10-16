@@ -59,6 +59,39 @@ export interface FlangeSpec {
    * one laps over the other's end instead of leaving a gap.
    */
   closeCorners?: boolean;
+  /** The shape of the bend relief notches cut when the flange is shortened (missing = rectangle). */
+  reliefShape?: ReliefShape;
+  /** Where this flange meets another at a corner of their wall (and the corner isn't closed): a relief cut there. */
+  cornerRelief?: "round" | "square";
+}
+
+/** Bend relief notches: square-ended, round-ended (obround), or a thin tear. */
+export type ReliefShape = "rectangle" | "round" | "tear";
+
+/** A relief cut where two bends meet at a corner of a wall (in the wall's coordinates): a circle or square of half-size `r` on the corner. */
+export interface CornerRelief {
+  wall: string;
+  at: P2;
+  /** The two edges' directions away from the corner (along the first, then the second). */
+  e1: P2;
+  e2: P2;
+  r: number;
+  shape: "round" | "square";
+  /** The two flanges meeting there. */
+  flanges: [string, string];
+  /** How far it reaches below the wall's bottom and above its top (the bends' radius). */
+  below: number;
+  above: number;
+}
+
+/** A corner relief's outline in its wall's coordinates (a circle as many points, or the square). */
+export function cornerReliefPoints(c: CornerRelief, steps = 32): P2[] {
+  const at = (s: number, t: number): P2 => [c.at[0] + c.e1[0] * s + c.e2[0] * t, c.at[1] + c.e1[1] * s + c.e2[1] * t];
+  if (c.shape === "square") return [at(-c.r, -c.r), at(c.r, -c.r), at(c.r, c.r), at(-c.r, c.r)];
+  return Array.from({ length: steps }, (_, i) => {
+    const a = (2 * Math.PI * i) / steps;
+    return at(c.r * Math.cos(a), c.r * Math.sin(a));
+  });
 }
 
 export interface TabSpec {
@@ -122,6 +155,8 @@ export interface Bend {
 export interface FoldedSheet {
   walls: Wall[];
   bends: Bend[];
+  /** Relief cuts where bends meet at a wall's corners. */
+  cornerReliefs?: CornerRelief[];
   /** Flange id → why it couldn't be made. */
   errors: Record<string, string>;
 }
@@ -313,17 +348,29 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     const startP = along(inset);
     const endP = along(full - inset);
     const into: P2 = [-e2[1], e2[0]];
-    const w = Math.min(T, inset);
+    const shape = fl.reliefShape ?? "rectangle";
+    // A tear is just a thin cut; the others are as wide as the sheet is thick (or the shortening, if less).
+    const w = shape === "tear" ? Math.min(0.2, T / 4, inset) : Math.min(T, inset);
     const notch = (t0: number): Segment[] => {
       const p = along(t0);
       const q = along(t0 + w);
-      const qi: P2 = [q[0] + into[0] * T, q[1] + into[1] * T];
-      const pi: P2 = [p[0] + into[0] * T, p[1] + into[1] * T];
+      const deep = (x: P2, d: number): P2 => [x[0] + into[0] * d, x[1] + into[1] * d];
+      if (shape === "round") {
+        // Round-ended: straight sides, then a half circle at the bottom, T deep in all.
+        const side = T - w / 2;
+        const mid = deep(along(t0 + w / 2), T);
+        return anticlockwise([
+          { kind: "line", from: p, to: q },
+          { kind: "line", from: q, to: deep(q, side) },
+          { kind: "arc", from: deep(q, side), mid, to: deep(p, side) },
+          { kind: "line", from: deep(p, side), to: p },
+        ]);
+      }
       return anticlockwise([
         { kind: "line", from: p, to: q },
-        { kind: "line", from: q, to: qi },
-        { kind: "line", from: qi, to: pi },
-        { kind: "line", from: pi, to: p },
+        { kind: "line", from: q, to: deep(q, T) },
+        { kind: "line", from: deep(q, T), to: deep(p, T) },
+        { kind: "line", from: deep(p, T), to: p },
       ]);
     };
     const reliefs = inset > 1e-9 ? [notch(inset - w), notch(full - inset)] : [];
@@ -400,6 +447,7 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     });
   }
   closeCorners(spec, walls, bends);
+  const cornerReliefs = findCornerReliefs(spec, walls, bends);
   for (const t of spec.tabs ?? []) {
     const w = walls.find((x) => x.id === t.wall);
     if (!w) {
@@ -408,7 +456,49 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     }
     w.tabs = [...(w.tabs ?? []), { outline: anticlockwise(t.outline), holes: t.holes.map((h) => anticlockwise(h, false)) }];
   }
-  return { walls, bends, errors };
+  return { walls, bends, errors, ...(cornerReliefs.length ? { cornerReliefs } : {}) };
+}
+
+/**
+ * Corner reliefs: where bends off two neighbouring edges of a wall meet at
+ * their shared corner (neither shortened there, and the corner not closed),
+ * and either flange asks for one, a round or square cut on the corner, the
+ * size of the bend (radius plus thickness), so the bends don't tear into
+ * each other.
+ */
+function findCornerReliefs(spec: SheetSpec, walls: Wall[], bends: Bend[]): CornerRelief[] {
+  const T = spec.thickness;
+  const flange = new Map(spec.flanges.map((f) => [f.id, f]));
+  const out: CornerRelief[] = [];
+  for (const w of walls) {
+    const k = w.outline.length;
+    for (let i = 0; i < k; i++) {
+      const a = bends.find((b) => b.parent === w.id && b.edge === i);
+      const b = bends.find((x) => x.parent === w.id && x.edge === (i + 1) % k);
+      if (!a || !b || a.inset > 1e-9 || b.inset > 1e-9) continue;
+      const fa = flange.get(a.flangeId);
+      const fb = flange.get(b.flangeId);
+      if (fa?.closeCorners || fb?.closeCorners) continue;
+      const shape = fa?.cornerRelief ?? fb?.cornerRelief;
+      if (!shape) continue;
+      const sa = w.outline[i];
+      const sb = w.outline[(i + 1) % k];
+      if (sa.kind !== "line" || sb.kind !== "line") continue;
+      const R = Math.max(a.radius, b.radius);
+      out.push({
+        wall: w.id,
+        at: sa.to,
+        e1: unit2([sa.from[0] - sa.to[0], sa.from[1] - sa.to[1]]),
+        e2: unit2([sb.to[0] - sb.from[0], sb.to[1] - sb.from[1]]),
+        r: R + T,
+        shape,
+        flanges: [a.flangeId, b.flangeId],
+        below: a.down || b.down ? R : 0,
+        above: a.down && b.down ? 0 : R,
+      });
+    }
+  }
+  return out;
 }
 
 /** A wall's rectangle from u0 to u1 along its bend edge, `h` high. */
@@ -482,14 +572,23 @@ export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]
     childOn.set(`${b.parent}:${b.edge}`, folded.walls.find((w) => w.id === b.child)!);
     bendOn.set(`${b.parent}:${b.edge}`, b);
   }
-  /** A relief notch's corners in order along the edge: out of the edge, in, across, back out. */
+  /** A relief notch's outline in order along the edge: from where it leaves the edge, round its inside, back to the edge. */
   const notchPoints = (wall: Wall, r: Segment[], e2: P2, from: P2): P2[] => {
-    const pts = r.map((s) => (s.kind === "line" ? s.from : [0, 0])) as P2[];
+    const pts = outlinePoints(r);
     const t = (p: P2) => (p[0] - from[0]) * e2[0] + (p[1] - from[1]) * e2[1];
     const onEdge = (p: P2) => Math.abs((p[0] - from[0]) * e2[1] - (p[1] - from[1]) * e2[0]) < 1e-9;
-    const edge = pts.filter(onEdge).sort((a, b) => t(a) - t(b));
-    const inner = pts.filter((p) => !onEdge(p)).sort((a, b) => t(a) - t(b));
-    return [edge[0], inner[0], inner[1], edge[1]].map((p) => flatPoint(wall.flat, p));
+    const n = pts.length;
+    // The two corners on the edge are next to each other round the outline; walk the long way from the nearer one to the further.
+    const ends = pts.map((_, i) => i).filter((i) => onEdge(pts[i]));
+    if (ends.length < 2) return [];
+    const [lo, hi] = [...ends].sort((a, b) => t(pts[a]) - t(pts[b]));
+    const step = (lo + 1) % n === hi ? -1 : 1;
+    const path: P2[] = [];
+    for (let i = lo; ; i = (i + step + n) % n) {
+      path.push(pts[i]);
+      if (i === hi) break;
+    }
+    return path.map((p) => flatPoint(wall.flat, p));
   };
   const out: P2[] = [];
   /** Go round a wall's outline (skipping its bend edge, where it joins its parent), detouring round any flange on its edges. */
