@@ -234,15 +234,24 @@ function RibThickenOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
-  if (draft?.type !== "rib" && draft?.type !== "thicken" && draft?.type !== "sheetMetal" && draft?.type !== "flange" && draft?.type !== "hem" && draft?.type !== "tab") return null;
+  if (draft?.type !== "rib" && draft?.type !== "thicken" && draft?.type !== "sheetMetal" && draft?.type !== "flange" && draft?.type !== "hem" && draft?.type !== "tab" && draft?.type !== "wrap") return null;
   const at = features.findIndex((f) => f.id === draft.id);
   const sketches = (at >= 0 ? features.slice(0, at) : features).filter((f) => f.type === "sketch" && !f.suppressed);
   return (
     <>
-      {(draft.type === "rib" || draft.type === "sheetMetal" || draft.type === "tab") && (
+      {draft.type === "wrap" && (
+        <div className="segmented two" role="radiogroup" aria-label="Raised or engraved">
+          {(["add", "remove"] as const).map((op) => (
+            <button type="button" key={op} role="radio" aria-checked={draft.operation === op} className={draft.operation === op ? "selected" : ""} onClick={() => setDraftField({ operation: op })}>
+              {op === "add" ? "Raised" : "Engraved"}
+            </button>
+          ))}
+        </div>
+      )}
+      {(draft.type === "rib" || draft.type === "sheetMetal" || draft.type === "tab" || draft.type === "wrap") && (
         <fieldset className="param-group">
-          <legend>{draft.type === "rib" ? "Rib lines" : draft.type === "tab" ? "Shape of the tab" : "Shape of the sheet"}</legend>
-          <select className="full-select" aria-label={draft.type === "rib" ? "Sketch with the rib lines" : draft.type === "tab" ? "Sketch with the tab's shape" : "Sketch with the sheet's shape"} value={draft.sketchRef ?? ""} onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}>
+          <legend>{draft.type === "rib" ? "Rib lines" : draft.type === "tab" ? "Shape of the tab" : draft.type === "wrap" ? "Shapes to wrap" : "Shape of the sheet"}</legend>
+          <select className="full-select" aria-label={draft.type === "rib" ? "Sketch with the rib lines" : draft.type === "tab" ? "Sketch with the tab's shape" : draft.type === "wrap" ? "Sketch with the shapes to wrap" : "Sketch with the sheet's shape"} value={draft.sketchRef ?? ""} onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}>
             {!draft.sketchRef && <option value="">Choose a sketch…</option>}
             {sketches.map((f) => (
               <option key={f.id} value={f.id}>
@@ -253,6 +262,8 @@ function RibThickenOptions() {
           <p className="dialog-hint field-hint">
             {draft.type === "rib"
               ? "Draw the rib as a line (or lines) across the corner it braces, on a plane through the part."
+              : draft.type === "wrap"
+              ? "Draw the shapes flat, on any plane. Across the sketch runs round the face, up the sketch along it."
               : draft.type === "tab"
               ? "Sketch on a face of the sheet (its top or bottom, or a flange's face) — closed shapes that overlap or meet the edge become part of that wall, and of its flat pattern."
               : "A closed shape makes a flat sheet (holes in it go through). Or draw the side view as connected lines — an L, U or Z — for a bent sheet: the lines are one face of the metal and the corners become bends. Then bend flanges off its edges."}
@@ -957,7 +968,7 @@ function PicksField() {
   const parts = useStore(studioParts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
-  const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound"];
+  const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap"];
   const flange = draft?.type === "flange" || draft?.type === "hem";
   if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type) || flange)) return null;
   const picks = draft.picks ?? [];
@@ -981,6 +992,8 @@ function PicksField() {
           ? "Round faces to thread"
           : draft.type === "fullRound"
           ? "Top faces to round over"
+          : draft.type === "wrap"
+          ? "Round face to wrap round"
           : draft.type === "thicken"
           ? "Faces to thicken"
           : draft.type === "draft"
@@ -1001,6 +1014,8 @@ function PicksField() {
             ? "Click the outside of a rod (for a bolt) or the inside of a hole (for a nut)."
             : draft.type === "fullRound"
             ? "Click the flat top face of a rib or wall (a long strip with straight, parallel sides)."
+            : draft.type === "wrap"
+            ? "Click the side of a rod or boss (or the inside of a hole). The sketch's shapes are wrapped round it, centred where you click."
             : draft.type === "thicken"
             ? "Click the flat faces to grow into a solid."
             : draft.type === "draft"
@@ -1237,7 +1252,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button

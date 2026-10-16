@@ -571,7 +571,7 @@ export const useStore = create<AppState>((set, get) => {
         if (s.selectedPlane) draft.splitDef = { ...draft.splitDef, plane: { kind: "default", name: s.selectedPlane } };
       }
       // Face features start with the faces selected.
-      if (type === "thicken" || type === "draft" || type === "moveFace" || type === "replaceFace" || type === "deleteFace" || type === "thread" || type === "fullRound") {
+      if (type === "thicken" || type === "draft" || type === "moveFace" || type === "replaceFace" || type === "deleteFace" || type === "thread" || type === "fullRound" || type === "wrap") {
         draft.picks = s.selection
           .filter((item) => item.kind === "face")
           .map((item) => pickFor(s.parts, item))

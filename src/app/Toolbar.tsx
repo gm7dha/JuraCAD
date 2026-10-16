@@ -177,13 +177,29 @@ export function Toolbar() {
             },
           ]}
         />
-        <ToolButton
-          label="Text"
-          icon={<Icons.Text />}
-          onClick={() => startCreate("text")}
-          disabled={!ready}
-          active={editingType === "text"}
-          title="Text — raised or engraved lettering on a plane or flat face"
+        <ToolGroupButton
+          id="text"
+          name="text"
+          items={[
+            {
+              key: "text",
+              label: "Text",
+              icon: <Icons.Text />,
+              onClick: () => startCreate("text"),
+              disabled: !ready,
+              active: editingType === "text",
+              title: "Text — raised or engraved lettering on a plane or face (it wraps round round faces)",
+            },
+            {
+              key: "wrap",
+              label: "Wrap",
+              icon: <Icons.Wrap />,
+              onClick: () => startCreate("wrap"),
+              disabled: !ready || !hasPart,
+              active: editingType === "wrap",
+              title: hasPart ? "Wrap — wrap a sketch's shapes (a logo, a pattern) round a round face, raised or engraved" : "Make a part first",
+            },
+          ]}
         />
         <ToolGroupButton
           id="thicken"

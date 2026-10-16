@@ -107,6 +107,27 @@ export function wrapStart(cyl: Cylinder, faceCentre: Vec3): { radial: Vec3; heig
 export function wrappedTextSolid(cyl: Cylinder, start: { radial: Vec3; height: number }, convex: boolean, o: TextOptions): Shape3D {
   const { contours, width } = textOutlines(o.bold ? FONTS.bold : FONTS.regular, o.value, o.size);
   if (contours.length === 0) throw new Error("Type some text (letters, numbers or symbols) to make.");
+  const shapes = nestContours(contours).map((sh) => ({ outer: sh.outer, holes: sh.holes }));
+  return wrapShapes(cyl, start, convex, shapes, [width / 2, o.size / 2], o, "The letters are too big for such a narrow round face — make them smaller.");
+}
+
+/**
+ * Flat shapes (outlines with holes, in their own x/y) wrapped round a
+ * cylinder, centred on `centre` of the shapes: each shape is laid on its own
+ * flat patch touching the surface where it sits, turned to face straight out,
+ * and pushed out of (or, with `flip`, into) the surface. `x` runs round the
+ * surface (mm along it) and `y` along the axis, from the start point; `angle`
+ * turns the shapes first. Used by Text and by Wrap.
+ */
+export function wrapShapes(
+  cyl: Cylinder,
+  start: { radial: Vec3; height: number },
+  convex: boolean,
+  shapes: { outer: [number, number][]; holes: [number, number][][] }[],
+  centre: [number, number],
+  o: Pick<TextOptions, "depth" | "x" | "y" | "angle" | "flip">,
+  tooBig: string,
+): Shape3D {
   const R = cyl.radius;
   const k = cyl.axis;
   const e1 = start.radial;
@@ -114,29 +135,29 @@ export function wrappedTextSolid(cyl: Cylinder, start: { radial: Vec3; height: n
   const a = (o.angle * Math.PI) / 180;
   const c = Math.cos(a);
   const s = Math.sin(a);
-  // The text is centred on the start point; (s, t) = round the surface, along the axis.
+  // The shapes are centred on the start point; (s, t) = round the surface, along the axis.
   const flat = ([px, py]: [number, number]): [number, number] => {
-    const x = px - width / 2;
-    const y = py - o.size / 2;
+    const x = px - centre[0];
+    const y = py - centre[1];
     return [x * c - y * s + o.x, x * s + y * c + o.y];
   };
   const solids: Shape3D[] = [];
-  for (const shape of nestContours(contours)) {
+  for (const shape of shapes) {
     const outer = shape.outer.map(flat);
     const xs = outer.map((p) => p[0]);
     const mid = (Math.min(...xs) + Math.max(...xs)) / 2;
     const half = (Math.max(...xs) - Math.min(...xs)) / 2;
-    if (half >= R) throw new Error("The letters are too big for such a narrow round face — make them smaller.");
+    if (half >= R) throw new Error(tooBig);
     // How far the patch's edges stand off the surface (or dig into it).
     const sag = R - Math.sqrt(R * R - half * half);
     const th = (convex ? mid : -mid) / R;
     const radial = add3(scale3(e1, Math.cos(th)), scale3(e2, Math.sin(th)));
-    // Inside a hole the text is read from the axis side, so it runs the other way round.
+    // Inside a hole the shapes are seen from the axis side, so they run the other way round.
     const along = scale3(add3(scale3(e1, -Math.sin(th)), scale3(e2, Math.cos(th))), convex ? 1 : -1);
     // Out of the material: away from the axis on a rod, towards it in a hole.
     const out = convex ? radial : scale3(radial, -1);
     const touch = add3(cyl.origin, scale3(k, start.height), scale3(radial, R));
-    // Raised letters start below the surface so they meet it everywhere; engraved ones start just above it.
+    // Raised shapes start below the surface so they meet it everywhere; engraved ones start just above it.
     const from = o.flip ? (convex ? 0 : sag) + 0.05 : convex ? -sag - 0.05 : -0.05;
     const length = o.flip ? -(o.depth + from) : o.depth - from;
     const at = ([x, y]: [number, number], w: number): Vec3 => add3(touch, scale3(along, x - mid), scale3(k, y), scale3(out, w));

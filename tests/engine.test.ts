@@ -1832,6 +1832,36 @@ describe("text", () => {
     expect(v).toBeLessThan(solidVolume - 5);
     expect(v).toBeGreaterThan(solidVolume - 300);
   });
+
+  it("wraps a sketch's shapes round a round face (Wrap)", () => {
+    const rod = feature("cylinder", { diameter: 20, height: 30, x: 0, y: 0, z: 0 });
+    const first = build([rod]);
+    const side = first.parts[0].faceRefs.find((f) => f.kind === "face" && f.surface === "CYLINDRE")!;
+    const solidVolume = analyzeMesh(first.parts[0].vertices, first.parts[0].triangles).volume;
+    // An 8 × 4 rectangle, and a small square beside it, drawn anywhere.
+    let data = addRectangle(emptySketch(), { x: 100, y: 50 }, { x: 108, y: 54 }).sketch;
+    data = addRectangle(data, { x: 110, y: 50 }, { x: 112, y: 52 }).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+    const wrap: Feature = { ...feature("wrap", { depth: 1 }, "add"), sketchRef: sk.id, picks: [{ partId: rod.id, ref: side }] };
+    const r = build([rod, sk, wrap]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    // Each shape on a flat patch 1 mm out from the surface where it touches (≈ 41 + 4 mm³), on the side facing the front.
+    expect(a.volume).toBeGreaterThan(solidVolume + 35);
+    expect(a.volume).toBeLessThan(solidVolume + 55);
+    expect(a.bounds!.min[1]).toBeLessThan(-10.5);
+    const engraved = build([rod, sk, { ...wrap, operation: "remove" }]);
+    expect(engraved.featureErrors).toEqual({});
+    // Cut down to a flat 1 mm in (≈ 23 + 4 mm³).
+    const cutVolume = solidVolume - analyzeMesh(engraved.parts[0].vertices, engraved.parts[0].triangles).volume;
+    expect(cutVolume).toBeGreaterThan(20);
+    expect(cutVolume).toBeLessThan(35);
+    // Too wide for the rod.
+    const wide = sketchFeature({ kind: "default", name: "Top" }, addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 40, y: 4 }).sketch);
+    expect(build([rod, wide, { ...wrap, sketchRef: wide.id }]).featureErrors[wrap.id]).toMatch(/too wide/);
+    expect(build([rod, sk, { ...wrap, picks: [] }]).featureErrors[wrap.id]).toMatch(/round face/);
+  });
 });
 
 describe("splines and ellipses", () => {

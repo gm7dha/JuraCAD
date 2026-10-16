@@ -209,6 +209,13 @@ export const Icons = {
       <path d="M12 6v9" strokeDasharray="1.5 1.5" />
     </Svg>
   ),
+  Wrap: (p: IconProps) => (
+    <Svg {...p}>
+      <ellipse cx="12" cy="5" rx="6" ry="2" />
+      <path d="M6 5v14c0 1.1 2.7 2 6 2s6-.9 6-2V5" />
+      <path d="M8 11c2 1 6 1 8 0M8 14l2-2 2 2 2-2 2 2" />
+    </Svg>
+  ),
   Derived: (p: IconProps) => (
     <Svg {...p}>
       <rect x="3" y="3" width="8" height="8" rx="1" />
