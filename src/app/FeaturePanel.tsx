@@ -132,7 +132,19 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
   const toggleDatum = useStore((s) => s.toggleDatum);
 
   const entries: MenuEntry[] = [
-    ...(plane ? [{ label: "View normal to", action: () => viewportApi.current?.viewNormalToPlane(plane) }] : []),
+    ...(plane
+      ? [
+          { label: "View normal to", action: () => viewportApi.current?.viewNormalToPlane(plane) },
+          {
+            label: "New plane from this…",
+            action: () => {
+              // A copy of this plane, moved by a distance set in the Plane dialog.
+              useStore.getState().selectPlane(plane);
+              useStore.getState().startCreate("plane");
+            },
+          },
+        ]
+      : []),
     { label: hidden ? "Show" : "Hide", action: () => toggleDatum(name) },
   ];
 
