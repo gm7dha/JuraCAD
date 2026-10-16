@@ -1789,6 +1789,29 @@ describe("extrude up to a face, and with draft", () => {
 });
 
 describe("sweep and loft", () => {
+  it("lofts between ellipses (and a circle) without cutting them in two", () => {
+    // An ellipse long along X at the bottom, one long along Y 20 up: one smooth side, a plain rim top and bottom.
+    const low = sketchFeature({ kind: "default", name: "Top" }, addEllipse(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 0 }, [0, 5]).sketch);
+    const high = sketchFeature(planeOnFace([0, 0, 1], [0, 0, 20], "up"), addEllipse(emptySketch(), { x: 0, y: 0 }, { x: 6, y: 0 }, [0, 12]).sketch);
+    const lo: Feature = { ...feature("loft", {}), sections: [low.id, high.id] };
+    const r = build([low, high, lo]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts[0].edgeRefs.map((e) => e.curve)).toEqual(["ELLIPSE", "ELLIPSE"]);
+    expect(r.parts[0].faceRefs).toHaveLength(3);
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    // A circle up to an ellipse, turned: the same.
+    const ring = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 0, y: 0 }, 8).sketch);
+    const r2 = build([ring, high, { ...lo, sections: [ring.id, high.id] }]);
+    expect(r2.featureErrors).toEqual({});
+    expect(r2.parts[0].edgeRefs).toHaveLength(2);
+    expect(r2.parts[0].faceRefs).toHaveLength(3);
+    // As a surface: one face, two rims.
+    const r3 = build([low, high, { ...lo, surface: true }]);
+    expect(r3.featureErrors).toEqual({});
+    expect(r3.parts[0].faceRefs).toHaveLength(1);
+    expect(r3.parts[0].edgeRefs).toHaveLength(2);
+  });
+
   it("sweeps a circle along an L-shaped path into a bent pipe", () => {
     // Path on Top: straight along +X for 40 mm.
     let path = emptySketch();
