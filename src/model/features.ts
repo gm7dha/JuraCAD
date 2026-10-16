@@ -308,6 +308,17 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "A thin strengthening wall from the lines of a sketch, filling the space up to the part (gussets, webs).",
     params: [{ key: "thickness", label: "Thickness", defaultValue: "3", positive: true, group: "size" }],
   },
+  derived: {
+    type: "derived",
+    label: "Derived",
+    namePrefix: "Derived",
+    description: "A part from another Part Studio brought into this one, where it was made (moved by X, Y, Z if you like). It updates when the original changes.",
+    params: [
+      { key: "x", label: "Move X", defaultValue: "0", group: "position" },
+      { key: "y", label: "Move Y", defaultValue: "0", group: "position" },
+      { key: "z", label: "Move Z", defaultValue: "0", group: "position" },
+    ],
+  },
   fastener: {
     type: "fastener",
     label: "Fastener",
