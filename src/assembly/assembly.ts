@@ -233,7 +233,7 @@ export function bomCsv(rows: BomRow[]): string {
 
 
 
-const MATE_TYPE_NAMES = new Set<string>(["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "pinSlot", "parallel", "width"]);
+const MATE_TYPE_NAMES = new Set<string>(["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "pinSlot", "parallel", "width", "tangent"]);
 
 function parseConnector(raw: unknown): MateConnector | null {
   const c = (raw ?? {}) as Record<string, unknown>;

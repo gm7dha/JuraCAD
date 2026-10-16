@@ -44,6 +44,7 @@ const MATE_ICONS: Record<MateType, (p: { size?: number }) => ReactNode> = {
   pinSlot: Icons.MatePinSlot,
   parallel: Icons.MateParallel,
   width: Icons.MateWidth,
+  tangent: Icons.MateTangent,
 };
 
 
@@ -1217,10 +1218,12 @@ export function MateDialog() {
             Pick again
           </button>
         )}
-        <label className="check-row">
-          <input type="checkbox" checked={mate.flip} onChange={(e) => st.setMateDraft({ flip: e.target.checked })} />
-          Flip (turn the moving part round)
-        </label>
+        {mate.type !== "tangent" && (
+          <label className="check-row">
+            <input type="checkbox" checked={mate.flip} onChange={(e) => st.setMateDraft({ flip: e.target.checked })} />
+            Flip (turn the moving part round)
+          </label>
+        )}
         {def.values.map((d) => (
           <MateValueField
             key={d.key}

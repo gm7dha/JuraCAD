@@ -495,6 +495,13 @@ export const Icons = {
       <circle cx="9" cy="12" r="1.8" fill="currentColor" />
     </Svg>
   ),
+  MateTangent: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 19h18" />
+      <circle cx="12" cy="13" r="6" />
+      <circle cx="12" cy="13" r="1" fill="currentColor" />
+    </Svg>
+  ),
   MateWidth: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 4v16M20 4v16" />
