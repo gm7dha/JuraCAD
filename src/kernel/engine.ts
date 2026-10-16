@@ -30,7 +30,7 @@ import { flatProjection } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize } from "../model/fasteners";
 import type { CheckResult, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
-import { fromRel, sectionGeometry, type SectionRequest } from "../drawing/sections";
+import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
 import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
@@ -2176,7 +2176,7 @@ export class GeometryEngine {
    * Drawing views: the chosen parts (or an assembly's placed copies) seen from
    * each direction, with the lines hidden behind the part worked out.
    */
-  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sections: SectionRequest[] = []): ViewProjection[] {
+  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sections: SectionRequest[] = [], breakouts: BreakOutRequest[] = []): ViewProjection[] {
     const placed = instances?.length ? this.placeInstances(instances) : [];
     const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts.filter((p) => !p.configured);
     const shapes = placed.length ? placed.map((p) => p.shape) : chosen.map((p) => p.shape);
@@ -2223,6 +2223,76 @@ export class GeometryEngine {
               ...(h.csk ? { csk: h.csk } : {}),
             }));
         });
+      }
+      // How deep each flat view sees the part (front to back), for broken-out cuts.
+      const [blo, bhi] = boundsOf(whole);
+      const corners: Vec3[] = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [i & 1 ? bhi[0] : blo[0], i & 2 ? bhi[1] : blo[1], i & 4 ? bhi[2] : blo[2]]);
+      const along = (t: Vec3) => corners.map((c) => dot3(c, t));
+      out.forEach((view, i) => {
+        if (standard[i] === "iso") return;
+        const a = along(VIEW_CAMERAS[standard[i]].toward);
+        view.depth = Math.max(...a) - Math.min(...a);
+      });
+      // Broken-out cuts: the view drawn again with the material inside each rectangle cut away to its depth.
+      for (const host of [...new Set(breakouts.map((b) => b.host))]) {
+        const at = out.findIndex((p) => p.kind === host);
+        const plain = out[at];
+        if (at < 0 || !plain?.bounds) continue;
+        const { toward, right } = VIEW_CAMERAS[host];
+        const up = cross3(toward, right);
+        const front = Math.max(...along(toward));
+        const diag = Math.hypot(bhi[0] - blo[0], bhi[1] - blo[1], bhi[2] - blo[2]);
+        const mine = breakouts.filter((b) => b.host === host);
+        const rects = mine.map((b) => {
+          const p = fromRel(plain.bounds!, b.a);
+          const q = fromRel(plain.bounds!, b.b);
+          return { x0: Math.min(p[0], q[0]), y0: Math.min(p[1], q[1]), x1: Math.max(p[0], q[0]), y1: Math.max(p[1], q[1]), h: front - b.depth };
+        });
+        const at3 = (x: number, y: number, h: number): Vec3 => [x * right[0] + y * up[0] + h * toward[0], x * right[1] + y * up[1] + h * toward[1], x * right[2] + y * up[2] + h * toward[2]];
+        let cut: Shape3D | null = null;
+        try {
+          const L = 2 * diag + 10;
+          const boxes = rects.filter((r) => r.x1 - r.x0 > 1e-6 && r.y1 - r.y0 > 1e-6).map((r) => {
+            const face = makePolygon([at3(r.x0, r.y0, r.h), at3(r.x1, r.y0, r.h), at3(r.x1, r.y1, r.h), at3(r.x0, r.y1, r.h)]);
+            const v = new Vector([toward[0] * L, toward[1] * L, toward[2] * L]);
+            try {
+              return basicFaceExtrusion(face, v) as Shape3D;
+            } finally {
+              face.delete();
+              v.delete();
+            }
+          });
+          const cutter = fusePieces(boxes);
+          if (!cutter) continue;
+          try {
+            cut = whole.cut(cutter);
+          } finally {
+            cutter.delete();
+          }
+          const view = projectView(cut, host, toward, right, withHidden, cylinderAxes(cut));
+          // The faces left at the bottom of each cut, hatched like a section.
+          const m = cut.mesh(MESH_TOLERANCES.display);
+          const vs = m.vertices;
+          const tol = 1e-4 * Math.max(1, diag);
+          const faces: number[] = [];
+          for (let i = 0; i + 2 < m.triangles.length; i += 3) {
+            const ids = [m.triangles[i], m.triangles[i + 1], m.triangles[i + 2]];
+            const pts = ids.map((k): Vec3 => [vs[3 * k], vs[3 * k + 1], vs[3 * k + 2]]);
+            const r = rects.find((rc) => pts.every((p) => Math.abs(dot3(p, toward) - rc.h) < tol && dot3(p, right) > rc.x0 - tol && dot3(p, right) < rc.x1 + tol && dot3(p, up) > rc.y0 - tol && dot3(p, up) < rc.y1 + tol));
+            if (r) for (const p of pts) faces.push(dot3(p, right), dot3(p, up));
+          }
+          view.cutFaces = faces;
+          view.breakLines = rects.map((r) => [r.x0, r.y0, r.x1, r.y0, r.x1, r.y1, r.x0, r.y1, r.x0, r.y0]);
+          view.depth = plain.depth;
+          view.holes = plain.holes;
+          // Keep the plain view's box, so dimensions and other views stay where they were.
+          view.bounds = plain.bounds;
+          out[at] = view;
+        } catch {
+          // Left as it was: the plain view.
+        } finally {
+          cut?.delete();
+        }
       }
       out.push(...flats);
       for (const req of sections) {

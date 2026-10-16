@@ -281,11 +281,12 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     // Detail views are drawn bigger than the rest.
     const vs = scale * (p.zoom ?? 1);
     const map = (line: number[]) => line.map((val, i) => (i % 2 === 0 ? centre[0] + (val - cx) * vs : centre[1] + (val - cy) * vs));
-    if (v.kind === "section" && p.cutFaces) {
+    if (p.cutFaces) {
       for (const seg of hatchLines(p.cutFaces, HATCH_SPACING / scale)) prims.push({ kind: "path", points: map(seg), style: "thin" });
     }
     for (const line of drawing.hiddenLines ? p.hidden : []) prims.push({ kind: "path", points: map(line), style: "hidden" });
     for (const line of p.visible) prims.push({ kind: "path", points: map(line), style: "visible" });
+    for (const line of p.breakLines ?? []) prims.push({ kind: "path", points: map(line), style: "thin" });
     if (drawing.centreLines !== false) {
       for (const seg of [...centreMarks(p, vs), ...centreLines(p, vs)]) prims.push({ kind: "path", points: map(seg), style: "centre" });
     }

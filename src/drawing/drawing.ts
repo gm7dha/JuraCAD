@@ -2,7 +2,7 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
+import type { BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { SECTION_HOSTS, viewKey } from "./sections";
 
 const drawingsOf = (doc: PartSmithDocument) => doc.drawings ?? [];
@@ -149,6 +149,15 @@ export function parseDrawings(raw: unknown): Drawing[] {
       const letter = typeof rs.letter === "string" && rs.letter.trim() ? rs.letter.trim().slice(0, 3) : "A";
       sections.push({ id: rs.id, letter, host: rs.host as ViewKind, a, b, ...(rs.flip === true ? { flip: true } : {}), ...(rs.aux === true ? { aux: true } : {}) });
     }
+    const breakouts: BreakOut[] = [];
+    for (const x of Array.isArray(r.breakouts) ? r.breakouts : []) {
+      const rx = (x ?? {}) as Record<string, unknown>;
+      const pair = (v: unknown) => (Array.isArray(v) && v.length === 2 && v.every(num) ? (v as [number, number]) : null);
+      const a = pair(rx.a);
+      const b = pair(rx.b);
+      if (typeof rx.id !== "string" || !SECTION_HOSTS.includes(rx.host as ViewKind) || !a || !b || !num(rx.depth) || (rx.depth as number) <= 0) continue;
+      breakouts.push({ id: rx.id, host: rx.host as ViewKind, a, b, depth: rx.depth as number });
+    }
     const details: DetailView[] = [];
     for (const x of Array.isArray(r.details) ? r.details : []) {
       const rx = (x ?? {}) as Record<string, unknown>;
@@ -234,6 +243,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       views,
       title,
       ...(shownSections.length ? { sections: shownSections } : {}),
+      ...(breakouts.length ? { breakouts } : {}),
       ...(details.some((x) => views.some((v) => v.kind === "detail" && v.detail === x.id))
         ? { details: details.filter((x) => views.some((v) => v.kind === "detail" && v.detail === x.id)) }
         : {}),
