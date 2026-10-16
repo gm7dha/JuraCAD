@@ -6,6 +6,14 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.21 — Thread symbols on bolts, wide wraps, smoother lofts · commit `921ff98`
+
+- Drawings: **thread symbols on bolts, screws, nuts and threaded rods** (fasteners and Thread features), as well as
+  tapped holes.
+- **Wrap** and wrapped Text: shapes wider than the rod now wrap round in narrow strips, hugging the curve.
+- **Loft** between ellipses (or a circle and an ellipse) no longer leaves an extra edge down the side or splits
+  the rims.
+
 ## v0.20 — Surface tools · commit `4f12a19`
 
 - **Surfaces**: thin skins with no inside, for flowing shapes. Tick **Surface** in Extrude, Revolve, Sweep or Loft
