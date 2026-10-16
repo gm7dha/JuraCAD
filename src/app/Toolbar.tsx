@@ -82,6 +82,7 @@ export function Toolbar() {
   const hasSketch = useStore((s) => activeFeatures(s).some((f) => f.type === "sketch"));
   const sketchCount = useStore((s) => activeFeatures(s).filter((f) => f.type === "sketch").length);
   const hasPart = useStore((s) => studioParts(s).length > 0);
+  const hasSurface = useStore((s) => studioParts(s).some((p) => p.surface));
   const hasSheet = useStore((s) => studioParts(s).some((p) => !!p.flat));
   const showFlat = useStore((s) => s.showFlat);
   const partCount = useStore((s) => studioParts(s).length);
@@ -212,7 +213,7 @@ export function Toolbar() {
               onClick: () => startCreate("thicken"),
               disabled: !ready || !hasPart,
               active: editingType === "thicken",
-              title: hasPart ? "Thicken — grow flat faces into a solid of a set thickness" : "Make a part first",
+              title: hasPart ? "Thicken — grow flat faces, or a whole surface, into a solid of a set thickness" : "Make a part first",
             },
             {
               key: "rib",
@@ -222,6 +223,39 @@ export function Toolbar() {
               disabled: !ready || !hasPart || !hasSketch,
               active: editingType === "rib",
               title: hasPart && hasSketch ? "Rib — a thin strengthening wall along a sketch's lines, filling the space up to the part" : "Make a part, then sketch the rib's line(s)",
+            },
+          ]}
+        />
+        <ToolGroupButton
+          id="surfaces"
+          name="surface"
+          items={[
+            {
+              key: "fill",
+              label: "Fill",
+              icon: <Icons.Fill />,
+              onClick: () => startCreate("fill"),
+              disabled: !ready || !hasPart,
+              active: editingType === "fill",
+              title: hasPart ? "Fill — a surface spanning a ring of edges (flat, or a smooth patch), as a new surface part. Tick Surface in Extrude, Revolve, Sweep or Loft for other surfaces" : "Make a part first",
+            },
+            {
+              key: "enclose",
+              label: "Enclose",
+              icon: <Icons.Enclose />,
+              onClick: () => startCreate("enclose"),
+              disabled: !ready || !hasSurface,
+              active: editingType === "enclose",
+              title: hasSurface ? "Enclose — close surfaces up into one solid (they must meet all the way round)" : "Make a surface first (tick Surface in Extrude, Revolve, Sweep or Loft, or use Fill)",
+            },
+            {
+              key: "offsetSurface",
+              label: "Offset surface",
+              icon: <Icons.OffsetSurface />,
+              onClick: () => startCreate("offsetSurface"),
+              disabled: !ready || !hasSurface,
+              active: editingType === "offsetSurface",
+              title: hasSurface ? "Offset surface — a copy of a surface moved a set distance along its normal, as a new surface part" : "Make a surface first",
             },
           ]}
         />

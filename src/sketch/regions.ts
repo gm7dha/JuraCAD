@@ -95,9 +95,9 @@ function makeLoop(segments: Segment[], polygon: Pt[]): Loop {
   return { segments, polygon, area };
 }
 
-export function findRegions(sketch: SketchData): RegionResult {
+/** The sketch's curves as a graph: the standalone closed curves, and the end-to-end curves between shared points. */
+function sketchGraph(sketch: SketchData) {
   const pts = pointsById(sketch);
-  const problems: string[] = [];
   const loops: Loop[] = [];
   const solid = sketch.curves.filter((c) => !c.construction);
 
@@ -169,12 +169,43 @@ export function findRegions(sketch: SketchData): RegionResult {
     for (const n of [e.a, e.b]) adjacency.set(n, [...(adjacency.get(n) ?? []), i]);
   });
 
+  /** One curve walked from node `at`: its pieces and polygon points (the polygon leaves out the end point). */
+  const walkEdge = (ei: number, at: number): { segments: Segment[]; polygon: Pt[]; next: number } => {
+    const e = edges[ei];
+    const forward = e.a === at;
+    const next = forward ? e.b : e.a;
+    const from = nodePos[at];
+    const to = nodePos[next];
+    const segments: Segment[] = [];
+    const polygon: Pt[] = [];
+    if (e.curve.type === "line") {
+      segments.push({ kind: "line", from, to });
+      polygon.push(from);
+    } else if (e.curve.type === "spline") {
+      // Its pieces, the other way round when walking it backwards.
+      const ps = e.curve.points.map((id) => pts.get(id)!);
+      const pieces = splineBeziers(forward ? ps : [...ps].reverse(), false, e.curve.conic);
+      for (const [f, c1, c2, t] of pieces) segments.push({ kind: "bezier", from: f, c1, c2, to: t });
+      polygon.push(...splinePolyline(forward ? ps : [...ps].reverse(), false, undefined, e.curve.conic).slice(0, -1));
+    } else {
+      const center = pts.get(e.curve.center)!;
+      const s = pts.get(e.curve.start)!;
+      const en = pts.get(e.curve.end)!;
+      const { r, a0, a1 } = arcGeometry(center, s, en);
+      const midA = (a0 + a1) / 2;
+      const mid: Pt = [center[0] + r * Math.cos(midA), center[1] + r * Math.sin(midA)];
+      segments.push({ kind: "arc", from, mid, to });
+      if (forward) sampleArc(center, r, a0, a1, polygon);
+      else sampleArc(center, r, a1, a0, polygon);
+    }
+    return { segments, polygon, next };
+  };
+
+  // The connected groups of curves: closed rings, open runs, or branching (a junction of three or more).
   const usedEdge = new Array<boolean>(edges.length).fill(false);
-  let openShapes = 0;
-  let branching = 0;
+  const groups: { edges: number[]; kind: "closed" | "open" | "branching" }[] = [];
   for (let start = 0; start < edges.length; start++) {
     if (usedEdge[start]) continue;
-    // Collect this connected group of curves.
     const group: number[] = [];
     const stack = [start];
     usedEdge[start] = true;
@@ -192,51 +223,78 @@ export function findRegions(sketch: SketchData): RegionResult {
     }
     const nodes = new Set(group.flatMap((ei) => [edges[ei].a, edges[ei].b]));
     const degrees = [...nodes].map((n) => (adjacency.get(n) ?? []).length);
-    if (degrees.some((d) => d > 2)) {
-      branching++;
-      continue;
-    }
-    if (degrees.some((d) => d < 2)) {
-      openShapes++;
-      continue;
-    }
+    groups.push({ edges: group, kind: degrees.some((d) => d > 2) ? "branching" : degrees.some((d) => d < 2) ? "open" : "closed" });
+  }
 
-    // Walk round the loop in order.
+  /** Walk a ring or run from `at` along its curves, in order. */
+  const walk = (group: number[], first: number, at: number): { segments: Segment[]; polygon: Pt[] } => {
     const segments: Segment[] = [];
     const polygon: Pt[] = [];
     const visited = new Set<number>();
-    let current = group[0];
-    let at = edges[current].a;
+    let current = first;
     while (!visited.has(current)) {
       visited.add(current);
-      const e = edges[current];
-      const forward = e.a === at;
-      const next = forward ? e.b : e.a;
-      const from = nodePos[at];
-      const to = nodePos[next];
-      if (e.curve.type === "line") {
-        segments.push({ kind: "line", from, to });
-        polygon.push(from);
-      } else if (e.curve.type === "spline") {
-        // Its pieces, the other way round when walking it backwards.
-        const ps = e.curve.points.map((id) => pts.get(id)!);
-        const pieces = splineBeziers(forward ? ps : [...ps].reverse(), false, e.curve.conic);
-        for (const [f, c1, c2, t] of pieces) segments.push({ kind: "bezier", from: f, c1, c2, to: t });
-        polygon.push(...splinePolyline(forward ? ps : [...ps].reverse(), false, undefined, e.curve.conic).slice(0, -1));
-      } else {
-        const center = pts.get(e.curve.center)!;
-        const s = pts.get(e.curve.start)!;
-        const en = pts.get(e.curve.end)!;
-        const { r, a0, a1 } = arcGeometry(center, s, en);
-        const midA = (a0 + a1) / 2;
-        const mid: Pt = [center[0] + r * Math.cos(midA), center[1] + r * Math.sin(midA)];
-        segments.push({ kind: "arc", from, mid, to });
-        if (forward) sampleArc(center, r, a0, a1, polygon);
-        else sampleArc(center, r, a1, a0, polygon);
-      }
-      at = next;
-      current = (adjacency.get(at) ?? []).find((ei) => ei !== current && !visited.has(ei)) ?? current;
+      const step = walkEdge(current, at);
+      segments.push(...step.segments);
+      polygon.push(...step.polygon);
+      at = step.next;
+      const after = (adjacency.get(at) ?? []).find((ei) => ei !== current && !visited.has(ei) && group.includes(ei));
+      if (after === undefined) break;
+      current = after;
     }
+    return { segments, polygon, end: nodePos[at] } as { segments: Segment[]; polygon: Pt[] } & { end: Pt };
+  };
+
+  return { loops, edges, nodePos, adjacency, groups, walk };
+}
+
+/** A run of curves joined end to end: a closed ring, or open with two free ends. */
+export interface Chain {
+  segments: Segment[];
+  closed: boolean;
+}
+
+/**
+ * Every run of the sketch's (non-construction) curves, closed or open, each
+ * walked in order — for surfaces, which can be made from open outlines too.
+ * Runs with a junction of three or more curves are left out.
+ */
+export function findChains(sketch: SketchData): { chains: Chain[]; problems: string[] } {
+  const g = sketchGraph(sketch);
+  const chains: Chain[] = g.loops.map((l) => ({ segments: l.segments, closed: true }));
+  let branching = 0;
+  for (const group of g.groups) {
+    if (group.kind === "branching") {
+      branching++;
+      continue;
+    }
+    const first = group.kind === "open" ? group.edges.find((ei) => [g.edges[ei].a, g.edges[ei].b].some((n) => (g.adjacency.get(n) ?? []).length === 1))! : group.edges[0];
+    const e = g.edges[first];
+    const at = group.kind === "open" && (g.adjacency.get(e.b) ?? []).length === 1 ? e.b : e.a;
+    const { segments } = g.walk(group.edges, first, at);
+    chains.push({ segments, closed: group.kind === "closed" });
+  }
+  const problems: string[] = [];
+  if (branching) problems.push(`${branching} shape${branching > 1 ? "s have" : " has"} lines meeting at a junction, so ${branching > 1 ? "they were" : "it was"} left out.`);
+  return { chains, problems };
+}
+
+export function findRegions(sketch: SketchData): RegionResult {
+  const g = sketchGraph(sketch);
+  const problems: string[] = [];
+  const loops: Loop[] = [...g.loops];
+  let openShapes = 0;
+  let branching = 0;
+  for (const group of g.groups) {
+    if (group.kind === "branching") {
+      branching++;
+      continue;
+    }
+    if (group.kind === "open") {
+      openShapes++;
+      continue;
+    }
+    const { segments, polygon } = g.walk(group.edges, group.edges[0], g.edges[group.edges[0]].a);
     const loop = makeLoop(segments, polygon);
     if (loop.area > 1e-9) loops.push(loop);
   }

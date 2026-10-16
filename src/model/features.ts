@@ -176,6 +176,27 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "y", label: "Start Y (on the plane)", defaultValue: "0", group: "position" },
     ],
   },
+  fill: {
+    type: "fill",
+    label: "Fill",
+    namePrefix: "Fill",
+    description: "A surface spanning a ring of edges — flat if they lie in a plane, else a smooth patch — to close an opening or make a skin (a new surface part).",
+    params: [],
+  },
+  enclose: {
+    type: "enclose",
+    label: "Enclose",
+    namePrefix: "Enclose",
+    description: "Closes surfaces up into one solid: click a face of each surface. They must meet at their edges all the way round.",
+    params: [],
+  },
+  offsetSurface: {
+    type: "offsetSurface",
+    label: "Offset surface",
+    namePrefix: "Offset surface",
+    description: "A copy of a surface moved a set distance along its normal everywhere (minus for the other side), as a new surface part.",
+    params: [{ key: "distance", label: "Distance", defaultValue: "2", group: "size" }],
+  },
   wrap: {
     type: "wrap",
     label: "Wrap",
@@ -435,9 +456,10 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener">): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface">): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   if (f.type === "extrude" && (f.extrude?.end === "throughAll" || f.extrude?.end === "upToFace")) keys.delete("depth");
+  if (f.type === "extrude" && f.surface) keys.delete("draft");
   if (f.type === "plane" && f.planeDef?.mode !== "angle") keys.delete("angle");
   if (f.type === "fastener" && f.fastener && !hasLength(f.fastener.kind)) keys.delete("length");
   if (f.type === "hole" && f.hole) {

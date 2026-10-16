@@ -25,7 +25,7 @@ import {
 } from "replicad";
 
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
-import { findRegions, type Loop } from "../sketch/regions";
+import { findRegions, type Loop, type Segment } from "../sketch/regions";
 import type { SketchData } from "../sketch/types";
 import { edgesOf as edgesOfShape, facesOf, wiresOf } from "./topology";
 
@@ -42,8 +42,13 @@ export const release = (...items: { delete(): void }[]) => items.forEach((i) => 
 
 /** The closed outline of one loop of the sketch, `offset` mm along the plane's normal. */
 export function loopWire(loop: Loop, frame: PlaneFrame, offset: number): Wire {
+  return segmentsWire(loop.segments, frame, offset);
+}
+
+/** A run of sketch pieces (closed or open) as one wire, `offset` mm along the plane's normal. */
+export function segmentsWire(segments: Segment[], frame: PlaneFrame, offset: number): Wire {
   const P = ([x, y]: [number, number]) => toWorld(frame, x, y, offset);
-  const edges: Edge[] = loop.segments.map((seg) => {
+  const edges: Edge[] = segments.map((seg) => {
     switch (seg.kind) {
       case "line":
         return makeLine(P(seg.from), P(seg.to));

@@ -209,6 +209,33 @@ export const Icons = {
       <path d="M12 6v9" strokeDasharray="1.5 1.5" />
     </Svg>
   ),
+  Surface: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 17c4-6 8 2 12-4s4-6 6-4" />
+      <path d="M3 17h0M3 11c4-6 8 2 12-4s4-6 6-4" opacity="0.5" />
+      <path d="M3 11v6M21 3v6" />
+    </Svg>
+  ),
+  Fill: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 6c4 3 12 3 16 0v12c-4-3-12-3-16 0z" />
+      <path d="M8 10c2 1 6 1 8 0M8 14c2 1 6 1 8 0" opacity="0.5" />
+    </Svg>
+  ),
+  Enclose: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 8l8-4 8 4v8l-8 4-8-4z" />
+      <path d="M4 8l8 4 8-4M12 12v8" />
+      <path d="M12 12l-8-4" opacity="0.4" />
+    </Svg>
+  ),
+  OffsetSurface: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 15c4-6 8 2 12-4s4-6 6-4" />
+      <path d="M3 20c4-6 8 2 12-4s4-6 6-4" opacity="0.5" />
+      <path d="M12 4v6M9 7l3-3 3 3" />
+    </Svg>
+  ),
   Wrap: (p: IconProps) => (
     <Svg {...p}>
       <ellipse cx="12" cy="5" rx="6" ry="2" />

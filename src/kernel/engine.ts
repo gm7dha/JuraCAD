@@ -18,6 +18,7 @@ import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
+import { encloseSurfaces, extrudeSurface, fillEdges, loftSurface, offsetSurface, revolveSurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
@@ -52,6 +53,8 @@ interface BuiltPart {
   shape: Shape3D;
   /** For a part straight from an imported file: identifies its display mesh, which is kept between rebuilds while the part is unchanged. */
   meshKey?: string;
+  /** A surface: a thin skin with no inside. */
+  surface?: boolean;
   /** Sheet metal parts: the sheet they're folded from (for flanges and the flat pattern), and the features that made it. */
   sheet?: SheetSpec;
   sheetFeatures?: string[];
@@ -203,26 +206,36 @@ function cutThread(start: Shape3D, cyl: Cylinder, from: number, to: number, lo: 
 }
 
 /**
- * Edges that only one face uses — the seam down the side of a cylinder, cone
- * or sphere, where the surface meets itself. Onshape doesn't show those (they
- * aren't real edges of the shape), and clicking one would get in the way of
- * picking the round face.
+ * Seams: the line down the side of a cylinder, cone or sphere where the
+ * surface meets itself (a face's outline runs along it twice). Onshape doesn't
+ * show those (they aren't real edges of the shape), and clicking one would get
+ * in the way of picking the round face. The free edges of a surface (a skin)
+ * are real edges, and are kept.
  */
 export function seamEdgeIds(shape: Shape3D): Set<number> {
-  const faceCount = new Map<number, number>();
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const seams = new Set<number>();
   for (const f of facesOf(shape)) {
     try {
-      const mine = new Set<number>();
-      for (const e of edgesOf(f)) {
-        mine.add(e.hashCode);
-        e.delete();
+      // A seam runs round the face twice (once each way), so it turns up twice when the face's edges are walked.
+      const seen = new Map<number, number>();
+      const explorer = new oc.TopExp_Explorer(f.wrapped, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+      try {
+        for (; explorer.More(); explorer.Next()) {
+          const h = oc.ReplicadShapeHasher.HashCode(explorer.Current(), 2147483647) as number;
+          seen.set(h, (seen.get(h) ?? 0) + 1);
+        }
+      } finally {
+        explorer.delete();
       }
-      for (const h of mine) faceCount.set(h, (faceCount.get(h) ?? 0) + 1);
+      for (const [h, n] of seen) if (n > 1) seams.add(h);
     } finally {
       f.delete();
     }
   }
-  return new Set([...faceCount].filter(([, n]) => n === 1).map(([h]) => h));
+  return seams;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** A part's edge lines without its seams (see seamEdgeIds). */
@@ -722,9 +735,14 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       }
       if (feature.type === "revolve") {
         const opts = feature.revolve ?? { axis: "vertical", flip: false };
+        if (feature.surface) return revolveSurface(sketch.sketch.plane, sketch.sketch.data, { axis: opts.axis, angle: v.angle, flip: opts.flip });
         return revolveSketch(sketch.sketch.plane, sketch.sketch.data, { axis: opts.axis, angle: v.angle, flip: opts.flip });
       }
       const opts = feature.extrude ?? { end: "blind", flip: false };
+      if (feature.surface) {
+        if (opts.end !== "blind" && opts.end !== "symmetric") throw new Error("A surface can be extruded a set depth (or symmetric), not through all or up to a face.");
+        return extrudeSurface(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip });
+      }
       if (opts.end === "throughAll") {
         if (feature.operation !== "remove") throw new Error("Through all only works with Remove — it cuts right through the part.");
         // Long enough to pass through every part, both ways from the sketch.
@@ -771,6 +789,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       if (feature.sketchRef && feature.sketchRef === feature.pathRef) throw new Error("The profile and the path must be different sketches.");
       const profile = need(feature.sketchRef, "profile");
       const path = need(feature.pathRef, "path");
+      if (feature.surface) return sweepSurface(profile.plane!, profile.data, path.plane!, path.data);
       return sweepSketch(profile.plane!, profile.data, path.plane!, path.data);
     }
     case "wrap": {
@@ -838,7 +857,32 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         if (!sk?.sketch?.plane) throw new Error(f ? `${f.name} can't be used (it's suppressed, comes later in the list, or has no plane).` : "One of its sketches has been deleted. Edit the loft.");
         return { plane: sk.sketch.plane, data: sk.sketch.data, name: sk.name };
       });
+      if (feature.surface) return loftSurface(sections);
       return loftSketches(sections);
+    }
+    case "fill": {
+      const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
+      if (!picks.length) throw new Error("Click the edges round the opening to fill (on any parts).");
+      const edges: Edge[] = [];
+      try {
+        for (const partId of new Set(picks.map((p) => p.partId))) {
+          const part = parts.find((p) => p.id === partId);
+          if (!part) throw new Error("A part the edges were on no longer exists. Edit this and pick the edges again.");
+          edges.push(...findPickedEdges(part.shape, picks.filter((p) => p.partId === partId)));
+        }
+        return fillEdges(edges);
+      } finally {
+        edges.forEach((e) => e.delete());
+      }
+    }
+    case "offsetSurface": {
+      const pick = feature.picks?.find((p) => p.ref.kind === "face");
+      if (!pick) throw new Error("Click a face of the surface to offset.");
+      const part = parts.find((p) => p.id === pick.partId);
+      if (!part) throw new Error("The surface no longer exists. Click a face of another.");
+      if (!part.surface) throw new Error("Offset surface works on surfaces (skins). For a solid, use Move face or Shell.");
+      if (Math.abs(v.distance) < 1e-9) throw new Error("Distance: enter how far to move the surface (minus for the other side).");
+      return offsetSurface(part.shape, v.distance);
     }
     case "hole": {
       const h = feature.hole;
@@ -1093,6 +1137,7 @@ export class GeometryEngine {
   private buildFeatures(features: Feature[]): Record<string, string> {
     const featureErrors: Record<string, string> = {};
     let partCounter = 0;
+    let surfaceCounter = 0;
     const sketches: SketchMap = new Map();
 
     for (const feature of features) {
@@ -1212,9 +1257,27 @@ export class GeometryEngine {
         continue;
       }
 
-      // Wrap goes on the part whose face it's wrapped round; everything else on the latest part.
+      // Surfaces are always new parts; Enclose closes surfaces up into a solid.
+      if (feature.surface || feature.type === "fill" || feature.type === "offsetSurface" || feature.type === "enclose") {
+        if (feature.type === "enclose") {
+          const r = this.applyEnclose(feature, partCounter + 1);
+          if (r.error) featureErrors[feature.id] = r.error;
+          if (r.newPart) partCounter++;
+          continue;
+        }
+        try {
+          const skin = buildSolid(feature, values, sketches, features, this.parts);
+          surfaceCounter++;
+          this.tools.set(feature.id, { shape: skin.clone(), operation: "new", partId: feature.id });
+          this.parts.push({ id: feature.id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true });
+        } catch (e) {
+          featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
+        }
+        continue;
+      }
+      // Wrap goes on the part whose face it's wrapped round; everything else on the latest solid part.
       const wrapOn = feature.type === "wrap" ? this.parts.find((p) => p.id === feature.picks?.find((x) => x.ref.kind === "face")?.partId) : undefined;
-      const target = wrapOn ?? this.parts[this.parts.length - 1];
+      const target = wrapOn ?? [...this.parts].reverse().find((p) => !p.surface);
       if (feature.operation !== "new" && !target) {
         featureErrors[feature.id] =
           feature.type === "hole"
@@ -1261,6 +1324,7 @@ export class GeometryEngine {
       }
 
       try {
+        if (!target) throw new Error("There's no part to change yet.");
         const result = feature.operation === "add" ? target.shape.fuse(tool) : feature.operation === "intersect" ? (target.shape.intersect(tool) as Shape3D) : target.shape.cut(tool);
         if (solidsOf(result).length === 0) {
           result.delete();
@@ -1577,6 +1641,32 @@ export class GeometryEngine {
     return null;
   }
 
+  /** Enclose: the surfaces whose faces were picked, sewn and closed into one solid (the surfaces are used up). */
+  private applyEnclose(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    const ids = [...new Set(picks.map((p) => p.partId))];
+    const surfaces = ids.map((id) => this.parts.find((p) => p.id === id)).filter((p): p is BuiltPart => !!p);
+    if (!surfaces.length) return { error: "Click a face of each surface to close up into a solid." };
+    if (surfaces.some((p) => !p.surface)) return { error: "Enclose closes up surfaces (skins). Remove the faces picked on solid parts." };
+    let solid: Shape3D;
+    try {
+      solid = encloseSurfaces(surfaces.map((p) => p.shape));
+    } catch (e) {
+      return { error: describeError(e, "Couldn't close these surfaces into a solid.") };
+    }
+    if (solidsOf(solid).length === 0 || !isValidSolid(solid)) {
+      solid.delete();
+      return { error: "These surfaces don't close up into a solid — there's a gap somewhere between them. Fill it first." };
+    }
+    for (const p of surfaces) {
+      this.parts.splice(this.parts.indexOf(p), 1);
+      p.shape.delete();
+    }
+    this.tools.set(feature.id, { shape: solid.clone(), operation: "new", partId: feature.id });
+    this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [...new Set([...surfaces.flatMap((p) => p.featureIds), feature.id])], shape: solid });
+    return { newPart: true };
+  }
+
   private applyThicken(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
     const { values, errors } = resolveParams(feature);
     if (errors.thickness) return { error: `Thickness: ${errors.thickness}` };
@@ -1594,6 +1684,32 @@ export class GeometryEngine {
     }
     let solid: Shape3D | null = null;
     try {
+      // A surface (skin): the whole of it thickened into a solid, curved faces and all.
+      if (part.surface) {
+        faces.forEach((f) => f.delete());
+        faces = [];
+        solid = thickenSurface(part.shape, values.thickness * (feature.flipSide ? -1 : 1));
+        if (feature.operation === "new") {
+          // The skin becomes the solid: it's no longer listed as a surface of its own.
+          this.parts.splice(this.parts.indexOf(part), 1);
+          part.shape.delete();
+          this.tools.set(feature.id, { shape: solid.clone(), operation: "new", partId: feature.id });
+          this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [...part.featureIds, feature.id], shape: solid });
+          return { newPart: true };
+        }
+        const onto = [...this.parts].reverse().find((p) => !p.surface);
+        if (!onto) return { error: "There's no solid part to add this to yet. Use New to make one from the surface." };
+        const result = feature.operation === "add" ? onto.shape.fuse(solid) : feature.operation === "intersect" ? (onto.shape.intersect(solid) as Shape3D) : onto.shape.cut(solid);
+        solid.delete();
+        if (solidsOf(result).length === 0) {
+          result.delete();
+          return { error: "This would remove the whole part." };
+        }
+        onto.shape.delete();
+        onto.shape = result;
+        onto.featureIds.push(feature.id);
+        return {};
+      }
       for (const face of faces) {
         if (face.geomType !== "PLANE") throw new Error("Thicken works on flat faces. Remove the curved face.");
         const n = take(face.normalAt());
@@ -1935,7 +2051,7 @@ export class GeometryEngine {
     if (!feature.sketchRef) return "Choose the sketch with the rib's lines.";
     const sketch = sketches.get(feature.sketchRef);
     if (!sketch?.sketch?.plane) return "The sketch it uses can't be found (deleted or suppressed).";
-    const part = this.parts[this.parts.length - 1];
+    const part = [...this.parts].reverse().find((p) => !p.surface);
     if (!part) return "There's no part to add a rib to yet.";
     const frame = planeFrame(sketch.sketch.plane);
     const data = sketch.sketch.data;
@@ -2366,15 +2482,15 @@ export class GeometryEngine {
         }
         let exactVolume: number | null = null;
         try {
-          exactVolume = measureVolume(p.shape);
+          exactVolume = p.surface ? 0 : measureVolume(p.shape);
         } catch {
           exactVolume = null;
         }
         const m = p.shape.mesh(tol);
         const mesh = analyzeMesh(m.vertices, m.triangles);
         // Measuring wall thickness only makes sense on a closed surface.
-        const thinnest = mesh.watertight ? estimateThickness(m.vertices, m.triangles) : null;
-        return { partId: p.id, name: p.name, geometryValid, exactVolume, mesh, thinnest };
+        const thinnest = mesh.watertight && !p.surface ? estimateThickness(m.vertices, m.triangles) : null;
+        return { partId: p.id, name: p.name, geometryValid, exactVolume, mesh, thinnest, ...(p.surface ? { surface: true } : {}) };
       }),
     };
   }
@@ -2786,7 +2902,7 @@ export class GeometryEngine {
   private meshPart(p: BuiltPart): PartMesh {
     const mesh = this.meshPartShape(p);
     const flat = this.flatOf(p);
-    return flat ? { ...mesh, flat } : mesh;
+    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}) };
   }
 
   /** A sheet metal part's flat pattern (null for other parts, or if it can't be unfolded). */

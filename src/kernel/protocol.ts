@@ -95,6 +95,8 @@ export interface PartMesh {
   edgeRefs: EdgeRef[];
   /** Sheet metal parts: the flat pattern (for laser cutting). */
   flat?: FlatPatternData;
+  /** A surface: a thin skin with no inside (thicken or enclose it to make a solid). */
+  surface?: boolean;
 }
 
 /** A sheet metal part laid out flat (mm): the outline to cut, holes, and where it bends. */
@@ -136,6 +138,8 @@ export interface PartCheck {
   mesh: MeshAnalysis;
   /** Thinnest wall found (approximate), or null if it couldn't be measured. */
   thinnest: ThicknessEstimate | null;
+  /** A surface (a skin with no inside), not a solid. */
+  surface?: boolean;
 }
 
 export interface CheckResult {
