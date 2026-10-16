@@ -1360,6 +1360,7 @@ export class GeometryEngine {
             angle: values.angle,
             down: !!feature.flipSide,
             ...(values.inset > 0 ? { inset: values.inset } : {}),
+            ...(feature.closeCorners ? { closeCorners: true } : {}),
           };
       added.push(fl);
       spec = { ...spec, flanges: [...spec.flanges, fl] };

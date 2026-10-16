@@ -119,6 +119,32 @@ describe("sheet metal", () => {
     expect(foldSheet(spec([{ id: "x", wall: "base", edge: 1, length: 20, angle: 180, down: false }])).errors.x).toMatch(/less than 180/);
   });
 
+  it("closes the corner where two flanges meet: one laps the other's end, the other butts against it", () => {
+    const T = 2;
+    const R = 2;
+    const k = 0.5;
+    const two = [
+      { id: "r", wall: "base", edge: 1, length: 30, angle: 90, down: false, closeCorners: true },
+      { id: "t", wall: "base", edge: 2, length: 30, angle: 90, down: false },
+    ];
+    const f = foldSheet(spec(two, T, R, k));
+    expect(f.errors).toEqual({});
+    const [right, top] = [f.walls[1], f.walls[2]];
+    // The right flange runs on past the corner (y = 50) to the top flange's outside face (y = 54)…
+    close(wallPoint(right.frame, [-(R + T), 0]), [100 + R + T, 54, T + R]);
+    // …and the top flange runs on to the right flange's inside face (x = 102).
+    close(wallPoint(top.frame, [100 + R, 0]), [100 + R, 50 + R + T, T + R]);
+    // Flat: both tabs add to the walls, not to the bends.
+    const allowance = (Math.PI / 2) * (R + k * T);
+    expect(area(flatPattern(f).outline)).toBeCloseTo(5000 + 50 * allowance + 26 * 54 + 100 * allowance + 26 * 102, 4);
+    expect(flatPattern(f).bendLines).toHaveLength(2);
+    // Not asked for, or not square-on (a 45° flange): left open.
+    const open = foldSheet(spec(two.map((x) => ({ ...x, closeCorners: false }))));
+    expect(open.walls[1].outline[0]).toEqual({ kind: "line", from: [0, 0], to: [50, 0] });
+    const tilted = foldSheet(spec([two[0], { ...two[1], angle: 45 }]));
+    expect(tilted.walls[1].outline[0]).toEqual({ kind: "line", from: [0, 0], to: [50, 0] });
+  });
+
   it("explains flanges it can't make", () => {
     const f = foldSheet(spec([
       { id: "short", wall: "base", edge: 0, length: 3, angle: 90, down: false },

@@ -53,6 +53,12 @@ export interface FlangeSpec {
   radius?: number;
   /** A hem: the edge folded right back on itself (angle 180, `straight` the length of the folded-over part). */
   hem?: boolean;
+  /**
+   * Close the corner where this flange meets another on the next edge round
+   * (both full-length, at 90°, on a square corner): the walls are extended so
+   * one laps over the other's end instead of leaving a gap.
+   */
+  closeCorners?: boolean;
 }
 
 export interface SheetSpec {
@@ -84,6 +90,11 @@ export interface Bend {
   /** How much shorter than its edge it is at each end, and the relief notches cut into the parent there (in the parent's coordinates, start end first). */
   inset: number;
   reliefs: Segment[][];
+  /** The bend's inside radius, angle (degrees), which way, and the flat wall's height after it. */
+  radius: number;
+  angle: number;
+  down: boolean;
+  straight: number;
   /** The bend's cross-section, drawn in the plane through `start` with x along `out` and y along `up`, swept along `along` for `length`. */
   start: V3;
   out: V3;
@@ -362,6 +373,10 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       child: child.id,
       inset,
       reliefs,
+      radius: R,
+      angle: fl.angle,
+      down: fl.down,
+      straight,
       start: s0,
       out: o,
       up: n,
@@ -372,8 +387,64 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       allowance,
     });
   }
+  closeCorners(spec, walls, bends);
   return { walls, bends, errors };
 }
+
+/** A wall's rectangle from u0 to u1 along its bend edge, `h` high. */
+const rectRange = (u0: number, u1: number, h: number): Segment[] => [
+  { kind: "line", from: [u0, 0], to: [u1, 0] },
+  { kind: "line", from: [u1, 0], to: [u1, h] },
+  { kind: "line", from: [u1, h], to: [u0, h] },
+  { kind: "line", from: [u0, h], to: [u0, 0] },
+];
+
+/**
+ * Closed corners: where two full-length right-angle flanges meet at a square
+ * corner of their wall and either asks for it, extend their ends so the
+ * corner is closed — the first flange's wall runs on to the outside of the
+ * second's, and the second's runs on to butt against the first's inside.
+ */
+function closeCorners(spec: SheetSpec, walls: Wall[], bends: Bend[]): void {
+  const T = spec.thickness;
+  const wants = new Set(spec.flanges.filter((f) => f.closeCorners).map((f) => f.id));
+  if (!wants.size) return;
+  const ext = new Map<string, { lo: number; hi: number }>();
+  const more = (child: string, lo: number, hi: number) => {
+    const e = ext.get(child) ?? { lo: 0, hi: 0 };
+    ext.set(child, { lo: Math.max(e.lo, lo), hi: Math.max(e.hi, hi) });
+  };
+  for (const w of walls) {
+    const k = w.outline.length;
+    for (let i = 0; i < k; i++) {
+      const a = bends.find((b) => b.parent === w.id && b.edge === i);
+      const b = bends.find((x) => x.parent === w.id && x.edge === (i + 1) % k);
+      if (!a || !b || (!wants.has(a.flangeId) && !wants.has(b.flangeId))) continue;
+      const sa = w.outline[i];
+      const sb = w.outline[(i + 1) % k];
+      if (sa.kind !== "line" || sb.kind !== "line") continue;
+      const ea = unit2([sa.to[0] - sa.from[0], sa.to[1] - sa.from[1]]);
+      const eb = unit2([sb.to[0] - sb.from[0], sb.to[1] - sb.from[1]]);
+      const square = Math.abs(ea[0] * eb[0] + ea[1] * eb[1]) < 1e-6 && ea[0] * eb[1] - ea[1] * eb[0] > 0;
+      const right = (x: Bend) => Math.abs(x.angle - 90) < 1e-6 && x.inset < 1e-9;
+      if (!square || !right(a) || !right(b) || a.down !== b.down) continue;
+      // a's wall runs past the corner to b's outside face; b's runs to a's inside face.
+      more(a.child, b.radius + T, 0);
+      more(b.child, 0, a.radius);
+    }
+  }
+  for (const [id, e] of ext) {
+    const wall = walls.find((x) => x.id === id);
+    const bend = bends.find((x) => x.child === id);
+    if (!wall || !bend) continue;
+    wall.outline = rectRange(-e.lo, bend.length + e.hi, bend.straight);
+  }
+}
+
+const unit2 = (v: P2): P2 => {
+  const l = Math.hypot(v[0], v[1]) || 1;
+  return [v[0] / l, v[1] / l];
+};
 
 /** The flat pattern: one outline to cut round (and the holes in it), and the bend lines. */
 export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]; bendLines: [P2, P2][] } {
@@ -410,7 +481,12 @@ export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]
         out.push(flatPoint(wall.flat, seg.from));
         if (bend.reliefs.length) out.push(...notchPoints(wall, bend.reliefs[0], e2, seg.from));
         out.push(at(bend.inset));
+        // Across the bend's strip to the wall, round the wall (its bottom edge may run past the bend at either
+        // end, for a closed corner), and back across the strip.
+        out.push(flatPoint(child.flat, [bend.length, 0]));
         walk(child, 0);
+        const bottom = child.outline[0];
+        if (bottom.kind === "line") out.push(flatPoint(child.flat, bottom.from));
         out.push(flatPoint(child.flat, [0, 0]));
         out.push(at(L - bend.inset));
         if (bend.reliefs.length) out.push(...notchPoints(wall, bend.reliefs[1], e2, seg.from));

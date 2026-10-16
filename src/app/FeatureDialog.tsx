@@ -256,6 +256,12 @@ function RibThickenOptions() {
           </p>
         </fieldset>
       )}
+      {draft.type === "flange" && (
+        <label className="check-row" title="Where one of these flanges meets another full-length 90° flange at a square corner, their ends are extended so one laps over the other instead of leaving a gap">
+          <input type="checkbox" checked={!!draft.closeCorners} onChange={(e) => setDraftField({ closeCorners: e.target.checked || undefined })} />
+          Close corners where flanges meet
+        </label>
+      )}
       <label className="check-row">
         <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked })} />
         {draft.type === "rib"
