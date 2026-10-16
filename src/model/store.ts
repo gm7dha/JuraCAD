@@ -557,6 +557,8 @@ export const useStore = create<AppState>((set, get) => {
         const partId = s.selection[0]?.partId ?? mine[mine.length - 1]?.id;
         if (partId) draft.transform = { ...draft.transform, partId };
       }
+      // A new plane starts offset from the standard plane selected in the list (or 3D view), if any.
+      if (type === "plane" && draft.planeDef && s.selectedPlane) draft.planeDef = { ...draft.planeDef, ref: { kind: "default", name: s.selectedPlane } };
       // Split starts with the part picked in the Parts list (or clicked in the 3D view).
       if (type === "split" && draft.splitDef) {
         const partId = s.selectedParts[0] ?? s.selection[0]?.partId;

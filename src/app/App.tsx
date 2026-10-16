@@ -4,7 +4,7 @@ import { connectKernel } from "../kernel/connect";
 import { activeAssembly, activeDrawing, activeFeatures, studioParts, useStore } from "../model/store";
 import { DrawingPanel, DrawingSheet, DrawingToolbar } from "./DrawingUI";
 import { AssemblyPanel, AssemblyToolbar, ExplodePanel, InsertPanel, InstancePanel, MateDialog, PatternPanel } from "./AssemblyUI";
-import { Viewport, viewportApi } from "../viewport/Viewport";
+import { Viewport, viewNormalToPlaneFeature, viewportApi } from "../viewport/Viewport";
 import type { StandardView } from "../viewport/ViewCube";
 import { CheckDialog } from "./CheckDialog";
 import { ExportDialog } from "./ExportDialog";
@@ -194,7 +194,10 @@ function useShortcuts() {
           break;
         case "n":
         case "N":
-          if (!viewportApi.current?.viewNormalToSelection()) s.showToast("Select a face or plane first, then press N.");
+          if (viewportApi.current?.viewNormalToSelection()) break;
+          // A Plane feature selected in the list (or clicked in the view).
+          if (s.selectedFeatureId && activeFeatures(s).find((f) => f.id === s.selectedFeatureId)?.type === "plane" && viewNormalToPlaneFeature(s.selectedFeatureId)) break;
+          s.showToast("Select a face or plane first, then press N.");
           break;
         case "?":
           s.openDialog("help");

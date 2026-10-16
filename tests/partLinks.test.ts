@@ -40,7 +40,9 @@ describe("grouping the feature list by part", () => {
       { id: "box", name: "Part 2", featureIds: ["box", "join"] },
     ];
     const g = groupByPart(parts, features);
-    expect(g.groups.map((x) => x.featureIds)).toEqual([["pl", "sk", "ex", "join"], ["box", "join"]]);
+    // Planes sit with the standard planes, not under a part.
+    expect(g.planes).toEqual(["pl"]);
+    expect(g.groups.map((x) => x.featureIds)).toEqual([["sk", "ex", "join"], ["box", "join"]]);
     expect(g.other).toEqual(["spare"]);
   });
 });

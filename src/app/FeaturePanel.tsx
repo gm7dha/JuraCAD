@@ -5,7 +5,7 @@ import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isS
 import { activeFeatures, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
 import { nextFolderName } from "../model/document";
 import type { Feature, FeatureType } from "../model/types";
-import { viewportApi } from "../viewport/Viewport";
+import { viewNormalToPlaneFeature, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { clickRow, dragRows } from "../model/listSelection";
 import { featuresOfParts, groupByPart, partsOfFeature } from "../model/partLinks";
@@ -132,7 +132,19 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
   const toggleDatum = useStore((s) => s.toggleDatum);
 
   const entries: MenuEntry[] = [
-    ...(plane ? [{ label: "View normal to", action: () => viewportApi.current?.viewNormalToPlane(plane) }] : []),
+    ...(plane
+      ? [
+          { label: "View normal to", action: () => viewportApi.current?.viewNormalToPlane(plane) },
+          {
+            label: "New plane from this…",
+            action: () => {
+              // A copy of this plane, moved by a distance set in the Plane dialog.
+              useStore.getState().selectPlane(plane);
+              useStore.getState().startCreate("plane");
+            },
+          },
+        ]
+      : []),
     { label: hidden ? "Show" : "Hide", action: () => toggleDatum(name) },
   ];
 
@@ -249,6 +261,7 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
       },
     },
     { label: feature.suppressed ? "Unsuppress" : "Suppress", action: () => toggleSuppressed(feature.id) },
+    ...(feature.type === "plane" ? [{ label: "View normal to", action: () => viewNormalToPlaneFeature(feature.id) }] : []),
     { label: "Roll back to here", action: () => useStore.getState().setRollback(feature.id) },
     feature.folder
       ? { label: `Take out of "${feature.folder}"`, action: () => useStore.getState().setFeatureFolder([feature.id], null) }
@@ -636,7 +649,7 @@ export function FeaturePanel() {
     }
   };
   const [collapsed, setCollapsed] = useState<string[]>([]);
-  const groups = useMemo(() => (grouped ? groupByPart(parts, features) : { groups: [], other: [] }), [grouped, parts, features]);
+  const groups = useMemo(() => (grouped ? groupByPart(parts, features) : { planes: [], groups: [], other: [] }), [grouped, parts, features]);
   const linkedParts = useMemo(() => (selectedFeatureId ? partsOfFeature(parts, selectedFeatureId, features) : []), [parts, selectedFeatureId, features]);
 
   return (
@@ -724,6 +737,11 @@ export function FeaturePanel() {
               }}
             />
           )}
+          {grouped &&
+            groups.planes.map((id) => {
+              const f = features.find((x) => x.id === id);
+              return f ? <FeatureRow key={id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(id)} /> : null;
+            })}
           {grouped &&
             groups.groups.map((g) => (
               <li key={g.partId} className="feature-group" role="treeitem" aria-expanded={!collapsed.includes(g.partId)}>

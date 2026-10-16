@@ -183,3 +183,15 @@ describe("configurations", () => {
     expect(doc().configurations).toBe(undefined);
   });
 });
+
+describe("new plane from a standard plane", () => {
+  it("starts offset from the plane selected in the list", () => {
+    s().selectPlane("Front");
+    s().startCreate("plane");
+    expect(s().editing?.draft.planeDef?.ref).toEqual({ kind: "default", name: "Front" });
+    s().cancelDraft();
+    s().selectPlane(null);
+    s().startCreate("plane");
+    expect(s().editing?.draft.planeDef?.ref).toEqual({ kind: "default", name: "Top" });
+  });
+});
