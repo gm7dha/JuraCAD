@@ -90,7 +90,11 @@ export function HelpDialog() {
       </p>
       <KeyTable rows={rows.sketch} keysFirst />
       <p className="muted small">
-        PartSmith {SHORT_VERSION} ({APP_VERSION}). PartSmith is free and open source (MIT). It uses the OpenCascade geometry kernel (LGPL 2.1) via replicad.{" "}
+        PartSmith {SHORT_VERSION} ({APP_VERSION}) —{" "}
+        <button type="button" className="text-button small-text inline-link" onClick={() => openDialog("whatsNew")}>
+          what's new
+        </button>
+        . PartSmith is free and open source (MIT). It uses the OpenCascade geometry kernel (LGPL 2.1) via replicad.{" "}
         <a href="https://github.com/Gm7dha/partsmith" target="_blank" rel="noreferrer">
           Source on GitHub
         </a>

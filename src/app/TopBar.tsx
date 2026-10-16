@@ -9,11 +9,14 @@ import { browserKind, installApp, installSteps, isInstalledApp, useCanInstall } 
 import { Modal } from "./Modal";
 import { setThemeChoice, themeChoice, type ThemeChoice } from "./theme";
 import { SHORT_VERSION } from "../version";
+import { versionIsNew } from "./WhatsNewDialog";
 import { detectPlatform, shortcut } from "./platform";
 
 export function TopBar() {
   const doc = useDocument();
   const renameDocument = useStore((s) => s.renameDocument);
+  /** A dot on the version until its changes have been looked at. */
+  const [fresh, setFresh] = useState(versionIsNew);
   const openDialog = useStore((s) => s.openDialog);
   const newDocument = useStore((s) => s.newDocument);
   const hasParts = useStore((s) => s.parts.length > 0);
@@ -60,9 +63,19 @@ export function TopBar() {
       >
         {unsaved ? (fileName ? "Unsaved changes" : "Not saved to a file") : fileName ? `Saved · ${fileName}` : ""}
       </span>
-      <span className="phase-badge" title="Your PartSmith version. See Help (?) for what's new.">
-        {SHORT_VERSION} preview
-      </span>
+      <button
+        type="button"
+        className={`phase-badge${fresh ? " fresh" : ""}`}
+        onClick={() => {
+          setFresh(false);
+          useStore.getState().openDialog("whatsNew");
+        }}
+        title="Your PartSmith version — click to see what's new"
+      >
+        {SHORT_VERSION}
+        <span className="badge-extra"> preview</span>
+        {fresh && <span className="badge-dot" aria-label="(new)" />}
+      </button>
       <div className="topbar-spacer" />
       {!installed && (
         <button className="text-button" onClick={() => (canInstall ? void installApp() : setInstallHelp(true))} title="Install PartSmith as an app on this computer — it then opens in its own window and works offline">
