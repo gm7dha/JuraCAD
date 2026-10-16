@@ -18,6 +18,7 @@ import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
+import { offsetSolid } from "./surface";
 import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, loftSurface, offsetSurface, revolveSurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
@@ -2493,11 +2494,33 @@ export class GeometryEngine {
     const { values, errors } = resolveParams(feature);
     if (errors.thickness) return `Wall thickness: ${errors.thickness}`;
     const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
-    if (picks.length === 0) return "Click the face to leave open (usually the top). The rest of the part becomes walls.";
     const partIds = [...new Set(picks.map((p) => p.partId))];
     if (partIds.length > 1) return "Shell works on one part at a time. Remove the faces picked on the other part.";
-    const part = this.parts.find((p) => p.id === partIds[0]);
-    if (!part) return "The part these faces were on no longer exists. Edit this feature and pick the faces again.";
+    const part = picks.length ? this.parts.find((p) => p.id === partIds[0]) : [...this.parts].reverse().find((p) => !p.surface);
+    if (!part) return picks.length ? "The part these faces were on no longer exists. Edit this feature and pick the faces again." : "There's no part to hollow yet.";
+    // No faces picked — or every face (a ball has only one) — hollows it closed inside, with no opening.
+    const all = facesOf(part.shape);
+    const faceCount = all.length;
+    all.forEach((f) => f.delete());
+    if (picks.length === 0 || picks.length >= faceCount) {
+      let inner: Shape3D | null = null;
+      try {
+        inner = offsetSolid(part.shape, -values.thickness);
+        const hollow = part.shape.cut(inner);
+        if (!isValidSolid(hollow) || !shrankWithin(part.shape, hollow)) {
+          hollow.delete();
+          return "Couldn't hollow this part. Try thinner walls — rounded corners and thin areas must be thicker than the walls.";
+        }
+        part.shape.delete();
+        part.shape = hollow;
+        part.featureIds.push(feature.id);
+        return null;
+      } catch {
+        return "Couldn't hollow this part. Try thinner walls — rounded corners and thin areas must be thicker than the walls.";
+      } finally {
+        inner?.delete();
+      }
+    }
 
     let faces: Face[];
     try {

@@ -302,3 +302,26 @@ const unit = (a: Vec3): Vec3 => {
   const l = Math.hypot(a[0], a[1], a[2]) || 1;
   return [a[0] / l, a[1] / l, a[2] / l];
 };
+
+/** A solid grown (or, minus, shrunk) by `distance` all over: for hollowing a part closed inside. */
+export function offsetSolid(shape: Shape3D, distance: number): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const builder = new oc.BRepOffsetAPI_MakeOffsetShape();
+  try {
+    builder.PerformByJoin(shape.wrapped, distance, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false);
+    if (!builder.IsDone()) throw new Error("Couldn't shrink the part for its inside.");
+    const out = cast(builder.Shape()) as Shape3D;
+    // A closed skin: make it a solid to cut away.
+    try {
+      const solid = makeSolid([out as never]);
+      out.delete();
+      return solid;
+    } catch {
+      return out;
+    }
+  } finally {
+    builder.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}

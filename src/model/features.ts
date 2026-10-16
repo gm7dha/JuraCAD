@@ -84,7 +84,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "shell",
     label: "Shell",
     namePrefix: "Shell",
-    description: "Hollows out a part, leaving walls of the thickness you choose.",
+    description: "Hollows out a part, leaving walls of the thickness you choose — open at the faces you pick, or closed inside if you pick none (or every face, as on a ball).",
     params: [{ key: "thickness", label: "Wall thickness", defaultValue: "2", positive: true, group: "size" }],
   },
   hole: {
