@@ -2180,6 +2180,10 @@ describe("surfaces", () => {
     expect(o.parts[1].surface).toBe(true);
     const a1 = area(o.parts[1]);
     const back = area(build([box, skin, { ...off, params: { distance: "-2" } }]).parts[1]);
-    expect([Math.round(a1), Math.round(back)].sort((x, y) => x - y)).toEqual([240, 560]);
+    const [small, big] = [a1, back].sort((x, y) => x - y);
+    expect(small).toBeCloseTo(240, 0);
+    // Outwards the corners are rounded off, so a little under 4 × 14 × 10.
+    expect(big).toBeGreaterThan(500);
+    expect(big).toBeLessThan(561);
   });
 });
