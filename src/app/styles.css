@@ -1449,6 +1449,16 @@ kbd {
   fill: rgba(31, 111, 209, 0.12);
 }
 
+.drawing-select-box {
+  fill: rgba(31, 111, 209, 0.08);
+  stroke: #1f6fd1;
+  stroke-width: 0.3;
+  pointer-events: none;
+}
+.drawing-select-box.crossing {
+  stroke-dasharray: 1.5 1;
+  fill: rgba(31, 160, 90, 0.08);
+}
 .drawing-dim-selected {
   fill: none;
   stroke: var(--accent);
