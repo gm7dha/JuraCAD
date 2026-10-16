@@ -6,6 +6,15 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.15 — Replace face, conics, Group and Width mates · commit `129faf6`
+
+- Part Studio: **Replace face** — move flat faces onto another face or plane parallel to them (to line parts up),
+  with an offset.
+- Sketch: **Conic** — a curve between two points that bends towards a corner, with a Fullness setting
+  (0.5 = a parabola).
+- Assemblies: **Group** (lock parts together so they move as one) and the **Width** mate (centre a part between two
+  faces, like a tab in a slot). The less-used mates and Pattern/Replicate now share ▾ buttons.
+
 ## v0.14 — Polish: tidier toolbars, folders, more sketch and drawing tools · commit `4f3732a`
 
 - Toolbars: every toolbar fits on one row; similar tools share a button (click the **▾** for the others), and
