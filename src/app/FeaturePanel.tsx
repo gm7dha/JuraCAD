@@ -459,7 +459,7 @@ function PartsList({
   linked,
 }: {
   linked: string[];
-  parts: { id: string; name: string }[];
+  parts: { id: string; name: string; flat?: unknown }[];
   hiddenParts: string[];
   toggleHidden: (id: string) => void;
   onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void;
@@ -574,6 +574,11 @@ function PartsList({
           <button type="button" className="text-button small-text" onClick={() => st().openDialog("export")}>
             Export…
           </button>
+          {selected.length === 1 && !!parts.find((p) => p.id === selected[0])?.flat && (
+            <button type="button" className="text-button small-text" onClick={() => st().openDialog("flatPattern")} title="See this sheet metal part laid out flat, and save it for laser cutting">
+              Flat pattern
+            </button>
+          )}
           <button type="button" className="icon-button small" onClick={() => st().setSelectedParts([])} aria-label="Clear selection" title="Clear selection (Esc)">
             <Icons.Cross size={14} />
           </button>

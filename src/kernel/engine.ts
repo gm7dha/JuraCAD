@@ -23,7 +23,7 @@ import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
-import { findSheetEdge, foldSheet, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
+import { findSheetEdge, flatPattern, foldSheet, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
 import { bendSolid, fuseAll, wallSolid } from "./sheetMetal";
 import { fastenerName, fastenerSize } from "../model/fasteners";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
@@ -50,8 +50,9 @@ interface BuiltPart {
   shape: Shape3D;
   /** For a part straight from an imported file: identifies its display mesh, which is kept between rebuilds while the part is unchanged. */
   meshKey?: string;
-  /** Sheet metal parts: the sheet they're folded from (for flanges and the flat pattern). */
+  /** Sheet metal parts: the sheet they're folded from (for flanges and the flat pattern), and the features that made it. */
   sheet?: SheetSpec;
+  sheetFeatures?: string[];
 }
 
 /** Display meshes of unchanged imported parts (they can take seconds to make). */
@@ -1271,7 +1272,7 @@ export class GeometryEngine {
       return { error: describeError(e, "Couldn't make the sheet.") };
     }
     this.tools.set(feature.id, { shape: shape.clone(), operation: "new", partId: feature.id });
-    this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, sheet: spec });
+    this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, sheet: spec, sheetFeatures: [feature.id] });
     return { newPart: true };
   }
 
@@ -1330,6 +1331,7 @@ export class GeometryEngine {
     part.shape = result;
     part.sheet = spec;
     part.featureIds.push(feature.id);
+    part.sheetFeatures = [...(part.sheetFeatures ?? []), feature.id];
     return null;
   }
 
@@ -2321,6 +2323,18 @@ export class GeometryEngine {
   }
 
   private meshPart(p: BuiltPart): PartMesh {
+    const mesh = this.meshPartShape(p);
+    if (!p.sheet) return mesh;
+    try {
+      const flat = flatPattern(foldSheet(p.sheet));
+      const s = p.sheet;
+      return { ...mesh, flat: { ...flat, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) } };
+    } catch {
+      return mesh;
+    }
+  }
+
+  private meshPartShape(p: BuiltPart): PartMesh {
     // An imported part nothing has changed since: reuse its mesh (copied, as the arrays are handed over to the app).
     const key = p.meshKey && p.featureIds.length === 1 ? p.meshKey : null;
     const cached = key ? importedMeshes.get(key) : undefined;

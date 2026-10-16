@@ -1803,6 +1803,12 @@ describe("sheet metal", () => {
     // The plate, a quarter-round bend (radii 2 and 4) and a 26 mm straight wall, all 50 mm long and 2 mm thick.
     expect(vol()).toBeCloseTo(10000 + (Math.PI / 4) * (16 - 4) * 50 + 26 * 50 * 2, 1);
     expect(r2.parts).toHaveLength(1);
+    // Its flat pattern: 100 wide plus the bend allowance (π/2 × (2 + 0.45 × 2)) and the 26 mm wall.
+    const flat = r2.parts[0].flat!;
+    expect(flat.bendLines).toHaveLength(1);
+    const xs = flat.outline.map((q) => q[0]);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(100 + (Math.PI / 2) * (2 + 0.45 * 2) + 26, 4);
+    expect(flat.notShown).toEqual([]);
     // Not a sheet metal part: a clear message.
     const box = feature("box", { width: 10, depth: 10, height: 10 });
     const r3 = build([box]);

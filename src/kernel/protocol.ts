@@ -81,6 +81,20 @@ export interface PartMesh {
   faceRefs: FaceRef[];
   /** What each edge looks like (same order as edgeGroups). */
   edgeRefs: EdgeRef[];
+  /** Sheet metal parts: the flat pattern (for laser cutting). */
+  flat?: FlatPatternData;
+}
+
+/** A sheet metal part laid out flat (mm): the outline to cut, holes, and where it bends. */
+export interface FlatPatternData {
+  outline: [number, number][];
+  holes: [number, number][][];
+  bendLines: [[number, number], [number, number]][];
+  thickness: number;
+  radius: number;
+  k: number;
+  /** Features that changed the part after it was made from sheet (cuts and the like): not in the flat pattern. */
+  notShown: string[];
 }
 
 export interface RebuildResult {
