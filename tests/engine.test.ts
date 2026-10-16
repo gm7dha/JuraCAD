@@ -1534,6 +1534,40 @@ describe("several Part Studios", () => {
     engine.rebuildStudios([{ id: "main", features: [a] }]);
     expect(engine.partCount).toBe(1);
   });
+
+  it("brings a part in from another Part Studio (Derived), and follows changes to it", () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    // The studio using the part comes first in the list: it's still built after the one it uses.
+    const derived: Feature = { ...feature("derived", { x: 0, y: 0, z: 20 }), derived: { studioId: "s2", partId: box.id } };
+    const hole = feature("cylinder", { diameter: 4, height: 40, x: 5, y: 5, z: 0 }, "remove");
+    const zs = (m: { vertices: Float32Array | number[] }) => Array.from(m.vertices).filter((_, k) => k % 3 === 2);
+    const r = engine.rebuildStudios([
+      { id: "main", features: [derived, hole] },
+      { id: "s2", features: [box] },
+    ]);
+    expect(r.featureErrors).toEqual({});
+    const mine = r.parts.find((p) => p.studioId === "main")!;
+    expect(mine.name).toBe("Part 1");
+    expect(Math.min(...zs(mine))).toBeCloseTo(20, 4);
+    // Cut in its new home; the original is untouched.
+    expect(analyzeMesh(mine.vertices, mine.triangles).volume).toBeCloseTo(1000 - Math.PI * 4 * 10, 0);
+    // The original gets taller: the derived part follows.
+    const taller = { ...box, params: { ...box.params, height: "15" } };
+    const r2 = engine.rebuildStudios([
+      { id: "main", features: [derived, hole] },
+      { id: "s2", features: [taller] },
+    ]);
+    expect(r2.rebuilt.sort()).toEqual(["main", "s2"]);
+    const mine2 = r2.parts.find((p) => p.studioId === "main")!;
+    expect(Math.max(...zs(mine2))).toBeCloseTo(35, 4);
+    // Gone, or using each other: said plainly.
+    const lost: Feature = { ...derived, derived: { studioId: "s2", partId: "nope" } };
+    expect(engine.rebuildStudios([{ id: "main", features: [lost] }, { id: "s2", features: [taller] }]).featureErrors[lost.id]).toMatch(/isn't in its Part Studio/);
+    const back: Feature = { ...feature("derived", {}), derived: { studioId: "main", partId: derived.id } };
+    const loop = engine.rebuildStudios([{ id: "main", features: [derived] }, { id: "s2", features: [taller, back] }]);
+    expect(Object.values(loop.featureErrors).join(" ")).toMatch(/uses parts from this one/);
+  });
 });
 
 describe("assembly exports and clashes", () => {

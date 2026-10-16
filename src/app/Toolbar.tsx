@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { activeFeatures, studioParts, useStore } from "../model/store";
+import { activeFeatures, activeStudioId, studioParts, useStore } from "../model/store";
 import type { FeatureType } from "../model/types";
 import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -85,6 +85,7 @@ export function Toolbar() {
   const hasSheet = useStore((s) => studioParts(s).some((p) => !!p.flat));
   const showFlat = useStore((s) => s.showFlat);
   const partCount = useStore((s) => studioParts(s).length);
+  const otherStudioParts = useStore((s) => s.parts.some((p) => !p.configuration && p.studioId !== undefined && p.studioId !== activeStudioId(s)));
   const sectionOn = useStore((s) => s.section !== null);
   const printBedOn = useStore((s) => s.printBed !== null);
   const platform = detectPlatform();
@@ -306,7 +307,15 @@ export function Toolbar() {
           onClick={() => startCreate("fastener")}
           disabled={!ready}
           active={editingType === "fastener"}
-          title="Fastener — a standard hex bolt, nut or washer (M3–M12) as a new part, optionally with its thread"
+          title="Fastener — a standard bolt, screw (socket cap, button head, countersunk, pan head, grub), nut or washer (M3–M12) as a new part, optionally with its thread"
+        />
+        <ToolButton
+          label="Derived"
+          icon={<Icons.Derived />}
+          onClick={() => startCreate("derived")}
+          disabled={!ready || !otherStudioParts}
+          active={editingType === "derived"}
+          title={otherStudioParts ? "Derived — bring a part from another Part Studio into this one (it updates when the original changes)" : "Make a part in another Part Studio first"}
         />
         <ToolGroupButton
           id="holes"

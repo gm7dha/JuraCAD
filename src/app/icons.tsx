@@ -203,6 +203,14 @@ export const Icons = {
       <path d="M12 6v9" strokeDasharray="1.5 1.5" />
     </Svg>
   ),
+  Derived: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="3" y="3" width="8" height="8" rx="1" />
+      <rect x="13" y="13" width="8" height="8" rx="1" />
+      <path d="M11 7h4a2 2 0 0 1 2 2v4" />
+      <path d="M15 11l2 2 2-2" />
+    </Svg>
+  ),
   Section: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 8 12 4l8 4v8l-8 4-8-4z" />
