@@ -97,7 +97,7 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
     return joined(
       wires.map((w) => {
         try {
-          return genericSweep(w, spine, { transitionMode: "round", forceProfileSpineOthogonality: false }, true);
+          return genericSweep(w, spine, { transitionMode: "round", forceProfileSpineOthogonality: false }, true) as Shape3D;
         } catch {
           throw new Error("Couldn't sweep the outline along that path. Check it sits at the start of the path and is small enough for its bends.");
         }
