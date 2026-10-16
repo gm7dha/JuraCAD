@@ -968,8 +968,8 @@ function PicksField() {
   const parts = useStore(studioParts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
-  const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap"];
-  const flange = draft?.type === "flange" || draft?.type === "hem";
+  const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap", "enclose", "offsetSurface"];
+  const flange = draft?.type === "flange" || draft?.type === "hem" || draft?.type === "fill";
   if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type) || flange)) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
@@ -986,6 +986,12 @@ function PicksField() {
       <legend>
         {draft.type === "hem"
           ? "Edges to fold over"
+          : draft.type === "fill"
+          ? "Edges round the opening"
+          : draft.type === "enclose"
+          ? "Surfaces to close up"
+          : draft.type === "offsetSurface"
+          ? "Surface to offset"
           : flange
           ? "Edges to bend off"
           : draft.type === "thread"
@@ -1008,6 +1014,12 @@ function PicksField() {
         <p className="dialog-hint pick-hint">
           {draft.type === "hem"
             ? "Click straight edges of a sheet metal part (on its top or bottom face). Each is folded back over the sheet."
+            : draft.type === "fill"
+            ? "Click every edge round the opening (on any parts, surfaces or solids). They must join up into one ring."
+            : draft.type === "enclose"
+            ? "Click a face of each surface. Together they must close up with no gaps — Fill any openings first."
+            : draft.type === "offsetSurface"
+            ? "Click a face of the surface to offset."
             : flange
             ? "Click straight edges of a sheet metal part (on its top or bottom face). Each gets a flange; you can also click a flange's own edges."
             : draft.type === "thread"
@@ -1252,7 +1264,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -1270,6 +1282,16 @@ export function FeatureDialog() {
         </div>
         )}
 
+        {(draft.type === "extrude" || draft.type === "revolve" || draft.type === "sweep" || draft.type === "loft") && (
+          <label className="check-row" title="A thin skin with no inside, made from the sketch's lines and curves (open or closed). Thicken it, or Enclose several surfaces, to get a solid">
+            <input
+              type="checkbox"
+              checked={!!draft.surface}
+              onChange={(e) => setDraftField(e.target.checked ? { surface: true, operation: "new" } : { surface: undefined })}
+            />
+            Surface (a thin skin, no inside)
+          </label>
+        )}
         <PlaneDefOptions />
         <BooleanOptionsField />
         <DeletePartOptions />

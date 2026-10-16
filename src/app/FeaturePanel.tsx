@@ -48,6 +48,9 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   hem: Icons.Hem,
   fullRound: Icons.FullRound,
   wrap: Icons.Wrap,
+  fill: Icons.Fill,
+  enclose: Icons.Enclose,
+  offsetSurface: Icons.OffsetSurface,
   tab: Icons.Tab,
   deleteFace: Icons.DeleteFace,
   thread: Icons.Thread,
@@ -383,10 +386,13 @@ function PartRow({
   onMenu,
   onPress,
   onPassOver,
+  surface,
 }: {
   id: string;
   name: string;
   hidden: boolean;
+  /** A surface (a skin with no inside). */
+  surface?: boolean;
   selected: boolean;
   linked: boolean;
   onToggle: () => void;
@@ -458,6 +464,11 @@ function PartRow({
       ) : (
         <span className="feature-name">{name}</span>
       )}
+      {surface && (
+        <span className="muted small part-tag" title="A surface: a thin skin with no inside. Thicken it, or Enclose several, to make a solid.">
+          surface
+        </span>
+      )}
       <EyeButton hidden={hidden} name={name} onToggle={onToggle} />
     </li>
   );
@@ -477,7 +488,7 @@ function PartsList({
   linked,
 }: {
   linked: string[];
-  parts: { id: string; name: string; flat?: unknown }[];
+  parts: { id: string; name: string; flat?: unknown; surface?: boolean }[];
   hiddenParts: string[];
   toggleHidden: (id: string) => void;
   onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void;
@@ -566,6 +577,7 @@ function PartsList({
             id={p.id}
             name={p.name}
             hidden={hiddenParts.includes(p.id)}
+            surface={p.surface}
             selected={selected.includes(p.id)}
             linked={linked.includes(p.id)}
             onToggle={() => toggleHidden(p.id)}

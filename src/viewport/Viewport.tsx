@@ -129,7 +129,7 @@ export function viewNormalToPlaneFeature(id: string): boolean {
 }
 
 const NO_IDS: string[] = [];
-const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap"]);
+const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap", "enclose", "offsetSurface"]);
 
 /** Apply a click in the viewport to the selection, like Onshape. */
 function handlePick(target: PickTarget | null, additive: boolean) {
@@ -243,6 +243,17 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       return;
     }
   }
+  // Fill: the edges round an opening.
+  if (s.editing?.draft.type === "fill") {
+    if (target?.kind !== "part") return;
+    if (target.item.kind !== "edge") {
+      s.showToast("Click the edges round the opening (not a face).");
+      return;
+    }
+    const pick = pickFor(s.parts, target.item);
+    if (pick) s.toggleDraftPick(pick);
+    return;
+  }
   // Flange: straight edges of a sheet metal part.
   if (s.editing?.draft.type === "flange" || s.editing?.draft.type === "hem") {
     if (target?.kind !== "part") return;
@@ -260,15 +271,15 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
   // Thicken, Draft, Move face, Replace face, Delete face: faces.
   const faceFeature = s.editing?.draft.type;
-  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "replaceFace" || faceFeature === "deleteFace" || faceFeature === "fullRound" || faceFeature === "thread" || faceFeature === "wrap") {
+  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "replaceFace" || faceFeature === "deleteFace" || faceFeature === "fullRound" || faceFeature === "thread" || faceFeature === "wrap" || faceFeature === "enclose" || faceFeature === "offsetSurface") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "face") {
       s.showToast("Click a face rather than an edge.");
       return;
     }
     const pick = pickFor(s.parts, target.item);
-    // Wrap goes round one face: a new click replaces the last.
-    if (pick && faceFeature === "wrap") s.setDraftField({ picks: [pick] });
+    // Wrap goes round one face, Offset surface works on one surface: a new click replaces the last.
+    if (pick && (faceFeature === "wrap" || faceFeature === "offsetSurface")) s.setDraftField({ picks: [pick] });
     else if (pick) s.toggleDraftPick(pick);
     return;
   }
@@ -406,9 +417,10 @@ export function Viewport() {
   /** The parts of the Part Studio on show. */
   const shownParts = useStore(studioParts);
   const selection = useStore((s) => s.selection);
+  // Whatever the open feature has picked (edges and faces) is shown highlighted.
   const picks = useStore((s) =>
-    s.editing && isPickFeature(s.editing.draft.type)
-      ? s.editing.draft.picks ?? null
+    s.editing?.draft.picks
+      ? s.editing.draft.picks
       : s.editing?.draft.extrude?.end === "upToFace" && s.editing.draft.extrude.upTo
         ? s.editing.draft.extrude.upTo
         : null,

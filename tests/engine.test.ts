@@ -2058,3 +2058,119 @@ describe("sheet metal", () => {
     expect(build([box, { ...flange, picks: [{ partId: r3.parts[0].id, ref: boxEdge }] }]).featureErrors.fl).toMatch(/isn't a sheet metal part/);
   });
 });
+
+describe("surfaces", () => {
+  const area = (m: { vertices: Float32Array; triangles: Uint32Array }) => {
+    let a = 0;
+    const v = m.vertices;
+    const t = m.triangles;
+    for (let i = 0; i + 2 < t.length; i += 3) {
+      const [p, q, r] = [t[i], t[i + 1], t[i + 2]].map((k) => [v[3 * k], v[3 * k + 1], v[3 * k + 2]]);
+      const u = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+      const w = [r[0] - p[0], r[1] - p[1], r[2] - p[2]];
+      a += Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]) / 2;
+    }
+    return a;
+  };
+  /** An open L: along X 20, then up Y 10. */
+  const openL = () => {
+    let d = addLine(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 0 }).sketch;
+    d = addLine(d, { x: 20, y: 0 }, { x: 20, y: 10 }).sketch;
+    return d;
+  };
+
+  it("extrudes an open outline into a surface, and a closed one into a skin with no ends", () => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, openL());
+    const ex: Feature = { ...extrudeFeature(sk.id, 5), surface: true };
+    const r = build([sk, ex]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    expect(r.parts[0].surface).toBe(true);
+    expect(r.parts[0].name).toBe("Surface 1");
+    // Two walls: 20 × 5 and 10 × 5, no top or bottom.
+    expect(area(r.parts[0])).toBeCloseTo(150, 2);
+    expect(r.parts[0].faceRefs).toHaveLength(2);
+    const box = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 10, 10));
+    const skin = build([box, { ...extrudeFeature(box.id, 10), surface: true }]);
+    expect(skin.featureErrors).toEqual({});
+    expect(area(skin.parts[0])).toBeCloseTo(400, 2);
+    // The check says what it is, and it has no volume.
+    const c = engine.check("coarse");
+    expect(c.parts[0].surface).toBe(true);
+    expect(c.parts[0].exactVolume).toBe(0);
+    // A solid made afterwards doesn't try to add to the surface.
+    const later = build([box, { ...extrudeFeature(box.id, 10), surface: true }, feature("box", { width: 5, depth: 5, height: 5, x: 30 }, "add")]);
+    expect(later.featureErrors).toEqual({});
+    expect(later.parts.map((p) => !!p.surface)).toEqual([true, false]);
+  });
+
+  it("revolves, sweeps and lofts outlines into surfaces", () => {
+    // A line 10 from the axis, spun right round: a tube of radius 10, 20 long (no ends).
+    const d = addLine(emptySketch(), { x: 10, y: 0 }, { x: 10, y: 20 }).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Front" }, d);
+    const rev: Feature = { ...feature("revolve", { angle: 360 }), sketchRef: sk.id, revolve: { axis: "vertical", flip: false }, surface: true };
+    const r = build([sk, rev]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts[0].surface).toBe(true);
+    expect(area(r.parts[0])).toBeCloseTo(2 * Math.PI * 10 * 20, -1);
+    // Loft: two open arcs of different sizes on parallel planes.
+    const arcA = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: -10, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 6 }).sketch);
+    const arcB = sketchFeature(planeOnFace([0, 0, 1], [0, 0, 20], "up"), addArc(emptySketch(), { x: -20, y: 0 }, { x: 20, y: 0 }, { x: 0, y: 12 }).sketch);
+    const lo: Feature = { ...feature("loft", {}), sections: [arcA.id, arcB.id], surface: true };
+    const l = build([arcA, arcB, lo]);
+    expect(l.featureErrors).toEqual({});
+    expect(l.parts[0].surface).toBe(true);
+    expect(area(l.parts[0])).toBeGreaterThan(400);
+    // Sweep: a line swept along an arc: a bent strip.
+    const prof = sketchFeature({ kind: "default", name: "Right" }, addLine(emptySketch(), { x: 0, y: 0 }, { x: 0, y: 8 }).sketch);
+    const path = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: 0, y: 0 }, { x: 30, y: 30 }, { x: 21, y: 9 }).sketch);
+    const sw: Feature = { ...feature("sweep", {}), sketchRef: prof.id, pathRef: path.id, surface: true };
+    const s = build([prof, path, sw]);
+    expect(s.featureErrors).toEqual({});
+    expect(s.parts[0].surface).toBe(true);
+    expect(area(s.parts[0])).toBeGreaterThan(100);
+  });
+
+  it("fills openings, encloses surfaces into a solid, and thickens or offsets a surface", () => {
+    const box = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 10, 10));
+    const skin: Feature = { ...extrudeFeature(box.id, 10), surface: true };
+    const first = build([box, skin]);
+    const p = first.parts[0];
+    // The four edges round the top opening (at z = 10) and the bottom (z = 0).
+    const ring = (z: number) => p.edgeRefs.filter((e) => e.curve === "LINE" && Math.abs(e.a[2] - z) < 1e-6 && Math.abs(e.b[2] - z) < 1e-6).map((ref) => ({ partId: p.id, ref }));
+    expect(ring(10)).toHaveLength(4);
+    const top: Feature = { ...feature("fill", {}), picks: ring(10) };
+    const bottom: Feature = { ...feature("fill", {}), picks: ring(0) };
+    const filled = build([box, skin, top, bottom]);
+    expect(filled.featureErrors).toEqual({});
+    expect(filled.parts.map((x) => x.name)).toEqual(["Surface 1", "Surface 2", "Surface 3"]);
+    expect(area(filled.parts[1])).toBeCloseTo(100, 3);
+    // Enclose the three into a 10 mm cube.
+    const faceOf = (part: (typeof filled.parts)[number]) => ({ partId: part.id, ref: part.faceRefs[0] });
+    const enc: Feature = { ...feature("enclose", {}), picks: filled.parts.map(faceOf) };
+    const closed = build([box, skin, top, bottom, enc]);
+    expect(closed.featureErrors).toEqual({});
+    expect(closed.parts).toHaveLength(1);
+    expect(closed.parts[0].surface).toBeUndefined();
+    expect(closed.parts[0].name).toBe("Part 1");
+    expect(analyzeMesh(closed.parts[0].vertices, closed.parts[0].triangles).volume).toBeCloseTo(1000, 1);
+    expect(engine.check("coarse").parts[0].exactVolume).toBeCloseTo(1000, 3);
+    // A missing side: can't be enclosed.
+    const gap: Feature = { ...enc, picks: [faceOf(filled.parts[0]), faceOf(filled.parts[1])] };
+    expect(build([box, skin, top, bottom, gap]).featureErrors[gap.id]).toMatch(/gap/);
+    // Thicken the open skin 1 mm outwards: a 12 × 12 × 10 box less the 10 × 10 × 10 inside.
+    const thick: Feature = { ...feature("thicken", { thickness: 1 }, "new"), picks: [faceOf(p)] };
+    const t = build([box, skin, thick]);
+    expect(t.featureErrors).toEqual({});
+    expect(t.parts).toHaveLength(1);
+    expect(t.parts[0].surface).toBeUndefined();
+    expect(Math.abs(engine.check("coarse").parts[0].exactVolume! - (12 * 12 - 100) * 10)).toBeLessThan(1);
+    // Offset the skin 2 mm outwards: a 14 × 14 skin, 10 tall, as another surface.
+    const off: Feature = { ...feature("offsetSurface", { distance: 2 }), picks: [faceOf(p)] };
+    const o = build([box, skin, off]);
+    expect(o.featureErrors).toEqual({});
+    expect(o.parts).toHaveLength(2);
+    expect(o.parts[1].surface).toBe(true);
+    expect(area(o.parts[1])).toBeCloseTo(4 * 14 * 10, 0);
+  });
+});

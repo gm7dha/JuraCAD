@@ -41,6 +41,19 @@ export function reportPart(p: PartCheck): PartReport {
   const m = p.mesh;
   const findings: Finding[] = [];
 
+  if (p.surface) {
+    // A skin with no inside: nothing to print as it is.
+    findings.push({ level: "warn", text: "Is a surface (a thin skin with no inside) — Thicken it, or Enclose several surfaces, to make a solid you can print" });
+    if (m.triangleCount === 0) findings.push({ level: "error", text: "Has no surface at all" });
+    if (p.geometryValid === false) findings.push({ level: "warn", text: "OpenCascade reported a geometry problem — check the exported file carefully" });
+    let size = "—";
+    if (m.bounds) {
+      const d = m.bounds.max.map((v, i) => v - m.bounds!.min[i]);
+      size = lengthUnit() === "in" ? `${d.map((v) => lengthNumber(v, "in", 2)).join(" × ")} in` : `${round(d[0])} × ${round(d[1])} × ${round(d[2])} mm`;
+    }
+    return { partId: p.partId, name: p.name, level: worst(findings.map((f) => f.level)), findings, size, volume: "—", volumeMm3: 0 };
+  }
+
   if (m.watertight) {
     findings.push({ level: "ok", text: "Closed and watertight" });
   } else {

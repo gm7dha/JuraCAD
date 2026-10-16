@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { findRegions } from "../src/sketch/regions";
+import { findChains, findRegions } from "../src/sketch/regions";
+import { addCircle, addLine } from "../src/sketch/ops";
+import { emptySketch } from "../src/sketch/types";
 import type { SketchData } from "../src/sketch/types";
 
 function rect(prefix: string, x0: number, y0: number, w: number, h: number, construction = false): SketchData {
@@ -106,5 +108,31 @@ describe("closed shapes", () => {
     (s.curves[3] as { p2: string }).p2 = "copy";
     const r = findRegions(s);
     expect(r.regions).toHaveLength(1);
+  });
+});
+
+describe("chains (for surfaces)", () => {
+  it("finds open runs as well as closed rings, walked in order", () => {
+    // An open L of two lines, a closed triangle, a circle, and three lines meeting at a junction.
+    let s = addLine(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 0 }).sketch;
+    s = addLine(s, { x: 10, y: 0 }, { x: 10, y: 10 }).sketch;
+    s = addLine(s, { x: 20, y: 0 }, { x: 30, y: 0 }).sketch;
+    s = addLine(s, { x: 30, y: 0 }, { x: 25, y: 8 }).sketch;
+    s = addLine(s, { x: 25, y: 8 }, { x: 20, y: 0 }).sketch;
+    s = addCircle(s, { x: 50, y: 50 }, 5).sketch;
+    for (const to of [[70, 0], [0, 70], [-70, 0]] as [number, number][]) s = addLine(s, { x: 60, y: 60 }, { x: to[0], y: to[1] }).sketch;
+    const { chains, problems } = findChains(s);
+    expect(problems).toEqual(["1 shape has lines meeting at a junction, so it was left out."]);
+    expect(chains.map((c) => [c.closed, c.segments.length]).sort()).toEqual([
+      [false, 2],
+      [true, 1],
+      [true, 3],
+    ]);
+    const open = chains.find((c) => !c.closed)!;
+    // From one free end to the other, each piece starting where the last ended.
+    expect((open.segments[0] as { from: [number, number] }).from).toEqual([0, 0]);
+    expect((open.segments[1] as { to: [number, number] }).to).toEqual([10, 10]);
+    // Regions still ignore the open and branching shapes.
+    expect(findRegions(s).regions).toHaveLength(2);
   });
 });
