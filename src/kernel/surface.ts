@@ -111,12 +111,8 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
         const pipe = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
         try {
           pipe.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RoundCorner);
-          pipe.Add_1(w.wrapped, false, false);
-          try {
-            pipe.Build(new oc.Message_ProgressRange_1());
-          } catch {
-            pipe.Build();
-          }
+          pipe.Add(w.wrapped, false, true);
+          pipe.Build();
           if (!pipe.IsDone()) throw new Error("the path and outline don't go together");
           return cast(pipe.Shape()) as Shape3D;
         } catch (e) {
@@ -188,10 +184,10 @@ export function thickenSurface(shape: Shape3D, thickness: number): Shape3D {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const faces = facesOf(shape);
-  const none = new oc.TopTools_ListOfShape_1();
+  const none = new oc.NCollection_List_TopoDS_Shape();
   const builder = new oc.BRepOffsetAPI_MakeThickSolid();
   try {
-    builder.MakeThickSolidByJoin(shape.wrapped, none, thickness, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Arc, false, new oc.Message_ProgressRange_1());
+    builder.MakeThickSolidByJoin(shape.wrapped, none, thickness, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Arc, false);
     if (!builder.IsDone()) throw new Error("Couldn't thicken this surface. Try a smaller thickness, or the other side.");
     return cast(builder.Shape()) as Shape3D;
   } finally {
@@ -221,7 +217,7 @@ export function offsetSurface(shape: Shape3D, distance: number): Shape3D {
   const oc = getOC() as any;
   const builder = new oc.BRepOffsetAPI_MakeOffsetShape();
   try {
-    builder.PerformByJoin(shape.wrapped, distance, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Arc, false, new oc.Message_ProgressRange_1());
+    builder.PerformByJoin(shape.wrapped, distance, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Arc, false);
     if (!builder.IsDone()) throw new Error("Couldn't offset this surface that far. Try a smaller distance.");
     return cast(builder.Shape()) as Shape3D;
   } finally {
