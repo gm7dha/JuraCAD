@@ -26,8 +26,9 @@ import { findRegions } from "../sketch/regions";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { findSheetEdge, flatPattern, flatPoint, foldSheet, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
 import { bendSolid, fusePieces, wallCutLines, wallSolid } from "./sheetMetal";
+import { flatProjection } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize } from "../model/fasteners";
-import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import type { CheckResult, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
@@ -2171,12 +2172,20 @@ export class GeometryEngine {
    */
   project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sections: SectionRequest[] = []): ViewProjection[] {
     const placed = instances?.length ? this.placeInstances(instances) : [];
-    const shapes = placed.length ? placed.map((p) => p.shape) : (partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts.filter((p) => !p.configured)).map((p) => p.shape);
+    const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts.filter((p) => !p.configured);
+    const shapes = placed.length ? placed.map((p) => p.shape) : chosen.map((p) => p.shape);
     const empty = (kind: string): ViewProjection => ({ kind, visible: [], hidden: [], circles: [], points: [], bounds: null });
-    const standard = views.filter((k) => k !== "section");
+    // The flat pattern view: the one sheet metal part drawn (nothing for assemblies or several parts).
+    const flatView = (): ViewProjection => {
+      const sheets = placed.length ? [] : chosen.filter((p) => p.sheet);
+      const flat = sheets.length === 1 ? this.flatOf(sheets[0]) : null;
+      return flat ? flatProjection(flat) : empty("flat");
+    };
+    const standard = views.filter((k) => k !== "section" && k !== "flat");
+    const flats = views.filter((k) => k === "flat").map(flatView);
     if (shapes.length === 0) {
       placed.forEach((p) => p.shape.delete());
-      return [...standard.map(empty), ...sections.map((s) => empty(s.key))];
+      return [...standard.map(empty), ...flats, ...sections.map((s) => empty(s.key))];
     }
     const whole = (shapes.length === 1 ? shapes[0] : makeCompound(shapes)) as Shape3D;
     let wholeAxes: [Vec3, Vec3][] | null = null;
@@ -2209,6 +2218,7 @@ export class GeometryEngine {
             }));
         });
       }
+      out.push(...flats);
       for (const req of sections) {
         let host = out.find((p) => p.kind === req.host);
         if (!host) {
@@ -2408,7 +2418,13 @@ export class GeometryEngine {
 
   private meshPart(p: BuiltPart): PartMesh {
     const mesh = this.meshPartShape(p);
-    if (!p.sheet) return mesh;
+    const flat = this.flatOf(p);
+    return flat ? { ...mesh, flat } : mesh;
+  }
+
+  /** A sheet metal part's flat pattern (null for other parts, or if it can't be unfolded). */
+  private flatOf(p: BuiltPart): FlatPatternData | null {
+    if (!p.sheet) return null;
     try {
       const folded = foldSheet(p.sheet);
       const flat = flatPattern(folded);
@@ -2417,9 +2433,9 @@ export class GeometryEngine {
         const wall = folded.walls.find((w) => w.id === c.wall);
         return wall ? c.lines.map(([a, b]): [[number, number], [number, number]] => [flatPoint(wall.flat, a), flatPoint(wall.flat, b)]) : [];
       });
-      return { ...mesh, flat: { ...flat, cuts, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) } };
+      return { ...flat, cuts, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) };
     } catch {
-      return mesh;
+      return null;
     }
   }
 

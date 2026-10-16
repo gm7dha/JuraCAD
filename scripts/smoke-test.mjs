@@ -1091,6 +1091,36 @@ try {
     const dxf = readFileSync(await (await dxfDownload).path(), "utf8");
     if (!dxf.includes("ENTITIES") || !/\nLINE\n/.test(dxf)) throw new Error("the flat pattern DXF has no lines");
     await page.keyboard.press("Escape");
+    // A flange on the sheet, then its flat pattern on the drawing, with the bend listed.
+    step = "putting the flat pattern on a drawing";
+    const sheetName = await page.locator(".part-row").last().innerText();
+    await page.locator(".part-row").last().click();
+    await page.keyboard.press("f");
+    await page.waitForTimeout(600);
+    const edgeAt = await page.evaluate(() => {
+      const s = window.partsmithStore.getState();
+      const part = s.parts.find((q) => q.flat);
+      // A straight edge along the sheet's top face, nearest the camera (lowest on screen).
+      const v = window.partsmithViewport.current;
+      const spots = part.edgeRefs
+        .map((e, i) => ({ e, i }))
+        .filter(({ e }) => e.curve === "LINE" && Math.abs(e.a[2] - e.b[2]) < 1e-6 && e.a[2] > 1)
+        .map(({ i }) => v.screenPointOnEdge(part.id, i))
+        .filter(Boolean);
+      return spots.sort((a, b) => b.y - a.y)[0];
+    });
+    await tool("Flange");
+    await page.mouse.click(box.x + edgeAt.x, box.y + edgeAt.y);
+    await page.waitForFunction(() => (window.partsmithStore.getState().editing?.draft.picks?.length ?? 0) === 1, null, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => !window.partsmithStore.getState().editing, null, { timeout: 30_000 });
+    await page.getByRole("button", { name: "Drawing 1" }).click();
+    await page.locator("#drawing-source").selectOption({ label: sheetName.trim().split("\n")[0] });
+    await page.getByLabel("Flat pattern (sheet metal)").check();
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "FLAT PATTERN"), null, { timeout: 60_000 });
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^B1: (UP|DOWN) 90°/.test(t.textContent ?? "")), null, { timeout: 10_000 });
+    await shot("flatview");
+    await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));

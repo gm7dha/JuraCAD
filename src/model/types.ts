@@ -187,7 +187,7 @@ export interface PartSmithDocument {
 
 /** Which way a drawing view looks at the part. */
 /** "section" is a view of the part cut through along a line drawn on another view (see Drawing.sections). */
-export type ViewKind = "front" | "top" | "right" | "left" | "back" | "bottom" | "iso" | "section" | "detail";
+export type ViewKind = "front" | "top" | "right" | "left" | "back" | "bottom" | "iso" | "section" | "detail" | "flat";
 
 /** One view on a drawing sheet. */
 export interface DrawingView {

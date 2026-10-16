@@ -447,7 +447,15 @@ const unit2 = (v: P2): P2 => {
 };
 
 /** The flat pattern: one outline to cut round (and the holes in it), and the bend lines. */
-export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]; bendLines: [P2, P2][] } {
+export interface FlatBend {
+  line: [P2, P2];
+  /** Degrees; up = towards the sheet's top (n) side. */
+  angle: number;
+  radius: number;
+  up: boolean;
+}
+
+export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]; bendLines: [P2, P2][]; bends: FlatBend[] } {
   const childOn = new Map<string, Wall>();
   const bendOn = new Map<string, Bend>();
   for (const b of folded.bends) {
@@ -497,7 +505,12 @@ export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]
   };
   walk(folded.walls[0], undefined);
   const holes = folded.walls.flatMap((w) => w.holes.map((h) => outlinePoints(h).map((p) => flatPoint(w.flat, p))));
-  return { outline: dedupe(out), holes, bendLines: folded.bends.map((b) => b.flatLine) };
+  return {
+    outline: dedupe(out),
+    holes,
+    bendLines: folded.bends.map((b) => b.flatLine),
+    bends: folded.bends.map((b) => ({ line: b.flatLine, angle: b.angle, radius: b.radius, up: !b.down })),
+  };
 }
 
 function dedupe(pts: P2[]): P2[] {
