@@ -687,11 +687,14 @@ try {
     await page.locator(".feature-row >> text=Bracket <2>").click({ modifiers: ["Shift"] });
     await page.getByRole("button", { name: "Group", exact: true }).click();
     await page.waitForSelector(".panel-section.groups .feature-row >> text=Group 1", { timeout: 5_000 });
-    // A grouped part says so, and can be ungrouped from there.
-    // (Part 2 is after the brackets in the list, so it's the one that follows the group.)
-    await page.locator(".side-panel .feature-row >> text=Part 2 <1>").first().click();
-    const said = await page.locator(".instance-panel").innerText();
-    if (!/In Group 1/.test(said)) throw new Error(`a grouped part's panel says: ${said.slice(0, 120)}`);
+    // A grouped part says so, and can be ungrouped from there (the one the group carries: the other may be held by a mate).
+    let said = "";
+    for (const name of ["Bracket <2>", "Part 2 <1>"]) {
+      await page.locator(".side-panel .feature-row", { hasText: name }).first().click();
+      said = await page.locator(".instance-panel").innerText();
+      if (/In Group 1/.test(said)) break;
+    }
+    if (!/In Group 1/.test(said)) throw new Error(`neither grouped part's panel mentions the group: ${said.slice(0, 120)}`);
     await shot("group");
     await page.getByRole("button", { name: "Ungroup Group 1" }).click();
     await page.waitForSelector(".panel-section.groups", { state: "detached", timeout: 5_000 });
