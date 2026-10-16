@@ -47,6 +47,8 @@ export interface FlangeSpec {
   down: boolean;
   /** The flat part's length straight after the bend, instead of working it out from `length` (sheets from an open outline). */
   straight?: number;
+  /** Shorten the flange this much at each end of the edge (a bend relief is cut at each end so it can bend). */
+  inset?: number;
 }
 
 export interface SheetSpec {
@@ -75,6 +77,9 @@ export interface Bend {
   /** The parent's edge it bends off. */
   edge: number;
   child: string;
+  /** How much shorter than its edge it is at each end, and the relief notches cut into the parent there (in the parent's coordinates, start end first). */
+  inset: number;
+  reliefs: Segment[][];
   /** The bend's cross-section, drawn in the plane through `start` with x along `out` and y along `up`, swept along `along` for `length`. */
   start: V3;
   out: V3;
@@ -267,13 +272,39 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
 
     const [ax, ay] = seg.from;
     const [bx, by] = seg.to;
-    const len = Math.hypot(bx - ax, by - ay);
-    const e2: P2 = [(bx - ax) / len, (by - ay) / len];
+    const full = Math.hypot(bx - ax, by - ay);
+    const e2: P2 = [(bx - ax) / full, (by - ay) / full];
+    const inset = Math.max(0, fl.inset ?? 0);
+    const len = full - 2 * inset;
+    if (len < 0.01) {
+      used.delete(key);
+      errors[fl.id] = `Shortened too much: that edge is only ${Math.round(full * 100) / 100} mm long.`;
+      continue;
+    }
+    // The flange's ends along the edge, and relief notches (thickness wide and deep) into the parent beyond them.
+    const along = (t: number): P2 => [ax + e2[0] * t, ay + e2[1] * t];
+    const startP = along(inset);
+    const endP = along(full - inset);
+    const into: P2 = [-e2[1], e2[0]];
+    const w = Math.min(T, inset);
+    const notch = (t0: number): Segment[] => {
+      const p = along(t0);
+      const q = along(t0 + w);
+      const qi: P2 = [q[0] + into[0] * T, q[1] + into[1] * T];
+      const pi: P2 = [p[0] + into[0] * T, p[1] + into[1] * T];
+      return anticlockwise([
+        { kind: "line", from: p, to: q },
+        { kind: "line", from: q, to: qi },
+        { kind: "line", from: qi, to: pi },
+        { kind: "line", from: pi, to: p },
+      ]);
+    };
+    const reliefs = inset > 1e-9 ? [notch(inset - w), notch(full - inset)] : [];
     const f = parent.frame;
     const e = add(mul(f.u, e2[0]), mul(f.v, e2[1]));
     const n = f.n;
     const o = cross3(e, n); // outward: the right of an anticlockwise edge
-    const s0 = wallPoint(f, seg.to);
+    const s0 = wallPoint(f, endP);
     const sin = Math.sin(theta);
     const cos = Math.cos(theta);
     let origin: V3;
@@ -309,8 +340,8 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     const pf = parent.flat;
     const eF: P2 = add2(mul2(pf.u, e2[0]), mul2(pf.v, e2[1]));
     const outF: P2 = [eF[1], -eF[0]];
-    const bF = flatPoint(pf, seg.to);
-    const aF = flatPoint(pf, seg.from);
+    const bF = flatPoint(pf, endP);
+    const aF = flatPoint(pf, startP);
     const child: Wall = {
       id: fl.id,
       frame: { origin, u: mul(e, -1), v: d, n: nn },
@@ -325,6 +356,8 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       parent: parent.id,
       edge: fl.edge,
       child: child.id,
+      inset,
+      reliefs,
       start: s0,
       out: o,
       up: n,
@@ -341,7 +374,20 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
 /** The flat pattern: one outline to cut round (and the holes in it), and the bend lines. */
 export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]; bendLines: [P2, P2][] } {
   const childOn = new Map<string, Wall>();
-  for (const b of folded.bends) childOn.set(`${b.parent}:${b.edge}`, folded.walls.find((w) => w.id === b.child)!);
+  const bendOn = new Map<string, Bend>();
+  for (const b of folded.bends) {
+    childOn.set(`${b.parent}:${b.edge}`, folded.walls.find((w) => w.id === b.child)!);
+    bendOn.set(`${b.parent}:${b.edge}`, b);
+  }
+  /** A relief notch's corners in order along the edge: out of the edge, in, across, back out. */
+  const notchPoints = (wall: Wall, r: Segment[], e2: P2, from: P2): P2[] => {
+    const pts = r.map((s) => (s.kind === "line" ? s.from : [0, 0])) as P2[];
+    const t = (p: P2) => (p[0] - from[0]) * e2[0] + (p[1] - from[1]) * e2[1];
+    const onEdge = (p: P2) => Math.abs((p[0] - from[0]) * e2[1] - (p[1] - from[1]) * e2[0]) < 1e-9;
+    const edge = pts.filter(onEdge).sort((a, b) => t(a) - t(b));
+    const inner = pts.filter((p) => !onEdge(p)).sort((a, b) => t(a) - t(b));
+    return [edge[0], inner[0], inner[1], edge[1]].map((p) => flatPoint(wall.flat, p));
+  };
   const out: P2[] = [];
   /** Go round a wall's outline (skipping its bend edge, where it joins its parent), detouring round any flange on its edges. */
   const walk = (wall: Wall, skip: number | undefined) => {
@@ -353,9 +399,17 @@ export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]
       const seg = wall.outline[i];
       const child = childOn.get(`${wall.id}:${i}`);
       if (seg.kind === "line" && child) {
+        const bend = bendOn.get(`${wall.id}:${i}`)!;
+        const L = Math.hypot(seg.to[0] - seg.from[0], seg.to[1] - seg.from[1]);
+        const e2: P2 = [(seg.to[0] - seg.from[0]) / L, (seg.to[1] - seg.from[1]) / L];
+        const at = (t: number): P2 => flatPoint(wall.flat, [seg.from[0] + e2[0] * t, seg.from[1] + e2[1] * t]);
         out.push(flatPoint(wall.flat, seg.from));
+        if (bend.reliefs.length) out.push(...notchPoints(wall, bend.reliefs[0], e2, seg.from));
+        out.push(at(bend.inset));
         walk(child, 0);
         out.push(flatPoint(child.flat, [0, 0]));
+        out.push(at(L - bend.inset));
+        if (bend.reliefs.length) out.push(...notchPoints(wall, bend.reliefs[1], e2, seg.from));
       } else {
         for (const p of outlinePoints([seg])) out.push(flatPoint(wall.flat, p));
       }

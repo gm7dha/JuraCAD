@@ -1809,6 +1809,9 @@ describe("sheet metal", () => {
     const xs = flat.outline.map((q) => q[0]);
     expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(100 + (Math.PI / 2) * (2 + 0.45 * 2) + 26, 4);
     expect(flat.notShown).toEqual([]);
+    // Shortened by 10 at each end: 30 wide, with a 2 × 2 relief notch (through the 2 mm sheet) beside each end.
+    build([sk, sheet(sk.id), { ...flange, params: { length: "30", angle: "90", inset: "10" } }]);
+    expect(vol()).toBeCloseTo(10000 - 2 * 8 + (Math.PI / 4) * (16 - 4) * 30 + 26 * 30 * 2, 1);
     // A hole drilled through the plate afterwards (a 10 mm cylinder taken away) shows in the flat pattern, round its centre.
     const drill = feature("cylinder", { diameter: 10, height: 20, x: 50, y: 25, z: -5 }, "remove");
     const r4 = build([sk, sheet(sk.id), flange, drill]);

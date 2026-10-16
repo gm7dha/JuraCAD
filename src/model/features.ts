@@ -263,6 +263,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     params: [
       { key: "length", label: "Length (outside, to the tip)", defaultValue: "20", positive: true, group: "size" },
       { key: "angle", label: "Bend angle", defaultValue: "90", positive: true, group: "size", unit: "°" },
+      { key: "inset", label: "Shorten each end by (a relief is cut so it can bend)", defaultValue: "0", min: 0, group: "size" },
     ],
   },
   thicken: {

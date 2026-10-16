@@ -83,6 +83,22 @@ describe("sheet metal", () => {
     expect(findSheetEdge(f, 2, [10, 70, 0], [90, 70, 0])).toBe(null);
   });
 
+  it("shortens a flange at each end, cutting a relief notch into the sheet beside each end of the bend", () => {
+    const T = 2;
+    const R = 2;
+    const k = 0.5;
+    const f = foldSheet(spec([{ id: "f", wall: "base", edge: 1, length: 30, angle: 90, down: false, inset: 10 }], T, R, k));
+    expect(f.errors).toEqual({});
+    // 30 wide (50 less 10 each end), starting 10 in from y = 50.
+    close(wallPoint(f.walls[1].frame, [0, 0]), [104, 40, 4]);
+    close(wallPoint(f.walls[1].frame, [30, 0]), [104, 10, 4]);
+    expect(f.bends[0].reliefs).toHaveLength(2);
+    // Flat: the plate less two 2 × 2 notches, plus the 30 wide strip and flange.
+    const allowance = (Math.PI / 2) * (R + k * T);
+    expect(area(flatPattern(f).outline)).toBeCloseTo(100 * 50 - 2 * T * T + 30 * (allowance + 26), 4);
+    expect(foldSheet(spec([{ id: "g", wall: "base", edge: 1, length: 30, angle: 90, down: false, inset: 25 }])).errors.g).toMatch(/Shortened too much/);
+  });
+
   it("explains flanges it can't make", () => {
     const f = foldSheet(spec([
       { id: "short", wall: "base", edge: 0, length: 3, angle: 90, down: false },
