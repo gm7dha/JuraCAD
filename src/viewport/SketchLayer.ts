@@ -46,7 +46,7 @@ type Pt = [number, number];
 function curveSegments(s: SketchData, c: SketchCurve): [Pt, Pt][] {
   if (c.type === "line") return [[pointPos(s, c.p1), pointPos(s, c.p2)]];
   if (c.type === "spline" || c.type === "ellipse") {
-    const pts = c.type === "spline" ? splinePolyline(splinePoints(s, c), c.closed) : ellipsePoints(s, c);
+    const pts = c.type === "spline" ? splinePolyline(splinePoints(s, c), c.closed, undefined, c.conic) : ellipsePoints(s, c);
     return pts.slice(1).map((q, i) => [pts[i], q] as [Pt, Pt]);
   }
   const [cx, cy] = pointPos(s, c.center);
@@ -267,6 +267,12 @@ export class SketchLayer {
       for (const seg of segs) {
         (c.construction ? consSegs : solidSegs).push(seg);
         (c.construction ? consCols : solidCols).push(colour);
+      }
+      // A conic's guide lines out to its corner point (dashed).
+      if (c.type === "spline" && c.conic !== undefined && c.points.length === 3) {
+        const [a, m, b] = splinePoints(data, c);
+        consSegs.push([a, m], [m, b]);
+        consCols.push(colour, colour);
       }
     }
     this.solid.set(frame, solidSegs, solidCols);

@@ -58,7 +58,14 @@ export function parseSketchData(raw: unknown): SketchData | null {
     else if (c.type === "arc" && str(c.center) && str(c.start) && str(c.end))
       curves.push({ id: c.id, type: "arc", center: c.center, start: c.start, end: c.end, construction });
     else if (c.type === "spline" && Array.isArray(c.points) && c.points.length >= 2 && c.points.every(str))
-      curves.push({ id: c.id, type: "spline", points: c.points as string[], closed: c.closed === true && c.points.length >= 3, construction });
+      curves.push({
+        id: c.id,
+        type: "spline",
+        points: c.points as string[],
+        closed: c.closed === true && c.points.length >= 3 && typeof c.conic !== "number",
+        construction,
+        ...(typeof c.conic === "number" && c.conic > 0 && c.conic < 1 && c.points.length === 3 ? { conic: c.conic } : {}),
+      });
     else if (c.type === "ellipse" && str(c.center) && str(c.major) && str(c.minor))
       curves.push({ id: c.id, type: "ellipse", center: c.center, major: c.major, minor: c.minor, construction });
     else return null;

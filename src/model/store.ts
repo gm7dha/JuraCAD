@@ -88,6 +88,7 @@ export type SketchTool =
   | "arc"
   | "tangentArc"
   | "spline"
+  | "conic"
   | "ellipse"
   | "point"
   | "dimension"
@@ -121,6 +122,8 @@ export interface SketchSession {
   provisional: string[];
   /** Polygon tool: number of sides. */
   polygonSides: number;
+  /** Conic tool: how full new conics are (0.5 = a parabola). */
+  conicRho?: number;
   /** Corner-rounding tool: radius as typed. */
   filletRadius: string;
   /** Offset tool: distance as typed. */
@@ -249,7 +252,7 @@ export interface AppState {
   keepOfferedDimension: (id: string) => void;
   /** Drop any offered dimensions not kept yet. */
   discardOfferedDimensions: () => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**

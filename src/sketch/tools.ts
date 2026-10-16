@@ -661,7 +661,7 @@ export function mirrorCurves(s: SketchData, axisId: string, curveIds: string[]):
       curves.push({ id, type: "circle", center: copyOf(c.center), radius: c.radius, construction: c.construction });
       constraints.push({ id: sketchId("c"), type: "equal", refs: [c.id, id] });
     } else if (c.type === "spline") {
-      curves.push({ id: sketchId("sp"), type: "spline", points: c.points.map(copyOf), closed: c.closed, construction: c.construction });
+      curves.push({ id: sketchId("sp"), type: "spline", points: c.points.map(copyOf), closed: c.closed, construction: c.construction, ...(c.conic !== undefined ? { conic: c.conic } : {}) });
     } else if (c.type === "ellipse") {
       curves.push({ id: sketchId("el"), type: "ellipse", center: copyOf(c.center), major: copyOf(c.major), minor: copyOf(c.minor), construction: c.construction });
     } else {
@@ -834,7 +834,7 @@ function copyCurvesWith(s: SketchData, sources: SketchCurve[], move: (p: P2) => 
     for (const c of sources) {
       if (c.type === "line") curves.push({ id: sketchId("l"), type: "line", p1: copyOf(c.p1), p2: copyOf(c.p2), construction: c.construction });
       else if (c.type === "circle") curves.push({ id: sketchId("k"), type: "circle", center: copyOf(c.center), radius: c.radius, construction: c.construction });
-      else if (c.type === "spline") curves.push({ id: sketchId("sp"), type: "spline", points: c.points.map(copyOf), closed: c.closed, construction: c.construction });
+      else if (c.type === "spline") curves.push({ id: sketchId("sp"), type: "spline", points: c.points.map(copyOf), closed: c.closed, construction: c.construction, ...(c.conic !== undefined ? { conic: c.conic } : {}) });
       else if (c.type === "ellipse")
         curves.push({ id: sketchId("el"), type: "ellipse", center: copyOf(c.center), major: copyOf(c.major), minor: copyOf(c.minor), construction: c.construction });
       else curves.push({ id: sketchId("a"), type: "arc", center: copyOf(c.center), start: copyOf(c.start), end: copyOf(c.end), construction: c.construction });
@@ -937,6 +937,38 @@ export function addSpline(s: SketchData, placed: Placed[], closed: boolean, cons
   const id = sketchId("sp");
   const spline: SketchSpline = { id, type: "spline", points: ids, closed, construction };
   return { ...settle({ ...sk, curves: [...sk.curves, spline] }), splineId: id };
+}
+
+// ---------------------------------------------------------------------------
+// Conic
+
+/**
+ * A conic from `start` to `end`, pulled towards the corner point `apex` by
+ * `rho` (0.5 = a parabola; less is flatter, more is fuller).
+ */
+export function addConic(s: SketchData, start: Placed, end: Placed, apex: Placed, rho: number, construction = false): EditResult & { conicId: string } {
+  const fail = (error: string) => ({ sketch: s, conicId: "", error });
+  if (!(rho > 0 && rho < 1)) return fail("The conic's fullness must be between 0 and 1 (0.5 is a parabola).");
+  let sk = s;
+  const ids: string[] = [];
+  for (const p of [start, apex, end]) {
+    const r = placePoint(sk, p);
+    sk = r.sketch;
+    ids.push(r.id);
+  }
+  if (new Set(ids).size < 3) return fail("Click three different points: both ends, then the corner the curve bends towards.");
+  const [a, m, b] = ids.map((id) => pointPos(sk, id));
+  const cross = (m[0] - a[0]) * (b[1] - a[1]) - (m[1] - a[1]) * (b[0] - a[0]);
+  if (Math.abs(cross) < 1e-6 * Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1]) ** 2)) return fail("The corner point is in line with the ends, so there's no bend. Click it off to one side.");
+  const id = sketchId("cn");
+  const conic: SketchSpline = { id, type: "spline", points: ids, closed: false, construction, conic: rho };
+  return { ...settle({ ...sk, curves: [...sk.curves, conic] }), conicId: id };
+}
+
+/** Change a conic's fullness. */
+export function setConicRho(s: SketchData, id: string, rho: number): SketchData {
+  if (!(rho > 0 && rho < 1)) return s;
+  return { ...s, curves: s.curves.map((c) => (c.id === id && c.type === "spline" && c.conic !== undefined ? { ...c, conic: rho } : c)) };
 }
 
 // ---------------------------------------------------------------------------

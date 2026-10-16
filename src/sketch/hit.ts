@@ -32,7 +32,7 @@ export function distToCurve(s: SketchData, c: SketchCurve, x: number, y: number)
     return distToSegment(x, y, ax, ay, bx, by);
   }
   if (c.type === "spline" || c.type === "ellipse") {
-    const pts = c.type === "spline" ? splinePolyline(splinePoints(s, c), c.closed) : ellipsePoints(s, c);
+    const pts = c.type === "spline" ? splinePolyline(splinePoints(s, c), c.closed, undefined, c.conic) : ellipsePoints(s, c);
     let best = Infinity;
     for (let i = 0; i + 1 < pts.length; i++) best = Math.min(best, distToSegment(x, y, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]));
     return best;

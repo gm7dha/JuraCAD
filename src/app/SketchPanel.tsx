@@ -7,6 +7,32 @@ import { findRegions } from "../sketch/regions";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { makeSketchPattern, makeSketchTransform, setPatternOption } from "./sketchActions";
+import { setConicRho } from "../sketch/tools";
+
+/** A conic's fullness: a slider from flat to full, and the number (0.5 = a parabola). */
+function ConicFullness({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  const take = (raw: string) => {
+    const v = Number(raw);
+    if (v > 0 && v < 1) onChange(Math.round(v * 1000) / 1000);
+  };
+  return (
+    <label className="tool-option" title="How full the conic is: less than 0.5 is flatter (part of an ellipse), 0.5 is a parabola, more is fuller (towards the corner)">
+      Fullness
+      <input type="range" min={0.05} max={0.95} step={0.01} value={value} aria-label="Conic fullness slider" onChange={(e) => take(e.target.value)} />
+      <input
+        className="short-input"
+        value={text}
+        spellCheck={false}
+        aria-label="Conic fullness"
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => take(text)}
+        onKeyDown={(e) => e.key === "Enter" && take(text)}
+      />
+    </label>
+  );
+}
 
 /** The sketch's feature panel (top-left of the viewport), like Onshape's sketch dialog. */
 export function SketchPanel() {
@@ -15,6 +41,8 @@ export function SketchPanel() {
   const selectionCount = useStore((s) => s.sketch?.selection.length ?? 0);
   const tool = useStore((s) => s.sketch?.tool ?? "select");
   const polygonSides = useStore((s) => s.sketch?.polygonSides ?? 6);
+  const conicRho = useStore((s) => s.sketch?.conicRho ?? 0.5);
+  const selection = useStore((s) => s.sketch?.selection);
   const filletRadius = useStore((s) => s.sketch?.filletRadius ?? "2");
   const offsetDistance = useStore((s) => s.sketch?.offsetDistance ?? "2");
   const patternKind = useStore((s) => s.sketch?.patternKind ?? "linear");
@@ -89,6 +117,21 @@ export function SketchPanel() {
             />
           </label>
         )}
+        {(() => {
+          // The conic tool's fullness, or the selected conic's.
+          const picked = selection?.length === 1 ? data.curves.find((c) => c.id === selection[0] && c.type === "spline" && c.conic !== undefined) : undefined;
+          const rho = picked?.type === "spline" ? picked.conic : tool === "conic" ? conicRho : undefined;
+          if (rho === undefined) return null;
+          return (
+            <ConicFullness
+              value={rho}
+              onChange={(v) => {
+                if (picked) useStore.getState().updateSketch(setConicRho(data, picked.id, v));
+                else setSketchOptions({ conicRho: v });
+              }}
+            />
+          );
+        })()}
         {tool === "offset" && (
           <label className="tool-option">
             Distance

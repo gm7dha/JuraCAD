@@ -220,9 +220,9 @@ export function findRegions(sketch: SketchData): RegionResult {
       } else if (e.curve.type === "spline") {
         // Its pieces, the other way round when walking it backwards.
         const ps = e.curve.points.map((id) => pts.get(id)!);
-        const pieces = splineBeziers(forward ? ps : [...ps].reverse(), false);
+        const pieces = splineBeziers(forward ? ps : [...ps].reverse(), false, e.curve.conic);
         for (const [f, c1, c2, t] of pieces) segments.push({ kind: "bezier", from: f, c1, c2, to: t });
-        polygon.push(...splinePolyline(forward ? ps : [...ps].reverse(), false).slice(0, -1));
+        polygon.push(...splinePolyline(forward ? ps : [...ps].reverse(), false, undefined, e.curve.conic).slice(0, -1));
       } else {
         const center = pts.get(e.curve.center)!;
         const s = pts.get(e.curve.start)!;

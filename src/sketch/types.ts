@@ -43,13 +43,18 @@ export interface SketchArc {
   construction: boolean;
 }
 
-/** A smooth curve through its points, in order (closed: joined back to the first). */
+/**
+ * A smooth curve through its points, in order (closed: joined back to the first).
+ * With `conic` it's a conic instead: from its first point to its last, pulled
+ * towards the middle one (the corner) by that amount (0.5 = a parabola).
+ */
 export interface SketchSpline {
   id: string;
   type: "spline";
   points: string[];
   closed: boolean;
   construction: boolean;
+  conic?: number;
 }
 
 /** An ellipse: its centre and the ends of its two axes (kept square to each other). */
