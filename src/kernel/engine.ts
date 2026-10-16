@@ -1137,6 +1137,7 @@ export class GeometryEngine {
   private buildFeatures(features: Feature[]): Record<string, string> {
     const featureErrors: Record<string, string> = {};
     let partCounter = 0;
+    let surfaceCounter = 0;
     const sketches: SketchMap = new Map();
 
     for (const feature of features) {
@@ -1266,9 +1267,9 @@ export class GeometryEngine {
         }
         try {
           const skin = buildSolid(feature, values, sketches, features, this.parts);
-          partCounter++;
+          surfaceCounter++;
           this.tools.set(feature.id, { shape: skin.clone(), operation: "new", partId: feature.id });
-          this.parts.push({ id: feature.id, name: `Surface ${partCounter}`, featureIds: [feature.id], shape: skin, surface: true });
+          this.parts.push({ id: feature.id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true });
         } catch (e) {
           featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         }

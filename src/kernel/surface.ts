@@ -95,17 +95,32 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
   const spine = pathWire(pathPlane, path);
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
+  const why = (e: unknown): string => {
+    if (e instanceof Error) return e.message;
+    try {
+      const [, message] = oc.getExceptionMessage(e);
+      return String(message);
+    } catch {
+      return String(e);
+    }
+  };
   try {
     return joined(
       wires.map((w) => {
-        // OpenCascade's plain pipe carries any outline (open or closed) along the path as a skin.
-        const pipe = new oc.BRepOffsetAPI_MakePipe_1(spine.wrapped, w.wrapped);
+        // OpenCascade's pipe shell carries any outline (open or closed) along the path as a skin.
+        const pipe = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
         try {
-          pipe.Build(new oc.Message_ProgressRange_1());
-          if (!pipe.IsDone()) throw new Error("not done");
+          pipe.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RoundCorner);
+          pipe.Add_1(w.wrapped, false, false);
+          try {
+            pipe.Build(new oc.Message_ProgressRange_1());
+          } catch {
+            pipe.Build();
+          }
+          if (!pipe.IsDone()) throw new Error("the path and outline don't go together");
           return cast(pipe.Shape()) as Shape3D;
-        } catch {
-          throw new Error("Couldn't sweep the outline along that path. Check it sits at the start of the path and is small enough for its bends.");
+        } catch (e) {
+          throw new Error(`Couldn't sweep the outline along that path (${why(e)}). Check it sits at the start of the path and is small enough for its bends.`);
         } finally {
           pipe.delete();
         }
