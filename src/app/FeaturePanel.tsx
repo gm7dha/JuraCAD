@@ -574,7 +574,7 @@ function PartsList({
           <button type="button" className="text-button small-text" onClick={() => st().openDialog("export")}>
             Export…
           </button>
-          {selected.length === 1 && parts.find((p) => p.id === selected[0])?.flat && (
+          {selected.length === 1 && !!parts.find((p) => p.id === selected[0])?.flat && (
             <button type="button" className="text-button small-text" onClick={() => st().openDialog("flatPattern")} title="See this sheet metal part laid out flat, and save it for laser cutting">
               Flat pattern
             </button>
