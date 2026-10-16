@@ -7,7 +7,7 @@ import { groupOf, makeGroup, removeGroup, tidyGroups } from "../src/assembly/gro
 import { applyPlacement, IDENTITY, quatFromEulerDeg, type Placement, type Vec3 } from "../src/assembly/math";
 import { solveAssembly } from "../src/assembly/mates";
 import { emptyDocument } from "../src/model/document";
-import type { Assembly, Instance, Mate } from "../src/model/types";
+import type { Assembly, Instance, Mate, PartSmithDocument } from "../src/model/types";
 
 const close = (a: number[], b: number[], digits = 6) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], digits));
 const at = (x: number, y: number, z: number, turn = 0): Placement => ({ position: [x, y, z], rotation: quatFromEulerDeg(0, 0, turn) });
@@ -75,7 +75,7 @@ describe("groups", () => {
     expect(gone.groups![0].members).toEqual(["b", "c"]);
     close(gone.groups![0].offsets.c.position, [10, 0, 0]);
     // Down to one part: no group.
-    let doc = { ...emptyDocument(), assemblies: [{ ...one, id: "asm" }] };
+    let doc: PartSmithDocument = { ...emptyDocument(), assemblies: [{ ...one, id: "asm" }] };
     doc = removeInstances(doc, "asm", ["a"]);
     expect(doc.assemblies![0].groups).toBe(undefined);
     expect(removeGroup(one, "g1").groups).toBe(undefined);
