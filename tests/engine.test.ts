@@ -1774,3 +1774,39 @@ describe("curve pattern", () => {
     expect(build([plate, peg, { ...pattern, pathRef: undefined }]).featureErrors[pattern.id]).toMatch(/path/);
   });
 });
+
+describe("sheet metal", () => {
+  const vol = () => engine.check("normal").parts[0].exactVolume!;
+  const sheet = (sketchRef: string, flipSide = false): Feature => ({
+    id: "sm",
+    name: "Sheet metal 1",
+    type: "sheetMetal",
+    operation: "new",
+    suppressed: false,
+    params: { thickness: "2", radius: "2", kFactor: "0.45" },
+    sketchRef,
+    ...(flipSide ? { flipSide: true } : {}),
+  });
+
+  it("makes a flat sheet from a sketch, then bends a flange up off a picked edge", () => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 100, 50));
+    const r1 = build([sk, sheet(sk.id)]);
+    expect(r1.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(100 * 50 * 2, 3);
+    // The right-hand edge (x = 100) along the sheet's top face.
+    const p = r1.parts[0];
+    const ref = p.edgeRefs.find((e) => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[0] - 100) < 1e-6 && Math.abs(e.b[0] - 100) < 1e-6 && Math.abs(e.a[2] - 2) < 1e-6)!;
+    expect(ref).toBeTruthy();
+    const flange: Feature = { id: "fl", name: "Flange 1", type: "flange", operation: "add", suppressed: false, params: { length: "30", angle: "90" }, picks: [{ partId: p.id, ref }] };
+    const r2 = build([sk, sheet(sk.id), flange]);
+    expect(r2.featureErrors).toEqual({});
+    // The plate, a quarter-round bend (radii 2 and 4) and a 26 mm straight wall, all 50 mm long and 2 mm thick.
+    expect(vol()).toBeCloseTo(10000 + (Math.PI / 4) * (16 - 4) * 50 + 26 * 50 * 2, 1);
+    expect(r2.parts).toHaveLength(1);
+    // Not a sheet metal part: a clear message.
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const r3 = build([box]);
+    const boxEdge = r3.parts[0].edgeRefs.find((e) => e.kind === "edge" && e.curve === "LINE")!;
+    expect(build([box, { ...flange, picks: [{ partId: r3.parts[0].id, ref: boxEdge }] }]).featureErrors.fl).toMatch(/isn't a sheet metal part/);
+  });
+});

@@ -22,6 +22,9 @@ import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
+import { findRegions } from "../sketch/regions";
+import { findSheetEdge, foldSheet, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
+import { bendSolid, fuseAll, wallSolid } from "./sheetMetal";
 import { fastenerName, fastenerSize } from "../model/fasteners";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
@@ -47,6 +50,8 @@ interface BuiltPart {
   shape: Shape3D;
   /** For a part straight from an imported file: identifies its display mesh, which is kept between rebuilds while the part is unchanged. */
   meshKey?: string;
+  /** Sheet metal parts: the sheet they're folded from (for flanges and the flat pattern). */
+  sheet?: SheetSpec;
 }
 
 /** Display meshes of unchanged imported parts (they can take seconds to make). */
@@ -1052,6 +1057,17 @@ export class GeometryEngine {
         if (r.newPart) partCounter++;
         continue;
       }
+      if (feature.type === "sheetMetal") {
+        const r = this.applySheetMetal(feature, sketches, partCounter + 1);
+        if (r.error) featureErrors[feature.id] = r.error;
+        if (r.newPart) partCounter++;
+        continue;
+      }
+      if (feature.type === "flange") {
+        const err = this.applyFlange(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "thread") {
         const err = this.applyThread(feature);
         if (err) featureErrors[feature.id] = err;
@@ -1225,6 +1241,98 @@ export class GeometryEngine {
   }
 
   /** Grow picked flat faces into a solid, then make it a new part or add it to, cut it from or intersect it with their part. */
+  /** Sheet metal: a flat sheet from a closed sketch, kept as a sheet so flanges can be bent off it. */
+  private applySheetMetal(feature: Feature, sketches: SketchMap, nextPartNumber: number): { error?: string; newPart?: boolean } {
+    const { values, errors } = resolveParams(feature);
+    const bad = FEATURE_DEFS.sheetMetal.params.find((p) => errors[p.key]);
+    if (bad) return { error: `${bad.label}: ${errors[bad.key]}` };
+    if (values.kFactor > 1) return { error: "K-factor: use a value from 0 to 1 (0.45 is usual)." };
+    if (!feature.sketchRef) return { error: "Choose the sketch with the sheet's shape." };
+    const sketch = sketches.get(feature.sketchRef);
+    if (!sketch?.sketch?.plane) return { error: "The sketch it uses can't be found (deleted, suppressed, or after this in the list)." };
+    const { regions, problems } = findRegions(sketch.sketch.data);
+    if (regions.length === 0) return { error: `The sketch has no closed shape for the sheet.${problems.length ? ` ${problems.join(" ")}` : ""}` };
+    if (regions.length > 1) return { error: "Sheet metal needs one closed shape (holes inside it are fine). Put other shapes in another sketch." };
+    const frame = planeFrame(sketch.sketch.plane);
+    const T = values.thickness;
+    // Flipped: the sheet sits below the sketch.
+    const origin = feature.flipSide ? ([frame.origin[0] - frame.n[0] * T, frame.origin[1] - frame.n[1] * T, frame.origin[2] - frame.n[2] * T] as Vec3) : frame.origin;
+    const spec: SheetSpec = {
+      thickness: T,
+      radius: values.radius,
+      k: values.kFactor,
+      base: { frame: { origin, u: frame.u, v: frame.v, n: frame.n }, outer: regions[0].outer.segments, holes: regions[0].holes.map((h) => h.segments) },
+      flanges: [],
+    };
+    let shape: Shape3D;
+    try {
+      shape = wallSolid(foldSheet(spec).walls[0], T);
+    } catch (e) {
+      return { error: describeError(e, "Couldn't make the sheet.") };
+    }
+    this.tools.set(feature.id, { shape: shape.clone(), operation: "new", partId: feature.id });
+    this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, sheet: spec });
+    return { newPart: true };
+  }
+
+  /** Flange: a wall bent up (or down) off each picked straight edge of a sheet metal part. */
+  private applyFlange(feature: Feature): string | null {
+    const { values, errors } = resolveParams(feature);
+    const bad = FEATURE_DEFS.flange.params.find((p) => errors[p.key]);
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
+    if (picks.length === 0) return "Click the straight edges of the sheet to bend flanges off.";
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return "A flange works on one sheet metal part at a time. Remove the edges picked on the other part.";
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these edges were on no longer exists. Edit this flange and pick the edges again.";
+    if (!part.sheet) return "That isn't a sheet metal part. Make one with Sheet metal (from a sketch) first.";
+    let spec = part.sheet;
+    const added: FlangeSpec[] = [];
+    for (let i = 0; i < picks.length; i++) {
+      const ref = picks[i].ref;
+      if (ref.kind !== "edge" || ref.curve !== "LINE") return "Flanges bend off straight edges. Remove the curved edge.";
+      // Edges of flanges made earlier in this same feature count too.
+      const where = findSheetEdge(foldSheet(spec), spec.thickness, ref.a, ref.b, 0.01);
+      if (!where) return "One of the edges isn't a free straight edge along the sheet's top or bottom face (or it's already bent). Edit this flange and pick it again.";
+      const fl: FlangeSpec = { id: `${feature.id}:${i}`, wall: where.wall, edge: where.edge, length: values.length, angle: values.angle, down: !!feature.flipSide };
+      added.push(fl);
+      spec = { ...spec, flanges: [...spec.flanges, fl] };
+    }
+    const folded = foldSheet(spec);
+    const problem = added.map((f) => folded.errors[f.id]).find(Boolean);
+    if (problem) return problem;
+    const ids = new Set(added.map((f) => f.id));
+    let pieces: Shape3D[] = [];
+    let result: Shape3D | null = null;
+    try {
+      pieces = [
+        ...folded.bends.filter((b) => ids.has(b.flangeId)).map((b) => bendSolid(b)),
+        ...folded.walls.filter((w) => ids.has(w.id)).map((w) => wallSolid(w, spec.thickness)),
+      ];
+      const extra = fuseAll(pieces);
+      pieces = [];
+      if (!extra) return "Click the straight edges of the sheet to bend flanges off.";
+      try {
+        result = part.shape.fuse(extra);
+      } finally {
+        extra.delete();
+      }
+      if (!isValidSolid(result)) {
+        result.delete();
+        return "The flange runs into the rest of the part. Try a shorter flange, a different angle, or bending it the other way.";
+      }
+    } catch (e) {
+      pieces.forEach((p) => p.delete());
+      return describeError(e, "Couldn't bend this flange.");
+    }
+    part.shape.delete();
+    part.shape = result;
+    part.sheet = spec;
+    part.featureIds.push(feature.id);
+    return null;
+  }
+
   private applyThicken(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
     const { values, errors } = resolveParams(feature);
     if (errors.thickness) return { error: `Thickness: ${errors.thickness}` };
