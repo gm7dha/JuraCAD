@@ -832,6 +832,11 @@ try {
   await page.waitForSelector(".drawing-busy, .drawing-sheet", { timeout: 5_000 }).catch(() => {});
   await page.waitForTimeout(3000);
   await shot("asmdrawing");
+  step = "opening what's new";
+  await page.locator(".phase-badge").click();
+  await page.waitForSelector(".whats-new-list li", { timeout: 5_000 });
+  await shot("whatsnew");
+  await page.keyboard.press("Escape");
   step = "switching to inches";
   await page.getByRole("button", { name: "Settings" }).click();
   // The menu must really be on show (not cut off by the top bar).
