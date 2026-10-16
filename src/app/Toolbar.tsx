@@ -81,6 +81,7 @@ export function Toolbar() {
   const hasSketch = useStore((s) => activeFeatures(s).some((f) => f.type === "sketch"));
   const sketchCount = useStore((s) => activeFeatures(s).filter((f) => f.type === "sketch").length);
   const hasPart = useStore((s) => studioParts(s).length > 0);
+  const hasSheet = useStore((s) => studioParts(s).some((p) => !!p.flat));
   const partCount = useStore((s) => studioParts(s).length);
   const sectionOn = useStore((s) => s.section !== null);
   const platform = detectPlatform();
@@ -225,6 +226,14 @@ export function Toolbar() {
               disabled: !ready || !hasPart,
               active: editingType === "flange",
               title: hasPart ? "Flange — bend a wall up (or down) off straight edges of a sheet metal part" : "Make a sheet metal part first",
+            },
+            {
+              key: "flatPattern",
+              label: "Flat pattern",
+              icon: <Icons.FlatPattern />,
+              onClick: () => useStore.getState().openDialog("flatPattern"),
+              disabled: !hasSheet,
+              title: hasSheet ? "Flat pattern — see the sheet metal part laid out flat, and save it as DXF for laser cutting" : "Make a sheet metal part first",
             },
           ]}
         />

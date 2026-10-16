@@ -2621,3 +2621,19 @@ kbd {
 .relation-button > span:not(.relation-symbol) {
   display: none;
 }
+
+.flat-pattern-view {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  justify-content: center;
+  max-height: 55vh;
+}
+
+.flat-pattern-view img {
+  max-width: 100%;
+  max-height: calc(55vh - 16px);
+  object-fit: contain;
+}

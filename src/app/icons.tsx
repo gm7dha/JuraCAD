@@ -270,6 +270,12 @@ export const Icons = {
       <path d="M3 15v1.5l8 4 10-5V14" />
     </Svg>
   ),
+  FlatPattern: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 8h18v8H3z" />
+      <path d="M8 8v8M16 8v8" strokeDasharray="1.5 1.5" />
+    </Svg>
+  ),
   Flange: (p: IconProps) => (
     <Svg {...p}>
       <path d="M2 17l8 4 8-4-8-4z" />
