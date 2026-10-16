@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { sheetDxf, sheetSvg } from "../drawing/export";
 import { flatPrims, flatSize } from "../sheetmetal/flatExport";
 import { activeFeatures, studioParts, useDocument, useLengthUnit, useStore } from "../model/store";
-import { showLength } from "../model/units";
+import { lengthNumber } from "../model/units";
 import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
 import type { PartMesh } from "../kernel/protocol";
@@ -43,7 +43,7 @@ export function FlatPatternDialog() {
   }
   const flat = part.flat;
   const { width, height } = flatSize(flat);
-  const mm = (v: number) => showLength(String(Math.round(v * 100) / 100), unit);
+  const mm = (v: number) => lengthNumber(v, unit);
   const base = safeFileName(`${doc.name} ${part.name} flat`, "flat pattern");
   const skipped = flat.notShown.map((id) => features.find((f) => f.id === id)?.name).filter(Boolean);
 
