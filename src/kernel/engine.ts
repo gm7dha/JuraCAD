@@ -55,11 +55,85 @@ interface BuiltPart {
   meshKey?: string;
   /** A surface: a thin skin with no inside. */
   surface?: boolean;
+  /**
+   * Threads on it (modelled or not), for drawing them the standard way: the
+   * axis, how far along it they run, the outside and root diameters, and
+   * whether it's a rod's (external) or a hole's (internal).
+   */
+  threads?: ThreadMark[];
   /** Sheet metal parts: the sheet they're folded from (for flanges and the flat pattern), and the features that made it. */
   sheet?: SheetSpec;
   sheetFeatures?: string[];
   /** Cuts made in the sheet afterwards, traced on its walls (in each wall's own coordinates), for the flat pattern. */
   sheetCuts?: { wall: string; lines: [[number, number], [number, number]][] }[];
+}
+
+interface ThreadMark {
+  origin: Vec3;
+  axis: Vec3;
+  from: number;
+  to: number;
+  major: number;
+  minor: number;
+  external: boolean;
+}
+
+/**
+ * Threads drawn the standard way (ISO 6410) on a view looking along `toward`.
+ * Seen from the side: thin lines along the thread at its root diameter for a
+ * rod (the outline already shows its outside), or dashed at its outside
+ * diameter for a hole. Seen end-on: a thin three-quarter circle at the root
+ * diameter of a rod or the outside diameter of a hole.
+ */
+export function threadMarkLines(marks: ThreadMark[], toward: Vec3, right: Vec3, up: Vec3): { line: number[]; hidden: boolean }[] {
+  const flat = (p: Vec3): [number, number] => [dot3(p, right), dot3(p, up)];
+  const out: { line: number[]; hidden: boolean }[] = [];
+  for (const m of marks) {
+    const along = dot3(m.axis, toward);
+    const r = (m.external ? m.minor : m.major) / 2;
+    if (Math.abs(along) > 0.999) {
+      // End-on: three quarters round, the top-right quarter left open.
+      const [cx, cy] = flat(m.origin);
+      const arc: number[] = [];
+      for (let i = 0; i <= 36; i++) {
+        const a = Math.PI / 2 + (i / 36) * 1.5 * Math.PI;
+        arc.push(cx + r * Math.cos(a), cy + r * Math.sin(a));
+      }
+      out.push({ line: arc, hidden: false });
+    } else if (Math.abs(along) < 1e-3) {
+      const at = (t: number): Vec3 => [m.origin[0] + m.axis[0] * t, m.origin[1] + m.axis[1] * t, m.origin[2] + m.axis[2] * t];
+      const [ax, ay] = flat(at(m.from));
+      const [bx, by] = flat(at(m.to));
+      const L = Math.hypot(bx - ax, by - ay);
+      if (L < 1e-9) continue;
+      const nx = (-(by - ay) / L) * r;
+      const ny = ((bx - ax) / L) * r;
+      for (const sgn of [1, -1]) out.push({ line: [ax + sgn * nx, ay + sgn * ny, bx + sgn * nx, by + sgn * ny], hidden: !m.external });
+    }
+  }
+  return out;
+}
+
+/** `v` turned `angle` radians about the unit direction `k` (Rodrigues). */
+function rotateAbout(v: Vec3, k: Vec3, angle: number): Vec3 {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const d = dot3(k, v);
+  const x = cross3(k, v);
+  return [v[0] * c + x[0] * s + k[0] * d * (1 - c), v[1] * c + x[1] * s + k[1] * d * (1 - c), v[2] * c + x[2] * s + k[2] * d * (1 - c)];
+}
+
+/** A fastener's thread, for drawings (whether it's modelled or not): along a screw's shank, or through a nut. */
+function fastenerThreads(feature: Feature, v: Record<string, number>): ThreadMark[] {
+  const f = feature.fastener;
+  const s = f ? fastenerSize(f.size) : undefined;
+  if (!f || !s || f.kind === "washer") return [];
+  const minor = s.d - 1.0825 * s.pitch;
+  const axis: Vec3 = [0, 0, 1];
+  const origin: Vec3 = [v.x, v.y, v.z];
+  if (f.kind === "nut") return [{ origin, axis, from: 0, to: s.nut, major: s.d, minor, external: false }];
+  const shank = shankOf(f.kind, s, v.length);
+  return [{ origin, axis, from: shank.top - shank.length, to: shank.top, major: s.d, minor, external: true }];
 }
 
 /** Display meshes of unchanged imported parts (they can take seconds to make). */
@@ -1324,7 +1398,7 @@ export class GeometryEngine {
             : feature.type === "derived" && feature.derived
               ? (this.derivedSource(feature)?.name ?? `Part ${partCounter}`)
               : `Part ${partCounter}`;
-        this.parts.push({ id: feature.id, name, featureIds: [feature.id], shape: tool });
+        this.parts.push({ id: feature.id, name, featureIds: [feature.id], shape: tool, ...(feature.type === "fastener" ? { threads: fastenerThreads(feature, values) } : {}) });
         continue;
       }
 
@@ -1807,6 +1881,7 @@ export class GeometryEngine {
       return describeError(e, "Couldn't find the picked faces.");
     }
     let shape = part.shape;
+    const marks: ThreadMark[] = [];
     try {
       for (const face of faces) {
         const cyl = cylinderOfFace(face);
@@ -1846,6 +1921,9 @@ export class GeometryEngine {
         const next = cutThread(shape, cyl, from, hi + pitch, lo, hi, pitch, external);
         if (shape !== part.shape) shape.delete();
         shape = next;
+        // For drawings: where it runs, and its outside and root sizes (60° metric: root = outside − 1.0825 × pitch).
+        const d = external ? 2 * cyl.radius : 2 * cyl.radius + 1.0825 * pitch;
+        marks.push({ origin: cyl.origin, axis: cyl.axis, from: Math.max(lo, from), to: hi, major: d, minor: d - 1.0825 * pitch, external });
       }
       const solids = solidsOf(shape);
       solids.forEach((x) => x.delete());
@@ -1853,6 +1931,7 @@ export class GeometryEngine {
       part.shape.delete();
       part.shape = shape;
       part.featureIds.push(feature.id);
+      part.threads = [...(part.threads ?? []), ...marks];
       return null;
     } catch (e) {
       if (shape !== part.shape) shape.delete();
@@ -2261,13 +2340,21 @@ export class GeometryEngine {
       shape.delete();
       return { error: describeError(e, "Couldn't move this part.") };
     }
+    // Its threads (for drawings) go with it.
+    const turnVec = (p: Vec3, withCentre: boolean): Vec3 => {
+      let q: Vec3 = withCentre ? [p[0] - centre[0], p[1] - centre[1], p[2] - centre[2]] : p;
+      for (const [a, axis] of turns) if (Math.abs(a) > 1e-12) q = rotateAbout(q, axis, (a * Math.PI) / 180);
+      return withCentre ? [q[0] + centre[0] + values.dx, q[1] + centre[1] + values.dy, q[2] + centre[2] + values.dz] : q;
+    };
+    const threads = part.threads?.map((m) => ({ ...m, origin: turnVec(m.origin, true), axis: turnVec(m.axis, false) }));
     if (t.copy) {
-      this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape });
+      this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, ...(threads ? { threads } : {}) });
       return { newPart: true };
     }
     part.shape.delete();
     part.shape = shape;
     part.featureIds.push(feature.id);
+    if (threads) part.threads = threads;
     // The features that made this part move with it, so a later pattern or mirror of them starts from where the part is now.
     for (const tool of this.tools.values()) {
       if (tool.partId !== part.id) continue;
@@ -2646,6 +2733,18 @@ export class GeometryEngine {
             .map((h) => ({ a: flatP(h.entry), b: flatP([h.entry[0] + h.into[0] * h.depth, h.entry[1] + h.into[1] * h.depth, h.entry[2] + h.into[2] * h.depth]), d: h.diameter }));
           if (side.length) view.sideHoles = side;
         });
+        // Threads on rods and in holes (Thread features and fasteners), drawn the standard way.
+        const marks = chosen.flatMap((p) => p.threads ?? []);
+        if (marks.length) {
+          out.forEach((view, i) => {
+            const kind = standard[i];
+            if (kind === "iso") return;
+            const { toward, right } = VIEW_CAMERAS[kind];
+            const up = cross3(toward, right);
+            const lines = threadMarkLines(marks, toward, right, up);
+            if (lines.length) view.threadMarks = lines;
+          });
+        }
       }
       // How deep each flat view sees the part (front to back), for broken-out cuts.
       const [blo, bhi] = boundsOf(whole);
