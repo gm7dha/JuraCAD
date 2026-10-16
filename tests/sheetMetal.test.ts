@@ -100,6 +100,38 @@ describe("sheet metal", () => {
     expect(foldSheet(spec([{ id: "g", wall: "base", edge: 1, length: 30, angle: 90, down: false, inset: 25 }])).errors.g).toMatch(/Shortened too much/);
   });
 
+  it("cuts round-ended or tear reliefs when asked", () => {
+    const T = 2;
+    const R = 2;
+    const k = 0.5;
+    const allowance = (Math.PI / 2) * (R + k * T);
+    const flangeArea = 30 * (allowance + 26);
+    const round = foldSheet(spec([{ id: "f", wall: "base", edge: 1, length: 30, angle: 90, down: false, inset: 10, reliefShape: "round" }], T, R, k));
+    expect(round.errors).toEqual({});
+    expect(round.bends[0].reliefs[0].some((s) => s.kind === "arc")).toBe(true);
+    // Each notch: 2 wide, 1 straight then a half circle of radius 1 (the circle is drawn as short lines, so a touch less).
+    expect(area(flatPattern(round).outline)).toBeCloseTo(100 * 50 - 2 * (2 + Math.PI / 2) + flangeArea, 1);
+    const tear = foldSheet(spec([{ id: "f", wall: "base", edge: 1, length: 30, angle: 90, down: false, inset: 10, reliefShape: "tear" }], T, R, k));
+    // A thin cut: 0.2 wide, as deep as the sheet is thick.
+    expect(area(flatPattern(tear).outline)).toBeCloseTo(100 * 50 - 2 * 0.2 * T + flangeArea, 4);
+  });
+
+  it("finds corner reliefs where two flanges meet, unless the corner is closed", () => {
+    const right = { id: "r", wall: "base", edge: 1, length: 30, angle: 90, down: false } as const;
+    const topEdge = { id: "t", wall: "base", edge: 2, length: 30, angle: 90, down: false } as const;
+    expect(foldSheet(spec([right, topEdge])).cornerReliefs).toBeUndefined();
+    const f = foldSheet(spec([{ ...right, cornerRelief: "round" }, topEdge]));
+    expect(f.cornerReliefs).toHaveLength(1);
+    const c = f.cornerReliefs![0];
+    expect(c.at).toEqual([100, 50]);
+    // The bend's size: radius 2 plus thickness 2.
+    expect(c.r).toBe(4);
+    expect(c.flanges).toEqual(["r", "t"]);
+    expect(foldSheet(spec([{ ...right, cornerRelief: "square", closeCorners: true }, topEdge])).cornerReliefs).toBeUndefined();
+    // Shortened at that corner: the bends don't meet, so no relief there.
+    expect(foldSheet(spec([{ ...right, cornerRelief: "round", inset: 5 }, topEdge])).cornerReliefs).toBeUndefined();
+  });
+
   it("folds a hem right back over the sheet, lying a small gap above it", () => {
     const T = 2;
     const f = foldSheet(spec([{ id: "h", wall: "base", edge: 1, length: 0, angle: 180, down: false, hem: true, radius: 0.05, straight: 8 }], T, 2, 0.5));

@@ -265,6 +265,26 @@ function RibThickenOptions() {
           Close corners where flanges meet
         </label>
       )}
+      {draft.type === "flange" && (
+        <>
+          <label className="field-label" htmlFor="flange-relief">
+            Bend relief shape <span className="muted small">(when shortened at the ends)</span>
+          </label>
+          <select id="flange-relief" className="full-select" value={draft.reliefShape ?? "rectangle"} onChange={(e) => setDraftField({ reliefShape: e.target.value === "rectangle" ? undefined : (e.target.value as "round" | "tear") })}>
+            <option value="rectangle">Rectangle</option>
+            <option value="round">Round end</option>
+            <option value="tear">Tear (a thin cut)</option>
+          </select>
+          <label className="field-label" htmlFor="flange-corner-relief">
+            Corner relief <span className="muted small">(where two flanges meet)</span>
+          </label>
+          <select id="flange-corner-relief" className="full-select" value={draft.cornerRelief ?? "none"} onChange={(e) => setDraftField({ cornerRelief: e.target.value === "none" ? undefined : (e.target.value as "round" | "square") })}>
+            <option value="none">None</option>
+            <option value="round">Round</option>
+            <option value="square">Square</option>
+          </select>
+        </>
+      )}
       {draft.type !== "tab" && (
       <label className="check-row">
         <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked })} />

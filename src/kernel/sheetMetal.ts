@@ -5,8 +5,8 @@
 import { basicFaceExtrusion, Vector, type Shape3D } from "replicad";
 import { facesOf } from "./topology";
 
-import type { Bend, FoldedSheet, P2, Wall } from "../sheetmetal/sheet";
-import { unfoldMoves } from "../sheetmetal/sheet";
+import type { Bend, CornerRelief, FoldedSheet, P2, Wall } from "../sheetmetal/sheet";
+import { anticlockwise, cornerReliefPoints, flatPoint, unfoldMoves } from "../sheetmetal/sheet";
 import { outsideOnly } from "../sheetmetal/flatExport";
 import type { Loop, Segment } from "../sketch/regions";
 import { loopFace, release } from "./extrude";
@@ -43,6 +43,18 @@ export function wallSolid(wall: Wall, thickness: number): Shape3D {
   const main = prism(wall.outline, wall.holes, wall.frame, v);
   if (!wall.tabs?.length) return main;
   return fusePieces([main, ...wall.tabs.map((t) => prism(t.outline, t.holes, wall.frame, v))])!;
+}
+
+/** A corner relief's cutter: its outline on the wall, through the wall and the bends either side of it. */
+export function cornerReliefSolid(wall: Wall, c: CornerRelief, thickness: number): Shape3D {
+  const f = wall.frame;
+  const pts = cornerReliefPoints(c);
+  const segs: Segment[] = pts.map((p, i) => ({ kind: "line", from: p, to: pts[(i + 1) % pts.length] }));
+  const lo = c.below + 0.01;
+  // Up to where the bends end (just short of the flanges' flat walls).
+  const h = lo + thickness + c.above - 0.001;
+  const frame = { ...f, origin: [f.origin[0] - f.n[0] * lo, f.origin[1] - f.n[1] * lo, f.origin[2] - f.n[2] * lo] as V3 };
+  return prism(anticlockwise(segs), [], frame, [f.n[0] * h, f.n[1] * h, f.n[2] * h]);
 }
 
 /** A bend as a solid: its curved cross-section swept along the edge. */
@@ -188,3 +200,29 @@ export function flatBoundary(unfolded: Shape3D, base: { origin: V3; u: V3; v: V3
   return outsideOnly(pieces);
 }
 
+
+/**
+ * Corner reliefs cut out of the part laid out flat (where they fall in the
+ * flat pattern), so its outline shows them. Frees `unfolded`.
+ */
+export function cutFlatCornerReliefs(unfolded: Shape3D, folded: FoldedSheet, thickness: number): Shape3D {
+  let out = unfolded;
+  const base = folded.walls[0].frame;
+  for (const c of folded.cornerReliefs ?? []) {
+    const wall = folded.walls.find((w) => w.id === c.wall);
+    if (!wall) continue;
+    const pts = cornerReliefPoints(c).map((p) => flatPoint(wall.flat, p));
+    const segs: Segment[] = pts.map((p, i) => ({ kind: "line", from: p, to: pts[(i + 1) % pts.length] }));
+    const frame = { ...base, origin: [base.origin[0] - base.n[0], base.origin[1] - base.n[1], base.origin[2] - base.n[2]] as V3 };
+    const h = thickness + 2;
+    const cutter = prism(anticlockwise(segs), [], frame, [base.n[0] * h, base.n[1] * h, base.n[2] * h]);
+    try {
+      const next = out.cut(cutter) as Shape3D;
+      out.delete();
+      out = next;
+    } finally {
+      cutter.delete();
+    }
+  }
+  return out;
+}

@@ -1974,6 +1974,14 @@ describe("sheet metal", () => {
     expect(r7.parts).toHaveLength(1);
     expect(vol()).toBeCloseTo(10000 + (Math.PI / 4) * 12 * (50 + 100) + 26 * 2 * (54 + 102), 1);
     expect(r7.parts[0].flat!.bendLines).toHaveLength(2);
+    // The same two flanges with a round corner relief instead: a little less metal, and the flat pattern outlined round it.
+    const relieved = build([sk, sheet(sk.id), { ...both, closeCorners: undefined, cornerRelief: "round" }]);
+    expect(relieved.featureErrors).toEqual({});
+    const withRelief = vol();
+    build([sk, sheet(sk.id), { ...both, closeCorners: undefined }]);
+    const without = vol();
+    expect(withRelief).toBeLessThan(without - 10);
+    expect(relieved.parts[0].flat!.boundary?.length).toBeGreaterThan(0);
     // A closed hem on the same edge: a half-turn bend (inside radius 0.05) and an 8 mm lip folded back over the sheet.
     const hem: Feature = { id: "hm", name: "Hem 1", type: "hem", operation: "add", suppressed: false, params: { length: "8", gap: "0", inset: "0" }, picks: [{ partId: p.id, ref }] };
     const r6 = build([sk, sheet(sk.id), hem]);
