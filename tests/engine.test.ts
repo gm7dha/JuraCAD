@@ -1221,13 +1221,13 @@ describe("move, turn and copy parts", () => {
 
   it("turns about two axes at once (X first, then Y), and reads old designs that turned about one chosen axis", () => {
     const box = feature("box", { width: 10, depth: 20, height: 5 });
-    // 90° about X stands the 20 mm depth up; then 90° about Y lays the 10 mm width along Z.
+    // 90° about X stands the 20 mm depth up (and lays the height along Y); then 90° about Y swings that depth along X and the width along Z.
     const r = build([box, transformFeature(box.id, { about: "origin" }, { rx: 90, ry: 90 })]);
     expect(r.featureErrors).toEqual({});
     const b = boundsOfPart(r);
+    expect(b.max[0] - b.min[0]).toBeCloseTo(20, 4);
+    expect(b.max[1] - b.min[1]).toBeCloseTo(5, 4);
     expect(b.max[2] - b.min[2]).toBeCloseTo(10, 4);
-    expect(b.max[0] - b.min[0]).toBeCloseTo(5, 4);
-    expect(b.max[1] - b.min[1]).toBeCloseTo(20, 4);
     const old = parseDocument({ ...emptyDocument(), features: [box, { ...transformFeature(box.id, { axis: "y" }, {}), params: { angle: "90", dx: "0", dy: "0", dz: "0" } }] })!;
     const t = old.features[1];
     expect([t.params.rx, t.params.ry, t.params.rz, "angle" in t.params]).toEqual(["0", "90", "0", false]);
