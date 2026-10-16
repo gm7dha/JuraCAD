@@ -6,6 +6,12 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.20 — Surface tools · commit `4f12a19`
+
+- **Surfaces**: thin skins with no inside, for flowing shapes. Tick **Surface** in Extrude, Revolve, Sweep or Loft
+  (open outlines work too), or use **Fill** to span a ring of edges. Then **Thicken** a surface into a solid, or
+  **Enclose** several into one. Also **Offset surface**, **Extend surface**, and **Split** to trim a surface.
+
 ## v0.19 — Print bed, shortened views, Mirror, Derived, Wrap and more · commit `e4e823f`
 
 - **Print bed** preview: your 3D printer's bed and build volume under the parts, and whether they fit.
