@@ -6,6 +6,16 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.16 — Sheet metal, and what's new · commit `0171140`
+
+- **Sheet metal**: a flat sheet from a closed sketch, or a bent one from connected lines (an L, U or Z side view);
+  set its thickness, bend radius and K-factor.
+- **Flange**: bend walls up or down off straight edges (on flanges too), at any angle, optionally shortened at
+  each end with bend reliefs.
+- **Flat pattern**: the part unfolded (with bend allowances and any holes cut afterwards), saved as DXF for laser
+  cutting or SVG.
+- Click the version number in the top bar to see **what's new** in each version.
+
 ## v0.15 — Replace face, conics, Group and Width mates · commit `129faf6`
 
 - Part Studio: **Replace face** — move flat faces onto another face or plane parallel to them (to line parts up),
