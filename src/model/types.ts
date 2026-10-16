@@ -1,3 +1,4 @@
+import type { FastenerKind } from "./fasteners";
 import type { TopoPick } from "../geometry/topoRef";
 import type { Variable } from "./variables";
 import type { Configuration } from "./configurations";
@@ -128,7 +129,7 @@ export interface Feature {
   /** Delete part: the parts it removes from the Part Studio. */
   deleteParts?: string[];
   /** Fastener: which standard part, and whether its thread is modelled. */
-  fastener?: { kind: "bolt" | "nut" | "washer"; size: string; threaded: boolean };
+  fastener?: { kind: FastenerKind; size: string; threaded: boolean };
   booleanDef?: BooleanOptions;
   /** Split: which part, and the plane that cuts it in two. */
   splitDef?: SplitOptions;

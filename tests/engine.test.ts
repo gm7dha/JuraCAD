@@ -17,6 +17,7 @@ import type { Feature, FeatureType, Operation } from "../src/model/types";
 import { defaultAxis } from "../src/sketch/axis";
 import { addArc, addCircle, addLine, addPoint, addRectangle } from "../src/sketch/ops";
 import { holeVolume, type HoleSize } from "../src/model/holes";
+import type { FastenerKind } from "../src/model/fasteners";
 import { addEllipse, addSpline } from "../src/sketch/tools";
 import { matchingConnectors } from "../src/assembly/connectors";
 import { planeOnFace, type SketchPlane } from "../src/sketch/planes";
@@ -1171,7 +1172,7 @@ describe("coil", () => {
 });
 
 describe("fasteners", () => {
-  const fastener = (kind: "bolt" | "nut" | "washer", threaded = false, length = 12): Feature => ({
+  const fastener = (kind: FastenerKind, threaded = false, length = 12): Feature => ({
     ...feature("fastener", { length, x: 0, y: 0, z: 0 }),
     fastener: { kind, size: "M6", threaded },
   });
@@ -1189,6 +1190,44 @@ describe("fasteners", () => {
     const washer = build([fastener("washer")]);
     expect(volumeOf(washer)).toBeCloseTo(Math.PI * (36 - 3.2 * 3.2) * 1.6, -1);
   });
+
+  it("makes Allen key, countersunk, pan head and grub screws", () => {
+    const cap = build([fastener("socketCap")]);
+    expect(cap.featureErrors).toEqual({});
+    expect(cap.parts[0].name).toBe("M6 × 12 socket cap screw");
+    // Ø10 × 6 head less a 5 mm hex socket 3 deep, on a Ø6 × 12 shank.
+    expect(volumeOf(cap)).toBeCloseTo(Math.PI * 25 * 6 - hexArea(5) * 3 + Math.PI * 9 * 12, -1);
+    // Countersunk: overall length 12, a 3.3 mm cone head (Ø12 to Ø6), 4 mm socket 2.2 deep; its top is flush at z = 0.
+    const csk = build([fastener("countersunk")]);
+    expect(csk.featureErrors).toEqual({});
+    expect(volumeOf(csk)).toBeCloseTo((Math.PI * 3.3 * (9 + 18 + 36)) / 3 + Math.PI * 9 * 8.7 - hexArea(4) * 2.2, -1);
+    const grub = build([fastener("grub", false, 10)]);
+    expect(grub.parts[0].name).toBe("M6 × 10 grub screw");
+    expect(volumeOf(grub)).toBeCloseTo(Math.PI * 9 * 10 - hexArea(3) * 2.4, -1);
+    // Button head: a dome Ø10.5 × 3.3 (about 162 mm³) less its socket, on the shank.
+    const button = volumeOf(build([fastener("buttonHead")]));
+    expect(button).toBeGreaterThan(Math.PI * 9 * 12 + 100);
+    expect(button).toBeLessThan(Math.PI * 9 * 12 + 170);
+    // Pan head: Ø12 × 4.6 with a rounded top and a cross recess.
+    const pan = build([fastener("panHead")]);
+    expect(pan.featureErrors).toEqual({});
+    const v = volumeOf(pan);
+    expect(v).toBeGreaterThan(Math.PI * 9 * 12 + 350);
+    expect(v).toBeLessThan(Math.PI * 9 * 12 + Math.PI * 36 * 4.6);
+    // Too short for its head.
+    expect(build([fastener("countersunk", false, 3)]).featureErrors).not.toEqual({});
+  });
+
+  it("threads screws below the head, and grub screws all along", () => {
+    for (const kind of ["socketCap", "grub"] as const) {
+      const plain = volumeOf(build([fastener(kind, false, 8)]));
+      const threaded = build([fastener(kind, true, 8)]);
+      expect(threaded.featureErrors).toEqual({});
+      const v = volumeOf(threaded);
+      expect(v).toBeLessThan(plain - 10);
+      expect(v).toBeGreaterThan(plain - 90);
+    }
+  }, 120_000);
 
   it("cuts the thread when asked", () => {
     const plain = volumeOf(build([fastener("bolt", false, 8)]));

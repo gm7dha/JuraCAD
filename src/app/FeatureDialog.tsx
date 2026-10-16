@@ -15,7 +15,7 @@ import { activeFeatures, studioParts, useLengthUnit, useStore } from "../model/s
 import type { Operation } from "../model/types";
 import { DeleteFaceHelp } from "./DeleteFaceHelp";
 import { Icons } from "./icons";
-import { FASTENER_LABELS, FASTENER_SIZES } from "../model/fasteners";
+import { FASTENER_KINDS, FASTENER_LABELS, FASTENER_SIZES, type FastenerKind } from "../model/fasteners";
 import { ISO_COARSE } from "../kernel/thread";
 import { importedSize } from "../model/importFile";
 import { chooseImportFile } from "./fileActions";
@@ -1021,7 +1021,18 @@ function PicksField() {
   );
 }
 
-/** Fastener: bolt, nut or washer; the size; whether to model the thread. */
+const FASTENER_HINTS: Record<FastenerKind, string> = {
+  bolt: "X, Y, Z is the middle of the underside of the head; the shank points down. Length is under the head.",
+  socketCap: "X, Y, Z is the middle of the underside of the head; the shank points down. Length is under the head.",
+  buttonHead: "X, Y, Z is the middle of the underside of the head; the shank points down. Length is under the head.",
+  panHead: "X, Y, Z is the middle of the underside of the head; the shank points down. Length is under the head.",
+  countersunk: "X, Y, Z is the middle of the flat top of the head (flush with the surface); it points down. Length includes the head.",
+  grub: "X, Y, Z is the middle of the end with the hex socket; it points down.",
+  nut: "X, Y, Z is the middle of its underside.",
+  washer: "X, Y, Z is the middle of its underside.",
+};
+
+/** Fastener: the kind (bolt, screws, nut, washer); the size; whether to model the thread. */
 function FastenerOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
@@ -1031,13 +1042,16 @@ function FastenerOptions() {
   return (
     <fieldset className="param-group">
       <legend>Fastener</legend>
-      <div className="segmented" role="group" aria-label="Kind of fastener">
-        {(["bolt", "nut", "washer"] as const).map((k) => (
-          <button type="button" key={k} className={f.kind === k ? "selected" : ""} aria-pressed={f.kind === k} onClick={() => update({ kind: k })}>
+      <label className="field-label" htmlFor="fastener-kind">
+        Kind
+      </label>
+      <select id="fastener-kind" className="full-select" value={f.kind} onChange={(e) => update({ kind: e.target.value as FastenerKind })}>
+        {FASTENER_KINDS.map((k) => (
+          <option key={k} value={k}>
             {FASTENER_LABELS[k]}
-          </button>
+          </option>
         ))}
-      </div>
+      </select>
       <label className="field-label" htmlFor="fastener-size">
         Size
       </label>
@@ -1055,7 +1069,7 @@ function FastenerOptions() {
         </label>
       )}
       <p className="dialog-hint field-hint">
-        {f.kind === "bolt" ? "X, Y, Z is the middle of the underside of the head; the shank points down." : "X, Y, Z is the middle of its underside."}
+        {FASTENER_HINTS[f.kind]}
       </p>
     </fieldset>
   );

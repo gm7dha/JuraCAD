@@ -1,3 +1,4 @@
+import { hasLength } from "./fasteners";
 import { evaluate, type Scope } from "./expr";
 import type { Feature, FeatureType, Operation } from "./types";
 
@@ -311,7 +312,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "fastener",
     label: "Fastener",
     namePrefix: "Fastener",
-    description: "A standard metric hex bolt, nut or washer (M3–M12), as a new part — optionally with its thread modelled.",
+    description: "A standard metric bolt, screw (socket cap, button head, countersunk, pan head, grub), nut or washer (M3–M12), as a new part — optionally with its thread modelled.",
     params: [
       { key: "length", label: "Length", defaultValue: "20", positive: true, group: "size" },
       { key: "x", label: "X", defaultValue: "0", group: "position" },
@@ -415,7 +416,7 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   if (f.type === "extrude" && (f.extrude?.end === "throughAll" || f.extrude?.end === "upToFace")) keys.delete("depth");
   if (f.type === "plane" && f.planeDef?.mode !== "angle") keys.delete("angle");
-  if (f.type === "fastener" && f.fastener?.kind !== "bolt") keys.delete("length");
+  if (f.type === "fastener" && f.fastener && !hasLength(f.fastener.kind)) keys.delete("length");
   if (f.type === "hole" && f.hole) {
     if (f.hole.end === "throughAll") keys.delete("depth");
     if (f.hole.kind !== "counterbore") ["cboreDiameter", "cboreDepth"].forEach((k) => keys.delete(k));
