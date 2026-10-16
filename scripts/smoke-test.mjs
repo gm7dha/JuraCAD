@@ -1005,6 +1005,18 @@ try {
     now = await curves();
     if (!now.includes("arc")) throw new Error(`tangent arc wasn't drawn (${now.join(",")})`);
 
+    // A conic: both ends, then the corner it bends towards.
+    await tool("Conic");
+    await page.mouse.click(mx + 20, my - 150);
+    await page.mouse.click(mx + 120, my - 150);
+    await page.mouse.move(mx + 110, my - 100, { steps: 3 });
+    await page.mouse.click(mx + 110, my - 100);
+    const conics = await page.evaluate(() => window.partsmithStore.getState().editing.draft.sketch.data.curves.filter((c) => c.type === "spline" && c.conic === 0.5).length);
+    if (conics !== 1) throw new Error(`the conic tool made ${conics} conic(s)`);
+    await page.waitForSelector('[aria-label="Conic fullness"]', { timeout: 5_000 });
+    await shot("conic");
+    await page.keyboard.press("Escape");
+
     await page.keyboard.press("c");
     await page.mouse.click(mx + 120, my);
     await page.mouse.click(mx + 135, my);
