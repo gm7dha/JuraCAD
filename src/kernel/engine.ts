@@ -1083,6 +1083,11 @@ export class GeometryEngine {
         if (err) featureErrors[feature.id] = err;
         continue;
       }
+      if (feature.type === "fullRound") {
+        const err = this.applyFullRound(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "draft" || feature.type === "moveFace" || feature.type === "replaceFace" || feature.type === "deleteFace") {
         const err = this.applyFaceEdit(feature);
         if (err) featureErrors[feature.id] = err;
@@ -1717,6 +1722,116 @@ export class GeometryEngine {
       return describeError(e, `Couldn't apply this ${def.label.toLowerCase()}.`);
     } finally {
       faces.forEach((f) => f.delete());
+    }
+  }
+
+  /**
+   * Full round: each picked flat face — the top of a rib or wall, a strip
+   * with two long straight parallel sides — replaced by a half-round as wide
+   * as the strip, tangent to both sides. Built directly: the strip is cut back
+   * by half its width and a half-cylinder put in its place (a fillet of
+   * exactly half the width is too much for OpenCascade's fillets).
+   */
+  private applyFullRound(feature: Feature): string | null {
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    if (picks.length === 0) return "Click the flat top face of a rib or wall to round over.";
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return "A full round works on one part at a time. Remove the faces picked on the other part.";
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these faces were on no longer exists. Edit this feature and pick the faces again.";
+    let faces: Face[];
+    try {
+      faces = findPickedFaces(part.shape, picks);
+    } catch (e) {
+      return describeError(e, "Couldn't find the picked faces.");
+    }
+    let shape: Shape3D | null = part.shape.clone();
+    try {
+      for (const face of faces) {
+        if (face.geomType !== "PLANE") return "Full round works on flat faces. Pick the flat top of the rib or wall.";
+        const n = take(face.normalAt());
+        // The two longest straight edges: the sides, which must be parallel.
+        const lines = edgesOf(face)
+          .map((e) => {
+            try {
+              if (e.geomType !== "LINE") return null;
+              const a = take(e.startPoint);
+              const b = take(e.endPoint);
+              return { a, b, len: Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) };
+            } finally {
+              e.delete();
+            }
+          })
+          .filter((x): x is { a: Vec3; b: Vec3; len: number } => !!x)
+          .sort((x, y) => y.len - x.len);
+        if (lines.length < 2) return "Full round needs a face with two long straight sides (the top of a straight rib or wall).";
+        const [s1, s2] = lines;
+        const axis: Vec3 = [(s1.b[0] - s1.a[0]) / s1.len, (s1.b[1] - s1.a[1]) / s1.len, (s1.b[2] - s1.a[2]) / s1.len];
+        const d2: Vec3 = [(s2.b[0] - s2.a[0]) / s2.len, (s2.b[1] - s2.a[1]) / s2.len, (s2.b[2] - s2.a[2]) / s2.len];
+        if (Math.abs(Math.abs(dot3(axis, d2)) - 1) > 1e-6) return "The face's two long sides aren't parallel. Full round works on straight ribs and walls.";
+        const across0 = cross3(n, axis);
+        const off = (p: Vec3) => dot3([p[0] - s1.a[0], p[1] - s1.a[1], p[2] - s1.a[2]], across0);
+        const width = Math.abs(off(s2.a));
+        if (width < 1e-6) return "That face has no width to round over.";
+        const across: Vec3 = off(s2.a) > 0 ? across0 : [-across0[0], -across0[1], -across0[2]];
+        const r = width / 2;
+        // Along the strip: from its first end to its last.
+        const ts = [s1.a, s1.b, s2.a, s2.b].map((p) => dot3([p[0] - s1.a[0], p[1] - s1.a[1], p[2] - s1.a[2]], axis));
+        const t0 = Math.min(...ts);
+        const t1 = Math.max(...ts);
+        const at = (t: number, w: number, h: number): Vec3 => [
+          s1.a[0] + axis[0] * t + across[0] * w + n[0] * h,
+          s1.a[1] + axis[1] * t + across[1] * w + n[1] * h,
+          s1.a[2] + axis[2] * t + across[2] * w + n[2] * h,
+        ];
+        // The block taken away: the strip, half its width deep (and a little above, to be sure).
+        const base = makePolygon([at(t0, 0, -r), at(t1, 0, -r), at(t1, width, -r), at(t0, width, -r)]);
+        const lift = new Vector([n[0] * (r + 1), n[1] * (r + 1), n[2] * (r + 1)]);
+        let block: Shape3D;
+        try {
+          block = basicFaceExtrusion(base, lift) as Shape3D;
+        } finally {
+          base.delete();
+          lift.delete();
+        }
+        // Is the part solid all the way down there? (Otherwise the sides are too short for a full round.)
+        const inside = shape.intersect(block) as Shape3D;
+        const filled = measureVolume(inside);
+        inside.delete();
+        if (filled < (t1 - t0) * width * r * 0.999) {
+          block.delete();
+          return `The sides aren't tall enough for a full round: it needs ${Math.round(r * 100) / 100} mm of straight side below the face.`;
+        }
+        const cyl = makeCylinder(r, t1 - t0, at(t0, r, -r), axis);
+        let round: Shape3D;
+        try {
+          round = cyl.intersect(block) as Shape3D;
+        } finally {
+          cyl.delete();
+        }
+        try {
+          const trimmed: Shape3D = shape.cut(block);
+          shape.delete();
+          shape = trimmed;
+          const rounded: Shape3D = shape.fuse(round);
+          shape.delete();
+          shape = rounded;
+        } finally {
+          block.delete();
+          round.delete();
+        }
+      }
+      if (!isValidSolid(shape)) return "That would leave the part broken.";
+      part.shape.delete();
+      part.shape = shape;
+      part.featureIds.push(feature.id);
+      shape = null;
+      return null;
+    } catch (e) {
+      return describeError(e, "Couldn't round this over.");
+    } finally {
+      faces.forEach((f) => f.delete());
+      shape?.delete();
     }
   }
 

@@ -357,6 +357,15 @@ export function Toolbar() {
               active: editingType === "chamfer",
               title: hasPart ? "Chamfer — bevel edges with a flat cut. Select edges first, or pick them after" : "Make a part first, then bevel its edges",
             },
+            {
+              key: "fullRound",
+              label: "Full round",
+              icon: <Icons.FullRound />,
+              onClick: () => startCreate("fullRound"),
+              disabled: !ready || !hasPart,
+              active: editingType === "fullRound",
+              title: hasPart ? "Full round — round the top of a rib or wall right over, from side to side: click its flat top face" : "Make a part first",
+            },
           ]}
         />
         <ToolButton

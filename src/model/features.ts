@@ -185,6 +185,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "endRadius", label: "Radius at the far end (0 = the same all along)", defaultValue: "0", min: 0, group: "size" },
     ],
   },
+  fullRound: {
+    type: "fullRound",
+    label: "Full round",
+    namePrefix: "Full round",
+    description: "Rounds the top of a rib or wall right over, from one side to the other: click its flat top face.",
+    params: [],
+  },
   chamfer: {
     type: "chamfer",
     label: "Chamfer",

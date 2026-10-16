@@ -936,7 +936,7 @@ function PicksField() {
   const parts = useStore(studioParts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
-  const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread"];
+  const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound"];
   const flange = draft?.type === "flange" || draft?.type === "hem";
   if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type) || flange)) return null;
   const picks = draft.picks ?? [];
@@ -958,6 +958,8 @@ function PicksField() {
           ? "Edges to bend off"
           : draft.type === "thread"
           ? "Round faces to thread"
+          : draft.type === "fullRound"
+          ? "Top faces to round over"
           : draft.type === "thicken"
           ? "Faces to thicken"
           : draft.type === "draft"
@@ -976,6 +978,8 @@ function PicksField() {
             ? "Click straight edges of a sheet metal part (on its top or bottom face). Each gets a flange; you can also click a flange's own edges."
             : draft.type === "thread"
             ? "Click the outside of a rod (for a bolt) or the inside of a hole (for a nut)."
+            : draft.type === "fullRound"
+            ? "Click the flat top face of a rib or wall (a long strip with straight, parallel sides)."
             : draft.type === "thicken"
             ? "Click the flat faces to grow into a solid."
             : draft.type === "draft"
@@ -1154,7 +1158,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "tab" && draft.type !== "thread" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button

@@ -120,7 +120,7 @@ function customPlaneAt(id: string): SketchPlane | null {
 }
 
 const NO_IDS: string[] = [];
-const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread"]);
+const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound"]);
 
 /** Apply a click in the viewport to the selection, like Onshape. */
 function handlePick(target: PickTarget | null, additive: boolean) {
@@ -251,7 +251,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
   // Thicken, Draft, Move face, Replace face, Delete face: faces.
   const faceFeature = s.editing?.draft.type;
-  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "replaceFace" || faceFeature === "deleteFace" || faceFeature === "thread") {
+  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "replaceFace" || faceFeature === "deleteFace" || faceFeature === "fullRound" || faceFeature === "thread") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "face") {
       s.showToast("Click a face rather than an edge.");
