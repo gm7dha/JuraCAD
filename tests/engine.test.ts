@@ -970,6 +970,23 @@ describe("draft, move face and delete face", () => {
     expect(build([box, { ...rep, replaceDef: { target: null } }]).featureErrors[rep.id]).toMatch(/Click the face/);
   });
 
+  it("rounds the top of a wall right over (a full round), tangent to both sides", () => {
+    // A wall 10 thick, 40 long, 20 tall: its top becomes a half-round of radius 5.
+    const wall = feature("box", { width: 10, depth: 40, height: 20 });
+    const top = faceOf(build([wall]), (f) => f.surface === "PLANE" && f.normal[2] > 0.99);
+    const round: Feature = { ...feature("fullRound", {}), picks: top };
+    const r = build([wall, round]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(8000 - (10 * 40 * 5 - (Math.PI * 25 * 40) / 2), 1);
+    // Still 20 tall at the middle of the round.
+    const zs = Array.from(r.parts[0].vertices).filter((_, i) => i % 3 === 2);
+    expect(Math.max(...zs)).toBeCloseTo(20, 2);
+    // Too short to round right over.
+    const low = feature("box", { width: 10, depth: 40, height: 3 });
+    const lowTop = faceOf(build([low]), (f) => f.surface === "PLANE" && f.normal[2] > 0.99);
+    expect(build([low, { ...round, picks: lowTop }]).featureErrors[round.id]).toMatch(/aren't tall enough/);
+  });
+
   it("tapers side faces about the neutral plane", () => {
     const box = feature("box", { width: 20, depth: 20, height: 10 });
     const r1 = build([box]);
