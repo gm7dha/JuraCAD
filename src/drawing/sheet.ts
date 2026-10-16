@@ -7,6 +7,7 @@
  * the view from the top goes below the front view, the view from the right
  * goes to its left.
  */
+import { clipOut, cutsOn, removed, SHORT_GAP, squeeze, unsqueeze } from "./shorten";
 import { lengthNumber, lengthUnit } from "../model/units";
 import type { ViewProjection } from "../kernel/protocol";
 import type { Drawing, SectionCut, SheetSize, ViewKind } from "../model/types";
@@ -127,8 +128,59 @@ const sizeOf = (p: ViewProjection | undefined): [number, number] => {
   const z = p?.zoom ?? 1;
   return p?.bounds ? [(p.bounds[2] - p.bounds[0]) * z, (p.bounds[3] - p.bounds[1]) * z] : [0, 0];
 };
-const centreOf = (p: ViewProjection | undefined): [number, number] =>
-  p?.bounds ? [(p.bounds[0] + p.bounds[2]) / 2, (p.bounds[1] + p.bounds[3]) / 2] : [0, 0];
+/** A view's size on paper at scale `s`, less any bands taken out to shorten it (each leaving a small gap). */
+function paperSize(p: ViewProjection | undefined, s: number): [number, number] {
+  const [w, h] = sizeOf(p);
+  if (!p?.shorten?.length) return [w * s, h * s];
+  const z = p.zoom ?? 1;
+  return ([0, 1] as const).map((axis) => {
+    const bands = cutsOn(p.shorten, axis);
+    return ((axis === 0 ? w : h) / z - removed(bands)) * s * z + bands.length * SHORT_GAP;
+  }) as [number, number];
+}
+
+/** Squeezes a view's coordinate along one axis (for shortened views; otherwise as it is). */
+function squeezer(p: ViewProjection, scale: number): { x: (v: number) => number; y: (v: number) => number; bands: [{ from: number; to: number }[], { from: number; to: number }[]]; g: number } {
+  const g = SHORT_GAP / (scale * (p.zoom ?? 1));
+  const bx = cutsOn(p.shorten, 0);
+  const by = cutsOn(p.shorten, 1);
+  return { x: (v) => squeeze(v, bx, g), y: (v) => squeeze(v, by, g), bands: [bx, by], g };
+}
+
+/** The middle of a view, as drawn (after any shortening). */
+function drawnCentre(p: ViewProjection | undefined, scale: number): [number, number] {
+  if (!p?.bounds) return [0, 0];
+  const q = squeezer(p, scale);
+  return [(q.x(p.bounds[0]) + q.x(p.bounds[2])) / 2, (q.y(p.bounds[1]) + q.y(p.bounds[3])) / 2];
+}
+
+/** A polyline with the bands of a shortened view taken out: the pieces left. */
+function clipped(p: ViewProjection, line: number[]): number[][] {
+  if (!p.shorten?.length) return [line];
+  return clipOut(line, 0, cutsOn(p.shorten, 0)).flatMap((piece) => clipOut(piece, 1, cutsOn(p.shorten, 1)));
+}
+
+/** Break lines either side of each band taken out of a shortened view (a zigzag across the view). */
+function breakSymbols(p: ViewProjection, scale: number, at: (x: number, y: number) => [number, number], box: [number, number, number, number]): Prim[] {
+  const out: Prim[] = [];
+  const q = squeezer(p, scale);
+  const zig = (u: number, lo: number, hi: number, across: boolean): Prim => {
+    const mid = (lo + hi) / 2;
+    const pts = [lo - 2, u, mid - 2, u, mid - 1, u + 1.5, mid + 1, u - 1.5, mid + 2, u, hi + 2, u];
+    const flat: number[] = [];
+    for (let i = 0; i < pts.length; i += 2) flat.push(...(across ? [pts[i + 1], pts[i]] : [pts[i], pts[i + 1]]));
+    return { kind: "path", points: flat, style: "thin" };
+  };
+  for (const b of q.bands[0]) {
+    const xa = at(b.from, 0)[0];
+    for (const x of [xa, xa + SHORT_GAP]) out.push(zig(x, box[1], box[3], true));
+  }
+  for (const b of q.bands[1]) {
+    const ya = at(0, b.from)[1];
+    for (const y of [ya, ya + SHORT_GAP]) out.push(zig(y, box[0], box[2], false));
+  }
+  return out;
+}
 
 /** The area views may use: the frame, minus a strip above the title block. */
 const BOM_ROW = 6;
@@ -170,7 +222,7 @@ function needed(
   s: number,
 ): { w: number; h: number; cols: number[]; rows: number[]; side: { key: string; w: number; h: number }[] } {
   const shown = new Set(keys);
-  const size = (k: string) => (shown.has(k) ? sizeOf(projections[k]).map((v) => v * s) : [0, 0]);
+  const size = (k: string) => (shown.has(k) ? paperSize(projections[k], s) : [0, 0]);
   const [fw, fh] = size("front");
   const cols = [size("right")[0], fw, size("left")[0], size("back")[0]];
   const rows = [size("bottom")[1], fh, size("top")[1]];
@@ -277,28 +329,37 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     const p = projections[key];
     if (!p?.bounds) continue;
     const centre = centreFor(key);
-    const [cx, cy] = centreOf(p);
     // Detail views are drawn bigger than the rest.
     const vs = scale * (p.zoom ?? 1);
-    const map = (line: number[]) => line.map((val, i) => (i % 2 === 0 ? centre[0] + (val - cx) * vs : centre[1] + (val - cy) * vs));
+    const at = (x: number, y: number) => toSheet({ centre }, p, scale, x, y);
+    const map = (line: number[]) => {
+      const out: number[] = [];
+      for (let i = 0; i + 1 < line.length; i += 2) out.push(...at(line[i], line[i + 1]));
+      return out;
+    };
+    // Shortened views: the bands taken out aren't drawn.
+    const draw = (line: number[], style: LineStyle) => {
+      for (const piece of clipped(p, line)) prims.push({ kind: "path", points: map(piece), style });
+    };
     if (p.cutFaces) {
-      for (const seg of hatchLines(p.cutFaces, HATCH_SPACING / scale)) prims.push({ kind: "path", points: map(seg), style: "thin" });
+      for (const seg of hatchLines(p.cutFaces, HATCH_SPACING / scale)) draw(seg, "thin");
     }
-    for (const line of drawing.hiddenLines ? p.hidden : []) prims.push({ kind: "path", points: map(line), style: "hidden" });
-    for (const line of p.visible) prims.push({ kind: "path", points: map(line), style: "visible" });
-    for (const line of p.breakLines ?? []) prims.push({ kind: "path", points: map(line), style: "thin" });
+    for (const line of drawing.hiddenLines ? p.hidden : []) draw(line, "hidden");
+    for (const line of p.visible) draw(line, "visible");
+    for (const line of p.breakLines ?? []) draw(line, "thin");
     if (drawing.centreLines !== false) {
-      for (const seg of [...centreMarks(p, vs), ...centreLines(p, vs)]) prims.push({ kind: "path", points: map(seg), style: "centre" });
+      for (const seg of [...centreMarks(p, vs), ...centreLines(p, vs)]) draw(seg, "centre");
     }
     // Tapped holes: the thread drawn the standard way.
     if (drawing.threadSymbols !== false && info.taps?.length) {
       const t = threadSymbols(p, info.taps);
-      for (const arc of t.endOn) prims.push({ kind: "path", points: map(arc), style: "thin" });
+      for (const arc of t.endOn) draw(arc, "thin");
       // From the side they're inside the part, so shown with the hidden lines.
-      if (drawing.hiddenLines) for (const seg of t.side) prims.push({ kind: "path", points: map(seg), style: "hidden" });
+      if (drawing.hiddenLines) for (const seg of t.side) draw(seg, "hidden");
     }
-    const [w, h] = sizeOf(p).map((d) => d * scale);
+    const [w, h] = paperSize(p, scale);
     const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
+    if (p.shorten?.length) prims.push(...breakSymbols(p, scale, at, box));
     if (v.kind === "flat") {
       // Bend lines, numbered, and a list of the bends under the view's name.
       prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: "FLAT PATTERN", size: 3.5, anchor: "middle", bold: true });
@@ -490,10 +551,23 @@ function balloonPrims(host: PlacedView, p: ViewProjection, scale: number, balloo
 }
 
 /** Where a point of a view (in its own mm) lands on the sheet. */
-export function toSheet(view: PlacedView, projection: ViewProjection, scale: number, x: number, y: number): [number, number] {
-  const [cx, cy] = centreOf(projection);
+export function toSheet(view: Pick<PlacedView, "centre">, projection: ViewProjection, scale: number, x: number, y: number): [number, number] {
+  const [cx, cy] = drawnCentre(projection, scale);
   const s = scale * (projection.zoom ?? 1);
-  return [view.centre[0] + (x - cx) * s, view.centre[1] + (y - cy) * s];
+  if (!projection.shorten?.length) return [view.centre[0] + (x - cx) * s, view.centre[1] + (y - cy) * s];
+  const q = squeezer(projection, scale);
+  return [view.centre[0] + (q.x(x) - cx) * s, view.centre[1] + (q.y(y) - cy) * s];
+}
+
+/** The other way: the point on the view (its own coordinates, the real part) under a point on the sheet. */
+export function fromSheet(view: Pick<PlacedView, "centre">, projection: ViewProjection, scale: number, sx: number, sy: number): [number, number] {
+  const [cx, cy] = drawnCentre(projection, scale);
+  const s = scale * (projection.zoom ?? 1);
+  const u = cx + (sx - view.centre[0]) / s;
+  const v = cy + (sy - view.centre[1]) / s;
+  if (!projection.shorten?.length) return [u, v];
+  const q = squeezer(projection, scale);
+  return [unsqueeze(u, q.bands[0], q.g), unsqueeze(v, q.bands[1], q.g)];
 }
 
 const rect = (x0: number, y0: number, x1: number, y1: number, style: LineStyle): Prim => ({ kind: "path", points: [x0, y0, x1, y0, x1, y1, x0, y1], closed: true, style });

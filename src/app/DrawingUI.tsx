@@ -2,6 +2,7 @@
  * The drawing tab: a sheet with views of a part (or an assembly) and a title
  * block, its settings panel and toolbar, and saving it as PDF or SVG.
  */
+import { putShortening, removeShortening, withShortenings } from "../drawing/shorten";
 import { itemsInBox, toggled } from "../drawing/select";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
@@ -15,7 +16,7 @@ import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } fro
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
-import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { angleGeometry, dimPoint, dragDimension, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
@@ -24,7 +25,7 @@ import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, PartSmithDocument, SectionCut } from "../model/types";
+import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, PartSmithDocument, SectionCut } from "../model/types";
 import { addSection, breakOutRequests, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
@@ -149,7 +150,9 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
   const base = state.result ?? fresh;
   const detailsKey = JSON.stringify(drawing.details ?? []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const projections = useMemo(() => (base ? withDetails(base, drawing) : null), [base, detailsKey]);
+  const shortKey = JSON.stringify(drawing.shortened ?? []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const projections = useMemo(() => (base ? withShortenings(withDetails(base, drawing), drawing) : null), [base, detailsKey, shortKey]);
   return { projections, subject: subject?.name ?? null, instances: subject?.instances, busy: state.busy, error: state.error };
 }
 
@@ -270,6 +273,7 @@ export function DrawingToolbar() {
               ["section", "Section", <Icons.Section key="s" />, "Section — click two points across the front, top or a side view to cut the part open there. Flip or remove sections in the panel"],
               ["auxiliary", "Auxiliary view", <Icons.AuxView key="a" />, "Auxiliary view — click two points along a sloping edge on the front, top or a side view: the part is shown looking square-on to it, so the sloping face is drawn at its true size"],
               ["breakout", "Broken-out", <Icons.BreakOut key="b" />, "Broken-out — click two corners of an area on the front, top or a side view: the part is cut away there to show what's inside (set the depth in the panel)"],
+              ["shorten", "Shortened view", <Icons.Shorten key="sh" />, "Shortened view — click two points along a long view (front, top or a side): the stretch between them is taken out so it fits the sheet. Dimensions still show the real length"],
               ["detail", "Detail", <Icons.Detail key="d" />, "Detail — click the middle of a small area on a view, then the circle's size: it's shown again bigger"],
             ] as const
           ).map(([t, label, icon, title]) => ({
@@ -693,6 +697,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
       <SectionsList drawing={drawing} change={change} />
       <DetailsList drawing={drawing} change={change} />
       <BreakOutsList drawing={drawing} change={change} />
+      <ShortenedList drawing={drawing} change={change} />
       <RevisionsList drawing={drawing} change={change} />
       <section className="panel-section">
         <h3>Title block</h3>
@@ -771,6 +776,37 @@ function BreakOutsList({ drawing, change }: { drawing: Drawing; change: (fn: (d:
                 onClick={() => change((d) => removeBreakOut(d, b.id))}
                 title="Remove this cut (the view shows the whole part again)"
                 aria-label={`Remove broken-out cut ${i + 1}`}
+              >
+                Remove
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** The drawing's shortened views: remove one to show the whole length again. */
+function ShortenedList({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
+  const list = drawing.shortened ?? [];
+  if (!list.length) return null;
+  return (
+    <section className="panel-section">
+      <h3>Shortened views</h3>
+      <div className="drawing-views">
+        {list.map((s, i) => (
+          <div className="section-row" key={s.id}>
+            <span>
+              Break {i + 1} <span className="muted small">(on {VIEW_LABELS[s.host]}, {s.axis === "x" ? "across" : "up and down"})</span>
+            </span>
+            <span className="row-actions-inline">
+              <button
+                type="button"
+                className="text-button small-text danger-text"
+                onClick={() => change((d) => removeShortening(d, s.id))}
+                title="Remove this break (the view shows its whole length again)"
+                aria-label={`Remove break ${i + 1}`}
               >
                 Remove
               </button>
@@ -980,6 +1016,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const [detailStart, setDetailStart] = useState<{ view: string; at: P2 } | null>(null);
   /** Broken-out tool: the first corner clicked. */
   const [breakStart, setBreakStart] = useState<{ view: string; at: P2 } | null>(null);
+  /** Shortened view tool: the first edge clicked. */
+  const [shortStart, setShortStart] = useState<{ view: string; at: P2 } | null>(null);
   const [cursor, setCursor] = useState<P2 | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [W, H] = SHEETS[drawing.sheet];
@@ -995,6 +1033,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     setCutStart(null);
     setDetailStart(null);
     setBreakStart(null);
+    setShortStart(null);
     setRun(null);
   }, [tool, drawing.id]);
 
@@ -1035,6 +1074,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         else if (cutStart) setCutStart(null);
         else if (detailStart) setDetailStart(null);
         else if (breakStart) setBreakStart(null);
+        else if (shortStart) setShortStart(null);
         else if (pending) setPending(null);
         else if (run) setRun(null);
         else if (s.selectedDims.length) s.selectDim(null);
@@ -1045,7 +1085,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending, cutStart, run, detailStart, breakStart, symbolStart]);
+  }, [pending, cutStart, run, detailStart, breakStart, shortStart, symbolStart]);
 
   const toSheet = (e: { clientX: number; clientY: number }): P2 => {
     const svg = svgRef.current;
@@ -1234,9 +1274,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     );
     const p = v && projections[v.key];
     if (!v || !p?.bounds) return null;
-    const cx = (p.bounds[0] + p.bounds[2]) / 2;
-    const cy = (p.bounds[1] + p.bounds[3]) / 2;
-    return { view: v.key, at: [cx + (here[0] - v.centre[0]) / layout.scale, cy + (here[1] - v.centre[1]) / layout.scale], sheet: here };
+    return { view: v.key, at: fromSheetPoint(v, p, layout.scale, here[0], here[1]), sheet: here };
   };
   /** The section line's end for the pointer: straightened when it's within a few degrees of across or up-and-down. */
   const cutEnd = (here: P2): { at: P2; sheet: P2 } | null => {
@@ -1294,6 +1332,33 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     useStore.getState().setDrawingTool("select");
   };
 
+  /** Shortened view: the two edges of the stretch to take out, along whichever way they're further apart. */
+  const shortenClick = (here: P2) => {
+    if (!shortStart) {
+      const p = cutPoint(here);
+      if (p) setShortStart({ view: p.view, at: p.at });
+      return;
+    }
+    const end = cutPoint(here, shortStart.view);
+    const p = projections?.[shortStart.view];
+    if (!end || !p?.bounds || !layout) return;
+    const dx = Math.abs(end.at[0] - shortStart.at[0]);
+    const dy = Math.abs(end.at[1] - shortStart.at[1]);
+    if (Math.max(dx, dy) * layout.scale < 3) return;
+    const axis = dx >= dy ? "x" : "y";
+    const i = axis === "x" ? 0 : 1;
+    const lo = p.bounds[i];
+    const span = p.bounds[i + 2] - lo;
+    if (!(span > 0)) return;
+    const frac = (v: number) => Math.round(Math.max(0, Math.min(1, (v - lo) / span)) * 1e6) / 1e6;
+    const a = frac(shortStart.at[i]);
+    const b = frac(end.at[i]);
+    if (Math.abs(b - a) < 1e-3) return;
+    change((d) => putShortening(d, { id: newId("sh"), host: shortStart.view as Shortening["host"], axis, from: Math.min(a, b), to: Math.max(a, b) }));
+    setShortStart(null);
+    useStore.getState().setDrawingTool("select");
+  };
+
   const sectionClick = (here: P2) => {
     if (!cutStart) {
       const p = cutPoint(here);
@@ -1348,6 +1413,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     else if (tool === "section" || tool === "auxiliary") sectionClick(toSheet(e));
     else if (tool === "detail") detailClick(toSheet(e));
     else if (tool === "breakout") breakClick(toSheet(e));
+    else if (tool === "shorten") shortenClick(toSheet(e));
     else {
       // Empty paper: drag out a box to select dimensions and notes (Shift or Ctrl adds to what's selected).
       const at = toSheet(e);
@@ -1435,7 +1501,11 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     message = run
       ? `Click the next corner or hole centre (${what}). Esc to finish, or click another view's point to start again there.`
       : "Click the datum: the corner or hole centre to measure from.";
-  } else if (tool === "breakout")
+  } else if (tool === "shorten")
+    message = shortStart
+      ? "Click the other end of the stretch to take out (along the view, or up and down it). Esc to start again."
+      : "Click one end of the stretch to take out of a long view (front, top or a side view).";
+  else if (tool === "breakout")
     message = breakStart
       ? "Click the opposite corner of the area to cut away. Set how deep it goes in the panel. Esc to start again."
       : "Click one corner of the area to cut away, on the front, top or a side view.";
@@ -1467,7 +1537,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     return { point: at(f.kind === "point" ? f.at : f.centre) };
   })();
   const cutHover =
-    (tool === "section" || tool === "auxiliary" || (tool === "detail" && !detailStart) || (tool === "breakout" && !breakStart)) && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor)) : null;
+    (tool === "section" || tool === "auxiliary" || (tool === "detail" && !detailStart) || (tool === "breakout" && !breakStart) || tool === "shorten") && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor, shortStart?.view)) : null;
   const breakRect = (() => {
     if (tool !== "breakout" || !breakStart || !cursor) return null;
     const at = viewAt(breakStart.view);
