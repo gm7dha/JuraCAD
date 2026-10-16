@@ -104,9 +104,11 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "transform",
     label: "Move / copy",
     namePrefix: "Transform",
-    description: "Moves and/or turns a part, or a copy of it.",
+    description: "Moves and/or turns a part, or a copy of it. Turns are about X, then Y, then Z.",
     params: [
-      { key: "angle", label: "Turn by", defaultValue: "0", group: "size", unit: "°" },
+      { key: "rx", label: "Turn about X (red)", defaultValue: "0", group: "size", unit: "°" },
+      { key: "ry", label: "Turn about Y (green)", defaultValue: "0", group: "size", unit: "°" },
+      { key: "rz", label: "Turn about Z (blue)", defaultValue: "0", group: "size", unit: "°" },
       { key: "dx", label: "Move X (red)", defaultValue: "0", group: "position" },
       { key: "dy", label: "Move Y (green)", defaultValue: "0", group: "position" },
       { key: "dz", label: "Move Z (blue)", defaultValue: "0", group: "position" },
