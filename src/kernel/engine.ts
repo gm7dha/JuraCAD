@@ -1057,7 +1057,7 @@ export class GeometryEngine {
         if (err) featureErrors[feature.id] = err;
         continue;
       }
-      if (feature.type === "draft" || feature.type === "moveFace" || feature.type === "deleteFace") {
+      if (feature.type === "draft" || feature.type === "moveFace" || feature.type === "replaceFace" || feature.type === "deleteFace") {
         const err = this.applyFaceEdit(feature);
         if (err) featureErrors[feature.id] = err;
         continue;
@@ -1387,27 +1387,59 @@ export class GeometryEngine {
       } else if (feature.type === "deleteFace") {
         result = deleteFaces(part.shape, faces);
       } else {
-        const d = values.distance;
-        if (Math.abs(d) < 1e-9) return "Enter a distance to move the faces by.";
-        // Each flat face swept out (or in) along its own normal, then added (or cut).
-        let prism: Shape3D | null = null;
-        for (const face of faces) {
-          if (face.geomType !== "PLANE") throw new Error("Move face works on flat faces. Remove the curved face.");
-          const n = take(face.normalAt());
-          const piece = basicFaceExtrusion(face, new Vector([n[0] * d, n[1] * d, n[2] * d])) as Shape3D;
-          if (!prism) prism = piece;
-          else {
-            const next: Shape3D = prism.fuse(piece);
-            prism.delete();
-            piece.delete();
-            prism = next;
+        // How far each flat face moves along its own outward normal.
+        const moves: { face: Face; d: number }[] = [];
+        if (feature.type === "replaceFace") {
+          const target = feature.replaceDef?.target;
+          if (!target) return "Click the face (or plane) to move them onto: press “Pick the face to move them onto”, then click it.";
+          const frame = planeFrame(target);
+          for (const face of faces) {
+            if (face.geomType !== "PLANE") return "Replace face works on flat faces. Remove the curved face.";
+            const n = take(face.normalAt());
+            if (Math.abs(dot3(n, frame.n)) < 0.9999) return "The faces must be parallel to the face they're moved onto (it can't tilt them). Pick a parallel face or plane.";
+            const c = take(face.center);
+            const gap = dot3([frame.origin[0] - c[0], frame.origin[1] - c[1], frame.origin[2] - c[2]], n);
+            moves.push({ face, d: gap + values.offset });
+          }
+          if (moves.every((m) => Math.abs(m.d) < 1e-9)) return "The faces are already on that face — nothing to move.";
+        } else {
+          const d = values.distance;
+          if (Math.abs(d) < 1e-9) return "Enter a distance to move the faces by.";
+          for (const face of faces) {
+            if (face.geomType !== "PLANE") throw new Error("Move face works on flat faces. Remove the curved face.");
+            moves.push({ face, d });
           }
         }
-        if (!prism) return "Click the faces to move.";
+        // Each face swept out (or in) along its normal: what's swept outwards is added, inwards is cut.
+        const join = (a: Shape3D | null, b: Shape3D): Shape3D => {
+          if (!a) return b;
+          const next: Shape3D = a.fuse(b);
+          a.delete();
+          b.delete();
+          return next;
+        };
+        let grow: Shape3D | null = null;
+        let shrink: Shape3D | null = null;
+        for (const { face, d } of moves) {
+          if (Math.abs(d) < 1e-9) continue;
+          const n = take(face.normalAt());
+          const piece = basicFaceExtrusion(face, new Vector([n[0] * d, n[1] * d, n[2] * d])) as Shape3D;
+          if (d > 0) grow = join(grow, piece);
+          else shrink = join(shrink, piece);
+        }
+        if (!grow && !shrink) return "Click the faces to move.";
+        let shape: Shape3D = part.shape;
         try {
-          result = d > 0 ? part.shape.fuse(prism) : part.shape.cut(prism);
+          if (grow) shape = shape.fuse(grow);
+          if (shrink) {
+            const cut: Shape3D = shape.cut(shrink);
+            if (shape !== part.shape) shape.delete();
+            shape = cut;
+          }
+          result = shape;
         } finally {
-          prism.delete();
+          grow?.delete();
+          shrink?.delete();
         }
       }
       const solids = solidsOf(result);

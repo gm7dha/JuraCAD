@@ -320,6 +320,15 @@ export function Toolbar() {
               title: hasPart ? "Move face — push flat faces out or in by a distance" : "Make a part first",
             },
             {
+              key: "replaceFace",
+              label: "Replace face",
+              icon: <Icons.ReplaceFace />,
+              onClick: () => startCreate("replaceFace"),
+              disabled: !ready || !hasPart,
+              active: editingType === "replaceFace",
+              title: hasPart ? "Replace face — move flat faces onto another face or plane parallel to them (to line parts up)" : "Make a part first",
+            },
+            {
               key: "deleteFace",
               label: "Delete face",
               icon: <Icons.DeleteFace />,

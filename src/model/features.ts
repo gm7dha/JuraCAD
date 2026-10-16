@@ -211,6 +211,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Moves flat faces straight out (or in, with a minus distance), growing or shrinking the part.",
     params: [{ key: "distance", label: "Distance", defaultValue: "2", group: "size" }],
   },
+  replaceFace: {
+    type: "replaceFace",
+    label: "Replace face",
+    namePrefix: "Replace face",
+    description: "Moves flat faces onto another flat face or plane that's parallel to them — to line a part up with another, or level it with a face.",
+    params: [{ key: "offset", label: "Offset (past the face, or short of it with a minus amount)", defaultValue: "0", group: "size" }],
+  },
   thread: {
     type: "thread",
     label: "Thread",
