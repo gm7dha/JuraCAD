@@ -1,5 +1,5 @@
 import { parsePick } from "../geometry/topoRef";
-import { FASTENER_SIZES } from "./fasteners";
+import { FASTENER_KINDS, FASTENER_SIZES, type FastenerKind } from "./fasteners";
 import { parsePlane, parseSketchData } from "../sketch/validate";
 import { defaultAxis } from "../sketch/axis";
 import { emptySketch } from "../sketch/types";
@@ -410,7 +410,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "fastener") {
       const fa = (f.fastener ?? {}) as Record<string, unknown>;
       feature.fastener = {
-        kind: fa.kind === "nut" || fa.kind === "washer" ? fa.kind : "bolt",
+        kind: FASTENER_KINDS.includes(fa.kind as FastenerKind) ? (fa.kind as FastenerKind) : "bolt",
         size: typeof fa.size === "string" && FASTENER_SIZES.some((s) => s.name === fa.size) ? fa.size : "M6",
         threaded: fa.threaded === true,
       };

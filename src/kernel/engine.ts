@@ -27,7 +27,7 @@ import { openChain, profileSheet } from "../sheetmetal/profile";
 import { findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
 import { bendSolid, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
 import { flatProjection } from "../sheetmetal/flatExport";
-import { fastenerName, fastenerSize } from "../model/fasteners";
+import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import type { CheckResult, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
@@ -863,10 +863,14 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       const s = fastenerSize(f.size);
       if (!f.threaded || f.kind === "washer" || !s) return solid;
       try {
-        if (f.kind === "bolt") {
-          // Along the shank, leaving a pitch plain under the head; the groove runs out past the tip.
-          const cyl: Cylinder = { origin: [v.x, v.y, v.z - v.length], axis: [0, 0, 1], radius: s.d / 2 };
-          const out = cutThread(solid, cyl, -s.pitch, Math.max(v.length - s.pitch, s.pitch), 0, v.length, s.pitch, true);
+        if (hasLength(f.kind)) {
+          // Along the shank, leaving a pitch plain under the head (a grub screw is threaded all the way);
+          // the groove runs out past the tip.
+          const shank = shankOf(f.kind, s, v.length);
+          const len = shank.length;
+          const cyl: Cylinder = { origin: [v.x, v.y, v.z + shank.top - len], axis: [0, 0, 1], radius: s.d / 2 };
+          const end = f.kind === "grub" ? len + s.pitch : Math.max(len - s.pitch, s.pitch);
+          const out = cutThread(solid, cyl, -s.pitch, end, 0, len, s.pitch, true);
           if (out !== solid) solid.delete();
           return out;
         }
