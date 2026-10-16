@@ -149,6 +149,16 @@ try {
   await page.getByRole("button", { name: "Close section view" }).click();
   await page.waitForSelector(".section-panel", { state: "detached" });
 
+  step = "checking it fits on a print bed";
+  await page.getByRole("button", { name: "Print bed", exact: true }).click();
+  await page.waitForSelector(".print-bed-panel >> text=Fits on the bed", { timeout: 5_000 });
+  await page.locator("#print-bed-printer").selectOption("custom");
+  await page.getByLabel("Bed X (width)").fill("10");
+  await page.waitForSelector(".print-bed-panel >> text=too wide", { timeout: 5_000 });
+  await shot("print-bed");
+  await page.getByRole("button", { name: "Close print bed" }).click();
+  await page.waitForSelector(".print-bed-panel", { state: "detached" });
+
   step = "switching to the top view";
   await page.keyboard.press("Shift+Digit5");
   await page.waitForTimeout(600);

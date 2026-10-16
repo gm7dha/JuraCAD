@@ -550,6 +550,69 @@ export class SceneManager {
       p.mesh.visible = p.lines.visible = !this.hidden.has(id);
       p.cut.visible = p.mesh.visible && this.section !== null;
     }
+    this.updatePrintBed();
+  }
+
+  /** The box round everything shown (world mm), or null when nothing is. */
+  visibleBounds(): { min: [number, number, number]; max: [number, number, number] } | null {
+    const box = new THREE.Box3();
+    for (const p of this.parts.values()) if (p.mesh.visible) box.expandByObject(p.mesh);
+    return box.isEmpty() ? null : { min: box.min.toArray() as [number, number, number], max: box.max.toArray() as [number, number, number] };
+  }
+
+  /**
+   * Show a printer's bed (X × Y, with a 10 mm grid) under the parts shown,
+   * centred beneath them, and its build volume as an outline — red where the
+   * parts don't fit. Null hides it.
+   */
+  setPrintBed(size: [number, number, number] | null): void {
+    this.printBedSize = size;
+    this.updatePrintBed();
+  }
+
+  private printBedSize: [number, number, number] | null = null;
+  private readonly printBedGroup = new THREE.Group();
+
+  private updatePrintBed(): void {
+    const g = this.printBedGroup;
+    for (const child of [...g.children]) {
+      g.remove(child);
+      const o = child as THREE.Mesh | THREE.LineSegments;
+      o.geometry?.dispose();
+      (o.material as THREE.Material | undefined)?.dispose();
+    }
+    const size = this.printBedSize;
+    if (!size) return;
+    if (!g.parent) this.scene.add(g);
+    const b = this.visibleBounds();
+    const centre = b ? [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2] : [0, 0];
+    const z0 = b ? b.min[2] : 0;
+    const fits = !b || [0, 1, 2].every((i) => b.max[i] - b.min[i] <= size[i] + 1e-6);
+    const [w, d, h] = size;
+    const x0 = centre[0] - w / 2;
+    const y0 = centre[1] - d / 2;
+    // The plate, just under the parts.
+    const plate = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, d),
+      new THREE.MeshBasicMaterial({ color: fits ? 0x2f6fb0 : 0xc0392b, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    plate.position.set(centre[0], centre[1], z0 - 0.05);
+    plate.raycast = () => {};
+    // A 10 mm grid, and the build volume's edges.
+    const grid: number[] = [];
+    for (let x = 0; x <= w + 1e-6; x += 10) grid.push(x0 + x, y0, z0, x0 + x, y0 + d, z0);
+    for (let y = 0; y <= d + 1e-6; y += 10) grid.push(x0, y0 + y, z0, x0 + w, y0 + y, z0);
+    const gridGeo = new THREE.BufferGeometry();
+    gridGeo.setAttribute("position", new THREE.Float32BufferAttribute(grid, 3));
+    const gridLines = new THREE.LineSegments(gridGeo, new THREE.LineBasicMaterial({ color: 0x6b7c8f, transparent: true, opacity: 0.35 }));
+    gridLines.raycast = () => {};
+    const volume = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(w, d, h)),
+      new THREE.LineBasicMaterial({ color: fits ? 0x2f6fb0 : 0xc0392b, transparent: true, opacity: 0.7 }),
+    );
+    volume.position.set(centre[0], centre[1], z0 + h / 2);
+    volume.raycast = () => {};
+    g.add(plate, gridLines, volume);
   }
 
   /** Zoom and centre so everything visible fits on screen. */
@@ -869,6 +932,7 @@ export class SceneManager {
     const extent = box.isEmpty() ? 0 : Math.max(...box.getSize(new THREE.Vector3()).toArray(), 0);
     // Like Onshape, planes roughly cover the model (100 mm when empty).
     this.planeSize = extent > 0 ? Math.max(10, Math.ceil((extent * 1.1) / 5) * 5) : 100;
+    this.updatePrintBed();
     for (const group of this.planesGroup.children) {
       const inner = group.children[0];
       inner.scale.setScalar(this.planeSize);

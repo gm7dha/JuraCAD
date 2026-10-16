@@ -7,6 +7,7 @@ import { Icons } from "./icons";
 import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
+import { startPrintBed } from "./PrintBedPanel";
 import { chooseImportFile } from "./fileActions";
 
 function ToolButton({
@@ -85,6 +86,7 @@ export function Toolbar() {
   const showFlat = useStore((s) => s.showFlat);
   const partCount = useStore((s) => studioParts(s).length);
   const sectionOn = useStore((s) => s.section !== null);
+  const printBedOn = useStore((s) => s.printBed !== null);
   const platform = detectPlatform();
 
   return (
@@ -508,6 +510,14 @@ export function Toolbar() {
           disabled={!hasPart}
           active={sectionOn}
           title="Section view — slice the view open to see inside (doesn't change the part)"
+        />
+        <ToolButton
+          label="Print bed"
+          icon={<Icons.PrintBed />}
+          onClick={() => (useStore.getState().printBed ? useStore.getState().setPrintBed(null) : startPrintBed())}
+          disabled={!hasPart}
+          active={printBedOn}
+          title="Print bed — show your 3D printer's bed and build volume under the parts, to check they fit"
         />
       </div>
       <div className="tool-group">

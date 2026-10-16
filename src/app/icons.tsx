@@ -196,6 +196,13 @@ export const Icons = {
       <path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" />
     </Svg>
   ),
+  PrintBed: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 17l9 4 9-4-9-4z" />
+      <path d="M8 13.5V8l4-2 4 2v5.5" />
+      <path d="M12 6v9" strokeDasharray="1.5 1.5" />
+    </Svg>
+  ),
   Section: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 8 12 4l8 4v8l-8 4-8-4z" />
