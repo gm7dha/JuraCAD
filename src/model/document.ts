@@ -92,7 +92,8 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.operation = "add";
   }
   if (type === "thicken" || type === "moveFace" || type === "deleteFace" || type === "thread" || type === "fullRound" || type === "wrap" || type === "fill" || type === "enclose" || type === "offsetSurface") feature.picks = [];
-  if (type === "fill" || type === "enclose" || type === "offsetSurface") feature.operation = "new";
+  if (type === "extendSurface") feature.picks = [];
+  if (type === "fill" || type === "enclose" || type === "offsetSurface" || type === "extendSurface") feature.operation = "new";
   if (type === "wrap") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
     feature.sketchRef = sketches[sketches.length - 1]?.id;
@@ -465,7 +466,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "draft" && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "coil" && f.flipSide === true) feature.flipSide = true;
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "loft") && f.surface === true) feature.surface = true;
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface"].includes(feature.type)) {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

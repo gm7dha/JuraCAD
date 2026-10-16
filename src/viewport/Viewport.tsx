@@ -243,11 +243,11 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       return;
     }
   }
-  // Fill: the edges round an opening.
-  if (s.editing?.draft.type === "fill") {
+  // Fill: the edges round an opening; Extend surface: the edges to push out.
+  if (s.editing?.draft.type === "fill" || s.editing?.draft.type === "extendSurface") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "edge") {
-      s.showToast("Click the edges round the opening (not a face).");
+      s.showToast(s.editing.draft.type === "fill" ? "Click the edges round the opening (not a face)." : "Click the edges of the surface to extend (not a face).");
       return;
     }
     const pick = pickFor(s.parts, target.item);

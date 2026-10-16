@@ -229,6 +229,13 @@ export const Icons = {
       <path d="M12 12l-8-4" opacity="0.4" />
     </Svg>
   ),
+  ExtendSurface: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 15c3-5 6-5 9-3" />
+      <path d="M12 12c3 2 5 2 9-3" strokeDasharray="2 1.5" />
+      <path d="M17 6l4 3-3 4" />
+    </Svg>
+  ),
   OffsetSurface: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 15c4-6 8 2 12-4s4-6 6-4" />

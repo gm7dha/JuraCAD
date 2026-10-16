@@ -13,7 +13,7 @@ import { axisInSketch, type RevolveAxis } from "../sketch/axis";
 import type { SketchData } from "../sketch/types";
 import { release, segmentsWire } from "./extrude";
 import { pathWire } from "./sweep";
-import { facesOf } from "./topology";
+import { edgesOf, facesOf } from "./topology";
 
 type Vec3 = [number, number, number];
 
@@ -227,3 +227,75 @@ export function offsetSurface(shape: Shape3D, distance: number): Shape3D {
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
+
+/** Faces and shells sewn into one shell (or whatever closes up), with OpenCascade's sewing. */
+function sewn(shapes: Shape3D[]): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const sewing = new oc.BRepBuilderAPI_Sewing(1e-4, true, true, true, false);
+  try {
+    for (const s of shapes) sewing.Add(s.wrapped);
+    sewing.Perform();
+    return cast(sewing.SewedShape()) as Shape3D;
+  } finally {
+    sewing.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * A surface grown out past its free edges: each picked edge is pushed
+ * `distance` further on, straight along the surface's tangent there, and the
+ * new strip is joined on.
+ */
+export function extendSurface(shape: Shape3D, edges: Edge[], distance: number): Shape3D {
+  if (!edges.length) throw new Error("Click the edges of the surface to extend.");
+  if (!(distance > 0)) throw new Error("Distance: enter how far to extend.");
+  const faces = facesOf(shape);
+  const strips: Shape3D[] = [];
+  try {
+    for (const edge of edges) {
+      const hash = edge.hashCode;
+      // The face this edge belongs to.
+      const face = faces.find((f) => {
+        const mine = edgesOf(f);
+        const has = mine.some((e) => e.hashCode === hash);
+        mine.forEach((e) => e.delete());
+        return has;
+      });
+      if (!face) throw new Error("A picked edge isn't on this surface. Pick its own edges.");
+      const m = take(edge.pointAt(0.5));
+      const t = take(edge.tangentAt(0.5));
+      let n: Vec3;
+      try {
+        n = take(face.normalAt(m));
+      } catch {
+        throw new Error("Couldn't tell which way the surface goes at that edge.");
+      }
+      // Across the edge, in the surface, away from the face.
+      let d = unit(cross(t, n));
+      const c = take(face.center);
+      if (d[0] * (m[0] - c[0]) + d[1] * (m[1] - c[1]) + d[2] * (m[2] - c[2]) < 0) d = [-d[0], -d[1], -d[2]];
+      const v = new Vector([d[0] * distance, d[1] * distance, d[2] * distance]);
+      try {
+        strips.push(basicFaceExtrusion(edge as unknown as Face, v));
+      } finally {
+        v.delete();
+      }
+    }
+    return sewn([shape, ...strips]);
+  } finally {
+    release(...faces, ...strips);
+  }
+}
+
+const take = (v: { x: number; y: number; z: number; delete(): void }): Vec3 => {
+  const out: Vec3 = [v.x, v.y, v.z];
+  v.delete();
+  return out;
+};
+const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit = (a: Vec3): Vec3 => {
+  const l = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+};
