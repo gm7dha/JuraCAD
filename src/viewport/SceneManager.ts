@@ -176,7 +176,13 @@ export class SceneManager {
     toTarget: THREE.Vector3;
     fromZoom: number;
     toZoom: number;
+    fromUp: THREE.Vector3;
+    toUp: THREE.Vector3;
   } | null = null;
+  /** A right-drag (or one-finger drag) turning the view, with the last pointer position. */
+  private orbit: { id: number; x: number; y: number } | null = null;
+  /** Fingers on the screen (one turns the view; two pinch and pan). */
+  private readonly touches = new Set<number>();
 
   constructor(container: HTMLElement, callbacks: SceneCallbacks) {
     this.container = container;
@@ -238,6 +244,7 @@ export class SceneManager {
     el.addEventListener("pointermove", this.onPointerMove);
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointerleave", this.onPointerLeave);
+    el.addEventListener("pointercancel", this.onPointerCancel);
     el.addEventListener("contextmenu", (e) => e.preventDefault());
 
     // Onshape mouse: right-drag orbits, middle-drag pans, wheel zooms towards the cursor.
@@ -248,6 +255,8 @@ export class SceneManager {
       RIGHT: THREE.MOUSE.ROTATE,
     };
     this.controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    // Turning the view is ours (see orbitBy): OrbitControls stops at straight up and down.
+    this.controls.enableRotate = false;
     this.controls.enableDamping = false;
     this.controls.zoomToCursor = true;
     this.controls.screenSpacePanning = true;
@@ -561,13 +570,18 @@ export class SceneManager {
   }
 
   /** The current view (to come back to later). */
-  saveView(): { dir: THREE.Vector3; target: THREE.Vector3; zoom: number } {
+  saveView(): { dir: THREE.Vector3; target: THREE.Vector3; zoom: number; up: THREE.Vector3 } {
     const a = this.animation;
-    if (a) return { dir: a.toDir.clone(), target: a.toTarget.clone(), zoom: a.toZoom };
-    return { dir: this.camera.position.clone().sub(this.controls.target).normalize(), target: this.controls.target.clone(), zoom: this.camera.zoom };
+    if (a) return { dir: a.toDir.clone(), target: a.toTarget.clone(), zoom: a.toZoom, up: a.toUp.clone() };
+    return { dir: this.camera.position.clone().sub(this.controls.target).normalize(), target: this.controls.target.clone(), zoom: this.camera.zoom, up: this.camera.up.clone() };
   }
 
-  restoreView(v: { dir: THREE.Vector3; target: THREE.Vector3; zoom: number }): void {
+  /** Which way is up on screen (for the smoke test). */
+  cameraUp(): [number, number, number] {
+    return this.camera.up.toArray() as [number, number, number];
+  }
+
+  restoreView(v: { dir: THREE.Vector3; target: THREE.Vector3; zoom: number; up?: THREE.Vector3 }): void {
     this.animateTo(v, true);
   }
 
@@ -737,6 +751,7 @@ export class SceneManager {
     el.removeEventListener("pointerdown", this.onPointerDown);
     el.removeEventListener("pointermove", this.onPointerMove);
     el.removeEventListener("pointerup", this.onPointerUp);
+    el.removeEventListener("pointercancel", this.onPointerCancel);
     el.removeEventListener("pointerleave", this.onPointerLeave);
     for (const p of this.parts.values()) {
       p.mesh.geometry.dispose();
@@ -907,7 +922,32 @@ export class SceneManager {
     this.sketchLayer.setResolution(this.width, this.height);
   }
 
-  private animateTo(goal: { dir?: THREE.Vector3; target?: THREE.Vector3; zoom?: number }, animate: boolean): void {
+  /**
+   * Turn the view by a mouse movement of (dx, dy) pixels, about the screen's
+   * up and sideways directions — with no stop at straight up or down, so the
+   * model can be turned right over (as in Onshape).
+   */
+  private orbitBy(dx: number, dy: number): void {
+    const k = (2 * Math.PI * this.controls.rotateSpeed) / this.height;
+    const target = this.controls.target;
+    const offset = this.camera.position.clone().sub(target);
+    const back = offset.clone().normalize();
+    const up = this.camera.up.clone();
+    up.addScaledVector(back, -up.dot(back));
+    if (up.lengthSq() < 1e-12) up.copy(uprightFor(back));
+    up.normalize();
+    const right = up.clone().cross(back).normalize();
+    const turn = new THREE.Quaternion()
+      .setFromAxisAngle(up, -dx * k)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(right, -dy * k));
+    offset.applyQuaternion(turn);
+    up.applyQuaternion(turn);
+    this.camera.position.copy(target).add(offset);
+    this.camera.up.copy(up);
+    this.camera.lookAt(target);
+  }
+
+  private animateTo(goal: { dir?: THREE.Vector3; target?: THREE.Vector3; zoom?: number; up?: THREE.Vector3 }, animate: boolean): void {
     const fromDir = this.camera.position.clone().sub(this.controls.target).normalize();
     // If the camera is already moving (e.g. F pressed straight after Shift+7), keep heading where it
     // was going for anything this move doesn't change, rather than cancelling the turn.
@@ -915,8 +955,10 @@ export class SceneManager {
     const toDir = (goal.dir ?? running?.toDir ?? fromDir).clone().normalize();
     const toTarget = (goal.target ?? running?.toTarget ?? this.controls.target).clone();
     const toZoom = goal.zoom ?? running?.toZoom ?? this.camera.zoom;
+    // A new direction stands the view upright again (Z up, or Y up looking straight down).
+    const toUp = (goal.up ?? (goal.dir ? uprightFor(toDir) : (running?.toUp ?? this.camera.up))).clone();
     if (!animate) {
-      this.applyCamera(toDir, toTarget, toZoom);
+      this.applyCamera(toDir, toTarget, toZoom, toUp);
       return;
     }
     this.animation = {
@@ -928,11 +970,15 @@ export class SceneManager {
       toTarget,
       fromZoom: this.camera.zoom,
       toZoom,
+      fromUp: this.camera.up.clone(),
+      toUp,
     };
   }
 
-  private applyCamera(dir: THREE.Vector3, target: THREE.Vector3, zoom: number): void {
+  private applyCamera(dir: THREE.Vector3, target: THREE.Vector3, zoom: number, up: THREE.Vector3): void {
     const distance = Math.max(5000, this.planeSize * 20);
+    const u = up.clone().addScaledVector(dir, -up.dot(dir));
+    this.camera.up.copy(u.lengthSq() > 1e-12 ? u.normalize() : uprightFor(dir));
     this.controls.target.copy(target);
     this.camera.position.copy(target).addScaledVector(dir, distance);
     this.camera.zoom = zoom;
@@ -956,7 +1002,8 @@ export class SceneManager {
     }
     const target = a.fromTarget.clone().lerp(a.toTarget, e);
     const zoom = a.fromZoom * Math.pow(a.toZoom / a.fromZoom, e);
-    this.applyCamera(dir.normalize(), target, zoom);
+    const up = a.fromUp.clone().lerp(a.toUp, e);
+    this.applyCamera(dir.normalize(), target, zoom, up.lengthSq() > 1e-12 ? up : a.toUp);
     if (t >= 1) this.animation = null;
   }
 
@@ -1028,6 +1075,15 @@ export class SceneManager {
 
   private onPointerDown = (e: PointerEvent) => {
     const { x, y } = this.localPoint(e);
+    if (e.pointerType === "touch") {
+      this.touches.add(e.pointerId);
+      // A second finger pinches or pans instead.
+      this.orbit = this.touches.size === 1 && !this.sketchController && !this.viewCube.contains(x, y, this.width) ? { id: e.pointerId, x: e.clientX, y: e.clientY } : null;
+    } else if (e.button === 2 && !(e.ctrlKey || e.metaKey)) {
+      this.orbit = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      this.animation = null;
+      this.renderer.domElement.setPointerCapture(e.pointerId);
+    }
     this.pointerDown = { x, y, button: e.button };
     if (this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const ptr = this.sketchPointer(e);
@@ -1056,6 +1112,18 @@ export class SceneManager {
   };
 
   private onPointerMove = (e: PointerEvent) => {
+    const orbit = this.orbit;
+    if (orbit && orbit.id === e.pointerId) {
+      const dx = e.clientX - orbit.x;
+      const dy = e.clientY - orbit.y;
+      if (dx || dy) {
+        this.animation = null;
+        this.orbitBy(dx, dy);
+        orbit.x = e.clientX;
+        orbit.y = e.clientY;
+      }
+      if (e.pointerType !== "touch") return;
+    }
     if (this.sketchController) {
       const ptr = this.sketchPointer(e);
       const leftDown = (e.buttons & 1) === 1;
@@ -1119,7 +1187,20 @@ export class SceneManager {
     this.renderer.domElement.style.cursor = "";
   };
 
+  private onPointerCancel = (e: PointerEvent) => {
+    this.touches.delete(e.pointerId);
+    if (this.orbit?.id === e.pointerId) this.orbit = null;
+  };
+
   private onPointerUp = (e: PointerEvent) => {
+    this.touches.delete(e.pointerId);
+    if (this.orbit?.id === e.pointerId) {
+      this.orbit = null;
+      if (e.pointerType !== "touch") {
+        if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+        return;
+      }
+    }
     const down = this.pointerDown;
     this.pointerDown = null;
     const drag = this.drag;
@@ -1206,4 +1287,11 @@ export class SceneManager {
     this.viewCube.render(this.renderer, this.camera, this.width, this.height);
     for (const fn of this.frameListeners) fn();
   };
+}
+
+/** "Up" for a view looking back along `dir`: world Z, or Y when looking straight down (or up) Z. */
+function uprightFor(dir: THREE.Vector3): THREE.Vector3 {
+  const up = new THREE.Vector3(0, 0, 1).addScaledVector(dir, -dir.z);
+  if (up.lengthSq() > 1e-12) return up.normalize();
+  return new THREE.Vector3(0, 1, 0).addScaledVector(dir, -dir.y).normalize();
 }

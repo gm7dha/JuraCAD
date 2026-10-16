@@ -107,6 +107,21 @@ try {
   const features = await page.locator(".feature-row:not(.datum)").count();
   if (features !== 2) throw new Error(`expected 2 features in the list, found ${features}`);
 
+  step = "orbiting right over the top";
+  {
+    const vp = await page.locator(".viewport").boundingBox();
+    const cx = vp.x + vp.width * 0.5;
+    const cy = vp.y + vp.height * 0.5;
+    await page.mouse.move(cx, cy - vp.height * 0.2);
+    await page.mouse.down({ button: "right" });
+    for (let i = 1; i <= 10; i++) await page.mouse.move(cx, cy - vp.height * 0.2 + vp.height * 0.04 * i);
+    await page.mouse.up({ button: "right" });
+    const up = await page.evaluate(() => window.partsmithViewport.current.cameraUp());
+    // From the starting (isometric) view, 0.4 of the view's height turns ~130°: past straight down onto the top.
+    if (!(up[2] < 0)) throw new Error(`orbiting stopped at the top (screen up is ${up.map((n) => n.toFixed(2)).join(", ")})`);
+    await page.evaluate(() => window.partsmithViewport.current.setView("iso", false));
+  }
+
   step = "hovering and selecting a face";
   const box = await page.locator(".viewport").boundingBox();
   await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.55);
