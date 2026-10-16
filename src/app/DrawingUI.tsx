@@ -2,6 +2,7 @@
  * The drawing tab: a sheet with views of a part (or an assembly) and a title
  * block, its settings panel and toolbar, and saving it as PDF or SVG.
  */
+import { itemsInBox, toggled } from "../drawing/select";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { arrangeViews, nextRevision, putDimension, putNote, removeDimension, removeNote, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
@@ -370,6 +371,29 @@ function NoteProperties({ drawing, change }: { drawing: Drawing; change: (fn: (d
   );
 }
 
+/** More than one dimension or note selected: how many, and a way to delete them. */
+function SeveralSelected({ change }: { change: (fn: (d: Drawing) => Drawing) => void }) {
+  const ids = useStore((s) => s.selectedDims);
+  const selectDim = useStore((s) => s.selectDim);
+  if (ids.length < 2) return null;
+  return (
+    <section className="panel-section">
+      <h3>{ids.length} selected</h3>
+      <p className="dialog-hint">Ctrl-click (⌘-click on a Mac) a dimension or note to add or take it away. Delete removes them all.</p>
+      <button
+        type="button"
+        className="text-button"
+        onClick={() => {
+          change((d) => ids.reduce((acc, id) => removeNote(removeDimension(acc, id), id), d));
+          selectDim(null);
+        }}
+      >
+        Delete {ids.length}
+      </button>
+    </section>
+  );
+}
+
 /** The selected dimension: text before and after its number, and its tolerance. */
 function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
   const selectedDim = useStore((s) => s.selectedDim);
@@ -497,6 +521,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
 
   return (
     <aside className="side-panel drawing-panel" aria-label="Drawing settings">
+      <SeveralSelected change={change} />
       <DimensionProperties drawing={drawing} change={change} />
       <NoteProperties drawing={drawing} change={change} />
       <section className="panel-section">
@@ -916,7 +941,10 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const bom = useMemo(() => bomFor(drawing, doc, allParts), [drawing, doc, allParts]);
   const change = useStore((s) => s.changeDrawing);
   const tool = useStore((s) => s.drawingTool);
-  const selectedDim = useStore((s) => s.selectedDim);
+  const selectedDims = useStore((s) => s.selectedDims);
+  const isSelected = (id: string) => selectedDims.includes(id);
+  /** A selection box being dragged out over empty paper (sheet mm). */
+  const [selBox, setSelBox] = useState<{ from: P2; to: P2; additive: boolean } | null>(null);
   const { projections, subject, instances, busy, error } = useProjections(drawing);
   const instancesKey = instances ? JSON.stringify(instances) : "";
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -980,10 +1008,10 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       const t = e.target as HTMLElement | null;
       if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
       const s = useStore.getState();
-      if ((e.key === "Delete" || e.key === "Backspace") && s.selectedDim) {
+      if ((e.key === "Delete" || e.key === "Backspace") && s.selectedDims.length) {
         e.preventDefault();
-        const id = s.selectedDim;
-        s.changeDrawing((d) => removeNote(removeDimension(d, id), id));
+        const ids = s.selectedDims;
+        s.changeDrawing((d) => ids.reduce((acc, id) => removeNote(removeDimension(acc, id), id), d));
         s.selectDim(null);
       } else if (e.key === "Escape") {
         if (symbolStart) setSymbolStart(null);
@@ -992,7 +1020,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         else if (breakStart) setBreakStart(null);
         else if (pending) setPending(null);
         else if (run) setRun(null);
-        else if (s.selectedDim) s.selectDim(null);
+        else if (s.selectedDims.length) s.selectDim(null);
         else if (s.drawingTool !== "select") s.setDrawingTool("select");
       } else if ((e.key === "d" || e.key === "D") && !e.ctrlKey && !e.metaKey && !e.altKey) {
         s.setDrawingTool(s.drawingTool === "dimension" ? "select" : "dimension");
@@ -1303,7 +1331,12 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     else if (tool === "section" || tool === "auxiliary") sectionClick(toSheet(e));
     else if (tool === "detail") detailClick(toSheet(e));
     else if (tool === "breakout") breakClick(toSheet(e));
-    else useStore.getState().selectDim(null);
+    else {
+      // Empty paper: drag out a box to select dimensions and notes (Shift or Ctrl adds to what's selected).
+      const at = toSheet(e);
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+      setSelBox({ from: at, to: at, additive: e.shiftKey || e.ctrlKey || e.metaKey });
+    }
   };
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (pan.current && svgRef.current) {
@@ -1314,6 +1347,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     }
     const here = toSheet(e);
     if (tool !== "select") setCursor(here);
+    if (selBox) setSelBox({ ...selBox, to: here });
     if (drag) setDrag({ ...drag, at: [drag.from[0] + here[0] - drag.start[0], drag.from[1] + here[1] - drag.start[1]] });
     if (noteDrag) setNoteDrag({ ...noteDrag, at: [noteDrag.from[0] + here[0] - noteDrag.start[0], noteDrag.from[1] + here[1] - noteDrag.start[1]] });
     if (dimDrag) {
@@ -1330,6 +1364,14 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   };
   const onPointerUp = () => {
     pan.current = null;
+    if (selBox) {
+      setSelBox(null);
+      const st = useStore.getState();
+      const moved = Math.hypot(selBox.to[0] - selBox.from[0], selBox.to[1] - selBox.from[1]) > 1;
+      const ids = moved && layout ? itemsInBox(layout, selBox.from, selBox.to) : [];
+      if (selBox.additive) st.selectDims([...st.selectedDims, ...ids.filter((id) => !st.selectedDims.includes(id))]);
+      else st.selectDims(ids);
+    }
     if (drag) {
       const { viewId, at } = drag;
       setDrag(null);
@@ -1446,7 +1488,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const r = resolveDim(preview, p);
     return drawDimension(preview, r, at, measureDim(preview, r)).prims;
   })();
-  const selected = layout?.dims.find((d) => d.id === selectedDim);
+  const selectedPlaced = layout?.dims.filter((d) => isSelected(d.id)) ?? [];
   const lost = new Set(layout?.dims.filter((d) => !d.found).map((d) => d.id));
 
   const renderPrim = (p: Prim, i: number, colour: string) => {
@@ -1476,7 +1518,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const colourOf = (i: number) => {
     const d = layout?.dims.find((x) => i >= x.from && i < x.to);
     if (!d) return "#111";
-    if (d.id === selectedDim) return "#1f6fd1";
+    if (isSelected(d.id)) return "#1f6fd1";
     return lost.has(d.id) ? "#c2410c" : "#111";
   };
 
@@ -1522,7 +1564,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
           layout?.notes.map((n) => (
             <rect
               key={n.id}
-              className={`drawing-note-handle${n.id === selectedDim ? " selected" : ""}`}
+              className={`drawing-note-handle${isSelected(n.id) ? " selected" : ""}`}
               x={n.box[0] - 1}
               y={H - n.box[3] - 1}
               width={n.box[2] - n.box[0] + 2}
@@ -1530,7 +1572,9 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
               onPointerDown={(e) => {
                 if (e.button !== 0) return;
                 e.stopPropagation();
-                useStore.getState().selectDim(n.id);
+                const st = useStore.getState();
+                if (e.ctrlKey || e.metaKey) return st.selectDims(toggled(st.selectedDims, n.id));
+                st.selectDim(n.id);
                 (e.target as Element).setPointerCapture(e.pointerId);
                 const note = drawing.notes?.find((x) => x.id === n.id);
                 if (note) setNoteDrag({ id: n.id, start: toSheet(e), from: note.at, at: note.at });
@@ -1543,7 +1587,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
           layout?.dims.map((d) => (
             <circle
               key={d.id}
-              className={`drawing-dim-handle${d.id === selectedDim ? " selected" : ""}`}
+              className={`drawing-dim-handle${isSelected(d.id) ? " selected" : ""}`}
               cx={d.label[0]}
               cy={H - d.label[1] - 1.5}
               r={4}
@@ -1551,7 +1595,9 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
               onPointerDown={(e) => {
                 if (e.button !== 0) return;
                 e.stopPropagation();
-                useStore.getState().selectDim(d.id);
+                const st = useStore.getState();
+                if (e.ctrlKey || e.metaKey) return st.selectDims(toggled(st.selectedDims, d.id));
+                st.selectDim(d.id);
                 (e.target as Element).setPointerCapture(e.pointerId);
                 const dim = drawing.dimensions?.find((x) => x.id === d.id);
                 if (dim) setDimDrag({ id: d.id, patch: { offset: dim.offset, ...(dim.angle !== undefined ? { angle: dim.angle } : {}) } });
@@ -1574,7 +1620,18 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
           />
         )}
         {hover?.kind === "line" && <line x1={hover.sheetA[0]} y1={H - hover.sheetA[1]} x2={hover.sheetB[0]} y2={H - hover.sheetB[1]} className="drawing-snap-line" />}
-        {selected && <circle cx={selected.label[0]} cy={H - selected.label[1] - 1.5} r={4.5} className="drawing-dim-selected" />}
+        {selectedPlaced.map((d) => (
+          <circle key={d.id} cx={d.label[0]} cy={H - d.label[1] - 1.5} r={4.5} className="drawing-dim-selected" />
+        ))}
+        {selBox && (
+          <rect
+            x={Math.min(selBox.from[0], selBox.to[0])}
+            y={H - Math.max(selBox.from[1], selBox.to[1])}
+            width={Math.abs(selBox.to[0] - selBox.from[0])}
+            height={Math.abs(selBox.to[1] - selBox.from[1])}
+            className={`drawing-select-box${selBox.to[0] < selBox.from[0] ? " crossing" : ""}`}
+          />
+        )}
         {cutFrom && <circle cx={cutFrom[0]} cy={H - cutFrom[1]} r={1.2} className="drawing-snap picked" />}
         {cutFrom && cutHover && <line x1={cutFrom[0]} y1={H - cutFrom[1]} x2={cutHover.sheet[0]} y2={H - cutHover.sheet[1]} className="drawing-cut-preview" />}
         {cutHover && <circle cx={cutHover.sheet[0]} cy={H - cutHover.sheet[1]} r={1.2} className="drawing-snap point" />}

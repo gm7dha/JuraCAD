@@ -49,6 +49,9 @@ import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
+
+/** No drawing dimensions selected (one shared array, so selectors stay stable). */
+const NO_DIMS: string[] = [];
 export interface SelectionItem {
   partId: string;
   kind: "face" | "edge";
@@ -210,6 +213,8 @@ export interface AppState {
   /** Drawing tab: what clicks on the sheet do, and the selected dimension. */
   drawingTool: DrawingTool;
   selectedDim: string | null;
+  /** Every selected dimension and note (several when box-selected or Ctrl-clicked; selectedDim is set only when there's one). */
+  selectedDims: string[];
   /** Part Studio rolled back to just after this feature (Onshape's rollback bar); null = showing everything. */
   rollbackTo: string | null;
   /** What a mouse drag in an assembly is changing, while the button is held. */
@@ -361,6 +366,7 @@ export interface AppState {
   setDragPreview: (change: DragChange | null) => void;
   setDrawingTool: (tool: DrawingTool) => void;
   selectDim: (id: string | null) => void;
+  selectDims: (ids: string[]) => void;
   /** Keep what the drag did (one undo step). */
   commitDrag: () => void;
   undo: () => void;
@@ -523,6 +529,7 @@ export const useStore = create<AppState>((set, get) => {
     setAnimatingMate: (animatingMate) => set({ animatingMate }),
     drawingTool: "select",
     selectedDim: null,
+    selectedDims: NO_DIMS,
     rollbackTo: null,
 
     startCreate: (type) => {
@@ -926,7 +933,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveTab: (activeTab) => {
       if (get().editing) return;
-      set({ activeTab, rollbackTo: null, animatingMate: null, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, editingPattern: null, drawingTool: "select", selectedDim: null });
+      set({ activeTab, rollbackTo: null, animatingMate: null, asmSelection: [], selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, editingPattern: null, drawingTool: "select", selectedDim: null, selectedDims: NO_DIMS });
     },
 
     removeAssembly: (id) => {
@@ -1066,8 +1073,9 @@ export const useStore = create<AppState>((set, get) => {
     cancelMateDraft: () => set({ mateDraft: null }),
 
     setDragPreview: (dragPreview) => set({ dragPreview }),
-    setDrawingTool: (drawingTool) => set({ drawingTool, selectedDim: null }),
-    selectDim: (selectedDim) => set({ selectedDim }),
+    setDrawingTool: (drawingTool) => set({ drawingTool, selectedDim: null, selectedDims: NO_DIMS }),
+    selectDim: (selectedDim) => set({ selectedDim, selectedDims: selectedDim ? [selectedDim] : NO_DIMS }),
+    selectDims: (ids) => set({ selectedDim: ids.length === 1 ? ids[0] : null, selectedDims: ids.length ? ids : NO_DIMS }),
 
     commitDrag: () => {
       const s = get();

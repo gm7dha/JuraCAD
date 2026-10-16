@@ -790,6 +790,18 @@ try {
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     await page.waitForFunction((n) => document.querySelectorAll(".drawing-dim-handle").length === n, dimCount, { timeout: 5_000 });
   }
+  step = "selecting two dimensions and deleting them";
+  if (dimCount >= 2) {
+    const handles = page.locator(".drawing-dim-handle");
+    await handles.nth(0).click({ modifiers: ["Control"], force: true });
+    await handles.nth(1).click({ modifiers: ["Control"], force: true });
+    await page.waitForSelector(".drawing-panel >> text=2 selected", { timeout: 5_000 });
+    await page.keyboard.press("Delete");
+    await page.waitForFunction((n) => document.querySelectorAll(".drawing-dim-handle").length === n, dimCount - 2, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction((n) => document.querySelectorAll(".drawing-dim-handle").length === n, dimCount, { timeout: 5_000 });
+    await page.keyboard.press("Escape");
+  }
   step = "baseline, chain and ordinate tools";
   for (const name of ["Baseline", "Chain", "Ordinate"]) {
     await tool(name);
