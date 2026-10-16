@@ -430,6 +430,13 @@ export const Icons = {
       <path d="m16 8 .5-3M16 8l3-.5" />
     </Svg>
   ),
+  BreakOut: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="3" y="5" width="18" height="14" />
+      <path d="M8 9c2-1 5 1 8 0v6c-3 1-6-1-8 0z" />
+      <path d="M10 11l4 3M10 13.5l2 1.5" />
+    </Svg>
+  ),
   Detail: (p: IconProps) => (
     <Svg {...p}>
       <circle cx="8" cy="8" r="4" />

@@ -4,7 +4,7 @@
  * geometry engine (to make the cut) and the sheet (to draw the cutting line
  * and its arrows).
  */
-import type { Drawing, DrawingView, SectionCut, ViewKind } from "../model/types";
+import type { BreakOut, Drawing, DrawingView, SectionCut, ViewKind } from "../model/types";
 import { VIEW_CAMERAS, viewUp } from "./cameras";
 
 type V3 = [number, number, number];
@@ -137,4 +137,29 @@ export function sectionRequests(d: Drawing): SectionRequest[] {
   return (d.sections ?? [])
     .filter((s) => d.views.some((v) => v.kind === "section" && v.section === s.id))
     .map((s) => ({ key: `section:${s.id}`, host: s.host, a: s.a, b: s.b, flip: !!s.flip, aux: !!s.aux }));
+}
+
+/** What the geometry engine needs for each broken-out cut. */
+export interface BreakOutRequest {
+  host: ViewKind;
+  a: P2;
+  b: P2;
+  depth: number;
+}
+
+export function breakOutRequests(d: Drawing): BreakOutRequest[] {
+  const shown = new Set(d.views.map((v) => v.kind));
+  return (d.breakouts ?? []).filter((b) => shown.has(b.host)).map((b) => ({ host: b.host, a: b.a, b: b.b, depth: b.depth }));
+}
+
+/** Add, change or remove a broken-out cut. */
+export function putBreakOut(d: Drawing, b: BreakOut): Drawing {
+  const list = d.breakouts ?? [];
+  return { ...d, breakouts: list.some((x) => x.id === b.id) ? list.map((x) => (x.id === b.id ? b : x)) : [...list, b] };
+}
+
+export function removeBreakOut(d: Drawing, id: string): Drawing {
+  const list = (d.breakouts ?? []).filter((x) => x.id !== id);
+  const { breakouts: _old, ...rest } = d;
+  return list.length ? { ...rest, breakouts: list } : rest;
 }

@@ -1568,6 +1568,25 @@ describe("drawing views", () => {
     expect(area(c.cutFaces!)).toBeCloseTo(800, 1);
   });
 
+  it("cuts a broken-out view away to a depth inside a rectangle, hatching the floor of the cut", () => {
+    engine.rebuild([feature("box", { width: 40, depth: 30, height: 20 })]);
+    // On the front view (40 × 20), the middle half each way, 10 mm deep (the block is 30 deep).
+    const [plain] = engine.project([], undefined, ["front"], true);
+    expect(plain.depth).toBeCloseTo(30, 6);
+    const [cut] = engine.project([], undefined, ["front"], true, [], [{ host: "front", a: [0.25, 0.25], b: [0.75, 0.75], depth: 10 }]);
+    expect(cut.bounds).toEqual(plain.bounds);
+    expect(cut.breakLines).toHaveLength(1);
+    const area = (t: number[]) => {
+      let sum = 0;
+      for (let i = 0; i < t.length; i += 6) sum += Math.abs((t[i + 2] - t[i]) * (t[i + 5] - t[i + 1]) - (t[i + 4] - t[i]) * (t[i + 3] - t[i + 1])) / 2;
+      return sum;
+    };
+    // The floor of the pocket: 20 × 10.
+    expect(area(cut.cutFaces!)).toBeCloseTo(200, 1);
+    // The pocket's walls show as more lines.
+    expect(cut.visible.length).toBeGreaterThan(plain.visible.length);
+  });
+
   it("draws auxiliary views square-on to a sloping line, without cutting", () => {
     engine.rebuild([feature("box", { width: 40, depth: 30, height: 20 })]);
     // Corner to corner across the front view (40 × 20): the view looks square-on to that diagonal.

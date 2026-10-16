@@ -224,6 +224,8 @@ export interface Drawing {
   notes?: DrawingNote[];
   /** Section cuts drawn on the views (optional: older saves have none). */
   sections?: SectionCut[];
+  /** Broken-out cuts on views (optional: older saves have none). */
+  breakouts?: BreakOut[];
   /** False hides centre marks and centre lines (missing = shown). */
   centreLines?: boolean;
   /** Revision history, oldest first (shown in a table above the title block). */
@@ -243,6 +245,20 @@ export interface Drawing {
  * view it's drawn on, so the cut stays in the same place on the part when it
  * changes size.
  */
+/**
+ * A broken-out view: a rectangle on a view where the part is cut away down to
+ * a depth, to show what's inside (the cut face is hatched).
+ */
+export interface BreakOut {
+  id: string;
+  host: ViewKind;
+  /** Opposite corners as fractions of the host view's width and height. */
+  a: [number, number];
+  b: [number, number];
+  /** How deep to cut, from the front of the part as the view sees it (mm). */
+  depth: number;
+}
+
 /** A detail view: a circle on a view, shown again bigger. */
 export interface DetailView {
   id: string;
