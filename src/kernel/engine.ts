@@ -2346,6 +2346,8 @@ export class GeometryEngine {
       const part = this.parts.find((p) => p.id === i.partId) ?? this.parts.find((p) => p.id === i.partId.split("@")[0]);
       if (!part) continue;
       let shape = part.shape.clone();
+      // A mirrored copy: the part's mirror image, flipped across its own YZ plane.
+      if (i.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
       const [x, y, z, w] = i.rotation;
       const s = Math.sqrt(Math.max(0, 1 - w * w));
       const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;

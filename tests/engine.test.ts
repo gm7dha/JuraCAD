@@ -1564,6 +1564,22 @@ describe("assembly exports and clashes", () => {
     // The part itself hasn't moved.
     expect(engine.check("coarse").parts).toHaveLength(1);
   });
+
+  it("shows mirrored copies as the part's mirror image", () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    engine.rebuild([box]);
+    const id: [number, number, number, number] = [0, 0, 0, 1];
+    // Mirrored, the box spans x −10…0 instead of 0…10: next to the original, not on it.
+    const mirrored = [
+      { id: "i1", partId: box.id, name: "Box <1>", position: [0, 0, 0] as [number, number, number], rotation: id },
+      { id: "i2", partId: box.id, name: "Box <2>", position: [0, 0, 0] as [number, number, number], rotation: id, mirrored: true },
+    ];
+    expect(engine.clashes(mirrored)).toHaveLength(0);
+    const { vertices } = readBinaryStl(engine.exportStl([], "coarse", mirrored).stl);
+    const xs = Array.from(vertices).filter((_, k) => k % 3 === 0);
+    expect(Math.min(...xs)).toBeCloseTo(-10, 3);
+  });
 });
 
 describe("drawing views", () => {

@@ -71,9 +71,13 @@ function balloonsFor(bom: BomLine[] | undefined, instances: InstanceInput[] | un
   if (!bom?.length || !instances?.length) return undefined;
   const out: NonNullable<SheetInfo["balloons"]> = [];
   for (const row of bom) {
-    const inst = instances.find((i) => i.partId === row.partId);
-    const mesh = row.partId ? findMesh(parts, row.partId) : undefined;
-    const spot = mesh ? surfacePointNearCentre(mesh.vertices) : null;
+    // Mirrored copies are their own line ("…~mirrored").
+    const mirrored = !!row.partId?.endsWith("~mirrored");
+    const partId = mirrored ? row.partId!.slice(0, -"~mirrored".length) : row.partId;
+    const inst = instances.find((i) => i.partId === partId && !!i.mirrored === mirrored);
+    const mesh = partId ? findMesh(parts, partId) : undefined;
+    const local = mesh ? surfacePointNearCentre(mesh.vertices) : null;
+    const spot = local && mirrored ? ([-local[0], local[1], local[2]] as typeof local) : local;
     if (inst && spot) out.push({ item: row.item, at: applyPlacement({ position: inst.position, rotation: inst.rotation }, spot) });
   }
   return out;

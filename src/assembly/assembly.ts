@@ -209,14 +209,16 @@ export function billOfMaterials(assembly: Assembly, partNames: Record<string, st
   const rows = new Map<string, BomRow>();
   for (const i of assembly.instances) {
     // A part in another configuration is a different line ("Bracket (Large)").
-    const key = i.configuration && configurationNames[i.configuration] ? `${i.partId}@${i.configuration}` : i.partId;
+    const cfgKey = i.configuration && configurationNames[i.configuration] ? `${i.partId}@${i.configuration}` : i.partId;
+    // A mirrored copy is the opposite hand: a different part to make.
+    const key = i.mirrored ? `${cfgKey}~mirrored` : cfgKey;
     const row = rows.get(key);
     if (row) row.quantity++;
     else {
       const name = partNames[i.partId];
       const base = name ?? i.name.replace(/\s*<\d+>$/, "");
-      const cfg = key !== i.partId ? ` (${configurationNames[i.configuration!]})` : "";
-      rows.set(key, { partId: key, name: base + cfg, quantity: 1, missing: name === undefined });
+      const cfg = cfgKey !== i.partId ? ` (${configurationNames[i.configuration!]})` : "";
+      rows.set(key, { partId: key, name: base + cfg + (i.mirrored ? " (mirrored)" : ""), quantity: 1, missing: name === undefined });
     }
   }
   return [...rows.values()];
@@ -309,6 +311,7 @@ export function parseAssemblies(raw: unknown): Assembly[] {
         placement: parsePlacement(ri.placement),
         fixed: ri.fixed === true,
         ...(typeof ri.configuration === "string" && ri.configuration ? { configuration: ri.configuration } : {}),
+        ...(ri.mirrored === true ? { mirrored: true } : {}),
         ...(ri.replicaOf && typeof (ri.replicaOf as Record<string, unknown>).replicate === "string" && Number.isInteger((ri.replicaOf as Record<string, unknown>).index)
           ? { replicaOf: { replicate: (ri.replicaOf as { replicate: string }).replicate, index: (ri.replicaOf as { index: number }).index }, fixed: false }
           : {}),

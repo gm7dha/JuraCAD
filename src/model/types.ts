@@ -406,6 +406,8 @@ export interface Instance {
   configuration?: string;
   /** A copy made by Replicate: which replicate, and which of its copies (1, 2…). */
   replicaOf?: { replicate: string; index: number };
+  /** Shown as the part's mirror image (a copy made by a Mirror): the part is flipped across its own YZ plane, then placed. */
+  mirrored?: boolean;
 }
 
 /**
@@ -428,7 +430,8 @@ export interface Replicate {
 export interface AssemblyPattern {
   id: string;
   name: string;
-  kind: "linear" | "circular";
+  /** Mirror: one copy of each, mirrored across the plane square to `axis` through `centre`. */
+  kind: "linear" | "circular" | "mirror";
   /** The instances repeated. */
   seeds: string[];
   /** How many in each row, including the original. */

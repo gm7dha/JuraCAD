@@ -14,7 +14,7 @@ import type { Assembly, Mate, MateConnector, MateType } from "../model/types";
 import { sameRef } from "../geometry/topoRef";
 import { compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement, type Vec3 } from "./math";
 import { connectorFrameOnParts, framePlacement, type Frame } from "./connectors";
-import { patternStep, placeCopy } from "./patterns";
+import { mirrorPlacement, patternStep, placeCopy } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
 import type { PartMesh } from "../kernel/protocol";
 
@@ -353,6 +353,12 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
     }
     for (const i of assembly.instances) {
       if (i.copyOf?.pattern !== p.id || !instances.has(i.copyOf.seed)) continue;
+      if (p.kind === "mirror") {
+        // Mirroring is its own undoing: the copy is the original's mirror image, and the other way round.
+        const flip = (q: Placement) => mirrorPlacement(p, q);
+        copyLinks.push({ u: null, patternId: p.id, a: i.copyOf.seed, b: i.id, fwd: flip, back: flip });
+        continue;
+      }
       const shift = placeCopy(p, step.step, IDENTITY, i.copyOf.index);
       const back = invert(shift);
       copyLinks.push({ u: null, patternId: p.id, a: i.copyOf.seed, b: i.id, fwd: (q) => compose(shift, q), back: (q) => compose(back, q) });
@@ -567,9 +573,15 @@ export function solveWithParts(assembly: Assembly, parts: PartMesh[]): SolveResu
     const instance = assembly.instances.find((i) => i.id === mate[side].instanceId);
     const mesh = instance?.configuration ? findMesh(parts, meshIdOf(instance)) : undefined;
     const c = mate[side];
-    return mesh
+    const f = mesh
       ? connectorFrameOnParts([mesh], { pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
       : connectorFrameOnParts(parts, c);
+    // A mirrored instance shows its part flipped across its own YZ plane: so are its connectors.
+    if (f && instance?.mirrored) {
+      const flipX = (v: Vec3): Vec3 => [-v[0], v[1], v[2]];
+      return { ...f, origin: flipX(f.origin), z: flipX(f.z), x: flipX(f.x) };
+    }
+    return f;
   });
 }
 

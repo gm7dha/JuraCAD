@@ -9,11 +9,13 @@ import { evaluate } from "../model/expr";
 import type { Assembly, AssemblyPattern, Instance } from "../model/types";
 import { compose, quatFromAxisAngle, rotate, type Placement, type Vec3 } from "./math";
 import { nextInstanceName } from "./assembly";
+import { quatFromBasis } from "./connectors";
 
 const AXES: Record<AssemblyPattern["axis"], Vec3> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
 
 /** The pattern's step as a number (mm, or degrees between copies), or what's wrong with it. */
 export function patternStep(p: AssemblyPattern): { step: number } | { error: string } {
+  if (p.kind === "mirror") return { step: 0 };
   if (!Number.isInteger(p.count) || p.count < 2 || p.count > 100) return { error: "How many: enter a whole number from 2 to 100." };
   const v = evaluate(p.amount);
   if (!v.ok) return { error: `${p.kind === "linear" ? "Spacing" : "Spread over"}: ${v.error}` };
@@ -27,6 +29,7 @@ export function patternStep(p: AssemblyPattern): { step: number } | { error: str
 
 /** Where copy number `k` (1, 2…) goes, given where the original is. */
 export function placeCopy(p: AssemblyPattern, step: number, original: Placement, k: number): Placement {
+  if (p.kind === "mirror") return mirrorPlacement(p, original);
   const dir = AXES[p.axis];
   const sign = p.flip ? -1 : 1;
   if (p.kind === "linear") {
@@ -41,6 +44,29 @@ export function placeCopy(p: AssemblyPattern, step: number, original: Placement,
   return compose(back, compose(turn, compose(toOrigin, original)));
 }
 
+/**
+ * Where a mirrored copy goes: the original's mirror image across the plane
+ * square to the pattern's axis through its centre. The copy shows the part
+ * flipped across its own YZ plane (Instance.mirrored), so this is the move
+ * and turn that put that flipped part in the mirror-image place. Mirroring
+ * twice gets back to the start.
+ */
+export function mirrorPlacement(p: Pick<AssemblyPattern, "axis" | "centre">, q: Placement): Placement {
+  const n = AXES[p.axis];
+  const c = p.centre ?? [0, 0, 0];
+  const reflect = (v: Vec3): Vec3 => {
+    const d = 2 * (v[0] * n[0] + v[1] * n[1] + v[2] * n[2]);
+    return [v[0] - d * n[0], v[1] - d * n[1], v[2] - d * n[2]];
+  };
+  // Columns of the copy's turn: the original's axes, X flipped (the part is mirrored in its own X), then reflected.
+  const x = reflect(rotate(q.rotation, [-1, 0, 0]));
+  const y = reflect(rotate(q.rotation, [0, 1, 0]));
+  const z = reflect(rotate(q.rotation, [0, 0, 1]));
+  const rel: Vec3 = [q.position[0] - c[0], q.position[1] - c[1], q.position[2] - c[2]];
+  const r = reflect(rel);
+  return { position: [r[0] + c[0], r[1] + c[1], r[2] + c[2]], rotation: quatFromBasis(x, y, z) };
+}
+
 /** Make the copies match the pattern: add the missing ones, drop extras, and put each in place. */
 export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string): Assembly {
   const step = patternStep(p);
@@ -48,13 +74,17 @@ export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string
   const keep: Instance[] = [];
   let instances = a.instances.filter((i) => i.copyOf?.pattern !== p.id);
   const old = a.instances.filter((i) => i.copyOf?.pattern === p.id);
+  const count = p.kind === "mirror" ? 2 : p.count;
   for (const seed of seeds) {
-    for (let k = 1; k < p.count; k++) {
+    for (let k = 1; k < count; k++) {
       const placement = "step" in step ? placeCopy(p, step.step, seed.placement, k) : seed.placement;
       const was = old.find((i) => i.copyOf!.seed === seed.id && i.copyOf!.index === k && i.partId === seed.partId);
-      const copy: Instance = was
+      const made: Instance = was
         ? { ...was, placement }
         : { id: newId(), partId: seed.partId, name: nextInstanceName({ ...a, instances: [...instances, ...keep] }, seed.name.replace(/ <\d+>$/, "")), placement, fixed: false, copyOf: { pattern: p.id, seed: seed.id, index: k } };
+      // A mirrored copy is the part's mirror image (and a mirror of a mirror is the part itself).
+      const { mirrored: _m, ...unflipped } = made;
+      const copy: Instance = p.kind === "mirror" && !seed.mirrored ? { ...unflipped, mirrored: true } : p.kind !== "mirror" && seed.mirrored ? { ...unflipped, mirrored: true } : unflipped;
       // Copies show the part in the same configuration as their original.
       const { configuration: _old, ...plain } = copy;
       keep.push(seed.configuration ? { ...plain, configuration: seed.configuration } : plain);
@@ -122,19 +152,19 @@ export function placeCopies(a: Assembly, placements: Record<string, Placement>):
   return errors;
 }
 
-/** "Pattern 1", "Pattern 2"… */
-export function nextPatternName(a: Assembly): string {
+/** "Pattern 1", "Pattern 2"… (or "Mirror 1"…) */
+export function nextPatternName(a: Assembly, prefix = "Pattern"): string {
   const used = new Set((a.patterns ?? []).map((p) => p.name));
   let n = 1;
-  while (used.has(`Pattern ${n}`)) n++;
-  return `Pattern ${n}`;
+  while (used.has(`${prefix} ${n}`)) n++;
+  return `${prefix} ${n}`;
 }
 
 /** Read a saved pattern (null if it's unusable). */
 export function parsePattern(raw: unknown, instanceIds: Set<string>): AssemblyPattern | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
-  if (typeof r.id !== "string" || (r.kind !== "linear" && r.kind !== "circular")) return null;
+  if (typeof r.id !== "string" || (r.kind !== "linear" && r.kind !== "circular" && r.kind !== "mirror")) return null;
   const seeds = (Array.isArray(r.seeds) ? r.seeds : []).filter((s): s is string => typeof s === "string" && instanceIds.has(s));
   if (!seeds.length) return null;
   const count = typeof r.count === "number" && Number.isInteger(r.count) ? Math.max(2, Math.min(100, r.count)) : 2;
@@ -144,7 +174,7 @@ export function parsePattern(raw: unknown, instanceIds: Set<string>): AssemblyPa
     name: typeof r.name === "string" && r.name.trim() ? r.name.slice(0, 80) : "Pattern",
     kind: r.kind,
     seeds,
-    count,
+    count: r.kind === "mirror" ? 2 : count,
     amount: typeof r.amount === "string" ? r.amount : r.kind === "linear" ? "20" : "360",
     axis: r.axis === "x" || r.axis === "y" ? r.axis : "z",
     ...(r.flip === true ? { flip: true } : {}),
@@ -155,6 +185,7 @@ export function parsePattern(raw: unknown, instanceIds: Set<string>): AssemblyPa
 /** Where a point (mm) ends up on copy number `k`. */
 export const turnPoint = (p: AssemblyPattern, step: number, v: Vec3, k: number): Vec3 => {
   const c = p.centre ?? [0, 0, 0];
+  if (p.kind === "mirror") return mirrorPlacement(p, { position: v, rotation: [0, 0, 0, 1] }).position;
   if (p.kind === "linear") {
     const dir = AXES[p.axis];
     const d = (p.flip ? -1 : 1) * step * k;
