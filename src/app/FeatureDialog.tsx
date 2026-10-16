@@ -1043,7 +1043,7 @@ function PicksField() {
             : draft.type === "deleteFace"
             ? "Click the faces to remove — all the faces of a fillet, hole or boss."
             : shell
-            ? "Click the face (or faces) to leave open — usually the top. The rest of the part becomes walls."
+            ? "Click the face (or faces) to leave open — usually the top. The rest of the part becomes walls. Or click none (or every face, as on a ball) to hollow it closed inside, with no opening."
             : `Click the edges you want to ${verb} in the 3D view. Click a face to ${verb} all its edges.`}
         </p>
       ) : (

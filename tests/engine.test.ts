@@ -522,6 +522,21 @@ describe("shell", () => {
     expect(check.mesh.watertight).toBe(true);
   });
 
+  it("hollows a ball (or a box with no face picked) closed inside", () => {
+    // A 20 mm ball, its one face picked: a 2 mm skin round a 16 mm hollow.
+    const ball = feature("sphere", { diameter: 20, x: 0, y: 0, z: 0 });
+    const r = build([ball, shellFeature(2, [topFace(build([ball]))])]);
+    expect(r.featureErrors).toEqual({});
+    const check = engine.check("normal").parts[0];
+    expect(check.geometryValid).toBe(true);
+    expect(check.exactVolume!).toBeCloseTo((4 / 3) * Math.PI * (1000 - 512), 0);
+    // A box with nothing picked: closed walls all round.
+    const box = feature("box", { width: 20, depth: 20, height: 10 });
+    const closed = build([box, shellFeature(2, [])]);
+    expect(closed.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(20 * 20 * 10 - 16 * 16 * 6, 1);
+  });
+
   it("keeps working after the box is resized", () => {
     const box = feature("box", { width: 20, depth: 20, height: 10 });
     const pick = topFace(build([box]));
@@ -534,8 +549,6 @@ describe("shell", () => {
   it("explains problems in plain words", () => {
     const box = feature("box", { width: 20, depth: 20, height: 10 });
     const pick = topFace(build([box]));
-    const none = shellFeature(2, []);
-    expect(build([box, none]).featureErrors[none.id]).toMatch(/Click the face/);
     const thick = shellFeature(15, [pick]);
     const r = build([box, thick]);
     expect(r.featureErrors[thick.id]).toMatch(/thinner walls/);
