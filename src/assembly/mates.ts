@@ -12,7 +12,7 @@ import { applyRelations } from "./relations";
 import { evaluate } from "../model/expr";
 import type { Assembly, Mate, MateConnector, MateType } from "../model/types";
 import { sameRef } from "../geometry/topoRef";
-import { compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement } from "./math";
+import { compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement, type Vec3 } from "./math";
 import { connectorFrameOnParts, framePlacement, type Frame } from "./connectors";
 import { patternStep, placeCopy } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
@@ -99,6 +99,18 @@ export const MATE_TYPES: Record<MateType, MateTypeDef> = {
       angle(true, "Angle"),
     ],
   },
+  tangent: {
+    type: "tangent",
+    label: "Tangent",
+    description: "Keeps a round face touching another face — a roller on a flat, a wheel against a wheel, a ball on a plate. Pick at least one round face (a cylinder or ball). The part can slide, turn and roll while staying in touch.",
+    values: [
+      { key: "dx", label: "Slide", unit: "mm", free: true },
+      { key: "dy", label: "Slide sideways", unit: "mm", free: true },
+      angle(true, "Angle"),
+      { key: "roll", label: "Roll", unit: "°", free: true },
+      gap,
+    ],
+  },
   ball: {
     type: "ball",
     label: "Ball",
@@ -111,7 +123,7 @@ export const MATE_TYPES: Record<MateType, MateTypeDef> = {
   },
 };
 
-export const MATE_ORDER: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "pinSlot", "parallel", "width", "ball"];
+export const MATE_ORDER: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "pinSlot", "parallel", "width", "tangent", "ball"];
 
 /**
  * The limits on a mate's movements, worked out from what's typed (missing
@@ -179,6 +191,42 @@ export function mateOffset(type: MateType, v: Record<string, number>, flip: bool
   return flip ? offset : compose(offset, HALF_TURN_X);
 }
 
+/** A face as a Tangent mate sees it: Z points out to where the other face touches (across a cylinder's axis), X along a cylinder's axis. */
+export interface TangentSide {
+  frame: Frame;
+  kind: "plane" | "cylinder" | "sphere";
+  radius: number;
+}
+
+export function tangentSide(f: Frame): TangentSide | null {
+  if (f.surface === "plane") return { frame: f, kind: "plane", radius: 0 };
+  if (f.surface === "cylinder") return { frame: { origin: f.origin, z: f.x, x: f.z }, kind: "cylinder", radius: f.radius ?? 0 };
+  if (f.surface === "sphere") return { frame: f, kind: "sphere", radius: f.radius ?? 0 };
+  return null;
+}
+
+const turnAbout = (axis: Vec3, radians: number): Placement => ({ position: [0, 0, 0], rotation: quatFromAxisAngle(axis, radians) });
+const shift = (x: number, y: number, z: number): Placement => ({ position: [x, y, z], rotation: [0, 0, 0, 1] });
+
+/**
+ * Where the round side `b` sits on side `a` for a Tangent mate (relative to
+ * their tangent frames): slid `dx`, `dy` over a's surface (on a cylinder, along
+ * its axis and round it; on a ball, round it — distances measured on the
+ * surface), touching at the radii plus the gap, turned about the line between
+ * them, then rolled about b's own axis.
+ */
+export function tangentOffset(a: Pick<TangentSide, "kind" | "radius">, b: Pick<TangentSide, "kind" | "radius">, v: Record<string, number>): Placement {
+  const dx = v.dx ?? 0;
+  const dy = v.dy ?? 0;
+  let move: Placement;
+  if (a.kind === "cylinder") move = compose(shift(dx, 0, 0), turnAbout([1, 0, 0], -dy / Math.max(a.radius, 1e-9)));
+  else if (a.kind === "sphere") move = compose(turnAbout([0, 1, 0], dx / Math.max(a.radius, 1e-9)), turnAbout([1, 0, 0], -dy / Math.max(a.radius, 1e-9)));
+  else move = shift(dx, dy, 0);
+  const touch = shift(0, 0, a.radius + b.radius + (v.gap ?? 0));
+  const roll = turnAbout([1, 0, 0], (v.roll ?? 0) * RAD);
+  return compose(compose(compose(compose(move, touch), turnAbout([0, 0, 1], (v.angle ?? 0) * RAD)), HALF_TURN_X), roll);
+}
+
 /** Looks up a connector's frame on its instance's part, or null if it can't be found any more. */
 export type FrameLookup = (mate: Mate, side: "a" | "b") => Frame | null;
 
@@ -222,6 +270,8 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
     fa: Frame;
     fb: Frame;
     values: Record<string, number>;
+    /** Tangent mates: both sides' surfaces (round one second; `swapped` when that's the first part's). */
+    tangent?: { a: TangentSide; b: TangentSide; swapped: boolean };
   }
   /** A join between two instances: a mate, a pattern copy following its original, or two grouped parts (a → b, and back). */
   interface Link {
@@ -260,13 +310,24 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
       mateErrors[mate.id] = "A face or edge it uses can't be found any more (the part has changed too much). Edit the mate and pick it again.";
       continue;
     }
+    let tangent: Usable["tangent"];
+    if (mate.type === "tangent") {
+      const ta = tangentSide(fa);
+      const tb = tangentSide(fb);
+      if (!ta || !tb || (ta.kind === "plane" && tb.kind === "plane")) {
+        mateErrors[mate.id] = "A Tangent mate needs faces, at least one of them round (a cylinder or ball) — like a roller and the flat it runs on.";
+        continue;
+      }
+      // Keep the round one second, so it's the one that rolls.
+      tangent = tb.kind === "plane" ? { a: tb, b: ta, swapped: true } : { a: ta, b: tb, swapped: false };
+    }
     const { values, errors } = mateValues(mate);
     const bad = Object.keys(errors)[0];
     if (bad) {
       mateErrors[mate.id] = `${MATE_TYPES[mate.type].values.find((d) => d.key === bad)?.label ?? bad}: ${errors[bad]}`;
       continue;
     }
-    usable.push({ mate, a: ia.id, b: ib.id, fa, fb, values });
+    usable.push({ mate, a: ia.id, b: ib.id, fa, fb, values, ...(tangent ? { tangent } : {}) });
   }
 
   // The movements loops may adjust: every free amount of every usable mate, within its limits.
@@ -312,13 +373,21 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
   /** Grouped parts other than each group's first: placed from their group rather than started from. */
   const followers = new Set((assembly.groups ?? []).flatMap((g) => g.members.slice(1)));
 
+  /** Where the second part sits relative to the first. */
+  const mateRelation = (u: Usable, v: Record<string, number>): Placement => {
+    const t = u.tangent;
+    if (!t) return compose(compose(framePlacement(u.fa), mateOffset(u.mate.type, v, u.mate.flip)), invert(framePlacement(u.fb)));
+    const rel = compose(compose(framePlacement(t.a.frame), tangentOffset(t.a, t.b, v)), invert(framePlacement(t.b.frame)));
+    return t.swapped ? invert(rel) : rel;
+  };
+
   /** One pass outwards from the fixed parts with these free amounts; closures = links reaching a part already placed. */
   const spread = (x: number[]) => {
     const values = new Map(usable.map((u) => [u, { ...u.values }]));
     free.forEach((f, i) => (values.get(f.u)![f.key] = x[i]));
     const links: Link[] = [
       ...usable.map((u): Link => {
-        const rel = compose(compose(framePlacement(u.fa), mateOffset(u.mate.type, values.get(u)!, u.mate.flip)), invert(framePlacement(u.fb)));
+        const rel = mateRelation(u, values.get(u)!);
         const inv = invert(rel);
         return { u, patternId: null, a: u.a, b: u.b, fwd: (q) => compose(q, rel), back: (q) => compose(q, inv) };
       }),

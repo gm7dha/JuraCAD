@@ -170,7 +170,7 @@ describe("solving mates", () => {
 
   it("works out values with maths and units, blank as 0", () => {
     expect(mateValues({ type: "cylindrical", values: { distance: "1 in", angle: "" } }).values).toEqual({ distance: 25.4, angle: 0 });
-    expect(Object.keys(MATE_TYPES)).toHaveLength(9);
+    expect(Object.keys(MATE_TYPES)).toHaveLength(10);
   });
 });
 

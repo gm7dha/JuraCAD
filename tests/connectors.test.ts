@@ -86,6 +86,10 @@ describe("connectors on real parts", () => {
     const f = connectorFrame(part, "face", hole)!;
     close(f.origin, [20, 15, 10], 3);
     parallel(f.z, [0, 0, 1]);
+    // For Tangent mates: it's round, and how big.
+    expect(f.surface).toBe("cylinder");
+    expect(f.radius).toBeCloseTo(5, 3);
+    expect(connectorFrame(part, "face", faceWhere((s, _c, nrm) => s === "PLANE" && nrm[2] > 0.99))!.surface).toBe("plane");
   });
 
   it("puts a circular edge's connector at its centre", () => {
@@ -110,6 +114,8 @@ describe("connectors on real parts", () => {
     const p = r.parts[0];
     const f = connectorFrame(p, "face", 0)!;
     close(f.origin, [5, -3, 7], 3);
+    expect(f.surface).toBe("sphere");
+    expect(f.radius).toBeCloseTo(10, 3);
     e2.dispose();
   });
 });

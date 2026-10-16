@@ -21,6 +21,9 @@ export interface Frame {
   z: Vec3;
   /** Unit direction of its X axis (at right angles to Z). */
   x: Vec3;
+  /** For Tangent mates: a flat face, or a round one (cylinder: Z along its axis; ball: origin at its centre) and its radius. */
+  surface?: "plane" | "cylinder" | "sphere";
+  radius?: number;
 }
 
 type MeshData = Pick<PartMesh, "vertices" | "normals" | "triangles" | "faceGroups" | "lines" | "edgeGroups" | "faceRefs" | "edgeRefs">;
@@ -174,11 +177,13 @@ export function faceFrame(mesh: MeshData, index: number): Frame | null {
   const surface = mesh.faceRefs?.[index]?.surface ?? "UNKNOWN";
   const avgNormal = normalize(f.normals.reduce(add, [0, 0, 0] as Vec3));
 
-  if (surface === "PLANE") return frame(f.centroid, length(avgNormal) > 0 ? avgNormal : mesh.faceRefs[index].normal);
+  if (surface === "PLANE") return { ...frame(f.centroid, length(avgNormal) > 0 ? avgNormal : mesh.faceRefs[index].normal), surface: "plane" };
 
   if (surface === "SPHERE") {
     const c = roundCentre(f.points, f.normals, null);
-    return c ? frame(c, [0, 0, 1]) : null;
+    if (!c) return null;
+    const radius = f.points.reduce((t, p) => t + length(sub(p, c)), 0) / f.points.length;
+    return { ...frame(c, [0, 0, 1]), surface: "sphere", radius };
   }
 
   // Surfaces of revolution: the axis is the direction the surface directions
@@ -197,7 +202,14 @@ export function faceFrame(mesh: MeshData, index: number): Frame | null {
   const centre = surface === "CYLINDER" || surface === "CYLINDRE" ? roundCentre(f.points, f.normals, axis) : null;
   // Elsewhere (cones and the like) the area centre of a whole round face sits on its axis.
   const base = centre ?? sub(f.centroid, scale(axis, dot(f.centroid, axis)));
-  return frame(add(sub(base, scale(axis, dot(base, axis))), scale(axis, mid)), axis);
+  const out = frame(add(sub(base, scale(axis, dot(base, axis))), scale(axis, mid)), axis);
+  if (!centre) return out;
+  // A cylinder: how far its surface is from the axis.
+  const fromAxis = (p: Vec3) => {
+    const v = sub(p, out.origin);
+    return length(sub(v, scale(axis, dot(v, axis))));
+  };
+  return { ...out, surface: "cylinder", radius: f.points.reduce((t, p) => t + fromAxis(p), 0) / f.points.length };
 }
 
 /** The points of one edge of the mesh, in order. */

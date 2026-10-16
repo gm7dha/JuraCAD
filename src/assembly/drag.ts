@@ -150,6 +150,26 @@ export function planDrag(
     };
   };
 
+  /** Slide over the first connector's face (Planar, Width, Tangent on a flat). */
+  const facePlan = (): DragStart => {
+    if (sign < 0) return { refuse: `Drag the other part of ${mate.name}, or use its sliders.` };
+    if (Math.abs(dot(normalize(view), axis.z)) < 0.05) return { refuse: "You're looking along the face — turn the view a little to drag it." };
+    return {
+      plan: {
+        update(ray) {
+          const hit = rayPlane(ray, grab, axis.z);
+          if (!hit) return null;
+          const d = sub(hit, grab);
+          return {
+            kind: "mate",
+            id: mate.id,
+            values: { ...mate.values, dx: limited("dx", (start.dx ?? 0) + dot(d, axis.x), 0.1), dy: limited("dy", (start.dy ?? 0) + dot(d, axis.y), 0.1) },
+          };
+        },
+      },
+    };
+  };
+
   switch (mate.type) {
     case "revolute":
       return turnPlan();
@@ -157,25 +177,13 @@ export function planDrag(
       return slidePlan();
     case "cylindrical":
       return shift ? slidePlan() : turnPlan();
+    case "tangent":
+      // Rolling on a flat face slides like Planar; on a round one, use the sliders.
+      if (fa.surface !== "plane" || frameOf(mate, "b")?.surface === "plane") return { refuse: `Use the sliders in ${mate.name} to move it round a curved face (double-click it in the Mates list).` };
+      return facePlan();
     case "width":
-    case "planar": {
-      if (sign < 0) return { refuse: `Drag the other part of ${mate.name}, or use its sliders.` };
-      if (Math.abs(dot(normalize(view), axis.z)) < 0.05) return { refuse: "You're looking along the face — turn the view a little to drag it." };
-      return {
-        plan: {
-          update(ray) {
-            const hit = rayPlane(ray, grab, axis.z);
-            if (!hit) return null;
-            const d = sub(hit, grab);
-            return {
-              kind: "mate",
-              id: mate.id,
-              values: { ...mate.values, dx: limited("dx", (start.dx ?? 0) + dot(d, axis.x), 0.1), dy: limited("dy", (start.dy ?? 0) + dot(d, axis.y), 0.1) },
-            };
-          },
-        },
-      };
-    }
+    case "planar":
+      return facePlan();
     case "pinSlot": {
       if (shift) return turnPlan();
       // Slide along the slot (the connector's X direction).
