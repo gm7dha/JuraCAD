@@ -1095,6 +1095,11 @@ try {
     step = "putting the flat pattern on a drawing";
     const sheetName = await page.locator(".part-row").last().innerText();
     await page.locator(".part-row").last().click();
+    // Only the sheet on show, so its edges aren't behind the other parts.
+    await page.evaluate(() => {
+      const s = window.partsmithStore.getState();
+      s.setPartsHidden(s.parts.filter((q) => !q.flat && !q.configuration).map((q) => q.id), true);
+    });
     await page.keyboard.press("f");
     await page.waitForTimeout(600);
     const edgeAt = await page.evaluate(() => {
@@ -1122,6 +1127,10 @@ try {
       return f ? s.featureErrors[f.id] ?? "" : "no flange feature";
     });
     if (flangeProblem) throw new Error(`the flange didn't build: ${flangeProblem}`);
+    await page.evaluate(() => {
+      const s = window.partsmithStore.getState();
+      s.setPartsHidden(s.parts.map((q) => q.id), false);
+    });
     await page.getByRole("button", { name: "Drawing 1" }).click();
     await page.locator("#drawing-source").selectOption({ label: sheetName.trim().split("\n")[0] });
     await page.getByLabel("Flat pattern (sheet metal)").check();
