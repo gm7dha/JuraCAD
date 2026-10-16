@@ -192,7 +192,7 @@ export function wrapShapes(
 /** Shapes reaching further round the surface than this (radians, either side of their middle) are wrapped in strips. */
 const STRIP_ANGLE = (10 * Math.PI) / 180;
 /** Each strip's share of the way round (radians). */
-const STRIP_STEP = (3 * Math.PI) / 180;
+const STRIP_STEP = (5 * Math.PI) / 180;
 
 /**
  * A wide shape wrapped round a cylinder in narrow strips: the shape is made as
@@ -283,14 +283,23 @@ function wrapWide(
   }
   if (!strips.length) throw new Error("Nothing to wrap.");
   // Joined into one solid: overlapping pieces left side by side would upset adding or cutting it later.
-  let joined = strips[0];
-  for (const piece of strips.slice(1)) {
-    const next = joined.fuse(piece) as Shape3D;
-    joined.delete();
-    piece.delete();
-    joined = next;
+  // Pairs at a time (each strip only overlaps its neighbours), so each join stays small.
+  let level = strips;
+  while (level.length > 1) {
+    const next: Shape3D[] = [];
+    for (let i = 0; i < level.length; i += 2) {
+      if (i + 1 >= level.length) {
+        next.push(level[i]);
+        continue;
+      }
+      const both = level[i].fuse(level[i + 1]) as Shape3D;
+      level[i].delete();
+      level[i + 1].delete();
+      next.push(both);
+    }
+    level = next;
   }
-  return joined;
+  return level[0];
 }
 
 /** Does a shape have any solid in it? */
