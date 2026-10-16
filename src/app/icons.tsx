@@ -444,6 +444,13 @@ export const Icons = {
       <circle cx="9" cy="12" r="1.8" fill="currentColor" />
     </Svg>
   ),
+  MateWidth: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 4v16M20 4v16" />
+      <rect x="8" y="7" width="8" height="10" rx="1" />
+      <path d="M12 3v18" strokeDasharray="2 2" />
+    </Svg>
+  ),
   MateParallel: (p: IconProps) => (
     <Svg {...p}>
       <path d="M7 20V4M17 20V4" />
@@ -493,6 +500,12 @@ export const Icons = {
     <Svg {...p}>
       <ellipse cx="12" cy="12" rx="9" ry="5.5" transform="rotate(-20 12 12)" />
       <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+    </Svg>
+  ),
+  Conic: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 19C6 10 11 6 20 5" />
+      <path d="M4 19 5 5h15" strokeDasharray="2 2" />
     </Svg>
   ),
   Spline: (p: IconProps) => (

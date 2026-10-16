@@ -423,13 +423,15 @@ export interface AssemblyPattern {
 }
 
 /** Kinds of mate (Onshape names in brackets where they differ): Fasten, Hinge (revolute), Slider, Cylindrical, Planar, Ball. */
-export type MateType = "fastened" | "revolute" | "slider" | "cylindrical" | "planar" | "ball" | "pinSlot" | "parallel";
+export type MateType = "fastened" | "revolute" | "slider" | "cylindrical" | "planar" | "ball" | "pinSlot" | "parallel" | "width";
 
 /** One end of a mate: a face or edge on an instance, remembered by what it looks like. */
 export interface MateConnector {
   instanceId: string;
   /** The face or edge (its partId is the Part Studio part). */
   pick: TopoPick;
+  /** Width mates: the second flat face; the connector sits halfway between the two. */
+  pick2?: TopoPick;
 }
 
 export interface Mate {

@@ -40,7 +40,7 @@ import { matchingConnectors } from "../assembly/connectors";
 import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
-import { MATE_TYPES, nextMateName, solveWithParts } from "../assembly/mates";
+import { MATE_TYPES, nextMateName, pickWidthFace, solveWithParts } from "../assembly/mates";
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
@@ -89,6 +89,7 @@ export type SketchTool =
   | "arc"
   | "tangentArc"
   | "spline"
+  | "conic"
   | "ellipse"
   | "point"
   | "dimension"
@@ -122,6 +123,8 @@ export interface SketchSession {
   provisional: string[];
   /** Polygon tool: number of sides. */
   polygonSides: number;
+  /** Conic tool: how full new conics are (0.5 = a parabola). */
+  conicRho?: number;
   /** Corner-rounding tool: radius as typed. */
   filletRadius: string;
   /** Offset tool: distance as typed. */
@@ -250,7 +253,7 @@ export interface AppState {
   keepOfferedDimension: (id: string) => void;
   /** Drop any offered dimensions not kept yet. */
   discardOfferedDimensions: () => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**
@@ -1012,6 +1015,12 @@ export const useStore = create<AppState>((set, get) => {
           const asm = activeAssembly(s);
           const autoName = /^\S+ \d+$/.test(s.mateDraft.mate.name) && s.mateDraft.mode === "create";
           if (asm && autoName) mate.name = nextMateName(asm, patch.type);
+          // Only Width mates use a second face on each part.
+          if (patch.type !== "width") {
+            const one = (c?: MateConnector) => (c?.pick2 ? { instanceId: c.instanceId, pick: c.pick } : c);
+            mate.a = one(mate.a);
+            mate.b = one(mate.b);
+          }
         }
         return { mateDraft: { ...s.mateDraft, mate } };
       }),
@@ -1020,9 +1029,9 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.mateDraft) return {};
         const m = s.mateDraft.mate;
-        let next: MateDraft;
-        if (!m.a || (m.a && m.b) || (!m.b && m.a.instanceId === c.instanceId)) next = { ...m, a: c, b: undefined };
-        else next = { ...m, b: c };
+        let next: MateDraft = { ...m, b: c };
+        if (m.type === "width") next = { ...m, ...pickWidthFace(m, c) };
+        else if (!m.a || (m.a && m.b) || (!m.b && m.a.instanceId === c.instanceId)) next = { ...m, a: c, b: undefined };
         return { mateDraft: { ...s.mateDraft, mate: next } };
       }),
 
@@ -1413,3 +1422,4 @@ function replicateHoles(a: Assembly, rep: Replicate, parts: PartMesh[]) {
   // Picks name the part itself, whichever configuration it's shown in.
   return part && instance ? matchingConnectors(part, { ...target.pick, partId: part.id }).map((p) => ({ ...p, partId: instance.partId })) : [];
 }
+
