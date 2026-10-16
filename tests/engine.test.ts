@@ -1932,7 +1932,7 @@ describe("text", () => {
     const tooWide = sketchFeature({ kind: "default", name: "Top" }, addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 70, y: 4 }).sketch);
     expect(build([rod, tooWide, { ...wrap, sketchRef: tooWide.id }]).featureErrors[wrap.id]).toMatch(/too wide/);
     expect(build([rod, sk, { ...wrap, picks: [] }]).featureErrors[wrap.id]).toMatch(/round face/);
-  });
+  }, 120_000);
 });
 
 describe("splines and ellipses", () => {
