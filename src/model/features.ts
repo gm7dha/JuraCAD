@@ -266,6 +266,17 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "inset", label: "Shorten each end by (a relief is cut so it can bend)", defaultValue: "0", min: 0, group: "size" },
     ],
   },
+  hem: {
+    type: "hem",
+    label: "Hem",
+    namePrefix: "Hem",
+    description: "Folds straight edges of a sheet metal part right back on themselves, for a safe, stiff edge.",
+    params: [
+      { key: "length", label: "Length of the folded-over part", defaultValue: "8", positive: true, group: "size" },
+      { key: "gap", label: "Gap inside the fold (0 = folded flat)", defaultValue: "0", min: 0, group: "size" },
+      { key: "inset", label: "Shorten each end by (a relief is cut so it can fold)", defaultValue: "0", min: 0, group: "size" },
+    ],
+  },
   thicken: {
     type: "thicken",
     label: "Thicken",

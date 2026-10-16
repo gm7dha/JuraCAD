@@ -1812,6 +1812,13 @@ describe("sheet metal", () => {
     // Shortened by 10 at each end: 30 wide, with a 2 × 2 relief notch (through the 2 mm sheet) beside each end.
     build([sk, sheet(sk.id), { ...flange, params: { length: "30", angle: "90", inset: "10" } }]);
     expect(vol()).toBeCloseTo(10000 - 2 * 8 + (Math.PI / 4) * (16 - 4) * 30 + 26 * 30 * 2, 1);
+    // A closed hem on the same edge: a half-turn bend (inside radius 0.05) and an 8 mm lip folded back over the sheet.
+    const hem: Feature = { id: "hm", name: "Hem 1", type: "hem", operation: "add", suppressed: false, params: { length: "8", gap: "0", inset: "0" }, picks: [{ partId: p.id, ref }] };
+    const r6 = build([sk, sheet(sk.id), hem]);
+    expect(r6.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(10000 + (Math.PI / 2) * (2.05 * 2.05 - 0.05 * 0.05) * 50 + 8 * 50 * 2, 1);
+    expect(r6.parts).toHaveLength(1);
+    expect(r6.parts[0].flat!.bendLines).toHaveLength(1);
     // A hole drilled through the plate afterwards (a 10 mm cylinder taken away) shows in the flat pattern, round its centre.
     const drill = feature("cylinder", { diameter: 10, height: 20, x: 50, y: 25, z: -5 }, "remove");
     const r4 = build([sk, sheet(sk.id), flange, drill]);

@@ -228,6 +228,15 @@ export function Toolbar() {
               title: hasPart ? "Flange — bend a wall up (or down) off straight edges of a sheet metal part" : "Make a sheet metal part first",
             },
             {
+              key: "hem",
+              label: "Hem",
+              icon: <Icons.Hem />,
+              onClick: () => startCreate("hem"),
+              disabled: !ready || !hasSheet,
+              active: editingType === "hem",
+              title: hasSheet ? "Hem — fold straight edges of a sheet metal part back on themselves, for a safe, stiff edge" : "Make a sheet metal part first",
+            },
+            {
               key: "flatPattern",
               label: "Flat pattern",
               icon: <Icons.FlatPattern />,

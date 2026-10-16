@@ -1067,7 +1067,7 @@ export class GeometryEngine {
         if (r.newPart) partCounter++;
         continue;
       }
-      if (feature.type === "flange") {
+      if (feature.type === "flange" || feature.type === "hem") {
         const err = this.applyFlange(feature);
         if (err) featureErrors[feature.id] = err;
         continue;
@@ -1318,33 +1318,49 @@ export class GeometryEngine {
 
   /** Flange: a wall bent up (or down) off each picked straight edge of a sheet metal part. */
   private applyFlange(feature: Feature): string | null {
+    const hem = feature.type === "hem";
+    const what = hem ? "hem" : "flange";
     const { values, errors } = resolveParams(feature);
-    const bad = FEATURE_DEFS.flange.params.find((p) => errors[p.key]);
+    const bad = FEATURE_DEFS[feature.type].params.find((p) => errors[p.key]);
     if (bad) return `${bad.label}: ${errors[bad.key]}`;
     const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
-    if (picks.length === 0) return "Click the straight edges of the sheet to bend flanges off.";
+    if (picks.length === 0) return hem ? "Click the straight edges of the sheet to fold over." : "Click the straight edges of the sheet to bend flanges off.";
     const partIds = [...new Set(picks.map((p) => p.partId))];
-    if (partIds.length > 1) return "A flange works on one sheet metal part at a time. Remove the edges picked on the other part.";
+    if (partIds.length > 1) return `A ${what} works on one sheet metal part at a time. Remove the edges picked on the other part.`;
     const part = this.parts.find((p) => p.id === partIds[0]);
-    if (!part) return "The part these edges were on no longer exists. Edit this flange and pick the edges again.";
+    if (!part) return `The part these edges were on no longer exists. Edit this ${what} and pick the edges again.`;
     if (!part.sheet) return "That isn't a sheet metal part. Make one with Sheet metal (from a sketch) first.";
     let spec = part.sheet;
     const added: FlangeSpec[] = [];
     for (let i = 0; i < picks.length; i++) {
       const ref = picks[i].ref;
-      if (ref.kind !== "edge" || ref.curve !== "LINE") return "Flanges bend off straight edges. Remove the curved edge.";
+      if (ref.kind !== "edge" || ref.curve !== "LINE") return `${hem ? "Hems fold" : "Flanges bend"} straight edges. Remove the curved edge.`;
       // Edges of flanges made earlier in this same feature count too.
       const where = findSheetEdge(foldSheet(spec), spec.thickness, ref.a, ref.b, 0.01);
-      if (!where) return "One of the edges isn't a free straight edge along the sheet's top or bottom face (or it's already bent). Edit this flange and pick it again.";
-      const fl: FlangeSpec = {
-        id: `${feature.id}:${i}`,
-        wall: where.wall,
-        edge: where.edge,
-        length: values.length,
-        angle: values.angle,
-        down: !!feature.flipSide,
-        ...(values.inset > 0 ? { inset: values.inset } : {}),
-      };
+      if (!where) return `One of the edges isn't a free straight edge along the sheet's top or bottom face (or it's already bent). Edit this ${what} and pick it again.`;
+      const fl: FlangeSpec = hem
+        ? {
+            id: `${feature.id}:${i}`,
+            wall: where.wall,
+            edge: where.edge,
+            length: 0,
+            angle: 180,
+            down: !!feature.flipSide,
+            hem: true,
+            // Folded flat against the sheet (a closed hem) needs a tiny bend radius; a gap opens it up.
+            radius: Math.max(0.05, values.gap / 2),
+            straight: values.length,
+            ...(values.inset > 0 ? { inset: values.inset } : {}),
+          }
+        : {
+            id: `${feature.id}:${i}`,
+            wall: where.wall,
+            edge: where.edge,
+            length: values.length,
+            angle: values.angle,
+            down: !!feature.flipSide,
+            ...(values.inset > 0 ? { inset: values.inset } : {}),
+          };
       added.push(fl);
       spec = { ...spec, flanges: [...spec.flanges, fl] };
     }
@@ -1361,7 +1377,7 @@ export class GeometryEngine {
       ];
       const extra = fusePieces(pieces);
       pieces = [];
-      if (!extra) return "Click the straight edges of the sheet to bend flanges off.";
+      if (!extra) return hem ? "Click the straight edges of the sheet to fold over." : "Click the straight edges of the sheet to bend flanges off.";
       try {
         result = part.shape.fuse(extra);
       } finally {
@@ -1386,11 +1402,13 @@ export class GeometryEngine {
       }
       if (!isValidSolid(result)) {
         result.delete();
-        return "The flange runs into the rest of the part. Try a shorter flange, a different angle, or bending it the other way.";
+        return hem
+          ? "The hem runs into the rest of the part. Try a shorter one, or folding it the other way."
+          : "The flange runs into the rest of the part. Try a shorter flange, a different angle, or bending it the other way.";
       }
     } catch (e) {
       pieces.forEach((p) => p.delete());
-      return describeError(e, "Couldn't bend this flange.");
+      return describeError(e, `Couldn't ${hem ? "fold this hem" : "bend this flange"}.`);
     }
     part.shape.delete();
     part.shape = result;

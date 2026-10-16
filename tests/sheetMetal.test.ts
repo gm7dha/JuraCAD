@@ -99,6 +99,26 @@ describe("sheet metal", () => {
     expect(foldSheet(spec([{ id: "g", wall: "base", edge: 1, length: 30, angle: 90, down: false, inset: 25 }])).errors.g).toMatch(/Shortened too much/);
   });
 
+  it("folds a hem right back over the sheet, lying a small gap above it", () => {
+    const T = 2;
+    const f = foldSheet(spec([{ id: "h", wall: "base", edge: 1, length: 0, angle: 180, down: false, hem: true, radius: 0.05, straight: 8 }], T, 2, 0.5));
+    expect(f.errors).toEqual({});
+    const hem = f.walls[1];
+    // Folded over the top: its outer (top) face 2 × 0.05 above the sheet's top face, running back 8 mm from the edge.
+    close(wallPoint(hem.frame, [0, 0]), [100, 50, 2 * T + 0.1]);
+    close(wallPoint(hem.frame, [0, 8]), [92, 50, 2 * T + 0.1]);
+    close(wallPoint(hem.frame, [0, 0], T), [100, 50, T + 0.1]);
+    // Folded under instead.
+    const under = foldSheet(spec([{ id: "h", wall: "base", edge: 1, length: 0, angle: 180, down: true, hem: true, radius: 1, straight: 8 }], T, 2, 0.5));
+    expect(under.errors).toEqual({});
+    close(wallPoint(under.walls[1].frame, [0, 8]), [92, 50, -2]);
+    // Flat: the plate, the fold's allowance and the 8 mm lip.
+    const xs = flatPattern(f).outline.map((p) => p[0]);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(100 + Math.PI * (0.05 + 0.5 * T) + 8, 6);
+    // A plain flange can't go to 180°.
+    expect(foldSheet(spec([{ id: "x", wall: "base", edge: 1, length: 20, angle: 180, down: false }])).errors.x).toMatch(/less than 180/);
+  });
+
   it("explains flanges it can't make", () => {
     const f = foldSheet(spec([
       { id: "short", wall: "base", edge: 0, length: 3, angle: 90, down: false },

@@ -270,6 +270,12 @@ export const Icons = {
       <path d="M3 15v1.5l8 4 10-5V14" />
     </Svg>
   ),
+  Hem: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 15h13a3 3 0 0 0 0-6H9" />
+      <path d="M3 18h13a6 6 0 0 0 0-12H9" />
+    </Svg>
+  ),
   FlatPattern: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 8h18v8H3z" />

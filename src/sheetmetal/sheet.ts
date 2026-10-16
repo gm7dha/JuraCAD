@@ -49,6 +49,10 @@ export interface FlangeSpec {
   straight?: number;
   /** Shorten the flange this much at each end of the edge (a bend relief is cut at each end so it can bend). */
   inset?: number;
+  /** Its own inside bend radius (hems fold back with a tiny one), instead of the sheet's. */
+  radius?: number;
+  /** A hem: the edge folded right back on itself (angle 180, `straight` the length of the folded-over part). */
+  hem?: boolean;
 }
 
 export interface SheetSpec {
@@ -222,7 +226,6 @@ const rect = (w: number, h: number): Segment[] => [
 /** Fold the sheet: every wall where it ends up, and the bends between them. */
 export function foldSheet(spec: SheetSpec): FoldedSheet {
   const T = spec.thickness;
-  const R = spec.radius;
   const base: Wall = {
     id: "base",
     frame: spec.base.frame,
@@ -255,10 +258,11 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       errors[fl.id] = "That edge already has a flange.";
       continue;
     }
-    if (!(fl.angle > 0 && fl.angle < 180)) {
+    if (!(fl.angle > 0 && (fl.angle < 180 || (fl.hem && fl.angle <= 180)))) {
       errors[fl.id] = "The bend angle must be more than 0° and less than 180°.";
       continue;
     }
+    const R = fl.radius ?? spec.radius;
     const theta = (fl.angle * Math.PI) / 180;
     const straight = fl.straight ?? fl.length - (R + T) * Math.tan(theta / 2);
     if (straight < 0.01) {
