@@ -688,6 +688,8 @@ try {
     await page.getByRole("button", { name: "Group", exact: true }).click();
     await page.waitForSelector(".panel-section.groups .feature-row >> text=Group 1", { timeout: 5_000 });
     await shot("group");
+    // Its row's buttons show on hover.
+    await page.locator(".panel-section.groups .feature-row").first().hover();
     await page.getByRole("button", { name: "Ungroup Group 1" }).click();
     await page.waitForSelector(".panel-section.groups", { state: "detached", timeout: 5_000 });
   }
