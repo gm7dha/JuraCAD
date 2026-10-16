@@ -2172,12 +2172,14 @@ describe("surfaces", () => {
     expect(thickCheck.geometryValid).toBe(true);
     expect(thickCheck.exactVolume!).toBeGreaterThan(400);
     expect(thickCheck.exactVolume!).toBeLessThan(450);
-    // Offset the skin 2 mm outwards: a 14 × 14 skin, 10 tall, as another surface.
+    // Offset the skin 2 mm: a 14 × 14 (or, the other way, 6 × 6) skin, 10 tall, as another surface; minus goes the other way.
     const off: Feature = { ...feature("offsetSurface", { distance: 2 }), picks: [faceOf(p)] };
     const o = build([box, skin, off]);
     expect(o.featureErrors).toEqual({});
     expect(o.parts).toHaveLength(2);
     expect(o.parts[1].surface).toBe(true);
-    expect(area(o.parts[1])).toBeCloseTo(4 * 14 * 10, 0);
+    const a1 = area(o.parts[1]);
+    const back = area(build([box, skin, { ...off, params: { distance: "-2" } }]).parts[1]);
+    expect([Math.round(a1), Math.round(back)].sort((x, y) => x - y)).toEqual([240, 560]);
   });
 });
