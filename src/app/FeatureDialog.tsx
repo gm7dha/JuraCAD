@@ -646,22 +646,14 @@ function TransformOptions() {
         <input type="checkbox" checked={t.copy} onChange={(e) => update({ copy: e.target.checked })} />
         Make a copy (keep the original where it is)
       </label>
-      <label className="field-label" htmlFor="transform-axis">
-        Turn about
+      <label className="field-label" htmlFor="transform-about">
+        Turn about axes
       </label>
-      <div className="inline-selects">
-        <select id="transform-axis" className="full-select" value={t.axis} onChange={(e) => update({ axis: e.target.value as Axis })}>
-          {(["x", "y", "z"] as const).map((a) => (
-            <option key={a} value={a}>
-              {AXIS_LABELS[a]}
-            </option>
-          ))}
-        </select>
-        <select className="full-select" aria-label="Turn about which point" value={t.about} onChange={(e) => update({ about: e.target.value as "origin" | "centre" })}>
-          <option value="centre">through the part's centre</option>
-          <option value="origin">through the origin</option>
-        </select>
-      </div>
+      <select id="transform-about" className="full-select" aria-label="Turn about which point" value={t.about} onChange={(e) => update({ about: e.target.value as "origin" | "centre" })}>
+        <option value="centre">through the part's centre</option>
+        <option value="origin">through the origin</option>
+      </select>
+      <p className="dialog-hint field-hint">The turns above happen about X, then Y, then Z.</p>
     </fieldset>
   );
 }
