@@ -25,7 +25,7 @@ import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { findSheetEdge, flatPattern, flatPoint, foldSheet, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
-import { bendSolid, fusePieces, wallCutLines, wallSolid } from "./sheetMetal";
+import { bendSolid, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
 import { flatProjection } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize } from "../model/fasteners";
 import type { CheckResult, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
@@ -2341,6 +2341,22 @@ export class GeometryEngine {
     }
     found.forEach((f) => f.shape.delete());
     return result;
+  }
+
+  /** A sheet metal part laid out flat (its walls laid down, bends unrolled into strips), meshed for display. */
+  unfold(partId: string): PartMesh | null {
+    const part = this.parts.find((p) => p.id === partId);
+    if (!part?.sheet) return null;
+    let solid: Shape3D | null = null;
+    try {
+      solid = unfoldedSolid(part.shape, foldSheet(part.sheet), part.sheet.thickness);
+      if (!solid) return null;
+      return this.meshPartShape({ id: part.id, name: part.name, featureIds: [...part.featureIds], shape: solid });
+    } catch {
+      return null;
+    } finally {
+      solid?.delete();
+    }
   }
 
   /** Measure whole parts: each one's size, and between two of them the gap (0 if touching) and any overlap. */

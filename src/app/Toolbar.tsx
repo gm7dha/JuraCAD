@@ -82,6 +82,7 @@ export function Toolbar() {
   const sketchCount = useStore((s) => activeFeatures(s).filter((f) => f.type === "sketch").length);
   const hasPart = useStore((s) => studioParts(s).length > 0);
   const hasSheet = useStore((s) => studioParts(s).some((p) => !!p.flat));
+  const showFlat = useStore((s) => s.showFlat);
   const partCount = useStore((s) => studioParts(s).length);
   const sectionOn = useStore((s) => s.section !== null);
   const platform = detectPlatform();
@@ -235,6 +236,15 @@ export function Toolbar() {
               disabled: !ready || !hasSheet,
               active: editingType === "hem",
               title: hasSheet ? "Hem — fold straight edges of a sheet metal part back on themselves, for a safe, stiff edge" : "Make a sheet metal part first",
+            },
+            {
+              key: "unfold",
+              label: "Unfold",
+              icon: <Icons.Unfold />,
+              onClick: () => useStore.getState().setShowFlat(!showFlat),
+              disabled: !hasSheet,
+              active: showFlat,
+              title: hasSheet ? "Unfold — show the sheet metal parts laid out flat in the 3D view (click again to fold them back up)" : "Make a sheet metal part first",
             },
             {
               key: "flatPattern",

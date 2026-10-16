@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
@@ -10,6 +10,7 @@ import { explodeAssembly, useSolvedAssembly } from "../app/assemblySolve";
 import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
+import { getKernel } from "../kernel/connect";
 import type { Feature } from "../model/types";
 import { SketchController } from "../sketch/controller";
 import { planeFrame, planeOnFace, type SketchPlane } from "../sketch/planes";
@@ -125,6 +126,11 @@ const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "dele
 function handlePick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
   if (activeAssembly(s)) return handleAssemblyPick(target, additive);
+  // Parts shown flat are just for looking at: their faces and edges aren't the real ones.
+  if (s.showFlat && target?.kind === "part" && s.parts.find((p) => p.id === target.item.partId)?.flat) {
+    s.showToast("This part is shown flat. Turn Unfold off (in the toolbar) to pick its faces and edges.");
+    return;
+  }
   // A Plane feature: use it wherever a plane is wanted, otherwise select it in the list.
   if (target?.kind === "customPlane") {
     const plane = customPlaneAt(target.id);
@@ -442,11 +448,36 @@ export function Viewport() {
   // In an assembly the meshes only change when parts are rebuilt or instances added/removed, not when they move.
   const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${meshIdOf(i)}`).join(",") : null;
   const hadNothing = useRef(true);
-  const display = useMemo(
-    () => (assembly ? instanceMeshes(parts, assembly) : shownParts),
+  // Sheet metal shown flat: each sheet part's unfolded mesh, fetched when asked for or when the parts are rebuilt.
+  const showFlat = useStore((s) => s.showFlat);
+  const [flatMeshes, setFlatMeshes] = useState<{ for: PartMesh[]; meshes: Record<string, PartMesh> } | null>(null);
+  useEffect(() => {
+    if (!showFlat || assembly) return;
+    const sheets = shownParts.filter((p) => p.flat);
+    if (!sheets.length) return;
+    let live = true;
+    const kernel = getKernel();
+    kernel
+      .whenIdle()
+      .then(() => Promise.all(sheets.map((p) => kernel.unfold(p.id).catch(() => null))))
+      .then((list) => {
+        if (!live) return;
+        const meshes: Record<string, PartMesh> = {};
+        list.forEach((m, i) => {
+          if (m) meshes[sheets[i].id] = m;
+        });
+        setFlatMeshes({ for: shownParts, meshes });
+      });
+    return () => {
+      live = false;
+    };
+  }, [showFlat, shownParts, assembly]);
+  const display = useMemo(() => {
+    if (assembly) return instanceMeshes(parts, assembly);
+    if (!showFlat || !flatMeshes || flatMeshes.for !== shownParts) return shownParts;
+    return shownParts.map((p) => flatMeshes.meshes[p.id] ?? p);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [parts, shownParts, instanceKey],
-  );
+  }, [parts, shownParts, instanceKey, showFlat, flatMeshes]);
   const { solved } = useSolvedAssembly();
   const mateDraft = useStore((s) => s.mateDraft?.mate ?? null);
   // Exploded view: shown spread apart, except while a mate is being made.

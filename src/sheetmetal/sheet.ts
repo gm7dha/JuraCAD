@@ -550,3 +550,48 @@ export function findSheetEdge(folded: FoldedSheet, thickness: number, a: V3, b: 
   }
   return null;
 }
+
+/**
+ * How to lay a wall down flat: the frame it occupies in the unfolded sheet
+ * (in the base wall's plane), and the turn (axis and degrees about the
+ * wall's origin) that takes the wall's frame onto it. For bends, the flat
+ * strip each one unrolls into.
+ */
+export function unfoldMoves(folded: FoldedSheet): {
+  walls: { id: string; from: Frame3; to: Frame3; axis: V3; angle: number }[];
+  strips: { frame: Frame3; length: number; width: number }[];
+} {
+  const base = folded.walls[0].frame;
+  const inBase = (p: P2): V3 => add(add(base.origin, mul(base.u, p[0])), mul(base.v, p[1]));
+  const dirInBase = (d: P2): V3 => add(mul(base.u, d[0]), mul(base.v, d[1]));
+  const walls = folded.walls.map((w) => {
+    const to: Frame3 = { origin: inBase(w.flat.origin), u: dirInBase(w.flat.u), v: dirInBase(w.flat.v), n: base.n };
+    // The rotation taking (u, v, n) to (u', v', n'): R = B · Aᵀ, as an axis and angle.
+    const A = [w.frame.u, w.frame.v, w.frame.n];
+    const B = [to.u, to.v, to.n];
+    const R = [0, 1, 2].map((r) => [0, 1, 2].map((c) => B[0][r] * A[0][c] + B[1][r] * A[1][c] + B[2][r] * A[2][c]));
+    const trace = R[0][0] + R[1][1] + R[2][2];
+    const angle = Math.acos(Math.max(-1, Math.min(1, (trace - 1) / 2)));
+    let axis: V3 = [R[2][1] - R[1][2], R[0][2] - R[2][0], R[1][0] - R[0][1]];
+    const l = Math.hypot(...axis);
+    if (l > 1e-9) axis = mul(axis, 1 / l);
+    else if (angle > 1e-9) {
+      // A half turn: the axis is the eigenvector for +1.
+      const k = [0, 1, 2].reduce((best, i) => (R[i][i] > R[best][best] ? i : best), 0);
+      const col: V3 = [R[0][k] + (k === 0 ? 1 : 0), R[1][k] + (k === 1 ? 1 : 0), R[2][k] + (k === 2 ? 1 : 0)];
+      axis = mul(col, 1 / (Math.hypot(...col) || 1));
+    } else axis = [0, 0, 1];
+    return { id: w.id, from: w.frame, to, axis, angle: (angle * 180) / Math.PI };
+  });
+  const strips = folded.bends.map((b) => {
+    const [a, c] = b.flatLine;
+    const along: P2 = [c[0] - a[0], c[1] - a[1]];
+    const L = Math.hypot(along[0], along[1]) || 1;
+    const e: P2 = [along[0] / L, along[1] / L];
+    // The strip is centred on the bend line: from its outer side back towards the parent (a right-handed frame).
+    const inward: P2 = [-e[1], e[0]];
+    const corner: P2 = [a[0] - (inward[0] * b.allowance) / 2, a[1] - (inward[1] * b.allowance) / 2];
+    return { frame: { origin: inBase(corner), u: dirInBase(e), v: dirInBase(inward), n: base.n }, length: L, width: b.allowance };
+  });
+  return { walls, strips };
+}

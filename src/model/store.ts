@@ -180,6 +180,8 @@ export interface AppState {
   hiddenParts: string[];
   /** Parts drawn see-through (display only, not saved). */
   transparentParts: string[];
+  /** Part Studio: show sheet metal parts laid out flat instead of folded. */
+  showFlat: boolean;
   /** Whole parts picked in the Parts list (for hiding, colouring or exporting several at once). */
   selectedParts: string[];
   /** Default plane picked in the list or viewport (planes and faces aren't selected together). */
@@ -366,6 +368,7 @@ export interface AppState {
   selectFeature: (id: string | null) => void;
   setSelection: (items: SelectionItem[]) => void;
   toggleHidden: (partId: string) => void;
+  setShowFlat: (on: boolean) => void;
   setSelectedParts: (ids: string[]) => void;
   /** Boolean dialog: add a part to (or take it off) the list being picked. */
   toggleBooleanPart: (partId: string) => void;
@@ -496,6 +499,7 @@ export const useStore = create<AppState>((set, get) => {
     section: null,
     hiddenParts: [],
     transparentParts: [],
+    showFlat: false,
     selectedParts: [],
     selectedPlane: null,
     listHoverPlane: null,
@@ -602,7 +606,7 @@ export const useStore = create<AppState>((set, get) => {
           .map((item) => pickFor(s.parts, item))
           .filter((p): p is TopoPick => p !== null);
       }
-      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], selectedPlane: null });
+      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], selectedPlane: null, showFlat: false });
     },
 
     startImport: (file) => {
@@ -614,7 +618,7 @@ export const useStore = create<AppState>((set, get) => {
       let name = base;
       for (let n = 2; used.has(name); n++) name = `${base} (${n})`;
       draft.name = name;
-      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], selectedPlane: null });
+      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], selectedPlane: null, showFlat: false });
     },
 
     startEdit: (id) => {
@@ -622,6 +626,7 @@ export const useStore = create<AppState>((set, get) => {
       if (!f) return;
       set({
         editing: { mode: "edit", draft: { ...f, params: { ...f.params } } },
+        showFlat: false,
         sketch: f.type === "sketch" ? newSession() : null,
         selectedFeatureId: id,
         selectedPlane: null,
@@ -634,6 +639,7 @@ export const useStore = create<AppState>((set, get) => {
       draft.sketch = { plane, data: draft.sketch!.data };
       set({
         editing: { mode: "create", draft },
+        showFlat: false,
         sketch: {
           ...newSession(),
           message: plane ? null : { text: "Click Top, Front or Right in the feature list, or a flat face, to sketch on it.", tone: "info" },
@@ -1295,6 +1301,7 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => ({ transparentParts: on ? [...s.transparentParts.filter((p) => !ids.includes(p)), ...ids] : s.transparentParts.filter((p) => !ids.includes(p)) })),
     setPartsHidden: (ids, hidden) =>
       set((s) => ({ hiddenParts: hidden ? [...s.hiddenParts.filter((p) => !ids.includes(p)), ...ids] : s.hiddenParts.filter((p) => !ids.includes(p)) })),
+    setShowFlat: (showFlat) => set({ showFlat, selection: [] }),
     toggleHidden: (partId) =>
       set((s) => ({
         hiddenParts: s.hiddenParts.includes(partId) ? s.hiddenParts.filter((p) => p !== partId) : [...s.hiddenParts, partId],
