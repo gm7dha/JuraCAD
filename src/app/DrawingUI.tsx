@@ -23,8 +23,8 @@ import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, PartSmithDocument, SectionCut } from "../model/types";
-import { addSection, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
+import type { BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, PartSmithDocument, SectionCut } from "../model/types";
+import { addSection, breakOutRequests, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
 import { downloadFile, safeFileName } from "./download";
@@ -92,8 +92,9 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
   // (Sections are asked for separately; details are worked out here from their host views.)
   const kinds = drawing.views.map((v) => v.kind).filter((k) => k !== "section" && k !== "detail");
   const sections = sectionRequests(drawing);
+  const breakouts = breakOutRequests(drawing);
   // The same key object while nothing it's made of changes, so the effect below only runs on real changes.
-  const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines, JSON.stringify(sections)] : null;
+  const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines, JSON.stringify(sections), JSON.stringify(breakouts)] : null;
   const keyRef = useRef<unknown[] | null>(null);
   if (!rawKey) keyRef.current = null;
   else if (!keyRef.current || !sameKey(keyRef.current, rawKey)) keyRef.current = rawKey;
@@ -117,7 +118,7 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
       const kernel = getKernel();
       const promise = kernel
         .whenIdle()
-        .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sections))
+        .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sections, breakouts))
         .then((list) => {
           const result: Projections = {};
           for (const p of list) result[p.kind] = p;
@@ -263,6 +264,7 @@ export function DrawingToolbar() {
             [
               ["section", "Section", <Icons.Section key="s" />, "Section — click two points across the front, top or a side view to cut the part open there. Flip or remove sections in the panel"],
               ["auxiliary", "Auxiliary view", <Icons.AuxView key="a" />, "Auxiliary view — click two points along a sloping edge on the front, top or a side view: the part is shown looking square-on to it, so the sloping face is drawn at its true size"],
+              ["breakout", "Broken-out", <Icons.BreakOut key="b" />, "Broken-out — click two corners of an area on the front, top or a side view: the part is cut away there to show what's inside (set the depth in the panel)"],
               ["detail", "Detail", <Icons.Detail key="d" />, "Detail — click the middle of a small area on a view, then the circle's size: it's shown again bigger"],
             ] as const
           ).map(([t, label, icon, title]) => ({
@@ -648,6 +650,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
       </section>
       <SectionsList drawing={drawing} change={change} />
       <DetailsList drawing={drawing} change={change} />
+      <BreakOutsList drawing={drawing} change={change} />
       <RevisionsList drawing={drawing} change={change} />
       <section className="panel-section">
         <h3>Title block</h3>
@@ -705,6 +708,57 @@ function RevisionsList({ drawing, change }: { drawing: Drawing; change: (fn: (d:
 }
 
 /** The drawing's section cuts: flip which way each looks, or remove it. */
+function BreakOutsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
+  const list = drawing.breakouts ?? [];
+  if (!list.length) return null;
+  return (
+    <section className="panel-section">
+      <h3>Broken-out</h3>
+      <div className="drawing-views">
+        {list.map((b, i) => (
+          <div className="section-row" key={b.id}>
+            <span>
+              Cut {i + 1} <span className="muted small">(on {VIEW_LABELS[b.host]})</span>
+              <br />
+              <DepthBox value={b.depth} label={`Broken-out cut ${i + 1} depth`} onCommit={(depth) => change((d) => putBreakOut(d, { ...b, depth }))} />
+            </span>
+            <span className="row-actions-inline">
+              <button
+                type="button"
+                className="text-button small-text danger-text"
+                onClick={() => change((d) => removeBreakOut(d, b.id))}
+                title="Remove this cut (the view shows the whole part again)"
+                aria-label={`Remove broken-out cut ${i + 1}`}
+              >
+                Remove
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** How deep a broken-out cut goes (mm, or the design's units), saved on Enter or leaving the box. */
+function DepthBox({ value, label, onCommit }: { value: number; label: string; onCommit: (v: number) => void }) {
+  const unit = useLengthUnit();
+  const [text, setText] = useState(lengthNumber(value, unit));
+  useEffect(() => setText(lengthNumber(value, unit)), [value, unit]);
+  const take = () => {
+    const v = Number(text);
+    if (v > 0) onCommit(fromUnit(v, unit));
+    else setText(lengthNumber(value, unit));
+  };
+  return (
+    <label className="small muted" title="How deep the cut goes, from the front of the part as this view sees it">
+      Depth{" "}
+      <input className="short-input" aria-label={label} value={text} onChange={(e) => setText(e.target.value)} onBlur={take} onKeyDown={(e) => e.key === "Enter" && take()} />{" "}
+      {unit}
+    </label>
+  );
+}
+
 function DetailsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
   const details = drawing.details ?? [];
   return (
@@ -879,6 +933,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const [cutStart, setCutStart] = useState<{ view: string; at: P2 } | null>(null);
   /** Detail tool: the circle's middle (view mm), on its view. */
   const [detailStart, setDetailStart] = useState<{ view: string; at: P2 } | null>(null);
+  /** Broken-out tool: the first corner clicked. */
+  const [breakStart, setBreakStart] = useState<{ view: string; at: P2 } | null>(null);
   const [cursor, setCursor] = useState<P2 | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [W, H] = SHEETS[drawing.sheet];
@@ -893,6 +949,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     setPending(null);
     setCutStart(null);
     setDetailStart(null);
+    setBreakStart(null);
     setRun(null);
   }, [tool, drawing.id]);
 
@@ -932,6 +989,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         if (symbolStart) setSymbolStart(null);
         else if (cutStart) setCutStart(null);
         else if (detailStart) setDetailStart(null);
+        else if (breakStart) setBreakStart(null);
         else if (pending) setPending(null);
         else if (run) setRun(null);
         else if (s.selectedDim) s.selectDim(null);
@@ -942,7 +1000,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending, cutStart, run, detailStart, symbolStart]);
+  }, [pending, cutStart, run, detailStart, breakStart, symbolStart]);
 
   const toSheet = (e: { clientX: number; clientY: number }): P2 => {
     const svg = svgRef.current;
@@ -1172,6 +1230,25 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     useStore.getState().setDrawingTool("select");
   };
 
+  /** Broken-out tool: two corners of a rectangle on a front, top or side view; it starts cut halfway through. */
+  const breakClick = (here: P2) => {
+    if (!breakStart) {
+      const p = cutPoint(here);
+      if (p) setBreakStart({ view: p.view, at: p.at });
+      return;
+    }
+    const end = cutPoint(here, breakStart.view);
+    const p = projections?.[breakStart.view];
+    if (!end || !p?.bounds || !layout) return;
+    const [ax, ay] = breakStart.at;
+    const [bx, by] = end.at;
+    if (Math.abs(bx - ax) * layout.scale < 2 || Math.abs(by - ay) * layout.scale < 2) return;
+    const depth = Math.max(0.1, Math.round(((p.depth ?? 10) / 2) * 10) / 10);
+    change((d) => putBreakOut(d, { id: newId("bo"), host: breakStart.view as BreakOut["host"], a: toRel(p.bounds!, breakStart.at), b: toRel(p.bounds!, end.at), depth }));
+    setBreakStart(null);
+    useStore.getState().setDrawingTool("select");
+  };
+
   const sectionClick = (here: P2) => {
     if (!cutStart) {
       const p = cutPoint(here);
@@ -1225,6 +1302,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     else if (linear) linearClick(toSheet(e));
     else if (tool === "section" || tool === "auxiliary") sectionClick(toSheet(e));
     else if (tool === "detail") detailClick(toSheet(e));
+    else if (tool === "breakout") breakClick(toSheet(e));
     else useStore.getState().selectDim(null);
   };
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
@@ -1298,7 +1376,11 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     message = run
       ? `Click the next corner or hole centre (${what}). Esc to finish, or click another view's point to start again there.`
       : "Click the datum: the corner or hole centre to measure from.";
-  } else if (tool === "detail")
+  } else if (tool === "breakout")
+    message = breakStart
+      ? "Click the opposite corner of the area to cut away. Set how deep it goes in the panel. Esc to start again."
+      : "Click one corner of the area to cut away, on the front, top or a side view.";
+  else if (tool === "detail")
     message = detailStart
       ? "Click to set the size of the circle — everything inside it is shown bigger. Esc to start again."
       : "Click the middle of the area to show bigger, on the front, top or a side view.";
@@ -1325,7 +1407,14 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (f.kind === "line") return { line: [at(f.a), at(f.b)] as [P2, P2] };
     return { point: at(f.kind === "point" ? f.at : f.centre) };
   })();
-  const cutHover = (tool === "section" || tool === "auxiliary" || (tool === "detail" && !detailStart)) && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor)) : null;
+  const cutHover =
+    (tool === "section" || tool === "auxiliary" || (tool === "detail" && !detailStart) || (tool === "breakout" && !breakStart)) && cursor ? (cutStart ? cutEnd(cursor) : cutPoint(cursor)) : null;
+  const breakRect = (() => {
+    if (tool !== "breakout" || !breakStart || !cursor) return null;
+    const at = viewAt(breakStart.view);
+    const end = cutPoint(cursor, breakStart.view);
+    return at && end ? { a: at(breakStart.at), b: end.sheet } : null;
+  })();
   const detailCircle = (() => {
     if (tool !== "detail" || !detailStart || !cursor || !layout) return null;
     const at = viewAt(detailStart.view);
@@ -1490,6 +1579,16 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         {cutFrom && cutHover && <line x1={cutFrom[0]} y1={H - cutFrom[1]} x2={cutHover.sheet[0]} y2={H - cutHover.sheet[1]} className="drawing-cut-preview" />}
         {cutHover && <circle cx={cutHover.sheet[0]} cy={H - cutHover.sheet[1]} r={1.2} className="drawing-snap point" />}
         {detailCircle && <circle cx={detailCircle.c[0]} cy={H - detailCircle.c[1]} r={detailCircle.r} className="drawing-cut-preview" fill="none" />}
+        {breakRect && (
+          <rect
+            x={Math.min(breakRect.a[0], breakRect.b[0])}
+            y={H - Math.max(breakRect.a[1], breakRect.b[1])}
+            width={Math.abs(breakRect.b[0] - breakRect.a[0])}
+            height={Math.abs(breakRect.b[1] - breakRect.a[1])}
+            className="drawing-cut-preview"
+            fill="none"
+          />
+        )}
       </svg>
       {message && <div className="drawing-message">{message}</div>}
       {layout?.tooBig && <div className="drawing-message warn">The part is too big for this sheet even at {scaleLabel(layout.scale)}. Try a bigger sheet.</div>}

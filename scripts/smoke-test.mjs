@@ -814,6 +814,18 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^DETAIL [A-Z]/.test(t.textContent ?? "")), null, { timeout: 10_000 });
     await shot("detail");
   }
+  step = "adding a broken-out view";
+  {
+    // On the front view: an area in the middle, cut away halfway through.
+    const frontNow = await page.locator(".drawing-view-handle").first().boundingBox();
+    await tool("Broken-out");
+    await page.mouse.click(frontNow.x + frontNow.width * 0.3, frontNow.y + frontNow.height * 0.35);
+    await page.mouse.move(frontNow.x + frontNow.width * 0.6, frontNow.y + frontNow.height * 0.65, { steps: 3 });
+    await page.mouse.click(frontNow.x + frontNow.width * 0.6, frontNow.y + frontNow.height * 0.65);
+    await page.waitForSelector('[aria-label="Broken-out cut 1 depth"]', { timeout: 10_000 });
+    await page.waitForTimeout(3000);
+    await shot("breakout");
+  }
   step = "adding an auxiliary view";
   {
     // Look square-on to a slanted line across the front view.

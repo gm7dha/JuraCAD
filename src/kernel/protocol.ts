@@ -2,7 +2,7 @@ import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
-import type { SectionRequest } from "../drawing/sections";
+import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
 
 /** A copy of a part placed in an assembly, for exports and clash checks. */
 export interface InstanceInput {
@@ -36,6 +36,10 @@ export interface ViewProjection {
   cutFaces?: number[];
   /** Holes seen end-on (centre of the opening), for hole callouts. */
   holes?: ViewHole[];
+  /** How far the part reaches front to back as the view sees it (mm), for broken-out cuts' depths. */
+  depth?: number;
+  /** Broken-out cuts on this view: each one's outline (x0, y0, x1, y1…, closed). */
+  breakLines?: number[][];
   /** Flat pattern views: the bends, each a line across the pattern (x0, y0, x1, y1), its angle (degrees), inside radius, and whether it bends up. */
   bends?: { line: [number, number, number, number]; angle: number; radius: number; up: boolean }[];
 }
@@ -166,7 +170,7 @@ export type KernelRequest =
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[] }
   | { type: "clashes"; instances: InstanceInput[] }
-  | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[] }
+  | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[] }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
   | { type: "unfold"; partId: string }
