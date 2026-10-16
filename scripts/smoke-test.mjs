@@ -670,7 +670,7 @@ try {
   step = "patterning a part in the assembly";
   await page.getByRole("button", { name: "Explode", exact: true }).click();
   await page.locator(".feature-row >> text=Part 2 <1>").click();
-  await page.getByRole("button", { name: "Pattern", exact: true }).click();
+  await tool("Pattern");
   await page.waitForSelector('[aria-label="Pattern Pattern 1"]', { timeout: 5_000 });
   await page.getByLabel("How many (including the original)").fill("4");
   await page.getByLabel("How many (including the original)").press("Enter");
@@ -681,6 +681,21 @@ try {
   await shot("pattern");
   await page.getByRole("button", { name: "Delete pattern (and its copies)" }).click();
   await page.waitForFunction(() => ![...document.querySelectorAll(".feature-row")].some((r) => r.textContent?.includes("Part 2 <2>")), null, { timeout: 5_000 });
+  step = "grouping parts in the assembly";
+  {
+    await page.locator(".feature-row >> text=Part 2 <1>").click();
+    await page.locator(".feature-row >> text=Bracket <2>").click({ modifiers: ["Shift"] });
+    await page.getByRole("button", { name: "Group", exact: true }).click();
+    await page.waitForSelector(".panel-section.groups .feature-row >> text=Group 1", { timeout: 5_000 });
+    // A grouped part says so, and can be ungrouped from there.
+    // (Part 2 is after the brackets in the list, so it's the one that follows the group.)
+    await page.locator(".side-panel .feature-row >> text=Part 2 <1>").first().click();
+    const said = await page.locator(".instance-panel").innerText();
+    if (!/In Group 1/.test(said)) throw new Error(`a grouped part's panel says: ${said.slice(0, 120)}`);
+    await shot("group");
+    await page.getByRole("button", { name: "Ungroup Group 1" }).click();
+    await page.waitForSelector(".panel-section.groups", { state: "detached", timeout: 5_000 });
+  }
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
   step = "adding a second Part Studio";

@@ -19,6 +19,7 @@ import { partBox, useSolvedAssembly } from "./assemblySolve";
 import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
+import { ToolGroupButton } from "./ToolGroupButton";
 import { Icons } from "./icons";
 import { toggleMateAnimation } from "./animateMate";
 import { detectPlatform, shortcut } from "./platform";
@@ -103,23 +104,37 @@ export function AssemblyToolbar() {
           onClick={() => useStore.getState().removeInstances(selected.map((i) => i.id))}
           title={selected.length ? "Remove the selected parts from this assembly (Delete)" : "Select a part first"}
         />
-        <ToolButton
-          label="Pattern"
-          icon={<Icons.LinearPattern />}
-          disabled={!selected.some((i) => !i.copyOf)}
-          onClick={() => useStore.getState().createPattern()}
-          title={selected.some((i) => !i.copyOf) ? "Pattern — repeat the selected parts in a row or round an axis (the copies follow the originals)" : "Select the parts to repeat first"}
+        <ToolGroupButton
+          id="asm-copies"
+          name="copies"
+          items={[
+            {
+              key: "pattern",
+              label: "Pattern",
+              icon: <Icons.LinearPattern />,
+              disabled: !selected.some((i) => !i.copyOf),
+              onClick: () => useStore.getState().createPattern(),
+              title: selected.some((i) => !i.copyOf) ? "Pattern — repeat the selected parts in a row or round an axis (the copies follow the originals)" : "Select the parts to repeat first",
+            },
+            {
+              key: "replicate",
+              label: "Replicate",
+              icon: <Icons.Replicate />,
+              disabled: selected.length !== 1,
+              onClick: () => useStore.getState().createReplicate(),
+              title:
+                selected.length === 1
+                  ? "Replicate — copy this part into every other hole like the one it's mated into (e.g. a bolt into all the matching holes)"
+                  : "Select one part that's mated into a hole first",
+            },
+          ]}
         />
         <ToolButton
-          label="Replicate"
-          icon={<Icons.Replicate />}
-          disabled={selected.length !== 1}
-          onClick={() => useStore.getState().createReplicate()}
-          title={
-            selected.length === 1
-              ? "Replicate — copy this part into every other hole like the one it's mated into (e.g. a bolt into all the matching holes)"
-              : "Select one part that's mated into a hole first"
-          }
+          label="Group"
+          icon={<Icons.Group />}
+          disabled={selected.length < 2}
+          onClick={() => useStore.getState().createGroup()}
+          title={selected.length >= 2 ? "Group — lock the selected parts together where they are, so they move as one" : "Select two or more parts first (Ctrl or Shift + click)"}
         />
       </div>
       <div className="tool-divider" />
@@ -282,6 +297,63 @@ function MatesSection({ assembly }: { assembly: Assembly }) {
       {mates.length === 0 && assembly.instances.length >= 2 && (
         <p className="panel-hint">Join parts with a mate: choose Fasten, Hinge, Slider… in the toolbar, then click a face or edge on each part.</p>
       )}
+    </section>
+  );
+}
+
+/** Groups: parts locked together. */
+function GroupsSection({ assembly }: { assembly: Assembly }) {
+  const { solved } = useSolvedAssembly();
+  const groups = assembly.groups ?? [];
+  if (!groups.length) return null;
+  const names = Object.fromEntries(assembly.instances.map((i) => [i.id, i.name]));
+  return (
+    <section className="panel-section groups">
+      <h3>
+        Groups <span className="count">({groups.length})</span>
+      </h3>
+      <ul className="feature-list">
+        {groups.map((g) => {
+          const error = solved?.groupErrors?.[g.id];
+          return (
+            <li
+              key={g.id}
+              className={["feature-row", error && "failed"].filter(Boolean).join(" ")}
+              title={error ? `Problem: ${error}` : `${g.members.map((m) => names[m] ?? "?").join(", ")} — they move as one. Click to select them; double-click to rename.`}
+              onClick={() => useStore.getState().setAsmSelection(g.members)}
+              onDoubleClick={() => {
+                const name = window.prompt("Group name", g.name);
+                if (name) useStore.getState().renameGroup(g.id, name);
+              }}
+            >
+              <span className="feature-icon">
+                <Icons.Group size={18} />
+              </span>
+              <span className="feature-name">
+                {g.name} <span className="muted">({g.members.length})</span>
+              </span>
+              {error && (
+                <span className="feature-error-icon" aria-label="Problem">
+                  <Icons.Warning size={16} />
+                </span>
+              )}
+              <span className="row-actions">
+                <button
+                  className="icon-button small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    useStore.getState().deleteGroup(g.id);
+                  }}
+                  aria-label={`Ungroup ${g.name}`}
+                  title="Ungroup — the parts stay where they are, but move separately again"
+                >
+                  <Icons.Trash size={15} />
+                </button>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
@@ -619,6 +691,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
         {assembly.instances.length === 0 && <p className="panel-hint">Click Insert to bring in parts from the Part Studio.</p>}
       </section>
       <MatesSection assembly={assembly} />
+      <GroupsSection assembly={assembly} />
       <PatternsSection assembly={assembly} />
       <RelationsSection assembly={assembly} />
       <PositionsSection assembly={assembly} />
@@ -780,6 +853,7 @@ export function InstancePanel() {
   if (!instance || insertOpen || mating) return null;
   const drivenBy = solved?.drivenBy[instance.id];
   const driver = drivenBy ? asm?.mates?.find((m) => m.id === drivenBy) : undefined;
+  const group = drivenBy?.startsWith("group:") ? asm?.groups?.find((g) => `group:${g.id}` === drivenBy) : undefined;
   const copyPattern = instance.copyOf ? asm?.patterns?.find((p) => p.id === instance.copyOf!.pattern) : undefined;
   const copyOriginal = instance.copyOf ? asm?.instances.find((i) => i.id === instance.copyOf!.seed) : undefined;
   const update = useStore.getState().updateInstance;
@@ -843,6 +917,15 @@ export function InstancePanel() {
             </p>
             <button type="button" className="text-button" onClick={() => useStore.getState().setEditingPattern(copyPattern.id)}>
               Edit {copyPattern.name}
+            </button>
+          </>
+        ) : group ? (
+          <>
+            <p className="dialog-hint">
+              In <strong>{group.name}</strong>: it moves with the other parts in the group. Drag it to move them all, or ungroup to move it on its own.
+            </p>
+            <button type="button" className="text-button" onClick={() => useStore.getState().deleteGroup(group.id)}>
+              Ungroup {group.name}
             </button>
           </>
         ) : driver ? (

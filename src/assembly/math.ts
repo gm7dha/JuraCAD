@@ -134,3 +134,14 @@ export function samePlacement(a: Placement, b: Placement, tol = 1e-6): boolean {
   const d = Math.abs(a.rotation[0] * b.rotation[0] + a.rotation[1] * b.rotation[1] + a.rotation[2] * b.rotation[2] + a.rotation[3] * b.rotation[3]);
   return d > 1 - tol;
 }
+
+/** A placement read from a file (anything missing or broken becomes no move, no turn). */
+export function parsePlacement(raw: unknown): Placement {
+  const num = (v: unknown, fallback = 0) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+  const p = (raw ?? {}) as Record<string, unknown>;
+  const pos = Array.isArray(p.position) ? p.position : [];
+  const rot = Array.isArray(p.rotation) ? p.rotation : [];
+  const position: Vec3 = [num(pos[0]), num(pos[1]), num(pos[2])];
+  const rotation: Quat = rot.length === 4 ? quatNormalize([num(rot[0]), num(rot[1]), num(rot[2]), num(rot[3], 1)]) : [0, 0, 0, 1];
+  return { position, rotation };
+}

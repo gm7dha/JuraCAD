@@ -487,6 +487,18 @@ export interface Assembly {
   patterns?: AssemblyPattern[];
   /** Parts copied into matching holes (optional: older saves have none). */
   replicates?: Replicate[];
+  /** Parts locked together so they move as one (optional: older saves have none). */
+  groups?: AssemblyGroup[];
+}
+
+/** Parts locked together where they were when grouped (Onshape's Group mate). */
+export interface AssemblyGroup {
+  id: string;
+  name: string;
+  /** The parts (instance ids); the first is the one the others are kept relative to. */
+  members: string[];
+  /** Where each other member sits relative to the first. */
+  offsets: Record<string, import("../assembly/math").Placement>;
 }
 
 /** How finely curved surfaces are turned into triangles. */

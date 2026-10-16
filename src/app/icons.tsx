@@ -133,6 +133,13 @@ export const Icons = {
       <path d="M4 20V10l6-6h10" />
     </Svg>
   ),
+  Group: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="3" y="9" width="8" height="8" rx="1" />
+      <rect x="13" y="7" width="8" height="10" rx="1" />
+      <path d="M1.5 5h21v15h-21z" strokeDasharray="2 2" />
+    </Svg>
+  ),
   Replicate: (p: IconProps) => (
     <Svg {...p}>
       <rect x="2.5" y="13" width="19" height="7" rx="1" />

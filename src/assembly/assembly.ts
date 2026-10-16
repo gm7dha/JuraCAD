@@ -4,11 +4,12 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
-import type { Assembly, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
+import type { Assembly, AssemblyGroup, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
 import { parseRelation } from "./relations";
 import { parsePattern, tidyPatterns } from "./patterns";
 import { parseReplicate, tidyReplicates } from "./replicate";
-import { applyPlacement, IDENTITY, quatNormalize, type Placement, type Quat, type Vec3 } from "./math";
+import { parseGroup, tidyGroups } from "./groups";
+import { applyPlacement, IDENTITY, parsePlacement, type Placement, type Vec3 } from "./math";
 
 const assembliesOf = (doc: PartSmithDocument) => doc.assemblies ?? [];
 
@@ -146,14 +147,14 @@ export function removeRelation(doc: PartSmithDocument, assemblyId: string, id: s
 export function removeInstances(doc: PartSmithDocument, assemblyId: string, ids: string[]): PartSmithDocument {
   const gone = new Set(ids);
   return updateAssembly(doc, assemblyId, (a) =>
-    tidyReplicates(
+    tidyGroups(tidyReplicates(
       tidyPatterns(
         withMates(
           { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
           (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
         ),
       ),
-    ),
+    )),
   );
 }
 
@@ -230,16 +231,7 @@ export function bomCsv(rows: BomRow[]): string {
 // ---------------------------------------------------------------------------
 // Reading from files and browser storage
 
-const num = (v: unknown, fallback = 0) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
 
-function parsePlacement(raw: unknown): Placement {
-  const p = (raw ?? {}) as Record<string, unknown>;
-  const pos = Array.isArray(p.position) ? p.position : [];
-  const rot = Array.isArray(p.rotation) ? p.rotation : [];
-  const position: Vec3 = [num(pos[0]), num(pos[1]), num(pos[2])];
-  const rotation: Quat = rot.length === 4 ? quatNormalize([num(rot[0]), num(rot[1]), num(rot[2]), num(rot[3], 1)]) : [0, 0, 0, 1];
-  return { position, rotation };
-}
 
 const MATE_TYPE_NAMES = new Set<string>(["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "pinSlot", "parallel"]);
 
@@ -353,14 +345,21 @@ export function parseAssemblies(raw: unknown): Assembly[] {
     const instanceIds = new Set(instances.map((i) => i.id));
     const patterns = (Array.isArray(r.patterns) ? r.patterns : []).map((p) => parsePattern(p, instanceIds)).filter((p): p is AssemblyPattern => !!p);
     const replicates = (Array.isArray(r.replicates) ? r.replicates : []).map(parseReplicate).filter((x): x is Replicate => !!x);
+    // Each part in one group at most.
+    const groups: AssemblyGroup[] = [];
+    for (const raw of Array.isArray(r.groups) ? r.groups : []) {
+      const g = parseGroup(raw);
+      if (g && g.members.every((m) => instanceIds.has(m) && !groups.some((x) => x.members.includes(m)))) groups.push(g);
+    }
     out.push(
-      tidyReplicates(tidyPatterns({
+      tidyGroups(tidyReplicates(tidyPatterns({
         ...(mates.length ? { ...assembly, mates } : assembly),
         ...(relations.length ? { relations } : {}),
         ...(positions.length ? { positions } : {}),
         ...(patterns.length ? { patterns } : {}),
         ...(replicates.length ? { replicates } : {}),
-      })),
+        ...(groups.length ? { groups } : {}),
+      }))),
     );
   }
   return out;

@@ -62,6 +62,16 @@ export function planDrag(
   if (!instance) return { refuse: "" };
   const mateId = solved.drivenBy[instanceId];
 
+  // A grouped part: drag the whole group, by its first part.
+  if (mateId?.startsWith("group:")) {
+    const group = assembly.groups?.find((g) => `group:${g.id}` === mateId);
+    const anchor = group?.members[0];
+    if (group && anchor && anchor !== instanceId && !solved.drivenBy[anchor]?.startsWith("group:")) {
+      return planDrag(assembly, solved, frameOf, anchor, grab, view, shift);
+    }
+    return { refuse: group ? `${instance.name} is in ${group.name}, which is held in place by a mate or a fixed part. Move that instead, or ungroup it.` : "" };
+  }
+
   if (!mateId) {
     if (instance.fixed) return { refuse: `${instance.name} is fixed. Unfix it (toolbar) to move it.` };
     const start = solved.placements[instanceId] ?? instance.placement;
