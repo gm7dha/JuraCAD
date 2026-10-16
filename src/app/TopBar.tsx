@@ -72,7 +72,8 @@ export function TopBar() {
         }}
         title="Your PartSmith version — click to see what's new"
       >
-        {SHORT_VERSION} preview
+        {SHORT_VERSION}
+        <span className="badge-extra"> preview</span>
         {fresh && <span className="badge-dot" aria-label="(new)" />}
       </button>
       <div className="topbar-spacer" />

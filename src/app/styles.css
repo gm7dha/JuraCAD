@@ -2004,7 +2004,7 @@ kbd {
 }
 
 @media (max-width: 1300px) {
-  .phase-badge {
+  .phase-badge .badge-extra {
     display: none;
   }
 }
@@ -2670,4 +2670,12 @@ kbd {
 /* Sketch relations show just their symbol (the name is in the tooltip), so the whole sketch toolbar fits. */
 .relation-button > span:not(.relation-symbol) {
   display: none;
+}
+
+.text-button.inline-link {
+  display: inline;
+  padding: 0;
+  height: auto;
+  font-size: inherit;
+  text-decoration: underline;
 }
