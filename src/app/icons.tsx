@@ -437,6 +437,13 @@ export const Icons = {
       <circle cx="9" cy="12" r="1.8" fill="currentColor" />
     </Svg>
   ),
+  MateWidth: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 4v16M20 4v16" />
+      <rect x="8" y="7" width="8" height="10" rx="1" />
+      <path d="M12 3v18" strokeDasharray="2 2" />
+    </Svg>
+  ),
   MateParallel: (p: IconProps) => (
     <Svg {...p}>
       <path d="M7 20V4M17 20V4" />

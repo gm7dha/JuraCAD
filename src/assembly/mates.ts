@@ -10,9 +10,10 @@
  */
 import { applyRelations } from "./relations";
 import { evaluate } from "../model/expr";
-import type { Assembly, Mate, MateType } from "../model/types";
+import type { Assembly, Mate, MateConnector, MateType } from "../model/types";
+import { sameRef } from "../geometry/topoRef";
 import { compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement } from "./math";
-import { frameOnParts, framePlacement, type Frame } from "./connectors";
+import { connectorFrameOnParts, framePlacement, type Frame } from "./connectors";
 import { patternStep, placeCopy } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
 import type { PartMesh } from "../kernel/protocol";
@@ -88,6 +89,16 @@ export const MATE_TYPES: Record<MateType, MateTypeDef> = {
       angle(true, "Angle"),
     ],
   },
+  width: {
+    type: "width",
+    label: "Width",
+    description: "Centres a part between two faces of another — like a tab in a slot: pick the two sides of the slot, then the two sides of the tab. It can still slide along and turn.",
+    values: [
+      { key: "dx", label: "Slide X", unit: "mm", free: true },
+      { key: "dy", label: "Slide Y", unit: "mm", free: true },
+      angle(true, "Angle"),
+    ],
+  },
   ball: {
     type: "ball",
     label: "Ball",
@@ -100,7 +111,7 @@ export const MATE_TYPES: Record<MateType, MateTypeDef> = {
   },
 };
 
-export const MATE_ORDER: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "pinSlot", "parallel", "ball"];
+export const MATE_ORDER: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "pinSlot", "parallel", "width", "ball"];
 
 /**
  * The limits on a mate's movements, worked out from what's typed (missing
@@ -234,6 +245,14 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
     }
     const fa = frameOf(mate, "a");
     const fb = frameOf(mate, "b");
+    if (mate.type === "width" && (!mate.a.pick2 || !mate.b.pick2)) {
+      mateErrors[mate.id] = "Pick two faces on each part: the two sides of the slot, then the two sides of what goes in it.";
+      continue;
+    }
+    if (mate.type === "width" && (!fa || !fb)) {
+      mateErrors[mate.id] = "A Width mate needs two flat faces on each part, parallel to each other (like the two sides of a slot).";
+      continue;
+    }
     if (!fa || !fb) {
       mateErrors[mate.id] = "A face or edge it uses can't be found any more (the part has changed too much). Edit the mate and pick it again.";
       continue;
@@ -442,7 +461,10 @@ export function solveWithParts(assembly: Assembly, parts: PartMesh[]): SolveResu
     // On the part as the instance shows it (which may be another configuration).
     const instance = assembly.instances.find((i) => i.id === mate[side].instanceId);
     const mesh = instance?.configuration ? findMesh(parts, meshIdOf(instance)) : undefined;
-    return mesh ? frameOnParts([mesh], { ...mate[side].pick, partId: mesh.id }) : frameOnParts(parts, mate[side].pick);
+    const c = mate[side];
+    return mesh
+      ? connectorFrameOnParts([mesh], { pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
+      : connectorFrameOnParts(parts, c);
   });
 }
 
@@ -453,4 +475,27 @@ export function nextMateName(assembly: Assembly, type: MateType): string {
   let n = 1;
   while (used.has(`${prefix} ${n}`)) n++;
   return `${prefix} ${n}`;
+}
+
+/**
+ * Width mates take two faces on each part: the two sides of the slot (on the
+ * part that stays put), then the two sides of what goes in it. A click on a
+ * part other than the one being picked moves on to (or starts) the other side.
+ */
+export function pickWidthFace(m: { a?: MateConnector; b?: MateConnector }, c: MateConnector): { a?: MateConnector; b?: MateConnector } {
+  const add = (side: MateConnector | undefined) =>
+    side && side.instanceId === c.instanceId && !side.pick2 && !sameRef(side.pick.ref, c.pick.ref) ? { ...side, pick2: c.pick } : null;
+  if (!m.a) return { a: c, b: undefined };
+  if (!m.a.pick2) {
+    const a = add(m.a);
+    return a ? { a, b: undefined } : { a: c, b: undefined };
+  }
+  if (!m.b) return m.a.instanceId === c.instanceId ? { a: c, b: undefined } : { a: m.a, b: c };
+  if (!m.b.pick2) {
+    const b = add(m.b);
+    if (b) return { a: m.a, b };
+    return m.a.instanceId === c.instanceId ? { a: c, b: undefined } : { a: m.a, b: c };
+  }
+  // Both sides done: start again.
+  return { a: c, b: undefined };
 }
