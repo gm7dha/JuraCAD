@@ -23,8 +23,8 @@ import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
-import { findSheetEdge, flatPattern, foldSheet, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
-import { bendSolid, fuseAll, wallSolid } from "./sheetMetal";
+import { findSheetEdge, flatPattern, flatPoint, foldSheet, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
+import { bendSolid, fusePieces, wallCutLines, wallSolid } from "./sheetMetal";
 import { fastenerName, fastenerSize } from "../model/fasteners";
 import type { CheckResult, ExportResult, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
@@ -53,6 +53,8 @@ interface BuiltPart {
   /** Sheet metal parts: the sheet they're folded from (for flanges and the flat pattern), and the features that made it. */
   sheet?: SheetSpec;
   sheetFeatures?: string[];
+  /** Cuts made in the sheet afterwards, traced on its walls (in each wall's own coordinates), for the flat pattern. */
+  sheetCuts?: { wall: string; lines: [[number, number], [number, number]][] }[];
 }
 
 /** Display meshes of unchanged imported parts (they can take seconds to make). */
@@ -1177,6 +1179,7 @@ export class GeometryEngine {
         target.shape = result;
         target.featureIds.push(feature.id);
         this.tools.set(feature.id, { shape: tool.clone(), operation: feature.operation, partId: target.id });
+        if (target.sheet && feature.operation === "remove") this.traceSheetCut(target, feature.id, tool);
       } catch (e) {
         featureErrors[feature.id] = describeError(
           e,
@@ -1276,6 +1279,23 @@ export class GeometryEngine {
     return { newPart: true };
   }
 
+  /** A cut through a sheet metal part: where it goes through each wall, so the flat pattern shows it. */
+  private traceSheetCut(part: BuiltPart, featureId: string, tool: Shape3D): void {
+    if (!part.sheet) return;
+    let found = false;
+    try {
+      for (const wall of foldSheet(part.sheet).walls) {
+        const lines = wallCutLines(wall, part.sheet.thickness, tool);
+        if (!lines.length) continue;
+        (part.sheetCuts ??= []).push({ wall: wall.id, lines });
+        found = true;
+      }
+    } catch {
+      // Not traced: it's listed as not shown in the flat pattern.
+    }
+    if (found) part.sheetFeatures = [...(part.sheetFeatures ?? []), featureId];
+  }
+
   /** Flange: a wall bent up (or down) off each picked straight edge of a sheet metal part. */
   private applyFlange(feature: Feature): string | null {
     const { values, errors } = resolveParams(feature);
@@ -1311,7 +1331,7 @@ export class GeometryEngine {
         ...folded.bends.filter((b) => ids.has(b.flangeId)).map((b) => bendSolid(b)),
         ...folded.walls.filter((w) => ids.has(w.id)).map((w) => wallSolid(w, spec.thickness)),
       ];
-      const extra = fuseAll(pieces);
+      const extra = fusePieces(pieces);
       pieces = [];
       if (!extra) return "Click the straight edges of the sheet to bend flanges off.";
       try {
@@ -2326,9 +2346,14 @@ export class GeometryEngine {
     const mesh = this.meshPartShape(p);
     if (!p.sheet) return mesh;
     try {
-      const flat = flatPattern(foldSheet(p.sheet));
+      const folded = foldSheet(p.sheet);
+      const flat = flatPattern(folded);
       const s = p.sheet;
-      return { ...mesh, flat: { ...flat, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) } };
+      const cuts = (p.sheetCuts ?? []).flatMap((c) => {
+        const wall = folded.walls.find((w) => w.id === c.wall);
+        return wall ? c.lines.map(([a, b]): [[number, number], [number, number]] => [flatPoint(wall.flat, a), flatPoint(wall.flat, b)]) : [];
+      });
+      return { ...mesh, flat: { ...flat, cuts, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) } };
     } catch {
       return mesh;
     }
