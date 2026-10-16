@@ -352,6 +352,11 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         about: t.about === "origin" ? "origin" : "centre",
         copy: t.copy === true,
       };
+      // Older designs turned about one chosen axis: that angle becomes the turn about that axis.
+      if (typeof params.angle === "string" && params.rx === undefined && params.ry === undefined && params.rz === undefined) {
+        feature.params[`r${feature.transform.axis}`] = params.angle;
+      }
+      delete feature.params.angle;
     }
     if (feature.type === "hole") {
       const h = (f.hole ?? {}) as Record<string, unknown>;

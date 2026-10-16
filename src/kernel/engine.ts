@@ -1822,14 +1822,20 @@ export class GeometryEngine {
     if (!t?.partId) return { error: "Choose the part to move." };
     const part = this.parts.find((p) => p.id === t.partId);
     if (!part) return { error: "The part it moves no longer exists. Edit this feature and choose another part." };
-    if (Math.abs(values.angle) < 1e-12 && Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) < 1e-12 && !t.copy) {
+    const turns: [number, Vec3][] = [
+      [values.rx, [1, 0, 0]],
+      [values.ry, [0, 1, 0]],
+      [values.rz, [0, 0, 1]],
+    ];
+    const turning = turns.some(([a]) => Math.abs(a) > 1e-12);
+    if (!turning && Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) < 1e-12 && !t.copy) {
       return { error: "Nothing to do yet — enter a distance to move or an angle to turn." };
     }
     const [lo, hi] = boundsOf(part.shape);
     const centre: [number, number, number] = t.about === "origin" ? [0, 0, 0] : [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
     const move = (s: Shape3D): Shape3D => {
       let out = s;
-      if (Math.abs(values.angle) > 1e-12) out = out.rotate(values.angle, centre, AXES[t.axis]);
+      for (const [a, axis] of turns) if (Math.abs(a) > 1e-12) out = out.rotate(a, centre, axis);
       if (Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) > 0) out = out.translate([values.dx, values.dy, values.dz]);
       return out;
     };

@@ -1095,6 +1095,11 @@ try {
     step = "putting the flat pattern on a drawing";
     const sheetName = await page.locator(".part-row").last().innerText();
     await page.locator(".part-row").last().click();
+    // Only the sheet on show, so its edges aren't behind the other parts.
+    await page.evaluate(() => {
+      const s = window.partsmithStore.getState();
+      s.setPartsHidden(s.parts.filter((q) => !q.flat && !q.configuration).map((q) => q.id), true);
+    });
     await page.keyboard.press("f");
     await page.waitForTimeout(600);
     const edgeAt = await page.evaluate(() => {
@@ -1114,11 +1119,30 @@ try {
     await page.waitForFunction(() => (window.partsmithStore.getState().editing?.draft.picks?.length ?? 0) === 1, null, { timeout: 5_000 });
     await page.getByRole("button", { name: "Accept" }).click();
     await page.waitForFunction(() => !window.partsmithStore.getState().editing, null, { timeout: 30_000 });
+    await page.waitForTimeout(500);
+    await page.waitForFunction(() => !window.partsmithStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    const flangeProblem = await page.evaluate(() => {
+      const s = window.partsmithStore.getState();
+      const f = s.history.present.features.find((x) => x.type === "flange");
+      return f ? s.featureErrors[f.id] ?? "" : "no flange feature";
+    });
+    if (flangeProblem) throw new Error(`the flange didn't build: ${flangeProblem}`);
+    await page.evaluate(() => {
+      const s = window.partsmithStore.getState();
+      s.setPartsHidden(s.parts.map((q) => q.id), false);
+    });
     await page.getByRole("button", { name: "Drawing 1" }).click();
     await page.locator("#drawing-source").selectOption({ label: sheetName.trim().split("\n")[0] });
     await page.getByLabel("Flat pattern (sheet metal)").check();
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "FLAT PATTERN"), null, { timeout: 60_000 });
-    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^B1: (UP|DOWN) 90°/.test(t.textContent ?? "")), null, { timeout: 10_000 });
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^B1: (UP|DOWN) 90°/.test(t.textContent ?? "")), null, { timeout: 10_000 }).catch(async () => {
+      const info = await page.evaluate(() => {
+        const s = window.partsmithStore.getState();
+        const sheets = s.parts.filter((q) => q.flat).map((q) => `${q.id}${q.configuration ? "@" + q.configuration : ""}: ${q.flat.bends.length} bend(s), ${q.flat.bendLines.length} line(s)`);
+        return `${sheets.join("; ")} | texts: ${[...document.querySelectorAll(".drawing-text")].map((t) => t.textContent).join(" / ")}`;
+      });
+      throw new Error(`no bend list on the flat pattern view (${info})`);
+    });
     await shot("flatview");
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }

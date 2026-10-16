@@ -355,8 +355,11 @@ export class SceneManager {
     const g = p?.data.edgeGroups[edgeIndex];
     if (!p || !g) return null;
     const l = p.data.lines;
-    const m = g.start + Math.floor(g.count / 2);
-    const c = new THREE.Vector3(l[3 * m], l[3 * m + 1], l[3 * m + 2]).applyMatrix4(p.mesh.matrixWorld).project(this.camera);
+    // Halfway along: the middle of the middle segment (the points come in pairs, one segment each).
+    const seg = g.start + 2 * Math.floor(g.count / 4);
+    const c = new THREE.Vector3((l[3 * seg] + l[3 * seg + 3]) / 2, (l[3 * seg + 1] + l[3 * seg + 4]) / 2, (l[3 * seg + 2] + l[3 * seg + 5]) / 2)
+      .applyMatrix4(p.mesh.matrixWorld)
+      .project(this.camera);
     return { x: ((c.x + 1) / 2) * this.width, y: ((1 - c.y) / 2) * this.height };
   }
 
