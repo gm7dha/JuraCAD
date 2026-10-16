@@ -1921,6 +1921,18 @@ kbd {
   font: inherit;
 }
 
+.tool-option input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  border: none;
+  padding: 0;
+}
+
+.tool-option input.short-input {
+  width: 56px;
+}
+
 .segmented.three {
   grid-template-columns: repeat(3, 1fr);
 }

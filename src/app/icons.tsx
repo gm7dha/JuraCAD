@@ -495,6 +495,12 @@ export const Icons = {
       <circle cx="12" cy="12" r="1.2" fill="currentColor" />
     </Svg>
   ),
+  Conic: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 19C6 10 11 6 20 5" />
+      <path d="M4 19 5 5h15" strokeDasharray="2 2" />
+    </Svg>
+  ),
   Spline: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 17c3-9 6-10 9-5s6 4 9-5" />

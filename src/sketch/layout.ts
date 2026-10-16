@@ -137,7 +137,7 @@ export function badgeAnchors(s: SketchData, c: SketchConstraint): Pt[] {
       return mid(a, b);
     }
     if (curve.type === "spline") {
-      const pts = splinePolyline(splinePoints(s, curve), curve.closed);
+      const pts = splinePolyline(splinePoints(s, curve), curve.closed, undefined, curve.conic);
       return pts[Math.floor(pts.length / 2)];
     }
     if (curve.type === "ellipse") return ellipsePoints(s, curve, 8)[1];

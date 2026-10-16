@@ -35,6 +35,7 @@ import {
   addThreePointCircle,
   alignedWidth,
   addSpline,
+  addConic,
   addTangentArc,
   filletCorner,
   mirrorCurves,
@@ -263,7 +264,7 @@ export class SketchController {
         if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
         else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius });
         else if (c.type === "spline" || c.type === "ellipse") {
-          const pts = c.type === "spline" ? splinePolyline(c.points.map(at), c.closed) : ellipsePolyline(ellipseFrom(at(c.center), at(c.major), at(c.minor)));
+          const pts = c.type === "spline" ? splinePolyline(c.points.map(at), c.closed, undefined, c.conic) : ellipsePolyline(ellipseFrom(at(c.center), at(c.major), at(c.minor)));
           for (let k = 0; k + 1 < pts.length; k++) out.push({ kind: "line", a: pts[k], b: pts[k + 1] });
         } else {
           const cc = at(c.center);
@@ -479,6 +480,21 @@ export class SketchController {
         this.emit({ preview: [] });
         return;
       }
+      case "conic": {
+        if (this.placed.length < 2) {
+          this.placed = [...this.placed, p];
+          this.state.setSketchMessage(this.placed.length === 1 ? "Click where the curve ends." : "Now click the corner the curve bends towards (set how full it is in the sketch panel).", "info");
+          return;
+        }
+        const [start, end] = this.placed;
+        const r = addConic(d, start, end, p, this.state.sketch?.conicRho ?? 0.5, construction);
+        if (this.commit(r, [r.conicId])) {
+          this.placed = [];
+          this.state.setSketchMessage(null);
+        }
+        this.emit({ preview: [] });
+        return;
+      }
       case "ellipse": {
         if (this.placed.length < 2) {
           this.placed = [...this.placed, p];
@@ -691,6 +707,17 @@ export class SketchController {
       const a0 = Math.atan2(p.y - first.y, p.x - first.x);
       const corner = (i: number): [number, number] => [first.x + R * Math.cos(a0 + (2 * Math.PI * i) / n), first.y + R * Math.sin(a0 + (2 * Math.PI * i) / n)];
       for (let i = 0; i < n; i++) preview.push({ kind: "line", a: corner(i), b: corner(i + 1) });
+    } else if (tool === "conic" && first) {
+      const second = this.placed[1];
+      if (!second) preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
+      else {
+        const a: [number, number] = [first.x, first.y];
+        const b: [number, number] = [second.x, second.y];
+        const m: [number, number] = [p.x, p.y];
+        const pts = splinePolyline([a, m, b], false, 16, this.state.sketch?.conicRho ?? 0.5);
+        for (let i = 0; i + 1 < pts.length; i++) preview.push({ kind: "line", a: pts[i], b: pts[i + 1] });
+        preview.push({ kind: "guide", a, b: m }, { kind: "guide", a: m, b });
+      }
     } else if (tool === "ellipse" && first) {
       const c: [number, number] = [first.x, first.y];
       const second = this.placed[1];
