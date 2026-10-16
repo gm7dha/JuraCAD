@@ -18,6 +18,8 @@ type P2 = [number, number];
 export interface TapSize {
   drill: number;
   thread: string;
+  /** The thread's outside (nominal) diameter, e.g. 6 for M6. */
+  major: number;
 }
 
 /** Tapped hole sizes made by the Hole features that could be on this drawing's part. */
@@ -31,7 +33,7 @@ export function tapSizes(doc: PartSmithDocument, drawing: Pick<Drawing, "source"
     const size = SCREW_SIZES.find((s) => s.name === f.hole!.standard);
     if (!size) continue;
     const d = evaluate(f.params.diameter ?? "");
-    out.push({ drill: d.ok ? d.value : size.tapDrill, thread: `${size.name} × ${size.pitch}` });
+    out.push({ drill: d.ok ? d.value : size.tapDrill, thread: `${size.name} × ${size.pitch}`, major: Number(size.name.slice(1)) });
   }
   return out;
 }
@@ -81,4 +83,42 @@ export function calloutLines(h: ViewHole, count: number, taps: TapSize[]): strin
 export function calloutText(p: ViewProjection, centre: P2, taps: TapSize[]): string[] | null {
   const h = holeAt(p, centre);
   return h ? calloutLines(h, matchingHoles(p, h), taps) : null;
+}
+
+/**
+ * Thread symbols for tapped holes, drawn the standard way (ISO 6410): seen
+ * end-on, a thin three-quarter circle at the thread's outside diameter; seen
+ * from the side, thin lines along the hole at that diameter (hidden, as
+ * they're inside the part). View mm.
+ */
+export function threadSymbols(p: ViewProjection, taps: TapSize[]): { endOn: number[][]; side: number[][] } {
+  const endOn: number[][] = [];
+  const side: number[][] = [];
+  if (!taps.length) return { endOn, side };
+  const tapFor = (d: number) => taps.find((t) => near(t.drill, d) && t.major > d);
+  for (const h of p.holes ?? []) {
+    const t = tapFor(h.d);
+    if (!t) continue;
+    // Three quarters round, leaving the top-right quarter open.
+    const r = t.major / 2;
+    const arc: number[] = [];
+    const steps = 36;
+    for (let i = 0; i <= steps; i++) {
+      const a = Math.PI / 2 + (i / steps) * (1.5 * Math.PI);
+      arc.push(h.cx + r * Math.cos(a), h.cy + r * Math.sin(a));
+    }
+    endOn.push(arc);
+  }
+  for (const h of p.sideHoles ?? []) {
+    const t = tapFor(h.d);
+    if (!t) continue;
+    const dx = h.b[0] - h.a[0];
+    const dy = h.b[1] - h.a[1];
+    const L = Math.hypot(dx, dy);
+    if (L < 1e-9) continue;
+    const nx = (-dy / L) * (t.major / 2);
+    const ny = (dx / L) * (t.major / 2);
+    side.push([h.a[0] + nx, h.a[1] + ny, h.b[0] + nx, h.b[1] + ny], [h.a[0] - nx, h.a[1] - ny, h.b[0] - nx, h.b[1] - ny]);
+  }
+  return { endOn, side };
 }
