@@ -1125,7 +1125,14 @@ try {
     await page.locator("#drawing-source").selectOption({ label: sheetName.trim().split("\n")[0] });
     await page.getByLabel("Flat pattern (sheet metal)").check();
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "FLAT PATTERN"), null, { timeout: 60_000 });
-    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^B1: (UP|DOWN) 90°/.test(t.textContent ?? "")), null, { timeout: 10_000 });
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^B1: (UP|DOWN) 90°/.test(t.textContent ?? "")), null, { timeout: 10_000 }).catch(async () => {
+      const info = await page.evaluate(() => {
+        const s = window.partsmithStore.getState();
+        const sheets = s.parts.filter((q) => q.flat).map((q) => `${q.id}${q.configuration ? "@" + q.configuration : ""}: ${q.flat.bends.length} bend(s), ${q.flat.bendLines.length} line(s)`);
+        return `${sheets.join("; ")} | texts: ${[...document.querySelectorAll(".drawing-text")].map((t) => t.textContent).join(" / ")}`;
+      });
+      throw new Error(`no bend list on the flat pattern view (${info})`);
+    });
     await shot("flatview");
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
