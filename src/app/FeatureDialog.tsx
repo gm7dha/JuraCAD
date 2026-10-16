@@ -233,7 +233,7 @@ function RibThickenOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
-  if (draft?.type !== "rib" && draft?.type !== "thicken" && draft?.type !== "sheetMetal" && draft?.type !== "flange") return null;
+  if (draft?.type !== "rib" && draft?.type !== "thicken" && draft?.type !== "sheetMetal" && draft?.type !== "flange" && draft?.type !== "hem") return null;
   const at = features.findIndex((f) => f.id === draft.id);
   const sketches = (at >= 0 ? features.slice(0, at) : features).filter((f) => f.type === "sketch" && !f.suppressed);
   return (
@@ -264,6 +264,8 @@ function RibThickenOptions() {
           ? "Flip (the metal on the other side of the sketch)"
           : draft.type === "flange"
           ? "Bend down instead of up"
+          : draft.type === "hem"
+          ? "Fold under instead of over"
           : "Flip (grow inwards)"}
       </label>
     </>
@@ -933,7 +935,7 @@ function PicksField() {
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
   const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread"];
-  const flange = draft?.type === "flange";
+  const flange = draft?.type === "flange" || draft?.type === "hem";
   if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type) || flange)) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
@@ -948,7 +950,9 @@ function PicksField() {
       onClick={() => replacing && replacing.picking === "target" && setDraftField({ replaceDef: { ...replacing, picking: "faces" } })}
     >
       <legend>
-        {flange
+        {draft.type === "hem"
+          ? "Edges to fold over"
+          : flange
           ? "Edges to bend off"
           : draft.type === "thread"
           ? "Round faces to thread"
@@ -964,7 +968,9 @@ function PicksField() {
       </legend>
       {picks.length === 0 ? (
         <p className="dialog-hint pick-hint">
-          {flange
+          {draft.type === "hem"
+            ? "Click straight edges of a sheet metal part (on its top or bottom face). Each is folded back over the sheet."
+            : flange
             ? "Click straight edges of a sheet metal part (on its top or bottom face). Each gets a flange; you can also click a flange's own edges."
             : draft.type === "thread"
             ? "Click the outside of a rod (for a bolt) or the inside of a hole (for a nut)."
@@ -1146,7 +1152,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "thread" && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "thread" && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button

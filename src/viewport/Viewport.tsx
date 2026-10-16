@@ -229,15 +229,15 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
   }
   // Flange: straight edges of a sheet metal part.
-  if (s.editing?.draft.type === "flange") {
+  if (s.editing?.draft.type === "flange" || s.editing?.draft.type === "hem") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "edge") {
-      s.showToast("Click an edge of the sheet (not a face) to bend a flange off it.");
+      s.showToast(s.editing.draft.type === "hem" ? "Click an edge of the sheet (not a face) to fold it over." : "Click an edge of the sheet (not a face) to bend a flange off it.");
       return;
     }
     const pick = pickFor(s.parts, target.item);
     if (pick?.ref.kind === "edge" && pick.ref.curve !== "LINE") {
-      s.showToast("Flanges bend off straight edges.");
+      s.showToast(s.editing.draft.type === "hem" ? "Hems fold straight edges." : "Flanges bend off straight edges.");
       return;
     }
     if (pick) s.toggleDraftPick(pick);
