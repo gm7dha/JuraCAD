@@ -111,7 +111,8 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
         const pipe = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
         try {
           pipe.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RoundCorner);
-          pipe.Add(w.wrapped, false, true);
+          // No correction: a single line has no plane to turn square to the path.
+          pipe.Add(w.wrapped, false, false);
           pipe.Build();
           if (!pipe.IsDone()) throw new Error("the path and outline don't go together");
           return cast(pipe.Shape()) as Shape3D;
@@ -187,7 +188,8 @@ export function thickenSurface(shape: Shape3D, thickness: number): Shape3D {
   const none = new oc.NCollection_List_TopoDS_Shape();
   const builder = new oc.BRepOffsetAPI_MakeThickSolid();
   try {
-    builder.MakeThickSolidByJoin(shape.wrapped, none, thickness, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Arc, false);
+    // Sharp corners where the thickened faces meet (as the surface's own corners are).
+    builder.MakeThickSolidByJoin(shape.wrapped, none, thickness, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false);
     if (!builder.IsDone()) throw new Error("Couldn't thicken this surface. Try a smaller thickness, or the other side.");
     return cast(builder.Shape()) as Shape3D;
   } finally {

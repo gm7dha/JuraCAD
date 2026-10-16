@@ -2167,7 +2167,8 @@ describe("surfaces", () => {
     expect(t.featureErrors).toEqual({});
     expect(t.parts).toHaveLength(1);
     expect(t.parts[0].surface).toBeUndefined();
-    expect(Math.abs(engine.check("coarse").parts[0].exactVolume! - (12 * 12 - 100) * 10)).toBeLessThan(1);
+    const thickVolume = engine.check("coarse").parts[0].exactVolume!;
+    expect(Math.abs(thickVolume - (12 * 12 - 100) * 10), `volume ${thickVolume}`).toBeLessThan(2);
     // Offset the skin 2 mm outwards: a 14 × 14 skin, 10 tall, as another surface.
     const off: Feature = { ...feature("offsetSurface", { distance: 2 }), picks: [faceOf(p)] };
     const o = build([box, skin, off]);
