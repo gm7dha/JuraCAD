@@ -252,7 +252,7 @@ function RibThickenOptions() {
           <p className="dialog-hint field-hint">
             {draft.type === "rib"
               ? "Draw the rib as a line (or lines) across the corner it braces, on a plane through the part."
-              : "A closed shape (holes in it are cut through the sheet). Flanges can then be bent up off its straight edges."}
+              : "A closed shape makes a flat sheet (holes in it go through). Or draw the side view as connected lines — an L, U or Z — for a bent sheet: the lines are one face of the metal and the corners become bends. Then bend flanges off its edges."}
           </p>
         </fieldset>
       )}
@@ -261,7 +261,7 @@ function RibThickenOptions() {
         {draft.type === "rib"
           ? "Flip (fill the other side of the line)"
           : draft.type === "sheetMetal"
-          ? "Flip (the sheet goes below the sketch)"
+          ? "Flip (the metal on the other side of the sketch)"
           : draft.type === "flange"
           ? "Bend down instead of up"
           : "Flip (grow inwards)"}

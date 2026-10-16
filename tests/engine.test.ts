@@ -1817,6 +1817,14 @@ describe("sheet metal", () => {
     expect(cut.notShown).toEqual([]);
     expect(cut.cuts!.length).toBeGreaterThan(8);
     for (const [a, b] of cut.cuts!) for (const q of [a, b]) expect(Math.hypot(q[0] - 50, q[1] - 25)).toBeCloseTo(5, 1);
+    // From an open outline: an L (50 along, then 30 up), 20 deep. Two flats (46 and 26) and a quarter bend.
+    let L = addLine(emptySketch(), { x: 0, y: 0, snap: null }, { x: 50, y: 0, snap: null }).sketch;
+    L = addLine(L, { x: 50, y: 0, snap: null }, { x: 50, y: 30, snap: null }).sketch;
+    const lsk = sketchFeature({ kind: "default", name: "Top" }, L);
+    const r5 = build([lsk, { ...sheet(lsk.id), params: { thickness: "2", radius: "2", kFactor: "0.45", depth: "20" } }]);
+    expect(r5.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(20 * 2 * (46 + 26) + (Math.PI / 4) * (16 - 4) * 20, 1);
+    expect(r5.parts[0].flat!.bendLines).toHaveLength(1);
     // Not a sheet metal part: a clear message.
     const box = feature("box", { width: 10, depth: 10, height: 10 });
     const r3 = build([box]);
