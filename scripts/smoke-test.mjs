@@ -670,7 +670,7 @@ try {
   step = "patterning a part in the assembly";
   await page.getByRole("button", { name: "Explode", exact: true }).click();
   await page.locator(".feature-row >> text=Part 2 <1>").click();
-  await page.getByRole("button", { name: "Pattern", exact: true }).click();
+  await tool("Pattern");
   await page.waitForSelector('[aria-label="Pattern Pattern 1"]', { timeout: 5_000 });
   await page.getByLabel("How many (including the original)").fill("4");
   await page.getByLabel("How many (including the original)").press("Enter");
@@ -681,6 +681,18 @@ try {
   await shot("pattern");
   await page.getByRole("button", { name: "Delete pattern (and its copies)" }).click();
   await page.waitForFunction(() => ![...document.querySelectorAll(".feature-row")].some((r) => r.textContent?.includes("Part 2 <2>")), null, { timeout: 5_000 });
+  step = "grouping parts in the assembly";
+  {
+    await page.locator(".feature-row >> text=Part 2 <1>").click();
+    await page.locator(".feature-row >> text=Bracket <2>").click({ modifiers: ["Shift"] });
+    await page.getByRole("button", { name: "Group", exact: true }).click();
+    await page.waitForSelector(".panel-section.groups .feature-row >> text=Group 1", { timeout: 5_000 });
+    await shot("group");
+    // Its row's buttons show on hover.
+    await page.locator(".panel-section.groups .feature-row").first().hover();
+    await page.getByRole("button", { name: "Ungroup Group 1" }).click();
+    await page.waitForSelector(".panel-section.groups", { state: "detached", timeout: 5_000 });
+  }
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
   step = "adding a second Part Studio";

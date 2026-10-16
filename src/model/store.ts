@@ -37,6 +37,7 @@ import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
 import { matchingConnectors } from "../assembly/connectors";
+import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, pickWidthFace, solveWithParts } from "../assembly/mates";
@@ -345,6 +346,11 @@ export interface AppState {
   createPattern: () => void;
   updatePattern: (id: string, patch: Partial<Omit<AssemblyPattern, "id">>) => void;
   deletePattern: (id: string) => void;
+  /** Group: lock the selected parts together where they are. */
+  createGroup: () => void;
+  /** Ungroup: the parts stay where they are but move separately again. */
+  deleteGroup: (id: string) => void;
+  renameGroup: (id: string, name: string) => void;
   /** Replicate: copy the selected part into every hole matching the one it's mated into. */
   createReplicate: () => void;
   /** Look for matching holes again (after the part changed). */
@@ -1181,6 +1187,31 @@ export const useStore = create<AppState>((set, get) => {
       if (!asm) return;
       change((doc) => updateAssembly(doc, asm.id, (a) => removePattern(a, id)));
       if (get().editingPattern === id) set({ editingPattern: null });
+    },
+    createGroup: () => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm) return;
+      const { placements } = solveWithParts(asm, s.parts);
+      const made = makeGroup(asm, s.asmSelection, placements, newId("g"));
+      if (made.error) {
+        s.showToast(made.error);
+        return;
+      }
+      change((doc) => updateAssembly(settlePlacements(doc, asm.id, placements), asm.id, (a) => ({ ...a, groups: made.assembly.groups })));
+      set({ asmSelection: [] });
+    },
+    deleteGroup: (id) => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm) return;
+      const { placements } = solveWithParts(asm, s.parts);
+      change((doc) => updateAssembly(settlePlacements(doc, asm.id, placements), asm.id, (a) => removeGroup(a, id)));
+    },
+    renameGroup: (id, name) => {
+      const asm = activeAssembly(get());
+      if (!asm) return;
+      change((doc) => updateAssembly(doc, asm.id, (a) => renameGroup(a, id, name)));
     },
     toggleMateSuppressed: (id) => {
       const s = get();

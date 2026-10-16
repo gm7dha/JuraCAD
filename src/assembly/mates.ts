@@ -193,6 +193,8 @@ export interface SolveResult {
   adjusted?: Record<string, Record<string, number>>;
   /** Pattern id → plain-English reason its copies couldn't be placed. */
   patternErrors?: Record<string, string>;
+  /** Group id → plain-English reason its parts couldn't be kept together. */
+  groupErrors?: Record<string, string>;
 }
 
 /** How much a turn counts against a gap when closing loops: 1 radian ≈ this many mm. */
@@ -221,10 +223,11 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
     fb: Frame;
     values: Record<string, number>;
   }
-  /** A join between two instances: a mate, or a pattern copy following its original (a → b, and back). */
+  /** A join between two instances: a mate, a pattern copy following its original, or two grouped parts (a → b, and back). */
   interface Link {
     u: Usable | null;
     patternId: string | null;
+    groupId?: string;
     a: string;
     b: string;
     fwd: (p: Placement) => Placement;
@@ -295,6 +298,20 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
     }
   }
 
+  // Grouped parts are held where they were grouped, relative to the group's first part.
+  const groupLinks: Link[] = [];
+  for (const g of assembly.groups ?? []) {
+    if (!instances.has(g.members[0])) continue;
+    for (const m of g.members.slice(1)) {
+      const rel = g.offsets[m];
+      if (!rel || !instances.has(m)) continue;
+      const inv = invert(rel);
+      groupLinks.push({ u: null, patternId: null, groupId: g.id, a: g.members[0], b: m, fwd: (q) => compose(q, rel), back: (q) => compose(q, inv) });
+    }
+  }
+  /** Grouped parts other than each group's first: placed from their group rather than started from. */
+  const followers = new Set((assembly.groups ?? []).flatMap((g) => g.members.slice(1)));
+
   /** One pass outwards from the fixed parts with these free amounts; closures = links reaching a part already placed. */
   const spread = (x: number[]) => {
     const values = new Map(usable.map((u) => [u, { ...u.values }]));
@@ -306,11 +323,16 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
         return { u, patternId: null, a: u.a, b: u.b, fwd: (q) => compose(q, rel), back: (q) => compose(q, inv) };
       }),
       ...copyLinks,
+      ...groupLinks,
     ];
     const placements: Record<string, Placement> = {};
     const drivenBy: Record<string, string> = {};
     const closures: { link: Link; target: Placement; already: Placement; fixedPair: boolean }[] = [];
-    const starts = [...assembly.instances.filter((i) => i.fixed), ...assembly.instances.filter((i) => !i.fixed)];
+    const starts = [
+      ...assembly.instances.filter((i) => i.fixed),
+      ...assembly.instances.filter((i) => !i.fixed && !followers.has(i.id)),
+      ...assembly.instances.filter((i) => !i.fixed && followers.has(i.id)),
+    ];
     for (const st of starts) {
       if (placements[st.id]) continue;
       placements[st.id] = st.placement;
@@ -338,6 +360,7 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
           }
           placements[other] = target;
           if (link.u) drivenBy[other] = link.u.mate.id;
+          else if (link.groupId) drivenBy[other] = `group:${link.groupId}`;
           else if (link.b === other) drivenBy[other] = `pattern:${link.patternId}`;
           queue.push(other);
         }
@@ -366,8 +389,14 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
   const result = spread(x);
   r = residual(x);
   // Report the closing mates that still don't fit.
+  const groupErrors: Record<string, string> = {};
   result.closures.forEach((c, i) => {
     const bad = r.slice(6 * i, 6 * i + 6).some((v) => Math.abs(v) > 1e-3);
+    if (bad && c.link.groupId && !groupErrors[c.link.groupId]) {
+      groupErrors[c.link.groupId] = c.fixedPair
+        ? "Two of its parts are fixed in places that don't match how they were grouped. Unfix one."
+        : "Its parts are also held by mates (or fixed parts) somewhere other than where they were grouped. Delete those mates, or ungroup.";
+    }
     if (bad && !c.link.u && c.link.patternId && !patternErrors[c.link.patternId]) {
       patternErrors[c.link.patternId] = c.fixedPair
         ? "A copy and its original are both fixed — unfix one, so the copy can follow the original."
@@ -384,7 +413,14 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
   free.forEach((f, i) => {
     if (Math.abs(x[i] - start[i]) > 1e-9) (adjusted[f.u.mate.id] ??= {})[f.key] = x[i];
   });
-  return { placements: result.placements, mateErrors, drivenBy: result.drivenBy, adjusted, ...(Object.keys(patternErrors).length ? { patternErrors } : {}) };
+  return {
+    placements: result.placements,
+    mateErrors,
+    drivenBy: result.drivenBy,
+    adjusted,
+    ...(Object.keys(patternErrors).length ? { patternErrors } : {}),
+    ...(Object.keys(groupErrors).length ? { groupErrors } : {}),
+  };
 }
 
 /**
