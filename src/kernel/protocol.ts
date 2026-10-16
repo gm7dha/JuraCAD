@@ -90,6 +90,8 @@ export interface FlatPatternData {
   outline: [number, number][];
   holes: [number, number][][];
   bendLines: [[number, number], [number, number]][];
+  /** Cuts made in the part after it was a sheet (holes, notches…), as line pieces. */
+  cuts?: [[number, number], [number, number]][];
   thickness: number;
   radius: number;
   k: number;

@@ -24,6 +24,7 @@ export function flatPrims(flat: FlatPatternData): { prims: Prim[]; size: [number
   const prims: Prim[] = [
     { kind: "path", points: flat.outline.flatMap(at), closed: true, style: "visible" },
     ...flat.holes.map((h): Prim => ({ kind: "path", points: h.flatMap(at), closed: true, style: "visible" })),
+    ...(flat.cuts ?? []).map((c): Prim => ({ kind: "path", points: [...at(c[0]), ...at(c[1])], style: "visible" })),
     ...flat.bendLines.map((b): Prim => ({ kind: "path", points: [...at(b[0]), ...at(b[1])], style: "centre" })),
   ];
   return { prims, size: [width + 2 * MARGIN, height + 2 * MARGIN] };

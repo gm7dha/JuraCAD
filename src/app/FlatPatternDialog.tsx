@@ -80,8 +80,8 @@ export function FlatPatternDialog() {
       </p>
       {skipped.length > 0 && (
         <p className="dialog-hint">
-          Not shown yet: changes made to the part after it was a sheet ({skipped.join(", ")}). Draw holes and cut-outs in the sheet's sketch to have them in the
-          flat pattern.
+          Not shown: changes to the part that aren't cuts through its flat walls ({skipped.join(", ")}) — for example something added to it, or a cut only
+          through a bend.
         </p>
       )}
     </Modal>

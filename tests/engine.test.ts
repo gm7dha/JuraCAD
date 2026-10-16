@@ -1809,6 +1809,14 @@ describe("sheet metal", () => {
     const xs = flat.outline.map((q) => q[0]);
     expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(100 + (Math.PI / 2) * (2 + 0.45 * 2) + 26, 4);
     expect(flat.notShown).toEqual([]);
+    // A hole drilled through the plate afterwards (a 10 mm cylinder taken away) shows in the flat pattern, round its centre.
+    const drill = feature("cylinder", { diameter: 10, height: 20, x: 50, y: 25, z: -5 }, "remove");
+    const r4 = build([sk, sheet(sk.id), flange, drill]);
+    expect(r4.featureErrors).toEqual({});
+    const cut = r4.parts[0].flat!;
+    expect(cut.notShown).toEqual([]);
+    expect(cut.cuts!.length).toBeGreaterThan(8);
+    for (const [a, b] of cut.cuts!) for (const q of [a, b]) expect(Math.hypot(q[0] - 50, q[1] - 25)).toBeCloseTo(5, 1);
     // Not a sheet metal part: a clear message.
     const box = feature("box", { width: 10, depth: 10, height: 10 });
     const r3 = build([box]);
