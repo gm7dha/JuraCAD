@@ -274,6 +274,26 @@ export function frameOnParts(parts: PartMesh[], pick: TopoPick): Frame | null {
 }
 
 /**
+ * A Width mate's connector: halfway between two flat faces that face each
+ * other (or the same way), its Z along the first face's normal. Null when
+ * they aren't flat and parallel.
+ */
+export function widthFrame(f1: Frame, f2: Frame): Frame | null {
+  if (Math.abs(dot(f1.z, f2.z)) < 0.999) return null;
+  // Halfway between the two faces' middles lies on the plane halfway between them.
+  return frame(scale(add(f1.origin, f2.origin), 0.5), f1.z);
+}
+
+/** A connector's frame on its part as built now — halfway between both faces for a Width mate (null if it can't be found). */
+export function connectorFrameOnParts(parts: PartMesh[], c: { pick: TopoPick; pick2?: TopoPick }): Frame | null {
+  const f1 = frameOnParts(parts, c.pick);
+  if (!c.pick2 || !f1) return f1;
+  if (c.pick.ref.kind !== "face" || c.pick2.ref.kind !== "face" || c.pick.ref.surface !== "PLANE" || c.pick2.ref.surface !== "PLANE") return null;
+  const f2 = frameOnParts(parts, c.pick2);
+  return f2 ? widthFrame(f1, f2) : null;
+}
+
+/**
  * Other faces or edges on a part just like the picked one — the same kind of
  * face or edge, the same size, pointing the same way (every other hole of the
  * same size drilled from the same side). For Replicate.

@@ -5,7 +5,7 @@ import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
 import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
 import { compose, placementMatrix, rotate, type Placement } from "../assembly/math";
-import { findPick, frameOnParts, framePlacement } from "../assembly/connectors";
+import { connectorFrameOnParts, findPick, framePlacement } from "../assembly/connectors";
 import { explodeAssembly, useSolvedAssembly } from "../app/assemblySolve";
 import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
@@ -46,8 +46,10 @@ function connectorItems(parts: PartMesh[], assembly: Assembly, connectors: (Mate
     if (!c) continue;
     const instance = assembly.instances.find((i) => i.id === c.instanceId);
     const part = instance && findMesh(parts, meshIdOf(instance));
-    const index = part ? findPick(part, c.pick) : -1;
-    if (instance && index >= 0) items.push({ partId: instance.id, kind: c.pick.ref.kind, index });
+    for (const pick of c.pick2 ? [c.pick, c.pick2] : [c.pick]) {
+      const index = part ? findPick(part, pick) : -1;
+      if (instance && index >= 0) items.push({ partId: instance.id, kind: pick.ref.kind, index });
+    }
   }
   return items;
 }
@@ -319,7 +321,7 @@ function dragStart(target: PickTarget & { kind: "part" }, ray: ScreenRay, shift:
   const asm = activeAssembly(s);
   if (!asm || s.mateDraft || !target.point) return false;
   const solved = solveWithParts(asm, s.parts);
-  const r = planDrag(asm, solved, (m, side) => frameOnParts(s.parts, m[side].pick), target.item.partId, target.point, ray.dir, shift);
+  const r = planDrag(asm, solved, (m, side) => connectorFrameOnParts(s.parts, m[side]), target.item.partId, target.point, ray.dir, shift);
   if ("refuse" in r) {
     if (r.refuse) s.showToast(r.refuse);
     return false;
@@ -461,7 +463,7 @@ export function Viewport() {
     for (const c of [mateDraft.a, mateDraft.b]) {
       if (!c) continue;
       const instance = assembly.instances.find((i) => i.id === c.instanceId);
-      const f = frameOnParts(parts, c.pick);
+      const f = connectorFrameOnParts(parts, c);
       if (!instance || !f) continue;
       const where: Placement = solved?.placements[instance.id] ?? instance.placement;
       const world = compose(where, framePlacement(f));

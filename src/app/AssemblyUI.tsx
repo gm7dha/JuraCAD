@@ -19,6 +19,7 @@ import { partBox, useSolvedAssembly } from "./assemblySolve";
 import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
+import { ToolGroupButton } from "./ToolGroupButton";
 import { Icons } from "./icons";
 import { toggleMateAnimation } from "./animateMate";
 import { detectPlatform, shortcut } from "./platform";
@@ -42,6 +43,7 @@ const MATE_ICONS: Record<MateType, (p: { size?: number }) => ReactNode> = {
   ball: Icons.MateBall,
   pinSlot: Icons.MatePinSlot,
   parallel: Icons.MateParallel,
+  width: Icons.MateWidth,
 };
 
 
@@ -124,7 +126,7 @@ export function AssemblyToolbar() {
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
-        {MATE_ORDER.map((type) => {
+        {MATE_ORDER.slice(0, 5).map((type) => {
           const Icon = MATE_ICONS[type];
           const enough = (asm?.instances.length ?? 0) >= 2;
           return (
@@ -139,6 +141,23 @@ export function AssemblyToolbar() {
             />
           );
         })}
+        <ToolGroupButton
+          id="asm-more-mates"
+          name="mate"
+          items={MATE_ORDER.slice(5).map((type) => {
+            const Icon = MATE_ICONS[type];
+            const enough = (asm?.instances.length ?? 0) >= 2;
+            return {
+              key: type,
+              label: MATE_TYPES[type].label,
+              icon: <Icon />,
+              onClick: () => useStore.getState().startMate(type),
+              disabled: !enough,
+              active: draftType === type,
+              title: enough ? `${MATE_TYPES[type].label} — ${MATE_TYPES[type].description}` : "Insert at least two parts first, then join them with a mate",
+            };
+          })}
+        />
       </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">
@@ -1043,18 +1062,27 @@ export function MateDialog() {
   const { mate, mode } = draftState;
   const st = useStore.getState();
   const def = MATE_TYPES[mate.type];
-  const ready = !!mate.a && !!mate.b;
+  const width = mate.type === "width";
+  const ready = !!mate.a && !!mate.b && (!width || (!!mate.a.pick2 && !!mate.b.pick2));
   const { errors } = mateValues(mate);
   const limits = mateLimits(mate);
   const problem = ready ? solved?.mateErrors[mate.id] : undefined;
   const nameOf = (c?: MateConnector) => (c ? asm.instances.find((i) => i.id === c.instanceId)?.name ?? "?" : "");
   const slot = (c: MateConnector | undefined, n: 1 | 2) => (
-    <div className={`connector-slot${c ? " filled" : ""}${(!mate.a && n === 1) || (mate.a && !mate.b && n === 2) ? " waiting" : ""}`}>
+    <div
+      className={`connector-slot${c && (!width || c.pick2) ? " filled" : ""}${
+        (n === 1 && (!mate.a || (width && !mate.a.pick2))) || (n === 2 && mate.a && (!width || mate.a.pick2) && (!mate.b || (width && !mate.b.pick2))) ? " waiting" : ""
+      }`}
+    >
       <span className="connector-number">{n}</span>
-      {c ? (
+      {c && (!width || c.pick2) ? (
         <span>
-          {nameOf(c)} — {connectorLabel(c)}
+          {nameOf(c)} — {width ? "two faces" : connectorLabel(c)}
         </span>
+      ) : c && width ? (
+        <span className="muted">{nameOf(c)} — now click the face opposite</span>
+      ) : width ? (
+        <span className="muted">{n === 1 ? "Click both sides of the slot (on the part that stays put)" : "Click both sides of the part that goes in it"}</span>
       ) : (
         <span className="muted">{n === 1 ? "Click a face or edge on the part that stays put" : "Click a face or edge on the part to move"}</span>
       )}

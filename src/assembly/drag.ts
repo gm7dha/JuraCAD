@@ -147,6 +147,7 @@ export function planDrag(
       return slidePlan();
     case "cylindrical":
       return shift ? slidePlan() : turnPlan();
+    case "width":
     case "planar": {
       if (sign < 0) return { refuse: `Drag the other part of ${mate.name}, or use its sliders.` };
       if (Math.abs(dot(normalize(view), axis.z)) < 0.05) return { refuse: "You're looking along the face — turn the view a little to drag it." };
