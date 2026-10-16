@@ -6,6 +6,17 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.19 — Print bed, shortened views, Mirror, Derived, Wrap and more · commit `e4e823f`
+
+- **Print bed** preview: your 3D printer's bed and build volume under the parts, and whether they fit.
+- Drawings: **shortened views** for long parts (dimensions still show the real length), **thread symbols** on
+  tapped holes, and select several dimensions at once (drag a box, or Ctrl-click).
+- Assemblies: **Tangent mate** (a roller on a flat, wheels touching), and **Mirror** (mirror-image copies across a
+  plane, listed as their own parts).
+- Part Studio: **Derived** (bring in a part from another Part Studio), **Wrap** (a sketch's shapes round a round
+  face), and planes you make sit with Top, Front and Right — right-click one to make a new plane from it.
+- Sheet metal: round-ended or tear **bend reliefs**, and round or square **corner reliefs**.
+
 ## v0.18 — Tabs, broken-out views, full round, more fasteners, free orbit · commit `6570e52`
 
 - Sheet metal: **tabs** — add a flat tab to a wall from a sketch.
