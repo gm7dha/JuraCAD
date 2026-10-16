@@ -119,6 +119,14 @@ function customPlaneAt(id: string): SketchPlane | null {
   return f && frame ? planeAsSketchPlane(f, frame) : null;
 }
 
+/** Look straight at a Plane feature. False if it can't be placed. */
+export function viewNormalToPlaneFeature(id: string): boolean {
+  const plane = customPlaneAt(id);
+  if (!plane) return false;
+  viewportApi.current?.viewNormalToSketch(plane);
+  return true;
+}
+
 const NO_IDS: string[] = [];
 const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound"]);
 

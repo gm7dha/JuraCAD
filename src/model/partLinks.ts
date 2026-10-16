@@ -33,17 +33,20 @@ export function featuresOfParts(parts: { id: string; featureIds: string[] }[], p
 }
 
 /**
- * The feature list grouped by part, for the "Group by part" view: each part
- * with the features that made it (in build order), then anything not tied to
- * a part. A feature that shaped several parts is listed under each.
+ * The feature list grouped by part, for the "Group by part" view: Plane
+ * features first (with the standard planes — they belong to no part), then
+ * each part with the features that made it (in build order), then anything
+ * else not tied to a part. A feature that shaped several parts is listed under each.
  */
 export function groupByPart(
   parts: { id: string; name: string; featureIds: string[] }[],
   features: Feature[],
-): { groups: { partId: string; name: string; featureIds: string[] }[]; other: string[] } {
-  const groups = parts.map((p) => ({ partId: p.id, name: p.name, featureIds: featuresOfParts(parts, [p.id], features) }));
-  const used = new Set(groups.flatMap((g) => g.featureIds));
-  return { groups, other: features.filter((f) => !used.has(f.id)).map((f) => f.id) };
+): { planes: string[]; groups: { partId: string; name: string; featureIds: string[] }[]; other: string[] } {
+  const planes = features.filter((f) => f.type === "plane").map((f) => f.id);
+  const isPlane = new Set(planes);
+  const groups = parts.map((p) => ({ partId: p.id, name: p.name, featureIds: featuresOfParts(parts, [p.id], features).filter((id) => !isPlane.has(id)) }));
+  const used = new Set([...planes, ...groups.flatMap((g) => g.featureIds)]);
+  return { planes, groups, other: features.filter((f) => !used.has(f.id)).map((f) => f.id) };
 }
 
 /** Parts a feature helped make (for a sketch: the parts made from it). */
