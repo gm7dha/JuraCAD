@@ -1,5 +1,5 @@
 /** Standard metric bolts, screws, nuts and washers as solids (see model/fasteners.ts for the sizes). */
-import { basicFaceExtrusion, makeBox, makeCone, makeCylinder, makePolygon, makeSphere, Vector, type Shape3D } from "replicad";
+import { basicFaceExtrusion, makeBox, makeCylinder, makePolygon, makeSphere, Vector, type Shape3D } from "replicad";
 
 import { fastenerSize, hasLength, hexagon, shankOf, type FastenerKind } from "../model/fasteners";
 import { release } from "./extrude";
@@ -61,9 +61,13 @@ export function fastenerSolid(kind: FastenerKind, sizeName: string, length: numb
         return cut(fuse(dome, body), socket(h.s!, z + h.k, h.t!));
       }
       case "countersunk": {
-        // A 90° cone, wide end flush at z.
+        // A 90° cone, wide end flush at z (its height is half the difference in diameters).
         const h = s.countersunk;
-        const cone = makeCone(s.d / 2, h.dk / 2, h.k, [x, y, z - h.k], [0, 0, 1]);
+        // A cylinder chamfered 45° at the bottom down to the shank, trimmed flush at z.
+        const tall = cyl(h.dk / 2, z - h.k, h.k + 1);
+        const chamfered: Shape3D = tall.chamfer(h.k, (e) => e.inPlane("XY", z - h.k));
+        tall.delete();
+        const cone = cut(chamfered, makeBox([x - h.dk, y - h.dk, z], [x + h.dk, y + h.dk, z + 2]));
         return cut(fuse(cone, body), socket(h.s!, z, h.t!));
       }
       case "panHead": {

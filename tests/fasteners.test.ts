@@ -16,6 +16,7 @@ describe("fastener sizes", () => {
     for (const s of FASTENER_SIZES) {
       for (const h of [s.socketCap, s.buttonHead, s.countersunk]) {
         expect(h.dk).toBeGreaterThan(s.d);
+        if (h === s.countersunk) expect(h.k).toBeCloseTo((h.dk - s.d) / 2);
         // The hex key fits inside the head and the socket is shallower than it.
         expect(h.s! / Math.sqrt(3) * 2).toBeLessThan(h.dk);
         expect(h.t!).toBeLessThan(h.k + (h === s.countersunk ? 2 : 0));
@@ -27,7 +28,7 @@ describe("fastener sizes", () => {
 
   it("measures countersunk screws overall", () => {
     const m6 = FASTENER_SIZES.find((s) => s.name === "M6")!;
-    expect(shankOf("countersunk", m6, 20)).toEqual({ top: -3.3, length: 20 - 3.3 });
+    expect(shankOf("countersunk", m6, 20)).toEqual({ top: -3, length: 17 });
     expect(shankOf("socketCap", m6, 20)).toEqual({ top: 0, length: 20 });
   });
 

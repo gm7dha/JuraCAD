@@ -1197,10 +1197,10 @@ describe("fasteners", () => {
     expect(cap.parts[0].name).toBe("M6 × 12 socket cap screw");
     // Ø10 × 6 head less a 5 mm hex socket 3 deep, on a Ø6 × 12 shank.
     expect(volumeOf(cap)).toBeCloseTo(Math.PI * 25 * 6 - hexArea(5) * 3 + Math.PI * 9 * 12, -1);
-    // Countersunk: overall length 12, a 3.3 mm cone head (Ø12 to Ø6), 4 mm socket 2.2 deep; its top is flush at z = 0.
+    // Countersunk: overall length 12, a 3 mm 90° cone head (Ø12 to Ø6), 4 mm socket 2.2 deep; its top is flush at z = 0.
     const csk = build([fastener("countersunk")]);
     expect(csk.featureErrors).toEqual({});
-    expect(volumeOf(csk)).toBeCloseTo((Math.PI * 3.3 * (9 + 18 + 36)) / 3 + Math.PI * 9 * 8.7 - hexArea(4) * 2.2, -1);
+    expect(volumeOf(csk)).toBeCloseTo((Math.PI * 3 * (9 + 18 + 36)) / 3 + Math.PI * 9 * 9 - hexArea(4) * 2.2, -1);
     const grub = build([fastener("grub", false, 10)]);
     expect(grub.parts[0].name).toBe("M6 × 10 grub screw");
     expect(volumeOf(grub)).toBeCloseTo(Math.PI * 9 * 10 - hexArea(3) * 2.4, -1);
