@@ -38,6 +38,17 @@ function linear(a: Pt, b: Pt, offset: Pt): DimensionLayout {
   return { lines: [[a, a2], [b, b2], [a2, b2]], label: add(anchor, offset), anchor };
 }
 
+/** A horizontal (k = 0) or vertical (k = 1) dimension between two points: square extension lines out to the label's level. */
+function squared(a: Pt, b: Pt, offset: Pt, k: 0 | 1): DimensionLayout {
+  const anchor = mid(a, b);
+  const label = add(anchor, offset);
+  // The dimension line runs across (or up) at the label's height (or position).
+  const at = (p: Pt): Pt => (k === 0 ? [p[0], label[1]] : [label[0], p[1]]);
+  const a2 = at(a);
+  const b2 = at(b);
+  return { lines: [[a, a2], [b, b2], [a2, b2]], label, anchor };
+}
+
 function linePts(s: SketchData, l: SketchLine): [Pt, Pt] {
   return [pointPos(s, l.p1), pointPos(s, l.p2)];
 }
@@ -51,9 +62,38 @@ export function dimensionLayout(s: SketchData, c: SketchConstraint): DimensionLa
         return linear(a, b, offset);
       }
       case "distance":
+        return linear(pointPos(s, c.refs[0]), pointPos(s, c.refs[1]), offset);
       case "horizontalDistance":
       case "verticalDistance":
-        return linear(pointPos(s, c.refs[0]), pointPos(s, c.refs[1]), offset);
+        return squared(pointPos(s, c.refs[0]), pointPos(s, c.refs[1]), offset, c.type === "horizontalDistance" ? 0 : 1);
+      case "offset": {
+        // Drawn on the first copy: across to its original.
+        const copy = curveById(s, c.refs[0]);
+        const orig = curveById(s, c.refs[1]);
+        if (copy?.type === "line" && orig?.type === "line") {
+          const [a, b] = linePts(s, copy);
+          const p = mid(a, b);
+          const [m, n] = linePts(s, orig);
+          const d = unit(sub(n, m));
+          const foot = add(m, scale(d, dotp(sub(p, m), d)));
+          return { lines: [[p, foot]], label: add(mid(p, foot), offset), anchor: mid(p, foot) };
+        }
+        if ((copy?.type === "arc" || copy?.type === "circle") && (orig?.type === "arc" || orig?.type === "circle")) {
+          const centre = pointPos(s, copy.center);
+          // Along the middle of the copy (an arc), or up and to the right (a circle).
+          let dir: Pt = [Math.SQRT1_2, Math.SQRT1_2];
+          if (copy.type === "arc") {
+            const a0 = Math.atan2(pointPos(s, copy.start)[1] - centre[1], pointPos(s, copy.start)[0] - centre[0]);
+            let a1 = Math.atan2(pointPos(s, copy.end)[1] - centre[1], pointPos(s, copy.end)[0] - centre[0]);
+            while (a1 <= a0) a1 += 2 * Math.PI;
+            dir = [Math.cos((a0 + a1) / 2), Math.sin((a0 + a1) / 2)];
+          }
+          const p = add(centre, scale(dir, radiusOf(s, copy)));
+          const q = add(centre, scale(dir, radiusOf(s, orig)));
+          return { lines: [[p, q]], label: add(mid(p, q), offset), anchor: mid(p, q) };
+        }
+        return null;
+      }
       case "pointLineDistance": {
         const p = pointPos(s, c.refs[0]);
         const [a, b] = linePts(s, curveById(s, c.refs[1]) as SketchLine);
@@ -129,6 +169,7 @@ export const RELATION_SYMBOLS: Partial<Record<SketchConstraint["type"], string>>
   symmetric: "⇆",
   pointOnLine: "●",
   pointOnCircle: "●",
+  pointOnCurve: "●",
   fix: "⚓",
 };
 
@@ -165,6 +206,6 @@ export function badgeAnchors(s: SketchData, c: SketchConstraint): Pt[] {
     return add(centre, [r * Math.cos(am), r * Math.sin(am)]);
   };
   // Relations between two things get a badge on each, like Onshape.
-  const refs = c.type === "horizontal" || c.type === "vertical" || c.type === "fix" ? c.refs.slice(0, 1) : c.type === "coincident" || c.type === "pointOnLine" || c.type === "pointOnCircle" || c.type === "midpoint" ? c.refs.slice(0, 1) : c.type === "symmetric" ? c.refs.slice(0, 2) : c.refs;
+  const refs = c.type === "horizontal" || c.type === "vertical" || c.type === "fix" ? c.refs.slice(0, 1) : c.type === "coincident" || c.type === "pointOnLine" || c.type === "pointOnCircle" || c.type === "pointOnCurve" || c.type === "midpoint" ? c.refs.slice(0, 1) : c.type === "symmetric" ? c.refs.slice(0, 2) : c.refs;
   return refs.map(at).filter((p): p is Pt => p !== null);
 }

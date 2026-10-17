@@ -724,6 +724,26 @@ describe("extrude through all and the new sketch shapes", () => {
     expect(build([block, sk, add]).featureErrors[add.id]).toMatch(/only works with Remove/);
   });
 
+  it("cuts notches flush with any edge, and holes where joined shapes overlap", () => {
+    for (const [a, b] of [
+      [{ x: 40, y: 0 }, { x: 60, y: 20 }],
+      [{ x: 40, y: 80 }, { x: 60, y: 100 }],
+      [{ x: 0, y: 40 }, { x: 20, y: 60 }],
+      [{ x: 80, y: 40 }, { x: 100, y: 60 }],
+    ]) {
+      const data = addRectangle(addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 100, y: 100 }).sketch, a, b).sketch;
+      const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+      build([sk, extrudeFeature(sk.id, 10)]);
+      expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo(96000, 1);
+    }
+    let plus = addRectangle(emptySketch(), { x: 0, y: 40 }, { x: 100, y: 60 }).sketch;
+    plus = addRectangle(plus, { x: 40, y: 0 }, { x: 60, y: 100 }).sketch;
+    plus = addCircle(plus, { x: 50, y: 50 }, 5).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, plus);
+    build([sk, extrudeFeature(sk.id, 10)]);
+    expect(engine.check("normal").parts[0].exactVolume).toBeCloseTo((3600 - Math.PI * 25) * 10, 1);
+  });
+
   it("extrudes slots, polygons and rounded rectangles", async () => {
     const { addSlot, addPolygon, filletCorner } = await import("../src/sketch/tools");
     const slot = sketchFeature({ kind: "default", name: "Top" }, addSlot(emptySketch(), { x: 0, y: 0 }, { x: 30, y: 0 }, 5).sketch);
@@ -2154,6 +2174,14 @@ describe("sheet metal", () => {
     params: { thickness: "2", radius: "2", kFactor: "0.45" },
     sketchRef,
     ...(flipSide ? { flipSide: true } : {}),
+  });
+
+  it("explains what to do when the sketch has overlapping shapes", () => {
+    let data = rectSketch(0, 0, 100, 50);
+    data = addCircle(data, { x: 100, y: 25 }, 10).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+    const r = build([sk, sheet(sk.id)]);
+    expect(r.featureErrors.sm).toMatch(/overlap each other count separately: use Trim/);
   });
 
   it("still takes flanges after the part is moved or turned, and copies keep their flat pattern", () => {
