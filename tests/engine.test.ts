@@ -2122,6 +2122,34 @@ describe("sheet metal", () => {
     ...(flipSide ? { flipSide: true } : {}),
   });
 
+  it("still takes flanges after the part is moved or turned, and copies keep their flat pattern", () => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 100, 50));
+    const plain = build([sk, sheet(sk.id)]);
+    const edge = (r: ReturnType<typeof build>, x: number) => r.parts[0].edgeRefs.find((e) => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[0] - x) < 1e-6 && Math.abs(e.b[0] - x) < 1e-6 && Math.abs(e.a[2] - 2) < 1e-6)!;
+    const flange = (r: ReturnType<typeof build>, x: number): Feature => ({ id: "fl", name: "Flange 1", type: "flange", operation: "add", suppressed: false, params: { length: "30", angle: "90" }, picks: [{ partId: "sm", ref: edge(r, x) }] });
+    build([sk, sheet(sk.id), flange(plain, 100)]);
+    const expected = vol();
+    // Moved 20 along X: its right edge is now at x = 120.
+    const mv: Feature = { ...feature("transform", { dx: 20 }, "add"), transform: { partId: "sm", axis: "z", about: "centre", copy: false } };
+    const moved = build([sk, sheet(sk.id), mv]);
+    const r = build([sk, sheet(sk.id), mv, flange(moved, 120)]);
+    expect(r.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(expected, 1);
+    expect(r.parts[0].flat).toBeTruthy();
+    // The move doesn't count as something the flat pattern leaves out.
+    expect(r.parts[0].flat!.notShown ?? []).toEqual([]);
+    // Turned 90° about its centre (50, 25): the old right edge now runs along X at y = 75.
+    const turn: Feature = { ...feature("transform", { rz: 90 }, "add"), transform: { partId: "sm", axis: "z", about: "centre", copy: false } };
+    const turned = build([sk, sheet(sk.id), turn]);
+    const side = turned.parts[0].edgeRefs.find((e) => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[1] - 75) < 1e-6 && Math.abs(e.b[1] - 75) < 1e-6 && Math.abs(e.a[2] - 2) < 1e-6)!;
+    const r2 = build([sk, sheet(sk.id), turn, { ...flange(turned, 100), picks: [{ partId: "sm", ref: side }] }]);
+    expect(r2.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(expected, 1);
+    // A moved copy is sheet metal too.
+    const copy = build([sk, sheet(sk.id), { ...mv, transform: { ...mv.transform!, copy: true } }]);
+    expect(copy.parts.map((p) => !!p.flat)).toEqual([true, true]);
+  });
+
   it("makes a flat sheet from a sketch, then bends a flange up off a picked edge", () => {
     const sk = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 100, 50));
     const r1 = build([sk, sheet(sk.id)]);
@@ -2576,6 +2604,17 @@ describe("surfaces", () => {
     expect(check.geometryValid).toBe(true);
     expect(check.exactVolume!).toBeGreaterThan(1000);
     expect(check.mesh.watertight).toBe(true);
+  });
+
+  it("draws a surface in drawing views, including section views", () => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: -10, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }).sketch);
+    build([sk, { ...extrudeFeature(sk.id, 20), surface: true }]);
+    const [front, cut] = engine.project([], undefined, ["front"], true, [{ key: "section:A", host: "front", a: [0, 0.5], b: [1, 0.5], flip: false }]);
+    expect(front.visible.length).toBeGreaterThan(0);
+    // Cut half way up: the arc that's left, seen from above.
+    expect(cut.kind).toBe("section:A");
+    expect(cut.bounds).not.toBeNull();
+    expect(cut.visible.length + cut.circles.length).toBeGreaterThan(0);
   });
 
   it("exports surfaces to STEP and reads them back as surfaces", async () => {
