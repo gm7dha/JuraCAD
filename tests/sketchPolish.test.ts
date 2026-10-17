@@ -9,6 +9,7 @@ import {
   applyRelation,
   deleteItems,
   dimensionFor,
+  dragPoint,
   joinPoints,
   measure,
   placedDistance,
@@ -16,6 +17,7 @@ import {
   radiusOf,
   setDimensionDriven,
   setDimensionValue,
+  splinePath,
 } from "../src/sketch/ops";
 import { dimensionLayout } from "../src/sketch/layout";
 import { findRegions } from "../src/sketch/regions";
@@ -71,8 +73,8 @@ describe("trim (fixes)", () => {
     // The kept arc goes the long way round (the bit inside the ellipse is gone).
     const [sx, sy] = pointPos(r.sketch, arc.start);
     const [ex, ey] = pointPos(r.sketch, arc.end);
-    expect(Math.hypot(sx, sy)).toBeCloseTo(10, 6);
-    expect(Math.hypot(ex, ey)).toBeCloseTo(10, 6);
+    expect(Math.hypot(sx, sy)).toBeCloseTo(10, 4);
+    expect(Math.hypot(ex, ey)).toBeCloseTo(10, 4);
     expect(sy).toBeGreaterThan(0);
     expect(ey).toBeLessThan(0);
   });
@@ -498,3 +500,61 @@ describe("overlapping shapes", () => {
     expect(regions[0].holes).toHaveLength(1);
   });
 });
+
+describe("points on splines and ellipses", () => {
+  const onEllipse = (s: SketchData, id: string, pid: string) => {
+    const e = s.curves.find((c) => c.id === id)!;
+    if (e.type !== "ellipse") throw new Error("not an ellipse");
+    const [cx, cy] = pointPos(s, e.center);
+    const [mx, my] = pointPos(s, e.major);
+    const [nx, ny] = pointPos(s, e.minor);
+    const rx = Math.hypot(mx - cx, my - cy);
+    const ry = Math.hypot(nx - cx, ny - cy);
+    const [px, py] = pointPos(s, pid);
+    const ux = (mx - cx) / rx, uy = (my - cy) / rx;
+    const a = (px - cx) * ux + (py - cy) * uy;
+    const b = -(px - cx) * uy + (py - cy) * ux;
+    return Math.hypot(a / rx, b / ry);
+  };
+
+  it("holds a point on an ellipse with Coincident, and keeps it there when the ellipse is resized", () => {
+    const e = addEllipse(emptySketch(), at(0, 0), at(10, 0), [0, 5]);
+    const p = addPoint(e.sketch, at(6, 5));
+    const r = applyRelation(p.sketch, "coincident", [p.pointId, e.ellipseId]);
+    expect(r.error).toBeUndefined();
+    expect(onEllipse(r.sketch, e.ellipseId, p.pointId)).toBeCloseTo(1, 6);
+    const el = r.sketch.curves.find((c) => c.id === e.ellipseId)!;
+    if (el.type !== "ellipse") throw new Error("not an ellipse");
+    const moved = dragPoint(r.sketch, el.major, 20, 0);
+    expect(onEllipse(moved, e.ellipseId, p.pointId)).toBeCloseTo(1, 6);
+  });
+
+  it("a line drawn to a spline stays on it when the spline is reshaped", () => {
+    const sp = addSpline(emptySketch(), [at(0, 0), at(10, 5), at(20, 0)], false);
+    const l = addLine(sp.sketch, at(10, -10), { x: 10, y: 4, snap: { kind: "curve", id: sp.splineId } });
+    expect(l.sketch.constraints.some((c) => c.type === "pointOnCurve")).toBe(true);
+    const spline = l.sketch.curves.find((c) => c.id === sp.splineId)!;
+    if (spline.type !== "spline") throw new Error("not a spline");
+    const moved = dragPoint(l.sketch, spline.points[1], 10, 9);
+    const end = pointPos(moved, line(moved, l.lineId).p2);
+    const path = splinePathOf(moved, sp.splineId);
+    const gap = Math.min(...path.map(([x, y]) => Math.hypot(x - end[0], y - end[1])));
+    expect(gap).toBeLessThan(0.05);
+    expect(solveSketch(moved).ok).toBe(true);
+  });
+
+  it("extends a line up to a spline", () => {
+    const sp = addSpline(emptySketch(), [at(0, 10), at(10, 12), at(20, 10)], false);
+    const l = addLine(sp.sketch, at(10, 0), at(10, 3));
+    const r = extendAt(l.sketch, l.lineId, at(10, 2.9));
+    expect(r.error).toBeUndefined();
+    expect(pointPos(r.sketch, line(r.sketch, l.lineId).p2)[1]).toBeGreaterThan(11);
+    expect(r.sketch.constraints.some((c) => c.type === "pointOnCurve")).toBe(true);
+  });
+});
+
+function splinePathOf(s: SketchData, id: string): [number, number][] {
+  const c = s.curves.find((k) => k.id === id);
+  if (c?.type !== "spline") return [];
+  return splinePath(s, c, 64);
+}

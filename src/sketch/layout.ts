@@ -169,6 +169,7 @@ export const RELATION_SYMBOLS: Partial<Record<SketchConstraint["type"], string>>
   symmetric: "⇆",
   pointOnLine: "●",
   pointOnCircle: "●",
+  pointOnCurve: "●",
   fix: "⚓",
 };
 
@@ -205,6 +206,6 @@ export function badgeAnchors(s: SketchData, c: SketchConstraint): Pt[] {
     return add(centre, [r * Math.cos(am), r * Math.sin(am)]);
   };
   // Relations between two things get a badge on each, like Onshape.
-  const refs = c.type === "horizontal" || c.type === "vertical" || c.type === "fix" ? c.refs.slice(0, 1) : c.type === "coincident" || c.type === "pointOnLine" || c.type === "pointOnCircle" || c.type === "midpoint" ? c.refs.slice(0, 1) : c.type === "symmetric" ? c.refs.slice(0, 2) : c.refs;
+  const refs = c.type === "horizontal" || c.type === "vertical" || c.type === "fix" ? c.refs.slice(0, 1) : c.type === "coincident" || c.type === "pointOnLine" || c.type === "pointOnCircle" || c.type === "pointOnCurve" || c.type === "midpoint" ? c.refs.slice(0, 1) : c.type === "symmetric" ? c.refs.slice(0, 2) : c.refs;
   return refs.map(at).filter((p): p is Pt => p !== null);
 }

@@ -15,6 +15,7 @@ const RELATIONS = new Set<string>([
   "symmetric",
   "pointOnLine",
   "pointOnCircle",
+  "pointOnCurve",
   "fix",
 ]);
 

@@ -250,6 +250,11 @@ export function settle(sketch: SketchData): EditResult {
 }
 
 /** Resolve a placed point into a point id, adding the point and any snap constraint. */
+/** The constraint that holds a point on a curve of this kind. */
+export function onCurveType(c: SketchCurve): "pointOnLine" | "pointOnCircle" | "pointOnCurve" {
+  return c.type === "line" ? "pointOnLine" : c.type === "circle" || c.type === "arc" ? "pointOnCircle" : "pointOnCurve";
+}
+
 export function placePoint(s: SketchData, p: Placed): { sketch: SketchData; id: string } {
   if (p.snap?.kind === "point" && isPointId(s, p.snap.id) && p.snap.id !== ORIGIN_ID) return { sketch: s, id: p.snap.id };
   const id = sketchId("p");
@@ -259,7 +264,7 @@ export function placePoint(s: SketchData, p: Placed): { sketch: SketchData; id: 
     constraints.push({ id: sketchId("c"), type: "coincident", refs: [id, ORIGIN_ID] });
   } else if (p.snap?.kind === "curve") {
     const c = curveById(s, p.snap.id);
-    if (c) constraints.push({ id: sketchId("c"), type: c.type === "line" ? "pointOnLine" : "pointOnCircle", refs: [id, c.id] });
+    if (c) constraints.push({ id: sketchId("c"), type: onCurveType(c), refs: [id, c.id] });
   } else if (p.snap?.kind === "align") {
     // Keep it lined up: straight above/below (vertical) and/or level with (horizontal) the point it snapped to.
     if (p.snap.x && (p.snap.x === ORIGIN_ID || isPointId(s, p.snap.x))) constraints.push({ id: sketchId("c"), type: "vertical", refs: [id, p.snap.x] });
@@ -443,7 +448,7 @@ export const RELATION_LABELS: Record<RelationTool, string> = {
 
 /** What to select for each relation, in plain English. */
 export const RELATION_HINTS: Record<RelationTool, string> = {
-  coincident: "Select two points, or a point and a line, circle or arc",
+  coincident: "Select two points, or a point and a line, circle, arc, spline or ellipse",
   horizontal: "Select one or more lines, or two points",
   vertical: "Select one or more lines, or two points",
   parallel: "Select two or more lines",
@@ -481,8 +486,8 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
     case "coincident":
       if (only(2) && pts.length === 2) return [mk("coincident", pts)];
       if (only(2) && pts.length === 1 && crv.length === 1) {
-        if (!isLine(crv[0]) && !isRound(crv[0])) return "Points can't be held on a spline or ellipse yet — put them on a line, circle or arc.";
-        return [mk(isLine(crv[0]) ? "pointOnLine" : "pointOnCircle", [pts[0], crv[0].id])];
+        if (curvePoints(crv[0]).includes(pts[0])) return "That point is already part of that shape.";
+        return [mk(onCurveType(crv[0]), [pts[0], crv[0].id])];
       }
       break;
     case "horizontal":
@@ -801,6 +806,25 @@ export function splinePoints(s: SketchData, c: SketchSpline): [number, number][]
 /** The handles the user has set on a spline, one entry per point (undefined where the curve runs naturally). */
 export function splineHandles(c: SketchSpline): ([number, number] | undefined)[] {
   return c.points.map((id) => c.tangents?.[id]);
+}
+
+/** The nearest place to `p` on a path of short straight pieces. */
+export function nearestOnPath(path: [number, number][], p: [number, number]): [number, number] {
+  let best: [number, number] = path[0] ?? p;
+  let bestD = Infinity;
+  for (let i = 0; i + 1 < path.length; i++) {
+    const [ax, ay] = path[i];
+    const dx = path[i + 1][0] - ax, dy = path[i + 1][1] - ay;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / l2)) : 0;
+    const q: [number, number] = [ax + t * dx, ay + t * dy];
+    const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (d < bestD) {
+      bestD = d;
+      best = q;
+    }
+  }
+  return best;
 }
 
 /** The spline drawn as short straight pieces. */

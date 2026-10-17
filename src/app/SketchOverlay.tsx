@@ -20,6 +20,7 @@ const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
   midpoint: "Midpoint",
   pointOnLine: "Point on line",
   pointOnCircle: "Point on circle",
+  pointOnCurve: "Point on curve",
   fix: "Fixed",
 };
 
@@ -147,7 +148,7 @@ function computePlacements(data: SketchData) {
       if (l) dims.push({ constraint: c, placement: { id: c.id, at: l.label, dx: 0, dy: 0 } });
       continue;
     }
-    if (c.type === "coincident" || c.type === "pointOnLine" || c.type === "pointOnCircle") continue; // too cluttered; shown as joined points
+    if (c.type === "coincident" || c.type === "pointOnLine" || c.type === "pointOnCircle" || c.type === "pointOnCurve") continue; // too cluttered; shown as joined points
     badgeAnchors(data, c).forEach((at, i) => {
       const key = `${Math.round(at[0] * 100)},${Math.round(at[1] * 100)}`;
       const n = spots.get(key) ?? 0;

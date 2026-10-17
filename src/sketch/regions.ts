@@ -325,7 +325,7 @@ export function findRegions(sketch: SketchData): RegionResult {
   const regions: Region[] = [];
   loops.forEach((outer, i) => {
     if (depth[i] % 2 !== 0) return;
-    const holes = loops.filter((l, j) => depth[j] === depth[i] + 1 && inside[j][i]);
+    const holes = loops.filter((_l, j) => depth[j] === depth[i] + 1 && inside[j][i]);
     regions.push({ outer, holes });
   });
   return { regions, problems };

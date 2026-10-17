@@ -89,6 +89,8 @@ export type RelationType =
   | "symmetric"
   | "pointOnLine"
   | "pointOnCircle"
+  /** A point held on a spline or ellipse: refs [point, curve]. */
+  | "pointOnCurve"
   | "fix";
 
 /** Dimensions (have a value the user types). */

@@ -48,9 +48,11 @@ describe("ellipses", () => {
     s = applyRelation(s, "horizontal", [e.center, e.major]).sketch;
     const before = analyzeSketch(s).freedom;
     expect(before).toBe(2);
-    // Holding a point on it isn't possible yet, and says so.
+    // A point can be held on it too.
     const p = addLine(s, at(20, 20), at(30, 20));
-    expect(typeof applyRelation(p.sketch, "coincident", [p.endId, e.id]).error).toBe("string");
+    const on = applyRelation(p.sketch, "coincident", [p.endId, e.id]);
+    expect(on.error).toBeUndefined();
+    expect(on.sketch.constraints.some((c) => c.type === "pointOnCurve" && c.refs[1] === e.id)).toBe(true);
   });
 
   it("can be picked, mirrored, patterned, saved and deleted", () => {

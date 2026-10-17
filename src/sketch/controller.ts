@@ -22,6 +22,9 @@ import {
   joinPoints,
   pointPos,
   splineHandles,
+  splinePath,
+  ellipsePoints,
+  nearestOnPath,
   pointsSharingCurve,
   radiusOf,
   setSplineHandle,
@@ -341,8 +344,8 @@ export class SketchController {
         const t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1);
         [x, y] = [ax + t * dx, ay + t * dy];
       } else if (c.type === "spline" || c.type === "ellipse") {
-        // No "on the spline/ellipse" constraint: just the pointer, with no snap.
-        return { x: e.x, y: e.y, snap: null };
+        // The nearest place on the curve (it's held there).
+        [x, y] = nearestOnPath(c.type === "spline" ? splinePath(d, c, 48) : ellipsePoints(d, c, 256), [e.x, e.y]);
       } else {
         const [cx, cy] = pointPos(d, c.center);
         const r = radiusOf(d, c);

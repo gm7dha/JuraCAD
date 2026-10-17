@@ -11,6 +11,7 @@
  * constraints, so fully defined geometry can be drawn black, as in Onshape.
  */
 import { evaluate } from "../model/expr";
+import { splinePolyline } from "./spline";
 import { ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData } from "./types";
 
 type Vec = [number, number];
@@ -310,6 +311,39 @@ function buildSystem(sketch: SketchData): System {
           },
         };
       }
+      case "pointOnCurve": {
+        const p = P(a);
+        const curve = curves.get(b);
+        if (curve?.type === "ellipse") {
+          const cen = P(curve.center), ma = P(curve.major), mi = P(curve.minor);
+          return {
+            size: 1,
+            eval: (x, out) => {
+              const u = p(x), c = cen(x), m = ma(x), n = mi(x);
+              const ax = [m[0] - c[0], m[1] - c[1]];
+              const rx = Math.hypot(ax[0], ax[1]) || 1e-12;
+              const ry = Math.hypot(n[0] - c[0], n[1] - c[1]) || 1e-12;
+              const q = [u[0] - c[0], u[1] - c[1]];
+              const along = (q[0] * ax[0] + q[1] * ax[1]) / rx;
+              const across = (q[1] * ax[0] - q[0] * ax[1]) / rx;
+              // Roughly the distance (mm) to the ellipse: zero on it, and smooth either side.
+              out.push((Math.hypot(along / rx, across / ry) - 1) * Math.min(rx, ry));
+            },
+          };
+        }
+        if (curve?.type === "spline") {
+          const ids = curve.points.map((id) => P(id));
+          const handles = curve.points.map((id) => curve.tangents?.[id]);
+          return {
+            size: 1,
+            eval: (x, out) => {
+              const path = splinePolyline(ids.map((f) => f(x)), curve.closed, 48, curve.conic, handles);
+              out.push(signedDistanceToPath(p(x), path));
+            },
+          };
+        }
+        throw new Error(`${b} is not a spline or ellipse`);
+      }
       case "pointOnCircle": {
         const p = P(a);
         const c = circular(b);
@@ -389,6 +423,27 @@ function buildSystem(sketch: SketchData): System {
   }
 
   return { n: init.length, pointVar, radiusVar, x0: Float64Array.from(init), blocks, skipped };
+}
+
+/** Distance from `p` to a path of straight pieces, plus on the left of the nearest piece, minus on the right. */
+function signedDistanceToPath(p: Vec, path: Vec[]): number {
+  let best = Infinity;
+  let signed = 0;
+  for (let i = 0; i + 1 < path.length; i++) {
+    const a = path[i], b = path[i + 1];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const l2 = dx * dx + dy * dy;
+    if (l2 < 1e-24) continue;
+    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2));
+    const fx = a[0] + t * dx - p[0], fy = a[1] + t * dy - p[1];
+    const d = Math.hypot(fx, fy);
+    if (d < best) {
+      best = d;
+      const side = dx * (p[1] - a[1]) - dy * (p[0] - a[0]);
+      signed = side >= 0 ? d : -d;
+    }
+  }
+  return best === Infinity ? 0 : signed;
 }
 
 function evalAll(sys: System, x: Float64Array): number[] {

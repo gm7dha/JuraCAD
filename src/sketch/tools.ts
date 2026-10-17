@@ -5,7 +5,7 @@
  */
 import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
-import { addArc, addCircle, addRectangle, circleThrough, curveById, curvePoints, deleteItems, ellipsePoints, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, splinePath, type EditResult, type Placed } from "./ops";
+import { addArc, addCircle, addRectangle, circleThrough, curveById, curvePoints, deleteItems, ellipsePoints, mirrorPoint, onCurveType, placePoint, pointPos, radiusOf, settle, sketchId, splinePath, type EditResult, type Placed } from "./ops";
 import { minorPointFor } from "./ellipse";
 import { ORIGIN_ID, type SketchEllipse, type SketchSpline, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
@@ -387,7 +387,7 @@ export function intersections(s: SketchData, a: SketchCurve, b: SketchCurve): P2
   // A spline or ellipse crossing a line, arc or circle: follow it as short straight pieces.
   if (wavy(a) || wavy(b)) {
     const [k, w] = (wavy(a) ? [b, a] : [a, b]) as [SketchLine | SketchArc | SketchCircle, SketchSpline | SketchEllipse];
-    return crossingsWithPath(s, k, w.type === "spline" ? splinePath(s, w, 48) : ellipsePoints(s, w, 256));
+    return crossingsWithPath(s, k, w.type === "spline" ? splinePath(s, w, 48) : ellipsePoints(s, w, 1024));
   }
   const seg = (l: SketchLine) => [pointPos(s, l.p1), pointPos(s, l.p2)] as [P2, P2];
   const onSeg = (l: SketchLine, p: P2) => {
@@ -484,7 +484,7 @@ function paramOf(s: SketchData, c: SketchCurve, p: P2): number {
 }
 
 /** Constraints that stay true when a curve is shortened (others, like its length, are dropped). */
-const KEEPS_WHEN_TRIMMED = new Set(["horizontal", "vertical", "parallel", "perpendicular", "tangent", "pointOnLine", "pointOnCircle", "concentric", "radius", "diameter", "equal", "fix", "offset"]);
+const KEEPS_WHEN_TRIMMED = new Set(["horizontal", "vertical", "parallel", "perpendicular", "tangent", "pointOnLine", "pointOnCircle", "concentric", "radius", "diameter", "equal", "fix", "offset", "pointOnCurve"]);
 
 /**
  * Trim: remove the piece of a curve between the nearest crossings either
@@ -513,8 +513,7 @@ export function trimAt(s: SketchData, curveId: string, at: { x: number; y: numbe
   const newPoint = (cut: Cut) => {
     const id = sketchId("p");
     const other = curveById(s, cut.by)!;
-    // A new end on a spline or ellipse can't be held on it (there's no such constraint yet): it just stays where it was cut.
-    const on: SketchConstraint[] = other.type === "line" ? [con("pointOnLine", [id, cut.by])] : other.type === "circle" || other.type === "arc" ? [con("pointOnCircle", [id, cut.by])] : [];
+    const on: SketchConstraint[] = [con(onCurveType(other), [id, cut.by])];
     return { point: { id, x: cut.point[0], y: cut.point[1] }, constraints: on };
   };
   // A shortened line is no longer equal in length to anything (an arc keeps its radius, so stays equal).
@@ -1392,6 +1391,18 @@ export function extendAt(s: SketchData, curveId: string, at: { x: number; y: num
         const p = add(end, mul(dir, t));
         if (other.type === "circle" || onArc(s, other, p)) consider(t, p, other.id);
       }
+    } else {
+      // A spline or ellipse: along its short straight pieces.
+      const path = other.type === "spline" ? splinePath(s, other, 48) : ellipsePoints(s, other, 1024);
+      for (let i = 0; i + 1 < path.length; i++) {
+        const e = sub(path[i + 1], path[i]);
+        const den = cross(dir, e);
+        if (Math.abs(den) < 1e-12) continue;
+        const w = sub(path[i], end);
+        const t = cross(w, e) / den;
+        const u = cross(w, dir) / den;
+        if (u >= -1e-9 && u <= 1 + 1e-9) consider(t, add(end, mul(dir, t)), other.id);
+      }
     }
   }
   const hit = best as { t: number; point: P2; by: string } | null;
@@ -1400,7 +1411,7 @@ export function extendAt(s: SketchData, curveId: string, at: { x: number; y: num
   const points = s.points.map((p) => (p.id === endId ? { ...p, x: hit.point[0], y: hit.point[1] } : p));
   const constraints = s.constraints
     .filter((c) => !(c.type === "length" && c.refs[0] === line.id))
-    .concat([con(target.type === "line" ? "pointOnLine" : "pointOnCircle", [endId, target.id])]);
+    .concat([con(onCurveType(target), [endId, target.id])]);
   return settle({ ...s, points, constraints });
 }
 
@@ -1434,7 +1445,7 @@ function extendArc(s: SketchData, arc: SketchArc, at: { x: number; y: number }):
   if (!hit) return { sketch: s, error: "There's nothing further round that arc for it to reach." };
   const target = curveById(s, hit.by)!;
   const points = s.points.map((p) => (p.id === endId ? { ...p, x: hit.point[0], y: hit.point[1] } : p));
-  const on = target.type === "line" ? [con("pointOnLine", [endId, target.id])] : target.type === "circle" || target.type === "arc" ? [con("pointOnCircle", [endId, target.id])] : [];
+  const on = [con(onCurveType(target), [endId, target.id])];
   const solved = solveSketch({ ...s, points, constraints: [...s.constraints, ...on] });
   if (!solved.ok) return { sketch: s, error: "That arc's end is held where it is by its constraints, so it can't be extended." };
   return { sketch: solved.sketch };
