@@ -325,6 +325,15 @@ export function Toolbar() {
               title: hasSheet ? "Hem — fold straight edges of a sheet metal part back on themselves, for a safe, stiff edge" : "Make a sheet metal part first",
             },
             {
+              key: "cornerBreak",
+              label: "Corner break",
+              icon: <Icons.CornerBreak />,
+              onClick: () => startCreate("cornerBreak"),
+              disabled: !ready || !hasSheet,
+              active: editingType === "cornerBreak",
+              title: hasSheet ? "Corner break — round off (or cut off) outside corners of a sheet metal part: click the short edge through the sheet at each corner" : "Make a sheet metal part first",
+            },
+            {
               key: "unfold",
               label: "Unfold",
               icon: <Icons.Unfold />,

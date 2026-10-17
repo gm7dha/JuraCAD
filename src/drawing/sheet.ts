@@ -5,19 +5,22 @@
  *
  * Layout follows ISO first-angle projection (as used in the UK and Europe):
  * the view from the top goes below the front view, the view from the right
- * goes to its left.
+ * goes to its left — or, when the drawing asks for it, third-angle (US/ANSI):
+ * the top view above the front, the right view to its right.
  */
 import { clipOut, cutsOn, removed, SHORT_GAP, squeeze, unsqueeze } from "./shorten";
 import { lengthNumber, lengthUnit } from "../model/units";
 import type { ViewProjection } from "../kernel/protocol";
-import type { Drawing, SectionCut, SheetSize, ViewKind } from "../model/types";
+import type { Dimension, Drawing, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { centreLines, centreMarks, hatchLines, placeBalloons } from "./annotations";
 import { holeRows, holeTableView, type HoleRow } from "./holeTable";
 import { projectPoint } from "./cameras";
 import { fromRel, sectionGeometry, sectionTitle, viewKey } from "./sections";
-import { drawDimension, measureDim, resolveDim } from "./dimensions";
+import { drawDimension, measureDim, resolveDim, type DimStyle } from "./dimensions";
 import { calloutText, threadSymbols, type TapSize } from "./holeCallouts";
 import { symbolPrims } from "./symbols";
+import { clipToCircle } from "./details";
+import { textWidth } from "./export";
 
 /** "centre" is the long-and-short dashed line for centre lines and cutting planes. */
 export type LineStyle = "border" | "visible" | "hidden" | "thin" | "centre";
@@ -26,10 +29,21 @@ export type Prim =
   | { kind: "path"; points: number[]; closed?: boolean; fill?: boolean; style: LineStyle }
   | { kind: "text"; x: number; y: number; text: string; size: number; anchor: "start" | "middle" | "end"; bold?: boolean; rotate?: number };
 
-export const SHEETS: Record<SheetSize, [number, number]> = { A4: [297, 210], A3: [420, 297], A2: [594, 420] };
+export const SHEETS: Record<SheetSize, [number, number]> = {
+  A4: [297, 210],
+  A3: [420, 297],
+  A2: [594, 420],
+  A1: [841, 594],
+  A0: [1189, 841],
+  "ANSI A": [279.4, 215.9],
+  "ANSI B": [431.8, 279.4],
+  "ANSI C": [558.8, 431.8],
+  "ANSI D": [863.6, 558.8],
+  "ANSI E": [1117.6, 863.6],
+};
 
 /** Standard drawing scales, biggest first (2 = 2:1, 0.5 = 1:2). */
-export const STANDARD_SCALES = [10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01];
+export const STANDARD_SCALES = [100, 50, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001];
 
 export function scaleLabel(s: number): string {
   if (s >= 1) return `${Math.round(s * 100) / 100}:1`;
@@ -156,8 +170,11 @@ function drawnCentre(p: ViewProjection | undefined, scale: number): [number, num
 
 /** A polyline with the bands of a shortened view taken out: the pieces left. */
 function clipped(p: ViewProjection, line: number[]): number[][] {
-  if (!p.shorten?.length) return [line];
-  return clipOut(line, 0, cutsOn(p.shorten, 0)).flatMap((piece) => clipOut(piece, 1, cutsOn(p.shorten, 1)));
+  // Detail views: kept inside their circle.
+  const c = p.clipCircle;
+  const lines = c ? clipToCircle(line, [c[0], c[1]], c[2]) : [line];
+  if (!p.shorten?.length) return lines;
+  return lines.flatMap((l) => clipOut(l, 0, cutsOn(p.shorten, 0))).flatMap((piece) => clipOut(piece, 1, cutsOn(p.shorten, 1)));
 }
 
 /** Break lines either side of each band taken out of a shortened view (a zigzag across the view). */
@@ -221,12 +238,16 @@ function needed(
   keys: string[],
   s: number,
   maxH = Infinity,
+  third = false,
+  sideGap = 0,
 ): { w: number; h: number; cols: number[]; rows: number[]; side: { key: string; w: number; h: number; x: number; y: number }[] } {
   const shown = new Set(keys);
   const size = (k: string) => (shown.has(k) ? paperSize(projections[k], s) : [0, 0]);
   const [fw, fh] = size("front");
-  const cols = [size("right")[0], fw, size("left")[0], size("back")[0]];
-  const rows = [size("bottom")[1], fh, size("top")[1]];
+  // Columns left to right and rows top to bottom (see GRID).
+  const g = third ? GRID.third : GRID.first;
+  const cols = g.cols.map((k) => (k === "front" ? fw : size(k)[0]));
+  const rows = g.rows.map((k) => (k === "front" ? fh : size(k)[1]));
   const used = (list: number[]) => list.filter((v) => v > 0);
   const gridW = used(cols).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(cols).length - 1);
   const gridH = used(rows).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(rows).length - 1);
@@ -259,10 +280,21 @@ function needed(
   }
   const sideW = columns.length ? cx - GAP : 0;
   const sideH = Math.max(0, ...columns.map((c) => c.h));
-  const w = gridW + (sideW > 0 ? (gridW > 0 ? GAP : 0) + sideW : 0);
+  // (`sideGap`: extra room between the lined-up views and the side column, for dimensions there.)
+  const w = gridW + (sideW > 0 ? (gridW > 0 ? GAP + sideGap : 0) + sideW : 0);
   const h = Math.max(gridH, sideH);
   return { w, h, cols, rows, side: placed };
 }
+
+/**
+ * Where the six standard views go around the front view: columns left to
+ * right, rows top to bottom. First-angle: each view goes on the far side of
+ * the front view from where it's seen; third-angle: on the near side.
+ */
+const GRID = {
+  first: { cols: ["right", "front", "left", "back"], rows: ["bottom", "front", "top"] },
+  third: { cols: ["left", "front", "right", "back"], rows: ["top", "front", "bottom"] },
+} as const;
 
 /** Room under a section view for its name (mm). */
 const LABEL_ROOM = 8;
@@ -271,10 +303,10 @@ const labelRoom = (key: string, p: ViewProjection | undefined) => LABEL_ROOM + (
 const BEND_LINE_H = 4;
 
 /** The biggest standard scale at which all the views fit on the sheet. */
-export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H): { scale: number; fits: boolean } {
+export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H, third = false, sideGap = 0): { scale: number; fits: boolean } {
   const area = viewArea(SHEETS[sheet], reserve);
   for (const s of STANDARD_SCALES) {
-    const n = needed(projections, keys, s, area.y1 - area.y0);
+    const n = needed(projections, keys, s, area.y1 - area.y0, third, sideGap);
     if (n.w <= area.x1 - area.x0 && n.h <= area.y1 - area.y0) return { scale: s, fits: true };
   }
   return { scale: STANDARD_SCALES[STANDARD_SCALES.length - 1], fits: false };
@@ -287,16 +319,110 @@ export function drawingViewKeys(drawing: Pick<Drawing, "views">): string[] {
 
 /** Work out where everything goes on the sheet. */
 export function layoutSheet(drawing: Drawing, projections: Projections, info: SheetInfo): SheetLayout {
+  // Room kept for dimensions beside the 3D column, and one scale smaller, when Fit to sheet
+  // or Auto dimension decided so (see planFit); old drawings have neither and lay out as before.
+  // (A chosen scale ignores it: the room was worked out for Fit to sheet.)
+  const gap = drawing.scale === undefined ? Math.min(MAX_SIDE_GAP, Math.max(0, drawing.fit?.gap ?? 0)) : 0;
+  return layoutAt(drawing, projections, info, gap).layout;
+}
+
+/** Most extra room kept beside the 3D column for dimensions (paper mm). */
+export const MAX_SIDE_GAP = 40;
+
+/**
+ * Decide how "Fit to sheet" makes room for the drawing's dimensions — run when
+ * the user asks (Auto dimension, Arrange, or choosing Fit to sheet), never
+ * while dragging, and kept on the drawing (`fit`) so the sheet doesn't change
+ * by itself. In order: nothing; more room beside the 3D column (up to
+ * MAX_SIDE_GAP); that and one scale smaller; just one scale smaller. The first
+ * that keeps every dimension inside the border and clear of the other views
+ * wins; if none does, nothing changes. `remake` makes the dimensions again for
+ * a scale (Auto dimension's rows are spaced for the scale they're made at).
+ */
+export function fitDrawing(drawing: Drawing, projections: Projections, info: SheetInfo, remake?: (scale: number) => Dimension[]): Drawing {
+  const { fit: _old, ...plain } = drawing;
+  const scaleOf = (d: Drawing) => layoutSheet({ ...d, dimensions: [] }, projections, info).scale;
+  const at = (d: Drawing): Drawing => (remake ? { ...d, dimensions: remake(scaleOf(d)) } : d);
+  const first = at(plain);
+  if (drawing.scale !== undefined || !first.dimensions?.length) return first;
+  const base = layoutAt(first, projections, info);
+  if (dimsClear(base.layout, first, base.reserve)) return first;
+  const gap = Math.min(MAX_SIDE_GAP, sideOverhang(base.layout, first));
+  const tries: NonNullable<Drawing["fit"]>[] = [...(gap > 0 ? [{ gap }, { gap, down: true as const }] : []), { down: true as const }];
+  const step = (d: Drawing) => STANDARD_SCALES.indexOf(scaleOf(d)) - STANDARD_SCALES.indexOf(base.layout.scale);
+  for (const fit of tries) {
+    // Never more than one scale smaller than without the room.
+    if (step({ ...plain, fit }) > 1) continue;
+    const d = at({ ...plain, fit });
+    if (dimsClear(layoutSheet(d, projections, info), d, base.reserve)) return d;
+  }
+  return first;
+}
+
+const LINED_UP = new Set<string>(["front", "top", "right", "left", "back", "bottom"]);
+
+/** Every point a dimension's shapes take up on the sheet (numbers by the corners of their boxes). */
+function dimPoints(l: SheetLayout, from: number, to: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (const p of l.prims.slice(from, to)) {
+    if (p.kind === "path") {
+      for (let i = 0; i + 1 < p.points.length; i += 2) out.push([p.points[i], p.points[i + 1]]);
+      continue;
+    }
+    const w = textWidth(p.text, p.size);
+    const x0 = p.anchor === "middle" ? -w / 2 : p.anchor === "end" ? -w : 0;
+    const a = ((p.rotate ?? 0) * Math.PI) / 180;
+    for (const [u, v] of [[x0, 0], [x0 + w, 0], [x0, p.size * 0.75], [x0 + w, p.size * 0.75]]) out.push([p.x + u * Math.cos(a) - v * Math.sin(a), p.y + u * Math.sin(a) + v * Math.cos(a)]);
+  }
+  return out;
+}
+
+/**
+ * How far the lined-up views' dimensions reach past the right of those views
+ * (paper mm, with a little room), when there's a column of other views
+ * (3D, sections, details) placed automatically beside them; else 0.
+ */
+function sideOverhang(l: SheetLayout, drawing: Pick<Drawing, "dimensions" | "views">): number {
+  const grid = l.views.filter((v) => LINED_UP.has(v.key));
+  const side = l.views.some((v) => !LINED_UP.has(v.key) && !drawing.views.find((x) => viewKey(x) === v.key)?.at);
+  if (!grid.length || !side || !drawing.dimensions?.length) return 0;
+  const right = Math.max(...grid.map((v) => v.box[2]));
+  const owner = new Map(drawing.dimensions.map((d) => [d.id, d.view]));
+  let reach = right;
+  for (const dim of l.dims) if (LINED_UP.has(owner.get(dim.id) ?? "")) for (const [x] of dimPoints(l, dim.from, dim.to)) reach = Math.max(reach, x);
+  return reach > right + 1e-6 ? Math.ceil(reach - right + 3) : 0;
+}
+
+/**
+ * Do all the dimensions sit on the paper inside the border, off the title
+ * block (and the tables above it), and clear of views other than their own?
+ */
+export function dimsClear(l: SheetLayout, drawing: Pick<Drawing, "dimensions">, reserve = TITLE_H): boolean {
+  const [W, H] = l.size;
+  const owner = new Map((drawing.dimensions ?? []).map((d) => [d.id, d.view]));
+  const out = (x: number, y: number) => x < MARGIN || x > W - MARGIN || y < MARGIN || y > H - MARGIN || (x > W - MARGIN - TITLE_W && y < MARGIN + reserve);
+  for (const dim of l.dims) {
+    const others = l.views.filter((v) => v.key !== owner.get(dim.id)).map((v) => v.box);
+    const bad = (x: number, y: number) => out(x, y) || others.some((b) => x > b[0] + 0.5 && x < b[2] - 0.5 && y > b[1] + 0.5 && y < b[3] - 0.5);
+    if (dimPoints(l, dim.from, dim.to).some(([x, y]) => bad(x, y))) return false;
+  }
+  return true;
+}
+
+function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, sideGap = 0): { layout: SheetLayout; reserve: number } {
   const size = SHEETS[drawing.sheet];
   const keys = drawingViewKeys(drawing).filter((k) => projections[k]?.bounds);
   // Hole table: the holes on one view, tagged, with a table above the title block.
   const holeKey = drawing.holeTable ? holeTableView(drawing, projections) : null;
   const holes = holeKey ? holeRows(projections[holeKey]!) : [];
   const reserve = bottomReserve(drawing, info.bom, holes.length);
-  const auto = fitScale(projections, keys, drawing.sheet, reserve);
-  const scale = drawing.scale ?? auto.scale;
+  const third = drawing.projection === "third";
+  const auto = fitScale(projections, keys, drawing.sheet, reserve, third, sideGap);
+  // (Fit to sheet can be asked to go one scale smaller, to make room for dimensions.)
+  const fitted = drawing.fit?.down ? (STANDARD_SCALES[STANDARD_SCALES.indexOf(auto.scale) + 1] ?? auto.scale) : auto.scale;
+  const scale = drawing.scale ?? fitted;
   const area = viewArea(size, reserve);
-  const n = needed(projections, keys, scale, area.y1 - area.y0);
+  const n = needed(projections, keys, scale, area.y1 - area.y0, third, sideGap);
 
   // Automatic places: the grid of aligned views centred in the area, the 3D and section views to its right.
   const left = area.x0 + Math.max(0, (area.x1 - area.x0 - n.w) / 2);
@@ -314,15 +440,11 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     rowY[i] = y - h / 2;
     if (h > 0) y -= h + GAP;
   });
-  const autoCentre: Record<string, [number, number]> = {
-    right: [colX[0], rowY[1]],
-    front: [colX[1], rowY[1]],
-    left: [colX[2], rowY[1]],
-    back: [colX[3], rowY[1]],
-    bottom: [colX[1], rowY[0]],
-    top: [colX[1], rowY[2]],
-  };
-  const sideX = gridRight > left ? gridRight + GAP : left;
+  const autoCentre: Record<string, [number, number]> = {};
+  const grid = third ? GRID.third : GRID.first;
+  grid.cols.forEach((k, i) => (autoCentre[k] = [colX[i], rowY[1]]));
+  grid.rows.forEach((k, i) => (autoCentre[k] = [colX[1], rowY[i]]));
+  const sideX = gridRight > left ? gridRight + GAP + sideGap : left;
   for (const item of n.side) {
     const viewH = isLabelled(item.key) ? item.h - labelRoom(item.key, projections[item.key]) : item.h;
     autoCentre[item.key] = [sideX + item.x + item.w / 2, top - item.y - viewH / 2];
@@ -361,7 +483,8 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
       for (const piece of clipped(p, line)) prims.push({ kind: "path", points: map(piece), style });
     };
     if (p.cutFaces) {
-      for (const seg of hatchLines(p.cutFaces, HATCH_SPACING / scale)) draw(seg, "thin");
+      // (Spaced evenly on paper, so a detail view drawn bigger isn't hatched more coarsely.)
+      for (const seg of hatchLines(p.cutFaces, HATCH_SPACING / vs)) draw(seg, "thin");
     }
     for (const line of drawing.hiddenLines ? p.hidden : []) draw(line, "hidden");
     for (const line of p.visible) draw(line, "visible");
@@ -396,7 +519,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
           kind: "text",
           x: centre[0],
           y: box[1] - 6 - BEND_LINE_H * (i + 1),
-          text: `B${i + 1}: ${b.up ? "UP" : "DOWN"} ${Math.round(b.angle * 10) / 10}°  R${Math.round(b.radius * 100) / 100}`,
+          text: `B${i + 1}: ${b.up ? "UP" : "DOWN"} ${Math.round(b.angle * 10) / 10}°  R${lengthNumber(b.radius)}`,
           size: 2.5,
           anchor: "middle",
         });
@@ -458,7 +581,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     if (!view || !p) continue;
     const resolved = resolveDim(dim, p);
     const at = ([x, y]: [number, number]) => toSheet(view, p, scale, x, y);
-    const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved), dim.callout ? calloutText(p, resolved.a, info.taps ?? []) : null);
+    const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved), dim.callout ? calloutText(p, resolved.a, info.taps ?? [], { ...dimStyle(drawing), ...(dim.places !== undefined ? { places: dim.places } : {}) }) : null, dimStyle(drawing));
     const from = prims.length;
     prims.push(...drawn.prims);
     dims.push({
@@ -494,7 +617,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   }
 
   prims.push(...frameAndTitle(size, drawing, scale, info, holeHost ? holes : []));
-  return { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, notes, prims };
+  return { layout: { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, notes, prims }, reserve };
 }
 
 /** The cutting line across a view, with arrows showing which way the section looks, and its letters. */
@@ -573,6 +696,11 @@ function balloonPrims(host: PlacedView, p: ViewProjection, scale: number, balloo
   return out;
 }
 
+/** How a drawing's dimensions read (decimal places, both units). */
+export function dimStyle(d: Pick<Drawing, "places" | "dualUnits">): DimStyle {
+  return { ...(d.places !== undefined ? { places: d.places } : {}), ...(d.dualUnits ? { dual: true } : {}) };
+}
+
 /** Where a point of a view (in its own mm) lands on the sheet. */
 export function toSheet(view: Pick<PlacedView, "centre">, projection: ViewProjection, scale: number, x: number, y: number): [number, number] {
   const [cx, cy] = drawnCentre(projection, scale);
@@ -602,7 +730,29 @@ function circle(cx: number, cy: number, r: number, style: LineStyle): Extract<Pr
   return { kind: "path", points, closed: true, style };
 }
 
-/** The border, the title block and the first-angle projection symbol. */
+/** Text size that keeps `text` within `width` mm (at most `size`, at least 1.5). */
+export function fitSize(text: string, width: number, size: number, bold = false): number {
+  const w = textWidth(text, size) * (bold ? 1.08 : 1);
+  return w <= width || w === 0 ? size : Math.max(1.5, Math.floor(((size * width) / w) * 10) / 10);
+}
+
+/**
+ * The projection symbol: a truncated cone, narrow end on the left, seen from
+ * the side and end-on (two circles). First-angle has the circles to the right
+ * of the cone, third-angle to its left (ISO 128 / ASME Y14.3).
+ * (x, y) is the left end of the symbol's middle line; it's 22 mm long.
+ */
+export function projectionSymbol(x: number, y: number, third: boolean): Prim[] {
+  const ends = third ? x + 4 : x + 18;
+  const cone = third ? x + 11 : x;
+  return [
+    circle(ends, y, 3.5, "thin"),
+    circle(ends, y, 1.75, "thin"),
+    { kind: "path", points: [cone, y - 1.75, cone + 11, y - 3.5, cone + 11, y + 3.5, cone, y + 1.75], closed: true, style: "thin" },
+  ];
+}
+
+/** The border, the title block and the projection symbol. */
 function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, info: SheetInfo, holes: HoleRow[] = []): Prim[] {
   const [W, H] = size;
   const out: Prim[] = [rect(MARGIN, MARGIN, W - MARGIN, H - MARGIN, "border")];
@@ -612,32 +762,37 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
   out.push(rect(x0, y0, x1, y0 + TITLE_H, "border"));
   out.push(line(x0, y0 + 12, x1, y0 + 12), line(x0, y0 + 24, x1, y0 + 24));
   const label = (x: number, y: number, text: string): Prim => ({ kind: "text", x: x + 1.5, y: y - 3, text, size: 2.2, anchor: "start" });
-  const value = (x: number, y: number, text: string, size = 3.5, bold = false): Prim => ({ kind: "text", x: x + 1.5, y: y + 2.5, text, size, anchor: "start", bold });
-
-  // Top row: the title.
-  out.push(label(x0, y0 + 36, "TITLE"), value(x0, y0 + 24.5, drawing.title.title || info.subject, 5, true));
-  // Middle row: design and material.
-  out.push(line(x0 + 100, y0 + 12, x0 + 100, y0 + 24));
-  out.push(label(x0, y0 + 24, "DESIGN"), value(x0, y0 + 13.5, info.designName));
-  out.push(label(x0 + 100, y0 + 24, "MATERIAL"), value(x0 + 100, y0 + 13.5, drawing.title.material ?? ""));
+  // A value in a cell `w` wide: made smaller if it's too long to fit.
+  const value = (x: number, y: number, text: string, w: number, size = 3.5, bold = false): Prim => ({ kind: "text", x: x + 1.5, y: y + 2.5, text, size: fitSize(text, w - 3, size, bold), anchor: "start", bold });
+  const row = (y: number, cells: [number, string, string][], size: number, bold = false) =>
+    cells.forEach(([dx, l, v], i) => {
+      const w = (cells[i + 1]?.[0] ?? TITLE_W) - dx;
+      if (dx > 0) out.push(line(x0 + dx, y, x0 + dx, y + 12));
+      out.push(label(x0 + dx, y + 12, l), value(x0 + dx, y + (size > 4 ? 0.5 : 1.5), v, w, size, bold));
+    });
+  const t = drawing.title;
+  // Top row: the title, the part number and the latest revision.
+  row(y0 + 24, [
+    [0, "TITLE", t.title || info.subject],
+    [118, "PART NO.", t.partNumber ?? ""],
+    [158, "REV", drawing.revisions?.[drawing.revisions.length - 1]?.rev ?? ""],
+  ], 5, true);
+  // Middle row: design, material, company.
+  row(y0 + 12, [
+    [0, "DESIGN", info.designName],
+    [64, "MATERIAL", t.material ?? ""],
+    [118, "COMPANY", t.company ?? ""],
+  ], 3.5);
   // Bottom row: drawn by, date, scale, sheet, units, projection.
-  const cells: [number, string, string][] = [
-    [0, "DRAWN BY", drawing.title.drawnBy ?? ""],
+  row(y0, [
+    [0, "DRAWN BY", t.drawnBy ?? ""],
     [50, "DATE", info.date],
     [80, "SCALE", scaleLabel(scale)],
     [102, "SHEET", drawing.sheet],
     [120, "UNITS", lengthUnit()],
     [138, "PROJECTION", ""],
-  ];
-  for (const [dx, l, v] of cells) {
-    if (dx > 0) out.push(line(x0 + dx, y0, x0 + dx, y0 + 12));
-    out.push(label(x0 + dx, y0 + 12, l), value(x0 + dx, y0 + 1.5, v, 3.2));
-  }
-  // First-angle symbol: the end view (circles) to the left of the side view (cone).
-  const sx = x0 + 145;
-  const sy = y0 + 5;
-  out.push(circle(sx + 4, sy, 3.5, "thin"), circle(sx + 4, sy, 1.75, "thin"));
-  out.push({ kind: "path", points: [sx + 11, sy - 1.75, sx + 22, sy - 3.5, sx + 22, sy + 3.5, sx + 11, sy + 1.75], closed: true, style: "thin" });
+  ], 3.2);
+  out.push(...projectionSymbol(x0 + 145, y0 + 5, drawing.projection === "third"));
 
   // Notes, just above the title block.
   // Parts list (assemblies), just above the title block: item, part, quantity.
@@ -652,7 +807,7 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
     rows.forEach((r, i) => {
       const y = top + i * BOM_ROW + 1.8;
       out.push({ kind: "text", x: x0 + 7.5, y, text: String(r.item), size: 3, anchor: "middle" });
-      out.push({ kind: "text", x: x0 + 17, y, text: r.name, size: 3, anchor: "start" });
+      out.push({ kind: "text", x: x0 + 17, y, text: r.name, size: fitSize(r.name, x1 - 20 - (x0 + 17) - 1, 3), anchor: "start" });
       out.push({ kind: "text", x: x1 - 10, y, text: String(r.quantity), size: 3, anchor: "middle" });
     });
     const hy = top + rows.length * BOM_ROW + 1.8;
@@ -696,7 +851,7 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
     revs.forEach((r, i) => {
       const y = top + i * BOM_ROW + 1.8;
       out.push({ kind: "text", x: x0 + 7.5, y, text: r.rev, size: 3, anchor: "middle" });
-      out.push({ kind: "text", x: cols[0] + 2, y, text: r.description, size: 3, anchor: "start" });
+      out.push({ kind: "text", x: cols[0] + 2, y, text: r.description, size: fitSize(r.description, cols[1] - cols[0] - 3, 3), anchor: "start" });
       out.push({ kind: "text", x: (cols[1] + x1) / 2, y, text: r.date, size: 3, anchor: "middle" });
     });
     const hy = top + revs.length * BOM_ROW + 1.8;

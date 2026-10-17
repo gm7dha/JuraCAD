@@ -3,10 +3,11 @@
  * changes, measuring, and drawing them (extension lines, arrows, the number).
  * Sizes on paper follow ISO 129 roughly: 3.5 mm text, 3 mm arrows.
  */
-import { lengthNumber } from "../model/units";
+import { lengthNumber, lengthUnit, toUnit } from "../model/units";
 import type { ViewProjection } from "../kernel/protocol";
 import type { Dimension, DimPoint } from "../model/types";
 import type { Prim } from "./sheet";
+import { textWidth } from "./export";
 
 type P2 = [number, number];
 
@@ -162,18 +163,70 @@ export function placeAngle(a: P2, b: P2, c: P2, d: P2, cursor: P2): { rays: [num
   return { rays: [s(g.u1), s(g.u2)], offset: Math.max(4, Math.round(Math.hypot(...w) * 10) / 10) };
 }
 
-export function dimLabel(dim: Dimension, value: number): string {
-  const base =
-    dim.type === "angle"
-      ? `${Math.round(value * 10) / 10}°`
-      : dim.type === "diameter"
-        ? `Ø${formatSize(value)}`
-        : dim.type === "radius"
-          ? `R${formatSize(value)}`
-          : formatSize(value);
+/** Drawing-wide settings for how dimensions read (see Drawing.places and Drawing.dualUnits). */
+export interface DimStyle {
+  places?: number;
+  dual?: boolean;
+}
+
+/** A number with exactly `places` decimals (no "-0"). */
+/**
+ * A length (mm) in the design's unit with `places` decimals — but never a
+ * non-zero size shown as 0: then as many places as it needs (e.g. Ø6 mm at
+ * no decimals in inches reads "Ø0.236", not "Ø0").
+ */
+function placedLength(mm: number, places: number): string {
+  const shown = fixed(toUnit(mm, lengthUnit()), places);
+  if (mm === 0 || parseFloat(shown) !== 0) return shown;
+  const auto = formatSize(mm);
+  return parseFloat(auto) === 0 ? shown : fixed(toUnit(mm, lengthUnit()), Math.max(places, auto.split(".")[1]?.length ?? 0));
+}
+
+/** The same for an angle (degrees). */
+function placedAngle(deg: number, places: number): string {
+  const shown = fixed(deg, places);
+  if (deg === 0 || parseFloat(shown) !== 0) return shown;
+  const auto = String(Math.round(deg * 100) / 100);
+  return parseFloat(auto) === 0 ? shown : fixed(deg, Math.max(places, auto.split(".")[1]?.length ?? 0));
+}
+
+function fixed(v: number, places: number): string {
+  const t = v.toFixed(places);
+  return /^-0(\.0*)?$/.test(t) ? t.slice(1) : t;
+}
+
+/**
+ * A length as a drawing shows it, with its sign ("Ø", "R" or none): the set
+ * decimal places (or as many as needed), and the other unit in brackets when
+ * asked — e.g. "Ø6.60 [Ø0.26]". Used by hole callouts.
+ */
+export function styledLength(v: number, style: DimStyle = {}, sign = ""): string {
+  const unit = lengthUnit();
+  const main = style.places === undefined ? formatSize(v) : placedLength(v, style.places);
+  return `${sign}${main}${style.dual ? ` [${sign}${lengthNumber(v, unit === "in" ? "mm" : "in")}]` : ""}`;
+}
+
+export function dimLabel(dim: Dimension, value: number, style: DimStyle = {}): string {
+  const places = dim.places ?? style.places;
+  const unit = lengthUnit();
+  // Lengths in the design's unit; angles in degrees (never converted to inches).
+  const size = (v: number) => (places === undefined ? formatSize(v) : placedLength(v, places));
+  const deg = (v: number, auto: number) => `${places === undefined ? Math.round(v * 10 ** auto) / 10 ** auto : placedAngle(v, places)}°`;
+  const sign = dim.type === "diameter" ? "Ø" : dim.type === "radius" ? "R" : "";
+  const base = dim.type === "angle" ? deg(value, 1) : `${sign}${size(value)}`;
   const t = dim.tolerance;
-  const tol = !t ? "" : Math.abs(t.plus - t.minus) < 1e-9 ? ` ±${formatSize(t.plus)}` : ` +${formatSize(t.plus)}/−${formatSize(t.minus)}`;
-  return `${dim.prefix ?? ""}${base}${tol}${dim.suffix ?? ""}`;
+  // A tolerance shows at least the set places, and more if it needs them (it's never rounded).
+  const tv = (v: number) => {
+    const auto = dim.type === "angle" ? String(Math.round(v * 100) / 100) : formatSize(v);
+    if (places === undefined) return dim.type === "angle" ? `${auto}°` : auto;
+    const p = Math.max(places, auto.split(".")[1]?.length ?? 0);
+    return dim.type === "angle" ? `${fixed(v, p)}°` : fixed(toUnit(v, unit), p);
+  };
+  const tol = !t ? "" : Math.abs(t.plus - t.minus) < 1e-9 ? ` ±${tv(t.plus)}` : ` +${tv(t.plus)}/−${tv(t.minus)}`;
+  // Both units: the other one in brackets after the size.
+  const other = unit === "in" ? "mm" : "in";
+  const dual = style.dual && dim.type !== "angle" ? ` [${sign}${lengthNumber(value, other)}]` : "";
+  return `${dim.prefix ?? ""}${base}${tol}${dual}${dim.suffix ?? ""}`;
 }
 
 /** How far (paper mm) a number has to be lifted off its line before it counts as moved off it. */
@@ -250,8 +303,48 @@ export interface DimDrawing {
  * Draw a dimension on the sheet. `at` turns a view point into sheet
  * millimetres; `value` is what it measures.
  */
-export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: number, callout?: string[] | null): DimDrawing {
-  const text = dimLabel(dim, value);
+export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: number, callout?: string[] | null, style: DimStyle = {}): DimDrawing {
+  const drawn = drawPlain(dim, r, at, value, callout, style);
+  if (!dim.frame) return drawn;
+  // A box (basic) or a rounded box (inspection) round the number.
+  const texts = drawn.prims.filter((p): p is Extract<Prim, { kind: "text" }> => p.kind === "text");
+  if (texts.length !== 1) return drawn;
+  return { ...drawn, prims: [...drawn.prims, textFrame(texts[0], dim.frame)] };
+}
+
+/** The outline round a dimension's number: a rectangle, or for inspection a box with round ends. */
+export function textFrame(t: Extract<Prim, { kind: "text" }>, kind: "basic" | "inspection"): Prim {
+  const w = textWidth(t.text, t.size);
+  const pad = 0.8;
+  const x0 = (t.anchor === "middle" ? -w / 2 : t.anchor === "end" ? -w : 0) - pad;
+  const x1 = x0 + w + 2 * pad;
+  const y0 = -pad;
+  const y1 = t.size * 0.75 + pad;
+  const local: number[] = [];
+  if (kind === "basic") local.push(x0, y0, x1, y0, x1, y1, x0, y1);
+  else {
+    // Half circles at each end.
+    const rr = (y1 - y0) / 2;
+    const cy = (y0 + y1) / 2;
+    for (let i = 0; i <= 8; i++) {
+      const a = -Math.PI / 2 + (i / 8) * Math.PI;
+      local.push(x1 + rr * Math.cos(a), cy + rr * Math.sin(a));
+    }
+    for (let i = 0; i <= 8; i++) {
+      const a = Math.PI / 2 + (i / 8) * Math.PI;
+      local.push(x0 + rr * Math.cos(a), cy + rr * Math.sin(a));
+    }
+  }
+  const a = ((t.rotate ?? 0) * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const points: number[] = [];
+  for (let i = 0; i < local.length; i += 2) points.push(t.x + local[i] * c - local[i + 1] * s, t.y + local[i] * s + local[i + 1] * c);
+  return { kind: "path", points, closed: true, style: "thin" };
+}
+
+function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: number, callout: string[] | null | undefined, style: DimStyle): DimDrawing {
+  const text = dimLabel(dim, value, style);
   const prims: Prim[] = [];
   if (dim.type === "diameter" || dim.type === "radius") {
     // A hole callout: several lines stacked above the leader's shoulder (prefix on the first, suffix on the last).

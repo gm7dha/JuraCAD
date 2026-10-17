@@ -19,16 +19,16 @@ import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
-import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
+import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gapReport, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { openChain, profileSheet } from "../sheetmetal/profile";
-import { findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
-import { bendSolid, cornerReliefSolid, cutFlatCornerReliefs, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
-import { flatProjection } from "../sheetmetal/flatExport";
+import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type SheetSpec } from "../sheetmetal/sheet";
+import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
+import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import type { CheckResult, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
@@ -65,8 +65,11 @@ interface BuiltPart {
   /** Sheet metal parts: the sheet they're folded from (for flanges and the flat pattern), and the features that made it. */
   sheet?: SheetSpec;
   sheetFeatures?: string[];
-  /** Cuts made in the sheet afterwards, traced on its walls (in each wall's own coordinates), for the flat pattern. */
-  sheetCuts?: { wall: string; lines: [[number, number], [number, number]][] }[];
+  /**
+   * Cuts made in the sheet afterwards, traced on its walls (in each wall's own coordinates) and its bends (`bend`:
+   * the flange whose bend it is, in the bend's unrolled coordinates), for the flat pattern.
+   */
+  sheetCuts?: { wall: string; bend?: string; lines: [[number, number], [number, number]][] }[];
 }
 
 interface ThreadMark {
@@ -560,16 +563,47 @@ export function findHoles(shape: Shape3D): FoundHole[] {
 }
 
 /**
+ * Like replicad's makeProjectedEdges, but leaving out tangent edges (where
+ * faces meet smoothly, e.g. along the sides of a fillet): only sharp edges and
+ * outlines.
+ */
+function projectedEdgesWithoutTangents(shape: Shape3D, camera: ProjectionCamera, withHidden: boolean): { visible: Edge[]; hidden: Edge[] } {
+  const oc = getOC();
+  const algo = new oc.HLRBRep_Algo();
+  const projector = new oc.HLRAlgo_Projector(camera.wrapped);
+  // Mark which edges are smooth (faces meeting at under ~0.1°), so the hidden-line pass can tell them apart.
+  oc.BRepLib.EncodeRegularity(shape.wrapped, 2e-3);
+  const toShape = (() => {
+    algo.Add(shape.wrapped, 0);
+    algo.Projector(projector);
+    algo.Update();
+    algo.Hide();
+    return new oc.HLRBRep_HLRToShape(algo);
+  })();
+  const edges = (c: { IsNull(): boolean }) => (c.IsNull() ? [] : (cast(c as never) as unknown as { edges: Edge[] }).edges);
+  try {
+    const visible = [...edges(toShape.VCompound()), ...edges(toShape.OutLineVCompound())];
+    const hidden = withHidden ? [...edges(toShape.HCompound()), ...edges(toShape.OutLineHCompound())] : [];
+    for (const e of [...visible, ...hidden]) oc.BRepLib.BuildCurves3d(e.wrapped as never);
+    return { visible, hidden };
+  } finally {
+    toShape.delete();
+    projector.delete();
+    algo.delete();
+  }
+}
+
+/**
  * One drawing view: the shape seen along `toward`, with the lines hidden
  * behind it (when asked), its circles for dimensions, and the centre lines of
  * round faces seen from the side (`axes`, in 3D).
  */
-function projectView(shape: Shape3D, kind: string, toward: Vec3, right: Vec3, withHidden: boolean, axes: [Vec3, Vec3][]): ViewProjection {
+function projectView(shape: Shape3D, kind: string, toward: Vec3, right: Vec3, withHidden: boolean, axes: [Vec3, Vec3][], tangent = true): ViewProjection {
   const up = cross3(toward, right);
   const flat = (p: Vec3): [number, number] => [dot3(p, right), dot3(p, up)];
   const camera = new ProjectionCamera([0, 0, 0], toward, right);
   try {
-    const { visible, hidden } = makeProjectedEdges(shape, camera, withHidden);
+    const { visible, hidden } = tangent ? makeProjectedEdges(shape, camera, withHidden) : projectedEdgesWithoutTangents(shape, camera, withHidden);
     const out: ViewProjection = { kind, visible: [], hidden: [], circles: [], points: [], bounds: null };
     let lo = [Infinity, Infinity];
     let hi = [-Infinity, -Infinity];
@@ -861,8 +895,8 @@ function outwardShell(shape: Shape3D, open: Face[], thickness: number): Shape3D 
 
 const OUTWARD_FAILED = "Couldn't build walls round the outside of this part. Try putting the walls inside instead (untick Walls outside).";
 const OUTWARD_APART =
-  "With those faces left open, the walls outside would come apart into separate pieces (where the open face meets the part's other faces). Leave a different face open, or put the walls inside instead (untick Walls outside).";
-const OUTWARD_OPEN_FAILED = "Couldn't build walls round the outside with those faces left open. Try leaving different faces open, or put the walls inside instead (untick Walls outside).";
+  "With those faces left open, the walls outside would come apart into separate pieces (where the open face meets the part's other faces). Leave a different face open, or put the walls inside instead (untick Walls outside). Where a gap or slot is narrower than twice the wall thickness, thinner walls may help.";
+const OUTWARD_OPEN_FAILED = "Couldn't build walls round the outside with those faces left open. Try leaving different faces open, or put the walls inside instead (untick Walls outside). Where a gap or slot is narrower than twice the wall thickness, thinner walls may help.";
 const OUTWARD_CURVED_OPEN = "Walls outside can only leave flat faces open, not curved ones. Leave a flat face open, or put the walls inside instead (untick Walls outside).";
 
 /**
@@ -1199,12 +1233,34 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       if (!picks.length) throw new Error("Click the edges round the opening to fill (on any parts).");
       const edges: Edge[] = [];
       try {
+        const supports: (Face | null)[] = [];
+        const allFaces: Face[] = [];
         for (const partId of new Set(picks.map((p) => p.partId))) {
           const part = parts.find((p) => p.id === partId);
           if (!part) throw new Error("A part the edges were on no longer exists. Edit this and pick the edges again.");
-          edges.push(...findPickedEdges(part.shape, picks.filter((p) => p.partId === partId)));
+          const found = findPickedEdges(part.shape, picks.filter((p) => p.partId === partId));
+          edges.push(...found);
+          if (feature.continuity) {
+            // The face beside each edge, to meet smoothly.
+            const faces = facesOf(part.shape);
+            allFaces.push(...faces);
+            for (const edge of found) {
+              supports.push(
+                faces.find((f) => {
+                  const mine = edgesOf(f);
+                  const has = mine.some((e) => e.isSame(edge));
+                  mine.forEach((e) => e.delete());
+                  return has;
+                }) ?? null,
+              );
+            }
+          }
         }
-        return fillEdges(edges);
+        try {
+          return fillEdges(edges, feature.continuity ? { supports } : undefined);
+        } finally {
+          allFaces.forEach((f) => f.delete());
+        }
       } finally {
         edges.forEach((e) => e.delete());
       }
@@ -1550,6 +1606,11 @@ export class GeometryEngine {
       }
       if (feature.type === "tab") {
         const err = this.applyTab(feature, sketches);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
+      if (feature.type === "cornerBreak") {
+        const err = this.applyCornerBreak(feature);
         if (err) featureErrors[feature.id] = err;
         continue;
       }
@@ -1916,10 +1977,18 @@ export class GeometryEngine {
     if (!part.sheet) return;
     let found = false;
     try {
-      for (const wall of foldSheet(part.sheet).walls) {
+      const folded = foldSheet(part.sheet);
+      for (const wall of folded.walls) {
         const lines = wallCutLines(wall, part.sheet.thickness, tool);
         if (!lines.length) continue;
         (part.sheetCuts ??= []).push({ wall: wall.id, lines });
+        found = true;
+      }
+      // Through the bends too (a slot across a fold), unrolled flat.
+      for (const bend of folded.bends) {
+        const lines = bendCutLines(bend, part.sheet.thickness, tool);
+        if (!lines.length) continue;
+        (part.sheetCuts ??= []).push({ wall: bend.parent, bend: bend.flangeId, lines });
         found = true;
       }
     } catch {
@@ -1947,8 +2016,10 @@ export class GeometryEngine {
     for (let i = 0; i < picks.length; i++) {
       const ref = picks[i].ref;
       if (ref.kind !== "edge" || ref.curve !== "LINE") return `${hem ? "Hems fold" : "Flanges bend"} straight edges. Remove the curved edge.`;
-      // Edges of flanges made earlier in this same feature count too.
-      const where = findSheetEdge(foldSheet(spec), spec.thickness, ref.a, ref.b, 0.01);
+      // Edges of flanges made earlier in this same feature count too. (Picked on the part as it was, before this
+      // feature's flanges cut any edges back to sit flush.)
+      const asPicked = { ...spec, flanges: spec.flanges.map((f) => (added.includes(f) && f.position ? { ...f, position: undefined } : f)) };
+      const where = findSheetEdge(foldSheet(asPicked), spec.thickness, ref.a, ref.b, 0.01);
       if (!where) return `One of the edges isn't a free straight edge along the sheet's top or bottom face (or it's already bent). Edit this ${what} and pick it again.`;
       const fl: FlangeSpec = hem
         ? {
@@ -1975,6 +2046,7 @@ export class GeometryEngine {
             ...(feature.closeCorners ? { closeCorners: true } : {}),
             ...(feature.reliefShape && feature.reliefShape !== "rectangle" ? { reliefShape: feature.reliefShape } : {}),
             ...(feature.cornerRelief ? { cornerRelief: feature.cornerRelief } : {}),
+            ...(feature.flangePosition ? { position: feature.flangePosition } : {}),
           };
       added.push(fl);
       spec = { ...spec, flanges: [...spec.flanges, fl] };
@@ -1983,9 +2055,29 @@ export class GeometryEngine {
     const problem = added.map((f) => folded.errors[f.id]).find(Boolean);
     if (problem) return problem;
     const ids = new Set(added.map((f) => f.id));
+    // Walls cut back so the new flanges sit flush: not next to a flange made before (it was bent off the whole edge).
+    const trims = (folded.trims ?? []).filter((t) => ids.has(t.flangeId));
+    for (const t of trims) {
+      const wall = folded.walls.find((w) => w.id === t.wall)!;
+      const fl = added.find((f) => f.id === t.flangeId)!;
+      const k = wall.outline.length;
+      const old = folded.bends.find((b) => b.parent === wall.id && !ids.has(b.flangeId) && (b.edge === (fl.edge + 1) % k || b.edge === (fl.edge - 1 + k) % k));
+      if (old && part.sheetFeatures?.[0] && old.flangeId.startsWith(`${part.sheetFeatures[0]}:`))
+        return "That edge is next to a bend of the sheet, so the flange can't sit flush there. Set the position to “Bend off the edge”.";
+      if (old) return "To sit flush, this flange cuts back the edge next to a flange made earlier. Pick both edges in one Flange (so they're made together), or set the position to “Bend off the edge”.";
+    }
     let pieces: Shape3D[] = [];
     let result: Shape3D | null = null;
+    let base: Shape3D = part.shape;
     try {
+      if (trims.length) {
+        const strips = fusePieces(trims.map((t) => wallSolid({ ...folded.walls.find((w) => w.id === t.wall)!, outline: t.outline, holes: [], tabs: [] }, spec.thickness)))!;
+        try {
+          base = part.shape.cut(strips);
+        } finally {
+          strips.delete();
+        }
+      }
       pieces = [
         ...folded.bends.filter((b) => ids.has(b.flangeId)).map((b) => bendSolid(b)),
         ...folded.walls.filter((w) => ids.has(w.id)).map((w) => wallSolid(w, spec.thickness)),
@@ -1994,7 +2086,7 @@ export class GeometryEngine {
       pieces = [];
       if (!extra) return hem ? "Click the straight edges of the sheet to fold over." : "Click the straight edges of the sheet to bend flanges off.";
       try {
-        result = part.shape.fuse(extra);
+        result = base.fuse(extra);
       } finally {
         extra.delete();
       }
@@ -2024,16 +2116,73 @@ export class GeometryEngine {
       if (!isValidSolid(result)) {
         result.delete();
         return hem
-          ? "The hem runs into the rest of the part. Try a shorter one, or folding it the other way."
-          : "The flange runs into the rest of the part. Try a shorter flange, a different angle, or bending it the other way.";
+          ? "The hem runs into the rest of the part. Shorten its ends (Shorten each end by), or make it shorter."
+          : "The flange runs into the rest of the part. Shorten its ends (Shorten each end by), or try a shorter flange or a different angle.";
       }
     } catch (e) {
       pieces.forEach((p) => p.delete());
       return describeError(e, `Couldn't ${hem ? "fold this hem" : "bend this flange"}.`);
+    } finally {
+      if (base !== part.shape) base.delete();
     }
     part.shape.delete();
     part.shape = result;
     part.sheet = spec;
+    part.featureIds.push(feature.id);
+    part.sheetFeatures = [...(part.sheetFeatures ?? []), feature.id];
+    return null;
+  }
+
+  /** Corner break: outside corners of a sheet metal part's walls rounded or cut off (the flat pattern follows). */
+  private applyCornerBreak(feature: Feature): string | null {
+    const { values, errors } = resolveParams(feature);
+    if (errors.size) return `${feature.breakStyle === "chamfer" ? "Distance" : "Radius"}: ${errors.size}`;
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
+    if (!picks.length) return "Click the short edge through the sheet at each corner to round off.";
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return "A corner break works on one sheet metal part at a time. Remove the corners picked on the other part.";
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these corners were on no longer exists. Edit this and pick the corners again.";
+    if (!part.sheet) return "That isn't a sheet metal part. Corner break rounds the corners of sheet metal; use Fillet on other parts.";
+    const spec = part.sheet;
+    const folded = foldSheet(spec);
+    const kind = feature.breakStyle === "chamfer" ? "chamfer" : "round";
+    const added: CornerBreak[] = [];
+    const cutters: Shape3D[] = [];
+    try {
+      for (let i = 0; i < picks.length; i++) {
+        const ref = picks[i].ref;
+        if (ref.kind !== "edge") continue;
+        const where = findSheetCorner(folded, spec.thickness, ref.a, ref.b, 0.01);
+        if (!where) return "One of the picked edges isn't at a corner of the sheet. Pick the short edge that runs through the sheet, from one face to the other, at an outside corner.";
+        const near = (q: [number, number]) => Math.hypot(q[0] - where.at[0], q[1] - where.at[1]) < 1e-6;
+        if ([...(spec.corners ?? []), ...added].some((x) => x.wall === where.wall && near(x.at))) return "That corner has already been rounded or cut off. Edit the earlier corner break to change it.";
+        const c: CornerBreak = { id: `${feature.id}:${i}`, wall: where.wall, at: where.at, kind, size: values.size };
+        const cut = cornerBreakCut(folded, c);
+        if (typeof cut === "string") return cut;
+        const wall = folded.walls.find((w) => w.id === where.wall)!;
+        cutters.push(wallSolid({ ...wall, outline: cut, holes: [], tabs: [] }, spec.thickness));
+        added.push(c);
+      }
+      const cutter = fusePieces(cutters.splice(0))!;
+      let result: Shape3D;
+      try {
+        result = part.shape.cut(cutter);
+      } finally {
+        cutter.delete();
+      }
+      if (!isValidSolid(result)) {
+        result.delete();
+        return "Couldn't round those corners cleanly. Try a smaller radius.";
+      }
+      part.shape.delete();
+      part.shape = result;
+    } catch (e) {
+      return describeError(e, "Couldn't round those corners.");
+    } finally {
+      cutters.forEach((c) => c.delete());
+    }
+    part.sheet = { ...spec, corners: [...(spec.corners ?? []), ...added] };
     part.featureIds.push(feature.id);
     part.sheetFeatures = [...(part.sheetFeatures ?? []), feature.id];
     return null;
@@ -2080,7 +2229,7 @@ export class GeometryEngine {
     }
     if (solidsOf(solid).length === 0 || !isValidSolid(solid)) {
       solid.delete();
-      return { error: "These surfaces don't close up into a solid — there's a gap somewhere between them. Fill it first." };
+      return { error: gapReport(surfaces.map((p) => p.shape)) };
     }
     for (const p of surfaces) {
       this.parts.splice(this.parts.indexOf(p), 1);
@@ -2112,7 +2261,7 @@ export class GeometryEngine {
       if (part.surface) {
         faces.forEach((f) => f.delete());
         faces = [];
-        solid = thickenSurface(part.shape, values.thickness * (feature.flipSide ? -1 : 1));
+        solid = thickenSurface(part.shape, values.thickness * (feature.flipSide && !feature.bothSides ? -1 : 1), !!feature.bothSides);
         if (feature.operation === "new") {
           // The skin becomes the solid: it's no longer listed as a surface of its own.
           this.parts.splice(this.parts.indexOf(part), 1);
@@ -2137,8 +2286,17 @@ export class GeometryEngine {
       for (const face of faces) {
         if (face.geomType !== "PLANE") throw new Error("Thicken works on flat faces. Remove the curved face.");
         const n = take(face.normalAt());
-        const t = values.thickness * (feature.flipSide ? -1 : 1);
-        const piece = basicFaceExtrusion(face, new Vector([n[0] * t, n[1] * t, n[2] * t])) as Shape3D;
+        const t = values.thickness * (feature.flipSide && !feature.bothSides ? -1 : 1);
+        // Both sides: from half the thickness behind the face to half in front.
+        const from = feature.bothSides ? face.clone().translate([(-n[0] * t) / 2, (-n[1] * t) / 2, (-n[2] * t) / 2]) : face;
+        const v = new Vector([n[0] * t, n[1] * t, n[2] * t]);
+        let piece: Shape3D;
+        try {
+          piece = basicFaceExtrusion(from, v) as Shape3D;
+        } finally {
+          v.delete();
+          if (from !== face) from.delete();
+        }
         if (!solid) solid = piece;
         else {
           const next: Shape3D = solid.fuse(piece);
@@ -2277,7 +2435,8 @@ export class GeometryEngine {
       return describeError(e, "Couldn't find the picked faces.");
     }
     let result: Shape3D | null = null;
-    if (part.surface) {
+    // Delete face on a surface, or leaving the hole open on a solid: the faces just taken away (a solid becomes a surface).
+    if (part.surface || (feature.type === "deleteFace" && feature.leaveOpen)) {
       if (feature.type !== "deleteFace") return `${def.label} works on solid parts; ${part.name} is a surface.`;
       try {
         result = removeFaces(part.shape, faces);
@@ -2289,6 +2448,10 @@ export class GeometryEngine {
       part.shape.delete();
       part.shape = result;
       part.featureIds.push(feature.id);
+      if (!part.surface) {
+        part.surface = true;
+        delete part.sheet;
+      }
       return null;
     }
     try {
@@ -3234,7 +3397,7 @@ export class GeometryEngine {
    * Drawing views: the chosen parts (or an assembly's placed copies) seen from
    * each direction, with the lines hidden behind the part worked out.
    */
-  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sections: SectionRequest[] = [], breakouts: BreakOutRequest[] = []): ViewProjection[] {
+  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sections: SectionRequest[] = [], breakouts: BreakOutRequest[] = [], tangent = true): ViewProjection[] {
     const placed = instances?.length ? this.placeInstances(instances) : [];
     const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts.filter((p) => !p.configured);
     const shapes = placed.length ? placed.map((p) => p.shape) : chosen.map((p) => p.shape);
@@ -3257,7 +3420,7 @@ export class GeometryEngine {
       const out: ViewProjection[] = standard.map((kind) => {
         const { toward, right } = VIEW_CAMERAS[kind];
         // Centre lines of round faces seen from the side (not in the 3D view).
-        return projectView(whole, kind, toward, right, withHidden, kind === "iso" ? [] : (wholeAxes ??= cylinderAxes(whole)));
+        return projectView(whole, kind, toward, right, withHidden, kind === "iso" ? [] : (wholeAxes ??= cylinderAxes(whole)), tangent);
       });
       // Holes seen end-on, for hole callouts (single parts only).
       if (!placed.length) {
@@ -3345,7 +3508,7 @@ export class GeometryEngine {
           } finally {
             cutter.delete();
           }
-          const view = projectView(cut, host, toward, right, withHidden, cylinderAxes(cut));
+          const view = projectView(cut, host, toward, right, withHidden, cylinderAxes(cut), tangent);
           // The faces left at the bottom of each cut, hatched like a section.
           const m = cut.mesh(MESH_TOLERANCES.display);
           const vs = m.vertices;
@@ -3361,6 +3524,9 @@ export class GeometryEngine {
           view.breakLines = rects.map((r) => [r.x0, r.y0, r.x1, r.y0, r.x1, r.y1, r.x0, r.y1, r.x0, r.y0]);
           view.depth = plain.depth;
           view.holes = plain.holes;
+          // Thread symbols stay (the plain view's).
+          if (plain.threadMarks) view.threadMarks = plain.threadMarks;
+          if (plain.sideHoles) view.sideHoles = plain.sideHoles;
           // Keep the plain view's box, so dimensions and other views stay where they were.
           view.bounds = plain.bounds;
           out[at] = view;
@@ -3384,7 +3550,7 @@ export class GeometryEngine {
         }
         if (req.aux) {
           // Auxiliary view: the whole part, looked at square-on to the line.
-          out.push(projectView(whole, req.key, geo.toward, geo.right, withHidden, (wholeAxes ??= cylinderAxes(whole))));
+          out.push(projectView(whole, req.key, geo.toward, geo.right, withHidden, (wholeAxes ??= cylinderAxes(whole)), tangent));
           continue;
         }
         const up = cross3(geo.toward, geo.right);
@@ -3395,7 +3561,7 @@ export class GeometryEngine {
           continue;
         }
         try {
-          const view = projectView(cut.shape, req.key, geo.toward, geo.right, false, cylinderAxes(cut.shape));
+          const view = projectView(cut.shape, req.key, geo.toward, geo.right, false, cylinderAxes(cut.shape), tangent);
           view.cutFaces = cut.faces;
           out.push(view);
         } finally {
@@ -3495,13 +3661,32 @@ export class GeometryEngine {
     return result;
   }
 
+  /**
+   * A sheet metal part laid out flat: its walls (with whatever was cut from
+   * them) laid down, its bends unrolled into strips with any cuts through them,
+   * and corner reliefs cut out. Null if it can't be.
+   */
+  private laidFlat(p: BuiltPart, folded: FoldedSheet): Shape3D | null {
+    if (!p.sheet) return null;
+    const T = p.sheet.thickness;
+    let out = unfoldedSolid(p.shape, folded, T);
+    if (!out) return null;
+    if (folded.cornerReliefs?.length) out = cutFlatCornerReliefs(out, folded, T);
+    const loops = (p.sheetCuts ?? []).flatMap((c) => {
+      const bend = c.bend ? folded.bends.find((b) => b.flangeId === c.bend) : undefined;
+      return bend ? chainLoops(c.lines, 1e-5).map((loop) => loop.map((q) => flatPoint(bend.flat, q))) : [];
+    });
+    if (loops.length) out = cutFlatLoops(out, folded.walls[0].frame, loops, T);
+    return out;
+  }
+
   /** A sheet metal part laid out flat (its walls laid down, bends unrolled into strips), meshed for display. */
   unfold(partId: string): PartMesh | null {
     const part = this.parts.find((p) => p.id === partId);
     if (!part?.sheet) return null;
     let solid: Shape3D | null = null;
     try {
-      solid = unfoldedSolid(part.shape, foldSheet(part.sheet), part.sheet.thickness);
+      solid = this.laidFlat(part, foldSheet(part.sheet));
       if (!solid) return null;
       return this.meshPartShape({ id: part.id, name: part.name, featureIds: [...part.featureIds], shape: solid });
     } catch {
@@ -3597,15 +3782,21 @@ export class GeometryEngine {
       const folded = foldSheet(p.sheet);
       const flat = flatPattern(folded);
       const s = p.sheet;
-      const cuts = (p.sheetCuts ?? []).flatMap((c) => {
-        const wall = folded.walls.find((w) => w.id === c.wall);
-        return wall ? c.lines.map(([a, b]): [[number, number], [number, number]] => [flatPoint(wall.flat, a), flatPoint(wall.flat, b)]) : [];
-      });
+      const cuts = outsideOnly(
+        (p.sheetCuts ?? []).flatMap((c) => {
+          if (c.bend) {
+            const bend = folded.bends.find((b) => b.flangeId === c.bend);
+            if (!bend) return [];
+            return bendCutToFlat(bend, c.lines);
+          }
+          const wall = folded.walls.find((w) => w.id === c.wall);
+          return wall ? c.lines.map(([a, b]): [[number, number], [number, number]] => [flatPoint(wall.flat, a), flatPoint(wall.flat, b)]) : [];
+        }),
+      );
       const out: FlatPatternData = { ...flat, cuts, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) };
-      // With tabs or corner reliefs the outline isn't a simple walk round the walls: take it from the part laid out flat.
-      if (s.tabs?.length || folded.cornerReliefs?.length) {
-        const laid = unfoldedSolid(p.shape, folded, s.thickness);
-        const unfolded = laid && folded.cornerReliefs?.length ? cutFlatCornerReliefs(laid, folded, s.thickness) : laid;
+      // With tabs, corner reliefs or cuts the outline isn't a simple walk round the walls: take it from the part laid out flat.
+      if (s.tabs?.length || s.corners?.length || folded.cornerReliefs?.length || p.sheetCuts?.length) {
+        const unfolded = this.laidFlat(p, folded);
         if (unfolded) {
           try {
             out.boundary = flatBoundary(unfolded, folded.walls[0].frame);

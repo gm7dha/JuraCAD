@@ -5,7 +5,7 @@
  * surface part can be thickened into a solid, or several can be closed up
  * into one (Enclose). All with OpenCascade.
  */
-import { basicFaceExtrusion, cast, getOC, loft, makeCompound, measureShapeVolumeProperties, measureVolume, makeNonPlanarFace, makeSolid, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
+import { basicFaceExtrusion, cast, getOC, loft, makeBSplineApproximation, makeCompound, makePolygon, measureShapeVolumeProperties, measureVolume, makeNonPlanarFace, makeSolid, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, type Chain } from "../sketch/regions";
@@ -169,9 +169,12 @@ export function loftSurface(sections: { plane: SketchPlane; data: SketchData; na
 
 /**
  * A face spanning a closed ring of edges (picked on parts): flat if they lie
- * in a plane, otherwise a smooth patch (OpenCascade's filling).
+ * in a plane, otherwise a smooth patch (OpenCascade's filling). With
+ * `match`, the patch meets the faces beside the edges (`supports`, one per
+ * edge, or null where there's none) smoothly — tangent to them — instead of
+ * at an angle.
  */
-export function fillEdges(edges: Edge[]): Shape3D {
+export function fillEdges(edges: Edge[], match?: { supports: (Face | null)[] }): Shape3D {
   if (edges.length === 0) throw new Error("Click the edges round the opening to fill.");
   let wire: Wire;
   try {
@@ -182,6 +185,10 @@ export function fillEdges(edges: Edge[]): Shape3D {
   if (!(getOC() as unknown as { BRep_Tool: { IsClosed(w: unknown): boolean } }).BRep_Tool.IsClosed(wire.wrapped)) {
     release(wire);
     throw new Error("The edges don't close up into a ring — there's a gap. Pick every edge round the opening.");
+  }
+  if (match && match.supports.some((f) => !!f)) {
+    release(wire);
+    return smoothFill(edges, match.supports);
   }
   try {
     try {
@@ -194,6 +201,76 @@ export function fillEdges(edges: Edge[]): Shape3D {
   } finally {
     release(wire);
   }
+}
+
+/**
+ * OpenCascade's filling through the edges, tangent to the face beside each
+ * one. Where the faces leave the edges steeply (a tube's
+ * walls going straight up from its rim), the patch is first pulled out by a
+ * point above the middle of the opening, or it can't bend round far enough.
+ */
+function smoothFill(edges: Edge[], supports: (Face | null)[]): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const order = oc.GeomAbs_Shape.GeomAbs_G1;
+  // Where the faces round the opening are heading: on past each edge, averaged; and the opening's middle and size.
+  const pts: Vec3[] = [];
+  const heading: Vec3 = [0, 0, 0];
+  edges.forEach((edge, i) => {
+    const face = supports[i];
+    if (face) {
+      const { at, out } = acrossEdge(edge, face, 8);
+      pts.push(...at.slice(0, -1));
+      out.forEach((d) => ((heading[0] += d[0]), (heading[1] += d[1]), (heading[2] += d[2])));
+    } else for (let k = 0; k < 8; k++) pts.push(take(edge.pointAt(k / 8)));
+  });
+  const mid: Vec3 = [0, 1, 2].map((k) => pts.reduce((sum, p) => sum + p[k], 0) / pts.length) as Vec3;
+  const size = pts.reduce((sum, p) => sum + Math.hypot(p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]), 0) / pts.length;
+  const along = Math.hypot(...heading);
+  const attempt = (guide: Vec3 | null): Shape3D | null => {
+    const filling = new oc.BRepOffsetAPI_MakeFilling(3, 15, 2, false, 1e-5, 1e-4, 1e-2, 0.1, 8, 9);
+    try {
+      edges.forEach((edge, i) => {
+        const face = supports[i];
+        if (face) filling.Add(edge.wrapped, face.wrapped, order, true);
+        else filling.Add(edge.wrapped, oc.GeomAbs_Shape.GeomAbs_C0, true);
+      });
+      if (guide) {
+        const p = new oc.gp_Pnt(guide[0], guide[1], guide[2]);
+        filling.Add(p);
+        p.delete();
+      }
+      filling.Build();
+      if (!filling.IsDone()) return null;
+      // Is it smooth where it meets the faces (within about 3°)?
+      if (filling.G1Error() > 0.05) return null;
+      const out = cast(filling.Shape()) as Shape3D;
+      const faces = facesOf(out);
+      const any = faces.length > 0;
+      faces.forEach((f) => f.delete());
+      if (!any) {
+        out.delete();
+        return null;
+      }
+      return out;
+    } catch {
+      return null;
+    } finally {
+      filling.delete();
+    }
+  };
+  let out = attempt(null);
+  // Pulled out towards where the faces head, by about the opening's size (a little less: a dome, not a cone).
+  for (const reach of [0.7, 0.4, 1]) {
+    if (out || along < 1e-9) break;
+    out = attempt([mid[0] + (heading[0] / along) * size * reach, mid[1] + (heading[1] / along) * size * reach, mid[2] + (heading[2] / along) * size * reach]);
+  }
+  if (!out)
+    throw new Error(
+      "Couldn't fit a smooth surface to those edges and the faces beside them. If the opening has sharp corners (like the top of a box), round them first (Fillet) — a smooth patch can't meet two faces at a sharp corner. Or use “Just meet the edges”.",
+    );
+  return out;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** Shells to thicken one by one: each shell of the shape, or a lone face as its own. */
@@ -286,14 +363,15 @@ function solidFrom(pieces: Shape3D[]): Shape3D {
 
 /**
  * A surface (skin) made into a solid `thickness` thick (on the side its faces
- * point to; minus for the other side): the skin, a copy pushed out by the
- * thickness, and walls between their rims, closed up into a solid.
+ * point to; minus for the other side; or, `bothSides`, half each way): the
+ * skin (or its copy pushed out half way), a copy pushed out by the thickness,
+ * and walls between their rims, closed up into a solid.
  */
-export function thickenSurface(shape: Shape3D, thickness: number): Shape3D {
+export function thickenSurface(shape: Shape3D, thickness: number, bothSides = false): Shape3D {
   if (!(Math.abs(thickness) > 1e-9)) throw new Error("Thickness: enter how thick to make it.");
   const pieces: Shape3D[] = [];
   try {
-    for (const shell of shellsOf(shape)) pieces.push(thickenShell(shell, thickness));
+    for (const shell of shellsOf(shape)) pieces.push(thickenShell(shell, thickness, bothSides));
     const out = pieces.length === 1 ? pieces[0] : (makeCompound(pieces) as Shape3D);
     pieces.length = 0;
     return out;
@@ -333,29 +411,39 @@ function offsetShape(shape: Shape3D, distance: number, failed: string): { offset
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
-function thickenShell(shell: Shape3D, thickness: number): Shape3D {
+type OffsetBuilder = ReturnType<typeof offsetShape>["builder"];
+
+function thickenShell(shell: Shape3D, thickness: number, bothSides = false): Shape3D {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const failed = "Couldn't thicken this surface. Try a smaller thickness, or the other side.";
   const rim = freeEdges(shell);
   const walls: Shape3D[] = [];
-  const first = offsetShape(shell, thickness, failed);
-  let offset: Shape3D | null = first.offset;
-  const builder = first.builder;
+  // The two faces of the solid: the skin itself and a copy pushed out by the thickness, or copies half way out either side.
+  const sides: { shape: Shape3D; builder: OffsetBuilder | null }[] = [];
+  const offsets = bothSides ? [thickness / 2, -thickness / 2] : [thickness];
   try {
+    if (!bothSides) sides.push({ shape: shell, builder: null });
+    for (const d of offsets) {
+      const made = offsetShape(shell, d, failed);
+      sides.push({ shape: made.offset, builder: made.builder });
+    }
     if (rim.length === 0) {
       // A closed skin: the space between the two. Plus is outwards, whichever way its faces point.
-      const inner = solidFrom([shell]);
-      let outer = solidFrom([offset]);
+      const [a, b] = sides;
+      const inner = solidFrom([a.shape]);
+      let outer = solidFrom([b.shape]);
       try {
-        if (signedVolume(outer) > signedVolume(inner) !== thickness > 0) {
+        // Which one is outside depends on which way the faces point; Both sides doesn't mind.
+        if (!bothSides && signedVolume(outer) > signedVolume(inner) !== thickness > 0) {
           outer.delete();
-          offset.delete();
-          offset = null;
           const again = offsetShape(shell, -thickness, failed);
           again.builder.delete();
-          offset = again.offset;
-          outer = solidFrom([offset]);
+          b.builder?.delete();
+          b.shape.delete();
+          b.shape = again.offset;
+          b.builder = null;
+          outer = solidFrom([b.shape]);
         }
         const [small, big] = signedVolume(inner) < signedVolume(outer) ? [inner, outer] : [outer, inner];
         const between = big.cut(small);
@@ -371,40 +459,48 @@ function thickenShell(shell: Shape3D, thickness: number): Shape3D {
         outer.delete();
       }
     }
-    // A wall between each rim edge and where the offset moved it to.
-    for (const edge of rim) {
-      const images = builder.Generated(edge.wrapped);
+    // A wall between where each rim edge went on one side and where it went on the other.
+    const imageOf = (side: (typeof sides)[number], edge: Edge): { edge: Edge; own: boolean } => {
+      if (!side.builder) return { edge, own: false };
+      const images = side.builder.Generated(edge.wrapped);
       try {
         if (images.Size() === 0) throw new Error(failed);
-        const image = cast(images.First() as never) as Edge;
-        const ruled = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
-        try {
-          const w1 = new oc.BRepBuilderAPI_MakeWire(edge.wrapped);
-          const w2 = new oc.BRepBuilderAPI_MakeWire(image.wrapped);
-          ruled.AddWire(w1.Wire());
-          ruled.AddWire(w2.Wire());
-          w1.delete();
-          w2.delete();
-          ruled.Build();
-          if (!ruled.IsDone()) throw new Error(failed);
-          walls.push(cast(ruled.Shape()) as Shape3D);
-        } finally {
-          ruled.delete();
-          image.delete();
-        }
+        return { edge: cast(images.First() as never) as Edge, own: true };
       } finally {
         images.delete();
+      }
+    };
+    for (const edge of rim) {
+      const one = imageOf(sides[0], edge);
+      const two = imageOf(sides[1], edge);
+      const ruled = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
+      try {
+        const w1 = new oc.BRepBuilderAPI_MakeWire(one.edge.wrapped);
+        const w2 = new oc.BRepBuilderAPI_MakeWire(two.edge.wrapped);
+        ruled.AddWire(w1.Wire());
+        ruled.AddWire(w2.Wire());
+        w1.delete();
+        w2.delete();
+        ruled.Build();
+        if (!ruled.IsDone()) throw new Error(failed);
+        walls.push(cast(ruled.Shape()) as Shape3D);
+      } finally {
+        ruled.delete();
+        if (one.own) one.edge.delete();
+        if (two.own) two.edge.delete();
       }
     }
     try {
       // Walls that meet flat along an edge are merged into one face (fewer, cleaner faces to pick).
-      return solidFrom([shell, offset, ...walls]).simplify();
+      return solidFrom([...sides.map((x) => x.shape), ...walls]).simplify();
     } catch {
       throw new Error(failed);
     }
   } finally {
-    builder.delete();
-    offset?.delete();
+    for (const side of sides) {
+      side.builder?.delete();
+      if (side.shape !== shell) side.shape.delete();
+    }
     rim.forEach((e) => e.delete());
     walls.forEach((w) => w.delete());
   }
@@ -417,7 +513,34 @@ export function encloseSurfaces(shapes: Shape3D[]): Shape3D {
   try {
     return solidFrom(shapes);
   } catch {
-    throw new Error("These surfaces don't close up into a solid — there's a gap somewhere between them. Fill it first.");
+    throw new Error(gapReport(shapes));
+  }
+}
+
+const roundTo = (x: number) => {
+  const r = Math.round(x * 10) / 10;
+  return Object.is(r, -0) ? 0 : r;
+};
+
+/**
+ * Why surfaces don't close up: how many edges are left open once they're
+ * sewn together (only one face runs along them), and where the first is.
+ */
+export function gapReport(shapes: Shape3D[]): string {
+  let open: Edge[] = [];
+  let skin: Shape3D | null = null;
+  try {
+    skin = sewn(shapes);
+    open = freeEdges(skin);
+    if (!open.length) return "These surfaces don't close up into a solid — they cross or overlap somewhere. Split or trim them so they only meet at their edges.";
+    const at = take(open[0].pointAt(0.5)).map(roundTo);
+    const total = open.reduce((sum, e) => sum + e.length, 0);
+    return `These surfaces don't close up into a solid: ${open.length === 1 ? "one edge is" : `${open.length} edges are`} left open (${Math.round(total * 10) / 10} mm in all), for example near (${at.join(", ")}). Fill the gap or extend the surfaces to meet, then try again.`;
+  } catch {
+    return "These surfaces don't close up into a solid — there's a gap somewhere between them. Fill it first.";
+  } finally {
+    open.forEach((e) => e.delete());
+    skin?.delete();
   }
 }
 
@@ -467,16 +590,105 @@ export function removeFaces(shape: Shape3D, faces: Face[]): Shape3D {
   }
 }
 
+/** How far a point is from a face (OpenCascade's distance between shapes). */
+function distanceToFace(face: Face, p: Vec3): number {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const pnt = new oc.gp_Pnt(p[0], p[1], p[2]);
+  const vertex = new oc.BRepBuilderAPI_MakeVertex(pnt);
+  const dist = new oc.BRepExtrema_DistShapeShape();
+  try {
+    dist.LoadS1(vertex.Vertex());
+    dist.LoadS2(face.wrapped);
+    return dist.Perform() && dist.NbSolution() > 0 ? dist.Value() : Infinity;
+  } finally {
+    dist.delete();
+    vertex.delete();
+    pnt.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * Along an edge of a face: points on it, and at each the direction straight
+ * on across the edge, in the surface and away from the face.
+ */
+function acrossEdge(edge: Edge, face: Face, samples: number): { at: Vec3[]; out: Vec3[] } {
+  const at: Vec3[] = [];
+  const out: Vec3[] = [];
+  for (let i = 0; i <= samples; i++) {
+    const s = i / samples;
+    const m = take(edge.pointAt(s));
+    const t = take(edge.tangentAt(s));
+    let n: Vec3;
+    try {
+      n = take(face.normalAt(m));
+    } catch {
+      throw new Error("Couldn't tell which way the surface goes at that edge.");
+    }
+    at.push(m);
+    out.push(unit(cross(t, n)));
+  }
+  // Which way is away from the face: a little way one side is on it, the other side isn't. Decided where it's
+  // clearest (the middle), then kept the same all along.
+  const mid = Math.floor(samples / 2);
+  const eps = 1e-2;
+  const [m, d] = [at[mid], out[mid]];
+  const ahead = distanceToFace(face, [m[0] + d[0] * eps, m[1] + d[1] * eps, m[2] + d[2] * eps]);
+  const behind = distanceToFace(face, [m[0] - d[0] * eps, m[1] - d[1] * eps, m[2] - d[2] * eps]);
+  let flip = ahead < behind;
+  if (Math.abs(ahead - behind) < 1e-6) {
+    // Can't tell from the face (a sliver): away from its middle.
+    const c = take(face.center);
+    flip = d[0] * (m[0] - c[0]) + d[1] * (m[1] - c[1]) + d[2] * (m[2] - c[2]) < 0;
+  }
+  if (flip) out[mid] = [-d[0], -d[1], -d[2]];
+  const follow = (i: number, j: number) => {
+    const [a, b] = [out[i], out[j]];
+    if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] < 0) out[i] = [-a[0], -a[1], -a[2]];
+  };
+  for (let i = mid + 1; i <= samples; i++) follow(i, i - 1);
+  for (let i = mid - 1; i >= 0; i--) follow(i, i + 1);
+  return { at, out };
+}
+
+/** A straight-ruled strip between an edge and a curve through `to` (the same number of points as along the edge). */
+function stripTo(edge: Edge, to: Vec3[]): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const far = makeBSplineApproximation(to, { tolerance: 1e-5, degMax: 5, degMin: 3 });
+  const ruled = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
+  try {
+    const w1 = new oc.BRepBuilderAPI_MakeWire(edge.wrapped);
+    const w2 = new oc.BRepBuilderAPI_MakeWire(far.wrapped);
+    ruled.AddWire(w1.Wire());
+    ruled.AddWire(w2.Wire());
+    w1.delete();
+    w2.delete();
+    ruled.Build();
+    if (!ruled.IsDone()) throw new Error("Couldn't extend this surface.");
+    return cast(ruled.Shape()) as Shape3D;
+  } finally {
+    ruled.delete();
+    far.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
 /**
  * A surface grown out past its free edges: each picked edge is pushed
- * `distance` further on, straight along the surface's tangent there, and the
- * new strip is joined on.
+ * `distance` further on, straight along the surface's tangent at every point
+ * along it (so a cone's rim carries on as a cone), and the new strip is joined
+ * on. Where two extended edges of a face meet at a corner, the corner between
+ * their strips is filled in too, as Onshape does.
  */
 export function extendSurface(shape: Shape3D, edges: Edge[], distance: number): Shape3D {
   if (!edges.length) throw new Error("Click the edges of the surface to extend.");
   if (!(distance > 0)) throw new Error("Distance: enter how far to extend.");
   const faces = facesOf(shape);
   const strips: Shape3D[] = [];
+  /** Each extended edge's ends: where they are, which way the strip goes there, and which way the edge runs on past them. */
+  const ends: { face: Face; p: Vec3; d: Vec3; on: Vec3 }[] = [];
   try {
     for (const edge of edges) {
       const hash = edge.hashCode;
@@ -488,29 +700,77 @@ export function extendSurface(shape: Shape3D, edges: Edge[], distance: number): 
         return has;
       });
       if (!face) throw new Error("A picked edge isn't on this surface. Pick its own edges.");
-      const m = take(edge.pointAt(0.5));
-      const t = take(edge.tangentAt(0.5));
-      let n: Vec3;
-      try {
-        n = take(face.normalAt(m));
-      } catch {
-        throw new Error("Couldn't tell which way the surface goes at that edge.");
+      const sameAll = (out: Vec3[]) => out.every((d) => d[0] * out[0][0] + d[1] * out[0][1] + d[2] * out[0][2] > 1 - 1e-9);
+      // A straight edge usually goes the same way all along; check a few points first.
+      let { at, out } = acrossEdge(edge, face, edge.geomType === "LINE" ? 2 : 48);
+      if (at.length === 3 && !sameAll(out)) ({ at, out } = acrossEdge(edge, face, 48));
+      const same = sameAll(out);
+      if (same) {
+        // The same way all along (a straight edge on a flat face, or a curve whose surface carries straight on from it, like the top of an upright wall): pushed straight out.
+        const d = out[0];
+        const v = new Vector([d[0] * distance, d[1] * distance, d[2] * distance]);
+        try {
+          strips.push(asIs(basicFaceExtrusion(edge as unknown as Face, v)));
+        } finally {
+          v.delete();
+        }
+      } else {
+        strips.push(asIs(stripTo(edge, at.map((p, i) => [p[0] + out[i][0] * distance, p[1] + out[i][1] * distance, p[2] + out[i][2] * distance]))));
       }
-      // Across the edge, in the surface, away from the face.
-      let d = unit(cross(t, n));
-      const c = take(face.center);
-      if (d[0] * (m[0] - c[0]) + d[1] * (m[1] - c[1]) + d[2] * (m[2] - c[2]) < 0) d = [-d[0], -d[1], -d[2]];
-      const v = new Vector([d[0] * distance, d[1] * distance, d[2] * distance]);
-      try {
-        strips.push(asIs(basicFaceExtrusion(edge as unknown as Face, v)));
-      } finally {
-        v.delete();
+      const t0 = unit(take(edge.tangentAt(0)));
+      const t1 = unit(take(edge.tangentAt(1)));
+      const last = at.length - 1;
+      if (Math.hypot(at[0][0] - at[last][0], at[0][1] - at[last][1], at[0][2] - at[last][2]) > 1e-6) {
+        ends.push({ face, p: at[0], d: out[0], on: [-t0[0], -t0[1], -t0[2]] });
+        ends.push({ face, p: at[last], d: out[last], on: t1 });
       }
     }
+    // Corners: two extended edges of one face meeting at a point, their strips going different ways.
+    const corners: Shape3D[] = [];
+    for (let i = 0; i < ends.length; i++) {
+      for (let j = i + 1; j < ends.length; j++) {
+        const a = ends[i];
+        const b = ends[j];
+        if (a.face !== b.face || Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1], a.p[2] - b.p[2]) > 1e-6) continue;
+        if (a.d[0] * b.d[0] + a.d[1] * b.d[1] + a.d[2] * b.d[2] > 1 - 1e-6) continue;
+        const pa: Vec3 = [a.p[0] + a.d[0] * distance, a.p[1] + a.d[1] * distance, a.p[2] + a.d[2] * distance];
+        const pb: Vec3 = [b.p[0] + b.d[0] * distance, b.p[1] + b.d[1] * distance, b.p[2] + b.d[2] * distance];
+        // Where the strips' far edges, carried on past the corner, meet (a sharp corner); else just close the gap.
+        const x = meetPoint(pa, a.on, pb, b.on, distance);
+        const pts = x ? [a.p, pa, x, pb] : [a.p, pa, pb];
+        try {
+          corners.push(asIs(makePolygon(pts)));
+        } catch {
+          // Not flat: two triangles.
+          if (x) corners.push(asIs(makePolygon([a.p, pa, x])), asIs(makePolygon([a.p, x, pb])));
+        }
+      }
+    }
+    strips.push(...corners);
     return sewn([shape, ...strips]);
   } finally {
     release(...faces, ...strips);
   }
+}
+
+/** Where the lines p + s·u and q + t·v come closest, if that's ahead along both (and not too far off). */
+function meetPoint(p: Vec3, u: Vec3, q: Vec3, v: Vec3, scale: number): Vec3 | null {
+  // Least squares for s and t.
+  const w: Vec3 = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+  const a = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+  const b = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const c = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+  const d = u[0] * w[0] + u[1] * w[1] + u[2] * w[2];
+  const e = v[0] * w[0] + v[1] * w[1] + v[2] * w[2];
+  const den = a * c - b * b;
+  if (Math.abs(den) < 1e-9) return null;
+  const s = (b * e - c * d) / den;
+  const t = (a * e - b * d) / den;
+  if (!(s > 1e-6 && t > 1e-6) || s > 20 * scale || t > 20 * scale) return null;
+  const x: Vec3 = [p[0] + u[0] * s, p[1] + u[1] * s, p[2] + u[2] * s];
+  const y: Vec3 = [q[0] + v[0] * t, q[1] + v[1] * t, q[2] + v[2] * t];
+  if (Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]) > 1e-3 * scale) return null;
+  return [(x[0] + y[0]) / 2, (x[1] + y[1]) / 2, (x[2] + y[2]) / 2];
 }
 
 const take = (v: { x: number; y: number; z: number; delete(): void }): Vec3 => {

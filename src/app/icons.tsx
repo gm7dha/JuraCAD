@@ -370,6 +370,12 @@ export const Icons = {
       <path d="M3 18h13a6 6 0 0 0 0-12H9" />
     </Svg>
   ),
+  CornerBreak: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 15l8 4 6-3a3 3 0 0 0 1-5l-5-2z" />
+      <path d="M3 15v1.5l8 4 6-3a3 3 0 0 0 1-4" />
+    </Svg>
+  ),
   Unfold: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 17h9V7" />

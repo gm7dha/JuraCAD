@@ -26,7 +26,20 @@ export const VIEW_LABELS: Record<ViewKind, string> = {
   detail: "Detail",
   flat: "Flat pattern (sheet metal)",
 };
-export const SHEET_SIZES: SheetSize[] = ["A4", "A3", "A2"];
+export const SHEET_SIZES: SheetSize[] = ["A4", "A3", "A2", "A1", "A0", "ANSI A", "ANSI B", "ANSI C", "ANSI D", "ANSI E"];
+/** What each sheet size is, for the menu. */
+export const SHEET_LABELS: Record<SheetSize, string> = {
+  A4: "A4 (297 × 210 mm)",
+  A3: "A3 (420 × 297 mm)",
+  A2: "A2 (594 × 420 mm)",
+  A1: "A1 (841 × 594 mm)",
+  A0: "A0 (1189 × 841 mm)",
+  "ANSI A": "ANSI A / Letter (11 × 8.5 in)",
+  "ANSI B": "ANSI B / Tabloid (17 × 11 in)",
+  "ANSI C": "ANSI C (22 × 17 in)",
+  "ANSI D": "ANSI D (34 × 22 in)",
+  "ANSI E": "ANSI E (44 × 34 in)",
+};
 
 /** The views a new drawing starts with: the usual three, plus a 3D view. */
 export const DEFAULT_VIEWS: ViewKind[] = ["front", "top", "right", "iso"];
@@ -39,11 +52,14 @@ export function nextDrawingName(doc: PartSmithDocument): string {
 }
 
 export function addDrawing(doc: PartSmithDocument, id: string, source: Drawing["source"]): PartSmithDocument {
+  // Designs in inches start on US paper, arranged the US way (third-angle).
+  const us = doc.units === "in";
   const drawing: Drawing = {
     id,
     name: nextDrawingName(doc),
     source,
-    sheet: "A4",
+    sheet: us ? "ANSI A" : "A4",
+    ...(us ? { projection: "third" as const } : {}),
     hiddenLines: true,
     views: DEFAULT_VIEWS.map((kind) => ({ id: `${id}-${kind}`, kind })),
     title: {},
@@ -72,13 +88,29 @@ export function renameDrawing(doc: PartSmithDocument, id: string, name: string):
 }
 
 /** Show or hide one kind of view (shown views keep their place; a hidden view's dimensions go with it). */
-export function toggleView(d: Drawing, kind: ViewKind): Drawing {
+export function toggleView(drawing: Drawing, kind: ViewKind): Drawing {
+  // (The room kept for dimensions was worked out for the old views: dropped.)
+  const d = withoutFit(drawing);
   const has = d.views.some((v) => v.kind === kind);
   if (!has) return { ...d, views: [...d.views, { id: `${d.id}-${kind}`, kind }] };
   const out: Drawing = { ...d, views: d.views.filter((v) => v.kind !== kind) };
   const dims = (d.dimensions ?? []).filter((x) => x.view !== kind);
   if (dims.length) out.dimensions = dims;
   else delete out.dimensions;
+  return out;
+}
+
+/**
+ * The views to ask the geometry engine for: the drawing's own views (sections
+ * and details are asked for separately), plus the view each detail is taken
+ * from — even when that view is hidden — so a detail doesn't vanish when its
+ * view is unticked.
+ */
+export function projectionKinds(d: Pick<Drawing, "views" | "details">): ViewKind[] {
+  const out: ViewKind[] = [];
+  const add = (k: ViewKind) => !out.includes(k) && out.push(k);
+  for (const v of d.views) if (v.kind !== "section" && v.kind !== "detail") add(v.kind);
+  for (const x of d.details ?? []) if (d.views.some((v) => v.kind === "detail" && v.detail === x.id)) add(x.host);
   return out;
 }
 
@@ -117,9 +149,29 @@ export function removeNote(d: Drawing, id: string): Drawing {
   return left.length ? { ...rest, notes: left } : rest;
 }
 
-/** Put every view back in its automatic place. */
+/**
+ * Put just the lined-up views (front, top, sides, back, bottom) back in their
+ * automatic places — e.g. after switching first/third angle — keeping where
+ * the 3D, section, detail and flat pattern views were moved to.
+ */
+export function arrangeLinedUp(d: Drawing): Drawing {
+  const lined = new Set<ViewKind>(["front", "top", "right", "left", "back", "bottom"]);
+  return { ...withoutFit(d), views: d.views.map(({ at, ...v }) => (lined.has(v.kind) || !at ? v : { ...v, at })) };
+}
+
+/**
+ * A drawing without its saved room for dimensions (Drawing.fit) — for when
+ * the sheet, the views or how they're arranged change, so it isn't stale.
+ */
+export function withoutFit(d: Drawing): Drawing {
+  if (!d.fit) return d;
+  const { fit: _old, ...rest } = d;
+  return rest;
+}
+
+/** Put every view back in its automatic place (dropping any saved room for dimensions). */
 export function arrangeViews(d: Drawing): Drawing {
-  return { ...d, views: d.views.map(({ at: _at, ...v }) => v) };
+  return { ...withoutFit(d), views: d.views.map(({ at: _at, ...v }) => v) };
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +260,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
     const shownSections = sections.filter((s) => views.some((v) => v.kind === "section" && v.section === s.id));
     const t = (r.title ?? {}) as Record<string, unknown>;
     const title: Drawing["title"] = {};
-    for (const k of ["title", "drawnBy", "material", "notes"] as const) {
+    for (const k of ["title", "drawnBy", "material", "notes", "partNumber", "company"] as const) {
       const v = text(t[k], k === "notes" ? 1000 : 200);
       if (v) title[k] = v;
     }
@@ -247,6 +299,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       name: text(r.name, 80)?.trim() || "Drawing",
       source,
       sheet: SHEET_SIZES.includes(r.sheet as SheetSize) ? (r.sheet as SheetSize) : "A4",
+      ...(r.projection === "third" ? { projection: "third" as const } : {}),
       ...(num(r.scale) && (r.scale as number) > 0 ? { scale: r.scale as number } : {}),
       hiddenLines: r.hiddenLines !== false,
       views,
@@ -262,10 +315,27 @@ export function parseDrawings(raw: unknown): Drawing[] {
       ...(r.holeTable === true ? { holeTable: true } : {}),
       ...(r.balloons === false ? { balloons: false } : {}),
       ...(r.exploded === true ? { exploded: true } : {}),
+      ...(isPlaces(r.places) ? { places: r.places as number } : {}),
+      ...(r.dualUnits === true ? { dualUnits: true } : {}),
+      ...(r.tangentEdges === false ? { tangentEdges: false } : {}),
+      ...parseFit(r.fit),
     });
   }
   return out;
 }
+
+/** A saved Fit to sheet plan (see Drawing.fit). */
+function parseFit(raw: unknown): Pick<Drawing, "fit"> {
+  if (!raw || typeof raw !== "object") return {};
+  const r = raw as Record<string, unknown>;
+  const gap = num(r.gap) && (r.gap as number) > 0 ? Math.min(40, r.gap as number) : undefined;
+  const fit = { ...(gap ? { gap } : {}), ...(r.down === true ? { down: true as const } : {}) };
+  return Object.keys(fit).length ? { fit } : {};
+}
+
+/** Decimal places a dimension can be set to show. */
+export const PLACES = [0, 1, 2, 3, 4];
+const isPlaces = (v: unknown) => typeof v === "number" && PLACES.includes(v);
 
 const DIM_TYPES = new Set(["horizontal", "vertical", "aligned", "diameter", "radius", "ordinate", "angle"]);
 
@@ -317,6 +387,8 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(typeof r.suffix === "string" && r.suffix ? { suffix: r.suffix.slice(0, 40) } : {}),
     ...(r.callout === true && type === "diameter" ? { callout: true } : {}),
     ...(type === "angle" ? angleParts(r) : {}),
+    ...(isPlaces(r.places) ? { places: r.places as number } : {}),
+    ...(r.frame === "basic" || r.frame === "inspection" ? { frame: r.frame } : {}),
   };
 }
 

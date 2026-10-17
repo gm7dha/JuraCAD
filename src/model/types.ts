@@ -8,7 +8,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -159,6 +159,14 @@ export interface Feature {
   splitDef?: SplitOptions;
   /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
+  /** Delete face: leave the hole open instead of healing it (a solid part becomes a surface). */
+  leaveOpen?: boolean;
+  /** Corner break: round the corners off (missing) or cut them off straight. */
+  breakStyle?: "chamfer";
+  /** Fill: meet the faces beside the edges smoothly (tangent to them) instead of at an angle. */
+  continuity?: "tangent";
+  /** Thicken: half the thickness each side of the face or surface (then which way doesn't matter). */
+  bothSides?: boolean;
   /** Shell: hollow the part closed inside, keeping every face (no opening), whatever faces are picked. (Shell's `flipSide` puts the walls outside the part.) */
   hollow?: boolean;
   /** Flange: close the corners where these flanges meet other full-length right-angle flanges. */
@@ -166,6 +174,8 @@ export interface Feature {
   /** Flange: the shape of the bend relief notches (missing = rectangle) and the relief cut where flanges meet at a corner. */
   reliefShape?: "rectangle" | "round" | "tear";
   cornerRelief?: "round" | "square";
+  /** Flange: where it goes — bent off the edge (missing), or its outside or inside face flush with the edge (the sheet keeps its size). */
+  flangePosition?: "outside" | "inside";
   /**
    * Replace face: the flat face or plane the picked faces are moved onto
    * (null until one is picked), and what a click in the 3D view picks.
@@ -240,7 +250,8 @@ export interface DrawingView {
   at?: [number, number];
 }
 
-export type SheetSize = "A4" | "A3" | "A2";
+/** ISO paper sizes, and the US (ANSI) sizes: A = 11 × 8.5 in (Letter), B = 17 × 11 in, and so on. */
+export type SheetSize = "A4" | "A3" | "A2" | "A1" | "A0" | "ANSI A" | "ANSI B" | "ANSI C" | "ANSI D" | "ANSI E";
 
 /** A drawing tab: views of a part on a sheet, with a title block. */
 export interface Drawing {
@@ -249,12 +260,18 @@ export interface Drawing {
   /** The part drawn (its id), or an assembly (its id). */
   source: { kind: "part" | "assembly"; id: string } | null;
   sheet: SheetSize;
+  /**
+   * How the views are arranged: "third" = third-angle (US/ANSI: the top view
+   * above the front, the right view to its right); missing = first-angle
+   * (ISO, UK and Europe: the top view below, the right view to the left).
+   */
+  projection?: "third";
   /** Drawing scale (2 = 2:1, 0.5 = 1:2); missing = chosen to fit. */
   scale?: number;
   hiddenLines: boolean;
   views: DrawingView[];
   /** Title block entries. */
-  title: { title?: string; drawnBy?: string; material?: string; notes?: string };
+  title: { title?: string; drawnBy?: string; material?: string; notes?: string; partNumber?: string; company?: string };
   /** Dimensions (optional: older saves have none). */
   dimensions?: Dimension[];
   /** Detail views (each also has an entry in `views`). */
@@ -279,6 +296,18 @@ export interface Drawing {
   balloons?: boolean;
   /** Assembly drawings: show the parts spread apart (the assembly's exploded view). */
   exploded?: boolean;
+  /** Decimal places for dimensions (0–4, kept even when they're zeros); missing = as many as needed, up to 2 in mm or 3 in inches. */
+  places?: number;
+  /** Dimensions also give the size in the other unit, in brackets: "40 [1.575]". */
+  dualUnits?: boolean;
+  /**
+   * How Fit to sheet makes room for the dimensions (decided when Auto dimension
+   * runs or Fit to sheet is chosen): extra room beside the 3D column (paper mm)
+   * and/or one scale smaller. Missing = neither.
+   */
+  fit?: { gap?: number; down?: true };
+  /** False hides tangent edges (where a fillet or curved face meets a flat one smoothly); missing = shown. */
+  tangentEdges?: boolean;
 }
 
 /**
@@ -384,6 +413,10 @@ export interface Dimension {
   d?: DimPoint;
   /** Angles: which way along each edge the measured angle opens (1 = towards its second end, -1 = away). */
   rays?: [number, number];
+  /** Decimal places to show (0–4, kept even when they're zeros); missing = the drawing's setting. */
+  places?: number;
+  /** A box round the number: "basic" (a theoretically exact size, for GD&T) or "inspection" (a rounded box: check this one). */
+  frame?: "basic" | "inspection";
 }
 
 /** A note on a drawing sheet: its top-left corner (sheet mm, y up) and its lines of text. */

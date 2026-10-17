@@ -80,7 +80,7 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
     feature.sketchRef = sketches[sketches.length - 1]?.id;
     feature.operation = "new";
   }
-  if (type === "flange" || type === "hem") feature.picks = [];
+  if (type === "flange" || type === "hem" || type === "cornerBreak") feature.picks = [];
   if (type === "tab") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
     feature.sketchRef = sketches[sketches.length - 1]?.id;
@@ -434,7 +434,12 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "flange" && f.closeCorners === true) feature.closeCorners = true;
     if (feature.type === "flange" && (f.reliefShape === "round" || f.reliefShape === "tear")) feature.reliefShape = f.reliefShape;
     if (feature.type === "flange" && (f.cornerRelief === "round" || f.cornerRelief === "square")) feature.cornerRelief = f.cornerRelief;
+    if (feature.type === "flange" && (f.flangePosition === "outside" || f.flangePosition === "inside")) feature.flangePosition = f.flangePosition;
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
+    if (feature.type === "thicken" && f.bothSides === true) feature.bothSides = true;
+    if (feature.type === "cornerBreak" && f.breakStyle === "chamfer") feature.breakStyle = "chamfer";
+    if (feature.type === "deleteFace" && f.leaveOpen === true) feature.leaveOpen = true;
+    if (feature.type === "fill" && f.continuity === "tangent") feature.continuity = "tangent";
     if (feature.type === "derived") {
       const dv = (f.derived ?? {}) as Record<string, unknown>;
       if (typeof dv.studioId === "string" && typeof dv.partId === "string") feature.derived = { studioId: dv.studioId, partId: dv.partId };
@@ -488,7 +493,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if ((feature.type === "shell" || feature.type === "chamfer") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "chamfer" && (f.chamferType === "twoDistances" || f.chamferType === "distanceAngle")) feature.chamferType = f.chamferType;
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "loft") && f.surface === true) feature.surface = true;
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled"].includes(feature.type)) {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

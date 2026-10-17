@@ -63,6 +63,13 @@ export interface FlangeSpec {
   reliefShape?: ReliefShape;
   /** Where this flange meets another at a corner of their wall (and the corner isn't closed): a relief cut there. */
   cornerRelief?: "round" | "square";
+  /**
+   * Where the flange goes (missing: it bends off the edge, so the sheet gets
+   * bigger). "outside": the wall is cut back so the flange's outside face (at
+   * 90°; in general the outside faces' sharp corner) lines up with the edge —
+   * the sheet keeps its size. "inside": the same for the flange's inside face.
+   */
+  position?: "outside" | "inside";
 }
 
 /** Bend relief notches: square-ended, round-ended (obround), or a thin tear. */
@@ -102,6 +109,16 @@ export interface TabSpec {
   holes: Segment[][];
 }
 
+/** Corner break: a wall's outside corner rounded off (a radius) or cut off straight (a chamfer, `size` back along each edge). */
+export interface CornerBreak {
+  id: string;
+  wall: string;
+  /** The corner, in the wall's coordinates. */
+  at: P2;
+  kind: "round" | "chamfer";
+  size: number;
+}
+
 export interface SheetSpec {
   thickness: number;
   /** Inside bend radius. */
@@ -112,6 +129,8 @@ export interface SheetSpec {
   flanges: FlangeSpec[];
   /** Tabs: flat shapes sketched on a wall's face, joined onto that wall. */
   tabs?: TabSpec[];
+  /** Corners of walls rounded or cut off. */
+  corners?: CornerBreak[];
 }
 
 export interface Wall {
@@ -150,11 +169,19 @@ export interface Bend {
   /** Flat pattern: the line down the middle of the bend, and the strip's width (the bend allowance). */
   flatLine: [P2, P2];
   allowance: number;
+  /**
+   * Where the bend's strip lies in the flat pattern: a point `x` along the bend
+   * (from `start`, along `along`) and `s` across it (unrolled, from the parent's
+   * side, 0 to `allowance`) is at origin + x·u + s·v.
+   */
+  flat: Flat2;
 }
 
 export interface FoldedSheet {
   walls: Wall[];
   bends: Bend[];
+  /** Strips cut off walls so flanges sit flush with their edges (`position`), in the walls' coordinates. */
+  trims?: { flangeId: string; wall: string; outline: Segment[] }[];
   /** Relief cuts where bends meet at a wall's corners. */
   cornerReliefs?: CornerRelief[];
   /** Flange id → why it couldn't be made. */
@@ -295,8 +322,11 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
   const bends: Bend[] = [];
   const errors: Record<string, string> = {};
   const used = new Set<string>();
+  const trims: NonNullable<FoldedSheet["trims"]> = [];
+  setBack(spec, base, errors, trims);
 
   for (const fl of spec.flanges) {
+    if (errors[fl.id]) continue;
     const parent = walls.find((w) => w.id === fl.wall);
     const seg = parent?.outline[fl.edge];
     if (!parent || !seg) {
@@ -309,6 +339,10 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     }
     if (parent.bendEdge === fl.edge) {
       errors[fl.id] = "That edge is already bent (it's where this wall joins the one before).";
+      continue;
+    }
+    if (cornerBroken(spec, fl.wall, seg)) {
+      errors[fl.id] = CORNER_BROKEN;
       continue;
     }
     const key = `${fl.wall}:${fl.edge}`;
@@ -425,6 +459,7 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       bendEdge: 0,
     };
     walls.push(child);
+    setBack(spec, child, errors, trims);
     bends.push({
       flangeId: fl.id,
       parent: parent.id,
@@ -444,6 +479,7 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       profile,
       flatLine: [add2(aF, mul2(outF, allowance / 2)), add2(bF, mul2(outF, allowance / 2))],
       allowance,
+      flat: { origin: bF, u: mul2(eF, -1), v: outF },
     });
   }
   closeCorners(spec, walls, bends);
@@ -456,8 +492,98 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     }
     w.tabs = [...(w.tabs ?? []), { outline: anticlockwise(t.outline), holes: t.holes.map((h) => anticlockwise(h, false)) }];
   }
-  return { walls, bends, errors, ...(cornerReliefs.length ? { cornerReliefs } : {}) };
+  return { walls, bends, errors, ...(cornerReliefs.length ? { cornerReliefs } : {}), ...(trims.length ? { trims } : {}) };
 }
+
+const CORNER_BROKEN = "A corner of that edge has been rounded or cut off (Corner break), so it can't take a flange now. Move the flange above the corner break in the list.";
+
+/** Whether a corner at either end of a wall's edge has been rounded or cut off. */
+function cornerBroken(spec: SheetSpec, wall: string, seg: { from: P2; to: P2 }): boolean {
+  const near = (p: P2, q: P2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6;
+  return (spec.corners ?? []).some((c) => c.wall === wall && (near(c.at, seg.from) || near(c.at, seg.to)));
+}
+
+/** Where two lines (a point and a direction each) cross, or null if they're parallel. */
+function crossing(p: P2, d: P2, q: P2, e: P2): P2 | null {
+  const den = d[0] * e[1] - d[1] * e[0];
+  if (Math.abs(den) < 1e-12) return null;
+  const t = ((q[0] - p[0]) * e[1] - (q[1] - p[1]) * e[0]) / den;
+  return [p[0] + d[0] * t, p[1] + d[1] * t];
+}
+
+/**
+ * A new wall's edges cut back for flanges that sit flush with them
+ * (`position`), before any flange is bent off it: each such edge moves in by
+ * the bend's setback, its neighbours shortened (or lengthened) to meet it.
+ * The strips cut off are listed in `trims`.
+ */
+function setBack(spec: SheetSpec, wall: Wall, errors: Record<string, string>, trims: NonNullable<FoldedSheet["trims"]>): void {
+  const T = spec.thickness;
+  for (const fl of spec.flanges) {
+    if (fl.wall !== wall.id || !fl.position || fl.hem || errors[fl.id]) continue;
+    const k = wall.outline.length;
+    const seg = wall.outline[fl.edge];
+    if (!seg || seg.kind !== "line" || fl.edge === wall.bendEdge) continue; // the main loop explains these
+    if (cornerBroken(spec, wall.id, seg)) {
+      errors[fl.id] = CORNER_BROKEN;
+      continue;
+    }
+    if (!(fl.angle > 0 && fl.angle < 180)) continue;
+    const R = fl.radius ?? spec.radius;
+    const dist = (fl.position === "outside" ? R + T : R) * Math.tan((fl.angle * Math.PI) / 360);
+    if (dist < 1e-9) continue;
+    const prevAt = (fl.edge - 1 + k) % k;
+    const nextAt = (fl.edge + 1) % k;
+    const prev = wall.outline[prevAt];
+    const next = wall.outline[nextAt];
+    if (prevAt === wall.bendEdge || nextAt === wall.bendEdge) {
+      errors[fl.id] = "A flange on the side of another flange can only bend off the edge (it can't sit flush there). Set the position to “Bend off the edge”.";
+      continue;
+    }
+    if (prev.kind !== "line" || next.kind !== "line") {
+      errors[fl.id] = "To sit flush with the edge, the edges either side of it must be straight. Set the position to “Bend off the edge”, or make those edges straight.";
+      continue;
+    }
+    const L = Math.hypot(seg.to[0] - seg.from[0], seg.to[1] - seg.from[1]);
+    const e: P2 = [(seg.to[0] - seg.from[0]) / L, (seg.to[1] - seg.from[1]) / L];
+    const into: P2 = [-e[1], e[0]];
+    const from: P2 = [seg.from[0] + into[0] * dist, seg.from[1] + into[1] * dist];
+    const a = crossing(prev.from, [prev.to[0] - prev.from[0], prev.to[1] - prev.from[1]], from, e);
+    const b = crossing(next.from, [next.to[0] - next.from[0], next.to[1] - next.from[1]], from, e);
+    const along = (p: P2) => (p[0] - from[0]) * e[0] + (p[1] - from[1]) * e[1];
+    const ok = (p: P2, q: P2) => (p[0] - q[0]) * into[0] + (p[1] - q[1]) * into[1] > -1e-9;
+    // The edge still runs the same way, and its neighbours still have some length left, running into the wall.
+    if (
+      !a ||
+      !b ||
+      along(b) - along(a) < 0.01 ||
+      Math.hypot(a[0] - prev.from[0], a[1] - prev.from[1]) < 0.01 ||
+      Math.hypot(next.to[0] - b[0], next.to[1] - b[1]) < 0.01 ||
+      !ok(prev.from, a) ||
+      !ok(next.to, b)
+    ) {
+      errors[fl.id] = `The wall is too small to cut back ${round2(dist)} mm for this flange to sit flush. Set the position to “Bend off the edge”.`;
+      continue;
+    }
+    trims.push({
+      flangeId: fl.id,
+      wall: wall.id,
+      outline: anticlockwise([
+        { kind: "line", from: seg.from, to: seg.to },
+        { kind: "line", from: seg.to, to: b },
+        { kind: "line", from: b, to: a },
+        { kind: "line", from: a, to: seg.from },
+      ]),
+    });
+    const outline = [...wall.outline];
+    outline[prevAt] = { kind: "line", from: prev.from, to: a };
+    outline[fl.edge] = { kind: "line", from: a, to: b };
+    outline[nextAt] = { kind: "line", from: b, to: next.to };
+    wall.outline = outline;
+  }
+}
+
+const round2 = (x: number) => Math.round(x * 100) / 100;
 
 /**
  * Corner reliefs: where bends off two neighbouring edges of a wall meet at
@@ -632,6 +758,33 @@ export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]
   };
 }
 
+/**
+ * Line pieces joined end to end into closed loops (pieces that don't close
+ * up are left out). Ends within `tol` count as the same point.
+ */
+export function chainLoops(pieces: [P2, P2][], tol = 1e-6): P2[][] {
+  const left = pieces.filter(([a, b]) => Math.hypot(a[0] - b[0], a[1] - b[1]) > tol);
+  const same = (a: P2, b: P2) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= tol;
+  const loops: P2[][] = [];
+  while (left.length) {
+    const [first] = left.splice(0, 1);
+    const loop: P2[] = [first[0], first[1]];
+    for (;;) {
+      const end = loop[loop.length - 1];
+      if (same(end, loop[0])) {
+        loop.pop();
+        if (loop.length >= 3) loops.push(loop);
+        break;
+      }
+      const i = left.findIndex(([a, b]) => same(a, end) || same(b, end));
+      if (i < 0) break;
+      const [next] = left.splice(i, 1);
+      loop.push(same(next[0], end) ? next[1] : next[0]);
+    }
+  }
+  return loops;
+}
+
 function dedupe(pts: P2[]): P2[] {
   const out: P2[] = [];
   for (const p of pts) {
@@ -748,4 +901,69 @@ export function mapSegments(segments: Segment[], map: (p: P2) => P2): Segment[] 
       }
     }
   });
+}
+
+/**
+ * The corner of a wall a picked edge runs along: an edge straight through the
+ * sheet (from one face to the other) at a corner of a wall's outline.
+ */
+export function findSheetCorner(folded: FoldedSheet, thickness: number, a: V3, b: V3, tol = 1e-3): { wall: string; at: P2 } | null {
+  const same = (p: V3, q: V3) => Math.hypot(...sub3(p, q)) < tol;
+  for (const w of folded.walls) {
+    for (const seg of w.outline) {
+      if (seg.kind !== "line") continue;
+      const q0 = wallPoint(w.frame, seg.from, 0);
+      const q1 = wallPoint(w.frame, seg.from, thickness);
+      if ((same(a, q0) && same(b, q1)) || (same(a, q1) && same(b, q0))) return { wall: w.id, at: seg.from };
+    }
+  }
+  return null;
+}
+
+/**
+ * What a corner break takes off a wall: the piece between its corner and the
+ * round (or the straight cut), in the wall's coordinates; or why it can't.
+ */
+export function cornerBreakCut(folded: FoldedSheet, c: Pick<CornerBreak, "wall" | "at" | "kind" | "size">): Segment[] | string {
+  const wall = folded.walls.find((w) => w.id === c.wall);
+  if (!wall) return "The wall that corner was on can't be found any more. Edit this and pick the corner again.";
+  const k = wall.outline.length;
+  const near = (p: P2, q: P2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6;
+  const j = wall.outline.findIndex((seg) => seg.kind === "line" && near(seg.from, c.at));
+  const prev = wall.outline[(j - 1 + k) % k];
+  const next = wall.outline[j];
+  if (j < 0 || !prev || prev.kind !== "line" || next.kind !== "line") return "Pick a corner where two straight edges of the sheet meet (the short edge through the sheet there).";
+  const bent = new Set(folded.bends.filter((b) => b.parent === wall.id).map((b) => b.edge));
+  if (wall.bendEdge !== undefined) bent.add(wall.bendEdge);
+  if (bent.has(j) || bent.has((j - 1 + k) % k)) return "That corner is next to a bend, so it can't be rounded or cut off. Pick a corner between two free edges.";
+  const l1 = Math.hypot(prev.from[0] - c.at[0], prev.from[1] - c.at[1]);
+  const l2 = Math.hypot(next.to[0] - c.at[0], next.to[1] - c.at[1]);
+  const e1: P2 = [(prev.from[0] - c.at[0]) / l1, (prev.from[1] - c.at[1]) / l1];
+  const e2: P2 = [(next.to[0] - c.at[0]) / l2, (next.to[1] - c.at[1]) / l2];
+  // An outside corner turns left going round (anticlockwise); an inside one would need metal added.
+  const turn = -e1[0] * e2[1] + e1[1] * e2[0];
+  if (turn < 1e-9) return "That's an inside corner (or not a corner at all). Corner break rounds or cuts off outside corners.";
+  const alpha = Math.acos(Math.max(-1, Math.min(1, e1[0] * e2[0] + e1[1] * e2[1])));
+  const back = c.kind === "round" ? c.size / Math.tan(alpha / 2) : c.size;
+  if (back > Math.min(l1, l2) - 1e-6) {
+    const most = c.kind === "round" ? Math.min(l1, l2) * Math.tan(alpha / 2) : Math.min(l1, l2);
+    return `Too big for that corner: its edges are only ${Math.round(Math.min(l1, l2) * 100) / 100} mm long. Use ${c.kind === "round" ? "a radius" : "a distance"} under ${Math.floor(most * 100) / 100} mm.`;
+  }
+  const p1: P2 = [c.at[0] + e1[0] * back, c.at[1] + e1[1] * back];
+  const p2: P2 = [c.at[0] + e2[0] * back, c.at[1] + e2[1] * back];
+  if (c.kind === "chamfer") {
+    return anticlockwise([
+      { kind: "line", from: c.at, to: p1 },
+      { kind: "line", from: p1, to: p2 },
+      { kind: "line", from: p2, to: c.at },
+    ]);
+  }
+  const bis = unit2([e1[0] + e2[0], e1[1] + e2[1]]);
+  const centre: P2 = [c.at[0] + (bis[0] * c.size) / Math.sin(alpha / 2), c.at[1] + (bis[1] * c.size) / Math.sin(alpha / 2)];
+  const mid: P2 = [centre[0] - bis[0] * c.size, centre[1] - bis[1] * c.size];
+  return anticlockwise([
+    { kind: "line", from: c.at, to: p1 },
+    { kind: "arc", from: p1, mid, to: p2 },
+    { kind: "line", from: p2, to: c.at },
+  ]);
 }
