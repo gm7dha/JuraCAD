@@ -1637,6 +1637,12 @@ describe("several Part Studios", () => {
     const back: Feature = { ...feature("derived", {}), derived: { studioId: "main", partId: derived.id } };
     const loop = engine.rebuildStudios([{ id: "main", features: [derived] }, { id: "s2", features: [taller, back] }]);
     expect(Object.values(loop.featureErrors).join(" ")).toMatch(/uses parts from this one/);
+    // The same on a fresh start (a file just opened), not "deleted".
+    engine.dispose();
+    engine = new GeometryEngine();
+    const fresh = engine.rebuildStudios([{ id: "main", features: [derived] }, { id: "s2", features: [taller, back] }]);
+    expect(Object.values(fresh.featureErrors).join(" ")).toMatch(/uses parts from this one/);
+    expect(Object.values(fresh.featureErrors).join(" ")).not.toMatch(/deleted/);
   });
 });
 
