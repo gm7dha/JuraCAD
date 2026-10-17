@@ -2,20 +2,22 @@
  * The assembly tab: its toolbar, the list of instances and parts, the Insert
  * panel and the panel for placing the selected instance.
  */
-import { canBeDriven, canDrive, nextRelationName, RELATION_KINDS } from "../assembly/relations";
+import { canBeDriven, canDrive, nextRelationName, RELATION_KIND_NAMES, RELATION_KINDS } from "../assembly/relations";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { billOfMaterials, bomCsv, nextPositionName, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
+import { billOfMaterials, bomCsv, bomTotalMass, nextPositionName, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
+import { formatMass } from "../model/materials";
 import { eulerDegFromQuat, quatFromEulerDeg, type Placement } from "../assembly/math";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { evaluate } from "../model/expr";
 import { activeAssembly, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber, showLength, storeLength } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { Assembly, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
+import type { Assembly, ExplodeStep, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
+import { stepDistance } from "../assembly/explode";
 import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
-import { partBox, useSolvedAssembly } from "./assemblySolve";
+import { bomInfo, partBox, useSolvedAssembly } from "./assemblySolve";
 import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
@@ -111,6 +113,14 @@ export function AssemblyToolbar() {
           name="copies"
           items={[
             {
+              key: "duplicate",
+              label: "Duplicate",
+              icon: <Icons.Duplicate />,
+              disabled: selected.length === 0,
+              onClick: () => useStore.getState().duplicateInstances(),
+              title: selected.length ? "Duplicate — copy the selected parts (and the mates between them), placed beside everything" : "Select the parts to copy first",
+            },
+            {
               key: "pattern",
               label: "Pattern",
               icon: <Icons.LinearPattern />,
@@ -189,14 +199,14 @@ export function AssemblyToolbar() {
           icon={<Icons.Explode />}
           onClick={() => {
             const s = useStore.getState();
-            s.setExplode(asm?.explode ? null : 1);
+            s.setExplode(asm?.explode !== undefined ? null : 1);
             s.setAsmSelection([]);
             // Zoom to show the parts in their new places.
             setTimeout(() => viewportApi.current?.fit(), 50);
           }}
           disabled={(asm?.instances.length ?? 0) < 2 || draftType !== null}
-          active={!!asm?.explode}
-          title={asm?.explode ? "Put the parts back together" : "Exploded view — pull the parts apart to show how they go together"}
+          active={asm?.explode !== undefined}
+          title={asm?.explode !== undefined ? "Put the parts back together" : "Exploded view — pull the parts apart to show how they go together"}
         />
         <ToolButton
           label="Section"
@@ -566,7 +576,7 @@ export function PatternPanel() {
   );
 }
 
-/** Relations: one mate driving another (gears, rack and pinion, screws). */
+/** Relations: one mate driving another (gears, rack and pinion, screws, linked sliders). */
 function RelationsSection({ assembly }: { assembly: Assembly }) {
   const { solved } = useSolvedAssembly();
   const [adding, setAdding] = useState(false);
@@ -576,11 +586,15 @@ function RelationsSection({ assembly }: { assembly: Assembly }) {
   const st = useStore.getState;
   const add = (kind: MateRelation["kind"]) => {
     setAdding(false);
-    const driver = mates.find(canDrive);
+    const driver = mates.find((m) => canDrive(m, kind));
     const driven = mates.find((m) => m !== driver && canBeDriven(m, kind));
     if (!driver || !driven) {
       st().showToast(
-        kind === "gear" ? "A gear relation needs two Hinge (or Cylindrical) mates." : "This needs a Hinge mate to drive it and a Slider (or Cylindrical) mate to move.",
+        kind === "gear"
+          ? "A gear relation needs two Hinge (or Cylindrical) mates."
+          : kind === "linear"
+            ? "A linear relation needs two Slider (or Cylindrical) mates."
+            : "This needs a Hinge mate to drive it and a Slider (or Cylindrical) mate to move.",
         "info",
       );
       return;
@@ -591,13 +605,13 @@ function RelationsSection({ assembly }: { assembly: Assembly }) {
     <section className="panel-section relations">
       <h3>
         Relations <span className="count">({relations.length})</span>
-        <button type="button" className="text-button small-text" onClick={() => setAdding(!adding)} title="Make one mate drive another: gears, rack and pinion, screws">
+        <button type="button" className="text-button small-text" onClick={() => setAdding(!adding)} title="Make one mate drive another: gears, rack and pinion, screws, linked sliders">
           + Add
         </button>
       </h3>
       {adding && (
         <ul className="relation-kinds">
-          {(Object.keys(RELATION_KINDS) as MateRelation["kind"][]).map((k) => (
+          {RELATION_KIND_NAMES.map((k) => (
             <li key={k}>
               <button type="button" className="text-button" onClick={() => add(k)} title={RELATION_KINDS[k].hint}>
                 {RELATION_KINDS[k].label}
@@ -620,9 +634,9 @@ function RelationsSection({ assembly }: { assembly: Assembly }) {
                 </button>
               </div>
               <label>
-                Turning
+                {r.kind === "linear" ? "Sliding" : "Turning"}
                 <select value={r.driver} aria-label={`${r.name} driver`} onChange={(e) => update({ driver: e.target.value })}>
-                  {mates.filter(canDrive).map((m) => (
+                  {mates.filter((m) => canDrive(m, r.kind)).map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name}
                     </option>
@@ -726,9 +740,10 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
     return Object.fromEntries(parts.map((p) => [p.id, label(p)]));
   }, [parts, doc]);
   const bom = useMemo(
-    () => billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name]))),
-    [assembly, partNames, doc.configurations],
+    () => billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name])), bomInfo(parts, doc.materials)),
+    [assembly, partNames, doc.configurations, parts, doc.materials],
   );
+  const total = bomTotalMass(bom);
   const kernelReady = useStore((s) => s.kernelStatus === "ready");
 
   return (
@@ -758,19 +773,29 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
             <tr>
               <th>#</th>
               <th>Part</th>
-              <th>Qty</th>
+              <th className="bom-qty">Qty</th>
+              <th className="bom-mass" title="What they weigh, made solid in the part's material (set it in the Part Studio's parts list)">Weight</th>
             </tr>
           </thead>
           <tbody>
             {bom.map((r, n) => (
               <tr key={r.partId} className={r.missing ? "missing" : ""}>
                 <td>{n + 1}</td>
-                <td>{r.name}</td>
-                <td>{r.quantity}</td>
+                <td title={r.material ? `${r.material}${r.massEach !== undefined ? ` — ${formatMass(r.massEach)} each` : ""}` : undefined}>{r.name}</td>
+                <td className="bom-qty">{r.quantity}</td>
+                <td className="bom-mass muted" title={r.surface ? "Surfaces have no weight (thicken one to make it solid)" : undefined}>
+                  {r.massEach !== undefined ? formatMass(r.massEach * r.quantity) : r.surface ? "—" : ""}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+        {total.grams > 0 && (
+          <p className="panel-hint bom-total" title="Printed parts with less infill weigh less">
+            Weight of everything: about {formatMass(total.grams)}
+            {total.partial ? " (some parts unknown)" : ""}
+          </p>
+        )}
         {bom.length > 0 && (
           <button
             className="text-button bom-download"
@@ -903,8 +928,13 @@ export function InstancePanel() {
   const insertOpen = useStore((s) => s.dialog === "insert");
   const mating = useStore((s) => s.mateDraft !== null);
   const { solved } = useSolvedAssembly();
+  const parts = useStore((s) => s.parts);
   const instance = asm && selection.length === 1 ? asm.instances.find((i) => i.id === selection[0]) : undefined;
-  if (!instance || insertOpen || mating) return null;
+  const studios = studiosOf(doc);
+  // Parts it could show instead (as in their Part Studio, not other configurations).
+  const choosable = studios.flatMap((st) => partsInStudio(parts, st.id)).filter((p) => !p.configuration);
+  // While exploded, the exploded view's panel is open instead.
+  if (!instance || insertOpen || mating || asm?.explode !== undefined) return null;
   const drivenBy = solved?.drivenBy[instance.id];
   const driver = drivenBy ? asm?.mates?.find((m) => m.id === drivenBy) : undefined;
   const group = drivenBy?.startsWith("group:") ? asm?.groups?.find((g) => `group:${g.id}` === drivenBy) : undefined;
@@ -941,6 +971,37 @@ export function InstancePanel() {
           <input type="checkbox" checked={instance.fixed} onChange={(e) => update(instance.id, { fixed: e.target.checked })} />
           Fixed (stays where it is)
         </label>
+        {!instance.copyOf && !instance.replicaOf && choosable.some((p) => p.id !== instance.partId) && (
+          <div className="param-field compact">
+            <label htmlFor="instance-part">Part</label>
+            <select
+              id="instance-part"
+              value={instance.partId}
+              onChange={(e) => useStore.getState().replaceInstancePart(instance.id, e.target.value)}
+              title="Replace — show another part here instead. Its mates are kept where the new part has a matching face (pick again if not)."
+            >
+              {!choosable.some((p) => p.id === instance.partId) && <option value={instance.partId}>(missing part)</option>}
+              {studios.length > 1
+                ? studios.map((st) => {
+                    const mine = partsInStudio(parts, st.id).filter((p) => !p.configuration);
+                    return mine.length ? (
+                      <optgroup key={st.id} label={st.name}>
+                        {mine.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null;
+                  })
+                : choosable.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+            </select>
+          </div>
+        )}
         {configurations.length > 0 && !instance.copyOf && (
           <div className="param-field compact">
             <label htmlFor="instance-configuration">Configuration</label>
@@ -1015,14 +1076,17 @@ export function InstancePanel() {
   );
 }
 
-/** The exploded view's settings: how far apart the parts are spread. */
+/** The exploded view's settings: how far apart the parts are spread, and steps moving chosen parts. */
 export function ExplodePanel() {
   const asm = useStore(activeAssembly);
   const preview = useStore((s) => s.explodePreview);
-  const busy = useStore((s) => s.asmSelection.length > 0 || s.dialog === "insert" || s.mateDraft !== null);
-  if (!asm?.explode || busy) return null;
+  const busy = useStore((s) => s.dialog === "insert" || s.mateDraft !== null);
+  const selection = useStore((s) => s.asmSelection);
+  if (!asm || asm.explode === undefined || busy) return null;
   const st = useStore.getState();
   const amount = preview ?? asm.explode;
+  const steps = asm.explodeSteps ?? [];
+  const names = Object.fromEntries(asm.instances.map((i) => [i.id, i.name]));
   const commit = () => {
     const p = useStore.getState().explodePreview;
     if (p !== null) {
@@ -1042,13 +1106,13 @@ export function ExplodePanel() {
       </header>
       <div className="feature-dialog-body">
         <label className="field-label" htmlFor="explode-spread">
-          Spread: {Math.round(amount * 100)}%
+          Spread: {amount > 0 ? `${Math.round(amount * 100)}%` : "off (steps only)"}
         </label>
         <input
           id="explode-spread"
           type="range"
           className="mate-slider"
-          min={0.1}
+          min={0}
           max={3}
           step={0.05}
           value={amount}
@@ -1059,10 +1123,84 @@ export function ExplodePanel() {
         />
         <p className="dialog-hint">
           Parts move straight out from the middle{asm.instances.some((i) => i.fixed) ? " of the fixed parts, which stay put" : ""}. Only the picture changes —
-          mates, exports and clash checks use the real places. Drawings of this assembly can show it exploded too.
+          mates, exports and clash checks use the real places. Drawings of this assembly can show it exploded too. To move or change a part itself, close the
+          exploded view first.
         </p>
+        <fieldset className="param-group explode-steps">
+          <legend>Steps</legend>
+          {steps.length === 0 && <p className="dialog-hint">Move chosen parts a set distance — the screws straight up out of their holes, then the lid…</p>}
+          <ol className="explode-step-list">
+            {steps.map((step, n) => (
+              <ExplodeStepRow key={step.id} step={step} number={n + 1} names={names} />
+            ))}
+          </ol>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => st.addExplodeStep()}
+            disabled={selection.length === 0}
+            title={selection.length ? "Add a step that moves the selected parts" : "Select the parts to move first (click them; Shift-click for more)"}
+          >
+            + Move {selection.length ? `the ${selection.length === 1 ? "selected part" : `${selection.length} selected parts`}` : "selected parts"}
+          </button>
+        </fieldset>
       </div>
     </div>
+  );
+}
+
+/** One exploded view step: which parts, which way and how far. */
+function ExplodeStepRow({ step, number, names }: { step: ExplodeStep; number: number; names: Record<string, string> }) {
+  const st = useStore.getState();
+  const unitNow = useLengthUnit();
+  const [text, setText] = useState(showLength(step.distance, unitNow));
+  useEffect(() => setText(showLength(step.distance, unitNow)), [step.distance, unitNow]);
+  const bad = stepDistance({ ...step, distance: storeLength(text, unitNow) });
+  const commit = () => {
+    const stored = storeLength(text.trim() || "0", unitNow);
+    if (stored !== step.distance && !("error" in bad)) st.updateExplodeStep(step.id, { distance: stored });
+  };
+  const who = step.instances.map((id) => names[id] ?? "?");
+  return (
+    <li className="explode-step">
+      <div className="relation-head">
+        <strong title={who.join(", ")}>
+          {number}. {who.length <= 2 ? who.join(" and ") : `${who[0]} and ${who.length - 1} more`}
+        </strong>
+        <button type="button" className="icon-button small" onClick={() => st.removeExplodeStep(step.id)} aria-label={`Remove step ${number}`} title="Remove this step">
+          <Icons.Cross size={14} />
+        </button>
+      </div>
+      <div className="explode-step-fields">
+        <select value={`${step.flip ? "-" : "+"}${step.axis}`} aria-label={`Step ${number} direction`} onChange={(e) => st.updateExplodeStep(step.id, { axis: e.target.value.slice(1) as ExplodeStep["axis"], flip: e.target.value.startsWith("-") })}>
+          {(["z", "x", "y"] as const).flatMap((a) =>
+            (["+", "-"] as const).map((sign) => (
+              <option key={sign + a} value={sign + a}>
+                {a === "z" ? (sign === "+" ? "Up" : "Down") : `${sign === "+" ? "+" : "−"}${a.toUpperCase()}`}
+              </option>
+            )),
+          )}
+        </select>
+        <div className={`param-input${"error" in bad ? " invalid" : ""}`}>
+          <input
+            value={text}
+            aria-label={`Step ${number} distance`}
+            spellCheck={false}
+            autoComplete="off"
+            inputMode="decimal"
+            onChange={(e) => setText(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            aria-invalid={"error" in bad}
+          />
+          <span className="unit">{unitNow}</span>
+        </div>
+      </div>
+      {"error" in bad && <div className="param-message error">{bad.error}</div>}
+    </li>
   );
 }
 

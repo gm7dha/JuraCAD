@@ -15,6 +15,7 @@ const RELATIONS = new Set<string>([
   "symmetric",
   "pointOnLine",
   "pointOnCircle",
+  "pointOnCurve",
   "fix",
 ]);
 
@@ -81,6 +82,7 @@ export function parseSketchData(raw: unknown): SketchData | null {
     if (Array.isArray(c.extra) && c.extra.every(num)) out.extra = c.extra as number[];
     const lo = c.labelOffset as Record<string, unknown> | undefined;
     if (lo && num(lo.x) && num(lo.y)) out.labelOffset = { x: lo.x, y: lo.y };
+    if (c.driven === true && DIMENSION_TYPES.has(out.type)) out.driven = true;
     constraints.push(out);
   }
   return { points, curves, constraints };
