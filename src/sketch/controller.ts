@@ -404,7 +404,7 @@ export class SketchController {
     if (tool === "sketchFillet") {
       const hit = this.hitAt(e);
       if (hit?.kind !== "point" || hit.id === ORIGIN_ID) {
-        this.state.setSketchMessage("Click the corner point where two lines meet.", "info");
+        this.state.setSketchMessage("Click the corner point where two lines or arcs meet.", "info");
         return;
       }
       const r = filletCorner(d, hit.id, this.state.sketch?.filletRadius ?? "2");

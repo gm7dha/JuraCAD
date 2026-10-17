@@ -420,3 +420,61 @@ describe("split and extend arcs", () => {
     expect(splitAt(c.sketch, c.circleId, at(5, 0)).error).toMatch(/Trim/);
   });
 });
+
+describe("rounding where a line meets an arc", () => {
+  it("rounds the corner between a line and an arc, touching both smoothly", () => {
+    // A line along the X axis to the origin; an arc round (10, 0) from (10, 10) down to the origin.
+    const l = addLine(emptySketch(), at(-10, 0), { x: 0, y: 0, snap: { kind: "origin" } });
+    const corner = line(l.sketch, l.lineId).p2;
+    const arcMade = addCentreArc(l.sketch, at(10, 0), at(10, 10), { x: 0, y: 0, snap: { kind: "point", id: corner } });
+    expect(arcMade.error).toBeUndefined();
+    const r = filletCorner(arcMade.sketch, corner, "2");
+    expect(r.error).toBeUndefined();
+    const fillet = r.sketch.curves.find((c) => c.id === r.arcId) as SketchArc;
+    expect(radiusOf(r.sketch, fillet)).toBeCloseTo(2, 6);
+    const [fx, fy] = pointPos(r.sketch, fillet.center);
+    expect(fx).toBeCloseTo(10 - Math.sqrt(140), 5);
+    expect(fy).toBeCloseTo(2, 5);
+    // The line now stops under the rounding's centre, and the corner is kept as a point for dimensions.
+    expect(lengthOf(r.sketch, l.lineId)).toBeCloseTo(10 - Math.sqrt(140) + 10, 5);
+    expect(pointPos(r.sketch, corner)[0]).toBeCloseTo(0, 6);
+    // The old arc ends where the rounding touches it (12 from its centre through the rounding's centre).
+    const arc = r.sketch.curves.find((c) => c.id === arcMade.arcId) as SketchArc;
+    expect(radiusOf(r.sketch, arc)).toBeCloseTo(10, 6);
+    const touching = [arc.start, arc.end].some((id) => fillet.start === id || fillet.end === id);
+    expect(touching).toBe(true);
+    // Bigger radius: still touching the arc from outside.
+    const bigger = setDimensionValue(r.sketch, r.sketch.constraints.find((c) => c.type === "radius" && c.refs[0] === r.arcId)!.id, "3");
+    expect(bigger.error).toBeUndefined();
+    const [gx, gy] = pointPos(bigger.sketch, fillet.center);
+    const [cx, cy] = pointPos(bigger.sketch, arc.center);
+    expect(Math.hypot(gx - cx, gy - cy)).toBeCloseTo(radiusOf(bigger.sketch, arc) + 3, 6);
+    const ln = line(bigger.sketch, l.lineId);
+    const [ax, ay] = pointPos(bigger.sketch, ln.p1);
+    const [bx, by] = pointPos(bigger.sketch, ln.p2);
+    expect(Math.abs((bx - ax) * (gy - ay) - (by - ay) * (gx - ax)) / Math.hypot(bx - ax, by - ay)).toBeCloseTo(3, 6);
+  });
+
+  it("rounds the corner where two arcs meet", () => {
+    // One arc round (0, 10) leaving the origin to the right, another round (−10, 0) leaving it upwards.
+    const a = addCentreArc(emptySketch(), at(0, 10), { x: 0, y: 0, snap: { kind: "origin" } }, at(10, 10));
+    const arcA = a.sketch.curves.find((c) => c.id === a.arcId) as SketchArc;
+    const corner = arcA.start;
+    const b = addCentreArc(a.sketch, at(-10, 0), { x: 0, y: 0, snap: { kind: "point", id: corner } }, at(-10, 10));
+    const r = filletCorner(b.sketch, corner, "1");
+    expect(r.error).toBeUndefined();
+    const fillet = r.sketch.curves.find((c) => c.id === r.arcId) as SketchArc;
+    const [fx, fy] = pointPos(r.sketch, fillet.center);
+    const x = (-16 + Math.sqrt(392)) / 4;
+    expect(fx).toBeCloseTo(x, 5);
+    expect(fy).toBeCloseTo(2 - x, 5);
+    expect(r.sketch.constraints.filter((c) => c.type === "tangent" && c.refs.includes(r.arcId)).map((c) => c.extra?.[0]).sort()).toEqual([0, 1]);
+  });
+
+  it("says when the radius doesn't fit", () => {
+    const l = addLine(emptySketch(), at(-10, 0), { x: 0, y: 0, snap: { kind: "origin" } });
+    const corner = line(l.sketch, l.lineId).p2;
+    const arcMade = addCentreArc(l.sketch, at(10, 0), at(10, 10), { x: 0, y: 0, snap: { kind: "point", id: corner } });
+    expect(filletCorner(arcMade.sketch, corner, "40").error).toMatch(/doesn't fit/);
+  });
+});

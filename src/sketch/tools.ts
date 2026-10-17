@@ -135,8 +135,15 @@ export function filletCorner(original: SketchData, pointId: string, radiusText: 
   if (r.value <= 0) return fail("The radius must be more than 0.");
   // Lines joined by dragging one end onto the other have separate end points held together: make them one point first.
   const s = mergeCoincident(original, pointId);
-  const lines = s.curves.filter((c): c is SketchLine => c.type === "line" && !c.construction && (c.p1 === pointId || c.p2 === pointId));
-  if (lines.length !== 2) return fail("Click a corner where exactly two lines meet.");
+  const meeting = s.curves.filter(
+    (c): c is SketchLine | SketchArc => !c.construction && ((c.type === "line" && (c.p1 === pointId || c.p2 === pointId)) || (c.type === "arc" && (c.start === pointId || c.end === pointId))),
+  );
+  if (meeting.length === 2 && meeting.some((c) => c.type === "arc")) {
+    const made = roundCurvedCorner(s, pointId, meeting[0], meeting[1], r.value, radiusText);
+    return "error" in made ? fail(made.error) : made;
+  }
+  const lines = meeting.filter((c): c is SketchLine => c.type === "line");
+  if (lines.length !== 2 || meeting.length !== 2) return fail("Click a corner where exactly two lines or arcs meet.");
   const [L1, L2] = lines;
   const P = pointPos(s, pointId);
   const far = (l: SketchLine) => (l.p1 === pointId ? l.p2 : l.p1);
@@ -223,6 +230,120 @@ export function mergeCoincident(s: SketchData, pointId: string): SketchData {
     .filter((c) => !(c.type === "coincident" && c.refs[0] === c.refs[1]));
   const points = s.points.filter((p) => p.id === pointId || !same.has(p.id));
   return { points, curves, constraints };
+}
+
+/**
+ * Round a corner where a line meets an arc, or two arcs meet: an arc of
+ * `radius` touching both smoothly, each trimmed back to where it touches.
+ */
+function roundCurvedCorner(
+  s: SketchData,
+  pointId: string,
+  k1: SketchLine | SketchArc,
+  k2: SketchLine | SketchArc,
+  radius: number,
+  radiusText: string,
+): { sketch: SketchData; arcId: string } | { error: string } {
+  const P = pointPos(s, pointId);
+  type Side = { kind: "line"; a: P2; d: P2 } | { kind: "circle"; c: P2; r: number };
+  /** The curve moved `radius` to one side (+1 / −1): a parallel line, or a bigger/smaller circle. */
+  const shifted = (k: SketchLine | SketchArc, sign: number): Side => {
+    if (k.type === "line") {
+      const a = pointPos(s, k.p1);
+      const d = unit(sub(pointPos(s, k.p2), a));
+      return { kind: "line", a: add(a, mul([-d[1], d[0]], sign * radius)), d };
+    }
+    return { kind: "circle", c: pointPos(s, k.center), r: radiusOf(s, k) + sign * radius };
+  };
+  /** Where the rounding touches curve `k` if its centre is at `f`, and whether that's on the part of `k` kept. */
+  const touch = (k: SketchLine | SketchArc, f: P2): P2 | null => {
+    if (k.type === "line") {
+      const a = pointPos(s, k.p1);
+      const b = pointPos(s, k.p2);
+      const d = sub(b, a);
+      const t = dot(sub(f, a), d) / (dot(d, d) || 1);
+      return t > 1e-9 && t < 1 - 1e-9 ? add(a, mul(d, t)) : null;
+    }
+    const c = pointPos(s, k.center);
+    const p = add(c, mul(unit(sub(f, c)), radiusOf(s, k)));
+    // Strictly inside the arc (not at its ends).
+    const [a0, sweep] = arcSpan(s, k);
+    const at = norm(Math.atan2(p[1] - c[1], p[0] - c[0]) - a0);
+    return at > 1e-9 && at < sweep - 1e-9 ? p : null;
+  };
+  const meet = (u: Side, w: Side): P2[] => {
+    if (u.kind === "line" && w.kind === "line") {
+      const hit = lineLine(u.a, u.d, w.a, w.d);
+      return hit ? [hit] : [];
+    }
+    if (u.kind === "circle" && w.kind === "circle") {
+      if (u.r <= 1e-9 || w.r <= 1e-9) return [];
+      const d = len(sub(w.c, u.c));
+      if (d < 1e-12 || d > u.r + w.r || d < Math.abs(u.r - w.r)) return [];
+      const x = (d * d + u.r * u.r - w.r * w.r) / (2 * d);
+      const h = Math.sqrt(Math.max(0, u.r * u.r - x * x));
+      const e = unit(sub(w.c, u.c));
+      const m = add(u.c, mul(e, x));
+      return [add(m, mul([-e[1], e[0]], h)), sub(m, mul([-e[1], e[0]], h))];
+    }
+    const [l, c] = (u.kind === "line" ? [u, w] : [w, u]) as [Extract<Side, { kind: "line" }>, Extract<Side, { kind: "circle" }>];
+    if (c.r <= 1e-9) return [];
+    const f = sub(l.a, c.c);
+    const b = dot(f, l.d);
+    const disc = b * b - (dot(f, f) - c.r * c.r);
+    if (disc < 0) return [];
+    const q = Math.sqrt(disc);
+    return [add(l.a, mul(l.d, -b - q)), add(l.a, mul(l.d, -b + q))];
+  };
+  let best: { f: P2; t1: P2; t2: P2; cost: number } | null = null;
+  for (const s1 of [1, -1]) {
+    for (const s2 of [1, -1]) {
+      for (const f of meet(shifted(k1, s1), shifted(k2, s2))) {
+        const t1 = touch(k1, f);
+        const t2 = touch(k2, f);
+        if (!t1 || !t2) continue;
+        // The rounding must sit in the corner: its touching points nearer the corner than anything else.
+        const cost = len(sub(t1, P)) + len(sub(t2, P));
+        if (!best || cost < best.cost) best = { f, t1, t2, cost };
+      }
+    }
+  }
+  if (!best) return { error: "That radius doesn't fit this corner — try a smaller one." };
+  const { f, t1: T1, t2: T2 } = best;
+  const [p1, p2, pc] = [T1, T2, f].map(([x, y]) => ({ id: sketchId("p"), x, y }));
+  const arcId = sketchId("a");
+  // The rounding turns the short way from one touching point to the other.
+  const ccw = cross(sub(T1, f), sub(T2, f)) > 0;
+  const fillet: SketchArc = { id: arcId, type: "arc", center: pc.id, start: ccw ? p1.id : p2.id, end: ccw ? p2.id : p1.id, construction: false };
+  const reroute = (k: SketchLine | SketchArc, to: string): SketchCurve =>
+    k.type === "line" ? (k.p1 === pointId ? { ...k, p1: to } : { ...k, p2: to }) : k.start === pointId ? { ...k, start: to } : { ...k, end: to };
+  const far = (l: SketchLine) => (l.p1 === pointId ? l.p2 : l.p1);
+  const constraints: SketchConstraint[] = s.constraints.map((k) => {
+    // A trimmed line's length dimension measures to the corner (the virtual sharp) instead.
+    const l = [k1, k2].find((c): c is SketchLine => c.type === "line" && k.type === "length" && k.refs[0] === c.id);
+    return l ? { ...k, type: "distance", refs: [pointId, far(l)] } : k;
+  });
+  const tangentTo = (k: SketchLine | SketchArc, T: P2): SketchConstraint => {
+    const t = con("tangent", [k.id, arcId]);
+    // An arc and the rounding with their centres on the same side of where they touch: one sits inside the other.
+    if (k.type === "arc") t.extra = [dot(sub(pointPos(s, k.center), T), sub(f, T)) > 0 ? 1 : 0];
+    return t;
+  };
+  constraints.push(
+    con(k1.type === "line" ? "pointOnLine" : "pointOnCircle", [pointId, k1.id]),
+    con(k2.type === "line" ? "pointOnLine" : "pointOnCircle", [pointId, k2.id]),
+    tangentTo(k1, T1),
+    tangentTo(k2, T2),
+    con("radius", [arcId], radiusText),
+  );
+  const changed: SketchData = {
+    points: [...s.points.map((p) => (p.id === pointId ? { ...p, standalone: true } : p)), p1, p2, pc],
+    curves: [...s.curves.map((k) => (k.id === k1.id ? reroute(k1, p1.id) : k.id === k2.id ? reroute(k2, p2.id) : k)), fillet],
+    constraints,
+  };
+  const solved = solveSketch(changed);
+  if (!solved.ok) return { error: "Rounding this corner would conflict with the sketch's other constraints." };
+  return { sketch: solved.sketch, arcId };
 }
 
 // ---------------------------------------------------------------------------
