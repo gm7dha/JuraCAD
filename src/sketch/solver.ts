@@ -129,6 +129,8 @@ function buildSystem(sketch: SketchData): System {
   }
 
   for (const con of sketch.constraints) {
+    // Reference dimensions only show a size; they never move anything.
+    if (con.driven) continue;
     let value = 0;
     if (con.value !== undefined) {
       const r = evaluate(con.value);
@@ -250,6 +252,24 @@ function buildSystem(sketch: SketchData): System {
       }
       case "midpoint": {
         const p = P(a);
+        const arc = curves.get(b);
+        if (arc?.type === "arc") {
+          // Halfway round the arc (anticlockwise from its start to its end).
+          const cen = P(arc.center), st = P(arc.start), en = P(arc.end);
+          return {
+            size: 2,
+            eval: (x, out) => {
+              const u = p(x), c = cen(x), s0 = st(x), e = en(x);
+              const a0 = Math.atan2(s0[1] - c[1], s0[0] - c[0]);
+              let sweep = Math.atan2(e[1] - c[1], e[0] - c[0]) - a0;
+              while (sweep <= 0) sweep += 2 * Math.PI;
+              while (sweep > 2 * Math.PI) sweep -= 2 * Math.PI;
+              const r = Math.hypot(s0[0] - c[0], s0[1] - c[1]);
+              const am = a0 + sweep / 2;
+              out.push(u[0] - (c[0] + r * Math.cos(am)), u[1] - (c[1] + r * Math.sin(am)));
+            },
+          };
+        }
         const [m, n] = lineEnds(b);
         return {
           size: 2,
@@ -317,6 +337,28 @@ function buildSystem(sketch: SketchData): System {
         const q = P(b);
         const sign = con.extra?.[0] ?? 1;
         return { size: 1, eval: (x, out) => out.push(sign * (q(x)[k] - p(x)[k]) - value) };
+      }
+      case "offset": {
+        // Each [copy, original] pair stays `value` apart: a line's distance from the original line, an arc's or circle's radius from the original's.
+        const pairs: ((x: Float64Array) => number)[] = [];
+        for (let i = 0; i + 1 < con.refs.length; i += 2) {
+          const [copy, orig] = [con.refs[i], con.refs[i + 1]];
+          if (kind(copy) === "line" && kind(orig) === "line") {
+            const [p] = lineEnds(copy);
+            const [m, n] = lineEnds(orig);
+            pairs.push((x) => {
+              const u = p(x), s0 = m(x), e = n(x);
+              const dx = e[0] - s0[0], dy = e[1] - s0[1];
+              return Math.abs(dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1);
+            });
+          } else {
+            const c1 = circular(copy);
+            const c2 = circular(orig);
+            pairs.push((x) => Math.abs(c1.radius(x) - c2.radius(x)));
+          }
+        }
+        if (!pairs.length) throw new Error("offset has nothing to measure");
+        return { size: pairs.length, eval: (x, out) => { for (const f of pairs) out.push(f(x) - value); } };
       }
       case "radius":
       case "diameter": {

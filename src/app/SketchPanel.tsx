@@ -6,7 +6,8 @@ import { planeLabel } from "../sketch/planes";
 import { findRegions } from "../sketch/regions";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
-import { makeSketchPattern, makeSketchTransform, setPatternOption } from "./sketchActions";
+import { makeSketchPattern, makeSketchTransform, setPatternOption, toggleSketchDimensionDriven } from "./sketchActions";
+import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
 
 /** A conic's fullness: a slider from flat to full, and the number (0.5 = a parabola). */
@@ -222,6 +223,23 @@ export function SketchPanel() {
             <span className="muted">{unit}</span>
           </label>
         )}
+        {(() => {
+          // One dimension selected: it can be switched between setting the size and just showing it.
+          const dim = selection?.length === 1 ? data.constraints.find((c) => c.id === selection[0] && isDimension(c)) : undefined;
+          if (!dim) return null;
+          return (
+            <div className="tool-option">
+              <button
+                type="button"
+                className="text-button"
+                onClick={toggleSketchDimensionDriven}
+                title={dim.driven ? "Let this dimension set the size again" : "Keep this dimension just to show the size (in brackets) — it won't change the sketch"}
+              >
+                {dim.driven ? "Make driving" : "Make reference"}
+              </button>
+            </div>
+          );
+        })()}
         {confirmCancel && (
           <div className="dialog-error" role="alert">
             Discard your changes to this sketch? Click ✕ again to discard, or keep sketching.

@@ -126,6 +126,14 @@ export function measure(s: SketchData, c: SketchConstraint): number {
       const [dx, dy] = lineDir(s, l);
       return Math.abs(dx * (py - ay) - dy * (px - ax)) / (Math.hypot(dx, dy) || 1);
     }
+    case "offset": {
+      // The first pair: how far the copy is from the original.
+      const copy = curveById(s, a);
+      const orig = curveById(s, b);
+      if (copy?.type === "line" && orig?.type === "line") return measure(s, { id: "", type: "pointLineDistance", refs: [copy.p1, orig.id] });
+      if ((copy?.type === "arc" || copy?.type === "circle") && (orig?.type === "arc" || orig?.type === "circle")) return Math.abs(radiusOf(s, copy) - radiusOf(s, orig));
+      return 0;
+    }
     default:
       return 0;
   }
@@ -382,7 +390,16 @@ export function deleteItems(s: SketchData, ids: string[]): SketchData {
   const used = new Set(curves.flatMap(curvePoints));
   const points = s.points.filter((p) => !gone.has(p.id) && (used.has(p.id) || (p.standalone && !gone.has(p.id))));
   const alive = new Set<string>([ORIGIN_ID, ...points.map((p) => p.id), ...curves.map((c) => c.id)]);
-  const constraints = s.constraints.filter((c) => !gone.has(c.id) && c.refs.every((r) => alive.has(r)));
+  const constraints = s.constraints.flatMap((c): SketchConstraint[] => {
+    if (gone.has(c.id)) return [];
+    if (c.type === "offset") {
+      // An offset keeps the copies that are left.
+      const refs: string[] = [];
+      for (let i = 0; i + 1 < c.refs.length; i += 2) if (alive.has(c.refs[i]) && alive.has(c.refs[i + 1])) refs.push(c.refs[i], c.refs[i + 1]);
+      return refs.length ? [refs.length === c.refs.length ? c : { ...c, refs }] : [];
+    }
+    return c.refs.every((r) => alive.has(r)) ? [c] : [];
+  });
   return solveSketch({ points, curves, constraints }).sketch;
 }
 
@@ -434,7 +451,7 @@ export const RELATION_HINTS: Record<RelationTool, string> = {
   equal: "Select two or more lines, or two or more circles/arcs",
   tangent: "Select a line and a circle/arc, or two circles/arcs",
   concentric: "Select two circles or arcs",
-  midpoint: "Select a point and a line",
+  midpoint: "Select a point and a line or arc",
   symmetric: "Select two points (or two lines, circles or arcs) and then the line they mirror across",
   fix: "Select the points or shapes to hold in place",
 };
@@ -499,6 +516,10 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
       break;
     case "midpoint":
       if (only(2) && pts.length === 1 && lines.length === 1) return [mk("midpoint", [pts[0], lines[0].id])];
+      if (only(2) && pts.length === 1 && rounds.length === 1 && rounds[0].type === "arc") {
+        if ([rounds[0].start, rounds[0].end, rounds[0].center].includes(pts[0])) return "That point is already one of the arc's own points — pick a different point.";
+        return [mk("midpoint", [pts[0], rounds[0].id])];
+      }
       break;
     case "symmetric": {
       // The mirror line is the last thing selected.
@@ -589,6 +610,15 @@ export function dimensionFor(s: SketchData, sel: string[]): { type: ConstraintTy
   }
   if (sel.length === 2 && pts.length === 2) return { type: "distance", refs: pts };
   if (sel.length === 2 && pts.length === 1 && crv.length === 1 && isLine(crv[0])) return { type: "pointLineDistance", refs: [pts[0], crv[0].id] };
+  // Circles and arcs are measured from their centres (like Onshape).
+  if (sel.length === 2 && crv.length >= 1 && crv.every((c) => isLine(c) || isRound(c)) && crv.some(isRound)) {
+    const rounds = crv.filter(isRound);
+    const line = crv.find(isLine);
+    if (line) return { type: "pointLineDistance", refs: [rounds[0].center, line.id] };
+    const ends = [...pts, ...rounds.map((c) => c.center)];
+    if (ends[0] === ends[1]) return "Those share the same centre — dimension their sizes instead.";
+    return { type: "distance", refs: ends };
+  }
   if (sel.length === 2 && crv.length === 2 && isLine(crv[0]) && isLine(crv[1])) {
     const [ux, uy] = lineDir(s, crv[0]);
     const [wx, wy] = lineDir(s, crv[1]);
@@ -597,17 +627,50 @@ export function dimensionFor(s: SketchData, sel: string[]): { type: ConstraintTy
     if (Math.abs(cross) / lens < 1e-3) return { type: "pointLineDistance", refs: [crv[1].p1, crv[0].id] };
     return { type: "angle", refs: [crv[0].id, crv[1].id], extra: [Math.sign(cross) || 1] };
   }
-  return "Select a line, circle or arc — or two points, a point and a line, or two lines — to dimension.";
+  return "Select a line, circle or arc — or two things to measure between (points, lines, circles or arcs).";
 }
 
 /** Add a dimension for the selection, starting at its current size. */
+/**
+ * A distance between two points that run on a slant becomes a horizontal or
+ * vertical distance when its label is placed above/below or beside them (like
+ * Onshape); in the diagonal corners it stays a straight-line distance.
+ * `labelOffset` is measured from halfway between the points.
+ */
+export function placedDistance(a: [number, number], b: [number, number], labelOffset: { x: number; y: number }): "distance" | "horizontalDistance" | "verticalDistance" {
+  const dx = Math.abs(b[0] - a[0]);
+  const dy = Math.abs(b[1] - a[1]);
+  const size = Math.max(dx, dy);
+  // Already level or upright: all three are the same.
+  if (size < 1e-9 || dx < 1e-3 * size || dy < 1e-3 * size) return "distance";
+  const besideX = Math.abs(labelOffset.x) <= dx / 2;
+  const besideY = Math.abs(labelOffset.y) <= dy / 2;
+  if (besideX && !besideY) return "horizontalDistance";
+  if (besideY && !besideX) return "verticalDistance";
+  return "distance";
+}
+
 export function addDimension(
   s: SketchData,
   sel: string[],
   labelOffset: { x: number; y: number } = { x: 0, y: 0 },
-): EditResult & { dimensionId: string } {
-  const spec = dimensionFor(s, sel);
+): EditResult & { dimensionId: string; driven?: boolean } {
+  let spec = dimensionFor(s, sel);
   if (typeof spec === "string") return { sketch: s, error: spec, dimensionId: "" };
+  // Two points, or a slanted line, can be measured across or up instead, by where the label goes.
+  if (spec.type === "distance" || spec.type === "length") {
+    const ends = spec.type === "distance" ? spec.refs : (() => {
+      const l = curveById(s, spec.refs[0]) as SketchLine;
+      return [l.p1, l.p2];
+    })();
+    const A = pointPos(s, ends[0]);
+    const B = pointPos(s, ends[1]);
+    const kind = placedDistance(A, B, labelOffset);
+    if (kind !== "distance") {
+      const k = kind === "horizontalDistance" ? 0 : 1;
+      spec = { type: kind, refs: ends, extra: [Math.sign(B[k] - A[k]) || 1] };
+    }
+  }
   const id = sketchId("d");
   const draft: SketchConstraint = { id, ...spec, value: "0", labelOffset };
   // An angle measures the wedge the label was placed in (inside, outside or supplementary).
@@ -616,19 +679,47 @@ export function addDimension(
   draft.value = draft.type === "angle" ? roundValue(measure(s, draft)) : startingLength(measure(s, draft));
   const r = checkedSolve(s, { ...s, constraints: [...s.constraints, draft] }, "A dimension", true);
   if (r.error) {
-    return {
-      sketch: s,
-      error: "That's already fully set by other constraints or dimensions, so another dimension would over-define it.",
-      dimensionId: "",
-    };
+    // Already set by other constraints: add it as a reference dimension (shown in brackets), like Onshape's driven dimensions.
+    return { sketch: { ...s, constraints: [...s.constraints, { ...draft, driven: true }] }, dimensionId: id, driven: true };
   }
   return { sketch: r.sketch, dimensionId: id };
+}
+
+/**
+ * Make a dimension a reference (it shows the size and never changes the
+ * sketch) or a driving one again (it holds the size it shows). Making it
+ * driving fails if that would over-define the sketch.
+ */
+export function setDimensionDriven(s: SketchData, id: string, driven: boolean): EditResult {
+  const c = s.constraints.find((x) => x.id === id);
+  if (!c || !isDimension(c)) return { sketch: s, error: "Select a dimension first." };
+  if (!!c.driven === driven) return { sketch: s };
+  if (driven) {
+    const { driven: _d, ...rest } = c;
+    void _d;
+    return { sketch: { ...s, constraints: s.constraints.map((x) => (x.id === id ? { ...rest, driven: true, value: valueNow(s, c) } : x)) } };
+  }
+  const { driven: _d, ...rest } = c;
+  void _d;
+  const others = { ...s, constraints: s.constraints.filter((x) => x.id !== id) };
+  const back = { ...rest, value: valueNow(s, c) };
+  const r = checkedSolve(others, { ...others, constraints: [...others.constraints, back] }, "That dimension", true);
+  if (r.error) return { sketch: s, error: "That size is already set by other constraints or dimensions, so it has to stay a reference. Delete one of those first." };
+  // Keep the dimension in its place in the list.
+  return { sketch: { ...r.sketch, constraints: s.constraints.map((x) => (x.id === id ? back : r.sketch.constraints.find((k) => k.id === x.id) ?? x)) } };
+}
+
+/** A dimension's current size as a value to store (degrees for angles, the design's units for lengths). */
+function valueNow(s: SketchData, c: SketchConstraint): string {
+  const v = measure(s, c);
+  return c.type === "angle" ? roundValue(v) : startingLength(v);
 }
 
 /** Change a dimension's value (any expression, e.g. "20", "10 + 5", "1 in"). */
 export function setDimensionValue(s: SketchData, id: string, value: string): EditResult {
   const c = s.constraints.find((x) => x.id === id);
   if (!c || !isDimension(c)) return { sketch: s, error: "That dimension no longer exists." };
+  if (c.driven) return { sketch: s, error: "That's a reference dimension: it shows the size but can't change it. Make it a driving dimension in the sketch panel first." };
   const r = evaluate(value);
   if (!r.ok) return { sketch: s, error: r.error };
   if (c.type !== "angle" && r.value <= 0 && c.type !== "pointLineDistance") return { sketch: s, error: "Must be more than 0." };

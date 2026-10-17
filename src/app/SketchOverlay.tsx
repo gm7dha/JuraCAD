@@ -4,7 +4,7 @@ import { evaluate } from "../model/expr";
 import { lengthNumber, showLength, storeLength, type LengthUnit } from "../model/units";
 import { useLengthUnit, useStore } from "../model/store";
 import { badgeAnchors, dimensionLayout, RELATION_SYMBOLS } from "../sketch/layout";
-import { moveDimensionLabel, setDimensionValue } from "../sketch/ops";
+import { measure, moveDimensionLabel, setDimensionValue } from "../sketch/ops";
 import { isDimension, type SketchConstraint, type SketchData } from "../sketch/types";
 import { sketchStatus, viewportApi } from "../viewport/Viewport";
 
@@ -23,14 +23,22 @@ const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
   fix: "Fixed",
 };
 
-/** Text shown on a dimension label. */
-function dimensionText(c: SketchConstraint, unit: LengthUnit): string {
-  const r = evaluate(c.value ?? "");
-  const shown = !r.ok ? c.value ?? "?" : c.type === "angle" ? String(Math.round(r.value * 100) / 100) : lengthNumber(r.value, unit);
-  if (c.type === "diameter") return `⌀${shown}`;
-  if (c.type === "radius") return `R${shown}`;
-  if (c.type === "angle") return `${shown}°`;
-  return shown;
+/** Text shown on a dimension label. A reference (driven) dimension shows the size as it is now, in brackets. */
+function dimensionText(c: SketchConstraint, unit: LengthUnit, data?: SketchData): string {
+  let value: number | null = null;
+  if (c.driven && data) {
+    try {
+      value = measure(data, c);
+    } catch {
+      value = null;
+    }
+  } else {
+    const r = evaluate(c.value ?? "");
+    if (r.ok) value = r.value;
+  }
+  const shown = value === null ? c.value ?? "?" : c.type === "angle" ? String(Math.round(value * 100) / 100) : lengthNumber(value, unit);
+  const text = c.type === "diameter" ? `⌀${shown}` : c.type === "radius" ? `R${shown}` : c.type === "angle" ? `${shown}°` : shown;
+  return c.driven ? `(${text})` : text;
 }
 
 /** Shared empty list: a selector must not return a new array each time, or React re-renders forever. */
@@ -164,6 +172,8 @@ function DimensionLabel({
   editing: boolean;
 }) {
   const unit = useLengthUnit();
+  // A reference dimension shows the size the sketch has now.
+  const data = useStore((s) => (c.driven ? s.editing?.draft.sketch?.data ?? null : null));
   // Lengths are shown and typed in the design's units (see units.ts); angles in degrees.
   const shownValue = c.type === "angle" ? c.value ?? "" : showLength(c.value ?? "", unit);
   const [text, setText] = useState(shownValue);
@@ -200,7 +210,7 @@ function DimensionLabel({
     done();
   };
 
-  if (editing) {
+  if (editing && !c.driven) {
     return (
       <div ref={refCb} className="dimension-editor">
         <input
@@ -267,8 +277,8 @@ function DimensionLabel({
   return (
     <div
       ref={refCb}
-      className={`dimension-label${selected ? " selected" : ""}${failing ? " failing" : ""}`}
-      title="Double-click to change, drag to move"
+      className={`dimension-label${selected ? " selected" : ""}${failing ? " failing" : ""}${c.driven ? " driven" : ""}`}
+      title={c.driven ? "Reference dimension: shows the size but doesn't set it. Drag to move; select it to make it driving in the sketch panel" : "Double-click to change, drag to move"}
       role="button"
       tabIndex={-1}
       onPointerDown={onPointerDown}
@@ -276,10 +286,14 @@ function DimensionLabel({
       onPointerUp={onPointerUp}
       onDoubleClick={(e) => {
         e.stopPropagation();
+        if (c.driven) {
+          useStore.getState().setSketchMessage("That's a reference dimension (in brackets): it shows the size but doesn't set it. Select it and click Make driving in the sketch panel to set the size with it.", "info");
+          return;
+        }
         useStore.getState().setEditingDimension(c.id);
       }}
     >
-      {dimensionText(c, unit)}
+      {dimensionText(c, unit, data ?? undefined)}
     </div>
   );
 }

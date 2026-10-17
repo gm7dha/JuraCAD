@@ -92,7 +92,17 @@ export type RelationType =
   | "fix";
 
 /** Dimensions (have a value the user types). */
-export type DimensionType = "distance" | "length" | "horizontalDistance" | "verticalDistance" | "radius" | "diameter" | "angle" | "pointLineDistance";
+export type DimensionType =
+  | "distance"
+  | "length"
+  | "horizontalDistance"
+  | "verticalDistance"
+  | "radius"
+  | "diameter"
+  | "angle"
+  | "pointLineDistance"
+  /** How far an offset copy is from what it was copied from. refs: pairs of [copy, original] curves (lines, arcs, circles). */
+  | "offset";
 
 export type ConstraintType = RelationType | DimensionType;
 
@@ -114,6 +124,11 @@ export interface SketchConstraint {
   extra?: number[];
   /** Dimensions only: where the label sits, relative to the measured geometry (sketch mm). */
   labelOffset?: { x: number; y: number };
+  /**
+   * Dimensions only: a reference ("driven") dimension. It shows the size as it
+   * is, in brackets, and never changes the sketch; its value follows the geometry.
+   */
+  driven?: boolean;
 }
 
 export interface SketchData {
@@ -133,6 +148,7 @@ export const DIMENSION_TYPES: ReadonlySet<ConstraintType> = new Set<ConstraintTy
   "diameter",
   "angle",
   "pointLineDistance",
+  "offset",
 ]);
 
 export const isDimension = (c: SketchConstraint) => DIMENSION_TYPES.has(c.type);

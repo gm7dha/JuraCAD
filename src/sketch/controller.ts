@@ -179,7 +179,8 @@ export class SketchController {
     const ids: string[] = [];
     for (const refs of groups) {
       const r = addDimension(data, refs);
-      if (r.error) continue;
+      // Sizes already set by something else aren't offered.
+      if (r.error || r.driven) continue;
       data = r.sketch;
       ids.push(r.dimensionId);
     }
@@ -924,7 +925,7 @@ export class SketchController {
       return;
     }
     if (pending.length === 0) {
-      this.state.setSketchMessage("Click a line, circle or arc — or two points, a point and a line, or two lines.", "info");
+      this.state.setSketchMessage("Click a line, circle or arc — or two things to measure between. Where you put the value picks across, up or straight.", "info");
       return;
     }
     const spec = dimensionFor(d, pending);
@@ -936,7 +937,12 @@ export class SketchController {
     const offset = offsetFor(d, { id: "tmp", ...spec }, [e.x, e.y]);
     const r = addDimension(d, pending, offset);
     this.emit({ pending: [] });
-    if (this.commit(r)) this.state.setEditingDimension(r.dimensionId);
+    if (!this.commit(r)) return;
+    if (r.driven) {
+      this.state.setSketchMessage("That's already set by other constraints or dimensions, so it was added as a reference dimension (in brackets): it shows the size but doesn't change it.", "info");
+      return;
+    }
+    this.state.setEditingDimension(r.dimensionId);
   }
 }
 

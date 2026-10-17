@@ -5,7 +5,7 @@
  */
 import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
-import { addArc, addCircle, addRectangle, circleThrough, curveById, curvePoints, deleteItems, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, type EditResult, type Placed } from "./ops";
+import { addArc, addCircle, addRectangle, circleThrough, curveById, curvePoints, deleteItems, ellipsePoints, mirrorPoint, placePoint, pointPos, radiusOf, settle, sketchId, splinePath, type EditResult, type Placed } from "./ops";
 import { minorPointFor } from "./ellipse";
 import { ORIGIN_ID, type SketchEllipse, type SketchSpline, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
@@ -101,11 +101,13 @@ export function addPolygon(s: SketchData, centre: Placed, corner: { x: number; y
  * point stays as a "virtual sharp" so dimensions to it, and the lines'
  * length dimensions, keep working.
  */
-export function filletCorner(s: SketchData, pointId: string, radiusText: string): EditResult & { arcId: string } {
-  const fail = (error: string) => ({ sketch: s, arcId: "", error });
+export function filletCorner(original: SketchData, pointId: string, radiusText: string): EditResult & { arcId: string } {
+  const fail = (error: string) => ({ sketch: original, arcId: "", error });
   const r = evaluate(radiusText);
   if (!r.ok) return fail(r.error);
   if (r.value <= 0) return fail("The radius must be more than 0.");
+  // Lines joined by dragging one end onto the other have separate end points held together: make them one point first.
+  const s = mergeCoincident(original, pointId);
   const lines = s.curves.filter((c): c is SketchLine => c.type === "line" && !c.construction && (c.p1 === pointId || c.p2 === pointId));
   if (lines.length !== 2) return fail("Click a corner where exactly two lines meet.");
   const [L1, L2] = lines;
@@ -151,6 +153,51 @@ export function filletCorner(s: SketchData, pointId: string, radiusText: string)
   return { sketch: solved.sketch, arcId };
 }
 
+/**
+ * The sketch with every point held on `pointId` by a coincident constraint
+ * (directly or through others) merged into it: curves and constraints that
+ * used those points use `pointId` instead.
+ */
+export function mergeCoincident(s: SketchData, pointId: string): SketchData {
+  const same = new Set([pointId]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const c of s.constraints) {
+      if (c.type !== "coincident" || !c.refs.some((r) => same.has(r))) continue;
+      for (const r of c.refs) {
+        if (r !== ORIGIN_ID && !same.has(r)) {
+          same.add(r);
+          grew = true;
+        }
+      }
+    }
+  }
+  if (same.size === 1) return s;
+  const to = (id: string) => (same.has(id) ? pointId : id);
+  const curves = s.curves.map((c): SketchCurve => {
+    switch (c.type) {
+      case "line":
+        return { ...c, p1: to(c.p1), p2: to(c.p2) };
+      case "circle":
+        return { ...c, center: to(c.center) };
+      case "arc":
+        return { ...c, center: to(c.center), start: to(c.start), end: to(c.end) };
+      case "ellipse":
+        return { ...c, center: to(c.center), major: to(c.major), minor: to(c.minor) };
+      case "spline": {
+        const tangents = c.tangents ? Object.fromEntries(Object.entries(c.tangents).map(([k, v]) => [to(k), v])) : undefined;
+        return { ...c, points: c.points.map(to), ...(tangents ? { tangents } : {}) };
+      }
+    }
+  });
+  const constraints = s.constraints
+    .map((c) => ({ ...c, refs: c.refs.map(to) }))
+    // Joins between the merged points are no longer needed.
+    .filter((c) => !(c.type === "coincident" && c.refs[0] === c.refs[1]));
+  const points = s.points.filter((p) => p.id === pointId || !same.has(p.id));
+  return { points, curves, constraints };
+}
+
 // ---------------------------------------------------------------------------
 // Trim
 
@@ -186,8 +233,14 @@ function onArc(s: SketchData, c: SketchCircle | SketchArc, p: P2): boolean {
 
 /** Points where curves `a` and `b` cross (each within its own extent). */
 export function intersections(s: SketchData, a: SketchCurve, b: SketchCurve): P2[] {
-  // Splines aren't cut where things cross them (yet).
-  if (a.type === "spline" || b.type === "spline" || a.type === "ellipse" || b.type === "ellipse") return [];
+  const wavy = (c: SketchCurve) => c.type === "spline" || c.type === "ellipse";
+  // Two splines/ellipses crossing each other aren't worked out (yet).
+  if (wavy(a) && wavy(b)) return [];
+  // A spline or ellipse crossing a line, arc or circle: follow it as short straight pieces.
+  if (wavy(a) || wavy(b)) {
+    const [k, w] = (wavy(a) ? [b, a] : [a, b]) as [SketchLine | SketchArc | SketchCircle, SketchSpline | SketchEllipse];
+    return crossingsWithPath(s, k, w.type === "spline" ? splinePath(s, w, 48) : ellipsePoints(s, w, 256));
+  }
   const seg = (l: SketchLine) => [pointPos(s, l.p1), pointPos(s, l.p2)] as [P2, P2];
   const onSeg = (l: SketchLine, p: P2) => {
     const [A, B] = seg(l);
@@ -232,6 +285,44 @@ export function intersections(s: SketchData, a: SketchCurve, b: SketchCurve): P2
   return pts.filter((p) => onArc(s, a as SketchArc, p) && onArc(s, b as SketchArc, p));
 }
 
+/** Where a line, arc or circle crosses a path of short straight pieces (a spline or ellipse drawn out). */
+function crossingsWithPath(s: SketchData, k: SketchLine | SketchArc | SketchCircle, path: P2[]): P2[] {
+  const out: P2[] = [];
+  const push = (p: P2) => {
+    // Neighbouring pieces can both report a crossing right at their shared end.
+    if (!out.some((q) => len(sub(p, q)) < 1e-6)) out.push(p);
+  };
+  for (let i = 0; i + 1 < path.length; i++) {
+    const C = path[i];
+    const D = path[i + 1];
+    const q = sub(D, C);
+    if (len(q) < 1e-12) continue;
+    if (k.type === "line") {
+      const A = pointPos(s, k.p1);
+      const r = sub(pointPos(s, k.p2), A);
+      const den = cross(r, q);
+      if (Math.abs(den) < 1e-12) continue;
+      const t = cross(sub(C, A), q) / den;
+      const u = cross(sub(C, A), r) / den;
+      if (t >= -1e-9 && t <= 1 + 1e-9 && u >= -1e-9 && u <= 1 + 1e-9) push(add(A, mul(r, t)));
+    } else {
+      const { c: O, r } = circleOf(s, k);
+      const f = sub(C, O);
+      const qa = dot(q, q);
+      const qb = 2 * dot(f, q);
+      const disc = qb * qb - 4 * qa * (dot(f, f) - r * r);
+      if (disc < 0) continue;
+      const root = Math.sqrt(disc);
+      for (const t of [(-qb - root) / (2 * qa), (-qb + root) / (2 * qa)]) {
+        if (t < -1e-9 || t > 1 + 1e-9) continue;
+        const p = add(C, mul(q, t));
+        if (onArc(s, k, p)) push(p);
+      }
+    }
+  }
+  return out;
+}
+
 /** Position of a point along a curve (line: 0–1; arc/circle: angle from its start). */
 function paramOf(s: SketchData, c: SketchCurve, p: P2): number {
   if (c.type === "spline" || c.type === "ellipse") return 0;
@@ -245,7 +336,7 @@ function paramOf(s: SketchData, c: SketchCurve, p: P2): number {
 }
 
 /** Constraints that stay true when a curve is shortened (others, like its length, are dropped). */
-const KEEPS_WHEN_TRIMMED = new Set(["horizontal", "vertical", "parallel", "perpendicular", "tangent", "pointOnLine", "pointOnCircle", "concentric", "radius", "diameter", "equal", "fix"]);
+const KEEPS_WHEN_TRIMMED = new Set(["horizontal", "vertical", "parallel", "perpendicular", "tangent", "pointOnLine", "pointOnCircle", "concentric", "radius", "diameter", "equal", "fix", "offset"]);
 
 /**
  * Trim: remove the piece of a curve between the nearest crossings either
@@ -274,9 +365,12 @@ export function trimAt(s: SketchData, curveId: string, at: { x: number; y: numbe
   const newPoint = (cut: Cut) => {
     const id = sketchId("p");
     const other = curveById(s, cut.by)!;
-    return { point: { id, x: cut.point[0], y: cut.point[1] }, constraint: con(other.type === "line" ? "pointOnLine" : "pointOnCircle", [id, cut.by]) };
+    // A new end on a spline or ellipse can't be held on it (there's no such constraint yet): it just stays where it was cut.
+    const on: SketchConstraint[] = other.type === "line" ? [con("pointOnLine", [id, cut.by])] : other.type === "circle" || other.type === "arc" ? [con("pointOnCircle", [id, cut.by])] : [];
+    return { point: { id, x: cut.point[0], y: cut.point[1] }, constraints: on };
   };
-  const keep = s.constraints.filter((k) => !k.refs.includes(curveId) || KEEPS_WHEN_TRIMMED.has(k.type));
+  // A shortened line is no longer equal in length to anything (an arc keeps its radius, so stays equal).
+  const keep = s.constraints.filter((k) => !k.refs.includes(curveId) || (KEEPS_WHEN_TRIMMED.has(k.type) && !(k.type === "equal" && target.type === "line")));
   const others = s.curves.filter((c) => c.id !== curveId);
 
   if (target.type === "circle") {
@@ -287,7 +381,7 @@ export function trimAt(s: SketchData, curveId: string, at: { x: number; y: numbe
     const a = newPoint(hi);
     const b = newPoint(lo);
     const arc: SketchArc = { id: curveId, type: "arc", center: target.center, start: a.point.id, end: b.point.id, construction: target.construction };
-    return settle({ points: [...s.points, a.point, b.point], curves: [...others, arc], constraints: [...keep, a.constraint, b.constraint] });
+    return settle({ points: [...s.points, a.point, b.point], curves: [...others, arc], constraints: [...keep, ...a.constraints, ...b.constraints] });
   }
 
   const start = target.type === "line" ? target.p1 : target.start;
@@ -297,11 +391,11 @@ export function trimAt(s: SketchData, curveId: string, at: { x: number; y: numbe
 
   if (!before && after) {
     const a = newPoint(after);
-    return tidy(s, { points: [...s.points, a.point], curves: [...others, piece(a.point.id, finish, curveId)], constraints: [...keep, a.constraint] });
+    return tidy(s, { points: [...s.points, a.point], curves: [...others, piece(a.point.id, finish, curveId)], constraints: [...keep, ...a.constraints] });
   }
   if (before && !after) {
     const b = newPoint(before);
-    return tidy(s, { points: [...s.points, b.point], curves: [...others, piece(start, b.point.id, curveId)], constraints: [...keep, b.constraint] });
+    return tidy(s, { points: [...s.points, b.point], curves: [...others, piece(start, b.point.id, curveId)], constraints: [...keep, ...b.constraints] });
   }
   // A piece in the middle: split into two.
   const b = newPoint(before!);
@@ -313,7 +407,7 @@ export function trimAt(s: SketchData, curveId: string, at: { x: number; y: numbe
   return tidy(s, {
     points: [...s.points, b.point, a.point],
     curves: [...others, piece(start, b.point.id, curveId), piece(a.point.id, finish, secondId)],
-    constraints: [...keep, b.constraint, a.constraint, ...copied],
+    constraints: [...keep, ...b.constraints, ...a.constraints, ...copied],
   });
 }
 
@@ -446,7 +540,9 @@ export function offsetCurves(s: SketchData, curveId: string, at: { x: number; y:
     if (radius <= 1e-6) return fail("That offset is bigger than the circle — use a smaller distance, or offset outwards.");
     const id = sketchId("k");
     const circle: SketchCircle = { id, type: "circle", center: clicked.center, radius, construction: false };
-    return { ...settle({ ...s, curves: [...s.curves, circle] }), curveIds: [id] };
+    // The copy stays that far from the original when the original changes size.
+    const keepApart: SketchConstraint = { ...con("offset", [id, clicked.id], distanceText), labelOffset: { x: 0, y: 0 } };
+    return { ...settle({ ...s, curves: [...s.curves, circle], constraints: [...s.constraints, keepApart] }), curveIds: [id] };
   }
 
   const { steps, closed } = chainOf(s, clicked);
@@ -518,6 +614,8 @@ export function offsetCurves(s: SketchData, curveId: string, at: { x: number; y:
 
   const curves: SketchCurve[] = [];
   const constraints: SketchConstraint[] = [];
+  /** [copy, original] pairs, held the offset distance apart. */
+  const pairs: string[] = [];
   steps.forEach((st, i) => {
     const from = pid(i);
     const to = pid(i + 1);
@@ -525,12 +623,19 @@ export function offsetCurves(s: SketchData, curveId: string, at: { x: number; y:
       const id = sketchId("l");
       curves.push({ id, type: "line", p1: from, p2: to, construction: false });
       constraints.push(con("parallel", [id, st.curve.id]));
+      pairs.push(id, st.curve.id);
     } else {
       const id = sketchId("a");
       const forward = st.from === st.curve.start;
       curves.push({ id, type: "arc", center: st.curve.center, start: forward ? from : to, end: forward ? to : from, construction: false });
+      pairs.push(id, st.curve.id);
     }
   });
+  // One dimension holds every copy that far from its original, so the offset follows when the original changes.
+  // The clicked curve's pair goes first: the label sits by it.
+  const first = steps.findIndex((st) => st.curve.id === clicked.id);
+  const ordered = [...pairs.slice(first * 2), ...pairs.slice(0, first * 2)];
+  constraints.push({ ...con("offset", ordered, distanceText), labelOffset: { x: 0, y: 0 } });
   const result = settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: [...s.constraints, ...constraints] });
   return { ...result, curveIds: curves.map((c) => c.id) };
 }

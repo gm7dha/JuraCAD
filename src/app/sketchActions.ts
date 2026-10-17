@@ -1,6 +1,6 @@
 /** Actions used by both the sketch toolbar and keyboard shortcuts. */
 import { useStore, type SketchTool } from "../model/store";
-import { applyRelation, deleteItems, RELATION_LABELS, toggleConstruction, type RelationTool } from "../sketch/ops";
+import { applyRelation, deleteItems, RELATION_LABELS, setDimensionDriven, toggleConstruction, type RelationTool } from "../sketch/ops";
 import { patternCurves, readPatternSettings, readTransformSettings, transformCurves } from "../sketch/tools";
 import { viewportApi } from "../viewport/Viewport";
 
@@ -120,4 +120,21 @@ export function sketchEscape() {
   }
   s.setSketchSelection([]);
   s.setSketchMessage(null);
+}
+
+/** Turn the selected dimension into a reference one (shows the size only), or back into a driving one. */
+export function toggleSketchDimensionDriven() {
+  const s = useStore.getState();
+  const data = sketchData();
+  if (!data || !s.sketch) return;
+  const id = s.sketch.selection.find((x) => data.constraints.some((c) => c.id === x));
+  const c = data.constraints.find((x) => x.id === id);
+  if (!c) return;
+  const r = setDimensionDriven(data, c.id, !c.driven);
+  if (r.error) {
+    s.setSketchMessage(r.error, "error");
+    return;
+  }
+  s.updateSketch(r.sketch, { record: true });
+  s.setSketchMessage(c.driven ? "It's a driving dimension again: double-click it to change the size." : "It's a reference dimension now (in brackets): it shows the size but doesn't set it.", "info");
 }

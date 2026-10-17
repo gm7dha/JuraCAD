@@ -1788,6 +1788,11 @@ kbd {
   background: var(--warn-soft);
 }
 
+.dimension-label.driven {
+  color: var(--ink-2);
+  border-style: dashed;
+}
+
 .dimension-label.failing {
   border-color: var(--error);
   color: var(--error);
