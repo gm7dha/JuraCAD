@@ -613,9 +613,15 @@ function SketchSolidOptions() {
             )}
           </select>
           <p className="dialog-hint field-hint">Tip: draw a construction line (Q) in the sketch to spin around any line you like.</p>
-          <label className="check-row">
-            <input type="checkbox" checked={rev.flip} onChange={(e) => setDraftField({ revolve: { ...rev, flip: e.target.checked } })} />
-            Flip direction (for less than a full turn)
+          {!rev.symmetric && (
+            <label className="check-row">
+              <input type="checkbox" checked={rev.flip} onChange={(e) => setDraftField({ revolve: { ...rev, flip: e.target.checked } })} />
+              Flip direction (for less than a full turn)
+            </label>
+          )}
+          <label className="check-row" title="Spin half the angle one way from the sketch and half the other way">
+            <input type="checkbox" checked={!!rev.symmetric} onChange={(e) => setDraftField({ revolve: { ...rev, symmetric: e.target.checked || undefined } })} />
+            Both ways (half the angle each side of the sketch)
           </label>
         </>
       )}
@@ -653,6 +659,12 @@ function SketchSolidOptions() {
         <label className="check-row">
           <input type="checkbox" checked={opts.flip} onChange={(e) => setDraftField({ extrude: { ...opts, flip: e.target.checked } })} />
           Flip direction
+        </label>
+      )}
+      {draft.type === "extrude" && opts.end === "blind" && !draft.surface && (
+        <label className="check-row" title="Extrude the other way from the sketch too, by its own depth (Depth the other way)">
+          <input type="checkbox" checked={!!opts.second} onChange={(e) => setDraftField({ extrude: { ...opts, second: e.target.checked || undefined } })} />
+          Also extrude the other way (a second depth)
         </label>
       )}
     </fieldset>
@@ -928,15 +940,69 @@ function PatternOptions() {
   const toggleDraftSource = useStore((s) => s.toggleDraftSource);
   const setDraftField = useStore((s) => s.setDraftField);
   const setDraftMirrorPlane = useStore((s) => s.setDraftMirrorPlane);
+  const parts = useStore(studioParts);
   if (!draft || !isPatternFeature(draft.type)) return null;
   const mirror = draft.type === "mirror";
   const sources = (mirror ? draft.mirror?.sources : draft.pattern?.sources) ?? [];
   const named = sources.map((id) => ({ id, name: features.find((f) => f.id === id)?.name ?? "Deleted feature" }));
   const pattern = draft.pattern ?? { sources: [], axis: "x" as Axis, flip: false };
   const plane = draft.mirror?.plane;
+  const m = draft.mirror;
+  // Mirror a whole part (Onshape's part mirror) instead of features.
+  const partMode = mirror && m?.part !== undefined;
+  // Only parts that exist by this point in the list (not ones made by later features).
+  const at = features.findIndex((f) => f.id === draft.id);
+  const later = new Set(at >= 0 ? features.slice(at + 1).map((f) => f.id) : []);
+  const partChoices = parts.filter((p) => p.id !== draft.id && !later.has(p.id.split("~")[0]));
+  const axis2 = pattern.axis2 ?? (pattern.axis === "y" ? "x" : "y");
 
   return (
     <>
+      {mirror && m && (
+        <div className="segmented two" role="radiogroup" aria-label="What to mirror">
+          {(
+            [
+              [false, "Features", "Mirror chosen features (a boss, a hole…) onto the same part"],
+              [true, "Whole part", "Mirror a whole part — as a new part, or joined onto it (model half, mirror the rest)"],
+            ] as const
+          ).map(([whole, label, hint]) => (
+            <button
+              type="button"
+              key={label}
+              role="radio"
+              aria-checked={partMode === whole}
+              className={partMode === whole ? "selected" : ""}
+              title={hint}
+              onClick={() => {
+                if (whole === partMode) return;
+                const { part: _part, join: _join, ...rest } = m;
+                setDraftField({ mirror: whole ? { ...rest, part: partChoices[partChoices.length - 1]?.id ?? "", join: true } : rest });
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {partMode && m ? (
+        <fieldset className="param-group">
+          <legend>Part to mirror</legend>
+          <select className="full-select" aria-label="Part to mirror" value={m.part ?? ""} onChange={(e) => setDraftField({ mirror: { ...m, part: e.target.value } })}>
+            {!m.part && <option value="">Choose a part…</option>}
+            {partChoices.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+            {m.part && !partChoices.some((p) => p.id === m.part) && <option value={m.part}>Missing part — choose another</option>}
+          </select>
+          <label className="check-row">
+            <input type="checkbox" checked={!!m.join} onChange={(e) => setDraftField({ mirror: { ...m, join: e.target.checked || undefined } })} />
+            Join the mirror image onto the part (otherwise it&apos;s a new part)
+          </label>
+          <p className="dialog-hint field-hint">Tip: model one half up to the plane, then mirror it and join — both halves stay the same as you change it.</p>
+        </fieldset>
+      ) : (
       <fieldset className="param-group">
         <legend>Features to {mirror ? "mirror" : "repeat"}</legend>
         {named.length === 0 ? (
@@ -955,6 +1021,7 @@ function PatternOptions() {
         )}
         {named.length > 0 && <p className="muted small field-note">Click features in the list to add or remove them. Each copy adds or cuts just like the original.</p>}
       </fieldset>
+      )}
       {mirror && plane ? (
         <fieldset className="param-group">
           <legend>Mirror across</legend>
@@ -1001,12 +1068,15 @@ function PatternOptions() {
             className="full-select"
             aria-label="Axis"
             value={pattern.axis}
-            onChange={(e) => setDraftField({ pattern: { ...pattern, axis: e.target.value as Axis } })}
+            onChange={(e) => {
+              const axis = e.target.value as Axis;
+              // The rows can't go the same way as the copies: swap them over.
+              setDraftField({ pattern: { ...pattern, axis, ...(pattern.axis2 === axis ? { axis2: pattern.axis } : {}) } });
+            }}
           >
             {(["x", "y", "z"] as const).map((a) => (
               <option key={a} value={a}>
                 {AXIS_LABELS[a]}
-                {draft.type === "circularPattern" ? " through the origin" : ""}
               </option>
             ))}
           </select>
@@ -1014,6 +1084,34 @@ function PatternOptions() {
             <input type="checkbox" checked={pattern.flip} onChange={(e) => setDraftField({ pattern: { ...pattern, flip: e.target.checked } })} />
             Flip direction
           </label>
+          {draft.type === "circularPattern" && (
+            <p className="dialog-hint field-hint">The axis goes through the point under Axis position below (the origin to start with) — put it at the middle of the round part.</p>
+          )}
+          {draft.type === "linearPattern" && (
+            <>
+              <label className="field-label" htmlFor="pattern-axis2">
+                Rows go along (for a grid)
+              </label>
+              <select
+                id="pattern-axis2"
+                className="full-select"
+                aria-label="Second direction"
+                value={axis2}
+                onChange={(e) => setDraftField({ pattern: { ...pattern, axis2: e.target.value as Axis } })}
+              >
+                {(["x", "y", "z"] as const).map((a) => (
+                  <option key={a} value={a} disabled={a === pattern.axis}>
+                    {AXIS_LABELS[a]}
+                  </option>
+                ))}
+              </select>
+              <label className="check-row">
+                <input type="checkbox" checked={!!pattern.flip2} onChange={(e) => setDraftField({ pattern: { ...pattern, flip2: e.target.checked || undefined } })} />
+                Flip the rows&apos; direction
+              </label>
+              <p className="dialog-hint field-hint">Set Rows below to more than 1 for a grid.</p>
+            </>
+          )}
         </fieldset>
       )}
     </>
@@ -1054,6 +1152,50 @@ function ThreadOptions() {
   );
 }
 
+/** Chamfer: the same both ways, two distances, or a distance and an angle (and which face the first one runs along). */
+function ChamferOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (draft?.type !== "chamfer") return null;
+  const kind = draft.chamferType ?? "equal";
+  return (
+    <>
+      <div className="segmented three" role="radiogroup" aria-label="Chamfer type">
+        {(
+          [
+            ["equal", "Equal", "The same distance along both faces (a 45° bevel)"],
+            ["twoDistances", "2 distances", "A different distance along each face"],
+            ["distanceAngle", "Angle", "A distance along one face, at an angle to it"],
+          ] as const
+        ).map(([k, label, hint]) => (
+          <button
+            type="button"
+            key={k}
+            role="radio"
+            aria-checked={kind === k}
+            className={kind === k ? "selected" : ""}
+            title={hint}
+            onClick={() => setDraftField({ chamferType: k === "equal" ? undefined : k })}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {kind !== "equal" && (
+        <>
+          <label className="check-row">
+            <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked || undefined })} />
+            Swap sides
+          </label>
+          <p className="dialog-hint field-hint">
+            The first distance runs along the face you clicked — or, for an edge, the face beside it that faces most upwards. Tick Swap sides to measure it along the other face.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
 /** Fillet/chamfer/shell: the edges and faces picked so far. */
 function PicksField() {
   const draft = useStore((s) => s.editing?.draft);
@@ -1086,6 +1228,10 @@ function PicksField() {
             </button>
           ))}
         </div>
+        <label className="check-row" title="The walls go round the outside, and the part itself becomes the space inside — handy for a case or cover that fits round something">
+          <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked || undefined })} />
+          Walls outside (the part becomes the space inside)
+        </label>
         <fieldset className="param-group">
           <legend>{hollow ? "Part to hollow" : "Faces to remove"}</legend>
           {picks.length === 0 ? (
@@ -1378,7 +1524,7 @@ export function FeatureDialog() {
   const hasErrors = Object.keys(errors).length > 0;
   const groups: { title: string; params: ParamDef[] }[] = [
     { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
-    { title: draft.type === "transform" ? "Move" : "Position", params: def.params.filter((p) => p.group === "position") },
+    { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis position" : "Position", params: def.params.filter((p) => p.group === "position") },
   ];
 
   return (
@@ -1466,6 +1612,7 @@ export function FeatureDialog() {
         <HoleOptions />
         <TransformOptions />
         <ImportOptions />
+        <ChamferOptions />
         <PicksField />
         <SurfaceOptions />
         <ThreadOptions />
@@ -1480,7 +1627,13 @@ export function FeatureDialog() {
             {g.params.map((p, pi) => (
               <ParamField
                 key={p.key}
-                def={draft.type === "cornerBreak" && p.key === "size" ? { ...p, label: draft.breakStyle === "chamfer" ? "Distance back along each edge" : "Radius" } : p}
+                def={
+                  draft.type === "chamfer" && draft.chamferType && p.key === "distance"
+                    ? { ...p, label: "First distance" }
+                    : draft.type === "cornerBreak" && p.key === "size"
+                      ? { ...p, label: draft.breakStyle === "chamfer" ? "Distance back along each edge" : "Radius" }
+                      : p
+                }
                 value={draft.params[p.key] ?? p.defaultValue}
                 autoFocus={mode === "create" && gi === 0 && pi === 0}
               />

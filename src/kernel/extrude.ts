@@ -37,6 +37,8 @@ export interface ExtrudeOptions {
   flip: boolean;
   /** Taper of the sides in degrees (positive narrows away from the sketch). */
   draft?: number;
+  /** One way (blind) only: also this far the other way from the sketch. */
+  depth2?: number;
 }
 
 /** Free OpenCascade objects once we're done with them. */
@@ -149,10 +151,30 @@ export function extrudeSketch(plane: SketchPlane, data: SketchData, opts: Extrud
   }
   const frame = planeFrame(plane);
   const dirSign = opts.flip ? -1 : 1;
-  const offset = opts.end === "symmetric" ? -opts.depth / 2 : 0;
+  // How far it goes ahead of the sketch, and behind it (symmetric, or a second direction).
+  const ahead = opts.end === "symmetric" ? opts.depth / 2 : opts.depth;
+  const behind = opts.end === "symmetric" ? opts.depth / 2 : Math.max(0, opts.depth2 ?? 0);
+  const drafted = !!opts.draft && Math.abs(opts.draft) > 1e-9;
+  if (drafted && behind > 0) {
+    // With a taper, each side narrows away from the sketch: two tapered halves, joined at the sketch.
+    const front = extrudeSketch(plane, data, { depth: ahead, end: "blind", flip: opts.flip, draft: opts.draft });
+    let back: Shape3D;
+    try {
+      back = extrudeSketch(plane, data, { depth: behind, end: "blind", flip: !opts.flip, draft: opts.draft });
+    } catch (e) {
+      release(front);
+      throw e;
+    }
+    try {
+      return front.fuse(back);
+    } finally {
+      release(front, back);
+    }
+  }
   const n = frame.n;
-  const vector: [number, number, number] = [n[0] * opts.depth * dirSign, n[1] * opts.depth * dirSign, n[2] * opts.depth * dirSign];
-  const start = opts.end === "symmetric" ? offset * dirSign : 0;
+  const length = ahead + behind;
+  const vector: [number, number, number] = [n[0] * length * dirSign, n[1] * length * dirSign, n[2] * length * dirSign];
+  const start = -behind * dirSign;
 
   let result: Shape3D | null = null;
   for (const region of regions) {
@@ -171,8 +193,8 @@ export function extrudeSketch(plane: SketchPlane, data: SketchData, opts: Extrud
       result = merged;
     }
   }
-  if (opts.draft && Math.abs(opts.draft) > 1e-9) {
-    const tapered = draftSides(result!, frame, opts.flip ? -1 : 1, opts.draft);
+  if (drafted) {
+    const tapered = draftSides(result!, frame, opts.flip ? -1 : 1, opts.draft!);
     release(result!);
     return tapered;
   }
