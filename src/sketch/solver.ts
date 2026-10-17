@@ -11,7 +11,9 @@
  * constraints, so fully defined geometry can be drawn black, as in Onshape.
  */
 import { evaluate } from "../model/expr";
-import { splinePolyline } from "./spline";
+import { splineBeziers } from "./spline";
+
+type Bez = [Vec, Vec, Vec, Vec];
 import { ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData } from "./types";
 
 type Vec = [number, number];
@@ -89,6 +91,33 @@ function buildSystem(sketch: SketchData): System {
     id === ORIGIN_ID || pointVar.has(id) ? "point" : curves.get(id)?.type ?? "point";
 
   const blocks: System["blocks"] = [];
+
+  /**
+   * A spline's Bézier pieces for the current unknowns, worked out once and
+   * shared by every point held on it (re-worked only when its points move).
+   */
+  const pieceCache = new Map<string, (x: Float64Array) => Bez[]>();
+  const splinePieces = (id: string) => {
+    const known = pieceCache.get(id);
+    if (known) return known;
+    const curve = curves.get(id);
+    if (curve?.type !== "spline") throw new Error(`${id} is not a spline`);
+    const ids = curve.points.map((pid) => P(pid));
+    const handles = curve.points.map((pid) => curve.tangents?.[pid]);
+    let lastKey: number[] = [];
+    let last: Bez[] = [];
+    const get = (x: Float64Array) => {
+      const pts = ids.map((f) => f(x));
+      const key = pts.flat();
+      if (key.length !== lastKey.length || key.some((v, i) => v !== lastKey[i])) {
+        lastKey = key;
+        last = splineBeziers(pts, curve.closed, curve.conic, handles);
+      }
+      return last;
+    };
+    pieceCache.set(id, get);
+    return get;
+  };
 
   // Every arc keeps its start and end at the same distance from the centre.
   for (const c of sketch.curves) {
@@ -332,15 +361,8 @@ function buildSystem(sketch: SketchData): System {
           };
         }
         if (curve?.type === "spline") {
-          const ids = curve.points.map((id) => P(id));
-          const handles = curve.points.map((id) => curve.tangents?.[id]);
-          return {
-            size: 1,
-            eval: (x, out) => {
-              const path = splinePolyline(ids.map((f) => f(x)), curve.closed, 48, curve.conic, handles);
-              out.push(signedDistanceToPath(p(x), path));
-            },
-          };
+          const pieces = splinePieces(curve.id);
+          return { size: 1, eval: (x, out) => out.push(signedDistanceToBeziers(p(x), pieces(x))) };
         }
         throw new Error(`${b} is not a spline or ellipse`);
       }
@@ -428,25 +450,59 @@ function buildSystem(sketch: SketchData): System {
   return { n: init.length, pointVar, radiusVar, x0: Float64Array.from(init), blocks, skipped };
 }
 
-/** Distance from `p` to a path of straight pieces, plus on the left of the nearest piece, minus on the right. */
-function signedDistanceToPath(p: Vec, path: Vec[]): number {
+/**
+ * Distance from `p` to the nearest place on a chain of cubic Bézier pieces,
+ * plus on the curve's left (as it runs), minus on its right. The nearest place
+ * is found on the true curve (a coarse search, then a few Newton steps), so the
+ * side doesn't flicker near bends.
+ */
+function signedDistanceToBeziers(p: Vec, pieces: Bez[]): number {
+  const at = ([a, b, c, d]: Bez, t: number): Vec => {
+    const u = 1 - t;
+    const k0 = u * u * u, k1 = 3 * u * u * t, k2 = 3 * u * t * t, k3 = t * t * t;
+    return [k0 * a[0] + k1 * b[0] + k2 * c[0] + k3 * d[0], k0 * a[1] + k1 * b[1] + k2 * c[1] + k3 * d[1]];
+  };
+  const tangent = ([a, b, c, d]: Bez, t: number): Vec => {
+    const u = 1 - t;
+    const k0 = 3 * u * u, k1 = 6 * u * t, k2 = 3 * t * t;
+    return [k0 * (b[0] - a[0]) + k1 * (c[0] - b[0]) + k2 * (d[0] - c[0]), k0 * (b[1] - a[1]) + k1 * (c[1] - b[1]) + k2 * (d[1] - c[1])];
+  };
+  const bend = ([a, b, c, d]: Bez, t: number): Vec => {
+    const u = 1 - t;
+    return [6 * u * (c[0] - 2 * b[0] + a[0]) + 6 * t * (d[0] - 2 * c[0] + b[0]), 6 * u * (c[1] - 2 * b[1] + a[1]) + 6 * t * (d[1] - 2 * c[1] + b[1])];
+  };
   let best = Infinity;
-  let signed = 0;
-  for (let i = 0; i + 1 < path.length; i++) {
-    const a = path[i], b = path[i + 1];
-    const dx = b[0] - a[0], dy = b[1] - a[1];
-    const l2 = dx * dx + dy * dy;
-    if (l2 < 1e-24) continue;
-    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2));
-    const fx = a[0] + t * dx - p[0], fy = a[1] + t * dy - p[1];
-    const d = Math.hypot(fx, fy);
-    if (d < best) {
-      best = d;
-      const side = dx * (p[1] - a[1]) - dy * (p[0] - a[0]);
-      signed = side >= 0 ? d : -d;
+  let bestPiece = -1;
+  let bestT = 0;
+  const STEPS = 12;
+  pieces.forEach((bz, i) => {
+    for (let k = 0; k <= STEPS; k++) {
+      const q = at(bz, k / STEPS);
+      const d = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2;
+      if (d < best) {
+        best = d;
+        bestPiece = i;
+        bestT = k / STEPS;
+      }
     }
+  });
+  if (bestPiece < 0) return 0;
+  const bz = pieces[bestPiece];
+  let t = bestT;
+  for (let iter = 0; iter < 6; iter++) {
+    const q = at(bz, t), d1 = tangent(bz, t), d2 = bend(bz, t);
+    const r: Vec = [q[0] - p[0], q[1] - p[1]];
+    const f = r[0] * d1[0] + r[1] * d1[1];
+    const df = d1[0] * d1[0] + d1[1] * d1[1] + r[0] * d2[0] + r[1] * d2[1];
+    if (Math.abs(df) < 1e-15) break;
+    t = Math.max(0, Math.min(1, t - f / df));
   }
-  return best === Infinity ? 0 : signed;
+  const q = at(bz, t);
+  let dir = tangent(bz, t);
+  if (Math.hypot(dir[0], dir[1]) < 1e-12) dir = [bz[3][0] - bz[0][0], bz[3][1] - bz[0][1]];
+  const dist = Math.hypot(p[0] - q[0], p[1] - q[1]);
+  const side = dir[0] * (p[1] - q[1]) - dir[1] * (p[0] - q[0]);
+  return side >= 0 ? dist : -dist;
 }
 
 function evalAll(sys: System, x: Float64Array): number[] {

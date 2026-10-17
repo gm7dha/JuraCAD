@@ -672,6 +672,36 @@ describe("points on splines and ellipses", () => {
     expect(solveSketch(moved).ok).toBe(true);
   });
 
+  it("a point dragged off the outside of a spline's bend comes back onto it", () => {
+    const sp = addSpline(emptySketch(), [at(0, 0), at(10, 10), at(20, 0)], false);
+    const p = addPoint(sp.sketch, at(10, 9.5));
+    const held = applyRelation(p.sketch, "coincident", [p.pointId, sp.splineId]);
+    expect(held.error).toBeUndefined();
+    const spline = held.sketch.curves.find((c) => c.id === sp.splineId)!;
+    if (spline.type !== "spline") throw new Error("not a spline");
+    for (const target of [at(10.5, 14), at(9, 13), at(10, 6)]) {
+      const moved = dragPoint(held.sketch, p.pointId, target.x, target.y);
+      const [x, y] = pointPos(moved, p.pointId);
+      const path = splinePathOf(moved, sp.splineId);
+      expect(Math.min(...path.map(([u, v]) => Math.hypot(u - x, v - y)))).toBeLessThan(0.02);
+    }
+  });
+
+  it("solves quickly with several points held on one spline", () => {
+    const sp = addSpline(emptySketch(), [at(0, 0), at(20, 10), at(40, -5), at(60, 5), at(80, 0)], false);
+    let s = sp.sketch;
+    for (let i = 0; i < 8; i++) {
+      const p = addPoint(s, at(5 + i * 9, 3));
+      s = applyRelation(p.sketch, "coincident", [p.pointId, sp.splineId]).sketch;
+    }
+    const spline = s.curves.find((c) => c.id === sp.splineId)!;
+    if (spline.type !== "spline") throw new Error("not a spline");
+    const t = performance.now();
+    const moved = dragPoint(s, spline.points[2], 40, 5);
+    expect(performance.now() - t).toBeLessThan(200);
+    expect(solveSketch(moved).ok).toBe(true);
+  });
+
   it("extends a line up to a spline", () => {
     const sp = addSpline(emptySketch(), [at(0, 10), at(10, 12), at(20, 10)], false);
     const l = addLine(sp.sketch, at(10, 0), at(10, 3));
@@ -685,5 +715,5 @@ describe("points on splines and ellipses", () => {
 function splinePathOf(s: SketchData, id: string): [number, number][] {
   const c = s.curves.find((k) => k.id === id);
   if (c?.type !== "spline") return [];
-  return splinePath(s, c, 64);
+  return splinePath(s, c, 400);
 }
