@@ -55,15 +55,53 @@ export function outlinePoints(p: ViewProjection): P2[] {
   const out: P2[] = [];
   const onCircle = (x: number, y: number) => p.circles.some((c) => Math.abs(Math.hypot(x - c.cx, y - c.cy) - c.r) < 1e-4);
   // Only ends of visible lines: hidden (dashed) edges are dimensioned in the view where they show.
+  // Ends of straight edges are corners worth dimensioning; ends of curves (a thread's or coil's
+  // turns, a spline) only where they reach the edge of the view, for its overall size.
+  const [bx0, by0, bx1, by1] = p.bounds ?? [0, 0, 0, 0];
+  const onEdge = (x: number, y: number) => Math.min(Math.abs(x - bx0), Math.abs(x - bx1), Math.abs(y - by0), Math.abs(y - by1)) < 1e-4;
   const ends: P2[] = [];
-  for (const line of p.visible) if (line.length >= 4) ends.push([line[0], line[1]], [line[line.length - 2], line[line.length - 1]]);
-  const seen = (x: number, y: number) => ends.some((q) => Math.abs(q[0] - x) < 1e-4 && Math.abs(q[1] - y) < 1e-4);
+  for (const line of p.visible) {
+    if (line.length < 4) continue;
+    const straight = line.length === 4;
+    for (const q of [[line[0], line[1]], [line[line.length - 2], line[line.length - 1]]] as P2[]) if (straight || onEdge(q[0], q[1])) ends.push(q);
+  }
+  const seen = (x: number, y: number) => ends.some((q) => Math.abs(q[0] - x) < 1e-4 && Math.abs(q[1] - y) < 1e-4) && !inThread(p, x, y);
   for (let i = 0; i + 1 < p.points.length; i += 2) {
     const [x, y] = [p.points[i], p.points[i + 1]];
     if (onCircle(x, y) || !seen(x, y)) continue;
     if (!out.some((q) => Math.abs(q[0] - x) < 1e-6 && Math.abs(q[1] - y) < 1e-6)) out.push([x, y]);
   }
   return out;
+}
+
+/**
+ * Is a point part of a modelled thread (its crests and roots), along the
+ * length the view's thread marks cover? Those are drawn, but not dimensioned
+ * one by one: the thread's size and length say it all.
+ */
+function inThread(p: ViewProjection, x: number, y: number): boolean {
+  for (const m of p.threadMarks ?? []) {
+    const l = m.line;
+    if (l.length < 4) continue;
+    const [ax, ay, bx, by] = [l[0], l[1], l[l.length - 2], l[l.length - 1]];
+    const len = Math.hypot(bx - ax, by - ay);
+    if (len < 1e-6) continue;
+    const ux = (bx - ax) / len;
+    const uy = (by - ay) / len;
+    // Along the mark (strictly inside its length), and within a thread's depth of it either side.
+    const along = (x - ax) * ux + (y - ay) * uy;
+    const across = Math.abs((x - ax) * -uy + (y - ay) * ux);
+    if (along > 1e-3 && along < len - 1e-3 && across < Math.max(1, len * 0.02) + 0.35 * markSpread(p)) return true;
+  }
+  return false;
+}
+
+/** The distance between a view's two outermost parallel thread marks (about a thread's minor diameter), or 0. */
+function markSpread(p: ViewProjection): number {
+  const mids = (p.threadMarks ?? []).filter((m) => m.line.length >= 4).map((m) => [(m.line[0] + m.line[m.line.length - 2]) / 2, (m.line[1] + m.line[m.line.length - 1]) / 2]);
+  let best = 0;
+  for (const a of mids) for (const b of mids) best = Math.max(best, Math.hypot(a[0] - b[0], a[1] - b[1]));
+  return best;
 }
 
 interface Row {
