@@ -128,6 +128,82 @@ export function wallCutLines(wall: Wall, thickness: number, tool: Shape3D): [P2,
 }
 
 /**
+ * Where a cut goes through a bend, as line pieces in the bend's own unrolled
+ * coordinates (x along the bend, s across it from the parent's side) — for the
+ * flat pattern. Traced on the bend's curved face on the sheet's 0 side (the
+ * side wall cuts are traced on), so the pieces join up with the walls'.
+ */
+export function bendCutLines(bend: Bend, thickness: number, tool: Shape3D): [P2, P2][] {
+  const solid = bendSolid(bend);
+  let inside: Shape3D | null = null;
+  const out: [P2, P2][] = [];
+  const R = bend.radius;
+  const T = thickness;
+  const theta = (bend.angle * Math.PI) / 180;
+  // The 0 side's radius, and the bend's centre line in its cross-section (out, up).
+  const rr = bend.down ? R : R + T;
+  const cy = bend.down ? -R : T + R;
+  const local = (p: V3): { x: number; s: number; r: number } => {
+    const d: V3 = [p[0] - bend.start[0], p[1] - bend.start[1], p[2] - bend.start[2]];
+    const px = dot(d, bend.out);
+    const py = dot(d, bend.up) - cy;
+    const phi = bend.down ? Math.atan2(px, py) : Math.atan2(px, -py);
+    return { x: dot(d, bend.along), s: (Math.max(0, Math.min(theta, phi)) * bend.allowance) / theta, r: Math.hypot(px, py) };
+  };
+  try {
+    inside = solid.intersect(tool) as Shape3D;
+    for (const face of facesOf(inside)) {
+      try {
+        if (face.geomType === "PLANE") continue;
+        const { lines, edgeGroups } = face.meshEdges({ tolerance: 0.01, angularTolerance: 0.1 });
+        const pieces: [P2, P2][] = [];
+        let onSide = true;
+        for (const g of edgeGroups) {
+          for (let i = g.start; i + 1 < g.start + g.count; i += 2) {
+            const a = local([lines[3 * i], lines[3 * i + 1], lines[3 * i + 2]]);
+            const b = local([lines[3 * i + 3], lines[3 * i + 4], lines[3 * i + 5]]);
+            if (Math.abs(a.r - rr) > 1e-3 || Math.abs(b.r - rr) > 1e-3) onSide = false;
+            pieces.push([
+              [a.x, a.s],
+              [b.x, b.s],
+            ]);
+          }
+        }
+        if (onSide) out.push(...pieces);
+      } finally {
+        face.delete();
+      }
+    }
+  } finally {
+    solid.delete();
+    inside?.delete();
+  }
+  return out;
+}
+
+/** Closed loops (in the flat pattern's coordinates) cut right through the part laid out flat. Frees `unfolded`. */
+export function cutFlatLoops(unfolded: Shape3D, base: { origin: V3; u: V3; v: V3; n: V3 }, loops: P2[][], thickness: number): Shape3D {
+  let out = unfolded;
+  const frame = { ...base, origin: [base.origin[0] - base.n[0], base.origin[1] - base.n[1], base.origin[2] - base.n[2]] as V3 };
+  const h = thickness + 2;
+  for (const pts of loops) {
+    const segs: Segment[] = pts.map((p, i) => ({ kind: "line", from: p, to: pts[(i + 1) % pts.length] }));
+    let cutter: Shape3D | null = null;
+    try {
+      cutter = prism(anticlockwise(segs), [], frame, [base.n[0] * h, base.n[1] * h, base.n[2] * h]);
+      const next = out.cut(cutter) as Shape3D;
+      out.delete();
+      out = next;
+    } catch {
+      // A loop that can't be made into a face (it crosses itself): left uncut.
+    } finally {
+      cutter?.delete();
+    }
+  }
+  return out;
+}
+
+/**
  * The part laid out flat: each wall's material (with whatever was cut from it)
  * moved to where it lies in the flat pattern, and each bend unrolled into a
  * flat strip. Null if nothing could be laid down.
@@ -167,6 +243,11 @@ export function unfoldedSolid(part: Shape3D, folded: FoldedSheet, thickness: num
     );
   }
   return fusePieces(pieces);
+}
+
+/** A bend cut's line pieces (in its unrolled coordinates) moved into the flat pattern. */
+export function bendCutToFlat(bend: Bend, lines: [P2, P2][]): [P2, P2][] {
+  return lines.map(([a, b]) => [flatPoint(bend.flat, a), flatPoint(bend.flat, b)]);
 }
 
 /**

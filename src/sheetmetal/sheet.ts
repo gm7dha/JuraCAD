@@ -150,6 +150,12 @@ export interface Bend {
   /** Flat pattern: the line down the middle of the bend, and the strip's width (the bend allowance). */
   flatLine: [P2, P2];
   allowance: number;
+  /**
+   * Where the bend's strip lies in the flat pattern: a point `x` along the bend
+   * (from `start`, along `along`) and `s` across it (unrolled, from the parent's
+   * side, 0 to `allowance`) is at origin + x·u + s·v.
+   */
+  flat: Flat2;
 }
 
 export interface FoldedSheet {
@@ -444,6 +450,7 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       profile,
       flatLine: [add2(aF, mul2(outF, allowance / 2)), add2(bF, mul2(outF, allowance / 2))],
       allowance,
+      flat: { origin: bF, u: mul2(eF, -1), v: outF },
     });
   }
   closeCorners(spec, walls, bends);
@@ -630,6 +637,33 @@ export function flatPattern(folded: FoldedSheet): { outline: P2[]; holes: P2[][]
     bendLines: folded.bends.map((b) => b.flatLine),
     bends: folded.bends.map((b) => ({ line: b.flatLine, angle: b.angle, radius: b.radius, up: !b.down })),
   };
+}
+
+/**
+ * Line pieces joined end to end into closed loops (pieces that don't close
+ * up are left out). Ends within `tol` count as the same point.
+ */
+export function chainLoops(pieces: [P2, P2][], tol = 1e-6): P2[][] {
+  const left = pieces.filter(([a, b]) => Math.hypot(a[0] - b[0], a[1] - b[1]) > tol);
+  const same = (a: P2, b: P2) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= tol;
+  const loops: P2[][] = [];
+  while (left.length) {
+    const [first] = left.splice(0, 1);
+    const loop: P2[] = [first[0], first[1]];
+    for (;;) {
+      const end = loop[loop.length - 1];
+      if (same(end, loop[0])) {
+        loop.pop();
+        if (loop.length >= 3) loops.push(loop);
+        break;
+      }
+      const i = left.findIndex(([a, b]) => same(a, end) || same(b, end));
+      if (i < 0) break;
+      const [next] = left.splice(i, 1);
+      loop.push(same(next[0], end) ? next[1] : next[0]);
+    }
+  }
+  return loops;
 }
 
 function dedupe(pts: P2[]): P2[] {

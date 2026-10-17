@@ -26,9 +26,9 @@ import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { openChain, profileSheet } from "../sheetmetal/profile";
-import { findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type FlangeSpec, type SheetSpec } from "../sheetmetal/sheet";
-import { bendSolid, cornerReliefSolid, cutFlatCornerReliefs, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
-import { flatProjection } from "../sheetmetal/flatExport";
+import { chainLoops, findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type FlangeSpec, type FoldedSheet, type SheetSpec } from "../sheetmetal/sheet";
+import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
+import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import type { CheckResult, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
@@ -65,8 +65,11 @@ interface BuiltPart {
   /** Sheet metal parts: the sheet they're folded from (for flanges and the flat pattern), and the features that made it. */
   sheet?: SheetSpec;
   sheetFeatures?: string[];
-  /** Cuts made in the sheet afterwards, traced on its walls (in each wall's own coordinates), for the flat pattern. */
-  sheetCuts?: { wall: string; lines: [[number, number], [number, number]][] }[];
+  /**
+   * Cuts made in the sheet afterwards, traced on its walls (in each wall's own coordinates) and its bends (`bend`:
+   * the flange whose bend it is, in the bend's unrolled coordinates), for the flat pattern.
+   */
+  sheetCuts?: { wall: string; bend?: string; lines: [[number, number], [number, number]][] }[];
 }
 
 interface ThreadMark {
@@ -1661,10 +1664,18 @@ export class GeometryEngine {
     if (!part.sheet) return;
     let found = false;
     try {
-      for (const wall of foldSheet(part.sheet).walls) {
+      const folded = foldSheet(part.sheet);
+      for (const wall of folded.walls) {
         const lines = wallCutLines(wall, part.sheet.thickness, tool);
         if (!lines.length) continue;
         (part.sheetCuts ??= []).push({ wall: wall.id, lines });
+        found = true;
+      }
+      // Through the bends too (a slot across a fold), unrolled flat.
+      for (const bend of folded.bends) {
+        const lines = bendCutLines(bend, part.sheet.thickness, tool);
+        if (!lines.length) continue;
+        (part.sheetCuts ??= []).push({ wall: bend.parent, bend: bend.flangeId, lines });
         found = true;
       }
     } catch {
@@ -1735,13 +1746,32 @@ export class GeometryEngine {
         ...folded.bends.filter((b) => ids.has(b.flangeId)).map((b) => bendSolid(b)),
         ...folded.walls.filter((w) => ids.has(w.id)).map((w) => wallSolid(w, spec.thickness)),
       ];
+      // Each new wall and bend on its own, then together: if they (or they and the part) share any space, they collide.
+      const separately = pieces.reduce((sum, p) => sum + measureVolume(p), 0);
       const extra = fusePieces(pieces);
       pieces = [];
       if (!extra) return hem ? "Click the straight edges of the sheet to fold over." : "Click the straight edges of the sheet to bend flanges off.";
+      let clash: string | null = null;
       try {
         result = part.shape.fuse(extra);
+        const together = measureVolume(extra);
+        const whole = measureVolume(result);
+        const tol = Math.max(0.01, whole * 1e-6);
+        if (separately - together > tol) {
+          clash = hem
+            ? "These hems run into each other. Shorten their ends, or hem fewer edges."
+            : "These flanges run into each other where they meet. Try shorter flanges or a smaller angle, or shorten their ends (Shorten each end by).";
+        } else if (measureVolume(part.shape) + together - whole > tol) {
+          clash = hem
+            ? "The hem runs into the rest of the part. Try a shorter one, or folding it the other way."
+            : "The flange runs into the rest of the part. Try a shorter flange, a different angle, or bending it the other way.";
+        }
       } finally {
         extra.delete();
+      }
+      if (clash) {
+        result.delete();
+        return clash;
       }
       // Bend reliefs: notches cut into the wall each shortened flange bends off.
       const reliefs = folded.bends
@@ -3100,13 +3130,32 @@ export class GeometryEngine {
     return result;
   }
 
+  /**
+   * A sheet metal part laid out flat: its walls (with whatever was cut from
+   * them) laid down, its bends unrolled into strips with any cuts through them,
+   * and corner reliefs cut out. Null if it can't be.
+   */
+  private laidFlat(p: BuiltPart, folded: FoldedSheet): Shape3D | null {
+    if (!p.sheet) return null;
+    const T = p.sheet.thickness;
+    let out = unfoldedSolid(p.shape, folded, T);
+    if (!out) return null;
+    if (folded.cornerReliefs?.length) out = cutFlatCornerReliefs(out, folded, T);
+    const loops = (p.sheetCuts ?? []).flatMap((c) => {
+      const bend = c.bend ? folded.bends.find((b) => b.flangeId === c.bend) : undefined;
+      return bend ? chainLoops(c.lines, 1e-5).map((loop) => loop.map((q) => flatPoint(bend.flat, q))) : [];
+    });
+    if (loops.length) out = cutFlatLoops(out, folded.walls[0].frame, loops, T);
+    return out;
+  }
+
   /** A sheet metal part laid out flat (its walls laid down, bends unrolled into strips), meshed for display. */
   unfold(partId: string): PartMesh | null {
     const part = this.parts.find((p) => p.id === partId);
     if (!part?.sheet) return null;
     let solid: Shape3D | null = null;
     try {
-      solid = unfoldedSolid(part.shape, foldSheet(part.sheet), part.sheet.thickness);
+      solid = this.laidFlat(part, foldSheet(part.sheet));
       if (!solid) return null;
       return this.meshPartShape({ id: part.id, name: part.name, featureIds: [...part.featureIds], shape: solid });
     } catch {
@@ -3202,15 +3251,21 @@ export class GeometryEngine {
       const folded = foldSheet(p.sheet);
       const flat = flatPattern(folded);
       const s = p.sheet;
-      const cuts = (p.sheetCuts ?? []).flatMap((c) => {
-        const wall = folded.walls.find((w) => w.id === c.wall);
-        return wall ? c.lines.map(([a, b]): [[number, number], [number, number]] => [flatPoint(wall.flat, a), flatPoint(wall.flat, b)]) : [];
-      });
+      const cuts = outsideOnly(
+        (p.sheetCuts ?? []).flatMap((c) => {
+          if (c.bend) {
+            const bend = folded.bends.find((b) => b.flangeId === c.bend);
+            if (!bend) return [];
+            return bendCutToFlat(bend, c.lines);
+          }
+          const wall = folded.walls.find((w) => w.id === c.wall);
+          return wall ? c.lines.map(([a, b]): [[number, number], [number, number]] => [flatPoint(wall.flat, a), flatPoint(wall.flat, b)]) : [];
+        }),
+      );
       const out: FlatPatternData = { ...flat, cuts, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) };
-      // With tabs or corner reliefs the outline isn't a simple walk round the walls: take it from the part laid out flat.
-      if (s.tabs?.length || folded.cornerReliefs?.length) {
-        const laid = unfoldedSolid(p.shape, folded, s.thickness);
-        const unfolded = laid && folded.cornerReliefs?.length ? cutFlatCornerReliefs(laid, folded, s.thickness) : laid;
+      // With tabs, corner reliefs or cuts the outline isn't a simple walk round the walls: take it from the part laid out flat.
+      if (s.tabs?.length || folded.cornerReliefs?.length || p.sheetCuts?.length) {
+        const unfolded = this.laidFlat(p, folded);
         if (unfolded) {
           try {
             out.boundary = flatBoundary(unfolded, folded.walls[0].frame);
