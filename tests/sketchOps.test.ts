@@ -22,7 +22,7 @@ import {
 } from "../src/sketch/ops";
 import { dimensionLayout } from "../src/sketch/layout";
 import { findRegions } from "../src/sketch/regions";
-import { analyzeSketch } from "../src/sketch/solver";
+import { analyzeSketch, solveSketch } from "../src/sketch/solver";
 import { emptySketch, ORIGIN_ID, type SketchArc, type SketchCircle, type SketchLine } from "../src/sketch/types";
 
 const lineOf = (s: ReturnType<typeof emptySketch>, id: string) => s.curves.find((c) => c.id === id) as SketchLine;
@@ -276,5 +276,15 @@ describe("editing", () => {
     const [p1, p2] = [pointPos(square.sketch, a.p1), pointPos(square.sketch, a.p2)];
     const [q1, q2] = [pointPos(square.sketch, b.p1), pointPos(square.sketch, b.p2)];
     expect((p2[0] - p1[0]) * (q2[0] - q1[0]) + (p2[1] - p1[1]) * (q2[1] - q1[1])).toBeCloseTo(0, 6);
+  });
+
+  it("deleting a point takes the lines that end at it, leaving a sound sketch", () => {
+    const r = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 40, y: 20 });
+    const corner = (r.sketch.curves[0] as SketchLine).p2;
+    const after = deleteItems(r.sketch, [corner]);
+    expect(after.curves).toHaveLength(2);
+    expect(after.points.every((p) => after.curves.some((c) => c.type === "line" && (c.p1 === p.id || c.p2 === p.id)))).toBe(true);
+    expect(after.constraints.every((c) => c.refs.every((id) => id === ORIGIN_ID || after.points.some((p) => p.id === id) || after.curves.some((x) => x.id === id)))).toBe(true);
+    expect(solveSketch(after).ok).toBe(true);
   });
 });
