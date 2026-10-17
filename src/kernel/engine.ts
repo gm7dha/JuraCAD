@@ -19,7 +19,7 @@ import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
-import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
+import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gapReport, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
@@ -1900,7 +1900,7 @@ export class GeometryEngine {
     }
     if (solidsOf(solid).length === 0 || !isValidSolid(solid)) {
       solid.delete();
-      return { error: "These surfaces don't close up into a solid — there's a gap somewhere between them. Fill it first." };
+      return { error: gapReport(surfaces.map((p) => p.shape)) };
     }
     for (const p of surfaces) {
       this.parts.splice(this.parts.indexOf(p), 1);

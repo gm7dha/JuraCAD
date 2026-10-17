@@ -279,4 +279,18 @@ describe("surfaces", () => {
       expect(nearRim).toBeGreaterThan(1);
     }
   });
+
+  it("says where the gap is when surfaces don't close up", () => {
+    // Four walls of a 10 mm box and a lid, but no bottom: the four bottom edges (40 mm) are left open, at z = 0.
+    const box = sketchFeature(top, rectSketch(0, 0, 10, 10));
+    const skin: Feature = { ...extrudeFeature(box.id, 10), surface: true };
+    const p = build([box, skin]).parts[0];
+    const ring = p.edgeRefs.filter((e) => e.curve === "LINE" && Math.abs(e.a[2] - 10) < 1e-6 && Math.abs(e.b[2] - 10) < 1e-6).map((ref) => ({ partId: p.id, ref }));
+    const lid: Feature = { ...feature("fill", {}), picks: ring };
+    const both = build([box, skin, lid]);
+    const enc: Feature = { ...feature("enclose", {}), picks: both.parts.map((x) => ({ partId: x.id, ref: x.faceRefs[0] })) };
+    const r = build([box, skin, lid, enc]);
+    expect(r.featureErrors[enc.id]).toMatch(/4 edges are left open \(40 mm in all\), for example near \([\d.]+, [\d.]+, 0\)/);
+    expect(r.parts).toHaveLength(2);
+  });
 });

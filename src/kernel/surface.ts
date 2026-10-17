@@ -510,7 +510,34 @@ export function encloseSurfaces(shapes: Shape3D[]): Shape3D {
   try {
     return solidFrom(shapes);
   } catch {
-    throw new Error("These surfaces don't close up into a solid — there's a gap somewhere between them. Fill it first.");
+    throw new Error(gapReport(shapes));
+  }
+}
+
+const roundTo = (x: number) => {
+  const r = Math.round(x * 10) / 10;
+  return Object.is(r, -0) ? 0 : r;
+};
+
+/**
+ * Why surfaces don't close up: how many edges are left open once they're
+ * sewn together (only one face runs along them), and where the first is.
+ */
+export function gapReport(shapes: Shape3D[]): string {
+  let open: Edge[] = [];
+  let skin: Shape3D | null = null;
+  try {
+    skin = sewn(shapes);
+    open = freeEdges(skin);
+    if (!open.length) return "These surfaces don't close up into a solid — they cross or overlap somewhere. Split or trim them so they only meet at their edges.";
+    const at = take(open[0].pointAt(0.5)).map(roundTo);
+    const total = open.reduce((sum, e) => sum + e.length, 0);
+    return `These surfaces don't close up into a solid: ${open.length === 1 ? "one edge is" : `${open.length} edges are`} left open (${Math.round(total * 10) / 10} mm in all), for example near (${at.join(", ")}). Fill the gap or extend the surfaces to meet, then try again.`;
+  } catch {
+    return "These surfaces don't close up into a solid — there's a gap somewhere between them. Fill it first.";
+  } finally {
+    open.forEach((e) => e.delete());
+    skin?.delete();
   }
 }
 
