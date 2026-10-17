@@ -330,7 +330,13 @@ function RibThickenOptions() {
           </select>
         </>
       )}
-      {draft.type !== "tab" && (
+      {draft.type === "thicken" && (
+        <label className="check-row" title="Half the thickness goes each side of the face or surface">
+          <input type="checkbox" checked={!!draft.bothSides} onChange={(e) => setDraftField({ bothSides: e.target.checked || undefined })} />
+          Both sides (half each way)
+        </label>
+      )}
+      {draft.type !== "tab" && !(draft.type === "thicken" && draft.bothSides) && (
       <label className="check-row">
         <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked })} />
         {draft.type === "rib"

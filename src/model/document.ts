@@ -422,6 +422,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "flange" && (f.cornerRelief === "round" || f.cornerRelief === "square")) feature.cornerRelief = f.cornerRelief;
     if (feature.type === "flange" && (f.flangePosition === "outside" || f.flangePosition === "inside")) feature.flangePosition = f.flangePosition;
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
+    if (feature.type === "thicken" && f.bothSides === true) feature.bothSides = true;
     if (feature.type === "derived") {
       const dv = (f.derived ?? {}) as Record<string, unknown>;
       if (typeof dv.studioId === "string" && typeof dv.partId === "string") feature.derived = { studioId: dv.studioId, partId: dv.partId };

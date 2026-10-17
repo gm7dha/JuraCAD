@@ -286,14 +286,15 @@ function solidFrom(pieces: Shape3D[]): Shape3D {
 
 /**
  * A surface (skin) made into a solid `thickness` thick (on the side its faces
- * point to; minus for the other side): the skin, a copy pushed out by the
- * thickness, and walls between their rims, closed up into a solid.
+ * point to; minus for the other side; or, `bothSides`, half each way): the
+ * skin (or its copy pushed out half way), a copy pushed out by the thickness,
+ * and walls between their rims, closed up into a solid.
  */
-export function thickenSurface(shape: Shape3D, thickness: number): Shape3D {
+export function thickenSurface(shape: Shape3D, thickness: number, bothSides = false): Shape3D {
   if (!(Math.abs(thickness) > 1e-9)) throw new Error("Thickness: enter how thick to make it.");
   const pieces: Shape3D[] = [];
   try {
-    for (const shell of shellsOf(shape)) pieces.push(thickenShell(shell, thickness));
+    for (const shell of shellsOf(shape)) pieces.push(thickenShell(shell, thickness, bothSides));
     const out = pieces.length === 1 ? pieces[0] : (makeCompound(pieces) as Shape3D);
     pieces.length = 0;
     return out;
@@ -333,29 +334,39 @@ function offsetShape(shape: Shape3D, distance: number, failed: string): { offset
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
-function thickenShell(shell: Shape3D, thickness: number): Shape3D {
+type OffsetBuilder = ReturnType<typeof offsetShape>["builder"];
+
+function thickenShell(shell: Shape3D, thickness: number, bothSides = false): Shape3D {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const failed = "Couldn't thicken this surface. Try a smaller thickness, or the other side.";
   const rim = freeEdges(shell);
   const walls: Shape3D[] = [];
-  const first = offsetShape(shell, thickness, failed);
-  let offset: Shape3D | null = first.offset;
-  const builder = first.builder;
+  // The two faces of the solid: the skin itself and a copy pushed out by the thickness, or copies half way out either side.
+  const sides: { shape: Shape3D; builder: OffsetBuilder | null }[] = [];
+  const offsets = bothSides ? [thickness / 2, -thickness / 2] : [thickness];
   try {
+    if (!bothSides) sides.push({ shape: shell, builder: null });
+    for (const d of offsets) {
+      const made = offsetShape(shell, d, failed);
+      sides.push({ shape: made.offset, builder: made.builder });
+    }
     if (rim.length === 0) {
       // A closed skin: the space between the two. Plus is outwards, whichever way its faces point.
-      const inner = solidFrom([shell]);
-      let outer = solidFrom([offset]);
+      const [a, b] = sides;
+      const inner = solidFrom([a.shape]);
+      let outer = solidFrom([b.shape]);
       try {
-        if (signedVolume(outer) > signedVolume(inner) !== thickness > 0) {
+        // Which one is outside depends on which way the faces point; Both sides doesn't mind.
+        if (!bothSides && signedVolume(outer) > signedVolume(inner) !== thickness > 0) {
           outer.delete();
-          offset.delete();
-          offset = null;
           const again = offsetShape(shell, -thickness, failed);
           again.builder.delete();
-          offset = again.offset;
-          outer = solidFrom([offset]);
+          b.builder?.delete();
+          b.shape.delete();
+          b.shape = again.offset;
+          b.builder = null;
+          outer = solidFrom([b.shape]);
         }
         const [small, big] = signedVolume(inner) < signedVolume(outer) ? [inner, outer] : [outer, inner];
         const between = big.cut(small);
@@ -371,40 +382,48 @@ function thickenShell(shell: Shape3D, thickness: number): Shape3D {
         outer.delete();
       }
     }
-    // A wall between each rim edge and where the offset moved it to.
-    for (const edge of rim) {
-      const images = builder.Generated(edge.wrapped);
+    // A wall between where each rim edge went on one side and where it went on the other.
+    const imageOf = (side: (typeof sides)[number], edge: Edge): { edge: Edge; own: boolean } => {
+      if (!side.builder) return { edge, own: false };
+      const images = side.builder.Generated(edge.wrapped);
       try {
         if (images.Size() === 0) throw new Error(failed);
-        const image = cast(images.First() as never) as Edge;
-        const ruled = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
-        try {
-          const w1 = new oc.BRepBuilderAPI_MakeWire(edge.wrapped);
-          const w2 = new oc.BRepBuilderAPI_MakeWire(image.wrapped);
-          ruled.AddWire(w1.Wire());
-          ruled.AddWire(w2.Wire());
-          w1.delete();
-          w2.delete();
-          ruled.Build();
-          if (!ruled.IsDone()) throw new Error(failed);
-          walls.push(cast(ruled.Shape()) as Shape3D);
-        } finally {
-          ruled.delete();
-          image.delete();
-        }
+        return { edge: cast(images.First() as never) as Edge, own: true };
       } finally {
         images.delete();
+      }
+    };
+    for (const edge of rim) {
+      const one = imageOf(sides[0], edge);
+      const two = imageOf(sides[1], edge);
+      const ruled = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
+      try {
+        const w1 = new oc.BRepBuilderAPI_MakeWire(one.edge.wrapped);
+        const w2 = new oc.BRepBuilderAPI_MakeWire(two.edge.wrapped);
+        ruled.AddWire(w1.Wire());
+        ruled.AddWire(w2.Wire());
+        w1.delete();
+        w2.delete();
+        ruled.Build();
+        if (!ruled.IsDone()) throw new Error(failed);
+        walls.push(cast(ruled.Shape()) as Shape3D);
+      } finally {
+        ruled.delete();
+        if (one.own) one.edge.delete();
+        if (two.own) two.edge.delete();
       }
     }
     try {
       // Walls that meet flat along an edge are merged into one face (fewer, cleaner faces to pick).
-      return solidFrom([shell, offset, ...walls]).simplify();
+      return solidFrom([...sides.map((x) => x.shape), ...walls]).simplify();
     } catch {
       throw new Error(failed);
     }
   } finally {
-    builder.delete();
-    offset?.delete();
+    for (const side of sides) {
+      side.builder?.delete();
+      if (side.shape !== shell) side.shape.delete();
+    }
     rim.forEach((e) => e.delete());
     walls.forEach((w) => w.delete());
   }

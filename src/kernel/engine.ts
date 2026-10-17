@@ -1910,7 +1910,7 @@ export class GeometryEngine {
       if (part.surface) {
         faces.forEach((f) => f.delete());
         faces = [];
-        solid = thickenSurface(part.shape, values.thickness * (feature.flipSide ? -1 : 1));
+        solid = thickenSurface(part.shape, values.thickness * (feature.flipSide && !feature.bothSides ? -1 : 1), !!feature.bothSides);
         if (feature.operation === "new") {
           // The skin becomes the solid: it's no longer listed as a surface of its own.
           this.parts.splice(this.parts.indexOf(part), 1);
@@ -1935,8 +1935,17 @@ export class GeometryEngine {
       for (const face of faces) {
         if (face.geomType !== "PLANE") throw new Error("Thicken works on flat faces. Remove the curved face.");
         const n = take(face.normalAt());
-        const t = values.thickness * (feature.flipSide ? -1 : 1);
-        const piece = basicFaceExtrusion(face, new Vector([n[0] * t, n[1] * t, n[2] * t])) as Shape3D;
+        const t = values.thickness * (feature.flipSide && !feature.bothSides ? -1 : 1);
+        // Both sides: from half the thickness behind the face to half in front.
+        const from = feature.bothSides ? face.clone().translate([(-n[0] * t) / 2, (-n[1] * t) / 2, (-n[2] * t) / 2]) : face;
+        const v = new Vector([n[0] * t, n[1] * t, n[2] * t]);
+        let piece: Shape3D;
+        try {
+          piece = basicFaceExtrusion(from, v) as Shape3D;
+        } finally {
+          v.delete();
+          if (from !== face) from.delete();
+        }
         if (!solid) solid = piece;
         else {
           const next: Shape3D = solid.fuse(piece);

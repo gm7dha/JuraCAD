@@ -12,7 +12,7 @@ import type { EdgeRef } from "../src/geometry/topoRef";
 import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
-import { addLine, addRectangle } from "../src/sketch/ops";
+import { addArc, addCircle, addLine, addRectangle } from "../src/sketch/ops";
 import type { SketchPlane } from "../src/sketch/planes";
 import { emptySketch, type SketchData } from "../src/sketch/types";
 
@@ -213,5 +213,40 @@ describe("surfaces", () => {
     const r2 = build([sk, wall, { ...all, picks: two.map((ref) => ({ partId: wall.id, ref })) }]);
     expect(r2.featureErrors).toEqual({});
     expect(area(r2.parts[0])).toBeCloseTo(23 * 8, 2);
+  });
+
+  it("thickens half each way (both sides), for surfaces and flat faces", () => {
+    // A flat wall at y = 0, 20 × 5: 1 mm thick from y = −0.5 to 0.5.
+    const sk = sketchFeature(top, addLine(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 0 }).sketch);
+    const wall: Feature = { ...extrudeFeature(sk.id, 5), surface: true };
+    const w = build([sk, wall]).parts[0];
+    const th: Feature = { ...feature("thicken", { thickness: 1 }), picks: [{ partId: wall.id, ref: w.faceRefs[0] }], bothSides: true };
+    const r = build([sk, wall, th]);
+    expect(r.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(100, 3);
+    const m = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    expect(m.bounds!.min[1]).toBeCloseTo(-0.5, 4);
+    expect(m.bounds!.max[1]).toBeCloseTo(0.5, 4);
+    // Flip makes no difference then.
+    build([sk, wall, { ...th, flipSide: true }]);
+    expect(vol()).toBeCloseTo(100, 3);
+    // A round skin, radius 10 and 20 tall, 2 thick both sides: a tube from radius 9 to 11.
+    const c = sketchFeature(top, addCircle(emptySketch(), { x: 0, y: 0 }, 10).sketch);
+    const skin: Feature = { ...extrudeFeature(c.id, 20), surface: true };
+    const cp = { partId: skin.id, ref: build([c, skin]).parts[0].faceRefs[0] };
+    expect(build([c, skin, { ...feature("thicken", { thickness: 2 }), picks: [cp], bothSides: true }]).featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(Math.PI * (121 - 81) * 20, 1);
+    // A closed ball skin, radius 10, 2 thick both sides: from radius 9 to 11.
+    const arc = sketchFeature(front, addArc(emptySketch(), { x: 0, y: -10 }, { x: 0, y: 10 }, { x: 10, y: 0 }).sketch);
+    const ball: Feature = { ...feature("revolve", { angle: 360 }), sketchRef: arc.id, revolve: { axis: "vertical", flip: false }, surface: true };
+    const bp = { partId: ball.id, ref: build([arc, ball]).parts[0].faceRefs[0] };
+    expect(build([arc, ball, { ...feature("thicken", { thickness: 2 }), picks: [bp], bothSides: true }]).featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo((4 / 3) * Math.PI * (1331 - 729), 0);
+    // The top face of a block, 4 thick both sides, added on: only the 2 above it is new.
+    const block = feature("box", { width: 10, depth: 10, height: 10 });
+    const topFace = build([block]).parts[0].faceRefs.find((f) => Math.abs(f.center[2] - 10) < 1e-6)!;
+    const onto = build([block, { ...feature("thicken", { thickness: 4 }, "add"), picks: [{ partId: block.id, ref: topFace }], bothSides: true }]);
+    expect(onto.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(1200, 3);
   });
 });

@@ -141,6 +141,8 @@ export interface Feature {
   splitDef?: SplitOptions;
   /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
+  /** Thicken: half the thickness each side of the face or surface (then which way doesn't matter). */
+  bothSides?: boolean;
   /** Shell: hollow the part closed inside, keeping every face (no opening), whatever faces are picked. */
   hollow?: boolean;
   /** Flange: close the corners where these flanges meet other full-length right-angle flanges. */

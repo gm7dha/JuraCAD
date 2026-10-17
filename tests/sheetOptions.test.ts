@@ -98,6 +98,8 @@ describe("saving the new options", () => {
     doc = addFeature(doc, fl);
     const back = parseDocument(JSON.parse(JSON.stringify(doc)))!;
     expect(back.features[0].flangePosition).toBe("outside");
+    const th = { ...createFeature(doc, "thicken"), id: "th", bothSides: true };
+    expect(parseDocument(JSON.parse(JSON.stringify(addFeature(doc, th))))!.features[1].bothSides).toBe(true);
     const odd = parseDocument(JSON.parse(JSON.stringify({ ...doc, features: [{ ...fl, flangePosition: "sideways" }] })))!;
     expect(odd.features[0].flangePosition).toBeUndefined();
   });
