@@ -170,6 +170,26 @@ export interface DimStyle {
 }
 
 /** A number with exactly `places` decimals (no "-0"). */
+/**
+ * A length (mm) in the design's unit with `places` decimals — but never a
+ * non-zero size shown as 0: then as many places as it needs (e.g. Ø6 mm at
+ * no decimals in inches reads "Ø0.236", not "Ø0").
+ */
+function placedLength(mm: number, places: number): string {
+  const shown = fixed(toUnit(mm, lengthUnit()), places);
+  if (mm === 0 || parseFloat(shown) !== 0) return shown;
+  const auto = formatSize(mm);
+  return parseFloat(auto) === 0 ? shown : fixed(toUnit(mm, lengthUnit()), Math.max(places, auto.split(".")[1]?.length ?? 0));
+}
+
+/** The same for an angle (degrees). */
+function placedAngle(deg: number, places: number): string {
+  const shown = fixed(deg, places);
+  if (deg === 0 || parseFloat(shown) !== 0) return shown;
+  const auto = String(Math.round(deg * 100) / 100);
+  return parseFloat(auto) === 0 ? shown : fixed(deg, Math.max(places, auto.split(".")[1]?.length ?? 0));
+}
+
 function fixed(v: number, places: number): string {
   const t = v.toFixed(places);
   return /^-0(\.0*)?$/.test(t) ? t.slice(1) : t;
@@ -182,7 +202,7 @@ function fixed(v: number, places: number): string {
  */
 export function styledLength(v: number, style: DimStyle = {}, sign = ""): string {
   const unit = lengthUnit();
-  const main = style.places === undefined ? formatSize(v) : fixed(toUnit(v, unit), style.places);
+  const main = style.places === undefined ? formatSize(v) : placedLength(v, style.places);
   return `${sign}${main}${style.dual ? ` [${sign}${lengthNumber(v, unit === "in" ? "mm" : "in")}]` : ""}`;
 }
 
@@ -190,8 +210,8 @@ export function dimLabel(dim: Dimension, value: number, style: DimStyle = {}): s
   const places = dim.places ?? style.places;
   const unit = lengthUnit();
   // Lengths in the design's unit; angles in degrees (never converted to inches).
-  const size = (v: number) => (places === undefined ? formatSize(v) : fixed(toUnit(v, unit), places));
-  const deg = (v: number, auto: number) => `${places === undefined ? Math.round(v * 10 ** auto) / 10 ** auto : fixed(v, places)}°`;
+  const size = (v: number) => (places === undefined ? formatSize(v) : placedLength(v, places));
+  const deg = (v: number, auto: number) => `${places === undefined ? Math.round(v * 10 ** auto) / 10 ** auto : placedAngle(v, places)}°`;
   const sign = dim.type === "diameter" ? "Ø" : dim.type === "radius" ? "R" : "";
   const base = dim.type === "angle" ? deg(value, 1) : `${sign}${size(value)}`;
   const t = dim.tolerance;

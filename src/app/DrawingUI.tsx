@@ -1361,7 +1361,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const t = linearTarget(here);
     if (!t) return;
     if (!run || t.view !== run.view) {
-      setRun(startRun(t.view, tool as LinearKind, t.at, drawing.projection === "third"));
+      setRun(startRun(t.view, tool as LinearKind, t.at, drawing.projection === "third", drawingViewKeys(drawing)));
       return;
     }
     const made = linearNext(here);

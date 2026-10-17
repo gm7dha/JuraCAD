@@ -27,10 +27,12 @@ export interface LinearRun {
   count: number;
   /** The drawing is laid out third-angle (rows go on the other side, away from the neighbouring views). */
   third?: boolean;
+  /** The drawing's views (so rows keep clear of the ones next to this view). */
+  shown?: string[];
 }
 
-export function startRun(view: string, kind: LinearKind, datum: P2, third = false): LinearRun {
-  return { view, kind, datum, last: datum, dir: null, count: 0, ...(third ? { third: true } : {}) };
+export function startRun(view: string, kind: LinearKind, datum: P2, third = false, shown?: string[]): LinearRun {
+  return { view, kind, datum, last: datum, dir: null, count: 0, ...(third ? { third: true } : {}), ...(shown ? { shown } : {}) };
 }
 
 const same = (q: P2, r: P2) => Math.abs(q[0] - r[0]) < 1e-6 && Math.abs(q[1] - r[1]) < 1e-6;
@@ -55,7 +57,7 @@ export function nextLinear(run: LinearRun, p: ViewProjection, target: P2, scale:
   const madeHere = run.kind === "ordinate" && run.count > 0 ? run.count + 1 : run.count;
   const before = Math.max(0, existing.filter(mine).length - madeHere);
   const row = run.kind === "ordinate" ? (before > 0 ? 1 : 0) : before + (run.kind === "baseline" ? run.count : 0);
-  const side = rowSide(run.view, dir, !!run.third);
+  const side = rowSide(run.view, dir, !!run.third, run.shown);
   const dim = (a: P2, b: P2): Omit<Dimension, "id"> => ({
     view: run.view,
     type,

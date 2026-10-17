@@ -47,6 +47,11 @@ const SIDES_THIRD: Partial<Record<ViewKind, { h: "above" | "below"; v: "left" | 
   left: { h: "below", v: "left" },
   back: { h: "below", v: "right" },
 };
+/** The layout's grid (as in sheet.ts): the row through the front view, left to right, and its column, top to bottom. */
+const GRID = {
+  first: { row: ["right", "front", "left", "back"], col: ["bottom", "front", "top"] },
+  third: { row: ["left", "front", "right", "back"], col: ["top", "front", "bottom"] },
+};
 const ORDER: ViewKind[] = ["front", "top", "right", "left", "back", "bottom"];
 
 /** Gap between the view and the first dimension line, and between rows (paper mm). */
@@ -137,6 +142,18 @@ export function autoDimensions(projections: Projections, views: string[], existi
       if (!owner.has(a)) owner.set(a, { view: k, dir });
     }
   }
+  // When a view has views on both sides a row would go (e.g. the front with all six views shown),
+  // give that direction to another view that shows it and has a free side.
+  for (const [a, o] of owner) {
+    if (!boxedIn(o.view, o.dir, third, views)) continue;
+    for (const k of standard) {
+      const dir = (["h", "v"] as Dir[]).find((d) => VIEW_AXES[k]![d].axis === a);
+      if (k !== o.view && dir && !boxedIn(k, dir, third, views)) {
+        owner.set(a, { view: k, dir });
+        break;
+      }
+    }
+  }
 
   // World coordinates already covered, per direction (so circle centres aren't repeated in another view).
   const covered = new Map<Axis, Set<number>>([
@@ -171,7 +188,7 @@ export function autoDimensions(projections: Projections, views: string[], existi
     }
   }
 
-  for (const row of rows) out.push(...baseline(projections[row.view]!, row, existing, scale, newId, third));
+  for (const row of rows) out.push(...baseline(projections[row.view]!, row, existing, scale, newId, third, views));
   out.push(...circleSizes(projections, standard, existing, newId));
   return out;
 }
@@ -179,9 +196,29 @@ export function autoDimensions(projections: Projections, views: string[], existi
 export type Side = "above" | "below" | "left" | "right";
 
 /** Which side of a view a row of across ("h") or up-and-down ("v") dimensions goes. */
-export function rowSide(view: string, dir: "h" | "v", third = false): Side {
+/** Is there a view next to `view` on side `side` (in the layout's grid)? */
+function hasNeighbour(view: string, side: Side, third: boolean, shown: readonly string[]): boolean {
+  const g = GRID[third ? "third" : "first"];
+  const line = side === "left" || side === "right" ? g.row : g.col;
+  const i = line.indexOf(view);
+  if (i < 0) return false;
+  const before = side === "left" || side === "above";
+  const others = before ? line.slice(0, i) : line.slice(i + 1);
+  return others.some((k) => shown.includes(k));
+}
+
+/** Is a view boxed in for a row of `dir` dimensions: views beside it on both sides that row could go? */
+function boxedIn(view: string, dir: Dir, third: boolean, shown: readonly string[]): boolean {
+  return dir === "h" ? hasNeighbour(view, "above", third, shown) && hasNeighbour(view, "below", third, shown) : hasNeighbour(view, "left", third, shown) && hasNeighbour(view, "right", third, shown);
+}
+
+export function rowSide(view: string, dir: "h" | "v", third = false, shown?: readonly string[]): Side {
   const side = (third ? SIDES_THIRD : SIDES)[view as ViewKind] ?? { h: "below", v: "right" };
-  return dir === "h" ? side.h : side.v;
+  const want = dir === "h" ? side.h : side.v;
+  // When the usual side has a view next to it and the other side is free, use that.
+  if (!shown) return want;
+  const other: Side = want === "above" ? "below" : want === "below" ? "above" : want === "left" ? "right" : "left";
+  return hasNeighbour(view, want, third, shown) && !hasNeighbour(view, other, third, shown) ? other : want;
 }
 
 /**
@@ -215,7 +252,7 @@ export function rowStyle(distances: number[]): "baseline" | "chain" | "ordinate"
 }
 
 /** One direction's dimensions on a view, measured from its corner, in the style that reads best. */
-function baseline(p: ViewProjection, row: Row, existing: Dimension[], scale: number, newId: () => string, third: boolean): Dimension[] {
+function baseline(p: ViewProjection, row: Row, existing: Dimension[], scale: number, newId: () => string, third: boolean, shown: string[]): Dimension[] {
   const i = row.dir === "h" ? 0 : 1;
   const j = 1 - i;
   const centres = p.circles.filter((c) => c.full && !c.hidden).map((c): P2 => [c.cx, c.cy]);
@@ -234,7 +271,7 @@ function baseline(p: ViewProjection, row: Row, existing: Dimension[], scale: num
   if (!chosen.length) return [];
   // Which side the row goes on: away from the views next to this one (first-angle layout puts
   // the top view below the front view and the right view to its left; third-angle the other way).
-  const where = rowSide(row.view, row.dir, third);
+  const where = rowSide(row.view, row.dir, third, shown);
   // The point at each position nearest that side, so extension lines are short.
   const pointAt = (v: number) =>
     pts.filter((q) => same(q[i], v)).sort((a, b) => (where === "below" ? a[1] - b[1] : where === "above" ? b[1] - a[1] : where === "left" ? a[0] - b[0] : b[0] - a[0]))[0];

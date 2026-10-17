@@ -285,6 +285,9 @@ describe("detail views keep what their view shows", () => {
 });
 
 describe("review fixes", () => {
+  const view = rectView("front", 40, 20);
+  const length: Dimension = { id: "x", view: "front", type: "horizontal", a: dimPoint([0, 0], view), b: dimPoint([40, 0], view), offset: 8 };
+  const angle: Dimension = { ...length, type: "angle", c: dimPoint([0, 0], view), d: dimPoint([0, 20], view) };
   /** A w × h rectangle drawn as four edges (as the engine gives them). */
   const edges = (kind: ViewKind, w: number, h: number) => rectView(kind, w, h, { visible: [[0, 0, w, 0], [w, 0, w, h], [w, h, 0, h], [0, h, 0, 0]] });
   // A stepped front (three steps each way), so the rows of dimensions stack up past the gap between views.
@@ -293,12 +296,14 @@ describe("review fixes", () => {
   for (let i = 0; i < pts.length; i += 2) stepped.push([pts[i], pts[i + 1], pts[(i + 2) % pts.length], pts[(i + 3) % pts.length]]);
   const solid = { front: rectView("front", 40, 20, { visible: stepped, points: stepped.flat() }), top: edges("top", 40, 30), right: edges("right", 30, 20) };
   /** Lay out the block with auto dimensions; which dimensions run into another view's box. */
-  function clashes(third: boolean): string[] {
-    const block = solid;
+  const six = ["front", "top", "right", "left", "back", "bottom"];
+  const all = { ...solid, left: edges("left", 30, 20), back: edges("back", 40, 20), bottom: edges("bottom", 40, 30) };
+  function clashes(third: boolean, keys = ["front", "top", "right"]): string[] {
+    const block = all;
     let n = 0;
-    let d: Drawing = { ...newDrawing(), sheet: "A3", views: ["front", "top", "right"].map((k) => ({ id: k, kind: k as ViewKind })), ...(third ? { projection: "third" as const } : {}) };
+    let d: Drawing = { ...newDrawing(), sheet: "A3", views: keys.map((k) => ({ id: k, kind: k as ViewKind })), ...(third ? { projection: "third" as const } : {}) };
     const first = layoutSheet(d, block, info);
-    d = { ...d, dimensions: autoDimensions(block, ["front", "top", "right"], [], first.scale, () => `a${n++}`, third) };
+    d = { ...d, dimensions: autoDimensions(block, keys, [], first.scale, () => `a${n++}`, third) };
     const l = layoutSheet(d, block, info);
     const out: string[] = [];
     for (const dim of l.dims) {
@@ -319,6 +324,11 @@ describe("review fixes", () => {
   it("third angle: auto dimensions stay clear of the neighbouring views (as in first angle)", () => {
     expect(clashes(false)).toEqual([]);
     expect(clashes(true)).toEqual([]);
+  });
+
+  it("with all six views, rows go where there's no view next door (the front's sizes move to a view with room)", () => {
+    expect(clashes(false, six)).toEqual([]);
+    expect(clashes(true, six)).toEqual([]);
   });
 
   it("third angle: baseline runs go on the far side from the neighbouring views", () => {
@@ -355,6 +365,22 @@ describe("review fixes", () => {
     expect(calloutLines(h, 2, [])).toEqual(["2× Ø6.6 × 10 DEEP", "CBORE Ø11 × 6.4 DEEP"]);
     expect(calloutLines(h, 2, [], { places: 2 })).toEqual(["2× Ø6.60 × 10.00 DEEP", "CBORE Ø11.00 × 6.40 DEEP"]);
     expect(calloutLines({ ...h, cbore: undefined }, 1, [], { dual: true })).toEqual(["Ø6.6 [Ø0.26] × 10 [0.394] DEEP"]);
+  });
+
+  it("never shows a non-zero size as 0 at too few decimal places", () => {
+    const h = { cx: 0, cy: 0, d: 6.6, through: true, depth: 10, cbore: { diameter: 11, depth: 6.4 }, csk: { diameter: 12.6, angle: 90 } };
+    setLengthUnit("in");
+    try {
+      expect(calloutLines(h, 2, [], { places: 0 })).toEqual(["2× Ø0.26 THRU", "CBORE Ø0.433 × 0.252 DEEP", "CSK Ø0.496 × 90°"]);
+      expect(dimLabel({ ...length, type: "diameter", places: 0 }, 6)).toBe("Ø0.236");
+      // Sizes of an inch or more just round.
+      expect(dimLabel({ ...length, places: 0 }, 40)).toBe("2");
+    } finally {
+      setLengthUnit("mm");
+    }
+    expect(dimLabel({ ...length, places: 0 }, 0.3)).toBe("0.3");
+    expect(dimLabel({ ...length, places: 0 }, 0)).toBe("0");
+    expect(dimLabel({ ...angle, places: 0 }, 0.25)).toBe("0.25°");
   });
 
   it("hatches a detail of a broken-out view at the usual spacing on paper", () => {
