@@ -6,6 +6,17 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.22 — Surfaces that work like parts, Split with a surface, Ruled surface, spline handles · commit `5a090ce`
+
+- **Thicken** on a surface now makes a real solid (it used to make a second skin and call it solid): flat, curved,
+  closed (plus is outwards) and multi-piece surfaces, with **Flip** for the other side.
+- Surfaces can be **moved, copied, mirrored, patterned, filleted and chamfered**, faces deleted from them, and
+  **imported from STEP** (alone or alongside solids). Booleans and Shell explain that a surface has no inside.
+- **Split with a surface**: cut a part (or another surface) along a curved surface — Front side / Back side / Both.
+- **Ruled surface**: straight strips swept from edges, square to a plane or tilted by an angle.
+- Sketch **spline handles**: select a spline and drag the green handles to reshape it. Points snap onto each other
+  from further away; a line can go from Vertical to Horizontal without "conflicting".
+
 ## v0.21 — Thread symbols on bolts, wide wraps, smoother lofts · commit `921ff98`
 
 - Drawings: **thread symbols on bolts, screws, nuts and threaded rods** (fasteners and Thread features), as well as

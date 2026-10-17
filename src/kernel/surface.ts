@@ -377,7 +377,8 @@ function thickenShell(shell: Shape3D, thickness: number): Shape3D {
       }
     }
     try {
-      return solidFrom([shell, offset, ...walls]);
+      // Walls that meet flat along an edge are merged into one face (fewer, cleaner faces to pick).
+      return solidFrom([shell, offset, ...walls]).simplify();
     } catch {
       throw new Error(failed);
     }
