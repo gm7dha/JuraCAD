@@ -1235,7 +1235,8 @@ export function addAlignedRectangle(s: SketchData, a: Placed, b: Placed, p: P2, 
  */
 export function extendAt(s: SketchData, curveId: string, at: { x: number; y: number }): EditResult {
   const line = curveById(s, curveId);
-  if (line?.type !== "line") return { sketch: s, error: "Click near the end of a line to extend it." };
+  if (line?.type === "arc") return extendArc(s, line, at);
+  if (line?.type !== "line") return { sketch: s, error: "Click near the end of a line or arc to extend it." };
   const A = pointPos(s, line.p1);
   const B = pointPos(s, line.p2);
   const click: P2 = [at.x, at.y];
@@ -1282,10 +1283,83 @@ export function extendAt(s: SketchData, curveId: string, at: { x: number; y: num
   return settle({ ...s, points, constraints });
 }
 
-/** Split a line in two where it's clicked; the two halves stay in line with each other. */
+/**
+ * Extend an arc round its circle, from the end nearest the click, until it
+ * meets another line, arc, circle, spline or ellipse.
+ */
+function extendArc(s: SketchData, arc: SketchArc, at: { x: number; y: number }): EditResult {
+  const C = pointPos(s, arc.center);
+  const r = radiusOf(s, arc);
+  const S = pointPos(s, arc.start);
+  const E = pointPos(s, arc.end);
+  const click: P2 = [at.x, at.y];
+  const fromEnd = len(sub(click, E)) <= len(sub(click, S));
+  const endId = fromEnd ? arc.end : arc.start;
+  const ang = (p: P2) => Math.atan2(p[1] - C[1], p[0] - C[0]);
+  const [a0, sweep] = arcSpan(s, arc);
+  // How far round (radians) a point is past the end being extended: anticlockwise past the end, clockwise before the start.
+  const ahead = (p: P2) => (fromEnd ? norm(ang(p) - (a0 + sweep)) : norm(a0 - ang(p)));
+  const whole: SketchCircle = { id: arc.id, type: "circle", center: arc.center, radius: r, construction: arc.construction };
+  let best: { t: number; point: P2; by: string } | null = null;
+  for (const other of s.curves) {
+    if (other.id === arc.id) continue;
+    for (const p of intersections(s, whole, other)) {
+      const t = ahead(p);
+      // Not the end itself, and not so far round it would meet its own other end.
+      if (t > 1e-6 && t < TAU - sweep - 1e-6 && (!best || t < best.t)) best = { t, point: p, by: other.id };
+    }
+  }
+  const hit = best as { t: number; point: P2; by: string } | null;
+  if (!hit) return { sketch: s, error: "There's nothing further round that arc for it to reach." };
+  const target = curveById(s, hit.by)!;
+  const points = s.points.map((p) => (p.id === endId ? { ...p, x: hit.point[0], y: hit.point[1] } : p));
+  const on = target.type === "line" ? [con("pointOnLine", [endId, target.id])] : target.type === "circle" || target.type === "arc" ? [con("pointOnCircle", [endId, target.id])] : [];
+  const solved = solveSketch({ ...s, points, constraints: [...s.constraints, ...on] });
+  if (!solved.ok) return { sketch: s, error: "That arc's end is held where it is by its constraints, so it can't be extended." };
+  return { sketch: solved.sketch };
+}
+
+/** Split an arc in two where it's clicked; both pieces keep the same centre and size. */
+function splitArc(s: SketchData, arc: SketchArc, at: { x: number; y: number }): EditResult & { lineIds: string[] } {
+  const C = pointPos(s, arc.center);
+  const r = radiusOf(s, arc);
+  const [a0, sweep] = arcSpan(s, arc);
+  const t = norm(Math.atan2(at.y - C[1], at.x - C[0]) - a0);
+  if (t <= sweep * 0.02 || t >= sweep * 0.98) return { sketch: s, lineIds: [], error: "Click further from the arc's ends to split it." };
+  const pid = sketchId("p");
+  const second = sketchId("a");
+  const first: SketchArc = { ...arc, end: pid };
+  const rest: SketchArc = { id: second, type: "arc", center: arc.center, start: pid, end: arc.end, construction: arc.construction };
+  const constraints: SketchConstraint[] = [];
+  for (const c of s.constraints) {
+    if (!c.refs.includes(arc.id)) {
+      constraints.push(c);
+      continue;
+    }
+    // Halfway round the whole arc means nothing for either piece.
+    if (c.type === "midpoint") continue;
+    // Something joined smoothly onto the arc's far end now joins the second piece.
+    if (c.type === "tangent") {
+      const other = curveById(s, c.refs.find((x) => x !== arc.id)!);
+      const ends = other ? (other.type === "line" ? [other.p1, other.p2] : other.type === "arc" ? [other.start, other.end] : []) : [];
+      if (ends.includes(arc.end) && !ends.includes(arc.start)) {
+        constraints.push({ ...c, refs: c.refs.map((x) => (x === arc.id ? second : x)) });
+        continue;
+      }
+    }
+    constraints.push(c);
+  }
+  const point = { id: pid, x: C[0] + r * Math.cos(a0 + t), y: C[1] + r * Math.sin(a0 + t) };
+  const curves = s.curves.flatMap((c) => (c.id === arc.id ? [first, rest] : [c]));
+  return { ...settle({ points: [...s.points, point], curves, constraints }), lineIds: [arc.id, second] };
+}
+
+/** Split a line (or arc) in two where it's clicked; the two halves stay in line with each other (or on the same circle). */
 export function splitAt(s: SketchData, curveId: string, at: { x: number; y: number }): EditResult & { lineIds: string[] } {
   const line = curveById(s, curveId);
-  if (line?.type !== "line") return { sketch: s, lineIds: [], error: "Click a line where you want to split it." };
+  if (line?.type === "arc") return splitArc(s, line, at);
+  if (line?.type === "circle") return { sketch: s, lineIds: [], error: "A circle has no ends to split between — use Trim to cut a piece out of it, or draw an arc instead." };
+  if (line?.type !== "line") return { sketch: s, lineIds: [], error: "Click a line or arc where you want to split it." };
   const A = pointPos(s, line.p1);
   const B = pointPos(s, line.p2);
   const d = sub(B, A);

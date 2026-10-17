@@ -20,7 +20,7 @@ import {
 import { dimensionLayout } from "../src/sketch/layout";
 import { findRegions } from "../src/sketch/regions";
 import { analyzeSketch, solveSketch } from "../src/sketch/solver";
-import { addEllipse, addPolygon, addSlot, addSpline, filletCorner, offsetCurves, polygonCorners, trimAt } from "../src/sketch/tools";
+import { addCentreArc, addEllipse, addPolygon, addSlot, addSpline, extendAt, filletCorner, offsetCurves, polygonCorners, splitAt, trimAt } from "../src/sketch/tools";
 import { parseSketchData } from "../src/sketch/validate";
 import { emptySketch, type SketchArc, type SketchCircle, type SketchData, type SketchLine } from "../src/sketch/types";
 
@@ -361,5 +361,62 @@ describe("polygon sized across flats", () => {
     const axis = line(sl.sketch, sl.axisId!);
     expect(axis.construction).toBe(true);
     expect(lengthOf(sl.sketch, sl.axisId!)).toBeCloseTo(30, 9);
+  });
+});
+
+describe("split and extend arcs", () => {
+  // A quarter arc of radius 10 round the origin, from (10, 0) anticlockwise to (0, 10).
+  const quarter = () => {
+    const r = addCentreArc(emptySketch(), { x: 0, y: 0, snap: { kind: "origin" } }, at(10, 0), at(0, 10));
+    return { s: r.sketch, arcId: r.arcId };
+  };
+  const ends = (s: SketchData, id: string) => {
+    const a = s.curves.find((c) => c.id === id) as SketchArc;
+    return [pointPos(s, a.start), pointPos(s, a.end)].map((p) => [Math.round(p[0] * 1e6) / 1e6, Math.round(p[1] * 1e6) / 1e6]);
+  };
+
+  it("splits an arc where it's clicked into two on the same circle", () => {
+    const { s, arcId } = quarter();
+    const r = splitAt(s, arcId, at(8, 7));
+    expect(r.error).toBeUndefined();
+    expect(r.lineIds).toHaveLength(2);
+    const [a, b] = r.lineIds.map((id) => r.sketch.curves.find((c) => c.id === id) as SketchArc);
+    expect(a.end).toBe(b.start);
+    expect(a.center).toBe(b.center);
+    const [mx, my] = pointPos(r.sketch, a.end);
+    expect(Math.hypot(mx, my)).toBeCloseTo(10, 6);
+    expect(Math.atan2(my, mx)).toBeCloseTo(Math.atan2(7, 8), 6);
+    // Too near an end.
+    expect(splitAt(s, arcId, at(10, 0.01)).error).toMatch(/further from/);
+  });
+
+  it("a radius dimension still sizes both pieces after a split", () => {
+    const { s, arcId } = quarter();
+    const d = addDimension(s, [arcId], { x: 5, y: 5 });
+    const r = splitAt(d.sketch, arcId, at(8, 7));
+    const v = setDimensionValue(r.sketch, d.dimensionId, "15");
+    expect(v.error).toBeUndefined();
+    for (const id of r.lineIds) expect(radiusOf(v.sketch, v.sketch.curves.find((c) => c.id === id) as SketchArc)).toBeCloseTo(15, 6);
+  });
+
+  it("extends an arc round its circle to the next line, from either end", () => {
+    const { s, arcId } = quarter();
+    const wall = addLine(s, at(-20, 6), at(20, 6), { construction: false });
+    // From its end (0, 10) anticlockwise... nothing until the line y = 6 on the left.
+    const left = extendAt(wall.sketch, arcId, at(1, 10));
+    expect(left.error).toBeUndefined();
+    expect(ends(left.sketch, arcId)[1]).toEqual([-8, 6]);
+    // From its start (10, 0) clockwise round to y = -… : add a line below.
+    const floor = addLine(s, at(-20, -6), at(20, -6));
+    const down = extendAt(floor.sketch, arcId, at(10, 1));
+    expect(down.error).toBeUndefined();
+    expect(ends(down.sketch, arcId)[0]).toEqual([8, -6]);
+    expect(down.sketch.constraints.some((c) => c.type === "pointOnLine" && c.refs[1] === floor.lineId)).toBe(true);
+    expect(extendAt(s, arcId, at(10, 1)).error).toMatch(/nothing further/);
+  });
+
+  it("explains that circles can't be split", () => {
+    const c = addCircle(emptySketch(), at(0, 0), 5);
+    expect(splitAt(c.sketch, c.circleId, at(5, 0)).error).toMatch(/Trim/);
   });
 });
