@@ -388,7 +388,8 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
       for (const piece of clipped(p, line)) prims.push({ kind: "path", points: map(piece), style });
     };
     if (p.cutFaces) {
-      for (const seg of hatchLines(p.cutFaces, HATCH_SPACING / scale)) draw(seg, "thin");
+      // (Spaced evenly on paper, so a detail view drawn bigger isn't hatched more coarsely.)
+      for (const seg of hatchLines(p.cutFaces, HATCH_SPACING / vs)) draw(seg, "thin");
     }
     for (const line of drawing.hiddenLines ? p.hidden : []) draw(line, "hidden");
     for (const line of p.visible) draw(line, "visible");
@@ -485,7 +486,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     if (!view || !p) continue;
     const resolved = resolveDim(dim, p);
     const at = ([x, y]: [number, number]) => toSheet(view, p, scale, x, y);
-    const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved), dim.callout ? calloutText(p, resolved.a, info.taps ?? []) : null, dimStyle(drawing));
+    const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved), dim.callout ? calloutText(p, resolved.a, info.taps ?? [], { ...dimStyle(drawing), ...(dim.places !== undefined ? { places: dim.places } : {}) }) : null, dimStyle(drawing));
     const from = prims.length;
     prims.push(...drawn.prims);
     dims.push({

@@ -10,7 +10,7 @@ import { evaluate } from "../model/expr";
 import { SCREW_SIZES } from "../model/holes";
 import { allFeatures, studioOfFeature, studioFeatures } from "../model/studios";
 import type { Drawing, Feature, PartSmithDocument } from "../model/types";
-import { lengthNumber } from "../model/units";
+import { styledLength, type DimStyle } from "./dimensions";
 
 type P2 = [number, number];
 
@@ -66,23 +66,26 @@ export function matchingHoles(p: ViewProjection, h: ViewHole): number {
   return (p.holes ?? []).filter((x) => same(x, h)).length;
 }
 
-/** The lines of a hole's callout (lengths in the drawing's units). */
-export function calloutLines(h: ViewHole, count: number, taps: TapSize[]): string[] {
-  const n = lengthNumber;
+/**
+ * The lines of a hole's callout (lengths in the drawing's units, with its
+ * decimal places and both units if it asks; the thread name stays as it is).
+ */
+export function calloutLines(h: ViewHole, count: number, taps: TapSize[], style: DimStyle = {}): string[] {
+  const n = (v: number, sign = "") => styledLength(v, style, sign);
   const many = count > 1 ? `${count}× ` : "";
   const deep = h.through ? " THRU" : ` × ${n(h.depth)} DEEP`;
-  const lines = [`${many}Ø${n(h.d)}${deep}`];
+  const lines = [`${many}${n(h.d, "Ø")}${deep}`];
   const tap = taps.find((t) => near(t.drill, h.d));
   if (tap) lines.push(`${tap.thread} TAP${h.through ? " THRU" : ""}`);
-  if (h.cbore) lines.push(`CBORE Ø${n(h.cbore.diameter)} × ${n(h.cbore.depth)} DEEP`);
-  if (h.csk) lines.push(`CSK Ø${n(h.csk.diameter)} × ${Math.round(h.csk.angle)}°`);
+  if (h.cbore) lines.push(`CBORE ${n(h.cbore.diameter, "Ø")} × ${n(h.cbore.depth)} DEEP`);
+  if (h.csk) lines.push(`CSK ${n(h.csk.diameter, "Ø")} × ${Math.round(h.csk.angle)}°`);
   return lines;
 }
 
 /** A callout dimension's text, worked out from the hole as the part is now (null: the hole is gone). */
-export function calloutText(p: ViewProjection, centre: P2, taps: TapSize[]): string[] | null {
+export function calloutText(p: ViewProjection, centre: P2, taps: TapSize[], style: DimStyle = {}): string[] | null {
   const h = holeAt(p, centre);
-  return h ? calloutLines(h, matchingHoles(p, h), taps) : null;
+  return h ? calloutLines(h, matchingHoles(p, h), taps, style) : null;
 }
 
 /**

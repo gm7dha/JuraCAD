@@ -55,7 +55,7 @@ function pdfString(s: string): string {
   }
   return out;
 }
-const WIN_ANSI: Record<string, number> = { "€": 0x80, "–": 0x96, "—": 0x97, "‘": 0x91, "’": 0x92, "“": 0x93, "”": 0x94, "•": 0x95 };
+const WIN_ANSI: Record<string, number> = { "€": 0x80, "–": 0x96, "—": 0x97, "‘": 0x91, "’": 0x92, "“": 0x93, "”": 0x94, "•": 0x95, "™": 0x99 };
 /** Signs the PDF's built-in fonts lack, written as the nearest plain letters (e.g. a tolerance's minus sign). */
 const PLAIN: Record<string, string> = { "−": "-", "‐": "-", "≤": "<=", "≥": ">=", "≈": "~", "⌀": "\\330" };
 
@@ -128,7 +128,8 @@ export function dxfText(text: string): string {
   let out = "";
   for (const ch of text.replace(/[Ø⌀]/g, "%%c").replace(/°/g, "%%d").replace(/±/g, "%%p")) {
     const code = ch.codePointAt(0)!;
-    out += code < 128 ? ch : `\\U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+    // (Readers take exactly four hex digits, so anything beyond them — emoji and the like — becomes "?".)
+    out += code < 128 ? ch : code > 0xffff ? "?" : `\\U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
   }
   return out;
 }

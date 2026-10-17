@@ -7,6 +7,7 @@ import { lengthNumber, lengthUnit, toUnit } from "../model/units";
 import type { ViewProjection } from "../kernel/protocol";
 import type { Dimension, DimPoint } from "../model/types";
 import type { Prim } from "./sheet";
+import { textWidth } from "./export";
 
 type P2 = [number, number];
 
@@ -174,6 +175,17 @@ function fixed(v: number, places: number): string {
   return /^-0(\.0*)?$/.test(t) ? t.slice(1) : t;
 }
 
+/**
+ * A length as a drawing shows it, with its sign ("Ø", "R" or none): the set
+ * decimal places (or as many as needed), and the other unit in brackets when
+ * asked — e.g. "Ø6.60 [Ø0.26]". Used by hole callouts.
+ */
+export function styledLength(v: number, style: DimStyle = {}, sign = ""): string {
+  const unit = lengthUnit();
+  const main = style.places === undefined ? formatSize(v) : fixed(toUnit(v, unit), style.places);
+  return `${sign}${main}${style.dual ? ` [${sign}${lengthNumber(v, unit === "in" ? "mm" : "in")}]` : ""}`;
+}
+
 export function dimLabel(dim: Dimension, value: number, style: DimStyle = {}): string {
   const places = dim.places ?? style.places;
   const unit = lengthUnit();
@@ -183,11 +195,12 @@ export function dimLabel(dim: Dimension, value: number, style: DimStyle = {}): s
   const sign = dim.type === "diameter" ? "Ø" : dim.type === "radius" ? "R" : "";
   const base = dim.type === "angle" ? deg(value, 1) : `${sign}${size(value)}`;
   const t = dim.tolerance;
-  // (A tolerance never rounds away to nothing: too few places for it, and it shows as many as it needs.)
+  // A tolerance shows at least the set places, and more if it needs them (it's never rounded).
   const tv = (v: number) => {
-    const shown = dim.type === "angle" ? deg(v, 2) : size(v);
-    if (places === undefined || v === 0 || parseFloat(shown) !== 0) return shown;
-    return dim.type === "angle" ? `${Math.round(v * 100) / 100}°` : formatSize(v);
+    const auto = dim.type === "angle" ? String(Math.round(v * 100) / 100) : formatSize(v);
+    if (places === undefined) return dim.type === "angle" ? `${auto}°` : auto;
+    const p = Math.max(places, auto.split(".")[1]?.length ?? 0);
+    return dim.type === "angle" ? `${fixed(v, p)}°` : fixed(toUnit(v, unit), p);
   };
   const tol = !t ? "" : Math.abs(t.plus - t.minus) < 1e-9 ? ` ±${tv(t.plus)}` : ` +${tv(t.plus)}/−${tv(t.minus)}`;
   // Both units: the other one in brackets after the size.
@@ -281,7 +294,7 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
 
 /** The outline round a dimension's number: a rectangle, or for inspection a box with round ends. */
 export function textFrame(t: Extract<Prim, { kind: "text" }>, kind: "basic" | "inspection"): Prim {
-  const w = t.text.length * t.size * 0.6;
+  const w = textWidth(t.text, t.size);
   const pad = 0.8;
   const x0 = (t.anchor === "middle" ? -w / 2 : t.anchor === "end" ? -w : 0) - pad;
   const x1 = x0 + w + 2 * pad;

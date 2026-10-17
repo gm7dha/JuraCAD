@@ -147,6 +147,16 @@ export function removeNote(d: Drawing, id: string): Drawing {
   return left.length ? { ...rest, notes: left } : rest;
 }
 
+/**
+ * Put just the lined-up views (front, top, sides, back, bottom) back in their
+ * automatic places — e.g. after switching first/third angle — keeping where
+ * the 3D, section, detail and flat pattern views were moved to.
+ */
+export function arrangeLinedUp(d: Drawing): Drawing {
+  const lined = new Set<ViewKind>(["front", "top", "right", "left", "back", "bottom"]);
+  return { ...d, views: d.views.map(({ at, ...v }) => (lined.has(v.kind) || !at ? v : { ...v, at })) };
+}
+
 /** Put every view back in its automatic place. */
 export function arrangeViews(d: Drawing): Drawing {
   return { ...d, views: d.views.map(({ at: _at, ...v }) => v) };

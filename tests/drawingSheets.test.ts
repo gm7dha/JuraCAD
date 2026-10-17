@@ -5,7 +5,11 @@
 import { describe, expect, it } from "vitest";
 
 import { addDetail, detailProjection, withDetails } from "../src/drawing/details";
-import { addDrawing, parseDrawings, projectionKinds, toggleView } from "../src/drawing/drawing";
+import { addDrawing, arrangeLinedUp, parseDrawings, projectionKinds, toggleView } from "../src/drawing/drawing";
+import { autoDimensions } from "../src/drawing/autoDimension";
+import { advanceRun, nextLinear, startRun } from "../src/drawing/linearDims";
+import { calloutLines } from "../src/drawing/holeCallouts";
+import { missedSections } from "../src/drawing/sections";
 import { dimLabel, dimPoint, drawDimension, resolveDim } from "../src/drawing/dimensions";
 import { dxfText, sheetDxf, sheetPdf } from "../src/drawing/export";
 import { fitScale, fitSize, layoutSheet, projectionSymbol, SHEETS, type Prim } from "../src/drawing/sheet";
@@ -135,9 +139,14 @@ describe("dimension formatting", () => {
     expect(dimLabel(length, 40)).toBe("40");
     expect(dimLabel(length, 40, { places: 2 })).toBe("40.00");
     expect(dimLabel({ ...length, places: 1 }, 12.345, { places: 3 })).toBe("12.3");
-    // A tolerance too small for the places shows as many as it needs.
-    expect(dimLabel({ ...length, places: 0, tolerance: { plus: 0.1, minus: 0.1 } }, 12.5)).toBe("13 ±0.1");
-    expect(dimLabel({ ...length, places: 2, tolerance: { plus: 0.1, minus: 0 } }, 12.5)).toBe("12.50 +0.10/−0.00");
+    // A tolerance shows at least the set places, and as many more as it needs (never rounded).
+    const tol = (places: number, plus: number, minus = plus, d: Dimension = length) => dimLabel({ ...d, places, tolerance: { plus, minus } }, d.type === "angle" ? 45 : 12.5);
+    expect(tol(0, 0.1)).toBe("13 ±0.1");
+    expect(tol(0, 0.5)).toBe("13 ±0.5");
+    expect(tol(1, 0.25)).toBe("12.5 ±0.25");
+    expect(tol(1, 0.15, 0.05)).toBe("12.5 +0.15/−0.05");
+    expect(tol(0, 0.5, 0.5, angle)).toBe("45° ±0.5°");
+    expect(tol(2, 0.1, 0)).toBe("12.50 +0.10/−0.00");
     expect(dimLabel({ ...length, type: "diameter", places: 2 }, 6)).toBe("Ø6.00");
     expect(dimLabel({ ...angle, places: 2 }, 45)).toBe("45.00°");
   });
@@ -272,5 +281,103 @@ describe("detail views keep what their view shows", () => {
     // The front view itself isn't drawn, but its detail is.
     const l = layoutSheet(d, withDetails({ ...block, front: host }, d), info);
     expect(l.views.map((v) => v.key)).toEqual(["top", "right", "iso", "detail:d1"]);
+  });
+});
+
+describe("review fixes", () => {
+  /** A w × h rectangle drawn as four edges (as the engine gives them). */
+  const edges = (kind: ViewKind, w: number, h: number) => rectView(kind, w, h, { visible: [[0, 0, w, 0], [w, 0, w, h], [w, h, 0, h], [0, h, 0, 0]] });
+  // A stepped front (three steps each way), so the rows of dimensions stack up past the gap between views.
+  const pts = [0, 0, 40, 0, 40, 10, 25, 10, 25, 15, 10, 15, 10, 20, 0, 20];
+  const stepped: number[][] = [];
+  for (let i = 0; i < pts.length; i += 2) stepped.push([pts[i], pts[i + 1], pts[(i + 2) % pts.length], pts[(i + 3) % pts.length]]);
+  const solid = { front: rectView("front", 40, 20, { visible: stepped, points: stepped.flat() }), top: edges("top", 40, 30), right: edges("right", 30, 20) };
+  /** Lay out the block with auto dimensions; which dimensions run into another view's box. */
+  function clashes(third: boolean): string[] {
+    const block = solid;
+    let n = 0;
+    let d: Drawing = { ...newDrawing(), sheet: "A3", views: ["front", "top", "right"].map((k) => ({ id: k, kind: k as ViewKind })), ...(third ? { projection: "third" as const } : {}) };
+    const first = layoutSheet(d, block, info);
+    d = { ...d, dimensions: autoDimensions(block, ["front", "top", "right"], [], first.scale, () => `a${n++}`, third) };
+    const l = layoutSheet(d, block, info);
+    const out: string[] = [];
+    for (const dim of l.dims) {
+      const own = d.dimensions!.find((x) => x.id === dim.id)!.view;
+      for (const v of l.views) {
+        if (v.key === own) continue;
+        const [x0, y0, x1, y1] = v.box;
+        for (const p of l.prims.slice(dim.from, dim.to)) {
+          const pts = p.kind === "path" ? p.points : [p.x, p.y];
+          for (let i = 0; i < pts.length; i += 2) if (pts[i] > x0 + 0.5 && pts[i] < x1 - 0.5 && pts[i + 1] > y0 + 0.5 && pts[i + 1] < y1 - 0.5) out.push(`${own} → ${v.key}`);
+        }
+      }
+    }
+    expect(d.dimensions!.length).toBeGreaterThan(2);
+    return [...new Set(out)];
+  }
+
+  it("third angle: auto dimensions stay clear of the neighbouring views (as in first angle)", () => {
+    expect(clashes(false)).toEqual([]);
+    expect(clashes(true)).toEqual([]);
+  });
+
+  it("third angle: baseline runs go on the far side from the neighbouring views", () => {
+    const front = block.front;
+    const run = (third: boolean) => {
+      const r = startRun("front", "baseline", [0, 0], third);
+      const [h] = nextLinear(r, front, [40, 0], 1, []);
+      const [v] = nextLinear(startRun("front", "baseline", [0, 0], third), front, [0, 20], 1, []);
+      expect(advanceRun(r, [40, 0], [h]).third).toBe(third ? true : undefined);
+      return [Math.sign(h.offset), Math.sign(v.offset)];
+    };
+    // First angle: widths above (+), heights to the right (vertical offsets are measured leftwards, so −).
+    expect(run(false)).toEqual([1, -1]);
+    // Third angle: widths below (the top view is above), heights to the left (the right view is to the right).
+    expect(run(true)).toEqual([-1, 1]);
+  });
+
+  it("only says a section misses the part once the views are up to date", () => {
+    const d = { sections: [{ id: "s1", letter: "A", host: "top" as const, a: [0, 0.5] as [number, number], b: [1, 0.5] as [number, number] }] };
+    expect([...missedSections(d, { front: { bounds: [0, 0, 1, 1] } }, false)]).toEqual([]);
+    expect([...missedSections(d, { front: { bounds: [0, 0, 1, 1] } }, true)]).toEqual(["s1"]);
+    expect([...missedSections(d, { "section:s1": { bounds: [0, 0, 1, 1] } }, true)]).toEqual([]);
+    expect([...missedSections(d, { "section:s1": { bounds: null } }, true)]).toEqual(["s1"]);
+  });
+
+  it("writes characters beyond four hex digits into DXF as ?, and ™ into PDF", () => {
+    expect(dxfText("Part 😀 A")).toBe("Part ? A");
+    const pdf = new TextDecoder("latin1").decode(sheetPdf([{ kind: "text", x: 1, y: 1, text: "Brand™", size: 3, anchor: "start" }], [297, 210]));
+    expect(pdf).toContain("(Brand\\231) Tj");
+  });
+
+  it("hole callouts follow the drawing's decimal places and both units", () => {
+    const h = { cx: 0, cy: 0, d: 6.6, through: false, depth: 10, cbore: { diameter: 11, depth: 6.4 } };
+    expect(calloutLines(h, 2, [])).toEqual(["2× Ø6.6 × 10 DEEP", "CBORE Ø11 × 6.4 DEEP"]);
+    expect(calloutLines(h, 2, [], { places: 2 })).toEqual(["2× Ø6.60 × 10.00 DEEP", "CBORE Ø11.00 × 6.40 DEEP"]);
+    expect(calloutLines({ ...h, cbore: undefined }, 1, [], { dual: true })).toEqual(["Ø6.6 [Ø0.26] × 10 [0.394] DEEP"]);
+  });
+
+  it("hatches a detail of a broken-out view at the usual spacing on paper", () => {
+    // A 10 × 10 hatched square in the host view, shown 4 times bigger.
+    const host = rectView("front", 20, 20, { cutFaces: [0, 0, 10, 0, 10, 10, 0, 0, 10, 10, 0, 10] });
+    let d: Drawing = { ...newDrawing(), views: [{ id: "f", kind: "front" }], scale: 1 };
+    d = addDetail(d, { id: "d1", letter: "B", host: "front", centre: [0.25, 0.25], radius: 4, zoom: 4 });
+    const l = layoutSheet(d, withDetails({ front: host }, d), info);
+    const box = l.views.find((v) => v.key === "detail:d1")!.box;
+    const inside = (p: Prim) => p.kind === "path" && p.style === "thin" && p.points.length === 4 && p.points.every((v, i) => v >= box[i % 2] - 1e-6 && v <= box[2 + (i % 2)] + 1e-6);
+    const vs = [...new Set(l.prims.filter(inside).map((p) => Math.round(((-(p as { points: number[] }).points[0] + (p as { points: number[] }).points[1]) / Math.SQRT2) * 1000) / 1000))].sort((a, b) => a - b);
+    expect(vs.length).toBeGreaterThan(3);
+    for (let i = 1; i < vs.length; i++) expect(vs[i] - vs[i - 1]).toBeCloseTo(2.5, 2);
+  });
+
+  it("switching first/third angle keeps where 3D, section and detail views were moved", () => {
+    const d: Drawing = { ...newDrawing(), views: newDrawing().views.map((v) => ({ ...v, at: [100, 100] as [number, number] })) };
+    const after = arrangeLinedUp(d);
+    expect(after.views.map((v) => [v.kind, v.at])).toEqual([
+      ["front", undefined],
+      ["top", undefined],
+      ["right", undefined],
+      ["iso", [100, 100]],
+    ]);
   });
 });

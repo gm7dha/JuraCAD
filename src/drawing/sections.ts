@@ -163,3 +163,13 @@ export function removeBreakOut(d: Drawing, id: string): Drawing {
   const { breakouts: _old, ...rest } = d;
   return list.length ? { ...rest, breakouts: list } : rest;
 }
+
+/**
+ * Sections whose cutting line misses the part (their view came back empty).
+ * Only known once the views shown are up to date: while new ones are being
+ * worked out, a section just drawn isn't in the old ones yet, and says nothing.
+ */
+export function missedSections(d: Pick<Drawing, "sections">, projections: Partial<Record<string, { bounds: unknown }>> | null, upToDate: boolean): Set<string> {
+  if (!projections || !upToDate) return new Set();
+  return new Set((d.sections ?? []).filter((s) => !projections[`section:${s.id}`]?.bounds).map((s) => s.id));
+}

@@ -6,7 +6,7 @@ import { putShortening, removeShortening, withShortenings } from "../drawing/sho
 import { itemsInBox, toggled } from "../drawing/select";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
-import { arrangeViews, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
+import { arrangeLinedUp, arrangeViews, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
@@ -26,7 +26,7 @@ import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
 import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, PartSmithDocument, SectionCut } from "../model/types";
-import { addSection, breakOutRequests, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
+import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
 import { downloadFile, safeFileName } from "./download";
@@ -90,7 +90,7 @@ const inFlight = new Map<string, { key: unknown[]; promise: Promise<Projections>
 const sameKey = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** The drawing's views from the geometry engine, refreshed when the part or the chosen views change. */
-function useProjections(drawing: Drawing): { projections: Projections | null; subject: string | null; instances?: InstanceInput[]; busy: boolean; error: string | null } {
+function useProjections(drawing: Drawing): { projections: Projections | null; subject: string | null; instances?: InstanceInput[]; busy: boolean; error: string | null; upToDate: boolean } {
   const doc = useStore((s) => s.history.present);
   const parts = useStore((s) => s.parts);
   const ready = useStore((s) => s.kernelStatus === "ready");
@@ -154,7 +154,9 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
   const shortKey = JSON.stringify(drawing.shortened ?? []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const projections = useMemo(() => (base ? withShortenings(withDetails(base, drawing), drawing) : null), [base, detailsKey, shortKey]);
-  return { projections, subject: subject?.name ?? null, instances: subject?.instances, busy: state.busy, error: state.error };
+  // True once the views shown are the ones for the drawing as it is now (not the last ones, kept while new ones are worked out).
+  const upToDate = !!fresh && (state.result === null || state.result === fresh);
+  return { projections, subject: subject?.name ?? null, instances: subject?.instances, busy: state.busy, error: state.error, upToDate };
 }
 
 /** The sheet as last laid out on screen (for saving). */
@@ -172,7 +174,7 @@ export function autoDimensionDrawing() {
     s.showToast("The drawing isn't ready yet — wait for its views to appear, then try again.", "error");
     return;
   }
-  const added = autoDimensions(shownSheet.projections, drawingViewKeys(d), d.dimensions ?? [], shownSheet.layout.scale, () => newId("dm"));
+  const added = autoDimensions(shownSheet.projections, drawingViewKeys(d), d.dimensions ?? [], shownSheet.layout.scale, () => newId("dm"), d.projection === "third");
   if (!added.length) {
     const hasViews = drawingViewKeys(d).some((k) => k !== "iso" && !k.startsWith("section:"));
     s.showToast(hasViews ? "Nothing more to add — it's already dimensioned." : "Auto dimension needs a front, top or side view.", "info");
@@ -483,19 +485,17 @@ function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (f
             }}
           />
         )}
-        {!dim.callout && (
-          <div className="drawing-field">
-            <label htmlFor="dim-places">Decimal places</label>
-            <select id="dim-places" value={dim.places === undefined ? "" : String(dim.places)} onChange={(e) => edit({ places: e.target.value === "" ? undefined : Number(e.target.value) })}>
-              <option value="">Same as the drawing</option>
-              {PLACES.map((n) => (
-                <option key={n} value={String(n)}>
-                  {n === 0 ? "None (whole numbers)" : `${n} (${(0).toFixed(n)})`}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        <div className="drawing-field">
+          <label htmlFor="dim-places">Decimal places</label>
+          <select id="dim-places" value={dim.places === undefined ? "" : String(dim.places)} onChange={(e) => edit({ places: e.target.value === "" ? undefined : Number(e.target.value) })}>
+            <option value="">Same as the drawing</option>
+            {PLACES.map((n) => (
+              <option key={n} value={String(n)}>
+                {n === 0 ? "None (whole numbers)" : `${n} (${(0).toFixed(n)})`}
+              </option>
+            ))}
+          </select>
+        </div>
         {!dim.callout && (
           <div className="drawing-field">
             <span className="field-label">Box round the number</span>
@@ -503,8 +503,8 @@ function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (f
               {(
                 [
                   [undefined, "None", "Just the number"],
-                  ["basic", "Exact", "A box: the exact (basic) size, with its tolerance given by a GD&T frame"],
-                  ["inspection", "Check", "A rounded box: an inspection dimension — measure this one when checking the part"],
+                  ["basic", "Exact (basic)", "A box: the exact (basic) size, with its tolerance given by a GD&T frame"],
+                  ["inspection", "Inspect", "A rounded box: an inspection dimension — measure this one when checking the part"],
                 ] as const
               ).map(([f, label, tip]) => (
                 <button type="button" key={label} role="radio" title={tip} aria-checked={dim.frame === f} className={dim.frame === f ? "selected" : ""} onClick={() => edit({ frame: f })}>
@@ -556,7 +556,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   const doc = useStore((s) => s.history.present);
   const parts = useStore((s) => s.parts);
   const change = useStore((s) => s.changeDrawing);
-  const { projections, subject } = useProjections(drawing);
+  const { projections, subject, upToDate } = useProjections(drawing);
   const auto = projections
     ? fitScale(projections, drawingViewKeys(drawing), drawing.sheet, bottomReserve(drawing, bomFor(drawing, doc, parts), holeCount(drawing, projections)), drawing.projection === "third")
     : null;
@@ -622,8 +622,8 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
             <div className="segmented two" role="radiogroup" aria-label="Projection">
               {(
                 [
-                  [false, "First angle", "ISO (UK, Europe, most of the world): the top view goes below the front view, the right view to its left"],
-                  [true, "Third angle", "US (ANSI): the top view goes above the front view, the right view to its right"],
+                  [false, "First angle", "ISO (UK, Europe, most of the world): the top view goes below the front view, the right view to its left. Switching puts the lined-up views back in place; 3D, section and detail views you moved stay put."],
+                  [true, "Third angle", "US (ANSI): the top view goes above the front view, the right view to its right. Switching puts the lined-up views back in place; 3D, section and detail views you moved stay put."],
                 ] as const
               ).map(([third, label, tip]) => (
                 <button
@@ -635,7 +635,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
                   className={(drawing.projection === "third") === third ? "selected" : ""}
                   onClick={() =>
                     change((d) => {
-                      const { projection: _old, ...rest } = arrangeViews(d);
+                      const { projection: _old, ...rest } = arrangeLinedUp(d);
                       return third ? { ...rest, projection: "third" } : rest;
                     })
                   }
@@ -797,7 +797,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
           )}
         </div>
       </section>
-      <SectionsList drawing={drawing} change={change} projections={projections} />
+      <SectionsList drawing={drawing} change={change} missed={missedSections(drawing, projections, upToDate)} />
       <DetailsList drawing={drawing} change={change} />
       <BreakOutsList drawing={drawing} change={change} />
       <ShortenedList drawing={drawing} change={change} />
@@ -987,7 +987,7 @@ function DetailsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: D
   );
 }
 
-function SectionsList({ drawing, change, projections }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void; projections: Projections | null }) {
+function SectionsList({ drawing, change, missed }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void; missed: Set<string> }) {
   const sections = drawing.sections ?? [];
   return (
     <section className="panel-section">
@@ -1003,7 +1003,7 @@ function SectionsList({ drawing, change, projections }: { drawing: Drawing; chan
           <div className="section-row" key={s.id}>
             <span>
               {s.aux ? `View ${s.letter} (auxiliary)` : `Section ${s.letter}-${s.letter}`} <span className="muted small">(on {VIEW_LABELS[s.host]})</span>
-              {projections && !projections[`section:${s.id}`]?.bounds && (
+              {missed.has(s.id) && (
                 <span className="muted small" role="note">
                   {" "}
                   — its line misses the part, so there's nothing to show. Remove it and draw the line across the part.
@@ -1361,7 +1361,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const t = linearTarget(here);
     if (!t) return;
     if (!run || t.view !== run.view) {
-      setRun(startRun(t.view, tool as LinearKind, t.at));
+      setRun(startRun(t.view, tool as LinearKind, t.at, drawing.projection === "third"));
       return;
     }
     const made = linearNext(here);
