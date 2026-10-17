@@ -133,6 +133,55 @@ describe("offset keeps its distance", () => {
     expect(outer).toBeCloseTo(30 * 18 + Math.PI * 81, 0);
   });
 
+  const roundedRect = () => {
+    const rc = addRectangle(emptySketch(), at(0, 0), at(40, 20));
+    let s = rc.sketch;
+    for (const id of rc.lineIds) s = filletCorner(s, line(rc.sketch, id).p2, "3").sketch;
+    return { s, lineIds: rc.lineIds };
+  };
+
+  it("offset copies can't flip over to the other side of the original", () => {
+    const { s, lineIds } = roundedRect();
+    const held = applyRelation(s, "fix", s.curves.map((c) => c.id)).sketch;
+    const o = offsetCurves(held, lineIds[0], at(20, 1), "2");
+    expect(o.error).toBeUndefined();
+    // Nothing left to move: the copy is pinned by the offset.
+    expect(analyzeSketch(o.sketch).freedom).toBe(0);
+    const copyArcs = () => o.curveIds.map((id) => o.sketch.curves.find((c) => c.id === id)!).filter((c): c is SketchArc => c.type === "arc");
+    expect(copyArcs()).toHaveLength(4);
+    for (const a of copyArcs()) expect(radiusOf(o.sketch, a)).toBeCloseTo(1, 6);
+    // Dragging a copy's corner hard outwards: it stays put rather than jumping to the far side.
+    const copyLine = o.sketch.curves.find((c) => c.id === o.curveIds.find((id) => o.sketch.curves.find((k) => k.id === id)?.type === "line"))! as SketchLine;
+    const dragged = dragPoint(o.sketch, copyLine.p1, -10, -10);
+    for (const a of copyArcs()) expect(radiusOf(dragged, a)).toBeCloseTo(1, 6);
+    // An inward gap bigger than the corners' radius can't be made: the corner copies would have to turn inside out.
+    const gap = o.sketch.constraints.find((c) => c.type === "offset")!;
+    expect(setDimensionValue(o.sketch, gap.id, "5").error).toBeDefined();
+    const [[outer, pocket]] = areas(dragged);
+    expect(outer).toBeGreaterThan(pocket);
+    expect(pocket).toBeCloseTo(36 * 16 - (4 - Math.PI), 0);
+  });
+
+  it("a dragged offset line stays on its own side of the original", () => {
+    const l = addLine(emptySketch(), at(0, 0), at(20, 0));
+    const held = applyRelation(l.sketch, "fix", [l.lineId]).sketch;
+    const o = offsetCurves(held, l.lineId, at(10, 1), "2");
+    const copy = line(o.sketch, o.curveIds[0]);
+    const dragged = dragPoint(o.sketch, copy.p1, 0, -3);
+    expect(pointPos(dragged, copy.p1)[1]).toBeCloseTo(2, 6);
+    expect(pointPos(dragged, copy.p2)[1]).toBeCloseTo(2, 6);
+  });
+
+  it("offsetting a slot or a rounded rectangle adds no new freedom", () => {
+    const sl = addSlot(emptySketch(), at(0, 0), at(30, 0), 5);
+    const before = analyzeSketch(sl.sketch).freedom;
+    const o = offsetCurves(sl.sketch, sl.curveIds[0], at(15, 8), "2");
+    expect(analyzeSketch(o.sketch).freedom).toBe(before);
+    const { s, lineIds } = roundedRect();
+    const o2 = offsetCurves(s, lineIds[0], at(20, 1), "2");
+    expect(analyzeSketch(o2.sketch).freedom).toBe(analyzeSketch(s).freedom);
+  });
+
   it("an offset circle grows with the original", () => {
     const c = addCircle(emptySketch(), at(0, 0), 10);
     const o = offsetCurves(c.sketch, c.circleId, at(13, 0), "2");

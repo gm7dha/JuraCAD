@@ -400,8 +400,15 @@ export function deleteItems(s: SketchData, ids: string[]): SketchData {
     if (c.type === "offset") {
       // An offset keeps the copies that are left.
       const refs: string[] = [];
-      for (let i = 0; i + 1 < c.refs.length; i += 2) if (alive.has(c.refs[i]) && alive.has(c.refs[i + 1])) refs.push(c.refs[i], c.refs[i + 1]);
-      return refs.length ? [refs.length === c.refs.length ? c : { ...c, refs }] : [];
+      const extra: number[] = [];
+      for (let i = 0; i + 1 < c.refs.length; i += 2) {
+        if (!alive.has(c.refs[i]) || !alive.has(c.refs[i + 1])) continue;
+        refs.push(c.refs[i], c.refs[i + 1]);
+        if (c.extra?.[i / 2] !== undefined) extra.push(c.extra[i / 2]);
+      }
+      if (!refs.length) return [];
+      if (refs.length === c.refs.length) return [c];
+      return [{ ...c, refs, ...(c.extra ? { extra } : {}) }];
     }
     return c.refs.every((r) => alive.has(r)) ? [c] : [];
   });

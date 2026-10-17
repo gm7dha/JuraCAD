@@ -374,21 +374,24 @@ function buildSystem(sketch: SketchData): System {
       }
       case "offset": {
         // Each [copy, original] pair stays `value` apart: a line's distance from the original line, an arc's or circle's radius from the original's.
+        // Each pair's side (extra): a signed distance, so a copy can't flip over to the other side of its original.
         const pairs: ((x: Float64Array) => number)[] = [];
         for (let i = 0; i + 1 < con.refs.length; i += 2) {
           const [copy, orig] = [con.refs[i], con.refs[i + 1]];
+          const side = con.extra?.[i / 2];
+          const signed = (v: number) => (side === undefined ? Math.abs(v) : side * v);
           if (kind(copy) === "line" && kind(orig) === "line") {
             const [p] = lineEnds(copy);
             const [m, n] = lineEnds(orig);
             pairs.push((x) => {
               const u = p(x), s0 = m(x), e = n(x);
               const dx = e[0] - s0[0], dy = e[1] - s0[1];
-              return Math.abs(dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1);
+              return signed((dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1));
             });
           } else {
             const c1 = circular(copy);
             const c2 = circular(orig);
-            pairs.push((x) => Math.abs(c1.radius(x) - c2.radius(x)));
+            pairs.push((x) => signed(c1.radius(x) - c2.radius(x)));
           }
         }
         if (!pairs.length) throw new Error("offset has nothing to measure");

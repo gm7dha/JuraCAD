@@ -688,7 +688,7 @@ export function offsetCurves(s: SketchData, curveId: string, at: { x: number; y:
     const id = sketchId("k");
     const circle: SketchCircle = { id, type: "circle", center: clicked.center, radius, construction: false };
     // The copy stays that far from the original when the original changes size.
-    const keepApart: SketchConstraint = { ...con("offset", [id, clicked.id], distanceText), labelOffset: { x: 0, y: 0 } };
+    const keepApart: SketchConstraint = { ...con("offset", [id, clicked.id], distanceText), extra: [outward ? 1 : -1], labelOffset: { x: 0, y: 0 } };
     return { ...settle({ ...s, curves: [...s.curves, circle], constraints: [...s.constraints, keepApart] }), curveIds: [id] };
   }
 
@@ -782,9 +782,36 @@ export function offsetCurves(s: SketchData, curveId: string, at: { x: number; y:
   // The clicked curve's pair goes first: the label sits by it.
   const first = steps.findIndex((st) => st.curve.id === clicked.id);
   const ordered = [...pairs.slice(first * 2), ...pairs.slice(0, first * 2)];
-  constraints.push({ ...con("offset", ordered, distanceText), labelOffset: { x: 0, y: 0 } });
+  // Copies of pieces that joined smoothly join smoothly too (this also pins down where they meet).
+  const tangents = (a: string, b: string) => s.constraints.find((k) => k.type === "tangent" && k.refs.includes(a) && k.refs.includes(b));
+  for (let i = closed ? 0 : 1; i < steps.length; i++) {
+    const prev = (i - 1 + steps.length) % steps.length;
+    if (prev === i) continue;
+    const t = tangents(steps[prev].curve.id, steps[i].curve.id);
+    if (!t) continue;
+    const [a, b] = [curves[prev].id, curves[i].id];
+    const flip = t.refs[0] === steps[i].curve.id;
+    constraints.push({ ...con("tangent", flip ? [b, a] : [a, b]), ...(t.extra ? { extra: [...t.extra] } : {}) });
+  }
+  const drafted: SketchData = { points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: s.constraints };
+  // Which side each copy is on, so it can't flip across its original later.
+  const sides: number[] = [];
+  for (let i = 0; i < ordered.length; i += 2) sides.push(offsetSide(drafted, ordered[i], ordered[i + 1]));
+  constraints.push({ ...con("offset", ordered, distanceText), extra: sides, labelOffset: { x: 0, y: 0 } });
   const result = settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: [...s.constraints, ...constraints] });
   return { ...result, curveIds: curves.map((c) => c.id) };
+}
+
+/** Which side of its original an offset copy is: a line to the left (+1) or right (−1) of the original's direction; an arc or circle bigger (+1) or smaller (−1). */
+export function offsetSide(s: SketchData, copyId: string, origId: string): number {
+  const copy = curveById(s, copyId);
+  const orig = curveById(s, origId);
+  if (copy?.type === "line" && orig?.type === "line") {
+    const a = pointPos(s, orig.p1);
+    return Math.sign(cross(sub(pointPos(s, orig.p2), a), sub(pointPos(s, copy.p1), a))) || 1;
+  }
+  if ((copy?.type === "arc" || copy?.type === "circle") && (orig?.type === "arc" || orig?.type === "circle")) return Math.sign(radiusOf(s, copy) - radiusOf(s, orig)) || 1;
+  return 1;
 }
 
 // ---------------------------------------------------------------------------
