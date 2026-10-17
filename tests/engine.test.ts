@@ -1510,6 +1510,34 @@ describe("importing STEP and STL files", () => {
     expect(analyzeMesh(r3.parts[0].vertices, r3.parts[0].triangles).volume).toBeCloseTo(8000 * 25.4 ** 3, -3);
   });
 
+  it("brings separate bodies in an STL in as separate parts, and an open mesh as a surface", () => {
+    // A 10 mm cube and a ball 30 mm away, in one STL file.
+    build([feature("box", { width: 10, depth: 10, height: 10 }), feature("sphere", { diameter: 8, x: 30 })]);
+    const stl = new Uint8Array(engine.exportStl([], "normal").stl);
+    engine.dispose();
+    let b64 = "";
+    for (const x of stl) b64 += String.fromCharCode(x);
+    const file = { fileName: "two.stl", format: "stl" as const, data: btoa(b64), units: "mm" as const };
+    const r = build([importFeature(file)]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2"]);
+    expect(engine.check("normal").parts.every((p) => p.mesh.watertight && p.geometryValid)).toBe(true);
+    engine.dispose();
+    // Both cut cleanly out of a block (it used to leave a broken, leaky part).
+    const block = feature("box", { width: 50, depth: 20, height: 20, x: -5, y: -5, z: -5 });
+    const cut = build([block, importFeature(file, "remove")]);
+    expect(cut.featureErrors).toEqual({});
+    const c = engine.check("normal").parts[0];
+    expect(c.mesh.watertight).toBe(true);
+    expect(c.exactVolume!).toBeLessThan(20000 - 1000 - 200);
+    engine.dispose();
+    // A single triangle: an open mesh, so a surface rather than a solid with no inside.
+    const tri = "solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 10 0 0\nvertex 0 10 0\nendloop\nendfacet\nendsolid t\n";
+    const open = build([importFeature({ fileName: "tri.stl", format: "stl", data: btoa(tri), units: "mm" })]);
+    expect(open.featureErrors).toEqual({});
+    expect(open.parts.map((p) => [p.name, !!p.surface])).toEqual([["Surface 1", true]]);
+  });
+
   it("reads text STL files, and finely curved ones in reasonable time", () => {
     const P = [[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]];
     const tris = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]];
