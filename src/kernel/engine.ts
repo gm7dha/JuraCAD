@@ -1703,8 +1703,10 @@ export class GeometryEngine {
     for (let i = 0; i < picks.length; i++) {
       const ref = picks[i].ref;
       if (ref.kind !== "edge" || ref.curve !== "LINE") return `${hem ? "Hems fold" : "Flanges bend"} straight edges. Remove the curved edge.`;
-      // Edges of flanges made earlier in this same feature count too.
-      const where = findSheetEdge(foldSheet(spec), spec.thickness, ref.a, ref.b, 0.01);
+      // Edges of flanges made earlier in this same feature count too. (Picked on the part as it was, before this
+      // feature's flanges cut any edges back to sit flush.)
+      const asPicked = { ...spec, flanges: spec.flanges.map((f) => (added.includes(f) && f.position ? { ...f, position: undefined } : f)) };
+      const where = findSheetEdge(foldSheet(asPicked), spec.thickness, ref.a, ref.b, 0.01);
       if (!where) return `One of the edges isn't a free straight edge along the sheet's top or bottom face (or it's already bent). Edit this ${what} and pick it again.`;
       const fl: FlangeSpec = hem
         ? {
@@ -1731,6 +1733,7 @@ export class GeometryEngine {
             ...(feature.closeCorners ? { closeCorners: true } : {}),
             ...(feature.reliefShape && feature.reliefShape !== "rectangle" ? { reliefShape: feature.reliefShape } : {}),
             ...(feature.cornerRelief ? { cornerRelief: feature.cornerRelief } : {}),
+            ...(feature.flangePosition ? { position: feature.flangePosition } : {}),
           };
       added.push(fl);
       spec = { ...spec, flanges: [...spec.flanges, fl] };
@@ -1739,9 +1742,27 @@ export class GeometryEngine {
     const problem = added.map((f) => folded.errors[f.id]).find(Boolean);
     if (problem) return problem;
     const ids = new Set(added.map((f) => f.id));
+    // Walls cut back so the new flanges sit flush: not next to a flange made before (it was bent off the whole edge).
+    const trims = (folded.trims ?? []).filter((t) => ids.has(t.flangeId));
+    for (const t of trims) {
+      const wall = folded.walls.find((w) => w.id === t.wall)!;
+      const fl = added.find((f) => f.id === t.flangeId)!;
+      const k = wall.outline.length;
+      const old = folded.bends.find((b) => b.parent === wall.id && !ids.has(b.flangeId) && (b.edge === (fl.edge + 1) % k || b.edge === (fl.edge - 1 + k) % k));
+      if (old) return "To sit flush, this flange cuts back the edge next to a flange made earlier. Pick both edges in one Flange (so they're made together), or set the position to “Bend off the edge”.";
+    }
     let pieces: Shape3D[] = [];
     let result: Shape3D | null = null;
+    let base: Shape3D = part.shape;
     try {
+      if (trims.length) {
+        const strips = fusePieces(trims.map((t) => wallSolid({ ...folded.walls.find((w) => w.id === t.wall)!, outline: t.outline, holes: [], tabs: [] }, spec.thickness)))!;
+        try {
+          base = part.shape.cut(strips);
+        } finally {
+          strips.delete();
+        }
+      }
       pieces = [
         ...folded.bends.filter((b) => ids.has(b.flangeId)).map((b) => bendSolid(b)),
         ...folded.walls.filter((w) => ids.has(w.id)).map((w) => wallSolid(w, spec.thickness)),
@@ -1753,7 +1774,7 @@ export class GeometryEngine {
       if (!extra) return hem ? "Click the straight edges of the sheet to fold over." : "Click the straight edges of the sheet to bend flanges off.";
       let clash: string | null = null;
       try {
-        result = part.shape.fuse(extra);
+        result = base.fuse(extra);
         const together = measureVolume(extra);
         const whole = measureVolume(result);
         const tol = Math.max(0.01, whole * 1e-6);
@@ -1761,7 +1782,7 @@ export class GeometryEngine {
           clash = hem
             ? "These hems run into each other. Shorten their ends, or hem fewer edges."
             : "These flanges run into each other where they meet. Try shorter flanges or a smaller angle, or shorten their ends (Shorten each end by).";
-        } else if (measureVolume(part.shape) + together - whole > tol) {
+        } else if (measureVolume(base) + together - whole > tol) {
           clash = hem
             ? "The hem runs into the rest of the part. Try a shorter one, or folding it the other way."
             : "The flange runs into the rest of the part. Try a shorter flange, a different angle, or bending it the other way.";
@@ -1805,6 +1826,8 @@ export class GeometryEngine {
     } catch (e) {
       pieces.forEach((p) => p.delete());
       return describeError(e, `Couldn't ${hem ? "fold this hem" : "bend this flange"}.`);
+    } finally {
+      if (base !== part.shape) base.delete();
     }
     part.shape.delete();
     part.shape = result;

@@ -148,6 +148,8 @@ export interface Feature {
   /** Flange: the shape of the bend relief notches (missing = rectangle) and the relief cut where flanges meet at a corner. */
   reliefShape?: "rectangle" | "round" | "tear";
   cornerRelief?: "round" | "square";
+  /** Flange: where it goes — bent off the edge (missing), or its outside or inside face flush with the edge (the sheet keeps its size). */
+  flangePosition?: "outside" | "inside";
   /**
    * Replace face: the flat face or plane the picked faces are moved onto
    * (null until one is picked), and what a click in the 3D view picks.

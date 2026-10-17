@@ -281,6 +281,30 @@ function RibThickenOptions() {
         </fieldset>
       )}
       {draft.type === "flange" && (
+        <>
+          <label className="field-label" htmlFor="flange-position">
+            Where the flange goes
+          </label>
+          <select
+            id="flange-position"
+            className="full-select"
+            value={draft.flangePosition ?? "edge"}
+            onChange={(e) => setDraftField({ flangePosition: e.target.value === "edge" ? undefined : (e.target.value as "outside" | "inside") })}
+          >
+            <option value="edge">Bend off the edge (the sheet gets bigger)</option>
+            <option value="outside">Outside flush with the edge (keeps the sheet's size)</option>
+            <option value="inside">Inside flush with the edge</option>
+          </select>
+          <p className="dialog-hint field-hint">
+            {draft.flangePosition === "outside"
+              ? "The sheet is cut back so the flange's outside face lines up with the edge: a box drawn 100 wide stays 100 wide outside."
+              : draft.flangePosition === "inside"
+              ? "The sheet is cut back so the flange's inside face lines up with the edge: the space inside stays the size you drew."
+              : "The bend starts at the edge, so the part grows by the bend and the sheet's thickness."}
+          </p>
+        </>
+      )}
+      {draft.type === "flange" && (
         <label className="check-row" title="Where one of these flanges meets another full-length 90° flange at a square corner, their ends are extended so one laps over the other instead of leaving a gap">
           <input type="checkbox" checked={!!draft.closeCorners} onChange={(e) => setDraftField({ closeCorners: e.target.checked || undefined })} />
           Close corners where flanges meet

@@ -63,6 +63,13 @@ export interface FlangeSpec {
   reliefShape?: ReliefShape;
   /** Where this flange meets another at a corner of their wall (and the corner isn't closed): a relief cut there. */
   cornerRelief?: "round" | "square";
+  /**
+   * Where the flange goes (missing: it bends off the edge, so the sheet gets
+   * bigger). "outside": the wall is cut back so the flange's outside face (at
+   * 90°; in general the outside faces' sharp corner) lines up with the edge —
+   * the sheet keeps its size. "inside": the same for the flange's inside face.
+   */
+  position?: "outside" | "inside";
 }
 
 /** Bend relief notches: square-ended, round-ended (obround), or a thin tear. */
@@ -161,6 +168,8 @@ export interface Bend {
 export interface FoldedSheet {
   walls: Wall[];
   bends: Bend[];
+  /** Strips cut off walls so flanges sit flush with their edges (`position`), in the walls' coordinates. */
+  trims?: { flangeId: string; wall: string; outline: Segment[] }[];
   /** Relief cuts where bends meet at a wall's corners. */
   cornerReliefs?: CornerRelief[];
   /** Flange id → why it couldn't be made. */
@@ -301,8 +310,11 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
   const bends: Bend[] = [];
   const errors: Record<string, string> = {};
   const used = new Set<string>();
+  const trims: NonNullable<FoldedSheet["trims"]> = [];
+  setBack(spec, base, errors, trims);
 
   for (const fl of spec.flanges) {
+    if (errors[fl.id]) continue;
     const parent = walls.find((w) => w.id === fl.wall);
     const seg = parent?.outline[fl.edge];
     if (!parent || !seg) {
@@ -431,6 +443,7 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       bendEdge: 0,
     };
     walls.push(child);
+    setBack(spec, child, errors, trims);
     bends.push({
       flangeId: fl.id,
       parent: parent.id,
@@ -463,8 +476,86 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     }
     w.tabs = [...(w.tabs ?? []), { outline: anticlockwise(t.outline), holes: t.holes.map((h) => anticlockwise(h, false)) }];
   }
-  return { walls, bends, errors, ...(cornerReliefs.length ? { cornerReliefs } : {}) };
+  return { walls, bends, errors, ...(cornerReliefs.length ? { cornerReliefs } : {}), ...(trims.length ? { trims } : {}) };
 }
+
+/** Where two lines (a point and a direction each) cross, or null if they're parallel. */
+function crossing(p: P2, d: P2, q: P2, e: P2): P2 | null {
+  const den = d[0] * e[1] - d[1] * e[0];
+  if (Math.abs(den) < 1e-12) return null;
+  const t = ((q[0] - p[0]) * e[1] - (q[1] - p[1]) * e[0]) / den;
+  return [p[0] + d[0] * t, p[1] + d[1] * t];
+}
+
+/**
+ * A new wall's edges cut back for flanges that sit flush with them
+ * (`position`), before any flange is bent off it: each such edge moves in by
+ * the bend's setback, its neighbours shortened (or lengthened) to meet it.
+ * The strips cut off are listed in `trims`.
+ */
+function setBack(spec: SheetSpec, wall: Wall, errors: Record<string, string>, trims: NonNullable<FoldedSheet["trims"]>): void {
+  const T = spec.thickness;
+  for (const fl of spec.flanges) {
+    if (fl.wall !== wall.id || !fl.position || fl.hem || errors[fl.id]) continue;
+    const k = wall.outline.length;
+    const seg = wall.outline[fl.edge];
+    if (!seg || seg.kind !== "line" || fl.edge === wall.bendEdge) continue; // the main loop explains these
+    if (!(fl.angle > 0 && fl.angle < 180)) continue;
+    const R = fl.radius ?? spec.radius;
+    const dist = (fl.position === "outside" ? R + T : R) * Math.tan((fl.angle * Math.PI) / 360);
+    if (dist < 1e-9) continue;
+    const prevAt = (fl.edge - 1 + k) % k;
+    const nextAt = (fl.edge + 1) % k;
+    const prev = wall.outline[prevAt];
+    const next = wall.outline[nextAt];
+    if (prevAt === wall.bendEdge || nextAt === wall.bendEdge) {
+      errors[fl.id] = "A flange on the side of another flange can only bend off the edge (it can't sit flush there). Set the position to “Bend off the edge”.";
+      continue;
+    }
+    if (prev.kind !== "line" || next.kind !== "line") {
+      errors[fl.id] = "To sit flush with the edge, the edges either side of it must be straight. Set the position to “Bend off the edge”, or make those edges straight.";
+      continue;
+    }
+    const L = Math.hypot(seg.to[0] - seg.from[0], seg.to[1] - seg.from[1]);
+    const e: P2 = [(seg.to[0] - seg.from[0]) / L, (seg.to[1] - seg.from[1]) / L];
+    const into: P2 = [-e[1], e[0]];
+    const from: P2 = [seg.from[0] + into[0] * dist, seg.from[1] + into[1] * dist];
+    const a = crossing(prev.from, [prev.to[0] - prev.from[0], prev.to[1] - prev.from[1]], from, e);
+    const b = crossing(next.from, [next.to[0] - next.from[0], next.to[1] - next.from[1]], from, e);
+    const along = (p: P2) => (p[0] - from[0]) * e[0] + (p[1] - from[1]) * e[1];
+    const ok = (p: P2, q: P2) => (p[0] - q[0]) * into[0] + (p[1] - q[1]) * into[1] > -1e-9;
+    // The edge still runs the same way, and its neighbours still have some length left, running into the wall.
+    if (
+      !a ||
+      !b ||
+      along(b) - along(a) < 0.01 ||
+      Math.hypot(a[0] - prev.from[0], a[1] - prev.from[1]) < 0.01 ||
+      Math.hypot(next.to[0] - b[0], next.to[1] - b[1]) < 0.01 ||
+      !ok(prev.from, a) ||
+      !ok(next.to, b)
+    ) {
+      errors[fl.id] = `The wall is too small to cut back ${round2(dist)} mm for this flange to sit flush. Set the position to “Bend off the edge”.`;
+      continue;
+    }
+    trims.push({
+      flangeId: fl.id,
+      wall: wall.id,
+      outline: anticlockwise([
+        { kind: "line", from: seg.from, to: seg.to },
+        { kind: "line", from: seg.to, to: b },
+        { kind: "line", from: b, to: a },
+        { kind: "line", from: a, to: seg.from },
+      ]),
+    });
+    const outline = [...wall.outline];
+    outline[prevAt] = { kind: "line", from: prev.from, to: a };
+    outline[fl.edge] = { kind: "line", from: a, to: b };
+    outline[nextAt] = { kind: "line", from: b, to: next.to };
+    wall.outline = outline;
+  }
+}
+
+const round2 = (x: number) => Math.round(x * 100) / 100;
 
 /**
  * Corner reliefs: where bends off two neighbouring edges of a wall meet at

@@ -138,6 +138,44 @@ describe("sheet metal", () => {
   });
 });
 
+describe("flange position", () => {
+  const sheet = (sketchRef: string): Feature => ({ id: "sm", name: "Sheet metal 1", type: "sheetMetal", operation: "new", suppressed: false, params: { thickness: "2", radius: "2", kFactor: "0.45" }, sketchRef });
+  const edgesAt = (r: ReturnType<typeof build>) => r.parts[0].edgeRefs.filter((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[2] - 2) < 1e-6 && Math.abs(e.b[2] - 2) < 1e-6);
+  const flange = (id: string, refs: EdgeRef[], extra: Partial<Feature> = {}): Feature => ({
+    id,
+    name: id,
+    type: "flange",
+    operation: "add",
+    suppressed: false,
+    params: { length: "20", angle: "90", inset: "0" },
+    picks: refs.map((ref) => ({ partId: "sm", ref })),
+    ...extra,
+  });
+
+  it("keeps a box's outside size when the flanges sit flush outside", () => {
+    const sk = sketchFeature(top, rectSketch(0, 0, 100, 50));
+    const edges = edgesAt(build([sk, sheet(sk.id)]));
+    const r = build([sk, sheet(sk.id), flange("fl", edges, { flangePosition: "outside" })]);
+    expect(r.featureErrors).toEqual({});
+    const m = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    expect(m.bounds!.min.map((v) => Math.round(v * 1e4) / 1e4)).toEqual([0, 0, 0]);
+    expect(m.bounds!.max.map((v) => Math.round(v * 1e4) / 1e4)).toEqual([100, 50, 20]);
+    // A 92 × 42 base, and round its 268 mm edge a quarter bend (radii 2 and 4) and a 16 mm straight wall.
+    expect(vol()).toBeCloseTo(92 * 42 * 2 + 268 * ((Math.PI / 4) * 12 + 16 * 2), 2);
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    // Inside flush: the space inside is 100 × 50.
+    const inner = build([sk, sheet(sk.id), flange("fl", edges, { flangePosition: "inside" })]);
+    expect(inner.featureErrors).toEqual({});
+    const mi = analyzeMesh(inner.parts[0].vertices, inner.parts[0].triangles);
+    expect(mi.bounds!.min[0]).toBeCloseTo(-2, 4);
+    expect(mi.bounds!.max[0]).toBeCloseTo(102, 4);
+    // Flush next to a flange made earlier (bent off its whole edge) can't be done: say how instead.
+    const first = flange("fa", [edges.find((e) => Math.abs(e.a[0] - 100) < 1e-6 && Math.abs(e.b[0] - 100) < 1e-6)!]);
+    const later = flange("fb", [edges.find((e) => Math.abs(e.a[1] - 50) < 1e-6 && Math.abs(e.b[1] - 50) < 1e-6)!], { flangePosition: "outside" });
+    expect(build([sk, sheet(sk.id), first, later]).featureErrors.fb).toMatch(/Pick both edges in one Flange/);
+  });
+});
+
 describe("surfaces", () => {
   it("extends a curved edge along the surface everywhere (a cone carries on as a cone)", () => {
     // A cone: a line from (10, 10) to (20, 0) on Front, spun round the vertical axis.
