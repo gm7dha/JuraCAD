@@ -677,9 +677,11 @@ function sectionCut(shape: Shape3D, origin: Vec3, normal: Vec3, flat: (p: Vec3) 
   } finally {
     box.delete();
   }
+  // What's left: solids, or (for a surface, which has no inside) faces.
   const solids = solidsOf(cut);
-  solids.forEach((x) => x.delete());
-  if (solids.length === 0) {
+  const pieces = solids.length ? solids : facesOf(cut);
+  pieces.forEach((x) => x.delete());
+  if (pieces.length === 0) {
     cut.delete();
     return null;
   }
@@ -2421,19 +2423,27 @@ export class GeometryEngine {
       return withCentre ? [q[0] + centre[0] + values.dx, q[1] + centre[1] + values.dy, q[2] + centre[2] + values.dz] : q;
     };
     const threads = part.threads?.map((m) => ({ ...m, origin: turnVec(m.origin, true), axis: turnVec(m.axis, false) }));
+    // A sheet metal part's sheet moves with it, so flanges can still be added and its flat pattern still drawn.
+    const f0 = part.sheet?.base.frame;
+    const sheet = part.sheet && f0 ? { ...part.sheet, base: { ...part.sheet.base, frame: { origin: turnVec(f0.origin, true), u: turnVec(f0.u, false), v: turnVec(f0.v, false), n: turnVec(f0.n, false) } } } : undefined;
+    const sheetCopy = sheet ? { sheet, sheetFeatures: [...(part.sheetFeatures ?? []), feature.id], ...(part.sheetCuts ? { sheetCuts: part.sheetCuts.map((c) => ({ ...c, lines: c.lines.map((l) => l.map((q) => [...q]) as [[number, number], [number, number]]) })) } : {}) } : {};
     if (t.copy) {
       // A copy of a surface is another surface.
       if (part.surface) {
         this.parts.push({ id: feature.id, name: `${part.name} (copy)`, featureIds: [feature.id], shape, surface: true });
         return {};
       }
-      this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, ...(threads ? { threads } : {}) });
+      this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, ...(threads ? { threads } : {}), ...sheetCopy });
       return { newPart: true };
     }
     part.shape.delete();
     part.shape = shape;
     part.featureIds.push(feature.id);
     if (threads) part.threads = threads;
+    if (sheet) {
+      part.sheet = sheet;
+      part.sheetFeatures = [...(part.sheetFeatures ?? []), feature.id];
+    }
     // The features that made this part move with it, so a later pattern or mirror of them starts from where the part is now.
     for (const tool of this.tools.values()) {
       if (tool.partId !== part.id) continue;
