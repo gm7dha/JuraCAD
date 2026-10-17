@@ -2584,10 +2584,12 @@ export class GeometryEngine {
   private applyShell(feature: Feature): string | null {
     const { values, errors } = resolveParams(feature);
     if (errors.thickness) return `Wall thickness: ${errors.thickness}`;
-    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
-    const partIds = [...new Set(picks.map((p) => p.partId))];
+    const facePicks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    const partIds = [...new Set(facePicks.map((p) => p.partId))];
     if (partIds.length > 1) return "Shell works on one part at a time. Remove the faces picked on the other part.";
-    const part = picks.length ? this.parts.find((p) => p.id === partIds[0]) : [...this.parts].reverse().find((p) => !p.surface);
+    const part = facePicks.length ? this.parts.find((p) => p.id === partIds[0]) : [...this.parts].reverse().find((p) => !p.surface);
+    // Hollow: sealed inside, so the picked face only says which part.
+    const picks = feature.hollow ? [] : facePicks;
     if (!part) return picks.length ? "The part these faces were on no longer exists. Edit this feature and pick the faces again." : "There's no part to hollow yet.";
     if (part.surface) return `${part.name} is a surface, with no inside to hollow. Use Thicken to give it walls instead.`;
     // No faces picked — or every face (a ball has only one) — hollows it closed inside, with no opening.

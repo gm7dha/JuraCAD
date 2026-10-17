@@ -78,6 +78,13 @@ export function Toolbar() {
   const redo = useStore((s) => s.redo);
   const startCreate = useStore((s) => s.startCreate);
   const editingType = useStore((s) => (s.editing?.mode === "create" ? s.editing.draft.type : null));
+  const editingHollow = useStore((s) => !!s.editing?.draft.hollow);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const startHollow = () => {
+    startCreate("shell");
+    const name = useStore.getState().editing?.draft.name ?? "";
+    setDraftField({ hollow: true, name: name.replace(/^Shell/, "Hollow") });
+  };
   const ready = useStore((s) => s.kernelStatus === "ready");
   const hasSketch = useStore((s) => activeFeatures(s).some((f) => f.type === "sketch"));
   const sketchCount = useStore((s) => activeFeatures(s).filter((f) => f.type === "sketch").length);
@@ -447,13 +454,29 @@ export function Toolbar() {
             },
           ]}
         />
-        <ToolButton
-          label="Shell"
-          icon={<Icons.Shell />}
-          onClick={() => startCreate("shell")}
-          disabled={!ready || !hasPart}
-          active={editingType === "shell"}
-          title={hasPart ? "Shell — hollow out a part. Click the face to leave open (usually the top)" : "Make a part first, then hollow it out"}
+        <ToolGroupButton
+          id="shell"
+          name="shell"
+          items={[
+            {
+              key: "shell",
+              label: "Shell",
+              icon: <Icons.Shell />,
+              onClick: () => startCreate("shell"),
+              disabled: !ready || !hasPart,
+              active: editingType === "shell" && !editingHollow,
+              title: hasPart ? "Shell — hollow out a part, leaving the faces you click open (usually the top)" : "Make a part first, then hollow it out",
+            },
+            {
+              key: "hollow",
+              label: "Hollow",
+              icon: <Icons.Hollow />,
+              onClick: () => startHollow(),
+              disabled: !ready || !hasPart,
+              active: editingType === "shell" && editingHollow,
+              title: hasPart ? "Hollow — hollow out a part with every face kept, sealed inside (a set wall thickness all round)" : "Make a part first, then hollow it out",
+            },
+          ]}
         />
         <ToolGroupButton
           id="faces"

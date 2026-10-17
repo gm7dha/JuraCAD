@@ -299,6 +299,12 @@ export const Icons = {
       <rect x="7.5" y="9.5" width="9" height="7" />
     </Svg>
   ),
+  Hollow: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="5" strokeDasharray="2 1.5" />
+    </Svg>
+  ),
   Warning: (p: IconProps) => (
     <Svg {...p}>
       <path d="M12 3 2 20h20z" />

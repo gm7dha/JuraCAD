@@ -535,6 +535,11 @@ describe("shell", () => {
     const closed = build([box, shellFeature(2, [])]);
     expect(closed.featureErrors).toEqual({});
     expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(20 * 20 * 10 - 16 * 16 * 6, 1);
+    // Hollow with a face picked: the face only says which part; it stays closed.
+    const other = feature("box", { width: 10, depth: 10, height: 10, x: 50 });
+    const hollowed = build([box, other, { ...shellFeature(2, [topFace(build([box]))]), hollow: true }]);
+    expect(hollowed.featureErrors).toEqual({});
+    expect(engine.check("normal").parts.map((p) => Math.round(p.exactVolume!))).toEqual([20 * 20 * 10 - 16 * 16 * 6, 1000]);
   });
 
   it("keeps working after the box is resized", () => {
