@@ -1480,7 +1480,7 @@ export function FeatureDialog() {
             {g.params.map((p, pi) => (
               <ParamField
                 key={p.key}
-                def={p}
+                def={draft.type === "cornerBreak" && p.key === "size" ? { ...p, label: draft.breakStyle === "chamfer" ? "Distance back along each edge" : "Radius" } : p}
                 value={draft.params[p.key] ?? p.defaultValue}
                 autoFocus={mode === "create" && gi === 0 && pi === 0}
               />

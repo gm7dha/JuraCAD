@@ -1776,6 +1776,8 @@ export class GeometryEngine {
       const fl = added.find((f) => f.id === t.flangeId)!;
       const k = wall.outline.length;
       const old = folded.bends.find((b) => b.parent === wall.id && !ids.has(b.flangeId) && (b.edge === (fl.edge + 1) % k || b.edge === (fl.edge - 1 + k) % k));
+      if (old && part.sheetFeatures?.[0] && old.flangeId.startsWith(`${part.sheetFeatures[0]}:`))
+        return "That edge is next to a bend of the sheet, so the flange can't sit flush there. Set the position to “Bend off the edge”.";
       if (old) return "To sit flush, this flange cuts back the edge next to a flange made earlier. Pick both edges in one Flange (so they're made together), or set the position to “Bend off the edge”.";
     }
     let pieces: Shape3D[] = [];
@@ -1794,32 +1796,13 @@ export class GeometryEngine {
         ...folded.bends.filter((b) => ids.has(b.flangeId)).map((b) => bendSolid(b)),
         ...folded.walls.filter((w) => ids.has(w.id)).map((w) => wallSolid(w, spec.thickness)),
       ];
-      // Each new wall and bend on its own, then together: if they (or they and the part) share any space, they collide.
-      const separately = pieces.reduce((sum, p) => sum + measureVolume(p), 0);
       const extra = fusePieces(pieces);
       pieces = [];
       if (!extra) return hem ? "Click the straight edges of the sheet to fold over." : "Click the straight edges of the sheet to bend flanges off.";
-      let clash: string | null = null;
       try {
         result = base.fuse(extra);
-        const together = measureVolume(extra);
-        const whole = measureVolume(result);
-        const tol = Math.max(0.01, whole * 1e-6);
-        if (separately - together > tol) {
-          clash = hem
-            ? "These hems run into each other. Shorten their ends, or hem fewer edges."
-            : "These flanges run into each other where they meet. Try shorter flanges or a smaller angle, or shorten their ends (Shorten each end by).";
-        } else if (measureVolume(base) + together - whole > tol) {
-          clash = hem
-            ? "The hem runs into the rest of the part. Try a shorter one, or folding it the other way."
-            : "The flange runs into the rest of the part. Try a shorter flange, a different angle, or bending it the other way.";
-        }
       } finally {
         extra.delete();
-      }
-      if (clash) {
-        result.delete();
-        return clash;
       }
       // Bend reliefs: notches cut into the wall each shortened flange bends off.
       const reliefs = folded.bends
@@ -1847,8 +1830,8 @@ export class GeometryEngine {
       if (!isValidSolid(result)) {
         result.delete();
         return hem
-          ? "The hem runs into the rest of the part. Try a shorter one, or folding it the other way."
-          : "The flange runs into the rest of the part. Try a shorter flange, a different angle, or bending it the other way.";
+          ? "The hem runs into the rest of the part. Shorten its ends (Shorten each end by), or make it shorter."
+          : "The flange runs into the rest of the part. Shorten its ends (Shorten each end by), or try a shorter flange or a different angle.";
       }
     } catch (e) {
       pieces.forEach((p) => p.delete());
@@ -1867,7 +1850,7 @@ export class GeometryEngine {
   /** Corner break: outside corners of a sheet metal part's walls rounded or cut off (the flat pattern follows). */
   private applyCornerBreak(feature: Feature): string | null {
     const { values, errors } = resolveParams(feature);
-    if (errors.size) return `Radius: ${errors.size}`;
+    if (errors.size) return `${feature.breakStyle === "chamfer" ? "Distance" : "Radius"}: ${errors.size}`;
     const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
     if (!picks.length) return "Click the short edge through the sheet at each corner to round off.";
     const partIds = [...new Set(picks.map((p) => p.partId))];
@@ -1886,6 +1869,8 @@ export class GeometryEngine {
         if (ref.kind !== "edge") continue;
         const where = findSheetCorner(folded, spec.thickness, ref.a, ref.b, 0.01);
         if (!where) return "One of the picked edges isn't at a corner of the sheet. Pick the short edge that runs through the sheet, from one face to the other, at an outside corner.";
+        const near = (q: [number, number]) => Math.hypot(q[0] - where.at[0], q[1] - where.at[1]) < 1e-6;
+        if ([...(spec.corners ?? []), ...added].some((x) => x.wall === where.wall && near(x.at))) return "That corner has already been rounded or cut off. Edit the earlier corner break to change it.";
         const c: CornerBreak = { id: `${feature.id}:${i}`, wall: where.wall, at: where.at, kind, size: values.size };
         const cut = cornerBreakCut(folded, c);
         if (typeof cut === "string") return cut;

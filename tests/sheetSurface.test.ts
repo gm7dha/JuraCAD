@@ -121,20 +121,33 @@ describe("sheet metal", () => {
     expect(analyzeMesh(laid.vertices, laid.triangles).volume).toBeCloseTo((46 + allowance + 26) * 20 * 2 - 6 * (2 + allowance) * 2, 1);
   });
 
-  it("says when flanges would run into each other instead of merging them", () => {
+  it("builds hems and steep flanges on neighbouring edges just as before", () => {
     const sk = sketchFeature(top, rectSketch(0, 0, 100, 50));
     const edges = topEdges(build([sk, sheet(sk.id)]));
     expect(edges).toHaveLength(4);
-    // Folded over at 150° on all four edges, they overlap at the corners.
-    const folded = build([sk, sheet(sk.id), flange(edges, { angle: "150" })]);
-    expect(folded.featureErrors.fl).toMatch(/run into each other/);
-    expect(vol()).toBeCloseTo(100 * 50 * 2, 3);
-    // At 90° they don't: four 20 mm flanges (a quarter bend, radii 2 and 4, and 16 mm straight) round the 300 mm edge.
-    const box = build([sk, sheet(sk.id), flange(edges)]);
-    expect(box.featureErrors).toEqual({});
+    const hem = (id: string, refs: EdgeRef[]): Feature => ({ id, name: id, type: "hem", operation: "add", suppressed: false, params: { length: "8", gap: "0", inset: "0" }, picks: refs.map((ref) => ({ partId: "sm", ref })) });
+    // A hem on every edge (as saved designs have): the same volume as always.
+    expect(build([sk, sheet(sk.id), hem("h", edges)]).featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(16267.2, 1);
+    // On two neighbouring edges: in one Hem, or one Hem each.
+    const right = edges.find((e) => Math.abs(e.a[0] - 100) < 1e-6 && Math.abs(e.b[0] - 100) < 1e-6)!;
+    const bottom = edges.find((e) => Math.abs(e.a[1]) < 1e-6 && Math.abs(e.b[1]) < 1e-6)!;
+    expect(build([sk, sheet(sk.id), hem("h", [right, bottom])]).featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(13261.6, 1);
+    const one = build([sk, sheet(sk.id), hem("h1", [right])]);
+    const second = one.parts[0].edgeRefs.find((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[1]) < 1e-6 && Math.abs(e.b[1]) < 1e-6 && Math.abs(e.a[2] - 2) < 1e-6 && Math.abs(e.b[2] - 2) < 1e-6)!;
+    expect(build([sk, sheet(sk.id), hem("h1", [right]), hem("h2", [second])]).featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(13261.6, 1);
+    // Flanges folded over at 120° on all four edges, or on two neighbouring edges one at a time.
+    expect(build([sk, sheet(sk.id), flange(edges, { angle: "120" })]).featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    const f1 = { ...flange([right], { angle: "120" }), id: "fa" };
+    const afterOne = build([sk, sheet(sk.id), f1]);
+    const next = afterOne.parts[0].edgeRefs.find((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[1]) < 1e-6 && Math.abs(e.b[1]) < 1e-6 && Math.abs(e.a[2] - 2) < 1e-6 && Math.abs(e.b[2] - 2) < 1e-6)!;
+    expect(build([sk, sheet(sk.id), f1, { ...flange([next], { angle: "120" }), id: "fb" }]).featureErrors).toEqual({});
+    // At 90° four 20 mm flanges: a quarter bend (radii 2 and 4) and 16 mm straight round the 300 mm edge.
+    expect(build([sk, sheet(sk.id), flange(edges)]).featureErrors).toEqual({});
     expect(vol()).toBeCloseTo(10000 + 300 * ((Math.PI / 4) * (16 - 4) + 16 * 2), 2);
-    // One at 150° on its own is fine.
-    expect(build([sk, sheet(sk.id), flange([edges[0]], { angle: "150" })]).featureErrors).toEqual({});
   });
 });
 
@@ -178,6 +191,14 @@ describe("corner break", () => {
     expect(build([sk, sheet(sk.id), fl, brk([c1], 5)]).featureErrors.cb).toMatch(/next to a bend/);
     // A flange after the corner was rounded.
     expect(build([sk, sheet(sk.id), brk([c1], 5), fl]).featureErrors.fl).toMatch(/Move the flange above the corner break/);
+    // Nor a flange sitting flush there (on either edge at that corner).
+    const bottom = plain.parts[0].edgeRefs.find((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[1]) < 1e-6 && Math.abs(e.b[1]) < 1e-6 && Math.abs(e.a[2] - 2) < 1e-6 && Math.abs(e.b[2] - 2) < 1e-6)!;
+    for (const edge of [right, bottom]) {
+      const flush = { ...fl, picks: [{ partId: "sm", ref: edge }], flangePosition: "outside" as const };
+      expect(build([sk, sheet(sk.id), brk([c1], 10), flush]).featureErrors.fl).toMatch(/Move the flange above the corner break/);
+    }
+    // The same corner twice.
+    expect(build([sk, sheet(sk.id), brk([c1], 5), { ...brk([c1], 3), id: "cb2" }]).featureErrors.cb2).toMatch(/already been rounded/);
     // Not a corner edge.
     expect(build([sk, sheet(sk.id), brk([right], 5)]).featureErrors.cb).toMatch(/isn't at a corner/);
   });
@@ -218,6 +239,15 @@ describe("flange position", () => {
     const first = flange("fa", [edges.find((e) => Math.abs(e.a[0] - 100) < 1e-6 && Math.abs(e.b[0] - 100) < 1e-6)!]);
     const later = flange("fb", [edges.find((e) => Math.abs(e.a[1] - 50) < 1e-6 && Math.abs(e.b[1] - 50) < 1e-6)!], { flangePosition: "outside" });
     expect(build([sk, sheet(sk.id), first, later]).featureErrors.fb).toMatch(/Pick both edges in one Flange/);
+    // On a bent sheet from an open outline (an L), the side edge beside its bend can't sit flush.
+    let L = addLine(emptySketch(), { x: 0, y: 0 }, { x: 50, y: 0 }).sketch;
+    L = addLine(L, { x: 50, y: 0 }, { x: 50, y: 30 }).sketch;
+    const lsk = sketchFeature(front, L);
+    const lsheet: Feature = { ...sheet(lsk.id), params: { thickness: "2", radius: "2", kFactor: "0.45", depth: "20" } };
+    const lr = build([lsk, lsheet]);
+    const side = lr.parts[0].edgeRefs.find((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[1]) < 1e-6 && Math.abs(e.b[1]) < 1e-6 && Math.abs(e.a[2] - 2) < 1e-6 && Math.abs(e.b[2] - 2) < 1e-6)!;
+    expect(side).toBeTruthy();
+    expect(build([lsk, lsheet, flange("fl", [side], { flangePosition: "outside" })]).featureErrors.fl).toMatch(/next to a bend of the sheet/);
   });
 });
 

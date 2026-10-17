@@ -265,7 +265,10 @@ function smoothFill(edges: Edge[], supports: (Face | null)[]): Shape3D {
     if (out || along < 1e-9) break;
     out = attempt([mid[0] + (heading[0] / along) * size * reach, mid[1] + (heading[1] / along) * size * reach, mid[2] + (heading[2] / along) * size * reach]);
   }
-  if (!out) throw new Error("Couldn't fit a smooth surface to those edges and the faces beside them. Try “Just meet the edges”, or pick edges of surfaces.");
+  if (!out)
+    throw new Error(
+      "Couldn't fit a smooth surface to those edges and the faces beside them. If the opening has sharp corners (like the top of a box), round them first (Fillet) — a smooth patch can't meet two faces at a sharp corner. Or use “Just meet the edges”.",
+    );
   return out;
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
@@ -703,7 +706,7 @@ export function extendSurface(shape: Shape3D, edges: Edge[], distance: number): 
       if (at.length === 3 && !sameAll(out)) ({ at, out } = acrossEdge(edge, face, 48));
       const same = sameAll(out);
       if (same) {
-        // The same way all along (a straight edge, or a curve on a flat face): pushed straight out.
+        // The same way all along (a straight edge on a flat face, or a curve whose surface carries straight on from it, like the top of an upright wall): pushed straight out.
         const d = out[0];
         const v = new Vector([d[0] * distance, d[1] * distance, d[2] * distance]);
         try {

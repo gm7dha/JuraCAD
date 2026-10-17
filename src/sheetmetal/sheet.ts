@@ -341,9 +341,8 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
       errors[fl.id] = "That edge is already bent (it's where this wall joins the one before).";
       continue;
     }
-    const near = (p: P2, q: P2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6;
-    if ((spec.corners ?? []).some((c) => c.wall === fl.wall && (near(c.at, seg.from) || near(c.at, seg.to)))) {
-      errors[fl.id] = "A corner of that edge has been rounded or cut off (Corner break), so it can't take a flange now. Move the flange above the corner break in the list.";
+    if (cornerBroken(spec, fl.wall, seg)) {
+      errors[fl.id] = CORNER_BROKEN;
       continue;
     }
     const key = `${fl.wall}:${fl.edge}`;
@@ -496,6 +495,14 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
   return { walls, bends, errors, ...(cornerReliefs.length ? { cornerReliefs } : {}), ...(trims.length ? { trims } : {}) };
 }
 
+const CORNER_BROKEN = "A corner of that edge has been rounded or cut off (Corner break), so it can't take a flange now. Move the flange above the corner break in the list.";
+
+/** Whether a corner at either end of a wall's edge has been rounded or cut off. */
+function cornerBroken(spec: SheetSpec, wall: string, seg: { from: P2; to: P2 }): boolean {
+  const near = (p: P2, q: P2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6;
+  return (spec.corners ?? []).some((c) => c.wall === wall && (near(c.at, seg.from) || near(c.at, seg.to)));
+}
+
 /** Where two lines (a point and a direction each) cross, or null if they're parallel. */
 function crossing(p: P2, d: P2, q: P2, e: P2): P2 | null {
   const den = d[0] * e[1] - d[1] * e[0];
@@ -517,6 +524,10 @@ function setBack(spec: SheetSpec, wall: Wall, errors: Record<string, string>, tr
     const k = wall.outline.length;
     const seg = wall.outline[fl.edge];
     if (!seg || seg.kind !== "line" || fl.edge === wall.bendEdge) continue; // the main loop explains these
+    if (cornerBroken(spec, wall.id, seg)) {
+      errors[fl.id] = CORNER_BROKEN;
+      continue;
+    }
     if (!(fl.angle > 0 && fl.angle < 180)) continue;
     const R = fl.radius ?? spec.radius;
     const dist = (fl.position === "outside" ? R + T : R) * Math.tan((fl.angle * Math.PI) / 360);
