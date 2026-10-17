@@ -87,16 +87,66 @@ export function pointInPolygon(p: Pt, poly: Pt[]): boolean {
   return inside;
 }
 
+/** Distance from `p` to the nearest edge of a closed polygon. */
+function distanceToOutline(p: Pt, poly: Pt[]): number {
+  let best = Infinity;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [ax, ay] = poly[j];
+    const dx = poly[i][0] - ax, dy = poly[i][1] - ay;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(ax + t * dx - p[0], ay + t * dy - p[1]));
+  }
+  return best;
+}
+
 /**
- * Is `inner` inside `outer`? Nearly all of its outline must be (a few points
- * may sit right on `outer`'s edge, where a circle touches a side).
+ * How `inner` sits against `outer`, judged from points around its outline (its
+ * corners and the middles of its sides). Points right on `outer`'s edge (a
+ * notch flush with a side, a corner touching it) don't count either way.
+ * "inside": (nearly) all the rest are inside; "overlap": some are inside and
+ * some outside; "outside": none are inside.
  */
-function containsLoop(outer: Loop, inner: Loop): boolean {
-  const n = inner.polygon.length;
-  if (!n) return false;
-  let count = 0;
-  for (const p of inner.polygon) if (pointInPolygon(p, outer.polygon)) count++;
-  return count >= 0.95 * n;
+/** Do two outlines properly cross each other somewhere (not just touch)? */
+function outlinesCross(a: Pt[], b: Pt[]): boolean {
+  for (let i = 0; i < a.length; i++) {
+    const p = a[i], p2 = a[(i + 1) % a.length];
+    const r: Pt = [p2[0] - p[0], p2[1] - p[1]];
+    for (let j = 0; j < b.length; j++) {
+      const q = b[j], q2 = b[(j + 1) % b.length];
+      const w: Pt = [q2[0] - q[0], q2[1] - q[1]];
+      const den = r[0] * w[1] - r[1] * w[0];
+      if (Math.abs(den) < 1e-12) continue;
+      const qp: Pt = [q[0] - p[0], q[1] - p[1]];
+      const t = (qp[0] * w[1] - qp[1] * w[0]) / den;
+      const u = (qp[0] * r[1] - qp[1] * r[0]) / den;
+      if (t > 1e-6 && t < 1 - 1e-6 && u > 1e-6 && u < 1 - 1e-6) return true;
+    }
+  }
+  return false;
+}
+
+function loopRelation(outer: Loop, inner: Loop): "inside" | "overlap" | "outside" {
+  const poly = inner.polygon;
+  const n = poly.length;
+  if (!n) return "outside";
+  const size = Math.max(1, ...outer.polygon.map((p) => Math.max(Math.abs(p[0]), Math.abs(p[1]))));
+  const eps = 1e-6 * size;
+  let isIn = 0;
+  let isOut = 0;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % n];
+    for (const t of [0, 0.25, 0.5, 0.75]) {
+      const p: Pt = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      if (distanceToOutline(p, outer.polygon) <= eps) continue;
+      if (pointInPolygon(p, outer.polygon)) isIn++;
+      else isOut++;
+    }
+  }
+  if (isIn === 0) return "outside";
+  // A few stray points outside allowed: a circle drawn as straight pieces can poke out a hair where it touches a side.
+  return isOut <= 0.05 * (isIn + isOut) ? "inside" : "overlap";
 }
 
 function makeLoop(segments: Segment[], polygon: Pt[]): Loop {
@@ -318,10 +368,22 @@ export function findRegions(sketch: SketchData): RegionResult {
   if (openShapes) problems.push(`${openShapes} shape${openShapes > 1 ? "s aren't" : " isn't"} closed, so ${openShapes > 1 ? "they were" : "it was"} left out.`);
   if (branching) problems.push(`${branching} shape${branching > 1 ? "s have" : " has"} lines meeting at a junction, so ${branching > 1 ? "they were" : "it was"} left out.`);
 
-  // Nesting: how many other loops contain each loop. A loop only partly inside another (two
-  // overlapping shapes) isn't nested: both stay solid, so they join up when extruded.
-  const inside = loops.map((l) => loops.map((other) => other !== l && other.area > l.area && containsLoop(other, l)));
-  const depth = inside.map((row) => row.filter(Boolean).length);
+  // Nesting. Shapes that overlap (each partly inside the other) are joined into one group, so
+  // they stay solid together and a hole inside where they overlap is a hole in both.
+  const rel = loops.map((l) => loops.map((other) => (other === l ? "outside" : loopRelation(other, l))));
+  const group = loops.map((_l, i) => i);
+  const find = (i: number): number => (group[i] === i ? i : (group[i] = find(group[i])));
+  loops.forEach((_l, i) =>
+    loops.forEach((_k, j) => {
+      if (i >= j || rel[i][j] === "inside" || rel[j][i] === "inside") return;
+      const overlapping = rel[i][j] === "overlap" || rel[j][i] === "overlap" || outlinesCross(loops[i].polygon, loops[j].polygon);
+      if (overlapping) group[find(i)] = find(j);
+    }),
+  );
+  // A loop is inside loop j when it's (nearly) all within it, and j is bigger.
+  const inside = loops.map((l, i) => loops.map((other, j) => j !== i && other.area > l.area && rel[i][j] === "inside"));
+  // Depth: how many other groups hold this loop.
+  const depth = loops.map((_l, i) => new Set(loops.flatMap((_k, j) => (inside[i][j] && find(j) !== find(i) ? [find(j)] : []))).size);
   const regions: Region[] = [];
   loops.forEach((outer, i) => {
     if (depth[i] % 2 !== 0) return;

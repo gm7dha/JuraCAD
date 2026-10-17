@@ -482,6 +482,54 @@ describe("rounding where a line meets an arc", () => {
 });
 
 describe("overlapping shapes", () => {
+  const plateWith = (add: (s: SketchData) => SketchData) => add(addRectangle(emptySketch(), at(0, 0), at(100, 100)).sketch);
+
+  it("a notch drawn flush with any edge of a plate is still a hole", () => {
+    for (const [a, b] of [
+      [at(40, 0), at(60, 20)],
+      [at(40, 80), at(60, 100)],
+      [at(0, 40), at(20, 60)],
+      [at(80, 40), at(100, 60)],
+    ]) {
+      const regions = findRegions(plateWith((s) => addRectangle(s, a, b).sketch)).regions;
+      expect(regions).toHaveLength(1);
+      expect(regions[0].holes).toHaveLength(1);
+      expect(regions[0].holes[0].area).toBeCloseTo(400, 6);
+    }
+  });
+
+  it("a triangle whose corners touch the plate's edges is a hole", () => {
+    const s = plateWith((p) => {
+      let t = addLine(p, at(50, 100), at(0, 50)).sketch;
+      const first = t.curves[t.curves.length - 1] as SketchLine;
+      t = addLine(t, { x: 0, y: 50, snap: { kind: "point", id: first.p2 } }, at(100, 50)).sketch;
+      const second = t.curves[t.curves.length - 1] as SketchLine;
+      return addLine(t, { x: 100, y: 50, snap: { kind: "point", id: second.p2 } }, { x: 50, y: 100, snap: { kind: "point", id: first.p1 } }).sketch;
+    });
+    const regions = findRegions(s).regions;
+    expect(regions).toHaveLength(1);
+    expect(regions[0].holes).toHaveLength(1);
+    expect(regions[0].holes[0].area).toBeCloseTo(2500, 6);
+  });
+
+  it("two overlapping rectangles plus a hole in the overlap: the hole goes through both", () => {
+    let s = addRectangle(emptySketch(), at(0, 40), at(100, 60)).sketch;
+    s = addRectangle(s, at(40, 0), at(60, 100)).sketch;
+    s = addCircle(s, at(50, 50), 5).sketch;
+    const regions = findRegions(s).regions;
+    expect(regions).toHaveLength(2);
+    expect(regions.every((r) => r.holes.length === 1)).toBe(true);
+  });
+
+  it("two bars crossing where no corner or side's middle lands in the other still join", () => {
+    let s = addRectangle(emptySketch(), at(0, 45), at(100, 55)).sketch;
+    s = addRectangle(s, at(13, 0), at(17, 100)).sketch;
+    s = addCircle(s, at(15, 50), 1).sketch;
+    const regions = findRegions(s).regions;
+    expect(regions).toHaveLength(2);
+    expect(regions.every((r) => r.holes.length === 1)).toBe(true);
+  });
+
   it("a circle overlapping either side of a rectangle joins onto it rather than cutting a notch", () => {
     for (const x of [0, 20]) {
       let s = addRectangle(emptySketch(), at(0, 0), at(20, 10)).sketch;
