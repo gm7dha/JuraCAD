@@ -259,5 +259,7 @@ describe("mirror a whole part", () => {
     expect(boundsOf(r, 1).min[0]).toBeCloseTo(-10, 3);
     const gone: Feature = { ...mirror(false), mirror: { sources: [], plane: { kind: "default", name: "Right" }, part: "nope" } };
     expect(build([half, gone]).featureErrors[gone.id]).toMatch(/no longer exists/);
+    const unchosen: Feature = { ...mirror(false), mirror: { sources: [], plane: { kind: "default", name: "Right" }, part: "" } };
+    expect(build([half, unchosen]).featureErrors[unchosen.id]).toMatch(/Choose the part/);
   });
 });

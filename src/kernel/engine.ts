@@ -1474,7 +1474,7 @@ export class GeometryEngine {
         if (r.newPart) partCounter++;
         continue;
       }
-      if (feature.type === "mirror" && feature.mirror?.part) {
+      if (feature.type === "mirror" && feature.mirror?.part !== undefined) {
         const r = this.applyMirrorPart(feature, partCounter + 1);
         if (r.error) featureErrors[feature.id] = r.error;
         if (r.newPart) partCounter++;
@@ -2740,6 +2740,7 @@ export class GeometryEngine {
    */
   private applyMirrorPart(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
     const m = feature.mirror!;
+    if (!m.part) return { error: "Choose the part to mirror." };
     const part = this.parts.find((p) => p.id === m.part);
     if (!part) return { error: "The part it mirrors no longer exists. Edit this mirror and choose another part." };
     const frame = planeFrame(m.plane);
