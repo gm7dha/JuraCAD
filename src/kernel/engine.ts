@@ -18,7 +18,7 @@ import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
-import { offsetSolid } from "./surface";
+import { offsetSolid, shellByCutting } from "./surface";
 import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
@@ -2488,7 +2488,14 @@ export class GeometryEngine {
         if (!feature.pathRef || !sk) return "Choose the sketch with the path to follow.";
         if (all.indexOf(sk) > all.indexOf(feature)) return `${sk.name} comes after this curve pattern in the list.`;
         if (sk.suppressed || !sk.sketch?.plane) return `${sk.name} can't be used as the path.`;
-        const walk = walkPath(sk.sketch.plane, sk.sketch.data);
+        // Walk the path from the end nearest the first thing being repeated.
+        const firstTool = this.tools.get(ordered[0]?.id ?? "");
+        let near: Vec3 | undefined;
+        if (firstTool) {
+          const [lo, hi] = boundsOf(firstTool.shape);
+          near = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+        }
+        const walk = walkPath(sk.sketch.plane, sk.sketch.data, near);
         if (typeof walk === "string") return walk;
         const stations = pathStations(walk, count);
         const first = walk.at(0);
@@ -2624,20 +2631,36 @@ export class GeometryEngine {
     }
     const failed =
       "Couldn't hollow this part. Try thinner walls — rounded corners and thin areas must be thicker than the walls.";
-    let shape: Shape3D;
+    let shape: Shape3D | null = null;
+    // A hollowed part must be valid, lighter than before, and no bigger than before. (With walls
+    // thicker than the part, OpenCascade can "succeed" with a strange inside-out solid.)
+    const good = (s: Shape3D) => isValidSolid(s) && shrankWithin(part.shape, s);
     try {
-      shape = part.shape.shell(values.thickness, (f) => f.inList(faces));
-    } catch {
-      return failed;
+      try {
+        shape = part.shape.shell(values.thickness, (f) => f.inList(faces));
+        if (!good(shape)) {
+          shape.delete();
+          shape = null;
+        }
+      } catch {
+        shape = null;
+      }
+      // Round fillets OpenCascade's shell can come out broken: hollow it closed and cut the opening instead.
+      if (!shape) {
+        try {
+          shape = shellByCutting(part.shape, faces, values.thickness);
+          if (!good(shape)) {
+            shape.delete();
+            shape = null;
+          }
+        } catch {
+          shape = null;
+        }
+      }
     } finally {
       faces.forEach((f) => f.delete());
     }
-    // A hollowed part must be valid, lighter than before, and no bigger than before. (With walls
-    // thicker than the part, OpenCascade can "succeed" with a strange inside-out solid.)
-    if (!isValidSolid(shape) || !shrankWithin(part.shape, shape)) {
-      shape.delete();
-      return failed;
-    }
+    if (!shape) return failed;
     part.shape.delete();
     part.shape = shape;
     part.featureIds.push(feature.id);

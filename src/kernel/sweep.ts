@@ -2,57 +2,70 @@
  * Sweep (a profile carried along a path) and loft (a smooth solid joining
  * outlines on different sketches), with OpenCascade.
  */
-import { genericSweep, loft, makeLine, makeThreePointArc, type Edge, type Shape3D, type Wire, assembleWire } from "replicad";
+import { genericSweep, loft, type Shape3D, type Wire } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
-import { findRegions, type Segment } from "../sketch/regions";
-import { chainOf } from "../sketch/tools";
-import { pointPos } from "../sketch/ops";
-import type { SketchArc, SketchData, SketchLine } from "../sketch/types";
-import { loopWire, release } from "./extrude";
+import { findChains, findRegions, type Segment } from "../sketch/regions";
+import type { SketchData } from "../sketch/types";
+import { loopWire, release, segmentsWire } from "./extrude";
 
-/** The path a sweep follows: all the sketch's lines and arcs, joined end to end into one run. */
-export function pathWire(plane: SketchPlane, data: SketchData): Wire {
-  const curves = data.curves.filter((c): c is SketchLine | SketchArc => (c.type === "line" || c.type === "arc") && !c.construction);
-  if (curves.length === 0) {
-    throw new Error(data.curves.some((c) => c.type === "circle" && !c.construction) ? "A sweep path can't be a whole circle — use arcs." : "The path sketch has no lines or arcs.");
-  }
-  // Start from an open end if there is one.
-  const ends = new Map<string, number>();
-  for (const c of curves) for (const p of c.type === "line" ? [c.p1, c.p2] : [c.start, c.end]) ends.set(p, (ends.get(p) ?? 0) + 1);
-  const start = curves.find((c) => (c.type === "line" ? [c.p1, c.p2] : [c.start, c.end]).some((p) => ends.get(p) === 1)) ?? curves[0];
-  const { steps } = chainOf(data, start);
-  if (steps.length !== curves.length) throw new Error("The path must be one connected run of lines and arcs, with no branches.");
-  const frame = planeFrame(plane);
-  const P = (id: string) => {
-    const [x, y] = pointPos(data, id);
-    return toWorld(frame, x, y);
-  };
-  const edges: Edge[] = steps.map((st) => {
-    if (st.curve.type === "line") return makeLine(P(st.from), P(st.to));
-    const [cx, cy] = pointPos(data, st.curve.center);
-    const [sx, sy] = pointPos(data, st.curve.start);
-    const [ex, ey] = pointPos(data, st.curve.end);
-    const r = Math.hypot(sx - cx, sy - cy);
-    const a0 = Math.atan2(sy - cy, sx - cx);
-    let a1 = Math.atan2(ey - cy, ex - cx);
-    if (a1 <= a0) a1 += 2 * Math.PI;
-    const am = (a0 + a1) / 2;
-    const mid = toWorld(frame, cx + r * Math.cos(am), cy + r * Math.sin(am));
-    return makeThreePointArc(P(st.from), mid, P(st.to));
+type Vec3 = [number, number, number];
+
+/** The same run of curves walked the other way. */
+function reversed(segments: Segment[]): Segment[] {
+  return [...segments].reverse().map((sg): Segment => {
+    if (sg.kind === "line") return { kind: "line", from: sg.to, to: sg.from };
+    if (sg.kind === "arc") return { kind: "arc", from: sg.to, mid: sg.mid, to: sg.from };
+    if (sg.kind === "bezier") return { kind: "bezier", from: sg.to, c1: sg.c2, c2: sg.c1, to: sg.from };
+    return sg;
   });
-  try {
-    return assembleWire(edges);
-  } finally {
-    release(...edges);
+}
+
+const endsOf = (segments: Segment[]): [[number, number], [number, number]] | null => {
+  const a = segments[0];
+  const b = segments[segments.length - 1];
+  if (!("from" in a) || !("to" in b)) return null;
+  return [a.from, b.to];
+};
+
+/**
+ * The path a sweep follows: the sketch's curves (lines, arcs, splines,
+ * ellipses, circles) joined end to end into one run, open or closed. An open
+ * run starts from the end nearest `near` (where the profile sits), if given.
+ */
+export function pathWire(plane: SketchPlane, data: SketchData, near?: Vec3): Wire {
+  const { chains, problems } = findChains(data);
+  if (chains.length === 0) {
+    throw new Error(problems.length ? `The path must be one connected run of curves, with no branches. ${problems.join(" ")}` : "The path sketch has no lines or curves.");
   }
+  if (chains.length > 1 || problems.length) throw new Error("The path must be one connected run of lines and curves, with no branches or separate pieces.");
+  const frame = planeFrame(plane);
+  let segments = chains[0].segments;
+  const ends = endsOf(segments);
+  if (near && ends && !chains[0].closed) {
+    const d = (p: [number, number]) => {
+      const w = toWorld(frame, p[0], p[1]);
+      return Math.hypot(w[0] - near[0], w[1] - near[1], w[2] - near[2]);
+    };
+    if (d(ends[1]) < d(ends[0]) - 1e-9) segments = reversed(segments);
+  }
+  return segmentsWire(segments, frame, 0);
+}
+
+/** A point on a sketch's first closed shape (or first run), in 3D: where a sweep's profile sits. */
+export function profileAt(plane: SketchPlane, data: SketchData): Vec3 | undefined {
+  const { chains } = findChains(data);
+  const first = chains[0]?.segments[0];
+  if (!first) return undefined;
+  const p = "from" in first ? first.from : first.center;
+  return toWorld(planeFrame(plane), p[0], p[1]);
 }
 
 /** Carry each closed shape of the profile sketch along the path (holes stay holes). */
 export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData): Shape3D {
   const { regions, problems } = findRegions(profile);
   if (regions.length === 0) throw new Error(`The profile sketch has no closed shapes.${problems.length ? ` ${problems.join(" ")}` : ""}`);
-  const spine = pathWire(pathPlane, path);
+  const spine = pathWire(pathPlane, path, profileAt(profilePlane, profile));
   const frame = planeFrame(profilePlane);
   const sweepOne = (wire: Wire): Shape3D => {
     try {

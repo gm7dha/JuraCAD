@@ -1,11 +1,11 @@
 /**
- * A sketch's lines and arcs, joined end to end, as a path in 3D you can walk
+ * A sketch's lines and curves, joined end to end, as a path in 3D you can walk
  * along by distance — for Curve pattern (copies spaced evenly along a path).
  */
-import { pointPos } from "./ops";
 import { planeFrame, toWorld, type SketchPlane, type Vec3 } from "./planes";
-import { chainOf } from "./tools";
-import type { SketchArc, SketchData, SketchLine } from "./types";
+import { findChains, type Segment } from "./regions";
+import { bezierAt } from "./spline";
+import type { SketchData } from "./types";
 
 export interface PathWalk {
   length: number;
@@ -14,44 +14,76 @@ export interface PathWalk {
   at: (d: number) => { point: Vec3; tangent: Vec3 };
 }
 
-/** The path, or a plain-English reason it can't be used. */
-export function walkPath(plane: SketchPlane, data: SketchData): PathWalk | string {
-  const curves = data.curves.filter((c): c is SketchLine | SketchArc => (c.type === "line" || c.type === "arc") && !c.construction);
-  if (curves.length === 0) return "The path sketch has no lines or arcs.";
-  // Start from an open end when there is one.
-  const ends = new Map<string, number>();
-  for (const c of curves) for (const p of c.type === "line" ? [c.p1, c.p2] : [c.start, c.end]) ends.set(p, (ends.get(p) ?? 0) + 1);
-  const start = curves.find((c) => (c.type === "line" ? [c.p1, c.p2] : [c.start, c.end]).some((p) => ends.get(p) === 1)) ?? curves[0];
-  let { steps, closed } = chainOf(data, start);
-  if (steps.length !== curves.length) return "The path must be one connected run of lines and arcs, with no branches.";
-  // Begin at the open end (the chain may have been found starting from the far end of the first curve).
-  if (!closed && ends.get(steps[0].from) !== 1) steps = [...steps].reverse().map((s) => ({ ...s, from: s.to, to: s.from }));
-  const frame = planeFrame(plane);
+/** A run of curve pieces as closely spaced points, in order. */
+export function sampleSegments(segments: Segment[]): [number, number][] {
   const pts: [number, number][] = [];
-  for (const st of steps) {
-    const a = pointPos(data, st.from);
-    const b = pointPos(data, st.to);
-    if (st.curve.type === "line") {
-      if (!pts.length) pts.push(a);
-      pts.push(b);
-      continue;
-    }
-    const [cx, cy] = pointPos(data, st.curve.center);
-    const r = Math.hypot(a[0] - cx, a[1] - cy);
-    const a0 = Math.atan2(a[1] - cy, a[0] - cx);
-    let a1 = Math.atan2(b[1] - cy, b[0] - cx);
-    // Arcs are stored anticlockwise from start to end; walking from end to start goes the other way.
-    const forward = st.from === st.curve.start;
-    if (forward) while (a1 <= a0) a1 += 2 * Math.PI;
-    else while (a1 >= a0) a1 -= 2 * Math.PI;
-    const n = Math.max(8, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 90)));
-    if (!pts.length) pts.push(a);
-    for (let i = 1; i <= n; i++) {
-      const t = a0 + ((a1 - a0) * i) / n;
-      pts.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]);
+  const push = (p: [number, number]) => {
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) > 1e-12) pts.push(p);
+  };
+  for (const sg of segments) {
+    if (sg.kind === "line") {
+      push(sg.from);
+      push(sg.to);
+    } else if (sg.kind === "bezier") {
+      push(sg.from);
+      for (let i = 1; i <= 32; i++) push(bezierAt([sg.from, sg.c1, sg.c2, sg.to], i / 32));
+    } else if (sg.kind === "arc") {
+      // The circle through its three points, walked from the start through the middle to the end.
+      const [ax, ay] = sg.from;
+      const [bx, by] = sg.mid;
+      const [cx, cy] = sg.to;
+      const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+      if (Math.abs(d) < 1e-12) {
+        push(sg.from);
+        push(sg.to);
+        continue;
+      }
+      const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+      const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+      const r = Math.hypot(ax - ux, ay - uy);
+      const a0 = Math.atan2(ay - uy, ax - ux);
+      const turn = (from: number, to: number) => {
+        let t = to - from;
+        while (t <= 0) t += 2 * Math.PI;
+        return t;
+      };
+      // Anticlockwise if the middle comes before the end going anticlockwise; otherwise clockwise.
+      const ccw = turn(a0, Math.atan2(by - uy, bx - ux)) < turn(a0, Math.atan2(cy - uy, cx - ux));
+      const sweep = ccw ? turn(a0, Math.atan2(cy - uy, cx - ux)) : -turn(Math.atan2(cy - uy, cx - ux), a0);
+      const n = Math.max(8, Math.ceil(Math.abs(sweep) / (Math.PI / 90)));
+      push(sg.from);
+      for (let i = 1; i <= n; i++) push([ux + r * Math.cos(a0 + (sweep * i) / n), uy + r * Math.sin(a0 + (sweep * i) / n)]);
+    } else if (sg.kind === "circle") {
+      for (let i = 0; i <= 180; i++) push([sg.center[0] + sg.radius * Math.cos((i * Math.PI) / 90), sg.center[1] + sg.radius * Math.sin((i * Math.PI) / 90)]);
+    } else {
+      const c = Math.cos(sg.angle);
+      const sn = Math.sin(sg.angle);
+      for (let i = 0; i <= 180; i++) {
+        const t = (i * Math.PI) / 90;
+        const x = sg.rx * Math.cos(t);
+        const y = sg.ry * Math.sin(t);
+        push([sg.center[0] + x * c - y * sn, sg.center[1] + x * sn + y * c]);
+      }
     }
   }
-  const world = pts.map(([x, y]) => toWorld(frame, x, y));
+  return pts;
+}
+
+/** The path, or a plain-English reason it can't be used. */
+export function walkPath(plane: SketchPlane, data: SketchData, near?: Vec3): PathWalk | string {
+  const { chains, problems } = findChains(data);
+  if (chains.length === 0) return problems.length ? `The path must be one connected run of curves, with no branches. ${problems.join(" ")}` : "The path sketch has no lines or curves.";
+  if (chains.length > 1 || problems.length) return "The path must be one connected run of lines and curves, with no branches or separate pieces.";
+  const closed = chains[0].closed;
+  const frame = planeFrame(plane);
+  const pts = sampleSegments(chains[0].segments);
+  let world = pts.map(([x, y]) => toWorld(frame, x, y));
+  // An open path starts from the end nearest `near` (the thing being repeated), if given.
+  if (near && !closed && world.length > 1) {
+    const dist = (p: Vec3) => Math.hypot(p[0] - near[0], p[1] - near[1], p[2] - near[2]);
+    if (dist(world[world.length - 1]) < dist(world[0]) - 1e-9) world = [...world].reverse();
+  }
   const cum = [0];
   for (let i = 1; i < world.length; i++) cum.push(cum[i - 1] + Math.hypot(...(world[i].map((v, k) => v - world[i - 1][k]) as Vec3)));
   const length = cum[cum.length - 1];

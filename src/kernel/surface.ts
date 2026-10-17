@@ -12,7 +12,7 @@ import { findChains, type Chain } from "../sketch/regions";
 import { axisInSketch, type RevolveAxis } from "../sketch/axis";
 import type { SketchData } from "../sketch/types";
 import { release, segmentsWire } from "./extrude";
-import { loopStart, pathWire } from "./sweep";
+import { loopStart, pathWire, profileAt } from "./sweep";
 import { edgesOf, facesOf, solidsOf } from "./topology";
 
 type Vec3 = [number, number, number];
@@ -104,7 +104,7 @@ export function revolveSurface(plane: SketchPlane, data: SketchData, opts: { axi
 /** Each run of the profile's curves carried along the path: a skin. */
 export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData): Shape3D {
   const { wires } = sketchWires(profilePlane, profile, "sweep");
-  const spine = pathWire(pathPlane, path);
+  const spine = pathWire(pathPlane, path, profileAt(profilePlane, profile));
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const why = (e: unknown): string => {
@@ -661,5 +661,56 @@ export function ruledSurface(edges: Edge[], direction: Vec3, distance: number, a
     return strips.length === 1 ? strips.splice(0, 1)[0] : sewn(strips);
   } finally {
     strips.forEach((s) => s.delete());
+  }
+}
+
+/**
+ * Shell built another way, for when OpenCascade's thick solid comes out
+ * broken (as it can round fillets): the part hollowed closed inside, then an
+ * opening cut through each picked flat face — the inside's matching face
+ * pushed straight out through it.
+ */
+export function shellByCutting(shape: Shape3D, faces: Face[], thickness: number): Shape3D {
+  const failed = "Couldn't hollow this part. Try thinner walls — rounded corners and thin areas must be thicker than the walls.";
+  if (faces.some((f) => f.geomType !== "PLANE")) throw new Error(failed);
+  const inner = offsetSolid(shape, -thickness);
+  const tools: Shape3D[] = [inner];
+  const innerFaces = facesOf(inner);
+  try {
+    for (const face of faces) {
+      const n = take(face.normalAt());
+      const c = take(face.center);
+      // The inside's face parallel to this one, a wall's thickness in from it.
+      const match = innerFaces.find((f) => {
+        if (f.geomType !== "PLANE") return false;
+        const m = take(f.normalAt());
+        if (m[0] * n[0] + m[1] * n[1] + m[2] * n[2] < 0.9999) return false;
+        const q = take(f.center);
+        const depth = (c[0] - q[0]) * n[0] + (c[1] - q[1]) * n[1] + (c[2] - q[2]) * n[2];
+        return Math.abs(depth - thickness) < 1e-4;
+      });
+      if (!match) throw new Error(failed);
+      const reach = thickness + 1;
+      const v = new Vector([n[0] * reach, n[1] * reach, n[2] * reach]);
+      try {
+        tools.push(asIs(basicFaceExtrusion(match, v)));
+      } finally {
+        v.delete();
+      }
+    }
+    let cutter = tools[0];
+    for (const t of tools.slice(1)) {
+      const next = cutter.fuse(t);
+      if (cutter !== inner) cutter.delete();
+      cutter = next;
+    }
+    try {
+      return shape.cut(cutter);
+    } finally {
+      if (cutter !== inner) cutter.delete();
+    }
+  } finally {
+    innerFaces.forEach((f) => f.delete());
+    tools.forEach((t) => t.delete());
   }
 }
