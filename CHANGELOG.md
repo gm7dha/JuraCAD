@@ -8,7 +8,7 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.25 — PartSmith is now JuraCAD
+## v0.25 — PartSmith is now JuraCAD · commit `2b05613`
 
 - **New name:** the app is now called **JuraCAD** — in the top bar, Help, What's new, the install instructions,
   messages, and the files it exports (STL, 3MF, PDF and SVG say JuraCAD made them).
