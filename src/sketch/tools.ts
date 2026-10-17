@@ -34,7 +34,7 @@ const con = (type: SketchConstraint["type"], refs: string[], value?: string): Sk
 // Slot
 
 /** A slot (rounded-end rectangle) between two centre points, `radius` = half its width. */
-export function addSlot(s: SketchData, c1: Placed, c2: Placed, radius: number, construction = false): EditResult & { curveIds: string[] } {
+export function addSlot(s: SketchData, c1: Placed, c2: Placed, radius: number, construction = false): EditResult & { curveIds: string[]; axisId?: string } {
   const d = sub([c2.x, c2.y], [c1.x, c1.y]);
   if (len(d) < 1e-6) return { sketch: s, curveIds: [], error: "Click two different centre points for the slot." };
   if (radius < 1e-6) return { sketch: s, curveIds: [], error: "Move the pointer away from the centre line to give the slot a width." };
@@ -63,25 +63,45 @@ export function addSlot(s: SketchData, c1: Placed, c2: Placed, radius: number, c
   ];
   const sk = b.sketch;
   const r = settle({ points: [...sk.points, ...pts], curves: [...sk.curves, ...curves], constraints: [...sk.constraints, ...constraints] });
-  return { ...r, curveIds: [ids.top, ids.bottom, ids.arc1, ids.arc2] };
+  return { ...r, curveIds: [ids.top, ids.bottom, ids.arc1, ids.arc2], axisId: ids.axis };
 }
 
 // ---------------------------------------------------------------------------
 // Polygon
 
-/** A regular polygon with `sides` corners, centred on `centre`, one corner at `corner`. */
-export function addPolygon(s: SketchData, centre: Placed, corner: { x: number; y: number }, sides: number, construction = false): EditResult & { lineIds: string[] } {
+/** Where the polygon tool's pointer is the corners' corner points (by default) or the middle of one side. */
+export type PolygonAcross = "corners" | "flats";
+
+/** The polygon's corners: around `centre`, sized and turned by the pointer at `at` (a corner, or the middle of a side). */
+export function polygonCorners(centre: P2, at: P2, sides: number, across: PolygonAcross = "corners"): P2[] {
+  const n = Math.max(3, Math.round(sides));
+  const d = len(sub(at, centre));
+  const R = across === "flats" ? d / Math.cos(Math.PI / n) : d;
+  const start = Math.atan2(at[1] - centre[1], at[0] - centre[0]) - (across === "flats" ? Math.PI / n : 0);
+  return Array.from({ length: n }, (_, i) => [centre[0] + R * Math.cos(start + (TAU * i) / n), centre[1] + R * Math.sin(start + (TAU * i) / n)]);
+}
+
+/**
+ * A regular polygon with `sides` corners, centred on `centre`. The pointer
+ * `corner` is one corner, or with `across` = "flats" the middle of one side
+ * (for sizing across flats, like a nut). Its size is held by a construction
+ * circle through the corners, or touching the sides (`sizeCircleId`).
+ */
+export function addPolygon(
+  s: SketchData,
+  centre: Placed,
+  corner: { x: number; y: number },
+  sides: number,
+  construction = false,
+  across: PolygonAcross = "corners",
+): EditResult & { lineIds: string[]; sizeCircleId?: string } {
   const n = Math.round(sides);
   if (!(n >= 3 && n <= 64)) return { sketch: s, lineIds: [], error: "A polygon needs between 3 and 64 sides." };
-  const R = Math.hypot(corner.x - centre.x, corner.y - centre.y);
-  if (R < 1e-6) return { sketch: s, lineIds: [], error: "Move the pointer away from the centre to give the polygon a size." };
+  if (Math.hypot(corner.x - centre.x, corner.y - centre.y) < 1e-6) return { sketch: s, lineIds: [], error: "Move the pointer away from the centre to give the polygon a size." };
+  const corners = polygonCorners([centre.x, centre.y], [corner.x, corner.y], n, across);
+  const R = len(sub(corners[0], [centre.x, centre.y]));
   const c = placePoint(s, centre);
-  const start = Math.atan2(corner.y - centre.y, corner.x - centre.x);
-  const pts: SketchPoint[] = Array.from({ length: n }, (_, i) => ({
-    id: sketchId("p"),
-    x: centre.x + R * Math.cos(start + (TAU * i) / n),
-    y: centre.y + R * Math.sin(start + (TAU * i) / n),
-  }));
+  const pts: SketchPoint[] = corners.map(([x, y]) => ({ id: sketchId("p"), x, y }));
   const circleId = sketchId("k");
   const lineIds = pts.map(() => sketchId("l"));
   const curves: SketchCurve[] = [
@@ -89,8 +109,15 @@ export function addPolygon(s: SketchData, centre: Placed, corner: { x: number; y
     ...pts.map((p, i): SketchLine => ({ id: lineIds[i], type: "line", p1: p.id, p2: pts[(i + 1) % n].id, construction })),
   ];
   const constraints = [...pts.map((p) => con("pointOnCircle", [p.id, circleId])), ...lineIds.slice(1).map((id) => con("equal", [lineIds[0], id]))];
+  let sizeCircleId = circleId;
+  if (across === "flats") {
+    // A second construction circle touching the sides: its diameter is the size across flats.
+    sizeCircleId = sketchId("k");
+    curves.push({ id: sizeCircleId, type: "circle", center: c.id, radius: R * Math.cos(Math.PI / n), construction: true });
+    constraints.push(con("tangent", [lineIds[0], sizeCircleId]));
+  }
   const sk = c.sketch;
-  return { ...settle({ points: [...sk.points, ...pts], curves: [...sk.curves, ...curves], constraints: [...sk.constraints, ...constraints] }), lineIds };
+  return { ...settle({ points: [...sk.points, ...pts], curves: [...sk.curves, ...curves], constraints: [...sk.constraints, ...constraints] }), lineIds, sizeCircleId };
 }
 
 // ---------------------------------------------------------------------------

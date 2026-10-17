@@ -32,6 +32,7 @@ import {
 import {
   addCentreRectangle,
   addPolygon,
+  polygonCorners,
   addAlignedRectangle,
   addCentreArc,
   addEllipse,
@@ -590,7 +591,11 @@ export class SketchController {
         }
         const [a, b] = this.placed;
         const r = addSlot(d, a, b, slotRadius(a, b, p), construction);
-        if (this.commit(r, r.curveIds)) this.placed = [];
+        if (this.commit(r, r.curveIds)) {
+          this.placed = [];
+          // Offer its length (centre to centre) and the round ends' size.
+          if (!construction && r.axisId) this.offerDimensions([[r.axisId], [r.curveIds[2]]]);
+        }
         this.emit({ preview: [] });
         return;
       }
@@ -599,8 +604,12 @@ export class SketchController {
           this.placed = [p];
           return;
         }
-        const r = addPolygon(d, this.placed[0], p, this.state.sketch?.polygonSides ?? 6, construction);
-        if (this.commit(r, r.lineIds)) this.placed = [];
+        const r = addPolygon(d, this.placed[0], p, this.state.sketch?.polygonSides ?? 6, construction, this.state.sketch?.polygonAcross ?? "corners");
+        if (this.commit(r, r.lineIds)) {
+          this.placed = [];
+          // Offer its size: across corners, or across flats.
+          if (!construction && r.sizeCircleId) this.offerDimensions([[r.sizeCircleId]]);
+        }
         this.emit({ preview: [] });
         return;
       }
@@ -729,10 +738,11 @@ export class SketchController {
       else preview.push(...slotPreview(first, this.placed[1], slotRadius(first, this.placed[1], p)));
     } else if (tool === "polygon" && first) {
       const n = Math.max(3, Math.min(64, Math.round(this.state.sketch?.polygonSides ?? 6)));
-      const R = Math.hypot(p.x - first.x, p.y - first.y);
-      const a0 = Math.atan2(p.y - first.y, p.x - first.x);
-      const corner = (i: number): [number, number] => [first.x + R * Math.cos(a0 + (2 * Math.PI * i) / n), first.y + R * Math.sin(a0 + (2 * Math.PI * i) / n)];
-      for (let i = 0; i < n; i++) preview.push({ kind: "line", a: corner(i), b: corner(i + 1) });
+      const across = this.state.sketch?.polygonAcross ?? "corners";
+      const corners = polygonCorners([first.x, first.y], [p.x, p.y], n, across);
+      for (let i = 0; i < n; i++) preview.push({ kind: "line", a: corners[i], b: corners[(i + 1) % n] });
+      const r = Math.hypot(p.x - first.x, p.y - first.y);
+      if (r > 1e-9) preview.push({ kind: "guide", a: [first.x, first.y], b: [p.x, p.y] });
     } else if (tool === "conic" && first) {
       const second = this.placed[1];
       if (!second) preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });

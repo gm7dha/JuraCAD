@@ -42,6 +42,7 @@ export function SketchPanel() {
   const selectionCount = useStore((s) => s.sketch?.selection.length ?? 0);
   const tool = useStore((s) => s.sketch?.tool ?? "select");
   const polygonSides = useStore((s) => s.sketch?.polygonSides ?? 6);
+  const polygonAcross = useStore((s) => s.sketch?.polygonAcross ?? "corners");
   const conicRho = useStore((s) => s.sketch?.conicRho ?? 0.5);
   const selection = useStore((s) => s.sketch?.selection);
   const filletRadius = useStore((s) => s.sketch?.filletRadius ?? "2");
@@ -117,6 +118,25 @@ export function SketchPanel() {
               onChange={(e) => setSketchOptions({ polygonSides: Math.max(3, Math.min(64, Number(e.target.value) || 3)) })}
             />
           </label>
+        )}
+        {tool === "polygon" && (
+          <div className="tool-option">
+            Size across
+            <div className="segmented two" role="group" aria-label="Polygon size across">
+              {(["corners", "flats"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={polygonAcross === k ? "selected" : ""}
+                  aria-pressed={polygonAcross === k}
+                  title={k === "corners" ? "The pointer sets a corner: the size is measured corner to corner" : "The pointer sets the middle of a side: the size is measured across flat sides (like a nut or spanner size)"}
+                  onClick={() => setSketchOptions({ polygonAcross: k })}
+                >
+                  {k === "corners" ? "Corners" : "Flats"}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {(() => {
           // The conic tool's fullness, or the selected conic's.

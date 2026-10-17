@@ -126,6 +126,8 @@ export interface SketchSession {
   provisional: string[];
   /** Polygon tool: number of sides. */
   polygonSides: number;
+  /** Polygon tool: the pointer sets a corner (the size across corners) or the middle of a side (across flats). */
+  polygonAcross?: "corners" | "flats";
   /** Conic tool: how full new conics are (0.5 = a parabola). */
   conicRho?: number;
   /** Corner-rounding tool: radius as typed. */
@@ -262,7 +264,7 @@ export interface AppState {
   keepOfferedDimension: (id: string) => void;
   /** Drop any offered dimensions not kept yet. */
   discardOfferedDimensions: () => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**

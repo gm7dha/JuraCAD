@@ -20,7 +20,7 @@ import {
 import { dimensionLayout } from "../src/sketch/layout";
 import { findRegions } from "../src/sketch/regions";
 import { analyzeSketch, solveSketch } from "../src/sketch/solver";
-import { addEllipse, addPolygon, addSlot, addSpline, filletCorner, offsetCurves, trimAt } from "../src/sketch/tools";
+import { addEllipse, addPolygon, addSlot, addSpline, filletCorner, offsetCurves, polygonCorners, trimAt } from "../src/sketch/tools";
 import { parseSketchData } from "../src/sketch/validate";
 import { emptySketch, type SketchArc, type SketchCircle, type SketchData, type SketchLine } from "../src/sketch/types";
 
@@ -328,5 +328,38 @@ describe("midpoint of an arc", () => {
     expect(qx).toBeCloseTo(wx, 6);
     expect(qy).toBeCloseTo(wy, 6);
     expect(applyRelation(r.sketch, "midpoint", [arc.start, arc.id]).error).toMatch(/own points/);
+  });
+});
+
+describe("polygon sized across flats", () => {
+  it("puts the pointer at the middle of a side, and sizes it like a nut", () => {
+    const corners = polygonCorners([0, 0], [5, 0], 6, "flats");
+    // The side between the first two corners has its middle at the pointer.
+    expect((corners[0][0] + corners[1][0]) / 2).toBeCloseTo(5, 9);
+    expect((corners[0][1] + corners[1][1]) / 2).toBeCloseTo(0, 9);
+    const r = addPolygon(emptySketch(), at(0, 0), at(3, 0), 6, false, "flats");
+    expect(r.error).toBeUndefined();
+    expect(analyzeSketch(r.sketch).freedom).toBe(4);
+    // An M3 nut is 5.5 mm across flats.
+    const d = addDimension(r.sketch, [r.sizeCircleId!]);
+    expect(d.sketch.constraints.find((c) => c.id === d.dimensionId)!.type).toBe("diameter");
+    const nut = setDimensionValue(d.sketch, d.dimensionId, "5.5");
+    expect(nut.error).toBeUndefined();
+    const area = findRegions(nut.sketch).regions[0].outer.area;
+    // A hexagon's area is (√3 / 2) × (across flats)².
+    expect(area).toBeCloseTo((Math.sqrt(3) / 2) * 5.5 * 5.5, 6);
+  });
+
+  it("across corners is still the default, sized by the circle through the corners", () => {
+    const r = addPolygon(emptySketch(), at(0, 0), at(10, 0), 6);
+    const circle = r.sketch.curves.find((c) => c.id === r.sizeCircleId) as SketchCircle;
+    expect(circle.radius).toBeCloseTo(10, 9);
+  });
+
+  it("a slot says which line is its centre line, to size its length", () => {
+    const sl = addSlot(emptySketch(), at(0, 0), at(30, 0), 5);
+    const axis = line(sl.sketch, sl.axisId!);
+    expect(axis.construction).toBe(true);
+    expect(lengthOf(sl.sketch, sl.axisId!)).toBeCloseTo(30, 9);
   });
 });
