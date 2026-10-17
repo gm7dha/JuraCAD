@@ -860,38 +860,57 @@ function outwardShell(shape: Shape3D, open: Face[], thickness: number): Shape3D 
 }
 
 const OUTWARD_FAILED = "Couldn't build walls round the outside of this part. Try putting the walls inside instead (untick Walls outside).";
+const OUTWARD_APART =
+  "With those faces left open, the walls outside would come apart into separate pieces (where the open face meets the part's other faces). Leave a different face open, or put the walls inside instead (untick Walls outside).";
 const OUTWARD_OPEN_FAILED =
   "Couldn't build walls round the outside with those faces left open. Leave flat faces open (curved ones can't be here), or put the walls inside instead (untick Walls outside).";
 
 /**
  * Walls outside, the slow sure way: sealed walls all round (the part grown by
- * `thickness`, minus the part), then, for each flat face left open, the wall
- * beyond that face's plane and over it cut away. Curved open faces aren't handled.
+ * `thickness`, minus the part); then, for each flat face left open, the walls
+ * past that face's plane are cut away — except the walls round any of the part
+ * that itself stands out past the plane (a boss on an open top keeps its whole
+ * sleeve, down to the face). Curved open faces aren't handled.
  */
 function outwardByCutting(shape: Shape3D, open: Face[], thickness: number): Shape3D {
   const grown = offsetSolid(shape, thickness);
   let walls: Shape3D;
+  let lo: Vec3;
+  let hi: Vec3;
   try {
+    [lo, hi] = boundsOf(grown);
     walls = grown.cut(shape);
   } finally {
     grown.delete();
   }
+  const scrap: Shape3D[] = [];
   try {
     for (const face of open) {
       if (face.geomType !== "PLANE") throw new Error("curved opening");
       const centre = take(face.center);
       const normal = take(face.normalAt(centre));
-      // Everything past the face's plane, within a wall's thickness of the face.
-      const [lo, hi] = boundsOf(face as unknown as Shape3D);
-      const grow = thickness * 1.01 + 0.01;
-      const near = makeBox([lo[0] - grow, lo[1] - grow, lo[2] - grow], [hi[0] + grow, hi[1] + grow, hi[2] + grow]);
+      const big = makeBox([lo[0] - 1, lo[1] - 1, lo[2] - 1], [hi[0] + 1, hi[1] + 1, hi[2] + 1]);
       const beyond = halfSpace(walls, centre, normal);
-      let cutter: Shape3D;
+      scrap.push(big, beyond);
+      let cutter = big.intersect(beyond) as Shape3D;
+      // The part past the plane, with its own walls round it: those stay.
+      const past = shape.intersect(beyond) as Shape3D;
+      scrap.push(past);
+      let pastVolume = 0;
       try {
-        cutter = near.intersect(beyond) as Shape3D;
-      } finally {
-        near.delete();
-        beyond.delete();
+        pastVolume = measureVolume(past);
+      } catch {
+        pastVolume = 0;
+      }
+      if (pastVolume > 1e-6) {
+        const keep = offsetSolid(past, thickness);
+        try {
+          const next: Shape3D = cutter.cut(keep);
+          cutter.delete();
+          cutter = next;
+        } finally {
+          keep.delete();
+        }
       }
       try {
         const next: Shape3D = walls.cut(cutter);
@@ -905,6 +924,14 @@ function outwardByCutting(shape: Shape3D, open: Face[], thickness: number): Shap
   } catch (e) {
     walls.delete();
     throw e;
+  } finally {
+    scrap.forEach((x) => {
+      try {
+        x.delete();
+      } catch {
+        // already freed
+      }
+    });
   }
 }
 
@@ -1530,9 +1557,8 @@ export class GeometryEngine {
         continue;
       }
       if (isPatternFeature(feature.type)) {
-        const r = this.applyPattern(feature, features, partCounter + 1);
+        const r = this.applyPattern(feature, features);
         if (r.error) featureErrors[feature.id] = r.error;
-        partCounter += r.newParts ?? 0;
         continue;
       }
 
@@ -2636,7 +2662,7 @@ export class GeometryEngine {
    * Mirror or pattern: repeat what earlier features did (add or cut their
    * solid) at mirrored, shifted or turned positions. Returns an error message, or null.
    */
-  private applyPattern(feature: Feature, all: Feature[], nextPartNumber: number): { error?: string; newParts?: number } {
+  private applyPattern(feature: Feature, all: Feature[]): { error?: string } {
     const def = FEATURE_DEFS[feature.type];
     const { values, errors } = resolveParams(feature);
     const badParam = def.params.find((p) => errors[p.key]);
@@ -2731,17 +2757,7 @@ export class GeometryEngine {
 
     // Work on copies of the parts, and only keep them if everything succeeds.
     const working = new Map<string, Shape3D>();
-    // Copies of a New feature that wouldn't touch its part: each is a new part (as in Onshape), not loose pieces of that one.
-    const extraParts: Shape3D[] = [];
-    const release = () => {
-      working.forEach((s) => s.delete());
-      extraParts.forEach((s) => s.delete());
-    };
-    const pieces = (x: Shape3D) => {
-      const list = solidsOf(x);
-      list.forEach((y) => y.delete());
-      return list.length;
-    };
+    const release = () => working.forEach((s) => s.delete());
     try {
       for (const source of ordered) {
         const tool = this.tools.get(source.id)!;
@@ -2760,29 +2776,6 @@ export class GeometryEngine {
             shape = next;
           } finally {
             copies.forEach((c) => c.delete());
-          }
-          working.set(part.id, shape);
-          continue;
-        }
-        if (tool.operation === "new") {
-          const before = pieces(shape);
-          let trial = shape.clone();
-          for (const place of placements) {
-            const copy = place(tool.shape.clone());
-            try {
-              const next = trial.fuse(copy);
-              trial.delete();
-              trial = next;
-            } finally {
-              copy.delete();
-            }
-          }
-          if (pieces(trial) > before) {
-            trial.delete();
-            for (const place of placements) extraParts.push(place(tool.shape.clone()));
-          } else {
-            shape.delete();
-            shape = trial;
           }
           working.set(part.id, shape);
           continue;
@@ -2815,12 +2808,7 @@ export class GeometryEngine {
       part.shape = shape;
       part.featureIds.push(feature.id);
     }
-    extraParts.forEach((shape, k) => {
-      const id = `${feature.id}~${k + 1}`;
-      this.tools.set(id, { shape: shape.clone(), operation: "new", partId: id });
-      this.parts.push({ id, name: `Part ${nextPartNumber + k}`, featureIds: [feature.id], shape });
-    });
-    return { newParts: extraParts.length };
+    return {};
   }
 
   /**
@@ -2942,10 +2930,29 @@ export class GeometryEngine {
     let shape: Shape3D | null = null;
     // A hollowed part must be valid, lighter than before, and no bigger than before. (With walls
     // thicker than the part, OpenCascade can "succeed" with a strange inside-out solid.)
-    const good = (s: Shape3D) => isValidSolid(s) && (outward ? grewWithin(part.shape, s, values.thickness) : shrankWithin(part.shape, s));
+    const pieceCount = (x: Shape3D) => {
+      const list = solidsOf(x);
+      list.forEach((y) => y.delete());
+      return list.length;
+    };
+    const startPieces = pieceCount(part.shape);
+    // Walls outside that come apart (more separate pieces than the part had) aren't accepted.
+    let cameApart = false;
+    const good = (s: Shape3D) => {
+      if (!isValidSolid(s)) return false;
+      if (!outward) return shrankWithin(part.shape, s);
+      if (!grewWithin(part.shape, s, values.thickness)) return false;
+      if (pieceCount(s) > startPieces) {
+        cameApart = true;
+        return false;
+      }
+      return true;
+    };
     try {
       try {
-        shape = outward ? outwardShell(part.shape, faces, values.thickness) : part.shape.shell(values.thickness, (f) => f.inList(faces));
+        // Walls outside: sealed walls with the openings cut away first — OpenCascade's own outward shell
+        // can lose or add walls where an open face meets the part's other faces.
+        shape = outward ? outwardByCutting(part.shape, faces, values.thickness) : part.shape.shell(values.thickness, (f) => f.inList(faces));
         if (!good(shape)) {
           shape.delete();
           shape = null;
@@ -2954,8 +2961,8 @@ export class GeometryEngine {
         shape = null;
       }
       // Round fillets OpenCascade's shell can come out broken: hollow it closed and cut the opening instead.
-      // Walls outside: sealed walls with the openings cut away (keeps the corners sharp), then round joins (OpenCascade's usual shell).
-      for (const attempt of outward ? [() => outwardByCutting(part.shape, faces, values.thickness), () => part.shape.shell(-values.thickness, (f) => f.inList(faces))] : []) {
+      // Walls outside: then OpenCascade's outward shell, sharp then with round joins.
+      for (const attempt of outward ? [() => outwardShell(part.shape, faces, values.thickness), () => part.shape.shell(-values.thickness, (f) => f.inList(faces))] : []) {
         if (shape) break;
         try {
           shape = attempt();
@@ -2981,7 +2988,7 @@ export class GeometryEngine {
     } finally {
       faces.forEach((f) => f.delete());
     }
-    if (!shape) return outward ? OUTWARD_OPEN_FAILED : failed;
+    if (!shape) return outward ? (cameApart ? OUTWARD_APART : OUTWARD_OPEN_FAILED) : failed;
     part.shape.delete();
     part.shape = shape;
     part.featureIds.push(feature.id);

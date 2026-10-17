@@ -285,6 +285,50 @@ describe("review follow-ups", () => {
     expect(v).toBeGreaterThan(rounded(44, 34, 22, 7) - rounded(40, 30, 20, 5) - 150);
   });
 
+  it("won't make walls outside that come apart: a boss's sleeve over an open top would float free", () => {
+    const box = feature("box", { width: 20, depth: 20, height: 10 });
+    const boss = feature("cylinder", { diameter: 6, height: 5, x: 10, y: 10, z: 10 }, "add");
+    const top = pickAt(build([box, boss]), "face", [10, 10, 10]);
+    const shell: Feature = { ...feature("shell", { thickness: 1 }, "add"), picks: [top], flipSide: true };
+    const r = build([box, boss, shell]);
+    // The walls would be the sides and bottom round the box (22 × 22 × 11 less the box) plus the boss's sleeve
+    // and cap (π(4² − 3²) × 5 + π4² × 1 = 1484.22 mm³ in all) — but nothing joins the sleeve to the side walls once
+    // the top is open, so it says so instead of making a part in two pieces.
+    expect(r.featureErrors[shell.id]).toMatch(/come apart into separate pieces/);
+    expect(volumes()[0]).toBeCloseTo(4000 + Math.PI * 9 * 5, 2);
+    // With walls inside it works.
+    const inside = build([box, boss, { ...shell, flipSide: undefined }]);
+    expect(inside.featureErrors).toEqual({});
+  });
+
+
+  it("keeps an upright's wall down to an open step beside it", () => {
+    // An L: a 30 × 10 × 5 base with a 10 × 10 × 15 upright at one end; the base's step top left open.
+    const base = feature("box", { width: 30, depth: 10, height: 5 });
+    const upright = feature("box", { width: 10, depth: 10, height: 20 }, "add");
+    const step = pickAt(build([base, upright]), "face", [20, 5, 5]);
+    const shell: Feature = { ...feature("shell", { thickness: 2 }, "add"), picks: [step], flipSide: true };
+    const r = build([base, upright, shell]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].mesh.pieces).toBe(1);
+    // The grown L (34 × 14 × 7 base, 14 × 14 × 24 upright, overlapping 14 × 14 × 7) up to z = 22 past the step,
+    // minus the L: the walls stop at the step's plane only over the step.
+    const grownBelow = 34 * 14 * 7;
+    const uprightAbove = 14 * 14 * (22 - 5);
+    expect(volumes()[0]).toBeCloseTo(grownBelow + uprightAbove - (30 * 10 * 5 + 10 * 10 * 15), 1);
+  });
+
+  it("cuts the walls cleanly at an open bottom when every edge is rounded", () => {
+    const box = feature("box", { width: 30, depth: 30, height: 15 });
+    const round: Feature = { ...feature("fillet", { radius: 3 }, "add"), picks: [pickAt(build([box]), "face", [15, 15, 15]), pickAt(build([box]), "face", [15, 15, 0])] };
+    const bottom = pickAt(build([box, round]), "face", [15, 15, 0]);
+    const shell: Feature = { ...feature("shell", { thickness: 2 }, "add"), picks: [bottom], flipSide: true };
+    const r = build([box, round, shell]);
+    expect(r.featureErrors).toEqual({});
+    expect(boundsOf(r).min[2]).toBeCloseTo(0, 2);
+    expect(boundsOf(r).max[2]).toBeCloseTo(17, 2);
+  });
+
   it("explains walls outside can't leave a curved face open", () => {
     const can = feature("cylinder", { diameter: 20, height: 10 });
     const side = build([can]).parts[0].faceRefs.find((f) => f.surface === "CYLINDRE")!;
@@ -323,20 +367,4 @@ describe("review follow-ups", () => {
     expect(volumes()[0]).toBeCloseTo(Math.PI * 9 * 10, 2);
   });
 
-  it("makes copies of a New feature separate parts when they don't touch it, and joins them when they do", () => {
-    const cube = feature("box", { width: 10, depth: 10, height: 10 });
-    const apart: Feature = { ...feature("linearPattern", { count: 3, spacing: 20 }, "add"), pattern: { sources: [cube.id], axis: "x", flip: false } };
-    const r = build([cube, apart]);
-    expect(r.featureErrors).toEqual({});
-    expect(r.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2", "Part 3"]);
-    expect(volumes().map((v) => Math.round(v))).toEqual([1000, 1000, 1000]);
-    expect(boundsOf(r, 2).min[0]).toBeCloseTo(40, 3);
-    // A later New part is numbered after them.
-    const later = feature("sphere", { diameter: 4, x: 100 });
-    expect(build([cube, apart, later]).parts.map((p) => p.name)).toEqual(["Part 1", "Part 2", "Part 3", "Part 4"]);
-    const touching: Feature = { ...apart, params: { ...apart.params, spacing: "10" } };
-    const t = build([cube, touching]);
-    expect(t.parts).toHaveLength(1);
-    expect(volumes()[0]).toBeCloseTo(3000, 3);
-  });
 });
