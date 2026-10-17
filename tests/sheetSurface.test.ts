@@ -203,8 +203,8 @@ describe("flange position", () => {
     const r = build([sk, sheet(sk.id), flange("fl", edges, { flangePosition: "outside" })]);
     expect(r.featureErrors).toEqual({});
     const m = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
-    expect(m.bounds!.min.map((v) => Math.round(v * 1e4) / 1e4)).toEqual([0, 0, 0]);
-    expect(m.bounds!.max.map((v) => Math.round(v * 1e4) / 1e4)).toEqual([100, 50, 20]);
+    expect(m.bounds!.min.map((v) => Math.round(v * 1e4) / 1e4 + 0)).toEqual([0, 0, 0]);
+    expect(m.bounds!.max.map((v) => Math.round(v * 1e4) / 1e4 + 0)).toEqual([100, 50, 20]);
     // A 92 × 42 base, and round its 268 mm edge a quarter bend (radii 2 and 4) and a 16 mm straight wall.
     expect(vol()).toBeCloseTo(92 * 42 * 2 + 268 * ((Math.PI / 4) * 12 + 16 * 2), 2);
     expect(engine.check("normal").parts[0].geometryValid).toBe(true);
