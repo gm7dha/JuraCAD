@@ -11,6 +11,9 @@
  * constraints, so fully defined geometry can be drawn black, as in Onshape.
  */
 import { evaluate } from "../model/expr";
+import { splineBeziers } from "./spline";
+
+type Bez = [Vec, Vec, Vec, Vec];
 import { ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData } from "./types";
 
 type Vec = [number, number];
@@ -89,6 +92,33 @@ function buildSystem(sketch: SketchData): System {
 
   const blocks: System["blocks"] = [];
 
+  /**
+   * A spline's Bézier pieces for the current unknowns, worked out once and
+   * shared by every point held on it (re-worked only when its points move).
+   */
+  const pieceCache = new Map<string, (x: Float64Array) => Bez[]>();
+  const splinePieces = (id: string) => {
+    const known = pieceCache.get(id);
+    if (known) return known;
+    const curve = curves.get(id);
+    if (curve?.type !== "spline") throw new Error(`${id} is not a spline`);
+    const ids = curve.points.map((pid) => P(pid));
+    const handles = curve.points.map((pid) => curve.tangents?.[pid]);
+    let lastKey: number[] = [];
+    let last: Bez[] = [];
+    const get = (x: Float64Array) => {
+      const pts = ids.map((f) => f(x));
+      const key = pts.flat();
+      if (key.length !== lastKey.length || key.some((v, i) => v !== lastKey[i])) {
+        lastKey = key;
+        last = splineBeziers(pts, curve.closed, curve.conic, handles);
+      }
+      return last;
+    };
+    pieceCache.set(id, get);
+    return get;
+  };
+
   // Every arc keeps its start and end at the same distance from the centre.
   for (const c of sketch.curves) {
     if (c.type !== "arc") continue;
@@ -129,6 +159,8 @@ function buildSystem(sketch: SketchData): System {
   }
 
   for (const con of sketch.constraints) {
+    // Reference dimensions only show a size; they never move anything.
+    if (con.driven) continue;
     let value = 0;
     if (con.value !== undefined) {
       const r = evaluate(con.value);
@@ -250,6 +282,24 @@ function buildSystem(sketch: SketchData): System {
       }
       case "midpoint": {
         const p = P(a);
+        const arc = curves.get(b);
+        if (arc?.type === "arc") {
+          // Halfway round the arc (anticlockwise from its start to its end).
+          const cen = P(arc.center), st = P(arc.start), en = P(arc.end);
+          return {
+            size: 2,
+            eval: (x, out) => {
+              const u = p(x), c = cen(x), s0 = st(x), e = en(x);
+              const a0 = Math.atan2(s0[1] - c[1], s0[0] - c[0]);
+              let sweep = Math.atan2(e[1] - c[1], e[0] - c[0]) - a0;
+              while (sweep <= 0) sweep += 2 * Math.PI;
+              while (sweep > 2 * Math.PI) sweep -= 2 * Math.PI;
+              const r = Math.hypot(s0[0] - c[0], s0[1] - c[1]);
+              const am = a0 + sweep / 2;
+              out.push(u[0] - (c[0] + r * Math.cos(am)), u[1] - (c[1] + r * Math.sin(am)));
+            },
+          };
+        }
         const [m, n] = lineEnds(b);
         return {
           size: 2,
@@ -290,6 +340,32 @@ function buildSystem(sketch: SketchData): System {
           },
         };
       }
+      case "pointOnCurve": {
+        const p = P(a);
+        const curve = curves.get(b);
+        if (curve?.type === "ellipse") {
+          const cen = P(curve.center), ma = P(curve.major), mi = P(curve.minor);
+          return {
+            size: 1,
+            eval: (x, out) => {
+              const u = p(x), c = cen(x), m = ma(x), n = mi(x);
+              const ax = [m[0] - c[0], m[1] - c[1]];
+              const rx = Math.hypot(ax[0], ax[1]) || 1e-12;
+              const ry = Math.hypot(n[0] - c[0], n[1] - c[1]) || 1e-12;
+              const q = [u[0] - c[0], u[1] - c[1]];
+              const along = (q[0] * ax[0] + q[1] * ax[1]) / rx;
+              const across = (q[1] * ax[0] - q[0] * ax[1]) / rx;
+              // Roughly the distance (mm) to the ellipse: zero on it, and smooth either side.
+              out.push((Math.hypot(along / rx, across / ry) - 1) * Math.min(rx, ry));
+            },
+          };
+        }
+        if (curve?.type === "spline") {
+          const pieces = splinePieces(curve.id);
+          return { size: 1, eval: (x, out) => out.push(signedDistanceToBeziers(p(x), pieces(x))) };
+        }
+        throw new Error(`${b} is not a spline or ellipse`);
+      }
       case "pointOnCircle": {
         const p = P(a);
         const c = circular(b);
@@ -317,6 +393,31 @@ function buildSystem(sketch: SketchData): System {
         const q = P(b);
         const sign = con.extra?.[0] ?? 1;
         return { size: 1, eval: (x, out) => out.push(sign * (q(x)[k] - p(x)[k]) - value) };
+      }
+      case "offset": {
+        // Each [copy, original] pair stays `value` apart: a line's distance from the original line, an arc's or circle's radius from the original's.
+        // Each pair's side (extra): a signed distance, so a copy can't flip over to the other side of its original.
+        const pairs: ((x: Float64Array) => number)[] = [];
+        for (let i = 0; i + 1 < con.refs.length; i += 2) {
+          const [copy, orig] = [con.refs[i], con.refs[i + 1]];
+          const side = con.extra?.[i / 2];
+          const signed = (v: number) => (side === undefined ? Math.abs(v) : side * v);
+          if (kind(copy) === "line" && kind(orig) === "line") {
+            const [p] = lineEnds(copy);
+            const [m, n] = lineEnds(orig);
+            pairs.push((x) => {
+              const u = p(x), s0 = m(x), e = n(x);
+              const dx = e[0] - s0[0], dy = e[1] - s0[1];
+              return signed((dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1));
+            });
+          } else {
+            const c1 = circular(copy);
+            const c2 = circular(orig);
+            pairs.push((x) => signed(c1.radius(x) - c2.radius(x)));
+          }
+        }
+        if (!pairs.length) throw new Error("offset has nothing to measure");
+        return { size: pairs.length, eval: (x, out) => { for (const f of pairs) out.push(f(x) - value); } };
       }
       case "radius":
       case "diameter": {
@@ -347,6 +448,61 @@ function buildSystem(sketch: SketchData): System {
   }
 
   return { n: init.length, pointVar, radiusVar, x0: Float64Array.from(init), blocks, skipped };
+}
+
+/**
+ * Distance from `p` to the nearest place on a chain of cubic Bézier pieces,
+ * plus on the curve's left (as it runs), minus on its right. The nearest place
+ * is found on the true curve (a coarse search, then a few Newton steps), so the
+ * side doesn't flicker near bends.
+ */
+function signedDistanceToBeziers(p: Vec, pieces: Bez[]): number {
+  const at = ([a, b, c, d]: Bez, t: number): Vec => {
+    const u = 1 - t;
+    const k0 = u * u * u, k1 = 3 * u * u * t, k2 = 3 * u * t * t, k3 = t * t * t;
+    return [k0 * a[0] + k1 * b[0] + k2 * c[0] + k3 * d[0], k0 * a[1] + k1 * b[1] + k2 * c[1] + k3 * d[1]];
+  };
+  const tangent = ([a, b, c, d]: Bez, t: number): Vec => {
+    const u = 1 - t;
+    const k0 = 3 * u * u, k1 = 6 * u * t, k2 = 3 * t * t;
+    return [k0 * (b[0] - a[0]) + k1 * (c[0] - b[0]) + k2 * (d[0] - c[0]), k0 * (b[1] - a[1]) + k1 * (c[1] - b[1]) + k2 * (d[1] - c[1])];
+  };
+  const bend = ([a, b, c, d]: Bez, t: number): Vec => {
+    const u = 1 - t;
+    return [6 * u * (c[0] - 2 * b[0] + a[0]) + 6 * t * (d[0] - 2 * c[0] + b[0]), 6 * u * (c[1] - 2 * b[1] + a[1]) + 6 * t * (d[1] - 2 * c[1] + b[1])];
+  };
+  let best = Infinity;
+  let bestPiece = -1;
+  let bestT = 0;
+  const STEPS = 12;
+  pieces.forEach((bz, i) => {
+    for (let k = 0; k <= STEPS; k++) {
+      const q = at(bz, k / STEPS);
+      const d = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2;
+      if (d < best) {
+        best = d;
+        bestPiece = i;
+        bestT = k / STEPS;
+      }
+    }
+  });
+  if (bestPiece < 0) return 0;
+  const bz = pieces[bestPiece];
+  let t = bestT;
+  for (let iter = 0; iter < 6; iter++) {
+    const q = at(bz, t), d1 = tangent(bz, t), d2 = bend(bz, t);
+    const r: Vec = [q[0] - p[0], q[1] - p[1]];
+    const f = r[0] * d1[0] + r[1] * d1[1];
+    const df = d1[0] * d1[0] + d1[1] * d1[1] + r[0] * d2[0] + r[1] * d2[1];
+    if (Math.abs(df) < 1e-15) break;
+    t = Math.max(0, Math.min(1, t - f / df));
+  }
+  const q = at(bz, t);
+  let dir = tangent(bz, t);
+  if (Math.hypot(dir[0], dir[1]) < 1e-12) dir = [bz[3][0] - bz[0][0], bz[3][1] - bz[0][1]];
+  const dist = Math.hypot(p[0] - q[0], p[1] - q[1]);
+  const side = dir[0] * (p[1] - q[1]) - dir[1] * (p[0] - q[0]);
+  return side >= 0 ? dist : -dist;
 }
 
 function evalAll(sys: System, x: Float64Array): number[] {
