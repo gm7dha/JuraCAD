@@ -239,7 +239,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -590,7 +590,7 @@ export const useStore = create<AppState>((set, get) => {
           .filter((p): p is TopoPick => p !== null);
       }
       // A flange (or Fill) starts with the edges selected.
-      if (type === "flange" || type === "hem" || type === "fill" || type === "extendSurface" || type === "ruled") {
+      if (type === "flange" || type === "hem" || type === "cornerBreak" || type === "fill" || type === "extendSurface" || type === "ruled") {
         draft.picks = s.selection
           .filter((item) => item.kind === "edge")
           .map((item) => pickFor(s.parts, item))

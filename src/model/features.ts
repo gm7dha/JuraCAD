@@ -326,6 +326,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "inset", label: "Shorten each end by (a relief is cut so it can bend)", defaultValue: "0", min: 0, group: "size" },
     ],
   },
+  cornerBreak: {
+    type: "cornerBreak",
+    label: "Corner break",
+    namePrefix: "Corner break",
+    description: "Rounds off (or cuts off) outside corners of a sheet metal part's walls — click the short edge through the sheet at each corner. The flat pattern follows.",
+    params: [{ key: "size", label: "Radius", defaultValue: "5", positive: true, group: "size" }],
+  },
   tab: {
     type: "tab",
     label: "Tab",

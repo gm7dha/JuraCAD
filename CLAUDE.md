@@ -28,12 +28,19 @@
   straight edges, flanges on flanges) and works out both the folded walls/bends and the flat pattern from that;
   `src/sheetmetal/profile.ts` turns an open chain of sketch lines into a sheet (first line the base, later lines flanges with a set straight length). `src/kernel/sheetMetal.ts` makes them into solids. The engine stores the sheet on the part (`BuiltPart.sheet`);
   Flange matches picked edges to wall edges (`findSheetEdge`) and fuses the new bends and walls onto the part.
+  A flange's `position` ("outside"/"inside" flush) cuts its edge back when the wall is made (`setBack` in sheet.ts; the
+  strips cut off are `FoldedSheet.trims`). Corner break (`SheetSpec.corners`, `cornerBreakCut`, `findSheetCorner`) cuts
+  wall corners; cuts are traced on walls and bends (`bendCutLines`) and the flat pattern's `boundary` is then taken from
+  the part laid flat (`laidFlat` in engine.ts).
 - Surfaces: `src/kernel/surface.ts` (extrude/revolve/sweep/loft of a sketch's open or closed runs — `findChains` in
   `src/sketch/regions.ts` — as shells; Fill from edges; thicken, enclose and offset). A surface part has `surface: true`
   (BuiltPart and PartMesh); solid features add to / cut from the latest *solid* part, never a surface. replicad's
   helpers label every result a `Solid`: wrap surface results with `asIs()` so moves/mirrors don't fail on the type.
   Thicken builds a real solid (skin + offset + walls between their rims); Split takes a surface as the cutter
   (`splitBySurface`); Ruled surface sweeps strips from edges; STEP import brings surfaces in as a surface part.
+  Fill `continuity: "tangent"` meets the neighbouring faces smoothly (OCCT filling, G1); Thicken `bothSides`; Delete face
+  `leaveOpen` turns a solid into a surface; Extend surface samples curved edges and fills corners; Enclose failures name
+  the open edges (`gapReport`).
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
