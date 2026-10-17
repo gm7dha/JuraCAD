@@ -9,7 +9,7 @@ const n = (v: number) => String(Math.round(v * 1000) / 1000);
 const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /** An SVG file of the sheet, sized in millimetres. */
-export function sheetSvg(prims: Prim[], size: [number, number], title = "PartSmith drawing"): string {
+export function sheetSvg(prims: Prim[], size: [number, number], title = "JuraCAD drawing"): string {
   const [W, H] = size;
   const body = prims.map((p) => {
     if (p.kind === "path") {
@@ -67,7 +67,7 @@ export function textWidth(text: string, size: number): number {
 }
 
 /** A one-page PDF file of the sheet. */
-export function sheetPdf(prims: Prim[], size: [number, number], title = "PartSmith drawing"): Uint8Array {
+export function sheetPdf(prims: Prim[], size: [number, number], title = "JuraCAD drawing"): Uint8Array {
   const [W, H] = size;
   const ops: string[] = ["1 J 1 j"];
   for (const p of prims) {
@@ -97,7 +97,7 @@ export function sheetPdf(prims: Prim[], size: [number, number], title = "PartSmi
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
     `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-    `<< /Title (${pdfString(title)}) /Producer (PartSmith) >>`,
+    `<< /Title (${pdfString(title)}) /Producer (JuraCAD) >>`,
   ];
   let out = "%PDF-1.4\n";
   const offsets: number[] = [];

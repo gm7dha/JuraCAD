@@ -13,7 +13,7 @@ describe("part colours", () => {
     expect(colourToRgb("#ff8000").map((v) => Math.round(v * 255))).toEqual([255, 128, 0]);
   });
 
-  it("are saved in .partsmith files", () => {
+  it("are saved in design files", () => {
     let doc = emptyDocument();
     const box = createFeature(doc, "box");
     doc = { ...addFeature(doc, box), appearance: { [box.id]: "#d64545" } };

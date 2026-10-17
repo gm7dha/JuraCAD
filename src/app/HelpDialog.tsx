@@ -48,12 +48,12 @@ export function HelpDialog() {
   return (
     <Modal title="Help and shortcuts" onClose={() => openDialog(null)} width={560}>
       <p>
-        PartSmith works like Onshape. Sketch a shape and extrude or revolve it, or add simple solids from the toolbar,
+        JuraCAD works like Onshape. Sketch a shape and extrude or revolve it, or add simple solids from the toolbar,
         then edit them any time by double-clicking them in the feature list. Any box accepts maths, units and
         variables (set them up with Variables in the toolbar), e.g. <kbd>wall * 2</kbd> or <kbd>1/4 in</kbd>.
         Import brings in STEP or STL files from other programs (or drag one onto the window).
-        Your latest work is kept in this browser automatically; use Save to keep a .partsmith file on your computer.
-        Install (top bar) makes PartSmith a desktop app with its own window that works offline; in Safari on a Mac,
+        Your latest work is kept in this browser automatically; use Save to keep a .juracad file on your computer.
+        Install (top bar) makes JuraCAD a desktop app with its own window that works offline; in Safari on a Mac,
         use File › Add to Dock.
       </p>
       <h3 className="help-heading">Finding tools</h3>
@@ -90,12 +90,12 @@ export function HelpDialog() {
       </p>
       <KeyTable rows={rows.sketch} keysFirst />
       <p className="muted small">
-        PartSmith {SHORT_VERSION} ({APP_VERSION}) —{" "}
+        JuraCAD {SHORT_VERSION} ({APP_VERSION}) —{" "}
         <button type="button" className="text-button small-text inline-link" onClick={() => openDialog("whatsNew")}>
           what's new
         </button>
-        . PartSmith is free and open source (MIT). It uses the OpenCascade geometry kernel (LGPL 2.1) via replicad.{" "}
-        <a href="https://github.com/Gm7dha/partsmith" target="_blank" rel="noreferrer">
+        . JuraCAD is free and open source (MIT). It uses the OpenCascade geometry kernel (LGPL 2.1) via replicad.{" "}
+        <a href="https://github.com/Gm7dha/JuraCAD" target="_blank" rel="noreferrer">
           Source on GitHub
         </a>
         .

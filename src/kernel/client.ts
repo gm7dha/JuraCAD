@@ -19,7 +19,7 @@ export class KernelClient {
   private idleWaiters: (() => void)[] = [];
 
   constructor() {
-    this.worker = new Worker(new URL("./kernel.worker.ts", import.meta.url), { type: "module", name: "partsmith-geometry" });
+    this.worker = new Worker(new URL("./kernel.worker.ts", import.meta.url), { type: "module", name: "juracad-geometry" });
 
     let markReady: () => void;
     let markFailed: (e: Error) => void;

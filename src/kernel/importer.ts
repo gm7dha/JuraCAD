@@ -25,7 +25,7 @@ let fileCounter = 0;
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function withFile<T>(bytes: Uint8Array, use: (name: string) => T): T {
   const oc = getOC() as any;
-  const name = `partsmith-import-${++fileCounter}`;
+  const name = `juracad-import-${++fileCounter}`;
   oc.FS.writeFile(`/${name}`, bytes);
   try {
     return use(name);

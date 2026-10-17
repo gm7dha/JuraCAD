@@ -1,10 +1,10 @@
-# PartSmith
+# JuraCAD
 
 **Free, open-source, browser-based parametric CAD — with Onshape-style controls. Design parts to 3D print yourself or to send to a manufacturer.**
 
-▶ **Use it:** https://gm7dha.github.io/partsmith/ (Chrome or Edge recommended)
+▶ **Use it:** https://gm7dha.github.io/JuraCAD/ (Chrome or Edge recommended)
 
-PartSmith runs entirely in your browser. Your designs never leave your computer, there's no account, and it's free.
+JuraCAD runs entirely in your browser. Your designs never leave your computer, there's no account, and it's free.
 
 > **Status: v0.9 preview (Phase 6 done, extras under way).** You can sketch shapes with dimensions and constraints, extrude or revolve them into parts, round, bevel or hollow them,
 > put parts together in assemblies with mates, check they're sound and fit, export STEP, STL or 3MF, and make dimensioned 2D drawings (PDF, SVG, DXF). See the [roadmap](docs/DESIGN.md#roadmap).
@@ -58,10 +58,10 @@ PartSmith runs entirely in your browser. Your designs never leave your computer,
 - **Check model** — confirms each part is closed and watertight, valid and in one piece, finds its thinnest wall,
   and spots separate parts that overlap.
 - **Install it as an app** (Chrome/Edge: the Install app button) so it opens in its own window and works offline;
-  installed, it can open `.partsmith` files you double-click.
+  installed, it can open `.juracad` files you double-click.
 - **Export STEP** (exact shapes — what machine shops and most manufacturers want), **STL** or **3MF** (for 3D printing;
-  3MF keeps part names) in coarse, normal or fine quality. PartSmith checks the model first and warns you about problems.
-- **Save** your design to a `.partsmith` file on your computer and **Open** it again later (or drag the file onto the
+  3MF keeps part names) in coarse, normal or fine quality. JuraCAD checks the model first and warns you about problems.
+- **Save** your design to a `.juracad` file on your computer and **Open** it again later (or drag the file onto the
   window). Your latest work is also kept in the browser automatically.
 
 ## Controls (same as Onshape)
@@ -101,7 +101,7 @@ npm run build      # production build into dist/
 
 ## Licence
 
-PartSmith is MIT licensed (see [LICENSE](LICENSE)).
+JuraCAD is MIT licensed (see [LICENSE](LICENSE)).
 It uses [OpenCascade](https://dev.opencascade.org/) via [replicad-opencascadejs](https://github.com/sgenoud/replicad)
 (LGPL-2.1), [replicad](https://replicad.xyz) (MIT), [three.js](https://threejs.org) (MIT),
 [React](https://react.dev) (MIT) and [Zustand](https://github.com/pmndrs/zustand) (MIT).

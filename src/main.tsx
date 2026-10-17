@@ -21,8 +21,8 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 
 // The browser smoke test (opened with ?smoke) reaches the 3D view to find where to click.
 if (new URLSearchParams(window.location.search).has("smoke")) {
-  (window as unknown as { partsmithViewport: typeof viewportApi }).partsmithViewport = viewportApi;
-  (window as unknown as { partsmithStore: typeof useStore }).partsmithStore = useStore;
+  (window as unknown as { juracadViewport: typeof viewportApi }).juracadViewport = viewportApi;
+  (window as unknown as { juracadStore: typeof useStore }).juracadStore = useStore;
 }
 
 // Light or dark, before the first paint.

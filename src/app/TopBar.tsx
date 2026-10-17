@@ -34,9 +34,9 @@ export function TopBar() {
 
   return (
     <header className="topbar">
-      <div className="brand" title="PartSmith">
+      <div className="brand" title="JuraCAD">
         <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" width={24} height={24} />
-        <span>PartSmith</span>
+        <span>JuraCAD</span>
       </div>
       <input
         className="doc-name"
@@ -70,7 +70,7 @@ export function TopBar() {
           setFresh(false);
           useStore.getState().openDialog("whatsNew");
         }}
-        title="Your PartSmith version — click to see what's new"
+        title="Your JuraCAD version — click to see what's new"
       >
         {SHORT_VERSION}
         <span className="badge-extra"> preview</span>
@@ -78,7 +78,7 @@ export function TopBar() {
       </button>
       <div className="topbar-spacer" />
       {!installed && (
-        <button className="text-button" onClick={() => (canInstall ? void installApp() : setInstallHelp(true))} title="Install PartSmith as an app on this computer — it then opens in its own window and works offline">
+        <button className="text-button" onClick={() => (canInstall ? void installApp() : setInstallHelp(true))} title="Install JuraCAD as an app on this computer — it then opens in its own window and works offline">
           <Icons.Export size={18} style={{ transform: "rotate(180deg)" }} /> <span className="button-label">Install</span>
         </button>
       )}
@@ -94,13 +94,13 @@ export function TopBar() {
       >
         <Icons.New size={18} /> <span className="button-label">New</span>
       </button>
-      <button className="text-button" onClick={() => void openFromFile()} title={`Open a .partsmith file (${shortcut(platform, "O")})`}>
+      <button className="text-button" onClick={() => void openFromFile()} title={`Open a .juracad file (${shortcut(platform, "O")})`}>
         <Icons.Open size={18} /> <span className="button-label">Open</span>
       </button>
       <button
         className="text-button"
         onClick={() => void saveToFile()}
-        title={`Save to a .partsmith file on your computer (${shortcut(platform, "S")}). ${shortcut(platform, "S", { shift: true })} saves a copy under a new name.`}
+        title={`Save to a .juracad file on your computer (${shortcut(platform, "S")}). ${shortcut(platform, "S", { shift: true })} saves a copy under a new name.`}
       >
         <Icons.Save size={18} /> <span className="button-label">Save</span>
       </button>
@@ -120,8 +120,8 @@ export function TopBar() {
         <Icons.Help />
       </button>
       {installHelp && (
-        <Modal title="Install PartSmith as an app" onClose={() => setInstallHelp(false)} width={480}>
-          <p>Installed, PartSmith opens in its own window, has its own icon, and works without an internet connection.</p>
+        <Modal title="Install JuraCAD as an app" onClose={() => setInstallHelp(false)} width={480}>
+          <p>Installed, JuraCAD opens in its own window, has its own icon, and works without an internet connection.</p>
           <ol className="install-steps">
             {installSteps(browserKind()).map((step) => (
               <li key={step}>{step}</li>

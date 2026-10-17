@@ -6,6 +6,7 @@ import { fromUnit, lengthNumber } from "../model/units";
 import { viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 
+// Browser-storage key from the app's old name (PartSmith); kept so the chosen printer is remembered.
 const PRINTER_KEY = "partsmith.printer";
 
 /** Turn the print bed preview on, with the printer chosen last time. */

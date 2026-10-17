@@ -23,7 +23,7 @@ import { addOffsets, putExplodeStep, removeExplodeStep, stepDistance, stepOffset
 import type { Vec3 } from "../src/assembly/math";
 import { MATE_TYPES, solveAssembly } from "../src/assembly/mates";
 import { emptyDocument } from "../src/model/document";
-import type { Assembly, Instance, Mate, PartSmithDocument } from "../src/model/types";
+import type { Assembly, Instance, Mate, JuraCADDocument } from "../src/model/types";
 
 const close = (a: number[], b: number[], digits = 6) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], digits));
 const pick = (partId: string) => ({ partId, ref: { kind: "face" as const, surface: "PLANE", center: [0, 0, 0] as Vec3, normal: [0, 0, 1] as Vec3 } });
@@ -205,7 +205,7 @@ describe("exploded view steps", () => {
 
   it("forgets parts that a pattern change removes", () => {
     const seeded: Assembly = { ...base, instances: [...base.instances] };
-    let doc: PartSmithDocument = { ...emptyDocument(), assemblies: [seeded] };
+    let doc: JuraCADDocument = { ...emptyDocument(), assemblies: [seeded] };
     let k = 0;
     const pattern = { id: "pt", name: "Pattern 1", kind: "linear" as const, seeds: ["a"], count: 3, amount: "20", axis: "x" as const };
     doc = updateAssembly(doc, "A", (a) => syncPattern(a, pattern, () => `copy${++k}`));
@@ -217,7 +217,7 @@ describe("exploded view steps", () => {
   });
 
   it("can show only the steps (no spread), and saves and reopens them", () => {
-    let doc: PartSmithDocument = { ...emptyDocument(), assemblies: [putExplodeStep(base, { id: "s1", instances: ["a", "zzz"], axis: "x", distance: "12" })] };
+    let doc: JuraCADDocument = { ...emptyDocument(), assemblies: [putExplodeStep(base, { id: "s1", instances: ["a", "zzz"], axis: "x", distance: "12" })] };
     doc = setExplode(doc, "A", 0);
     expect(doc.assemblies![0].explode).toBe(0);
     expect(setExplode(doc, "A", null).assemblies![0].explode).toBeUndefined();

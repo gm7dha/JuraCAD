@@ -72,17 +72,17 @@ export function ExportDialog() {
     try {
       if (format === "step") {
         const { step, partCount } = await getKernel().exportStep(partIds, doc.appearance, chosenInstances);
-        const name = `${safeFileName(fileName, "partsmith")}.step`;
+        const name = `${safeFileName(fileName, "juracad")}.step`;
         downloadFile(step, name, "model/step");
         showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})`, "success");
       } else if (format === "3mf") {
         const { data, triangleCount } = await getKernel().export3mf(partIds, quality, doc.name, doc.appearance, chosenInstances);
-        const name = `${safeFileName(fileName, "partsmith")}.3mf`;
+        const name = `${safeFileName(fileName, "juracad")}.3mf`;
         downloadFile(data, name, "model/3mf");
         showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
       } else {
         const { stl, triangleCount } = await getKernel().exportStl(partIds, quality, chosenInstances);
-        const name = `${safeFileName(fileName, "partsmith")}.stl`;
+        const name = `${safeFileName(fileName, "juracad")}.stl`;
         downloadFile(stl, name, "model/stl");
         showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
       }
@@ -207,7 +207,7 @@ export function ExportDialog() {
         </div>
       </div>
       <p className="muted small">
-        Units are millimetres. PartSmith checks the model before saving and warns you about any problems. Not sure which
+        Units are millimetres. JuraCAD checks the model before saving and warns you about any problems. Not sure which
         format? Send STEP — almost every manufacturer can use it.
       </p>
       {error && <p className="dialog-error">{error}</p>}

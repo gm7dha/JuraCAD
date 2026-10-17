@@ -55,7 +55,7 @@ export function modelXml(parts: MeshPart[], title: string): string {
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<model unit="millimeter" xml:lang="en-GB" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
     ` <metadata name="Title">${xmlEscape(title)}</metadata>`,
-    ' <metadata name="Application">PartSmith</metadata>',
+    ' <metadata name="Application">JuraCAD</metadata>',
     " <resources>",
   ];
   // Colours (if any part has one) go in a material list that each object points to.
@@ -95,7 +95,7 @@ const RELS = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 /** A complete .3mf file. */
-export function write3mf(parts: MeshPart[], title = "PartSmith model"): Uint8Array {
+export function write3mf(parts: MeshPart[], title = "JuraCAD model"): Uint8Array {
   return zipStored([
     { name: "[Content_Types].xml", data: CONTENT_TYPES },
     { name: "_rels/.rels", data: RELS },

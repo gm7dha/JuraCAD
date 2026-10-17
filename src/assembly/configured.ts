@@ -7,7 +7,7 @@
  */
 import { activeConfiguration } from "../model/configurations";
 import { studioOfFeature } from "../model/studios";
-import type { Instance, PartSmithDocument } from "../model/types";
+import type { Instance, JuraCADDocument } from "../model/types";
 
 /** The id of the part (as built) an instance shows. */
 export const meshIdOf = (i: Pick<Instance, "partId" | "configuration">): string => (i.configuration ? `${i.partId}@${i.configuration}` : i.partId);
@@ -21,7 +21,7 @@ export function findMesh<T extends { id: string }>(parts: readonly T[], id: stri
 }
 
 /** The Part Studios to build in other configurations: (studio, configuration) pairs used by instances, other than the one on show. */
-export function configurationsInUse(doc: PartSmithDocument): { studioId: string; configurationId: string }[] {
+export function configurationsInUse(doc: JuraCADDocument): { studioId: string; configurationId: string }[] {
   const shown = activeConfiguration(doc)?.id;
   const known = new Set((doc.configurations ?? []).map((c) => c.id));
   const out: { studioId: string; configurationId: string }[] = [];
@@ -37,7 +37,7 @@ export function configurationsInUse(doc: PartSmithDocument): { studioId: string;
 }
 
 /** "Bracket (Large)" — a part's name with its configuration, when it has one. */
-export function configuredName(doc: PartSmithDocument, name: string, configuration?: string): string {
+export function configuredName(doc: JuraCADDocument, name: string, configuration?: string): string {
   const c = configuration ? doc.configurations?.find((x) => x.id === configuration) : undefined;
   return c ? `${name} (${c.name})` : name;
 }

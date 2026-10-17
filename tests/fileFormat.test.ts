@@ -12,7 +12,7 @@ function sampleDoc() {
   return { ...doc, variables: [{ id: "v1", name: "wall", value: "2" }] };
 }
 
-describe(".partsmith files", () => {
+describe(".juracad files", () => {
   it("save and open back exactly", () => {
     const doc = sampleDoc();
     const text = serializeDocument(doc, new Date("2026-01-02T03:04:05Z"));
@@ -23,13 +23,13 @@ describe(".partsmith files", () => {
 
   it("explain files that can't be opened", () => {
     const bad = (text: string) => {
-      const r = readDocumentFile(text, "thing.partsmith");
+      const r = readDocumentFile(text, "thing.juracad");
       return r.ok ? "" : r.error;
     };
     expect(bad("ISO-10303-21;\nHEADER;")).toMatch(/STEP file/);
     expect(bad("solid part\nfacet normal 0 0 1")).toMatch(/STL/);
-    expect(bad("hello")).toMatch(/isn't a PartSmith file/);
-    expect(bad('{"format":"other"}')).toMatch(/isn't a PartSmith file/);
+    expect(bad("hello")).toMatch(/isn't a JuraCAD design file/);
+    expect(bad('{"format":"other"}')).toMatch(/isn't a JuraCAD design file/);
     expect(bad('{"format":"partsmith","version":2,"features":[]}')).toMatch(/newer version/);
     expect(bad('{"format":"partsmith","version":1,"features":[{"id":5}]}')).toMatch(/damaged/);
   });
@@ -56,14 +56,14 @@ describe("opening and saving in the app", () => {
     const before = s().history.present;
     expect(s().savedDoc).toBeNull();
 
-    s().openDocument(sampleDoc(), "Bracket.partsmith");
+    s().openDocument(sampleDoc(), "Bracket.juracad");
     expect(s().history.present.name).toBe("Bracket");
     expect(s().savedDoc).toBe(s().history.present);
-    expect(s().fileName).toBe("Bracket.partsmith");
+    expect(s().fileName).toBe("Bracket.juracad");
 
     s().renameDocument("Bracket v2");
     expect(s().savedDoc).not.toBe(s().history.present);
-    s().markSaved("Bracket v2.partsmith");
+    s().markSaved("Bracket v2.juracad");
     expect(s().savedDoc).toBe(s().history.present);
 
     s().undo();

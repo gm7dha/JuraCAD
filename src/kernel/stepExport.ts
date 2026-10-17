@@ -55,7 +55,7 @@ export function writeStep(parts: StepPart[]): Uint8Array {
     oc.Interface_Static.SetIVal("write.precision.mode", 0);
     oc.Interface_Static.SetIVal("write.step.assembly", 2);
     oc.Interface_Static.SetIVal("write.step.schema", 5);
-    const file = "partsmith-export.step";
+    const file = "juracad-export.step";
     const progress = keep(new oc.Message_ProgressRange());
     if (!writer.Perform(doc, file, progress)) throw new Error("The STEP file couldn't be written.");
     const bytes = new Uint8Array(oc.FS.readFile("/" + file));

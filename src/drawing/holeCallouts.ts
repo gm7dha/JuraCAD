@@ -9,7 +9,7 @@ import type { ViewHole, ViewProjection } from "../kernel/protocol";
 import { evaluate } from "../model/expr";
 import { SCREW_SIZES } from "../model/holes";
 import { allFeatures, studioOfFeature, studioFeatures } from "../model/studios";
-import type { Drawing, Feature, PartSmithDocument } from "../model/types";
+import type { Drawing, Feature, JuraCADDocument } from "../model/types";
 import { styledLength, type DimStyle } from "./dimensions";
 
 type P2 = [number, number];
@@ -23,7 +23,7 @@ export interface TapSize {
 }
 
 /** Tapped hole sizes made by the Hole features that could be on this drawing's part. */
-export function tapSizes(doc: PartSmithDocument, drawing: Pick<Drawing, "source">): TapSize[] {
+export function tapSizes(doc: JuraCADDocument, drawing: Pick<Drawing, "source">): TapSize[] {
   if (drawing.source?.kind !== "part") return [];
   const studio = studioOfFeature(doc, drawing.source.id);
   const features: Feature[] = studio ? studioFeatures(doc, studio) : allFeatures(doc);

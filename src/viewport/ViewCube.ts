@@ -6,7 +6,7 @@ export type StandardView = "front" | "back" | "left" | "right" | "top" | "bottom
 
 /**
  * Direction from the model towards the camera for each standard view.
- * PartSmith is Z-up like Onshape: Front looks along +Y, Top looks down -Z.
+ * JuraCAD is Z-up like Onshape: Front looks along +Y, Top looks down -Z.
  * Top/Bottom are nudged slightly so "up" on screen stays well defined.
  */
 export const VIEW_DIRECTIONS: Record<StandardView, THREE.Vector3> = {

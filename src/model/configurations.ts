@@ -9,7 +9,7 @@
  */
 import { newId } from "./document";
 import { allFeatures, mapAllFeatures } from "./studios";
-import type { PartSmithDocument } from "./types";
+import type { JuraCADDocument } from "./types";
 import { applyVariables } from "./variables";
 
 export interface Configuration {
@@ -22,7 +22,7 @@ export interface Configuration {
 }
 
 /** The document's state now, as a configuration's contents. */
-export function snapshot(doc: PartSmithDocument): Pick<Configuration, "values" | "suppressed"> {
+export function snapshot(doc: JuraCADDocument): Pick<Configuration, "values" | "suppressed"> {
   return {
     values: Object.fromEntries((doc.variables ?? []).map((v) => [v.id, v.value])),
     suppressed: allFeatures(doc)
@@ -32,13 +32,13 @@ export function snapshot(doc: PartSmithDocument): Pick<Configuration, "values" |
 }
 
 /** The configuration on show (null when there are none). */
-export function activeConfiguration(doc: PartSmithDocument): Configuration | null {
+export function activeConfiguration(doc: JuraCADDocument): Configuration | null {
   const list = doc.configurations ?? [];
   return list.find((c) => c.id === doc.activeConfiguration) ?? list[0] ?? null;
 }
 
 /** Save the current state into the configuration on show. */
-function remember(doc: PartSmithDocument): PartSmithDocument {
+function remember(doc: JuraCADDocument): JuraCADDocument {
   const active = activeConfiguration(doc);
   if (!active) return doc;
   const now = snapshot(doc);
@@ -46,7 +46,7 @@ function remember(doc: PartSmithDocument): PartSmithDocument {
 }
 
 /** "Configuration 2", "Configuration 3"… */
-export function nextConfigurationName(doc: PartSmithDocument): string {
+export function nextConfigurationName(doc: JuraCADDocument): string {
   const used = new Set((doc.configurations ?? []).map((c) => c.name));
   let n = (doc.configurations?.length ?? 0) + 1;
   while (used.has(`Configuration ${n}`)) n++;
@@ -57,7 +57,7 @@ export function nextConfigurationName(doc: PartSmithDocument): string {
  * Add a configuration that starts as a copy of the current state, and show it.
  * The very first time, the current state is kept as "Default" too.
  */
-export function addConfiguration(doc: PartSmithDocument, name: string, id = newId("cfg")): PartSmithDocument {
+export function addConfiguration(doc: JuraCADDocument, name: string, id = newId("cfg")): JuraCADDocument {
   let next = remember(doc);
   const list = [...(next.configurations ?? [])];
   if (!list.length) list.push({ id: newId("cfg"), name: "Default", ...snapshot(next) });
@@ -67,7 +67,7 @@ export function addConfiguration(doc: PartSmithDocument, name: string, id = newI
 }
 
 /** Show another configuration: its variable values and suppressed features come back. */
-export function switchConfiguration(doc: PartSmithDocument, id: string): PartSmithDocument {
+export function switchConfiguration(doc: JuraCADDocument, id: string): JuraCADDocument {
   const target = doc.configurations?.find((c) => c.id === id);
   if (!target || activeConfiguration(doc)?.id === id) return doc;
   const saved = remember(doc);
@@ -78,14 +78,14 @@ export function switchConfiguration(doc: PartSmithDocument, id: string): PartSmi
   return variables.length ? applyVariables(next, variables) : next;
 }
 
-export function renameConfiguration(doc: PartSmithDocument, id: string, name: string): PartSmithDocument {
+export function renameConfiguration(doc: JuraCADDocument, id: string, name: string): JuraCADDocument {
   const n = name.trim();
   if (!n) return doc;
   return { ...doc, configurations: (doc.configurations ?? []).map((c) => (c.id === id ? { ...c, name: n.slice(0, 60) } : c)) };
 }
 
 /** Forget a configuration (the one on show stays as it is; with one left, the list goes). */
-export function removeConfiguration(doc: PartSmithDocument, id: string): PartSmithDocument {
+export function removeConfiguration(doc: JuraCADDocument, id: string): JuraCADDocument {
   const left = (doc.configurations ?? []).filter((c) => c.id !== id);
   const { configurations: _c, activeConfiguration: _a, ...rest } = doc;
   if (left.length < 2) return rest;

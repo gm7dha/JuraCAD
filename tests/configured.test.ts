@@ -6,13 +6,13 @@ import { syncPattern } from "../src/assembly/patterns";
 import { addConfiguration } from "../src/model/configurations";
 import { emptyDocument } from "../src/model/document";
 import { defaultParams } from "../src/model/features";
-import type { Assembly, Instance, PartSmithDocument } from "../src/model/types";
+import type { Assembly, Instance, JuraCADDocument } from "../src/model/types";
 
 const P = { position: [0, 0, 0] as [number, number, number], rotation: [0, 0, 0, 1] as [number, number, number, number] };
 const inst = (id: string, configuration?: string): Instance => ({ id, partId: "b1", name: `Bracket <${id}>`, placement: P, fixed: false, ...(configuration ? { configuration } : {}) });
 
-function doc(instances: Instance[]): PartSmithDocument {
-  let d: PartSmithDocument = { ...emptyDocument(), features: [{ id: "b1", name: "Box 1", type: "box", operation: "new", suppressed: false, params: defaultParams("box") }] };
+function doc(instances: Instance[]): JuraCADDocument {
+  let d: JuraCADDocument = { ...emptyDocument(), features: [{ id: "b1", name: "Box 1", type: "box", operation: "new", suppressed: false, params: defaultParams("box") }] };
   d = addConfiguration(d, "Large", "large");
   const def = d.configurations![0].id;
   // Show Default in the Part Studio.

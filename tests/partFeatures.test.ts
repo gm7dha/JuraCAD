@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { addFeature, createFeature, emptyDocument, parseDocument } from "../src/model/document";
 import { visibleParamKeys } from "../src/model/features";
-import type { Feature, PartSmithDocument } from "../src/model/types";
+import type { Feature, JuraCADDocument } from "../src/model/types";
 
-const roundTrip = (doc: PartSmithDocument) => parseDocument(JSON.parse(JSON.stringify(doc)));
+const roundTrip = (doc: JuraCADDocument) => parseDocument(JSON.parse(JSON.stringify(doc)));
 
 describe("saving part modelling options", () => {
   it("opens designs with an Intersect feature (they used to fail to open)", () => {

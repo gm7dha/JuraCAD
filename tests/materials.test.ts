@@ -11,7 +11,7 @@ describe("materials", () => {
     // No material set: PLA.
     expect(materialOf(undefined).key).toBe("pla");
   });
-  it("only keep materials PartSmith knows when a file is opened", () => {
+  it("only keep materials JuraCAD knows when a file is opened", () => {
     expect(parseMaterials({ p1: "steel", p2: "unobtainium", p3: 5 })).toEqual({ p1: "steel" });
   });
 });

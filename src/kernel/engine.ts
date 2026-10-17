@@ -1573,7 +1573,7 @@ export class GeometryEngine {
       }
       const def = FEATURE_DEFS[feature.type];
       if (!def) {
-        featureErrors[feature.id] = "PartSmith doesn't know this kind of feature.";
+        featureErrors[feature.id] = "JuraCAD doesn't know this kind of feature.";
         continue;
       }
       if (isPickFeature(feature.type)) {
@@ -3600,7 +3600,7 @@ export class GeometryEngine {
     });
     const triangleCount = meshes.reduce((n, m) => n + m.triangles.length / 3, 0);
     const names = chosen.map((p) => p.name).join(", ");
-    return { stl: writeBinaryStl(meshes, `PartSmith export: ${names}`), triangleCount };
+    return { stl: writeBinaryStl(meshes, `JuraCAD export: ${names}`), triangleCount };
     });
   }
 

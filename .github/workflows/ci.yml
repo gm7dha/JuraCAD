@@ -17,6 +17,11 @@ jobs:
   build:
     name: Build and test
     runs-on: ubuntu-latest
+    env:
+      # The site lives at https://gm7dha.github.io/<repo name>/, so the build and the
+      # smoke test use the repository's name as the base path. Renaming the repo
+      # needs no code change: run this workflow again (Actions › Run workflow).
+      BASE_PATH: /${{ github.event.repository.name }}/
     steps:
       - uses: actions/checkout@v5
 
