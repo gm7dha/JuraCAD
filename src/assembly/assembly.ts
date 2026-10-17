@@ -159,8 +159,11 @@ export function removeInstances(doc: PartSmithDocument, assemblyId: string, ids:
 }
 
 function withMates(a: Assembly, mates: Mate[]): Assembly {
-  const { mates: _old, ...rest } = a;
-  return mates.length ? { ...rest, mates } : rest;
+  const { mates: _old, relations: oldRelations, ...rest } = a;
+  // Gear, rack and screw relations go with the mates they link.
+  const ids = new Set(mates.map((m) => m.id));
+  const relations = (oldRelations ?? []).filter((r) => ids.has(r.driver) && ids.has(r.driven));
+  return { ...rest, ...(mates.length ? { mates } : {}), ...(relations.length ? { relations } : {}) };
 }
 
 /** Add a mate, or replace the one with the same id. */

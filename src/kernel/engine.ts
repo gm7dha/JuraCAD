@@ -1115,6 +1115,7 @@ export class GeometryEngine {
     // Every size below is worked out with the document's variables.
     setCurrentScope(variables);
     const wanted = new Set(studios.map((s) => s.id));
+    this.studiosWanted = wanted;
     for (const [id, b] of this.builds) {
       if (!wanted.has(id)) {
         this.disposeBuild(b);
@@ -1221,6 +1222,8 @@ export class GeometryEngine {
 
   /** Part Studios built so far in this rebuild (Derived may only use those). */
   private studiosBuilt = new Set<string>();
+  /** The Part Studios in the document (being built now). */
+  private studiosWanted = new Set<string>();
 
   /** The part a Derived feature brings in, as built in its own Part Studio (null if it can't be found). */
   private derivedSource(feature: Feature): BuiltPart | null {
@@ -1233,7 +1236,7 @@ export class GeometryEngine {
   private derivedSolid(feature: Feature, v: Record<string, number>): Shape3D {
     const d = feature.derived;
     if (!d) throw new Error("Choose a part from another Part Studio.");
-    if (!this.builds.has(d.studioId)) throw new Error("The Part Studio this part came from has been deleted.");
+    if (!this.studiosWanted.has(d.studioId)) throw new Error("The Part Studio this part came from has been deleted.");
     if (!this.studiosBuilt.has(d.studioId)) throw new Error("That Part Studio uses parts from this one, so this one can't use its parts too.");
     const src = this.derivedSource(feature);
     if (!src) throw new Error("That part isn't in its Part Studio any more. Edit this and choose another.");

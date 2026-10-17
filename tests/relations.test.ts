@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAssemblies } from "../src/assembly/assembly";
+import { parseAssemblies, removeInstances, removeMate } from "../src/assembly/assembly";
+import { IDENTITY } from "../src/assembly/math";
+import { emptyDocument } from "../src/model/document";
 import type { Vec3 } from "../src/assembly/math";
 import { applyRelations, drivenValue, nextRelationName } from "../src/assembly/relations";
 import type { Assembly, Mate, MateType } from "../src/model/types";
@@ -67,5 +69,17 @@ describe("mate relations", () => {
     const [back] = parseAssemblies(JSON.parse(JSON.stringify([a])));
     expect(back.relations).toEqual([{ id: "r1", name: "Gear 1", kind: "gear", driver: "g1", driven: "g2", ratio: "2", reverse: true }]);
     expect(nextRelationName(back, "gear")).toBe("Gear 2");
+  });
+
+  it("go when a mate they link (or its part) is deleted", () => {
+    const doc = { ...emptyDocument(), assemblies: [asm([mate("g1", "revolute"), mate("g2", "revolute"), mate("g3", "revolute")], [
+      { id: "r1", name: "Gear 1", kind: "gear" as const, driver: "g1", driven: "g2", ratio: "2" },
+      { id: "r2", name: "Gear 2", kind: "gear" as const, driver: "g1", driven: "g3", ratio: "3" },
+    ])] };
+    doc.assemblies[0].instances = [{ id: "base", partId: "p", name: "base", placement: IDENTITY, fixed: true }, ...["g1", "g2", "g3"].map((m) => ({ id: `i_${m}`, partId: "p", name: m, placement: IDENTITY, fixed: false }))];
+    const noG2 = removeMate(doc, "a", "g2").assemblies![0];
+    expect(noG2.relations?.map((r) => r.id)).toEqual(["r2"]);
+    const noG1 = removeInstances(doc, "a", ["i_g1"]).assemblies![0];
+    expect(noG1.relations).toBe(undefined);
   });
 });
