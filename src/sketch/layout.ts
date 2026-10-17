@@ -1,7 +1,7 @@
 /**
  * Where to draw dimension lines/labels and constraint badges, in sketch mm.
  */
-import { curveById, ellipsePoints, pointPos, radiusOf, splinePath } from "./ops";
+import { angleRays, curveById, ellipsePoints, pointPos, radiusOf, splinePath } from "./ops";
 import { isDimension, type SketchArc, type SketchCircle, type SketchConstraint, type SketchData, type SketchLine } from "./types";
 
 type Pt = [number, number];
@@ -73,19 +73,32 @@ export function dimensionLayout(s: SketchData, c: SketchConstraint): DimensionLa
         return { lines: [[from, rim], [rim, label]], label, anchor: centre };
       }
       case "angle": {
-        const [a1, b1] = linePts(s, curveById(s, c.refs[0]) as SketchLine);
-        const [a2, b2] = linePts(s, curveById(s, c.refs[1]) as SketchLine);
-        // Corner = where the two lines (extended) cross; fall back to their midpoints.
-        const d1 = sub(b1, a1);
-        const d2 = sub(b2, a2);
-        const den = d1[0] * d2[1] - d1[1] * d2[0];
-        let corner: Pt;
-        if (Math.abs(den) > 1e-12) {
-          const t = ((a2[0] - a1[0]) * d2[1] - (a2[1] - a1[1]) * d2[0]) / den;
-          corner = add(a1, scale(d1, t));
-        } else corner = mid(mid(a1, b1), mid(a2, b2));
+        // An arc round the corner between the two rays, as far out as the label; the lines are
+        // extended (dashed-looking thin lines) out to the arc where they stop short of it.
+        const { corner, u, w } = angleRays(s, c);
+        const r = Math.max(Math.hypot(offset[0], offset[1]), 2);
         const label = add(corner, offset);
-        return { lines: [[corner, label]], label, anchor: corner };
+        const a0 = Math.atan2(u[1], u[0]);
+        let sweep = Math.atan2(u[0] * w[1] - u[1] * w[0], u[0] * w[0] + u[1] * w[1]);
+        if (Math.abs(sweep) < 1e-9) sweep = Math.PI;
+        const steps = Math.max(8, Math.ceil((Math.abs(sweep) / (2 * Math.PI)) * 96));
+        const lines: Segment2[] = [];
+        let prev: Pt = add(corner, scale(u, r));
+        for (let i = 1; i <= steps; i++) {
+          const a = a0 + (sweep * i) / steps;
+          const p: Pt = add(corner, [r * Math.cos(a), r * Math.sin(a)]);
+          lines.push([prev, p]);
+          prev = p;
+        }
+        for (const [ray, ref] of [
+          [u, c.refs[0]],
+          [w, c.refs[1]],
+        ] as [Pt, string][]) {
+          const [p, q] = linePts(s, curveById(s, ref) as SketchLine);
+          const reach = Math.max(dotp(sub(p, corner), ray), dotp(sub(q, corner), ray));
+          if (reach < r) lines.push([add(corner, scale(ray, Math.max(reach, 0))), add(corner, scale(ray, r))]);
+        }
+        return { lines, label, anchor: corner };
       }
       default:
         return null;

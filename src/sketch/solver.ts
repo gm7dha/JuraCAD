@@ -328,10 +328,14 @@ function buildSystem(sketch: SketchData): System {
         const d1 = dir(a);
         const d2 = dir(b);
         const target = ((con.extra?.[0] ?? 1) * value * Math.PI) / 180;
+        // Which way along each line the measured angle opens (see angleRays in ops.ts).
+        const s1 = con.extra?.[1] ?? 1;
+        const s2 = con.extra?.[2] ?? 1;
         return {
           size: 1,
           eval: (x, out) => {
-            const u = d1(x), w = d2(x);
+            const u0 = d1(x), w0 = d2(x);
+            const u = [u0[0] * s1, u0[1] * s1], w = [w0[0] * s2, w0[1] * s2];
             const ang = Math.atan2(u[0] * w[1] - u[1] * w[0], u[0] * w[0] + u[1] * w[1]);
             const diff = ang - target;
             out.push(Math.atan2(Math.sin(diff), Math.cos(diff)));

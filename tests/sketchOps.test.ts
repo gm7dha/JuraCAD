@@ -15,10 +15,12 @@ import {
   dragCurve,
   dragPoint,
   measure,
+  moveDimensionLabel,
   pointPos,
   setDimensionValue,
   toggleConstruction,
 } from "../src/sketch/ops";
+import { dimensionLayout } from "../src/sketch/layout";
 import { findRegions } from "../src/sketch/regions";
 import { analyzeSketch } from "../src/sketch/solver";
 import { emptySketch, ORIGIN_ID, type SketchArc, type SketchCircle, type SketchLine } from "../src/sketch/types";
@@ -238,5 +240,41 @@ describe("editing", () => {
     expect(again.error).toBe(undefined);
     expect(pointPos(again.sketch, line.p1)[0]).toBeCloseTo(pointPos(again.sketch, line.p2)[0], 6);
     expect(Math.abs(pointPos(again.sketch, line.p2)[1] - pointPos(again.sketch, line.p1)[1])).toBeCloseTo(5, 6);
+  });
+
+  it("angle dimensions measure the wedge the label sits in, drawn as an arc", () => {
+    // Two lines joined end to end at (20, 0): one along X, the next off at 45°.
+    let s = addLine(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 0 }).sketch;
+    const a = s.curves[0] as SketchLine;
+    s = addLine(s, { x: 20, y: 0, snap: { kind: "point", id: a.p2 } }, { x: 30, y: 10 }).sketch;
+    const b = s.curves[1] as SketchLine;
+    // Label placed above-left of the corner: inside the 135° wedge between the first line (going back) and the second.
+    const inside = addDimension(s, [a.id, b.id], { x: -3, y: 3 });
+    expect(inside.error).toBe(undefined);
+    const dim = inside.sketch.constraints.find((c) => c.id === inside.dimensionId)!;
+    expect(dim.value).toBe("135");
+    expect(dim.extra!.slice(1)).toEqual([-1, 1]);
+    // Placed above-right: the 45° wedge.
+    const outside = addDimension(s, [a.id, b.id], { x: 3, y: 1 });
+    expect(outside.sketch.constraints.find((c) => c.id === outside.dimensionId)!.value).toBe("45");
+    // The arc runs round the corner at the label's distance, with the first line extended out to meet it.
+    const layout = dimensionLayout(inside.sketch, dim)!;
+    expect(layout.anchor).toEqual([20, 0]);
+    const r = Math.hypot(3, 3);
+    for (const [p] of layout.lines.slice(0, 8)) expect(Math.hypot(p[0] - 20, p[1])).toBeCloseTo(r, 6);
+    expect(layout.lines.length).toBeGreaterThan(8);
+    // Dragging the label into the other wedge re-measures it as 45° without moving the lines.
+    const moved = moveDimensionLabel(inside.sketch, dim.id, { x: 3, y: 1 });
+    const after = moved.constraints.find((c) => c.id === dim.id)!;
+    expect(after.value).toBe("45");
+    expect(after.extra!.slice(1)).toEqual([1, 1]);
+    expect(pointPos(moved, b.p2)).toEqual(pointPos(inside.sketch, b.p2));
+    // Setting the inside angle to 90° makes the lines square to each other (measured in that wedge).
+    const square = setDimensionValue(inside.sketch, dim.id, "90");
+    expect(square.error).toBe(undefined);
+    expect(measure(square.sketch, square.sketch.constraints.find((c) => c.id === dim.id)!)).toBeCloseTo(90, 6);
+    const [p1, p2] = [pointPos(square.sketch, a.p1), pointPos(square.sketch, a.p2)];
+    const [q1, q2] = [pointPos(square.sketch, b.p1), pointPos(square.sketch, b.p2)];
+    expect((p2[0] - p1[0]) * (q2[0] - q1[0]) + (p2[1] - p1[1]) * (q2[1] - q1[1])).toBeCloseTo(0, 6);
   });
 });
