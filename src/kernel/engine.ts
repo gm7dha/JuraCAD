@@ -19,7 +19,7 @@ import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid } from "./surface";
-import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
+import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
@@ -961,6 +961,23 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         edges.forEach((e) => e.delete());
       }
     }
+    case "ruled": {
+      const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
+      if (!picks.length) throw new Error("Click the edges to sweep the strips from (on any parts).");
+      const frame = planeFrame(feature.neutral ?? { kind: "default", name: "Top" });
+      const sign = feature.flipSide ? -1 : 1;
+      const edges: Edge[] = [];
+      try {
+        for (const partId of new Set(picks.map((p) => p.partId))) {
+          const part = parts.find((p) => p.id === partId);
+          if (!part) throw new Error("A part the edges were on no longer exists. Edit this and pick the edges again.");
+          edges.push(...findPickedEdges(part.shape, picks.filter((p) => p.partId === partId)));
+        }
+        return ruledSurface(edges, [frame.n[0] * sign, frame.n[1] * sign, frame.n[2] * sign], v.distance, v.angle);
+      } finally {
+        edges.forEach((e) => e.delete());
+      }
+    }
     case "offsetSurface": {
       const pick = feature.picks?.find((p) => p.ref.kind === "face");
       if (!pick) throw new Error("Click a face of the surface to offset.");
@@ -1353,7 +1370,7 @@ export class GeometryEngine {
       }
 
       // Surfaces are always new parts; Enclose closes surfaces up into a solid.
-      if (feature.surface || feature.type === "fill" || feature.type === "offsetSurface" || feature.type === "enclose") {
+      if (feature.surface || feature.type === "fill" || feature.type === "offsetSurface" || feature.type === "enclose" || feature.type === "ruled") {
         if (feature.type === "enclose") {
           const r = this.applyEnclose(feature, partCounter + 1);
           if (r.error) featureErrors[feature.id] = r.error;

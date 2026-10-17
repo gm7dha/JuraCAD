@@ -190,22 +190,23 @@ function ReplaceFaceOptions() {
   );
 }
 
-/** Draft: the neutral plane, and which way the part pulls out. */
+/** Draft: the neutral plane, and which way the part pulls out. Ruled surface: the plane the strips run square to. */
 function DraftOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
-  if (draft?.type !== "draft") return null;
+  if (draft?.type !== "draft" && draft?.type !== "ruled") return null;
+  const ruled = draft.type === "ruled";
   const neutral = draft.neutral ?? { kind: "default" as const, name: "Top" as const };
   const planes = features.filter((f) => f.type === "plane");
   const frames = framesOf(features);
   const value = neutral.kind === "default" ? neutral.name : neutral.planeRef ? `plane:${neutral.planeRef}` : "face";
   return (
     <fieldset className="param-group">
-      <legend>Neutral plane</legend>
+      <legend>{ruled ? "Square to" : "Neutral plane"}</legend>
       <select
         className="full-select"
-        aria-label="Neutral plane"
+        aria-label={ruled ? "Plane the strips run square to" : "Neutral plane"}
         value={value}
         onChange={(e) => {
           const v = e.target.value;
@@ -227,10 +228,12 @@ function DraftOptions() {
         ))}
         {value === "face" && <option value="face">{planeLabel(neutral)}</option>}
       </select>
-      <p className="dialog-hint field-hint">The faces pivot where they meet this plane (or click a plane in the 3D view). Usually the base of the part.</p>
+      <p className="dialog-hint field-hint">
+        {ruled ? "The strips run straight out, square to this plane (or click a plane in the 3D view). Tilt leans them over, across the edge." : "The faces pivot where they meet this plane (or click a plane in the 3D view). Usually the base of the part."}
+      </p>
       <label className="check-row">
         <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked })} />
-        Flip (pull out the other way)
+        {ruled ? "Flip (sweep the other way)" : "Flip (pull out the other way)"}
       </label>
     </fieldset>
   );
@@ -976,7 +979,7 @@ function PicksField() {
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
   const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap", "enclose", "offsetSurface"];
-  const flange = draft?.type === "flange" || draft?.type === "hem" || draft?.type === "fill" || draft?.type === "extendSurface";
+  const flange = draft?.type === "flange" || draft?.type === "hem" || draft?.type === "fill" || draft?.type === "extendSurface" || draft?.type === "ruled";
   if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type) || flange)) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
@@ -997,6 +1000,8 @@ function PicksField() {
           ? "Edges round the opening"
           : draft.type === "extendSurface"
           ? "Edges to extend"
+          : draft.type === "ruled"
+          ? "Edges to sweep from"
           : draft.type === "enclose"
           ? "Surfaces to close up"
           : draft.type === "offsetSurface"
@@ -1027,6 +1032,8 @@ function PicksField() {
             ? "Click every edge round the opening (on any parts, surfaces or solids). They must join up into one ring."
             : draft.type === "extendSurface"
             ? "Click the free edges of a surface. Each is pushed straight on, along the surface, by the distance."
+            : draft.type === "ruled"
+            ? "Click edges on any parts or surfaces. A straight strip is swept from each, square to the plane chosen below."
             : draft.type === "enclose"
             ? "Click a face of each surface. Together they must close up with no gaps — Fill any openings first."
             : draft.type === "offsetSurface"
@@ -1275,7 +1282,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && !draft.surface && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button

@@ -150,7 +150,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     else if (d?.type === "mirror") s.setDraftMirrorPlane(plane);
     else if (d?.type === "plane" && d.planeDef && d.id !== target.id) s.setDraftField({ planeDef: { ...d.planeDef, ref: plane } });
     else if (d?.type === "split" && d.splitDef) s.setDraftField({ splitDef: { ...d.splitDef, plane, toolPartId: undefined } });
-    else if (d?.type === "draft") s.setDraftField({ neutral: plane });
+    else if (d?.type === "draft" || d?.type === "ruled") s.setDraftField({ neutral: plane });
     else if (d?.type === "replaceFace") s.setDraftField({ replaceDef: { target: plane, picking: "faces" } });
     else if (!s.editing) s.selectFeature(target.id);
     return;
@@ -231,7 +231,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     return;
   }
   // Draft: a click on a plane sets the neutral plane.
-  if (s.editing?.draft.type === "draft" && target?.kind === "plane") {
+  if ((s.editing?.draft.type === "draft" || s.editing?.draft.type === "ruled") && target?.kind === "plane") {
     s.setDraftField({ neutral: { kind: "default", name: target.plane } });
     return;
   }
@@ -250,10 +250,10 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
   }
   // Fill: the edges round an opening; Extend surface: the edges to push out.
-  if (s.editing?.draft.type === "fill" || s.editing?.draft.type === "extendSurface") {
+  if (s.editing?.draft.type === "fill" || s.editing?.draft.type === "extendSurface" || s.editing?.draft.type === "ruled") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "edge") {
-      s.showToast(s.editing.draft.type === "fill" ? "Click the edges round the opening (not a face)." : "Click the edges of the surface to extend (not a face).");
+      s.showToast(s.editing.draft.type === "fill" ? "Click the edges round the opening (not a face)." : s.editing.draft.type === "ruled" ? "Click the edges to sweep strips from (not a face)." : "Click the edges of the surface to extend (not a face).");
       return;
     }
     const pick = pickFor(s.parts, target.item);

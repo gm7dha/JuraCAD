@@ -204,6 +204,16 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Grows a surface out past its edges: click the edges to extend and how far (straight on, along the surface).",
     params: [{ key: "distance", label: "Distance", defaultValue: "5", positive: true, group: "size" }],
   },
+  ruled: {
+    type: "ruled",
+    label: "Ruled surface",
+    namePrefix: "Ruled surface",
+    description: "Straight strips swept from edges in one direction (square to a plane), optionally tilted by an angle, as a new surface part. For walls, drafted sides or a guide for Split.",
+    params: [
+      { key: "distance", label: "Distance", defaultValue: "10", positive: true, group: "size" },
+      { key: "angle", label: "Tilt", defaultValue: "0", group: "size", unit: "°" },
+    ],
+  },
   wrap: {
     type: "wrap",
     label: "Wrap",

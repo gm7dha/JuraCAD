@@ -616,3 +616,38 @@ export function gathered(pieces: Shape3D[], surface: boolean): Shape3D {
   }
   return makeCompound(pieces) as Shape3D;
 }
+
+/**
+ * Ruled surface: a straight strip swept from each edge `distance` along
+ * `direction` (a plane's normal), tilted by `angle` degrees across the edge.
+ * The strips are sewn together where they share edges.
+ */
+export function ruledSurface(edges: Edge[], direction: Vec3, distance: number, angle: number): Shape3D {
+  if (edges.length === 0) throw new Error("Click the edges to sweep the strips from.");
+  if (!(distance > 0)) throw new Error("Distance: enter how far the strips go.");
+  const dir = unit(direction);
+  const strips: Shape3D[] = [];
+  try {
+    for (const edge of edges) {
+      let v: Vec3 = dir;
+      if (Math.abs(angle) > 1e-9) {
+        const t = take(edge.tangentAt(0.5));
+        const side = unit(cross(t, dir));
+        if (Math.hypot(...side) < 1e-6) throw new Error("An edge runs along the direction, so it can't be tilted. Pick a different plane or set the tilt to 0.");
+        const rad = (angle * Math.PI) / 180;
+        v = [dir[0] * Math.cos(rad) + side[0] * Math.sin(rad), dir[1] * Math.cos(rad) + side[1] * Math.sin(rad), dir[2] * Math.cos(rad) + side[2] * Math.sin(rad)];
+      }
+      const vec = new Vector([v[0] * distance, v[1] * distance, v[2] * distance]);
+      try {
+        strips.push(asIs(basicFaceExtrusion(edge as unknown as Face, vec)));
+      } catch {
+        throw new Error("Couldn't sweep a strip from one of the edges — it may run along the direction. Pick a different plane.");
+      } finally {
+        vec.delete();
+      }
+    }
+    return strips.length === 1 ? strips.splice(0, 1)[0] : sewn(strips);
+  } finally {
+    strips.forEach((s) => s.delete());
+  }
+}

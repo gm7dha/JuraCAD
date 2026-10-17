@@ -258,6 +258,15 @@ export function Toolbar() {
               title: hasSurface ? "Extend surface — grow a surface out past its edges, straight on. To trim a surface, use Split with a plane" : "Make a surface first",
             },
             {
+              key: "ruled",
+              label: "Ruled surface",
+              icon: <Icons.Ruled />,
+              onClick: () => startCreate("ruled"),
+              disabled: !ready || !hasPart,
+              active: editingType === "ruled",
+              title: hasPart ? "Ruled surface — straight strips swept from edges, square to a plane (or tilted), as a new surface part" : "Make a part first",
+            },
+            {
               key: "offsetSurface",
               label: "Offset surface",
               icon: <Icons.OffsetSurface />,

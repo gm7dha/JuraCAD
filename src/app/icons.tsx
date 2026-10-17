@@ -236,6 +236,13 @@ export const Icons = {
       <path d="M17 6l4 3-3 4" />
     </Svg>
   ),
+  Ruled: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 17c4-5 8 1 12-3s4-4 6-3" />
+      <path d="M3 9c4-5 8 1 12-3s4-4 6-3" opacity="0.5" />
+      <path d="M5 16V8M11 14V6M17 13V5M21 11V3" opacity="0.6" />
+    </Svg>
+  ),
   OffsetSurface: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 15c4-6 8 2 12-4s4-6 6-4" />
