@@ -1312,6 +1312,40 @@ kbd {
   margin: 4px 10px 10px;
 }
 
+.bom-table .bom-qty {
+  text-align: right;
+}
+
+.bom-table .bom-mass {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.bom-total {
+  margin-top: 2px;
+}
+
+.explode-step-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.explode-step {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.explode-step-fields {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.explode-step-fields select {
+  flex: 0 0 auto;
+}
+
 .insert-studio {
   margin: 10px 0 0;
   font-size: 12px;

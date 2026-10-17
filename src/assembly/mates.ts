@@ -40,8 +40,8 @@ export const MATE_TYPES: Record<MateType, MateTypeDef> = {
   fastened: {
     type: "fastened",
     label: "Fasten",
-    description: "Joins the two parts solidly — no movement.",
-    values: [gap, angle(false)],
+    description: "Joins the two parts solidly — no movement. Use the gap, turn and shifts to set exactly where it sits.",
+    values: [gap, angle(false), { key: "dx", label: "Shift X", unit: "mm", free: false }, { key: "dy", label: "Shift Y", unit: "mm", free: false }],
   },
   revolute: {
     type: "revolute",
@@ -255,7 +255,16 @@ const TURN_WEIGHT = 20;
  * are adjusted until the loop closes; only if it can't be closed is a mate
  * reported as disagreeing.
  */
-export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResult {
+export interface SolveOptions {
+  /**
+   * Mates whose movements were just set (typed, dragged or animated): loops
+   * are closed by moving the other mates first, so these stay as set unless
+   * the loop can't close any other way.
+   */
+  hold?: readonly string[];
+}
+
+export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: SolveOptions = {}): SolveResult {
   // Relations (gears, rack and pinion, screws) set the amounts of the mates they drive.
   const related = applyRelations(input);
   const assembly = related.assembly;
@@ -460,9 +469,37 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
 
   let x = start;
   let r = residual(x);
-  if (r.length && free.length && size(r) > 1e-6) x = closeLoops(start, residual, clampX);
+  if (r.length && free.length && size(r) > 1e-6) {
+    // First move only the mates that weren't just set; then, if that can't close the loop, all of them.
+    const hold = new Set(options.hold ?? []);
+    const movable = free.map((_, i) => i).filter((i) => !hold.has(free[i].u.mate.id));
+    if (movable.length && movable.length < free.length) {
+      const expand = (xs: number[]) => {
+        const full = [...start];
+        movable.forEach((i, k) => (full[i] = xs[k]));
+        return full;
+      };
+      const pickMovable = (full: number[]) => movable.map((i) => full[i]);
+      x = expand(closeLoops(pickMovable(start), (xs) => residual(expand(xs)), (xs) => pickMovable(clampX(expand(xs)))));
+    }
+    if (size(residual(x)) > 1e-6) x = closeLoops(x, residual, clampX);
+  }
   const result = spread(x);
   r = residual(x);
+  // When a loop can't close, is a limit what's stopping it? Try again without limits: blame the
+  // amounts that would then go past their limits, if the loop closes that way.
+  const failed = r.some((v) => Math.abs(v) > 1e-3);
+  let atLimit: string | null = null;
+  if (failed && free.some((f) => Number.isFinite(f.min) || Number.isFinite(f.max))) {
+    const loose = closeLoops(x, residual);
+    if (size(residual(loose)) < 1e-4) {
+      const beyond = free.findIndex((f, i) => loose[i] < f.min - 1e-6 || loose[i] > f.max + 1e-6);
+      if (beyond >= 0) {
+        const f = free[beyond];
+        atLimit = `${f.u.mate.name} (${MATE_TYPES[f.u.mate.type].values.find((d) => d.key === f.key)?.label ?? f.key})`;
+      }
+    }
+  }
   // Report the closing mates that still don't fit.
   const groupErrors: Record<string, string> = {};
   result.closures.forEach((c, i) => {
@@ -480,14 +517,19 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup): SolveResul
     if (bad && c.link.u && !mateErrors[c.link.u.mate.id]) {
       mateErrors[c.link.u.mate.id] = c.fixedPair
         ? "Both parts are fixed, so this mate can't move either of them. Unfix one."
-        : "This mate can't be met together with the other mates on the same parts — they pull against each other. Suppress or delete one, or let one of them move (a Hinge or Slider instead of Fasten).";
+        : atLimit
+          ? `This mate can't be met: ${atLimit} has reached its limit. Widen the limit, or move the parts back.`
+          : "This mate can't be met together with the other mates on the same parts — they pull against each other. Suppress or delete one, or let one of them move (a Hinge or Slider instead of Fasten).";
     }
   });
-  // Movements the loop solver changed, so the mate dialogs can show where things ended up.
+  // Movements the loop solver changed, so they can be stored and the next solve starts there —
+  // only when every loop closed (a failed attempt's amounts mean nothing).
   const adjusted: Record<string, Record<string, number>> = {};
-  free.forEach((f, i) => {
-    if (Math.abs(x[i] - start[i]) > 1e-9) (adjusted[f.u.mate.id] ??= {})[f.key] = x[i];
-  });
+  if (!failed) {
+    free.forEach((f, i) => {
+      if (Math.abs(x[i] - start[i]) > 1e-9) (adjusted[f.u.mate.id] ??= {})[f.key] = x[i];
+    });
+  }
   return {
     placements: result.placements,
     mateErrors,
@@ -567,22 +609,32 @@ function solveLinear(M: number[][], b: number[]): number[] | null {
 }
 
 /** Solve using the parts as built now. */
-export function solveWithParts(assembly: Assembly, parts: PartMesh[]): SolveResult {
-  return solveAssembly(assembly, (mate, side) => {
-    // On the part as the instance shows it (which may be another configuration).
-    const instance = assembly.instances.find((i) => i.id === mate[side].instanceId);
-    const mesh = instance?.configuration ? findMesh(parts, meshIdOf(instance)) : undefined;
-    const c = mate[side];
-    const f = mesh
-      ? connectorFrameOnParts([mesh], { pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
-      : connectorFrameOnParts(parts, c);
-    // A mirrored instance shows its part flipped across its own YZ plane: so are its connectors.
-    if (f && instance?.mirrored) {
-      const flipX = (v: Vec3): Vec3 => [-v[0], v[1], v[2]];
-      return { ...f, origin: flipX(f.origin), z: flipX(f.z), x: flipX(f.x) };
-    }
-    return f;
-  });
+export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: SolveOptions = {}): SolveResult {
+  return solveAssembly(assembly, frameLookup(assembly, parts), options);
+}
+
+/**
+ * Where each mate's connectors are on the parts as built now — on the part as
+ * each instance shows it (another configuration, or mirrored).
+ */
+export function frameLookup(assembly: Assembly, parts: PartMesh[]): FrameLookup {
+  return (mate, side) => connectorFrameFor(assembly, parts, mate[side]);
+}
+
+/** One connector's frame on its part, as its instance shows the part (null if it can't be found). */
+export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: MateConnector): Frame | null {
+  // On the part as the instance shows it (which may be another configuration).
+  const instance = assembly.instances.find((i) => i.id === c.instanceId);
+  const mesh = instance?.configuration ? findMesh(parts, meshIdOf(instance)) : undefined;
+  const f = mesh
+    ? connectorFrameOnParts([mesh], { pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
+    : connectorFrameOnParts(parts, c);
+  // A mirrored instance shows its part flipped across its own YZ plane: so are its connectors.
+  if (f && instance?.mirrored) {
+    const flipX = (v: Vec3): Vec3 => [-v[0], v[1], v[2]];
+    return { ...f, origin: flipX(f.origin), z: flipX(f.z), x: flipX(f.x) };
+  }
+  return f;
 }
 
 /** Next free mate name, e.g. "Hinge 2". */
