@@ -116,9 +116,8 @@ export function measure(s: SketchData, c: SketchConstraint): number {
     case "diameter":
       return 2 * radiusOf(s, curveById(s, a) as SketchCircle | SketchArc);
     case "angle": {
-      const [ux, uy] = lineDir(s, curveById(s, a) as SketchLine);
-      const [wx, wy] = lineDir(s, curveById(s, b) as SketchLine);
-      return Math.abs((Math.atan2(ux * wy - uy * wx, ux * wx + uy * wy) * 180) / Math.PI);
+      const { u, w } = angleRays(s, c);
+      return Math.abs((Math.atan2(u[0] * w[1] - u[1] * w[0], u[0] * w[0] + u[1] * w[1]) * 180) / Math.PI);
     }
     case "pointLineDistance": {
       const [px, py] = pointPos(s, a);
@@ -133,6 +132,64 @@ export function measure(s: SketchData, c: SketchConstraint): number {
 }
 
 /** Round a measured value for display / as a starting dimension value. */
+/**
+ * The two rays an angle dimension measures between: from the corner where its
+ * two lines (extended) cross, along each line the way its `extra` flips say
+ * (extra = [sign, flip1, flip2]; older dimensions have just [sign] and run the
+ * way each line was drawn).
+ */
+export function angleRays(s: SketchData, c: SketchConstraint): { corner: [number, number]; u: [number, number]; w: [number, number] } {
+  const l1 = curveById(s, c.refs[0]) as SketchLine;
+  const l2 = curveById(s, c.refs[1]) as SketchLine;
+  const [a1x, a1y] = pointPos(s, l1.p1);
+  const [a2x, a2y] = pointPos(s, l2.p1);
+  const d1 = lineDir(s, l1);
+  const d2 = lineDir(s, l2);
+  const den = d1[0] * d2[1] - d1[1] * d2[0];
+  let corner: [number, number];
+  if (Math.abs(den) > 1e-12) {
+    const t = ((a2x - a1x) * d2[1] - (a2y - a1y) * d2[0]) / den;
+    corner = [a1x + d1[0] * t, a1y + d1[1] * t];
+  } else {
+    const [b1x, b1y] = pointPos(s, l1.p2);
+    const [b2x, b2y] = pointPos(s, l2.p2);
+    corner = [(a1x + b1x + a2x + b2x) / 4, (a1y + b1y + a2y + b2y) / 4];
+  }
+  const s1 = c.extra?.[1] ?? 1;
+  const s2 = c.extra?.[2] ?? 1;
+  const n1 = Math.hypot(d1[0], d1[1]) || 1;
+  const n2 = Math.hypot(d2[0], d2[1]) || 1;
+  return { corner, u: [(d1[0] * s1) / n1, (d1[1] * s1) / n1], w: [(d2[0] * s2) / n2, (d2[1] * s2) / n2] };
+}
+
+/**
+ * The `extra` for an angle dimension whose label sits at `offset` from the
+ * corner: the pair of rays (one along each line, either way) whose angle the
+ * label lies within — so the label's side says whether the inside, outside or
+ * a supplementary angle is meant — and which way round it is measured.
+ */
+export function angleExtraFor(s: SketchData, c: SketchConstraint, offset: [number, number]): number[] {
+  const base = angleRays(s, { ...c, extra: [1, 1, 1] });
+  const L: [number, number] = [offset[0], offset[1]];
+  const cross = (p: [number, number], q: [number, number]) => p[0] * q[1] - p[1] * q[0];
+  let pick: [number, number] = [c.extra?.[1] ?? 1, c.extra?.[2] ?? 1];
+  if (Math.hypot(L[0], L[1]) > 1e-9) {
+    for (const s1 of [1, -1]) {
+      for (const s2 of [1, -1]) {
+        const u: [number, number] = [base.u[0] * s1, base.u[1] * s1];
+        const w: [number, number] = [base.w[0] * s2, base.w[1] * s2];
+        const turn = cross(u, w);
+        if (Math.abs(turn) < 1e-9) continue;
+        // Inside the wedge from u round to w (the short way) when L turns the same way from u, and w from L.
+        if (Math.sign(cross(u, L)) === Math.sign(turn) && Math.sign(cross(L, w)) === Math.sign(turn)) pick = [s1, s2];
+      }
+    }
+  }
+  const u: [number, number] = [base.u[0] * pick[0], base.u[1] * pick[0]];
+  const w: [number, number] = [base.w[0] * pick[1], base.w[1] * pick[1]];
+  return [Math.sign(cross(u, w)) || 1, pick[0], pick[1]];
+}
+
 export function roundValue(v: number): string {
   const r = Math.round(v * 100) / 100;
   return String(Object.is(r, -0) ? 0 : r);
@@ -538,6 +595,8 @@ export function addDimension(
   if (typeof spec === "string") return { sketch: s, error: spec, dimensionId: "" };
   const id = sketchId("d");
   const draft: SketchConstraint = { id, ...spec, value: "0", labelOffset };
+  // An angle measures the wedge the label was placed in (inside, outside or supplementary).
+  if (draft.type === "angle") draft.extra = angleExtraFor(s, draft, [labelOffset.x, labelOffset.y]);
   // Lengths start in the design's units (angles in degrees).
   draft.value = draft.type === "angle" ? roundValue(measure(s, draft)) : startingLength(measure(s, draft));
   const r = checkedSolve(s, { ...s, constraints: [...s.constraints, draft] }, "A dimension", true);
@@ -565,7 +624,18 @@ export function setDimensionValue(s: SketchData, id: string, value: string): Edi
 }
 
 export function moveDimensionLabel(s: SketchData, id: string, labelOffset: { x: number; y: number }): SketchData {
-  return { ...s, constraints: s.constraints.map((c) => (c.id === id ? { ...c, labelOffset } : c)) };
+  return {
+    ...s,
+    constraints: s.constraints.map((c) => {
+      if (c.id !== id) return c;
+      if (c.type !== "angle") return { ...c, labelOffset };
+      // Dragged into another wedge: the dimension measures that angle instead (the lines stay where they are).
+      const extra = angleExtraFor(s, c, [labelOffset.x, labelOffset.y]);
+      const moved = { ...c, labelOffset, extra };
+      if (extra[1] === (c.extra?.[1] ?? 1) && extra[2] === (c.extra?.[2] ?? 1)) return moved;
+      return { ...moved, value: roundValue(measure(s, moved)) };
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
