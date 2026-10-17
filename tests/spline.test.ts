@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { addLine, deleteItems, dimensionFor, pointPos, type Placed } from "../src/sketch/ops";
+import { addLine, deleteItems, dimensionFor, pointPos, setSplineHandle, splineHandleEnds, splinePath, type Placed } from "../src/sketch/ops";
 import { findRegions } from "../src/sketch/regions";
-import { bezierAt, splineBeziers, splinePolyline } from "../src/sketch/spline";
-import { addSpline, mirrorCurves, patternCurves } from "../src/sketch/tools";
+import { bezierAt, splineBeziers, splinePolyline, splineTangents } from "../src/sketch/spline";
+import { addSpline, mirrorCurves, patternCurves, transformCurves } from "../src/sketch/tools";
 import { distToCurve } from "../src/sketch/hit";
 import { emptySketch, type SketchSpline } from "../src/sketch/types";
 import { parseSketchData } from "../src/sketch/validate";
@@ -73,5 +73,100 @@ describe("splines", () => {
     expect(p.sketch.curves.filter((c) => c.type === "spline")).toHaveLength(3);
     expect(parseSketchData(JSON.parse(JSON.stringify(s)))?.curves[0]).toEqual(sp);
     expect(deleteItems(s, [sp.id]).points).toHaveLength(0);
+  });
+});
+
+describe("spline handles", () => {
+  const three = () => {
+    const r = addSpline(emptySketch(), [at(0, 0), at(10, 10), at(20, 0)], false);
+    return { s: r.sketch, sp: r.sketch.curves.find((c) => c.type === "spline") as SketchSpline };
+  };
+
+  it("curve naturally until a handle is set, then follow the handle", () => {
+    const { s, sp } = three();
+    const pts = sp.points.map((id) => pointPos(s, id));
+    // Natural tangent at the middle point: half the way from the first to the last.
+    expect(splineTangents(pts, false)[1]).toEqual([10, 0]);
+    // Set the middle handle straight up: the curve leaves the point going up.
+    const shaped = setSplineHandle(s, sp.id, sp.points[1], [0, 12]);
+    const c = shaped.curves[0] as SketchSpline;
+    expect(c.tangents).toEqual({ [sp.points[1]]: [0, 12] });
+    const pieces = splineBeziers(pts, false, undefined, c.points.map((id) => c.tangents?.[id]));
+    expect(pieces[1][1]).toEqual([10, 14]);
+    expect(pieces[0][2]).toEqual([10, 6]);
+    // Still through every point.
+    expect(bezierAt(pieces[1], 0)).toEqual(pts[1]);
+    // Cleared again: back to natural.
+    const cleared = setSplineHandle(shaped, sp.id, sp.points[1], null);
+    expect((cleared.curves[0] as SketchSpline).tangents).toBe(undefined);
+  });
+
+  it("show handle ends a third of the tangent out from each point, only for selected splines", () => {
+    const { s, sp } = three();
+    expect(splineHandleEnds(s, [])).toHaveLength(0);
+    const ends = splineHandleEnds(s, [sp.id]);
+    expect(ends).toHaveLength(6);
+    const mid = ends.filter((h) => h.pointId === sp.points[1]);
+    expect(mid.map((h) => h.at)).toEqual([
+      [10 + 10 / 3, 10],
+      [10 - 10 / 3, 10],
+    ]);
+    // Selecting one of its points shows them too.
+    expect(splineHandleEnds(s, [sp.points[0]])).toHaveLength(6);
+  });
+
+  it("handles go with copies, mirrors and moves, and are saved and loaded", () => {
+    const { s, sp } = three();
+    const shaped = setSplineHandle(s, sp.id, sp.points[1], [0, 12]);
+    // Moved and turned 90°: the handle turns too.
+    const turned = transformCurves(shaped, [sp.id], { dx: 0, dy: 0, angle: 90, copy: false });
+    expect(turned.error).toBe(undefined);
+    const t = (turned.sketch.curves.find((c) => c.type === "spline") as SketchSpline).tangents![sp.points[1]];
+    expect(t[0]).toBeCloseTo(-12, 6);
+    expect(t[1]).toBeCloseTo(0, 6);
+    // Mirrored about a vertical line at x = 30: the handle (straight up) stays straight up on the copy.
+    const withAxis = addLine(shaped, { x: 30, y: -5 }, { x: 30, y: 25 }).sketch;
+    const axis = withAxis.curves.find((c) => c.type === "line")!;
+    const m = mirrorCurves(withAxis, axis.id, [sp.id]);
+    expect(m.error).toBe(undefined);
+    const copy = m.sketch.curves.find((c) => c.type === "spline" && c.id !== sp.id) as SketchSpline;
+    expect(Object.values(copy.tangents!)[0].map((v) => Math.round(v * 1e6) / 1e6)).toEqual([0, 12]);
+    // Patterned copies keep the handle as it is.
+    const p = patternCurves(shaped, [sp.id], { kind: "linear", count: 2, spacing: 50, angle: 0 });
+    const pc = p.sketch.curves.find((c) => c.type === "spline" && c.id !== sp.id) as SketchSpline;
+    expect(Object.values(pc.tangents!)).toEqual([[0, 12]]);
+    // Round trip through save and load; handles for unknown points are dropped.
+    const loaded = parseSketchData(JSON.parse(JSON.stringify(shaped)))!;
+    expect((loaded.curves[0] as SketchSpline).tangents).toEqual({ [sp.points[1]]: [0, 12] });
+    const junk = JSON.parse(JSON.stringify(shaped));
+    junk.curves[0].tangents = { nope: [1, 2], [sp.points[0]]: [1, "x"] };
+    expect((parseSketchData(junk)!.curves[0] as SketchSpline).tangents).toBe(undefined);
+    // The drawn curve bends with the handle.
+    const flat = splinePath(s, sp);
+    const bent = splinePath(shaped, shaped.curves[0] as SketchSpline);
+    expect(Math.max(...bent.map((q) => q[1]))).toBeGreaterThan(Math.max(...flat.map((q) => q[1])) + 0.5);
+  });
+
+  it("carry into the shapes made from the sketch", () => {
+    // A closed spline (a rounded square) with one handle pulled hard to one side bulges that way.
+    const r = addSpline(emptySketch(), [at(0, 0), at(20, 0), at(20, 20), at(0, 20)], true);
+    const sp = r.sketch.curves[0] as SketchSpline;
+    const plain = findRegions(r.sketch).regions[0];
+    const shaped = setSplineHandle(r.sketch, sp.id, sp.points[1], [0, 60]);
+    const bulged = findRegions(shaped).regions[0];
+    // The curve arrives at that point from below now (its control sits at (20, −20)), so it dips under the square.
+    const low = (reg: typeof plain) => Math.min(...reg.outer.polygon.map((q) => q[1]));
+    expect(low(bulged)).toBeLessThan(low(plain) - 2);
+    // An open spline closing a shape with a line, walked either way, uses the handles too.
+    let s = addLine(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 0 }).sketch;
+    const open = addSpline(s, [{ x: 20, y: 0, snap: { kind: "point", id: s.curves[0].type === "line" ? s.curves[0].p2 : "" } }, at(10, 8), { x: 0, y: 0, snap: { kind: "point", id: s.curves[0].type === "line" ? s.curves[0].p1 : "" } }], false);
+    s = open.sketch;
+    const osp = s.curves.find((c) => c.type === "spline") as SketchSpline;
+    const a1 = findRegions(s).regions[0];
+    const pulled = setSplineHandle(s, osp.id, osp.points[1], [-30, 20]);
+    const a2 = findRegions(pulled).regions[0];
+    const top = (reg: typeof a1) => Math.max(...reg.outer.polygon.map((q) => q[1]));
+    expect(a1.outer.polygon.length).toBeGreaterThan(5);
+    expect(Math.abs(top(a2) - top(a1))).toBeGreaterThan(0.5);
   });
 });

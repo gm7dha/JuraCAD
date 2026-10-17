@@ -45,27 +45,41 @@ export function conicBeziers(a: P2, apex: P2, b: P2, rho: number, pieces = 8): [
   return out;
 }
 
-/** The Bézier pieces (start, two handles, end) for a spline through `pts` — or, given `conic`, a conic over its three points. */
-export function splineBeziers(pts: P2[], closed: boolean, conic?: number): [P2, P2, P2, P2][] {
-  if (conic !== undefined && pts.length === 3) return conicBeziers(pts[0], pts[1], pts[2], conic);
+/**
+ * The curve's direction and speed at each point (its tangent vector): the
+ * one the user set by dragging a handle, or else the natural one — half the
+ * way from the point before to the point after (so the curve flows smoothly),
+ * straight on at an open spline's ends.
+ */
+export function splineTangents(pts: P2[], closed: boolean, set?: (P2 | undefined)[]): P2[] {
   const n = pts.length;
-  if (n < 2) return [];
   const at = (i: number): P2 => {
     if (closed) return pts[((i % n) + n) % n];
-    // Past the ends: mirror the next point, so the curve leaves the end straight towards it.
     if (i < 0) return [2 * pts[0][0] - pts[1][0], 2 * pts[0][1] - pts[1][1]];
     if (i >= n) return [2 * pts[n - 1][0] - pts[n - 2][0], 2 * pts[n - 1][1] - pts[n - 2][1]];
     return pts[i];
   };
+  return pts.map((_, i) => set?.[i] ?? [(at(i + 1)[0] - at(i - 1)[0]) / 2, (at(i + 1)[1] - at(i - 1)[1]) / 2]);
+}
+
+/**
+ * The Bézier pieces (start, two handles, end) for a spline through `pts` — or,
+ * given `conic`, a conic over its three points. `tangents` are the user's
+ * handles (per point; missing ones curve naturally).
+ */
+export function splineBeziers(pts: P2[], closed: boolean, conic?: number, tangents?: (P2 | undefined)[]): [P2, P2, P2, P2][] {
+  if (conic !== undefined && pts.length === 3) return conicBeziers(pts[0], pts[1], pts[2], conic);
+  const n = pts.length;
+  if (n < 2) return [];
+  const t = splineTangents(pts, closed, tangents);
   const out: [P2, P2, P2, P2][] = [];
   const pieces = closed ? n : n - 1;
   for (let i = 0; i < pieces; i++) {
-    const p0 = at(i - 1);
-    const p1 = at(i);
-    const p2 = at(i + 1);
-    const p3 = at(i + 2);
-    const c1: P2 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
-    const c2: P2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    const j = (i + 1) % n;
+    const p1 = pts[i];
+    const p2 = pts[j];
+    const c1: P2 = [p1[0] + t[i][0] / 3, p1[1] + t[i][1] / 3];
+    const c2: P2 = [p2[0] - t[j][0] / 3, p2[1] - t[j][1] / 3];
     out.push([p1, c1, c2, p2]);
   }
   return out;
@@ -82,8 +96,8 @@ export function bezierAt([a, b, c, d]: [P2, P2, P2, P2], t: number): P2 {
 }
 
 /** The spline as short straight pieces (for drawing, picking and finding closed shapes). */
-export function splinePolyline(pts: P2[], closed: boolean, steps = 16, conic?: number): P2[] {
-  const pieces = splineBeziers(pts, closed, conic);
+export function splinePolyline(pts: P2[], closed: boolean, steps = 16, conic?: number, tangents?: (P2 | undefined)[]): P2[] {
+  const pieces = splineBeziers(pts, closed, conic, tangents);
   if (conic !== undefined) steps = Math.max(2, Math.round(steps / 3));
   if (!pieces.length) return pts.slice();
   const out: P2[] = [pieces[0][0]];

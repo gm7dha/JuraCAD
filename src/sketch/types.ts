@@ -55,6 +55,12 @@ export interface SketchSpline {
   closed: boolean;
   construction: boolean;
   conic?: number;
+  /**
+   * Handles the user has dragged: for a point's id, the curve's direction and
+   * speed there (a tangent vector, mm). Points not listed curve smoothly on
+   * their own.
+   */
+  tangents?: Record<string, [number, number]>;
 }
 
 /** An ellipse: its centre and the ends of its two axes (kept square to each other). */

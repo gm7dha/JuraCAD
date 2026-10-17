@@ -6,6 +6,7 @@
  */
 import { evaluate } from "../model/expr";
 import { ellipseFrom, ellipsePolyline, type EllipseGeom } from "./ellipse";
+import { splinePolyline, splineTangents } from "./spline";
 import { startingLength } from "../model/units";
 import { analyzeSketch, solveSketch } from "./solver";
 import {
@@ -457,7 +458,46 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
 export function applyRelation(s: SketchData, tool: RelationTool, selection: string[]): EditResult {
   const made = relationConstraints(s, tool, selection);
   if (typeof made === "string") return { sketch: s, error: made };
-  return checkedSolve(s, { ...s, constraints: [...s.constraints, ...made] }, RELATION_LABELS[tool], true);
+  let start = s;
+  if (tool === "horizontal" || tool === "vertical") {
+    // A line already square to the way it's asked to go would be squashed to a
+    // point by the nearest solution; turn it about its middle first so the
+    // solver starts from a line that way round.
+    start = turnedTowards(s, made, tool);
+  }
+  const r = checkedSolve(start, { ...start, constraints: [...start.constraints, ...made] }, RELATION_LABELS[tool], true);
+  return r.error ? { sketch: s, error: r.error } : r;
+}
+
+/** Lines about to be made horizontal/vertical that run (nearly) the other way, turned about their middles to the new direction. */
+function turnedTowards(s: SketchData, made: SketchConstraint[], tool: "horizontal" | "vertical"): SketchData {
+  const moves = new Map<string, [number, number]>();
+  for (const c of made) {
+    if (c.refs.length !== 1) continue;
+    const line = curveById(s, c.refs[0]);
+    if (!isLine(line)) continue;
+    const [ax, ay] = pointPos(s, line.p1);
+    const [bx, by] = pointPos(s, line.p2);
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) continue;
+    const across = tool === "horizontal" ? Math.abs(dx) / len : Math.abs(dy) / len;
+    if (across > 0.3) continue; // already leaning the right way: the solver can swing it round
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2;
+    const sign = tool === "horizontal" ? Math.sign(dy) || 1 : Math.sign(dx) || 1;
+    const half = len / 2;
+    if (tool === "horizontal") {
+      moves.set(line.p1, [mx - sign * half, my]);
+      moves.set(line.p2, [mx + sign * half, my]);
+    } else {
+      moves.set(line.p1, [mx, my - sign * half]);
+      moves.set(line.p2, [mx, my + sign * half]);
+    }
+  }
+  if (!moves.size) return s;
+  return { ...s, points: s.points.map((p) => (moves.has(p.id) ? { ...p, x: moves.get(p.id)![0], y: moves.get(p.id)![1] } : p)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +620,68 @@ export function dragCircleRim(start: SketchData, circleId: string, radius: numbe
 /** A spline's points where they are now. */
 export function splinePoints(s: SketchData, c: SketchSpline): [number, number][] {
   return c.points.map((id) => pointPos(s, id));
+}
+
+/** The handles the user has set on a spline, one entry per point (undefined where the curve runs naturally). */
+export function splineHandles(c: SketchSpline): ([number, number] | undefined)[] {
+  return c.points.map((id) => c.tangents?.[id]);
+}
+
+/** The spline drawn as short straight pieces. */
+export function splinePath(s: SketchData, c: SketchSpline, steps?: number): [number, number][] {
+  return splinePolyline(splinePoints(s, c), c.closed, steps, c.conic, splineHandles(c));
+}
+
+/** One end of a spline point's handle: dragging it sets the curve's direction and speed there. */
+export interface SplineHandleEnd {
+  splineId: string;
+  pointId: string;
+  /** Which end of the handle: +1 along the curve, −1 against it. */
+  side: 1 | -1;
+  at: [number, number];
+}
+
+/**
+ * The handle ends of the splines to show handles for: those selected, or with
+ * a point of theirs selected (a conic has none — it's shaped by its corner).
+ */
+export function splineHandleEnds(s: SketchData, selection: Iterable<string>): SplineHandleEnd[] {
+  const sel = new Set(selection);
+  const out: SplineHandleEnd[] = [];
+  for (const c of s.curves) {
+    if (c.type !== "spline" || c.conic !== undefined) continue;
+    if (!sel.has(c.id) && !c.points.some((id) => sel.has(id))) continue;
+    const pts = splinePoints(s, c);
+    const tangents = splineTangents(pts, c.closed, splineHandles(c));
+    c.points.forEach((pointId, i) => {
+      const [x, y] = pts[i];
+      const [tx, ty] = tangents[i];
+      // A handle end sits where the curve's Bézier control is: a third of the tangent out from the point.
+      out.push({ splineId: c.id, pointId, side: 1, at: [x + tx / 3, y + ty / 3] });
+      out.push({ splineId: c.id, pointId, side: -1, at: [x - tx / 3, y - ty / 3] });
+    });
+  }
+  return out;
+}
+
+/**
+ * Set (or, with null, clear) the handle at one point of a spline: the curve's
+ * direction and speed there. Dragging a handle end sets it; the opposite end
+ * follows, so the curve stays smooth through the point.
+ */
+export function setSplineHandle(s: SketchData, splineId: string, pointId: string, tangent: [number, number] | null): SketchData {
+  return {
+    ...s,
+    curves: s.curves.map((c) => {
+      if (c.id !== splineId || c.type !== "spline" || !c.points.includes(pointId)) return c;
+      const tangents = { ...(c.tangents ?? {}) };
+      if (tangent) tangents[pointId] = tangent;
+      else delete tangents[pointId];
+      const { tangents: _old, ...rest } = c;
+      void _old;
+      return Object.keys(tangents).length ? { ...rest, tangents } : rest;
+    }),
+  };
 }
 
 /** An ellipse as short straight pieces (closed: the last point repeats the first). */

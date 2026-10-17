@@ -65,6 +65,7 @@ export function parseSketchData(raw: unknown): SketchData | null {
         closed: c.closed === true && c.points.length >= 3 && typeof c.conic !== "number",
         construction,
         ...(typeof c.conic === "number" && c.conic > 0 && c.conic < 1 && c.points.length === 3 ? { conic: c.conic } : {}),
+        ...splineHandlesOf(c.tangents, c.points as string[]),
       });
     else if (c.type === "ellipse" && str(c.center) && str(c.major) && str(c.minor))
       curves.push({ id: c.id, type: "ellipse", center: c.center, major: c.major, minor: c.minor, construction });
@@ -83,4 +84,14 @@ export function parseSketchData(raw: unknown): SketchData | null {
     constraints.push(out);
   }
   return { points, curves, constraints };
+}
+
+/** A spline's saved handles, keeping only those for its own points and with two finite numbers. */
+function splineHandlesOf(raw: unknown, points: string[]): { tangents?: Record<string, [number, number]> } {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, [number, number]> = {};
+  for (const [id, t] of Object.entries(raw as Record<string, unknown>)) {
+    if (points.includes(id) && Array.isArray(t) && t.length === 2 && t.every((v) => typeof v === "number" && Number.isFinite(v))) out[id] = [t[0], t[1]];
+  }
+  return Object.keys(out).length ? { tangents: out } : {};
 }

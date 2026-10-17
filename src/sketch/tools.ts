@@ -661,7 +661,9 @@ export function mirrorCurves(s: SketchData, axisId: string, curveIds: string[]):
       curves.push({ id, type: "circle", center: copyOf(c.center), radius: c.radius, construction: c.construction });
       constraints.push({ id: sketchId("c"), type: "equal", refs: [c.id, id] });
     } else if (c.type === "spline") {
-      curves.push({ id: sketchId("sp"), type: "spline", points: c.points.map(copyOf), closed: c.closed, construction: c.construction, ...(c.conic !== undefined ? { conic: c.conic } : {}) });
+      const ids = c.points.map(copyOf);
+      const tangents = movedHandles(s, c, ids, (p) => mirrorPoint(s, axis, p));
+      curves.push({ id: sketchId("sp"), type: "spline", points: ids, closed: c.closed, construction: c.construction, ...(c.conic !== undefined ? { conic: c.conic } : {}), ...(tangents ? { tangents } : {}) });
     } else if (c.type === "ellipse") {
       curves.push({ id: sketchId("el"), type: "ellipse", center: copyOf(c.center), major: copyOf(c.major), minor: copyOf(c.minor), construction: c.construction });
     } else {
@@ -834,12 +836,31 @@ function copyCurvesWith(s: SketchData, sources: SketchCurve[], move: (p: P2) => 
     for (const c of sources) {
       if (c.type === "line") curves.push({ id: sketchId("l"), type: "line", p1: copyOf(c.p1), p2: copyOf(c.p2), construction: c.construction });
       else if (c.type === "circle") curves.push({ id: sketchId("k"), type: "circle", center: copyOf(c.center), radius: c.radius, construction: c.construction });
-      else if (c.type === "spline") curves.push({ id: sketchId("sp"), type: "spline", points: c.points.map(copyOf), closed: c.closed, construction: c.construction, ...(c.conic !== undefined ? { conic: c.conic } : {}) });
-      else if (c.type === "ellipse")
+      else if (c.type === "spline") {
+        const ids = c.points.map(copyOf);
+        const tangents = movedHandles(s, c, ids, move);
+        curves.push({ id: sketchId("sp"), type: "spline", points: ids, closed: c.closed, construction: c.construction, ...(c.conic !== undefined ? { conic: c.conic } : {}), ...(tangents ? { tangents } : {}) });
+      } else if (c.type === "ellipse")
         curves.push({ id: sketchId("el"), type: "ellipse", center: copyOf(c.center), major: copyOf(c.major), minor: copyOf(c.minor), construction: c.construction });
       else curves.push({ id: sketchId("a"), type: "arc", center: copyOf(c.center), start: copyOf(c.start), end: copyOf(c.end), construction: c.construction });
     }
   }
+}
+
+
+/** A spline's handles carried along with a copy of it (moved, turned or mirrored the same way), keyed by the copied points' ids. */
+function movedHandles(s: SketchData, c: SketchSpline, newIds: string[], move: (p: P2) => P2): Record<string, P2> | undefined {
+  if (!c.tangents) return undefined;
+  const out: Record<string, P2> = {};
+  c.points.forEach((id, i) => {
+    const t = c.tangents?.[id];
+    if (!t) return;
+    const p = pointPos(s, id);
+    const a = move(p);
+    const b = move([p[0] + t[0], p[1] + t[1]]);
+    out[newIds[i]] = [b[0] - a[0], b[1] - a[1]];
+  });
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Move / copy settings as numbers (mm and degrees). */
@@ -882,7 +903,13 @@ export function transformCurves(s: SketchData, curveIds: string[], t: SketchTran
     const [x, y] = move([p.x, p.y]);
     return { ...p, x, y };
   });
-  const r = settle({ ...s, points });
+  // Splines' handles turn with them.
+  const curves = s.curves.map((c) => {
+    if (c.type !== "spline" || !c.tangents || !sources.includes(c)) return c;
+    const tangents = movedHandles(s, c, c.points, move);
+    return tangents ? { ...c, tangents } : c;
+  });
+  const r = settle({ ...s, points, curves });
   // Constraints (a fix, a dimension to something that stays) may hold them where they were.
   const before = pointPos(s, [...moving][0]);
   const after = pointPos(r.sketch, [...moving][0]);
