@@ -757,7 +757,7 @@ function valueNow(s: SketchData, c: SketchConstraint): string {
 export function setDimensionValue(s: SketchData, id: string, value: string): EditResult {
   const c = s.constraints.find((x) => x.id === id);
   if (!c || !isDimension(c)) return { sketch: s, error: "That dimension no longer exists." };
-  if (c.driven) return { sketch: s, error: "That's a reference dimension: it shows the size but can't change it. Make it a driving dimension in the sketch panel first." };
+  if (c.driven) return { sketch: s, error: "That dimension (in brackets) just shows the size. Select it and click \"Let it set the size\" in the sketch panel first." };
   const r = evaluate(value);
   if (!r.ok) return { sketch: s, error: r.error };
   if (c.type !== "angle" && r.value <= 0 && c.type !== "pointLineDistance") return { sketch: s, error: "Must be more than 0." };

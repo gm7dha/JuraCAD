@@ -253,9 +253,9 @@ export function SketchPanel() {
                 type="button"
                 className="text-button"
                 onClick={toggleSketchDimensionDriven}
-                title={dim.driven ? "Let this dimension set the size again" : "Keep this dimension just to show the size (in brackets) — it won't change the sketch"}
+                title={dim.driven ? "Let this dimension set the size again (you can then double-click it to type a new size)" : "Keep this dimension just to show the size (in brackets) — it won't change the sketch"}
               >
-                {dim.driven ? "Make driving" : "Make reference"}
+                {dim.driven ? "Let it set the size" : "Just show the size"}
               </button>
             </div>
           );

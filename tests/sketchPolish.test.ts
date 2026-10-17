@@ -326,7 +326,7 @@ describe("reference (driven) dimensions", () => {
     expect(v.error).toBeUndefined();
     expect(measure(v.sketch, ref)).toBeCloseTo(35, 6);
     // It can't be typed into.
-    expect(setDimensionValue(v.sketch, ref.id, "12").error).toMatch(/reference/);
+    expect(setDimensionValue(v.sketch, ref.id, "12").error).toMatch(/just shows the size/);
     // Nor made driving while the width dimension sets the same size…
     expect(setDimensionDriven(v.sketch, ref.id, false).error).toMatch(/already set/);
     // …but it can once that's gone.

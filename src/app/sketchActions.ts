@@ -136,5 +136,5 @@ export function toggleSketchDimensionDriven() {
     return;
   }
   s.updateSketch(r.sketch, { record: true });
-  s.setSketchMessage(c.driven ? "It's a driving dimension again: double-click it to change the size." : "It's a reference dimension now (in brackets): it shows the size but doesn't set it.", "info");
+  s.setSketchMessage(c.driven ? "It sets the size again: double-click it to type a new size." : "It just shows the size now (in brackets) and won't change the sketch.", "info");
 }

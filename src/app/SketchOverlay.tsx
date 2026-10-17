@@ -279,7 +279,7 @@ function DimensionLabel({
     <div
       ref={refCb}
       className={`dimension-label${selected ? " selected" : ""}${failing ? " failing" : ""}${c.driven ? " driven" : ""}`}
-      title={c.driven ? "Reference dimension: shows the size but doesn't set it. Drag to move; select it to make it driving in the sketch panel" : "Double-click to change, drag to move"}
+      title={c.driven ? "Just shows the size (it doesn't set it). Drag to move; select it and click \"Let it set the size\" in the sketch panel to change that" : "Double-click to change, drag to move"}
       role="button"
       tabIndex={-1}
       onPointerDown={onPointerDown}
@@ -288,7 +288,7 @@ function DimensionLabel({
       onDoubleClick={(e) => {
         e.stopPropagation();
         if (c.driven) {
-          useStore.getState().setSketchMessage("That's a reference dimension (in brackets): it shows the size but doesn't set it. Select it and click Make driving in the sketch panel to set the size with it.", "info");
+          useStore.getState().setSketchMessage("That dimension (in brackets) just shows the size. Select it and click \"Let it set the size\" in the sketch panel to type a new size.", "info");
           return;
         }
         useStore.getState().setEditingDimension(c.id);

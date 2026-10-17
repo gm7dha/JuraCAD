@@ -981,7 +981,7 @@ export class SketchController {
     this.emit({ pending: [] });
     if (!this.commit(r)) return;
     if (r.driven) {
-      this.state.setSketchMessage("That's already set by other constraints or dimensions, so it was added as a reference dimension (in brackets): it shows the size but doesn't change it.", "info");
+      this.state.setSketchMessage("That's already set by other constraints or dimensions, so this one just shows the size (in brackets) and won't change the sketch.", "info");
       return;
     }
     this.state.setEditingDimension(r.dimensionId);

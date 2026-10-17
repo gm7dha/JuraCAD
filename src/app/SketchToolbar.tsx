@@ -25,7 +25,7 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "slot", label: "Slot", key: "S", icon: <Icons.Slot />, hint: "Click both end centres, then move out to set the width" },
   { tool: "polygon", label: "Polygon", key: "G", icon: <Icons.Polygon />, hint: "Click the centre, then a corner (set the number of sides in the sketch panel)" },
   { tool: "point", label: "Point", key: "P", icon: <Icons.Point />, hint: "Click to place a point" },
-  { tool: "dimension", label: "Dimension", key: "D", icon: <Icons.Dimension />, hint: "Click a line or circle (or two things), then where the value goes" },
+  { tool: "dimension", label: "Dimension", key: "D", icon: <Icons.Dimension />, hint: "Click a line or circle (or two things), then where the value goes — where you put it picks across, up or straight" },
   { tool: "sketchFillet", label: "Round", key: "", icon: <Icons.CornerRound />, hint: "Click a corner where two lines or arcs meet to round it (set the radius in the sketch panel)" },
   { tool: "extend", label: "Extend", key: "", icon: <Icons.Extend />, hint: "Click near the end of a line or arc to lengthen it up to the next line, arc or circle" },
   { tool: "split", label: "Split", key: "", icon: <Icons.SplitLine />, hint: "Click a line or arc where you want to break it into two (they stay in line, or on the same circle)" },
