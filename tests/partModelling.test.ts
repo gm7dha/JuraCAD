@@ -357,6 +357,19 @@ describe("review follow-ups", () => {
       expect(volumes()[0]).toBeCloseTo(3856, 1);
     });
 
+    it("leaves the cover and rims on the other side of a T's underside", () => {
+      // A T: stem x 10–20 up to z = 10, bar x 0–30 from z = 10 to 15; only the bar's left underside left open.
+      const stem = feature("box", { width: 10, depth: 10, height: 10, x: 10 });
+      const bar = feature("box", { width: 30, depth: 10, height: 5, z: 10 }, "add");
+      const r0 = build([stem, bar]);
+      const shell = (at: [number, number, number][]): Feature => ({ ...feature("shell", { thickness: 2 }, "add"), picks: at.map((p) => pickAt(r0, "face", p)), flipSide: true });
+      onePiece(build([stem, bar, shell([[5, 5, 10]])]));
+      expect(volumes()[0]).toBeCloseTo(3464, 1);
+      // Both undersides open: the right one's cover and rims (x 18–32, 14 mm deep, 2 mm) go too.
+      onePiece(build([stem, bar, shell([[5, 5, 10], [25, 5, 10]])]));
+      expect(volumes()[0]).toBeCloseTo(3464 - 280, 1);
+    });
+
     it("leaves the cover on the far side of a groove when only one side's top is open", () => {
       const block = feature("box", { width: 30, depth: 10, height: 10 });
       const groove = feature("box", { width: 4, depth: 10, height: 3, x: 13, z: 7 }, "remove");

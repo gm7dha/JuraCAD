@@ -869,8 +869,8 @@ const OUTWARD_CURVED_OPEN = "Walls outside can only leave flat faces open, not c
  * Walls outside, the slow sure way: sealed walls all round (the part grown by
  * `thickness`, minus the part); then, for each flat face left open, the walls
  * over that face (its rims, a wall's thickness to the side, and any wall past
- * the plane joined on to those) are cut off at its plane — but not the cover over other faces in the same plane that aren't
- * open, nor the walls round any of the part that stands out past the plane (a
+ * the plane joined on to those) are cut off at its plane — but not the cover (and rims) over other faces in the same plane
+ * that aren't open, nor the walls round any of the part that stands out past the plane (a
  * boss on an open top keeps its whole sleeve, down to the face). Curved open
  * faces aren't handled.
  */
@@ -939,7 +939,14 @@ function outwardByCutting(shape: Shape3D, open: Face[], thickness: number): Shap
         const c = take(other.center);
         const n = take(other.normalAt(c));
         if (dot3(n, normal) < 1 - 1e-9 || Math.abs(dot3([c[0] - centre[0], c[1] - centre[1], c[2] - centre[2]], normal)) > 1e-6) continue;
-        const cover = along(other, reach);
+        // Its cover and rims: swept and widened just as the open face's are.
+        const swept = along(other, reach);
+        let cover: Shape3D;
+        try {
+          cover = offsetSolid(swept, reach);
+        } finally {
+          swept.delete();
+        }
         try {
           cutter = keepAway(cutter, cover);
         } finally {
