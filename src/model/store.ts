@@ -38,7 +38,7 @@ import { nextPatternName, removePattern, syncPattern } from "../assembly/pattern
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
 import { matchingConnectors } from "../assembly/connectors";
 import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
-import { duplicateInstances, placedBox, replaceInstancePart, type Box3 } from "../assembly/assembly";
+import { duplicateInstances, mirroredBox, placedBox, replaceInstancePart, type Box3 } from "../assembly/assembly";
 import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
@@ -1234,7 +1234,9 @@ export const useStore = create<AppState>((set, get) => {
       // Beside everything already there (in +X), keeping the copies' places relative to each other.
       const boxOf = (i: Instance) => {
         const part = findMesh(s.parts, meshIdOf(i));
-        const b = part ? boundsOfVertices(part.vertices) : null;
+        const raw = part ? boundsOfVertices(part.vertices) : null;
+        // A mirrored part is flipped across its own YZ plane before it's placed.
+        const b = raw && i.mirrored ? mirroredBox(raw) : raw;
         return b ? placedBox(b, placements[i.id] ?? i.placement) : null;
       };
       const all = asm.instances.map(boxOf).filter((b): b is Box3 => !!b);

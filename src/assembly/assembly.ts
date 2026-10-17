@@ -26,7 +26,8 @@ export function updateAssembly(doc: PartSmithDocument, id: string, fn: (a: Assem
   if (!assembliesOf(doc).some((a) => a.id === id)) return doc;
   return withAssemblies(
     doc,
-    assembliesOf(doc).map((a) => (a.id === id ? fn(a) : a)),
+    // Exploded view steps forget parts that any change removed (patterns, Replicate, delete…).
+    assembliesOf(doc).map((a) => (a.id === id ? tidyExplodeSteps(fn(a)) : a)),
   );
 }
 
@@ -122,16 +123,42 @@ export function duplicateInstances(
     instances.push({ ...plain, id, name: nextInstanceName({ ...a, instances }, base), fixed: false, placement: { position: [at.position[0] + shift[0], at.position[1] + shift[1], at.position[2] + shift[2]], rotation: at.rotation } });
   }
   const used = new Set((a.mates ?? []).map((m) => m.name));
+  const mateMap = new Map<string, string>();
   const copiedMates: Mate[] = (a.mates ?? [])
     .filter((m) => map.has(m.a.instanceId) && map.has(m.b.instanceId))
     .map((m) => {
       const { replicateOf: _r, ...plain } = m;
       const name = nextFreeName(used, m.name);
       used.add(name);
-      return { ...plain, id: newId("m"), name, a: { ...m.a, instanceId: map.get(m.a.instanceId)! }, b: { ...m.b, instanceId: map.get(m.b.instanceId)! } };
+      const id = newId("m");
+      mateMap.set(m.id, id);
+      return { ...plain, id, name, a: { ...m.a, instanceId: map.get(m.a.instanceId)! }, b: { ...m.b, instanceId: map.get(m.b.instanceId)! } };
+    });
+  // Relations between copied mates (gears…), and groups made only of copied parts, come too.
+  const usedRelations = new Set((a.relations ?? []).map((r) => r.name));
+  const copiedRelations: MateRelation[] = (a.relations ?? [])
+    .filter((r) => mateMap.has(r.driver) && mateMap.has(r.driven))
+    .map((r) => {
+      const name = nextFreeName(usedRelations, r.name);
+      usedRelations.add(name);
+      return { ...r, id: newId("rl"), name, driver: mateMap.get(r.driver)!, driven: mateMap.get(r.driven)! };
+    });
+  const usedGroups = new Set((a.groups ?? []).map((g) => g.name));
+  const copiedGroups: AssemblyGroup[] = (a.groups ?? [])
+    .filter((g) => g.members.every((m) => map.has(m)))
+    .map((g) => {
+      const name = nextFreeName(usedGroups, g.name);
+      usedGroups.add(name);
+      return { id: newId("g"), name, members: g.members.map((m) => map.get(m)!), offsets: Object.fromEntries(Object.entries(g.offsets).map(([m, o]) => [map.get(m) ?? m, o])) };
     });
   return {
-    assembly: { ...a, instances, ...(copiedMates.length ? { mates: [...(a.mates ?? []), ...copiedMates] } : {}) },
+    assembly: {
+      ...a,
+      instances,
+      ...(copiedMates.length ? { mates: [...(a.mates ?? []), ...copiedMates] } : {}),
+      ...(copiedRelations.length ? { relations: [...(a.relations ?? []), ...copiedRelations] } : {}),
+      ...(copiedGroups.length ? { groups: [...(a.groups ?? []), ...copiedGroups] } : {}),
+    },
     ids: [...map.values()],
   };
 }
@@ -311,7 +338,9 @@ export function settleSolved(
               const typed = (values[key] ?? "").trim();
               if (typed && !isPlainAmount(typed)) continue;
               const unit = MATE_TYPES[m.type].values.find((d) => d.key === key)?.unit;
-              values[key] = unit === "mm" ? startingLength(v) : String(Math.round(v * 1e6) / 1e6);
+              // Tidy numbers: to a thousandth (of a degree, or of a mm), and nothing left as "-0.000004".
+              const tidy = Math.abs(v) < 5e-4 ? 0 : Math.round(v * 1000) / 1000;
+              values[key] = unit === "mm" ? startingLength(tidy) : String(tidy === 0 ? 0 : tidy);
             }
             return { ...m, values };
           }),
@@ -333,6 +362,8 @@ export interface BomRow {
   material?: string;
   /** What one of them weighs (grams), when known. */
   massEach?: number;
+  /** A surface (a skin with no inside): it has no weight. */
+  surface?: boolean;
 }
 
 /** What the parts list can say about the part an instance shows: its material (key) and solid volume (mm³; null for a surface). */
@@ -360,17 +391,19 @@ export function billOfMaterials(assembly: Assembly, partNames: Record<string, st
         missing: name === undefined,
         ...(props ? { material: materialOf(props.material).label } : {}),
         ...(props && props.volume !== null && props.volume > 0 ? { massEach: massGrams(props.volume, props.material) } : {}),
+        ...(props && props.volume === null ? { surface: true } : {}),
       });
     }
   }
   return [...rows.values()];
 }
 
-/** What everything in the parts list weighs together (grams), and whether any part's weight is unknown. */
+/** What everything in the parts list weighs together (grams), and whether any part's weight is unknown (surfaces weigh nothing). */
 export function bomTotalMass(rows: BomRow[]): { grams: number; partial: boolean } {
   let grams = 0;
   let partial = false;
   for (const r of rows) {
+    if (r.surface) continue;
     if (r.massEach === undefined) partial = true;
     else grams += r.massEach * r.quantity;
   }
@@ -385,7 +418,7 @@ export function bomCsv(rows: BomRow[]): string {
   if (!extra) return ["Item,Part,Quantity", ...rows.map((r, i) => `${i + 1},${cell(r.name)},${r.quantity}`)].join("\n") + "\n";
   return (
     [
-      "Item,Part,Quantity,Material,Mass each (g),Mass (g)",
+      "Item,Part,Quantity,Material,Weight each (g),Weight (g)",
       ...rows.map((r, i) => `${i + 1},${cell(r.name)},${r.quantity},${cell(r.material ?? "")},${grams(r.massEach)},${grams(r.massEach === undefined ? undefined : r.massEach * r.quantity)}`),
     ].join("\n") + "\n"
   );
@@ -584,6 +617,11 @@ export function placedBox(box: Box3, placement: Placement): Box3 {
         }
       }
   return { min, max };
+}
+
+/** A part's box as a mirrored instance shows it (flipped across its own YZ plane). */
+export function mirroredBox(box: Box3): Box3 {
+  return { min: [-box.max[0], box.min[1], box.min[2]], max: [-box.min[0], box.max[1], box.max[2]] };
 }
 
 /**

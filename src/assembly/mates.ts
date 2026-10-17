@@ -486,9 +486,20 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
   }
   const result = spread(x);
   r = residual(x);
-  // A movement stopped at one of its limits (when a loop can't close, that's usually why).
-  const stopped = free.findIndex((f, i) => (Number.isFinite(f.min) && Math.abs(x[i] - f.min) < 1e-6) || (Number.isFinite(f.max) && Math.abs(x[i] - f.max) < 1e-6));
-  const atLimit = stopped >= 0 ? `${free[stopped].u.mate.name} (${MATE_TYPES[free[stopped].u.mate.type].values.find((d) => d.key === free[stopped].key)?.label ?? free[stopped].key})` : null;
+  // When a loop can't close, is a limit what's stopping it? Try again without limits: blame the
+  // amounts that would then go past their limits, if the loop closes that way.
+  const failed = r.some((v) => Math.abs(v) > 1e-3);
+  let atLimit: string | null = null;
+  if (failed && free.some((f) => Number.isFinite(f.min) || Number.isFinite(f.max))) {
+    const loose = closeLoops(x, residual);
+    if (size(residual(loose)) < 1e-4) {
+      const beyond = free.findIndex((f, i) => loose[i] < f.min - 1e-6 || loose[i] > f.max + 1e-6);
+      if (beyond >= 0) {
+        const f = free[beyond];
+        atLimit = `${f.u.mate.name} (${MATE_TYPES[f.u.mate.type].values.find((d) => d.key === f.key)?.label ?? f.key})`;
+      }
+    }
+  }
   // Report the closing mates that still don't fit.
   const groupErrors: Record<string, string> = {};
   result.closures.forEach((c, i) => {
@@ -511,11 +522,14 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
           : "This mate can't be met together with the other mates on the same parts — they pull against each other. Suppress or delete one, or let one of them move (a Hinge or Slider instead of Fasten).";
     }
   });
-  // Movements the loop solver changed, so the mate dialogs can show where things ended up.
+  // Movements the loop solver changed, so they can be stored and the next solve starts there —
+  // only when every loop closed (a failed attempt's amounts mean nothing).
   const adjusted: Record<string, Record<string, number>> = {};
-  free.forEach((f, i) => {
-    if (Math.abs(x[i] - start[i]) > 1e-9) (adjusted[f.u.mate.id] ??= {})[f.key] = x[i];
-  });
+  if (!failed) {
+    free.forEach((f, i) => {
+      if (Math.abs(x[i] - start[i]) > 1e-9) (adjusted[f.u.mate.id] ??= {})[f.key] = x[i];
+    });
+  }
   return {
     placements: result.placements,
     mateErrors,

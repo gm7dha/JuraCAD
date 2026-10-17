@@ -101,7 +101,16 @@ export function applyRelations(assembly: Assembly): { assembly: Assembly; driven
     const waiting = new Set(pending.map((r) => `${r.driven}:${RELATION_KINDS[r.kind].drivenKey}`));
     const ready = pending.filter((r) => !waiting.has(`${r.driver}:${RELATION_KINDS[r.kind].driverKey}`));
     if (!ready.length) {
-      for (const r of pending) errors[r.id] = "These relations drive each other round in a circle. Remove one of them.";
+      // Which of them are in the circle, and which just hang off it.
+      const driverOf = (r: MateRelation) => pending.find((x) => `${x.driven}:${RELATION_KINDS[x.kind].drivenKey}` === `${r.driver}:${RELATION_KINDS[r.kind].driverKey}`);
+      for (const r of pending) {
+        let at = driverOf(r);
+        for (let k = 0; at && at !== r && k < pending.length; k++) at = driverOf(at);
+        errors[r.id] =
+          at === r
+            ? "These relations drive each other round in a circle. Remove one of them."
+            : "Its driver is stuck in a circle of relations that drive each other. Remove one of those.";
+      }
       break;
     }
     for (const r of ready) {

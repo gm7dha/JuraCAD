@@ -89,15 +89,60 @@ describe("closing a loop keeps the mate you set", () => {
     const mates = doc.assemblies![0].mates!;
     const value = (id: string) => mates.find((m) => m.id === id)!.values.angle;
     expect(value("m1")).toBe("60");
-    expect(Number(value("m2"))).toBeCloseTo(solved.adjusted!.m2.angle, 5);
-    expect(Number(value("m4"))).toBeCloseTo(solved.adjusted!.m4.angle, 5);
+    expect(Number(value("m2"))).toBeCloseTo(solved.adjusted!.m2.angle, 2);
+    expect(Number(value("m4"))).toBeCloseTo(solved.adjusted!.m4.angle, 2);
     // A variable stays a variable.
     expect(value("m3")).toBe("#rocker");
-    // Solving again from the stored amounts changes nothing.
-    const again = solveAssembly({ ...fourBar("60"), mates: fourBar("60").mates!.map((m) => ({ ...m, values: { angle: m.id === "m3" ? String(solved.adjusted!.m3.angle) : value(m.id) } })) }, fourBarLookup);
-    expect(Object.keys(again.adjusted ?? {})).toEqual([]);
-    expect(again.placements.R.position[0]).toBeCloseTo(solved.placements.R.position[0], 4);
-    expect(again.placements.R.position[1]).toBeCloseTo(solved.placements.R.position[1], 4);
+    // Solving again from the stored amounts barely changes anything (only the rounding to a thousandth of a degree).
+    const stored = (id: string) => (id === "m3" ? String(solved.adjusted!.m3.angle) : value(id));
+    const again = solveAssembly({ ...fourBar("60"), mates: fourBar("60").mates!.map((m) => ({ ...m, values: { angle: stored(m.id) } })) }, fourBarLookup);
+    for (const [id, changes] of Object.entries(again.adjusted ?? {})) expect(Math.abs(changes.angle - Number(stored(id)))).toBeLessThan(0.01);
+    expect(again.placements.R.position[0]).toBeCloseTo(solved.placements.R.position[0], 2);
+    expect(again.placements.R.position[1]).toBeCloseTo(solved.placements.R.position[1], 2);
+  });
+});
+
+describe("when a loop can't close", () => {
+  // Links far too short to reach: ground 30, crank 10, coupler 5, rocker 5.
+  const short: Record<string, [Frame, Frame]> = { m1: [at(0), at(0)], m2: [at(10), at(0)], m3: [at(5), at(0)], m4: [at(5), at(30)] };
+  const lookup = (m: Mate, side: "a" | "b") => short[m.id]?.[side === "a" ? 0 : 1] ?? null;
+
+  it("stores nothing, so the amounts you typed are kept", () => {
+    const asm = fourBar("20", { m2: "45", m3: "90", m4: "-30" });
+    const solved = solveAssembly(asm, lookup, { hold: ["m1"] });
+    expect(Object.keys(solved.mateErrors).length).toBeGreaterThan(0);
+    expect(solved.adjusted).toEqual({});
+    const doc = settleSolved({ ...emptyDocument(), assemblies: [asm] }, "A", solved);
+    expect(doc.assemblies![0].mates!.map((m) => m.values.angle)).toEqual(["20", "45", "90", "-30"]);
+  });
+
+  it("only blames a limit that's really in the way", () => {
+    // Two Fastens that disagree (a real conflict), and a Slider elsewhere resting at its lowest limit.
+    const top: Frame = { origin: [0, 0, 10], z: [0, 0, 1], x: [1, 0, 0] };
+    const asm: Assembly = {
+      id: "A",
+      name: "A",
+      instances: [inst("a", true), inst("b"), inst("c")],
+      mates: [
+        mate("f1", "fastened", "a", "b", { angle: "90" }, { name: "Fasten 1" }),
+        mate("f2", "fastened", "a", "b", { angle: "0" }, { name: "Fasten 2" }),
+        mate("s", "slider", "a", "c", { distance: "0" }, { name: "Slider 1", limits: { distance: { min: "0", max: "50" } } }),
+      ],
+    };
+    const r = solveAssembly(asm, () => top);
+    const msg = Object.values(r.mateErrors).join(" ");
+    expect(msg).toContain("pull against each other");
+    expect(msg).not.toContain("limit");
+  });
+});
+
+describe("storing loop amounts", () => {
+  it("rounds them to a thousandth and never leaves -0.000004", () => {
+    const doc = settleSolved({ ...emptyDocument(), assemblies: [fourBar("0")] }, "A", {
+      placements: {},
+      adjusted: { m2: { angle: -0.000004 }, m3: { angle: 12.345678 }, m4: { angle: -179.99961 } },
+    });
+    expect(doc.assemblies![0].mates!.map((m) => m.values.angle)).toEqual(["0", "0", "12.346", "-180"]);
   });
 });
 
@@ -129,6 +174,15 @@ describe("relations", () => {
     const r = applyRelations({ ...a, relations: [...a.relations!, { id: "r3", name: "Gear 3", kind: "gear", driver: "m3", driven: "m1", ratio: "1" }] });
     expect(r.errors.r1).toContain("in a circle");
     expect(r.errors.r3).toContain("in a circle");
+    // One that only hangs off the circle says so.
+    const hanging = applyRelations({
+      ...a,
+      instances: [...a.instances, inst("w")],
+      mates: [...a.mates!, mate("m4", "revolute", "g", "w")],
+      relations: [...a.relations!, { id: "r3", name: "Gear 3", kind: "gear", driver: "m3", driven: "m1", ratio: "1" }, { id: "r4", name: "Gear 4", kind: "gear", driver: "m3", driven: "m4", ratio: "1" }],
+    });
+    expect(hanging.errors.r4).toContain("Its driver is stuck in a circle");
+    expect(hanging.errors.r2).toContain("drive each other round in a circle");
   });
 
   it("links two sliders with a Linear relation", () => {

@@ -692,6 +692,10 @@ try {
   await page.locator("#explode-spread").dispatchEvent("pointerup");
   await page.waitForFunction(() => document.querySelector('[aria-label="Exploded view"] .field-label')?.textContent?.includes("200%"));
   await shot("exploded");
+  step = "adding an exploded view step";
+  await page.locator(".feature-row >> text=Part 2 <1>").click();
+  await page.getByRole("button", { name: /Move the selected part/ }).click();
+  await page.waitForSelector(".explode-step >> text=Part 2 <1>", { timeout: 5_000 });
   step = "patterning a part in the assembly";
   await page.getByRole("button", { name: "Explode", exact: true }).click();
   await page.locator(".feature-row >> text=Part 2 <1>").click();
@@ -717,6 +721,15 @@ try {
     await page.locator(".panel-section.groups .feature-row").first().hover();
     await page.getByRole("button", { name: "Ungroup Group 1" }).click();
     await page.waitForSelector(".panel-section.groups", { state: "detached", timeout: 5_000 });
+  }
+  step = "duplicating a part in the assembly";
+  {
+    await page.locator(".feature-row >> text=Part 2 <1>").click();
+    await tool("Duplicate");
+    await page.waitForSelector(".feature-row >> text=Part 2 <2>", { timeout: 5_000 });
+    // The copy is selected: delete it again so the rest of the test sees the same assembly.
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".feature-row")].some((r) => r.textContent?.includes("Part 2 <2>")), null, { timeout: 5_000 });
   }
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 

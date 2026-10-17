@@ -783,7 +783,9 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
                 <td>{n + 1}</td>
                 <td title={r.material ? `${r.material}${r.massEach !== undefined ? ` — ${formatMass(r.massEach)} each` : ""}` : undefined}>{r.name}</td>
                 <td className="bom-qty">{r.quantity}</td>
-                <td className="bom-mass muted">{r.massEach !== undefined ? formatMass(r.massEach * r.quantity) : ""}</td>
+                <td className="bom-mass muted" title={r.surface ? "Surfaces have no weight (thicken one to make it solid)" : undefined}>
+                  {r.massEach !== undefined ? formatMass(r.massEach * r.quantity) : r.surface ? "—" : ""}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -928,6 +930,9 @@ export function InstancePanel() {
   const { solved } = useSolvedAssembly();
   const parts = useStore((s) => s.parts);
   const instance = asm && selection.length === 1 ? asm.instances.find((i) => i.id === selection[0]) : undefined;
+  const studios = studiosOf(doc);
+  // Parts it could show instead (as in their Part Studio, not other configurations).
+  const choosable = studios.flatMap((st) => partsInStudio(parts, st.id)).filter((p) => !p.configuration);
   // While exploded, the exploded view's panel is open instead.
   if (!instance || insertOpen || mating || asm?.explode !== undefined) return null;
   const drivenBy = solved?.drivenBy[instance.id];
@@ -966,7 +971,7 @@ export function InstancePanel() {
           <input type="checkbox" checked={instance.fixed} onChange={(e) => update(instance.id, { fixed: e.target.checked })} />
           Fixed (stays where it is)
         </label>
-        {!instance.copyOf && !instance.replicaOf && parts.length > 1 && (
+        {!instance.copyOf && !instance.replicaOf && choosable.some((p) => p.id !== instance.partId) && (
           <div className="param-field compact">
             <label htmlFor="instance-part">Part</label>
             <select
@@ -975,14 +980,25 @@ export function InstancePanel() {
               onChange={(e) => useStore.getState().replaceInstancePart(instance.id, e.target.value)}
               title="Replace — show another part here instead. Its mates are kept where the new part has a matching face (pick again if not)."
             >
-              {!parts.some((p) => p.id === instance.partId) && <option value={instance.partId}>(missing part)</option>}
-              {parts
-                .filter((p) => !p.configuration)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
+              {!choosable.some((p) => p.id === instance.partId) && <option value={instance.partId}>(missing part)</option>}
+              {studios.length > 1
+                ? studios.map((st) => {
+                    const mine = partsInStudio(parts, st.id).filter((p) => !p.configuration);
+                    return mine.length ? (
+                      <optgroup key={st.id} label={st.name}>
+                        {mine.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null;
+                  })
+                : choosable.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
             </select>
           </div>
         )}
@@ -1107,7 +1123,8 @@ export function ExplodePanel() {
         />
         <p className="dialog-hint">
           Parts move straight out from the middle{asm.instances.some((i) => i.fixed) ? " of the fixed parts, which stay put" : ""}. Only the picture changes —
-          mates, exports and clash checks use the real places. Drawings of this assembly can show it exploded too.
+          mates, exports and clash checks use the real places. Drawings of this assembly can show it exploded too. To move or change a part itself, close the
+          exploded view first.
         </p>
         <fieldset className="param-group explode-steps">
           <legend>Steps</legend>

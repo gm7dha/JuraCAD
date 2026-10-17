@@ -10,11 +10,14 @@ import {
   bomTotalMass,
   duplicateInstances,
   meshVolume,
+  mirroredBox,
   parseAssemblies,
   removeInstances,
   replaceInstancePart,
   setExplode,
+  updateAssembly,
 } from "../src/assembly/assembly";
+import { syncPattern } from "../src/assembly/patterns";
 import type { Frame } from "../src/assembly/connectors";
 import { addOffsets, putExplodeStep, removeExplodeStep, stepDistance, stepOffsets } from "../src/assembly/explode";
 import type { Vec3 } from "../src/assembly/math";
@@ -68,7 +71,12 @@ describe("weights in the parts list", () => {
     const total = bomTotalMass(rows);
     expect(total.grams).toBeCloseTo(2 * 7.85 + 2.48, 9);
     expect(total.partial).toBe(true);
-    expect(bomCsv(rows)).toBe("Item,Part,Quantity,Material,Mass each (g),Mass (g)\n1,Bolt,2,Steel,7.9,15.7\n2,Plate,1,PLA,2.5,2.5\n3,gone,1,,,\n");
+    expect(bomCsv(rows)).toBe("Item,Part,Quantity,Material,Weight each (g),Weight (g)\n1,Bolt,2,Steel,7.9,15.7\n2,Plate,1,PLA,2.5,2.5\n3,gone,1,,,\n");
+    // A surface weighs nothing, and doesn't make the total "partly unknown".
+    const withSurface = billOfMaterials({ ...asm, instances: asm.instances.slice(0, 3) }, { p1: "Bolt", p2: "Skin" }, {}, (i) => (i.partId === "p2" ? { volume: null } : { material: "steel", volume: 1000 }));
+    expect(withSurface[1].surface).toBe(true);
+    expect(withSurface[1].massEach).toBeUndefined();
+    expect(bomTotalMass(withSurface)).toEqual({ grams: 2 * 7.85, partial: false });
     // Without the extra information it's the plain three columns as before.
     expect(bomCsv(billOfMaterials(asm, { p1: "Bolt", p2: "Plate" })).split("\n")[0]).toBe("Item,Part,Quantity");
   });
@@ -101,6 +109,52 @@ describe("duplicating instances", () => {
       ["Fasten 1", "base", "lid"],
       ["Hinge 2", "i1", "i2"],
     ]);
+  });
+});
+
+describe("duplicating relations and groups", () => {
+  it("copies gears between copied mates, and groups of copied parts, under new names", () => {
+    const asm: Assembly = {
+      id: "A",
+      name: "A",
+      instances: [inst("g", "base", { fixed: true }), inst("x", "gear"), inst("y", "gear"), inst("z", "gear")],
+      mates: [
+        { id: "h1", name: "Hinge 1", type: "revolute", a: { instanceId: "x", pick: pick("gear") }, b: { instanceId: "y", pick: pick("gear") }, flip: false, values: {} },
+        { id: "h2", name: "Hinge 2", type: "revolute", a: { instanceId: "y", pick: pick("gear") }, b: { instanceId: "z", pick: pick("gear") }, flip: false, values: {} },
+        { id: "h3", name: "Hinge 3", type: "revolute", a: { instanceId: "g", pick: pick("base") }, b: { instanceId: "x", pick: pick("gear") }, flip: false, values: {} },
+      ],
+      relations: [
+        { id: "r1", name: "Gear 1", kind: "gear", driver: "h1", driven: "h2", ratio: "2" },
+        { id: "r2", name: "Gear 2", kind: "gear", driver: "h3", driven: "h1", ratio: "1" },
+      ],
+      groups: [
+        { id: "gr", name: "Group 1", members: ["y", "z"], offsets: { z: { position: [5, 0, 0], rotation: [0, 0, 0, 1] } } },
+        { id: "gr2", name: "Group 2", members: ["g", "x"], offsets: { x: { position: [1, 0, 0], rotation: [0, 0, 0, 1] } } },
+      ],
+    };
+    let n = 0;
+    const { assembly } = duplicateInstances(asm, ["x", "y", "z"], {}, [10, 0, 0], (p) => `${p}${++n}`);
+    // Hinges 1 and 2 copied as Hinge 4 and 5; the gear between them comes too, pointing at the copies.
+    const newMates = assembly.mates!.slice(3);
+    expect(newMates.map((m) => m.name)).toEqual(["Hinge 4", "Hinge 5"]);
+    expect(assembly.relations!.map((r) => [r.name, r.driver, r.driven])).toEqual([
+      ["Gear 1", "h1", "h2"],
+      ["Gear 2", "h3", "h1"],
+      ["Gear 3", newMates[0].id, newMates[1].id],
+    ]);
+    // Group 1 (all copied) is copied; Group 2 (its base wasn't copied) isn't.
+    const copiedGroup = assembly.groups![2];
+    expect(assembly.groups).toHaveLength(3);
+    expect(copiedGroup.name).toBe("Group 3");
+    const [y2, z2] = copiedGroup.members;
+    expect(assembly.instances.find((i) => i.id === y2)!.name).toBe("gear <3>");
+    expect(copiedGroup.offsets[z2].position).toEqual([5, 0, 0]);
+  });
+});
+
+describe("placing duplicates of mirrored parts", () => {
+  it("uses the mirrored part's box", () => {
+    expect(mirroredBox({ min: [50, 0, 0], max: [70, 10, 5] })).toEqual({ min: [-70, 0, 0], max: [-50, 10, 5] });
   });
 });
 
@@ -147,6 +201,19 @@ describe("exploded view steps", () => {
     expect("error" in stepDistance(a.explodeSteps![2])).toBe(true);
     close(addOffsets({ a: [1, 1, 1] }, off).a, [1, 1, 31]);
     expect(removeExplodeStep(removeExplodeStep(removeExplodeStep(a, "s1"), "s2"), "s3").explodeSteps).toBeUndefined();
+  });
+
+  it("forgets parts that a pattern change removes", () => {
+    const seeded: Assembly = { ...base, instances: [...base.instances] };
+    let doc: PartSmithDocument = { ...emptyDocument(), assemblies: [seeded] };
+    let k = 0;
+    const pattern = { id: "pt", name: "Pattern 1", kind: "linear" as const, seeds: ["a"], count: 3, amount: "20", axis: "x" as const };
+    doc = updateAssembly(doc, "A", (a) => syncPattern(a, pattern, () => `copy${++k}`));
+    doc = updateAssembly(doc, "A", (a) => putExplodeStep(a, { id: "s", instances: ["copy2", "b"], axis: "z", distance: "10" }));
+    // Two in the pattern now: copy 2 goes, and the step forgets it.
+    doc = updateAssembly(doc, "A", (a) => syncPattern(a, { ...pattern, count: 2 }, () => `copy${++k}`));
+    expect(doc.assemblies![0].instances.some((i) => i.id === "copy2")).toBe(false);
+    expect(doc.assemblies![0].explodeSteps).toEqual([{ id: "s", instances: ["b"], axis: "z", distance: "10" }]);
   });
 
   it("can show only the steps (no spread), and saves and reopens them", () => {
