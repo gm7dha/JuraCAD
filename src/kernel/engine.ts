@@ -12,14 +12,14 @@ import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveP
 import { planeFrame, toWorld } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
 import { setCurrentScope } from "../model/expr";
-import { MESH_TOLERANCES, type Axis, type Feature, type MeshQuality, type Operation } from "../model/types";
+import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
 import { revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid } from "./surface";
-import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, loftSurface, offsetSurface, revolveSurface, sweepSurface, thickenSurface } from "./surface";
+import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
@@ -38,7 +38,7 @@ import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep } from "./stepExport";
-import { importKey, importSolids } from "./importer";
+import { importKey, importSolids, isImportedSurface } from "./importer";
 import { edgesOf, facesOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
@@ -765,11 +765,22 @@ function shrankWithin(before: Shape3D, after: Shape3D): boolean {
 }
 
 /** True when the shape is at least one solid and passes OpenCascade's own check. */
-function isValidSolid(shape: Shape3D): boolean {
+/** The surfaces (skins) in an imported file, as one shape, or null when it has none. */
+function importedSurface(file: ImportedFile): Shape3D | null {
+  const shapes = importSolids(file);
+  let skin: Shape3D | null = null;
+  for (const s of shapes) {
+    if (isImportedSurface(s) && !skin) skin = s;
+    else s.delete();
+  }
+  return skin;
+}
+
+function isValidSolid(shape: Shape3D, surface = false): boolean {
   try {
-    const solids = solidsOf(shape);
-    const count = solids.length;
-    solids.forEach((x) => x.delete());
+    const pieces = surface ? facesOf(shape) : solidsOf(shape);
+    const count = pieces.length;
+    pieces.forEach((x) => x.delete());
     if (count === 0) return false;
     const analyzer = new (getOC().BRepCheck_Analyzer)(shape.wrapped, true, false, false);
     const ok = analyzer.IsValid();
@@ -1000,7 +1011,11 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       throw new Error("This feature doesn't make a solid of its own.");
     case "import": {
       if (!feature.import) throw new Error("This import has lost its file. Delete it and import the file again.");
-      const solids = importSolids(feature.import);
+      const shapes = importSolids(feature.import);
+      const solids = shapes.filter((s) => !isImportedSurface(s));
+      shapes.filter((s) => isImportedSurface(s)).forEach((s) => s.delete());
+      if (solids.length === 0 && feature.operation !== "new") throw new Error("The file holds only surfaces, which can't be added to or cut from a part. Import it as New.");
+      if (solids.length === 0) return makeCompound([]) as Shape3D;
       return solids.length === 1 ? solids[0] : (makeCompound(solids) as Shape3D);
     }
     case "box":
@@ -1377,7 +1392,7 @@ export class GeometryEngine {
       }
 
       if (feature.operation === "new" && feature.type === "import") {
-        // A STEP file may hold several parts: each solid becomes its own part.
+        // A STEP file may hold several parts: each solid becomes its own part, and any surfaces one surface part.
         this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
         const solids = solidsOf(tool);
         solids.forEach((solid, i) => {
@@ -1385,6 +1400,12 @@ export class GeometryEngine {
           const id = i === 0 ? feature.id : `${feature.id}~${i + 1}`;
           this.parts.push({ id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid, meshKey: `${importKey(feature.import!)}#${i}` });
         });
+        const skin = importedSurface(feature.import!);
+        if (skin) {
+          surfaceCounter++;
+          const id = solids.length === 0 ? feature.id : `${feature.id}~${solids.length + 1}`;
+          this.parts.push({ id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true, meshKey: `${importKey(feature.import!)}#s` });
+        }
         tool.delete();
         continue;
       }
@@ -1960,6 +1981,20 @@ export class GeometryEngine {
       return describeError(e, "Couldn't find the picked faces.");
     }
     let result: Shape3D | null = null;
+    if (part.surface) {
+      if (feature.type !== "deleteFace") return `${def.label} works on solid parts; ${part.name} is a surface.`;
+      try {
+        result = removeFaces(part.shape, faces);
+      } catch (e) {
+        return describeError(e, "Couldn't remove those faces.");
+      } finally {
+        faces.forEach((f) => f.delete());
+      }
+      part.shape.delete();
+      part.shape = result;
+      part.featureIds.push(feature.id);
+      return null;
+    }
     try {
       if (feature.type === "draft") {
         if (Math.abs(values.angle) < 1e-9) return "Enter an angle to taper by.";
@@ -2250,6 +2285,8 @@ export class GeometryEngine {
     if (targets.some((p) => !p) || tools.some((p) => !p)) return "One of its parts no longer exists. Edit this feature and pick again.";
     const ts = targets as BuiltPart[];
     const tls = (tools as BuiltPart[]).filter((p) => !ts.includes(p));
+    const skin = [...ts, ...tls].find((p) => p.surface);
+    if (skin) return `${skin.name} is a surface, with no inside to join or cut. Thicken it or Enclose it into a solid first.`;
     const fuseAll = (shapes: Shape3D[]): Shape3D => {
       let out = shapes[0].clone();
       for (const s of shapes.slice(1)) {
@@ -2349,6 +2386,11 @@ export class GeometryEngine {
     };
     const threads = part.threads?.map((m) => ({ ...m, origin: turnVec(m.origin, true), axis: turnVec(m.axis, false) }));
     if (t.copy) {
+      // A copy of a surface is another surface.
+      if (part.surface) {
+        this.parts.push({ id: feature.id, name: `${part.name} (copy)`, featureIds: [feature.id], shape, surface: true });
+        return {};
+      }
       this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, ...(threads ? { threads } : {}) });
       return { newPart: true };
     }
@@ -2458,6 +2500,19 @@ export class GeometryEngine {
           return `The part ${source.name} belonged to no longer exists.`;
         }
         let shape = working.get(part.id) ?? part.shape.clone();
+        if (part.surface) {
+          // Copies of a surface are joined on as more of the same skin (sewn where they touch).
+          const copies = placements.map((place) => place(tool.shape.clone()));
+          try {
+            const next = joinSurfaces([shape, ...copies]);
+            shape.delete();
+            shape = next;
+          } finally {
+            copies.forEach((c) => c.delete());
+          }
+          working.set(part.id, shape);
+          continue;
+        }
         for (const place of placements) {
           const copy = place(tool.shape.clone());
           try {
@@ -2498,6 +2553,7 @@ export class GeometryEngine {
     if (partIds.length > 1) return "Shell works on one part at a time. Remove the faces picked on the other part.";
     const part = picks.length ? this.parts.find((p) => p.id === partIds[0]) : [...this.parts].reverse().find((p) => !p.surface);
     if (!part) return picks.length ? "The part these faces were on no longer exists. Edit this feature and pick the faces again." : "There's no part to hollow yet.";
+    if (part.surface) return `${part.name} is a surface, with no inside to hollow. Use Thicken to give it walls instead.`;
     // No faces picked — or every face (a ball has only one) — hollows it closed inside, with no opening.
     const all = facesOf(part.shape);
     const faceCount = all.length;
@@ -2588,9 +2644,15 @@ export class GeometryEngine {
           chosen.forEach((c) => c.delete());
         }
         // OpenCascade sometimes "succeeds" with a broken solid when the size is too big.
-        if (!isValidSolid(shape)) {
+        if (!isValidSolid(shape, !!part.surface)) {
           shape.delete();
           throw new Error(failed);
+        }
+        if (part.surface) {
+          // The rounded surface comes back in pieces: one skin again.
+          const sewnUp = joinSurfaces([shape]);
+          shape.delete();
+          shape = sewnUp;
         }
         results.push({ part, shape });
       }

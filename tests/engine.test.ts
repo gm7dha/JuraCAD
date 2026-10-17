@@ -2284,11 +2284,13 @@ describe("surfaces", () => {
     expect(t.featureErrors).toEqual({});
     expect(t.parts).toHaveLength(1);
     expect(t.parts[0].surface).toBeUndefined();
-    // Roughly a 12 × 12 × 10 box less the 10 × 10 × 10 inside (the corners come out a touch different).
+    // The skin's faces point inwards here, so 1 mm in: 10 × 10 × 10 less the 8 × 8 × 10 inside. Flipped, outwards: 12 × 12 × 10 less 10 × 10 × 10.
     const thickCheck = engine.check("coarse").parts[0];
     expect(thickCheck.geometryValid).toBe(true);
-    expect(thickCheck.exactVolume!).toBeGreaterThan(400);
-    expect(thickCheck.exactVolume!).toBeLessThan(450);
+    expect(thickCheck.exactVolume!).toBeCloseTo(360, 3);
+    expect(thickCheck.mesh.watertight).toBe(true);
+    build([box, skin, { ...thick, flipSide: true }]);
+    expect(engine.check("coarse").parts[0].exactVolume!).toBeCloseTo(440, 3);
     // Offset the skin 2 mm: a 14 × 14 (or, the other way, 6 × 6) skin, 10 tall, as another surface; minus goes the other way.
     const off: Feature = { ...feature("offsetSurface", { distance: 2 }), picks: [faceOf(p)] };
     const o = build([box, skin, off]);
@@ -2302,5 +2304,123 @@ describe("surfaces", () => {
     // Outwards the corners are rounded off, so a little under 4 × 14 × 10.
     expect(big).toBeGreaterThan(500);
     expect(big).toBeLessThan(561);
+  });
+
+  it("thickens open and curved surfaces into real solids, either side", () => {
+    // A flat wall 20 × 5 → a 20 × 5 × 1 slab.
+    const sk = sketchFeature({ kind: "default", name: "Top" }, lineSketch(0, 0, 20, 0));
+    const wall: Feature = { ...extrudeFeature(sk.id, 5), surface: true };
+    const w = build([sk, wall]).parts[0];
+    const pick = { partId: w.id, ref: w.faceRefs[0] };
+    const slab = build([sk, wall, { ...feature("thicken", { thickness: 1 }, "new"), picks: [pick] }]);
+    expect(slab.featureErrors).toEqual({});
+    expect(slab.parts.map((p) => [p.name, !!p.surface, p.faceRefs.length])).toEqual([["Part 1", false, 6]]);
+    expect(engine.check("coarse").parts[0].exactVolume).toBeCloseTo(100, 3);
+    expect(engine.check("coarse").parts[0].mesh.watertight).toBe(true);
+    // A round skin (radius 10, 20 tall) → a tube 1 mm thick, one way or the other.
+    const c = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 0, y: 0 }, 10).sketch);
+    const skin: Feature = { ...extrudeFeature(c.id, 20), surface: true };
+    const cp = { partId: skin.id, ref: build([c, skin]).parts[0].faceRefs[0] };
+    const tube = build([c, skin, { ...feature("thicken", { thickness: 1 }, "new"), picks: [cp] }]);
+    expect(tube.featureErrors).toEqual({});
+    expect(tube.parts[0].faceRefs).toHaveLength(4);
+    const v1 = engine.check("coarse").parts[0].exactVolume!;
+    build([c, skin, { ...feature("thicken", { thickness: 1 }, "new"), picks: [cp], flipSide: true }]);
+    const v2 = engine.check("coarse").parts[0].exactVolume!;
+    expect([v1, v2].sort((a, b) => a - b).map((v) => Math.round(v))).toEqual([Math.round(Math.PI * (100 - 81) * 20), Math.round(Math.PI * (121 - 100) * 20)]);
+    // Added onto a solid: the tube fuses with a block under it.
+    const block = feature("box", { width: 10, depth: 10, height: 10, x: -5, y: -5, z: -10 });
+    const onto = build([block, c, skin, { ...feature("thicken", { thickness: 1 }, "add"), picks: [cp] }]);
+    expect(onto.featureErrors).toEqual({});
+    expect(onto.parts.map((p) => [p.name, !!p.surface])).toEqual([["Part 1", false], ["Surface 1", true]]);
+    expect(engine.check("coarse").parts[0].exactVolume).toBeCloseTo(1000 + v1, 1);
+    // A closed skin (a ball): plus is outwards whichever way its faces point.
+    const arc = sketchFeature({ kind: "default", name: "Front" }, addArc(emptySketch(), { x: 0, y: -10 }, { x: 0, y: 10 }, { x: 10, y: 0 }).sketch);
+    const ball: Feature = { ...feature("revolve", { angle: 360 }), sketchRef: arc.id, revolve: { axis: "vertical", flip: false }, surface: true };
+    const bp = { partId: ball.id, ref: build([arc, ball]).parts[0].faceRefs[0] };
+    build([arc, ball, { ...feature("thicken", { thickness: 1 }, "new"), picks: [bp] }]);
+    expect(engine.check("coarse").parts[0].exactVolume).toBeCloseTo((4 / 3) * Math.PI * (1331 - 1000), 1);
+    build([arc, ball, { ...feature("thicken", { thickness: 1 }, "new"), picks: [bp], flipSide: true }]);
+    expect(engine.check("coarse").parts[0].exactVolume).toBeCloseTo((4 / 3) * Math.PI * (1000 - 729), 1);
+    // Two separate walls in one surface: both thickened.
+    let two = lineSketch(0, 0, 20, 0);
+    two = addLine(two, { x: 0, y: 30 }, { x: 20, y: 30 }).sketch;
+    const tw = sketchFeature({ kind: "default", name: "Top" }, two);
+    const pair: Feature = { ...extrudeFeature(tw.id, 5), surface: true };
+    const pp = { partId: pair.id, ref: build([tw, pair]).parts[0].faceRefs[0] };
+    expect(build([tw, pair, { ...feature("thicken", { thickness: 1 }, "new"), picks: [pp] }]).featureErrors).toEqual({});
+    expect(engine.check("coarse").parts[0].exactVolume).toBeCloseTo(200, 3);
+  });
+
+  it("moves, copies, mirrors, patterns, rounds and trims surfaces like parts", () => {
+    let l = lineSketch(0, 0, 20, 0);
+    l = addLine(l, { x: 20, y: 0 }, { x: 20, y: 10 }).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, l);
+    const wall: Feature = { ...extrudeFeature(sk.id, 5), surface: true };
+    const first = build([sk, wall]);
+    const p = first.parts[0];
+    // Move it 10 along X; a copy is another surface.
+    const mv: Feature = { ...feature("transform", { dx: 10 }, "add"), transform: { partId: wall.id, axis: "z", about: "centre", copy: false } };
+    const moved = build([sk, wall, mv]);
+    expect(moved.featureErrors).toEqual({});
+    expect(Math.min(...Array.from(moved.parts[0].vertices).filter((_, i) => i % 3 === 0))).toBeCloseTo(10, 4);
+    const copied = build([sk, wall, { ...mv, transform: { ...mv.transform!, copy: true } }]);
+    expect(copied.featureErrors).toEqual({});
+    expect(copied.parts.map((x) => [x.name, !!x.surface])).toEqual([["Surface 1", true], ["Surface 1 (copy)", true]]);
+    // Mirror across the Right plane (x = 0): twice the skin, one surface.
+    const mi: Feature = { ...feature("mirror", {}, "add"), mirror: { sources: [wall.id], plane: { kind: "default", name: "Right" } } };
+    const mirrored = build([sk, wall, mi]);
+    expect(mirrored.featureErrors).toEqual({});
+    expect(mirrored.parts).toHaveLength(1);
+    expect(area(mirrored.parts[0])).toBeCloseTo(300, 2);
+    // Three in a row along Y.
+    const lp: Feature = { ...feature("linearPattern", { count: 3, spacing: 10 }, "add"), pattern: { sources: [wall.id], axis: "y", flip: false } };
+    const row = build([sk, wall, lp]);
+    expect(row.featureErrors).toEqual({});
+    expect(area(row.parts[0])).toBeCloseTo(450, 2);
+    // Round the corner where the two walls meet (radius 2): the corner strip replaced by a quarter round.
+    const corner = p.edgeRefs.find((e) => e.kind === "edge" && Math.abs(e.mid[0] - 20) < 1e-6 && Math.abs(e.mid[1]) < 1e-6)!;
+    const rounded = build([sk, wall, { ...feature("fillet", { radius: 2 }, "add"), picks: [{ partId: wall.id, ref: corner }] }]);
+    expect(rounded.featureErrors).toEqual({});
+    expect(rounded.parts[0].surface).toBe(true);
+    expect(area(rounded.parts[0])).toBeCloseTo(150 - 4 * 5 + Math.PI * 5, 1);
+    const bevelled = build([sk, wall, { ...feature("chamfer", { distance: 2 }, "add"), picks: [{ partId: wall.id, ref: corner }] }]);
+    expect(bevelled.featureErrors).toEqual({});
+    expect(area(bevelled.parts[0])).toBeCloseTo(150 - 4 * 5 + Math.SQRT2 * 2 * 5, 1);
+    // Delete face takes a face out of a surface; booleans and Shell say surfaces have no inside.
+    const side = p.faceRefs.find((f) => Math.abs(f.center[0] - 20) < 1e-6)!;
+    const fewer = build([sk, wall, { ...feature("deleteFace", {}), picks: [{ partId: wall.id, ref: side }] }]);
+    expect(fewer.featureErrors).toEqual({});
+    expect(area(fewer.parts[0])).toBeCloseTo(100, 2);
+    const box = feature("box", { width: 10, depth: 10, height: 10, y: -5 });
+    const union: Feature = { ...feature("boolean", {}), booleanDef: { op: "union", targets: [wall.id, box.id], tools: [], keepTools: false } };
+    expect(build([sk, wall, box, union]).featureErrors[union.id]).toMatch(/Surface 1 is a surface/);
+    const shell: Feature = { ...feature("shell", { thickness: 1 }, "remove"), picks: [{ partId: wall.id, ref: side }] };
+    expect(build([sk, wall, shell]).featureErrors[shell.id]).toMatch(/Use Thicken/);
+    // Fill needs a closed ring.
+    const topEdge = p.edgeRefs.find((e) => e.kind === "edge" && Math.abs(e.mid[2] - 5) < 1e-6)!;
+    const gap: Feature = { ...feature("fill", {}), picks: [{ partId: wall.id, ref: topEdge }] };
+    expect(build([sk, wall, gap]).featureErrors[gap.id]).toMatch(/gap/);
+  });
+
+  it("exports surfaces to STEP and reads them back as surfaces", async () => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: -10, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }).sketch);
+    const half: Feature = { ...extrudeFeature(sk.id, 20), surface: true };
+    const box = feature("box", { width: 5, depth: 5, height: 5, x: 30 });
+    build([sk, half, box]);
+    const { step, partCount } = await engine.exportStep([]);
+    expect(partCount).toBe(2);
+    const imp: Feature = { ...feature("import", {}), import: { fileName: "s.step", format: "step", data: new TextDecoder().decode(step), units: "mm" } };
+    const r = build([imp]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => [p.name, !!p.surface])).toEqual([["Part 1", false], ["Surface 1", true]]);
+    expect(area(r.parts[1])).toBeCloseTo(Math.PI * 10 * 20, 0);
+    // Surfaces alone come in too, but can't be added to a part.
+    build([sk, half]);
+    const only = new TextDecoder().decode((await engine.exportStep([])).step);
+    const alone = build([{ ...imp, import: { ...imp.import!, data: only } }]);
+    expect(alone.parts.map((p) => [p.name, !!p.surface])).toEqual([["Surface 1", true]]);
+    const onto: Feature = { ...feature("import", {}, "add"), import: { ...imp.import!, data: only } };
+    expect(build([box, onto]).featureErrors[onto.id]).toMatch(/only surfaces/);
   });
 });
