@@ -39,7 +39,7 @@ import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } fr
 import { matchingConnectors } from "../assembly/connectors";
 import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
 import { findMesh, meshIdOf } from "../assembly/configured";
-import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, updateInstance } from "../assembly/assembly";
+import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, pickWidthFace, solveWithParts } from "../assembly/mates";
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
@@ -1071,7 +1071,7 @@ export const useStore = create<AppState>((set, get) => {
       change((doc) => {
         const withMate = putMate(doc, asm.id, mate);
         const solvedAsm = withMate.assemblies?.find((a) => a.id === asm.id);
-        return solvedAsm ? settlePlacements(withMate, asm.id, solveWithParts(solvedAsm, s.parts).placements) : withMate;
+        return solvedAsm ? settleSolved(withMate, asm.id, solveWithParts(solvedAsm, s.parts, { hold: [mate.id] })) : withMate;
       });
       set({ mateDraft: null });
       return true;
@@ -1097,8 +1097,8 @@ export const useStore = create<AppState>((set, get) => {
       const mate = asm.mates?.find((m) => m.id === d.id);
       if (!mate) return;
       const moved = withDragChange(asm, d);
-      const { placements } = solveWithParts(moved, s.parts);
-      change((doc) => settlePlacements(putMate(doc, asm.id, { ...mate, values: d.values }), asm.id, placements));
+      const solved = solveWithParts(moved, s.parts, { hold: [mate.id] });
+      change((doc) => settleSolved(putMate(doc, asm.id, { ...mate, values: d.values }), asm.id, solved));
     },
 
     deleteMate: (id) => {
@@ -1106,8 +1106,7 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       if (!asm) return;
       // Parts stay where the mates had put them.
-      const { placements } = solveWithParts(asm, s.parts);
-      change((doc) => removeMate(settlePlacements(doc, asm.id, placements), asm.id, id));
+      change((doc) => removeMate(settleSolved(doc, asm.id, solveWithParts(asm, s.parts)), asm.id, id));
       if (s.mateDraft?.mate.id === id) set({ mateDraft: null });
     },
 
@@ -1120,7 +1119,8 @@ export const useStore = create<AppState>((set, get) => {
       }),
     savePosition: (name) => {
       const asm = activeAssembly(get());
-      if (asm) change((doc) => savePosition(doc, asm.id, newId("np"), name));
+      // Saved as shown: with the amounts loops of mates have moved to.
+      if (asm) change((doc) => savePosition(settleSolved(doc, asm.id, solveWithParts(asm, get().parts)), asm.id, newId("np"), name));
     },
     applyPosition: (id) => {
       const asm = activeAssembly(get());
@@ -1250,8 +1250,12 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       const mate = asm?.mates?.find((m) => m.id === id);
       if (!asm || !mate) return;
-      const { placements } = solveWithParts(asm, s.parts);
-      change((doc) => putMate(settlePlacements(doc, asm.id, placements), asm.id, { ...mate, suppressed: !mate.suppressed }));
+      const solved = solveWithParts(asm, s.parts);
+      change((doc) => {
+        const settled = settleSolved(doc, asm.id, solved);
+        const kept = settled.assemblies?.find((a) => a.id === asm.id)?.mates?.find((m) => m.id === id) ?? mate;
+        return putMate(settled, asm.id, { ...kept, suppressed: !mate.suppressed });
+      });
     },
     toggleInstanceHidden: (id) =>
       set((s) => ({ hiddenInstances: s.hiddenInstances.includes(id) ? s.hiddenInstances.filter((x) => x !== id) : [...s.hiddenInstances, id] })),

@@ -10,6 +10,8 @@ import { parsePattern, tidyPatterns } from "./patterns";
 import { parseReplicate, tidyReplicates } from "./replicate";
 import { parseGroup, tidyGroups } from "./groups";
 import { applyPlacement, IDENTITY, parsePlacement, type Placement, type Vec3 } from "./math";
+import { MATE_TYPES } from "./mates";
+import { startingLength } from "../model/units";
 
 const assembliesOf = (doc: PartSmithDocument) => doc.assemblies ?? [];
 
@@ -158,7 +160,8 @@ export function removeInstances(doc: PartSmithDocument, assemblyId: string, ids:
   );
 }
 
-function withMates(a: Assembly, mates: Mate[]): Assembly {
+/** The assembly with just these mates (and the relations between mates still there). */
+export function withMates(a: Assembly, mates: Mate[]): Assembly {
   const { mates: _old, relations: oldRelations, ...rest } = a;
   // Gear, rack and screw relations go with the mates they link.
   const ids = new Set(mates.map((m) => m.id));
@@ -198,6 +201,44 @@ export function settlePlacements(doc: PartSmithDocument, assemblyId: string, pla
     }),
   }));
 }
+
+/**
+ * Store where the solve put everything: each part's place, and the movements
+ * that loops of mates adjusted (so the next solve starts from there and a
+ * linkage stays the way it was left). Amounts typed as maths or variables
+ * are left as typed.
+ */
+export function settleSolved(
+  doc: PartSmithDocument,
+  assemblyId: string,
+  solved: { placements: Record<string, Placement>; adjusted?: Record<string, Record<string, number>> },
+): PartSmithDocument {
+  const settled = settlePlacements(doc, assemblyId, solved.placements);
+  const adjusted = solved.adjusted ?? {};
+  if (!Object.keys(adjusted).length) return settled;
+  return updateAssembly(settled, assemblyId, (a) => ({
+    ...a,
+    ...(a.mates
+      ? {
+          mates: a.mates.map((m) => {
+            const changes = adjusted[m.id];
+            if (!changes) return m;
+            const values = { ...m.values };
+            for (const [key, v] of Object.entries(changes)) {
+              const typed = (values[key] ?? "").trim();
+              if (typed && !isPlainAmount(typed)) continue;
+              const unit = MATE_TYPES[m.type].values.find((d) => d.key === key)?.unit;
+              values[key] = unit === "mm" ? startingLength(v) : String(Math.round(v * 1e6) / 1e6);
+            }
+            return { ...m, values };
+          }),
+        }
+      : {}),
+  }));
+}
+
+/** A typed amount that's just a number (in mm, or inches as " in"), not maths or a variable. */
+const isPlainAmount = (typed: string) => /^-?\d*\.?\d+(e-?\d+)?( in)?$/i.test(typed);
 
 export interface BomRow {
   partId: string;

@@ -26,7 +26,9 @@ export function useSolvedAssembly(): { assembly: Assembly | null; solved: SolveR
   const drag = useStore((s) => s.dragPreview);
   return useMemo(() => {
     if (!assembly) return { assembly: null, solved: null };
-    return { assembly, solved: solveWithParts(withDragChange(withDraftMate(assembly, draft), drag), parts) };
+    // The mate being edited or dragged keeps its amounts; loops close by moving the others.
+    const hold = [...(draft ? [draft.id] : []), ...(drag?.kind === "mate" ? [drag.id] : [])];
+    return { assembly, solved: solveWithParts(withDragChange(withDraftMate(assembly, draft), drag), parts, { hold }) };
   }, [assembly, parts, draft, drag]);
 }
 

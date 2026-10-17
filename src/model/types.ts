@@ -512,7 +512,7 @@ export interface NamedPosition {
 export interface MateRelation {
   id: string;
   name: string;
-  kind: "gear" | "rack" | "screw";
+  kind: "gear" | "rack" | "screw" | "linear";
   /** The mate that turns (a hinge). */
   driver: string;
   /** The mate it moves. */

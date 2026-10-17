@@ -7,7 +7,7 @@
  */
 import type { TopoPick } from "../geometry/topoRef";
 import type { Assembly, Instance, Mate, Replicate } from "../model/types";
-import { nextInstanceName } from "./assembly";
+import { nextInstanceName, withMates } from "./assembly";
 
 /** The mate holding an instance in a hole (a round edge or face on another part), and which side of it the instance is. */
 export function replicateSource(a: Assembly, instanceId: string): { mate: Mate; side: "a" | "b" } | string {
@@ -68,16 +68,16 @@ export function syncReplicate(a: Assembly, rep: Replicate, holes: TopoPick[], ne
   const at = instances.findIndex((i) => i.id === seed.id);
   instances = [...instances.slice(0, at + 1), ...copies, ...instances.slice(at + 1)];
   const others = (a.mates ?? []).filter((m) => m.replicateOf !== rep.id);
-  return { ...a, instances, mates: [...others, ...mates], replicates: withRep };
+  return withMates({ ...a, instances, replicates: withRep }, [...others, ...mates]);
 }
 
 /** Remove a replicate, its copies and their mates. */
 export function removeReplicate(a: Assembly, id: string): Assembly {
   const gone = new Set(a.instances.filter((i) => i.replicaOf?.replicate === id).map((i) => i.id));
-  const { replicates: _r, mates: _m, ...rest } = a;
+  const { replicates: _r, ...rest } = a;
   const replicates = (a.replicates ?? []).filter((r) => r.id !== id);
   const mates = (a.mates ?? []).filter((m) => m.replicateOf !== id && !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId));
-  return { ...rest, instances: a.instances.filter((i) => !gone.has(i.id)), ...(mates.length ? { mates } : {}), ...(replicates.length ? { replicates } : {}) };
+  return withMates({ ...rest, instances: a.instances.filter((i) => !gone.has(i.id)), ...(replicates.length ? { replicates } : {}) }, mates);
 }
 
 /** After parts or mates are removed: a replicate whose original or mate has gone goes too (with its copies). */

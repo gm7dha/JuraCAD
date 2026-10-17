@@ -2,7 +2,7 @@
  * The assembly tab: its toolbar, the list of instances and parts, the Insert
  * panel and the panel for placing the selected instance.
  */
-import { canBeDriven, canDrive, nextRelationName, RELATION_KINDS } from "../assembly/relations";
+import { canBeDriven, canDrive, nextRelationName, RELATION_KIND_NAMES, RELATION_KINDS } from "../assembly/relations";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { billOfMaterials, bomCsv, nextPositionName, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
@@ -566,7 +566,7 @@ export function PatternPanel() {
   );
 }
 
-/** Relations: one mate driving another (gears, rack and pinion, screws). */
+/** Relations: one mate driving another (gears, rack and pinion, screws, linked sliders). */
 function RelationsSection({ assembly }: { assembly: Assembly }) {
   const { solved } = useSolvedAssembly();
   const [adding, setAdding] = useState(false);
@@ -576,11 +576,15 @@ function RelationsSection({ assembly }: { assembly: Assembly }) {
   const st = useStore.getState;
   const add = (kind: MateRelation["kind"]) => {
     setAdding(false);
-    const driver = mates.find(canDrive);
+    const driver = mates.find((m) => canDrive(m, kind));
     const driven = mates.find((m) => m !== driver && canBeDriven(m, kind));
     if (!driver || !driven) {
       st().showToast(
-        kind === "gear" ? "A gear relation needs two Hinge (or Cylindrical) mates." : "This needs a Hinge mate to drive it and a Slider (or Cylindrical) mate to move.",
+        kind === "gear"
+          ? "A gear relation needs two Hinge (or Cylindrical) mates."
+          : kind === "linear"
+            ? "A linear relation needs two Slider (or Cylindrical) mates."
+            : "This needs a Hinge mate to drive it and a Slider (or Cylindrical) mate to move.",
         "info",
       );
       return;
@@ -591,13 +595,13 @@ function RelationsSection({ assembly }: { assembly: Assembly }) {
     <section className="panel-section relations">
       <h3>
         Relations <span className="count">({relations.length})</span>
-        <button type="button" className="text-button small-text" onClick={() => setAdding(!adding)} title="Make one mate drive another: gears, rack and pinion, screws">
+        <button type="button" className="text-button small-text" onClick={() => setAdding(!adding)} title="Make one mate drive another: gears, rack and pinion, screws, linked sliders">
           + Add
         </button>
       </h3>
       {adding && (
         <ul className="relation-kinds">
-          {(Object.keys(RELATION_KINDS) as MateRelation["kind"][]).map((k) => (
+          {RELATION_KIND_NAMES.map((k) => (
             <li key={k}>
               <button type="button" className="text-button" onClick={() => add(k)} title={RELATION_KINDS[k].hint}>
                 {RELATION_KINDS[k].label}
@@ -620,9 +624,9 @@ function RelationsSection({ assembly }: { assembly: Assembly }) {
                 </button>
               </div>
               <label>
-                Turning
+                {r.kind === "linear" ? "Sliding" : "Turning"}
                 <select value={r.driver} aria-label={`${r.name} driver`} onChange={(e) => update({ driver: e.target.value })}>
-                  {mates.filter(canDrive).map((m) => (
+                  {mates.filter((m) => canDrive(m, r.kind)).map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name}
                     </option>

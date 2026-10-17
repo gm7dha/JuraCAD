@@ -6,7 +6,7 @@ import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
 import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
 import { compose, placementMatrix, rotate, type Placement } from "../assembly/math";
-import { connectorFrameOnParts, findPick, framePlacement } from "../assembly/connectors";
+import { findPick, framePlacement } from "../assembly/connectors";
 import { explodeAssembly, useSolvedAssembly } from "../app/assemblySolve";
 import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
@@ -24,7 +24,7 @@ import { setSketchTheme } from "./SketchLayer";
 import { partsOfFeature } from "../model/partLinks";
 import { SceneManager, type PickTarget, type ScreenRay } from "./SceneManager";
 import { planDrag, type DragPlan } from "../assembly/drag";
-import { solveWithParts } from "../assembly/mates";
+import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mates";
 import { sectionPlane } from "./section";
 
 /** Shared empty colour list (a selector must not make a new object each time). */
@@ -370,7 +370,8 @@ function dragStart(target: PickTarget & { kind: "part" }, ray: ScreenRay, shift:
   const asm = activeAssembly(s);
   if (!asm || s.mateDraft || !target.point) return false;
   const solved = solveWithParts(asm, s.parts);
-  const r = planDrag(asm, solved, (m, side) => connectorFrameOnParts(s.parts, m[side]), target.item.partId, target.point, ray.dir, shift);
+  // Connectors on each part as its instance shows it (mirrored, or in another configuration).
+  const r = planDrag(asm, solved, frameLookup(asm, s.parts), target.item.partId, target.point, ray.dir, shift);
   if ("refuse" in r) {
     if (r.refuse) s.showToast(r.refuse);
     return false;
@@ -545,7 +546,7 @@ export function Viewport() {
     for (const c of [mateDraft.a, mateDraft.b]) {
       if (!c) continue;
       const instance = assembly.instances.find((i) => i.id === c.instanceId);
-      const f = connectorFrameOnParts(parts, c);
+      const f = connectorFrameFor(assembly, parts, c);
       if (!instance || !f) continue;
       const where: Placement = solved?.placements[instance.id] ?? instance.placement;
       const world = compose(where, framePlacement(f));
