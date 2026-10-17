@@ -87,6 +87,18 @@ export function pointInPolygon(p: Pt, poly: Pt[]): boolean {
   return inside;
 }
 
+/**
+ * Is `inner` inside `outer`? Nearly all of its outline must be (a few points
+ * may sit right on `outer`'s edge, where a circle touches a side).
+ */
+function containsLoop(outer: Loop, inner: Loop): boolean {
+  const n = inner.polygon.length;
+  if (!n) return false;
+  let count = 0;
+  for (const p of inner.polygon) if (pointInPolygon(p, outer.polygon)) count++;
+  return count >= 0.95 * n;
+}
+
 function makeLoop(segments: Segment[], polygon: Pt[]): Loop {
   let area = signedArea(polygon);
   if (area < 0) {
@@ -306,16 +318,14 @@ export function findRegions(sketch: SketchData): RegionResult {
   if (openShapes) problems.push(`${openShapes} shape${openShapes > 1 ? "s aren't" : " isn't"} closed, so ${openShapes > 1 ? "they were" : "it was"} left out.`);
   if (branching) problems.push(`${branching} shape${branching > 1 ? "s have" : " has"} lines meeting at a junction, so ${branching > 1 ? "they were" : "it was"} left out.`);
 
-  // Nesting: how many other loops contain each loop.
-  const depth = loops.map((l, i) =>
-    loops.reduce((d, other, j) => (j !== i && other.area > l.area && pointInPolygon(l.polygon[0], other.polygon) ? d + 1 : d), 0),
-  );
+  // Nesting: how many other loops contain each loop. A loop only partly inside another (two
+  // overlapping shapes) isn't nested: both stay solid, so they join up when extruded.
+  const inside = loops.map((l) => loops.map((other) => other !== l && other.area > l.area && containsLoop(other, l)));
+  const depth = inside.map((row) => row.filter(Boolean).length);
   const regions: Region[] = [];
   loops.forEach((outer, i) => {
     if (depth[i] % 2 !== 0) return;
-    const holes = loops.filter(
-      (l, j) => depth[j] === depth[i] + 1 && l.area < outer.area && pointInPolygon(l.polygon[0], outer.polygon),
-    );
+    const holes = loops.filter((l, j) => depth[j] === depth[i] + 1 && inside[j][i]);
     regions.push({ outer, holes });
   });
   return { regions, problems };

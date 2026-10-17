@@ -478,3 +478,23 @@ describe("rounding where a line meets an arc", () => {
     expect(filletCorner(arcMade.sketch, corner, "40").error).toMatch(/doesn't fit/);
   });
 });
+
+describe("overlapping shapes", () => {
+  it("a circle overlapping either side of a rectangle joins onto it rather than cutting a notch", () => {
+    for (const x of [0, 20]) {
+      let s = addRectangle(emptySketch(), at(0, 0), at(20, 10)).sketch;
+      s = addCircle(s, at(x, 5), 3).sketch;
+      const regions = findRegions(s).regions;
+      expect(regions).toHaveLength(2);
+      expect(regions.every((r) => r.holes.length === 0)).toBe(true);
+    }
+  });
+
+  it("a circle wholly inside (even touching a side) is still a hole", () => {
+    let s = addRectangle(emptySketch(), at(0, 0), at(20, 10)).sketch;
+    s = addCircle(s, at(10, 5), 5).sketch;
+    const regions = findRegions(s).regions;
+    expect(regions).toHaveLength(1);
+    expect(regions[0].holes).toHaveLength(1);
+  });
+});
