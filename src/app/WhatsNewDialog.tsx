@@ -6,6 +6,7 @@ import { useStore } from "../model/store";
 import { APP_VERSION, SHORT_VERSION } from "../version";
 import { Modal } from "./Modal";
 
+// Browser-storage key from the app's old name (PartSmith); kept so "what's new" isn't shown again after the rename.
 const SEEN_KEY = "partsmith.seenVersion";
 
 /** True when this version's changes haven't been looked at yet in this browser. */
@@ -46,7 +47,7 @@ export function WhatsNewDialog() {
   markSeen();
 
   return (
-    <Modal title={`What's new in PartSmith ${SHORT_VERSION}`} onClose={() => openDialog(null)} width={600}>
+    <Modal title={`What's new in JuraCAD ${SHORT_VERSION}`} onClose={() => openDialog(null)} width={600}>
       {current ? (
         <>
           {current.title && <p className="whats-new-title">{current.title}</p>}
@@ -70,7 +71,7 @@ export function WhatsNewDialog() {
       )}
       <p className="muted small">
         Each version is a safe point to go back to: ask for “go back to v0.14”, for example. The full history is on{" "}
-        <a href="https://github.com/Gm7dha/partsmith/blob/main/CHANGELOG.md" target="_blank" rel="noreferrer">
+        <a href="https://github.com/Gm7dha/JuraCAD/blob/main/CHANGELOG.md" target="_blank" rel="noreferrer">
           GitHub
         </a>
         .

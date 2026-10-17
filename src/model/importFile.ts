@@ -64,7 +64,7 @@ export type ImportReadResult = { ok: true; file: ImportedFile } | { ok: false; e
 export function readImport(fileName: string, bytes: Uint8Array): ImportReadResult {
   if (bytes.length === 0) return { ok: false, error: `${fileName} is empty.` };
   if (bytes.length > MAX_IMPORT_BYTES) {
-    return { ok: false, error: `${fileName} is ${(bytes.length / 1024 / 1024).toFixed(0)} MB — PartSmith can import files up to ${MAX_IMPORT_BYTES / 1024 / 1024} MB.` };
+    return { ok: false, error: `${fileName} is ${(bytes.length / 1024 / 1024).toFixed(0)} MB — JuraCAD can import files up to ${MAX_IMPORT_BYTES / 1024 / 1024} MB.` };
   }
   const format = detectFormat(fileName, bytes);
   if (!format) return { ok: false, error: `${fileName} isn't a STEP or STL file, so it can't be imported.` };

@@ -10,7 +10,7 @@ import { parseAppearance } from "./colours";
 import { parseMaterials } from "./materials";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
-import type { Feature, FeatureType, ImportedFile, Operation, PartSmithDocument, PartStudio } from "./types";
+import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, PartStudio } from "./types";
 import { MAIN_STUDIO } from "./studios";
 
 /**
@@ -18,7 +18,8 @@ import { MAIN_STUDIO } from "./studios";
  * they return a new document, which makes undo/redo trivial.
  */
 
-export function emptyDocument(name = "Untitled part"): PartSmithDocument {
+export function emptyDocument(name = "Untitled part"): JuraCADDocument {
+  // "partsmith" is the saved-file format id from the app's old name; it stays so files open in every version.
   return { format: "partsmith", version: 1, name, features: [] };
 }
 
@@ -31,7 +32,7 @@ export function newId(prefix = "f"): string {
 }
 
 /** Next free automatic name, e.g. "Box 3" when "Box 1" and "Box 2" exist. */
-export function nextFeatureName(doc: PartSmithDocument, type: FeatureType): string {
+export function nextFeatureName(doc: JuraCADDocument, type: FeatureType): string {
   const prefix = FEATURE_DEFS[type].namePrefix;
   const used = new Set(doc.features.map((f) => f.name));
   let n = 1;
@@ -39,7 +40,7 @@ export function nextFeatureName(doc: PartSmithDocument, type: FeatureType): stri
   return `${prefix} ${n}`;
 }
 
-export function createFeature(doc: PartSmithDocument, type: FeatureType, operation?: Operation): Feature {
+export function createFeature(doc: JuraCADDocument, type: FeatureType, operation?: Operation): Feature {
   const feature: Feature = {
     id: newId(),
     name: nextFeatureName(doc, type),
@@ -72,7 +73,7 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
   if (type === "text") {
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
-    feature.text = { value: "PartSmith", plane: { kind: "default", name: "Top" }, bold: false, flip: false };
+    feature.text = { value: "JuraCAD", plane: { kind: "default", name: "Top" }, bold: false, flip: false };
   }
   if (type === "split") feature.splitDef = { plane: { kind: "default", name: "Right" }, keep: "both", picking: "part" };
   if (type === "sheetMetal") {
@@ -142,20 +143,20 @@ export function createFeature(doc: PartSmithDocument, type: FeatureType, operati
   return feature;
 }
 
-export function addFeature(doc: PartSmithDocument, feature: Feature): PartSmithDocument {
+export function addFeature(doc: JuraCADDocument, feature: Feature): JuraCADDocument {
   return { ...doc, features: [...doc.features, feature] };
 }
 
-export function replaceFeature(doc: PartSmithDocument, feature: Feature): PartSmithDocument {
+export function replaceFeature(doc: JuraCADDocument, feature: Feature): JuraCADDocument {
   if (!doc.features.some((f) => f.id === feature.id)) return doc;
   return { ...doc, features: doc.features.map((f) => (f.id === feature.id ? feature : f)) };
 }
 
-export function removeFeature(doc: PartSmithDocument, id: string): PartSmithDocument {
+export function removeFeature(doc: JuraCADDocument, id: string): JuraCADDocument {
   return { ...doc, features: doc.features.filter((f) => f.id !== id) };
 }
 
-export function renameFeature(doc: PartSmithDocument, id: string, name: string): PartSmithDocument {
+export function renameFeature(doc: JuraCADDocument, id: string, name: string): JuraCADDocument {
   const trimmed = name.trim();
   const f = doc.features.find((x) => x.id === id);
   if (!f || !trimmed) return doc;
@@ -163,7 +164,7 @@ export function renameFeature(doc: PartSmithDocument, id: string, name: string):
 }
 
 /** Put features in a folder of the feature list (or, with null, take them out). */
-export function setFolder(doc: PartSmithDocument, ids: string[], folder: string | null): PartSmithDocument {
+export function setFolder(doc: JuraCADDocument, ids: string[], folder: string | null): JuraCADDocument {
   const name = folder?.trim().slice(0, 60) || null;
   const set = new Set(ids);
   return {
@@ -177,7 +178,7 @@ export function setFolder(doc: PartSmithDocument, ids: string[], folder: string 
 }
 
 /** Rename a folder (every feature in it). */
-export function renameFolder(doc: PartSmithDocument, from: string, to: string): PartSmithDocument {
+export function renameFolder(doc: JuraCADDocument, from: string, to: string): JuraCADDocument {
   const name = to.trim().slice(0, 60);
   if (!name || name === from) return doc;
   return { ...doc, features: doc.features.map((f) => (f.folder === from ? { ...f, folder: name } : f)) };
@@ -191,7 +192,7 @@ export function nextFolderName(features: readonly Feature[]): string {
   return `Folder ${n}`;
 }
 
-export function setSuppressed(doc: PartSmithDocument, id: string, suppressed: boolean): PartSmithDocument {
+export function setSuppressed(doc: JuraCADDocument, id: string, suppressed: boolean): JuraCADDocument {
   const f = doc.features.find((x) => x.id === id);
   if (!f) return doc;
   return replaceFeature(doc, { ...f, suppressed });
@@ -213,7 +214,7 @@ export function featuresToBuild(features: Feature[], draft: Feature | null, roll
 }
 
 /** Add a feature just after another (at the end if that one isn't there). */
-export function insertFeatureAfter(doc: PartSmithDocument, feature: Feature, afterId: string | null): PartSmithDocument {
+export function insertFeatureAfter(doc: JuraCADDocument, feature: Feature, afterId: string | null): JuraCADDocument {
   const at = afterId ? doc.features.findIndex((f) => f.id === afterId) : -1;
   if (at < 0) return addFeature(doc, feature);
   return { ...doc, features: [...doc.features.slice(0, at + 1), feature, ...doc.features.slice(at + 1)] };
@@ -230,19 +231,19 @@ export function featuresWithDraft(features: Feature[], draft: Feature | null): F
 // Undo / redo history
 
 export interface History {
-  past: PartSmithDocument[];
-  present: PartSmithDocument;
-  future: PartSmithDocument[];
+  past: JuraCADDocument[];
+  present: JuraCADDocument;
+  future: JuraCADDocument[];
 }
 
 const HISTORY_LIMIT = 200;
 
-export function historyOf(doc: PartSmithDocument): History {
+export function historyOf(doc: JuraCADDocument): History {
   return { past: [], present: doc, future: [] };
 }
 
 /** Record a change. No-op when nothing actually changed (e.g. a dialog accepted without edits). */
-export function commit(h: History, next: PartSmithDocument): History {
+export function commit(h: History, next: JuraCADDocument): History {
   if (next === h.present || JSON.stringify(next) === JSON.stringify(h.present)) return h;
   const past = [...h.past, h.present].slice(-HISTORY_LIMIT);
   return { past, present: next, future: [] };
@@ -264,7 +265,7 @@ export function redo(h: History): History {
  * Give a part a name (an empty name goes back to "Part N"). Copies of it in
  * assemblies that still carry the old name ("Part 1 <2>") follow the new one.
  */
-export function renamePart(doc: PartSmithDocument, partId: string, oldName: string, newName: string): PartSmithDocument {
+export function renamePart(doc: JuraCADDocument, partId: string, oldName: string, newName: string): JuraCADDocument {
   const name = newName.trim().slice(0, 80);
   const names = { ...(doc.partNames ?? {}) };
   if (name) names[partId] = name;
@@ -503,16 +504,17 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
 
 /** Check untrusted JSON (e.g. from browser storage) and return a clean document, or null. */
 /** Saved configurations, and which is on show. */
-function configurationsOf(d: Record<string, unknown>): Pick<PartSmithDocument, "configurations" | "activeConfiguration"> {
+function configurationsOf(d: Record<string, unknown>): Pick<JuraCADDocument, "configurations" | "activeConfiguration"> {
   const configurations = parseConfigurations(d.configurations);
   if (!configurations.length) return {};
   const active = configurations.find((c) => c.id === d.activeConfiguration)?.id ?? configurations[0].id;
   return { configurations, activeConfiguration: active };
 }
 
-export function parseDocument(data: unknown): PartSmithDocument | null {
+export function parseDocument(data: unknown): JuraCADDocument | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
+  // The format id stays "partsmith" (the app's old name), so old and new files both open.
   if (d.format !== "partsmith" || d.version !== 1 || !Array.isArray(d.features)) return null;
   const seen = new Set<string>();
   const features = parseFeatures(d.features, seen);

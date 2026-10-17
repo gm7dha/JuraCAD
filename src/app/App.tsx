@@ -232,7 +232,7 @@ export function App() {
   useEffect(() => connectKernel(), []);
   useShortcuts();
 
-  // Drop a .partsmith file anywhere on the window to open it.
+  // Drop a .juracad (or older .partsmith) file anywhere on the window to open it.
   useEffect(() => {
     const over = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes("Files")) e.preventDefault();

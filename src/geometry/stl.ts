@@ -9,7 +9,7 @@ export interface TriangleMesh {
   triangles: ArrayLike<number>;
 }
 
-export function writeBinaryStl(meshes: TriangleMesh[], header = "PartSmith"): ArrayBuffer {
+export function writeBinaryStl(meshes: TriangleMesh[], header = "JuraCAD"): ArrayBuffer {
   const total = meshes.reduce((n, m) => n + Math.floor(m.triangles.length / 3), 0);
   const buffer = new ArrayBuffer(84 + total * 50);
   const view = new DataView(buffer);

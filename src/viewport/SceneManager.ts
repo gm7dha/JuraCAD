@@ -11,7 +11,7 @@ import { labelSprite } from "./labels";
 import { SketchLayer, type ActiveSketch } from "./SketchLayer";
 import { VIEW_DIRECTIONS, ViewCube, type StandardView } from "./ViewCube";
 
-// PartSmith is Z-up, like Onshape.
+// JuraCAD is Z-up, like Onshape.
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 
 const COLOURS = {

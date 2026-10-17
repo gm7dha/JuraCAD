@@ -7,7 +7,7 @@ let storageWarned = false;
 import { activeStudioId } from "../model/store";
 import { studiosOf } from "../model/studios";
 import type { StudioInput } from "./protocol";
-import type { Feature, PartSmithDocument } from "../model/types";
+import type { Feature, JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
 import { switchConfiguration } from "../model/configurations";
 import { setCurrentScope } from "../model/expr";
@@ -49,8 +49,8 @@ function withoutFolders(list: Feature[]): Feature[] {
 }
 
 /** Part Studios that assemblies show in another configuration, built again in it ("<studio>@<configuration>"). */
-let configuredCache: { doc: PartSmithDocument; list: StudioInput[] } | null = null;
-function configuredStudios(doc: PartSmithDocument): StudioInput[] {
+let configuredCache: { doc: JuraCADDocument; list: StudioInput[] } | null = null;
+function configuredStudios(doc: JuraCADDocument): StudioInput[] {
   if (configuredCache?.doc === doc) return configuredCache.list;
   const list: StudioInput[] = [];
   for (const { studioId, configurationId } of configurationsInUse(doc)) {
@@ -66,7 +66,7 @@ function configuredStudios(doc: PartSmithDocument): StudioInput[] {
 }
 
 /** What decides the configured builds (so a rebuild happens when it changes). */
-function configuredKey(doc: PartSmithDocument): string {
+function configuredKey(doc: JuraCADDocument): string {
   const used = configurationsInUse(doc);
   return used.length ? JSON.stringify([used, doc.configurations, doc.activeConfiguration]) : "";
 }

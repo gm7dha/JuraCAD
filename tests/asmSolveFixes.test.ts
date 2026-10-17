@@ -11,7 +11,7 @@ import { solveAssembly } from "../src/assembly/mates";
 import { removePattern } from "../src/assembly/patterns";
 import { applyRelations, canDrive, drivenValue, RELATION_KIND_NAMES } from "../src/assembly/relations";
 import { emptyDocument } from "../src/model/document";
-import type { Assembly, Instance, Mate, MateType, PartSmithDocument } from "../src/model/types";
+import type { Assembly, Instance, Mate, MateType, JuraCADDocument } from "../src/model/types";
 
 const pick = { partId: "p", ref: { kind: "face" as const, surface: "PLANE", center: [0, 0, 0] as Vec3, normal: [0, 0, 1] as Vec3 } };
 const inst = (id: string, fixed = false): Instance => ({ id, partId: "p", name: id, placement: { position: [0, 0, 0], rotation: [0, 0, 0, 1] }, fixed });
@@ -84,7 +84,7 @@ describe("closing a loop keeps the mate you set", () => {
 
   it("remembers where the loop closed, so the next solve starts there", () => {
     const solved = solveAssembly(fourBar("60"), fourBarLookup, { hold: ["m1"] });
-    let doc: PartSmithDocument = { ...emptyDocument(), assemblies: [fourBar("60", { m3: "#rocker" })] };
+    let doc: JuraCADDocument = { ...emptyDocument(), assemblies: [fourBar("60", { m3: "#rocker" })] };
     doc = settleSolved(doc, "A", solved);
     const mates = doc.assemblies![0].mates!;
     const value = (id: string) => mates.find((m) => m.id === id)!.values.angle;

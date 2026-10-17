@@ -233,7 +233,7 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
 }
 
 /** Drag-and-drop data type for moving features up and down the list. */
-const FEATURE_DRAG = "application/x-partsmith-feature";
+const FEATURE_DRAG = "application/x-juracad-feature";
 
 function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void; linked: boolean; draggable?: boolean }) {
   const kernelError = useStore((s) => s.featureErrors[feature.id]);
@@ -650,6 +650,7 @@ export function FeaturePanel() {
   const linkedFeatures = useMemo(() => (selectedParts.length ? featuresOfParts(parts, selectedParts, features) : []), [parts, selectedParts, features]);
   // "Group by part": remembered on this computer.
   const rollbackTo = useStore((s) => s.rollbackTo);
+  // "partsmith.groupFeatures" is a browser-storage key from the app's old name, kept so the setting is remembered.
   const [grouped, setGrouped] = useState(() => {
     try {
       return localStorage.getItem("partsmith.groupFeatures") === "1";

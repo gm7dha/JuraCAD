@@ -8,7 +8,7 @@
  */
 import { resolveParams } from "../model/features";
 import type { Scope } from "../model/expr";
-import type { Feature, PartSmithDocument, PlaneOptions } from "../model/types";
+import type { Feature, JuraCADDocument, PlaneOptions } from "../model/types";
 import { cross, dot, normalize, planeFrame, type PlaneFrame, type SketchPlane, type Vec3 } from "./planes";
 
 /** Turn `w` about the unit axis `k` by `deg` degrees. */
@@ -123,7 +123,7 @@ export function refreshPlaneRefs(features: Feature[], scope?: Scope): Feature[] 
 }
 
 /** refreshPlaneRefs for every Part Studio in a document. */
-export function refreshDocumentPlanes(doc: PartSmithDocument, scope?: Scope): PartSmithDocument {
+export function refreshDocumentPlanes(doc: JuraCADDocument, scope?: Scope): JuraCADDocument {
   const features = refreshPlaneRefs(doc.features, scope);
   let studiosChanged = false;
   const studios = doc.partStudios?.map((s) => {

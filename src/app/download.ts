@@ -12,7 +12,7 @@ export function downloadFile(data: ArrayBuffer | Blob, filename: string, type = 
 }
 
 /** Make a name safe to use as a file name on Windows and macOS. */
-export function safeFileName(name: string, fallback = "partsmith"): string {
+export function safeFileName(name: string, fallback = "juracad"): string {
   const cleaned = name
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
     .replace(/\s+/g, " ")

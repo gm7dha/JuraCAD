@@ -1,10 +1,14 @@
-# Notes for Claude working on PartSmith
+# Notes for Claude working on JuraCAD
 
 - The owner is a hobbyist with no coding background who directs the work. Explain changes in plain English
   in pull requests, and keep the app's wording friendly and jargon-free.
 - The owner has said to merge PRs without asking once CI passes (squash merge), then tell them what changed so
   they can try it on the live site.
 - Design and roadmap: `docs/DESIGN.md`. The look and controls follow Onshape.
+- The app was called PartSmith until v0.25. Some old names stay on purpose so nothing breaks: browser-storage keys
+  (`partsmith.document.v1`, `partsmith.file.v1`, `partsmith.theme`, `partsmith.printer`, `partsmith.seenVersion`,
+  `partsmith.groupFeatures`, `partsmith.toolGroup.*`), the saved-file format id `"format": "partsmith"`, and opening
+  `.partsmith` files (new saves are `.juracad`). The `PartSmithDocument` type is a deprecated alias of `JuraCADDocument`.
 - Stack: TypeScript, React 18, Vite 5, Zustand 5, three.js, replicad 1.x + replicad-opencascadejs (OCCT WASM).
 - Geometry runs in `src/kernel/kernel.worker.ts`; the logic lives in `src/kernel/engine.ts` so it can be
   tested in Node (`tests/engine.test.ts` loads the real OCCT engine).
@@ -46,7 +50,9 @@
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
 - Keep pure logic (model, geometry, reports) out of React and covered by Vitest tests.
 - Every change: `npm run typecheck && npm test && npm run build`. CI runs the same and publishes `main`
-  to GitHub Pages (base path `/partsmith/`).
+  to GitHub Pages at https://gm7dha.github.io/JuraCAD/. The base path comes from the repository's name
+  (`BASE_PATH` in the workflow, read by vite.config.ts and the smoke test), so after a repo rename just run the
+  workflow again (Actions › Run workflow).
 - Units are millimetres everywhere in the model. A design can be shown in inches (`doc.units`): `src/model/units.ts`
   (`storeLength`/`showLength` save typed lengths with " in" so switching never changes geometry; `useLengthUnit()`
   re-renders components that show lengths). Z is up (Onshape convention): Top = XY, Front = XZ, Right = YZ.
@@ -57,10 +63,10 @@
   `tests/engine.test.ts` with the real OCCT in ~10 s, given a small vitest stand-in — far cheaper than CI round trips.
 - If the npm registry is unreachable from your environment, push to a branch with an open (draft) PR and
   let CI install, test and build. CI failures are reported as check-run annotations
-  (`gh api repos/gm7dha/partsmith/check-runs/<job id>/annotations`), readable even when job logs and
+  (`gh api repos/gm7dha/JuraCAD/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .partsmith → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → add a second Part Studio with a box → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → add a section view, a detail view and an auxiliary view → draw the assembly exploded (parts list) (the page is opened with `?smoke`, which exposes `window.partsmithViewport` so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → add a second Part Studio with a box → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → add a section view, a detail view and an auxiliary view → draw the assembly exploded (parts list) (the page is opened with `?smoke`, which exposes `window.juracadViewport` and `window.juracadStore` so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.

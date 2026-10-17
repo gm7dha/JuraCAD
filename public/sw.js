@@ -1,14 +1,14 @@
 /*
- * PartSmith's offline helper (a "service worker").
+ * JuraCAD's offline helper (a "service worker").
  *
- * It keeps a copy of the app on this computer so PartSmith opens even
+ * It keeps a copy of the app on this computer so JuraCAD opens even
  * without an internet connection:
  *  - The page itself is fetched fresh when online (so updates arrive), and
  *    the saved copy is used when offline.
  *  - Everything else (scripts, styles, the geometry engine) has a unique
  *    name per version, so the saved copy is used straight away.
  */
-const CACHE = "partsmith-v1";
+const CACHE = "juracad-v1";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

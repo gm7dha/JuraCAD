@@ -1,12 +1,13 @@
 /**
- * Saving and opening .partsmith files on the user's computer.
+ * Saving and opening .juracad files on the user's computer (older
+ * .partsmith files, from when the app was called PartSmith, open too).
  *
  * In Chrome and Edge this uses the browser's real Save / Open windows, and
  * after the first save, Save writes straight back to the same file. Other
  * browsers (Safari, Firefox) save by downloading and open with the normal
  * file picker.
  */
-import { FILE_EXTENSION, FILE_MIME, nameFromFileName, readDocumentFile, serializeDocument } from "../model/fileFormat";
+import { DESIGN_EXTENSIONS, FILE_EXTENSION, FILE_MIME, OLD_FILE_EXTENSION, OLD_FILE_MIME, nameFromFileName, readDocumentFile, serializeDocument } from "../model/fileFormat";
 import { useStore } from "../model/store";
 import { downloadFile, safeFileName } from "./download";
 import { IMPORT_ACCEPT, readImport } from "../model/importFile";
@@ -31,10 +32,20 @@ type PickerWindow = Window & {
   showOpenFilePicker?: (o: PickerOptions) => Promise<FileHandle[]>;
 };
 
-const FILE_TYPES = [{ description: "PartSmith design", accept: { [FILE_MIME]: [FILE_EXTENSION], "application/json": [FILE_EXTENSION] } }];
+const FILE_TYPES = [{ description: "JuraCAD design", accept: { [FILE_MIME]: [FILE_EXTENSION], "application/json": [FILE_EXTENSION] } }];
 
+// Opening also accepts .partsmith files saved before the app was renamed.
 const OPEN_TYPES = [
-  { description: "PartSmith design, or a STEP or STL model to import", accept: { [FILE_MIME]: [FILE_EXTENSION], "application/json": [FILE_EXTENSION], "model/step": [".step", ".stp"], "model/stl": [".stl"] } },
+  {
+    description: "JuraCAD design, or a STEP or STL model to import",
+    accept: {
+      [FILE_MIME]: [FILE_EXTENSION],
+      [OLD_FILE_MIME]: [OLD_FILE_EXTENSION],
+      "application/json": DESIGN_EXTENSIONS,
+      "model/step": [".step", ".stp"],
+      "model/stl": [".stl"],
+    },
+  },
 ];
 
 /** STEP and STL files are imported into the design rather than opened. */
@@ -54,7 +65,7 @@ export async function saveToFile(saveAs = false): Promise<void> {
   }
   const doc = s.history.present;
   const text = serializeDocument(doc);
-  const suggested = `${safeFileName(doc.name, "PartSmith design")}${FILE_EXTENSION}`;
+  const suggested = `${safeFileName(doc.name, "JuraCAD design")}${FILE_EXTENSION}`;
   const w = window as PickerWindow;
   try {
     if (w.showSaveFilePicker) {
@@ -99,7 +110,7 @@ export async function openFromFile(): Promise<void> {
   // Other browsers: the ordinary file picker.
   const input = document.createElement("input");
   input.type = "file";
-  input.accept = `${FILE_EXTENSION},application/json,${IMPORT_ACCEPT}`;
+  input.accept = `${DESIGN_EXTENSIONS.join(",")},application/json,${IMPORT_ACCEPT}`;
   input.className = "file-input";
   input.onchange = () => {
     const file = input.files?.[0];

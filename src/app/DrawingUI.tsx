@@ -24,7 +24,7 @@ import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, PartSmithDocument, SectionCut } from "../model/types";
+import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut } from "../model/types";
 import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
@@ -37,7 +37,7 @@ import { detectPlatform, shortcut } from "./platform";
 /** What a drawing shows, ready for the geometry engine (null when its part has gone). */
 function drawingSubject(
   drawing: Drawing,
-  doc: PartSmithDocument,
+  doc: JuraCADDocument,
   parts: PartMesh[],
 ): { name: string; partIds: string[]; instances?: InstanceInput[]; key: unknown[] } | null {
   const src = drawing.source;
@@ -57,7 +57,7 @@ function drawingSubject(
 }
 
 /** The parts list for an assembly drawing (none for a part). */
-function bomFor(drawing: Drawing, doc: PartSmithDocument, parts: PartMesh[]): BomLine[] | undefined {
+function bomFor(drawing: Drawing, doc: JuraCADDocument, parts: PartMesh[]): BomLine[] | undefined {
   if (drawing.source?.kind !== "assembly") return undefined;
   const asm = doc.assemblies?.find((a) => a.id === drawing.source!.id);
   if (!asm) return undefined;

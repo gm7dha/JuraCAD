@@ -1,6 +1,6 @@
-# PartSmith — Design
+# JuraCAD — Design
 
-PartSmith is a free, open-source, browser-based **general-purpose parametric CAD tool**, with the look and
+JuraCAD (called PartSmith until v0.25) is a free, open-source, browser-based **general-purpose parametric CAD tool**, with the look and
 controls of Onshape. It runs entirely in the browser, installs as an app on Windows and macOS (from Phase 4),
 and works offline.
 
@@ -53,7 +53,7 @@ Main thread (what you see)                 Background worker (heavy maths)
 └──────────────────────────────┘
           │ autosave
           ▼
-   Browser storage (later: .partsmith files)
+   Browser storage (later: .juracad files)
 ```
 
 - **`src/model`** — the document (an ordered feature list), feature definitions, the expression evaluator
@@ -73,7 +73,7 @@ Later phases add sketches, variables, assemblies (instances + mates) and drawing
 ### Topological naming (from Phase 3)
 
 When a fillet says "round edge 7" and edge 7 becomes a different edge after an earlier change, models break.
-PartSmith will follow FreeCAD 1.0's approach in its own code: every sketch entity gets a permanent ID;
+JuraCAD will follow FreeCAD 1.0's approach in its own code: every sketch entity gets a permanent ID;
 OpenCascade's *generated/modified* history names each face and edge from that history; feature references
 store names, not numbers; unresolved names show the feature in red rather than silently picking the wrong edge.
 
@@ -106,7 +106,7 @@ Each phase ends with a working version on the live site.
 | **P1 Foundation** ✅ | App shell, Onshape-style viewport, OpenCascade worker, box/cylinder/sphere with New/Add/Remove, basic model check, STL export | make simple solids and export them |
 | **P2 Sketcher** ✅ | Sketch on planes and flat faces; lines, rectangles, circles, arcs, points; constraints and dimensions; basic Extrude (one way / symmetric, New/Add/Remove) | draw a fully defined sketch and extrude it |
 | **P3 Part features** ✅ (topological naming: step 1) | Extrude, revolve, fillet, chamfer, shell, variables, editable history, topological naming | design real parts and change them later |
-| **P4 Save, check, export** ✅ | `.partsmith` save/open, fuller model check (thinnest wall, overlapping parts), STEP/STL/3MF export, install as an offline app | keep projects and trust exports |
+| **P4 Save, check, export** ✅ | `.juracad` save/open (older `.partsmith` files still open), fuller model check (thinnest wall, overlapping parts), STEP/STL/3MF export, install as an offline app | keep projects and trust exports |
 | P4b More modelling ✅ v0.5 (done: sketch slot/polygon/round/trim, through all, hole tool, move/copy, measure, section view, part colours, import STEP/STL; later: offset, use part edges, up to face, draft) | Sketch trim/extend/offset/fillet, slots and polygons, use part edges in sketches; extrude through all / up to face / draft; hole tool (counterbore, countersink, tapped); move/rotate/copy parts; measure; section view; part colours; import STEP/STL | model real parts quickly |
 | **P5 Assemblies** ✅ v0.6 (also several Part Studios, rename parts; since: mate limits, exploded views; later: mate loops) | Instances, mate connectors, Onshape mate types, BOM | check multi-part designs fit together |
 | **P6 2D drawings** ✅ v0.7 (since: section views, balloons, centre lines; later: detail views, tolerances) | ISO sheets, first-angle views, hidden lines, dimensions, PDF/SVG/DXF | print a dimensioned drawing |
@@ -122,4 +122,4 @@ Each phase ends with a working version on the live site.
 1. Each change goes in through a pull request with a plain-English summary and how to test it.
 2. GitHub Actions type-checks, runs the tests (including real OpenCascade reference models) and builds
    the site on every pull request. Nothing broken gets published.
-3. Merging to `main` publishes to https://gm7dha.github.io/partsmith/ within a few minutes.
+3. Merging to `main` publishes to https://gm7dha.github.io/JuraCAD/ within a few minutes.

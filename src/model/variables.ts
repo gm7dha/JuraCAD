@@ -6,7 +6,7 @@
 import { mapAllFeatures } from "./studios";
 import { solveSketch } from "../sketch/solver";
 import { evaluate, namesIn, RESERVED_NAMES, setCurrentScope, type Scope } from "./expr";
-import type { PartSmithDocument } from "./types";
+import type { JuraCADDocument } from "./types";
 
 export interface Variable {
   /** Permanent ID (so renames can be followed). */
@@ -70,7 +70,7 @@ export function renameInExpression(src: string, from: string, to: string): strin
 }
 
 /** Every expression in the document, with a way to replace it. */
-function mapExpressions(doc: PartSmithDocument, fn: (src: string) => string): PartSmithDocument {
+function mapExpressions(doc: JuraCADDocument, fn: (src: string) => string): JuraCADDocument {
   return mapAllFeatures(doc, (f) => {
       const params = Object.fromEntries(Object.entries(f.params).map(([k, v]) => [k, fn(v)]));
       const changedParams = Object.keys(params).some((k) => params[k] !== f.params[k]);
@@ -87,7 +87,7 @@ function mapExpressions(doc: PartSmithDocument, fn: (src: string) => string): Pa
 }
 
 /** How many boxes and dimensions use a variable. */
-export function usageCount(doc: PartSmithDocument, name: string): number {
+export function usageCount(doc: JuraCADDocument, name: string): number {
   let n = 0;
   mapExpressions(doc, (src) => {
     if (namesIn(src).includes(name)) n++;
@@ -101,8 +101,8 @@ export function usageCount(doc: PartSmithDocument, name: string): number {
  * renamed wherever they're used, and sketches whose dimensions use variables
  * are re-solved so their shapes match the new values.
  */
-export function applyVariables(doc: PartSmithDocument, variables: Variable[]): PartSmithDocument {
-  let next: PartSmithDocument = { ...doc, variables };
+export function applyVariables(doc: JuraCADDocument, variables: Variable[]): JuraCADDocument {
+  let next: JuraCADDocument = { ...doc, variables };
   for (const v of variables) {
     const old = doc.variables?.find((o) => o.id === v.id);
     if (old && old.name !== v.name) next = mapExpressions(next, (src) => renameInExpression(src, old.name, v.name));
@@ -113,7 +113,7 @@ export function applyVariables(doc: PartSmithDocument, variables: Variable[]): P
 }
 
 /** Re-solve every sketch whose dimensions use variables, with these values. */
-export function resolveSketches(doc: PartSmithDocument, values: Scope): PartSmithDocument {
+export function resolveSketches(doc: JuraCADDocument, values: Scope): JuraCADDocument {
   setCurrentScope(values);
   return mapAllFeatures(doc, (f) => {
     if (!f.sketch) return f;

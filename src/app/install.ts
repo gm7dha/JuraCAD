@@ -1,6 +1,6 @@
 /**
- * Installing PartSmith as an app (Chrome and Edge offer this), and opening
- * .partsmith files that were double-clicked once it's installed.
+ * Installing JuraCAD as an app (Chrome and Edge offer this), and opening
+ * .juracad (and older .partsmith) files that were double-clicked once it's installed.
  */
 import { useSyncExternalStore } from "react";
 
@@ -26,7 +26,7 @@ if (typeof window !== "undefined") {
     notify();
   });
 
-  // Files double-clicked (or "Open with PartSmith") after installing.
+  // Files double-clicked (or "Open with JuraCAD") after installing.
   const launchQueue = (window as unknown as { launchQueue?: { setConsumer(fn: (p: { files: { getFile(): Promise<File> }[] }) => void): void } })
     .launchQueue;
   launchQueue?.setConsumer(async (params) => {
@@ -35,7 +35,7 @@ if (typeof window !== "undefined") {
   });
 }
 
-/** True when PartSmith is already running as an installed app (its own window). */
+/** True when JuraCAD is already running as an installed app (its own window). */
 export function isInstalledApp(): boolean {
   if (typeof window === "undefined") return false;
   const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true; // Safari "Add to Dock"
@@ -57,19 +57,19 @@ export function browserKind(ua: string = typeof navigator !== "undefined" ? navi
 export function installSteps(kind: BrowserKind): string[] {
   switch (kind) {
     case "safari":
-      return ["In the Safari menu bar, choose File › Add to Dock…", "Click Add. PartSmith then opens from the Dock in its own window and works offline."];
+      return ["In the Safari menu bar, choose File › Add to Dock…", "Click Add. JuraCAD then opens from the Dock in its own window and works offline."];
     case "chrome":
       return [
-        "Click the install icon at the right-hand end of the address bar (a small screen with a down arrow), or open the ⋮ menu › Cast, save and share › Install PartSmith…",
-        "If neither is there, PartSmith is probably already installed — look for it in your Applications folder, Start menu or Launchpad.",
+        "Click the install icon at the right-hand end of the address bar (a small screen with a down arrow), or open the ⋮ menu › Cast, save and share › Install JuraCAD…",
+        "If neither is there, JuraCAD is probably already installed — look for it in your Applications folder, Start menu or Launchpad.",
       ];
     case "edge":
       return [
-        "Click the install icon at the right-hand end of the address bar, or open the … menu › Apps › Install PartSmith.",
-        "If it isn't offered, PartSmith is probably already installed — look for it in your Start menu or Applications folder.",
+        "Click the install icon at the right-hand end of the address bar, or open the … menu › Apps › Install JuraCAD.",
+        "If it isn't offered, JuraCAD is probably already installed — look for it in your Start menu or Applications folder.",
       ];
     case "firefox":
-      return ["Firefox can't install websites as apps. Open PartSmith in Chrome, Edge or Safari to install it — your designs are saved as files, so you can move between browsers."];
+      return ["Firefox can't install websites as apps. Open JuraCAD in Chrome, Edge or Safari to install it — your designs are saved as files, so you can move between browsers."];
     default:
       return ["Look in your browser's menu for Install, Add to Dock or Add to Home Screen."];
   }

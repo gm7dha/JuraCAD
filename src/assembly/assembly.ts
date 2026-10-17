@@ -4,7 +4,7 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
-import type { Assembly, AssemblyGroup, ExplodeStep, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
+import type { Assembly, AssemblyGroup, ExplodeStep, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, JuraCADDocument } from "../model/types";
 import { parseRelation } from "./relations";
 import { parsePattern, tidyPatterns } from "./patterns";
 import { parseReplicate, tidyReplicates } from "./replicate";
@@ -15,14 +15,14 @@ import { MATE_TYPES } from "./mates";
 import { startingLength } from "../model/units";
 import { massGrams, materialOf } from "../model/materials";
 
-const assembliesOf = (doc: PartSmithDocument) => doc.assemblies ?? [];
+const assembliesOf = (doc: JuraCADDocument) => doc.assemblies ?? [];
 
-function withAssemblies(doc: PartSmithDocument, assemblies: Assembly[]): PartSmithDocument {
+function withAssemblies(doc: JuraCADDocument, assemblies: Assembly[]): JuraCADDocument {
   const { assemblies: _old, ...rest } = doc;
   return assemblies.length ? { ...rest, assemblies } : rest;
 }
 
-export function updateAssembly(doc: PartSmithDocument, id: string, fn: (a: Assembly) => Assembly): PartSmithDocument {
+export function updateAssembly(doc: JuraCADDocument, id: string, fn: (a: Assembly) => Assembly): JuraCADDocument {
   if (!assembliesOf(doc).some((a) => a.id === id)) return doc;
   return withAssemblies(
     doc,
@@ -32,25 +32,25 @@ export function updateAssembly(doc: PartSmithDocument, id: string, fn: (a: Assem
 }
 
 /** Next free name: "Assembly 1", "Assembly 2"… */
-export function nextAssemblyName(doc: PartSmithDocument): string {
+export function nextAssemblyName(doc: JuraCADDocument): string {
   const used = new Set(assembliesOf(doc).map((a) => a.name));
   let n = 1;
   while (used.has(`Assembly ${n}`)) n++;
   return `Assembly ${n}`;
 }
 
-export function addAssembly(doc: PartSmithDocument, id = newId("a")): PartSmithDocument {
+export function addAssembly(doc: JuraCADDocument, id = newId("a")): JuraCADDocument {
   return withAssemblies(doc, [...assembliesOf(doc), { id, name: nextAssemblyName(doc), instances: [] }]);
 }
 
-export function removeAssembly(doc: PartSmithDocument, id: string): PartSmithDocument {
+export function removeAssembly(doc: JuraCADDocument, id: string): JuraCADDocument {
   return withAssemblies(
     doc,
     assembliesOf(doc).filter((a) => a.id !== id),
   );
 }
 
-export function renameAssembly(doc: PartSmithDocument, id: string, name: string): PartSmithDocument {
+export function renameAssembly(doc: JuraCADDocument, id: string, name: string): JuraCADDocument {
   const trimmed = name.trim();
   if (!trimmed) return doc;
   return updateAssembly(doc, id, (a) => ({ ...a, name: trimmed }));
@@ -69,12 +69,12 @@ export function nextInstanceName(assembly: Assembly, partName: string): string {
  * (like Onshape), so everything else has something to be placed against.
  */
 export function insertInstance(
-  doc: PartSmithDocument,
+  doc: JuraCADDocument,
   assemblyId: string,
   part: { id: string; name: string },
   placement: Placement = IDENTITY,
   id = newId("i"),
-): PartSmithDocument {
+): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => ({
     ...a,
     instances: [...a.instances, { id, partId: part.id, name: nextInstanceName(a, part.name), placement, fixed: a.instances.length === 0 }],
@@ -82,11 +82,11 @@ export function insertInstance(
 }
 
 export function updateInstance(
-  doc: PartSmithDocument,
+  doc: JuraCADDocument,
   assemblyId: string,
   instanceId: string,
   patch: Partial<Pick<Instance, "name" | "placement" | "fixed" | "configuration">>,
-): PartSmithDocument {
+): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => ({
     ...a,
     instances: a.instances.map((i) => {
@@ -206,7 +206,7 @@ export function replaceInstancePart(a: Assembly, instanceId: string, part: { id:
 }
 
 /** Add or replace a relation. */
-export function putRelation(doc: PartSmithDocument, assemblyId: string, relation: MateRelation): PartSmithDocument {
+export function putRelation(doc: JuraCADDocument, assemblyId: string, relation: MateRelation): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => {
     const list = a.relations ?? [];
     return { ...a, relations: list.some((r) => r.id === relation.id) ? list.map((r) => (r.id === relation.id ? relation : r)) : [...list, relation] };
@@ -214,7 +214,7 @@ export function putRelation(doc: PartSmithDocument, assemblyId: string, relation
 }
 
 /** Save the mates' amounts as they are now under a name (Onshape's named positions). */
-export function savePosition(doc: PartSmithDocument, assemblyId: string, id: string, name: string): PartSmithDocument {
+export function savePosition(doc: JuraCADDocument, assemblyId: string, id: string, name: string): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => {
     const values = Object.fromEntries((a.mates ?? []).map((m) => [m.id, { ...m.values }]));
     return { ...a, positions: [...(a.positions ?? []), { id, name, values }] };
@@ -222,7 +222,7 @@ export function savePosition(doc: PartSmithDocument, assemblyId: string, id: str
 }
 
 /** Put the mates back to a saved position (mates made since then stay as they are). */
-export function applyPosition(doc: PartSmithDocument, assemblyId: string, id: string): PartSmithDocument {
+export function applyPosition(doc: JuraCADDocument, assemblyId: string, id: string): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => {
     const pos = a.positions?.find((p) => p.id === id);
     if (!pos || !a.mates) return a;
@@ -230,7 +230,7 @@ export function applyPosition(doc: PartSmithDocument, assemblyId: string, id: st
   });
 }
 
-export function removePosition(doc: PartSmithDocument, assemblyId: string, id: string): PartSmithDocument {
+export function removePosition(doc: JuraCADDocument, assemblyId: string, id: string): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => {
     const { positions: _old, ...rest } = a;
     const left = (a.positions ?? []).filter((p) => p.id !== id);
@@ -247,7 +247,7 @@ export function nextPositionName(a: Assembly): string {
 }
 
 /** Remove a relation. */
-export function removeRelation(doc: PartSmithDocument, assemblyId: string, id: string): PartSmithDocument {
+export function removeRelation(doc: JuraCADDocument, assemblyId: string, id: string): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => {
     const { relations: _old, ...rest } = a;
     const left = (a.relations ?? []).filter((r) => r.id !== id);
@@ -256,7 +256,7 @@ export function removeRelation(doc: PartSmithDocument, assemblyId: string, id: s
 }
 
 /** Remove instances, and the mates that joined them to anything. */
-export function removeInstances(doc: PartSmithDocument, assemblyId: string, ids: string[]): PartSmithDocument {
+export function removeInstances(doc: JuraCADDocument, assemblyId: string, ids: string[]): JuraCADDocument {
   const gone = new Set(ids);
   return updateAssembly(doc, assemblyId, (a) =>
     tidyExplodeSteps(tidyGroups(tidyReplicates(
@@ -280,19 +280,19 @@ export function withMates(a: Assembly, mates: Mate[]): Assembly {
 }
 
 /** Add a mate, or replace the one with the same id. */
-export function putMate(doc: PartSmithDocument, assemblyId: string, mate: Mate): PartSmithDocument {
+export function putMate(doc: JuraCADDocument, assemblyId: string, mate: Mate): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => {
     const mates = a.mates ?? [];
     return withMates(a, mates.some((m) => m.id === mate.id) ? mates.map((m) => (m.id === mate.id ? mate : m)) : [...mates, mate]);
   });
 }
 
-export function removeMate(doc: PartSmithDocument, assemblyId: string, mateId: string): PartSmithDocument {
+export function removeMate(doc: JuraCADDocument, assemblyId: string, mateId: string): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => tidyReplicates(withMates(a, (a.mates ?? []).filter((m) => m.id !== mateId))));
 }
 
 /** Spread the parts apart for an exploded view (null puts them back together; 0 shows only the exploded view's steps). */
-export function setExplode(doc: PartSmithDocument, assemblyId: string, amount: number | null): PartSmithDocument {
+export function setExplode(doc: JuraCADDocument, assemblyId: string, amount: number | null): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => {
     const { explode: _old, ...rest } = a;
     return amount !== null && Number.isFinite(amount) && amount >= 0 ? { ...rest, explode: Math.min(amount, 10) } : rest;
@@ -300,7 +300,7 @@ export function setExplode(doc: PartSmithDocument, assemblyId: string, amount: n
 }
 
 /** Store where the mates put each part, so it stays there if a mate is later removed. */
-export function settlePlacements(doc: PartSmithDocument, assemblyId: string, placements: Record<string, Placement>): PartSmithDocument {
+export function settlePlacements(doc: JuraCADDocument, assemblyId: string, placements: Record<string, Placement>): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => ({
     ...a,
     instances: a.instances.map((i) => {
@@ -319,10 +319,10 @@ export function settlePlacements(doc: PartSmithDocument, assemblyId: string, pla
  * are left as typed.
  */
 export function settleSolved(
-  doc: PartSmithDocument,
+  doc: JuraCADDocument,
   assemblyId: string,
   solved: { placements: Record<string, Placement>; adjusted?: Record<string, Record<string, number>> },
-): PartSmithDocument {
+): JuraCADDocument {
   const settled = settlePlacements(doc, assemblyId, solved.placements);
   const adjusted = solved.adjusted ?? {};
   if (!Object.keys(adjusted).length) return settled;

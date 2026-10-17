@@ -6,6 +6,7 @@ import { useStore } from "../model/store";
 
 export type ThemeChoice = "light" | "dark" | "system";
 
+// Browser-storage key from the app's old name (PartSmith); kept so the chosen theme is remembered.
 const KEY = "partsmith.theme";
 
 export function themeChoice(): ThemeChoice {

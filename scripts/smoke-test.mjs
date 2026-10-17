@@ -28,6 +28,8 @@ let autoDims = 0;
 let holeCallout = "";
 let step = "starting";
 const server = await preview({ preview: { port: 4173, strictPort: true }, logLevel: "warn" });
+// The site's base path (e.g. "/JuraCAD/"), the same one vite.config.ts builds and previews with.
+const basePath = server.config.base;
 const browser = await chromium.launch({
   args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
 });
@@ -74,7 +76,7 @@ const statusText = () => page.locator(".status-strip").innerText();
 
 try {
   step = "loading the app";
-  await page.goto("http://localhost:4173/partsmith/?smoke");
+  await page.goto(`http://localhost:4173${basePath}?smoke`);
   await page.waitForSelector(".topbar", { timeout: 30_000 });
 
   step = "waiting for the geometry engine";
@@ -116,10 +118,10 @@ try {
     await page.mouse.down({ button: "right" });
     for (let i = 1; i <= 10; i++) await page.mouse.move(cx, cy - vp.height * 0.2 + vp.height * 0.04 * i);
     await page.mouse.up({ button: "right" });
-    const up = await page.evaluate(() => window.partsmithViewport.current.cameraUp());
+    const up = await page.evaluate(() => window.juracadViewport.current.cameraUp());
     // From the starting (isometric) view, 0.4 of the view's height turns ~130°: past straight down onto the top.
     if (!(up[2] < 0)) throw new Error(`orbiting stopped at the top (screen up is ${up.map((n) => n.toFixed(2)).join(", ")})`);
-    await page.evaluate(() => window.partsmithViewport.current.setView("iso", false));
+    await page.evaluate(() => window.juracadViewport.current.setView("iso", false));
   }
 
   step = "hovering and selecting a face";
@@ -496,7 +498,8 @@ try {
   const saved = await savePromise;
   const savedPath = await saved.path();
   const savedText = readFileSync(savedPath, "utf8");
-  if (!saved.suggestedFilename().endsWith(".partsmith")) throw new Error(`saved as ${saved.suggestedFilename()}`);
+  if (!saved.suggestedFilename().endsWith(".juracad")) throw new Error(`saved as ${saved.suggestedFilename()}`);
+  // The format id inside the file keeps the app's old name, so files open in older versions too.
   if (!/"format": "partsmith"/.test(savedText) || !/"gap"/.test(savedText)) throw new Error("the saved file is missing the design or its variables");
   await page.waitForSelector(".save-state:not(.unsaved)");
 
@@ -592,7 +595,7 @@ try {
   step = "fastening two parts together with a mate";
   // Where the top faces of Part 1 <2> and Part 2 <1> are on screen (Part 1 <1> sits under the dialog).
   const tops = await page.evaluate(() => {
-    const v = window.partsmithViewport.current;
+    const v = window.juracadViewport.current;
     return v.shownParts().slice(1, 3).map((p) => {
       const i = p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99);
       return v.screenPointOnFace(p.id, i);
@@ -633,7 +636,7 @@ try {
   const xBefore = await page.getByLabel("X (red)", { exact: true }).inputValue();
   await page.keyboard.press("Escape");
   const grabAt = await page.evaluate(() => {
-    const v = window.partsmithViewport.current;
+    const v = window.juracadViewport.current;
     const p = v.shownParts()[0];
     return v.screenPointOnFace(p.id, p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99));
   });
@@ -649,7 +652,7 @@ try {
   const xAfter = await page.getByLabel("X (red)", { exact: true }).inputValue();
   if (xAfter === xBefore) {
     const toast = (await page.locator(".toast").allInnerTexts()).join(" / ");
-    const debug = await page.evaluate(() => window.partsmithViewport.current?.lastDragDebug ?? "");
+    const debug = await page.evaluate(() => window.juracadViewport.current?.lastDragDebug ?? "");
     throw new Error(`dragging didn't move the part (X stayed ${xBefore}) at (${Math.round(grabAt.x)}, ${Math.round(grabAt.y)}); message: ${toast || "none"}; ${debug}`);
   }
   await page.keyboard.press("Escape");
@@ -961,7 +964,7 @@ try {
   {
     await page.keyboard.press("Escape");
     const spots = await page.evaluate(() => {
-      const v = window.partsmithViewport.current;
+      const v = window.juracadViewport.current;
       // A spot on each of two parts that really is that part when clicked (not hidden behind another).
       const out = [];
       for (const p of v.shownParts()) {
@@ -984,7 +987,7 @@ try {
     await page.mouse.click(cvs.x + spots[1].at.x, cvs.y + spots[1].at.y);
     await page.keyboard.up("Shift");
     await page.waitForFunction(() => document.querySelector(".measure-panel")?.textContent?.includes("Closest distance"), null, { timeout: 10_000 }).catch(async () => {
-      const sel = await page.evaluate(() => JSON.stringify(window.partsmithStore.getState().selection));
+      const sel = await page.evaluate(() => JSON.stringify(window.juracadStore.getState().selection));
       const panel = await page.locator(".measure-panel").innerText().catch(() => "(no measure panel)");
       throw new Error(`measuring between ${spots[0].id} and ${spots[1].id} showed no distance. Selection ${sel}; panel: ${panel.replace(/\n/g, " | ")}`);
     });
@@ -1067,7 +1070,7 @@ try {
     const box = await page.locator(".viewport").boundingBox();
     const mx = box.x + box.width / 2;
     const my = box.y + box.height / 2;
-    const curves = () => page.evaluate(() => window.partsmithStore.getState().editing?.draft.sketch?.data.curves.map((c) => c.type + (c.construction ? "*" : "")) ?? []);
+    const curves = () => page.evaluate(() => window.juracadStore.getState().editing?.draft.sketch?.data.curves.map((c) => c.type + (c.construction ? "*" : "")) ?? []);
 
     await tool("Centre rect");
     await page.mouse.click(mx - 150, my - 80);
@@ -1082,7 +1085,7 @@ try {
     await sizeBox.waitFor({ timeout: 5_000 });
     await page.keyboard.press("Escape");
     await page.locator(".dimension-editor").waitFor({ state: "detached", timeout: 5_000 });
-    const kept = await page.evaluate(() => window.partsmithStore.getState().editing.draft.sketch.data.constraints.filter((c) => c.value !== undefined).map((c) => c.value));
+    const kept = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketch.data.constraints.filter((c) => c.value !== undefined).map((c) => c.value));
     if (kept.length !== 1 || !/^30( in)?$/.test(kept[0])) throw new Error(`typing the width straight after drawing kept ${JSON.stringify(kept)}`);
 
     await page.keyboard.press("l");
@@ -1103,7 +1106,7 @@ try {
     await page.mouse.click(mx + 120, my - 150);
     await page.mouse.move(mx + 110, my - 100, { steps: 3 });
     await page.mouse.click(mx + 110, my - 100);
-    const conics = await page.evaluate(() => window.partsmithStore.getState().editing.draft.sketch.data.curves.filter((c) => c.type === "spline" && c.conic === 0.5).length);
+    const conics = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketch.data.curves.filter((c) => c.type === "spline" && c.conic === 0.5).length);
     if (conics !== 1) throw new Error(`the conic tool made ${conics} conic(s)`);
     await page.waitForSelector('[aria-label="Conic fullness"]', { timeout: 5_000 });
     await shot("conic");
@@ -1116,14 +1119,14 @@ try {
     await tool("Pattern");
     await page.getByRole("button", { name: "Round a centre" }).click();
     // A shape just drawn stays selected, so the pattern tool starts with the circle; clicking it would deselect it.
-    const already = await page.evaluate(() => window.partsmithStore.getState().sketch.selection.length);
+    const already = await page.evaluate(() => window.juracadStore.getState().sketch.selection.length);
     if (!already) {
       // Click exactly on the circle's edge (snapping may have nudged it while drawing).
       const rim = await page.evaluate(() => {
-        const d = window.partsmithStore.getState().editing.draft.sketch.data;
+        const d = window.juracadStore.getState().editing.draft.sketch.data;
         const c = d.curves.find((k) => k.type === "circle");
         const p = d.points.find((q) => q.id === c.center);
-        return window.partsmithViewport.current.projectSketchPoint(p.x + c.radius, p.y);
+        return window.juracadViewport.current.projectSketchPoint(p.x + c.radius, p.y);
       });
       await page.mouse.click(box.x + rim.x, box.y + rim.y);
     }
@@ -1172,16 +1175,16 @@ try {
     await page.locator(".part-row").last().click();
     // Only the sheet on show, so its edges aren't behind the other parts.
     await page.evaluate(() => {
-      const s = window.partsmithStore.getState();
+      const s = window.juracadStore.getState();
       s.setPartsHidden(s.parts.filter((q) => !q.flat && !q.configuration).map((q) => q.id), true);
     });
     await page.keyboard.press("f");
     await page.waitForTimeout(600);
     const edgeAt = await page.evaluate(() => {
-      const s = window.partsmithStore.getState();
+      const s = window.juracadStore.getState();
       const part = s.parts.find((q) => q.flat);
       // A straight edge along the sheet's top face, nearest the camera (lowest on screen).
-      const v = window.partsmithViewport.current;
+      const v = window.juracadViewport.current;
       const spots = part.edgeRefs
         .map((e, i) => ({ e, i }))
         .filter(({ e }) => e.curve === "LINE" && Math.abs(e.a[2] - e.b[2]) < 1e-6 && e.a[2] > 1)
@@ -1191,19 +1194,19 @@ try {
     });
     await tool("Flange");
     await page.mouse.click(box.x + edgeAt.x, box.y + edgeAt.y);
-    await page.waitForFunction(() => (window.partsmithStore.getState().editing?.draft.picks?.length ?? 0) === 1, null, { timeout: 5_000 });
+    await page.waitForFunction(() => (window.juracadStore.getState().editing?.draft.picks?.length ?? 0) === 1, null, { timeout: 5_000 });
     await page.getByRole("button", { name: "Accept" }).click();
-    await page.waitForFunction(() => !window.partsmithStore.getState().editing, null, { timeout: 30_000 });
+    await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
     await page.waitForTimeout(500);
-    await page.waitForFunction(() => !window.partsmithStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
     const flangeProblem = await page.evaluate(() => {
-      const s = window.partsmithStore.getState();
+      const s = window.juracadStore.getState();
       const f = s.history.present.features.find((x) => x.type === "flange");
       return f ? s.featureErrors[f.id] ?? "" : "no flange feature";
     });
     if (flangeProblem) throw new Error(`the flange didn't build: ${flangeProblem}`);
     await page.evaluate(() => {
-      const s = window.partsmithStore.getState();
+      const s = window.juracadStore.getState();
       s.setPartsHidden(s.parts.map((q) => q.id), false);
     });
     await page.getByRole("button", { name: "Drawing 1" }).click();
@@ -1212,7 +1215,7 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "FLAT PATTERN"), null, { timeout: 60_000 });
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => /^B1: (UP|DOWN) 90°/.test(t.textContent ?? "")), null, { timeout: 10_000 }).catch(async () => {
       const info = await page.evaluate(() => {
-        const s = window.partsmithStore.getState();
+        const s = window.juracadStore.getState();
         const sheets = s.parts.filter((q) => q.flat).map((q) => `${q.id}${q.configuration ? "@" + q.configuration : ""}: ${q.flat.bends.length} bend(s), ${q.flat.bendLines.length} line(s)`);
         return `${sheets.join("; ")} | texts: ${[...document.querySelectorAll(".drawing-text")].map((t) => t.textContent).join(" / ")}`;
       });

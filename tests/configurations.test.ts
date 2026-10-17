@@ -3,17 +3,17 @@ import { describe, expect, it } from "vitest";
 import { activeConfiguration, addConfiguration, removeConfiguration, renameConfiguration, switchConfiguration } from "../src/model/configurations";
 import { emptyDocument, parseDocument } from "../src/model/document";
 import { defaultParams } from "../src/model/features";
-import type { Feature, PartSmithDocument } from "../src/model/types";
+import type { Feature, JuraCADDocument } from "../src/model/types";
 import { applyVariables } from "../src/model/variables";
 
 const box = (id: string): Feature => ({ id, name: id, type: "box", operation: "new", suppressed: false, params: { ...defaultParams("box"), width: "w" } });
 
-function start(): PartSmithDocument {
-  const doc: PartSmithDocument = { ...emptyDocument(), features: [box("b1"), box("b2")] };
+function start(): JuraCADDocument {
+  const doc: JuraCADDocument = { ...emptyDocument(), features: [box("b1"), box("b2")] };
   return applyVariables(doc, [{ id: "v1", name: "w", value: "20" }]);
 }
-const w = (d: PartSmithDocument) => d.variables![0].value;
-const off = (d: PartSmithDocument) => d.features.filter((f) => f.suppressed).map((f) => f.id);
+const w = (d: JuraCADDocument) => d.variables![0].value;
+const off = (d: JuraCADDocument) => d.features.filter((f) => f.suppressed).map((f) => f.id);
 
 describe("configurations", () => {
   it("keeps the first state as Default and starts the new one as a copy", () => {

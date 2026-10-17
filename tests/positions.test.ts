@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { addAssembly, applyPosition, nextPositionName, parseAssemblies, putMate, removePosition, savePosition } from "../src/assembly/assembly";
 import { emptyDocument } from "../src/model/document";
-import type { Mate, PartSmithDocument } from "../src/model/types";
+import type { Mate, JuraCADDocument } from "../src/model/types";
 
 type Vec3 = [number, number, number];
-const assembliesOf = (d: PartSmithDocument) => d.assemblies ?? [];
+const assembliesOf = (d: JuraCADDocument) => d.assemblies ?? [];
 
 const pick = { partId: "p", ref: { kind: "face" as const, surface: "PLANE", center: [0, 0, 0] as Vec3, normal: [0, 0, 1] as Vec3 } };
 const hinge = (angle: string): Mate => ({ id: "m1", name: "Hinge 1", type: "revolute", a: { instanceId: "i1", pick }, b: { instanceId: "i2", pick }, flip: false, values: { angle } });

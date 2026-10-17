@@ -32,7 +32,7 @@ import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "./types";
+import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
@@ -229,8 +229,8 @@ export interface AppState {
   animatingMate: string | null;
   setAnimatingMate: (id: string | null) => void;
   /** The design as last saved to (or opened from) a file; compare with history.present to see unsaved changes. */
-  savedDoc: PartSmithDocument | null;
-  /** Name of that file, e.g. "Bracket.partsmith". */
+  savedDoc: JuraCADDocument | null;
+  /** Name of that file, e.g. "Bracket.juracad". */
   fileName: string | null;
 
   // actions
@@ -300,7 +300,7 @@ export interface AppState {
   removeConfiguration: (id: string) => void;
   newDocument: () => void;
   /** Replace the design with one opened from a file (undoable). */
-  openDocument: (doc: PartSmithDocument, fileName: string) => void;
+  openDocument: (doc: JuraCADDocument, fileName: string) => void;
   /** Note that the current design has just been saved to this file. */
   markSaved: (fileName: string) => void;
   /** Add an assembly tab and switch to it. */
@@ -418,19 +418,21 @@ export interface AppState {
   setRebuildResult: (parts: PartMesh[], featureErrors: Record<string, string>, ms: number, rebuilt?: string[], studioOrder?: string[]) => void;
 }
 
+// These browser-storage keys keep the app's old name (PartSmith) on purpose: changing them
+// would lose the design people have kept in this browser.
 export const STORAGE_KEY = "partsmith.document.v1";
 /** Which file the design in browser storage was last saved to, so "Saved" survives a page refresh. */
 const FILE_KEY = "partsmith.file.v1";
 
 /** A short fingerprint of a design, to tell whether it changed since it was saved. */
-export function fingerprint(doc: PartSmithDocument): string {
+export function fingerprint(doc: JuraCADDocument): string {
   const text = JSON.stringify(doc);
   let h = 5381;
   for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
   return `${text.length}:${h >>> 0}`;
 }
 
-function rememberFile(doc: PartSmithDocument, fileName: string | null) {
+function rememberFile(doc: JuraCADDocument, fileName: string | null) {
   try {
     if (fileName) globalThis.localStorage?.setItem(FILE_KEY, JSON.stringify({ fileName, print: fingerprint(doc) }));
     else globalThis.localStorage?.removeItem(FILE_KEY);
@@ -440,7 +442,7 @@ function rememberFile(doc: PartSmithDocument, fileName: string | null) {
 }
 
 /** The saved-file label for a design just loaded from browser storage. */
-function savedFileFor(doc: PartSmithDocument): { savedDoc: PartSmithDocument | null; fileName: string | null } {
+function savedFileFor(doc: JuraCADDocument): { savedDoc: JuraCADDocument | null; fileName: string | null } {
   try {
     const raw = globalThis.localStorage?.getItem(FILE_KEY);
     if (raw) {
@@ -453,7 +455,7 @@ function savedFileFor(doc: PartSmithDocument): { savedDoc: PartSmithDocument | n
   return { savedDoc: null, fileName: null };
 }
 
-function loadSavedDocument(): PartSmithDocument {
+function loadSavedDocument(): JuraCADDocument {
   try {
     const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
     if (raw) {
@@ -497,7 +499,7 @@ const existsIn = (d: SketchData, id: string) =>
 
 export const useStore = create<AppState>((set, get) => {
   /** Apply a document change and record it for undo. */
-  const change = (fn: (doc: PartSmithDocument) => PartSmithDocument) =>
+  const change = (fn: (doc: JuraCADDocument) => JuraCADDocument) =>
     set((s) => {
       const next = fn(s.history.present);
       // Keep sketches (and anything else) on Plane features where their planes are now.
@@ -505,7 +507,7 @@ export const useStore = create<AppState>((set, get) => {
       return { history: commit(s.history, settled) };
     });
   /** A change to the features of the Part Studio on show. */
-  const changeStudio = (fn: (doc: PartSmithDocument) => PartSmithDocument) =>
+  const changeStudio = (fn: (doc: JuraCADDocument) => JuraCADDocument) =>
     change((doc) => inStudio(doc, activeStudioId(get()) ?? MAIN_STUDIO, fn));
   /** The document as the Part Studio on show sees it (its features in `features`). */
   const view = () => studioView(get().history.present, activeStudioId(get()) ?? MAIN_STUDIO);
@@ -823,7 +825,7 @@ export const useStore = create<AppState>((set, get) => {
 
     suppressThenFinish: (ids, commit) => {
       const { editing } = get();
-      const off = (doc: PartSmithDocument) => ids.reduce((d, id) => setSuppressed(d, id, true), doc);
+      const off = (doc: JuraCADDocument) => ids.reduce((d, id) => setSuppressed(d, id, true), doc);
       if (commit && editing) {
         const draft = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
         changeStudio((doc) => {

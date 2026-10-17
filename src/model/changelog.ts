@@ -1,7 +1,7 @@
 /**
  * The version history (CHANGELOG.md) read into versions and their changes,
  * for the "What's new" window. Only the parts that matter to someone using
- * PartSmith are kept: the version, its title and its list of changes.
+ * JuraCAD are kept: the version, its title and its list of changes.
  */
 
 export interface ChangelogVersion {

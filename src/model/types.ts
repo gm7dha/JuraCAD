@@ -7,7 +7,7 @@ import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
-/** The kinds of feature PartSmith can build. */
+/** The kinds of feature JuraCAD can build. */
 export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak";
 
 /**
@@ -204,8 +204,19 @@ export interface Feature {
   picks?: TopoPick[];
 }
 
-/** One Part Studio's worth of design. Saved as a .partsmith file later (Phase 4). */
-export interface PartSmithDocument {
+/**
+ * The app's old name for JuraCADDocument (the app used to be called PartSmith),
+ * kept so work started before the rename still compiles. Use JuraCADDocument.
+ * @deprecated
+ */
+export type PartSmithDocument = JuraCADDocument;
+
+/** The whole design, as saved in a .juracad file. */
+export interface JuraCADDocument {
+  /**
+   * Saved-file format id. It stays "partsmith" (the app's old name) so files
+   * saved now still open in older versions, and older files keep opening.
+   */
   format: "partsmith";
   version: 1;
   name: string;

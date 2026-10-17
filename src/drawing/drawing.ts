@@ -2,12 +2,12 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { Shortening, BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, PartSmithDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
+import type { Shortening, BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, JuraCADDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { SECTION_HOSTS, viewKey } from "./sections";
 
-const drawingsOf = (doc: PartSmithDocument) => doc.drawings ?? [];
+const drawingsOf = (doc: JuraCADDocument) => doc.drawings ?? [];
 
-function withDrawings(doc: PartSmithDocument, drawings: Drawing[]): PartSmithDocument {
+function withDrawings(doc: JuraCADDocument, drawings: Drawing[]): JuraCADDocument {
   const { drawings: _old, ...rest } = doc;
   return drawings.length ? { ...rest, drawings } : rest;
 }
@@ -44,14 +44,14 @@ export const SHEET_LABELS: Record<SheetSize, string> = {
 /** The views a new drawing starts with: the usual three, plus a 3D view. */
 export const DEFAULT_VIEWS: ViewKind[] = ["front", "top", "right", "iso"];
 
-export function nextDrawingName(doc: PartSmithDocument): string {
+export function nextDrawingName(doc: JuraCADDocument): string {
   const used = new Set(drawingsOf(doc).map((d) => d.name));
   let n = 1;
   while (used.has(`Drawing ${n}`)) n++;
   return `Drawing ${n}`;
 }
 
-export function addDrawing(doc: PartSmithDocument, id: string, source: Drawing["source"]): PartSmithDocument {
+export function addDrawing(doc: JuraCADDocument, id: string, source: Drawing["source"]): JuraCADDocument {
   // Designs in inches start on US paper, arranged the US way (third-angle).
   const us = doc.units === "in";
   const drawing: Drawing = {
@@ -67,7 +67,7 @@ export function addDrawing(doc: PartSmithDocument, id: string, source: Drawing["
   return withDrawings(doc, [...drawingsOf(doc), drawing]);
 }
 
-export function updateDrawing(doc: PartSmithDocument, id: string, fn: (d: Drawing) => Drawing): PartSmithDocument {
+export function updateDrawing(doc: JuraCADDocument, id: string, fn: (d: Drawing) => Drawing): JuraCADDocument {
   if (!drawingsOf(doc).some((d) => d.id === id)) return doc;
   return withDrawings(
     doc,
@@ -75,14 +75,14 @@ export function updateDrawing(doc: PartSmithDocument, id: string, fn: (d: Drawin
   );
 }
 
-export function removeDrawing(doc: PartSmithDocument, id: string): PartSmithDocument {
+export function removeDrawing(doc: JuraCADDocument, id: string): JuraCADDocument {
   return withDrawings(
     doc,
     drawingsOf(doc).filter((d) => d.id !== id),
   );
 }
 
-export function renameDrawing(doc: PartSmithDocument, id: string, name: string): PartSmithDocument {
+export function renameDrawing(doc: JuraCADDocument, id: string, name: string): JuraCADDocument {
   const trimmed = name.trim();
   return trimmed ? updateDrawing(doc, id, (d) => ({ ...d, name: trimmed })) : doc;
 }

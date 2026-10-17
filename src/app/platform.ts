@@ -1,5 +1,5 @@
 /**
- * Which kind of computer PartSmith is running on, so shortcuts can be shown
+ * Which kind of computer JuraCAD is running on, so shortcuts can be shown
  * the way that computer's keyboard labels them (⌘ Cmd on a Mac, Ctrl on Windows).
  */
 export type Platform = "mac" | "windows";
@@ -60,9 +60,9 @@ export function helpRows(p: Platform) {
     [mac ? "Return" : "Enter", "Accept the open feature dialog"],
     ["Esc", "Cancel the feature dialog / clear the selection"],
     [k.del, "Delete the highlighted feature"],
-    [`${k.mod} + S`, "Save to a .partsmith file"],
+    [`${k.mod} + S`, "Save to a .juracad file"],
     [`${k.mod} + ${k.shift} + S`, "Save a copy under a new name"],
-    [`${k.mod} + O`, "Open a .partsmith file (or drag one onto the window)"],
+    [`${k.mod} + O`, "Open a .juracad file (or drag one onto the window)"],
     [`${k.mod} + D`, "Duplicate the selected parts"],
     ["?", "Show this help"],
     [`${k.shift} + S`, "Start a sketch on the selected plane or flat face"],

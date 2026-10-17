@@ -20,6 +20,7 @@ export interface GroupItem {
   shortcut?: string;
 }
 
+// "partsmith.toolGroup.*" are browser-storage keys from the app's old name (PartSmith), kept so choices are remembered.
 const remembered = (id: string): string | null => {
   try {
     return localStorage.getItem(`partsmith.toolGroup.${id}`);
