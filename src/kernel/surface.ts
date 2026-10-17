@@ -169,9 +169,12 @@ export function loftSurface(sections: { plane: SketchPlane; data: SketchData; na
 
 /**
  * A face spanning a closed ring of edges (picked on parts): flat if they lie
- * in a plane, otherwise a smooth patch (OpenCascade's filling).
+ * in a plane, otherwise a smooth patch (OpenCascade's filling). With
+ * `match`, the patch meets the faces beside the edges (`supports`, one per
+ * edge, or null where there's none) smoothly — tangent to them — instead of
+ * at an angle.
  */
-export function fillEdges(edges: Edge[]): Shape3D {
+export function fillEdges(edges: Edge[], match?: { supports: (Face | null)[] }): Shape3D {
   if (edges.length === 0) throw new Error("Click the edges round the opening to fill.");
   let wire: Wire;
   try {
@@ -182,6 +185,10 @@ export function fillEdges(edges: Edge[]): Shape3D {
   if (!(getOC() as unknown as { BRep_Tool: { IsClosed(w: unknown): boolean } }).BRep_Tool.IsClosed(wire.wrapped)) {
     release(wire);
     throw new Error("The edges don't close up into a ring — there's a gap. Pick every edge round the opening.");
+  }
+  if (match && match.supports.some((f) => !!f)) {
+    release(wire);
+    return smoothFill(edges, match.supports);
   }
   try {
     try {
@@ -194,6 +201,73 @@ export function fillEdges(edges: Edge[]): Shape3D {
   } finally {
     release(wire);
   }
+}
+
+/**
+ * OpenCascade's filling through the edges, tangent to the face beside each
+ * one. Where the faces leave the edges steeply (a tube's
+ * walls going straight up from its rim), the patch is first pulled out by a
+ * point above the middle of the opening, or it can't bend round far enough.
+ */
+function smoothFill(edges: Edge[], supports: (Face | null)[]): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const order = oc.GeomAbs_Shape.GeomAbs_G1;
+  // Where the faces round the opening are heading: on past each edge, averaged; and the opening's middle and size.
+  const pts: Vec3[] = [];
+  const heading: Vec3 = [0, 0, 0];
+  edges.forEach((edge, i) => {
+    const face = supports[i];
+    if (face) {
+      const { at, out } = acrossEdge(edge, face, 8);
+      pts.push(...at.slice(0, -1));
+      out.forEach((d) => ((heading[0] += d[0]), (heading[1] += d[1]), (heading[2] += d[2])));
+    } else for (let k = 0; k < 8; k++) pts.push(take(edge.pointAt(k / 8)));
+  });
+  const mid: Vec3 = [0, 1, 2].map((k) => pts.reduce((sum, p) => sum + p[k], 0) / pts.length) as Vec3;
+  const size = pts.reduce((sum, p) => sum + Math.hypot(p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]), 0) / pts.length;
+  const along = Math.hypot(...heading);
+  const attempt = (guide: Vec3 | null): Shape3D | null => {
+    const filling = new oc.BRepOffsetAPI_MakeFilling(3, 15, 2, false, 1e-5, 1e-4, 1e-2, 0.1, 8, 9);
+    try {
+      edges.forEach((edge, i) => {
+        const face = supports[i];
+        if (face) filling.Add(edge.wrapped, face.wrapped, order, true);
+        else filling.Add(edge.wrapped, oc.GeomAbs_Shape.GeomAbs_C0, true);
+      });
+      if (guide) {
+        const p = new oc.gp_Pnt(guide[0], guide[1], guide[2]);
+        filling.Add(p);
+        p.delete();
+      }
+      filling.Build();
+      if (!filling.IsDone()) return null;
+      // Is it smooth where it meets the faces (within about 3°)?
+      if (filling.G1Error() > 0.05) return null;
+      const out = cast(filling.Shape()) as Shape3D;
+      const faces = facesOf(out);
+      const any = faces.length > 0;
+      faces.forEach((f) => f.delete());
+      if (!any) {
+        out.delete();
+        return null;
+      }
+      return out;
+    } catch {
+      return null;
+    } finally {
+      filling.delete();
+    }
+  };
+  let out = attempt(null);
+  // Pulled out towards where the faces head, by about the opening's size (a little less: a dome, not a cone).
+  for (const reach of [0.7, 0.4, 1]) {
+    if (out || along < 1e-9) break;
+    out = attempt([mid[0] + (heading[0] / along) * size * reach, mid[1] + (heading[1] / along) * size * reach, mid[2] + (heading[2] / along) * size * reach]);
+  }
+  if (!out) throw new Error("Couldn't fit a smooth surface to those edges and the faces beside them. Try “Just meet the edges”, or pick edges of surfaces.");
+  return out;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** Shells to thicken one by one: each shell of the shape, or a lone face as its own. */

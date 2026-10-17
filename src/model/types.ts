@@ -141,6 +141,8 @@ export interface Feature {
   splitDef?: SplitOptions;
   /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
+  /** Fill: meet the faces beside the edges smoothly (tangent to them) instead of at an angle. */
+  continuity?: "tangent";
   /** Thicken: half the thickness each side of the face or surface (then which way doesn't matter). */
   bothSides?: boolean;
   /** Shell: hollow the part closed inside, keeping every face (no opening), whatever faces are picked. */

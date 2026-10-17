@@ -354,6 +354,34 @@ function RibThickenOptions() {
   );
 }
 
+/** Fill: how the patch meets the faces beside its edges. */
+function SurfaceOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (draft?.type !== "fill") return null;
+  return (
+    <>
+      <label className="field-label" htmlFor="fill-continuity">
+        How it meets the faces beside the edges
+      </label>
+      <select
+        id="fill-continuity"
+        className="full-select"
+        value={draft.continuity ?? "edges"}
+        onChange={(e) => setDraftField({ continuity: e.target.value === "tangent" ? "tangent" : undefined })}
+      >
+        <option value="edges">Just meet the edges (may leave a crease)</option>
+        <option value="tangent">Smoothly (no crease)</option>
+      </select>
+      <p className="dialog-hint field-hint">
+        {draft.continuity
+          ? "The patch bulges to carry on the surfaces round the opening without a crease — like a dome on a tube. Edges with no face beside them are just met."
+          : "The patch spans the edges as simply as it can: flat if they lie in a plane."}
+      </p>
+    </>
+  );
+}
+
 /** Boolean settings: join, cut or intersect, and the parts for each. */
 function BooleanOptionsField() {
   const draft = useStore((s) => s.editing?.draft);
@@ -1411,6 +1439,7 @@ export function FeatureDialog() {
         <TransformOptions />
         <ImportOptions />
         <PicksField />
+        <SurfaceOptions />
         <ThreadOptions />
         <PatternOptions />
 

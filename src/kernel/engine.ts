@@ -956,12 +956,34 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       if (!picks.length) throw new Error("Click the edges round the opening to fill (on any parts).");
       const edges: Edge[] = [];
       try {
+        const supports: (Face | null)[] = [];
+        const allFaces: Face[] = [];
         for (const partId of new Set(picks.map((p) => p.partId))) {
           const part = parts.find((p) => p.id === partId);
           if (!part) throw new Error("A part the edges were on no longer exists. Edit this and pick the edges again.");
-          edges.push(...findPickedEdges(part.shape, picks.filter((p) => p.partId === partId)));
+          const found = findPickedEdges(part.shape, picks.filter((p) => p.partId === partId));
+          edges.push(...found);
+          if (feature.continuity) {
+            // The face beside each edge, to meet smoothly.
+            const faces = facesOf(part.shape);
+            allFaces.push(...faces);
+            for (const edge of found) {
+              supports.push(
+                faces.find((f) => {
+                  const mine = edgesOf(f);
+                  const has = mine.some((e) => e.isSame(edge));
+                  mine.forEach((e) => e.delete());
+                  return has;
+                }) ?? null,
+              );
+            }
+          }
         }
-        return fillEdges(edges);
+        try {
+          return fillEdges(edges, feature.continuity ? { supports } : undefined);
+        } finally {
+          allFaces.forEach((f) => f.delete());
+        }
       } finally {
         edges.forEach((e) => e.delete());
       }

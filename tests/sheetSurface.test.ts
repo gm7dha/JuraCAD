@@ -249,4 +249,34 @@ describe("surfaces", () => {
     expect(onto.featureErrors).toEqual({});
     expect(vol()).toBeCloseTo(1200, 3);
   });
+
+  it("fills an opening smoothly, carrying on the surfaces round it (a dome on a tube)", () => {
+    const c = sketchFeature(top, addCircle(emptySketch(), { x: 0, y: 0 }, 10).sketch);
+    const tube: Feature = { ...extrudeFeature(c.id, 20), surface: true };
+    const p = build([c, tube]).parts[0];
+    const rim = p.edgeRefs.filter((e) => e.kind === "edge" && e.curve === "CIRCLE" && Math.abs(e.mid[2] - 20) < 1e-6).map((ref) => ({ partId: tube.id, ref }));
+    expect(rim).toHaveLength(1);
+    const fill: Feature = { ...feature("fill", {}), picks: rim };
+    // Just meeting the edge: a flat disc at z = 20.
+    const flat = build([c, tube, fill]);
+    expect(flat.featureErrors).toEqual({});
+    // (The mesh's straight sides cut the circle's edge a little short.)
+    expect(Math.abs(area(flat.parts[1]) - Math.PI * 100)).toBeLessThan(2);
+    expect(Math.max(...Array.from(flat.parts[1].vertices).filter((_, i) => i % 3 === 2))).toBeCloseTo(20, 4);
+    // Smoothly: it leaves the tube going straight up, so it domes up above the rim and has more area than the disc.
+    {
+      const smooth = build([c, tube, { ...fill, continuity: "tangent" }]);
+      expect(smooth.featureErrors).toEqual({});
+      expect(Math.max(...Array.from(smooth.parts[1].vertices).filter((_, i) => i % 3 === 2))).toBeGreaterThan(22);
+      expect(area(smooth.parts[1])).toBeGreaterThan(Math.PI * 100 * 1.1);
+      // Near the rim it's almost upright: points just inside the rim are well above it.
+      const v = smooth.parts[1].vertices;
+      let nearRim = 0;
+      for (let i = 0; i < v.length; i += 3) {
+        const r = Math.hypot(v[i], v[i + 1]);
+        if (r > 9.3 && r < 9.8) nearRim = Math.max(nearRim, v[i + 2] - 20);
+      }
+      expect(nearRim).toBeGreaterThan(1);
+    }
+  });
 });
