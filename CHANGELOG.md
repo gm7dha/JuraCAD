@@ -6,6 +6,24 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.24 — Round of polish across every area (reviewed by independent checkers) · commit `8faacdf`
+
+- **Sketch:** dimensions across / up / straight like Onshape (with a preview), dimensions to circles and arcs,
+  "just show the size" (reference) dimensions, polygon size across flats, Split / Extend / Round / Midpoint on arcs,
+  points on splines and ellipses. Fixed: Trim on polygons and at spline crossings, Round on dragged-together
+  corners, offsets now follow the original, overlapping shapes always join on, sketches with many holes are fast.
+- **Part modelling:** extrude both ways with two depths, revolve both ways, chamfer by 2 distances or angle, grid
+  patterns, circular pattern round any axis, Shell with walls outside, mirror a whole part. Fixed: designs with
+  Intersect wouldn't reopen, patterns after a Boolean join, tapered symmetric extrudes.
+- **Surfaces & sheet metal:** flange position (bend off / outside flush / inside flush), Corner break, cuts across
+  bends shown in the flat pattern, Thicken both sides, smooth Fill, Delete face leaving the hole open, Enclose says
+  where the gap is, Extend follows curved edges.
+- **Assemblies:** loops keep the mate you set, Linear relation, Duplicate, Replace part, weights in the parts list,
+  exploded-view steps.
+- **Drawings:** third-angle layout, A1/A0 and US sheets, part number and company in the title block, dimension
+  decimals and dual units, basic/inspection boxes, hide tangent edges, dimensions kept inside the border. Fixed:
+  first-angle symbol, PDF/DXF symbols, detail views.
+
 ## v0.23 — Hollow, angle arcs, and a round of bug fixes · commit `3c06f37`
 
 - **Hollow** (next to Shell): hollow a part out sealed inside, every face kept. Shell still opens the faces you
