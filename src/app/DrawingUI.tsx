@@ -6,7 +6,7 @@ import { putShortening, removeShortening, withShortenings } from "../drawing/sho
 import { itemsInBox, toggled } from "../drawing/select";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
-import { arrangeViews, nextRevision, putDimension, putNote, removeDimension, removeNote, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
+import { arrangeViews, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
@@ -16,7 +16,7 @@ import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } fro
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
-import { bottomReserve, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { bottomReserve, dimStyle, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { angleGeometry, dimPoint, dragDimension, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
@@ -96,11 +96,12 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
   const ready = useStore((s) => s.kernelStatus === "ready");
   const subject = drawingSubject(drawing, doc, parts);
   // (Sections are asked for separately; details are worked out here from their host views.)
-  const kinds = drawing.views.map((v) => v.kind).filter((k) => k !== "section" && k !== "detail");
+  const kinds = projectionKinds(drawing);
   const sections = sectionRequests(drawing);
   const breakouts = breakOutRequests(drawing);
   // The same key object while nothing it's made of changes, so the effect below only runs on real changes.
-  const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines, JSON.stringify(sections), JSON.stringify(breakouts)] : null;
+  const tangent = drawing.tangentEdges !== false;
+  const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines, tangent, JSON.stringify(sections), JSON.stringify(breakouts)] : null;
   const keyRef = useRef<unknown[] | null>(null);
   if (!rawKey) keyRef.current = null;
   else if (!keyRef.current || !sameKey(keyRef.current, rawKey)) keyRef.current = rawKey;
@@ -124,7 +125,7 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
       const kernel = getKernel();
       const promise = kernel
         .whenIdle()
-        .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sections, breakouts))
+        .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sections, breakouts, tangent))
         .then((list) => {
           const result: Projections = {};
           for (const p of list) result[p.kind] = p;
@@ -414,16 +415,19 @@ function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (f
       dimensions: d.dimensions?.map((x) => {
         if (x.id !== dim.id) return x;
         const next: Dimension = { ...x, ...patch };
-        for (const k of ["prefix", "suffix", "tolerance"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
+        for (const k of ["prefix", "suffix", "tolerance", "places", "frame"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
         return next;
       }),
     }));
   const t = dim.tolerance;
   const mode = !t ? "none" : Math.abs(t.plus - t.minus) < 1e-9 ? "sym" : "limits";
-  const shown = (mm: number) => lengthNumber(mm, unit);
+  // An angle's tolerance is in degrees; a length's in the design's unit.
+  const angle = dim.type === "angle";
+  const tolUnit = angle ? "°" : unit;
+  const shown = (mm: number) => (angle ? String(Math.round(mm * 100) / 100) : lengthNumber(mm, unit));
   const parse = (v: string) => {
-    const n = Number(v.replace(/^[+±−-]/, "").trim());
-    return Number.isFinite(n) ? fromUnit(Math.abs(n), unit) : null;
+    const n = Number(v.replace(/^[+±−-]/, "").replace(/°$/, "").trim());
+    return Number.isFinite(n) ? (angle ? Math.abs(n) : fromUnit(Math.abs(n), unit)) : null;
   };
   return (
     <section className="panel-section">
@@ -448,7 +452,7 @@ function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (f
                 aria-checked={mode === m}
                 className={mode === m ? "selected" : ""}
                 onClick={() => {
-                  const d = unit === "in" ? 0.127 : 0.1;
+                  const d = angle ? 0.5 : unit === "in" ? 0.127 : 0.1;
                   if (m === "none") edit({ tolerance: undefined });
                   else if (m === "sym") edit({ tolerance: { plus: t?.plus ?? d, minus: t?.plus ?? d } });
                   else edit({ tolerance: { plus: t?.plus ?? d, minus: t && mode === "limits" ? t.minus : 0 } });
@@ -461,7 +465,7 @@ function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (f
         </div>
         {t && (
           <TitleField
-            label={mode === "sym" ? `Tolerance ± (${unit})` : `Plus (${unit})`}
+            label={mode === "sym" ? `Tolerance ± (${tolUnit})` : `Plus (${tolUnit})`}
             value={shown(t.plus)}
             onCommit={(v) => {
               const n = parse(v);
@@ -471,13 +475,44 @@ function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (f
         )}
         {t && mode === "limits" && (
           <TitleField
-            label={`Minus (${unit})`}
+            label={`Minus (${tolUnit})`}
             value={shown(t.minus)}
             onCommit={(v) => {
               const n = parse(v);
               if (n !== null) edit({ tolerance: { plus: t.plus, minus: n } });
             }}
           />
+        )}
+        {!dim.callout && (
+          <div className="drawing-field">
+            <label htmlFor="dim-places">Decimal places</label>
+            <select id="dim-places" value={dim.places === undefined ? "" : String(dim.places)} onChange={(e) => edit({ places: e.target.value === "" ? undefined : Number(e.target.value) })}>
+              <option value="">Same as the drawing</option>
+              {PLACES.map((n) => (
+                <option key={n} value={String(n)}>
+                  {n === 0 ? "None (whole numbers)" : `${n} (${(0).toFixed(n)})`}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {!dim.callout && (
+          <div className="drawing-field">
+            <span className="field-label">Box round the number</span>
+            <div className="segmented three" role="radiogroup" aria-label="Box round the number">
+              {(
+                [
+                  [undefined, "None", "Just the number"],
+                  ["basic", "Exact", "A box: the exact (basic) size, with its tolerance given by a GD&T frame"],
+                  ["inspection", "Check", "A rounded box: an inspection dimension — measure this one when checking the part"],
+                ] as const
+              ).map(([f, label, tip]) => (
+                <button type="button" key={label} role="radio" title={tip} aria-checked={dim.frame === f} className={dim.frame === f ? "selected" : ""} onClick={() => edit({ frame: f })}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </div>
       <p className="dialog-hint">Drag its number to move it (Shift to move just the number). Delete removes it.</p>
@@ -517,12 +552,13 @@ function holeCount(drawing: Drawing, projections: Projections): number {
 }
 
 export function DrawingPanel({ drawing }: { drawing: Drawing }) {
+  const unit = useLengthUnit();
   const doc = useStore((s) => s.history.present);
   const parts = useStore((s) => s.parts);
   const change = useStore((s) => s.changeDrawing);
   const { projections, subject } = useProjections(drawing);
   const auto = projections
-    ? fitScale(projections, drawingViewKeys(drawing), drawing.sheet, bottomReserve(drawing, bomFor(drawing, doc, parts), holeCount(drawing, projections)))
+    ? fitScale(projections, drawingViewKeys(drawing), drawing.sheet, bottomReserve(drawing, bomFor(drawing, doc, parts), holeCount(drawing, projections)), drawing.projection === "third")
     : null;
   const studios = studiosOf(doc);
   const sourceValue = drawing.source ? `${drawing.source.kind}:${drawing.source.id}` : "";
@@ -572,18 +608,39 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
             </select>
           </div>
           <div className="drawing-field">
-            <span className="field-label">Sheet</span>
-            <div className="segmented three" role="radiogroup" aria-label="Sheet size">
+            <label htmlFor="drawing-sheet">Sheet</label>
+            <select id="drawing-sheet" value={drawing.sheet} onChange={(e) => change((d) => ({ ...arrangeViews(d), sheet: e.target.value as Drawing["sheet"] }))}>
               {SHEET_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {SHEET_LABELS[size]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="drawing-field">
+            <span className="field-label">Views arranged</span>
+            <div className="segmented two" role="radiogroup" aria-label="Projection">
+              {(
+                [
+                  [false, "First angle", "ISO (UK, Europe, most of the world): the top view goes below the front view, the right view to its left"],
+                  [true, "Third angle", "US (ANSI): the top view goes above the front view, the right view to its right"],
+                ] as const
+              ).map(([third, label, tip]) => (
                 <button
                   type="button"
-                  key={size}
+                  key={label}
                   role="radio"
-                  aria-checked={drawing.sheet === size}
-                  className={drawing.sheet === size ? "selected" : ""}
-                  onClick={() => change((d) => ({ ...arrangeViews(d), sheet: size }))}
+                  title={tip}
+                  aria-checked={(drawing.projection === "third") === third}
+                  className={(drawing.projection === "third") === third ? "selected" : ""}
+                  onClick={() =>
+                    change((d) => {
+                      const { projection: _old, ...rest } = arrangeViews(d);
+                      return third ? { ...rest, projection: "third" } : rest;
+                    })
+                  }
                 >
-                  {size}
+                  {label}
                 </button>
               ))}
             </div>
@@ -608,6 +665,39 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
               ))}
             </select>
           </div>
+          <div className="drawing-field">
+            <label htmlFor="drawing-places">Dimension decimals</label>
+            <select
+              id="drawing-places"
+              value={drawing.places === undefined ? "" : String(drawing.places)}
+              onChange={(e) =>
+                change((d) => {
+                  const { places: _old, ...rest } = d;
+                  return e.target.value === "" ? rest : { ...rest, places: Number(e.target.value) };
+                })
+              }
+            >
+              <option value="">As needed ({unit === "in" ? "up to 3" : "up to 2"})</option>
+              {PLACES.map((n) => (
+                <option key={n} value={String(n)}>
+                  {n === 0 ? "None (whole numbers)" : `Always ${n} (${(0).toFixed(n)})`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className="check-row" title={unit === "in" ? "Each size also in millimetres, in brackets: 1.575 [40]" : "Each size also in inches, in brackets: 40 [1.575]"}>
+            <input
+              type="checkbox"
+              checked={!!drawing.dualUnits}
+              onChange={(e) =>
+                change((d) => {
+                  const { dualUnits: _old, ...rest } = d;
+                  return e.target.checked ? { ...rest, dualUnits: true } : rest;
+                })
+              }
+            />
+            Sizes in {unit === "in" ? "millimetres" : "inches"} too
+          </label>
         </div>
       </section>
       <section className="panel-section">
@@ -622,6 +712,19 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
           <label className="check-row">
             <input type="checkbox" checked={drawing.hiddenLines} onChange={(e) => change((d) => ({ ...d, hiddenLines: e.target.checked }))} />
             Show hidden lines (dashed)
+          </label>
+          <label className="check-row" title="The lines where a rounded edge (fillet) or curved face meets a flat face smoothly. Hide them for a cleaner look.">
+            <input
+              type="checkbox"
+              checked={drawing.tangentEdges !== false}
+              onChange={(e) =>
+                change((d) => {
+                  const { tangentEdges: _old, ...rest } = d;
+                  return e.target.checked ? rest : { ...rest, tangentEdges: false };
+                })
+              }
+            />
+            Show tangent edges (where rounds meet flat faces)
           </label>
           <label className="check-row">
             <input
@@ -694,7 +797,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
           )}
         </div>
       </section>
-      <SectionsList drawing={drawing} change={change} />
+      <SectionsList drawing={drawing} change={change} projections={projections} />
       <DetailsList drawing={drawing} change={change} />
       <BreakOutsList drawing={drawing} change={change} />
       <ShortenedList drawing={drawing} change={change} />
@@ -703,7 +806,9 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
         <h3>Title block</h3>
         <div className="drawing-fields">
           <TitleField label="Title" value={drawing.title.title ?? ""} placeholder={subject ?? ""} onCommit={(v) => change((d) => ({ ...d, title: { ...d.title, title: v.trim() || undefined } }))} />
+          <TitleField label="Part number" value={drawing.title.partNumber ?? ""} placeholder="e.g. BRK-001" onCommit={(v) => change((d) => ({ ...d, title: { ...d.title, partNumber: v.trim() || undefined } }))} />
           <TitleField label="Drawn by" value={drawing.title.drawnBy ?? ""} onCommit={(v) => change((d) => ({ ...d, title: { ...d.title, drawnBy: v.trim() || undefined } }))} />
+          <TitleField label="Company" value={drawing.title.company ?? ""} placeholder="Your name or workshop" onCommit={(v) => change((d) => ({ ...d, title: { ...d.title, company: v.trim() || undefined } }))} />
           <TitleField label="Material" value={drawing.title.material ?? ""} placeholder="e.g. Nylon PA12, Stainless 316" onCommit={(v) => change((d) => ({ ...d, title: { ...d.title, material: v.trim() || undefined } }))} />
           <TitleField label="Notes" multiline value={drawing.title.notes ?? ""} placeholder="One note per line" onCommit={(v) => change((d) => ({ ...d, title: { ...d.title, notes: v.trim() || undefined } }))} />
         </div>
@@ -735,7 +840,7 @@ function RevisionsList({ drawing, change }: { drawing: Drawing; change: (fn: (d:
         </button>
       </h3>
       {revs.length === 0 ? (
-        <p className="panel-hint">Record changes to the drawing: each revision gets a letter, a description and a date.</p>
+        <p className="panel-hint">Record changes to the drawing: each revision gets a letter, a description and a date. The latest letter shows in the title block (REV).</p>
       ) : (
         <ul className="revision-list">
           {[...revs].reverse().map((r) => (
@@ -882,7 +987,7 @@ function DetailsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: D
   );
 }
 
-function SectionsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
+function SectionsList({ drawing, change, projections }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void; projections: Projections | null }) {
   const sections = drawing.sections ?? [];
   return (
     <section className="panel-section">
@@ -898,6 +1003,12 @@ function SectionsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: 
           <div className="section-row" key={s.id}>
             <span>
               {s.aux ? `View ${s.letter} (auxiliary)` : `Section ${s.letter}-${s.letter}`} <span className="muted small">(on {VIEW_LABELS[s.host]})</span>
+              {projections && !projections[`section:${s.id}`]?.bounds && (
+                <span className="muted small" role="note">
+                  {" "}
+                  — its line misses the part, so there's nothing to show. Remove it and draw the line across the part.
+                </span>
+              )}
             </span>
             <span className="row-actions-inline">
               <button
@@ -1565,7 +1676,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       if (!at || !p) return [];
       return linearNext(cursor).flatMap((d) => {
         const r = resolveDim(d, p);
-        return drawDimension(d, r, at, measureDim(d, r)).prims;
+        return drawDimension(d, r, at, measureDim(d, r), null, dimStyle(drawing)).prims;
       });
     }
     if (!preview || !projections) return [];
@@ -1573,7 +1684,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const p = projections[preview.view];
     if (!at || !p) return [];
     const r = resolveDim(preview, p);
-    return drawDimension(preview, r, at, measureDim(preview, r)).prims;
+    return drawDimension(preview, r, at, measureDim(preview, r), null, dimStyle(drawing)).prims;
   })();
   const selectedPlaced = layout?.dims.filter((d) => isSelected(d.id)) ?? [];
   const lost = new Set(layout?.dims.filter((d) => !d.found).map((d) => d.id));

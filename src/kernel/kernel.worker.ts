@@ -61,7 +61,7 @@ ctx.onmessage = (event) => {
           break;
         }
         case "project":
-          body = { type: "project", result: engine.project(request.partIds, request.instances, request.views, request.hidden, request.sections, request.breakouts) };
+          body = { type: "project", result: engine.project(request.partIds, request.instances, request.views, request.hidden, request.sections, request.breakouts, request.tangent !== false) };
           break;
         case "clashes":
           body = { type: "clashes", result: engine.clashes(request.instances) };

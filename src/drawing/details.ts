@@ -100,7 +100,8 @@ export function detailProjection(host: ViewProjection, detail: DetailView): View
   for (let i = 0; i + 1 < host.points.length; i += 2) {
     if (Math.hypot(host.points[i] - c[0], host.points[i + 1] - c[1]) <= r + 1e-9) points.push(host.points[i], host.points[i + 1]);
   }
-  return {
+  const inCircle = (x: number, y: number) => Math.hypot(x - c[0], y - c[1]) <= r + 1e-9;
+  const out: ViewProjection = {
     kind: detailKey(detail.id),
     visible: clip(host.visible),
     hidden: clip(host.hidden),
@@ -108,7 +109,18 @@ export function detailProjection(host: ViewProjection, detail: DetailView): View
     points,
     bounds: [c[0] - r, c[1] - r, c[0] + r, c[1] + r],
     zoom: detail.zoom,
+    // What else the host view shows, kept to the circle: centre lines, threads, holes (for callouts) and hatching.
+    clipCircle: [c[0], c[1], r],
   };
+  const axes = clip(host.axes ?? []);
+  if (axes.length) out.axes = axes;
+  const marks = (host.threadMarks ?? []).flatMap((m) => clipToCircle(m.line, c, r).map((line) => ({ line, hidden: m.hidden })));
+  if (marks.length) out.threadMarks = marks;
+  const holes = (host.holes ?? []).filter((h) => inCircle(h.cx, h.cy));
+  if (holes.length) out.holes = holes;
+  if (host.sideHoles?.length) out.sideHoles = host.sideHoles;
+  if (host.cutFaces?.length) out.cutFaces = host.cutFaces;
+  return out;
 }
 
 /** The drawing's projections plus its details' (worked out from their host views). */
