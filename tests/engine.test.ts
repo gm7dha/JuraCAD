@@ -2488,6 +2488,27 @@ describe("surfaces", () => {
     expect(area(rs.parts[1])).toBeCloseTo(Math.PI * 10 * 4, 0);
   });
 
+  it("thickens a revolved skin whose faces meet at an awkward angle (rounding the join)", () => {
+    // An arc closed by its chord, spun round a construction line 5 mm to one side: a curved face meeting a
+    // cylinder at a corner. Sharp-cornered offsetting fails on this, so the join is rounded instead.
+    let d = addLine(emptySketch(), { x: -5, y: -15 }, { x: -5, y: 15 }).sketch;
+    d = { ...d, curves: d.curves.map((c) => ({ ...c, construction: true })) };
+    d = addArc(d, { x: 0, y: -10 }, { x: 0, y: 10 }, { x: 10, y: 0 }).sketch;
+    d = addLine(d, { x: 0, y: 10 }, { x: 0, y: -10 }).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Front" }, d);
+    const rev: Feature = { ...feature("revolve", { angle: 360 }), sketchRef: sk.id, revolve: { axis: d.curves[0].id, flip: false }, surface: true };
+    const first = build([sk, rev]);
+    expect(first.featureErrors).toEqual({});
+    expect(first.parts[0].faceRefs).toHaveLength(2);
+    const th: Feature = { ...feature("thicken", { thickness: 1 }, "new"), picks: [{ partId: rev.id, ref: first.parts[0].faceRefs[0] }] };
+    const r = build([sk, rev, th]);
+    expect(r.featureErrors).toEqual({});
+    const check = engine.check("coarse").parts[0];
+    expect(check.geometryValid).toBe(true);
+    expect(check.exactVolume!).toBeGreaterThan(1000);
+    expect(check.mesh.watertight).toBe(true);
+  });
+
   it("exports surfaces to STEP and reads them back as surfaces", async () => {
     const sk = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: -10, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }).sketch);
     const half: Feature = { ...extrudeFeature(sk.id, 20), surface: true };

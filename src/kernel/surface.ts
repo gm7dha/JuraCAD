@@ -302,22 +302,47 @@ export function thickenSurface(shape: Shape3D, thickness: number): Shape3D {
   }
 }
 
+/**
+ * The shape's faces moved `distance` along their normals (OpenCascade's offset
+ * shape), with the builder — its `Generated` says where each edge went. Sharp
+ * corners where the moved faces meet are tried first; where that can't be
+ * worked out (faces meeting at an awkward angle) the corners are rounded instead.
+ */
+function offsetShape(shape: Shape3D, distance: number, failed: string): { offset: Shape3D; builder: { Generated(s: unknown): { Size(): number; First(): unknown; delete(): void }; delete(): void } } {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  for (const join of [oc.GeomAbs_JoinType.GeomAbs_Intersection, oc.GeomAbs_JoinType.GeomAbs_Arc]) {
+    const builder = new oc.BRepOffsetAPI_MakeOffsetShape();
+    try {
+      builder.PerformByJoin(shape.wrapped, distance, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, join, false);
+      if (!builder.IsDone()) throw new Error(failed);
+      const offset = cast(builder.Shape()) as Shape3D;
+      const faces = facesOf(offset);
+      const any = faces.length > 0;
+      faces.forEach((f) => f.delete());
+      if (!any) {
+        offset.delete();
+        throw new Error(failed);
+      }
+      return { offset, builder };
+    } catch {
+      builder.delete();
+    }
+  }
+  throw new Error(failed);
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
 function thickenShell(shell: Shape3D, thickness: number): Shape3D {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const failed = "Couldn't thicken this surface. Try a smaller thickness, or the other side.";
-  const builder = new oc.BRepOffsetAPI_MakeOffsetShape();
   const rim = freeEdges(shell);
   const walls: Shape3D[] = [];
-  let offset: Shape3D | null = null;
+  const first = offsetShape(shell, thickness, failed);
+  let offset: Shape3D | null = first.offset;
+  const builder = first.builder;
   try {
-    try {
-      builder.PerformByJoin(shell.wrapped, thickness, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false);
-      if (!builder.IsDone()) throw new Error(failed);
-      offset = cast(builder.Shape()) as Shape3D;
-    } catch {
-      throw new Error(failed);
-    }
     if (rim.length === 0) {
       // A closed skin: the space between the two. Plus is outwards, whichever way its faces point.
       const inner = solidFrom([shell]);
@@ -327,14 +352,9 @@ function thickenShell(shell: Shape3D, thickness: number): Shape3D {
           outer.delete();
           offset.delete();
           offset = null;
-          const again = new oc.BRepOffsetAPI_MakeOffsetShape();
-          try {
-            again.PerformByJoin(shell.wrapped, -thickness, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false);
-            if (!again.IsDone()) throw new Error(failed);
-            offset = cast(again.Shape()) as Shape3D;
-          } finally {
-            again.delete();
-          }
+          const again = offsetShape(shell, -thickness, failed);
+          again.builder.delete();
+          offset = again.offset;
           outer = solidFrom([offset]);
         }
         const [small, big] = signedVolume(inner) < signedVolume(outer) ? [inner, outer] : [outer, inner];
@@ -356,7 +376,7 @@ function thickenShell(shell: Shape3D, thickness: number): Shape3D {
       const images = builder.Generated(edge.wrapped);
       try {
         if (images.Size() === 0) throw new Error(failed);
-        const image = cast(images.First()) as Edge;
+        const image = cast(images.First() as never) as Edge;
         const ruled = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
         try {
           const w1 = new oc.BRepBuilderAPI_MakeWire(edge.wrapped);
@@ -506,25 +526,16 @@ const unit = (a: Vec3): Vec3 => {
 
 /** A solid grown (or, minus, shrunk) by `distance` all over: for hollowing a part closed inside. */
 export function offsetSolid(shape: Shape3D, distance: number): Shape3D {
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const oc = getOC() as any;
-  const builder = new oc.BRepOffsetAPI_MakeOffsetShape();
+  const { offset: out, builder } = offsetShape(shape, distance, "Couldn't shrink the part for its inside.");
+  builder.delete();
+  // A closed skin: make it a solid to cut away.
   try {
-    builder.PerformByJoin(shape.wrapped, distance, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false);
-    if (!builder.IsDone()) throw new Error("Couldn't shrink the part for its inside.");
-    const out = cast(builder.Shape()) as Shape3D;
-    // A closed skin: make it a solid to cut away.
-    try {
-      const solid = makeSolid([out as never]);
-      out.delete();
-      return solid;
-    } catch {
-      return out;
-    }
-  } finally {
-    builder.delete();
+    const solid = makeSolid([out as never]);
+    out.delete();
+    return solid;
+  } catch {
+    return out;
   }
-  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** A point well inside a piece: its centre of mass (a face's centre for a surface piece). */
