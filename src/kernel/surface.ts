@@ -5,7 +5,7 @@
  * surface part can be thickened into a solid, or several can be closed up
  * into one (Enclose). All with OpenCascade.
  */
-import { basicFaceExtrusion, cast, getOC, loft, makeCompound, makeNonPlanarFace, makeSolid, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
+import { basicFaceExtrusion, cast, getOC, loft, makeCompound, measureVolume, makeNonPlanarFace, makeSolid, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, type Chain } from "../sketch/regions";
@@ -13,7 +13,7 @@ import { axisInSketch, type RevolveAxis } from "../sketch/axis";
 import type { SketchData } from "../sketch/types";
 import { release, segmentsWire } from "./extrude";
 import { loopStart, pathWire } from "./sweep";
-import { edgesOf, facesOf } from "./topology";
+import { edgesOf, facesOf, solidsOf } from "./topology";
 
 type Vec3 = [number, number, number];
 
@@ -27,11 +27,23 @@ function sketchWires(plane: SketchPlane, data: SketchData, what: string): { wire
   return { wires: chains.map((c) => segmentsWire(c.segments, frame, 0)), chains, frame };
 }
 
-/** One shape from several (a compound when there's more than one), freeing the pieces. */
-function joined(pieces: Shape3D[]): Shape3D {
-  if (pieces.length === 1) return pieces[0];
-  const out = makeCompound(pieces) as Shape3D;
+/**
+ * The shape wrapped as what it really is. replicad's helpers (extrusion,
+ * revolution, loft…) label everything a Solid, but a surface is a shell or a
+ * face; moving or mirroring a mislabelled shape later fails with
+ * "unexpected types mismatch".
+ */
+export function asIs(shape: Shape3D | Face): Shape3D {
+  const out = cast(shape.wrapped) as Shape3D;
+  // A new handle to the same geometry; the old wrapper's handle can go.
+  shape.delete();
   return out;
+}
+
+/** One shape from several (a compound when there's more than one). */
+function joined(pieces: (Shape3D | Face)[]): Shape3D {
+  if (pieces.length === 1) return asIs(pieces[0]);
+  return makeCompound(pieces.map((p) => asIs(p))) as Shape3D;
 }
 
 /** OpenCascade can sweep a wire the same way as a face; the result is a shell rather than a solid. */
@@ -146,7 +158,7 @@ export function loftSurface(sections: { plane: SketchPlane; data: SketchData; na
       wires.push(segmentsWire(chains[0].segments, frame, 0, start));
     }
     try {
-      return loft(wires, { ruled: false }, true);
+      return asIs(loft(wires, { ruled: false }, true));
     } catch {
       throw new Error("Couldn't loft between those outlines. Try sketches on parallel planes, or outlines with the same number of pieces.");
     }
@@ -167,11 +179,15 @@ export function fillEdges(edges: Edge[]): Shape3D {
   } catch {
     throw new Error("The edges don't join up into one ring. Pick every edge round the opening, in any order.");
   }
+  if (!(getOC() as unknown as { BRep_Tool: { IsClosed(w: unknown): boolean } }).BRep_Tool.IsClosed(wire.wrapped)) {
+    release(wire);
+    throw new Error("The edges don't close up into a ring — there's a gap. Pick every edge round the opening.");
+  }
   try {
     try {
-      return makeFace(wire) as unknown as Shape3D;
+      return asIs(makeFace(wire));
     } catch {
-      return makeNonPlanarFace(wire) as unknown as Shape3D;
+      return asIs(makeNonPlanarFace(wire));
     }
   } catch {
     throw new Error("Couldn't fit a surface to those edges. Pick a ring of edges that closes up.");
@@ -180,39 +196,207 @@ export function fillEdges(edges: Edge[]): Shape3D {
   }
 }
 
-/**
- * A surface (skin) made into a solid `thickness` thick (on its outside; minus
- * for the other side), with OpenCascade's thick solid.
- */
-export function thickenSurface(shape: Shape3D, thickness: number): Shape3D {
+/** Shells to thicken one by one: each shell of the shape, or a lone face as its own. */
+function shellsOf(shape: Shape3D): Shape3D[] {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
-  const faces = facesOf(shape);
-  const none = new oc.NCollection_List_TopoDS_Shape();
-  const builder = new oc.BRepOffsetAPI_MakeThickSolid();
+  const type = shape.wrapped.ShapeType();
+  if (type === oc.TopAbs_ShapeEnum.TopAbs_SHELL || type === oc.TopAbs_ShapeEnum.TopAbs_FACE) return [shape];
+  const out: Shape3D[] = [];
+  const seen: any[] = [];
+  const explorer = new oc.TopExp_Explorer(shape.wrapped, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+  for (; explorer.More(); explorer.Next()) {
+    const item = explorer.Current();
+    if (seen.some((x) => x.IsSame(item))) continue;
+    seen.push(item);
+    out.push(cast(item) as Shape3D);
+  }
+  explorer.delete();
+  // Faces not in any shell.
+  const loose = new oc.TopExp_Explorer(shape.wrapped, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHELL);
+  for (; loose.More(); loose.Next()) out.push(cast(loose.Current()) as Shape3D);
+  loose.delete();
+  return out;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/** The edges of a skin that only one face runs along, once: its open rim (not seams, which a face runs along twice). */
+function freeEdges(shell: Shape3D): Edge[] {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const count = new Map<number, { edge: Edge; n: number }>();
+  const explorer = new oc.TopExp_Explorer(shell.wrapped, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+  // Every time any face runs along an edge, it's listed again here.
+  for (; explorer.More(); explorer.Next()) {
+    const edge = cast(explorer.Current()) as Edge;
+    const seen = count.get(edge.hashCode);
+    if (seen) {
+      seen.n++;
+      edge.delete();
+    } else count.set(edge.hashCode, { edge, n: 1 });
+  }
+  explorer.delete();
+  const out: Edge[] = [];
+  for (const { edge, n } of count.values()) {
+    // Not the point an edge shrinks to at a pole (the top of a ball), which no wall could be built from.
+    if (n === 1 && !oc.BRep_Tool.Degenerated(edge.wrapped)) out.push(edge);
+    else edge.delete();
+  }
+  return out;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+const signedVolume = (shape: Shape3D): number => measureVolume(shape);
+
+/** Faces and shells sewn up and made a solid (its faces turned to point outwards), or an error if they don't close. */
+function solidFrom(pieces: Shape3D[]): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const skin = sewn(pieces);
   try {
-    // Sharp corners where the thickened faces meet (as the surface's own corners are).
-    builder.MakeThickSolidByJoin(shape.wrapped, none, thickness, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false);
-    if (!builder.IsDone()) throw new Error("Couldn't thicken this surface. Try a smaller thickness, or the other side.");
-    return cast(builder.Shape()) as Shape3D;
+    let shell = skin.wrapped;
+    let made: any = null;
+    if (shell.ShapeType() === oc.TopAbs_ShapeEnum.TopAbs_FACE) {
+      // One face closed on itself (a ball): put it in a shell of its own.
+      made = new oc.TopoDS_Shell();
+      const b = new oc.TopoDS_Builder();
+      b.MakeShell(made);
+      b.Add(made, shell);
+      b.delete();
+      shell = made;
+    }
+    if (shell.ShapeType() !== oc.TopAbs_ShapeEnum.TopAbs_SHELL) throw new Error("not closed");
+    const fix = new oc.ShapeFix_Solid();
+    try {
+      const solid = cast(fix.SolidFromShell(oc.TopoDS.Shell(shell))) as Shape3D;
+      if (!(signedVolume(solid) > 1e-9)) {
+        solid.delete();
+        throw new Error("not closed");
+      }
+      return solid;
+    } finally {
+      fix.delete();
+      made?.delete();
+    }
+  } finally {
+    skin.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * A surface (skin) made into a solid `thickness` thick (on the side its faces
+ * point to; minus for the other side): the skin, a copy pushed out by the
+ * thickness, and walls between their rims, closed up into a solid.
+ */
+export function thickenSurface(shape: Shape3D, thickness: number): Shape3D {
+  if (!(Math.abs(thickness) > 1e-9)) throw new Error("Thickness: enter how thick to make it.");
+  const pieces: Shape3D[] = [];
+  try {
+    for (const shell of shellsOf(shape)) pieces.push(thickenShell(shell, thickness));
+    const out = pieces.length === 1 ? pieces[0] : (makeCompound(pieces) as Shape3D);
+    pieces.length = 0;
+    return out;
+  } finally {
+    pieces.forEach((p) => p.delete());
+  }
+}
+
+function thickenShell(shell: Shape3D, thickness: number): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const failed = "Couldn't thicken this surface. Try a smaller thickness, or the other side.";
+  const builder = new oc.BRepOffsetAPI_MakeOffsetShape();
+  const rim = freeEdges(shell);
+  const walls: Shape3D[] = [];
+  let offset: Shape3D | null = null;
+  try {
+    try {
+      builder.PerformByJoin(shell.wrapped, thickness, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false);
+      if (!builder.IsDone()) throw new Error(failed);
+      offset = cast(builder.Shape()) as Shape3D;
+    } catch {
+      throw new Error(failed);
+    }
+    if (rim.length === 0) {
+      // A closed skin: the space between the two. Plus is outwards, whichever way its faces point.
+      const inner = solidFrom([shell]);
+      let outer = solidFrom([offset]);
+      try {
+        if (signedVolume(outer) > signedVolume(inner) !== thickness > 0) {
+          outer.delete();
+          offset.delete();
+          offset = null;
+          const again = new oc.BRepOffsetAPI_MakeOffsetShape();
+          try {
+            again.PerformByJoin(shell.wrapped, -thickness, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false);
+            if (!again.IsDone()) throw new Error(failed);
+            offset = cast(again.Shape()) as Shape3D;
+          } finally {
+            again.delete();
+          }
+          outer = solidFrom([offset]);
+        }
+        const [small, big] = signedVolume(inner) < signedVolume(outer) ? [inner, outer] : [outer, inner];
+        const between = big.cut(small);
+        const solids = solidsOf(between);
+        if (solids.length === 1) {
+          between.delete();
+          return solids[0];
+        }
+        solids.forEach((x) => x.delete());
+        return between;
+      } finally {
+        inner.delete();
+        outer.delete();
+      }
+    }
+    // A wall between each rim edge and where the offset moved it to.
+    for (const edge of rim) {
+      const images = builder.Generated(edge.wrapped);
+      try {
+        if (images.Size() === 0) throw new Error(failed);
+        const image = cast(images.First()) as Edge;
+        const ruled = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
+        try {
+          const w1 = new oc.BRepBuilderAPI_MakeWire(edge.wrapped);
+          const w2 = new oc.BRepBuilderAPI_MakeWire(image.wrapped);
+          ruled.AddWire(w1.Wire());
+          ruled.AddWire(w2.Wire());
+          w1.delete();
+          w2.delete();
+          ruled.Build();
+          if (!ruled.IsDone()) throw new Error(failed);
+          walls.push(cast(ruled.Shape()) as Shape3D);
+        } finally {
+          ruled.delete();
+          image.delete();
+        }
+      } finally {
+        images.delete();
+      }
+    }
+    try {
+      return solidFrom([shell, offset, ...walls]);
+    } catch {
+      throw new Error(failed);
+    }
   } finally {
     builder.delete();
-    none.delete();
-    faces.forEach((f) => f.delete());
+    offset?.delete();
+    rim.forEach((e) => e.delete());
+    walls.forEach((w) => w.delete());
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** Surfaces sewn together and closed into one solid (they must meet at their edges all the way round). */
 export function encloseSurfaces(shapes: Shape3D[]): Shape3D {
-  const faces = shapes.flatMap((s) => facesOf(s));
-  if (faces.length === 0) throw new Error("Pick the surfaces to close up into a solid.");
+  if (shapes.length === 0) throw new Error("Pick the surfaces to close up into a solid.");
   try {
-    return makeSolid(faces);
+    return solidFrom(shapes);
   } catch {
     throw new Error("These surfaces don't close up into a solid — there's a gap somewhere between them. Fill it first.");
-  } finally {
-    faces.forEach((f) => f.delete());
   }
 }
 
@@ -244,6 +428,22 @@ function sewn(shapes: Shape3D[]): Shape3D {
     sewing.delete();
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/** Several surfaces as one: sewn together where they touch, otherwise side by side. */
+export function joinSurfaces(shapes: Shape3D[]): Shape3D {
+  return sewn(shapes);
+}
+
+/** A surface with some of its faces taken away (what's left, sewn back together). */
+export function removeFaces(shape: Shape3D, faces: Face[]): Shape3D {
+  const keep = facesOf(shape).filter((f) => !faces.some((x) => x.isSame(f)));
+  try {
+    if (keep.length === 0) throw new Error("That would remove the whole surface. Use Delete part instead.");
+    return sewn(keep as unknown as Shape3D[]);
+  } finally {
+    keep.forEach((f) => f.delete());
+  }
 }
 
 /**
@@ -281,7 +481,7 @@ export function extendSurface(shape: Shape3D, edges: Edge[], distance: number): 
       if (d[0] * (m[0] - c[0]) + d[1] * (m[1] - c[1]) + d[2] * (m[2] - c[2]) < 0) d = [-d[0], -d[1], -d[2]];
       const v = new Vector([d[0] * distance, d[1] * distance, d[2] * distance]);
       try {
-        strips.push(basicFaceExtrusion(edge as unknown as Face, v));
+        strips.push(asIs(basicFaceExtrusion(edge as unknown as Face, v)));
       } finally {
         v.delete();
       }

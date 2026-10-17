@@ -14,6 +14,10 @@ import { fromBase64 } from "../model/importFile";
 import type { ImportedFile } from "../model/types";
 
 const cache = new Map<string, Shape3D[]>();
+/** The imported shapes that are surfaces (skins) rather than solids. */
+const surfaceShapes = new WeakSet<Shape3D>();
+/** Whether an imported shape (as `importSolids` returned it) is a surface rather than a solid. */
+export const isImportedSurface = (shape: Shape3D): boolean => surfaceShapes.has(shape);
 const CACHE_SIZE = 4;
 
 let fileCounter = 0;
@@ -50,9 +54,26 @@ function readStep(text: string): Shape3D[] {
       reader.TransferRoots();
       const whole = cast(reader.OneShape()) as Shape3D;
       const solids = solidsOf(whole);
+      // Surfaces: shells that aren't part of a solid, and faces in no shell, as one skin.
+      const skins: Shape3D[] = [];
+      for (const [kind, within] of [["TopAbs_SHELL", "TopAbs_SOLID"], ["TopAbs_FACE", "TopAbs_SHELL"]] as const) {
+        const explorer = new oc.TopExp_Explorer(whole.wrapped, oc.TopAbs_ShapeEnum[kind], oc.TopAbs_ShapeEnum[within]);
+        for (; explorer.More(); explorer.Next()) skins.push(cast(explorer.Current()) as Shape3D);
+        explorer.delete();
+      }
       whole.delete();
-      if (solids.length === 0) {
-        throw new Error("The STEP file has no solid parts in it — only surfaces, which PartSmith can't use yet.");
+      if (solids.length === 0 && skins.length === 0) {
+        throw new Error("The STEP file has no parts in it — no solids and no surfaces.");
+      }
+      if (skins.length) {
+        const sewing = new oc.BRepBuilderAPI_Sewing(1e-4, true, true, true, false);
+        for (const k of skins) sewing.Add(k.wrapped);
+        sewing.Perform();
+        const skin = cast(sewing.SewedShape()) as Shape3D;
+        sewing.delete();
+        skins.forEach((k) => k.delete());
+        surfaceShapes.add(skin);
+        solids.push(skin);
       }
       return solids;
     } finally {
@@ -231,5 +252,9 @@ export function importSolids(file: ImportedFile): Shape3D[] {
     cache.delete(key);
     cache.set(key, solids);
   }
-  return solids.map((s) => s.clone());
+  return solids.map((s) => {
+    const copy = s.clone();
+    if (surfaceShapes.has(s)) surfaceShapes.add(copy);
+    return copy;
+  });
 }
