@@ -109,6 +109,16 @@ export interface TabSpec {
   holes: Segment[][];
 }
 
+/** Corner break: a wall's outside corner rounded off (a radius) or cut off straight (a chamfer, `size` back along each edge). */
+export interface CornerBreak {
+  id: string;
+  wall: string;
+  /** The corner, in the wall's coordinates. */
+  at: P2;
+  kind: "round" | "chamfer";
+  size: number;
+}
+
 export interface SheetSpec {
   thickness: number;
   /** Inside bend radius. */
@@ -119,6 +129,8 @@ export interface SheetSpec {
   flanges: FlangeSpec[];
   /** Tabs: flat shapes sketched on a wall's face, joined onto that wall. */
   tabs?: TabSpec[];
+  /** Corners of walls rounded or cut off. */
+  corners?: CornerBreak[];
 }
 
 export interface Wall {
@@ -327,6 +339,11 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     }
     if (parent.bendEdge === fl.edge) {
       errors[fl.id] = "That edge is already bent (it's where this wall joins the one before).";
+      continue;
+    }
+    const near = (p: P2, q: P2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6;
+    if ((spec.corners ?? []).some((c) => c.wall === fl.wall && (near(c.at, seg.from) || near(c.at, seg.to)))) {
+      errors[fl.id] = "A corner of that edge has been rounded or cut off (Corner break), so it can't take a flange now. Move the flange above the corner break in the list.";
       continue;
     }
     const key = `${fl.wall}:${fl.edge}`;
@@ -873,4 +890,69 @@ export function mapSegments(segments: Segment[], map: (p: P2) => P2): Segment[] 
       }
     }
   });
+}
+
+/**
+ * The corner of a wall a picked edge runs along: an edge straight through the
+ * sheet (from one face to the other) at a corner of a wall's outline.
+ */
+export function findSheetCorner(folded: FoldedSheet, thickness: number, a: V3, b: V3, tol = 1e-3): { wall: string; at: P2 } | null {
+  const same = (p: V3, q: V3) => Math.hypot(...sub3(p, q)) < tol;
+  for (const w of folded.walls) {
+    for (const seg of w.outline) {
+      if (seg.kind !== "line") continue;
+      const q0 = wallPoint(w.frame, seg.from, 0);
+      const q1 = wallPoint(w.frame, seg.from, thickness);
+      if ((same(a, q0) && same(b, q1)) || (same(a, q1) && same(b, q0))) return { wall: w.id, at: seg.from };
+    }
+  }
+  return null;
+}
+
+/**
+ * What a corner break takes off a wall: the piece between its corner and the
+ * round (or the straight cut), in the wall's coordinates; or why it can't.
+ */
+export function cornerBreakCut(folded: FoldedSheet, c: Pick<CornerBreak, "wall" | "at" | "kind" | "size">): Segment[] | string {
+  const wall = folded.walls.find((w) => w.id === c.wall);
+  if (!wall) return "The wall that corner was on can't be found any more. Edit this and pick the corner again.";
+  const k = wall.outline.length;
+  const near = (p: P2, q: P2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6;
+  const j = wall.outline.findIndex((seg) => seg.kind === "line" && near(seg.from, c.at));
+  const prev = wall.outline[(j - 1 + k) % k];
+  const next = wall.outline[j];
+  if (j < 0 || !prev || prev.kind !== "line" || next.kind !== "line") return "Pick a corner where two straight edges of the sheet meet (the short edge through the sheet there).";
+  const bent = new Set(folded.bends.filter((b) => b.parent === wall.id).map((b) => b.edge));
+  if (wall.bendEdge !== undefined) bent.add(wall.bendEdge);
+  if (bent.has(j) || bent.has((j - 1 + k) % k)) return "That corner is next to a bend, so it can't be rounded or cut off. Pick a corner between two free edges.";
+  const l1 = Math.hypot(prev.from[0] - c.at[0], prev.from[1] - c.at[1]);
+  const l2 = Math.hypot(next.to[0] - c.at[0], next.to[1] - c.at[1]);
+  const e1: P2 = [(prev.from[0] - c.at[0]) / l1, (prev.from[1] - c.at[1]) / l1];
+  const e2: P2 = [(next.to[0] - c.at[0]) / l2, (next.to[1] - c.at[1]) / l2];
+  // An outside corner turns left going round (anticlockwise); an inside one would need metal added.
+  const turn = -e1[0] * e2[1] + e1[1] * e2[0];
+  if (turn < 1e-9) return "That's an inside corner (or not a corner at all). Corner break rounds or cuts off outside corners.";
+  const alpha = Math.acos(Math.max(-1, Math.min(1, e1[0] * e2[0] + e1[1] * e2[1])));
+  const back = c.kind === "round" ? c.size / Math.tan(alpha / 2) : c.size;
+  if (back > Math.min(l1, l2) - 1e-6) {
+    const most = c.kind === "round" ? Math.min(l1, l2) * Math.tan(alpha / 2) : Math.min(l1, l2);
+    return `Too big for that corner: its edges are only ${Math.round(Math.min(l1, l2) * 100) / 100} mm long. Use ${c.kind === "round" ? "a radius" : "a distance"} under ${Math.floor(most * 100) / 100} mm.`;
+  }
+  const p1: P2 = [c.at[0] + e1[0] * back, c.at[1] + e1[1] * back];
+  const p2: P2 = [c.at[0] + e2[0] * back, c.at[1] + e2[1] * back];
+  if (c.kind === "chamfer") {
+    return anticlockwise([
+      { kind: "line", from: c.at, to: p1 },
+      { kind: "line", from: p1, to: p2 },
+      { kind: "line", from: p2, to: c.at },
+    ]);
+  }
+  const bis = unit2([e1[0] + e2[0], e1[1] + e2[1]]);
+  const centre: P2 = [c.at[0] + (bis[0] * c.size) / Math.sin(alpha / 2), c.at[1] + (bis[1] * c.size) / Math.sin(alpha / 2)];
+  const mid: P2 = [centre[0] - bis[0] * c.size, centre[1] - bis[1] * c.size];
+  return anticlockwise([
+    { kind: "line", from: c.at, to: p1 },
+    { kind: "arc", from: p1, mid, to: p2 },
+    { kind: "line", from: p2, to: c.at },
+  ]);
 }

@@ -354,10 +354,26 @@ function RibThickenOptions() {
   );
 }
 
-/** Fill: how the patch meets the faces beside its edges. */
+/** Fill: how the patch meets the faces beside its edges. Corner break: round or cut off. */
 function SurfaceOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
+  if (draft?.type === "cornerBreak") {
+    return (
+      <div className="segmented two" role="radiogroup" aria-label="Round or cut off">
+        {(
+          [
+            [undefined, "Round", "Round the corners off with the radius"],
+            ["chamfer", "Cut off", "Cut the corners off straight, this far back along each edge"],
+          ] as const
+        ).map(([style, label, hint]) => (
+          <button type="button" key={label} role="radio" aria-checked={draft.breakStyle === style} className={draft.breakStyle === style ? "selected" : ""} title={hint} onClick={() => setDraftField({ breakStyle: style })}>
+            {label}
+          </button>
+        ))}
+      </div>
+    );
+  }
   if (draft?.type !== "fill") return null;
   return (
     <>
@@ -1037,7 +1053,7 @@ function PicksField() {
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
   const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap", "enclose", "offsetSurface"];
-  const flange = draft?.type === "flange" || draft?.type === "hem" || draft?.type === "fill" || draft?.type === "extendSurface" || draft?.type === "ruled";
+  const flange = draft?.type === "flange" || draft?.type === "hem" || draft?.type === "cornerBreak" || draft?.type === "fill" || draft?.type === "extendSurface" || draft?.type === "ruled";
   if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type) || flange)) return null;
   const picks = draft.picks ?? [];
   const multiPart = new Set(picks.map((p) => p.partId)).size > 1;
@@ -1103,6 +1119,8 @@ function PicksField() {
       <legend>
         {draft.type === "hem"
           ? "Edges to fold over"
+          : draft.type === "cornerBreak"
+          ? "Corners"
           : draft.type === "fill"
           ? "Edges round the opening"
           : draft.type === "extendSurface"
@@ -1135,6 +1153,8 @@ function PicksField() {
         <p className="dialog-hint pick-hint">
           {draft.type === "hem"
             ? "Click straight edges of a sheet metal part (on its top or bottom face). Each is folded back over the sheet."
+            : draft.type === "cornerBreak"
+            ? "Click the short edge that runs through the sheet at each outside corner to round off (zoom in close). Corners next to a bend can't be done."
             : draft.type === "fill"
             ? "Click every edge round the opening (on any parts, surfaces or solids). They must join up into one ring."
             : draft.type === "extendSurface"
@@ -1389,7 +1409,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button

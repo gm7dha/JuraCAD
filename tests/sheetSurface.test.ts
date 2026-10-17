@@ -138,6 +138,51 @@ describe("sheet metal", () => {
   });
 });
 
+describe("corner break", () => {
+  const sheet = (sketchRef: string): Feature => ({ id: "sm", name: "Sheet metal 1", type: "sheetMetal", operation: "new", suppressed: false, params: { thickness: "2", radius: "2", kFactor: "0.45" }, sketchRef });
+  /** The short edge through the sheet at (x, y). */
+  const corner = (r: ReturnType<typeof build>, x: number, y: number) =>
+    r.parts[0].edgeRefs.find((e): e is EdgeRef => e.kind === "edge" && Math.abs(e.a[0] - x) < 1e-6 && Math.abs(e.a[1] - y) < 1e-6 && Math.abs(e.b[0] - x) < 1e-6 && Math.abs(e.b[1] - y) < 1e-6)!;
+  const brk = (refs: EdgeRef[], size: number, extra: Partial<Feature> = {}): Feature => ({ ...feature("cornerBreak", { size }, "add"), id: "cb", picks: refs.map((ref) => ({ partId: "sm", ref })), ...extra });
+
+  it("rounds or cuts off a sheet's corners, in the flat pattern too", () => {
+    const sk = sketchFeature(top, rectSketch(0, 0, 100, 50));
+    const plain = build([sk, sheet(sk.id)]);
+    const c1 = corner(plain, 100, 0);
+    const c2 = corner(plain, 0, 50);
+    expect(c1).toBeTruthy();
+    // Radius 10 on two corners: each loses a 10 × 10 square less a quarter circle, 2 thick.
+    const r = build([sk, sheet(sk.id), brk([c1, c2], 10)]);
+    expect(r.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(10000 - 2 * 2 * (100 - 25 * Math.PI), 3);
+    const flat = r.parts[0].flat!;
+    expect(flat.notShown).toEqual([]);
+    // The flat pattern's outline goes round the arc: its points near that corner are 10 from (90, 10).
+    const nearCorner = flat.boundary!.flat().filter((q) => q[0] > 90.01 && q[1] < 9.99);
+    expect(nearCorner.length).toBeGreaterThan(2);
+    for (const q of nearCorner) expect(Math.hypot(q[0] - 90, q[1] - 10)).toBeCloseTo(10, 2);
+    // Cut off 10 back instead: each loses a triangle, 50 mm², 2 thick.
+    build([sk, sheet(sk.id), brk([c1, c2], 10, { breakStyle: "chamfer" })]);
+    expect(vol()).toBeCloseTo(10000 - 2 * 2 * 50, 3);
+  });
+
+  it("explains corners it can't do", () => {
+    const sk = sketchFeature(top, rectSketch(0, 0, 100, 50));
+    const plain = build([sk, sheet(sk.id)]);
+    const c1 = corner(plain, 100, 0);
+    // Too big for a 50 mm edge.
+    expect(build([sk, sheet(sk.id), brk([c1], 60)]).featureErrors.cb).toMatch(/Too big for that corner/);
+    // Next to a bend.
+    const right = plain.parts[0].edgeRefs.find((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[0] - 100) < 1e-6 && Math.abs(e.b[0] - 100) < 1e-6 && Math.abs(e.a[2] - 2) < 1e-6 && Math.abs(e.b[2] - 2) < 1e-6)!;
+    const fl: Feature = { id: "fl", name: "Flange", type: "flange", operation: "add", suppressed: false, params: { length: "20", angle: "90", inset: "0" }, picks: [{ partId: "sm", ref: right }] };
+    expect(build([sk, sheet(sk.id), fl, brk([c1], 5)]).featureErrors.cb).toMatch(/next to a bend/);
+    // A flange after the corner was rounded.
+    expect(build([sk, sheet(sk.id), brk([c1], 5), fl]).featureErrors.fl).toMatch(/Move the flange above the corner break/);
+    // Not a corner edge.
+    expect(build([sk, sheet(sk.id), brk([right], 5)]).featureErrors.cb).toMatch(/isn't at a corner/);
+  });
+});
+
 describe("flange position", () => {
   const sheet = (sketchRef: string): Feature => ({ id: "sm", name: "Sheet metal 1", type: "sheetMetal", operation: "new", suppressed: false, params: { thickness: "2", radius: "2", kFactor: "0.45" }, sketchRef });
   const edgesAt = (r: ReturnType<typeof build>) => r.parts[0].edgeRefs.filter((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[2] - 2) < 1e-6 && Math.abs(e.b[2] - 2) < 1e-6);

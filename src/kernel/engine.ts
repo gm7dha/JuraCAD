@@ -26,7 +26,7 @@ import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { openChain, profileSheet } from "../sheetmetal/profile";
-import { chainLoops, findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type FlangeSpec, type FoldedSheet, type SheetSpec } from "../sheetmetal/sheet";
+import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type SheetSpec } from "../sheetmetal/sheet";
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
@@ -1332,6 +1332,11 @@ export class GeometryEngine {
         if (err) featureErrors[feature.id] = err;
         continue;
       }
+      if (feature.type === "cornerBreak") {
+        const err = this.applyCornerBreak(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "flange" || feature.type === "hem") {
         const err = this.applyFlange(feature);
         if (err) featureErrors[feature.id] = err;
@@ -1854,6 +1859,59 @@ export class GeometryEngine {
     part.shape.delete();
     part.shape = result;
     part.sheet = spec;
+    part.featureIds.push(feature.id);
+    part.sheetFeatures = [...(part.sheetFeatures ?? []), feature.id];
+    return null;
+  }
+
+  /** Corner break: outside corners of a sheet metal part's walls rounded or cut off (the flat pattern follows). */
+  private applyCornerBreak(feature: Feature): string | null {
+    const { values, errors } = resolveParams(feature);
+    if (errors.size) return `Radius: ${errors.size}`;
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
+    if (!picks.length) return "Click the short edge through the sheet at each corner to round off.";
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return "A corner break works on one sheet metal part at a time. Remove the corners picked on the other part.";
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these corners were on no longer exists. Edit this and pick the corners again.";
+    if (!part.sheet) return "That isn't a sheet metal part. Corner break rounds the corners of sheet metal; use Fillet on other parts.";
+    const spec = part.sheet;
+    const folded = foldSheet(spec);
+    const kind = feature.breakStyle === "chamfer" ? "chamfer" : "round";
+    const added: CornerBreak[] = [];
+    const cutters: Shape3D[] = [];
+    try {
+      for (let i = 0; i < picks.length; i++) {
+        const ref = picks[i].ref;
+        if (ref.kind !== "edge") continue;
+        const where = findSheetCorner(folded, spec.thickness, ref.a, ref.b, 0.01);
+        if (!where) return "One of the picked edges isn't at a corner of the sheet. Pick the short edge that runs through the sheet, from one face to the other, at an outside corner.";
+        const c: CornerBreak = { id: `${feature.id}:${i}`, wall: where.wall, at: where.at, kind, size: values.size };
+        const cut = cornerBreakCut(folded, c);
+        if (typeof cut === "string") return cut;
+        const wall = folded.walls.find((w) => w.id === where.wall)!;
+        cutters.push(wallSolid({ ...wall, outline: cut, holes: [], tabs: [] }, spec.thickness));
+        added.push(c);
+      }
+      const cutter = fusePieces(cutters.splice(0))!;
+      let result: Shape3D;
+      try {
+        result = part.shape.cut(cutter);
+      } finally {
+        cutter.delete();
+      }
+      if (!isValidSolid(result)) {
+        result.delete();
+        return "Couldn't round those corners cleanly. Try a smaller radius.";
+      }
+      part.shape.delete();
+      part.shape = result;
+    } catch (e) {
+      return describeError(e, "Couldn't round those corners.");
+    } finally {
+      cutters.forEach((c) => c.delete());
+    }
+    part.sheet = { ...spec, corners: [...(spec.corners ?? []), ...added] };
     part.featureIds.push(feature.id);
     part.sheetFeatures = [...(part.sheetFeatures ?? []), feature.id];
     return null;
@@ -3318,7 +3376,7 @@ export class GeometryEngine {
       );
       const out: FlatPatternData = { ...flat, cuts, thickness: s.thickness, radius: s.radius, k: s.k, notShown: p.featureIds.filter((id) => !p.sheetFeatures?.includes(id)) };
       // With tabs, corner reliefs or cuts the outline isn't a simple walk round the walls: take it from the part laid out flat.
-      if (s.tabs?.length || folded.cornerReliefs?.length || p.sheetCuts?.length) {
+      if (s.tabs?.length || s.corners?.length || folded.cornerReliefs?.length || p.sheetCuts?.length) {
         const unfolded = this.laidFlat(p, folded);
         if (unfolded) {
           try {

@@ -46,6 +46,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   sheetMetal: Icons.SheetMetal,
   flange: Icons.Flange,
   hem: Icons.Hem,
+  cornerBreak: Icons.CornerBreak,
   fullRound: Icons.FullRound,
   wrap: Icons.Wrap,
   fill: Icons.Fill,

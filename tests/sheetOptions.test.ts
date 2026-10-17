@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { addFeature, createFeature, emptyDocument, parseDocument } from "../src/model/document";
-import { chainLoops, flatPattern, foldSheet, type Frame3, type SheetSpec } from "../src/sheetmetal/sheet";
+import { chainLoops, cornerBreakCut, findSheetCorner, flatPattern, foldSheet, type Frame3, type SheetSpec } from "../src/sheetmetal/sheet";
 import type { Segment } from "../src/sketch/regions";
 
 const top: Frame3 = { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] };
@@ -77,6 +77,42 @@ describe("flange position", () => {
   });
 });
 
+describe("corner break", () => {
+  it("finds the corner a picked edge is at, and the piece to take off", () => {
+    const f = foldSheet(spec([]));
+    expect(findSheetCorner(f, 2, [100, 0, 0], [100, 0, 2])).toEqual({ wall: "base", at: [100, 0] });
+    expect(findSheetCorner(f, 2, [100, 0, 2], [100, 0, 0])).toEqual({ wall: "base", at: [100, 0] });
+    expect(findSheetCorner(f, 2, [100, 0, 0], [100, 50, 0])).toBeNull();
+    // Cut off 10 back: a triangle from the corner.
+    const cut = cornerBreakCut(f, { wall: "base", at: [100, 0], kind: "chamfer", size: 10 });
+    expect(Array.isArray(cut) && cut.map((s) => (s.kind === "line" ? s.from : null))).toEqual([[100, 0], [100, 10], [90, 0]]);
+    // Rounded: from 10 back along each edge, round an arc centred at (90, 10).
+    const round = cornerBreakCut(f, { wall: "base", at: [100, 0], kind: "round", size: 10 });
+    const arc = Array.isArray(round) ? round.find((s) => s.kind === "arc") : undefined;
+    expect(arc && arc.kind === "arc" && Math.hypot(arc.mid[0] - 90, arc.mid[1] - 10)).toBeCloseTo(10, 9);
+  });
+
+  it("only does outside corners", () => {
+    // An L-shaped plate: its inside corner at (50, 20).
+    const L: SheetSpec = {
+      ...spec([]),
+      base: {
+        frame: top,
+        outer: [
+          { kind: "line", from: [0, 0], to: [100, 0] },
+          { kind: "line", from: [100, 0], to: [100, 20] },
+          { kind: "line", from: [100, 20], to: [50, 20] },
+          { kind: "line", from: [50, 20], to: [50, 50] },
+          { kind: "line", from: [50, 50], to: [0, 50] },
+          { kind: "line", from: [0, 50], to: [0, 0] },
+        ],
+        holes: [],
+      },
+    };
+    expect(cornerBreakCut(foldSheet(L), { wall: "base", at: [50, 20], kind: "round", size: 5 })).toMatch(/inside corner/);
+  });
+});
+
 describe("chaining line pieces into loops", () => {
   it("joins pieces end to end, either way round, and drops loose ends", () => {
     const loops = chainLoops([
@@ -102,6 +138,10 @@ describe("saving the new options", () => {
     expect(parseDocument(JSON.parse(JSON.stringify(addFeature(doc, th))))!.features[1].bothSides).toBe(true);
     const fill = { ...createFeature(doc, "fill"), id: "fi", continuity: "tangent" as const };
     expect(parseDocument(JSON.parse(JSON.stringify(addFeature(doc, fill))))!.features[1].continuity).toBe("tangent");
+    const cb = { ...createFeature(doc, "cornerBreak"), id: "cb", breakStyle: "chamfer" as const };
+    const cbBack = parseDocument(JSON.parse(JSON.stringify(addFeature(doc, cb))))!.features[1];
+    expect(cbBack.breakStyle).toBe("chamfer");
+    expect(cbBack.picks).toEqual([]);
     const odd = parseDocument(JSON.parse(JSON.stringify({ ...doc, features: [{ ...fl, flangePosition: "sideways" }] })))!;
     expect(odd.features[0].flangePosition).toBeUndefined();
   });

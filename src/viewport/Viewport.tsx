@@ -260,6 +260,17 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     if (pick) s.toggleDraftPick(pick);
     return;
   }
+  // Corner break: the short edges through the sheet at its corners.
+  if (s.editing?.draft.type === "cornerBreak") {
+    if (target?.kind !== "part") return;
+    if (target.item.kind !== "edge") {
+      s.showToast("Click the short edge through the sheet at a corner (not a face).");
+      return;
+    }
+    const pick = pickFor(s.parts, target.item);
+    if (pick) s.toggleDraftPick(pick);
+    return;
+  }
   // Flange: straight edges of a sheet metal part.
   if (s.editing?.draft.type === "flange" || s.editing?.draft.type === "hem") {
     if (target?.kind !== "part") return;
