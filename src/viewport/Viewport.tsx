@@ -149,7 +149,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     else if (d?.type === "text" && d.text) s.setDraftField({ text: { ...d.text, plane } });
     else if (d?.type === "mirror") s.setDraftMirrorPlane(plane);
     else if (d?.type === "plane" && d.planeDef && d.id !== target.id) s.setDraftField({ planeDef: { ...d.planeDef, ref: plane } });
-    else if (d?.type === "split" && d.splitDef) s.setDraftField({ splitDef: { ...d.splitDef, plane } });
+    else if (d?.type === "split" && d.splitDef) s.setDraftField({ splitDef: { ...d.splitDef, plane, toolPartId: undefined } });
     else if (d?.type === "draft") s.setDraftField({ neutral: plane });
     else if (d?.type === "replaceFace") s.setDraftField({ replaceDef: { target: plane, picking: "faces" } });
     else if (!s.editing) s.selectFeature(target.id);
@@ -213,13 +213,19 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   // Split: the part, then the plane (a default plane, a Plane feature, or a flat face).
   if (s.editing?.draft.type === "split" && s.editing.draft.splitDef) {
     const sp = s.editing.draft.splitDef;
-    if (target?.kind === "plane") s.setDraftField({ splitDef: { ...sp, plane: { kind: "default", name: target.plane } } });
+    if (target?.kind === "plane") s.setDraftField({ splitDef: { ...sp, plane: { kind: "default", name: target.plane }, toolPartId: undefined } });
     else if (target?.kind === "part") {
       if (sp.picking !== "plane" || !sp.partId) s.setDraftField({ splitDef: { ...sp, partId: target.item.partId, picking: "plane" } });
       else if (target.item.kind === "face") {
+        // A surface part splits with its whole (curved) self; anything else must be a flat face.
+        const onPart = s.parts.find((p) => p.id === target.item.partId);
+        if (onPart?.surface && onPart.id !== sp.partId) {
+          s.setDraftField({ splitDef: { ...sp, toolPartId: onPart.id } });
+          return;
+        }
         const plane = planeForFace(target.item);
-        if (plane) s.setDraftField({ splitDef: { ...sp, plane } });
-        else s.showToast("That face is curved. Split along a flat face or a plane.");
+        if (plane) s.setDraftField({ splitDef: { ...sp, plane, toolPartId: undefined } });
+        else s.showToast("That face is curved. Split along a flat face, a plane, or a surface.");
       }
     }
     return;

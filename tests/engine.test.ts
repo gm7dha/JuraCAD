@@ -2403,6 +2403,51 @@ describe("surfaces", () => {
     expect(build([sk, wall, gap]).featureErrors[gap.id]).toMatch(/gap/);
   });
 
+  it("splits a part, or a surface, with a surface", () => {
+    // A 20 × 20 × 20 block, and a curved surface (an arc bulging up to z = 14 at the middle) extruded right through it along Y.
+    const block = feature("box", { width: 20, depth: 20, height: 20 });
+    const arcSk = sketchFeature({ kind: "default", name: "Front" }, addArc(emptySketch(), { x: -5, y: 10 }, { x: 25, y: 10 }, { x: 10, y: 14 }).sketch);
+    const curve: Feature = { ...extrudeFeature(arcSk.id, 50, { end: "symmetric" }), surface: true };
+    const first = build([block, arcSk, curve]);
+    expect(first.featureErrors).toEqual({});
+    expect(first.parts.map((p) => [p.name, !!p.surface])).toEqual([["Part 1", false], ["Surface 1", true]]);
+    const split: Feature = { ...feature("split", {}), splitDef: { partId: block.id, toolPartId: curve.id, plane: { kind: "default", name: "Top" }, keep: "both", picking: "plane" } };
+    const both = build([block, arcSk, curve, split]);
+    expect(both.featureErrors).toEqual({});
+    expect(both.parts.map((p) => [p.name, !!p.surface])).toEqual([["Part 1", false], ["Surface 1", true], ["Part 2", false]]);
+    const vols = engine.check("coarse").parts.filter((p) => !p.surface).map((p) => p.exactVolume!);
+    expect(vols[0] + vols[1]).toBeCloseTo(8000, 2);
+    // The top piece is the smaller: the arc sits above z = 10.
+    expect(Math.min(...vols)).toBeLessThan(3200);
+    expect(Math.max(...vols)).toBeGreaterThan(4800);
+    // One side only: a single part, the surface left alone.
+    const top = build([block, arcSk, curve, { ...split, splitDef: { ...split.splitDef!, keep: "front" } }]);
+    const bottom = build([block, arcSk, curve, { ...split, splitDef: { ...split.splitDef!, keep: "back" } }]);
+    expect(top.parts.map((p) => p.name)).toEqual(["Part 1", "Surface 1"]);
+    expect(bottom.parts.map((p) => p.name)).toEqual(["Part 1", "Surface 1"]);
+    const sideVols = [0, 0];
+    build([block, arcSk, curve, { ...split, splitDef: { ...split.splitDef!, keep: "front" } }]);
+    sideVols[0] = engine.check("coarse").parts[0].exactVolume!;
+    build([block, arcSk, curve, { ...split, splitDef: { ...split.splitDef!, keep: "back" } }]);
+    sideVols[1] = engine.check("coarse").parts[0].exactVolume!;
+    expect(sideVols[0] + sideVols[1]).toBeCloseTo(8000, 2);
+    expect(sideVols[0]).not.toBe(sideVols[1]);
+    // A surface that stops short can't split.
+    const short: Feature = { ...extrudeFeature(arcSk.id, 10, { end: "symmetric" }), surface: true };
+    const stops = build([block, arcSk, short, { ...split, splitDef: { ...split.splitDef!, toolPartId: short.id } }]);
+    expect(stops.featureErrors[split.id]).toMatch(/doesn't go right through/);
+    // A surface split by a surface: a flat wall (x = 0..20, 20 tall) cut by the same arc into two skins.
+    const wallSk = sketchFeature({ kind: "default", name: "Top" }, lineSketch(0, 10, 20, 10));
+    const wall: Feature = { ...extrudeFeature(wallSk.id, 20), surface: true };
+    const skins = build([wallSk, wall, arcSk, curve, { ...split, splitDef: { ...split.splitDef!, partId: wall.id } }]);
+    expect(skins.featureErrors).toEqual({});
+    expect(skins.parts.map((p) => [p.name, !!p.surface])).toEqual([["Surface 1", true], ["Surface 2", true], ["Surface 1 (cut)", true]]);
+    expect(area(skins.parts[0]) + area(skins.parts[2])).toBeCloseTo(400, 1);
+    // Can't split with a solid, or with itself.
+    const solidTool = build([block, arcSk, curve, { ...split, splitDef: { ...split.splitDef!, partId: curve.id, toolPartId: block.id } }]);
+    expect(solidTool.featureErrors[split.id]).toMatch(/is a solid/);
+  });
+
   it("exports surfaces to STEP and reads them back as surfaces", async () => {
     const sk = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: -10, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }).sketch);
     const half: Feature = { ...extrudeFeature(sk.id, 20), surface: true };
