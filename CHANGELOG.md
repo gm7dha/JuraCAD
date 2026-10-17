@@ -12,11 +12,12 @@ The point in the history for each version is the commit shown (see https://githu
 
 - **New name:** the app is now called **JuraCAD** — in the top bar, Help, What's new, the install instructions,
   messages, and the files it exports (STL, 3MF, PDF and SVG say JuraCAD made them).
-- **New address:** https://gm7dha.github.io/JuraCAD/ — update old bookmarks. If you installed the app, uninstall
-  it and install it again from the new address.
+- **New address:** https://gm7dha.github.io/JuraCAD/ — update old bookmarks. If you installed the app, Save your
+  design from it first, then uninstall it and install it again from the new address.
 - **Files:** designs now save as `.juracad`. Your older `.partsmith` files still open (Open, drag and drop, or
-  double-click in the installed app), and `.juracad` files still open in older versions.
-- **Nothing lost:** the design kept in your browser, your theme, printer and other settings carry over.
+  double-click in the installed app). In an older version, drag a `.juracad` file onto the window to open it.
+- **Carried over:** the design kept in this browser, your theme, printer and other settings. An app added to the
+  Dock with Safari keeps its own copy, so Save from it before the address changes.
 
 ## v0.24 — Round of polish across every area (reviewed by independent checkers) · commit `8faacdf`
 
