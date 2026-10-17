@@ -862,54 +862,104 @@ function outwardShell(shape: Shape3D, open: Face[], thickness: number): Shape3D 
 const OUTWARD_FAILED = "Couldn't build walls round the outside of this part. Try putting the walls inside instead (untick Walls outside).";
 const OUTWARD_APART =
   "With those faces left open, the walls outside would come apart into separate pieces (where the open face meets the part's other faces). Leave a different face open, or put the walls inside instead (untick Walls outside).";
-const OUTWARD_OPEN_FAILED =
-  "Couldn't build walls round the outside with those faces left open. Leave flat faces open (curved ones can't be here), or put the walls inside instead (untick Walls outside).";
+const OUTWARD_OPEN_FAILED = "Couldn't build walls round the outside with those faces left open. Try leaving different faces open, or put the walls inside instead (untick Walls outside).";
+const OUTWARD_CURVED_OPEN = "Walls outside can only leave flat faces open, not curved ones. Leave a flat face open, or put the walls inside instead (untick Walls outside).";
 
 /**
  * Walls outside, the slow sure way: sealed walls all round (the part grown by
  * `thickness`, minus the part); then, for each flat face left open, the walls
- * past that face's plane are cut away — except the walls round any of the part
- * that itself stands out past the plane (a boss on an open top keeps its whole
- * sleeve, down to the face). Curved open faces aren't handled.
+ * over that face (its rims, a wall's thickness to the side, and any wall past
+ * the plane joined on to those) are cut off at its plane — but not the cover over other faces in the same plane that aren't
+ * open, nor the walls round any of the part that stands out past the plane (a
+ * boss on an open top keeps its whole sleeve, down to the face). Curved open
+ * faces aren't handled.
  */
 function outwardByCutting(shape: Shape3D, open: Face[], thickness: number): Shape3D {
   const grown = offsetSolid(shape, thickness);
   let walls: Shape3D;
-  let lo: Vec3;
-  let hi: Vec3;
   try {
-    [lo, hi] = boundsOf(grown);
     walls = grown.cut(shape);
   } finally {
     grown.delete();
   }
+  const reach = thickness * 1.01 + 0.01;
   const scrap: Shape3D[] = [];
+  const keepAway = (cutter: Shape3D, what: Shape3D): Shape3D => {
+    const next: Shape3D = cutter.cut(what);
+    cutter.delete();
+    return next;
+  };
+  const allFaces = facesOf(shape);
   try {
     for (const face of open) {
       if (face.geomType !== "PLANE") throw new Error("curved opening");
       const centre = take(face.center);
       const normal = take(face.normalAt(centre));
-      const big = makeBox([lo[0] - 1, lo[1] - 1, lo[2] - 1], [hi[0] + 1, hi[1] + 1, hi[2] + 1]);
+      const along = (f: Face, d: number) => {
+        const v = new Vector([normal[0] * d, normal[1] * d, normal[2] * d]);
+        try {
+          return basicFaceExtrusion(f, v) as Shape3D;
+        } finally {
+          v.delete();
+        }
+      };
+      // Over the face, widened by a wall's thickness all round (its rims), past its plane only.
+      const over = along(face, reach);
+      scrap.push(over);
+      const widened = offsetSolid(over, reach);
       const beyond = halfSpace(walls, centre, normal);
-      scrap.push(big, beyond);
-      let cutter = big.intersect(beyond) as Shape3D;
-      // The part past the plane, with its own walls round it: those stay.
+      scrap.push(widened, beyond);
+      let cutter = widened.intersect(beyond) as Shape3D;
+      // And all of any piece of wall past the plane that runs on from there (the wrap round rounded edges).
+      const wallsPast = walls.intersect(beyond) as Shape3D;
+      scrap.push(wallsPast);
+      for (const piece of solidsOf(wallsPast)) {
+        try {
+          const shared = piece.intersect(widened) as Shape3D;
+          let touches = false;
+          try {
+            touches = measureVolume(shared) > 1e-9;
+          } catch {
+            touches = false;
+          } finally {
+            shared.delete();
+          }
+          if (touches) {
+            const next: Shape3D = cutter.fuse(piece);
+            cutter.delete();
+            cutter = next;
+          }
+        } finally {
+          piece.delete();
+        }
+      }
+      // Other faces in the same plane, facing the same way, that aren't open keep their cover.
+      for (const other of allFaces) {
+        if (other.geomType !== "PLANE" || open.some((o) => o.isSame(other))) continue;
+        const c = take(other.center);
+        const n = take(other.normalAt(c));
+        if (dot3(n, normal) < 1 - 1e-9 || Math.abs(dot3([c[0] - centre[0], c[1] - centre[1], c[2] - centre[2]], normal)) > 1e-6) continue;
+        const cover = along(other, reach);
+        try {
+          cutter = keepAway(cutter, cover);
+        } finally {
+          cover.delete();
+        }
+      }
+      // The part past the plane (each separate piece of it), with its own walls round it: those stay.
       const past = shape.intersect(beyond) as Shape3D;
       scrap.push(past);
-      let pastVolume = 0;
-      try {
-        pastVolume = measureVolume(past);
-      } catch {
-        pastVolume = 0;
-      }
-      if (pastVolume > 1e-6) {
-        const keep = offsetSolid(past, thickness);
+      for (const piece of solidsOf(past)) {
         try {
-          const next: Shape3D = cutter.cut(keep);
-          cutter.delete();
-          cutter = next;
+          if (measureVolume(piece) <= 1e-6) continue;
+          const keep = offsetSolid(piece, thickness);
+          try {
+            cutter = keepAway(cutter, keep);
+          } finally {
+            keep.delete();
+          }
         } finally {
-          keep.delete();
+          piece.delete();
         }
       }
       try {
@@ -925,7 +975,7 @@ function outwardByCutting(shape: Shape3D, open: Face[], thickness: number): Shap
     walls.delete();
     throw e;
   } finally {
-    scrap.forEach((x) => {
+    [...scrap, ...allFaces].forEach((x) => {
       try {
         x.delete();
       } catch {
@@ -2936,6 +2986,7 @@ export class GeometryEngine {
       return list.length;
     };
     const startPieces = pieceCount(part.shape);
+    const curvedOpen = faces.some((f) => f.geomType !== "PLANE");
     // Walls outside that come apart (more separate pieces than the part had) aren't accepted.
     let cameApart = false;
     const good = (s: Shape3D) => {
@@ -2988,7 +3039,7 @@ export class GeometryEngine {
     } finally {
       faces.forEach((f) => f.delete());
     }
-    if (!shape) return outward ? (cameApart ? OUTWARD_APART : OUTWARD_OPEN_FAILED) : failed;
+    if (!shape) return outward ? (cameApart ? OUTWARD_APART : curvedOpen ? OUTWARD_CURVED_OPEN : OUTWARD_OPEN_FAILED) : failed;
     part.shape.delete();
     part.shape = shape;
     part.featureIds.push(feature.id);

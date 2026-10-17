@@ -329,6 +329,47 @@ describe("review follow-ups", () => {
     expect(boundsOf(r).max[2]).toBeCloseTo(17, 2);
   });
 
+  describe("walls outside, open faces in the same plane as others", () => {
+    // A U: a 30 × 10 × 5 base with prongs at x 0–5 and x 25–30 up to z = 15.
+    const base = feature("box", { width: 30, depth: 10, height: 5 });
+    const left = feature("box", { width: 5, depth: 10, height: 10, z: 5 }, "add");
+    const right = feature("box", { width: 5, depth: 10, height: 10, x: 25, z: 5 }, "add");
+    const u = [base, left, right];
+    const open = (at: [number, number, number][]): Feature => {
+      const r0 = build(u);
+      return { ...feature("shell", { thickness: 2 }, "add"), picks: at.map((p) => pickAt(r0, "face", p)), flipSide: true };
+    };
+    const onePiece = (r: ReturnType<typeof build>) => {
+      expect(r.featureErrors).toEqual({});
+      expect(engine.check("normal").parts[0].mesh.pieces).toBe(1);
+    };
+
+    it("leaves the cover on the other prong when one prong's top is open", () => {
+      onePiece(build([...u, open([[2.5, 5, 15]])]));
+      expect(volumes()[0]).toBeCloseTo(4052, 1);
+      // The right prong's cap (x 23–32, 14 mm deep, 2 mm thick) is still there.
+      onePiece(build([...u, open([[2.5, 5, 15], [27.5, 5, 15]])]));
+      expect(volumes()[0]).toBeCloseTo(4052 - 9 * 14 * 2, 1);
+    });
+
+    it("opens the floor between the prongs, keeping each prong's walls down to it", () => {
+      onePiece(build([...u, open([[15, 5, 5]])]));
+      expect(volumes()[0]).toBeCloseTo(3856, 1);
+    });
+
+    it("leaves the cover on the far side of a groove when only one side's top is open", () => {
+      const block = feature("box", { width: 30, depth: 10, height: 10 });
+      const groove = feature("box", { width: 4, depth: 10, height: 3, x: 13, z: 7 }, "remove");
+      const r0 = build([block, groove]);
+      const shell = (at: [number, number, number][]): Feature => ({ ...feature("shell", { thickness: 1 }, "add"), picks: at.map((p) => pickAt(r0, "face", p)), flipSide: true });
+      onePiece(build([block, groove, shell([[6, 5, 10]])]));
+      const leftOnly = volumes()[0];
+      onePiece(build([block, groove, shell([[6, 5, 10], [24, 5, 10]])]));
+      // The right top's cover: x 16–31 (with the groove wall's and the end wall's tops), 12 mm deep, 1 mm thick.
+      expect(leftOnly - volumes()[0]).toBeCloseTo(15 * 12 * 1, 1);
+    });
+  });
+
   it("explains walls outside can't leave a curved face open", () => {
     const can = feature("cylinder", { diameter: 20, height: 10 });
     const side = build([can]).parts[0].faceRefs.find((f) => f.surface === "CYLINDRE")!;
