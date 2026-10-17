@@ -376,7 +376,7 @@ function thickenShell(shell: Shape3D, thickness: number): Shape3D {
       const images = builder.Generated(edge.wrapped);
       try {
         if (images.Size() === 0) throw new Error(failed);
-        const image = cast(images.First()) as Edge;
+        const image = cast(images.First() as never) as Edge;
         const ruled = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
         try {
           const w1 = new oc.BRepBuilderAPI_MakeWire(edge.wrapped);
