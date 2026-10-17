@@ -19,7 +19,7 @@ import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid } from "./surface";
-import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, sweepSurface, thickenSurface } from "./surface";
+import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
@@ -1455,34 +1455,53 @@ export class GeometryEngine {
     if (!sp?.partId) return { error: "Click the part to split." };
     const part = this.parts.find((p) => p.id === sp.partId);
     if (!part) return { error: "The part it splits no longer exists. Edit this feature and pick it again." };
-    const f = planeFrame(sp.plane);
     let front: Shape3D | null = null;
     let back: Shape3D | null = null;
-    try {
-      const keepFront = halfSpace(part.shape, f.origin, [-f.n[0], -f.n[1], -f.n[2]]);
-      const keepBack = halfSpace(part.shape, f.origin, f.n);
+    if (sp.toolPartId) {
+      // Split with a surface: the pieces on the side its faces point to, and the pieces behind it.
+      const tool = this.parts.find((p) => p.id === sp.toolPartId);
+      if (!tool) return { error: "The surface it splits with no longer exists. Edit this feature and pick another." };
+      if (tool === part) return { error: "A surface can't split itself. Pick a different surface to split with." };
+      if (!tool.surface) return { error: `${tool.name} is a solid. Split with a surface, a plane or a flat face.` };
       try {
-        front = part.shape.cut(keepFront);
-        back = part.shape.cut(keepBack);
-      } finally {
-        keepFront.delete();
-        keepBack.delete();
+        const sides = splitBySurface(part.shape, tool.shape, !!part.surface);
+        if (sides.front.length === 0 || sides.back.length === 0) {
+          [...sides.front, ...sides.back].forEach((x) => x.delete());
+          return { error: `${tool.name} doesn't go right through ${part.name}, so there's nothing to split. Extend the surface first.` };
+        }
+        front = gathered(sides.front, !!part.surface);
+        back = gathered(sides.back, !!part.surface);
+      } catch (e) {
+        return { error: describeError(e, "Couldn't split this part with that surface.") };
       }
-    } catch (e) {
-      front?.delete();
-      back?.delete();
-      return { error: describeError(e, "Couldn't split this part.") };
-    }
-    const count = (s: Shape3D) => {
-      // A surface splits into faces rather than solids.
-      const pieces = part.surface ? facesOf(s) : solidsOf(s);
-      pieces.forEach((x) => x.delete());
-      return pieces.length;
-    };
-    if (count(front) === 0 || count(back) === 0) {
-      front.delete();
-      back.delete();
-      return { error: "The plane doesn't go through this part, so there's nothing to split." };
+    } else {
+      const f = planeFrame(sp.plane);
+      try {
+        const keepFront = halfSpace(part.shape, f.origin, [-f.n[0], -f.n[1], -f.n[2]]);
+        const keepBack = halfSpace(part.shape, f.origin, f.n);
+        try {
+          front = part.shape.cut(keepFront);
+          back = part.shape.cut(keepBack);
+        } finally {
+          keepFront.delete();
+          keepBack.delete();
+        }
+      } catch (e) {
+        front?.delete();
+        back?.delete();
+        return { error: describeError(e, "Couldn't split this part.") };
+      }
+      const count = (s: Shape3D) => {
+        // A surface splits into faces rather than solids.
+        const pieces = part.surface ? facesOf(s) : solidsOf(s);
+        pieces.forEach((x) => x.delete());
+        return pieces.length;
+      };
+      if (count(front) === 0 || count(back) === 0) {
+        front.delete();
+        back.delete();
+        return { error: "The plane doesn't go through this part, so there's nothing to split." };
+      }
     }
     part.shape.delete();
     part.featureIds.push(feature.id);

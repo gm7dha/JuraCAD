@@ -402,6 +402,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       feature.splitDef = {
         ...(typeof sp.partId === "string" ? { partId: sp.partId } : {}),
         plane: parsePlane(sp.plane) ?? { kind: "default", name: "Right" },
+        ...(typeof sp.toolPartId === "string" ? { toolPartId: sp.toolPartId } : {}),
         keep: sp.keep === "front" || sp.keep === "back" ? sp.keep : "both",
         picking: sp.picking === "plane" ? "plane" : "part",
       };

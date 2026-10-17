@@ -82,7 +82,8 @@ function SplitOptionsField() {
   const update = (patch: Partial<typeof sp>) => setDraftField({ splitDef: { ...sp, ...patch } });
   const planes = features.filter((f) => f.type === "plane");
   const frames = framesOf(features);
-  const planeValue = sp.plane.kind === "default" ? sp.plane.name : sp.plane.planeRef ? `plane:${sp.plane.planeRef}` : "face";
+  const surfaces = parts.filter((p) => p.surface && p.id !== sp.partId);
+  const planeValue = sp.toolPartId ? `surface:${sp.toolPartId}` : sp.plane.kind === "default" ? sp.plane.name : sp.plane.planeRef ? `plane:${sp.plane.planeRef}` : "face";
   return (
     <>
       <fieldset className={`param-group pick-slot${sp.picking !== "plane" ? " active" : ""}`} onClick={() => sp.picking === "plane" && update({ picking: "part" })}>
@@ -98,12 +99,12 @@ function SplitOptionsField() {
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => {
             const v = e.target.value;
-            if (v === "Top" || v === "Front" || v === "Right") update({ plane: { kind: "default", name: v } });
+            if (v === "Top" || v === "Front" || v === "Right") update({ plane: { kind: "default", name: v }, toolPartId: undefined });
             else if (v.startsWith("plane:")) {
               const f = planes.find((x) => `plane:${x.id}` === v);
               const frame = f && frames.get(f.id);
-              if (f && frame) update({ plane: planeAsSketchPlane(f, frame) });
-            }
+              if (f && frame) update({ plane: planeAsSketchPlane(f, frame), toolPartId: undefined });
+            } else if (v.startsWith("surface:")) update({ toolPartId: v.slice("surface:".length) });
           }}
         >
           <option value="Top">Top plane</option>
@@ -114,16 +115,22 @@ function SplitOptionsField() {
               {f.name}
             </option>
           ))}
+          {surfaces.map((p) => (
+            <option key={p.id} value={`surface:${p.id}`}>
+              {p.name} (surface)
+            </option>
+          ))}
           {planeValue === "face" && <option value="face">{planeLabel(sp.plane)}</option>}
+          {sp.toolPartId && !surfaces.some((p) => p.id === sp.toolPartId) && <option value={`surface:${sp.toolPartId}`}>(missing surface)</option>}
         </select>
-        <p className="dialog-hint field-hint">Or click a plane or flat face in the 3D view.</p>
+        <p className="dialog-hint field-hint">Or click a plane, a flat face, or a surface in the 3D view. A surface cuts right through along its curve — Extend it first if it stops short.</p>
       </fieldset>
       <div className="segmented three" role="radiogroup" aria-label="Keep">
         {(
           [
             ["both", "Both pieces", "Keep both pieces, as two parts"],
-            ["front", "Front side", "Keep the piece on the plane's front side"],
-            ["back", "Back side", "Keep the piece on the plane's back side"],
+            ["front", "Front side", sp.toolPartId ? "Keep the pieces on the side the surface faces" : "Keep the piece on the plane's front side"],
+            ["back", "Back side", sp.toolPartId ? "Keep the pieces behind the surface" : "Keep the piece on the plane's back side"],
           ] as const
         ).map(([keep, label, hint]) => (
           <button type="button" key={keep} role="radio" aria-checked={sp.keep === keep} className={sp.keep === keep ? "selected" : ""} title={hint} onClick={() => update({ keep })}>

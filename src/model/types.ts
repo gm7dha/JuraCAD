@@ -44,6 +44,8 @@ export interface BooleanOptions {
 export interface SplitOptions {
   partId?: string;
   plane: SketchPlane;
+  /** Split with a surface part (picked by clicking it) instead of the plane. */
+  toolPartId?: string;
   /** Keep both pieces as separate parts, or only the piece on the plane's front (normal) or back side. */
   keep: "both" | "front" | "back";
   /** What a click in the 3D view picks. */

@@ -5,7 +5,7 @@
  * surface part can be thickened into a solid, or several can be closed up
  * into one (Enclose). All with OpenCascade.
  */
-import { basicFaceExtrusion, cast, getOC, loft, makeCompound, measureVolume, makeNonPlanarFace, makeSolid, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
+import { basicFaceExtrusion, cast, getOC, loft, makeCompound, measureShapeVolumeProperties, measureVolume, makeNonPlanarFace, makeSolid, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, type Chain } from "../sketch/regions";
@@ -524,4 +524,95 @@ export function offsetSolid(shape: Shape3D, distance: number): Shape3D {
     builder.delete();
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/** A point well inside a piece: its centre of mass (a face's centre for a surface piece). */
+function insidePoint(piece: Shape3D, surface: boolean): Vec3 {
+  if (surface) return take((piece as unknown as Face).center);
+  const c = measureShapeVolumeProperties(piece).centerOfMass;
+  return [c[0], c[1], c[2]];
+}
+
+/**
+ * The part (a solid or a surface) cut through by a surface: the pieces on the
+ * surface's front side (where its faces point) and on its back. Pieces the
+ * surface doesn't reach stay whole, on whichever side they lie.
+ */
+export function splitBySurface(shape: Shape3D, tool: Shape3D, surface: boolean): { front: Shape3D[]; back: Shape3D[] } {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const splitter = new oc.BRepAlgoAPI_Splitter();
+  const args = new oc.NCollection_List_TopoDS_Shape();
+  const tools = new oc.NCollection_List_TopoDS_Shape();
+  let result: Shape3D;
+  try {
+    args.Append(shape.wrapped);
+    tools.Append(tool.wrapped);
+    splitter.SetArguments(args);
+    splitter.SetTools(tools);
+    splitter.Build();
+    if (splitter.HasErrors()) throw new Error("Couldn't split the part with that surface.");
+    result = cast(splitter.Shape()) as Shape3D;
+  } finally {
+    splitter.delete();
+    args.delete();
+    tools.delete();
+  }
+  const pieces = surface ? (facesOf(result) as unknown as Shape3D[]) : solidsOf(result);
+  result.delete();
+  const toolFaces = facesOf(tool);
+  const front: Shape3D[] = [];
+  const back: Shape3D[] = [];
+  try {
+    for (const piece of pieces) {
+      const p = insidePoint(piece, surface);
+      // The nearest point of the surface to the piece, and which way the surface faces there.
+      const pnt = new oc.gp_Pnt(p[0], p[1], p[2]);
+      const vertex = new oc.BRepBuilderAPI_MakeVertex(pnt);
+      let best: { face: Face; at: Vec3; d: number } | null = null;
+      try {
+        for (const face of toolFaces) {
+          const dist = new oc.BRepExtrema_DistShapeShape();
+          try {
+            dist.LoadS1(vertex.Vertex());
+            dist.LoadS2(face.wrapped);
+            if (!dist.Perform() || dist.NbSolution() === 0) continue;
+            const d = dist.Value();
+            if (!best || d < best.d) {
+              const q = dist.PointOnShape2(1);
+              best = { face, at: [q.X(), q.Y(), q.Z()], d };
+              q.delete();
+            }
+          } finally {
+            dist.delete();
+          }
+        }
+      } finally {
+        vertex.delete();
+        pnt.delete();
+      }
+      if (!best) {
+        back.push(piece);
+        continue;
+      }
+      const n = take(best.face.normalAt(best.at));
+      const away: Vec3 = [p[0] - best.at[0], p[1] - best.at[1], p[2] - best.at[2]];
+      (away[0] * n[0] + away[1] * n[1] + away[2] * n[2] >= 0 ? front : back).push(piece);
+    }
+  } finally {
+    toolFaces.forEach((f) => f.delete());
+  }
+  return { front, back };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/** Pieces of a split gathered back into one shape: solids as a compound, faces of a surface sewn into a skin. */
+export function gathered(pieces: Shape3D[], surface: boolean): Shape3D {
+  if (pieces.length === 1) return pieces[0];
+  if (surface) {
+    const out = sewn(pieces);
+    pieces.forEach((p) => p.delete());
+    return out;
+  }
+  return makeCompound(pieces) as Shape3D;
 }
