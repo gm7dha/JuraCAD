@@ -88,7 +88,9 @@ export function renameDrawing(doc: PartSmithDocument, id: string, name: string):
 }
 
 /** Show or hide one kind of view (shown views keep their place; a hidden view's dimensions go with it). */
-export function toggleView(d: Drawing, kind: ViewKind): Drawing {
+export function toggleView(drawing: Drawing, kind: ViewKind): Drawing {
+  // (The room kept for dimensions was worked out for the old views: dropped.)
+  const d = withoutFit(drawing);
   const has = d.views.some((v) => v.kind === kind);
   if (!has) return { ...d, views: [...d.views, { id: `${d.id}-${kind}`, kind }] };
   const out: Drawing = { ...d, views: d.views.filter((v) => v.kind !== kind) };
@@ -154,12 +156,22 @@ export function removeNote(d: Drawing, id: string): Drawing {
  */
 export function arrangeLinedUp(d: Drawing): Drawing {
   const lined = new Set<ViewKind>(["front", "top", "right", "left", "back", "bottom"]);
-  return { ...d, views: d.views.map(({ at, ...v }) => (lined.has(v.kind) || !at ? v : { ...v, at })) };
+  return { ...withoutFit(d), views: d.views.map(({ at, ...v }) => (lined.has(v.kind) || !at ? v : { ...v, at })) };
 }
 
-/** Put every view back in its automatic place. */
+/**
+ * A drawing without its saved room for dimensions (Drawing.fit) — for when
+ * the sheet, the views or how they're arranged change, so it isn't stale.
+ */
+export function withoutFit(d: Drawing): Drawing {
+  if (!d.fit) return d;
+  const { fit: _old, ...rest } = d;
+  return rest;
+}
+
+/** Put every view back in its automatic place (dropping any saved room for dimensions). */
 export function arrangeViews(d: Drawing): Drawing {
-  return { ...d, views: d.views.map(({ at: _at, ...v }) => v) };
+  return { ...withoutFit(d), views: d.views.map(({ at: _at, ...v }) => v) };
 }
 
 // ---------------------------------------------------------------------------

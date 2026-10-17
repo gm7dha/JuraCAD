@@ -321,7 +321,9 @@ export function drawingViewKeys(drawing: Pick<Drawing, "views">): string[] {
 export function layoutSheet(drawing: Drawing, projections: Projections, info: SheetInfo): SheetLayout {
   // Room kept for dimensions beside the 3D column, and one scale smaller, when Fit to sheet
   // or Auto dimension decided so (see planFit); old drawings have neither and lay out as before.
-  return layoutAt(drawing, projections, info, Math.min(MAX_SIDE_GAP, Math.max(0, drawing.fit?.gap ?? 0))).layout;
+  // (A chosen scale ignores it: the room was worked out for Fit to sheet.)
+  const gap = drawing.scale === undefined ? Math.min(MAX_SIDE_GAP, Math.max(0, drawing.fit?.gap ?? 0)) : 0;
+  return layoutAt(drawing, projections, info, gap).layout;
 }
 
 /** Most extra room kept beside the 3D column for dimensions (paper mm). */

@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import { addDetail, detailProjection, withDetails } from "../src/drawing/details";
-import { addDrawing, arrangeLinedUp, parseDrawings, projectionKinds, toggleView } from "../src/drawing/drawing";
+import { addDrawing, arrangeLinedUp, arrangeViews, parseDrawings, projectionKinds, toggleView } from "../src/drawing/drawing";
 import { autoDimensions } from "../src/drawing/autoDimension";
 import { advanceRun, nextLinear, startRun } from "../src/drawing/linearDims";
 import { calloutLines } from "../src/drawing/holeCallouts";
@@ -508,5 +508,24 @@ describe("review fixes", () => {
     expect(parseDrawings(JSON.parse(JSON.stringify([{ ...d, fit: { gap: 12, down: true } }])))[0].fit).toEqual({ gap: 12, down: true });
     expect(parseDrawings([{ ...d, fit: { gap: 999, down: "yes" } }])[0].fit).toEqual({ gap: 40 });
     expect(parseDrawings([{ ...d, fit: { gap: -3 } }])[0].fit).toBeUndefined();
+  });
+
+  it("drops a stale room-for-dimensions when the scale, sheet, arrangement or views change", () => {
+    const views = { ...block, front: edges("front", 40, 20) };
+    const d: Drawing = { ...newDrawing(), sheet: "A3", dimensions: [length], fit: { gap: 29, down: true } };
+    const boxes = (l: ReturnType<typeof layoutSheet>) => l.views.map((v) => v.box);
+    // A chosen scale ignores it.
+    const { fit: _f, ...noFit } = d;
+    expect(boxes(layoutSheet({ ...d, scale: 2 }, views, info))).toEqual(boxes(layoutSheet({ ...noFit, scale: 2 }, views, info)));
+    // Rearranging, switching projection or showing/hiding a view drops it.
+    expect(arrangeViews(d).fit).toBeUndefined();
+    expect(arrangeLinedUp(d).fit).toBeUndefined();
+    expect(toggleView(d, "left").fit).toBeUndefined();
+    expect(toggleView(d, "iso").fit).toBeUndefined();
+    // A new sheet size gets a fresh fit (here none is needed): the scale that fits, not one step smaller.
+    const a4 = fitDrawing({ ...arrangeViews(d), sheet: "A4" }, views, info);
+    expect(a4.fit).toBeUndefined();
+    expect(layoutSheet(a4, views, info).scale).toBe(fitScale(views, ["front", "top", "right", "iso"], "A4").scale);
+    expect(layoutSheet(a4, views, info).scale).toBe(layoutSheet({ ...noFit, sheet: "A4" }, views, info).scale);
   });
 });

@@ -6,7 +6,7 @@ import { putShortening, removeShortening, withShortenings } from "../drawing/sho
 import { itemsInBox, toggled } from "../drawing/select";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
-import { arrangeLinedUp, arrangeViews, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
+import { arrangeLinedUp, arrangeViews, withoutFit, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
@@ -199,11 +199,11 @@ export function autoDimensionDrawing() {
   const sheet = shownSheet;
   // Room for the new dimensions round the views: more space beside the 3D view, or one scale
   // smaller (the new rows are spaced for the scale they end up at).
-  s.changeDrawing((x) => {
-    const existing = x.dimensions ?? [];
-    return fitDrawing(x, sheet.projections, sheet.info, (scale) => [...existing, ...autoDimensions(sheet.projections, drawingViewKeys(x), existing, scale, () => newId("dm"), x.projection === "third")]);
-  });
-  s.showToast(`Added ${added.length} dimension${added.length > 1 ? "s" : ""}. Drag a number to move it, or select one and press Delete.`, "success");
+  const existing = d.dimensions ?? [];
+  const next = fitDrawing(d, sheet.projections, sheet.info, (scale) => [...existing, ...autoDimensions(sheet.projections, drawingViewKeys(d), existing, scale, () => newId("dm"), d.projection === "third")]);
+  const count = (next.dimensions?.length ?? 0) - existing.length;
+  s.changeDrawing(() => next);
+  s.showToast(`Added ${count} dimension${count === 1 ? "" : "s"}. Drag a number to move it, or select one and press Delete.`, "success");
 }
 
 /** Save the drawing on show as a PDF or SVG file. */
@@ -624,7 +624,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
           </div>
           <div className="drawing-field">
             <label htmlFor="drawing-sheet">Sheet</label>
-            <select id="drawing-sheet" value={drawing.sheet} onChange={(e) => change((d) => ({ ...arrangeViews(d), sheet: e.target.value as Drawing["sheet"] }))}>
+            <select id="drawing-sheet" value={drawing.sheet} onChange={(e) => change((d) => withFit({ ...arrangeViews(d), sheet: e.target.value as Drawing["sheet"] }, projections ?? undefined, info))}>
               {SHEET_SIZES.map((size) => (
                 <option key={size} value={size}>
                   {SHEET_LABELS[size]}
@@ -651,7 +651,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
                   onClick={() =>
                     change((d) => {
                       const { projection: _old, ...rest } = arrangeLinedUp(d);
-                      return third ? { ...rest, projection: "third" } : rest;
+                      return withFit(third ? { ...rest, projection: "third" } : rest, projections ?? undefined, info);
                     })
                   }
                 >
@@ -668,7 +668,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
               onChange={(e) =>
                 change((d) => {
                   const { scale: _old, ...rest } = arrangeViews(d);
-                  return e.target.value === "fit" ? withFit(rest, projections ?? undefined, info) : { ...rest, scale: Number(e.target.value) };
+                  return e.target.value === "fit" ? withFit(rest, projections ?? undefined, info) : { ...withoutFit(rest), scale: Number(e.target.value) };
                 })
               }
             >
