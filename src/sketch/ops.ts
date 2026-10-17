@@ -362,7 +362,22 @@ export function addArc(s: SketchData, start: Placed, end: Placed, through: { x: 
 /** Delete curves, points and/or constraints, tidying up anything left dangling. */
 export function deleteItems(s: SketchData, ids: string[]): SketchData {
   const gone = new Set(ids);
-  const curves = s.curves.filter((c) => !gone.has(c.id));
+  // Deleting a point takes its lines, arcs and circles with it; a spline just loses that point
+  // (and goes too if fewer than two are left).
+  const curves = s.curves.flatMap((c): SketchCurve[] => {
+    if (gone.has(c.id)) return [];
+    if (c.type === "spline") {
+      if (!c.points.some((id) => gone.has(id))) return [c];
+      if (c.conic !== undefined) return [];
+      const points = c.points.filter((id) => !gone.has(id));
+      if (points.length < 2) return [];
+      const tangents = c.tangents ? Object.fromEntries(Object.entries(c.tangents).filter(([id]) => !gone.has(id))) : undefined;
+      const { tangents: _old, ...rest } = c;
+      void _old;
+      return [{ ...rest, points, closed: c.closed && points.length >= 3, ...(tangents && Object.keys(tangents).length ? { tangents } : {}) }];
+    }
+    return curvePoints(c).some((id) => gone.has(id)) ? [] : [c];
+  });
   // Keep points still used by a curve, or that the user placed on their own (unless deleted).
   const used = new Set(curves.flatMap(curvePoints));
   const points = s.points.filter((p) => !gone.has(p.id) && (used.has(p.id) || (p.standalone && !gone.has(p.id))));

@@ -169,4 +169,15 @@ describe("spline handles", () => {
     expect(a1.outer.polygon.length).toBeGreaterThan(5);
     expect(Math.abs(top(a2) - top(a1))).toBeGreaterThan(0.5);
   });
+
+  it("deleting one of a spline's points takes it out of the spline", () => {
+    const { s, sp } = three();
+    const shaped = setSplineHandle(s, sp.id, sp.points[2], [5, 5]);
+    const after = deleteItems(shaped, [sp.points[1]]);
+    const left = after.curves[0] as SketchSpline;
+    expect(left.points).toEqual([sp.points[0], sp.points[2]]);
+    expect(left.tangents).toEqual({ [sp.points[2]]: [5, 5] });
+    // Down to one point: the spline goes.
+    expect(deleteItems(after, [sp.points[0]]).curves).toHaveLength(0);
+  });
 });
