@@ -5,8 +5,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 
 import type { PreviewShape, SketchTransient } from "../sketch/controller";
 import { dimensionLayout } from "../sketch/layout";
-import { ellipsePoints, pointPos, radiusOf, splinePoints } from "../sketch/ops";
-import { splinePolyline } from "../sketch/spline";
+import { ellipsePoints, pointPos, radiusOf, splineHandleEnds, splinePath, splinePoints } from "../sketch/ops";
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import type { SketchAnalysis } from "../sketch/solver";
 import { isDimension, type SketchCurve, type SketchData } from "../sketch/types";
@@ -20,6 +19,8 @@ export const SKETCH_COLOURS = {
   inactive: new THREE.Color("#5b6672"),
   preview: new THREE.Color("#1f6fd1"),
   dimension: new THREE.Color("#4b5866"),
+  /** Spline handles: the dots and lines you drag to reshape a curve. */
+  handle: new THREE.Color("#2bb673"),
 };
 
 /** Sketch colours for a dark or light background (fully defined lines are black on light, near-white on dark). */
@@ -46,7 +47,7 @@ type Pt = [number, number];
 function curveSegments(s: SketchData, c: SketchCurve): [Pt, Pt][] {
   if (c.type === "line") return [[pointPos(s, c.p1), pointPos(s, c.p2)]];
   if (c.type === "spline" || c.type === "ellipse") {
-    const pts = c.type === "spline" ? splinePolyline(splinePoints(s, c), c.closed, undefined, c.conic) : ellipsePoints(s, c);
+    const pts = c.type === "spline" ? splinePath(s, c) : ellipsePoints(s, c);
     return pts.slice(1).map((q, i) => [pts[i], q] as [Pt, Pt]);
   }
   const [cx, cy] = pointPos(s, c.center);
@@ -275,6 +276,12 @@ export class SketchLayer {
         consCols.push(colour, colour);
       }
     }
+    // Spline handles (on selected splines): a line through each point, with a dot at each end to drag.
+    const handles = splineHandleEnds(data, a.selection);
+    for (const h of handles) {
+      consSegs.push([pointPos(data, h.pointId), h.at]);
+      consCols.push(SKETCH_COLOURS.handle);
+    }
     this.solid.set(frame, solidSegs, solidCols);
     this.construction.set(frame, consSegs, consCols);
 
@@ -300,6 +307,10 @@ export class SketchLayer {
       pos.push(...toWorld(frame, p.x, p.y));
       const c = conflicted.has(p.id) ? SKETCH_COLOURS.conflict : this.colourFor(p.id, a.analysis.definedPoints.has(p.id));
       col.push(c.r, c.g, c.b);
+    }
+    for (const h of handles) {
+      pos.push(...toWorld(frame, h.at[0], h.at[1]));
+      col.push(SKETCH_COLOURS.handle.r, SKETCH_COLOURS.handle.g, SKETCH_COLOURS.handle.b);
     }
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));

@@ -21,9 +21,13 @@ import {
   dragPoint,
   joinPoints,
   pointPos,
+  splineHandles,
   pointsSharingCurve,
   radiusOf,
+  setSplineHandle,
+  splineHandleEnds,
   type Placed,
+  type SplineHandleEnd,
 } from "./ops";
 import {
   addCentreRectangle,
@@ -89,9 +93,11 @@ export interface SketchTransient {
 const POINT_PX = 9;
 const CURVE_PX = 6;
 const DRAG_PX = 3;
+/** How close (px) a dragged point must come to another to snap onto it. */
+const SNAP_PX = 14;
 
 interface DragState {
-  kind: "point" | "curve" | "rim" | "none";
+  kind: "point" | "curve" | "rim" | "handle" | "none";
   id: string;
   start: SketchData;
   startX: number;
@@ -104,6 +110,8 @@ interface DragState {
   box?: { x: number; y: number; crossing: boolean };
   /** Dragging a point: the point (or origin) it has snapped onto, joined when the drag ends. */
   snapTo?: string | null;
+  /** Dragging a spline handle: which one. */
+  handle?: SplineHandleEnd;
 }
 
 export class SketchController {
@@ -264,7 +272,7 @@ export class SketchController {
         if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
         else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius });
         else if (c.type === "spline" || c.type === "ellipse") {
-          const pts = c.type === "spline" ? splinePolyline(c.points.map(at), c.closed, undefined, c.conic) : ellipsePolyline(ellipseFrom(at(c.center), at(c.major), at(c.minor)));
+          const pts = c.type === "spline" ? splinePolyline(c.points.map(at), c.closed, undefined, c.conic, splineHandles(c)) : ellipsePolyline(ellipseFrom(at(c.center), at(c.major), at(c.minor)));
           for (let k = 0; k + 1 < pts.length; k++) out.push({ kind: "line", a: pts[k], b: pts[k + 1] });
         } else {
           const cc = at(c.center);
@@ -289,6 +297,23 @@ export class SketchController {
     const d = this.data;
     if (!d) return null;
     return hitTest(d, e.x, e.y, POINT_PX * e.mmPerPx, CURVE_PX * e.mmPerPx, { ignore });
+  }
+
+  /** The spline handle end under the pointer, if any (handles show on selected splines). */
+  private handleAt(e: SketchPointer): SplineHandleEnd | null {
+    const d = this.data;
+    if (!d) return null;
+    const tol = POINT_PX * e.mmPerPx;
+    let best: SplineHandleEnd | null = null;
+    let bestD = tol;
+    for (const h of splineHandleEnds(d, this.state.sketch?.selection ?? [])) {
+      const dist = Math.hypot(h.at[0] - e.x, h.at[1] - e.y);
+      if (dist <= bestD) {
+        bestD = dist;
+        best = h;
+      }
+    }
+    return best;
   }
 
   /** Where a click lands, snapped to points, the origin or curves. */
@@ -778,7 +803,8 @@ export class SketchController {
       this.state.recordSketchStep(drag.start);
       return;
     }
-    // A click without dragging: select.
+    // A click without dragging: select (a click on a handle leaves the selection as it is).
+    if (drag.kind === "handle") return;
     const sel = this.state.sketch?.selection ?? [];
     if (!drag.hit) {
       if (!drag.additive) this.state.setSketchSelection([]);
@@ -816,6 +842,12 @@ export class SketchController {
 
   private selectDown(e: SketchPointer) {
     const d = this.data!;
+    // A spline handle (shown on selected splines) takes priority over whatever is under it.
+    const handle = this.handleAt(e);
+    if (handle) {
+      this.drag = { kind: "handle", id: handle.splineId, start: d, startX: e.x, startY: e.y, moved: false, additive: false, hit: null, handle };
+      return;
+    }
     const hit = this.hitAt(e);
     let kind: DragState["kind"] = "none";
     if (hit?.kind === "point" && hit.id !== ORIGIN_ID) kind = "point";
@@ -844,9 +876,22 @@ export class SketchController {
       return;
     }
     let next = drag.start;
+    if (drag.kind === "handle" && drag.handle) {
+      // The handle end follows the pointer: the curve's direction and speed at that point (its tangent is three times the handle).
+      const h = drag.handle;
+      const [px, py] = pointPos(drag.start, h.pointId);
+      const dx = e.x - px;
+      const dy = e.y - py;
+      // Dropped back onto the point: the handle is cleared and the curve runs naturally again.
+      const reset = Math.hypot(dx, dy) < POINT_PX * e.mmPerPx;
+      next = setSplineHandle(drag.start, h.splineId, h.pointId, reset ? null : [3 * dx * h.side, 3 * dy * h.side]);
+      this.state.updateSketch(next, { record: false });
+      return;
+    }
     if (drag.kind === "point") {
       // Hovering close to another point snaps onto it (and joins them when let go).
-      const others = this.hitAt(e, pointsSharingCurve(drag.start, drag.id));
+      // A wider reach than a click, so an end point dropped near another joins onto it.
+      const others = this.data ? hitTest(this.data, e.x, e.y, SNAP_PX * e.mmPerPx, 0, { ignore: pointsSharingCurve(drag.start, drag.id) }) : null;
       drag.snapTo = others?.kind === "point" ? others.id : null;
       const [x, y] = drag.snapTo ? pointPos(drag.start, drag.snapTo) : [e.x, e.y];
       next = dragPoint(drag.start, drag.id, x, y);

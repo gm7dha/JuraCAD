@@ -3,8 +3,7 @@
  * programs: dragging left to right selects what's wholly inside the box
  * ("window"); right to left also takes anything the box touches ("crossing").
  */
-import { curvePoints, ellipsePoints, pointPos, radiusOf, splinePoints } from "../sketch/ops";
-import { splinePolyline } from "../sketch/spline";
+import { curvePoints, ellipsePoints, pointPos, radiusOf, splinePath } from "../sketch/ops";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "../sketch/types";
 
 export interface Rect {
@@ -67,7 +66,7 @@ export function shapeInBox(r: Rect, points: ArrayLike<number>, segments: ArrayLi
 /** A sketch curve as a run of points (arcs and circles as short straight pieces). */
 function curvePolyline(s: SketchData, c: SketchCurve): number[] {
   if (c.type === "line") return [...pointPos(s, c.p1), ...pointPos(s, c.p2)];
-  if (c.type === "spline") return splinePolyline(splinePoints(s, c), c.closed, undefined, c.conic).flat();
+  if (c.type === "spline") return splinePath(s, c).flat();
   if (c.type === "ellipse") return ellipsePoints(s, c).flat();
   const [cx, cy] = pointPos(s, c.center);
   const r = radiusOf(s, c);

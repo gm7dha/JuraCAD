@@ -11,6 +11,7 @@
 import { ellipseFrom, ellipsePolyline } from "./ellipse";
 import { splineBeziers, splinePolyline } from "./spline";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
+import { splineHandles } from "./ops";
 
 export type Pt = [number, number];
 
@@ -123,8 +124,9 @@ function sketchGraph(sketch: SketchData) {
   for (const c of solid) {
     if (c.type !== "spline" || !c.closed || c.points.length < 3) continue;
     const ps = c.points.map((id) => pts.get(id)!);
-    const segs: Segment[] = splineBeziers(ps, true).map(([from, c1, c2, to]) => ({ kind: "bezier", from, c1, c2, to }));
-    loops.push(makeLoop(segs, splinePolyline(ps, true)));
+    const hs = splineHandles(c);
+    const segs: Segment[] = splineBeziers(ps, true, undefined, hs).map(([from, c1, c2, to]) => ({ kind: "bezier", from, c1, c2, to }));
+    loops.push(makeLoop(segs, splinePolyline(ps, true, undefined, undefined, hs)));
   }
 
   // Join lines, arcs and open splines at shared end points (merged by position, so separate
@@ -184,9 +186,11 @@ function sketchGraph(sketch: SketchData) {
     } else if (e.curve.type === "spline") {
       // Its pieces, the other way round when walking it backwards.
       const ps = e.curve.points.map((id) => pts.get(id)!);
-      const pieces = splineBeziers(forward ? ps : [...ps].reverse(), false, e.curve.conic);
+      // Walked backwards, each handle points the other way too.
+      const hs = splineHandles(e.curve).map((h) => (h && !forward ? ([-h[0], -h[1]] as [number, number]) : h));
+      const pieces = splineBeziers(forward ? ps : [...ps].reverse(), false, e.curve.conic, forward ? hs : [...hs].reverse());
       for (const [f, c1, c2, t] of pieces) segments.push({ kind: "bezier", from: f, c1, c2, to: t });
-      polygon.push(...splinePolyline(forward ? ps : [...ps].reverse(), false, undefined, e.curve.conic).slice(0, -1));
+      polygon.push(...splinePolyline(forward ? ps : [...ps].reverse(), false, undefined, e.curve.conic, forward ? hs : [...hs].reverse()).slice(0, -1));
     } else {
       const center = pts.get(e.curve.center)!;
       const s = pts.get(e.curve.start)!;

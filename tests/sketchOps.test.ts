@@ -216,4 +216,27 @@ describe("editing", () => {
     expect(JSON.stringify(r.sketch)).toBe(before);
     expect(ORIGIN_ID).toBe("origin");
   });
+
+  it("turns a vertical line horizontal (and back) instead of squashing it", () => {
+    let s = addLine(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 5 }).sketch;
+    const line = s.curves[0] as SketchLine;
+    const v = applyRelation(s, "vertical", [line.id]);
+    expect(v.error).toBe(undefined);
+    const vid = v.sketch.constraints.find((c) => c.type === "vertical")!.id;
+    // Delete the Vertical, then ask for Horizontal: the line swings round about its middle, same length.
+    s = deleteItems(v.sketch, [vid]);
+    const h = applyRelation(s, "horizontal", [line.id]);
+    expect(h.error).toBe(undefined);
+    const [ax, ay] = pointPos(h.sketch, line.p1);
+    const [bx, by] = pointPos(h.sketch, line.p2);
+    expect(ay).toBeCloseTo(by, 6);
+    expect(Math.abs(bx - ax)).toBeCloseTo(5, 6);
+    expect((ay + by) / 2).toBeCloseTo(2.5, 6);
+    // And straight back to vertical.
+    const hid = h.sketch.constraints.find((c) => c.type === "horizontal")!.id;
+    const again = applyRelation(deleteItems(h.sketch, [hid]), "vertical", [line.id]);
+    expect(again.error).toBe(undefined);
+    expect(pointPos(again.sketch, line.p1)[0]).toBeCloseTo(pointPos(again.sketch, line.p2)[0], 6);
+    expect(Math.abs(pointPos(again.sketch, line.p2)[1] - pointPos(again.sketch, line.p1)[1])).toBeCloseTo(5, 6);
+  });
 });
