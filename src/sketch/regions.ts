@@ -100,13 +100,6 @@ function distanceToOutline(p: Pt, poly: Pt[]): number {
   return best;
 }
 
-/**
- * How `inner` sits against `outer`, judged from points around its outline (its
- * corners and the middles of its sides). Points right on `outer`'s edge (a
- * notch flush with a side, a corner touching it) don't count either way.
- * "inside": (nearly) all the rest are inside; "overlap": some are inside and
- * some outside; "outside": none are inside.
- */
 /** Do two outlines properly cross each other somewhere (not just touch)? */
 function outlinesCross(a: Pt[], b: Pt[]): boolean {
   for (let i = 0; i < a.length; i++) {
@@ -124,29 +117,6 @@ function outlinesCross(a: Pt[], b: Pt[]): boolean {
     }
   }
   return false;
-}
-
-function loopRelation(outer: Loop, inner: Loop): "inside" | "overlap" | "outside" {
-  const poly = inner.polygon;
-  const n = poly.length;
-  if (!n) return "outside";
-  const size = Math.max(1, ...outer.polygon.map((p) => Math.max(Math.abs(p[0]), Math.abs(p[1]))));
-  const eps = 1e-6 * size;
-  let isIn = 0;
-  let isOut = 0;
-  for (let i = 0; i < n; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % n];
-    for (const t of [0, 0.25, 0.5, 0.75]) {
-      const p: Pt = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-      if (distanceToOutline(p, outer.polygon) <= eps) continue;
-      if (pointInPolygon(p, outer.polygon)) isIn++;
-      else isOut++;
-    }
-  }
-  if (isIn === 0) return "outside";
-  // A few stray points outside allowed: a circle drawn as straight pieces can poke out a hair where it touches a side.
-  return isOut <= 0.05 * (isIn + isOut) ? "inside" : "overlap";
 }
 
 function makeLoop(segments: Segment[], polygon: Pt[]): Loop {
@@ -368,27 +338,125 @@ export function findRegions(sketch: SketchData): RegionResult {
   if (openShapes) problems.push(`${openShapes} shape${openShapes > 1 ? "s aren't" : " isn't"} closed, so ${openShapes > 1 ? "they were" : "it was"} left out.`);
   if (branching) problems.push(`${branching} shape${branching > 1 ? "s have" : " has"} lines meeting at a junction, so ${branching > 1 ? "they were" : "it was"} left out.`);
 
-  // Nesting. Shapes that overlap (each partly inside the other) are joined into one group, so
-  // they stay solid together and a hole inside where they overlap is a hole in both.
-  const rel = loops.map((l) => loops.map((other) => (other === l ? "outside" : loopRelation(other, l))));
+  return { regions: nestLoops(loops), problems };
+}
+
+type Box = [number, number, number, number];
+const boxOf = (poly: Pt[]): Box => {
+  const b: Box = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [x, y] of poly) {
+    if (x < b[0]) b[0] = x;
+    if (y < b[1]) b[1] = y;
+    if (x > b[2]) b[2] = x;
+    if (y > b[3]) b[3] = y;
+  }
+  return b;
+};
+const boxesMeet = (a: Box, b: Box, eps: number) => a[0] <= b[2] + eps && b[0] <= a[2] + eps && a[1] <= b[3] + eps && b[1] <= a[3] + eps;
+
+/** Points round a loop's outline, to judge where it sits: its corners and quarter points along each side. */
+function samplesOf(loop: Loop): Pt[] {
+  const poly = loop.polygon;
+  const out: Pt[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    for (const t of [0, 0.25, 0.5, 0.75]) out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+  }
+  return out;
+}
+
+/**
+ * Sort closed loops into solid shapes and the holes in them.
+ *
+ * Loops are taken biggest first. A loop lying within the shapes already seen
+ * that it touches (judged from points round its outline; points right on their
+ * edges don't count either way) nests inside them. One that is only partly
+ * inside (two shapes overlapping) is joined to them as one group instead, so
+ * they stay solid together. Depth is how many groups a loop nests in: even =
+ * solid, odd = a hole, cut from every shape in the group around it.
+ */
+function nestLoops(loops: Loop[]): Region[] {
+  const n = loops.length;
+  if (!n) return [];
+  const boxes = loops.map((l) => boxOf(l.polygon));
+  const size = Math.max(1, ...boxes.map((b) => Math.max(Math.abs(b[0]), Math.abs(b[1]), Math.abs(b[2]), Math.abs(b[3]))));
+  const eps = 1e-6 * size;
+  const order = loops.map((_l, i) => i).sort((i, j) => loops[j].area - loops[i].area);
+  const samples: (Pt[] | null)[] = loops.map(() => null);
+  const samplesFor = (i: number) => (samples[i] ??= samplesOf(loops[i]));
+
+  /**
+   * Where loop `i`'s outline sits against the loops `others` (taken together):
+   * how many sample points are inside one of them, and how many are outside all.
+   */
+  const tally = (i: number, others: number[]) => {
+    let inside = 0;
+    let outside = 0;
+    for (const p of samplesFor(i)) {
+      let isIn = false;
+      let onEdge = false;
+      for (const j of others) {
+        const b = boxes[j];
+        if (p[0] < b[0] - eps || p[0] > b[2] + eps || p[1] < b[1] - eps || p[1] > b[3] + eps) continue;
+        if (distanceToOutline(p, loops[j].polygon) <= eps) onEdge = true;
+        else if (pointInPolygon(p, loops[j].polygon)) {
+          isIn = true;
+          break;
+        }
+      }
+      if (isIn) inside++;
+      else if (!onEdge) outside++;
+    }
+    return { inside, outside };
+  };
+  // Nearly all inside: a circle drawn as straight pieces can poke out a hair where it touches a side.
+  const within = (t: { inside: number; outside: number }) => t.inside > 0 && t.outside <= 0.05 * (t.inside + t.outside);
+
   const group = loops.map((_l, i) => i);
   const find = (i: number): number => (group[i] === i ? i : (group[i] = find(group[i])));
-  loops.forEach((_l, i) =>
-    loops.forEach((_k, j) => {
-      if (i >= j || rel[i][j] === "inside" || rel[j][i] === "inside") return;
-      const overlapping = rel[i][j] === "overlap" || rel[j][i] === "overlap" || outlinesCross(loops[i].polygon, loops[j].polygon);
-      if (overlapping) group[find(i)] = find(j);
-    }),
-  );
-  // A loop is inside loop j when it's (nearly) all within it, and j is bigger.
-  const inside = loops.map((l, i) => loops.map((other, j) => j !== i && other.area > l.area && rel[i][j] === "inside"));
-  // Depth: how many other groups hold this loop.
-  const depth = loops.map((_l, i) => new Set(loops.flatMap((_k, j) => (inside[i][j] && find(j) !== find(i) ? [find(j)] : []))).size);
+  /** For each loop, the bigger loops its outline touches or is inside. */
+  const touching: number[][] = loops.map(() => []);
+  const seen: number[] = [];
+  for (const i of order) {
+    // Only bigger loops whose boxes meet this one's can hold or overlap it.
+    const near = seen.filter((j) => boxesMeet(boxes[i], boxes[j], eps));
+    const related = near.filter((j) => {
+      const t = tally(i, [j]);
+      if (t.inside > 0) return true;
+      // No sample lands inside, but the outlines may still cross (two thin bars).
+      return outlinesCross(loops[i].polygon, loops[j].polygon);
+    });
+    touching[i] = related;
+    // Within the shapes it touches (even across where two of them overlap): it nests. Otherwise it joins them.
+    if (related.length && !within(tally(i, related))) for (const j of related) group[find(i)] = find(j);
+    seen.push(i);
+  }
+
+  // Depth: how many other groups this loop lies within.
+  const holders = loops.map((_l, i) => {
+    const groups = new Map<number, number[]>();
+    for (const j of touching[i]) {
+      const g = find(j);
+      if (g === find(i)) continue;
+      groups.set(g, [...(groups.get(g) ?? []), j]);
+    }
+    const out: number[] = [];
+    for (const [g, members] of groups) {
+      // All of the group's shapes near it, not just those it touches.
+      const all = loops.flatMap((_k, k) => (find(k) === g && boxesMeet(boxes[i], boxes[k], eps) ? [k] : []));
+      if (within(tally(i, all.length ? all : members))) out.push(g);
+    }
+    return out;
+  });
+  const depth = holders.map((h) => h.length);
   const regions: Region[] = [];
   loops.forEach((outer, i) => {
     if (depth[i] % 2 !== 0) return;
-    const holes = loops.filter((_l, j) => depth[j] === depth[i] + 1 && inside[j][i]);
+    // A hole belongs to every shape in the group it lies within that it touches.
+    const holes = loops.filter((_l, j) => depth[j] === depth[i] + 1 && holders[j].includes(find(i)) && touching[j].includes(i));
     regions.push({ outer, holes });
   });
-  return { regions, problems };
+  return regions;
 }
+

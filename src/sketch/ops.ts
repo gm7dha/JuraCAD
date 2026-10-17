@@ -763,7 +763,16 @@ export function setDimensionValue(s: SketchData, id: string, value: string): Edi
   if (c.type !== "angle" && r.value <= 0 && c.type !== "pointLineDistance") return { sketch: s, error: "Must be more than 0." };
   if (c.type === "pointLineDistance" && r.value < 0) return { sketch: s, error: "Can't be negative." };
   const solved = checkedSolve(s, { ...s, constraints: s.constraints.map((x) => (x.id === id ? { ...x, value } : x)) }, "That value", false);
-  if (solved.error) return { sketch: s, error: "The sketch can't take that value with its other constraints." };
+  if (solved.error) {
+    // An offset going inwards can't be wider than the rounded corners (arcs) it goes round.
+    const curved = c.type === "offset" && c.refs.some((id) => curveById(s, id)?.type === "arc");
+    return {
+      sketch: s,
+      error: curved
+        ? "That gap is too big to fit inside the rounded corners — use a smaller gap than the corner rounding."
+        : "The sketch can't take that value with its other constraints.",
+    };
+  }
   return solved;
 }
 

@@ -156,7 +156,7 @@ describe("offset keeps its distance", () => {
     for (const a of copyArcs()) expect(radiusOf(dragged, a)).toBeCloseTo(1, 6);
     // An inward gap bigger than the corners' radius can't be made: the corner copies would have to turn inside out.
     const gap = o.sketch.constraints.find((c) => c.type === "offset")!;
-    expect(setDimensionValue(o.sketch, gap.id, "5").error).toBeDefined();
+    expect(setDimensionValue(o.sketch, gap.id, "5").error).toMatch(/smaller gap than the corner rounding/);
     const [[outer, pocket]] = areas(dragged);
     expect(outer).toBeGreaterThan(pocket);
     expect(pocket).toBeCloseTo(36 * 16 - (4 - Math.PI), 0);
@@ -600,6 +600,49 @@ describe("overlapping shapes", () => {
     const regions = findRegions(s).regions;
     expect(regions).toHaveLength(2);
     expect(regions.every((r) => r.holes.length === 1)).toBe(true);
+  });
+
+  it("a hole lying across where two joined shapes overlap stays a hole in both", () => {
+    // A plus sign: the circle pokes out of the bar across, but sits inside the bar going up.
+    let s = addRectangle(emptySketch(), at(-30, -5), at(30, 10)).sketch;
+    s = addRectangle(s, at(-5, -30), at(5, 30)).sketch;
+    s = addCircle(s, at(0, 10), 3).sketch;
+    let regions = findRegions(s).regions;
+    expect(regions).toHaveLength(2);
+    expect(regions.every((r) => r.holes.length === 1)).toBe(true);
+    // An L of two overlapping rectangles, with a hole across one's edge inside the other.
+    let l = addRectangle(emptySketch(), at(0, 0), at(40, 10)).sketch;
+    l = addRectangle(l, at(0, 2), at(10, 40)).sketch;
+    l = addCircle(l, at(10, 5), 3).sketch;
+    regions = findRegions(l).regions;
+    expect(regions).toHaveLength(2);
+    expect(regions.every((r) => r.holes.length === 1)).toBe(true);
+  });
+
+  it("finds the holes in a plate with hundreds of them quickly", () => {
+    const plate = (n: number) => {
+      let s = addRectangle(emptySketch(), at(0, 0), at(n * 10, n * 10)).sketch;
+      // Built directly (one circle per hole) to keep the test itself quick.
+      const points = [...s.points];
+      const curves = [...s.curves];
+      for (let i = 0; i < n; i++)
+        for (let j = 0; j < n; j++) {
+          const id = `h${i}-${j}`;
+          points.push({ id: `${id}c`, x: 5 + i * 10, y: 5 + j * 10 });
+          curves.push({ id, type: "circle", center: `${id}c`, radius: 4, construction: false });
+        }
+      s = { ...s, points, curves };
+      return s;
+    };
+    let t = performance.now();
+    const r = findRegions(plate(10));
+    expect(performance.now() - t).toBeLessThan(200);
+    expect(r.regions).toHaveLength(1);
+    expect(r.regions[0].holes).toHaveLength(100);
+    t = performance.now();
+    const big = findRegions(plate(30));
+    expect(performance.now() - t).toBeLessThan(3000);
+    expect(big.regions[0].holes).toHaveLength(900);
   });
 
   it("two bars crossing where no corner or side's middle lands in the other still join", () => {
