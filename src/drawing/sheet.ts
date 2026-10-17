@@ -11,7 +11,7 @@
 import { clipOut, cutsOn, removed, SHORT_GAP, squeeze, unsqueeze } from "./shorten";
 import { lengthNumber, lengthUnit } from "../model/units";
 import type { ViewProjection } from "../kernel/protocol";
-import type { Drawing, SectionCut, SheetSize, ViewKind } from "../model/types";
+import type { Dimension, Drawing, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { centreLines, centreMarks, hatchLines, placeBalloons } from "./annotations";
 import { holeRows, holeTableView, type HoleRow } from "./holeTable";
 import { projectPoint } from "./cameras";
@@ -319,23 +319,42 @@ export function drawingViewKeys(drawing: Pick<Drawing, "views">): string[] {
 
 /** Work out where everything goes on the sheet. */
 export function layoutSheet(drawing: Drawing, projections: Projections, info: SheetInfo): SheetLayout {
-  // Room between the lined-up views and the 3D/section column for dimensions to their right.
-  const attempt = (forced?: number) => {
-    const plain = layoutAt(drawing, projections, info, forced);
-    const gap = sideOverhang(plain.layout, drawing);
-    return gap > 0 ? layoutAt(drawing, projections, info, forced, gap) : plain;
-  };
-  const first = attempt();
-  // A chosen scale is kept as it is; so is a sheet whose dimensions all fit.
-  if (drawing.scale !== undefined || !drawing.dimensions?.length || dimsClear(first.layout, drawing, first.reserve)) return first.layout;
-  // Otherwise the next smaller scales (up to three steps), so rows of dimensions round the
-  // views keep inside the border and clear of the other views; failing that, as it was.
-  const i = STANDARD_SCALES.indexOf(first.layout.scale);
-  for (const s of i < 0 ? [] : STANDARD_SCALES.slice(i + 1, i + 4)) {
-    const next = attempt(s);
-    if (dimsClear(next.layout, drawing, next.reserve)) return next.layout;
+  // Room kept for dimensions beside the 3D column, and one scale smaller, when Fit to sheet
+  // or Auto dimension decided so (see planFit); old drawings have neither and lay out as before.
+  return layoutAt(drawing, projections, info, Math.min(MAX_SIDE_GAP, Math.max(0, drawing.fit?.gap ?? 0))).layout;
+}
+
+/** Most extra room kept beside the 3D column for dimensions (paper mm). */
+export const MAX_SIDE_GAP = 40;
+
+/**
+ * Decide how "Fit to sheet" makes room for the drawing's dimensions — run when
+ * the user asks (Auto dimension, Arrange, or choosing Fit to sheet), never
+ * while dragging, and kept on the drawing (`fit`) so the sheet doesn't change
+ * by itself. In order: nothing; more room beside the 3D column (up to
+ * MAX_SIDE_GAP); that and one scale smaller; just one scale smaller. The first
+ * that keeps every dimension inside the border and clear of the other views
+ * wins; if none does, nothing changes. `remake` makes the dimensions again for
+ * a scale (Auto dimension's rows are spaced for the scale they're made at).
+ */
+export function fitDrawing(drawing: Drawing, projections: Projections, info: SheetInfo, remake?: (scale: number) => Dimension[]): Drawing {
+  const { fit: _old, ...plain } = drawing;
+  const scaleOf = (d: Drawing) => layoutSheet({ ...d, dimensions: [] }, projections, info).scale;
+  const at = (d: Drawing): Drawing => (remake ? { ...d, dimensions: remake(scaleOf(d)) } : d);
+  const first = at(plain);
+  if (drawing.scale !== undefined || !first.dimensions?.length) return first;
+  const base = layoutAt(first, projections, info);
+  if (dimsClear(base.layout, first, base.reserve)) return first;
+  const gap = Math.min(MAX_SIDE_GAP, sideOverhang(base.layout, first));
+  const tries: NonNullable<Drawing["fit"]>[] = [...(gap > 0 ? [{ gap }, { gap, down: true as const }] : []), { down: true as const }];
+  const step = (d: Drawing) => STANDARD_SCALES.indexOf(scaleOf(d)) - STANDARD_SCALES.indexOf(base.layout.scale);
+  for (const fit of tries) {
+    // Never more than one scale smaller than without the room.
+    if (step({ ...plain, fit }) > 1) continue;
+    const d = at({ ...plain, fit });
+    if (dimsClear(layoutSheet(d, projections, info), d, base.reserve)) return d;
   }
-  return first.layout;
+  return first;
 }
 
 const LINED_UP = new Set<string>(["front", "top", "right", "left", "back", "bottom"]);
@@ -388,7 +407,7 @@ export function dimsClear(l: SheetLayout, drawing: Pick<Drawing, "dimensions">, 
   return true;
 }
 
-function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, forced?: number, sideGap = 0): { layout: SheetLayout; reserve: number } {
+function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, sideGap = 0): { layout: SheetLayout; reserve: number } {
   const size = SHEETS[drawing.sheet];
   const keys = drawingViewKeys(drawing).filter((k) => projections[k]?.bounds);
   // Hole table: the holes on one view, tagged, with a table above the title block.
@@ -397,7 +416,9 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, f
   const reserve = bottomReserve(drawing, info.bom, holes.length);
   const third = drawing.projection === "third";
   const auto = fitScale(projections, keys, drawing.sheet, reserve, third, sideGap);
-  const scale = forced ?? drawing.scale ?? auto.scale;
+  // (Fit to sheet can be asked to go one scale smaller, to make room for dimensions.)
+  const fitted = drawing.fit?.down ? (STANDARD_SCALES[STANDARD_SCALES.indexOf(auto.scale) + 1] ?? auto.scale) : auto.scale;
+  const scale = drawing.scale ?? fitted;
   const area = viewArea(size, reserve);
   const n = needed(projections, keys, scale, area.y1 - area.y0, third, sideGap);
 

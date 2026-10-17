@@ -306,9 +306,19 @@ export function parseDrawings(raw: unknown): Drawing[] {
       ...(isPlaces(r.places) ? { places: r.places as number } : {}),
       ...(r.dualUnits === true ? { dualUnits: true } : {}),
       ...(r.tangentEdges === false ? { tangentEdges: false } : {}),
+      ...parseFit(r.fit),
     });
   }
   return out;
+}
+
+/** A saved Fit to sheet plan (see Drawing.fit). */
+function parseFit(raw: unknown): Pick<Drawing, "fit"> {
+  if (!raw || typeof raw !== "object") return {};
+  const r = raw as Record<string, unknown>;
+  const gap = num(r.gap) && (r.gap as number) > 0 ? Math.min(40, r.gap as number) : undefined;
+  const fit = { ...(gap ? { gap } : {}), ...(r.down === true ? { down: true as const } : {}) };
+  return Object.keys(fit).length ? { fit } : {};
 }
 
 /** Decimal places a dimension can be set to show. */

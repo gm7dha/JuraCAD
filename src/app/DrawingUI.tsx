@@ -15,7 +15,7 @@ import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } fro
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
-import { dimStyle, drawingViewKeys, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { angleGeometry, dimPoint, dragDimension, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
@@ -159,7 +159,24 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
 }
 
 /** The sheet as last laid out on screen (for saving). */
-let shownSheet: { drawingId: string; layout: SheetLayout; name: string; projections: Projections } | null = null;
+let shownSheet: { drawingId: string; layout: SheetLayout; name: string; projections: Projections; info: SheetInfo } | null = null;
+
+/**
+ * A drawing with Fit to sheet's room for its dimensions worked out again (see
+ * planFit): done when the user asks — Auto dimension, Arrange, or choosing Fit
+ * to sheet — so the sheet never rearranges itself while a dimension is dragged.
+ */
+function withFit(d: Drawing, projections: Projections | undefined, info: SheetInfo | undefined): Drawing {
+  return projections && info ? fitDrawing(d, projections, info) : d;
+}
+
+/** Arrange: every view back in its standard place, with room made for the dimensions. */
+export function arrangeDrawing() {
+  const s = useStore.getState();
+  const d = activeDrawing(s);
+  const sheet = d && shownSheet?.drawingId === d.id ? shownSheet : null;
+  s.changeDrawing((x) => withFit(arrangeViews(x), sheet?.projections, sheet?.info));
+}
 
 function today(): string {
   return new Date().toLocaleDateString("en-GB");
@@ -179,7 +196,13 @@ export function autoDimensionDrawing() {
     s.showToast(hasViews ? "Nothing more to add — it's already dimensioned." : "Auto dimension needs a front, top or side view.", "info");
     return;
   }
-  s.changeDrawing((x) => ({ ...x, dimensions: [...(x.dimensions ?? []), ...added] }));
+  const sheet = shownSheet;
+  // Room for the new dimensions round the views: more space beside the 3D view, or one scale
+  // smaller (the new rows are spaced for the scale they end up at).
+  s.changeDrawing((x) => {
+    const existing = x.dimensions ?? [];
+    return fitDrawing(x, sheet.projections, sheet.info, (scale) => [...existing, ...autoDimensions(sheet.projections, drawingViewKeys(x), existing, scale, () => newId("dm"), x.projection === "third")]);
+  });
   s.showToast(`Added ${added.length} dimension${added.length > 1 ? "s" : ""}. Drag a number to move it, or select one and press Delete.`, "success");
 }
 
@@ -296,8 +319,8 @@ export function DrawingToolbar() {
         <ToolButton
           label="Arrange"
           icon={<Icons.Fit />}
-          onClick={() => useStore.getState().changeDrawing(arrangeViews)}
-          title="Put every view back in its standard place"
+          onClick={arrangeDrawing}
+          title="Put every view back in its standard place (making room for the dimensions)"
         />
       </div>
     </div>
@@ -549,10 +572,9 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   const parts = useStore((s) => s.parts);
   const change = useStore((s) => s.changeDrawing);
   const { projections, subject, upToDate } = useProjections(drawing);
-  // The scale "Fit to sheet" picks: as laid out (it steps down if dimensions wouldn't fit round the views).
-  const auto = projections
-    ? layoutSheet({ ...drawing, scale: undefined }, projections, { designName: "", subject: "", date: "", bom: bomFor(drawing, doc, parts), taps: tapSizes(doc, drawing) })
-    : null;
+  // The scale "Fit to sheet" picks (with any room it keeps for dimensions).
+  const info = useMemo<SheetInfo>(() => ({ designName: "", subject: "", date: "", bom: bomFor(drawing, doc, parts), taps: tapSizes(doc, drawing) }), [drawing, doc, parts]);
+  const auto = useMemo(() => (projections ? layoutSheet({ ...drawing, scale: undefined }, projections, info) : null), [drawing, projections, info]);
   const studios = studiosOf(doc);
   const sourceValue = drawing.source ? `${drawing.source.kind}:${drawing.source.id}` : "";
 
@@ -646,7 +668,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
               onChange={(e) =>
                 change((d) => {
                   const { scale: _old, ...rest } = arrangeViews(d);
-                  return e.target.value === "fit" ? rest : { ...rest, scale: Number(e.target.value) };
+                  return e.target.value === "fit" ? withFit(rest, projections ?? undefined, info) : { ...rest, scale: Number(e.target.value) };
                 })
               }
             >
@@ -1158,8 +1180,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     [shown, projections, docName, subject, bom, balloons, unit, taps],
   );
   useEffect(() => {
-    if (layout && projections && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name, projections };
-  }, [layout, projections, drag, dimDrag, drawing.id, drawing.name]);
+    if (layout && projections && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name, projections, info: { designName: docName, subject: subject ?? "", date: today(), bom, balloons, taps } };
+  }, [layout, projections, drag, dimDrag, drawing.id, drawing.name, docName, subject, bom, balloons, taps]);
   const snaps = useMemo(() => (layout && projections && tool !== "select" ? snapsOf(layout, projections) : []), [layout, projections, tool]);
 
   // Delete removes the selected dimension; Esc steps back.

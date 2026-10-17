@@ -263,6 +263,12 @@ export interface Drawing {
   places?: number;
   /** Dimensions also give the size in the other unit, in brackets: "40 [1.575]". */
   dualUnits?: boolean;
+  /**
+   * How Fit to sheet makes room for the dimensions (decided when Auto dimension
+   * runs or Fit to sheet is chosen): extra room beside the 3D column (paper mm)
+   * and/or one scale smaller. Missing = neither.
+   */
+  fit?: { gap?: number; down?: true };
   /** False hides tangent edges (where a fillet or curved face meets a flat one smoothly); missing = shown. */
   tangentEdges?: boolean;
 }

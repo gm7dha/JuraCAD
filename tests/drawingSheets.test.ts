@@ -12,7 +12,7 @@ import { calloutLines } from "../src/drawing/holeCallouts";
 import { missedSections } from "../src/drawing/sections";
 import { dimLabel, dimPoint, drawDimension, resolveDim } from "../src/drawing/dimensions";
 import { dxfText, sheetDxf, sheetPdf } from "../src/drawing/export";
-import { dimsClear, fitScale, fitSize, layoutSheet, projectionSymbol, SHEETS, type Prim, type Projections } from "../src/drawing/sheet";
+import { dimsClear, fitScale, fitSize, layoutSheet, MAX_SIDE_GAP, fitDrawing, projectionSymbol, SHEETS, STANDARD_SCALES, type Prim, type Projections } from "../src/drawing/sheet";
 import type { ViewProjection } from "../src/kernel/protocol";
 import { emptyDocument } from "../src/model/document";
 import type { Dimension, Drawing, ViewKind } from "../src/model/types";
@@ -451,8 +451,15 @@ describe("review fixes", () => {
           let n = 0;
           let d: Drawing = { ...newDrawing(), sheet, views: keys.map((k) => ({ id: k, kind: k as ViewKind })), ...(third ? { projection: "third" as const } : {}) };
           const plain = layoutSheet(d, views, info);
-          d = { ...d, dimensions: autoDimensions(views, keys, [], plain.scale, () => `a${n++}`, third) };
+          // As Auto dimension does: decide the room the dimensions need (rows made for the scale used), and keep it on the drawing.
+          const base = d;
+          d = fitDrawing(d, views, info, (scale) => autoDimensions(views, keys, [], scale, () => `a${n++}`, third));
+          expect(d.dimensions!.length).toBeGreaterThan(2);
+          // At most 40 mm beside the 3D column, and at most one scale smaller than without dimensions.
+          expect((d.fit?.gap ?? 0) <= MAX_SIDE_GAP).toBe(true);
+          expect(base.fit).toBeUndefined();
           const l = layoutSheet(d, views, info);
+          expect(STANDARD_SCALES.indexOf(l.scale) - STANDARD_SCALES.indexOf(plain.scale)).toBeLessThanOrEqual(1);
           const where = `${sheet} ${third ? "third" : "first"} ${keys.join(",")} at ${l.scale}`;
           expect([where, dimsClear(l, d, 36)]).toEqual([where, true]);
           // Checked independently too: every dimension's lines and numbers inside the 10 mm border.
@@ -465,8 +472,41 @@ describe("review fixes", () => {
               }
             }
         }
-    // A sheet whose dimensions already fit keeps its scale; a chosen scale is never changed.
+    // A sheet whose dimensions already fit needs nothing; nor does a chosen scale.
     const d: Drawing = { ...newDrawing(), sheet: "A4", dimensions: [length], views: [{ id: "f", kind: "front" }] };
-    expect(layoutSheet(d, { front: rectView("front", 40, 20) }, info).scale).toBe(fitScale({ front: rectView("front", 40, 20) }, ["front"], "A4").scale);
+    expect(fitDrawing(d, { front: rectView("front", 40, 20) }, info)).toEqual(d);
+    const chosen = { ...d, scale: 1, dimensions: [{ ...length, offset: 500 }] };
+    expect(fitDrawing(chosen, { front: rectView("front", 40, 20) }, info)).toEqual(chosen);
+    // When nothing makes room, nothing changes (never the smallest scale).
+    const hopeless = { ...d, dimensions: [{ ...length, offset: 5000 }] };
+    expect(fitDrawing({ ...hopeless, fit: { gap: 10 } }, { front: rectView("front", 40, 20) }, info)).toEqual(hopeless);
+  });
+
+  it("never changes the scale or positions by itself: old drawings, and dimensions dragged far out", () => {
+    const views = { ...block, front: edges("front", 40, 20) };
+    const d: Drawing = { ...newDrawing(), sheet: "A4", dimensions: [length] };
+    const bare = layoutSheet({ ...newDrawing(), sheet: "A4" }, views, info);
+    const boxes = (l: ReturnType<typeof layoutSheet>) => l.views.map((v) => v.box);
+    // An old drawing (no saved fit) lays out just as it did, whatever its dimensions do.
+    for (const offset of [8, 60, 120, 400, -400]) {
+      const l = layoutSheet({ ...d, dimensions: [{ ...length, offset }] }, views, info);
+      expect([offset, l.scale]).toEqual([offset, bare.scale]);
+      expect(boxes(l)).toEqual(boxes(bare));
+    }
+    // With a saved fit, dragging a dimension anywhere doesn't change it either.
+    const fitted: Drawing = { ...d, fit: { gap: 12 } };
+    const before = layoutSheet(fitted, views, info);
+    for (const offset of [60, 120, 400]) {
+      const l = layoutSheet({ ...fitted, dimensions: [{ ...length, offset }] }, views, info);
+      expect([offset, l.scale, boxes(l)]).toEqual([offset, before.scale, boxes(before)]);
+    }
+    // The saved room moves the 3D view over; "one scale smaller" goes one step down.
+    expect(before.views.find((v) => v.key === "iso")!.box[0] - bare.views.find((v) => v.key === "iso")!.box[0]).toBeGreaterThan(0);
+    const down = layoutSheet({ ...d, fit: { down: true } }, views, info);
+    expect(STANDARD_SCALES.indexOf(down.scale)).toBe(STANDARD_SCALES.indexOf(bare.scale) + 1);
+    // Saved and opened again (junk dropped, the room capped).
+    expect(parseDrawings(JSON.parse(JSON.stringify([{ ...d, fit: { gap: 12, down: true } }])))[0].fit).toEqual({ gap: 12, down: true });
+    expect(parseDrawings([{ ...d, fit: { gap: 999, down: "yes" } }])[0].fit).toEqual({ gap: 40 });
+    expect(parseDrawings([{ ...d, fit: { gap: -3 } }])[0].fit).toBeUndefined();
   });
 });
