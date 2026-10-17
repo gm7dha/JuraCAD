@@ -8,7 +8,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature PartSmith can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -151,7 +151,7 @@ export interface Feature {
    * (null until one is picked), and what a click in the 3D view picks.
    */
   replaceDef?: { target: SketchPlane | null; picking?: "faces" | "target" };
-  /** Draft: the neutral plane (the faces pivot where they meet it; the part pulls out along its normal). */
+  /** Draft: the neutral plane (the faces pivot where they meet it; the part pulls out along its normal). Ruled surface: the strips run along this plane's normal. */
   neutral?: SketchPlane;
   /** Transform: move and/or turn a part (or a copy of it). */
   transform?: { partId?: string; axis: Axis; about: "origin" | "centre"; copy: boolean };

@@ -12,7 +12,7 @@ export function sketchesUsedBy(f: Feature): string[] {
 
 /** Plane features a feature is placed on or based on. */
 function planesUsedBy(f: Feature): string[] {
-  const refs = [f.sketch?.plane, f.text?.plane, f.mirror?.plane, f.splitDef?.plane, f.replaceDef?.target ?? undefined, f.planeDef?.ref, f.planeDef?.ref2];
+  const refs = [f.sketch?.plane, f.text?.plane, f.mirror?.plane, f.splitDef?.plane, f.neutral, f.replaceDef?.target ?? undefined, f.planeDef?.ref, f.planeDef?.ref2];
   return refs.flatMap((p) => (p && p.kind === "face" && p.planeRef ? [p.planeRef] : []));
 }
 

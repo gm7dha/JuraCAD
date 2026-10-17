@@ -2448,6 +2448,41 @@ describe("surfaces", () => {
     expect(solidTool.featureErrors[split.id]).toMatch(/is a solid/);
   });
 
+  it("sweeps ruled strips from edges, straight or tilted", () => {
+    // The top edges of a 10 mm cube, swept 5 up (square to Top): four walls, one surface.
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const p = build([box]).parts[0];
+    const top = p.edgeRefs.filter((e) => e.kind === "edge" && Math.abs(e.mid[2] - 10) < 1e-6).map((ref) => ({ partId: box.id, ref }));
+    expect(top).toHaveLength(4);
+    const ruled: Feature = { ...feature("ruled", { distance: 5, angle: 0 }), picks: top, neutral: { kind: "default", name: "Top" } };
+    const r = build([box, ruled]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((x) => [x.name, !!x.surface])).toEqual([["Part 1", false], ["Surface 1", true]]);
+    expect(area(r.parts[1])).toBeCloseTo(200, 2);
+    expect(Math.max(...Array.from(r.parts[1].vertices).filter((_, i) => i % 3 === 2))).toBeCloseTo(15, 4);
+    expect(analyzeMesh(r.parts[1].vertices, r.parts[1].triangles).pieces).toBe(1);
+    // Flipped: down into the cube, to z = 5.
+    const down = build([box, { ...ruled, flipSide: true }]);
+    expect(Math.min(...Array.from(down.parts[1].vertices).filter((_, i) => i % 3 === 2))).toBeCloseTo(5, 4);
+    // Tilted 45°: each strip leans over, 5 long, so it rises 5 cos 45°.
+    const tilted = build([box, { ...ruled, params: { distance: "5", angle: "45" } }]);
+    expect(tilted.featureErrors).toEqual({});
+    expect(Math.max(...Array.from(tilted.parts[1].vertices).filter((_, i) => i % 3 === 2))).toBeCloseTo(10 + 5 * Math.SQRT1_2, 3);
+    // One edge along the direction can't be tilted.
+    const upright = p.edgeRefs.find((e) => e.kind === "edge" && Math.abs(e.a[2] - e.b[2]) > 1)!;
+    const bad: Feature = { ...ruled, params: { distance: "5", angle: "30" }, picks: [{ partId: box.id, ref: upright }] };
+    expect(build([box, bad]).featureErrors[bad.id]).toMatch(/runs along the direction/);
+    // Edges of a surface work too, and the strip is a surface that can be thickened.
+    const sk = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: -10, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }).sketch);
+    const curve: Feature = { ...extrudeFeature(sk.id, 5), surface: true };
+    const cp = build([sk, curve]).parts[0];
+    const rim = cp.edgeRefs.find((e) => e.kind === "edge" && e.curve === "CIRCLE" && Math.abs(e.mid[2] - 5) < 1e-6)!;
+    const strip: Feature = { ...feature("ruled", { distance: 4, angle: 0 }), picks: [{ partId: curve.id, ref: rim }], neutral: { kind: "default", name: "Top" } };
+    const rs = build([sk, curve, strip]);
+    expect(rs.featureErrors).toEqual({});
+    expect(area(rs.parts[1])).toBeCloseTo(Math.PI * 10 * 4, 0);
+  });
+
   it("exports surfaces to STEP and reads them back as surfaces", async () => {
     const sk = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: -10, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }).sketch);
     const half: Feature = { ...extrudeFeature(sk.id, 20), surface: true };
