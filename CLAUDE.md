@@ -30,7 +30,10 @@
   Flange matches picked edges to wall edges (`findSheetEdge`) and fuses the new bends and walls onto the part.
 - Surfaces: `src/kernel/surface.ts` (extrude/revolve/sweep/loft of a sketch's open or closed runs — `findChains` in
   `src/sketch/regions.ts` — as shells; Fill from edges; thicken, enclose and offset). A surface part has `surface: true`
-  (BuiltPart and PartMesh); solid features add to / cut from the latest *solid* part, never a surface.
+  (BuiltPart and PartMesh); solid features add to / cut from the latest *solid* part, never a surface. replicad's
+  helpers label every result a `Solid`: wrap surface results with `asIs()` so moves/mirrors don't fail on the type.
+  Thicken builds a real solid (skin + offset + walls between their rims); Split takes a surface as the cutter
+  (`splitBySurface`); Ruled surface sweeps strips from edges; STEP import brings surfaces in as a surface part.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
@@ -40,6 +43,11 @@
 - Units are millimetres everywhere in the model. A design can be shown in inches (`doc.units`): `src/model/units.ts`
   (`storeLength`/`showLength` save typed lengths with " in" so switching never changes geometry; `useLengthUnit()`
   re-renders components that show lengths). Z is up (Onshape convention): Top = XY, Front = XZ, Right = YZ.
+- Running the engine tests without npm: clone replicad (github.com/sgenoud/replicad) and point `node_modules/replicad`
+  at a one-line package re-exporting `packages/replicad/src/index.ts`, symlink `node_modules/replicad-opencascadejs` to
+  its `packages/replicad-opencascadejs` (the built wasm is committed there), and add tiny stubs for `flatbush`,
+  `opentype.js` and `three/examples/fonts/*.json` (only Text needs the real ones). `tsx` then runs
+  `tests/engine.test.ts` with the real OCCT in ~10 s, given a small vitest stand-in — far cheaper than CI round trips.
 - If the npm registry is unreachable from your environment, push to a branch with an open (draft) PR and
   let CI install, test and build. CI failures are reported as check-run annotations
   (`gh api repos/gm7dha/partsmith/check-runs/<job id>/annotations`), readable even when job logs and
