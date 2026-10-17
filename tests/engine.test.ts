@@ -522,6 +522,23 @@ describe("shell", () => {
     expect(check.mesh.watertight).toBe(true);
   });
 
+  it("opens a part whose edges are all rounded", () => {
+    // Every edge of a 30 × 20 × 10 box rounded 2 mm, then shelled 1 mm open at the top: the closed hollow less
+    // the flat part of the top wall (26 × 16 × 1).
+    const box = feature("box", { width: 30, depth: 20, height: 10 });
+    const first = build([box]);
+    const fil: Feature = { ...feature("fillet", { radius: 2 }, "add"), picks: first.parts[0].edgeRefs.map((ref) => ({ partId: box.id, ref })) };
+    const rounded = build([box, fil]);
+    const top = rounded.parts[0].faceRefs.find((f) => f.surface === "PLANE" && f.normal[2] > 0.99)!;
+    const open = build([box, fil, shellFeature(1, [{ partId: box.id, ref: top }])]);
+    expect(open.featureErrors).toEqual({});
+    const v = engine.check("normal").parts[0];
+    expect(v.geometryValid).toBe(true);
+    build([box, fil, shellFeature(1, [])]);
+    const closed = engine.check("normal").parts[0].exactVolume!;
+    expect(v.exactVolume!).toBeCloseTo(closed - 26 * 16, 1);
+  });
+
   it("hollows a ball (or a box with no face picked) closed inside", () => {
     // A 20 mm ball, its one face picked: a 2 mm skin round a 16 mm hollow.
     const ball = feature("sphere", { diameter: 20, x: 0, y: 0, z: 0 });
@@ -2037,6 +2054,58 @@ describe("curve pattern", () => {
     expect(Math.max(...tops)).toBeCloseTo(92, 1);
     // Without a path it says so.
     expect(build([plate, peg, { ...pattern, pathRef: undefined }]).featureErrors[pattern.id]).toMatch(/path/);
+  });
+
+  it("follows a spline or a whole circle too", () => {
+    const plate = feature("box", { width: 100, depth: 100, height: 5, x: -50, y: -50, z: 0 });
+    const peg = feature("cylinder", { diameter: 4, height: 10, x: 30, y: 0, z: 5 }, "add");
+    // Around a whole circle: 6 pegs, evenly spaced, all on the circle.
+    const ring = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 0, y: 0 }, 30).sketch);
+    const round: Feature = { ...feature("curvePattern", { count: 6 }), operation: "add", pattern: { sources: [peg.id], axis: "x", flip: false }, pathRef: ring.id };
+    const r = build([plate, peg, ring, round]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(100 * 100 * 5 + 6 * Math.PI * 4 * 10, 0);
+    // Along an open spline from the peg.
+    const sp = addSpline(emptySketch(), [{ x: 30, y: 0 }, { x: 10, y: 20 }, { x: -20, y: 10 }, { x: -30, y: -30 }].map((q) => ({ ...q, snap: null })), false);
+    const wavy = sketchFeature({ kind: "default", name: "Top" }, sp.sketch);
+    const along: Feature = { ...round, pathRef: wavy.id, params: { count: "4" } };
+    const r2 = build([plate, peg, wavy, along]);
+    expect(r2.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(100 * 100 * 5 + 4 * Math.PI * 4 * 10, 0);
+    // The last peg sits on the spline's far end, (−30, −30).
+    const v = r2.parts[0].vertices;
+    const tops: [number, number][] = [];
+    for (let i = 0; i < v.length; i += 3) if (Math.abs(v[i + 2] - 15) < 1e-3) tops.push([v[i], v[i + 1]]);
+    expect(Math.min(...tops.map((t) => t[1]))).toBeCloseTo(-32, 1);
+  });
+});
+
+describe("sweep paths", () => {
+  const vol = () => engine.check("normal").parts[0].exactVolume!;
+  it("sweeps along a whole circle (a ring), a spline, and from whichever end the profile is at", () => {
+    // A 2 mm-radius circle round a 20 mm-radius circle: a torus, 2π·20 · π·2² mm³.
+    const ring = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 20, y: 0 }, 20).sketch);
+    const prof = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 0, y: 0 }, 2).sketch);
+    const torus = build([ring, prof, { ...feature("sweep", {}), sketchRef: prof.id, pathRef: ring.id }]);
+    expect(torus.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo(2 * Math.PI * 20 * Math.PI * 4, 0);
+    // A line then an arc, with the profile at the line's far end (x = 60): the sweep starts there.
+    let d = lineSketch(60, 0, 30, 0);
+    d = addArc(d, { x: 30, y: 0 }, { x: 0, y: 30 }, { x: 21.21, y: 21.21 }).sketch;
+    const path = sketchFeature({ kind: "default", name: "Top" }, d);
+    const end = sketchFeature(planeOnFace([1, 0, 0], [60, 0, 0], "end"), addCircle(emptySketch(), { x: 0, y: 0 }, 2).sketch);
+    const fromEnd = build([path, end, { ...feature("sweep", {}), sketchRef: end.id, pathRef: path.id }]);
+    expect(fromEnd.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo((30 + (Math.PI / 2) * 30) * Math.PI * 4, -1);
+    // Along a spline.
+    const sp = addSpline(emptySketch(), [{ x: 0, y: 0 }, { x: 20, y: 10 }, { x: 40, y: 0 }].map((q) => ({ ...q, snap: null })), false);
+    const curvy = sketchFeature({ kind: "default", name: "Top" }, sp.sketch);
+    const start = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 0, y: 0 }, 2).sketch);
+    const r = build([curvy, start, { ...feature("sweep", {}), sketchRef: start.id, pathRef: curvy.id }]);
+    expect(r.featureErrors).toEqual({});
+    const check = engine.check("normal").parts[0];
+    expect(check.geometryValid).toBe(true);
+    expect(check.exactVolume!).toBeGreaterThan(40 * Math.PI * 4);
   });
 });
 
