@@ -239,6 +239,7 @@ function needed(
   s: number,
   maxH = Infinity,
   third = false,
+  sideGap = 0,
 ): { w: number; h: number; cols: number[]; rows: number[]; side: { key: string; w: number; h: number; x: number; y: number }[] } {
   const shown = new Set(keys);
   const size = (k: string) => (shown.has(k) ? paperSize(projections[k], s) : [0, 0]);
@@ -279,7 +280,8 @@ function needed(
   }
   const sideW = columns.length ? cx - GAP : 0;
   const sideH = Math.max(0, ...columns.map((c) => c.h));
-  const w = gridW + (sideW > 0 ? (gridW > 0 ? GAP : 0) + sideW : 0);
+  // (`sideGap`: extra room between the lined-up views and the side column, for dimensions there.)
+  const w = gridW + (sideW > 0 ? (gridW > 0 ? GAP + sideGap : 0) + sideW : 0);
   const h = Math.max(gridH, sideH);
   return { w, h, cols, rows, side: placed };
 }
@@ -301,10 +303,10 @@ const labelRoom = (key: string, p: ViewProjection | undefined) => LABEL_ROOM + (
 const BEND_LINE_H = 4;
 
 /** The biggest standard scale at which all the views fit on the sheet. */
-export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H, third = false): { scale: number; fits: boolean } {
+export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H, third = false, sideGap = 0): { scale: number; fits: boolean } {
   const area = viewArea(SHEETS[sheet], reserve);
   for (const s of STANDARD_SCALES) {
-    const n = needed(projections, keys, s, area.y1 - area.y0, third);
+    const n = needed(projections, keys, s, area.y1 - area.y0, third, sideGap);
     if (n.w <= area.x1 - area.x0 && n.h <= area.y1 - area.y0) return { scale: s, fits: true };
   }
   return { scale: STANDARD_SCALES[STANDARD_SCALES.length - 1], fits: false };
@@ -317,6 +319,76 @@ export function drawingViewKeys(drawing: Pick<Drawing, "views">): string[] {
 
 /** Work out where everything goes on the sheet. */
 export function layoutSheet(drawing: Drawing, projections: Projections, info: SheetInfo): SheetLayout {
+  // Room between the lined-up views and the 3D/section column for dimensions to their right.
+  const attempt = (forced?: number) => {
+    const plain = layoutAt(drawing, projections, info, forced);
+    const gap = sideOverhang(plain.layout, drawing);
+    return gap > 0 ? layoutAt(drawing, projections, info, forced, gap) : plain;
+  };
+  const first = attempt();
+  // A chosen scale is kept as it is; so is a sheet whose dimensions all fit.
+  if (drawing.scale !== undefined || !drawing.dimensions?.length || dimsClear(first.layout, drawing, first.reserve)) return first.layout;
+  // Otherwise the next smaller scales (up to three steps), so rows of dimensions round the
+  // views keep inside the border and clear of the other views; failing that, as it was.
+  const i = STANDARD_SCALES.indexOf(first.layout.scale);
+  for (const s of i < 0 ? [] : STANDARD_SCALES.slice(i + 1, i + 4)) {
+    const next = attempt(s);
+    if (dimsClear(next.layout, drawing, next.reserve)) return next.layout;
+  }
+  return first.layout;
+}
+
+const LINED_UP = new Set<string>(["front", "top", "right", "left", "back", "bottom"]);
+
+/** Every point a dimension's shapes take up on the sheet (numbers by the corners of their boxes). */
+function dimPoints(l: SheetLayout, from: number, to: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (const p of l.prims.slice(from, to)) {
+    if (p.kind === "path") {
+      for (let i = 0; i + 1 < p.points.length; i += 2) out.push([p.points[i], p.points[i + 1]]);
+      continue;
+    }
+    const w = textWidth(p.text, p.size);
+    const x0 = p.anchor === "middle" ? -w / 2 : p.anchor === "end" ? -w : 0;
+    const a = ((p.rotate ?? 0) * Math.PI) / 180;
+    for (const [u, v] of [[x0, 0], [x0 + w, 0], [x0, p.size * 0.75], [x0 + w, p.size * 0.75]]) out.push([p.x + u * Math.cos(a) - v * Math.sin(a), p.y + u * Math.sin(a) + v * Math.cos(a)]);
+  }
+  return out;
+}
+
+/**
+ * How far the lined-up views' dimensions reach past the right of those views
+ * (paper mm, with a little room), when there's a column of other views
+ * (3D, sections, details) placed automatically beside them; else 0.
+ */
+function sideOverhang(l: SheetLayout, drawing: Pick<Drawing, "dimensions" | "views">): number {
+  const grid = l.views.filter((v) => LINED_UP.has(v.key));
+  const side = l.views.some((v) => !LINED_UP.has(v.key) && !drawing.views.find((x) => viewKey(x) === v.key)?.at);
+  if (!grid.length || !side || !drawing.dimensions?.length) return 0;
+  const right = Math.max(...grid.map((v) => v.box[2]));
+  const owner = new Map(drawing.dimensions.map((d) => [d.id, d.view]));
+  let reach = right;
+  for (const dim of l.dims) if (LINED_UP.has(owner.get(dim.id) ?? "")) for (const [x] of dimPoints(l, dim.from, dim.to)) reach = Math.max(reach, x);
+  return reach > right + 1e-6 ? Math.ceil(reach - right + 3) : 0;
+}
+
+/**
+ * Do all the dimensions sit on the paper inside the border, off the title
+ * block (and the tables above it), and clear of views other than their own?
+ */
+export function dimsClear(l: SheetLayout, drawing: Pick<Drawing, "dimensions">, reserve = TITLE_H): boolean {
+  const [W, H] = l.size;
+  const owner = new Map((drawing.dimensions ?? []).map((d) => [d.id, d.view]));
+  const out = (x: number, y: number) => x < MARGIN || x > W - MARGIN || y < MARGIN || y > H - MARGIN || (x > W - MARGIN - TITLE_W && y < MARGIN + reserve);
+  for (const dim of l.dims) {
+    const others = l.views.filter((v) => v.key !== owner.get(dim.id)).map((v) => v.box);
+    const bad = (x: number, y: number) => out(x, y) || others.some((b) => x > b[0] + 0.5 && x < b[2] - 0.5 && y > b[1] + 0.5 && y < b[3] - 0.5);
+    if (dimPoints(l, dim.from, dim.to).some(([x, y]) => bad(x, y))) return false;
+  }
+  return true;
+}
+
+function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, forced?: number, sideGap = 0): { layout: SheetLayout; reserve: number } {
   const size = SHEETS[drawing.sheet];
   const keys = drawingViewKeys(drawing).filter((k) => projections[k]?.bounds);
   // Hole table: the holes on one view, tagged, with a table above the title block.
@@ -324,10 +396,10 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   const holes = holeKey ? holeRows(projections[holeKey]!) : [];
   const reserve = bottomReserve(drawing, info.bom, holes.length);
   const third = drawing.projection === "third";
-  const auto = fitScale(projections, keys, drawing.sheet, reserve, third);
-  const scale = drawing.scale ?? auto.scale;
+  const auto = fitScale(projections, keys, drawing.sheet, reserve, third, sideGap);
+  const scale = forced ?? drawing.scale ?? auto.scale;
   const area = viewArea(size, reserve);
-  const n = needed(projections, keys, scale, area.y1 - area.y0, third);
+  const n = needed(projections, keys, scale, area.y1 - area.y0, third, sideGap);
 
   // Automatic places: the grid of aligned views centred in the area, the 3D and section views to its right.
   const left = area.x0 + Math.max(0, (area.x1 - area.x0 - n.w) / 2);
@@ -349,7 +421,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   const grid = third ? GRID.third : GRID.first;
   grid.cols.forEach((k, i) => (autoCentre[k] = [colX[i], rowY[1]]));
   grid.rows.forEach((k, i) => (autoCentre[k] = [colX[1], rowY[i]]));
-  const sideX = gridRight > left ? gridRight + GAP : left;
+  const sideX = gridRight > left ? gridRight + GAP + sideGap : left;
   for (const item of n.side) {
     const viewH = isLabelled(item.key) ? item.h - labelRoom(item.key, projections[item.key]) : item.h;
     autoCentre[item.key] = [sideX + item.x + item.w / 2, top - item.y - viewH / 2];
@@ -522,7 +594,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   }
 
   prims.push(...frameAndTitle(size, drawing, scale, info, holeHost ? holes : []));
-  return { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, notes, prims };
+  return { layout: { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, notes, prims }, reserve };
 }
 
 /** The cutting line across a view, with arrows showing which way the section looks, and its letters. */

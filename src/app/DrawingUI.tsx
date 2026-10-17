@@ -10,13 +10,12 @@ import { arrangeLinedUp, arrangeViews, nextRevision, PLACES, projectionKinds, pu
 import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
-import { holeRows, holeTableView } from "../drawing/holeTable";
 import { holeOfCircle, tapSizes } from "../drawing/holeCallouts";
 import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } from "../drawing/symbols";
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
-import { bottomReserve, dimStyle, drawingViewKeys, fitScale, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { dimStyle, drawingViewKeys, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { angleGeometry, dimPoint, dragDimension, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
@@ -544,21 +543,15 @@ function TitleField({ label, value, placeholder, multiline, onCommit }: { label:
   );
 }
 
-/** How many rows the hole table has (for fitting the views above it). */
-function holeCount(drawing: Drawing, projections: Projections): number {
-  if (!drawing.holeTable) return 0;
-  const key = holeTableView(drawing, projections);
-  return key ? holeRows(projections[key]!).length : 0;
-}
-
 export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   const unit = useLengthUnit();
   const doc = useStore((s) => s.history.present);
   const parts = useStore((s) => s.parts);
   const change = useStore((s) => s.changeDrawing);
   const { projections, subject, upToDate } = useProjections(drawing);
+  // The scale "Fit to sheet" picks: as laid out (it steps down if dimensions wouldn't fit round the views).
   const auto = projections
-    ? fitScale(projections, drawingViewKeys(drawing), drawing.sheet, bottomReserve(drawing, bomFor(drawing, doc, parts), holeCount(drawing, projections)), drawing.projection === "third")
+    ? layoutSheet({ ...drawing, scale: undefined }, projections, { designName: "", subject: "", date: "", bom: bomFor(drawing, doc, parts), taps: tapSizes(doc, drawing) })
     : null;
   const studios = studiosOf(doc);
   const sourceValue = drawing.source ? `${drawing.source.kind}:${drawing.source.id}` : "";

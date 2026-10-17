@@ -12,7 +12,7 @@ import { calloutLines } from "../src/drawing/holeCallouts";
 import { missedSections } from "../src/drawing/sections";
 import { dimLabel, dimPoint, drawDimension, resolveDim } from "../src/drawing/dimensions";
 import { dxfText, sheetDxf, sheetPdf } from "../src/drawing/export";
-import { fitScale, fitSize, layoutSheet, projectionSymbol, SHEETS, type Prim } from "../src/drawing/sheet";
+import { dimsClear, fitScale, fitSize, layoutSheet, projectionSymbol, SHEETS, type Prim, type Projections } from "../src/drawing/sheet";
 import type { ViewProjection } from "../src/kernel/protocol";
 import { emptyDocument } from "../src/model/document";
 import type { Dimension, Drawing, ViewKind } from "../src/model/types";
@@ -405,5 +405,68 @@ describe("review fixes", () => {
       ["right", undefined],
       ["iso", [100, 100]],
     ]);
+  });
+
+  it("keeps automatic dimension rows inside the border and clear of other views, stepping down the scale if need be", () => {
+    // A 60 × 40 × 25 stepped block with Ø8 and Ø5 holes from the top.
+    const seg = (pts: number[]) => {
+      const out: number[][] = [];
+      for (let i = 0; i < pts.length; i += 2) out.push([pts[i], pts[i + 1], pts[(i + 2) % pts.length], pts[(i + 3) % pts.length]]);
+      return out;
+    };
+    const stepView = (kind: ViewKind, w: number, h: number, extra: Partial<ViewProjection> = {}) => {
+      const lines = seg([0, 0, w, 0, w, h * 0.4, w * 0.6, h * 0.4, w * 0.6, h * 0.7, w * 0.3, h * 0.7, w * 0.3, h, 0, h]);
+      return rectView(kind, w, h, { visible: lines, points: lines.flat(), ...extra });
+    };
+    const holes = {
+      circles: [
+        { cx: 15, cy: 20, r: 4, hidden: false, full: true },
+        { cx: 45, cy: 20, r: 2.5, hidden: false, full: true },
+      ],
+      holes: [
+        { cx: 15, cy: 20, d: 8, through: true, depth: 25 },
+        { cx: 45, cy: 20, d: 5, through: true, depth: 25 },
+      ],
+    };
+    const top = rectView("top", 60, 40, { visible: [...seg([0, 0, 60, 0, 60, 40, 0, 40])], points: [0, 0, 60, 0, 60, 40, 0, 40, 15, 20, 45, 20], ...holes });
+    const views: Projections = {
+      front: stepView("front", 60, 25),
+      back: stepView("back", 60, 25),
+      top,
+      bottom: { ...top, kind: "bottom" },
+      right: stepView("right", 40, 25),
+      left: stepView("left", 40, 25),
+      iso: rectView("iso", 70, 60),
+    };
+    const sets = [
+      ["front", "top", "right", "left", "back", "bottom", "iso"],
+      ["front", "top", "right", "left", "bottom", "iso"],
+      ["front", "right", "left", "iso"],
+      ["front", "top", "bottom", "iso"],
+      ["front", "top", "right", "iso"],
+    ];
+    for (const sheet of ["A4", "A3"] as const)
+      for (const third of [false, true])
+        for (const keys of sets) {
+          let n = 0;
+          let d: Drawing = { ...newDrawing(), sheet, views: keys.map((k) => ({ id: k, kind: k as ViewKind })), ...(third ? { projection: "third" as const } : {}) };
+          const plain = layoutSheet(d, views, info);
+          d = { ...d, dimensions: autoDimensions(views, keys, [], plain.scale, () => `a${n++}`, third) };
+          const l = layoutSheet(d, views, info);
+          const where = `${sheet} ${third ? "third" : "first"} ${keys.join(",")} at ${l.scale}`;
+          expect([where, dimsClear(l, d, 36)]).toEqual([where, true]);
+          // Checked independently too: every dimension's lines and numbers inside the 10 mm border.
+          for (const dim of l.dims)
+            for (const p of l.prims.slice(dim.from, dim.to)) {
+              const pts = p.kind === "path" ? p.points : [p.x, p.y];
+              for (let i = 0; i < pts.length; i += 2) {
+                expect([where, pts[i] >= 10 && pts[i] <= l.size[0] - 10]).toEqual([where, true]);
+                expect([where, pts[i + 1] >= 10 && pts[i + 1] <= l.size[1] - 10]).toEqual([where, true]);
+              }
+            }
+        }
+    // A sheet whose dimensions already fit keeps its scale; a chosen scale is never changed.
+    const d: Drawing = { ...newDrawing(), sheet: "A4", dimensions: [length], views: [{ id: "f", kind: "front" }] };
+    expect(layoutSheet(d, { front: rectView("front", 40, 20) }, info).scale).toBe(fitScale({ front: rectView("front", 40, 20) }, ["front"], "A4").scale);
   });
 });
