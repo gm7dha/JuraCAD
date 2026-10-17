@@ -120,9 +120,27 @@ export interface Feature {
     face?: TopoPick;
   };
   /** Extrude features: one way or symmetric, and whether to flip. */
-  extrude?: { end: ExtrudeEnd; flip: boolean; /** Up to face: the flat face to stop at. */ upTo?: TopoPick };
+  extrude?: {
+    end: ExtrudeEnd;
+    flip: boolean;
+    /** Up to face: the flat face to stop at. */
+    upTo?: TopoPick;
+    /** One way (blind): also extrude the other way from the sketch, by the second depth (`depth2`). */
+    second?: boolean;
+  };
   /** Revolve features: the line to spin around ("vertical"/"horizontal" sketch axes, or a sketch line id) and which way. */
-  revolve?: { axis: string; flip: boolean };
+  revolve?: {
+    axis: string;
+    flip: boolean;
+    /** Spin both ways from the sketch, half the angle each way. */
+    symmetric?: boolean;
+  };
+  /**
+   * Chamfer: an equal bevel (missing), two different distances, or a distance
+   * and an angle. The first distance runs along the face that was clicked (or,
+   * for an edge, the face beside it that faces most upwards); `flipSide` swaps.
+   */
+  chamferType?: "twoDistances" | "distanceAngle";
   /** Hole features: where (the points and circle centres of a sketch) and what kind. */
   hole?: HoleOptions;
   /** Plane features: where the plane is. */
@@ -141,7 +159,7 @@ export interface Feature {
   splitDef?: SplitOptions;
   /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
-  /** Shell: hollow the part closed inside, keeping every face (no opening), whatever faces are picked. */
+  /** Shell: hollow the part closed inside, keeping every face (no opening), whatever faces are picked. (Shell's `flipSide` puts the walls outside the part.) */
   hollow?: boolean;
   /** Flange: close the corners where these flanges meet other full-length right-angle flanges. */
   closeCorners?: boolean;
@@ -157,10 +175,19 @@ export interface Feature {
   neutral?: SketchPlane;
   /** Transform: move and/or turn a part (or a copy of it). */
   transform?: { partId?: string; axis: Axis; about: "origin" | "centre"; copy: boolean };
-  /** Linear and circular patterns: the features to repeat, and along or around which axis. */
-  pattern?: { sources: string[]; axis: Axis; flip: boolean; follow?: boolean };
-  /** Mirror: the features to mirror, and the plane to mirror them across. */
-  mirror?: { sources: string[]; plane: SketchPlane };
+  /**
+   * Linear and circular patterns: the features to repeat, and along or around
+   * which axis (a circular pattern's axis passes through its cx, cy, cz).
+   * Linear: `axis2`/`flip2` are the second direction of a grid (with `count2`
+   * rows, `spacing2` apart).
+   */
+  pattern?: { sources: string[]; axis: Axis; flip: boolean; follow?: boolean; axis2?: Axis; flip2?: boolean };
+  /**
+   * Mirror: the features to mirror, and the plane to mirror them across. Or,
+   * with `part`, a whole part mirrored: as a new part, or joined onto the
+   * original (`join`) — model half, mirror the rest.
+   */
+  mirror?: { sources: string[]; plane: SketchPlane; part?: string; join?: boolean };
   /** Import: the file, stored in the design. */
   import?: ImportedFile;
   /** Fillet and chamfer: the edges (or faces, meaning all their edges) to round or bevel. Shell: the faces to remove. */

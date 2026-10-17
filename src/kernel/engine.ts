@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { basicFaceExtrusion, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -14,7 +14,7 @@ import { planeFeatureFrame } from "../sketch/planeFeature";
 import { setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
-import { revolveSketch } from "./revolve";
+import { centreRevolve, revolveSketch } from "./revolve";
 import { holeTool } from "./hole";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
@@ -751,6 +751,78 @@ function findPickedFaces(shape: Shape3D, picks: TopoPick[]): Face[] {
   return chosen;
 }
 
+/**
+ * A chamfer that isn't the same both ways: `first` mm along one face and
+ * `second` mm along the other ("twoDistances"), or `first` mm along one face at
+ * `second` degrees ("distanceAngle"). The first distance runs along the face
+ * that was picked, or — for a picked edge — the face beside it that faces most
+ * upwards (then most towards +Y, then +X); `flip` swaps to the other face.
+ */
+function lopsidedChamfer(shape: Shape3D, picks: TopoPick[], kind: "twoDistances" | "distanceAngle", first: number, second: number, flip: boolean): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const faces = facesOf(shape);
+  const pickedFaces = picks.some((p) => p.ref.kind === "face") ? findPickedFaces(shape, picks.filter((p) => p.ref.kind === "face")) : [];
+  const pickedEdges = picks.some((p) => p.ref.kind === "edge") ? findPickedEdges(shape, picks.filter((p) => p.ref.kind === "edge")) : [];
+  const items: { edge: Edge; face: Face }[] = [];
+  const extra: Edge[] = [];
+  const beside = (e: Edge) =>
+    faces.filter((f) => {
+      const es = edgesOf(f);
+      const hit = es.some((x) => x.isSame(e));
+      es.forEach((x) => x.delete());
+      return hit;
+    });
+  const upness = (f: Face): Vec3 => {
+    try {
+      const n = take(f.normalAt(take(f.center)));
+      return [n[2], n[1], n[0]];
+    } catch {
+      return [0, 0, 0];
+    }
+  };
+  const add = (edge: Edge, preferred: Face | null) => {
+    if (items.some((i) => i.edge.isSame(edge))) return;
+    const two = beside(edge);
+    // A seam, or a free edge: nothing to bevel between.
+    if (two.length !== 2) return;
+    let face: Face;
+    if (preferred) face = two.find((f) => (flip ? !f.isSame(preferred) : f.isSame(preferred))) ?? two[0];
+    else {
+      const [a, b] = two.map(upness);
+      const aFirst = a[0] - b[0] > 1e-6 || (Math.abs(a[0] - b[0]) <= 1e-6 && (a[1] - b[1] > 1e-6 || (Math.abs(a[1] - b[1]) <= 1e-6 && a[2] >= b[2])));
+      face = aFirst !== flip ? two[0] : two[1];
+    }
+    items.push({ edge, face });
+  };
+  const builder = new oc.BRepFilletAPI_MakeChamfer(shape.wrapped);
+  try {
+    for (const f of pickedFaces) {
+      for (const e of edgesOf(f)) {
+        extra.push(e);
+        add(e, f);
+      }
+    }
+    for (const e of pickedEdges) add(e, null);
+    if (!items.length) throw new Error("There are no edges here to bevel.");
+    for (const { edge, face } of items) {
+      if (kind === "twoDistances") builder.Add(first, second, edge.wrapped, face.wrapped);
+      else builder.AddDA(first, (second * Math.PI) / 180, edge.wrapped, face.wrapped);
+    }
+    return cast(builder.Shape()) as Shape3D;
+  } finally {
+    builder.delete();
+    [...faces, ...pickedFaces, ...pickedEdges, ...extra].forEach((x) => {
+      try {
+        x.delete();
+      } catch {
+        // already freed
+      }
+    });
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
 /** True when `after` has less volume than `before` and fits inside its bounding box. */
 function shrankWithin(before: Shape3D, after: Shape3D): boolean {
   try {
@@ -761,6 +833,43 @@ function shrankWithin(before: Shape3D, after: Shape3D): boolean {
     const [b0, b1] = boundsOf(after);
     const tol = 1e-3 + 1e-6 * Math.hypot(a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]);
     return [0, 1, 2].every((i) => b0[i] >= a0[i] - tol && b1[i] <= a1[i] + tol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Shell with the walls outside: the faces are pushed out by `thickness`, with
+ * sharp outside corners (like the part grown all round), the picked faces left
+ * open, and the part itself becoming the space inside.
+ */
+function outwardShell(shape: Shape3D, open: Face[], thickness: number): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const list = new oc.NCollection_List_TopoDS_Shape();
+  const builder = new oc.BRepOffsetAPI_MakeThickSolid();
+  try {
+    for (const f of open) list.Append(f.wrapped);
+    builder.MakeThickSolidByJoin(shape.wrapped, list, thickness, 1e-3, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false);
+    return cast(builder.Shape()) as Shape3D;
+  } finally {
+    builder.delete();
+    list.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * True when `after` (walls built round `before`) has some volume, and sticks out
+ * past `before` by no more than `by` (plus a little) on any side.
+ */
+function grewWithin(before: Shape3D, after: Shape3D, by: number): boolean {
+  try {
+    if (!(measureVolume(after) > 1e-6)) return false;
+    const [a0, a1] = boundsOf(before);
+    const [b0, b1] = boundsOf(after);
+    const tol = 1e-3 + 1e-6 * Math.hypot(a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]) + by * 1e-3;
+    return [0, 1, 2].every((i) => b0[i] >= a0[i] - by - tol && b1[i] <= a1[i] + by + tol);
   } catch {
     return false;
   }
@@ -823,8 +932,11 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       }
       if (feature.type === "revolve") {
         const opts = feature.revolve ?? { axis: "vertical", flip: false };
-        if (feature.surface) return revolveSurface(sketch.sketch.plane, sketch.sketch.data, { axis: opts.axis, angle: v.angle, flip: opts.flip });
-        return revolveSketch(sketch.sketch.plane, sketch.sketch.data, { axis: opts.axis, angle: v.angle, flip: opts.flip });
+        const ropts = { axis: opts.axis, angle: v.angle, flip: opts.flip };
+        const { plane, data } = sketch.sketch;
+        const shape = feature.surface ? revolveSurface(plane, data, ropts) : revolveSketch(plane, data, ropts);
+        // Symmetric: half the angle each way from the sketch.
+        return opts.symmetric ? centreRevolve(shape, plane, data, ropts) : shape;
       }
       const opts = feature.extrude ?? { end: "blind", flip: false };
       if (feature.surface) {
@@ -860,7 +972,8 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         if (Math.abs(d) < 1e-6) throw new Error("That face is level with the sketch, so there's nothing to extrude.");
         return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: Math.abs(d), end: "blind", flip: d < 0, draft: v.draft });
       }
-      return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip, draft: v.draft });
+      const second = opts.end === "blind" && opts.second ? v.depth2 : 0;
+      return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip, draft: v.draft, depth2: second });
     }
     case "sweep": {
       const need = (id: string | undefined, what: string) => {
@@ -1357,6 +1470,12 @@ export class GeometryEngine {
       }
       if (feature.type === "transform") {
         const r = this.applyTransform(feature, partCounter + 1);
+        if (r.error) featureErrors[feature.id] = r.error;
+        if (r.newPart) partCounter++;
+        continue;
+      }
+      if (feature.type === "mirror" && feature.mirror?.part) {
+        const r = this.applyMirrorPart(feature, partCounter + 1);
         if (r.error) featureErrors[feature.id] = r.error;
         if (r.newPart) partCounter++;
         continue;
@@ -2355,6 +2474,9 @@ export class GeometryEngine {
         ts[0].shape = shape;
         ts.slice(1).forEach((p) => used.add(p));
         ts[0].featureIds.push(feature.id, ...ts.slice(1).flatMap((p) => p.featureIds));
+        // What made the joined parts is now part of the first one, so a later pattern or mirror of it repeats on that.
+        const joined = new Set(ts.slice(1).map((p) => p.id));
+        for (const tool of this.tools.values()) if (joined.has(tool.partId)) tool.partId = ts[0].id;
       } else {
         if (ts.length === 0) return "Pick the parts to cut — click them in the 3D view or the Parts list.";
         if (tls.length === 0) return "Now pick the parts to cut with: choose “Cut with” below, then click them.";
@@ -2533,14 +2655,26 @@ export class GeometryEngine {
           } else placements.push((s) => s.translate(move));
         }
       } else if (feature.type === "linearPattern") {
-        for (let i = 1; i < count; i++) {
-          const d = values.spacing * i * sign;
-          placements.push((s) => s.translate([axis[0] * d, axis[1] * d, axis[2] * d]));
+        // A grid when there's more than one row: rows of `count`, `count2` of them along the second direction.
+        const rows = values.count2 ?? 1;
+        const axis2Name = feature.pattern?.axis2 ?? (feature.pattern?.axis === "y" ? "x" : "y");
+        if (rows > 1 && axis2Name === (feature.pattern?.axis ?? "x")) return "The rows must go along a different axis from the copies in each row. Choose another second direction.";
+        const axis2 = AXES[axis2Name];
+        const sign2 = feature.pattern?.flip2 ? -1 : 1;
+        for (let j = 0; j < rows; j++) {
+          for (let i = 0; i < count; i++) {
+            if (i === 0 && j === 0) continue;
+            const d = values.spacing * i * sign;
+            const d2 = (values.spacing2 ?? 0) * j * sign2;
+            placements.push((s) => s.translate([axis[0] * d + axis2[0] * d2, axis[1] * d + axis2[1] * d2, axis[2] * d + axis2[2] * d2]));
+          }
         }
       } else {
         if (values.angle > 360) return "Spread over: must be at most 360°";
         const step = values.angle >= 360 - 1e-9 ? 360 / count : values.angle / (count - 1);
-        for (let i = 1; i < count; i++) placements.push((s) => s.rotate(step * i * sign, [0, 0, 0], axis));
+        // The axis goes through (cx, cy, cz) — the origin unless moved.
+        const through: Vec3 = [values.cx ?? 0, values.cy ?? 0, values.cz ?? 0];
+        for (let i = 1; i < count; i++) placements.push((s) => s.rotate(step * i * sign, through, axis));
       }
     }
 
@@ -2600,6 +2734,44 @@ export class GeometryEngine {
     return null;
   }
 
+  /**
+   * Mirror a whole part across a plane: as a new part, or joined onto the
+   * original (model one half, mirror it for the other).
+   */
+  private applyMirrorPart(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+    const m = feature.mirror!;
+    const part = this.parts.find((p) => p.id === m.part);
+    if (!part) return { error: "The part it mirrors no longer exists. Edit this mirror and choose another part." };
+    const frame = planeFrame(m.plane);
+    let copy: Shape3D;
+    try {
+      copy = part.shape.clone().mirror(frame.n, frame.origin);
+    } catch (e) {
+      return { error: describeError(e, "Couldn't mirror this part.") };
+    }
+    if (m.join) {
+      let joined: Shape3D;
+      try {
+        joined = part.surface ? joinSurfaces([part.shape, copy]) : part.shape.fuse(copy);
+      } catch (e) {
+        return { error: describeError(e, "Couldn't join the mirror image onto the part.") };
+      } finally {
+        copy.delete();
+      }
+      part.shape.delete();
+      part.shape = joined;
+      part.featureIds.push(feature.id);
+      return {};
+    }
+    if (part.surface) {
+      this.parts.push({ id: feature.id, name: `${part.name} (mirror)`, featureIds: [feature.id], shape: copy, surface: true });
+      return {};
+    }
+    this.tools.set(feature.id, { shape: copy.clone(), operation: "new", partId: feature.id });
+    this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape: copy });
+    return { newPart: true };
+  }
+
   /** Hollow out a part, removing the picked faces. Returns an error message, or null. */
   private applyShell(feature: Feature): string | null {
     const { values, errors } = resolveParams(feature);
@@ -2612,6 +2784,8 @@ export class GeometryEngine {
     const picks = feature.hollow ? [] : facePicks;
     if (!part) return picks.length ? "The part these faces were on no longer exists. Edit this feature and pick the faces again." : "There's no part to hollow yet.";
     if (part.surface) return `${part.name} is a surface, with no inside to hollow. Use Thicken to give it walls instead.`;
+    // Walls outside: the part itself becomes the space inside.
+    const outward = !!feature.flipSide;
     // No faces picked — or every face (a ball has only one) — hollows it closed inside, with no opening.
     const all = facesOf(part.shape);
     const faceCount = all.length;
@@ -2619,6 +2793,18 @@ export class GeometryEngine {
     if (picks.length === 0 || picks.length >= faceCount) {
       let inner: Shape3D | null = null;
       try {
+        if (outward) {
+          inner = offsetSolid(part.shape, values.thickness);
+          const hollow = inner.cut(part.shape);
+          if (!isValidSolid(hollow) || !grewWithin(part.shape, hollow, values.thickness)) {
+            hollow.delete();
+            return "Couldn't put walls round this part. Try thinner walls.";
+          }
+          part.shape.delete();
+          part.shape = hollow;
+          part.featureIds.push(feature.id);
+          return null;
+        }
         inner = offsetSolid(part.shape, -values.thickness);
         const hollow = part.shape.cut(inner);
         if (!isValidSolid(hollow) || !shrankWithin(part.shape, hollow)) {
@@ -2647,10 +2833,10 @@ export class GeometryEngine {
     let shape: Shape3D | null = null;
     // A hollowed part must be valid, lighter than before, and no bigger than before. (With walls
     // thicker than the part, OpenCascade can "succeed" with a strange inside-out solid.)
-    const good = (s: Shape3D) => isValidSolid(s) && shrankWithin(part.shape, s);
+    const good = (s: Shape3D) => isValidSolid(s) && (outward ? grewWithin(part.shape, s, values.thickness) : shrankWithin(part.shape, s));
     try {
       try {
-        shape = part.shape.shell(values.thickness, (f) => f.inList(faces));
+        shape = outward ? outwardShell(part.shape, faces, values.thickness) : part.shape.shell(values.thickness, (f) => f.inList(faces));
         if (!good(shape)) {
           shape.delete();
           shape = null;
@@ -2659,7 +2845,7 @@ export class GeometryEngine {
         shape = null;
       }
       // Round fillets OpenCascade's shell can come out broken: hollow it closed and cut the opening instead.
-      if (!shape) {
+      if (!shape && !outward) {
         try {
           shape = shellByCutting(part.shape, faces, values.thickness);
           if (!good(shape)) {
@@ -2673,7 +2859,7 @@ export class GeometryEngine {
     } finally {
       faces.forEach((f) => f.delete());
     }
-    if (!shape) return failed;
+    if (!shape) return outward ? "Couldn't put walls round this part. Try thinner walls, or walls inside." : failed;
     part.shape.delete();
     part.shape = shape;
     part.featureIds.push(feature.id);
@@ -2689,6 +2875,8 @@ export class GeometryEngine {
     const picks = feature.picks ?? [];
     if (picks.length === 0) return "Click the edges (or faces) you want to " + (feature.type === "fillet" ? "round." : "bevel.");
     const size = feature.type === "fillet" ? values.radius : values.distance;
+    const lopsided = feature.type === "chamfer" && feature.chamferType ? feature.chamferType : null;
+    if (lopsided === "distanceAngle" && !(values.angle < 90)) return "Angle: use an angle between 0° and 90° (45° makes an even bevel).";
 
     // Apply part by part; picks remember which part they're on.
     const partIds = [...new Set(picks.map((p) => p.partId))];
@@ -2700,6 +2888,23 @@ export class GeometryEngine {
     try {
       for (const partId of partIds) {
         const part = this.parts.find((p) => p.id === partId)!;
+        if (lopsided) {
+          // Two distances, or a distance and an angle: each edge needs the face its first distance runs along.
+          const failed = "Couldn't bevel these edges. Try smaller distances — they have to fit on the faces next to each edge.";
+          let shape: Shape3D;
+          try {
+            shape = lopsidedChamfer(part.shape, picks.filter((p) => p.partId === partId), lopsided, size, lopsided === "twoDistances" ? values.distance2 : values.angle, !!feature.flipSide);
+          } catch (e) {
+            if (e instanceof Error && /can't be found/.test(e.message)) throw e;
+            throw new Error(failed);
+          }
+          if (!isValidSolid(shape, !!part.surface)) {
+            shape.delete();
+            throw new Error(failed);
+          }
+          results.push({ part, shape });
+          continue;
+        }
         const chosen = findPickedEdges(part.shape, picks.filter((p) => p.partId === partId));
         // A variable fillet runs from one radius at the start of each edge to another at its end.
         const end = feature.type === "fillet" ? (values.endRadius ?? 0) : 0;

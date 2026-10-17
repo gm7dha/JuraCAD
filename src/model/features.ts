@@ -70,6 +70,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Pushes the closed shapes of a sketch out into a solid.",
     params: [
       { key: "depth", label: "Depth", defaultValue: "10", positive: true, group: "size" },
+      { key: "depth2", label: "Depth the other way", defaultValue: "10", positive: true, group: "size" },
       { key: "draft", label: "Draft (taper)", defaultValue: "0", group: "size", unit: "°" },
     ],
   },
@@ -119,27 +120,32 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "mirror",
     label: "Mirror",
     namePrefix: "Mirror",
-    description: "Makes a mirror-image copy of features across a plane.",
+    description: "Makes a mirror-image copy of features — or of a whole part — across a plane.",
     params: [],
   },
   linearPattern: {
     type: "linearPattern",
     label: "Linear pattern",
     namePrefix: "Linear pattern",
-    description: "Repeats features in a straight line, evenly spaced.",
+    description: "Repeats features in a straight line, evenly spaced — or in a grid of rows.",
     params: [
       { key: "count", label: "How many (including the original)", defaultValue: "3", positive: true, integer: true, min: 2, group: "size", unit: "" },
       { key: "spacing", label: "Spacing", defaultValue: "20", positive: true, group: "size" },
+      { key: "count2", label: "Rows in the second direction (1 = just one row)", defaultValue: "1", positive: true, integer: true, min: 1, group: "size", unit: "" },
+      { key: "spacing2", label: "Spacing between rows", defaultValue: "20", positive: true, group: "size" },
     ],
   },
   circularPattern: {
     type: "circularPattern",
     label: "Circular pattern",
     namePrefix: "Circular pattern",
-    description: "Repeats features around an axis, evenly spaced.",
+    description: "Repeats features around an axis, evenly spaced. The axis can go through any point.",
     params: [
       { key: "count", label: "How many (including the original)", defaultValue: "6", positive: true, integer: true, min: 2, group: "size", unit: "" },
       { key: "angle", label: "Spread over", defaultValue: "360", positive: true, group: "size", unit: "°" },
+      { key: "cx", label: "Axis goes through X", defaultValue: "0", group: "position" },
+      { key: "cy", label: "Axis goes through Y", defaultValue: "0", group: "position" },
+      { key: "cz", label: "Axis goes through Z", defaultValue: "0", group: "position" },
     ],
   },
   curvePattern: {
@@ -247,8 +253,12 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "chamfer",
     label: "Chamfer",
     namePrefix: "Chamfer",
-    description: "Bevels sharp edges with a flat cut.",
-    params: [{ key: "distance", label: "Distance", defaultValue: "1", positive: true, group: "size" }],
+    description: "Bevels sharp edges with a flat cut — the same distance both ways, two different distances, or a distance and an angle.",
+    params: [
+      { key: "distance", label: "Distance", defaultValue: "1", positive: true, group: "size" },
+      { key: "distance2", label: "Second distance", defaultValue: "2", positive: true, group: "size" },
+      { key: "angle", label: "Angle", defaultValue: "30", positive: true, group: "size", unit: "°" },
+    ],
   },
   import: {
     type: "import",
@@ -473,10 +483,17 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface">): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   if (f.type === "extrude" && (f.extrude?.end === "throughAll" || f.extrude?.end === "upToFace")) keys.delete("depth");
+  if (f.type === "extrude" && !(f.extrude?.end === "blind" && f.extrude.second && !f.surface)) keys.delete("depth2");
   if (f.type === "extrude" && f.surface) keys.delete("draft");
+  // A circular pattern's axis: where along it doesn't matter, so that box is hidden.
+  if (f.type === "circularPattern") keys.delete(`c${f.pattern?.axis ?? "z"}`);
+  if (f.type === "chamfer") {
+    if (f.chamferType !== "twoDistances") keys.delete("distance2");
+    if (f.chamferType !== "distanceAngle") keys.delete("angle");
+  }
   if (f.type === "plane" && f.planeDef?.mode !== "angle") keys.delete("angle");
   if (f.type === "fastener" && f.fastener && !hasLength(f.fastener.kind)) keys.delete("length");
   if (f.type === "hole" && f.hole) {

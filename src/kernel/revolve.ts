@@ -19,6 +19,30 @@ export interface RevolveOptions {
 }
 
 type P2 = [number, number];
+type V3 = [number, number, number];
+
+/** The line a revolve spins around, in 3D: a point on it and its direction (null if the sketch line has gone). */
+export function revolveAxis(plane: SketchPlane, data: SketchData, axisId: RevolveAxis): { origin: V3; direction: V3 } | null {
+  const axis = axisInSketch(data, axisId);
+  if (!axis) return null;
+  const frame = planeFrame(plane);
+  const origin = toWorld(frame, axis.at[0], axis.at[1]);
+  const tip = toWorld(frame, axis.at[0] + axis.dir[0], axis.at[1] + axis.dir[1]);
+  return { origin, direction: [tip[0] - origin[0], tip[1] - origin[1], tip[2] - origin[2]] };
+}
+
+/**
+ * A revolved shape turned back by half its angle about its axis, so it goes
+ * equally both ways from the sketch (Onshape's "symmetric"). `shape` is used up.
+ */
+export function centreRevolve(shape: Shape3D, plane: SketchPlane, data: SketchData, opts: RevolveOptions): Shape3D {
+  if (opts.angle >= 360 - 1e-9) return shape;
+  const axis = revolveAxis(plane, data, opts.axis);
+  if (!axis) return shape;
+  const sign = opts.flip ? -1 : 1;
+  const d = axis.direction;
+  return shape.rotate(-opts.angle / 2, axis.origin, [d[0] * sign, d[1] * sign, d[2] * sign]);
+}
 
 export function revolveSketch(plane: SketchPlane, data: SketchData, opts: RevolveOptions): Shape3D {
   if (!(opts.angle > 0) || opts.angle > 360) throw new Error("The angle must be more than 0° and at most 360°.");

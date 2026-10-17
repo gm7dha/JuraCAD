@@ -157,7 +157,7 @@ describe("mirror and pattern features", () => {
     expect(mirror.mirror).toEqual({ sources: [box.id], plane: { kind: "default", name: "Right" } });
     const circ = createFeature(doc, "circularPattern");
     expect(circ.pattern).toEqual({ sources: [box.id], axis: "z", flip: false });
-    expect(circ.params).toEqual({ count: "6", angle: "360" });
+    expect(circ.params).toEqual({ count: "6", angle: "360", cx: "0", cy: "0", cz: "0" });
     const saved = parseDocument(JSON.parse(JSON.stringify(addFeature(addFeature(doc, mirror), circ))));
     expect(saved?.features[1].mirror).toEqual(mirror.mirror);
     expect(saved?.features[2].pattern).toEqual(circ.pattern);

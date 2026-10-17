@@ -306,7 +306,7 @@ function parseImportedFile(raw: unknown): ImportedFile | null {
 }
 
 const FEATURE_TYPES = new Set<string>(Object.keys(FEATURE_DEFS));
-const OPERATIONS = new Set<string>(["new", "add", "remove"]);
+const OPERATIONS = new Set<string>(["new", "add", "remove", "intersect"]);
 
 /** Check one Part Studio's features from untrusted JSON (ids must be unique across the document: `seen`). */
 function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
@@ -347,18 +347,32 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         end: ex?.end === "symmetric" || ex?.end === "throughAll" || ex?.end === "upToFace" ? ex.end : "blind",
         flip: ex?.flip === true,
         ...(upTo ? { upTo } : {}),
+        ...(ex?.second === true ? { second: true } : {}),
       };
     }
     const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
     if (feature.type === "linearPattern" || feature.type === "circularPattern" || feature.type === "curvePattern") {
       const pt = f.pattern as Record<string, unknown> | undefined;
       const axis = pt?.axis === "y" || pt?.axis === "z" ? pt.axis : pt?.axis === "x" ? "x" : feature.type === "circularPattern" ? "z" : "x";
-      feature.pattern = { sources: ids(pt?.sources), axis, flip: pt?.flip === true, ...(pt?.follow === true ? { follow: true } : {}) };
+      const axis2 = pt?.axis2 === "x" || pt?.axis2 === "y" || pt?.axis2 === "z" ? pt.axis2 : undefined;
+      feature.pattern = {
+        sources: ids(pt?.sources),
+        axis,
+        flip: pt?.flip === true,
+        ...(pt?.follow === true ? { follow: true } : {}),
+        ...(feature.type === "linearPattern" && axis2 ? { axis2 } : {}),
+        ...(feature.type === "linearPattern" && pt?.flip2 === true ? { flip2: true } : {}),
+      };
       if (feature.type === "curvePattern" && typeof f.pathRef === "string") feature.pathRef = f.pathRef;
     }
     if (feature.type === "mirror") {
       const mr = f.mirror as Record<string, unknown> | undefined;
-      feature.mirror = { sources: ids(mr?.sources), plane: parsePlane(mr?.plane) ?? { kind: "default", name: "Right" } };
+      feature.mirror = {
+        sources: ids(mr?.sources),
+        plane: parsePlane(mr?.plane) ?? { kind: "default", name: "Right" },
+        ...(typeof mr?.part === "string" ? { part: mr.part } : {}),
+        ...(mr?.join === true ? { join: true } : {}),
+      };
     }
     if (feature.type === "transform") {
       const t = (f.transform ?? {}) as Record<string, unknown>;
@@ -460,7 +474,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "revolve") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const rv = f.revolve as Record<string, unknown> | undefined;
-      feature.revolve = { axis: typeof rv?.axis === "string" ? rv.axis : "vertical", flip: rv?.flip === true };
+      feature.revolve = { axis: typeof rv?.axis === "string" ? rv.axis : "vertical", flip: rv?.flip === true, ...(rv?.symmetric === true ? { symmetric: true } : {}) };
     }
     if (feature.type === "import") {
       const im = parseImportedFile(f.import);
@@ -471,6 +485,8 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if ((feature.type === "draft" || feature.type === "ruled") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "coil" && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "shell" && f.hollow === true) feature.hollow = true;
+    if ((feature.type === "shell" || feature.type === "chamfer") && f.flipSide === true) feature.flipSide = true;
+    if (feature.type === "chamfer" && (f.chamferType === "twoDistances" || f.chamferType === "distanceAngle")) feature.chamferType = f.chamferType;
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "loft") && f.surface === true) feature.surface = true;
     if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
