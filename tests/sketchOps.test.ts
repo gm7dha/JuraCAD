@@ -108,9 +108,11 @@ describe("constraints and dimensions", () => {
     const height = addDimension(changed.sketch, [r.lineIds[1]]);
     expect(analyzeSketch(height.sketch).freedom).toBe(0);
 
-    // Fully defined: a further dimension would conflict.
+    // Fully defined: a further dimension only shows the size (a reference dimension).
     const extra = addDimension(height.sketch, [r.lineIds[2]]);
-    expect(extra.error).toMatch(/already fully set/);
+    expect(extra.error).toBeUndefined();
+    expect(extra.driven).toBe(true);
+    expect(analyzeSketch(extra.sketch).freedom).toBe(0);
 
     expect(setDimensionValue(height.sketch, width.dimensionId, "-3").error).toBeTruthy();
     expect(setDimensionValue(height.sketch, width.dimensionId, "abc").error).toBeTruthy();

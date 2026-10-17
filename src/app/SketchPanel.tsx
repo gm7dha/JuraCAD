@@ -6,7 +6,8 @@ import { planeLabel } from "../sketch/planes";
 import { findRegions } from "../sketch/regions";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
-import { makeSketchPattern, makeSketchTransform, setPatternOption } from "./sketchActions";
+import { makeSketchPattern, makeSketchTransform, setPatternOption, toggleSketchDimensionDriven } from "./sketchActions";
+import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
 
 /** A conic's fullness: a slider from flat to full, and the number (0.5 = a parabola). */
@@ -41,6 +42,7 @@ export function SketchPanel() {
   const selectionCount = useStore((s) => s.sketch?.selection.length ?? 0);
   const tool = useStore((s) => s.sketch?.tool ?? "select");
   const polygonSides = useStore((s) => s.sketch?.polygonSides ?? 6);
+  const polygonAcross = useStore((s) => s.sketch?.polygonAcross ?? "corners");
   const conicRho = useStore((s) => s.sketch?.conicRho ?? 0.5);
   const selection = useStore((s) => s.sketch?.selection);
   const filletRadius = useStore((s) => s.sketch?.filletRadius ?? "2");
@@ -116,6 +118,25 @@ export function SketchPanel() {
               onChange={(e) => setSketchOptions({ polygonSides: Math.max(3, Math.min(64, Number(e.target.value) || 3)) })}
             />
           </label>
+        )}
+        {tool === "polygon" && (
+          <div className="tool-option">
+            Size across
+            <div className="segmented two" role="group" aria-label="Polygon size across">
+              {(["corners", "flats"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={polygonAcross === k ? "selected" : ""}
+                  aria-pressed={polygonAcross === k}
+                  title={k === "corners" ? "The pointer sets a corner: the size is measured corner to corner" : "The pointer sets the middle of a side: the size is measured across flat sides (like a nut or spanner size)"}
+                  onClick={() => setSketchOptions({ polygonAcross: k })}
+                >
+                  {k === "corners" ? "Corners" : "Flats"}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {(() => {
           // The conic tool's fullness, or the selected conic's.
@@ -222,6 +243,23 @@ export function SketchPanel() {
             <span className="muted">{unit}</span>
           </label>
         )}
+        {(() => {
+          // One dimension selected: it can be switched between setting the size and just showing it.
+          const dim = selection?.length === 1 ? data.constraints.find((c) => c.id === selection[0] && isDimension(c)) : undefined;
+          if (!dim) return null;
+          return (
+            <div className="tool-option">
+              <button
+                type="button"
+                className="text-button"
+                onClick={toggleSketchDimensionDriven}
+                title={dim.driven ? "Let this dimension set the size again (you can then double-click it to type a new size)" : "Keep this dimension just to show the size (in brackets) — it won't change the sketch"}
+              >
+                {dim.driven ? "Let it set the size" : "Just show the size"}
+              </button>
+            </div>
+          );
+        })()}
         {confirmCancel && (
           <div className="dialog-error" role="alert">
             Discard your changes to this sketch? Click ✕ again to discard, or keep sketching.

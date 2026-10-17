@@ -8,7 +8,7 @@
 import { evaluate } from "../model/expr";
 import type { Assembly, AssemblyPattern, Instance } from "../model/types";
 import { compose, quatFromAxisAngle, rotate, type Placement, type Vec3 } from "./math";
-import { nextInstanceName } from "./assembly";
+import { nextInstanceName, withMates } from "./assembly";
 import { quatFromBasis } from "./connectors";
 
 const AXES: Record<AssemblyPattern["axis"], Vec3> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
@@ -96,21 +96,17 @@ export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string
   const gone = new Set(old.filter((i) => !keep.includes(i) && !keep.some((k) => k.id === i.id)).map((i) => i.id));
   const patterns = a.patterns ?? [];
   const next = patterns.some((x) => x.id === p.id) ? patterns.map((x) => (x.id === p.id ? p : x)) : [...patterns, p];
-  return {
-    ...a,
-    instances,
-    patterns: next,
-    ...(a.mates ? { mates: a.mates.filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)) } : {}),
-  };
+  const out = { ...a, instances, patterns: next };
+  return a.mates ? withMates(out, a.mates.filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId))) : out;
 }
 
 /** Remove a pattern and its copies. */
 export function removePattern(a: Assembly, id: string): Assembly {
   const gone = new Set(a.instances.filter((i) => i.copyOf?.pattern === id).map((i) => i.id));
-  const { patterns: _old, mates: _m, ...rest } = a;
+  const { patterns: _old, ...rest } = a;
   const patterns = (a.patterns ?? []).filter((p) => p.id !== id);
   const mates = (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId));
-  return { ...rest, instances: a.instances.filter((i) => !gone.has(i.id)), ...(mates.length ? { mates } : {}), ...(patterns.length ? { patterns } : {}) };
+  return withMates({ ...rest, instances: a.instances.filter((i) => !gone.has(i.id)), ...(patterns.length ? { patterns } : {}) }, mates);
 }
 
 /**
@@ -126,11 +122,7 @@ export function tidyPatterns(a: Assembly): Assembly {
   const orphan = new Set(a.instances.filter((i) => i.copyOf && !live.get(i.copyOf.pattern)?.has(i.copyOf.seed)).map((i) => i.id));
   const { patterns: _old, ...rest } = a;
   const out: Assembly = { ...rest, instances: a.instances.filter((i) => !orphan.has(i.id)), ...(patterns.length ? { patterns } : {}) };
-  if (orphan.size && a.mates) {
-    const mates = a.mates.filter((m) => !orphan.has(m.a.instanceId) && !orphan.has(m.b.instanceId));
-    if (mates.length) out.mates = mates;
-    else delete out.mates;
-  }
+  if (orphan.size && a.mates) return withMates(out, a.mates.filter((m) => !orphan.has(m.a.instanceId) && !orphan.has(m.b.instanceId)));
   return out;
 }
 

@@ -5,7 +5,7 @@
  */
 import { useStore, type SketchTool } from "../model/store";
 import { alignWith, hitTest, inferOrientation, type Hit } from "./hit";
-import { offsetFor } from "./layout";
+import { dimensionLayout, offsetFor } from "./layout";
 import {
   addArc,
   addCircle,
@@ -16,12 +16,16 @@ import {
   circleThrough,
   curveById,
   dimensionFor,
+  dimensionSpecAt,
   dragCircleRim,
   dragCurve,
   dragPoint,
   joinPoints,
   pointPos,
   splineHandles,
+  splinePath,
+  ellipsePoints,
+  nearestOnPath,
   pointsSharingCurve,
   radiusOf,
   setSplineHandle,
@@ -32,6 +36,7 @@ import {
 import {
   addCentreRectangle,
   addPolygon,
+  polygonCorners,
   addAlignedRectangle,
   addCentreArc,
   addEllipse,
@@ -122,6 +127,8 @@ export class SketchController {
   /** Points the pointer has passed over while drawing, most recent first (to line up with). */
   private acquired: string[] = [];
   private lastTool: SketchTool | null = null;
+  /** Which kind of dimension the placing preview last showed. */
+  private previewKind: string | null = null;
   private readonly listeners = new Set<(t: SketchTransient) => void>();
 
   onChange(fn: (t: SketchTransient) => void): () => void {
@@ -179,7 +186,8 @@ export class SketchController {
     const ids: string[] = [];
     for (const refs of groups) {
       const r = addDimension(data, refs);
-      if (r.error) continue;
+      // Sizes already set by something else aren't offered.
+      if (r.error || r.driven) continue;
       data = r.sketch;
       ids.push(r.dimensionId);
     }
@@ -339,8 +347,8 @@ export class SketchController {
         const t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1);
         [x, y] = [ax + t * dx, ay + t * dy];
       } else if (c.type === "spline" || c.type === "ellipse") {
-        // No "on the spline/ellipse" constraint: just the pointer, with no snap.
-        return { x: e.x, y: e.y, snap: null };
+        // The nearest place on the curve (it's held there).
+        [x, y] = nearestOnPath(c.type === "spline" ? splinePath(d, c, 48) : ellipsePoints(d, c, 256), [e.x, e.y]);
       } else {
         const [cx, cy] = pointPos(d, c.center);
         const r = radiusOf(d, c);
@@ -368,7 +376,7 @@ export class SketchController {
     if (tool === "extend" || tool === "split") {
       const hit = this.hitAt(e);
       if (hit?.kind !== "curve") {
-        this.state.setSketchMessage(tool === "extend" ? "Click near the end of a line you want to lengthen." : "Click a line where you want to split it.", "info");
+        this.state.setSketchMessage(tool === "extend" ? "Click near the end of a line or arc you want to lengthen." : "Click a line or arc where you want to split it.", "info");
         return;
       }
       this.commit(tool === "extend" ? extendAt(d, hit.id, { x: e.x, y: e.y }) : splitAt(d, hit.id, { x: e.x, y: e.y }), []);
@@ -402,7 +410,7 @@ export class SketchController {
     if (tool === "sketchFillet") {
       const hit = this.hitAt(e);
       if (hit?.kind !== "point" || hit.id === ORIGIN_ID) {
-        this.state.setSketchMessage("Click the corner point where two lines meet.", "info");
+        this.state.setSketchMessage("Click the corner point where two lines or arcs meet.", "info");
         return;
       }
       const r = filletCorner(d, hit.id, this.state.sketch?.filletRadius ?? "2");
@@ -589,7 +597,11 @@ export class SketchController {
         }
         const [a, b] = this.placed;
         const r = addSlot(d, a, b, slotRadius(a, b, p), construction);
-        if (this.commit(r, r.curveIds)) this.placed = [];
+        if (this.commit(r, r.curveIds)) {
+          this.placed = [];
+          // Offer its length (centre to centre) and the round ends' size.
+          if (!construction && r.axisId) this.offerDimensions([[r.axisId], [r.curveIds[2]]]);
+        }
         this.emit({ preview: [] });
         return;
       }
@@ -598,8 +610,12 @@ export class SketchController {
           this.placed = [p];
           return;
         }
-        const r = addPolygon(d, this.placed[0], p, this.state.sketch?.polygonSides ?? 6, construction);
-        if (this.commit(r, r.lineIds)) this.placed = [];
+        const r = addPolygon(d, this.placed[0], p, this.state.sketch?.polygonSides ?? 6, construction, this.state.sketch?.polygonAcross ?? "corners");
+        if (this.commit(r, r.lineIds)) {
+          this.placed = [];
+          // Offer its size: across corners, or across flats.
+          if (!construction && r.sizeCircleId) this.offerDimensions([[r.sizeCircleId]]);
+        }
         this.emit({ preview: [] });
         return;
       }
@@ -633,6 +649,10 @@ export class SketchController {
       const hit = this.hitAt(e);
       const circular = tool === "sketchPattern" && this.state.sketch?.patternKind === "circular";
       this.emit({ hover: hit?.kind === "curve" || (circular && hit?.kind === "point") ? hit : null, snap: null, preview: this.patternPreview() });
+      return;
+    }
+    if (tool === "dimension" && this.transient.pending.length) {
+      this.emit({ hover: this.hitAt(e), snap: null, ...this.dimensionPreview(e) });
       return;
     }
     if (tool === "dimension" || tool === "trim" || tool === "extend" || tool === "split" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
@@ -728,10 +748,11 @@ export class SketchController {
       else preview.push(...slotPreview(first, this.placed[1], slotRadius(first, this.placed[1], p)));
     } else if (tool === "polygon" && first) {
       const n = Math.max(3, Math.min(64, Math.round(this.state.sketch?.polygonSides ?? 6)));
-      const R = Math.hypot(p.x - first.x, p.y - first.y);
-      const a0 = Math.atan2(p.y - first.y, p.x - first.x);
-      const corner = (i: number): [number, number] => [first.x + R * Math.cos(a0 + (2 * Math.PI * i) / n), first.y + R * Math.sin(a0 + (2 * Math.PI * i) / n)];
-      for (let i = 0; i < n; i++) preview.push({ kind: "line", a: corner(i), b: corner(i + 1) });
+      const across = this.state.sketch?.polygonAcross ?? "corners";
+      const corners = polygonCorners([first.x, first.y], [p.x, p.y], n, across);
+      for (let i = 0; i < n; i++) preview.push({ kind: "line", a: corners[i], b: corners[(i + 1) % n] });
+      const r = Math.hypot(p.x - first.x, p.y - first.y);
+      if (r > 1e-9) preview.push({ kind: "guide", a: [first.x, first.y], b: [p.x, p.y] });
     } else if (tool === "conic" && first) {
       const second = this.placed[1];
       if (!second) preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
@@ -911,8 +932,30 @@ export class SketchController {
   // ---------------------------------------------------------------------------
   // Dimension tool: pick one or two things, then click where the value goes
 
+  /** While placing a dimension: where it would go, and whether it measures across, up or straight. */
+  private dimensionPreview(e: SketchPointer): Pick<SketchTransient, "preview" | "inference"> {
+    const d = this.data!;
+    const base = dimensionFor(d, this.transient.pending);
+    if (typeof base === "string") return { preview: [], inference: null };
+    const offset = offsetFor(d, { id: "tmp", ...base }, [e.x, e.y]);
+    const spec = dimensionSpecAt(d, this.transient.pending, offset);
+    if (typeof spec === "string") return { preview: [], inference: null };
+    const layout = dimensionLayout(d, { id: "tmp", ...spec, value: "0", labelOffset: offset });
+    const preview: PreviewShape[] = (layout?.lines ?? []).map(([a, b]) => ({ kind: "guide", a, b }));
+    const text = spec.type === "horizontalDistance" ? "Across" : spec.type === "verticalDistance" ? "Up" : null;
+    // Say which kind it will be when that changes as the pointer moves.
+    if (spec.type !== this.previewKind) {
+      this.previewKind = spec.type;
+      const what =
+        spec.type === "horizontalDistance" ? "the distance across" : spec.type === "verticalDistance" ? "the distance up" : spec.type === "length" ? "the line's length" : spec.type === "distance" ? "the straight distance" : null;
+      if (what) this.state.setSketchMessage(`Click to place ${what} — moving the value round picks across, up or straight.`, "info");
+    }
+    return { preview, inference: text ? { at: [e.x, e.y], text } : null };
+  }
+
   private dimensionClick(e: SketchPointer) {
     const d = this.data!;
+    this.previewKind = null;
     const hit = this.hitAt(e);
     const pending = this.transient.pending;
     if (hit && pending.length < 2 && !pending.includes(hit.id)) {
@@ -924,7 +967,7 @@ export class SketchController {
       return;
     }
     if (pending.length === 0) {
-      this.state.setSketchMessage("Click a line, circle or arc — or two points, a point and a line, or two lines.", "info");
+      this.state.setSketchMessage("Click a line, circle or arc — or two things to measure between. Where you put the value picks across, up or straight.", "info");
       return;
     }
     const spec = dimensionFor(d, pending);
@@ -936,7 +979,12 @@ export class SketchController {
     const offset = offsetFor(d, { id: "tmp", ...spec }, [e.x, e.y]);
     const r = addDimension(d, pending, offset);
     this.emit({ pending: [] });
-    if (this.commit(r)) this.state.setEditingDimension(r.dimensionId);
+    if (!this.commit(r)) return;
+    if (r.driven) {
+      this.state.setSketchMessage("That's already set by other constraints or dimensions, so this one just shows the size (in brackets) and won't change the sketch.", "info");
+      return;
+    }
+    this.state.setEditingDimension(r.dimensionId);
   }
 }
 
