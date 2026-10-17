@@ -988,6 +988,55 @@ function PicksField() {
   const verb = draft.type === "fillet" ? "round" : "bevel";
 
   const replacing = draft.type === "replaceFace" ? draft.replaceDef ?? { target: null } : null;
+  if (draft.type === "shell") {
+    const hollow = !!draft.hollow;
+    return (
+      <>
+        <div className="segmented two" role="radiogroup" aria-label="Open or hollow">
+          {(
+            [
+              [false, "Open", "Remove the faces you click, leaving walls behind — like a box with its lid off"],
+              [true, "Hollow", "Keep every face and hollow the inside out, sealed — like a hollow ball"],
+            ] as const
+          ).map(([h, label, hint]) => (
+            <button type="button" key={label} role="radio" aria-checked={hollow === h} className={hollow === h ? "selected" : ""} title={hint} onClick={() => setDraftField({ hollow: h || undefined })}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <fieldset className="param-group">
+          <legend>{hollow ? "Part to hollow" : "Faces to remove"}</legend>
+          {picks.length === 0 ? (
+            <p className="dialog-hint pick-hint">
+              {hollow ? "The latest part is hollowed out, sealed inside. Or click any face of another part to hollow that one instead." : "Click the face (or faces) to leave open — usually the top. The rest of the part becomes walls."}
+            </p>
+          ) : (
+            <ul className="pick-list" aria-label="Picked faces">
+              {picks.map((p, i) => (
+                <li key={i}>
+                  <span>
+                    {hollow ? parts.find((x) => x.id === p.partId)?.name ?? "part" : describeRef(p.ref, true)}
+                    {!hollow && multiPart && <span className="muted"> · {parts.find((x) => x.id === p.partId)?.name ?? "part"}</span>}
+                  </span>
+                  <button type="button" className="icon-button small" onClick={() => toggleDraftPick(p)} title="Remove from this feature" aria-label="Remove">
+                    <Icons.Cross size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {picks.length > 0 && (
+            <div className="pick-footer">
+              <span className="muted small">{hollow ? "Click a face of a different part to hollow that one." : "Click more faces to add them, or click one again to remove it."}</span>
+              <button type="button" className="link-button" onClick={() => setDraftField({ picks: [] })}>
+                Clear
+              </button>
+            </div>
+          )}
+        </fieldset>
+      </>
+    );
+  }
   return (
     <fieldset
       className={replacing ? `param-group pick-slot${replacing.picking !== "target" ? " active" : ""}` : "param-group"}

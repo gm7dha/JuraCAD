@@ -141,6 +141,8 @@ export interface Feature {
   splitDef?: SplitOptions;
   /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
+  /** Shell: hollow the part closed inside, keeping every face (no opening), whatever faces are picked. */
+  hollow?: boolean;
   /** Flange: close the corners where these flanges meet other full-length right-angle flanges. */
   closeCorners?: boolean;
   /** Flange: the shape of the bend relief notches (missing = rectangle) and the relief cut where flanges meet at a corner. */
