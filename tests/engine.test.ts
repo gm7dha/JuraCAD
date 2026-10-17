@@ -1332,6 +1332,10 @@ describe("thread symbols on drawings", () => {
     const [rodFront] = engine.project([], undefined, ["front"], true);
     expect(rodFront.threadMarks).toHaveLength(2);
     expect(Math.abs(rodFront.threadMarks![0].line[0])).toBeCloseTo((10 - 1.62375) / 2, 3);
+    // A broken-out cut on the view keeps the thread marks.
+    const [cutFront] = engine.project([], undefined, ["front"], true, [], [{ host: "front", a: [0, 0.6], b: [1, 1], depth: 2 }]);
+    expect(cutFront.breakLines).toHaveLength(1);
+    expect(cutFront.threadMarks).toEqual(rodFront.threadMarks);
   }, 120_000);
 });
 
@@ -1821,6 +1825,23 @@ describe("drawing views", () => {
     expect(area(cut.cutFaces!)).toBeCloseTo(200, 1);
     // The pocket's walls show as more lines.
     expect(cut.visible.length).toBeGreaterThan(plain.visible.length);
+  });
+
+  it("can leave out tangent edges, where faces meet smoothly", () => {
+    // A slot: a 40 × 20 × 10 block with a round end (a Ø20 cylinder centred on its right end).
+    const box = feature("box", { width: 40, depth: 20, height: 10 });
+    const end = feature("cylinder", { diameter: 20, height: 10, x: 40, y: 10, z: 0 }, "add");
+    engine = new GeometryEngine();
+    expect(engine.rebuild([box, end]).parts).toHaveLength(1);
+    // From the front, where the flat side meets the round end (x = 40) is a tangent edge: an upright line.
+    const upright = (p: { visible: number[][] }) => p.visible.filter((l) => l.length === 4 && Math.abs(l[0] - 40) < 1e-6 && Math.abs(l[2] - 40) < 1e-6).length;
+    const [withTangents] = engine.project([], undefined, ["front"], true);
+    const [without] = engine.project([], undefined, ["front"], true, [], [], false);
+    expect(upright(withTangents)).toBeGreaterThan(0);
+    expect(upright(without)).toBe(0);
+    // The outline stays the same.
+    expect(without.bounds).toEqual(withTangents.bounds);
+    expect(without.bounds![2]).toBeCloseTo(50, 6);
   });
 
   it("draws auxiliary views square-on to a sloping line, without cutting", () => {

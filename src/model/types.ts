@@ -223,7 +223,8 @@ export interface DrawingView {
   at?: [number, number];
 }
 
-export type SheetSize = "A4" | "A3" | "A2";
+/** ISO paper sizes, and the US (ANSI) sizes: A = 11 × 8.5 in (Letter), B = 17 × 11 in, and so on. */
+export type SheetSize = "A4" | "A3" | "A2" | "A1" | "A0" | "ANSI A" | "ANSI B" | "ANSI C" | "ANSI D" | "ANSI E";
 
 /** A drawing tab: views of a part on a sheet, with a title block. */
 export interface Drawing {
@@ -232,12 +233,18 @@ export interface Drawing {
   /** The part drawn (its id), or an assembly (its id). */
   source: { kind: "part" | "assembly"; id: string } | null;
   sheet: SheetSize;
+  /**
+   * How the views are arranged: "third" = third-angle (US/ANSI: the top view
+   * above the front, the right view to its right); missing = first-angle
+   * (ISO, UK and Europe: the top view below, the right view to the left).
+   */
+  projection?: "third";
   /** Drawing scale (2 = 2:1, 0.5 = 1:2); missing = chosen to fit. */
   scale?: number;
   hiddenLines: boolean;
   views: DrawingView[];
   /** Title block entries. */
-  title: { title?: string; drawnBy?: string; material?: string; notes?: string };
+  title: { title?: string; drawnBy?: string; material?: string; notes?: string; partNumber?: string; company?: string };
   /** Dimensions (optional: older saves have none). */
   dimensions?: Dimension[];
   /** Detail views (each also has an entry in `views`). */
@@ -262,6 +269,18 @@ export interface Drawing {
   balloons?: boolean;
   /** Assembly drawings: show the parts spread apart (the assembly's exploded view). */
   exploded?: boolean;
+  /** Decimal places for dimensions (0–4, kept even when they're zeros); missing = as many as needed, up to 2 in mm or 3 in inches. */
+  places?: number;
+  /** Dimensions also give the size in the other unit, in brackets: "40 [1.575]". */
+  dualUnits?: boolean;
+  /**
+   * How Fit to sheet makes room for the dimensions (decided when Auto dimension
+   * runs or Fit to sheet is chosen): extra room beside the 3D column (paper mm)
+   * and/or one scale smaller. Missing = neither.
+   */
+  fit?: { gap?: number; down?: true };
+  /** False hides tangent edges (where a fillet or curved face meets a flat one smoothly); missing = shown. */
+  tangentEdges?: boolean;
 }
 
 /**
@@ -367,6 +386,10 @@ export interface Dimension {
   d?: DimPoint;
   /** Angles: which way along each edge the measured angle opens (1 = towards its second end, -1 = away). */
   rays?: [number, number];
+  /** Decimal places to show (0–4, kept even when they're zeros); missing = the drawing's setting. */
+  places?: number;
+  /** A box round the number: "basic" (a theoretically exact size, for GD&T) or "inspection" (a rounded box: check this one). */
+  frame?: "basic" | "inspection";
 }
 
 /** A note on a drawing sheet: its top-left corner (sheet mm, y up) and its lines of text. */

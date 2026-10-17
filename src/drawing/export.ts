@@ -49,12 +49,15 @@ function pdfString(s: string): string {
     if (ch === "(" || ch === ")" || ch === "\\") out += `\\${ch}`;
     else if (code >= 32 && code < 127) out += ch;
     else if (win !== undefined) out += `\\${win.toString(8).padStart(3, "0")}`;
+    else if (PLAIN[ch]) out += PLAIN[ch];
     else if (code >= 160 && code <= 255) out += `\\${code.toString(8).padStart(3, "0")}`;
     else out += "?";
   }
   return out;
 }
-const WIN_ANSI: Record<string, number> = { "€": 0x80, "–": 0x96, "—": 0x97, "‘": 0x91, "’": 0x92, "“": 0x93, "”": 0x94, "•": 0x95 };
+const WIN_ANSI: Record<string, number> = { "€": 0x80, "–": 0x96, "—": 0x97, "‘": 0x91, "’": 0x92, "“": 0x93, "”": 0x94, "•": 0x95, "™": 0x99 };
+/** Signs the PDF's built-in fonts lack, written as the nearest plain letters (e.g. a tolerance's minus sign). */
+const PLAIN: Record<string, string> = { "−": "-", "‐": "-", "≤": "<=", "≥": ">=", "≈": "~", "⌀": "\\330" };
 
 /** Rough width of Helvetica text (for centring and right-aligning). */
 export function textWidth(text: string, size: number): number {
@@ -115,6 +118,22 @@ export function sheetPdf(prims: Prim[], size: [number, number], title = "PartSmi
 // ---------------------------------------------------------------------------
 // DXF (for CAD and laser/CNC programs)
 
+/**
+ * Text for a DXF file: plain ASCII, with the diameter, degree and plus-minus
+ * signs as DXF's %%c, %%d and %%p, and any other letter as a \U+XXXX code
+ * (which AutoCAD, LibreCAD and laser-cutter software read), so "4× Ø6" or a
+ * tolerance's minus sign don't arrive garbled.
+ */
+export function dxfText(text: string): string {
+  let out = "";
+  for (const ch of text.replace(/[Ø⌀]/g, "%%c").replace(/°/g, "%%d").replace(/±/g, "%%p")) {
+    const code = ch.codePointAt(0)!;
+    // (Readers take exactly four hex digits, so anything beyond them — emoji and the like — becomes "?".)
+    out += code < 128 ? ch : code > 0xffff ? "?" : `\\U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+  }
+  return out;
+}
+
 /** An AutoCAD R12 DXF file of the sheet (millimetres): lines on layers VISIBLE, HIDDEN, CENTRE and THIN, and text. */
 export function sheetDxf(prims: Prim[]): string {
   const out: string[] = [];
@@ -150,7 +169,7 @@ export function sheetDxf(prims: Prim[]): string {
       }
     } else {
       const align = p.anchor === "middle" ? 1 : p.anchor === "end" ? 2 : 0;
-      g(0, "TEXT"), g(8, "THIN"), g(10, p.x), g(20, p.y), g(30, 0), g(40, p.size), g(1, p.text.replace(/Ø/g, "%%c").replace(/°/g, "%%d").replace(/±/g, "%%p"));
+      g(0, "TEXT"), g(8, "THIN"), g(10, p.x), g(20, p.y), g(30, 0), g(40, p.size), g(1, dxfText(p.text));
       if (p.rotate) g(50, p.rotate);
       if (align) {
         g(72, align), g(11, p.x), g(21, p.y), g(31, 0);

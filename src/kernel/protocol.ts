@@ -48,6 +48,8 @@ export interface ViewProjection {
   breakLines?: number[][];
   /** Flat pattern views: the bends, each a line across the pattern (x0, y0, x1, y1), its angle (degrees), inside radius, and whether it bends up. */
   bends?: { line: [number, number, number, number]; angle: number; radius: number; up: boolean }[];
+  /** Detail views: anything drawn on the view is kept inside this circle (centre x, y and radius, view mm). */
+  clipCircle?: [number, number, number];
   /** Shortened views: bands taken out of the middle (added by the drawing, not the engine). */
   shorten?: { axis: 0 | 1; from: number; to: number }[];
 }
@@ -182,7 +184,7 @@ export type KernelRequest =
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[] }
   | { type: "clashes"; instances: InstanceInput[] }
-  | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[] }
+  | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
   | { type: "unfold"; partId: string }

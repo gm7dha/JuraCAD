@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { basicFaceExtrusion, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -563,16 +563,47 @@ export function findHoles(shape: Shape3D): FoundHole[] {
 }
 
 /**
+ * Like replicad's makeProjectedEdges, but leaving out tangent edges (where
+ * faces meet smoothly, e.g. along the sides of a fillet): only sharp edges and
+ * outlines.
+ */
+function projectedEdgesWithoutTangents(shape: Shape3D, camera: ProjectionCamera, withHidden: boolean): { visible: Edge[]; hidden: Edge[] } {
+  const oc = getOC();
+  const algo = new oc.HLRBRep_Algo();
+  const projector = new oc.HLRAlgo_Projector(camera.wrapped);
+  // Mark which edges are smooth (faces meeting at under ~0.1°), so the hidden-line pass can tell them apart.
+  oc.BRepLib.EncodeRegularity(shape.wrapped, 2e-3);
+  const toShape = (() => {
+    algo.Add(shape.wrapped, 0);
+    algo.Projector(projector);
+    algo.Update();
+    algo.Hide();
+    return new oc.HLRBRep_HLRToShape(algo);
+  })();
+  const edges = (c: { IsNull(): boolean }) => (c.IsNull() ? [] : (cast(c as never) as unknown as { edges: Edge[] }).edges);
+  try {
+    const visible = [...edges(toShape.VCompound()), ...edges(toShape.OutLineVCompound())];
+    const hidden = withHidden ? [...edges(toShape.HCompound()), ...edges(toShape.OutLineHCompound())] : [];
+    for (const e of [...visible, ...hidden]) oc.BRepLib.BuildCurves3d(e.wrapped as never);
+    return { visible, hidden };
+  } finally {
+    toShape.delete();
+    projector.delete();
+    algo.delete();
+  }
+}
+
+/**
  * One drawing view: the shape seen along `toward`, with the lines hidden
  * behind it (when asked), its circles for dimensions, and the centre lines of
  * round faces seen from the side (`axes`, in 3D).
  */
-function projectView(shape: Shape3D, kind: string, toward: Vec3, right: Vec3, withHidden: boolean, axes: [Vec3, Vec3][]): ViewProjection {
+function projectView(shape: Shape3D, kind: string, toward: Vec3, right: Vec3, withHidden: boolean, axes: [Vec3, Vec3][], tangent = true): ViewProjection {
   const up = cross3(toward, right);
   const flat = (p: Vec3): [number, number] => [dot3(p, right), dot3(p, up)];
   const camera = new ProjectionCamera([0, 0, 0], toward, right);
   try {
-    const { visible, hidden } = makeProjectedEdges(shape, camera, withHidden);
+    const { visible, hidden } = tangent ? makeProjectedEdges(shape, camera, withHidden) : projectedEdgesWithoutTangents(shape, camera, withHidden);
     const out: ViewProjection = { kind, visible: [], hidden: [], circles: [], points: [], bounds: null };
     let lo = [Infinity, Infinity];
     let hi = [-Infinity, -Infinity];
@@ -2974,7 +3005,7 @@ export class GeometryEngine {
    * Drawing views: the chosen parts (or an assembly's placed copies) seen from
    * each direction, with the lines hidden behind the part worked out.
    */
-  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sections: SectionRequest[] = [], breakouts: BreakOutRequest[] = []): ViewProjection[] {
+  project(partIds: string[], instances: InstanceInput[] | undefined, views: ViewKind[], withHidden = true, sections: SectionRequest[] = [], breakouts: BreakOutRequest[] = [], tangent = true): ViewProjection[] {
     const placed = instances?.length ? this.placeInstances(instances) : [];
     const chosen = partIds.length ? this.parts.filter((p) => partIds.includes(p.id)) : this.parts.filter((p) => !p.configured);
     const shapes = placed.length ? placed.map((p) => p.shape) : chosen.map((p) => p.shape);
@@ -2997,7 +3028,7 @@ export class GeometryEngine {
       const out: ViewProjection[] = standard.map((kind) => {
         const { toward, right } = VIEW_CAMERAS[kind];
         // Centre lines of round faces seen from the side (not in the 3D view).
-        return projectView(whole, kind, toward, right, withHidden, kind === "iso" ? [] : (wholeAxes ??= cylinderAxes(whole)));
+        return projectView(whole, kind, toward, right, withHidden, kind === "iso" ? [] : (wholeAxes ??= cylinderAxes(whole)), tangent);
       });
       // Holes seen end-on, for hole callouts (single parts only).
       if (!placed.length) {
@@ -3085,7 +3116,7 @@ export class GeometryEngine {
           } finally {
             cutter.delete();
           }
-          const view = projectView(cut, host, toward, right, withHidden, cylinderAxes(cut));
+          const view = projectView(cut, host, toward, right, withHidden, cylinderAxes(cut), tangent);
           // The faces left at the bottom of each cut, hatched like a section.
           const m = cut.mesh(MESH_TOLERANCES.display);
           const vs = m.vertices;
@@ -3101,6 +3132,9 @@ export class GeometryEngine {
           view.breakLines = rects.map((r) => [r.x0, r.y0, r.x1, r.y0, r.x1, r.y1, r.x0, r.y1, r.x0, r.y0]);
           view.depth = plain.depth;
           view.holes = plain.holes;
+          // Thread symbols stay (the plain view's).
+          if (plain.threadMarks) view.threadMarks = plain.threadMarks;
+          if (plain.sideHoles) view.sideHoles = plain.sideHoles;
           // Keep the plain view's box, so dimensions and other views stay where they were.
           view.bounds = plain.bounds;
           out[at] = view;
@@ -3124,7 +3158,7 @@ export class GeometryEngine {
         }
         if (req.aux) {
           // Auxiliary view: the whole part, looked at square-on to the line.
-          out.push(projectView(whole, req.key, geo.toward, geo.right, withHidden, (wholeAxes ??= cylinderAxes(whole))));
+          out.push(projectView(whole, req.key, geo.toward, geo.right, withHidden, (wholeAxes ??= cylinderAxes(whole)), tangent));
           continue;
         }
         const up = cross3(geo.toward, geo.right);
@@ -3135,7 +3169,7 @@ export class GeometryEngine {
           continue;
         }
         try {
-          const view = projectView(cut.shape, req.key, geo.toward, geo.right, false, cylinderAxes(cut.shape));
+          const view = projectView(cut.shape, req.key, geo.toward, geo.right, false, cylinderAxes(cut.shape), tangent);
           view.cutFaces = cut.faces;
           out.push(view);
         } finally {
