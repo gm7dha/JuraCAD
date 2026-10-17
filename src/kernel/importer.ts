@@ -99,8 +99,9 @@ function stlCorners(bytes: Uint8Array): Float32Array {
 
 /**
  * An STL is just triangles. Each one becomes a flat face sharing its edges with
- * its neighbours; together they're closed up into a solid, and flat areas made
- * of many triangles are joined back into single faces.
+ * its neighbours; each separate body is closed up into a solid of its own (or,
+ * if it isn't closed, brought in as a surface), and flat areas made of many
+ * triangles are joined back into single faces.
  */
 function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
   const scale = units === "in" ? 25.4 : 1;
@@ -172,35 +173,87 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
       }
       faces.push(face);
     }
-    // The triangles already share their edges, so they can go straight into one shell.
-    const builder = new oc.TopoDS_Builder();
-    garbage.push(builder);
-    const shell = new oc.TopoDS_Shell();
-    garbage.push(shell);
-    builder.MakeShell(shell);
-    for (const f of faces) builder.Add(shell, f.wrapped);
-    const maker = new oc.BRepBuilderAPI_MakeSolid();
-    garbage.push(maker);
-    maker.Add(shell);
-    let solid = cast(maker.Solid()) as Shape3D;
-    try {
-      if (measureVolume(solid) < 0) {
-        const flipped = cast(solid.wrapped.Reversed()) as Shape3D;
-        solid.delete();
-        solid = flipped;
-      }
-    } catch {
-      /* keep it as it is */
+    // Separate bodies in the file (triangles that don't touch) become separate parts.
+    const count = triangles.length / 3;
+    const parent = Array.from({ length: vertices.length / 3 }, (_, i) => i);
+    const find = (i: number): number => {
+      while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+      return i;
+    };
+    for (let t = 0; t < triangles.length; t += 3) {
+      const r = find(triangles[t]);
+      parent[find(triangles[t + 1])] = r;
+      parent[find(triangles[t + 2])] = r;
     }
-    // Join the triangles that lie flat together into single faces (slow on very detailed meshes, where it rarely helps).
-    if (triangles.length / 3 <= SIMPLIFY_LIMIT) {
+    const groups = new Map<number, number[]>();
+    for (let k = 0; k < count; k++) {
+      const g = find(triangles[3 * k]);
+      const list = groups.get(g);
+      if (list) list.push(k);
+      else groups.set(g, [k]);
+    }
+    const simplify = count <= SIMPLIFY_LIMIT;
+    const solids: Shape3D[] = [];
+    const open: Shape3D[] = [];
+    for (const members of groups.values()) {
+      // The triangles already share their edges, so they can go straight into one shell.
+      const builder = new oc.TopoDS_Builder();
+      garbage.push(builder);
+      const shell = new oc.TopoDS_Shell();
+      garbage.push(shell);
+      builder.MakeShell(shell);
+      for (const k of members) builder.Add(shell, faces[k].wrapped);
+      // Closed (watertight) when every edge is shared by exactly two of its triangles.
+      const uses = new Map<string, number>();
+      for (const k of members) {
+        const [a, b, c] = [triangles[3 * k], triangles[3 * k + 1], triangles[3 * k + 2]];
+        for (const [p, q] of [[a, b], [b, c], [c, a]]) {
+          const key = p < q ? `${p},${q}` : `${q},${p}`;
+          uses.set(key, (uses.get(key) ?? 0) + 1);
+        }
+      }
+      const closed = [...uses.values()].every((n) => n === 2);
+      if (!closed) {
+        // An open mesh: brought in as a surface (a skin with no inside).
+        open.push(cast(oc.TopoDS.Shell(shell)) as Shape3D);
+        continue;
+      }
+      const maker = new oc.BRepBuilderAPI_MakeSolid();
+      garbage.push(maker);
+      maker.Add(shell);
+      let solid = cast(maker.Solid()) as Shape3D;
       try {
-        solid = solid.simplify();
+        if (measureVolume(solid) < 0) {
+          const flipped = cast(solid.wrapped.Reversed()) as Shape3D;
+          solid.delete();
+          solid = flipped;
+        }
       } catch {
-        /* keep the triangles */
+        /* keep it as it is */
       }
+      // Join the triangles that lie flat together into single faces (slow on very detailed meshes, where it rarely helps).
+      if (simplify) {
+        try {
+          solid = solid.simplify();
+        } catch {
+          /* keep the triangles */
+        }
+      }
+      solids.push(solid);
     }
-    return [solid];
+    if (open.length) {
+      // All the open pieces together, as one surface part.
+      const builder = new oc.TopoDS_Builder();
+      garbage.push(builder);
+      const compound = new oc.TopoDS_Compound();
+      builder.MakeCompound(compound);
+      for (const o of open) builder.Add(compound, o.wrapped);
+      const skin = cast(compound) as Shape3D;
+      open.forEach((o) => o.delete());
+      surfaceShapes.add(skin);
+      solids.push(skin);
+    }
+    return solids;
   } catch (e) {
     throw new Error(`The STL file couldn't be turned into a solid. Check it's a closed (watertight) shape. (${describeError(e, "unknown")})`);
   } finally {
