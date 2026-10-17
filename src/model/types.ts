@@ -533,14 +533,28 @@ export interface Assembly {
   positions?: NamedPosition[];
   /** Mates driving other mates (gears, rack and pinion, screws). */
   relations?: MateRelation[];
-  /** Exploded view: how far the parts are spread apart (1 = their distance from the middle again); missing = together. */
+  /** Exploded view: how far the parts are spread apart (1 = their distance from the middle again; 0 = only the steps below); missing = together. */
   explode?: number;
+  /** Exploded view steps: chosen parts moved a set distance in a direction, one step after another (optional: older saves have none). */
+  explodeSteps?: ExplodeStep[];
   /** Patterns of instances (optional: older saves have none). */
   patterns?: AssemblyPattern[];
   /** Parts copied into matching holes (optional: older saves have none). */
   replicates?: Replicate[];
   /** Parts locked together so they move as one (optional: older saves have none). */
   groups?: AssemblyGroup[];
+}
+
+/** One step of an exploded view: some parts moved along X, Y or Z by a distance. */
+export interface ExplodeStep {
+  id: string;
+  /** The parts moved (instance ids). */
+  instances: string[];
+  axis: "x" | "y" | "z";
+  /** Go the other way (−X…). */
+  flip?: boolean;
+  /** How far, as typed (mm, maths or variables). */
+  distance: string;
 }
 
 /** Parts locked together where they were when grouped (Onshape's Group mate). */

@@ -512,7 +512,8 @@ export function Viewport() {
   const mateDraft = useStore((s) => s.mateDraft?.mate ?? null);
   // Exploded view: shown spread apart, except while a mate is being made.
   const explodePreview = useStore((s) => s.explodePreview);
-  const explode = mateDraft ? 0 : (explodePreview ?? assembly?.explode ?? 0);
+  // Null when not exploded (0 = exploded view steps only).
+  const explode = mateDraft ? null : (explodePreview ?? assembly?.explode ?? null);
   const placements = useMemo(() => {
     if (!assembly) return NO_PLACEMENTS;
     const solvedPlaces = Object.fromEntries(assembly.instances.map((i) => [i.id, solved?.placements[i.id] ?? i.placement]));
@@ -527,7 +528,7 @@ export function Viewport() {
     );
   }, [assembly, solved, parts, explode]);
 
-  useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft && !(explode > 0)), [assembly, mateDraft, explode]);
+  useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft && explode === null), [assembly, mateDraft, explode]);
   const editingAnything = useStore((s) => !!s.editing);
   // Tools that only take faces: clicking near an edge picks the face it's on.
   const facesOnly = useStore((s) => FACE_TOOLS.has(s.editing?.draft.type ?? ""));

@@ -6,6 +6,7 @@ import opencascade from "replicad-opencascadejs";
 import { setOC } from "replicad";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { replaceInstancePart } from "../src/assembly/assembly";
 import { planDrag } from "../src/assembly/drag";
 import { connectorFrameFor, frameLookup, solveWithParts } from "../src/assembly/mates";
 import { GeometryEngine } from "../src/kernel/engine";
@@ -58,6 +59,14 @@ describe("assemblies on real parts", () => {
     const r = solveWithParts(asm, taller);
     expect(r.mateErrors).toEqual({});
     expect(r.placements.i2.position[2]).toBeCloseTo(15, 6);
+
+    // Replace the block with a bigger one: the plate's mate finds the new block's top face.
+    const big = feature("box", { width: 30, depth: 30, height: 25, x: -100 });
+    const withBig = engine.rebuild([a, b, big]).parts;
+    const swapped = replaceInstancePart(asm, "i1", { id: big.id, name: "Big" });
+    const s = solveWithParts(swapped, withBig);
+    expect(s.mateErrors).toEqual({});
+    expect(s.placements.i2.position[2]).toBeCloseTo(25, 6);
   });
 
   it("drags a mirrored part round its own hinge", () => {

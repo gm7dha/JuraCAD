@@ -28,16 +28,18 @@ import type { SketchData } from "../sketch/types";
 import { setCurrentScope } from "./expr";
 import { addConfiguration, removeConfiguration, renameConfiguration, switchConfiguration } from "./configurations";
 import { framesOf, planeAsSketchPlane, refreshDocumentPlanes } from "../sketch/planeFeature";
-import { setLengthUnit, startingLength, type LengthUnit } from "./units";
+import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, AssemblyPattern, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "./types";
+import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, PartSmithDocument } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
 import { matchingConnectors } from "../assembly/connectors";
 import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
+import { duplicateInstances, placedBox, replaceInstancePart, type Box3 } from "../assembly/assembly";
+import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, pickWidthFace, solveWithParts } from "../assembly/mates";
@@ -366,6 +368,14 @@ export interface AppState {
   /** Look for matching holes again (after the part changed). */
   refreshReplicate: (id: string) => void;
   deleteReplicate: (id: string) => void;
+  /** Copy the selected instances (and the mates between them), placed beside everything. */
+  duplicateInstances: () => void;
+  /** Show another part in an instance (and its pattern and Replicate copies), keeping its mates. */
+  replaceInstancePart: (instanceId: string, partId: string) => void;
+  /** Exploded view steps: move the selected parts (add), change or remove a step. */
+  addExplodeStep: () => void;
+  updateExplodeStep: (id: string, patch: Partial<Omit<ExplodeStep, "id">>) => void;
+  removeExplodeStep: (id: string) => void;
   setDragPreview: (change: DragChange | null) => void;
   setDrawingTool: (tool: DrawingTool) => void;
   selectDim: (id: string | null) => void;
@@ -1213,6 +1223,60 @@ export const useStore = create<AppState>((set, get) => {
     deleteReplicate: (id) => {
       const asm = activeAssembly(get());
       if (asm) change((doc) => updateAssembly(doc, asm.id, (a) => removeReplicate(a, id)));
+    },
+    duplicateInstances: () => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm) return;
+      const ids = asm.instances.filter((i) => s.asmSelection.includes(i.id)).map((i) => i.id);
+      if (!ids.length) return;
+      const { placements } = solveWithParts(asm, s.parts);
+      // Beside everything already there (in +X), keeping the copies' places relative to each other.
+      const boxOf = (i: Instance) => {
+        const part = findMesh(s.parts, meshIdOf(i));
+        const b = part ? boundsOfVertices(part.vertices) : null;
+        return b ? placedBox(b, placements[i.id] ?? i.placement) : null;
+      };
+      const all = asm.instances.map(boxOf).filter((b): b is Box3 => !!b);
+      const mine = asm.instances.filter((i) => ids.includes(i.id)).map(boxOf).filter((b): b is Box3 => !!b);
+      const shift: [number, number, number] = all.length && mine.length ? [Math.max(...all.map((b) => b.max[0])) + 10 - Math.min(...mine.map((b) => b.min[0])), 0, 0] : [20, 0, 0];
+      const made = duplicateInstances(asm, ids, placements, shift, newId);
+      change((doc) => updateAssembly(doc, asm.id, () => made.assembly));
+      set({ asmSelection: made.ids });
+    },
+    replaceInstancePart: (instanceId, partId) => {
+      const s = get();
+      const asm = activeAssembly(s);
+      const part = s.parts.find((p) => p.id === partId);
+      const old = asm?.instances.find((i) => i.id === instanceId);
+      if (!asm || !part || !old) return;
+      const oldName = s.parts.find((p) => p.id === old.partId)?.name;
+      change((doc) => {
+        const next = updateAssembly(doc, asm.id, (a) => replaceInstancePart(a, instanceId, { id: part.id, name: part.name }, oldName));
+        const solved = next.assemblies?.find((a) => a.id === asm.id);
+        return solved ? settlePlacements(next, asm.id, solveWithParts(solved, s.parts).placements) : next;
+      });
+    },
+    addExplodeStep: () => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm) return;
+      const ids = asm.instances.filter((i) => s.asmSelection.includes(i.id)).map((i) => i.id);
+      if (!ids.length) return s.showToast("Select the parts to move first (click them, or Shift-click for more).", "info");
+      change((doc) => updateAssembly(doc, asm.id, (a) => putExplodeStep(a, { id: newId("xs"), instances: ids, axis: "z", distance: storeLength(lengthUnit() === "in" ? "1" : "30") })));
+      set({ asmSelection: [] });
+    },
+    updateExplodeStep: (id, patch) => {
+      const asm = activeAssembly(get());
+      const step = asm?.explodeSteps?.find((x) => x.id === id);
+      if (!asm || !step) return;
+      const next: ExplodeStep = { ...step, ...patch };
+      if (!next.flip) delete next.flip;
+      change((doc) => updateAssembly(doc, asm.id, (a) => putExplodeStep(a, next)));
+    },
+    removeExplodeStep: (id) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => updateAssembly(doc, asm.id, (a) => removeExplodeStep(a, id)));
     },
     deletePattern: (id) => {
       const asm = activeAssembly(get());

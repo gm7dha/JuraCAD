@@ -4,14 +4,16 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
-import type { Assembly, AssemblyGroup, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
+import type { Assembly, AssemblyGroup, ExplodeStep, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, PartSmithDocument } from "../model/types";
 import { parseRelation } from "./relations";
 import { parsePattern, tidyPatterns } from "./patterns";
 import { parseReplicate, tidyReplicates } from "./replicate";
 import { parseGroup, tidyGroups } from "./groups";
+import { parseExplodeStep, tidyExplodeSteps } from "./explode";
 import { applyPlacement, IDENTITY, parsePlacement, type Placement, type Vec3 } from "./math";
 import { MATE_TYPES } from "./mates";
 import { startingLength } from "../model/units";
+import { massGrams, materialOf } from "../model/materials";
 
 const assembliesOf = (doc: PartSmithDocument) => doc.assemblies ?? [];
 
@@ -95,6 +97,87 @@ export function updateInstance(
   }));
 }
 
+/**
+ * Copies of some instances (Onshape's copy and paste), each placed at its
+ * original's place moved by `shift`. Mates between the copied parts are
+ * copied too, so a hinged pair stays hinged; mates to other parts aren't.
+ * Pattern and Replicate copies become ordinary parts. Returns the new ids too.
+ */
+export function duplicateInstances(
+  a: Assembly,
+  ids: string[],
+  placements: Record<string, Placement>,
+  shift: Vec3,
+  newId: (prefix: string) => string,
+): { assembly: Assembly; ids: string[] } {
+  const chosen = a.instances.filter((i) => ids.includes(i.id));
+  const map = new Map<string, string>();
+  let instances = [...a.instances];
+  for (const i of chosen) {
+    const id = newId("i");
+    map.set(i.id, id);
+    const at = placements[i.id] ?? i.placement;
+    const base = /^(.*) <\d+>$/.exec(i.name)?.[1] ?? i.name;
+    const { copyOf: _c, replicaOf: _r, ...plain } = i;
+    instances.push({ ...plain, id, name: nextInstanceName({ ...a, instances }, base), fixed: false, placement: { position: [at.position[0] + shift[0], at.position[1] + shift[1], at.position[2] + shift[2]], rotation: at.rotation } });
+  }
+  const used = new Set((a.mates ?? []).map((m) => m.name));
+  const copiedMates: Mate[] = (a.mates ?? [])
+    .filter((m) => map.has(m.a.instanceId) && map.has(m.b.instanceId))
+    .map((m) => {
+      const { replicateOf: _r, ...plain } = m;
+      const name = nextFreeName(used, m.name);
+      used.add(name);
+      return { ...plain, id: newId("m"), name, a: { ...m.a, instanceId: map.get(m.a.instanceId)! }, b: { ...m.b, instanceId: map.get(m.b.instanceId)! } };
+    });
+  return {
+    assembly: { ...a, instances, ...(copiedMates.length ? { mates: [...(a.mates ?? []), ...copiedMates] } : {}) },
+    ids: [...map.values()],
+  };
+}
+
+/** "Hinge 3" for a copy of "Hinge 1" (the next free number), or "Lid hinge (copy)". */
+function nextFreeName(used: Set<string>, name: string): string {
+  const m = /^(.*) (\d+)$/.exec(name);
+  if (m) {
+    let n = Number(m[2]) + 1;
+    while (used.has(`${m[1]} ${n}`)) n++;
+    return `${m[1]} ${n}`;
+  }
+  let candidate = `${name} (copy)`;
+  for (let n = 2; used.has(candidate); n++) candidate = `${name} (copy ${n})`;
+  return candidate;
+}
+
+/**
+ * Show another part in an instance (Onshape's Replace instance), with its
+ * pattern and Replicate copies. Mates on it are kept: each looks for the
+ * most similar face or edge on the new part (pick it again if it's wrong).
+ * An instance still carrying its part's name ("Bolt <2>") takes the new one's.
+ */
+export function replaceInstancePart(a: Assembly, instanceId: string, part: { id: string; name: string }, oldPartName?: string): Assembly {
+  const target = a.instances.find((i) => i.id === instanceId);
+  if (!target || target.partId === part.id) return a;
+  const reps = new Set((a.replicates ?? []).filter((r) => r.seed === instanceId).map((r) => r.id));
+  const changing = new Set(a.instances.filter((i) => i.id === instanceId || i.copyOf?.seed === instanceId || (i.replicaOf && reps.has(i.replicaOf.replicate))).map((i) => i.id));
+  const instances: Instance[] = [];
+  a.instances.forEach((i, k) => {
+    if (!changing.has(i.id)) {
+      instances.push(i);
+      return;
+    }
+    // Another part has its own configurations: show it as in the Part Studio.
+    const { configuration: _c, ...plain } = i;
+    const auto = /^(.*) <\d+>$/.exec(i.name);
+    const renamed = auto && (oldPartName === undefined || auto[1] === oldPartName);
+    const others = { ...a, instances: [...instances, ...a.instances.slice(k + 1)] };
+    instances.push({ ...plain, partId: part.id, name: renamed ? nextInstanceName(others, part.name) : i.name });
+  });
+  const repick = (c: MateConnector): MateConnector =>
+    changing.has(c.instanceId) ? { ...c, pick: { ...c.pick, partId: part.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: part.id } } : {}) } : c;
+  return { ...a, instances, ...(a.mates ? { mates: a.mates.map((m) => ({ ...m, a: repick(m.a), b: repick(m.b) })) } : {}) };
+}
+
 /** Add or replace a relation. */
 export function putRelation(doc: PartSmithDocument, assemblyId: string, relation: MateRelation): PartSmithDocument {
   return updateAssembly(doc, assemblyId, (a) => {
@@ -149,14 +232,14 @@ export function removeRelation(doc: PartSmithDocument, assemblyId: string, id: s
 export function removeInstances(doc: PartSmithDocument, assemblyId: string, ids: string[]): PartSmithDocument {
   const gone = new Set(ids);
   return updateAssembly(doc, assemblyId, (a) =>
-    tidyGroups(tidyReplicates(
+    tidyExplodeSteps(tidyGroups(tidyReplicates(
       tidyPatterns(
         withMates(
           { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
           (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
         ),
       ),
-    )),
+    ))),
   );
 }
 
@@ -181,11 +264,11 @@ export function removeMate(doc: PartSmithDocument, assemblyId: string, mateId: s
   return updateAssembly(doc, assemblyId, (a) => tidyReplicates(withMates(a, (a.mates ?? []).filter((m) => m.id !== mateId))));
 }
 
-/** Spread the parts apart for an exploded view (null or 0 puts them back together). */
+/** Spread the parts apart for an exploded view (null puts them back together; 0 shows only the exploded view's steps). */
 export function setExplode(doc: PartSmithDocument, assemblyId: string, amount: number | null): PartSmithDocument {
   return updateAssembly(doc, assemblyId, (a) => {
     const { explode: _old, ...rest } = a;
-    return amount && amount > 0 ? { ...rest, explode: amount } : rest;
+    return amount !== null && Number.isFinite(amount) && amount >= 0 ? { ...rest, explode: Math.min(amount, 10) } : rest;
   });
 }
 
@@ -246,10 +329,17 @@ export interface BomRow {
   quantity: number;
   /** True when the part no longer exists in the Part Studio. */
   missing: boolean;
+  /** The part's material (e.g. "PLA"), when known. */
+  material?: string;
+  /** What one of them weighs (grams), when known. */
+  massEach?: number;
 }
 
+/** What the parts list can say about the part an instance shows: its material (key) and solid volume (mm³; null for a surface). */
+export type BomInfo = (instance: Instance) => { material?: string; volume: number | null } | null;
+
 /** Bill of materials: each part once, with how many copies are in the assembly (in order of first use). */
-export function billOfMaterials(assembly: Assembly, partNames: Record<string, string>, configurationNames: Record<string, string> = {}): BomRow[] {
+export function billOfMaterials(assembly: Assembly, partNames: Record<string, string>, configurationNames: Record<string, string> = {}, info?: BomInfo): BomRow[] {
   const rows = new Map<string, BomRow>();
   for (const i of assembly.instances) {
     // A part in another configuration is a different line ("Bracket (Large)").
@@ -262,16 +352,58 @@ export function billOfMaterials(assembly: Assembly, partNames: Record<string, st
       const name = partNames[i.partId];
       const base = name ?? i.name.replace(/\s*<\d+>$/, "");
       const cfg = cfgKey !== i.partId ? ` (${configurationNames[i.configuration!]})` : "";
-      rows.set(key, { partId: key, name: base + cfg + (i.mirrored ? " (mirrored)" : ""), quantity: 1, missing: name === undefined });
+      const props = name !== undefined ? info?.(i) : null;
+      rows.set(key, {
+        partId: key,
+        name: base + cfg + (i.mirrored ? " (mirrored)" : ""),
+        quantity: 1,
+        missing: name === undefined,
+        ...(props ? { material: materialOf(props.material).label } : {}),
+        ...(props && props.volume !== null && props.volume > 0 ? { massEach: massGrams(props.volume, props.material) } : {}),
+      });
     }
   }
   return [...rows.values()];
 }
 
+/** What everything in the parts list weighs together (grams), and whether any part's weight is unknown. */
+export function bomTotalMass(rows: BomRow[]): { grams: number; partial: boolean } {
+  let grams = 0;
+  let partial = false;
+  for (const r of rows) {
+    if (r.massEach === undefined) partial = true;
+    else grams += r.massEach * r.quantity;
+  }
+  return { grams, partial };
+}
+
 /** The bill of materials as a CSV file's text (opens in any spreadsheet). */
 export function bomCsv(rows: BomRow[]): string {
   const cell = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
-  return ["Item,Part,Quantity", ...rows.map((r, i) => `${i + 1},${cell(r.name)},${r.quantity}`)].join("\n") + "\n";
+  const extra = rows.some((r) => r.material !== undefined || r.massEach !== undefined);
+  const grams = (g: number | undefined) => (g === undefined ? "" : String(Math.round(g * 10) / 10));
+  if (!extra) return ["Item,Part,Quantity", ...rows.map((r, i) => `${i + 1},${cell(r.name)},${r.quantity}`)].join("\n") + "\n";
+  return (
+    [
+      "Item,Part,Quantity,Material,Mass each (g),Mass (g)",
+      ...rows.map((r, i) => `${i + 1},${cell(r.name)},${r.quantity},${cell(r.material ?? "")},${grams(r.massEach)},${grams(r.massEach === undefined ? undefined : r.massEach * r.quantity)}`),
+    ].join("\n") + "\n"
+  );
+}
+
+/** Volume (mm³) enclosed by a closed triangle mesh (x, y, z corners; three corner numbers per triangle). */
+export function meshVolume(vertices: ArrayLike<number>, triangles: ArrayLike<number>): number {
+  let v = 0;
+  for (let t = 0; t + 2 < triangles.length; t += 3) {
+    const a = 3 * triangles[t];
+    const b = 3 * triangles[t + 1];
+    const c = 3 * triangles[t + 2];
+    const [ax, ay, az] = [vertices[a], vertices[a + 1], vertices[a + 2]];
+    const [bx, by, bz] = [vertices[b], vertices[b + 1], vertices[b + 2]];
+    const [cx, cy, cz] = [vertices[c], vertices[c + 1], vertices[c + 2]];
+    v += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+  }
+  return Math.abs(v);
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +505,7 @@ export function parseAssemblies(raw: unknown): Assembly[] {
       id: r.id,
       name: typeof r.name === "string" && r.name.trim() ? r.name : "Assembly",
       instances,
-      ...(typeof r.explode === "number" && Number.isFinite(r.explode) && r.explode > 0 ? { explode: Math.min(r.explode, 10) } : {}),
+      ...(typeof r.explode === "number" && Number.isFinite(r.explode) && r.explode >= 0 ? { explode: Math.min(r.explode, 10) } : {}),
     };
     const mateIds = new Set(mates.map((m) => m.id));
     const relations = (Array.isArray(r.relations) ? r.relations : [])
@@ -394,20 +526,22 @@ export function parseAssemblies(raw: unknown): Assembly[] {
     const patterns = (Array.isArray(r.patterns) ? r.patterns : []).map((p) => parsePattern(p, instanceIds)).filter((p): p is AssemblyPattern => !!p);
     const replicates = (Array.isArray(r.replicates) ? r.replicates : []).map(parseReplicate).filter((x): x is Replicate => !!x);
     // Each part in one group at most.
+    const explodeSteps = (Array.isArray(r.explodeSteps) ? r.explodeSteps : []).map(parseExplodeStep).filter((x): x is ExplodeStep => !!x);
     const groups: AssemblyGroup[] = [];
     for (const raw of Array.isArray(r.groups) ? r.groups : []) {
       const g = parseGroup(raw);
       if (g && g.members.every((m) => instanceIds.has(m) && !groups.some((x) => x.members.includes(m)))) groups.push(g);
     }
     out.push(
-      tidyGroups(tidyReplicates(tidyPatterns({
+      tidyExplodeSteps(tidyGroups(tidyReplicates(tidyPatterns({
         ...(mates.length ? { ...assembly, mates } : assembly),
         ...(relations.length ? { relations } : {}),
         ...(positions.length ? { positions } : {}),
         ...(patterns.length ? { patterns } : {}),
         ...(replicates.length ? { replicates } : {}),
         ...(groups.length ? { groups } : {}),
-      }))),
+        ...(explodeSteps.length ? { explodeSteps } : {}),
+      })))),
     );
   }
   return out;

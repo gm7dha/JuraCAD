@@ -40,8 +40,8 @@ export const MATE_TYPES: Record<MateType, MateTypeDef> = {
   fastened: {
     type: "fastened",
     label: "Fasten",
-    description: "Joins the two parts solidly — no movement.",
-    values: [gap, angle(false)],
+    description: "Joins the two parts solidly — no movement. Use the gap, turn and shifts to set exactly where it sits.",
+    values: [gap, angle(false), { key: "dx", label: "Shift X", unit: "mm", free: false }, { key: "dy", label: "Shift Y", unit: "mm", free: false }],
   },
   revolute: {
     type: "revolute",

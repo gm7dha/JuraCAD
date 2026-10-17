@@ -2,8 +2,8 @@
 import { useMemo } from "react";
 
 import { solveWithParts, type SolveResult } from "../assembly/mates";
-import { boundsOfVertices, type Box3 } from "../assembly/assembly";
-import { explodedPlacements, explodeOffsets } from "../assembly/explode";
+import { boundsOfVertices, meshVolume, type BomInfo, type Box3 } from "../assembly/assembly";
+import { addOffsets, explodedPlacements, explodeOffsets, stepOffsets } from "../assembly/explode";
 import type { Placement } from "../assembly/math";
 import { withDragChange } from "../assembly/drag";
 import { findMesh, meshIdOf } from "../assembly/configured";
@@ -39,14 +39,33 @@ export function partBox(p: PartMesh): Box3 | null {
   return boxCache.get(p) ?? null;
 }
 
-/** Placements spread apart for an exploded view (unchanged when `amount` is 0). */
-export function explodeAssembly(assembly: Assembly, parts: PartMesh[], placements: Record<string, Placement>, amount: number): Record<string, Placement> {
-  if (!(amount > 0)) return placements;
+/** Volume of each part's display mesh (mm³; null for a surface), worked out once per rebuild. */
+const volumeCache = new WeakMap<PartMesh, number | null>();
+export function partVolume(p: PartMesh): number | null {
+  if (!volumeCache.has(p)) volumeCache.set(p, p.surface ? null : meshVolume(p.vertices, p.triangles));
+  return volumeCache.get(p) ?? null;
+}
+
+/** Material and volume of the part each instance shows, for the parts list. */
+export function bomInfo(parts: PartMesh[], materials: Record<string, string> | undefined): BomInfo {
+  return (i) => {
+    const mesh = findMesh(parts, meshIdOf(i));
+    return mesh ? { material: materials?.[i.partId], volume: partVolume(mesh) } : null;
+  };
+}
+
+/**
+ * Placements for an exploded view: spread apart by `amount` (0 = not spread),
+ * then moved by the exploded view's steps. Null = not exploded (unchanged).
+ */
+export function explodeAssembly(assembly: Assembly, parts: PartMesh[], placements: Record<string, Placement>, amount: number | null): Record<string, Placement> {
+  if (amount === null) return placements;
   const items = assembly.instances.map((i) => {
     const part = findMesh(parts, meshIdOf(i));
     return { id: i.id, placement: placements[i.id] ?? i.placement, box: part ? partBox(part) : null, fixed: i.fixed };
   });
-  return explodedPlacements(placements, explodeOffsets(items, amount));
+  const spread = amount > 0 ? explodeOffsets(items, amount) : {};
+  return explodedPlacements(placements, addOffsets(spread, stepOffsets(assembly.explodeSteps ?? [])));
 }
 
 /** Each instance in its solved place, for exports and clash checks (copies of missing parts are left out). */
