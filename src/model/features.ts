@@ -515,31 +515,30 @@ export interface ResolvedParams {
   errors: Record<string, string>;
 }
 
-/** Turn a feature's typed expressions into millimetre values, checking each one. */
-export function resolveParams(feature: Pick<Feature, "type" | "params">, scope?: Scope): ResolvedParams {
+/**
+ * Turn a feature's typed expressions into millimetre values, checking each one.
+ * A box that isn't shown as the feature is set up now (see visibleParamKeys)
+ * can't be fixed by the user, so a problem in it is ignored and its default used.
+ */
+export function resolveParams(feature: Pick<Feature, "type" | "params"> & Partial<Feature>, scope?: Scope): ResolvedParams {
   const def = FEATURE_DEFS[feature.type];
   const values: Record<string, number> = {};
   const errors: Record<string, string> = {};
+  const shown = visibleParamKeys(feature);
   for (const p of def.params) {
-    const src = feature.params[p.key] ?? p.defaultValue;
-    const r = scope ? evaluate(src, scope) : evaluate(src);
-    if (!r.ok) {
-      errors[p.key] = r.error;
-      continue;
-    }
-    if (p.positive && r.value <= 0) {
-      errors[p.key] = `${p.label} must be more than 0`;
-      continue;
-    }
-    if (p.integer && !Number.isInteger(r.value)) {
-      errors[p.key] = "Must be a whole number";
-      continue;
-    }
-    if (p.min !== undefined && r.value < p.min) {
-      errors[p.key] = `Must be at least ${p.min}`;
-      continue;
-    }
-    values[p.key] = r.value;
+    const typed = feature.params[p.key] ?? p.defaultValue;
+    const check = (src: string): string | number => {
+      const r = scope ? evaluate(src, scope) : evaluate(src);
+      if (!r.ok) return r.error;
+      if (p.positive && r.value <= 0) return `${p.label} must be more than 0`;
+      if (p.integer && !Number.isInteger(r.value)) return "Must be a whole number";
+      if (p.min !== undefined && r.value < p.min) return `Must be at least ${p.min}`;
+      return r.value;
+    };
+    let out = check(typed);
+    if (typeof out === "string" && !shown.has(p.key)) out = check(p.defaultValue);
+    if (typeof out === "string") errors[p.key] = out;
+    else values[p.key] = out;
   }
   return { values, errors };
 }

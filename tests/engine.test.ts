@@ -1370,8 +1370,13 @@ describe("move, turn and copy parts", () => {
     const pattern: Feature = { ...feature("linearPattern", { count: 3, spacing: 20 }, "add"), pattern: { sources: [box.id], axis: "x", flip: false } };
     const r = build([box, transformFeature(box.id, {}, { dx: 50, dy: 5 }), pattern]);
     expect(r.featureErrors).toEqual({});
-    const b = boundsOfPart(r);
-    expect([b.min[0], b.max[0], b.min[1]].map((v) => Math.round(v * 1000) / 1000)).toEqual([50, 100, 5]);
+    // The copies don't touch the box, so each is a part of its own (as in Onshape), 20 mm apart from where it is now.
+    expect(r.parts).toHaveLength(3);
+    const at = (i: number) => {
+      const b = boundsOfPart(r, i);
+      return [b.min[0], b.max[0], b.min[1]].map((v) => Math.round(v * 1000) / 1000);
+    };
+    expect([at(0), at(1), at(2)]).toEqual([[50, 60, 5], [70, 80, 5], [90, 100, 5]]);
   });
 
   it("copies a part, keeping the original", () => {

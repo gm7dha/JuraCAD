@@ -72,3 +72,22 @@ describe("which size boxes show", () => {
     expect([keys.has("cx"), keys.has("cy"), keys.has("cz")]).toEqual([false, true, true]);
   });
 });
+
+describe("problems in boxes that aren't shown", () => {
+  const f = (over: Partial<Feature> & Pick<Feature, "type">): Feature => ({ id: "x", name: "x", operation: "add", suppressed: false, params: {}, ...over });
+
+  it("are ignored (the default is used), so the feature can still be accepted", async () => {
+    const { resolveParams } = await import("../src/model/features");
+    // Chamfer: the angle box was cleared, then the type set back to Equal.
+    const equal = resolveParams(f({ type: "chamfer", params: { distance: "1", distance2: "2", angle: "" } }));
+    expect(equal.errors).toEqual({});
+    expect(equal.values.angle).toBe(30);
+    expect(Object.keys(resolveParams(f({ type: "chamfer", chamferType: "distanceAngle", params: { distance: "1", angle: "" } })).errors)).toEqual(["angle"]);
+    // Extrude: a second depth of 0, then the tick taken off.
+    expect(resolveParams(f({ type: "extrude", extrude: { end: "blind", flip: false }, params: { depth: "5", depth2: "0" } })).errors).toEqual({});
+    expect(Object.keys(resolveParams(f({ type: "extrude", extrude: { end: "blind", flip: false, second: true }, params: { depth: "5", depth2: "0" } })).errors)).toEqual(["depth2"]);
+    // Circular pattern round Z: the hidden Z position uses a deleted variable.
+    const round = resolveParams(f({ type: "circularPattern", pattern: { sources: [], axis: "z", flip: false }, params: { count: "4", angle: "360", cz: "gone * 2" } }));
+    expect(round.errors).toEqual({});
+  });
+});

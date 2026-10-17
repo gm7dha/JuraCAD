@@ -804,7 +804,7 @@ function lopsidedChamfer(shape: Shape3D, picks: TopoPick[], kind: "twoDistances"
       }
     }
     for (const e of pickedEdges) add(e, null);
-    if (!items.length) throw new Error("There are no edges here to bevel.");
+    if (!items.length) throw new Error("There are no edges here to bevel (a ball's face has none). Click edges, or faces with edges round them.");
     for (const { edge, face } of items) {
       if (kind === "twoDistances") builder.Add(first, second, edge.wrapped, face.wrapped);
       else builder.AddDA(first, (second * Math.PI) / 180, edge.wrapped, face.wrapped);
@@ -857,6 +857,55 @@ function outwardShell(shape: Shape3D, open: Face[], thickness: number): Shape3D 
     list.delete();
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+const OUTWARD_FAILED = "Couldn't build walls round the outside of this part. Try putting the walls inside instead (untick Walls outside).";
+const OUTWARD_OPEN_FAILED =
+  "Couldn't build walls round the outside with those faces left open. Leave flat faces open (curved ones can't be here), or put the walls inside instead (untick Walls outside).";
+
+/**
+ * Walls outside, the slow sure way: sealed walls all round (the part grown by
+ * `thickness`, minus the part), then, for each flat face left open, the wall
+ * beyond that face's plane and over it cut away. Curved open faces aren't handled.
+ */
+function outwardByCutting(shape: Shape3D, open: Face[], thickness: number): Shape3D {
+  const grown = offsetSolid(shape, thickness);
+  let walls: Shape3D;
+  try {
+    walls = grown.cut(shape);
+  } finally {
+    grown.delete();
+  }
+  try {
+    for (const face of open) {
+      if (face.geomType !== "PLANE") throw new Error("curved opening");
+      const centre = take(face.center);
+      const normal = take(face.normalAt(centre));
+      // Everything past the face's plane, within a wall's thickness of the face.
+      const [lo, hi] = boundsOf(face as unknown as Shape3D);
+      const grow = thickness * 1.01 + 0.01;
+      const near = makeBox([lo[0] - grow, lo[1] - grow, lo[2] - grow], [hi[0] + grow, hi[1] + grow, hi[2] + grow]);
+      const beyond = halfSpace(walls, centre, normal);
+      let cutter: Shape3D;
+      try {
+        cutter = near.intersect(beyond) as Shape3D;
+      } finally {
+        near.delete();
+        beyond.delete();
+      }
+      try {
+        const next: Shape3D = walls.cut(cutter);
+        walls.delete();
+        walls = next;
+      } finally {
+        cutter.delete();
+      }
+    }
+    return walls;
+  } catch (e) {
+    walls.delete();
+    throw e;
+  }
 }
 
 /**
@@ -1481,8 +1530,9 @@ export class GeometryEngine {
         continue;
       }
       if (isPatternFeature(feature.type)) {
-        const err = this.applyPattern(feature, features);
-        if (err) featureErrors[feature.id] = err;
+        const r = this.applyPattern(feature, features, partCounter + 1);
+        if (r.error) featureErrors[feature.id] = r.error;
+        partCounter += r.newParts ?? 0;
         continue;
       }
 
@@ -2475,7 +2525,8 @@ export class GeometryEngine {
         ts.slice(1).forEach((p) => used.add(p));
         ts[0].featureIds.push(feature.id, ...ts.slice(1).flatMap((p) => p.featureIds));
         // What made the joined parts is now part of the first one, so a later pattern or mirror of it repeats on that.
-        const joined = new Set(ts.slice(1).map((p) => p.id));
+        // (Only for Join: repeating a feature of an intersected part would add its whole solid back.)
+        const joined = new Set(b.op === "union" ? ts.slice(1).map((p) => p.id) : []);
         for (const tool of this.tools.values()) if (joined.has(tool.partId)) tool.partId = ts[0].id;
       } else {
         if (ts.length === 0) return "Pick the parts to cut — click them in the 3D view or the Parts list.";
@@ -2585,15 +2636,15 @@ export class GeometryEngine {
    * Mirror or pattern: repeat what earlier features did (add or cut their
    * solid) at mirrored, shifted or turned positions. Returns an error message, or null.
    */
-  private applyPattern(feature: Feature, all: Feature[]): string | null {
+  private applyPattern(feature: Feature, all: Feature[], nextPartNumber: number): { error?: string; newParts?: number } {
     const def = FEATURE_DEFS[feature.type];
     const { values, errors } = resolveParams(feature);
     const badParam = def.params.find((p) => errors[p.key]);
-    if (badParam) return `${badParam.label}: ${errors[badParam.key]}`;
+    if (badParam) return { error: `${badParam.label}: ${errors[badParam.key]}` };
     const mirror = feature.type === "mirror";
     const sourceIds = (mirror ? feature.mirror?.sources : feature.pattern?.sources) ?? [];
     if (sourceIds.length === 0) {
-      return `Pick the features to ${mirror ? "mirror" : "repeat"} — click them in the feature list while this dialog is open.`;
+      return { error: `Pick the features to ${mirror ? "mirror" : "repeat"} — click them in the feature list while this dialog is open.` };
     }
 
     // Use the sources in the order they were built.
@@ -2601,12 +2652,12 @@ export class GeometryEngine {
     const at = all.indexOf(feature);
     for (const id of sourceIds) {
       const f = all.find((x) => x.id === id);
-      if (!f) return "One of the features it repeats has been deleted. Edit this feature and pick again.";
-      if (all.indexOf(f) > at) return `${f.name} comes after this ${def.label.toLowerCase()} in the list.`;
-      if (!isSolidFeature(f.type)) return `${f.name} can't be ${mirror ? "mirrored" : "patterned"} — pick features that add or cut a solid.`;
-      if (f.operation === "intersect") return `${f.name} intersects, so it can't be ${mirror ? "mirrored" : "patterned"} — pick features that add or cut a solid.`;
-      if (f.suppressed) return `${f.name} is suppressed, so there's nothing to ${mirror ? "mirror" : "repeat"}.`;
-      if (!this.tools.has(id)) return `${f.name} couldn't be built, so it can't be ${mirror ? "mirrored" : "repeated"}.`;
+      if (!f) return { error: "One of the features it repeats has been deleted. Edit this feature and pick again." };
+      if (all.indexOf(f) > at) return { error: `${f.name} comes after this ${def.label.toLowerCase()} in the list.` };
+      if (!isSolidFeature(f.type)) return { error: `${f.name} can't be ${mirror ? "mirrored" : "patterned"} — pick features that add or cut a solid.` };
+      if (f.operation === "intersect") return { error: `${f.name} intersects, so it can't be ${mirror ? "mirrored" : "patterned"} — pick features that add or cut a solid.` };
+      if (f.suppressed) return { error: `${f.name} is suppressed, so there's nothing to ${mirror ? "mirror" : "repeat"}.` };
+      if (!this.tools.has(id)) return { error: `${f.name} couldn't be built, so it can't be ${mirror ? "mirrored" : "repeated"}.` };
     }
 
     // Where each copy goes.
@@ -2620,9 +2671,9 @@ export class GeometryEngine {
       const count = values.count;
       if (feature.type === "curvePattern") {
         const sk = all.find((f) => f.id === feature.pathRef);
-        if (!feature.pathRef || !sk) return "Choose the sketch with the path to follow.";
-        if (all.indexOf(sk) > all.indexOf(feature)) return `${sk.name} comes after this curve pattern in the list.`;
-        if (sk.suppressed || !sk.sketch?.plane) return `${sk.name} can't be used as the path.`;
+        if (!feature.pathRef || !sk) return { error: "Choose the sketch with the path to follow." };
+        if (all.indexOf(sk) > all.indexOf(feature)) return { error: `${sk.name} comes after this curve pattern in the list.` };
+        if (sk.suppressed || !sk.sketch?.plane) return { error: `${sk.name} can't be used as the path.` };
         // Walk the path from the end nearest the first thing being repeated.
         const firstTool = this.tools.get(ordered[0]?.id ?? "");
         let near: Vec3 | undefined;
@@ -2631,7 +2682,7 @@ export class GeometryEngine {
           near = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
         }
         const walk = walkPath(sk.sketch.plane, sk.sketch.data, near);
-        if (typeof walk === "string") return walk;
+        if (typeof walk === "string") return { error: walk };
         const stations = pathStations(walk, count);
         const first = walk.at(0);
         const flipped = !!feature.pattern?.flip;
@@ -2658,7 +2709,7 @@ export class GeometryEngine {
         // A grid when there's more than one row: rows of `count`, `count2` of them along the second direction.
         const rows = values.count2 ?? 1;
         const axis2Name = feature.pattern?.axis2 ?? (feature.pattern?.axis === "y" ? "x" : "y");
-        if (rows > 1 && axis2Name === (feature.pattern?.axis ?? "x")) return "The rows must go along a different axis from the copies in each row. Choose another second direction.";
+        if (rows > 1 && axis2Name === (feature.pattern?.axis ?? "x")) return { error: "The rows must go along a different axis from the copies in each row. Choose another second direction." };
         const axis2 = AXES[axis2Name];
         const sign2 = feature.pattern?.flip2 ? -1 : 1;
         for (let j = 0; j < rows; j++) {
@@ -2670,7 +2721,7 @@ export class GeometryEngine {
           }
         }
       } else {
-        if (values.angle > 360) return "Spread over: must be at most 360°";
+        if (values.angle > 360) return { error: "Spread over: must be at most 360°" };
         const step = values.angle >= 360 - 1e-9 ? 360 / count : values.angle / (count - 1);
         // The axis goes through (cx, cy, cz) — the origin unless moved.
         const through: Vec3 = [values.cx ?? 0, values.cy ?? 0, values.cz ?? 0];
@@ -2680,14 +2731,24 @@ export class GeometryEngine {
 
     // Work on copies of the parts, and only keep them if everything succeeds.
     const working = new Map<string, Shape3D>();
-    const release = () => working.forEach((s) => s.delete());
+    // Copies of a New feature that wouldn't touch its part: each is a new part (as in Onshape), not loose pieces of that one.
+    const extraParts: Shape3D[] = [];
+    const release = () => {
+      working.forEach((s) => s.delete());
+      extraParts.forEach((s) => s.delete());
+    };
+    const pieces = (x: Shape3D) => {
+      const list = solidsOf(x);
+      list.forEach((y) => y.delete());
+      return list.length;
+    };
     try {
       for (const source of ordered) {
         const tool = this.tools.get(source.id)!;
         const part = this.parts.find((p) => p.id === tool.partId);
         if (!part) {
           release();
-          return `The part ${source.name} belonged to no longer exists.`;
+          return { error: `The part ${source.name} belonged to no longer exists.` };
         }
         let shape = working.get(part.id) ?? part.shape.clone();
         if (part.surface) {
@@ -2699,6 +2760,29 @@ export class GeometryEngine {
             shape = next;
           } finally {
             copies.forEach((c) => c.delete());
+          }
+          working.set(part.id, shape);
+          continue;
+        }
+        if (tool.operation === "new") {
+          const before = pieces(shape);
+          let trial = shape.clone();
+          for (const place of placements) {
+            const copy = place(tool.shape.clone());
+            try {
+              const next = trial.fuse(copy);
+              trial.delete();
+              trial = next;
+            } finally {
+              copy.delete();
+            }
+          }
+          if (pieces(trial) > before) {
+            trial.delete();
+            for (const place of placements) extraParts.push(place(tool.shape.clone()));
+          } else {
+            shape.delete();
+            shape = trial;
           }
           working.set(part.id, shape);
           continue;
@@ -2717,13 +2801,13 @@ export class GeometryEngine {
           shape.delete();
           working.delete(part.id);
           release();
-          return "This would remove the whole part.";
+          return { error: "This would remove the whole part." };
         }
         working.set(part.id, shape);
       }
     } catch (e) {
       release();
-      return describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
+      return { error: describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`) };
     }
     for (const [id, shape] of working) {
       const part = this.parts.find((p) => p.id === id)!;
@@ -2731,7 +2815,12 @@ export class GeometryEngine {
       part.shape = shape;
       part.featureIds.push(feature.id);
     }
-    return null;
+    extraParts.forEach((shape, k) => {
+      const id = `${feature.id}~${k + 1}`;
+      this.tools.set(id, { shape: shape.clone(), operation: "new", partId: id });
+      this.parts.push({ id, name: `Part ${nextPartNumber + k}`, featureIds: [feature.id], shape });
+    });
+    return { newParts: extraParts.length };
   }
 
   /**
@@ -2742,8 +2831,15 @@ export class GeometryEngine {
     const m = feature.mirror!;
     if (!m.part) return { error: "Choose the part to mirror." };
     const part = this.parts.find((p) => p.id === m.part);
-    if (!part) return { error: "The part it mirrors no longer exists. Edit this mirror and choose another part." };
+    if (!part) return { error: "The part it mirrors no longer exists (or is made later in the list). Edit this mirror and choose another part." };
+    if (part.sheet) return { error: "Sheet metal parts can't be mirrored whole yet — the flat pattern couldn't follow. Mirror the features that made it, or copy it with Move / copy." };
     const frame = planeFrame(m.plane);
+    // Its threads (for drawings), mirrored too.
+    const reflect = (p: Vec3, point: boolean): Vec3 => {
+      const k = 2 * dot3(point ? [p[0] - frame.origin[0], p[1] - frame.origin[1], p[2] - frame.origin[2]] : p, frame.n);
+      return [p[0] - k * frame.n[0], p[1] - k * frame.n[1], p[2] - k * frame.n[2]];
+    };
+    const threads = part.threads?.map((t) => ({ ...t, origin: reflect(t.origin, true), axis: reflect(t.axis, false) }));
     let copy: Shape3D;
     try {
       copy = part.shape.clone().mirror(frame.n, frame.origin);
@@ -2759,9 +2855,21 @@ export class GeometryEngine {
       } finally {
         copy.delete();
       }
+      if (!part.surface) {
+        const count = (x: Shape3D) => {
+          const list = solidsOf(x);
+          list.forEach((y) => y.delete());
+          return list.length;
+        };
+        if (count(joined) > count(part.shape)) {
+          joined.delete();
+          return { error: "The mirror image doesn't touch the part, so they can't be joined into one. Untick Join to make it a new part, or mirror across a plane the part touches." };
+        }
+      }
       part.shape.delete();
       part.shape = joined;
       part.featureIds.push(feature.id);
+      if (threads?.length) part.threads = [...(part.threads ?? []), ...threads];
       return {};
     }
     if (part.surface) {
@@ -2769,7 +2877,7 @@ export class GeometryEngine {
       return {};
     }
     this.tools.set(feature.id, { shape: copy.clone(), operation: "new", partId: feature.id });
-    this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape: copy });
+    this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape: copy, ...(threads?.length ? { threads } : {}) });
     return { newPart: true };
   }
 
@@ -2799,7 +2907,7 @@ export class GeometryEngine {
           const hollow = inner.cut(part.shape);
           if (!isValidSolid(hollow) || !grewWithin(part.shape, hollow, values.thickness)) {
             hollow.delete();
-            return "Couldn't put walls round this part. Try thinner walls.";
+            return OUTWARD_FAILED;
           }
           part.shape.delete();
           part.shape = hollow;
@@ -2817,7 +2925,7 @@ export class GeometryEngine {
         part.featureIds.push(feature.id);
         return null;
       } catch {
-        return "Couldn't hollow this part. Try thinner walls — rounded corners and thin areas must be thicker than the walls.";
+        return outward ? OUTWARD_FAILED : "Couldn't hollow this part. Try thinner walls — rounded corners and thin areas must be thicker than the walls.";
       } finally {
         inner?.delete();
       }
@@ -2846,6 +2954,19 @@ export class GeometryEngine {
         shape = null;
       }
       // Round fillets OpenCascade's shell can come out broken: hollow it closed and cut the opening instead.
+      // Walls outside: sealed walls with the openings cut away (keeps the corners sharp), then round joins (OpenCascade's usual shell).
+      for (const attempt of outward ? [() => outwardByCutting(part.shape, faces, values.thickness), () => part.shape.shell(-values.thickness, (f) => f.inList(faces))] : []) {
+        if (shape) break;
+        try {
+          shape = attempt();
+          if (!good(shape)) {
+            shape.delete();
+            shape = null;
+          }
+        } catch {
+          shape = null;
+        }
+      }
       if (!shape && !outward) {
         try {
           shape = shellByCutting(part.shape, faces, values.thickness);
@@ -2860,7 +2981,7 @@ export class GeometryEngine {
     } finally {
       faces.forEach((f) => f.delete());
     }
-    if (!shape) return outward ? "Couldn't put walls round this part. Try thinner walls, or walls inside." : failed;
+    if (!shape) return outward ? OUTWARD_OPEN_FAILED : failed;
     part.shape.delete();
     part.shape = shape;
     part.featureIds.push(feature.id);
@@ -2896,7 +3017,7 @@ export class GeometryEngine {
           try {
             shape = lopsidedChamfer(part.shape, picks.filter((p) => p.partId === partId), lopsided, size, lopsided === "twoDistances" ? values.distance2 : values.angle, !!feature.flipSide);
           } catch (e) {
-            if (e instanceof Error && /can't be found/.test(e.message)) throw e;
+            if (e instanceof Error && /can't be found|no edges here/.test(e.message)) throw e;
             throw new Error(failed);
           }
           if (!isValidSolid(shape, !!part.surface)) {

@@ -531,10 +531,12 @@ function SketchSolidOptions() {
             )}
           </select>
           <p className="dialog-hint field-hint">Tip: draw a construction line (Q) in the sketch to spin around any line you like.</p>
-          <label className="check-row">
-            <input type="checkbox" checked={rev.flip} onChange={(e) => setDraftField({ revolve: { ...rev, flip: e.target.checked } })} />
-            Flip direction (for less than a full turn)
-          </label>
+          {!rev.symmetric && (
+            <label className="check-row">
+              <input type="checkbox" checked={rev.flip} onChange={(e) => setDraftField({ revolve: { ...rev, flip: e.target.checked } })} />
+              Flip direction (for less than a full turn)
+            </label>
+          )}
           <label className="check-row" title="Spin half the angle one way from the sketch and half the other way">
             <input type="checkbox" checked={!!rev.symmetric} onChange={(e) => setDraftField({ revolve: { ...rev, symmetric: e.target.checked || undefined } })} />
             Both ways (half the angle each side of the sketch)
@@ -866,7 +868,10 @@ function PatternOptions() {
   const m = draft.mirror;
   // Mirror a whole part (Onshape's part mirror) instead of features.
   const partMode = mirror && m?.part !== undefined;
-  const partChoices = parts.filter((p) => p.id !== draft.id);
+  // Only parts that exist by this point in the list (not ones made by later features).
+  const at = features.findIndex((f) => f.id === draft.id);
+  const later = new Set(at >= 0 ? features.slice(at + 1).map((f) => f.id) : []);
+  const partChoices = parts.filter((p) => p.id !== draft.id && !later.has(p.id.split("~")[0]));
   const axis2 = pattern.axis2 ?? (pattern.axis === "y" ? "x" : "y");
 
   return (
@@ -1535,7 +1540,7 @@ export function FeatureDialog() {
             {g.params.map((p, pi) => (
               <ParamField
                 key={p.key}
-                def={p}
+                def={draft.type === "chamfer" && draft.chamferType && p.key === "distance" ? { ...p, label: "First distance" } : p}
                 value={draft.params[p.key] ?? p.defaultValue}
                 autoFocus={mode === "create" && gi === 0 && pi === 0}
               />

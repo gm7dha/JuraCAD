@@ -263,3 +263,80 @@ describe("mirror a whole part", () => {
     expect(build([half, unchosen]).featureErrors[unchosen.id]).toMatch(/Choose the part/);
   });
 });
+
+describe("review follow-ups", () => {
+  it("puts walls outside a box with all its top edges rounded, leaving the bottom open", () => {
+    const box = feature("box", { width: 40, depth: 30, height: 20 });
+    const round: Feature = { ...feature("fillet", { radius: 5 }, "add"), picks: [pickAt(build([box]), "face", [20, 15, 20])] };
+    const bottom = pickAt(build([box, round]), "face", [20, 15, 0]);
+    const shell: Feature = { ...feature("shell", { thickness: 2 }, "add"), picks: [bottom], flipSide: true };
+    const r = build([box, round, shell]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    const b = boundsOf(r);
+    expect(b.min.map((v) => Math.round(v * 100) / 100)).toEqual([-2, -2, 0]);
+    expect(b.max.map((v) => Math.round(v * 100) / 100)).toEqual([42, 32, 22]);
+    // A box W × D × H with its top edges rounded (radius r, sharp upright corners) has volume
+    // W·D·H − (1 − π/4) r² · (edge lengths between the rounds) − 4 · r³/3. The walls are the grown part minus the part
+    // (at most; the outside corners may come out rounded too).
+    const rounded = (w: number, d: number, h: number, rr: number) => w * d * h - (1 - Math.PI / 4) * rr * rr * (2 * (w - 2 * rr) + 2 * (d - 2 * rr)) - (4 * rr ** 3) / 3;
+    const v = volumes()[0];
+    expect(v).toBeLessThanOrEqual(rounded(44, 34, 22, 7) - rounded(40, 30, 20, 5) + 0.01);
+    expect(v).toBeGreaterThan(rounded(44, 34, 22, 7) - rounded(40, 30, 20, 5) - 150);
+  });
+
+  it("explains walls outside can't leave a curved face open", () => {
+    const can = feature("cylinder", { diameter: 20, height: 10 });
+    const side = build([can]).parts[0].faceRefs.find((f) => f.surface === "CYLINDRE")!;
+    const shell: Feature = { ...feature("shell", { thickness: 1 }, "add"), picks: [{ partId: can.id, ref: side }], flipSide: true };
+    const err = build([can, shell]).featureErrors[shell.id];
+    expect(err).toMatch(/flat faces open/);
+    expect(err).not.toMatch(/thinner/);
+  });
+
+  it("says a ball's face has no edges to bevel", () => {
+    const ball = feature("sphere", { diameter: 20 });
+    const face = pickAt(build([ball]), "face", [0, 0, 10]);
+    const ch: Feature = { ...feature("chamfer", { distance: 1, distance2: 2 }, "add"), picks: [face], chamferType: "twoDistances" };
+    expect(build([ball, ch]).featureErrors[ch.id]).toMatch(/no edges here/);
+  });
+
+  it("won't join a mirror image that doesn't touch the part, or mirror sheet metal whole", () => {
+    const away = feature("box", { width: 10, depth: 10, height: 5, x: 5 });
+    const join: Feature = { ...feature("mirror", {}, "add"), mirror: { sources: [], plane: { kind: "default", name: "Right" }, part: away.id, join: true } };
+    const r = build([away, join]);
+    expect(r.featureErrors[join.id]).toMatch(/doesn't touch/);
+    expect(volumes()[0]).toBeCloseTo(500, 3);
+    const sk = sketchFeature({ kind: "default", name: "Top" }, rect(5, 0, 20, 10));
+    const sheet: Feature = { ...feature("sheetMetal", {}), sketchRef: sk.id };
+    const mirrorSheet: Feature = { ...feature("mirror", {}, "add"), mirror: { sources: [], plane: { kind: "default", name: "Right" }, part: sheet.id } };
+    expect(build([sk, sheet, mirrorSheet]).featureErrors[mirrorSheet.id]).toMatch(/Sheet metal/);
+  });
+
+  it("doesn't hand an intersected part's features over (a pattern would add their whole solid back)", () => {
+    const plate = feature("box", { width: 60, depth: 20, height: 10 });
+    const boss = feature("cylinder", { diameter: 6, height: 20, x: 10, y: 10, z: -5 });
+    const keep: Feature = { ...feature("boolean", {}), booleanDef: { op: "intersect", targets: [plate.id, boss.id], tools: [], keepTools: false } };
+    const row: Feature = { ...feature("linearPattern", { count: 3, spacing: 20 }, "add"), pattern: { sources: [boss.id], axis: "x", flip: false } };
+    const r = build([plate, boss, keep, row]);
+    expect(r.featureErrors[row.id]).toMatch(/no longer exists/);
+    expect(volumes()[0]).toBeCloseTo(Math.PI * 9 * 10, 2);
+  });
+
+  it("makes copies of a New feature separate parts when they don't touch it, and joins them when they do", () => {
+    const cube = feature("box", { width: 10, depth: 10, height: 10 });
+    const apart: Feature = { ...feature("linearPattern", { count: 3, spacing: 20 }, "add"), pattern: { sources: [cube.id], axis: "x", flip: false } };
+    const r = build([cube, apart]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2", "Part 3"]);
+    expect(volumes().map((v) => Math.round(v))).toEqual([1000, 1000, 1000]);
+    expect(boundsOf(r, 2).min[0]).toBeCloseTo(40, 3);
+    // A later New part is numbered after them.
+    const later = feature("sphere", { diameter: 4, x: 100 });
+    expect(build([cube, apart, later]).parts.map((p) => p.name)).toEqual(["Part 1", "Part 2", "Part 3", "Part 4"]);
+    const touching: Feature = { ...apart, params: { ...apart.params, spacing: "10" } };
+    const t = build([cube, touching]);
+    expect(t.parts).toHaveLength(1);
+    expect(volumes()[0]).toBeCloseTo(3000, 3);
+  });
+});
