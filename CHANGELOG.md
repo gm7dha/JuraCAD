@@ -6,6 +6,17 @@ newer tools won't open in an older version until those tools are back).
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/partsmith/commits/main).
 
+## v0.23 — Hollow, angle arcs, and a round of bug fixes · commit `3c06f37`
+
+- **Hollow** (next to Shell): hollow a part out sealed inside, every face kept. Shell still opens the faces you
+  click.
+- Sketch **angle dimensions** are drawn as arcs, and measure the angle on the side where you put them.
+- **Sweep** and **Curve pattern** follow splines, ellipses and whole circles, from whichever end the profile is at.
+- Fixed: Thicken and Shell on awkward or fully rounded shapes; drawing sections of surfaces; flanges after
+  moving a sheet metal part; deleting a sketch point; gear relations left behind by deleted mates; drawings
+  shrinking when they had several section and detail views; auto dimension on threads and coils; STL files with
+  several bodies (now separate parts) or open meshes (now surfaces).
+
 ## v0.22 — Surfaces that work like parts, Split with a surface, Ruled surface, spline handles · commit `5a090ce`
 
 - **Thicken** on a surface now makes a real solid (it used to make a second skin and call it solid): flat, curved,
