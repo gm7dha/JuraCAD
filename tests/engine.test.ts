@@ -2176,6 +2176,14 @@ describe("sheet metal", () => {
     ...(flipSide ? { flipSide: true } : {}),
   });
 
+  it("explains what to do when the sketch has overlapping shapes", () => {
+    let data = rectSketch(0, 0, 100, 50);
+    data = addCircle(data, { x: 100, y: 25 }, 10).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+    const r = build([sk, sheet(sk.id)]);
+    expect(r.featureErrors.sm).toMatch(/overlap each other count separately: use Trim/);
+  });
+
   it("still takes flanges after the part is moved or turned, and copies keep their flat pattern", () => {
     const sk = sketchFeature({ kind: "default", name: "Top" }, rectSketch(0, 0, 100, 50));
     const plain = build([sk, sheet(sk.id)]);

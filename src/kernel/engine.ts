@@ -1613,7 +1613,10 @@ export class GeometryEngine {
     const sketch = sketches.get(feature.sketchRef);
     if (!sketch?.sketch?.plane) return { error: "The sketch it uses can't be found (deleted, suppressed, or after this in the list)." };
     const { regions } = findRegions(sketch.sketch.data);
-    if (regions.length > 1) return { error: "Sheet metal needs one closed shape (holes inside it are fine). Put other shapes in another sketch." };
+    if (regions.length > 1)
+      return {
+        error: `Sheet metal needs one closed outline (holes inside it are fine), but this sketch has ${regions.length}. Shapes that overlap each other count separately: use Trim to cut away the pieces where they cross, so they make one outline, or move the other shapes to another sketch.`,
+      };
     const frame = planeFrame(sketch.sketch.plane);
     const T = values.thickness;
     if (regions.length === 0) {
