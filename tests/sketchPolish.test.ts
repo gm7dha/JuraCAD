@@ -216,6 +216,11 @@ describe("dimensions across, up or straight", () => {
     expect(placedDistance([0, 0], [10, 20], { x: 12, y: 0 })).toBe("verticalDistance");
     expect(placedDistance([0, 0], [10, 20], { x: 12, y: -15 })).toBe("distance");
     expect(placedDistance([0, 0], [10, 20], { x: 0, y: 0 })).toBe("distance");
+    // One slanted line: its own length anywhere beside it, across or up only past its ends.
+    expect(placedDistance([0, 0], [100, 10], { x: -1, y: 10 }, true)).toBe("distance");
+    expect(placedDistance([0, 0], [3, 4], { x: 20, y: -15 }, true)).toBe("distance");
+    expect(placedDistance([0, 0], [100, 10], { x: 0, y: 30 }, true)).toBe("distance");
+    expect(placedDistance([0, 0], [30, 40], { x: 0, y: 40 }, true)).toBe("horizontalDistance");
     // Level points: always a plain distance.
     expect(placedDistance([0, 0], [10, 0], { x: 0, y: 15 })).toBe("distance");
   });
@@ -246,7 +251,10 @@ describe("dimensions across, up or straight", () => {
 
   it("a slanted line's size can be dimensioned across", () => {
     const l = addLine(emptySketch(), at(0, 0), at(30, 40));
-    const r = addDimension(l.sketch, [l.lineId], { x: 0, y: 30 });
+    const r = addDimension(l.sketch, [l.lineId], { x: 0, y: 40 });
+    // Beside the line, between its ends: its length.
+    const beside = addDimension(l.sketch, [l.lineId], { x: -8, y: 6 });
+    expect(beside.sketch.constraints.find((k) => k.id === beside.dimensionId)!.type).toBe("length");
     expect(r.sketch.constraints.find((k) => k.id === r.dimensionId)!.type).toBe("horizontalDistance");
     // Placed right on the line, it's still the line's length.
     const plain = addDimension(l.sketch, [l.lineId]);
@@ -336,6 +344,30 @@ describe("reference (driven) dimensions", () => {
     const r = setDimensionDriven(s, width, true);
     expect(r.error).toBeUndefined();
     expect(analyzeSketch(r.sketch).freedom).toBe(analyzeSketch(s).freedom + 1);
+  });
+
+  it("with a conflict already in the sketch, says to fix that first instead of making a reference", () => {
+    const { rc, s } = sized();
+    // A clash: the top side forced to a different length from the bottom.
+    const clash = { ...s, constraints: [...s.constraints, { id: "bad", type: "length" as const, refs: [rc.lineIds[2]], value: "5" }] };
+    expect(solveSketch(clash).ok).toBe(false);
+    const c = addCircle(clash, at(100, 100), 4);
+    const r = addDimension(c.sketch, [c.circleId]);
+    expect(r.driven).toBeUndefined();
+    expect(r.error).toMatch(/red/);
+    const ref = addDimension(s, [rc.lineIds[2]], { x: 0, y: 3 });
+    const clashed = { ...ref.sketch, constraints: [...ref.sketch.constraints, { id: "bad", type: "length" as const, refs: [rc.lineIds[1]], value: "1", labelOffset: { x: 0, y: 0 } }, { id: "bad2", type: "length" as const, refs: [rc.lineIds[3]], value: "3" }] };
+    expect(setDimensionDriven(clashed, ref.dimensionId, false).error).toMatch(/red/);
+  });
+
+  it("keeps a typed expression when it's switched to show-only and back", () => {
+    const { s, width } = sized();
+    const typed = setDimensionValue(s, width, "10 + 15");
+    const shown = setDimensionDriven(typed.sketch, width, true);
+    expect(shown.sketch.constraints.find((c) => c.id === width)!.value).toBe("10 + 15");
+    const back = setDimensionDriven(shown.sketch, width, false);
+    expect(back.error).toBeUndefined();
+    expect(back.sketch.constraints.find((c) => c.id === width)!.value).toBe("10 + 15");
   });
 
   it("is kept when the sketch is saved and opened again", () => {

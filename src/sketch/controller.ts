@@ -5,7 +5,7 @@
  */
 import { useStore, type SketchTool } from "../model/store";
 import { alignWith, hitTest, inferOrientation, type Hit } from "./hit";
-import { offsetFor } from "./layout";
+import { dimensionLayout, offsetFor } from "./layout";
 import {
   addArc,
   addCircle,
@@ -16,6 +16,7 @@ import {
   circleThrough,
   curveById,
   dimensionFor,
+  dimensionSpecAt,
   dragCircleRim,
   dragCurve,
   dragPoint,
@@ -126,6 +127,8 @@ export class SketchController {
   /** Points the pointer has passed over while drawing, most recent first (to line up with). */
   private acquired: string[] = [];
   private lastTool: SketchTool | null = null;
+  /** Which kind of dimension the placing preview last showed. */
+  private previewKind: string | null = null;
   private readonly listeners = new Set<(t: SketchTransient) => void>();
 
   onChange(fn: (t: SketchTransient) => void): () => void {
@@ -648,6 +651,10 @@ export class SketchController {
       this.emit({ hover: hit?.kind === "curve" || (circular && hit?.kind === "point") ? hit : null, snap: null, preview: this.patternPreview() });
       return;
     }
+    if (tool === "dimension" && this.transient.pending.length) {
+      this.emit({ hover: this.hitAt(e), snap: null, ...this.dimensionPreview(e) });
+      return;
+    }
     if (tool === "dimension" || tool === "trim" || tool === "extend" || tool === "split" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
       const hit = this.hitAt(e);
       this.emit({ hover: (tool === "trim" || tool === "extend" || tool === "split" || tool === "offset" || tool === "mirror") && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
@@ -925,8 +932,30 @@ export class SketchController {
   // ---------------------------------------------------------------------------
   // Dimension tool: pick one or two things, then click where the value goes
 
+  /** While placing a dimension: where it would go, and whether it measures across, up or straight. */
+  private dimensionPreview(e: SketchPointer): Pick<SketchTransient, "preview" | "inference"> {
+    const d = this.data!;
+    const base = dimensionFor(d, this.transient.pending);
+    if (typeof base === "string") return { preview: [], inference: null };
+    const offset = offsetFor(d, { id: "tmp", ...base }, [e.x, e.y]);
+    const spec = dimensionSpecAt(d, this.transient.pending, offset);
+    if (typeof spec === "string") return { preview: [], inference: null };
+    const layout = dimensionLayout(d, { id: "tmp", ...spec, value: "0", labelOffset: offset });
+    const preview: PreviewShape[] = (layout?.lines ?? []).map(([a, b]) => ({ kind: "guide", a, b }));
+    const text = spec.type === "horizontalDistance" ? "Across" : spec.type === "verticalDistance" ? "Up" : null;
+    // Say which kind it will be when that changes as the pointer moves.
+    if (spec.type !== this.previewKind) {
+      this.previewKind = spec.type;
+      const what =
+        spec.type === "horizontalDistance" ? "the distance across" : spec.type === "verticalDistance" ? "the distance up" : spec.type === "length" ? "the line's length" : spec.type === "distance" ? "the straight distance" : null;
+      if (what) this.state.setSketchMessage(`Click to place ${what} — moving the value round picks across, up or straight.`, "info");
+    }
+    return { preview, inference: text ? { at: [e.x, e.y], text } : null };
+  }
+
   private dimensionClick(e: SketchPointer) {
     const d = this.data!;
+    this.previewKind = null;
     const hit = this.hitAt(e);
     const pending = this.transient.pending;
     if (hit && pending.length < 2 && !pending.includes(hit.id)) {

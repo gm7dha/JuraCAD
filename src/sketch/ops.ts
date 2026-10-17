@@ -649,12 +649,22 @@ export function dimensionFor(s: SketchData, sel: string[]): { type: ConstraintTy
  * Onshape); in the diagonal corners it stays a straight-line distance.
  * `labelOffset` is measured from halfway between the points.
  */
-export function placedDistance(a: [number, number], b: [number, number], labelOffset: { x: number; y: number }): "distance" | "horizontalDistance" | "verticalDistance" {
+export function placedDistance(
+  a: [number, number],
+  b: [number, number],
+  labelOffset: { x: number; y: number },
+  ofLine = false,
+): "distance" | "horizontalDistance" | "verticalDistance" {
   const dx = Math.abs(b[0] - a[0]);
   const dy = Math.abs(b[1] - a[1]);
   const size = Math.max(dx, dy);
   // Already level or upright: all three are the same.
   if (size < 1e-9 || dx < 1e-3 * size || dy < 1e-3 * size) return "distance";
+  // A line's own length whenever the label sits beside it (between its ends); across or up only past its ends.
+  if (ofLine) {
+    const along = Math.abs((labelOffset.x * (b[0] - a[0]) + labelOffset.y * (b[1] - a[1])) / Math.hypot(b[0] - a[0], b[1] - a[1]));
+    if (along <= Math.hypot(b[0] - a[0], b[1] - a[1]) / 2) return "distance";
+  }
   const besideX = Math.abs(labelOffset.x) <= dx / 2;
   const besideY = Math.abs(labelOffset.y) <= dy / 2;
   if (besideX && !besideY) return "horizontalDistance";
@@ -662,13 +672,14 @@ export function placedDistance(a: [number, number], b: [number, number], labelOf
   return "distance";
 }
 
-export function addDimension(
+/** The dimension the selection gets with its label at `labelOffset`: across, up or straight for two points or a slanted line. */
+export function dimensionSpecAt(
   s: SketchData,
   sel: string[],
-  labelOffset: { x: number; y: number } = { x: 0, y: 0 },
-): EditResult & { dimensionId: string; driven?: boolean } {
+  labelOffset: { x: number; y: number },
+): { type: ConstraintType; refs: string[]; extra?: number[] } | string {
   let spec = dimensionFor(s, sel);
-  if (typeof spec === "string") return { sketch: s, error: spec, dimensionId: "" };
+  if (typeof spec === "string") return spec;
   // Two points, or a slanted line, can be measured across or up instead, by where the label goes.
   if (spec.type === "distance" || spec.type === "length") {
     const ends = spec.type === "distance" ? spec.refs : (() => {
@@ -677,12 +688,22 @@ export function addDimension(
     })();
     const A = pointPos(s, ends[0]);
     const B = pointPos(s, ends[1]);
-    const kind = placedDistance(A, B, labelOffset);
+    const kind = placedDistance(A, B, labelOffset, spec.type === "length");
     if (kind !== "distance") {
       const k = kind === "horizontalDistance" ? 0 : 1;
       spec = { type: kind, refs: ends, extra: [Math.sign(B[k] - A[k]) || 1] };
     }
   }
+  return spec;
+}
+
+export function addDimension(
+  s: SketchData,
+  sel: string[],
+  labelOffset: { x: number; y: number } = { x: 0, y: 0 },
+): EditResult & { dimensionId: string; driven?: boolean } {
+  const spec = dimensionSpecAt(s, sel, labelOffset);
+  if (typeof spec === "string") return { sketch: s, error: spec, dimensionId: "" };
   const id = sketchId("d");
   const draft: SketchConstraint = { id, ...spec, value: "0", labelOffset };
   // An angle measures the wedge the label was placed in (inside, outside or supplementary).
@@ -691,6 +712,8 @@ export function addDimension(
   draft.value = draft.type === "angle" ? roundValue(measure(s, draft)) : startingLength(measure(s, draft));
   const r = checkedSolve(s, { ...s, constraints: [...s.constraints, draft] }, "A dimension", true);
   if (r.error) {
+    // With a conflict already in the sketch, nothing new can be checked: that has to be sorted out first.
+    if (!solveSketch(s).ok) return { sketch: s, error: CONFLICT_FIRST, dimensionId: "" };
     // Already set by other constraints: add it as a reference dimension (shown in brackets), like Onshape's driven dimensions.
     return { sketch: { ...s, constraints: [...s.constraints, { ...draft, driven: true }] }, dimensionId: id, driven: true };
   }
@@ -706,20 +729,23 @@ export function setDimensionDriven(s: SketchData, id: string, driven: boolean): 
   const c = s.constraints.find((x) => x.id === id);
   if (!c || !isDimension(c)) return { sketch: s, error: "Select a dimension first." };
   if (!!c.driven === driven) return { sketch: s };
-  if (driven) {
-    const { driven: _d, ...rest } = c;
-    void _d;
-    return { sketch: { ...s, constraints: s.constraints.map((x) => (x.id === id ? { ...rest, driven: true, value: valueNow(s, c) } : x)) } };
-  }
+  // Its value as typed (an expression or a variable) is kept while it's a reference, and used again if it still matches.
+  if (driven) return { sketch: { ...s, constraints: s.constraints.map((x) => (x.id === id ? { ...c, driven: true } : x)) } };
   const { driven: _d, ...rest } = c;
   void _d;
   const others = { ...s, constraints: s.constraints.filter((x) => x.id !== id) };
-  const back = { ...rest, value: valueNow(s, c) };
+  if (!solveSketch(others).ok) return { sketch: s, error: CONFLICT_FIRST };
+  const typed = evaluate(c.value ?? "");
+  const now = measure(s, c);
+  const matches = typed.ok && Math.abs(typed.value - now) <= 1e-6 * Math.max(1, Math.abs(now));
+  const back = { ...rest, value: matches ? c.value! : valueNow(s, c) };
   const r = checkedSolve(others, { ...others, constraints: [...others.constraints, back] }, "That dimension", true);
-  if (r.error) return { sketch: s, error: "That size is already set by other constraints or dimensions, so it has to stay a reference. Delete one of those first." };
+  if (r.error) return { sketch: s, error: "That size is already set by other constraints or dimensions, so it has to stay as just showing the size. Delete one of those first." };
   // Keep the dimension in its place in the list.
   return { sketch: { ...r.sketch, constraints: s.constraints.map((x) => (x.id === id ? back : r.sketch.constraints.find((k) => k.id === x.id) ?? x)) } };
 }
+
+const CONFLICT_FIRST = "Some of the sketch's constraints or dimensions can't all be met (shown in red). Fix or delete those first, then try again.";
 
 /** A dimension's current size as a value to store (degrees for angles, the design's units for lengths). */
 function valueNow(s: SketchData, c: SketchConstraint): string {
