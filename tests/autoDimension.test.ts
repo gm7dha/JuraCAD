@@ -156,4 +156,21 @@ describe("auto dimension", () => {
     const all = autoDimensions({ top: plate }, ["top"], [], 1, id);
     expect(autoDimensions({ top: plate }, ["top"], all, 1, id)).toEqual([]);
   });
+
+  it("dimensions a threaded rod by its size, not each turn of the thread", () => {
+    // A rod 10 wide, 40 long (side view), its thread modelled as a zigzag of short straight edges up both sides.
+    const zig = (x0: number, dx: number): [number, number][] => Array.from({ length: 17 }, (_, k): [number, number] => [x0 + (k % 2 ? dx : 0), 4 + k * 2]);
+    const corners: [number, number][] = [[0, 0], [10, 0], ...zig(10, -0.8), [10, 40], [0, 40], ...zig(0, 0.8).reverse()];
+    const front: ViewProjection = { ...view("front", corners), threadMarks: [{ line: [0.8, 4, 0.8, 36], hidden: false }, { line: [9.2, 4, 9.2, 36], hidden: false }] };
+    const dims = autoDimensions({ front }, ["front"], [], 1, id);
+    // Width, length, and where the thread starts and ends — no dimension to each crest.
+    expect(sizes(dims, { front })).toEqual(["front horizontal 10", "front vertical 36", "front vertical 4", "front vertical 40"]);
+  });
+
+  it("dimensions a coil (only curves) by its overall size", () => {
+    // A helix seen from the side: long curved polylines and no straight edges.
+    const wave = (x: number) => Array.from({ length: 41 }, (_, k) => [x + 2 * Math.sin(k / 3), k / 2]).flat();
+    const v: ViewProjection = { kind: "front", visible: [wave(5), wave(15)], hidden: [], circles: [], points: [5, 0, 5 + 2 * Math.sin(40 / 3), 20, 15, 0, 15 + 2 * Math.sin(40 / 3), 20, 7, 7, 13, 13], bounds: [3, 0, 17, 20] };
+    expect(autoDimensions({ front: v }, ["front"], [], 1, id).length).toBeLessThanOrEqual(4);
+  });
 });

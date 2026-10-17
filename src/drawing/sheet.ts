@@ -220,7 +220,8 @@ function needed(
   projections: Projections,
   keys: string[],
   s: number,
-): { w: number; h: number; cols: number[]; rows: number[]; side: { key: string; w: number; h: number }[] } {
+  maxH = Infinity,
+): { w: number; h: number; cols: number[]; rows: number[]; side: { key: string; w: number; h: number; x: number; y: number }[] } {
   const shown = new Set(keys);
   const size = (k: string) => (shown.has(k) ? paperSize(projections[k], s) : [0, 0]);
   const [fw, fh] = size("front");
@@ -236,11 +237,31 @@ function needed(
       return { key, w, h: h > 0 && isLabelled(key) ? h + labelRoom(key, projections[key]) : h };
     })
     .filter((x) => x.w > 0);
-  const sideW = Math.max(0, ...side.map((x) => x.w));
-  const sideH = side.reduce((t, x) => t + x.h, 0) + GAP * Math.max(0, side.length - 1);
+  // One above another, starting a new column beside it when the next wouldn't fit under the last.
+  const columns: { items: typeof side; w: number; h: number }[] = [];
+  for (const item of side) {
+    const col = columns[columns.length - 1];
+    if (col && col.h + GAP + item.h <= Math.max(maxH, gridH)) {
+      col.items.push(item);
+      col.h += GAP + item.h;
+      col.w = Math.max(col.w, item.w);
+    } else columns.push({ items: [item], w: item.w, h: item.h });
+  }
+  const placed: { key: string; w: number; h: number; x: number; y: number }[] = [];
+  let cx = 0;
+  for (const col of columns) {
+    let cy = 0;
+    for (const item of col.items) {
+      placed.push({ ...item, x: cx, y: cy });
+      cy += item.h + GAP;
+    }
+    cx += col.w + GAP;
+  }
+  const sideW = columns.length ? cx - GAP : 0;
+  const sideH = Math.max(0, ...columns.map((c) => c.h));
   const w = gridW + (sideW > 0 ? (gridW > 0 ? GAP : 0) + sideW : 0);
   const h = Math.max(gridH, sideH);
-  return { w, h, cols, rows, side };
+  return { w, h, cols, rows, side: placed };
 }
 
 /** Room under a section view for its name (mm). */
@@ -253,7 +274,7 @@ const BEND_LINE_H = 4;
 export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H): { scale: number; fits: boolean } {
   const area = viewArea(SHEETS[sheet], reserve);
   for (const s of STANDARD_SCALES) {
-    const n = needed(projections, keys, s);
+    const n = needed(projections, keys, s, area.y1 - area.y0);
     if (n.w <= area.x1 - area.x0 && n.h <= area.y1 - area.y0) return { scale: s, fits: true };
   }
   return { scale: STANDARD_SCALES[STANDARD_SCALES.length - 1], fits: false };
@@ -275,7 +296,7 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   const auto = fitScale(projections, keys, drawing.sheet, reserve);
   const scale = drawing.scale ?? auto.scale;
   const area = viewArea(size, reserve);
-  const n = needed(projections, keys, scale);
+  const n = needed(projections, keys, scale, area.y1 - area.y0);
 
   // Automatic places: the grid of aligned views centred in the area, the 3D and section views to its right.
   const left = area.x0 + Math.max(0, (area.x1 - area.x0 - n.w) / 2);
@@ -302,11 +323,9 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
     top: [colX[1], rowY[2]],
   };
   const sideX = gridRight > left ? gridRight + GAP : left;
-  let sideY = top;
   for (const item of n.side) {
     const viewH = isLabelled(item.key) ? item.h - labelRoom(item.key, projections[item.key]) : item.h;
-    autoCentre[item.key] = [sideX + item.w / 2, sideY - viewH / 2];
-    sideY -= item.h + GAP;
+    autoCentre[item.key] = [sideX + item.x + item.w / 2, top - item.y - viewH / 2];
   }
 
   // Views the user moved keep their place — but views lined up with the front view stay lined up with it.

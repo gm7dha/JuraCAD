@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { centreLines, centreMarks, hatchLines, mergeSegments, placeBalloons, surfacePointNearCentre } from "../src/drawing/annotations";
 import { addDrawing, parseDrawings } from "../src/drawing/drawing";
 import { addSection, nextSectionLetter, removeSection, sectionGeometry, sectionRequests } from "../src/drawing/sections";
+import { addDetail, withDetails } from "../src/drawing/details";
 import { sheetDxf } from "../src/drawing/export";
 import { layoutSheet } from "../src/drawing/sheet";
 import type { ViewProjection } from "../src/kernel/protocol";
@@ -164,6 +165,26 @@ describe("drawing extras on the sheet", () => {
     // Kept when saved and read back.
     const saved = parseDrawings(JSON.parse(JSON.stringify([d])))[0];
     expect(saved.sections![0].aux).toBe(true);
+  });
+
+  it("puts extra side views in a second column rather than shrinking the whole sheet", () => {
+    // Four views of a 40 × 30 × 20 part, two sections and a ×3 detail, plus a revisions table: all fit at 1:1 on A4.
+    let d = addSection(base(), { id: "A", host: "top", a: [0, 0.5], b: [1, 0.5] });
+    d = addSection(d, { id: "B", host: "front", a: [0.25, 0], b: [0.25, 1] });
+    d = addDetail(d, { id: "C", host: "front", centre: [0.5, 0.5], radius: 6, zoom: 3 });
+    d = { ...d, revisions: [{ id: "r", rev: "A", description: "First issue", date: "17/10/2026" }] };
+    const projections = withDetails(holed, d);
+    const l = layoutSheet(d, projections, info);
+    expect(l.scale).toBe(1);
+    // No two views overlap, and all are on the sheet.
+    for (const [i, v] of l.views.entries()) {
+      expect(v.box[0]).toBeGreaterThan(0);
+      expect(v.box[2]).toBeLessThan(l.size[0]);
+      for (const w of l.views.slice(i + 1)) {
+        const apart = v.box[2] <= w.box[0] || w.box[2] <= v.box[0] || v.box[3] <= w.box[1] || w.box[3] <= v.box[1];
+        expect(apart, `${v.key} / ${w.key}`).toBe(true);
+      }
+    }
   });
 
   it("takes several sections, each with its own letter, view and cutting line", () => {
