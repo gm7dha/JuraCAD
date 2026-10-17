@@ -338,4 +338,30 @@ describe("surfaces", () => {
     expect(r.featureErrors[enc.id]).toMatch(/4 edges are left open \(40 mm in all\), for example near \([\d.]+, [\d.]+, 0\)/);
     expect(r.parts).toHaveLength(2);
   });
+
+  it("deletes a solid's face leaving the hole open, so it becomes a surface", () => {
+    const block = feature("box", { width: 10, depth: 10, height: 10 });
+    const p = build([block]).parts[0];
+    const lidFace = p.faceRefs.find((f) => Math.abs(f.center[2] - 10) < 1e-6)!;
+    const del: Feature = { ...feature("deleteFace", {}), picks: [{ partId: block.id, ref: lidFace }], leaveOpen: true };
+    const r = build([block, del]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    expect(r.parts[0].surface).toBe(true);
+    expect(r.parts[0].faceRefs).toHaveLength(5);
+    expect(area(r.parts[0])).toBeCloseTo(500, 3);
+    // The open top's four edges can be filled and the whole closed up again: a 10 mm cube.
+    const ring = r.parts[0].edgeRefs.filter((e) => e.kind === "edge" && Math.abs(e.a[2] - 10) < 1e-6 && Math.abs(e.b[2] - 10) < 1e-6).map((ref) => ({ partId: block.id, ref }));
+    expect(ring).toHaveLength(4);
+    const lid: Feature = { ...feature("fill", {}), picks: ring };
+    const filled = build([block, del, lid]);
+    const enc: Feature = { ...feature("enclose", {}), picks: filled.parts.map((x) => ({ partId: x.id, ref: x.faceRefs[0] })) };
+    const closed = build([block, del, lid, enc]);
+    expect(closed.featureErrors).toEqual({});
+    expect(closed.parts.map((x) => !!x.surface)).toEqual([false]);
+    expect(vol()).toBeCloseTo(1000, 3);
+    // Without "leave open" the part stays a solid.
+    const healed = build([block, { ...del, leaveOpen: undefined }]);
+    expect(healed.parts[0]?.surface).toBeUndefined();
+  });
 });

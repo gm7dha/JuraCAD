@@ -2164,7 +2164,8 @@ export class GeometryEngine {
       return describeError(e, "Couldn't find the picked faces.");
     }
     let result: Shape3D | null = null;
-    if (part.surface) {
+    // Delete face on a surface, or leaving the hole open on a solid: the faces just taken away (a solid becomes a surface).
+    if (part.surface || (feature.type === "deleteFace" && feature.leaveOpen)) {
       if (feature.type !== "deleteFace") return `${def.label} works on solid parts; ${part.name} is a surface.`;
       try {
         result = removeFaces(part.shape, faces);
@@ -2176,6 +2177,10 @@ export class GeometryEngine {
       part.shape.delete();
       part.shape = result;
       part.featureIds.push(feature.id);
+      if (!part.surface) {
+        part.surface = true;
+        delete part.sheet;
+      }
       return null;
     }
     try {

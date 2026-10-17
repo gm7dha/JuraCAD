@@ -354,10 +354,18 @@ function RibThickenOptions() {
   );
 }
 
-/** Fill: how the patch meets the faces beside its edges. Corner break: round or cut off. */
+/** Fill: how the patch meets the faces beside its edges. Corner break: round or cut off. Delete face: leave open. */
 function SurfaceOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
+  if (draft?.type === "deleteFace") {
+    return (
+      <label className="check-row" title="Take the faces away without closing the gap: the part becomes a surface (a skin), to reshape and Enclose or Thicken again">
+        <input type="checkbox" checked={!!draft.leaveOpen} onChange={(e) => setDraftField({ leaveOpen: e.target.checked || undefined })} />
+        Leave the hole open (the part becomes a surface)
+      </label>
+    );
+  }
   if (draft?.type === "cornerBreak") {
     return (
       <div className="segmented two" role="radiogroup" aria-label="Round or cut off">

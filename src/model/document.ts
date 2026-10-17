@@ -424,6 +424,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "thicken" && f.bothSides === true) feature.bothSides = true;
     if (feature.type === "cornerBreak" && f.breakStyle === "chamfer") feature.breakStyle = "chamfer";
+    if (feature.type === "deleteFace" && f.leaveOpen === true) feature.leaveOpen = true;
     if (feature.type === "fill" && f.continuity === "tangent") feature.continuity = "tangent";
     if (feature.type === "derived") {
       const dv = (f.derived ?? {}) as Record<string, unknown>;

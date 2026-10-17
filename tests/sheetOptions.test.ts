@@ -142,6 +142,8 @@ describe("saving the new options", () => {
     const cbBack = parseDocument(JSON.parse(JSON.stringify(addFeature(doc, cb))))!.features[1];
     expect(cbBack.breakStyle).toBe("chamfer");
     expect(cbBack.picks).toEqual([]);
+    const df = { ...createFeature(doc, "deleteFace"), id: "df", leaveOpen: true };
+    expect(parseDocument(JSON.parse(JSON.stringify(addFeature(doc, df))))!.features[1].leaveOpen).toBe(true);
     const odd = parseDocument(JSON.parse(JSON.stringify({ ...doc, features: [{ ...fl, flangePosition: "sideways" }] })))!;
     expect(odd.features[0].flangePosition).toBeUndefined();
   });

@@ -141,6 +141,8 @@ export interface Feature {
   splitDef?: SplitOptions;
   /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
+  /** Delete face: leave the hole open instead of healing it (a solid part becomes a surface). */
+  leaveOpen?: boolean;
   /** Corner break: round the corners off (missing) or cut them off straight. */
   breakStyle?: "chamfer";
   /** Fill: meet the faces beside the edges smoothly (tangent to them) instead of at an angle. */
