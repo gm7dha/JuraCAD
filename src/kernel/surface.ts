@@ -682,7 +682,7 @@ function stripTo(edge: Edge, to: Vec3[]): Shape3D {
  * on. Where two extended edges of a face meet at a corner, the corner between
  * their strips is filled in too, as Onshape does.
  */
-export function extendSurface(shape: Shape3D, edges: Edge[], distance: number): Shape3D {
+export function extendSurface(shape: Shape3D, edges: Edge[], distance: number, limit?: Shape3D): Shape3D {
   if (!edges.length) throw new Error("Click the edges of the surface to extend.");
   if (!(distance > 0)) throw new Error("Distance: enter how far to extend.");
   const faces = facesOf(shape);
@@ -746,11 +746,117 @@ export function extendSurface(shape: Shape3D, edges: Edge[], distance: number): 
         }
       }
     }
+    const reached = strips.length;
     strips.push(...corners);
-    return sewn([shape, ...strips]);
+    if (!limit) return sewn([shape, ...strips]);
+    const kept = trimToLimit(shape, strips, reached, limit, distance);
+    try {
+      return sewn([shape, ...kept]);
+    } finally {
+      release(...kept);
+    }
   } finally {
     release(...faces, ...strips);
   }
+}
+
+/**
+ * Extend up to a face or part: the strips (made long, `reach`) cut where they
+ * meet `limit` — a solid part (cut away inside it) or a face (split along it;
+ * a flat face counts as its whole plane) — keeping only the pieces still
+ * joined to the surface. The first `mustReach` strips must each meet it.
+ */
+function trimToLimit(shape: Shape3D, strips: Shape3D[], mustReach: number, limit: Shape3D, reach: number): Shape3D[] {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const solid = solidsOf(limit);
+  const isSolid = solid.length > 0;
+  solid.forEach((x) => x.delete());
+  let tool: Shape3D = limit;
+  let ownTool = false;
+  const limitFaces = isSolid ? [] : facesOf(limit);
+  try {
+    if (!isSolid && limitFaces.length === 1 && limitFaces[0].geomType === "PLANE") {
+      // A flat face: its whole plane, big enough to cross every strip.
+      const f = limitFaces[0];
+      const c = take(f.center);
+      const n = unit(take(f.normalAt()));
+      const a = unit(Math.abs(n[0]) < 0.9 ? cross(n, [1, 0, 0]) : cross(n, [0, 1, 0]));
+      const b = cross(n, a);
+      const big = 4 * reach;
+      const at = (s: number, t: number): Vec3 => [c[0] + a[0] * s + b[0] * t, c[1] + a[1] * s + b[1] * t, c[2] + a[2] * s + b[2] * t];
+      tool = asIs(makePolygon([at(-big, -big), at(big, -big), at(big, big), at(-big, big)]));
+      ownTool = true;
+    }
+  } finally {
+    limitFaces.forEach((f) => f.delete());
+  }
+  const near = (piece: Shape3D) => {
+    const dist = new oc.BRepExtrema_DistShapeShape();
+    try {
+      dist.LoadS1(piece.wrapped);
+      dist.LoadS2(shape.wrapped);
+      return dist.Perform() && dist.NbSolution() > 0 && dist.Value() < 1e-5;
+    } finally {
+      dist.delete();
+    }
+  };
+  const kept: Shape3D[] = [];
+  try {
+    strips.forEach((strip, i) => {
+      // Split where it meets the face (or the part's skin); the piece inside a part, or past it, doesn't touch the surface.
+      let result: Shape3D;
+      const splitter = new oc.BRepAlgoAPI_Splitter();
+      const args = new oc.NCollection_List_TopoDS_Shape();
+      const tools = new oc.NCollection_List_TopoDS_Shape();
+      try {
+        args.Append(strip.wrapped);
+        tools.Append(tool.wrapped);
+        splitter.SetArguments(args);
+        splitter.SetTools(tools);
+        splitter.Build();
+        if (splitter.HasErrors()) throw new Error(`Couldn't cut the extension where it meets that ${isSolid ? "part" : "face"}.`);
+        result = cast(splitter.Shape()) as Shape3D;
+      } finally {
+        splitter.delete();
+        args.delete();
+        tools.delete();
+      }
+      const pieces = facesOf(result) as unknown as Shape3D[];
+      result.delete();
+      const mine = pieces.filter((p) => near(p));
+      pieces.filter((p) => !mine.includes(p)).forEach((p) => p.delete());
+      // A strip that was never cut — or a piece of it running on past the part's sides — doesn't meet it.
+      const size = (p: Shape3D) => {
+        const box = p.boundingBox;
+        const [a, b] = box.bounds as [Vec3, Vec3];
+        box.delete();
+        return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      };
+      const runsOn = pieces.length === mine.length || mine.some((p) => size(p) > 0.75 * reach);
+      if (runsOn && i >= mustReach) {
+        // A corner between strips that don't stop: left out.
+        mine.forEach((p) => p.delete());
+        return;
+      }
+      if (runsOn) {
+        mine.forEach((p) => p.delete());
+        throw new Error(
+          isSolid
+            ? "An edge's extension never meets that part all along (it runs alongside it, away from it, or past its sides). Pick edges that head straight at the part, choose “Up to a face” (a flat face carries on as its whole plane), or extend by a distance."
+            : "An edge's extension never meets that face (it runs alongside it or away from it, or past its edges). Pick edges that head towards it, or extend by a distance.",
+        );
+      }
+      kept.push(...mine);
+    });
+    return kept;
+  } catch (e) {
+    release(...kept);
+    throw e;
+  } finally {
+    if (ownTool) tool.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** Where the lines p + s·u and q + t·v come closest, if that's ahead along both (and not too far off). */

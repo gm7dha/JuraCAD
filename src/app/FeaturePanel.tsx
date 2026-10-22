@@ -55,6 +55,8 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   extendSurface: Icons.ExtendSurface,
   ruled: Icons.Ruled,
   tab: Icons.Tab,
+  bend: Icons.Bend,
+  jog: Icons.Jog,
   deleteFace: Icons.DeleteFace,
   thread: Icons.Thread,
 };
