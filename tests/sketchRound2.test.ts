@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addArc, addCircle, arcSweep, addDimension, addLine, dimensionFor, dragArcRim, measure, measureToOf, pointPos, setDimensionValue, setMeasureTo } from "../src/sketch/ops";
+import { addArc, addCircle, addPoint, applyRelation, arcSweep, dragPoint, addDimension, addLine, dimensionFor, dragArcRim, measure, measureToOf, pointPos, setDimensionValue, setMeasureTo } from "../src/sketch/ops";
 import { dimensionLayout } from "../src/sketch/layout";
 import { parseSketchData } from "../src/sketch/validate";
 import { solveSketch } from "../src/sketch/solver";
@@ -214,5 +214,33 @@ describe("measuring to circles' edges", () => {
     const d = addDimension(s, [a.id]);
     expect(measureToOf(d.sketch, d.sketch.constraints[0])).toBeNull();
     expect(setMeasureTo(d.sketch, d.sketch.constraints[0].id, "nearest").error).toMatch(/Select a dimension between/);
+  });
+});
+
+describe("a point halfway between two points", () => {
+  it("puts the first point picked midway between the other two, and keeps it there", () => {
+    let s = emptySketch();
+    const p = addPoint(s, at(3, 4));
+    s = p.sketch;
+    const a = addPoint(s, at(0, 0));
+    s = a.sketch;
+    const b = addPoint(s, at(20, 10));
+    s = b.sketch;
+    const r = applyRelation(s, "midpoint", [p.pointId, a.pointId, b.pointId]);
+    expect(r.error).toBeUndefined();
+    const m = pointPos(r.sketch, p.pointId);
+    const pa = pointPos(r.sketch, a.pointId);
+    const pb = pointPos(r.sketch, b.pointId);
+    expect(m[0]).toBeCloseTo((pa[0] + pb[0]) / 2, 9);
+    expect(m[1]).toBeCloseTo((pa[1] + pb[1]) / 2, 9);
+    // Dragging an end point carries the middle point along.
+    const moved = dragPoint(r.sketch, b.pointId, 40, 30);
+    const m2 = pointPos(moved, p.pointId);
+    const a2 = pointPos(moved, a.pointId);
+    expect(pointPos(moved, b.pointId)[0]).toBeCloseTo(40, 6);
+    expect(m2[0]).toBeCloseTo((a2[0] + 40) / 2, 6);
+    expect(m2[1]).toBeCloseTo((a2[1] + 30) / 2, 6);
+    // Two points alone aren't enough.
+    expect(applyRelation(s, "midpoint", [p.pointId, a.pointId]).error).toMatch(/three points/);
   });
 });

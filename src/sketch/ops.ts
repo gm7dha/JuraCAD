@@ -585,7 +585,7 @@ export const RELATION_HINTS: Record<RelationTool, string> = {
   equal: "Select two or more lines, or two or more circles/arcs",
   tangent: "Select a line and a circle/arc, or two circles/arcs",
   concentric: "Select two circles or arcs",
-  midpoint: "Select a point and a line or arc",
+  midpoint: "Select a point and a line or arc — or three points (the first goes halfway between the other two)",
   symmetric: "Select two points (or two lines, circles or arcs) and then the line they mirror across",
   fix: "Select the points or shapes to hold in place",
 };
@@ -650,6 +650,8 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
       break;
     case "midpoint":
       if (only(2) && pts.length === 1 && lines.length === 1) return [mk("midpoint", [pts[0], lines[0].id])];
+      // Three points: the first goes halfway between the other two.
+      if (only(3) && pts.length === 3) return [mk("midpoint", pts)];
       if (only(2) && pts.length === 1 && rounds.length === 1 && rounds[0].type === "arc") {
         if ([rounds[0].start, rounds[0].end, rounds[0].center].includes(pts[0])) return "That point is already one of the arc's own points — pick a different point.";
         return [mk("midpoint", [pts[0], rounds[0].id])];

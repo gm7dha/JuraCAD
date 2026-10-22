@@ -282,6 +282,17 @@ function buildSystem(sketch: SketchData): System {
       }
       case "midpoint": {
         const p = P(a);
+        if (con.refs.length === 3) {
+          // Halfway between two points.
+          const m = P(b), n = P(con.refs[2]);
+          return {
+            size: 2,
+            eval: (x, out) => {
+              const u = p(x), s0 = m(x), e = n(x);
+              out.push(u[0] - (s0[0] + e[0]) / 2, u[1] - (s0[1] + e[1]) / 2);
+            },
+          };
+        }
         const arc = curves.get(b);
         if (arc?.type === "arc") {
           // Halfway round the arc (anticlockwise from its start to its end).
