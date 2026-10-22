@@ -1473,7 +1473,9 @@ function extendArc(s: SketchData, arc: SketchArc, at: { x: number; y: number }):
   const target = curveById(s, hit.by)!;
   const points = s.points.map((p) => (p.id === endId ? { ...p, x: hit.point[0], y: hit.point[1] } : p));
   const on = [con(onCurveType(target), [endId, target.id])];
-  const solved = solveSketch({ ...s, points, constraints: [...s.constraints, ...on] });
+  // Its length and angle change as it grows (like a line's length when a line is extended).
+  const kept = s.constraints.filter((c) => !((c.type === "arcLength" || c.type === "arcAngle") && c.refs[0] === arc.id));
+  const solved = solveSketch({ ...s, points, constraints: [...kept, ...on] });
   if (!solved.ok) return { sketch: s, error: "That arc's end is held where it is by its constraints, so it can't be extended." };
   return { sketch: solved.sketch };
 }
@@ -1495,8 +1497,8 @@ function splitArc(s: SketchData, arc: SketchArc, at: { x: number; y: number }): 
       constraints.push(c);
       continue;
     }
-    // Halfway round the whole arc means nothing for either piece.
-    if (c.type === "midpoint") continue;
+    // Halfway round the whole arc, or how long or far round the whole arc is, means nothing for either piece.
+    if (c.type === "midpoint" || c.type === "arcLength" || c.type === "arcAngle") continue;
     // Something joined smoothly onto the arc's far end now joins the second piece.
     if (c.type === "tangent") {
       const other = curveById(s, c.refs.find((x) => x !== arc.id)!);

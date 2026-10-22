@@ -17,6 +17,7 @@ import {
   curveById,
   dimensionFor,
   dimensionSpecAt,
+  dragArcRim,
   dragCircleRim,
   dragCurve,
   dragPoint,
@@ -874,8 +875,8 @@ export class SketchController {
     if (hit?.kind === "point" && hit.id !== ORIGIN_ID) kind = "point";
     if (hit?.kind === "curve") {
       const c = curveById(d, hit.id)!;
-      // Dragging a circle's rim resizes it; drag its centre point to move it.
-      kind = c.type === "circle" ? "rim" : "curve";
+      // Dragging a circle's or an arc's rim resizes it; drag its centre point to move it.
+      kind = c.type === "circle" || c.type === "arc" ? "rim" : "curve";
     }
     this.drag = { kind, id: hit?.id ?? "", start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit, startScreenX: e.screenX };
   }
@@ -924,6 +925,9 @@ export class SketchController {
       if (c?.type === "circle") {
         const [cx, cy] = pointPos(drag.start, c.center);
         next = dragCircleRim(drag.start, c.id, Math.hypot(e.x - cx, e.y - cy));
+      } else if (c?.type === "arc") {
+        const [cx, cy] = pointPos(drag.start, c.center);
+        next = dragArcRim(drag.start, c.id, Math.hypot(e.x - cx, e.y - cy));
       }
     }
     this.state.updateSketch(next, { record: false });
@@ -963,7 +967,14 @@ export class SketchController {
       // Only keep a second pick if it makes a valid pair; otherwise start again with it.
       const ok = next.length === 1 || typeof dimensionFor(d, next) !== "string";
       this.emit({ pending: ok ? next : [hit.id] });
-      this.state.setSketchMessage("Now click where the dimension should go.", "info");
+      // A lone arc: say how to get its angle or length instead of its radius.
+      const only = (ok ? next : [hit.id]).length === 1 ? curveById(d, hit.id) : undefined;
+      this.state.setSketchMessage(
+        only?.type === "arc"
+          ? "Now click where the radius goes — or click the arc's centre for its angle, or one of its ends for its length."
+          : "Now click where the dimension should go.",
+        "info",
+      );
       return;
     }
     if (pending.length === 0) {

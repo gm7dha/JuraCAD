@@ -1,6 +1,6 @@
 /** Actions used by both the sketch toolbar and keyboard shortcuts. */
 import { useStore, type SketchTool } from "../model/store";
-import { applyRelation, deleteItems, RELATION_LABELS, setDimensionDriven, toggleConstruction, type RelationTool } from "../sketch/ops";
+import { applyRelation, deleteItems, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
 import { patternCurves, readPatternSettings, readTransformSettings, transformCurves } from "../sketch/tools";
 import { viewportApi } from "../viewport/Viewport";
 
@@ -137,4 +137,21 @@ export function toggleSketchDimensionDriven() {
   }
   s.updateSketch(r.sketch, { record: true });
   s.setSketchMessage(c.driven ? "It sets the size again: double-click it to type a new size." : "It just shows the size now (in brackets) and won't change the sketch.", "info");
+}
+
+/** Measure the selected distance between circles/arcs (or one and a line) to their centres, nearest edges or furthest edges. */
+export function setSketchMeasureTo(to: MeasureTo) {
+  const s = useStore.getState();
+  const data = sketchData();
+  if (!data || !s.sketch) return;
+  const id = s.sketch.selection.find((x) => data.constraints.some((c) => c.id === x));
+  if (!id) return;
+  const r = setMeasureTo(data, id, to);
+  if (r.error) {
+    s.setSketchMessage(r.error, "error");
+    return;
+  }
+  if (r.sketch === data) return;
+  s.updateSketch(r.sketch, { record: true });
+  s.setSketchMessage(to === "centre" ? "Measured between the centres now." : to === "nearest" ? "Measured to the nearest edges now (the gap between them)." : "Measured to the furthest edges now (the overall size).", "info");
 }

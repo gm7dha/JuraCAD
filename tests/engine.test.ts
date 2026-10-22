@@ -3,6 +3,7 @@
  * checks volumes, positions and soundness. This is how we catch the
  * geometry going wrong when code changes.
  */
+import { DEFAULT_CLASH_OPTIONS, judgeContacts } from "../src/assembly/assemblyCheck";
 import opencascade from "replicad-opencascadejs";
 import { setOC } from "replicad";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -1710,7 +1711,7 @@ describe("assembly exports and clashes", () => {
       { id: "i2", partId: box.id, name: "Box <2>", position: [15, 0, 0] as [number, number, number], rotation: turn90z },
       { id: "i3", partId: box.id, name: "Box <3>", position: [100, 0, 0] as [number, number, number], rotation: [0, 0, 0, 1] as [number, number, number, number] },
     ];
-    const clashes = engine.clashes(instances);
+    const clashes = judgeContacts(engine.clashes(instances), DEFAULT_CLASH_OPTIONS) as { a: string; b: string; volume: number }[];
     expect(clashes).toHaveLength(1);
     expect(clashes[0].a).toBe("Box <1>");
     expect(clashes[0].b).toBe("Box <2>");
@@ -1737,7 +1738,8 @@ describe("assembly exports and clashes", () => {
       { id: "i1", partId: box.id, name: "Box <1>", position: [0, 0, 0] as [number, number, number], rotation: id },
       { id: "i2", partId: box.id, name: "Box <2>", position: [0, 0, 0] as [number, number, number], rotation: id, mirrored: true },
     ];
-    expect(engine.clashes(mirrored)).toHaveLength(0);
+    // Side by side, touching: not a clash.
+    expect(judgeContacts(engine.clashes(mirrored), DEFAULT_CLASH_OPTIONS)).toHaveLength(0);
     const { vertices } = readBinaryStl(engine.exportStl([], "coarse", mirrored).stl);
     const xs = Array.from(vertices).filter((_, k) => k % 3 === 0);
     expect(Math.min(...xs)).toBeCloseTo(-10, 3);

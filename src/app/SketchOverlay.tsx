@@ -5,7 +5,7 @@ import { lengthNumber, showLength, storeLength, type LengthUnit } from "../model
 import { useLengthUnit, useStore } from "../model/store";
 import { badgeAnchors, dimensionLayout, RELATION_SYMBOLS } from "../sketch/layout";
 import { measure, moveDimensionLabel, setDimensionValue } from "../sketch/ops";
-import { isDimension, type SketchConstraint, type SketchData } from "../sketch/types";
+import { isAngleDimension, isDimension, type SketchConstraint, type SketchData } from "../sketch/types";
 import { sketchStatus, viewportApi } from "../viewport/Viewport";
 
 const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
@@ -37,8 +37,9 @@ function dimensionText(c: SketchConstraint, unit: LengthUnit, data?: SketchData)
     const r = evaluate(c.value ?? "");
     if (r.ok) value = r.value;
   }
-  const shown = value === null ? c.value ?? "?" : c.type === "angle" ? String(Math.round(value * 100) / 100) : lengthNumber(value, unit);
-  const text = c.type === "diameter" ? `⌀${shown}` : c.type === "radius" ? `R${shown}` : c.type === "angle" ? `${shown}°` : shown;
+  const shown = value === null ? c.value ?? "?" : isAngleDimension(c) ? String(Math.round(value * 100) / 100) : lengthNumber(value, unit);
+  // An arc's length gets the arc sign (⌒) in front, like a drawing.
+  const text = c.type === "diameter" ? `⌀${shown}` : c.type === "radius" ? `R${shown}` : isAngleDimension(c) ? `${shown}°` : c.type === "arcLength" ? `⌒${shown}` : shown;
   return c.driven ? `(${text})` : text;
 }
 
@@ -176,7 +177,7 @@ function DimensionLabel({
   // A reference dimension shows the size the sketch has now.
   const data = useStore((s) => (c.driven ? s.editing?.draft.sketch?.data ?? null : null));
   // Lengths are shown and typed in the design's units (see units.ts); angles in degrees.
-  const shownValue = c.type === "angle" ? c.value ?? "" : showLength(c.value ?? "", unit);
+  const shownValue = isAngleDimension(c) ? c.value ?? "" : showLength(c.value ?? "", unit);
   const [text, setText] = useState(shownValue);
   const [error, setError] = useState<string | null>(null);
   const drag = useRef<{ startData: SketchData; moved: boolean; x: number; y: number } | null>(null);
@@ -202,7 +203,7 @@ function DimensionLabel({
       done();
       return;
     }
-    const r = setDimensionValue(current, c.id, c.type === "angle" ? text.trim() : storeLength(text.trim(), unit));
+    const r = setDimensionValue(current, c.id, isAngleDimension(c) ? text.trim() : storeLength(text.trim(), unit));
     if (r.error) {
       setError(r.error);
       return;
@@ -238,7 +239,7 @@ function DimensionLabel({
             else if (!error) apply();
           }}
         />
-        <span className="unit">{c.type === "angle" ? "°" : unit}</span>
+        <span className="unit">{isAngleDimension(c) ? "°" : unit}</span>
         {error && <div className="dimension-error">{error}</div>}
       </div>
     );

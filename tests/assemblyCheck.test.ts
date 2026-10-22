@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assemblyReport } from "../src/assembly/assemblyCheck";
+import { assemblyReport, DEFAULT_CLASH_OPTIONS, judgeContact, judgeContacts, parseClashOptions } from "../src/assembly/assemblyCheck";
 import type { Assembly } from "../src/model/types";
 
 const pick = { partId: "f1", ref: { kind: "face" as const, surface: "PLANE", center: [0, 0, 0] as [number, number, number], normal: [0, 0, 1] as [number, number, number] } };
@@ -37,5 +37,65 @@ describe("assembly check", () => {
     expect(r.parts[0].name).toBe("Missing parts");
     expect(r.parts[1].findings[0].text).toBe("Hinge 1: Both parts are fixed.");
     expect(r.parts[2].findings[0].text).toContain("0.5 mm³");
+  });
+
+  it("judges overlaps thinner than the tolerance, and small gaps, as touching", () => {
+    // A 10 × 10 × 0.005 sliver: 2V/A ≈ 0.005 mm thick.
+    const sliver = { a: "A", b: "B", volume: 0.5, area: 200.2 };
+    expect(judgeContact(sliver, 0.01)).toEqual({ kind: "touch", a: "A", b: "B" });
+    expect(judgeContact(sliver, 0.001)).toEqual({ kind: "overlap", a: "A", b: "B", volume: 0.5 });
+    expect(judgeContact({ a: "A", b: "B", volume: 500, area: 400 }, 0.01)?.kind).toBe("overlap");
+    // A 0.02 mm cube of overlap at a corner: 2V/A says 0.0067 mm, but it's 0.02 thick — a clash at 0.01 mm.
+    const corner = { a: "A", b: "B", volume: 0.02 ** 3, area: 6 * 0.02 ** 2, boxMin: 0.02 };
+    expect(judgeContact(corner, 0.01)?.kind).toBe("overlap");
+    expect(judgeContact({ ...corner, boxMin: undefined }, 0.01)?.kind).toBe("touch");
+    // A 0.005 mm sleeve round a 10 mm pin, 20 long (a press fit): its box is 10 across, but it's thin — touching.
+    const sleeve = { a: "Pin", b: "Hole", volume: Math.PI * 10 * 20 * 0.005, area: 2 * Math.PI * 10 * 20, boxMin: 10 };
+    expect(judgeContact(sleeve, 0.01)?.kind).toBe("touch");
+    expect(judgeContact({ a: "A", b: "B", volume: 0, area: 0, gap: 0.004 }, 0.01)?.kind).toBe("touch");
+    expect(judgeContact({ a: "A", b: "B", volume: 0, area: 0, gap: 0.02 }, 0.01)).toBe(null);
+    // Surfaces: through a solid when deeper than the tolerance; crossing when longer than it.
+    expect(judgeContact({ a: "S", b: "B", surfaceA: true, area: 50, depth: 2.5 }, 0.01)).toEqual({ kind: "through", a: "S", b: "B", area: 50 });
+    expect(judgeContact({ a: "S", b: "B", surfaceA: true, area: 50, depth: 0.005 }, 0.01)?.kind).toBe("touch");
+    expect(judgeContact({ a: "S", b: "T", surfaceA: true, surfaceB: true, crossLength: 5 }, 0.01)).toEqual({ kind: "cross", a: "S", b: "T", length: 5 });
+    expect(judgeContact({ a: "S", b: "T", surfaceA: true, surfaceB: true, crossLength: 0, gap: 0 }, 0.01)?.kind).toBe("touch");
+    // Touching pairs are dropped unless asked for.
+    const both = [sliver, { a: "C", b: "D", volume: 100, area: 130 }];
+    expect(judgeContacts(both, DEFAULT_CLASH_OPTIONS).map((c) => c.kind)).toEqual(["overlap"]);
+    expect(judgeContacts(both, { ...DEFAULT_CLASH_OPTIONS, ignoreTouching: false }).map((c) => c.kind)).toEqual(["touch", "overlap"]);
+  });
+
+  it("describes surfaces, touching parts and what was left out", () => {
+    const r = assemblyReport(
+      asm,
+      solvedOk,
+      { f1: "Base" },
+      [
+        { kind: "through", a: "Skin <1>", b: "Base <1>", area: 50 },
+        { kind: "cross", a: "Skin <1>", b: "Skin <2>", length: 5 },
+        { kind: "touch", a: "Base <1>", b: "Base <2>" },
+      ],
+      { ...DEFAULT_CLASH_OPTIONS, ignoreTouching: false },
+      { hidden: 2 },
+    );
+    expect(r.headline).toBe("2 clashes found — some parts overlap.");
+    expect(r.parts[1].findings.map((f) => [f.level, f.text])).toEqual([
+      ["warn", "The surface Skin <1> goes through Base <1> (50 mm² of it is inside) — they'd be in each other's way."],
+      ["warn", "The surfaces Skin <1> and Skin <2> cross each other (along 5 mm)."],
+      ["ok", "Base <1> and Base <2> touch."],
+      ["ok", "Not checked: 2 hidden parts."],
+    ]);
+    // Only touching: everything fits, and the tolerance is explained.
+    const ok = assemblyReport(asm, solvedOk, { f1: "Base" }, [], DEFAULT_CLASH_OPTIONS);
+    expect(ok.level).toBe("ok");
+    expect(ok.parts[1].findings[1].text).toBe("Parts that only touch aren't listed (gaps and overlaps up to 0.01 mm count as touching).");
+  });
+
+  it("reads clash options safely", () => {
+    expect(parseClashOptions(null)).toEqual(DEFAULT_CLASH_OPTIONS);
+    expect(parseClashOptions({ ignoreTouching: false, tolerance: 0.2, skipHidden: true })).toEqual({ ignoreTouching: false, tolerance: 0.2, skipHidden: true });
+    expect(parseClashOptions({ tolerance: -1 }).tolerance).toBe(0.01);
+    expect(parseClashOptions({ tolerance: 99 }).tolerance).toBe(10);
+    expect(parseClashOptions({ tolerance: "x", ignoreTouching: "no" })).toEqual(DEFAULT_CLASH_OPTIONS);
   });
 });

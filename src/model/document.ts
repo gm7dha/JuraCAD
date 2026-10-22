@@ -8,10 +8,12 @@ import { parseConfigurations } from "./configurations";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
 import { parseMaterials } from "./materials";
+import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
 import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, PartStudio } from "./types";
 import { MAIN_STUDIO } from "./studios";
+import type { AreaPick } from "../sketch/areas";
 
 /**
  * Pure functions for changing a document. They never modify their input;
@@ -82,6 +84,11 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.operation = "new";
   }
   if (type === "flange" || type === "hem" || type === "cornerBreak") feature.picks = [];
+  if (type === "bend" || type === "jog") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    feature.sketchRef = sketches[sketches.length - 1]?.id;
+    feature.operation = "add";
+  }
   if (type === "tab") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
     feature.sketchRef = sketches[sketches.length - 1]?.id;
@@ -453,8 +460,10 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       const rd = (f.replaceDef ?? {}) as Record<string, unknown>;
       feature.replaceDef = { target: rd.target ? parsePlane(rd.target) ?? null : null, picking: rd.picking === "target" ? "target" : "faces" };
     }
-    if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab" || feature.type === "wrap") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
-    if ((feature.type === "sheetMetal" || feature.type === "flange" || feature.type === "hem") && f.flipSide === true) feature.flipSide = true;
+    if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab" || feature.type === "wrap" || feature.type === "bend" || feature.type === "jog") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+    if ((feature.type === "sheetMetal" || feature.type === "flange" || feature.type === "hem" || feature.type === "bend" || feature.type === "jog") && f.flipSide === true) feature.flipSide = true;
+    if ((feature.type === "bend" || feature.type === "jog") && f.keepOtherSide === true) feature.keepOtherSide = true;
+    if ((feature.type === "flange" || feature.type === "hem") && f.mitreCorners === true) feature.mitreCorners = true;
     if (feature.type === "flange" && f.closeCorners === true) feature.closeCorners = true;
     if (feature.type === "flange" && (f.reliefShape === "round" || f.reliefShape === "tear")) feature.reliefShape = f.reliefShape;
     if (feature.type === "flange" && (f.cornerRelief === "round" || f.cornerRelief === "square")) feature.cornerRelief = f.cornerRelief;
@@ -464,6 +473,11 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "cornerBreak" && f.breakStyle === "chamfer") feature.breakStyle = "chamfer";
     if (feature.type === "deleteFace" && f.leaveOpen === true) feature.leaveOpen = true;
     if (feature.type === "fill" && f.continuity === "tangent") feature.continuity = "tangent";
+    if (feature.type === "extendSurface" && f.extendTo && typeof f.extendTo === "object") {
+      const et = f.extendTo as Record<string, unknown>;
+      const target = parsePick(et.target);
+      if (et.mode === "face" || et.mode === "part") feature.extendTo = { mode: et.mode, ...(target ? { target } : {}) };
+    }
     if (feature.type === "derived") {
       const dv = (f.derived ?? {}) as Record<string, unknown>;
       if (typeof dv.studioId === "string" && typeof dv.partId === "string") feature.derived = { studioId: dv.studioId, partId: dv.partId };
@@ -517,6 +531,26 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if ((feature.type === "shell" || feature.type === "chamfer") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "chamfer" && (f.chamferType === "twoDistances" || f.chamferType === "distanceAngle")) feature.chamferType = f.chamferType;
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "loft") && f.surface === true) feature.surface = true;
+    if (feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") {
+      // Picked sketch areas: a point inside each, and (newer files) its size. Anything else is dropped, leaving every closed shape.
+      const areas = Array.isArray(f.areas)
+        ? f.areas
+            .filter(
+              (p): p is (number | string)[] =>
+                Array.isArray(p) &&
+                p.length >= 2 &&
+                p.length <= 100_000 &&
+                [p[0], p[1], ...(p.length >= 3 ? [p[2]] : [])].every((x) => typeof x === "number" && Number.isFinite(x)) &&
+                p.slice(3).every((x) => typeof x === "string" && /^.{1,200}[+-]$/.test(x)),
+            )
+            .map((p): AreaPick => {
+              const [x, y, size] = p as number[];
+              // The size (and signature) only count with a real size; otherwise just the point, as older files had.
+              return p.length >= 3 && size > 0 ? [x, y, size, ...(p.slice(3) as string[])] : [x, y];
+            })
+        : [];
+      if (areas.length) feature.areas = areas;
+    }
     if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
@@ -562,6 +596,7 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...(typeof d.studioName === "string" && d.studioName.trim() && d.studioName.trim() !== "Part Studio 1" ? { studioName: d.studioName.trim() } : {}),
     ...(partStudios.length ? { partStudios } : {}),
     ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),
+    ...(Object.keys(parsePartProperties(d.partProperties)).length ? { partProperties: parsePartProperties(d.partProperties) } : {}),
     ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
     ...(parseDrawings(d.drawings).length ? { drawings: parseDrawings(d.drawings) } : {}),
     ...configurationsOf(d),

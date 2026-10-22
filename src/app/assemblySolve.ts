@@ -2,7 +2,7 @@
 import { useMemo } from "react";
 
 import { solveWithParts, type SolveResult } from "../assembly/mates";
-import { boundsOfVertices, meshVolume, type BomInfo, type Box3 } from "../assembly/assembly";
+import { boundsOfVertices, type Box3 } from "../assembly/assembly";
 import { addOffsets, explodedPlacements, explodeOffsets, stepOffsets } from "../assembly/explode";
 import type { Placement } from "../assembly/math";
 import { withDragChange } from "../assembly/drag";
@@ -39,20 +39,8 @@ export function partBox(p: PartMesh): Box3 | null {
   return boxCache.get(p) ?? null;
 }
 
-/** Volume of each part's display mesh (mm³; null for a surface), worked out once per rebuild. */
-const volumeCache = new WeakMap<PartMesh, number | null>();
-export function partVolume(p: PartMesh): number | null {
-  if (!volumeCache.has(p)) volumeCache.set(p, p.surface ? null : meshVolume(p.vertices, p.triangles));
-  return volumeCache.get(p) ?? null;
-}
-
-/** Material and volume of the part each instance shows, for the parts list. */
-export function bomInfo(parts: PartMesh[], materials: Record<string, string> | undefined): BomInfo {
-  return (i) => {
-    const mesh = findMesh(parts, meshIdOf(i));
-    return mesh ? { material: materials?.[i.partId], volume: partVolume(mesh) } : null;
-  };
-}
+// Moved to src/assembly/drawingBom.ts (pure, so it can be tested); kept here for the app's imports.
+export { bomInfo, partVolume } from "../assembly/drawingBom";
 
 /**
  * Placements for an exploded view: spread apart by `amount` (0 = not spread),
@@ -60,7 +48,8 @@ export function bomInfo(parts: PartMesh[], materials: Record<string, string> | u
  */
 export function explodeAssembly(assembly: Assembly, parts: PartMesh[], placements: Record<string, Placement>, amount: number | null): Record<string, Placement> {
   if (amount === null) return placements;
-  const items = assembly.instances.map((i) => {
+  // Suppressed parts aren't shown, so they don't take part in spreading the others out.
+  const items = assembly.instances.filter((i) => !i.suppressed).map((i) => {
     const part = findMesh(parts, meshIdOf(i));
     return { id: i.id, placement: placements[i.id] ?? i.placement, box: part ? partBox(part) : null, fixed: i.fixed };
   });
@@ -68,10 +57,10 @@ export function explodeAssembly(assembly: Assembly, parts: PartMesh[], placement
   return explodedPlacements(placements, addOffsets(spread, stepOffsets(assembly.explodeSteps ?? [])));
 }
 
-/** Each instance in its solved place, for exports and clash checks (copies of missing parts are left out). */
+/** Each instance in its solved place, for exports, drawings and clash checks (suppressed parts, and copies of missing parts, are left out). */
 export function instancesForKernel(assembly: Assembly, parts: PartMesh[], solved: SolveResult = solveWithParts(assembly, parts)): InstanceInput[] {
   return assembly.instances
-    .filter((i) => findMesh(parts, meshIdOf(i)))
+    .filter((i) => !i.suppressed && findMesh(parts, meshIdOf(i)))
     .map((i) => {
       const p = solved.placements[i.id] ?? i.placement;
       return { id: i.id, partId: meshIdOf(i), name: i.name, position: p.position, rotation: p.rotation, ...(i.mirrored ? { mirrored: true } : {}) };

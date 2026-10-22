@@ -54,7 +54,8 @@ export function syncReplicate(a: Assembly, rep: Replicate, holes: TopoPick[], ne
     const { configuration: _old, ...plain } = copy;
     copies.push(seed.configuration ? { ...plain, configuration: seed.configuration } : plain);
     const before = oldMates.find((m) => (m.a.instanceId === copy.id || m.b.instanceId === copy.id) && m.replicateOf === rep.id);
-    const own = { instanceId: copies[copies.length - 1].id, pick: (side === "a" ? mate.a : mate.b).pick };
+    // The copy's own connector sits where the original's does (the same corner, the same spot).
+    const own = { ...(side === "a" ? mate.a : mate.b), instanceId: copies[copies.length - 1].id };
     const into = { instanceId: target.instanceId, pick: hole };
     mates.push({
       ...mate,

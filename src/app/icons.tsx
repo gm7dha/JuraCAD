@@ -88,6 +88,13 @@ export const Icons = {
       <path d="M9.9 9.9a2.8 2.8 0 0 0 4 4" />
     </Svg>
   ),
+  /** Suppress: a part's box, crossed out. */
+  Suppress: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" />
+      <path d="M4 4l16 16" />
+    </Svg>
+  ),
   Origin: (p: IconProps) => (
     <Svg {...p}>
       <circle cx="12" cy="12" r="2" />
@@ -368,6 +375,17 @@ export const Icons = {
     <Svg {...p}>
       <path d="M3 15h13a3 3 0 0 0 0-6H9" />
       <path d="M3 18h13a6 6 0 0 0 0-12H9" />
+    </Svg>
+  ),
+  Bend: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 18h8a4 4 0 0 0 4-4V5" />
+      <path d="M9 12l3 3" strokeDasharray="1.5 1.5" />
+    </Svg>
+  ),
+  Jog: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M2 18h6a2 2 0 0 0 2-2v-6a2 2 0 0 1 2-2h10" />
     </Svg>
   ),
   CornerBreak: (p: IconProps) => (

@@ -8,7 +8,8 @@
  */
 import type { Assembly, Mate } from "../model/types";
 import { framePlacement, type Frame } from "./connectors";
-import { add, compose, cross, dot, length, normalize, rotate, scale, sub, type Placement, type Vec3 } from "./math";
+import { isOrigin } from "./origin";
+import { add, compose, cross, IDENTITY, dot, length, normalize, rotate, scale, sub, type Placement, type Vec3 } from "./math";
 import { clampToLimits, mateValues, type SolveResult } from "./mates";
 import { lengthUnit, startingLength } from "../model/units";
 
@@ -62,14 +63,15 @@ export function planDrag(
   if (!instance) return { refuse: "" };
   const mateId = solved.drivenBy[instanceId];
 
-  // A grouped part: drag the whole group, by its first part.
+  // A grouped part: the whole group moves as one, so drag the part through which the rest of the
+  // assembly places the group — the one held by a mate (a hinge turns the whole group), or else
+  // the group's first part, which then moves freely.
   if (mateId?.startsWith("group:")) {
     const group = assembly.groups?.find((g) => `group:${g.id}` === mateId);
-    const anchor = group?.members[0];
-    if (group && anchor && anchor !== instanceId && !solved.drivenBy[anchor]?.startsWith("group:")) {
-      return planDrag(assembly, solved, frameOf, anchor, grab, view, shift);
-    }
-    return { refuse: group ? `${instance.name} is in ${group.name}, which is held in place by a mate or a fixed part. Move that instead, or ungroup it.` : "" };
+    if (!group) return { refuse: "" };
+    const entry = group.members.find((m) => m !== instanceId && !solved.drivenBy[m]?.startsWith("group:"));
+    if (entry) return planDrag(assembly, solved, frameOf, entry, grab, view, shift);
+    return { refuse: `${instance.name} is in ${group.name}, which can't be dragged from here. Move the part it's mated to, or ungroup it.` };
   }
 
   if (!mateId) {
@@ -92,7 +94,8 @@ export function planDrag(
   const mate = assembly.mates?.find((m) => m.id === mateId);
   if (!mate) return { refuse: "" };
   const fa = frameOf(mate, "a");
-  const pa = solved.placements[mate.a.instanceId];
+  // (The origin isn't in the solved places: it's always where it is.)
+  const pa = isOrigin(mate.a) ? IDENTITY : solved.placements[mate.a.instanceId];
   if (!fa || !pa) return { refuse: "" };
   const axis = worldFrame(pa, fa);
   // Mate amounts move the second connector's part; dragging the first part goes the other way.
@@ -150,9 +153,12 @@ export function planDrag(
     };
   };
 
-  /** Slide over the first connector's face (Planar, Width, Tangent on a flat). */
+  /**
+   * Slide over the first connector's face (Planar, Width, Tangent on a flat). Dragging the first
+   * connector's part (the other stays put — say it's fixed, or the origin) slides it the other way
+   * round: the amounts go down as it moves along the face.
+   */
   const facePlan = (): DragStart => {
-    if (sign < 0) return { refuse: `Drag the other part of ${mate.name}, or use its sliders.` };
     if (Math.abs(dot(normalize(view), axis.z)) < 0.05) return { refuse: "You're looking along the face — turn the view a little to drag it." };
     return {
       plan: {
@@ -163,7 +169,7 @@ export function planDrag(
           return {
             kind: "mate",
             id: mate.id,
-            values: { ...mate.values, dx: limited("dx", (start.dx ?? 0) + dot(d, axis.x), 0.1), dy: limited("dy", (start.dy ?? 0) + dot(d, axis.y), 0.1) },
+            values: { ...mate.values, dx: limited("dx", (start.dx ?? 0) + sign * dot(d, axis.x), 0.1), dy: limited("dy", (start.dy ?? 0) + sign * dot(d, axis.y), 0.1) },
           };
         },
       },

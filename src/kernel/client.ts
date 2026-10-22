@@ -1,7 +1,7 @@
 import type { TopoPick } from "../geometry/topoRef";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
-import type { CheckResult, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -137,9 +137,9 @@ export class KernelClient {
     return this.send({ type: "project", partIds, instances, views, hidden, sections, breakouts, tangent }).then((body) => body.result as ViewProjection[]);
   }
 
-  /** Pairs of assembly instances that occupy the same space. */
-  clashes(instances: InstanceInput[]): Promise<NonNullable<CheckResult["overlaps"]>> {
-    return this.send({ type: "clashes", instances }).then((body) => body.result as NonNullable<CheckResult["overlaps"]>);
+  /** How pairs of assembly instances meet: overlapping, or (`withGaps`) within `tolerance` (mm) of each other. */
+  clashes(instances: InstanceInput[], tolerance = 0, withGaps = true): Promise<ContactMeasure[]> {
+    return this.send({ type: "clashes", instances, tolerance, withGaps }).then((body) => body.result as ContactMeasure[]);
   }
 
   terminate(): void {

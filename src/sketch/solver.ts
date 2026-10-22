@@ -282,6 +282,17 @@ function buildSystem(sketch: SketchData): System {
       }
       case "midpoint": {
         const p = P(a);
+        if (con.refs.length === 3) {
+          // Halfway between two points.
+          const m = P(b), n = P(con.refs[2]);
+          return {
+            size: 2,
+            eval: (x, out) => {
+              const u = p(x), s0 = m(x), e = n(x);
+              out.push(u[0] - (s0[0] + e[0]) / 2, u[1] - (s0[1] + e[1]) / 2);
+            },
+          };
+        }
         const arc = curves.get(b);
         if (arc?.type === "arc") {
           // Halfway round the arc (anticlockwise from its start to its end).
@@ -418,6 +429,52 @@ function buildSystem(sketch: SketchData): System {
         }
         if (!pairs.length) throw new Error("offset has nothing to measure");
         return { size: pairs.length, eval: (x, out) => { for (const f of pairs) out.push(f(x) - value); } };
+      }
+      case "arcLength":
+      case "arcAngle": {
+        const arc = curves.get(a);
+        if (arc?.type !== "arc") throw new Error(`${a} is not an arc`);
+        const cen = P(arc.center), st = P(arc.start), en = P(arc.end);
+        const target = con.type === "arcAngle" ? (value * Math.PI) / 180 : value;
+        return {
+          size: 1,
+          eval: (x, out) => {
+            const c = cen(x), s0 = st(x), e = en(x);
+            let sweep = Math.atan2(e[1] - c[1], e[0] - c[0]) - Math.atan2(s0[1] - c[1], s0[0] - c[0]);
+            while (sweep <= 0) sweep += 2 * Math.PI;
+            while (sweep > 2 * Math.PI) sweep -= 2 * Math.PI;
+            const r = Math.hypot(s0[0] - c[0], s0[1] - c[1]);
+            out.push(con.type === "arcAngle" ? (sweep - target) * Math.max(r, 1) : r * sweep - target);
+          },
+        };
+      }
+      case "rimDistance": {
+        const ra = circular(a);
+        const mode = con.extra?.[0] ?? -1;
+        const inside = con.extra?.[1] === 1;
+        if (kind(b) === "line") {
+          const [m, n] = lineEnds(b);
+          return {
+            size: 1,
+            eval: (x, out) => {
+              const u = ra.centre(x), s0 = m(x), e = n(x);
+              const dx = e[0] - s0[0], dy = e[1] - s0[1];
+              const h = Math.abs((dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1));
+              out.push(h + mode * ra.radius(x) - value);
+            },
+          };
+        }
+        const rb = circular(b);
+        return {
+          size: 1,
+          eval: (x, out) => {
+            const p = ra.centre(x), q = rb.centre(x);
+            const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+            const r1 = ra.radius(x), r2 = rb.radius(x);
+            const gap = mode > 0 ? d + r1 + r2 : inside ? Math.abs(r1 - r2) - d : d - r1 - r2;
+            out.push(gap - value);
+          },
+        };
       }
       case "radius":
       case "diameter": {
@@ -566,6 +623,8 @@ export interface SolveOptions {
   moveRigid?: { pointIds: string[]; dx: number; dy: number };
   /** Resize this circle first (dragging its rim). */
   resize?: { circleId: string; radius: number };
+  /** Put these points here first and prefer to keep them there (dragging an arc's rim: its ends and centre). */
+  place?: { pointId: string; x: number; y: number }[];
   maxIterations?: number;
 }
 
@@ -596,7 +655,7 @@ function writeBack(sketch: SketchData, sys: System, x: Float64Array): SketchData
 
 /** Move the sketch so every constraint holds, changing it as little as possible. */
 export function solveSketch(sketch: SketchData, options: SolveOptions = {}): SolveResult {
-  const interactive = options.drag || options.moveRigid || options.resize;
+  const interactive = options.drag || options.moveRigid || options.resize || options.place?.length;
   if (!interactive) return solveOnce(sketch, options, 1);
   // First try to keep what's being dragged exactly under the pointer; if the
   // constraints make that impossible, let it give way as little as possible.
@@ -625,6 +684,13 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
       x[i] = options.resize.radius;
       weight[i] = stiffness;
     }
+  }
+  for (const p of options.place ?? []) {
+    const i = sys.pointVar.get(p.pointId);
+    if (i === undefined) continue;
+    x[i] = p.x;
+    x[i + 1] = p.y;
+    weight[i] = weight[i + 1] = stiffness;
   }
   if (options.drag) {
     const i = sys.pointVar.get(options.drag.pointId);
