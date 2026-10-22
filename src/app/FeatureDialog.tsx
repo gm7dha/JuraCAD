@@ -358,6 +358,8 @@ function RibThickenOptions() {
           ? "Flip (fill the other side of the line)"
           : draft.type === "sheetMetal"
           ? "Flip (the metal on the other side of the sketch)"
+          : draft.type === "jog"
+          ? "Step down instead of up"
           : draft.type === "flange" || lineBend
           ? "Bend down instead of up"
           : draft.type === "hem"
