@@ -1,0 +1,36 @@
+{
+  "manifest_version": "0.3",
+  "name": "juracad",
+  "display_name": "JuraCAD",
+  "version": "__VERSION__",
+  "description": "Describe a part in plain English and Claude builds it with JuraCAD's CAD engine, then saves a .juracad file you can open and edit in JuraCAD.",
+  "long_description": "JuraCAD is a free, open-source CAD app in your browser (https://gm7dha.github.io/JuraCAD/). With this extension, Claude can build parts for you step by step: sketches, extrudes, holes (M2–M12), fillets, chamfers, shells, patterns and mirrors, using JuraCAD's own geometry engine. It checks the part, can show you pictures of it, and saves a normal .juracad design in your JuraCAD folder. Open that file in JuraCAD and every feature and dimension can still be changed. It can also export STL, 3MF and STEP files for printing or manufacturing. It only reads and writes files inside the folder you choose.",
+  "author": { "name": "JuraCAD", "url": "https://github.com/Gm7dha/JuraCAD" },
+  "homepage": "https://gm7dha.github.io/JuraCAD/",
+  "repository": { "type": "git", "url": "https://github.com/Gm7dha/JuraCAD" },
+  "license": "MIT",
+  "keywords": ["cad", "3d", "3d printing", "design", "juracad"],
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.mjs", "${user_config.design_folder}"]
+    }
+  },
+  "user_config": {
+    "design_folder": {
+      "type": "directory",
+      "title": "Folder for your designs",
+      "description": "Where Claude saves your JuraCAD designs (and exported STL, 3MF and STEP files), and the only folder it can open designs from.",
+      "default": "${DOCUMENTS}/JuraCAD",
+      "required": false
+    }
+  },
+  "tools": "__TOOLS__",
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=18.0.0" }
+  }
+}

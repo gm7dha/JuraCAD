@@ -7,8 +7,9 @@
  *    the saved copy is used when offline.
  *  - Everything else (scripts, styles, the geometry engine) has a unique
  *    name per version, so the saved copy is used straight away.
+ *  - Downloads (the .mcpb extension for Claude) are never kept.
  */
-const CACHE = "juracad-v1";
+const CACHE = "juracad-v2";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -31,6 +32,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin) return;
+  // Downloads (the Claude extension) always come fresh: they keep the same name from version to version.
+  if (new URL(req.url).pathname.endsWith(".mcpb")) return;
 
   if (req.mode === "navigate") {
     // The page: fresh when online, saved copy when offline.

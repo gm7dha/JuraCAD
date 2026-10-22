@@ -55,6 +55,24 @@ jobs:
             exit 1
           }
 
+      # JuraCAD for Claude: the extension for the Claude desktop app (an .mcpb
+      # bundle), built from src/mcp and put on the site for download.
+      - name: Build the Claude extension
+        run: |
+          set -o pipefail
+          {
+            node scripts/build-claude-extension.mjs &&
+            npx --yes @anthropic-ai/mcpb validate build/claude-extension/manifest.json &&
+            npx --yes @anthropic-ai/mcpb pack build/claude-extension dist/juracad-claude.mcpb
+          } 2>&1 | tee extension.log || {
+            echo "::error title=Claude extension build failed::$(tail -n 40 extension.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
+            exit 1
+          }
+
+      - name: Check the Claude extension (unpack, start it, build a part over MCP)
+        timeout-minutes: 5
+        run: node scripts/check-claude-extension.mjs dist/juracad-claude.mcpb
+
       - name: Install browser for the smoke test
         run: npx playwright install --with-deps chromium
 

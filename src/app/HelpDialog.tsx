@@ -89,6 +89,28 @@ export function HelpDialog() {
         reshape. Click ✓ to finish, then use Extrude or Revolve to turn the closed shapes into a solid.
       </p>
       <KeyTable rows={rows.sketch} keysFirst />
+      <h3 className="help-heading">Use JuraCAD with Claude</h3>
+      <p className="small">
+        Describe a part in plain English — say, "a 60 × 40 mm mounting bracket, 3 mm thick, with four M4 holes 5 mm in
+        from the corners" — and Claude builds it step by step with JuraCAD's own geometry engine, checks it, and saves a
+        .juracad file. Open that file here with Open: every feature and dimension can still be changed.
+      </p>
+      <ol className="small help-steps">
+        <li>
+          <a href={`${import.meta.env.BASE_URL}juracad-claude.mcpb`} download="juracad-claude.mcpb">
+            Download the JuraCAD extension for Claude
+          </a>{" "}
+          (one file).
+        </li>
+        <li>
+          Double-click the downloaded file. The Claude desktop app opens it and asks to install JuraCAD: click Install.
+          (Or in Claude open Settings › Extensions and drag the file onto the window.)
+        </li>
+        <li>
+          Start a new chat in Claude and ask for a part. Your designs are saved in Documents › JuraCAD (you can choose
+          another folder in the extension's settings).
+        </li>
+      </ol>
       <p className="muted small">
         JuraCAD {SHORT_VERSION} ({APP_VERSION}) —{" "}
         <button type="button" className="text-button small-text inline-link" onClick={() => openDialog("whatsNew")}>
