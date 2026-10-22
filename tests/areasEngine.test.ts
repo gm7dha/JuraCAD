@@ -13,7 +13,7 @@ import { revolveSketch } from "../src/kernel/revolve";
 import { facesOf, solidsOf } from "../src/kernel/topology";
 import { defaultParams } from "../src/model/features";
 import type { Feature } from "../src/model/types";
-import { pickOf, pointInside, sketchAreas } from "../src/sketch/areas";
+import { pickOf, pointInside, sketchAreas, type AreaPick } from "../src/sketch/areas";
 import { emptyDocument, parseDocument } from "../src/model/document";
 import { addCircle, addLine, addRectangle } from "../src/sketch/ops";
 import type { SketchPlane } from "../src/sketch/planes";
@@ -163,7 +163,7 @@ describe("picked areas in a rebuild", () => {
   let engine: GeometryEngine | undefined;
   afterEach(() => engine?.dispose());
   const sketchFeature = (data: SketchData): Feature => ({ id: "s1", name: "Sketch 1", type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane: TOP, data } });
-  const extrudeFeature = (areas?: [number, number][]): Feature => ({
+  const extrudeFeature = (areas?: AreaPick[]): Feature => ({
     id: "e1",
     name: "Extrude 1",
     type: "extrude",
