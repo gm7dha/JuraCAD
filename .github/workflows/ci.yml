@@ -49,11 +49,12 @@ jobs:
       # become annotations, and a notice sums up time and memory per file:
       # see tests/support/ciReporter.ts.
       - name: Run tests
+        id: tests
         timeout-minutes: 15
         run: npm test -- --reporter=default --reporter=./tests/support/ciReporter.ts
 
       - name: Report memory problems
-        if: failure()
+        if: failure() && steps.tests.outcome == 'failure'
         run: |
           free -m
           # Did the system stop a process for using too much memory?

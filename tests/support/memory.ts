@@ -19,5 +19,5 @@ function peakMemoryMB(): number {
 }
 
 afterAll((suite) => {
-  (suite as { meta: Record<string, unknown> }).meta.peakMemoryMB = peakMemoryMB();
+  (suite as unknown as { meta: Record<string, unknown> }).meta.peakMemoryMB = peakMemoryMB();
 });
