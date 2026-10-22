@@ -465,10 +465,13 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   // Views drawn at their own scale.
   const own: Record<string, number> = {};
   for (const v of drawing.views) if (v.scale && v.kind !== "detail") own[viewKey(v)] = v.scale;
-  const auto = fitScale(projections, keys, drawing.sheet, reserve, third, sideGap, own);
+  const fitted = fitScale(projections, keys, drawing.sheet, reserve, third, sideGap, own);
+  // (When every view has its own scale, the sheet's is what would fit them all at one scale — not just the biggest there is.)
+  const allOwn = keys.length > 0 && keys.every((k) => own[k] !== undefined);
+  const auto = allOwn ? { scale: fitScale(projections, keys, drawing.sheet, reserve, third, sideGap).scale, fits: fitted.fits } : fitted;
   // (Fit to sheet can be asked to go one scale smaller, to make room for dimensions.)
-  const fitted = drawing.fit?.down ? (STANDARD_SCALES[STANDARD_SCALES.indexOf(auto.scale) + 1] ?? auto.scale) : auto.scale;
-  const scale = drawing.scale ?? fitted;
+  const stepped = drawing.fit?.down ? (STANDARD_SCALES[STANDARD_SCALES.indexOf(auto.scale) + 1] ?? auto.scale) : auto.scale;
+  const scale = drawing.scale ?? stepped;
   const area = viewArea(size, reserve);
   const n = needed(projections, keys, scale, area.y1 - area.y0, third, sideGap, own);
   const scaleOf = (k: string) => own[k] ?? scale;

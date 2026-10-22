@@ -183,6 +183,14 @@ describe("views at their own scale", () => {
     expect(texts(dl.prims)).toContain("200");
   });
 
+  it("gives the sheet a sensible scale when every view has its own", () => {
+    const d: Drawing = { ...newDrawing(), views: [{ id: "t", kind: "top", scale: 0.1 }] };
+    const l = layoutSheet(d, block, info);
+    // What the top view alone would fit at (not 100:1 just because nothing's at the sheet's scale).
+    expect(l.scale).toBe(layoutSheet({ ...d, views: [{ id: "t", kind: "top" }] }, block, info).scale);
+    expect(texts(l.prims)).toContain("SCALE 1:10");
+  });
+
   it("says when it's a view's own scale that doesn't fit", () => {
     const d: Drawing = { ...newDrawing(), views: [{ id: "f", kind: "front", scale: 20 }, { id: "t", kind: "top" }] };
     const l = layoutSheet(d, block, info);
