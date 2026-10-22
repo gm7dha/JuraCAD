@@ -513,9 +513,10 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");
+  if (f.type === "extendSurface" && f.extendTo) keys.delete("distance");
   if (f.type === "extrude" && (f.extrude?.end === "throughAll" || f.extrude?.end === "upToFace")) keys.delete("depth");
   if (f.type === "extrude" && !(f.extrude?.end === "blind" && f.extrude.second && !f.surface)) keys.delete("depth2");
   if (f.type === "extrude" && f.surface) keys.delete("draft");

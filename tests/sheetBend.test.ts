@@ -5,6 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { addFeature, createFeature, emptyDocument, parseDocument } from "../src/model/document";
+import { resolveParams, visibleParamKeys } from "../src/model/features";
 import { bendAllowance, findSheetEdge, flatPattern, foldSheet, jogSpacing, splitWall, unfoldMoves, wallPoint, type FlangeSpec, type Frame3, type P2, type SheetSpec } from "../src/sheetmetal/sheet";
 import type { Segment } from "../src/sketch/regions";
 
@@ -228,5 +230,40 @@ describe("mitred corners", () => {
       for (const s of wa.outline) expect(side(wallPoint(wa.frame, (s as { from: P2 }).from, h))).toBeGreaterThan(0.1 - 1e-9);
       for (const s of wb.outline) expect(side(wallPoint(wb.frame, (s as { from: P2 }).from, h))).toBeLessThan(-0.1 + 1e-9);
     }
+  });
+});
+
+describe("saving", () => {
+  it("keeps Bend, Jog and mitre settings when a design is saved and opened; old flanges and hems open as before", () => {
+    let doc = emptyDocument();
+    const sk = { ...createFeature(doc, "sketch"), id: "sk" };
+    doc = addFeature(doc, sk);
+    const b = { ...createFeature(doc, "bend"), id: "b", flipSide: true, keepOtherSide: true };
+    expect(b.sketchRef).toBe("sk");
+    const j = { ...createFeature(doc, "jog"), id: "j", params: { ...createFeature(doc, "jog").params, height: "12" } };
+    const h = { ...createFeature(doc, "hem"), id: "h", mitreCorners: true };
+    doc = [b, j, h].reduce(addFeature, doc);
+    const back = parseDocument(JSON.parse(JSON.stringify(doc)))!;
+    const [, b2, j2, h2] = back.features;
+    expect([b2.type, b2.sketchRef, b2.flipSide, b2.keepOtherSide]).toEqual(["bend", "sk", true, true]);
+    expect([j2.type, j2.sketchRef, resolveParams(j2).values.height, resolveParams(j2).values.angle]).toEqual(["jog", "sk", 12, 90]);
+    expect(h2.mitreCorners).toBe(true);
+    expect(resolveParams(h2).values.cornerGap).toBe(0.2);
+    // A hem saved before mitres existed: no gap box shown, nothing mitred.
+    const old = parseDocument(JSON.parse(JSON.stringify({ ...doc, features: [{ id: "o", name: "Hem 1", type: "hem", operation: "add", suppressed: false, params: { length: "8", gap: "0", inset: "0" }, picks: [] }] })))!;
+    expect(old.features[0].mitreCorners).toBeUndefined();
+    expect(visibleParamKeys(old.features[0]).has("cornerGap")).toBe(false);
+    expect(visibleParamKeys(h2).has("cornerGap")).toBe(true);
+  });
+
+  it("keeps Extend surface's “up to” choice; old ones extend by a distance", () => {
+    const doc = emptyDocument();
+    const ex = { ...createFeature(doc, "extendSurface"), id: "ex", extendTo: { mode: "part" as const } };
+    const back = parseDocument(JSON.parse(JSON.stringify(addFeature(doc, ex))))!.features[0];
+    expect(back.extendTo).toEqual({ mode: "part" });
+    expect(visibleParamKeys(back).has("distance")).toBe(false);
+    const odd = parseDocument(JSON.parse(JSON.stringify(addFeature(doc, { ...ex, extendTo: { mode: "sideways" } as never }))))!.features[0];
+    expect(odd.extendTo).toBeUndefined();
+    expect(visibleParamKeys(odd).has("distance")).toBe(true);
   });
 });

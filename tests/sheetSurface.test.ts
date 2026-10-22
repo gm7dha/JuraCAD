@@ -290,6 +290,57 @@ describe("surfaces", () => {
     expect(area(r2.parts[0])).toBeCloseTo(23 * 8, 2);
   });
 
+  it("extends up to a face (a flat one counts as its whole plane) or up to a part", () => {
+    // A flat wall at y = 0, 20 wide and 5 tall; a block above it from z = 12, and a narrow one (x 8 to 12).
+    const sk = sketchFeature(top, addLine(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 0 }).sketch);
+    const wall: Feature = { ...extrudeFeature(sk.id, 5), surface: true };
+    const block = feature("box", { width: 30, depth: 10, height: 8, x: -5, y: -5, z: 12 });
+    const narrow = feature("box", { width: 4, depth: 10, height: 8, x: 8, y: -5, z: 12 });
+    const r0 = build([sk, wall, block, narrow]);
+    const topEdge = r0.parts[0].edgeRefs.find((e) => e.kind === "edge" && Math.abs(e.mid[2] - 5) < 1e-6)!;
+    const under = (i: number) => ({ partId: r0.parts[i].id, ref: r0.parts[i].faceRefs.find((f) => Math.abs(f.center[2] - 12) < 1e-6)! });
+    const ext = (extendTo: Feature["extendTo"]): Feature => ({ ...feature("extendSurface", { distance: 3 }), picks: [{ partId: wall.id, ref: topEdge }], extendTo });
+    // Up to the block's underside, or to the block: 12 tall.
+    let r = build([sk, wall, block, narrow, ext({ mode: "face", target: under(1) })]);
+    expect(r.featureErrors).toEqual({});
+    expect(area(r.parts[0])).toBeCloseTo(20 * 12, 2);
+    r = build([sk, wall, block, narrow, ext({ mode: "part", target: under(1) })]);
+    expect(r.featureErrors).toEqual({});
+    expect(area(r.parts[0])).toBeCloseTo(20 * 12, 2);
+    // The narrow block's underside is only 4 wide, but its plane carries on: the whole edge goes up to z = 12.
+    r = build([sk, wall, block, narrow, ext({ mode: "face", target: under(2) })]);
+    expect(r.featureErrors).toEqual({});
+    expect(area(r.parts[0])).toBeCloseTo(20 * 12, 2);
+    expect(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).pieces).toBe(1);
+    // Up to the narrow block itself: the edge's ends would run on past its sides.
+    expect(Object.values(build([sk, wall, block, narrow, ext({ mode: "part", target: under(2) })]).featureErrors)[0]).toMatch(/past its sides/);
+    // Not picked yet, picked on itself, a surface as "part", and an edge heading away.
+    expect(build([sk, wall, block, ext({ mode: "face" })]).featureErrors).toMatchObject({ [`f${n}`]: "Click the face to extend up to." });
+    const bottomEdge = r0.parts[0].edgeRefs.find((e) => e.kind === "edge" && Math.abs(e.mid[2]) < 1e-6 && Math.abs(e.mid[0] - 10) < 1e-6)!;
+    const away: Feature = { ...ext({ mode: "part", target: under(1) }), picks: [{ partId: wall.id, ref: bottomEdge }] };
+    expect(Object.values(build([sk, wall, block, narrow, away]).featureErrors)[0]).toMatch(/never meets that part/);
+    const self: Feature = { ...ext({ mode: "face", target: { partId: wall.id, ref: r0.parts[0].faceRefs[0] } }) };
+    expect(Object.values(build([sk, wall, block, narrow, self]).featureErrors)[0]).toMatch(/not of the surface being extended/);
+  });
+
+  it("extends up to a curved face or a round part", () => {
+    // The same wall; a rod (radius 5, centre x = 30) beside its right-hand edge.
+    const sk = sketchFeature(top, addLine(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 0 }).sketch);
+    const wall: Feature = { ...extrudeFeature(sk.id, 5), surface: true };
+    const rod = feature("cylinder", { diameter: 10, height: 20, x: 30, y: 0, z: -5 });
+    const r0 = build([sk, wall, rod]);
+    const side = r0.parts[0].edgeRefs.find((e) => e.kind === "edge" && Math.abs(e.mid[0] - 20) < 1e-6)!;
+    const round = r0.parts[1].faceRefs.find((f) => f.surface === "CYLINDRE")!;
+    expect(round).toBeDefined();
+    for (const mode of ["face", "part"] as const) {
+      const ext: Feature = { ...feature("extendSurface", { distance: 3 }), picks: [{ partId: wall.id, ref: side }], extendTo: { mode, target: { partId: rod.id, ref: round } } };
+      const r = build([sk, wall, rod, ext]);
+      expect(r.featureErrors).toEqual({});
+      // Out to where the rod starts, x = 25: 25 × 5.
+      expect(area(r.parts[0])).toBeCloseTo(25 * 5, 2);
+    }
+  });
+
   it("thickens half each way (both sides), for surfaces and flat faces", () => {
     // A flat wall at y = 0, 20 × 5: 1 mm thick from y = −0.5 to 0.5.
     const sk = sketchFeature(top, addLine(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 0 }).sketch);

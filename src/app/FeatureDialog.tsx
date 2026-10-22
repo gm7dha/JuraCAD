@@ -397,6 +397,38 @@ function SurfaceOptions() {
       </div>
     );
   }
+  if (draft?.type === "extendSurface") {
+    const et = draft.extendTo;
+    return (
+      <>
+        <label className="field-label" htmlFor="extend-to">
+          How far
+        </label>
+        <select
+          id="extend-to"
+          className="full-select"
+          value={et?.mode ?? "distance"}
+          onChange={(e) => {
+            const mode = e.target.value;
+            setDraftField({ extendTo: mode === "face" || mode === "part" ? { mode, ...(et?.target ? { target: et.target } : {}) } : undefined });
+          }}
+        >
+          <option value="distance">By a distance</option>
+          <option value="face">Up to a face</option>
+          <option value="part">Up to a part</option>
+        </select>
+        {et && (
+          <p className={`dialog-hint field-hint${et.target ? "" : " attention"}`}>
+            {et.target
+              ? `${et.mode === "face" ? "Face" : "Part"} chosen — click a face of another part to change it.`
+              : et.mode === "face"
+              ? "Click the face to extend up to (a flat face counts as its whole plane). Click edges to choose what to extend."
+              : "Click any face of the solid part to extend up to. Click edges to choose what to extend."}
+          </p>
+        )}
+      </>
+    );
+  }
   if (draft?.type !== "fill") return null;
   return (
     <>
@@ -1327,7 +1359,9 @@ function PicksField() {
             : draft.type === "fill"
             ? "Click every edge round the opening (on any parts, surfaces or solids). They must join up into one ring."
             : draft.type === "extendSurface"
-            ? "Click the free edges of a surface. Each is pushed straight on, along the surface, by the distance."
+            ? draft.extendTo
+              ? "Click the free edges of a surface. Each is carried straight on, along the surface, until it meets the face or part."
+              : "Click the free edges of a surface. Each is pushed straight on, along the surface, by the distance."
             : draft.type === "ruled"
             ? "Click edges on any parts or surfaces. A straight strip is swept from each, square to the plane chosen below."
             : draft.type === "enclose"

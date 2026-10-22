@@ -2378,6 +2378,7 @@ export class GeometryEngine {
   private applyExtendSurface(feature: Feature): string | null {
     const { values, errors } = resolveParams(feature);
     if (errors.distance) return `Distance: ${errors.distance}`;
+    const upTo = feature.extendTo;
     const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
     if (!picks.length) return "Click the edges of the surface to extend.";
     const ids = [...new Set(picks.map((p) => p.partId))];
@@ -2385,10 +2386,34 @@ export class GeometryEngine {
     const part = this.parts.find((p) => p.id === ids[0]);
     if (!part) return "The surface no longer exists. Edit this and pick the edges again.";
     if (!part.surface) return "Extend surface works on surfaces (skins), not solid parts.";
+    // Up to a face or part: what it stops at, and a length sure to get past it.
+    let limit: Shape3D | null = null;
+    let ownLimit = false;
+    let reach = values.distance;
+    if (upTo) {
+      if (!upTo.target) return upTo.mode === "face" ? "Click the face to extend up to." : "Click a face of the part to extend up to.";
+      const other = this.parts.find((p) => p.id === upTo.target!.partId);
+      if (!other) return `The ${upTo.mode} it extends up to can't be found any more. Click it again.`;
+      if (other === part) return "Pick a face of another part or surface, not of the surface being extended.";
+      if (upTo.mode === "part") {
+        if (other.surface) return "“Up to a part” stops at a solid part. To stop at a surface, choose “Up to a face” and click it.";
+        limit = other.shape;
+      } else {
+        const [face] = findPickedFaces(other.shape, [upTo.target]);
+        if (!face) return "The face it extends up to can't be found any more (that part has changed). Click it again.";
+        limit = face as unknown as Shape3D;
+        ownLimit = true;
+      }
+      const a = boundsOf(part.shape);
+      const b = boundsOf(other.shape);
+      const lo = [0, 1, 2].map((i) => Math.min(a[0][i], b[0][i]));
+      const hi = [0, 1, 2].map((i) => Math.max(a[1][i], b[1][i]));
+      reach = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 1;
+    }
     let edges: Edge[] = [];
     try {
       edges = findPickedEdges(part.shape, picks);
-      const grown = extendSurface(part.shape, edges, values.distance);
+      const grown = extendSurface(part.shape, edges, reach, limit ?? undefined);
       part.shape.delete();
       part.shape = grown;
       part.featureIds.push(feature.id);
@@ -2397,6 +2422,7 @@ export class GeometryEngine {
       return describeError(e, "Couldn't extend this surface.");
     } finally {
       edges.forEach((e) => e.delete());
+      if (ownLimit) limit?.delete();
     }
   }
 

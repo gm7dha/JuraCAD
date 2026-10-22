@@ -173,6 +173,8 @@ export interface Feature {
   closeCorners?: boolean;
   /** Flange and Hem: mitre the corners where these meet flanges or hems on the next edges (trimmed along the corner's diagonal, `cornerGap` apart). */
   mitreCorners?: boolean;
+  /** Extend surface: how far — up to a face (a flat face counts as its whole plane) or a solid part, instead of by a distance; `target` is a face picked on it. */
+  extendTo?: { mode: "face" | "part"; target?: TopoPick };
   /** Bend and Jog: keep the other side of the line still (normally the smaller piece moves). */
   keepOtherSide?: boolean;
   /** Flange: the shape of the bend relief notches (missing = rectangle) and the relief cut where flanges meet at a corner. */

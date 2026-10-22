@@ -448,6 +448,11 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "cornerBreak" && f.breakStyle === "chamfer") feature.breakStyle = "chamfer";
     if (feature.type === "deleteFace" && f.leaveOpen === true) feature.leaveOpen = true;
     if (feature.type === "fill" && f.continuity === "tangent") feature.continuity = "tangent";
+    if (feature.type === "extendSurface" && f.extendTo && typeof f.extendTo === "object") {
+      const et = f.extendTo as Record<string, unknown>;
+      const target = parsePick(et.target);
+      if (et.mode === "face" || et.mode === "part") feature.extendTo = { mode: et.mode, ...(target ? { target } : {}) };
+    }
     if (feature.type === "derived") {
       const dv = (f.derived ?? {}) as Record<string, unknown>;
       if (typeof dv.studioId === "string" && typeof dv.partId === "string") feature.derived = { studioId: dv.studioId, partId: dv.partId };
