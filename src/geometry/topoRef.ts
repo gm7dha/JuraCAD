@@ -41,6 +41,11 @@ export type TopoRef = EdgeRef | FaceRef;
 export interface TopoPick {
   partId: string;
   ref: TopoRef;
+  /**
+   * Where it was clicked (on the face or edge), when that was kept: tells
+   * apart faces that look the same, such as the inside and outside of a pipe.
+   */
+  at?: Vec3;
 }
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -179,16 +184,18 @@ export function parsePick(data: unknown): TopoPick | null {
   const vec = (v: unknown): Vec3 | null =>
     Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x)) ? (v as Vec3) : null;
   const rel = vec(ref.rel);
+  const at = vec(d.at);
+  const pick = (r: TopoRef): TopoPick => ({ partId: d.partId as string, ref: r, ...(at ? { at } : {}) });
   if (ref.kind === "edge" && typeof ref.curve === "string") {
     const a = vec(ref.a);
     const b = vec(ref.b);
     const mid = vec(ref.mid);
-    if (a && b && mid) return { partId: d.partId, ref: { kind: "edge", curve: ref.curve, a, b, mid, ...(rel ? { rel } : {}) } };
+    if (a && b && mid) return pick({ kind: "edge", curve: ref.curve, a, b, mid, ...(rel ? { rel } : {}) });
   }
   if (ref.kind === "face" && typeof ref.surface === "string") {
     const center = vec(ref.center);
     const normal = vec(ref.normal);
-    if (center && normal) return { partId: d.partId, ref: { kind: "face", surface: ref.surface, center, normal, ...(rel ? { rel } : {}) } };
+    if (center && normal) return pick({ kind: "face", surface: ref.surface, center, normal, ...(rel ? { rel } : {}) });
   }
   return null;
 }

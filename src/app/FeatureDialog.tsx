@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { evaluate } from "../model/expr";
 import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
@@ -8,9 +8,10 @@ import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
 import { holePositionCount } from "../sketch/holePositions";
+import { formatSkip, parseSkip, totalCopies } from "../model/patterns";
 import { planeLabel } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
-import type { Axis } from "../model/types";
+import type { Axis, ExtrudeEnd, Feature } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { activeFeatures, activeStudioId, studioParts, useLengthUnit, useStore } from "../model/store";
 import { studiosOf } from "../model/studios";
@@ -678,37 +679,42 @@ function SketchSolidOptions() {
           </label>
         </>
       )}
-      {draft.type === "extrude" && (
-      <div className="segmented four" role="radiogroup" aria-label="Direction">
-        {(["blind", "symmetric", "upToFace", "throughAll"] as const).map((end) => (
-          <button
-            type="button"
-            key={end}
-            role="radio"
-            aria-checked={opts.end === end}
-            className={opts.end === end ? "selected" : ""}
-            onClick={() => setDraftField({ extrude: { ...opts, end } })}
-            title={
-              end === "blind"
-                ? "Extrude out from the sketch on one side"
-                : end === "symmetric"
-                  ? "Extrude the same amount on both sides of the sketch"
-                  : end === "upToFace"
-                    ? "Extrude until it reaches a flat face you click (parallel to the sketch)"
-                    : "Cut right through every part, on both sides of the sketch, however thick it gets (Remove only)"
-            }
-          >
-            {end === "blind" ? "One way" : end === "symmetric" ? "Both" : end === "upToFace" ? "To face" : "Through"}
-          </button>
+      {draft.type === "extrude" &&
+        (draft.surface ? (
+          <div className="segmented two" role="radiogroup" aria-label="Direction">
+            {(["blind", "symmetric"] as const).map((end) => (
+              <button type="button" key={end} role="radio" aria-checked={opts.end === end} className={opts.end === end ? "selected" : ""} onClick={() => setDraftField({ extrude: { ...opts, end } })}>
+                {end === "blind" ? "One way" : "Both"}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <>
+            <label className="field-label" htmlFor="extrude-end">
+              How far
+            </label>
+            <select
+              id="extrude-end"
+              className="full-select"
+              value={opts.end}
+              onChange={(e) => {
+                const end = e.target.value as ExtrudeEnd;
+                // A pick made for one kind of end doesn't fit another.
+                const { upTo: _u, upToEnd: _e, ...rest } = opts;
+                const keep = PICKED_ENDS[end] && PICKED_ENDS[end] === PICKED_ENDS[opts.end] && opts.upTo;
+                setDraftField({ extrude: { ...rest, end, ...(keep ? { upTo: opts.upTo, ...(opts.upToEnd ? { upToEnd: opts.upToEnd } : {}) } : {}) } });
+              }}
+            >
+              {EXTRUDE_ENDS.map(([end, label]) => (
+                <option key={end} value={end}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <p className={`dialog-hint field-hint${PICKED_ENDS[opts.end] && !opts.upTo ? " attention" : ""}`}>{extrudeEndHint(opts)}</p>
+          </>
         ))}
-      </div>
-      )}
-      {draft.type === "extrude" && opts.end === "upToFace" && (
-        <p className={`dialog-hint field-hint${opts.upTo ? "" : " attention"}`}>
-          {opts.upTo ? "Face chosen — click another face to change it." : "Click the flat face to extrude up to."}
-        </p>
-      )}
-      {draft.type === "extrude" && opts.end === "blind" && (
+      {draft.type === "extrude" && (opts.end === "blind" || opts.end === "upToNext" || opts.end === "upToPart") && (
         <label className="check-row">
           <input type="checkbox" checked={opts.flip} onChange={(e) => setDraftField({ extrude: { ...opts, flip: e.target.checked } })} />
           Flip direction
@@ -722,6 +728,40 @@ function SketchSolidOptions() {
       )}
     </fieldset>
   );
+}
+
+/** The ways an extrude can end, as listed (Onshape's order). */
+const EXTRUDE_ENDS: [ExtrudeEnd, string][] = [
+  ["blind", "A set depth (one way)"],
+  ["symmetric", "A set depth, both ways (symmetric)"],
+  ["upToNext", "Up to the next face"],
+  ["upToFace", "Up to a face"],
+  ["upToPart", "Up to a part"],
+  ["upToVertex", "Up to a corner (vertex)"],
+  ["throughAll", "Through all (Remove)"],
+];
+
+/** Ends that need something clicked in the 3D view, and what. */
+const PICKED_ENDS: Partial<Record<ExtrudeEnd, "face" | "edge" | "part">> = { upToFace: "face", upToVertex: "edge", upToPart: "part" };
+
+/** What the chosen end does, and (for the ends that need one) what to click. */
+function extrudeEndHint(opts: NonNullable<Feature["extrude"]>): string {
+  switch (opts.end) {
+    case "blind":
+      return "Out from the sketch on one side, by the depth below.";
+    case "symmetric":
+      return "Half the depth each side of the sketch.";
+    case "throughAll":
+      return "Cuts right through every part, on both sides of the sketch (Remove only).";
+    case "upToNext":
+      return "Stops at the next face it meets. Starting inside a part with Remove, it cuts through that wall only.";
+    case "upToFace":
+      return opts.upTo ? "Face chosen — click another face to change it." : "Click the face to stop at — flat (at any angle) or curved.";
+    case "upToPart":
+      return opts.upTo ? "Part chosen — click another part to change it." : "Click the part to extrude up to. All of the sketch must meet it.";
+    case "upToVertex":
+      return opts.upTo ? "Corner chosen — the extrude ends level with it. Click near another corner to change it." : "Click near the end of an edge: the extrude ends level with that corner.";
+  }
 }
 
 /** Text: the words, the plane, bold, and which way. */
@@ -974,13 +1014,36 @@ function HoleOptions() {
           ["tapped", "Tapped", "Drill size for cutting a thread — the screw screws into the part"],
         ], (fit) => update({ fit }))}
       {seg("Depth", h.end, [
-        ["throughAll", "Through all", "Right through the part"],
+        ["throughAll", "Through all", "Right through the part, one way from the sketch (Flip direction for the other way)"],
+        ["upToNext", "Up to next", "Through the first wall the drill meets, and no further"],
         ["blind", "To a depth", "Stops at a set depth, with a drill point at the bottom"],
       ], (end) => update({ end }))}
       <label className="check-row">
         <input type="checkbox" checked={h.flip} onChange={(e) => update({ flip: e.target.checked })} />
         Flip direction
       </label>
+      {h.end === "throughAll" && (
+        <label className="check-row" title="For a sketch on a plane inside the part: drill out both sides of it">
+          <input type="checkbox" checked={!!h.bothWays} onChange={(e) => update({ bothWays: e.target.checked || undefined })} />
+          Both ways from the sketch
+        </label>
+      )}
+      {h.fit === "tapped" && h.standard !== "Custom" && (
+        <>
+          <label className="check-row" title="Cut a real screw thread into the hole's wall, so a screw can go straight in — handy for 3D printing">
+            <input type="checkbox" checked={!!h.modelThread} onChange={(e) => update({ modelThread: e.target.checked || undefined })} />
+            Model the thread (for 3D printing)
+          </label>
+          {h.modelThread && (
+            <p className="dialog-hint field-hint">
+              Cuts a real helical {h.standard} thread (60°, standard pitch) into the wall. While this box is open the preview shows the plain hole; the
+              thread is cut when you press Accept. That takes a few seconds for each new thread size and length (about a quarter of a second a turn —
+              longer for deep holes); holes the same size share the work, and later edits reuse it. Threads smaller than M3 rarely print well; if a printed
+              thread is tight, run a tap through it. The thread depth is measured from where the hole goes into the part.
+            </p>
+          )}
+        </>
+      )}
       <p className="dialog-hint field-hint">{describeHole(h)}</p>
     </fieldset>
   );
@@ -1119,27 +1182,44 @@ function PatternOptions() {
       ) : (
         <fieldset className="param-group">
           <legend>{draft.type === "circularPattern" ? "Around the axis" : "Along the axis"}</legend>
-          <select
-            className="full-select"
-            aria-label="Axis"
-            value={pattern.axis}
-            onChange={(e) => {
-              const axis = e.target.value as Axis;
-              // The rows can't go the same way as the copies: swap them over.
-              setDraftField({ pattern: { ...pattern, axis, ...(pattern.axis2 === axis ? { axis2: pattern.axis } : {}) } });
-            }}
-          >
-            {(["x", "y", "z"] as const).map((a) => (
-              <option key={a} value={a}>
-                {AXIS_LABELS[a]}
-              </option>
-            ))}
-          </select>
+          {pattern.along ? (
+            <PickedRow
+              text={`${draft.type === "circularPattern" ? "Around" : "Along"}: ${describeRef(pattern.along.ref, true).toLowerCase()} (clicked)`}
+              onClear={() => {
+                const { along: _a, ...rest } = pattern;
+                setDraftField({ pattern: rest });
+              }}
+            />
+          ) : (
+            <select
+              className="full-select"
+              aria-label="Axis"
+              value={pattern.axis}
+              onChange={(e) => {
+                const axis = e.target.value as Axis;
+                // The rows can't go the same way as the copies: swap them over.
+                setDraftField({ pattern: { ...pattern, axis, ...(pattern.axis2 === axis ? { axis2: pattern.axis } : {}) } });
+              }}
+            >
+              {(["x", "y", "z"] as const).map((a) => (
+                <option key={a} value={a}>
+                  {AXIS_LABELS[a]}
+                </option>
+              ))}
+            </select>
+          )}
+          {!pattern.along && pattern.picking !== "along2" && (
+            <p className="dialog-hint field-hint">
+              {draft.type === "circularPattern"
+                ? "Or click a round face (a hole or boss), a round edge or a straight edge in the 3D view to turn round it."
+                : "Or click a straight edge in the 3D view to go along it (or a flat face, to go straight out of it)."}
+            </p>
+          )}
           <label className="check-row">
             <input type="checkbox" checked={pattern.flip} onChange={(e) => setDraftField({ pattern: { ...pattern, flip: e.target.checked } })} />
             Flip direction
           </label>
-          {draft.type === "circularPattern" && (
+          {draft.type === "circularPattern" && !pattern.along && (
             <p className="dialog-hint field-hint">The axis goes through the point under Axis position below (the origin to start with) — put it at the middle of the round part.</p>
           )}
           {draft.type === "linearPattern" && (
@@ -1147,19 +1227,40 @@ function PatternOptions() {
               <label className="field-label" htmlFor="pattern-axis2">
                 Rows go along (for a grid)
               </label>
-              <select
-                id="pattern-axis2"
-                className="full-select"
-                aria-label="Second direction"
-                value={axis2}
-                onChange={(e) => setDraftField({ pattern: { ...pattern, axis2: e.target.value as Axis } })}
-              >
-                {(["x", "y", "z"] as const).map((a) => (
-                  <option key={a} value={a} disabled={a === pattern.axis}>
-                    {AXIS_LABELS[a]}
-                  </option>
-                ))}
-              </select>
+              {pattern.along2 ? (
+                <PickedRow
+                  text={`Along: ${describeRef(pattern.along2.ref, true).toLowerCase()} (clicked)`}
+                  onClear={() => {
+                    const { along2: _a, picking: _p, ...rest } = pattern;
+                    setDraftField({ pattern: rest });
+                  }}
+                />
+              ) : (
+                <select
+                  id="pattern-axis2"
+                  className="full-select"
+                  aria-label="Second direction"
+                  value={axis2}
+                  onChange={(e) => setDraftField({ pattern: { ...pattern, axis2: e.target.value as Axis } })}
+                >
+                  {(["x", "y", "z"] as const).map((a) => (
+                    <option key={a} value={a} disabled={!pattern.along && a === pattern.axis}>
+                      {AXIS_LABELS[a]}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={pattern.picking === "along2"}
+                  onChange={(e) => {
+                    const { picking: _p, ...rest } = pattern;
+                    setDraftField({ pattern: e.target.checked ? { ...rest, picking: "along2" } : rest });
+                  }}
+                />
+                Clicks in the 3D view set the rows&apos; direction
+              </label>
               <label className="check-row">
                 <input type="checkbox" checked={!!pattern.flip2} onChange={(e) => setDraftField({ pattern: { ...pattern, flip2: e.target.checked || undefined } })} />
                 Flip the rows&apos; direction
@@ -1169,7 +1270,71 @@ function PatternOptions() {
           )}
         </fieldset>
       )}
+      {!mirror && <SkipCopies />}
     </>
+  );
+}
+
+/** A direction or axis clicked in the 3D view, with a button to go back to choosing one from the list. */
+function PickedRow({ text, onClear }: { text: string; onClear: () => void }) {
+  return (
+    <ul className="pick-list">
+      <li>
+        <span>{text}</span>
+        <button type="button" className="icon-button small" onClick={onClear} title="Choose from the list instead" aria-label="Clear the clicked direction">
+          <Icons.Cross size={14} />
+        </button>
+      </li>
+    </ul>
+  );
+}
+
+/** Patterns: copies to leave out, by number (the original is 1). */
+function SkipCopies() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const pattern = draft?.pattern;
+  const saved = formatSkip(pattern?.skip);
+  const [text, setText] = useState(saved);
+  // Follow the feature when it changes from elsewhere (undo, another feature opened).
+  const last = useRef(saved);
+  useEffect(() => {
+    if (saved !== last.current) setText(saved);
+    last.current = saved;
+  }, [saved]);
+  if (!draft || !pattern) return null;
+  const { values } = resolveParams(draft);
+  const total = totalCopies(values.count ?? 1, draft.type === "linearPattern" ? (values.count2 ?? 1) : 1);
+  const r = parseSkip(text, total);
+  return (
+    <fieldset className="param-group">
+      <legend>Skip copies</legend>
+      <div className={`param-field${"error" in r ? " invalid" : ""}`}>
+        <label htmlFor="pattern-skip">Leave out copies (numbers)</label>
+        <div className="param-input">
+          <input
+            id="pattern-skip"
+            value={text}
+            placeholder="none"
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => {
+              setText(e.target.value);
+              const next = parseSkip(e.target.value, total);
+              if ("skip" in next) {
+                const { skip: _s, ...rest } = pattern;
+                last.current = formatSkip(next.skip);
+                setDraftField({ pattern: next.skip.length ? { ...rest, skip: next.skip } : rest });
+              }
+            }}
+          />
+        </div>
+        {"error" in r && <div className="param-message error">{r.error}</div>}
+      </div>
+      <p className="dialog-hint field-hint">
+        The original is copy 1; the others count on from it{draft.type === "linearPattern" ? ", row by row in a grid" : ""}. For example 3, 5 or 2-4.
+      </p>
+    </fieldset>
   );
 }
 

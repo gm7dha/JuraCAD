@@ -227,6 +227,21 @@ export function insertFeatureAfter(doc: JuraCADDocument, feature: Feature, after
   return { ...doc, features: [...doc.features.slice(0, at + 1), feature, ...doc.features.slice(at + 1)] };
 }
 
+/**
+ * A feature being edited, as previewed: a hole's modelled thread takes seconds
+ * to cut, so the preview shows the plain hole and the thread is cut on Accept.
+ */
+export function previewOf(draft: Feature | null): Feature | null {
+  if (!draft?.hole?.modelThread) return draft;
+  const { modelThread: _m, ...hole } = draft.hole;
+  return { ...draft, hole };
+}
+
+/** While a feature is being edited: every hole previewed without its modelled thread (so a drag doesn't re-cut them all). */
+export function previewFeatures(features: Feature[]): Feature[] {
+  return features.some((f) => f.hole?.modelThread) ? features.map((f) => previewOf(f)!) : features;
+}
+
 export function featuresWithDraft(features: Feature[], draft: Feature | null): Feature[] {
   if (!draft) return features;
   return features.some((f) => f.id === draft.id)
@@ -313,6 +328,12 @@ function parseImportedFile(raw: unknown): ImportedFile | null {
   };
 }
 
+/** A pattern's skipped copies: whole numbers from 2 up (1 is the original), each once, in order. */
+function skipList(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.filter((x): x is number => typeof x === "number" && Number.isInteger(x) && x >= 2 && x <= 10000))].sort((a, b) => a - b);
+}
+
 const FEATURE_TYPES = new Set<string>(Object.keys(FEATURE_DEFS));
 const OPERATIONS = new Set<string>(["new", "add", "remove", "intersect"]);
 
@@ -351,10 +372,12 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const ex = f.extrude as Record<string, unknown> | undefined;
       const upTo = parsePick(ex?.upTo);
+      const ends = ["symmetric", "throughAll", "upToFace", "upToNext", "upToVertex", "upToPart"] as const;
       feature.extrude = {
-        end: ex?.end === "symmetric" || ex?.end === "throughAll" || ex?.end === "upToFace" ? ex.end : "blind",
+        end: ends.find((e) => e === ex?.end) ?? "blind",
         flip: ex?.flip === true,
         ...(upTo ? { upTo } : {}),
+        ...(ex?.upToEnd === "a" || ex?.upToEnd === "b" ? { upToEnd: ex.upToEnd } : {}),
         ...(ex?.second === true ? { second: true } : {}),
       };
     }
@@ -370,6 +393,9 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         ...(pt?.follow === true ? { follow: true } : {}),
         ...(feature.type === "linearPattern" && axis2 ? { axis2 } : {}),
         ...(feature.type === "linearPattern" && pt?.flip2 === true ? { flip2: true } : {}),
+        ...(feature.type !== "curvePattern" && parsePick(pt?.along) ? { along: parsePick(pt?.along)! } : {}),
+        ...(feature.type === "linearPattern" && parsePick(pt?.along2) ? { along2: parsePick(pt?.along2)! } : {}),
+        ...(skipList(pt?.skip).length ? { skip: skipList(pt?.skip) } : {}),
       };
       if (feature.type === "curvePattern" && typeof f.pathRef === "string") feature.pathRef = f.pathRef;
     }
@@ -404,8 +430,10 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         kind: h.kind === "counterbore" || h.kind === "countersink" ? h.kind : "simple",
         standard: typeof h.standard === "string" ? h.standard : "Custom",
         fit: h.fit === "tapped" ? "tapped" : "clearance",
-        end: h.end === "blind" ? "blind" : "throughAll",
+        end: h.end === "blind" || h.end === "upToNext" ? h.end : "throughAll",
         flip: h.flip === true,
+        ...(h.modelThread === true ? { modelThread: true } : {}),
+        ...(h.bothWays === true ? { bothWays: true } : {}),
       };
     }
     if (feature.type === "sweep") {

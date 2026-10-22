@@ -59,9 +59,17 @@ export interface HoleOptions {
   /** Screw size such as "M4", or "Custom". */
   standard: string;
   fit: HoleFit;
-  end: "blind" | "throughAll";
+  /**
+   * How deep: a set depth, right through (one way; `bothWays` for both), or
+   * through the first wall the drill meets ("upToNext").
+   */
+  end: "blind" | "throughAll" | "upToNext";
   /** Drill out of the face instead of into it. */
   flip: boolean;
+  /** Tapped holes: cut a real helical thread into the wall (for 3D printing) instead of just the tap-drill hole. */
+  modelThread?: boolean;
+  /** Through all: drill both ways from the sketch (for a sketch on a plane inside the part). Off: one way, as Onshape. */
+  bothWays?: boolean;
 }
 
 /** A STEP or STL file brought in from another program, kept inside the design. */
@@ -77,8 +85,12 @@ export interface ImportedFile {
 /** A world axis, for patterns. */
 export type Axis = "x" | "y" | "z";
 
-/** How an extrude runs: one way from the sketch (optionally flipped), or equally both ways. */
-export type ExtrudeEnd = "blind" | "symmetric" | "throughAll" | "upToFace";
+/**
+ * How an extrude runs: one way from the sketch (optionally flipped), equally
+ * both ways, right through, or up to something — a face (flat or curved), the
+ * next face it meets, a corner (vertex) or a part.
+ */
+export type ExtrudeEnd = "blind" | "symmetric" | "throughAll" | "upToFace" | "upToNext" | "upToVertex" | "upToPart";
 
 /**
  * How a feature's solid combines with what's already there (like Onshape's
@@ -131,8 +143,13 @@ export interface Feature {
   extrude?: {
     end: ExtrudeEnd;
     flip: boolean;
-    /** Up to face: the flat face to stop at. */
+    /**
+     * Up to face: the face to stop at (flat or curved). Up to vertex: an edge,
+     * whose end `upToEnd` ("a" or "b", as in the edge's ref) is the corner.
+     * Up to part: any face of the part.
+     */
     upTo?: TopoPick;
+    upToEnd?: "a" | "b";
     /** One way (blind): also extrude the other way from the sketch, by the second depth (`depth2`). */
     second?: boolean;
   };
@@ -205,7 +222,26 @@ export interface Feature {
    * Linear: `axis2`/`flip2` are the second direction of a grid (with `count2`
    * rows, `spacing2` apart).
    */
-  pattern?: { sources: string[]; axis: Axis; flip: boolean; follow?: boolean; axis2?: Axis; flip2?: boolean };
+  pattern?: {
+    sources: string[];
+    axis: Axis;
+    flip: boolean;
+    follow?: boolean;
+    axis2?: Axis;
+    flip2?: boolean;
+    /**
+     * Picked in the 3D view instead of `axis`: a linear pattern's direction
+     * (a straight edge, or a flat face's normal); a circular pattern's axis
+     * (a round face or edge, or a straight edge). Followed as the part changes.
+     */
+    along?: TopoPick;
+    /** Linear grid: the second direction picked in the 3D view instead of `axis2`. */
+    along2?: TopoPick;
+    /** Copies left out, by number (the original is 1; in a grid, row by row). */
+    skip?: number[];
+    /** While editing a grid: a click in the 3D view sets the rows' direction (`along2`) instead of `along`. Not saved. */
+    picking?: "along2";
+  };
   /**
    * Mirror: the features to mirror, and the plane to mirror them across. Or,
    * with `part`, a whole part mirrored: as a new part, or joined onto the

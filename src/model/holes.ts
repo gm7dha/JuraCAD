@@ -67,6 +67,17 @@ export interface HoleSize {
   throughAll: boolean;
   /** How far "through all" must reach. */
   throughLength: number;
+  /** Through all: also this far back the other way from the sketch (so a sketch inside the part goes right through). */
+  backLength?: number;
+  /** End flat at `depth` instead of with a drill point (up to next: the drill breaks through there). */
+  flatBottom?: boolean;
+  /**
+   * Tapped holes with the thread modelled: an ISO groove of this pitch round
+   * the wall, centred from `from` to `to` mm along the drill (the hole's
+   * radius is the tap drill's).
+   */
+  thread?: { from: number; to: number; pitch: number };
+  /** Where the straight (full-diameter) part of the hole starts, below any counterbore or countersink. */
   cboreDiameter: number;
   cboreDepth: number;
   cskDiameter: number;
@@ -87,7 +98,9 @@ export const HOLE_LEAD_IN = 0.05;
 export function holeProfile(h: HoleSize): ProfilePoint[] {
   const R = h.diameter / 2;
   const bottom = h.throughAll ? h.throughLength : h.depth;
-  const pts: ProfilePoint[] = [[0, -HOLE_LEAD_IN]];
+  const back = h.throughAll && h.backLength && h.backLength > HOLE_LEAD_IN ? h.backLength : 0;
+  // Through all, both ways: the plain hole also runs back out the other side of the sketch.
+  const pts: ProfilePoint[] = !back ? [[0, -HOLE_LEAD_IN]] : h.kind === "simple" ? [[0, -back], [R, -back]] : [[0, -back], [R, -back], [R, -HOLE_LEAD_IN]];
   if (h.kind === "counterbore") {
     if (h.cboreDiameter <= h.diameter) throw new Error("The counterbore must be wider than the hole.");
     if (!h.throughAll && h.cboreDepth >= h.depth) throw new Error("The counterbore must be shallower than the hole.");
@@ -100,11 +113,11 @@ export function holeProfile(h: HoleSize): ProfilePoint[] {
     const sinkDepth = (Rs - R) / Math.tan(((h.cskAngle / 2) * Math.PI) / 180);
     if (!h.throughAll && sinkDepth >= h.depth) throw new Error("The countersink is deeper than the hole.");
     pts.push([Rs + HOLE_LEAD_IN * Math.tan(((h.cskAngle / 2) * Math.PI) / 180), -HOLE_LEAD_IN], [R, sinkDepth]);
-  } else {
+  } else if (!back) {
     pts.push([R, -HOLE_LEAD_IN]);
   }
   pts.push([R, bottom]);
-  if (!h.throughAll) {
+  if (!h.throughAll && !h.flatBottom) {
     const tip = R / Math.tan(((DRILL_POINT_ANGLE / 2) * Math.PI) / 180);
     pts.push([0, bottom + tip]);
   } else {
@@ -136,4 +149,11 @@ export function holeVolume(h: HoleSize): number {
     v += (Math.PI * dt * (r1 * r1 + r1 * r2 + r2 * r2)) / 3; // frustum
   }
   return v;
+}
+
+/** How far down the drill the straight, full-diameter part of a hole starts (below a counterbore or countersink). */
+export function straightStart(h: HoleSize): number {
+  if (h.kind === "counterbore") return h.cboreDepth;
+  if (h.kind === "countersink") return (h.cskDiameter / 2 - h.diameter / 2) / Math.tan(((h.cskAngle / 2) * Math.PI) / 180);
+  return 0;
 }

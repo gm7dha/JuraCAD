@@ -7,15 +7,18 @@ import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, mak
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
-import { matchRefs, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { matchRefs, refDistance, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame, toWorld } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
-import { setCurrentScope } from "../model/expr";
+import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
 import { centreRevolve, revolveSketch } from "./revolve";
-import { holeTool } from "./hole";
+import { holeTool, type ThreadedHoleCache } from "./hole";
+import { HOLE_LEAD_IN, SCREW_SIZES, straightStart, type HoleSize } from "../model/holes";
+import { copyNumber, isSkipped } from "../model/patterns";
+import { materialRuns, shapeDistance, upToFaceSolid, upToPartsSolid } from "./upTo";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
@@ -40,7 +43,7 @@ import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep } from "./stepExport";
 import { importKey, importSolids, isImportedSurface } from "./importer";
-import { edgesOf, facesOf, solidsOf } from "./topology";
+import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 /** Id of the first Part Studio (matches MAIN_STUDIO in model/studios.ts). */
@@ -245,6 +248,10 @@ function cylinderAxes(shape: Shape3D): [Vec3, Vec3][] {
 }
 
 const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+/** True when two boxes (min and max corners) overlap or touch. */
+const boxesOverlap = (a: [Vec3, Vec3], b: [Vec3, Vec3]) => [0, 1, 2].every((k) => a[0][k] <= b[1][k] + 1e-6 && b[0][k] <= a[1][k] + 1e-6);
+/** A length for a message: at most two decimals ("2.5", not "2.500000001"). */
+const fmt = (x: number) => String(Math.round(x * 100) / 100);
 
 /**
  * Cut a thread groove into `start` from `from` to `to` along the cylinder's
@@ -787,6 +794,30 @@ function findPickedFaces(shape: Shape3D, picks: TopoPick[]): Face[] {
 }
 
 /**
+ * One picked face, found on the part as it is now. When several faces look
+ * just the same (the inside and outside of a pipe share an axis and centre),
+ * the one nearest where it was clicked is taken.
+ */
+function findPickedFace(shape: Shape3D, pick: TopoPick): Face {
+  if (!pick.at) return findPickedFaces(shape, [pick])[0];
+  const faces = facesOf(shape);
+  const bounds = boundsOf(shape);
+  const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+  const gaps = faces.map((f) => refDistance(pick.ref, faceRefOf(f, bounds), size));
+  const best = Math.min(...gaps);
+  const near = faces.filter((_, i) => gaps[i] <= best + 1e-6 && Number.isFinite(best) && best <= Math.max(1, 0.3 * size));
+  if (near.length <= 1) {
+    faces.forEach((f) => f.delete());
+    return findPickedFaces(shape, [pick])[0];
+  }
+  const point = makeVertex(pick.at);
+  const chosen = near.map((f) => ({ f, d: shapeDistance(point, f) })).sort((a, b) => a.d - b.d)[0].f;
+  point.delete();
+  faces.forEach((f) => f !== chosen && f.delete());
+  return chosen;
+}
+
+/**
  * A chamfer that isn't the same both ways: `first` mm along one face and
  * `second` mm along the other ("twoDistances"), or `first` mm along one face at
  * `second` degrees ("distanceAngle"). The first distance runs along the face
@@ -1084,7 +1115,7 @@ function reach(plane: Parameters<typeof planeFrame>[0], parts: BuiltPart[]): num
   return far;
 }
 
-function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[]): Shape3D {
+function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], threaded?: ThreadedHoleCache): Shape3D {
   switch (feature.type) {
     case "extrude":
     case "revolve": {
@@ -1117,28 +1148,90 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         const depth = 2 * reach(sketch.sketch.plane, parts) + 2;
         return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth, end: "symmetric", flip: false, areas: feature.areas });
       }
+      const frame = planeFrame(sketch.sketch.plane);
+      const n = frame.n;
+      const offset = v.offset ?? 0;
+      /** A one-way extrude ending `d` mm along the sketch's normal (minus: the other way), moved on by the offset. */
+      const toDistance = (d: number, what: string) => {
+        const total = d + Math.sign(d) * offset;
+        if (Math.abs(d) < 1e-6) throw new Error(`That ${what} is level with the sketch, so there's nothing to extrude. Pick another.`);
+        if (Math.sign(total) !== Math.sign(d) || Math.abs(total) < 1e-6) {
+          throw new Error(`The offset takes the end back past the sketch. Make the offset smaller than ${fmt(Math.abs(d))} mm.`);
+        }
+        return extrudeSketch(sketch.sketch!.plane!, sketch.sketch!.data, { depth: Math.abs(total), end: "blind", flip: total < 0, draft: v.draft, areas: feature.areas });
+      };
+      /** A long one-way extrude, to be cut back to where it should stop. */
+      const long = (flip: boolean) => {
+        const length = 2 * reach(sketch.sketch!.plane!, parts) + 2;
+        return { length, shape: extrudeSketch(sketch.sketch!.plane!, sketch.sketch!.data, { depth: length, end: "blind", flip, areas: feature.areas }) };
+      };
       if (opts.end === "upToFace") {
-        if (!opts.upTo) throw new Error("Click the flat face to extrude up to.");
+        if (!opts.upTo || opts.upTo.ref.kind !== "face") throw new Error("Click the face to extrude up to.");
         const part = parts.find((p) => p.id === opts.upTo!.partId);
         if (!part) throw new Error("The part with the face to extrude up to has gone. Edit this extrude and pick another face.");
-        const [face] = findPickedFaces(part.shape, [opts.upTo]);
-        let centre: Vec3;
-        let normal: Vec3;
+        const face = findPickedFace(part.shape, opts.upTo);
         try {
-          if (face.geomType !== "PLANE") throw new Error("Up to face needs a flat face.");
-          centre = take(face.center);
-          normal = take(face.normalAt(centre));
+          const centre = take(face.center);
+          if (face.geomType === "PLANE") {
+            const normal = take(face.normalAt(centre));
+            const d = (centre[0] - frame.origin[0]) * n[0] + (centre[1] - frame.origin[1]) * n[1] + (centre[2] - frame.origin[2]) * n[2];
+            // Parallel to the sketch: a plain extrude of the right depth (draft allowed).
+            if (Math.abs(dot3(normal, n)) >= 0.999) return toDistance(d, "face");
+            if (Math.abs(dot3(normal, n)) < 1e-3) throw new Error("That face runs alongside the extrude (parallel to its direction), so the extrude would never reach it. Pick a face across its path.");
+          }
+          // Slanted or curved: extrude well past it, then cut back to the face.
+          if (Math.abs(v.draft) > 1e-9) throw new Error("A draft only works up to a flat face parallel to the sketch. Set the draft to 0 for this face.");
+          const ahead = dot3([centre[0] - frame.origin[0], centre[1] - frame.origin[1], centre[2] - frame.origin[2]], n);
+          const flip = Math.abs(ahead) > 1e-6 ? ahead < 0 : opts.flip;
+          const { length, shape } = long(flip);
+          try {
+            const dir: Vec3 = flip ? [-n[0], -n[1], -n[2]] : n;
+            return upToFaceSolid(shape, frame.origin, dir, length, face, offset);
+          } finally {
+            shape.delete();
+          }
         } finally {
           face.delete();
         }
-        const frame = planeFrame(sketch.sketch.plane);
-        const n = frame.n;
-        if (Math.abs(normal[0] * n[0] + normal[1] * n[1] + normal[2] * n[2]) < 0.999) {
-          throw new Error("Up to face needs a face parallel to the sketch.");
+      }
+      if (opts.end === "upToVertex") {
+        if (!opts.upTo || opts.upTo.ref.kind !== "edge") throw new Error("Click near the end of an edge: that corner is where the extrude stops.");
+        const part = parts.find((p) => p.id === opts.upTo!.partId);
+        if (!part) throw new Error("The part with the corner to extrude up to has gone. Edit this extrude and pick another.");
+        const ref = opts.upTo.ref;
+        const want = opts.upToEnd === "b" ? ref.b : ref.a;
+        const [edge] = findPickedEdges(part.shape, [opts.upTo]);
+        let corner: Vec3;
+        try {
+          const ends = [take(edge.startPoint), take(edge.endPoint)];
+          corner = ends.sort((p, q) => Math.hypot(...p.map((x, k) => x - want[k])) - Math.hypot(...q.map((x, k) => x - want[k])))[0];
+        } finally {
+          edge.delete();
         }
-        const d = (centre[0] - frame.origin[0]) * n[0] + (centre[1] - frame.origin[1]) * n[1] + (centre[2] - frame.origin[2]) * n[2];
-        if (Math.abs(d) < 1e-6) throw new Error("That face is level with the sketch, so there's nothing to extrude.");
-        return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: Math.abs(d), end: "blind", flip: d < 0, draft: v.draft, areas: feature.areas });
+        return toDistance(dot3([corner[0] - frame.origin[0], corner[1] - frame.origin[1], corner[2] - frame.origin[2]], n), "corner");
+      }
+      if (opts.end === "upToNext" || opts.end === "upToPart") {
+        let stops: BuiltPart[];
+        let what: string;
+        if (opts.end === "upToPart") {
+          const part = opts.upTo ? parts.find((p) => p.id === opts.upTo!.partId) : undefined;
+          if (!opts.upTo) throw new Error("Click the part to extrude up to.");
+          if (!part) throw new Error("The part to extrude up to has gone. Edit this extrude and click another part.");
+          stops = [part];
+          what = part.name;
+        } else {
+          stops = parts.filter((p) => !p.surface);
+          what = "a part";
+        }
+        // Up to next cuts through the wall it starts in; otherwise it fills the gap up to the part.
+        const keep = opts.end === "upToNext" && (feature.operation === "remove" || feature.operation === "intersect") ? "material" : "air";
+        const { length, shape } = long(opts.flip);
+        try {
+          const dir: Vec3 = opts.flip ? [-n[0], -n[1], -n[2]] : n;
+          return upToPartsSolid(shape, frame.origin, dir, length, stops.map((p) => p.shape), keep, what);
+        } finally {
+          shape.delete();
+        }
       }
       const second = opts.end === "blind" && opts.second ? v.depth2 : 0;
       return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip, draft: v.draft, depth2: second, areas: feature.areas });
@@ -1304,22 +1397,73 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         throw new Error(`${exists.name} couldn't be used.`);
       }
       const through = h.end === "throughAll";
-      return holeTool(
-        sketch.sketch.plane,
-        sketch.sketch.data,
-        {
-          kind: h.kind,
-          diameter: v.diameter,
-          depth: v.depth,
-          throughAll: through,
-          throughLength: through ? 2 * reach(sketch.sketch.plane, parts) + 2 : 0,
-          cboreDiameter: v.cboreDiameter,
-          cboreDepth: v.cboreDepth,
-          cskDiameter: v.cskDiameter,
-          cskAngle: v.cskAngle,
-        },
-        h.flip,
-      );
+      const span = 2 * reach(sketch.sketch.plane, parts) + 2;
+      const back = through && h.bothWays ? span : 0;
+      const size: HoleSize = {
+        kind: h.kind,
+        diameter: v.diameter,
+        depth: v.depth,
+        throughAll: through,
+        throughLength: through ? span : 0,
+        // Through all, both ways (if asked): also back the other way, so a sketch inside the part drills right through.
+        ...(back ? { backLength: back } : {}),
+        cboreDiameter: v.cboreDiameter,
+        cboreDepth: v.cboreDepth,
+        cskDiameter: v.cskDiameter,
+        cskAngle: v.cskAngle,
+      };
+      const screw = h.fit === "tapped" ? SCREW_SIZES.find((x) => x.name === h.standard) : undefined;
+      if (screw && h.end === "blind" && v.threadDepth > v.depth + 1e-9) {
+        throw new Error(`The thread (${fmt(v.threadDepth)} mm) is deeper than the hole (${fmt(v.depth)} mm). Make the thread depth smaller, or the hole deeper.`);
+      }
+      const target = [...parts].reverse().find((p) => !p.surface);
+      if (h.end === "upToNext" && !target) throw new Error("There's no part to drill into yet. Make a part first.");
+      /** This hole's depth (up to next: through the first wall the drill meets, passing over any gap before it). */
+      const drilled = (at: Vec3, dir: Vec3): HoleSize => {
+        if (h.end !== "upToNext") return size;
+        const runs = materialRuns(target!.shape, at, dir, v.diameter / 2, span);
+        if (runs.length === 0) {
+          throw new Error(`The hole at (${at.map(fmt).join(", ")}) doesn't meet the part going that way. Tick Flip direction, or move the point onto the part.`);
+        }
+        const [, exit] = runs[0];
+        // Just past the far side so the drill breaks through cleanly, but not into anything beyond.
+        const gap = runs[1] ? runs[1][0] - exit : Infinity;
+        // (A modelled thread runs out past the far side: the drill goes a little further too, so they end cleanly together.)
+        const past = h.modelThread && screw ? 2 * screw.pitch : HOLE_LEAD_IN;
+        return { ...size, depth: exit + Math.min(past, gap / 2), flatBottom: true };
+      };
+      /**
+       * Modelled thread (for 3D printing): from where the drill enters the part (below any counterbore), down the
+       * thread depth (0: as far as the hole goes in the part), out past the far side where it comes out.
+       */
+      const withThread = (at: Vec3, dir: Vec3, hole: HoleSize): HoleSize => {
+        if (!h.modelThread || !screw || !target) return hole;
+        const pitch = screw.pitch;
+        const end = h.end === "blind" ? v.depth : h.end === "upToNext" ? hole.depth : span;
+        const start: Vec3 = [at[0] - dir[0] * back, at[1] - dir[1] * back, at[2] - dir[2] * back];
+        // All the material along the drill (beyond the hole too, to see how much room there is past its far end).
+        const all = materialRuns(target.shape, start, dir, v.diameter / 2, span + back).map(([a, b]): [number, number] => [a - back, b - back]);
+        const runs = all.filter(([a]) => a < end - 1e-6).map(([a, b]): [number, number] => [a, Math.min(b, end)]);
+        if (runs.length === 0) return hole;
+        // Below a counterbore or countersink (a plain hole can start anywhere, even behind the sketch when both ways).
+        const first = hole.kind === "simple" ? runs[0][0] : Math.max(runs[0][0], straightStart(hole));
+        let stop = v.threadDepth > 0 ? runs[0][0] + v.threadDepth : Infinity;
+        if (h.end === "blind") stop = Math.min(stop, v.depth - pitch / 2);
+        const reached = runs.filter(([a]) => a < stop);
+        const last = Math.max(...reached.map(([, b]) => b));
+        const comesOut = last < stop && last < end - 1e-6;
+        let to = Math.min(stop, last);
+        if (comesOut) {
+          // Run out a pitch past the far side — but the groove (about 0.4 of a pitch either side of its line) mustn't
+          // reach the next material. With too little room it ends a pitch inside the wall instead.
+          const next = all.find(([a]) => a > last + 1e-6)?.[0] ?? Infinity;
+          const runOut = Math.min(last + pitch, next - 0.5 * pitch);
+          to = runOut >= last + 0.1 * pitch ? runOut : last - pitch;
+        }
+        if (to - first < pitch) throw new Error("The thread would be less than one turn long. Make the thread depth (or the hole) deeper, or untick Model the thread.");
+        return { ...hole, thread: { from: first - pitch, to, pitch } };
+      };
+      return holeTool(sketch.sketch.plane, sketch.sketch.data, (at, dir) => withThread(at, dir, drilled(at, dir)), h.flip, threaded);
     }
     case "transform":
     case "sketch":
@@ -1398,6 +1542,10 @@ interface StudioBuild {
 }
 
 export class GeometryEngine {
+  /** Threaded holes already made (see hole.ts), kept between rebuilds. */
+  private threadedHoles: ThreadedHoleCache = new Map();
+  /** The part just after a hole with modelled threads, by everything that went into it (see the rebuild loop). */
+  private threadedResults = new Map<string, { shape: Shape3D; tool: Shape3D; error?: string }>();
   /** Every part of every Part Studio (for exports, checks and measuring). */
   private parts: BuiltPart[] = [];
   /** While a Part Studio is being built: the solids its features added or cut. */
@@ -1702,7 +1850,7 @@ export class GeometryEngine {
           continue;
         }
         try {
-          const skin = buildSolid(feature, values, sketches, features, this.parts);
+          const skin = buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles);
           surfaceCounter++;
           this.tools.set(feature.id, { shape: skin.clone(), operation: "new", partId: feature.id });
           this.parts.push({ id: feature.id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true });
@@ -1724,9 +1872,25 @@ export class GeometryEngine {
         continue;
       }
 
+      // A hole with modelled threads is slow to cut: reuse the result while nothing before it (or it) has changed.
+      const at = features.indexOf(feature);
+      const threadKey =
+        feature.type === "hole" && feature.hole?.modelThread && target && !target.sheet && !features.slice(0, at).some((f) => f.type === "derived")
+          ? JSON.stringify([getCurrentScope(), features.slice(0, at + 1)])
+          : null;
+      const done = threadKey ? this.threadedResults.get(threadKey) : undefined;
+      if (done && target) {
+        target.shape.delete();
+        target.shape = done.shape.clone();
+        target.featureIds.push(feature.id);
+        this.tools.set(feature.id, { shape: done.tool.clone(), operation: "remove", partId: target.id });
+        if (done.error) featureErrors[feature.id] = done.error;
+        continue;
+      }
+
       let tool: Shape3D;
       try {
-        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts);
+        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles);
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;
@@ -1767,16 +1931,50 @@ export class GeometryEngine {
 
       try {
         if (!target) throw new Error("There's no part to change yet.");
-        const result = feature.operation === "add" ? target.shape.fuse(tool) : feature.operation === "intersect" ? (target.shape.intersect(tool) as Shape3D) : target.shape.cut(tool);
+        let result = feature.operation === "add" ? target.shape.fuse(tool) : feature.operation === "intersect" ? (target.shape.intersect(tool) as Shape3D) : target.shape.cut(tool);
         if (solidsOf(result).length === 0) {
           result.delete();
           throw new Error(feature.operation === "intersect" ? "This doesn't overlap the part, so nothing would be left." : "This would remove the whole part.");
         }
+        // A modelled thread must leave one sound piece with less in it; if not, drill the plain hole and say so.
+        // (Checked against the plain hole: the thread can only take more away.)
+        if (feature.type === "hole" && feature.hole?.modelThread) {
+          const plain = buildSolid({ ...feature, hole: { ...feature.hole, modelThread: undefined } }, values, sketches, features, this.parts);
+          const plainResult: Shape3D = target.shape.cut(plain);
+          if (this.soundCut(plainResult, result)) {
+            plain.delete();
+            plainResult.delete();
+          } else {
+            result.delete();
+            tool.delete();
+            tool = plain;
+            result = plainResult;
+            featureErrors[feature.id] = "The hole is drilled, but its thread couldn't be cut cleanly here (too little room past it, perhaps). Untick \"Model the thread\", or change the thread depth.";
+          }
+        }
+        // An extrude cut that's nowhere near any part is almost always a mistake: say so (it still counts, so
+        // patterns and mirrors of it — a seed cut off the part — keep working).
+        const missed =
+          feature.type === "extrude" &&
+          feature.operation === "remove" &&
+          !features.some((f) => (f.pattern?.sources ?? f.mirror?.sources ?? []).includes(feature.id)) &&
+          !this.parts.some((p) => !p.surface && boxesOverlap(boundsOf(p.shape), boundsOf(tool))) &&
+          Math.abs(measureVolume(target.shape) - measureVolume(result)) < 1e-9;
         target.shape.delete();
         target.shape = result;
         target.featureIds.push(feature.id);
         this.tools.set(feature.id, { shape: tool.clone(), operation: feature.operation, partId: target.id });
         if (target.sheet && feature.operation === "remove") this.traceSheetCut(target, feature.id, tool);
+        if (missed) featureErrors[feature.id] = `This doesn't reach any part, so it cuts nothing (Remove cuts the latest part, ${target.name}). Check the direction (Flip), the depth and where the sketch is.`;
+        if (threadKey) {
+          this.threadedResults.set(threadKey, { shape: result.clone(), tool: tool.clone(), ...(featureErrors[feature.id] ? { error: featureErrors[feature.id] } : {}) });
+          for (const [k, old] of this.threadedResults) {
+            if (this.threadedResults.size <= 6) break;
+            old.shape.delete();
+            old.tool.delete();
+            this.threadedResults.delete(k);
+          }
+        }
       } catch (e) {
         featureErrors[feature.id] = describeError(
           e,
@@ -3141,8 +3339,20 @@ export class GeometryEngine {
       if (!this.tools.has(id)) return { error: `${f.name} couldn't be built, so it can't be ${mirror ? "mirrored" : "repeated"}.` };
     }
 
-    // Where each copy goes.
+    // Where each copy goes (skipped copies are left out).
     const placements: ((s: Shape3D) => Shape3D)[] = [];
+    const skip = feature.pattern?.skip;
+    // A direction or axis picked in the 3D view, found on the part as it is now.
+    let along: { dir: Vec3; through: Vec3 } | null = null;
+    let along2: Vec3 | null = null;
+    if (!mirror && feature.type !== "curvePattern") {
+      try {
+        if (feature.pattern?.along) along = this.pickedAxis(feature.pattern.along, feature.type === "circularPattern");
+        if (feature.type === "linearPattern" && feature.pattern?.along2) along2 = this.pickedAxis(feature.pattern.along2, false).dir;
+      } catch (e) {
+        return { error: describeError(e, "Couldn't find the picked direction.") };
+      }
+    }
     if (mirror) {
       const frame = planeFrame(feature.mirror!.plane);
       placements.push((s) => s.mirror(frame.n, frame.origin));
@@ -3170,7 +3380,8 @@ export class GeometryEngine {
         // From the end instead of the start.
         const along = (d: number) => walk.at(flipped ? walk.length - d : d);
         const origin = flipped ? walk.at(walk.length) : first;
-        for (const d of stations.slice(1)) {
+        for (const [k, d] of stations.entries()) {
+          if (k === 0 || isSkipped(skip, k + 1)) continue;
           const here = along(d);
           const move: Vec3 = [here.point[0] - origin.point[0], here.point[1] - origin.point[1], here.point[2] - origin.point[2]];
           if (feature.pattern?.follow) {
@@ -3190,25 +3401,29 @@ export class GeometryEngine {
         // A grid when there's more than one row: rows of `count`, `count2` of them along the second direction.
         const rows = values.count2 ?? 1;
         const axis2Name = feature.pattern?.axis2 ?? (feature.pattern?.axis === "y" ? "x" : "y");
-        if (rows > 1 && axis2Name === (feature.pattern?.axis ?? "x")) return { error: "The rows must go along a different axis from the copies in each row. Choose another second direction." };
-        const axis2 = AXES[axis2Name];
+        const dir = along?.dir ?? axis;
+        const axis2 = along2 ?? AXES[axis2Name];
+        if (rows > 1 && Math.abs(dot3(dir, axis2)) > 0.999) return { error: "The rows must go along a different axis from the copies in each row. Choose (or click) another second direction." };
         const sign2 = feature.pattern?.flip2 ? -1 : 1;
         for (let j = 0; j < rows; j++) {
           for (let i = 0; i < count; i++) {
-            if (i === 0 && j === 0) continue;
+            if ((i === 0 && j === 0) || isSkipped(skip, copyNumber(i, j, count))) continue;
             const d = values.spacing * i * sign;
             const d2 = (values.spacing2 ?? 0) * j * sign2;
-            placements.push((s) => s.translate([axis[0] * d + axis2[0] * d2, axis[1] * d + axis2[1] * d2, axis[2] * d + axis2[2] * d2]));
+            placements.push((s) => s.translate([dir[0] * d + axis2[0] * d2, dir[1] * d + axis2[1] * d2, dir[2] * d + axis2[2] * d2]));
           }
         }
       } else {
         if (values.angle > 360) return { error: "Spread over: must be at most 360°" };
         const step = values.angle >= 360 - 1e-9 ? 360 / count : values.angle / (count - 1);
         // The axis goes through (cx, cy, cz) — the origin unless moved.
-        const through: Vec3 = [values.cx ?? 0, values.cy ?? 0, values.cz ?? 0];
-        for (let i = 1; i < count; i++) placements.push((s) => s.rotate(step * i * sign, through, axis));
+        const through: Vec3 = along?.through ?? [values.cx ?? 0, values.cy ?? 0, values.cz ?? 0];
+        const turnAxis = along?.dir ?? axis;
+        for (let i = 1; i < count; i++) if (!isSkipped(skip, i + 1)) placements.push((s) => s.rotate(step * i * sign, through, turnAxis));
       }
     }
+
+    if (placements.length === 0) return { error: "Every copy is skipped, so the pattern does nothing. Take some numbers out of Skip copies." };
 
     // Work on copies of the parts, and only keep them if everything succeeds.
     const working = new Map<string, Shape3D>();
@@ -3264,6 +3479,74 @@ export class GeometryEngine {
       part.featureIds.push(feature.id);
     }
     return {};
+  }
+
+  /** A cut came out right: a valid solid, with as many solids and shells as `plain` (the same cut without the extras), and less in it. */
+  private soundCut(before: Shape3D, after: Shape3D): boolean {
+    if (!isValidSolid(after)) return false;
+    const count = (s: Shape3D) => {
+      const shells = shellsOf(s);
+      shells.forEach((x) => x.delete());
+      return shells.length;
+    };
+    const solids = (s: Shape3D) => {
+      const list = solidsOf(s);
+      list.forEach((x) => x.delete());
+      return list.length;
+    };
+    return count(after) === count(before) && solids(after) === solids(before) && measureVolume(after) < measureVolume(before) - 1e-3;
+  }
+
+  /**
+   * A direction or axis picked in the 3D view, found on its part as it is now:
+   * a straight edge (along it, as picked), a flat face (straight out of it),
+   * or — for an axis — a round face or round edge (through its centre).
+   */
+  private pickedAxis(pick: TopoPick, round: boolean): { dir: Vec3; through: Vec3 } {
+    const part = this.parts.find((p) => p.id === pick.partId);
+    if (!part) throw new Error("The part with the picked direction no longer exists. Edit this pattern and click another edge.");
+    const unit = (v: Vec3): Vec3 => {
+      const l = Math.hypot(...v);
+      return [v[0] / l, v[1] / l, v[2] / l];
+    };
+    if (pick.ref.kind === "edge") {
+      const ref = pick.ref;
+      const [edge] = findPickedEdges(part.shape, [pick]);
+      try {
+        const a = take(edge.startPoint);
+        const b = take(edge.endPoint);
+        if (edge.geomType === "LINE") {
+          let dir = unit([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+          // The way it pointed when picked (OpenCascade may number the ends the other way round).
+          if (dot3(dir, [ref.b[0] - ref.a[0], ref.b[1] - ref.a[1], ref.b[2] - ref.a[2]]) < 0) dir = [-dir[0], -dir[1], -dir[2]];
+          return { dir, through: a };
+        }
+        if (round && edge.geomType === "CIRCLE") {
+          const p0 = take(edge.pointAt(0));
+          const p1 = take(edge.pointAt(1 / 3));
+          const p2 = take(edge.pointAt(2 / 3));
+          const c = circleThrough3D(p0, p1, p2);
+          const n = cross3([p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]], [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]]);
+          if (c && Math.hypot(...n) > 1e-12) return { dir: unit(n), through: c.centre };
+        }
+      } finally {
+        edge.delete();
+      }
+      throw new Error(round ? "That edge is neither straight nor round. Click a straight edge, a round edge or a round face for the axis." : "That edge is curved. Click a straight edge, or a flat face, for the direction.");
+    }
+    const [face] = findPickedFaces(part.shape, [pick]);
+    try {
+      if (round) {
+        const cyl = cylinderOfFace(face);
+        if (cyl) return { dir: cyl.axis, through: cyl.origin };
+        throw new Error("That face isn't round. Click a round face (such as a hole or boss), a round edge or a straight edge for the axis.");
+      }
+      if (face.geomType !== "PLANE") throw new Error("That face is curved. Click a flat face (the copies go straight out of it) or a straight edge.");
+      const c = take(face.center);
+      return { dir: unit(take(face.normalAt(c))), through: c };
+    } finally {
+      face.delete();
+    }
   }
 
   /**
@@ -3999,6 +4282,10 @@ export class GeometryEngine {
 
   dispose(): void {
     this.disposeParts();
+    this.threadedHoles.forEach((s) => s.delete());
+    this.threadedHoles.clear();
+    this.threadedResults.forEach((r) => (r.shape.delete(), r.tool.delete()));
+    this.threadedResults.clear();
   }
 
   private meshPart(p: BuiltPart): PartMesh {
