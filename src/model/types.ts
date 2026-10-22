@@ -309,6 +309,8 @@ export interface Drawing {
   balloons?: boolean;
   /** Assembly drawings: show the parts spread apart (the assembly's exploded view). */
   exploded?: boolean;
+  /** Assembly drawings: add each part's weight to the parts list (missing = not shown). */
+  bomWeights?: boolean;
   /** Decimal places for dimensions (0–4, kept even when they're zeros); missing = as many as needed, up to 2 in mm or 3 in inches. */
   places?: number;
   /** Dimensions also give the size in the other unit, in brackets: "40 [1.575]". */

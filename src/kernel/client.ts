@@ -137,9 +137,9 @@ export class KernelClient {
     return this.send({ type: "project", partIds, instances, views, hidden, sections, breakouts, tangent }).then((body) => body.result as ViewProjection[]);
   }
 
-  /** How pairs of assembly instances meet: overlapping, or within `tolerance` (mm) of each other. */
-  clashes(instances: InstanceInput[], tolerance = 0): Promise<ContactMeasure[]> {
-    return this.send({ type: "clashes", instances, tolerance }).then((body) => body.result as ContactMeasure[]);
+  /** How pairs of assembly instances meet: overlapping, or (`withGaps`) within `tolerance` (mm) of each other. */
+  clashes(instances: InstanceInput[], tolerance = 0, withGaps = true): Promise<ContactMeasure[]> {
+    return this.send({ type: "clashes", instances, tolerance, withGaps }).then((body) => body.result as ContactMeasure[]);
   }
 
   terminate(): void {

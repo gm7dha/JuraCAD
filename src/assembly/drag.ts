@@ -153,9 +153,12 @@ export function planDrag(
     };
   };
 
-  /** Slide over the first connector's face (Planar, Width, Tangent on a flat). */
+  /**
+   * Slide over the first connector's face (Planar, Width, Tangent on a flat). Dragging the first
+   * connector's part (the other stays put — say it's fixed, or the origin) slides it the other way
+   * round: the amounts go down as it moves along the face.
+   */
   const facePlan = (): DragStart => {
-    if (sign < 0) return { refuse: `Drag the other part of ${mate.name}, or use its sliders.` };
     if (Math.abs(dot(normalize(view), axis.z)) < 0.05) return { refuse: "You're looking along the face — turn the view a little to drag it." };
     return {
       plan: {
@@ -166,7 +169,7 @@ export function planDrag(
           return {
             kind: "mate",
             id: mate.id,
-            values: { ...mate.values, dx: limited("dx", (start.dx ?? 0) + dot(d, axis.x), 0.1), dy: limited("dy", (start.dy ?? 0) + dot(d, axis.y), 0.1) },
+            values: { ...mate.values, dx: limited("dx", (start.dx ?? 0) + sign * dot(d, axis.x), 0.1), dy: limited("dy", (start.dy ?? 0) + sign * dot(d, axis.y), 0.1) },
           };
         },
       },

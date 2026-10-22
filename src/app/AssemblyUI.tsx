@@ -115,7 +115,7 @@ export function AssemblyToolbar() {
         />
         <ToolButton
           label={allSuppressed ? "Unsuppress" : "Suppress"}
-          icon={<Icons.EyeOff />}
+          icon={<Icons.Suppress />}
           disabled={selected.length === 0}
           onClick={() => useStore.getState().setInstancesSuppressed(selected.map((i) => i.id), !allSuppressed)}
           title={
@@ -810,6 +810,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
               <th>Part</th>
               <th className="bom-qty">Qty</th>
               <th className="bom-mass" title="What they weigh, made solid in the part's material (set it in the Part Studio's parts list)">Weight</th>
+              <th className="bom-edit" aria-label="Edit" />
             </tr>
           </thead>
           <tbody>
@@ -829,6 +830,18 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
                 <td className="bom-mass muted" title={r.surface ? "Surfaces have no weight (thicken one to make it solid)" : undefined}>
                   {r.massEach !== undefined ? formatMass(r.massEach * r.quantity) : r.surface ? "—" : ""}
                 </td>
+                <td className="bom-edit">
+                  {!r.missing && (
+                    <button
+                      className="icon-button small"
+                      onClick={() => setEditingProps({ partId: basePartId(r.partId), name: r.name })}
+                      aria-label={`Properties of ${r.name}`}
+                      title="Part number, description and your own properties"
+                    >
+                      <Icons.Sketch size={14} />
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -839,7 +852,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
             {total.partial ? " (some parts unknown)" : ""}
           </p>
         )}
-        {bom.length > 0 && <p className="panel-hint">Double-click a part to give it a part number, description or your own properties.</p>}
+        {bom.length > 0 && <p className="panel-hint">Click the pencil (or double-click a part) to give it a part number, description or your own properties.</p>}
         {editingProps && <PartPropertiesDialog partId={editingProps.partId} name={editingProps.name} onClose={() => setEditingProps(null)} />}
         {bom.length > 0 && (
           <button

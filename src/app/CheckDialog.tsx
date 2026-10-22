@@ -48,7 +48,8 @@ export async function runCheck(options: ClashOptions = loadClashOptions()): Prom
     // Suppressed parts are always left out (instancesForKernel); hidden ones when asked.
     const hidden = options.skipHidden ? asm.instances.filter((i) => !i.suppressed && s.hiddenInstances.includes(i.id)).map((i) => i.id) : [];
     const instances = instancesForKernel(asm, s.parts, solved).filter((i) => !hidden.includes(i.id));
-    const measured = await kernel.clashes(instances, options.tolerance);
+    // Gaps only matter when touching parts are listed.
+    const measured = await kernel.clashes(instances, options.tolerance, !options.ignoreTouching);
     const names = Object.fromEntries(s.parts.map((p) => [p.id, p.name]));
     return assemblyReport(asm, solved, names, judgeContacts(measured, options), options, { hidden: hidden.length, suppressed: asm.instances.filter((i) => i.suppressed).length });
   }

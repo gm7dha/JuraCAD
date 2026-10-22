@@ -111,4 +111,25 @@ describe("assembly clash check", () => {
     const rows = billOfMaterials({ id: "a", name: "A", instances: [{ id: "i", partId: "ball", name: "Ball <1>", placement: { position: [0, 0, 0], rotation: ID }, fixed: true }] }, { ball: "Ball" }, {}, () => ({ volume: r.parts[0].volume! }));
     expect(rows[0].massEach!).toBeCloseTo(massGrams(exact, undefined), 6);
   });
+
+  it("counts a small corner overlap as a clash, a press-fit sleeve as touching, and skips gaps when asked", () => {
+    setup();
+    // Overlapping by 0.02 mm each way at a corner: a 0.02 mm cube — thicker than 0.01, so a clash.
+    expect(judged([put("A", "box", 0), put("B", "box", 9.98, 9.98, 9.98)], 0.01, true).map((c) => c.kind)).toEqual(["overlap"]);
+    // Without gaps (touching parts not wanted), a pair that only touches isn't even measured.
+    expect(engine.clashes([put("A", "box", 0), put("B", "box", 10)], 0.01, false)).toEqual([]);
+    expect(engine.clashes([put("A", "box", 0), put("B", "box", 10)], 0.01, true)).toHaveLength(1);
+    engine.dispose();
+    // A 10 mm hole through a block and a 10.01 mm pin in it: 0.005 mm interference all round — a press fit.
+    engine = new GeometryEngine();
+    const block: Feature = { ...box, id: "block", params: { ...box.params, width: "20", depth: "20", height: "10" } };
+    const hole: Feature = { id: "hole", name: "Hole", type: "cylinder" as FeatureType, operation: "remove", suppressed: false, params: { ...defaultParams("cylinder"), diameter: "10", height: "30", x: "10", y: "10", z: "-10" } };
+    const pin: Feature = { id: "pin", name: "Pin", type: "cylinder" as FeatureType, operation: "new", suppressed: false, params: { ...defaultParams("cylinder"), diameter: "10.01", height: "10", x: "10", y: "10", z: "0" } };
+    const r = engine.rebuild([block, hole, pin]);
+    expect(r.parts.map((p) => p.id)).toEqual(["block", "pin"]);
+    const fit = judged([put("Block", "block", 0), put("Pin", "pin", 0)], 0.01);
+    expect(fit.map((c) => c.kind)).toEqual(["touch"]);
+    // With a tighter tolerance it's a clash.
+    expect(judged([put("Block", "block", 0), put("Pin", "pin", 0)], 0.001).map((c) => c.kind)).toEqual(["overlap"]);
+  });
 });

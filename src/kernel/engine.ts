@@ -3583,10 +3583,10 @@ export class GeometryEngine {
   }
 
   /** How pairs of assembly instances meet: overlapping, or within `tolerance` (mm) of each other (see clash.ts). */
-  clashes(instances: InstanceInput[], tolerance = 0): ContactMeasure[] {
+  clashes(instances: InstanceInput[], tolerance = 0, withGaps = true): ContactMeasure[] {
     const placed = this.placeInstances(instances);
     try {
-      return measureContacts(placed, tolerance);
+      return measureContacts(placed, tolerance, withGaps);
     } finally {
       placed.forEach((p) => p.shape.delete());
     }

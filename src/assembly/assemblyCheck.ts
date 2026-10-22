@@ -56,7 +56,8 @@ export type Contact =
 /**
  * Decide what a measured pair is. Two solids clash when they share more than a
  * sliver: their overlap is thicker than `tolerance` (its thickness is estimated
- * from the shared piece as 2 × volume ÷ area, exact for a thin flat slab). A
+ * from the shared piece as 2 × volume ÷ area — exact for a thin flat slab or
+ * sleeve — or, for a compact chunk at a corner or edge, the smallest side of the box round it). A
  * surface clashes with a solid when it goes further inside than the tolerance;
  * two surfaces when they cross along more than the tolerance. Anything less, or
  * a gap up to the tolerance, is touching. Null: they don't meet.
@@ -67,7 +68,13 @@ export function judgeContact(m: ContactMeasure, tolerance: number): Contact | nu
   if (!m.surfaceA && !m.surfaceB) {
     const v = m.volume ?? 0;
     if (v > 1e-6) {
-      const thickness = m.area && m.area > 0 ? (2 * v) / m.area : Infinity;
+      // 2V/A is exact for a flat sliver (or a thin sleeve round a pin), but gives too little for a
+      // chunk at a corner or along an edge (a cube's is a third of its side). For a chunk like that
+      // the box round it is no more than 3 × 2V/A across, and its smallest side is the thickness;
+      // a thin curved sleeve's box is far bigger than its thickness, so there 2V/A stands.
+      const slab = m.area && m.area > 0 ? (2 * v) / m.area : Infinity;
+      const box = m.boxMin ?? 0;
+      const thickness = box > slab && box <= 3 * slab * (1 + 1e-6) ? box : slab;
       return thickness > tol ? { kind: "overlap", a: m.a, b: m.b, volume: v } : touch;
     }
   } else if (m.surfaceA && !m.surfaceB) {

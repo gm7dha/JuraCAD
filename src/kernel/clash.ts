@@ -9,7 +9,8 @@
  *    how deep inside it goes;
  *  - two surfaces: how long a line they cross along (away from their edges).
  * Pairs that don't overlap get the gap between them, when it's within the
- * tolerance (to tell "touching" from "apart").
+ * tolerance (to tell "touching" from "apart") — unless touching parts aren't
+ * wanted, when that (slow) measurement is skipped.
  */
 import { cast, getOC, makeCompound, makeVertex, measureArea, measureDistanceBetween, measureLength, measureVolume, type Shape3D } from "replicad";
 import type { ContactMeasure } from "./protocol";
@@ -54,12 +55,14 @@ function edgesCompound(shape: Shape3D) {
 
 
 
-/** Solid ∩ solid: the shared volume and its surface area. */
-function solidOverlap(a: Shape3D, b: Shape3D): { volume: number; area: number } {
+/** Solid ∩ solid: the shared volume, its surface area and the smallest side of the box round it. */
+function solidOverlap(a: Shape3D, b: Shape3D): { volume: number; area: number; boxMin: number } {
   const common = a.intersect(b);
   try {
     const volume = measureVolume(common);
-    return { volume, area: volume > 1e-9 ? measureArea(common) : 0 };
+    if (volume <= 1e-9) return { volume, area: 0, boxMin: 0 };
+    const [lo, hi] = boundsOf(common);
+    return { volume, area: measureArea(common), boxMin: Math.min(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) };
   } finally {
     safeDelete(common);
   }
@@ -130,7 +133,7 @@ function surfacesCross(a: Shape3D, b: Shape3D, tolerance: number): number {
  * Measure every pair of parts whose boxes come within `tolerance` of each other.
  * Pairs that clearly don't meet are left out.
  */
-export function measureContacts(parts: PlacedShape[], tolerance: number): ContactMeasure[] {
+export function measureContacts(parts: PlacedShape[], tolerance: number, withGaps = true): ContactMeasure[] {
   const tol = Math.max(0, tolerance);
   const out: ContactMeasure[] = [];
   const boxes = parts.map((p) => boundsOf(p.shape));
@@ -147,6 +150,7 @@ export function measureContacts(parts: PlacedShape[], tolerance: number): Contac
           const o = solidOverlap(p.shape, q.shape);
           m.volume = o.volume;
           m.area = o.area;
+          if (o.boxMin > 0) m.boxMin = o.boxMin;
           meets = o.volume > 1e-6;
         } else if (p.surface && !q.surface) {
           const o = surfaceInside(p.shape, q.shape);
@@ -157,8 +161,9 @@ export function measureContacts(parts: PlacedShape[], tolerance: number): Contac
           m.crossLength = surfacesCross(p.shape, q.shape, tol);
           meets = m.crossLength > tol;
         }
-        // Not overlapping: how far apart are they (only matters within the tolerance)?
+        // Not overlapping: how far apart are they (only matters within the tolerance, and only when touching parts are listed)?
         if (!meets) {
+          if (!withGaps) continue;
           const gap = measureDistanceBetween(p.shape, q.shape);
           if (gap > tol + 1e-6) continue;
           m.gap = gap;

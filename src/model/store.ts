@@ -42,7 +42,7 @@ import { duplicateInstances, mirroredBox, placedBox, replaceInstancePart, type B
 import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
-import { MATE_TYPES, nextMateName, pickWidthFace, solveWithParts } from "../assembly/mates";
+import { MATE_TYPES, nextMateName, pickConnector, solveWithParts } from "../assembly/mates";
 import { setSuppressed as setInstancesOff } from "../assembly/suppress";
 import { setPartProperties as setPartPropertiesIn } from "../assembly/properties";
 import { moveFeature as moveFeatureIn } from "./reorder";
@@ -1077,9 +1077,7 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.mateDraft) return {};
         const m = s.mateDraft.mate;
-        let next: MateDraft = { ...m, b: c };
-        if (m.type === "width") next = { ...m, ...pickWidthFace(m, c) };
-        else if (!m.a || (m.a && m.b) || (!m.b && m.a.instanceId === c.instanceId)) next = { ...m, a: c, b: undefined };
+        const next: MateDraft = { ...m, ...pickConnector(m, c) };
         return { mateDraft: { ...s.mateDraft, mate: next } };
       }),
 

@@ -45,6 +45,13 @@ describe("assembly check", () => {
     expect(judgeContact(sliver, 0.01)).toEqual({ kind: "touch", a: "A", b: "B" });
     expect(judgeContact(sliver, 0.001)).toEqual({ kind: "overlap", a: "A", b: "B", volume: 0.5 });
     expect(judgeContact({ a: "A", b: "B", volume: 500, area: 400 }, 0.01)?.kind).toBe("overlap");
+    // A 0.02 mm cube of overlap at a corner: 2V/A says 0.0067 mm, but it's 0.02 thick — a clash at 0.01 mm.
+    const corner = { a: "A", b: "B", volume: 0.02 ** 3, area: 6 * 0.02 ** 2, boxMin: 0.02 };
+    expect(judgeContact(corner, 0.01)?.kind).toBe("overlap");
+    expect(judgeContact({ ...corner, boxMin: undefined }, 0.01)?.kind).toBe("touch");
+    // A 0.005 mm sleeve round a 10 mm pin, 20 long (a press fit): its box is 10 across, but it's thin — touching.
+    const sleeve = { a: "Pin", b: "Hole", volume: Math.PI * 10 * 20 * 0.005, area: 2 * Math.PI * 10 * 20, boxMin: 10 };
+    expect(judgeContact(sleeve, 0.01)?.kind).toBe("touch");
     expect(judgeContact({ a: "A", b: "B", volume: 0, area: 0, gap: 0.004 }, 0.01)?.kind).toBe("touch");
     expect(judgeContact({ a: "A", b: "B", volume: 0, area: 0, gap: 0.02 }, 0.01)).toBe(null);
     // Surfaces: through a solid when deeper than the tolerance; crossing when longer than it.

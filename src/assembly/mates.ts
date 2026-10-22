@@ -660,6 +660,19 @@ export function nextMateName(assembly: Assembly, type: MateType): string {
 }
 
 /**
+ * The mate dialog's next pick: the first click is the part that stays put,
+ * the second the part to move (a click on the first part again starts over).
+ * The origin always goes first — it never moves — so a part already picked
+ * moves over to second place.
+ */
+export function pickConnector(m: { type: MateType; a?: MateConnector; b?: MateConnector }, c: MateConnector): { a?: MateConnector; b?: MateConnector } {
+  if (m.type === "width") return pickWidthFace(m, c);
+  if (isOrigin(c)) return { a: c, b: [m.b, m.a].find((x) => x && !isOrigin(x)) };
+  if (!m.a || (m.a && m.b) || (!m.b && m.a.instanceId === c.instanceId)) return { a: c, b: undefined };
+  return { a: m.a, b: c };
+}
+
+/**
  * Width mates take two faces on each part: the two sides of the slot (on the
  * part that stays put), then the two sides of what goes in it. A click on a
  * part other than the one being picked moves on to (or starts) the other side.

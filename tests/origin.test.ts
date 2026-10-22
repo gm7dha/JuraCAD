@@ -4,7 +4,7 @@ import { parseAssemblies, removeInstances } from "../src/assembly/assembly";
 import type { Frame } from "../src/assembly/connectors";
 import { planDrag } from "../src/assembly/drag";
 import { applyPlacement, IDENTITY, type Vec3 } from "../src/assembly/math";
-import { connectorFrameFor, solveAssembly } from "../src/assembly/mates";
+import { connectorFrameFor, pickConnector, solveAssembly } from "../src/assembly/mates";
 import { isOrigin, ORIGIN_ID, originConnector, originFrame, originPlaneOf } from "../src/assembly/origin";
 import { emptyDocument } from "../src/model/document";
 import type { Assembly, Instance, Mate, MateType } from "../src/model/types";
@@ -75,5 +75,42 @@ describe("mating to the origin", () => {
     // A fixed part elsewhere doesn't stop the origin mate working.
     const withFixed: Assembly = { id: "a", name: "A", instances: [{ ...inst("base", 100, true), placement: IDENTITY }, inst("box")], mates: [mate("fastened", "box")] };
     expect(solveAssembly(withFixed, frames).mateErrors).toEqual({});
+  });
+});
+
+describe("picking the origin in the mate dialog", () => {
+  const part = { instanceId: "box", pick };
+  it("always puts the origin first (it stays put), moving a part already picked to second", () => {
+    // Part first, then the origin: swapped, so the part is the one that moves.
+    expect(pickConnector({ type: "planar", a: part }, originConnector("Top"))).toEqual({ a: originConnector("Top"), b: part });
+    // Origin first, then the part.
+    expect(pickConnector({ type: "planar", a: originConnector("Top") }, part)).toEqual({ a: originConnector("Top"), b: part });
+    // Another plane replaces the first.
+    expect(pickConnector({ type: "planar", a: originConnector("Top") }, originConnector("Front"))).toEqual({ a: originConnector("Front"), b: undefined });
+    // Ordinary picks are as before.
+    const other = { instanceId: "lid", pick };
+    expect(pickConnector({ type: "planar", a: part }, other)).toEqual({ a: part, b: other });
+    expect(pickConnector({ type: "planar", a: part, b: other }, other)).toEqual({ a: other, b: undefined });
+  });
+
+  it("drags a Planar part against the origin, whichever side it was picked on", () => {
+    // Picked part first and origin second, as the dialog now stores it: origin on side a.
+    const picked = pickConnector({ type: "planar", a: { instanceId: "box", pick } }, originConnector("Top"));
+    const asm: Assembly = { id: "a", name: "A", instances: [inst("box", 40)], mates: [{ ...mate("planar", "box"), a: picked.a!, b: picked.b! }] };
+    const r = solveAssembly(asm, frames);
+    const plan = planDrag(asm, r, frames, "box", [0, 0, 0], [0, 0, -1]);
+    if (!("plan" in plan)) throw new Error(`refused: ${plan.refuse}`);
+    expect(plan.plan.update({ origin: [5, 3, 100], dir: [0, 0, -1] })).toEqual({ kind: "mate", id: "m", values: { dx: "5", dy: "3" } });
+    // An older mate with the origin second (side b): dragging the part on side a slides it too, the right way.
+    const old: Assembly = { ...asm, mates: [{ ...asm.mates![0], a: { instanceId: "box", pick }, b: originConnector("Top") }] };
+    const ro = solveAssembly(old, frames);
+    const before = ro.placements.box.position;
+    const plan2 = planDrag(old, ro, frames, "box", before, [0, 0, -1]);
+    if (!("plan" in plan2)) throw new Error(`refused: ${plan2.refuse}`);
+    const change = plan2.plan.update({ origin: [before[0] + 5, before[1] + 3, 100], dir: [0, 0, -1] });
+    if (!change || change.kind !== "mate") throw new Error("no change");
+    const moved = solveAssembly({ ...old, mates: [{ ...old.mates![0], values: change.values }] }, frames).placements.box.position;
+    expect(moved[0] - before[0]).toBeCloseTo(5, 6);
+    expect(moved[1] - before[1]).toBeCloseTo(3, 6);
   });
 });

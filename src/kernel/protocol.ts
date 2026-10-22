@@ -167,6 +167,8 @@ export interface ContactMeasure {
   surfaceB?: boolean;
   /** Two solids: the volume they share (mm³) and that shared piece's surface area (mm²). */
   volume?: number;
+  /** Two solids: the smallest side of the box round the shared piece (mm). */
+  boxMin?: number;
   /** Two solids: the shared piece's area; a surface and a solid: how much of the surface is inside (mm²). */
   area?: number;
   /** A surface and a solid: how far inside the solid the surface goes (mm, about). */
@@ -208,7 +210,7 @@ export type KernelRequest =
   | { type: "check"; quality: MeshQuality; partIds?: string[] }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[] }
-  | { type: "clashes"; instances: InstanceInput[]; tolerance?: number }
+  | { type: "clashes"; instances: InstanceInput[]; tolerance?: number; withGaps?: boolean }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }

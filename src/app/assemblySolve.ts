@@ -2,7 +2,7 @@
 import { useMemo } from "react";
 
 import { solveWithParts, type SolveResult } from "../assembly/mates";
-import { boundsOfVertices, meshVolume, type BomInfo, type Box3 } from "../assembly/assembly";
+import { boundsOfVertices, type Box3 } from "../assembly/assembly";
 import { addOffsets, explodedPlacements, explodeOffsets, stepOffsets } from "../assembly/explode";
 import type { Placement } from "../assembly/math";
 import { withDragChange } from "../assembly/drag";
@@ -39,20 +39,8 @@ export function partBox(p: PartMesh): Box3 | null {
   return boxCache.get(p) ?? null;
 }
 
-/** Volume of each part (mm³; null for a surface): exact from the engine, else from its display mesh; worked out once per rebuild. */
-const volumeCache = new WeakMap<PartMesh, number | null>();
-export function partVolume(p: PartMesh): number | null {
-  if (!volumeCache.has(p)) volumeCache.set(p, p.surface ? null : p.volume ?? meshVolume(p.vertices, p.triangles));
-  return volumeCache.get(p) ?? null;
-}
-
-/** Material and volume of the part each instance shows, for the parts list. */
-export function bomInfo(parts: PartMesh[], materials: Record<string, string> | undefined): BomInfo {
-  return (i) => {
-    const mesh = findMesh(parts, meshIdOf(i));
-    return mesh ? { material: materials?.[i.partId], volume: partVolume(mesh) } : null;
-  };
-}
+// Moved to src/assembly/drawingBom.ts (pure, so it can be tested); kept here for the app's imports.
+export { bomInfo, partVolume } from "../assembly/drawingBom";
 
 /**
  * Placements for an exploded view: spread apart by `amount` (0 = not spread),
