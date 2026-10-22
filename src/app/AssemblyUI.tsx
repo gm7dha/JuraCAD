@@ -5,7 +5,8 @@
 import { canBeDriven, canDrive, nextRelationName, RELATION_KIND_NAMES, RELATION_KINDS } from "../assembly/relations";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { billOfMaterials, bomCsv, bomTotalMass, nextPositionName, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
+import { billOfMaterials, bomCsv, bomTotalMass, nextPositionName, placedBox, spotBeside, type BomRow, type Box3 } from "../assembly/assembly";
+import { Modal } from "./Modal";
 import { formatMass } from "../model/materials";
 import { eulerDegFromQuat, quatFromEulerDeg, type Placement } from "../assembly/math";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
@@ -13,11 +14,14 @@ import { evaluate } from "../model/expr";
 import { activeAssembly, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber, showLength, storeLength } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { Assembly, ExplodeStep, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
+import type { Assembly, ConnectorSpot, ExplodeStep, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
 import { stepDistance } from "../assembly/explode";
 import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
 import { bomInfo, partBox, useSolvedAssembly } from "./assemblySolve";
+import { mateInactive } from "../assembly/suppress";
+import { isOrigin, ORIGIN_ID, ORIGIN_PLANES, originConnector, originPlaneOf } from "../assembly/origin";
+import { spotOptions } from "../assembly/connectors";
 import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
@@ -78,6 +82,7 @@ export function AssemblyToolbar() {
   const platform = detectPlatform();
   const selected = asm?.instances.filter((i) => selection.includes(i.id)) ?? [];
   const allFixed = selected.length > 0 && selected.every((i) => i.fixed);
+  const allSuppressed = selected.length > 0 && selected.every((i) => i.suppressed);
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Assembly tools">
@@ -107,6 +112,19 @@ export function AssemblyToolbar() {
           disabled={selected.length === 0}
           onClick={() => useStore.getState().removeInstances(selected.map((i) => i.id))}
           title={selected.length ? "Remove the selected parts from this assembly (Delete)" : "Select a part first"}
+        />
+        <ToolButton
+          label={allSuppressed ? "Unsuppress" : "Suppress"}
+          icon={<Icons.Suppress />}
+          disabled={selected.length === 0}
+          onClick={() => useStore.getState().setInstancesSuppressed(selected.map((i) => i.id), !allSuppressed)}
+          title={
+            selected.length
+              ? allSuppressed
+                ? "Unsuppress — bring the selected parts back"
+                : "Suppress — switch the selected parts off for now: they're hidden and left out of the parts list, exports, clash checks and mates"
+              : "Select a part first (click it in the 3D view or the Instances list)"
+          }
         />
         <ToolGroupButton
           id="asm-copies"
@@ -230,14 +248,22 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
   const colour = useStore((s) => s.history.present.appearance?.[instance.partId] ?? DEFAULT_PART_COLOUR);
   return (
     <li
-      className={["feature-row", selected && "selected", hidden && "hidden", missing && "failed"].filter(Boolean).join(" ")}
+      className={["feature-row", selected && "selected", hidden && "hidden", missing && "failed", instance.suppressed && "suppressed"].filter(Boolean).join(" ")}
       onClick={(e) => {
         const s = useStore.getState();
         const additive = e.shiftKey || e.ctrlKey || e.metaKey;
         if (additive) s.setAsmSelection(selected ? s.asmSelection.filter((x) => x !== instance.id) : [...s.asmSelection, instance.id]);
         else s.setAsmSelection(selected && s.asmSelection.length === 1 ? [] : [instance.id]);
       }}
-      title={missing ? "Its part no longer exists in the Part Studio" : instance.fixed ? "Fixed — it stays where it is" : "Click to select; Shift-click to add"}
+      title={
+        instance.suppressed
+          ? "Suppressed — switched off for now. Select it and click Unsuppress to bring it back."
+          : missing
+            ? "Its part no longer exists in the Part Studio"
+            : instance.fixed
+              ? "Fixed — it stays where it is"
+              : "Click to select; Shift-click to add"
+      }
     >
       <span className="instance-colour" style={{ background: colour }} aria-hidden="true" />
       <span className="feature-name">{instance.name}</span>
@@ -251,6 +277,11 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
           <Icons.Warning size={16} />
         </span>
       )}
+      {instance.suppressed ? (
+        <span className="instance-suppressed muted" aria-label="Suppressed">
+          off
+        </span>
+      ) : (
       <button
         className={`icon-button small eye${hidden ? " is-hidden" : ""}`}
         onClick={(e) => {
@@ -262,27 +293,28 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
       >
         {hidden ? <Icons.EyeOff size={16} /> : <Icons.Eye size={16} />}
       </button>
+      )}
     </li>
   );
 }
 
-function MateRow({ mate, error, instanceNames }: { mate: Mate; error?: string; instanceNames: Record<string, string> }) {
+function MateRow({ mate, error, instanceNames, inactive }: { mate: Mate; error?: string; instanceNames: Record<string, string>; inactive: string | null }) {
   const editing = useStore((s) => s.mateDraft?.mate.id === mate.id);
   const Icon = MATE_ICONS[mate.type];
   const playing = useStore((s) => s.animatingMate === mate.id);
-  const canAnimate = !mate.suppressed && MATE_TYPES[mate.type].values.some((d) => d.free);
+  const canAnimate = !inactive && MATE_TYPES[mate.type].values.some((d) => d.free);
   const between = `${instanceNames[mate.a.instanceId] ?? "?"} and ${instanceNames[mate.b.instanceId] ?? "?"}`;
   return (
     <li
-      className={["feature-row", editing && "editing", error && !mate.suppressed && "failed", mate.suppressed && "suppressed"].filter(Boolean).join(" ")}
+      className={["feature-row", editing && "editing", error && !inactive && "failed", inactive && "suppressed"].filter(Boolean).join(" ")}
       onDoubleClick={() => useStore.getState().editMate(mate.id)}
-      title={mate.suppressed ? "Suppressed — not used" : error ? `Problem: ${error}` : `${MATE_TYPES[mate.type].label} joining ${between}. Double-click to edit.`}
+      title={inactive ?? (error ? `Problem: ${error}` : `${MATE_TYPES[mate.type].label} joining ${between}. Double-click to edit.`)}
     >
       <span className="feature-icon">
         <Icon size={18} />
       </span>
       <span className="feature-name">{mate.name}</span>
-      {error && !mate.suppressed && (
+      {error && !inactive && (
         <span className="feature-error-icon" aria-label="Problem">
           <Icons.Warning size={16} />
         </span>
@@ -320,7 +352,7 @@ function MateRow({ mate, error, instanceNames }: { mate: Mate; error?: string; i
 function MatesSection({ assembly }: { assembly: Assembly }) {
   const { solved } = useSolvedAssembly();
   const mates = assembly.mates ?? [];
-  const instanceNames = useMemo(() => Object.fromEntries(assembly.instances.map((i) => [i.id, i.name])), [assembly.instances]);
+  const instanceNames = useMemo(() => ({ ...Object.fromEntries(assembly.instances.map((i) => [i.id, i.name])), [ORIGIN_ID]: "the origin" }), [assembly.instances]);
   return (
     <section className="panel-section mates">
       <h3>
@@ -328,7 +360,7 @@ function MatesSection({ assembly }: { assembly: Assembly }) {
       </h3>
       <ul className="feature-list">
         {mates.map((m) => (
-          <MateRow key={m.id} mate={m} error={solved?.mateErrors[m.id]} instanceNames={instanceNames} />
+          <MateRow key={m.id} mate={m} error={solved?.mateErrors[m.id]} instanceNames={instanceNames} inactive={mateInactive(assembly, m)} />
         ))}
       </ul>
       {mates.length === 0 && assembly.instances.length >= 2 && (
@@ -740,9 +772,11 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
     return Object.fromEntries(parts.map((p) => [p.id, label(p)]));
   }, [parts, doc]);
   const bom = useMemo(
-    () => billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name])), bomInfo(parts, doc.materials)),
-    [assembly, partNames, doc.configurations, parts, doc.materials],
+    () => billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name])), bomInfo(parts, doc.materials), doc.partProperties),
+    [assembly, partNames, doc.configurations, parts, doc.materials, doc.partProperties],
   );
+  const [editingProps, setEditingProps] = useState<{ partId: string; name: string } | null>(null);
+  const showNumbers = bom.some((r) => r.properties?.number);
   const total = bomTotalMass(bom);
   const kernelReady = useStore((s) => s.kernelStatus === "ready");
 
@@ -772,19 +806,41 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
           <thead>
             <tr>
               <th>#</th>
+              {showNumbers && <th>Number</th>}
               <th>Part</th>
               <th className="bom-qty">Qty</th>
               <th className="bom-mass" title="What they weigh, made solid in the part's material (set it in the Part Studio's parts list)">Weight</th>
+              <th className="bom-edit" aria-label="Edit" />
             </tr>
           </thead>
           <tbody>
             {bom.map((r, n) => (
-              <tr key={r.partId} className={r.missing ? "missing" : ""}>
+              <tr
+                key={r.partId}
+                className={r.missing ? "missing" : "editable"}
+                onDoubleClick={() => !r.missing && setEditingProps({ partId: basePartId(r.partId), name: r.name })}
+              >
                 <td>{n + 1}</td>
-                <td title={r.material ? `${r.material}${r.massEach !== undefined ? ` — ${formatMass(r.massEach)} each` : ""}` : undefined}>{r.name}</td>
+                {showNumbers && <td className="bom-number">{r.properties?.number ?? ""}</td>}
+                <td title={bomRowTitle(r)}>
+                  {r.name}
+                  {r.properties?.description && <div className="bom-description muted">{r.properties.description}</div>}
+                </td>
                 <td className="bom-qty">{r.quantity}</td>
                 <td className="bom-mass muted" title={r.surface ? "Surfaces have no weight (thicken one to make it solid)" : undefined}>
                   {r.massEach !== undefined ? formatMass(r.massEach * r.quantity) : r.surface ? "—" : ""}
+                </td>
+                <td className="bom-edit">
+                  {!r.missing && (
+                    <button
+                      className="icon-button small"
+                      onClick={() => setEditingProps({ partId: basePartId(r.partId), name: r.name })}
+                      aria-label={`Edit the properties on line ${n + 1}`}
+                      title="Part number, description and your own properties"
+                    >
+                      <Icons.Sketch size={14} />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -796,6 +852,8 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
             {total.partial ? " (some parts unknown)" : ""}
           </p>
         )}
+        {bom.length > 0 && <p className="panel-hint">Click the pencil (or double-click a part) to give it a part number, description or your own properties.</p>}
+        {editingProps && <PartPropertiesDialog partId={editingProps.partId} name={editingProps.name} onClose={() => setEditingProps(null)} />}
         {bom.length > 0 && (
           <button
             className="text-button bom-download"
@@ -807,6 +865,81 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
         )}
       </section>
     </aside>
+  );
+}
+
+/** The Part Studio part a parts list line is for (lines for other configurations or mirrored copies have extra bits on the end). */
+const basePartId = (rowId: string) => rowId.split(/[@~]/)[0];
+
+/** Hover text for a parts list line: material and weight, and the part's own properties. */
+function bomRowTitle(r: BomRow): string | undefined {
+  const bits = [
+    r.material ? `${r.material}${r.massEach !== undefined ? ` — ${formatMass(r.massEach)} each` : ""}` : "",
+    ...(r.properties?.custom ?? []).map((c) => `${c.name}: ${c.value}`),
+    r.missing ? "" : "Double-click to edit its part number, description and properties",
+  ].filter(Boolean);
+  return bits.length ? bits.join("\n") : undefined;
+}
+
+/** Edit a part's number, description and your own properties (they show in every parts list of it). */
+function PartPropertiesDialog({ partId, name, onClose }: { partId: string; name: string; onClose: () => void }) {
+  const saved = useStore((s) => s.history.present.partProperties?.[partId]);
+  const [number, setNumber] = useState(saved?.number ?? "");
+  const [description, setDescription] = useState(saved?.description ?? "");
+  const [custom, setCustom] = useState<{ name: string; value: string }[]>(saved?.custom?.length ? saved.custom : []);
+  const save = () => {
+    useStore.getState().setPartProperties(partId, { number, description, custom });
+    onClose();
+  };
+  return (
+    <Modal
+      title={`Properties of ${name}`}
+      onClose={onClose}
+      width={460}
+      footer={
+        <>
+          <button className="text-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary-button" onClick={save}>
+            Save
+          </button>
+        </>
+      }
+    >
+      <form
+        className="part-properties"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        <label className="field-label" htmlFor="part-number">
+          Part number
+        </label>
+        <input id="part-number" value={number} maxLength={60} placeholder="e.g. BR-001" onChange={(e) => setNumber(e.target.value)} />
+        <label className="field-label" htmlFor="part-description">
+          Description
+        </label>
+        <input id="part-description" value={description} maxLength={200} placeholder="e.g. Shelf bracket, left" onChange={(e) => setDescription(e.target.value)} />
+        <div className="field-label">Your own properties</div>
+        {custom.map((c, i) => (
+          <div className="custom-property" key={i}>
+            <input aria-label={`Property ${i + 1} name`} value={c.name} maxLength={40} placeholder="Name (e.g. Supplier)" onChange={(e) => setCustom(custom.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))} />
+            <input aria-label={`Property ${i + 1} value`} value={c.value} maxLength={200} placeholder="Value" onChange={(e) => setCustom(custom.map((x, k) => (k === i ? { ...x, value: e.target.value } : x)))} />
+            <button type="button" className="icon-button small" aria-label={`Remove property ${i + 1}`} title="Remove" onClick={() => setCustom(custom.filter((_, k) => k !== i))}>
+              <Icons.Trash size={15} />
+            </button>
+          </div>
+        ))}
+        <button type="button" className="text-button small-text" onClick={() => setCustom([...custom, { name: "", value: "" }])}>
+          <Icons.Plus size={14} /> Add a property
+        </button>
+        <p className="dialog-hint">They show in every parts list with this part, its CSV file and drawings. Leave a box empty to remove it.</p>
+        {/* Enter in a box saves. */}
+        <button type="submit" hidden />
+      </form>
+    </Modal>
   );
 }
 
@@ -1206,6 +1339,8 @@ function ExplodeStepRow({ step, number, names }: { step: ExplodeStep; number: nu
 
 /** "Flat face", "Circular edge"… for showing what was picked. */
 function connectorLabel(c: MateConnector): string {
+  const plane = originPlaneOf(c);
+  if (plane) return `${plane} plane`;
   const ref = c.pick.ref;
   if (ref.kind === "face") {
     if (ref.surface === "PLANE") return "flat face";
@@ -1309,6 +1444,30 @@ function MateValueField({
   );
 }
 
+/** Where on a picked face or edge the connector sits (only when there's a choice). */
+function SpotChoice({ c, onChange }: { c: MateConnector; onChange: (c: MateConnector) => void }) {
+  const options = spotOptions(c);
+  if (options.length < 2) return null;
+  return (
+    <select
+      className="connector-spot"
+      aria-label="Where on it"
+      title="Where the mate connector sits on the face or edge"
+      value={c.spot ?? ""}
+      onChange={(e) => {
+        const { spot: _old, ...rest } = c;
+        onChange(e.target.value ? { ...rest, spot: e.target.value as ConnectorSpot } : rest);
+      }}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /** The mate dialog: pick a face or edge on two parts, choose the kind of joint and its amounts. */
 export function MateDialog() {
   const draftState = useStore((s) => s.mateDraft);
@@ -1323,7 +1482,7 @@ export function MateDialog() {
   const { errors } = mateValues(mate);
   const limits = mateLimits(mate);
   const problem = ready ? solved?.mateErrors[mate.id] : undefined;
-  const nameOf = (c?: MateConnector) => (c ? asm.instances.find((i) => i.id === c.instanceId)?.name ?? "?" : "");
+  const nameOf = (c?: MateConnector) => (c ? (isOrigin(c) ? "Origin" : asm.instances.find((i) => i.id === c.instanceId)?.name ?? "?") : "");
   const slot = (c: MateConnector | undefined, n: 1 | 2) => (
     <div
       className={`connector-slot${c && (!width || c.pick2) ? " filled" : ""}${
@@ -1332,8 +1491,9 @@ export function MateDialog() {
     >
       <span className="connector-number">{n}</span>
       {c && (!width || c.pick2) ? (
-        <span>
+        <span className="connector-picked">
           {nameOf(c)} — {width ? "two faces" : connectorLabel(c)}
+          {!width && <SpotChoice c={c} onChange={(next) => st.setMateDraft(n === 1 ? { a: next } : { b: next })} />}
         </span>
       ) : c && width ? (
         <span className="muted">{nameOf(c)} — now click the face opposite</span>
@@ -1386,6 +1546,24 @@ export function MateDialog() {
         <p className="dialog-hint field-hint">{def.description}</p>
         {slot(mate.a, 1)}
         {slot(mate.b, 2)}
+        {!width && !ready && (
+          <div className="origin-picks" role="group" aria-label="Mate to the origin">
+            <span className="muted" title="Hold a part in place against the assembly's origin, without fixing it">
+              Or use the origin:
+            </span>
+            {ORIGIN_PLANES.map((p) => (
+              <button
+                key={p}
+                type="button"
+                className="text-button small-text"
+                onClick={() => st.pickMateConnector(originConnector(p))}
+                title={`The origin's ${p} plane — like a flat face that never moves`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
         {ready && (
           <button type="button" className="text-button small-text" onClick={() => st.setMateDraft({ a: undefined, b: undefined })}>
             Pick again

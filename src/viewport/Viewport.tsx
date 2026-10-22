@@ -5,8 +5,9 @@ import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
 import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
-import { compose, placementMatrix, rotate, type Placement } from "../assembly/math";
-import { findPick, framePlacement } from "../assembly/connectors";
+import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
+import { isOrigin } from "../assembly/origin";
+import { clickedSpot, findPick, framePlacement } from "../assembly/connectors";
 import { explodeAssembly, useSolvedAssembly } from "../app/assemblySolve";
 import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
@@ -31,10 +32,11 @@ import { sectionPlane } from "./section";
 const NO_COLOURS: Record<string, string> = {};
 const NO_PLACEMENTS: Record<string, number[]> = {};
 
-/** Each instance shown as a copy of its part's mesh (moved into place with setPlacements). */
+/** Each instance shown as a copy of its part's mesh (moved into place with setPlacements); suppressed ones aren't shown. */
 function instanceMeshes(parts: PartMesh[], assembly: Assembly): PartMesh[] {
   const out: PartMesh[] = [];
   for (const i of assembly.instances) {
+    if (i.suppressed) continue;
     const part = findMesh(parts, meshIdOf(i));
     if (part) out.push({ ...part, id: i.id, name: i.name, featureIds: [] });
   }
@@ -74,8 +76,11 @@ function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
     if (!instance || !part) return;
     const ref = target.item.kind === "edge" ? part.edgeRefs?.[target.item.index] : part.faceRefs?.[target.item.index];
     if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return;
-    // Picks name the part itself, whichever configuration it's shown in.
-    s.pickMateConnector({ instanceId: instance.id, pick: { partId: instance.partId, ref } });
+    // Picks name the part itself, whichever configuration it's shown in. Where it was clicked is kept
+    // (in the part's own coordinates), and a click near an edge's end puts the connector on that corner.
+    const point = target.local?.map((v) => Math.round(v * 1e6) / 1e6) as [number, number, number] | undefined;
+    const spot = point ? clickedSpot(part, { partId: part.id, ref }, point) : undefined;
+    s.pickMateConnector({ instanceId: instance.id, pick: { partId: instance.partId, ref }, ...(spot ? { spot } : {}), ...(point ? { point } : {}) });
     return;
   }
   const id = target?.kind === "part" ? target.item.partId : null;
@@ -494,7 +499,7 @@ export function Viewport() {
   const asmSelection = useStore((s) => s.asmSelection);
   const hiddenInstances = useStore((s) => s.hiddenInstances);
   // In an assembly the meshes only change when parts are rebuilt or instances added/removed, not when they move.
-  const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${meshIdOf(i)}`).join(",") : null;
+  const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${meshIdOf(i)}${i.suppressed ? ":off" : ""}`).join(",") : null;
   const hadNothing = useRef(true);
   // Sheet metal shown flat: each sheet part's unfolded mesh, fetched when asked for or when the parts are rebuilt.
   const showFlat = useStore((s) => s.showFlat);
@@ -566,8 +571,9 @@ export function Viewport() {
       if (!c) continue;
       const instance = assembly.instances.find((i) => i.id === c.instanceId);
       const f = connectorFrameFor(assembly, parts, c);
-      if (!instance || !f) continue;
-      const where: Placement = solved?.placements[instance.id] ?? instance.placement;
+      // The origin's connectors sit at the origin itself.
+      if ((!instance && !isOrigin(c)) || !f) continue;
+      const where: Placement = instance ? solved?.placements[instance.id] ?? instance.placement : IDENTITY;
       const world = compose(where, framePlacement(f));
       markers.push({ origin: world.position, x: rotate(world.rotation, [1, 0, 0]), z: rotate(world.rotation, [0, 0, 1]) });
     }

@@ -675,7 +675,41 @@ try {
   await page.waitForSelector(".check-headline", { timeout: 30_000 });
   const asmHeadline = await page.locator(".check-headline").innerText();
   await shot("assembly-check");
+  // The clash check's choices: list touching parts too, then put it back.
+  await page.getByLabel("Touching tolerance").waitFor({ timeout: 5_000 });
+  await page.getByLabel("Ignore parts that only touch").uncheck();
+  await page.waitForSelector(".check-headline", { timeout: 30_000 });
+  await page.getByLabel("Ignore parts that only touch").check();
+  await page.waitForSelector(".check-headline", { timeout: 30_000 });
   await page.getByRole("button", { name: "Close" }).first().click();
+
+  step = "suppressing a part";
+  await page.locator(".feature-row >> text=Part 2 <1>").click();
+  await page.getByRole("button", { name: "Suppress", exact: true }).click();
+  await page.waitForSelector(".feature-row.suppressed >> text=Part 2 <1>", { timeout: 5_000 });
+  const bomOff = await page.locator(".bom-table").innerText();
+  if (/Part 2/.test(bomOff)) throw new Error(`a suppressed part is still in the parts list: "${bomOff.replace(/\n/g, " / ")}"`);
+  await page.waitForSelector(".panel-section.mates .feature-row.suppressed >> text=Fasten 1", { timeout: 5_000 });
+  await page.locator(".feature-row >> text=Part 2 <1>").click();
+  await page.getByRole("button", { name: "Unsuppress", exact: true }).click();
+  await page.waitForFunction(() => /Part 2/.test(document.querySelector(".bom-table")?.textContent ?? ""), null, { timeout: 5_000 });
+  if ((await page.locator(".panel-section.mates .feature-row.failed").count()) > 0) throw new Error("the mate broke after unsuppressing its part");
+  await page.keyboard.press("Escape");
+
+  step = "giving a part a part number";
+  await page.locator(".bom-table tr", { hasText: "Part 2" }).dblclick();
+  const propsDialog = page.getByRole("dialog", { name: /Properties of Part 2/ });
+  await propsDialog.getByLabel("Part number").fill("PS-002");
+  await propsDialog.getByLabel("Description").fill("Top block");
+  await propsDialog.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForFunction(() => /PS-002/.test(document.querySelector(".bom-table")?.textContent ?? ""), null, { timeout: 5_000 });
+  if (!/Top block/.test(await page.locator(".bom-table").innerText())) throw new Error("the parts list didn't show the description");
+  // Emptying the boxes takes them off again (and keeps the parts list as later steps expect it).
+  await page.locator(".bom-table tr", { hasText: "Part 2" }).dblclick();
+  await propsDialog.getByLabel("Part number").fill("");
+  await propsDialog.getByLabel("Description").fill("");
+  await propsDialog.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForFunction(() => !/PS-002|Top block/.test(document.querySelector(".bom-table")?.textContent ?? ""), null, { timeout: 5_000 });
   await page.getByRole("button", { name: "Export", exact: true }).click();
   await page.waitForSelector('#export-parts option[value="all"]', { state: "attached" });
   const allOption = await page.locator('#export-parts option[value="all"]').innerText();

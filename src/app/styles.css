@@ -1158,6 +1158,27 @@ button:disabled {
   font-size: 12.5px;
 }
 
+/* The assembly check's choices (touching, tolerance, hidden parts). */
+.clash-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.clash-options label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.clash-options .clash-tolerance {
+  width: 64px;
+}
+
 .check-headline {
   display: flex;
   gap: 8px;
@@ -1272,6 +1293,20 @@ kbd {
   border-radius: 3px;
   border: 1px solid rgba(0, 0, 0, 0.25);
   flex: none;
+}
+
+.origin-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  font-size: 12.5px;
+  margin: 2px 0 6px;
+}
+
+.instance-suppressed {
+  font-size: 11.5px;
+  padding: 0 6px;
 }
 
 .instance-fixed {
@@ -1622,6 +1657,45 @@ kbd {
   border: 1px dashed var(--line);
   border-radius: 6px;
   font-size: 13px;
+}
+
+.bom-table .bom-edit {
+  width: 24px;
+  padding: 0;
+  text-align: right;
+}
+
+.bom-description {
+  font-size: 11.5px;
+}
+
+.bom-table tr.editable {
+  cursor: default;
+}
+
+.part-properties {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.custom-property {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.connector-picked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.connector-spot {
+  font-size: 12px;
+  max-width: 100%;
 }
 
 .connector-slot.filled {

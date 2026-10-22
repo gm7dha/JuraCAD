@@ -8,6 +8,7 @@ import { parseConfigurations } from "./configurations";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
 import { parseMaterials } from "./materials";
+import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
 import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, PartStudio } from "./types";
@@ -551,6 +552,7 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...(typeof d.studioName === "string" && d.studioName.trim() && d.studioName.trim() !== "Part Studio 1" ? { studioName: d.studioName.trim() } : {}),
     ...(partStudios.length ? { partStudios } : {}),
     ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),
+    ...(Object.keys(parsePartProperties(d.partProperties)).length ? { partProperties: parsePartProperties(d.partProperties) } : {}),
     ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
     ...(parseDrawings(d.drawings).length ? { drawings: parseDrawings(d.drawings) } : {}),
     ...configurationsOf(d),

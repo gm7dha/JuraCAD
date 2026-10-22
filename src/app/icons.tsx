@@ -88,6 +88,13 @@ export const Icons = {
       <path d="M9.9 9.9a2.8 2.8 0 0 0 4 4" />
     </Svg>
   ),
+  /** Suppress: a part's box, crossed out. */
+  Suppress: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" />
+      <path d="M4 4l16 16" />
+    </Svg>
+  ),
   Origin: (p: IconProps) => (
     <Svg {...p}>
       <circle cx="12" cy="12" r="2" />

@@ -241,6 +241,8 @@ export interface JuraCADDocument {
   partStudios?: PartStudio[];
   /** Names given to parts, by part id (parts without one are "Part 1", "Part 2"…). */
   partNames?: Record<string, string>;
+  /** Part number, description and your own properties, by part id — shown in assembly parts lists. */
+  partProperties?: Record<string, PartProperties>;
   /** Assembly tabs (optional: older saves have none). */
   assemblies?: Assembly[];
   /** Drawing tabs (optional: older saves have none). */
@@ -313,6 +315,8 @@ export interface Drawing {
   balloons?: boolean;
   /** Assembly drawings: show the parts spread apart (the assembly's exploded view). */
   exploded?: boolean;
+  /** Assembly drawings: add each part's weight to the parts list (missing = not shown). */
+  bomWeights?: boolean;
   /** Decimal places for dimensions (0–4, kept even when they're zeros); missing = as many as needed, up to 2 in mm or 3 in inches. */
   places?: number;
   /** Dimensions also give the size in the other unit, in brackets: "40 [1.575]". */
@@ -511,6 +515,11 @@ export interface Instance {
   replicaOf?: { replicate: string; index: number };
   /** Shown as the part's mirror image (a copy made by a Mirror): the part is flipped across its own YZ plane, then placed. */
   mirrored?: boolean;
+  /**
+   * Switched off for now (Onshape's Suppress): hidden, and left out of the parts
+   * list, exports, clash checks and the mate solver; mates on it do nothing.
+   */
+  suppressed?: boolean;
 }
 
 /**
@@ -559,7 +568,27 @@ export interface MateConnector {
   pick: TopoPick;
   /** Width mates: the second flat face; the connector sits halfway between the two. */
   pick2?: TopoPick;
+  /**
+   * Where on the face or edge the connector sits, when not its usual spot (a
+   * face's centre, an edge's middle or a circle's centre): an edge's start or
+   * end corner, halfway along a curved edge, or where it was clicked (`point`).
+   * Only the connector's position changes, never its directions.
+   */
+  spot?: ConnectorSpot;
+  /** Where the face or edge was clicked, in the part's own coordinates (mm). */
+  point?: [number, number, number];
 }
+
+/** What a parts list says about a part besides its name (as in Onshape's part properties). */
+export interface PartProperties {
+  /** e.g. "BR-001". */
+  number?: string;
+  description?: string;
+  /** Your own properties, e.g. Supplier: "Screwfix", in the order they were added. */
+  custom?: { name: string; value: string }[];
+}
+
+export type ConnectorSpot = "start" | "end" | "middle" | "clicked";
 
 export interface Mate {
   id: string;
