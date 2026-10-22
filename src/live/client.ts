@@ -93,6 +93,8 @@ export class LiveClient {
   private listeners = new Set<() => void>();
   /** Bumped by connect/disconnect so an attempt that's been given up on stops. */
   private attempt = 0;
+  /** True while Claude's change is being applied (the store tells its listeners straight away: that's not the user). */
+  private applying = false;
 
   constructor(
     private readonly host: LiveHost,
@@ -215,7 +217,7 @@ export class LiveClient {
 
   /** Send the design if the user changed it (or switched Part Studio). */
   private pushIfChanged(): void {
-    if (!this.socket) return;
+    if (!this.socket || this.applying) return;
     const now = this.host.current();
     if (now.key === this.lastKey) return;
     this.lastKey = now.key;
@@ -244,7 +246,15 @@ export class LiveClient {
       this.sendTo(socket, { type: "refused", id: msg.id, version: this.version, reason: decision.reason, message: decision.message });
       return;
     }
-    const problem = this.host.apply(msg.file, msg.studio, msg.label, msg.replace);
+    this.applying = true;
+    let problem: string | null;
+    try {
+      problem = this.host.apply(msg.file, msg.studio, msg.label, msg.replace);
+    } catch (e) {
+      problem = `JuraCAD couldn't show it (${e instanceof Error ? e.message : String(e)})`;
+    } finally {
+      this.applying = false;
+    }
     if (problem) {
       this.sendTo(socket, { type: "refused", id: msg.id, version: this.version, reason: "invalid", message: problem });
       return;

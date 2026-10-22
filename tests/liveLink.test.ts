@@ -71,6 +71,8 @@ class FakeApp implements LiveHost {
     if (!r.ok) return r.error;
     this.history = commit(this.history, r.doc);
     this.applied.push({ label, replace });
+    // Like the real store, which tells its listeners (the live link among them) straight away.
+    this.listeners.forEach((f) => f());
     return null;
   }
   subscribe(fn: () => void) {

@@ -151,6 +151,8 @@ export class LiveBridge implements LiveLink {
         this.pending.delete(msg.id);
         if (msg.type === "applied") {
           if (msg.version !== p.base + 1 || !isNewer(this.version, msg.version)) {
+            // Shouldn't happen; if it does, start again cleanly rather than guess (the tool says so).
+            p.resolve?.({ type: "disconnected" });
             return this.refuse(conn, "JuraCAD and the extension lost track of the design's versions. Click Connect to Claude again.");
           }
           this.doc = p.full;
