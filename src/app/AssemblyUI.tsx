@@ -19,6 +19,7 @@ import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
 import { bomInfo, partBox, useSolvedAssembly } from "./assemblySolve";
 import { mateInactive } from "../assembly/suppress";
+import { isOrigin, ORIGIN_ID, ORIGIN_PLANES, originConnector, originPlaneOf } from "../assembly/origin";
 import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
@@ -349,7 +350,7 @@ function MateRow({ mate, error, instanceNames, inactive }: { mate: Mate; error?:
 function MatesSection({ assembly }: { assembly: Assembly }) {
   const { solved } = useSolvedAssembly();
   const mates = assembly.mates ?? [];
-  const instanceNames = useMemo(() => Object.fromEntries(assembly.instances.map((i) => [i.id, i.name])), [assembly.instances]);
+  const instanceNames = useMemo(() => ({ ...Object.fromEntries(assembly.instances.map((i) => [i.id, i.name])), [ORIGIN_ID]: "the origin" }), [assembly.instances]);
   return (
     <section className="panel-section mates">
       <h3>
@@ -1235,6 +1236,8 @@ function ExplodeStepRow({ step, number, names }: { step: ExplodeStep; number: nu
 
 /** "Flat face", "Circular edge"… for showing what was picked. */
 function connectorLabel(c: MateConnector): string {
+  const plane = originPlaneOf(c);
+  if (plane) return `${plane} plane`;
   const ref = c.pick.ref;
   if (ref.kind === "face") {
     if (ref.surface === "PLANE") return "flat face";
@@ -1352,7 +1355,7 @@ export function MateDialog() {
   const { errors } = mateValues(mate);
   const limits = mateLimits(mate);
   const problem = ready ? solved?.mateErrors[mate.id] : undefined;
-  const nameOf = (c?: MateConnector) => (c ? asm.instances.find((i) => i.id === c.instanceId)?.name ?? "?" : "");
+  const nameOf = (c?: MateConnector) => (c ? (isOrigin(c) ? "Origin" : asm.instances.find((i) => i.id === c.instanceId)?.name ?? "?") : "");
   const slot = (c: MateConnector | undefined, n: 1 | 2) => (
     <div
       className={`connector-slot${c && (!width || c.pick2) ? " filled" : ""}${
@@ -1415,6 +1418,24 @@ export function MateDialog() {
         <p className="dialog-hint field-hint">{def.description}</p>
         {slot(mate.a, 1)}
         {slot(mate.b, 2)}
+        {!width && !ready && (
+          <div className="origin-picks" role="group" aria-label="Mate to the origin">
+            <span className="muted" title="Hold a part in place against the assembly's origin, without fixing it">
+              Or use the origin:
+            </span>
+            {ORIGIN_PLANES.map((p) => (
+              <button
+                key={p}
+                type="button"
+                className="text-button small-text"
+                onClick={() => st.pickMateConnector(originConnector(p))}
+                title={`The origin's ${p} plane — like a flat face that never moves`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
         {ready && (
           <button type="button" className="text-button small-text" onClick={() => st.setMateDraft({ a: undefined, b: undefined })}>
             Pick again

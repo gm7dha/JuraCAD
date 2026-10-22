@@ -5,7 +5,8 @@ import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
 import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
-import { compose, placementMatrix, rotate, type Placement } from "../assembly/math";
+import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
+import { isOrigin } from "../assembly/origin";
 import { findPick, framePlacement } from "../assembly/connectors";
 import { explodeAssembly, useSolvedAssembly } from "../app/assemblySolve";
 import type { MateConnector } from "../model/types";
@@ -560,8 +561,9 @@ export function Viewport() {
       if (!c) continue;
       const instance = assembly.instances.find((i) => i.id === c.instanceId);
       const f = connectorFrameFor(assembly, parts, c);
-      if (!instance || !f) continue;
-      const where: Placement = solved?.placements[instance.id] ?? instance.placement;
+      // The origin's connectors sit at the origin itself.
+      if ((!instance && !isOrigin(c)) || !f) continue;
+      const where: Placement = instance ? solved?.placements[instance.id] ?? instance.placement : IDENTITY;
       const world = compose(where, framePlacement(f));
       markers.push({ origin: world.position, x: rotate(world.rotation, [1, 0, 0]), z: rotate(world.rotation, [0, 0, 1]) });
     }

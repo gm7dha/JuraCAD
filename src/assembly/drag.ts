@@ -8,7 +8,8 @@
  */
 import type { Assembly, Mate } from "../model/types";
 import { framePlacement, type Frame } from "./connectors";
-import { add, compose, cross, dot, length, normalize, rotate, scale, sub, type Placement, type Vec3 } from "./math";
+import { isOrigin } from "./origin";
+import { add, compose, cross, IDENTITY, dot, length, normalize, rotate, scale, sub, type Placement, type Vec3 } from "./math";
 import { clampToLimits, mateValues, type SolveResult } from "./mates";
 import { lengthUnit, startingLength } from "../model/units";
 
@@ -93,7 +94,8 @@ export function planDrag(
   const mate = assembly.mates?.find((m) => m.id === mateId);
   if (!mate) return { refuse: "" };
   const fa = frameOf(mate, "a");
-  const pa = solved.placements[mate.a.instanceId];
+  // (The origin isn't in the solved places: it's always where it is.)
+  const pa = isOrigin(mate.a) ? IDENTITY : solved.placements[mate.a.instanceId];
   if (!fa || !pa) return { refuse: "" };
   const axis = worldFrame(pa, fa);
   // Mate amounts move the second connector's part; dragging the first part goes the other way.
