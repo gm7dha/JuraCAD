@@ -30,7 +30,8 @@ import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
-import type { CheckResult, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import { measureContacts } from "./clash";
+import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
@@ -3605,8 +3606,8 @@ export class GeometryEngine {
   }
 
   /** A copy of each instance's part, turned and moved into its place in the assembly (caller frees them). */
-  private placeInstances(instances: InstanceInput[]): { id: string; partId: string; name: string; shape: Shape3D }[] {
-    const out: { id: string; partId: string; name: string; shape: Shape3D }[] = [];
+  private placeInstances(instances: InstanceInput[]): { id: string; partId: string; name: string; shape: Shape3D; surface?: boolean }[] {
+    const out: { id: string; partId: string; name: string; shape: Shape3D; surface?: boolean }[] = [];
     for (const i of instances) {
       // A part in another configuration, or (in the one on show) the ordinary part.
       const part = this.parts.find((p) => p.id === i.partId) ?? this.parts.find((p) => p.id === i.partId.split("@")[0]);
@@ -3619,7 +3620,7 @@ export class GeometryEngine {
       const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
       if (s > 1e-9 && Math.abs(angle) > 1e-9) shape = shape.rotate(angle, [0, 0, 0], [x / s, y / s, z / s]);
       if (Math.abs(i.position[0]) + Math.abs(i.position[1]) + Math.abs(i.position[2]) > 0) shape = shape.translate(i.position);
-      out.push({ id: i.id, partId: i.partId, name: i.name, shape });
+      out.push({ id: i.id, partId: i.partId, name: i.name, shape, ...(part.surface ? { surface: true } : {}) });
     }
     return out;
   }
@@ -3812,11 +3813,11 @@ export class GeometryEngine {
     }
   }
 
-  /** Pairs of assembly instances that occupy the same space. */
-  clashes(instances: InstanceInput[]): NonNullable<CheckResult["overlaps"]> {
+  /** How pairs of assembly instances meet: overlapping, or within `tolerance` (mm) of each other (see clash.ts). */
+  clashes(instances: InstanceInput[], tolerance = 0, withGaps = true): ContactMeasure[] {
     const placed = this.placeInstances(instances);
     try {
-      return this.findOverlaps(placed.map((p) => ({ id: p.id, name: p.name, featureIds: [], shape: p.shape })));
+      return measureContacts(placed, tolerance, withGaps);
     } finally {
       placed.forEach((p) => p.shape.delete());
     }
@@ -4003,7 +4004,16 @@ export class GeometryEngine {
   private meshPart(p: BuiltPart): PartMesh {
     const mesh = this.meshPartShape(p);
     const flat = this.flatOf(p);
-    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}) };
+    // The exact volume, for weights in parts lists (quick next to making the mesh).
+    let volume: number | null = null;
+    if (!p.surface) {
+      try {
+        volume = measureVolume(p.shape);
+      } catch {
+        volume = null;
+      }
+    }
+    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
   }
 
   /** A sheet metal part's flat pattern (null for other parts, or if it can't be unfolded). */

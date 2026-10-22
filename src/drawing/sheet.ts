@@ -126,6 +126,11 @@ export interface BomLine {
   quantity: number;
   /** The part (for balloons). */
   partId?: string;
+  /** Part number and description, when the part has them. */
+  number?: string;
+  description?: string;
+  /** What one weighs, written out (e.g. "12.5 g"), when known. */
+  weight?: string;
 }
 
 export interface SheetInfo {
@@ -887,7 +892,8 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
   out.push(...projectionSymbol(x0 + 145, y0 + 5, drawing.projection === "third"));
 
   // Notes, just above the title block.
-  // Parts list (assemblies), just above the title block: item, part, quantity.
+  // Parts list (assemblies), just above the title block: item, part, quantity — and part number,
+  // description and weight each when any part has them.
   let top = y0 + TITLE_H;
   const bom = info.bom ?? [];
   if (bom.length) {
@@ -895,17 +901,35 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
     const h = (rows.length + 1) * BOM_ROW;
     out.push(rect(x0, top, x1, top + h, "border"));
     for (let i = 1; i <= rows.length; i++) out.push(line(x0, top + i * BOM_ROW, x1, top + i * BOM_ROW));
-    out.push(line(x0 + 15, top, x0 + 15, top + h), line(x1 - 20, top, x1 - 20, top + h));
+    // Columns from the left: item, [part number], part, [description]; from the right: quantity, [weight].
+    const numberW = bom.some((r) => r.number) ? 30 : 0;
+    const weightW = bom.some((r) => r.weight) ? 22 : 0;
+    const partX = x0 + 15 + numberW;
+    const qtyX = x1 - 20;
+    const weightX = qtyX - weightW;
+    const descW = bom.some((r) => r.description) ? Math.max(0, Math.min(55, (weightX - partX) / 2)) : 0;
+    const descX = weightX - descW;
+    const walls = [x0 + 15, qtyX, ...(numberW ? [partX] : []), ...(weightW ? [weightX] : []), ...(descW ? [descX] : [])];
+    out.push(...walls.map((x) => line(x, top, x, top + h)));
+    const cell = (x: number, w: number, y: number, text: string, anchor: "start" | "middle") =>
+      out.push({ kind: "text", x: anchor === "middle" ? x + w / 2 : x + 2, y, text, size: fitSize(text, w - 3, 3), anchor });
     rows.forEach((r, i) => {
       const y = top + i * BOM_ROW + 1.8;
       out.push({ kind: "text", x: x0 + 7.5, y, text: String(r.item), size: 3, anchor: "middle" });
-      out.push({ kind: "text", x: x0 + 17, y, text: r.name, size: fitSize(r.name, x1 - 20 - (x0 + 17) - 1, 3), anchor: "start" });
+      if (numberW && r.number) cell(x0 + 15, numberW, y, r.number, "start");
+      cell(partX, descX - partX, y, r.name, "start");
+      if (descW && r.description) cell(descX, descW, y, r.description, "start");
+      if (weightW && r.weight) cell(weightX, weightW, y, r.weight, "middle");
       out.push({ kind: "text", x: x1 - 10, y, text: String(r.quantity), size: 3, anchor: "middle" });
     });
     const hy = top + rows.length * BOM_ROW + 1.8;
-    out.push({ kind: "text", x: x0 + 7.5, y: hy, text: "ITEM", size: 2.5, anchor: "middle", bold: true });
-    out.push({ kind: "text", x: x0 + 17, y: hy, text: "PART", size: 2.5, anchor: "start", bold: true });
-    out.push({ kind: "text", x: x1 - 10, y: hy, text: "QTY", size: 2.5, anchor: "middle", bold: true });
+    const head = (x: number, text: string, anchor: "start" | "middle" = "start") => out.push({ kind: "text", x, y: hy, text, size: 2.5, anchor, bold: true });
+    head(x0 + 7.5, "ITEM", "middle");
+    if (numberW) head(x0 + 17, "PART NO.");
+    head(partX + 2, "PART");
+    if (descW) head(descX + 2, "DESCRIPTION");
+    if (weightW) head(weightX + weightW / 2, "WEIGHT EACH", "middle");
+    head(x1 - 10, "QTY", "middle");
     top += h;
   }
 

@@ -173,6 +173,29 @@ describe("assembly drawings", () => {
     // Title block (36) + parts list (3 rows of 6, plus a gap) + notes (2 lines, plus a gap) are kept free.
     const lowest = Math.min(...l.views.map((v) => v.box[1]));
     expect(lowest).toBeGreaterThanOrEqual(10 + 36 + 21 + 12 + 5 - 1e-9);
+    // Without numbers, descriptions or weights: just the three columns.
+    // (The title block has its own PART NO. box.)
+    expect(texts.filter((t) => t === "PART NO.")).toHaveLength(1);
+    expect(texts).not.toContain("WEIGHT EACH");
+    expect(texts).not.toContain("DESCRIPTION");
+  });
+
+  it("add part number, description and weight columns when any part has them", () => {
+    const d = newDrawing();
+    const bom = [
+      { item: 1, name: "Base", quantity: 1, number: "BR-001", description: "Base plate", weight: "120 g" },
+      { item: 2, name: "Bolt M4", quantity: 4, weight: "2.1 g" },
+    ];
+    const l = layoutSheet(d, block, { ...info, bom });
+    const texts = l.prims.flatMap((p) => (p.kind === "text" ? [p] : []));
+    const names = texts.map((t) => t.text);
+    for (const t of ["DESCRIPTION", "WEIGHT EACH", "BR-001", "Base plate", "120 g", "2.1 g"]) expect(names).toContain(t);
+    expect(names.filter((t) => t === "PART NO.")).toHaveLength(2);
+    // Left to right: item, number, part, description, weight, quantity — on the same line.
+    const at = (t: string) => texts.find((x) => x.text === t)!;
+    const order = ["1", "BR-001", "Base", "Base plate", "120 g"].map((t) => at(t).x);
+    for (let i = 1; i < order.length; i++) expect(order[i]).toBeGreaterThan(order[i - 1]);
+    expect(at("BR-001").y).toBeCloseTo(at("120 g").y, 9);
   });
 });
 

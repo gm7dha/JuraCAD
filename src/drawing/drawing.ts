@@ -319,6 +319,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       ...(r.holeTable === true ? { holeTable: true } : {}),
       ...(r.balloons === false ? { balloons: false } : {}),
       ...(r.exploded === true ? { exploded: true } : {}),
+      ...(r.bomWeights === true ? { bomWeights: true } : {}),
       ...(isPlaces(r.places) ? { places: r.places as number } : {}),
       ...(r.dualUnits === true ? { dualUnits: true } : {}),
       ...(r.tangentEdges === false ? { tangentEdges: false } : {}),

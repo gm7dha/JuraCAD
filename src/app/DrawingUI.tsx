@@ -20,7 +20,6 @@ import { findMesh } from "../assembly/configured";
 import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { angleGeometry, arcOf, chamferSize, dimPoint, dragDimension, FITTABLE, fitOf, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
-import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
@@ -30,6 +29,7 @@ import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevis
 import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection, viewKey } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
+import { drawingBom } from "../assembly/drawingBom";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { ToolGroupButton } from "./ToolGroupButton";
@@ -56,16 +56,6 @@ function drawingSubject(
     instances = instances.map((i) => ({ ...i, position: spread[i.id]?.position ?? i.position }));
   }
   return { name: asm.name, partIds: [], instances, key: [JSON.stringify(instances), ...instances.map((i) => findMesh(parts, i.partId))] };
-}
-
-/** The parts list for an assembly drawing (none for a part). */
-function bomFor(drawing: Drawing, doc: JuraCADDocument, parts: PartMesh[]): BomLine[] | undefined {
-  if (drawing.source?.kind !== "assembly") return undefined;
-  const asm = doc.assemblies?.find((a) => a.id === drawing.source!.id);
-  if (!asm) return undefined;
-  const names = Object.fromEntries(parts.map((p) => [p.id, p.name]));
-  const configurations = Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name]));
-  return billOfMaterials(asm, names, configurations).map((r, i) => ({ item: i + 1, name: r.name, quantity: r.quantity, partId: r.partId }));
 }
 
 /** A spot on one copy of each listed part, for the balloons to point at. */
@@ -258,7 +248,7 @@ export function autoDimensionDrawing() {
 
 /** The title block and tables' details for one sheet of a drawing. */
 function sheetInfo(page: Drawing, doc: JuraCADDocument, parts: PartMesh[], subject: string, instances: InstanceInput[] | undefined, sheetNo: number, sheetCount: number): SheetInfo {
-  const bom = bomFor(page, doc, parts);
+  const bom = drawingBom(page, doc, parts);
   const balloons = balloonsFor(bom, instances, parts);
   return { designName: doc.name, subject, date: today(), bom, balloons, taps: tapSizes(doc, page), ...(sheetCount > 1 ? { sheetNo, sheetCount } : {}) };
 }
@@ -740,7 +730,7 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
   const change = changeShownPage;
   const { projections, subject, upToDate } = useProjections(drawing, cacheIdOf(whole, pageId));
   // The scale "Fit to sheet" picks (with any room it keeps for dimensions).
-  const info = useMemo<SheetInfo>(() => ({ designName: "", subject: "", date: "", bom: bomFor(drawing, doc, parts), taps: tapSizes(doc, drawing) }), [drawing, doc, parts]);
+  const info = useMemo<SheetInfo>(() => ({ designName: "", subject: "", date: "", bom: drawingBom(drawing, doc, parts), taps: tapSizes(doc, drawing) }), [drawing, doc, parts]);
   const auto = useMemo(() => (projections ? layoutSheet({ ...drawing, scale: undefined }, projections, info) : null), [drawing, projections, info]);
   const studios = studiosOf(doc);
   const sourceValue = drawing.source ? `${drawing.source.kind}:${drawing.source.id}` : "";
@@ -994,6 +984,21 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
                 }
               />
               Exploded (parts spread apart)
+            </label>
+          )}
+          {drawing.source?.kind === "assembly" && (
+            <label className="check-row" title="What each part weighs, made solid in its material (set in the Part Studio's parts list) — less infill weighs less">
+              <input
+                type="checkbox"
+                checked={!!drawing.bomWeights}
+                onChange={(e) =>
+                  change((d) => {
+                    const { bomWeights: _old, ...rest } = d;
+                    return e.target.checked ? { ...rest, bomWeights: true } : rest;
+                  })
+                }
+              />
+              Show weights in the parts list
             </label>
           )}
         </div>
@@ -1358,7 +1363,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   const sheetNo = pageNumber(whole, pageId);
   const sheetCount = pageIds(whole).length;
   const change = changeShownPage;
-  const bom = useMemo(() => bomFor(drawing, doc, allParts), [drawing, doc, allParts]);
+  const bom = useMemo(() => drawingBom(drawing, doc, allParts), [drawing, doc, allParts]);
   const tool = useStore((s) => s.drawingTool);
   const selectedDims = useStore((s) => s.selectedDims);
   const isSelected = (id: string) => selectedDims.includes(id);
