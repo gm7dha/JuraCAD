@@ -79,7 +79,7 @@ export interface PlacedView {
   centre: [number, number];
   /** The view's outline on the sheet: x0, y0, x1, y1. */
   box: [number, number, number, number];
-  /** The scale it's drawn at: its own, or the sheet's (detail views are drawn `zoom` times this). */
+  /** The scale it's drawn at: its own, that of the view it's taken from (details, sections), or the sheet's. Detail views are drawn `zoom` times this. */
   scale: number;
 }
 
@@ -273,6 +273,15 @@ const isDetailKey = (k: string) => k.startsWith("detail:");
 /** Views placed freely in the side column, with their names underneath. */
 const isLabelled = (k: string) => isSectionKey(k) || isDetailKey(k) || k === "flat";
 
+/**
+ * A view's scale when the sheet's is `s`: its own (`own`), or — for a detail,
+ * or a section without its own — that of the view it's taken from (`parent`),
+ * or the sheet's. (Detail views are then drawn `zoom` times bigger.)
+ */
+function scaleIn(k: string, s: number, own: Record<string, number>, parent: Record<string, string>): number {
+  return own[k] ?? (parent[k] !== undefined ? (own[parent[k]] ?? s) : s);
+}
+
 /** Width and height the arrangement needs on paper at a scale. */
 function needed(
   projections: Projections,
@@ -282,25 +291,32 @@ function needed(
   third = false,
   sideGap = 0,
   own: Record<string, number> = {},
+  parent: Record<string, string> = {},
 ): { w: number; h: number; cols: number[]; rows: number[]; side: { key: string; w: number; h: number; x: number; y: number }[] } {
   const shown = new Set(keys);
   // (Views with their own scale stay that size whatever the sheet's scale.)
-  const size = (k: string) => (shown.has(k) ? paperSize(projections[k], own[k] ?? s) : [0, 0]);
+  const size = (k: string) => (shown.has(k) ? paperSize(projections[k], scaleIn(k, s, own, parent)) : [0, 0]);
   const [fw, fh] = size("front");
   // Columns left to right and rows top to bottom (see GRID).
   const g = third ? GRID.third : GRID.first;
-  const cols = g.cols.map((k) => (k === "front" ? fw : size(k)[0]));
-  const rows = g.rows.map((k) => (k === "front" ? fh : size(k)[1]));
+  // The front's column and row: as wide and tall as the front — or, once views have scales of their own
+  // (so the top may be wider than the front, say), as the widest view above or below it and the tallest beside it.
+  const mixed = Object.keys(own).length > 0;
+  const frontW = mixed ? Math.max(fw, ...g.rows.map((k) => size(k)[0])) : fw;
+  const frontH = mixed ? Math.max(fh, ...g.cols.map((k) => size(k)[1])) : fh;
+  const cols = g.cols.map((k) => (k === "front" ? frontW : size(k)[0]));
+  const rows = g.rows.map((k) => (k === "front" ? frontH : size(k)[1]));
+  const differs = (k: string) => !isDetailKey(k) && Math.abs(scaleIn(k, s, own, parent) - s) > 1e-9;
   const used = (list: number[]) => list.filter((v) => v > 0);
   const gridW = used(cols).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(cols).length - 1);
   // (Room under the lowest row for a "SCALE 2:1" note when a lined-up view has its own scale.)
-  const noted = [...g.rows, ...g.cols].some((k) => shown.has(k) && own[k] !== undefined);
+  const noted = [...g.rows, ...g.cols].some((k) => shown.has(k) && differs(k));
   const gridH = used(rows).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(rows).length - 1) + (noted && used(rows).length ? LABEL_ROOM : 0);
   // The 3D view and the section views share a column to the right, one above another (sections with room for their names).
   const side = ["iso", ...keys.filter(isLabelled)]
     .map((key) => {
       const [w, h] = size(key);
-      return { key, w, h: h > 0 && (isLabelled(key) || own[key] !== undefined) ? h + labelRoom(key, projections[key]) : h };
+      return { key, w, h: h > 0 && (isLabelled(key) || differs(key)) ? h + labelRoom(key, projections[key]) : h };
     })
     .filter((x) => x.w > 0);
   // One above another, starting a new column beside it when the next wouldn't fit under the last.
@@ -348,10 +364,19 @@ const labelRoom = (key: string, p: ViewProjection | undefined) => LABEL_ROOM + (
 const BEND_LINE_H = 4;
 
 /** The biggest standard scale at which all the views fit on the sheet. */
-export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H, third = false, sideGap = 0, own: Record<string, number> = {}): { scale: number; fits: boolean } {
+export function fitScale(
+  projections: Projections,
+  keys: string[],
+  sheet: SheetSize,
+  reserve = TITLE_H,
+  third = false,
+  sideGap = 0,
+  own: Record<string, number> = {},
+  parent: Record<string, string> = {},
+): { scale: number; fits: boolean } {
   const area = viewArea(SHEETS[sheet], reserve);
   for (const s of STANDARD_SCALES) {
-    const n = needed(projections, keys, s, area.y1 - area.y0, third, sideGap, own);
+    const n = needed(projections, keys, s, area.y1 - area.y0, third, sideGap, own, parent);
     if (n.w <= area.x1 - area.x0 && n.h <= area.y1 - area.y0) return { scale: s, fits: true };
   }
   return { scale: STANDARD_SCALES[STANDARD_SCALES.length - 1], fits: false };
@@ -465,16 +490,21 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   // Views drawn at their own scale.
   const own: Record<string, number> = {};
   for (const v of drawing.views) if (v.scale && v.kind !== "detail") own[viewKey(v)] = v.scale;
-  const fitted = fitScale(projections, keys, drawing.sheet, reserve, third, sideGap, own);
+  // Details are drawn at the scale of the view they're taken from (times their enlargement); sections too, unless they have their own.
+  const parent: Record<string, string> = {};
+  for (const x of drawing.details ?? []) parent[`detail:${x.id}`] = x.host;
+  for (const x of drawing.sections ?? []) parent[`section:${x.id}`] = x.host;
+  const fitted = fitScale(projections, keys, drawing.sheet, reserve, third, sideGap, own, parent);
   // (When every view has its own scale, the sheet's is what would fit them all at one scale — not just the biggest there is.)
-  const allOwn = keys.length > 0 && keys.every((k) => own[k] !== undefined);
+  const allOwn = keys.length > 0 && keys.every((k) => own[k] !== undefined || (parent[k] !== undefined && own[parent[k]] !== undefined));
   const auto = allOwn ? { scale: fitScale(projections, keys, drawing.sheet, reserve, third, sideGap).scale, fits: fitted.fits } : fitted;
   // (Fit to sheet can be asked to go one scale smaller, to make room for dimensions.)
   const stepped = drawing.fit?.down ? (STANDARD_SCALES[STANDARD_SCALES.indexOf(auto.scale) + 1] ?? auto.scale) : auto.scale;
   const scale = drawing.scale ?? stepped;
   const area = viewArea(size, reserve);
-  const n = needed(projections, keys, scale, area.y1 - area.y0, third, sideGap, own);
-  const scaleOf = (k: string) => own[k] ?? scale;
+  const n = needed(projections, keys, scale, area.y1 - area.y0, third, sideGap, own, parent);
+  const scaleOf = (k: string) => scaleIn(k, scale, own, parent);
+  const differs = (k: string) => !isDetailKey(k) && Math.abs(scaleOf(k) - scale) > 1e-9;
 
   // Automatic places: the grid of aligned views centred in the area, the 3D and section views to its right.
   const left = area.x0 + Math.max(0, (area.x1 - area.x0 - n.w) / 2);
@@ -498,7 +528,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   grid.rows.forEach((k, i) => (autoCentre[k] = [colX[1], rowY[i]]));
   const sideX = gridRight > left ? gridRight + GAP + sideGap : left;
   for (const item of n.side) {
-    const viewH = isLabelled(item.key) || own[item.key] !== undefined ? item.h - labelRoom(item.key, projections[item.key]) : item.h;
+    const viewH = isLabelled(item.key) || differs(item.key) ? item.h - labelRoom(item.key, projections[item.key]) : item.h;
     autoCentre[item.key] = [sideX + item.x + item.w / 2, top - item.y - viewH / 2];
   }
 
@@ -560,7 +590,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
     const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
     if (p.shorten?.length) prims.push(...breakSymbols(p, sc, at, box));
     // A view at its own scale says so underneath (in its name, for views that have one).
-    const ownNote = own[key] !== undefined && Math.abs(own[key] - scale) > 1e-9 ? `SCALE ${scaleLabel(own[key])}` : null;
+    const ownNote = differs(key) ? `SCALE ${scaleLabel(sc)}` : null;
     if (ownNote && !isLabelled(key)) prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: ownNote, size: 3.5, anchor: "middle", bold: true });
     const named = (name: string) => (ownNote ? `${name}  ${ownNote}` : name);
     if (v.kind === "flat") {

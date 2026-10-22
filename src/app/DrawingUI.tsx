@@ -1060,7 +1060,7 @@ function ViewScales({ drawing, change, sheetScale }: { drawing: Drawing; change:
             </select>
           </div>
         ))}
-        <p className="panel-hint">A view at its own scale says so underneath it (e.g. SCALE 2:1). Detail views set theirs under Details.</p>
+        <p className="panel-hint">A view at its own scale says so underneath it (e.g. SCALE 2:1). A section follows the view it's cut from unless it has its own. Details are drawn times bigger than the view they're taken from — set how many under Details.</p>
       </div>
     </section>
   );
@@ -1210,6 +1210,7 @@ function DetailsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: D
             <span className="row-actions-inline">
               <select
                 aria-label={`Detail ${x.letter} enlargement`}
+                title="How many times bigger than the view it's taken from"
                 value={String(x.zoom)}
                 onChange={(e) => change((d) => updateDetail(d, x.id, (v) => ({ ...v, zoom: Number(e.target.value) })))}
               >
@@ -1566,7 +1567,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     return [a[0] + t * dx, a[1] + t * dy];
   };
   const newSymbol = (): DrawingSymbol =>
-    tool === "datum" ? { kind: "datum", letter: nextDatumLetter(drawing.notes) } : tool === "fcf" ? { kind: "fcf", characteristic: "flatness", tolerance: "0.1", datums: [] } : { kind: "finish", ra: "3.2" };
+    tool === "datum" ? { kind: "datum", letter: nextDatumLetter(pageIds(whole).flatMap((id) => pageOf(whole, id).notes ?? [])) } : tool === "fcf" ? { kind: "fcf", characteristic: "flatness", tolerance: "0.1", datums: [] } : { kind: "finish", ra: "3.2" };
   const symbolClick = (here: P2) => {
     if (!symbolStart) {
       setSymbolStart(snapped(here));

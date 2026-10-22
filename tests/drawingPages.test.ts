@@ -191,6 +191,67 @@ describe("views at their own scale", () => {
     expect(texts(l.prims)).toContain("SCALE 1:10");
   });
 
+  it("keeps lined-up views at their own scale clear of their neighbours", () => {
+    const all = (own: Record<string, number>): Drawing => ({
+      ...newDrawing(),
+      sheet: "A3",
+      scale: 1,
+      views: (["front", "top", "right", "iso"] as ViewKind[]).map((k) => ({ id: k, kind: k, ...(own[k] ? { scale: own[k] } : {}) })),
+    });
+    for (const own of [{ top: 5 }, { right: 5 }, { front: 5 }] as Record<string, number>[]) {
+      const l = layoutSheet(all(own), block, info);
+      for (const a of l.views) for (const b of l.views) if (a !== b) expect(overlap(a.box, b.box)).toBe(false);
+      // Still lined up with the front.
+      const at = (k: string) => l.views.find((v) => v.key === k)!;
+      expect(at("top").centre[0]).toBeCloseTo(at("front").centre[0], 9);
+      expect(at("right").centre[1]).toBeCloseTo(at("front").centre[1], 9);
+    }
+    // Third angle too.
+    const third = layoutSheet({ ...all({ top: 5 }), projection: "third" }, block, info);
+    for (const a of third.views) for (const b of third.views) if (a !== b) expect(overlap(a.box, b.box)).toBe(false);
+  });
+
+  it("draws a detail bigger than the view it's taken from, at that view's own scale", () => {
+    const projections: Projections = { ...block, "detail:d1": { ...rectView("front", 8, 8), zoom: 2 } };
+    const d: Drawing = {
+      ...newDrawing(),
+      sheet: "A2",
+      scale: 1,
+      views: [{ id: "f", kind: "front", scale: 5 }, { id: "dd", kind: "detail", detail: "d1" }],
+      details: [{ id: "d1", letter: "B", host: "front", centre: [0.5, 0.5], radius: 4, zoom: 2 }],
+    };
+    const l = layoutSheet(d, projections, info);
+    const detail = l.views.find((v) => v.key === "detail:d1")!;
+    expect(detail.scale).toBe(5);
+    // 8 mm across at 5 × 2 = 80 mm on paper (the host is 200 mm wide).
+    expect(detail.box[2] - detail.box[0]).toBeCloseTo(80, 9);
+    expect(texts(l.prims)).toContain("DETAIL B (10:1)");
+    // The circle on the host matches its scale.
+    for (const a of l.views) for (const b of l.views) if (a !== b) expect(overlap(a.box, b.box)).toBe(false);
+  });
+
+  it("draws a section at the scale of the view it's cut from, unless it has its own", () => {
+    const projections: Projections = { ...block, "section:s1": rectView("section", 30, 20) };
+    let d: Drawing = { ...newDrawing(), sheet: "A3", scale: 1, views: [{ id: "f", kind: "front" }, { id: "t", kind: "top", scale: 2 }] };
+    d = addSection(d, { id: "s1", host: "top", a: [0, 0.5], b: [1, 0.5] });
+    const l = layoutSheet(d, projections, info);
+    const sec = l.views.find((v) => v.kind === "section")!;
+    expect(sec.scale).toBe(2);
+    expect(sec.box[2] - sec.box[0]).toBeCloseTo(60, 9);
+    expect(texts(l.prims)).toContain("SECTION A-A  SCALE 2:1");
+    // Its own scale wins.
+    const own = layoutSheet({ ...d, views: d.views.map((v) => (v.kind === "section" ? { ...v, scale: 1 } : v)) }, projections, info);
+    expect(own.views.find((v) => v.kind === "section")!.scale).toBe(1);
+    expect(texts(own.prims)).toContain("SECTION A-A");
+  });
+
+  it("only makes room for a scale note when a view's scale differs from the sheet's", () => {
+    const base: Drawing = { ...newDrawing(), scale: 1, views: [{ id: "f", kind: "front" }, { id: "t", kind: "top" }, { id: "i", kind: "iso" }] };
+    const plain = layoutSheet(base, block, info);
+    const same = layoutSheet({ ...base, views: base.views.map((v) => (v.kind === "top" || v.kind === "iso" ? { ...v, scale: 1 } : v)) }, block, info);
+    expect(same.views.map((v) => v.box)).toEqual(plain.views.map((v) => v.box));
+  });
+
   it("says when it's a view's own scale that doesn't fit", () => {
     const d: Drawing = { ...newDrawing(), views: [{ id: "f", kind: "front", scale: 20 }, { id: "t", kind: "top" }] };
     const l = layoutSheet(d, block, info);

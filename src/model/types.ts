@@ -386,7 +386,7 @@ export interface DetailView {
   /** The circle's centre as fractions of the host view's width and height, and its radius (model mm). */
   centre: [number, number];
   radius: number;
-  /** How many times bigger than the rest of the sheet. */
+  /** How many times bigger than the view it's taken from (that view's own scale, or the sheet's). */
   zoom: number;
 }
 

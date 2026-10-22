@@ -1550,7 +1550,8 @@ kbd {
 
 .drawing-message.warn {
   top: auto;
-  bottom: 16px;
+  /* (Above the sheet tabs.) */
+  bottom: 48px;
   color: var(--warn-ink);
 }
 

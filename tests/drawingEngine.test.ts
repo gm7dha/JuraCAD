@@ -15,6 +15,7 @@ import { addDrawing, putDimension } from "../src/drawing/drawing";
 import { arcOf, chamferSize, dimPoint, measureDim, resolveDim } from "../src/drawing/dimensions";
 import { holeRows } from "../src/drawing/holeTable";
 import { addPage, changePage, pageOf } from "../src/drawing/pages";
+import { addSection, sectionRequests } from "../src/drawing/sections";
 import { layoutSheet, type Projections } from "../src/drawing/sheet";
 import { emptyDocument } from "../src/model/document";
 
@@ -84,6 +85,20 @@ describe("drawing dimensions on real views", () => {
     expect(l.dims.every((x) => x.found)).toBe(true);
     expect(texts(l)).toContain("7.85");
     expect(texts(l)).toContain("2 × 45°");
+  }, 60_000);
+
+  it("keeps a real plate's views apart when the top view is at its own scale", () => {
+    build([feature("box", { width: 120, depth: 80, height: 10 })]);
+    let d: Drawing = { ...newDrawing(), sheet: "A2", views: [{ id: "f", kind: "front" }, { id: "t", kind: "top", scale: 2 }, { id: "r", kind: "right" }, { id: "i", kind: "iso" }] };
+    d = addSection(d, { id: "s1", host: "front", a: [0.5, 0], b: [0.5, 1] });
+    const list = engine.project([], undefined, ["front", "top", "right", "iso"], true, sectionRequests(d));
+    const projections: Projections = Object.fromEntries(list.map((p) => [p.kind, p]));
+    const l = layoutSheet(d, projections, info);
+    expect(l.views).toHaveLength(5);
+    const overlap = (a: number[], b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+    for (const a of l.views) for (const b of l.views) if (a !== b) expect(overlap(a.box, b.box)).toBe(false);
+    const top = l.views.find((v) => v.key === "top")!;
+    expect(top.box[2] - top.box[0]).toBeCloseTo(240, 3);
   }, 60_000);
 
   it("lists 25 real holes in a wrapped table, with the views still on the sheet", () => {
