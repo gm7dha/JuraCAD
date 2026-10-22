@@ -959,6 +959,25 @@ try {
     if (!(after < before - 5)) throw new Error(`the front view didn't get shorter (${Math.round(before)} → ${Math.round(after)} px)`);
     await shot("shortened");
   }
+  step = "adding a second sheet";
+  {
+    await page.getByRole("button", { name: "+ Sheet", exact: true }).click();
+    await page.waitForSelector('[role="tab"][aria-selected="true"]:has-text("Sheet 2")', { timeout: 5_000 });
+    await page.locator(".drawing-panel").getByLabel("Top", { exact: true }).check();
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "2 OF 2"), null, { timeout: 60_000 });
+    await page.waitForFunction(() => document.querySelectorAll(".drawing-view-handle").length === 1, null, { timeout: 60_000 });
+    // Its view at its own scale, noted under it.
+    await page.locator('select[id^="view-scale-"]').first().selectOption("0.1");
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "SCALE 1:10"), null, { timeout: 10_000 });
+    await shot("sheet2");
+    // The PDF has both sheets, a page each.
+    const pdf2Promise = page.waitForEvent("download", { timeout: 60_000 });
+    await page.getByRole("button", { name: "PDF", exact: true }).click();
+    const pdf2 = readFileSync(await (await pdf2Promise).path(), "latin1");
+    if (!pdf2.includes("/Count 2") || !pdf2.includes("(1 OF 2) Tj") || !pdf2.includes("(2 OF 2) Tj")) throw new Error("the PDF doesn't have both sheets");
+    await page.getByRole("tab", { name: "Sheet 1", exact: true }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "1 OF 2"), null, { timeout: 60_000 });
+  }
   step = "drawing the assembly";
   await page.locator("#drawing-source").selectOption({ label: "Assembly 1" });
   await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "QTY"), null, { timeout: 60_000 });

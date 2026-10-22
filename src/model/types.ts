@@ -275,6 +275,8 @@ export interface DrawingView {
   detail?: string;
   /** Centre of the view on the sheet (mm from the bottom-left corner); missing = placed automatically. */
   at?: [number, number];
+  /** This view's own scale (2 = 2:1), noted under it; missing = the sheet's scale. */
+  scale?: number;
 }
 
 /** ISO paper sizes, and the US (ANSI) sizes: A = 11 × 8.5 in (Letter), B = 17 × 11 in, and so on. */
@@ -337,7 +339,21 @@ export interface Drawing {
   fit?: { gap?: number; down?: true };
   /** False hides tangent edges (where a fillet or curved face meets a flat one smoothly); missing = shown. */
   tangentEdges?: boolean;
+  /** Where the hole table's top-left corner was dragged to (sheet mm); missing = above the title block. */
+  holeTableAt?: [number, number];
+  /**
+   * Sheets 2, 3… of the drawing (sheet 1 is the drawing's own views,
+   * dimensions and so on, so older files open unchanged). Each has its own
+   * paper size, scale, views and annotations; the source, title block and
+   * settings are shared.
+   */
+  pages?: DrawingPage[];
 }
+
+/** The parts of a drawing that belong to one sheet (see Drawing.pages and PAGE_FIELDS in drawing/pages.ts). */
+export type PageField = "sheet" | "scale" | "fit" | "views" | "dimensions" | "notes" | "sections" | "details" | "breakouts" | "shortened" | "holeTable" | "holeTableAt";
+/** Sheet 2, 3… of a drawing. */
+export type DrawingPage = { id: string } & Pick<Drawing, "sheet" | "views"> & Partial<Pick<Drawing, Exclude<PageField, "sheet" | "views">>>;
 
 /**
  * A section: a cutting line drawn across one of the flat views (front, top…).
@@ -382,7 +398,7 @@ export interface DetailView {
   /** The circle's centre as fractions of the host view's width and height, and its radius (model mm). */
   centre: [number, number];
   radius: number;
-  /** How many times bigger than the rest of the sheet. */
+  /** How many times bigger than the view it's taken from (that view's own scale, or the sheet's). */
   zoom: number;
 }
 
@@ -414,7 +430,8 @@ export interface Dimension {
   /** The view it's on: its kind, or "section:<id>" for a section view. */
   view: string;
   /** "ordinate": just the distance from datum `a` to point `b`, along `axis`, at the end of a leader. */
-  type: "horizontal" | "vertical" | "aligned" | "diameter" | "radius" | "ordinate" | "angle";
+  /** "chamfer": a callout like "1 × 45°" on a slanted edge a–b; "arcLength": the length round an arc (centre a, radius r, b a point on it). */
+  type: "horizontal" | "vertical" | "aligned" | "diameter" | "radius" | "ordinate" | "angle" | "chamfer" | "arcLength";
   a: DimPoint;
   /** Second point (lengths). */
   b?: DimPoint;
@@ -446,6 +463,14 @@ export interface Dimension {
   places?: number;
   /** A box round the number: "basic" (a theoretically exact size, for GD&T) or "inspection" (a rounded box: check this one). */
   frame?: "basic" | "inspection";
+  /**
+   * A limits-and-fits tolerance (ISO 286): a hole or shaft class like "H7" or
+   * "g6", or a fit "H7/g6" (shown stacked). `limits` also shows the largest
+   * and smallest sizes it allows. Replaces `tolerance`.
+   */
+  limitsFit?: { class: string; limits?: true };
+  /** Chamfers: the distance is measured along the edge across ("h") or up and down ("v"); missing = whichever gives the smaller angle. */
+  along?: "h" | "v";
 }
 
 /** A note on a drawing sheet: its top-left corner (sheet mm, y up) and its lines of text. */

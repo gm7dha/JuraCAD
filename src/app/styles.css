@@ -1594,7 +1594,46 @@ kbd {
 
 .drawing-message.warn {
   top: auto;
-  bottom: 16px;
+  /* (Above the sheet tabs.) */
+  bottom: 48px;
+  color: var(--warn-ink);
+}
+
+/* Sheet tabs along the bottom of a drawing (Sheet 1, Sheet 2…, + Sheet). */
+.drawing-sheet-tabs {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  display: flex;
+  gap: 4px;
+  max-width: calc(100% - 160px);
+  overflow-x: auto;
+}
+
+.drawing-sheet-tabs button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.drawing-sheet-tabs button.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.drawing-sheet-tabs button.remove {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+}
+
+.panel-hint.warn-text {
   color: var(--warn-ink);
 }
 
