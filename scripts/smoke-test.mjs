@@ -52,6 +52,7 @@ async function tool(name) {
 }
 
 let shotNumber = 0;
+
 async function shot(name) {
   shotNumber++;
   const base = `${shotDir}/${shotNumber}-${name}`;
@@ -64,13 +65,196 @@ async function shot(name) {
       img.src = `data:image/jpeg;base64,${b64}`;
       await img.decode();
       const c = document.createElement("canvas");
-      c.width = 560;
+      c.width = Number(process.env.SMOKE_SHOT_WIDTH || 560);
       c.height = Math.round((img.height / img.width) * 560);
       c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      return c.toDataURL("image/jpeg", 0.5).split(",")[1];
+      return c.toDataURL("image/jpeg", 0.6).split(",")[1];
     }, buffer.toString("base64"));
     writeFileSync(`${base}.b64`, small);
   }
+}
+
+
+/** UX audit tour: full-resolution shots of dialogs, panels and narrow windows. Never fails the run. */
+async function shotEl(name, locator) {
+  shotNumber++;
+  const base = `${shotDir}/${shotNumber}-${name}`;
+  const buf = await locator.first().screenshot({ type: "jpeg", quality: 60, timeout: 4000 });
+  writeFileSync(`${base}.jpg`, buf);
+  if (wantShots) writeFileSync(`${base}.b64`, buf.toString("base64"));
+}
+async function tourStep(label, fn) {
+  const before = consoleErrors.length;
+  try {
+    await fn();
+  } catch (e) {
+    annotate("warning", `tour ${label}`, String(e instanceof Error ? e.message : e).slice(0, 400));
+  }
+  if (consoleErrors.length > before) annotate("warning", `tour console ${label}`, consoleErrors.slice(before).join(" | ").slice(0, 600));
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(150);
+  }
+}
+async function setTheme(name) {
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("radio", { name }).click();
+  await page.keyboard.press("Escape");
+}
+async function runTour() {
+  page.setDefaultTimeout(6000);
+  await tourStep("light", async () => setTheme("Light"));
+  await tourStep("studio", async () => {
+    await page.getByRole("button", { name: "Part Studio 1" }).click();
+    await page.waitForTimeout(800);
+    await shot("t-studio");
+    await shotEl("t-toolbar", page.locator('.toolbar[aria-label="Tools"]'));
+  });
+  const tools = (process.env.TOUR_TOOLS || "Extrude,Revolve,Sweep,Loft,Hole,Thread,Fillet,Chamfer,Shell,Draft,Move face,Move,Pattern,Circular,Mirror,Boolean,Split,Fastener,Text,Thicken,Rib,Fill,Sheet metal,Flange,Plane,Coil,Box,Delete face").split(",");
+  for (const name of tools) {
+    await tourStep(`tool ${name}`, async () => {
+      await tool(name);
+      await page.locator(".feature-dialog").waitFor();
+      await page.waitForTimeout(900);
+      if (["Extrude", "Hole", "Fillet", "Thread"].includes(name)) await shot(`t-full-${name}`);
+      await shotEl(`t-dlg-${name}`, page.locator(".feature-dialog"));
+      await page.locator(".feature-dialog").getByRole("button", { name: "Cancel" }).click().catch(() => {});
+    });
+  }
+  await tourStep("context menu", async () => {
+    await page.locator(".feature-row:not(.datum)").nth(2).click({ button: "right" });
+    await page.waitForTimeout(300);
+    await shot("t-context");
+  });
+  await tourStep("settings", async () => {
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.waitForTimeout(300);
+    await shot("t-settings");
+  });
+  for (const [label, open] of [
+    ["help", () => page.getByRole("button", { name: "Help and shortcuts" }).click()],
+    ["export", () => page.getByRole("button", { name: "Export" }).first().click()],
+    ["check", () => page.getByRole("button", { name: "Check" }).first().click()],
+    ["variables", () => tool("Variables")],
+    ["configurations", () => tool("Configurations")],
+  ]) {
+    await tourStep(label, async () => {
+      await open();
+      await page.locator(".modal").first().waitFor();
+      await page.waitForTimeout(1500);
+      const h = await page.locator(".modal").first().evaluate((m) => m.scrollHeight + 120);
+      if (label === "help") await page.setViewportSize({ width: 1180, height: Math.min(4000, Math.max(760, h)) });
+      await page.locator(".modal-body").first().evaluate((b) => (b.style.maxHeight = "none"));
+      await page.waitForTimeout(200);
+      await shotEl(`t-modal-${label}`, page.locator(".modal"));
+      await page.setViewportSize({ width: 1180, height: 760 });
+    });
+  }
+  await tourStep("sketch", async () => {
+    await page.getByRole("button", { name: "Sketch", exact: true }).click();
+    await page.waitForSelector(".sketch-panel");
+    await page.locator(".feature-row.datum", { hasText: "Top" }).click();
+    await page.waitForTimeout(800);
+    const vp = await page.locator(".viewport").boundingBox();
+    const cx = vp.x + vp.width / 2, cy = vp.y + vp.height / 2;
+    await page.keyboard.press("r");
+    await page.mouse.click(cx - 80, cy + 50);
+    await page.mouse.click(cx + 80, cy - 50);
+    await page.waitForTimeout(500);
+    await shot("t-sketch-rect-dims");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("l");
+    await page.mouse.click(cx - 120, cy - 100);
+    await page.mouse.move(cx + 20, cy - 110, { steps: 3 });
+    await page.waitForTimeout(300);
+    await shot("t-sketch-line");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await shotEl("t-sketch-panel", page.locator(".sketch-panel"));
+    const st = page.locator('[aria-label="Sketch tools"], .sketch-toolbar').first();
+    await shotEl("t-sketch-toolbar", st);
+    await page.locator(".sketch-panel").getByRole("button", { name: "Cancel" }).click().catch(() => {});
+  });
+  await tourStep("assembly", async () => {
+    await page.getByRole("button", { name: "Assembly 1" }).click();
+    await page.waitForTimeout(1000);
+    await shot("t-assembly");
+    await shotEl("t-asm-toolbar", page.locator('[aria-label="Assembly tools"]'));
+    for (const m of ["Revolute", "Slider"]) {
+      const b = page.getByRole("button", { name: m, exact: true });
+      if (await b.count()) {
+        await b.click();
+        await page.waitForTimeout(600);
+        await shot(`t-mate-${m}`);
+        await shotEl(`t-mate-dlg-${m}`, page.locator('form[aria-label="Mate"]'));
+        await page.locator('form[aria-label="Mate"]').getByRole("button", { name: "Cancel" }).click().catch(() => {});
+        break;
+      }
+    }
+    await page.locator(".feature-row >> text=Part 2 <1>").first().click();
+    await page.waitForTimeout(400);
+    await shot("t-asm-instance");
+  });
+  await tourStep("drawing", async () => {
+    await page.getByRole("button", { name: "Drawing 1" }).click();
+    await page.waitForTimeout(2500);
+    await shot("t-drawing");
+    await shotEl("t-draw-toolbar", page.locator('[aria-label="Drawing tools"]'));
+    await shotEl("t-draw-panel", page.locator(".drawing-panel"));
+  });
+  for (const [w, h] of [[900, 650], [700, 700], [390, 800]]) {
+    await tourStep(`narrow ${w}`, async () => {
+      await page.setViewportSize({ width: w, height: h });
+      await page.getByRole("button", { name: "Part Studio 1" }).click().catch(() => {});
+      await page.waitForTimeout(900);
+      await shot(`t-narrow-${w}-studio`);
+      await tool("Extrude");
+      await page.waitForTimeout(800);
+      await shot(`t-narrow-${w}-extrude`);
+      await page.locator(".feature-dialog").getByRole("button", { name: "Cancel" }).click().catch(() => {});
+      await page.getByRole("button", { name: "Drawing 1" }).click();
+      await page.waitForTimeout(2000);
+      await shot(`t-narrow-${w}-drawing`);
+      await page.getByRole("button", { name: "Assembly 1" }).click();
+      await page.waitForTimeout(800);
+      await shot(`t-narrow-${w}-asm`);
+    });
+  }
+  await page.setViewportSize({ width: 1180, height: 760 });
+  await tourStep("dark dialogs", async () => {
+    await setTheme("Dark");
+    await page.getByRole("button", { name: "Part Studio 1" }).click();
+    await page.waitForTimeout(600);
+    await tool("Hole");
+    await page.waitForTimeout(800);
+    await shot("t-dark-hole");
+    await page.locator(".feature-dialog").getByRole("button", { name: "Cancel" }).click().catch(() => {});
+    await page.getByRole("button", { name: "Help and shortcuts" }).click();
+    await page.waitForTimeout(400);
+    await shot("t-dark-help");
+  });
+  await tourStep("first run", async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1180, height: 760 } });
+    const fresh = await ctx.newPage();
+    fresh.on("pageerror", (e) => annotate("warning", "first-run page error", e.message));
+    await fresh.goto(`http://localhost:4173${basePath}`);
+    await fresh.waitForSelector(".topbar", { timeout: 30_000 });
+    await fresh.waitForTimeout(1500);
+    const save = page;
+    // shots of the fresh page
+    const b1 = await fresh.screenshot({ type: "jpeg", quality: 60 });
+    shotNumber++; writeFileSync(`${shotDir}/${shotNumber}-t-firstrun-loading.b64`, b1.toString("base64"));
+    await fresh.waitForSelector(".engine-status", { state: "detached", timeout: 120_000 }).catch(() => {});
+    await fresh.waitForTimeout(1000);
+    const b2 = await fresh.screenshot({ type: "jpeg", quality: 60 });
+    shotNumber++; writeFileSync(`${shotDir}/${shotNumber}-t-firstrun.b64`, b2.toString("base64"));
+    await fresh.setViewportSize({ width: 390, height: 800 });
+    await fresh.waitForTimeout(800);
+    const b3 = await fresh.screenshot({ type: "jpeg", quality: 60 });
+    shotNumber++; writeFileSync(`${shotDir}/${shotNumber}-t-firstrun-phone.b64`, b3.toString("base64"));
+    void save;
+    await ctx.close();
+  });
 }
 
 const statusText = () => page.locator(".status-strip").innerText();
@@ -1317,6 +1501,7 @@ try {
     "Smoke test passed",
     `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; made a sheet metal part and saved its flat pattern as DXF.`,
   );
+  if (process.env.SMOKE_TOUR === "1") await runTour();
 } catch (e) {
   await shot("failure").catch(() => {});
   annotate("error", `Smoke test failed while ${step}`, `${e instanceof Error ? e.message : e}\nConsole: ${consoleErrors.join(" | ") || "none"}`);

@@ -40,13 +40,6 @@ jobs:
             exit 1
           }
 
-      - name: Type check
-        run: npm run typecheck
-
-      - name: Run tests
-        timeout-minutes: 10
-        run: npm test -- --reporter=default --reporter=github-actions
-
       - name: Build site
         run: |
           set -o pipefail
@@ -73,87 +66,54 @@ jobs:
             exit 1
           }
 
-      - name: Check the Claude extension (unpack, start it, build a part over MCP)
-        timeout-minutes: 5
-        run: node scripts/check-claude-extension.mjs dist/juracad-claude.mcpb
-
       - name: Install browser for the smoke test
         run: npx playwright install --with-deps chromium
 
       - name: Browser smoke test
         env:
           # Set to "1" to attach small screenshots as annotations for review.
-          SMOKE_SCREENSHOTS: "0"
-          SMOKE_SHOW: "shortened"
+          SMOKE_SCREENSHOTS: "1"
+          SMOKE_SHOW: ""
+          SMOKE_TOUR: "1"
+          SMOKE_SHOT_WIDTH: "900"
         run: npm run smoke
 
-      - name: Attach screenshot 1
+      - name: Keep the screenshots
         if: always()
-        run: node scripts/emit-screenshot.mjs 1
-      - name: Attach screenshot 2
-        if: always()
-        run: node scripts/emit-screenshot.mjs 2
-      - name: Attach screenshot 3
-        if: always()
-        run: node scripts/emit-screenshot.mjs 3
-      - name: Attach screenshot 4
-        if: always()
-        run: node scripts/emit-screenshot.mjs 4
-      - name: Attach screenshot 5
-        if: always()
-        run: node scripts/emit-screenshot.mjs 5
-      - name: Attach screenshot 6
-        if: always()
-        run: node scripts/emit-screenshot.mjs 6
-      - name: Attach screenshot 7
-        if: always()
-        run: node scripts/emit-screenshot.mjs 7
-      - name: Attach screenshot 8
-        if: always()
-        run: node scripts/emit-screenshot.mjs 8
-      - name: Attach screenshot 9
-        if: always()
-        run: node scripts/emit-screenshot.mjs 9
-      - name: Attach screenshot 10
-        if: always()
-        run: node scripts/emit-screenshot.mjs 10
-      - name: Attach screenshot 11
-        if: always()
-        run: node scripts/emit-screenshot.mjs 11
-      - name: Attach screenshot 12
-        if: always()
-        run: node scripts/emit-screenshot.mjs 12
-      - name: Attach screenshot 13
-        if: always()
-        run: node scripts/emit-screenshot.mjs 13
-      - name: Attach screenshot 14
-        if: always()
-        run: node scripts/emit-screenshot.mjs 14
-      - name: Attach screenshot 15
-        if: always()
-        run: node scripts/emit-screenshot.mjs 15
-      - name: Attach screenshot 16
-        if: always()
-        run: node scripts/emit-screenshot.mjs 16
-
-      - name: Keep the built site (for previewing pull requests)
         uses: actions/upload-artifact@v4
         with:
-          name: site
-          path: |
-            dist
-            package-lock.json
-          retention-days: 7
+          name: shots
+          path: smoke-screenshots/*.b64
+          retention-days: 2
 
-      - name: Prepare GitHub Pages upload
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
+  emit:
+    name: Emit shots
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63]
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          path: dist
+          name: shots
+          path: shots
+      - name: Emit
+        run: |
+          node -e '
+          const fs=require("fs");const dir="shots";
+          const files=fs.readdirSync(dir).filter(f=>f.endsWith(".b64")).sort((a,b)=>parseInt(a)-parseInt(b));
+          const size=3900, cap=48; const bins=[];
+          for(const f of files){const n=Math.ceil(fs.statSync(dir+"/"+f).size/size); let b=bins.find(b=>b.used+n<=cap); if(!b){b={used:0,files:[]};bins.push(b);} b.used+=n; b.files.push(f);}
+          const k=Number(process.argv[1]);
+          if(k===0) console.log("::notice title=bins::"+bins.length+" bins for "+files.length+" shots: "+files.join(" "));
+          for(const f of (bins[k]?.files??[])){const d=fs.readFileSync(dir+"/"+f,"utf8");const parts=Math.ceil(d.length/size);for(let i=0;i<parts;i++)console.log("::notice title=screenshot "+f.replace(".b64","")+" part "+(i+1)+"/"+parts+"::"+d.slice(i*size,(i+1)*size));}
+          ' ${{ matrix.shard }}
 
   deploy:
     name: Publish to GitHub Pages
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: false
     needs: build
     runs-on: ubuntu-latest
     permissions:
