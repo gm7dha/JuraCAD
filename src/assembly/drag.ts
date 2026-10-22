@@ -62,14 +62,15 @@ export function planDrag(
   if (!instance) return { refuse: "" };
   const mateId = solved.drivenBy[instanceId];
 
-  // A grouped part: drag the whole group, by its first part.
+  // A grouped part: the whole group moves as one, so drag the part through which the rest of the
+  // assembly places the group — the one held by a mate (a hinge turns the whole group), or else
+  // the group's first part, which then moves freely.
   if (mateId?.startsWith("group:")) {
     const group = assembly.groups?.find((g) => `group:${g.id}` === mateId);
-    const anchor = group?.members[0];
-    if (group && anchor && anchor !== instanceId && !solved.drivenBy[anchor]?.startsWith("group:")) {
-      return planDrag(assembly, solved, frameOf, anchor, grab, view, shift);
-    }
-    return { refuse: group ? `${instance.name} is in ${group.name}, which is held in place by a mate or a fixed part. Move that instead, or ungroup it.` : "" };
+    if (!group) return { refuse: "" };
+    const entry = group.members.find((m) => m !== instanceId && !solved.drivenBy[m]?.startsWith("group:"));
+    if (entry) return planDrag(assembly, solved, frameOf, entry, grab, view, shift);
+    return { refuse: `${instance.name} is in ${group.name}, which can't be dragged from here. Move the part it's mated to, or ungroup it.` };
   }
 
   if (!mateId) {
