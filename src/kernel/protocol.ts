@@ -152,6 +152,29 @@ export interface CheckResult {
   overlaps?: { a: string; b: string; volume: number }[];
 }
 
+/**
+ * How two placed parts in an assembly meet, as measured for the clash check
+ * (src/kernel/clash.ts). Only pairs that overlap, or come within the
+ * tolerance of each other, are measured.
+ */
+export interface ContactMeasure {
+  a: string;
+  b: string;
+  /** a / b is a surface (a skin with no inside). When only one is, it's a. */
+  surfaceA?: boolean;
+  surfaceB?: boolean;
+  /** Two solids: the volume they share (mm³) and that shared piece's surface area (mm²). */
+  volume?: number;
+  /** Two solids: the shared piece's area; a surface and a solid: how much of the surface is inside (mm²). */
+  area?: number;
+  /** A surface and a solid: how far inside the solid the surface goes (mm, about). */
+  depth?: number;
+  /** Two surfaces: the length of the lines they cross along (mm). */
+  crossLength?: number;
+  /** Parts that don't overlap: the gap between them (mm), within the tolerance. */
+  gap?: number;
+}
+
 export interface ExportResult {
   /** Binary STL file contents. */
   stl: ArrayBuffer;
@@ -183,7 +206,7 @@ export type KernelRequest =
   | { type: "check"; quality: MeshQuality; partIds?: string[] }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[] }
-  | { type: "clashes"; instances: InstanceInput[] }
+  | { type: "clashes"; instances: InstanceInput[]; tolerance?: number }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
@@ -200,7 +223,7 @@ export type KernelResponseBody =
   | { type: "unfold"; result: PartMesh | null }
   | { type: "deleteFaceBlockers"; result: DeleteFaceBlockers }
   | { type: "export3mf"; result: ThreeMfResult }
-  | { type: "clashes"; result: NonNullable<CheckResult["overlaps"]> }
+  | { type: "clashes"; result: ContactMeasure[] }
   | { type: "project"; result: ViewProjection[] };
 
 /** Messages sent from the main thread to the worker. */

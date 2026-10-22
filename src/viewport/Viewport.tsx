@@ -31,10 +31,11 @@ import { sectionPlane } from "./section";
 const NO_COLOURS: Record<string, string> = {};
 const NO_PLACEMENTS: Record<string, number[]> = {};
 
-/** Each instance shown as a copy of its part's mesh (moved into place with setPlacements). */
+/** Each instance shown as a copy of its part's mesh (moved into place with setPlacements); suppressed ones aren't shown. */
 function instanceMeshes(parts: PartMesh[], assembly: Assembly): PartMesh[] {
   const out: PartMesh[] = [];
   for (const i of assembly.instances) {
+    if (i.suppressed) continue;
     const part = findMesh(parts, meshIdOf(i));
     if (part) out.push({ ...part, id: i.id, name: i.name, featureIds: [] });
   }
@@ -487,7 +488,7 @@ export function Viewport() {
   const asmSelection = useStore((s) => s.asmSelection);
   const hiddenInstances = useStore((s) => s.hiddenInstances);
   // In an assembly the meshes only change when parts are rebuilt or instances added/removed, not when they move.
-  const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${meshIdOf(i)}`).join(",") : null;
+  const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${meshIdOf(i)}${i.suppressed ? ":off" : ""}`).join(",") : null;
   const hadNothing = useRef(true);
   // Sheet metal shown flat: each sheet part's unfolded mesh, fetched when asked for or when the parts are rebuilt.
   const showFlat = useStore((s) => s.showFlat);

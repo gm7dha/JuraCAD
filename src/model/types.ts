@@ -505,6 +505,11 @@ export interface Instance {
   replicaOf?: { replicate: string; index: number };
   /** Shown as the part's mirror image (a copy made by a Mirror): the part is flipped across its own YZ plane, then placed. */
   mirrored?: boolean;
+  /**
+   * Switched off for now (Onshape's Suppress): hidden, and left out of the parts
+   * list, exports, clash checks and the mate solver; mates on it do nothing.
+   */
+  suppressed?: boolean;
 }
 
 /**

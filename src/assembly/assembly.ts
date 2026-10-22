@@ -85,7 +85,7 @@ export function updateInstance(
   doc: JuraCADDocument,
   assemblyId: string,
   instanceId: string,
-  patch: Partial<Pick<Instance, "name" | "placement" | "fixed" | "configuration">>,
+  patch: Partial<Pick<Instance, "name" | "placement" | "fixed" | "configuration" | "suppressed">>,
 ): JuraCADDocument {
   return updateAssembly(doc, assemblyId, (a) => ({
     ...a,
@@ -93,6 +93,7 @@ export function updateInstance(
       if (i.id !== instanceId) return i;
       const next = { ...i, ...patch, name: patch.name?.trim() || i.name };
       if ("configuration" in patch && !patch.configuration) delete next.configuration;
+      if ("suppressed" in patch && !patch.suppressed) delete next.suppressed;
       return next;
     }),
   }));
@@ -372,7 +373,9 @@ export type BomInfo = (instance: Instance) => { material?: string; volume: numbe
 /** Bill of materials: each part once, with how many copies are in the assembly (in order of first use). */
 export function billOfMaterials(assembly: Assembly, partNames: Record<string, string>, configurationNames: Record<string, string> = {}, info?: BomInfo): BomRow[] {
   const rows = new Map<string, BomRow>();
+  // Suppressed parts aren't in the parts list (like Onshape).
   for (const i of assembly.instances) {
+    if (i.suppressed) continue;
     // A part in another configuration is a different line ("Bracket (Large)").
     const cfgKey = i.configuration && configurationNames[i.configuration] ? `${i.partId}@${i.configuration}` : i.partId;
     // A mirrored copy is the opposite hand: a different part to make.
@@ -521,6 +524,7 @@ export function parseAssemblies(raw: unknown): Assembly[] {
         fixed: ri.fixed === true,
         ...(typeof ri.configuration === "string" && ri.configuration ? { configuration: ri.configuration } : {}),
         ...(ri.mirrored === true ? { mirrored: true } : {}),
+        ...(ri.suppressed === true ? { suppressed: true } : {}),
         ...(ri.replicaOf && typeof (ri.replicaOf as Record<string, unknown>).replicate === "string" && Number.isInteger((ri.replicaOf as Record<string, unknown>).index)
           ? { replicaOf: { replicate: (ri.replicaOf as { replicate: string }).replicate, index: (ri.replicaOf as { index: number }).index }, fixed: false }
           : {}),

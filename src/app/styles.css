@@ -1158,6 +1158,27 @@ button:disabled {
   font-size: 12.5px;
 }
 
+/* The assembly check's choices (touching, tolerance, hidden parts). */
+.clash-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.clash-options label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.clash-options .clash-tolerance {
+  width: 64px;
+}
+
 .check-headline {
   display: flex;
   gap: 8px;
@@ -1272,6 +1293,11 @@ kbd {
   border-radius: 3px;
   border: 1px solid rgba(0, 0, 0, 0.25);
   flex: none;
+}
+
+.instance-suppressed {
+  font-size: 11.5px;
+  padding: 0 6px;
 }
 
 .instance-fixed {

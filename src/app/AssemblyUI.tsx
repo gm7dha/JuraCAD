@@ -18,6 +18,7 @@ import { stepDistance } from "../assembly/explode";
 import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
 import { bomInfo, partBox, useSolvedAssembly } from "./assemblySolve";
+import { mateInactive } from "../assembly/suppress";
 import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
@@ -78,6 +79,7 @@ export function AssemblyToolbar() {
   const platform = detectPlatform();
   const selected = asm?.instances.filter((i) => selection.includes(i.id)) ?? [];
   const allFixed = selected.length > 0 && selected.every((i) => i.fixed);
+  const allSuppressed = selected.length > 0 && selected.every((i) => i.suppressed);
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Assembly tools">
@@ -107,6 +109,19 @@ export function AssemblyToolbar() {
           disabled={selected.length === 0}
           onClick={() => useStore.getState().removeInstances(selected.map((i) => i.id))}
           title={selected.length ? "Remove the selected parts from this assembly (Delete)" : "Select a part first"}
+        />
+        <ToolButton
+          label={allSuppressed ? "Unsuppress" : "Suppress"}
+          icon={<Icons.EyeOff />}
+          disabled={selected.length === 0}
+          onClick={() => useStore.getState().setInstancesSuppressed(selected.map((i) => i.id), !allSuppressed)}
+          title={
+            selected.length
+              ? allSuppressed
+                ? "Unsuppress — bring the selected parts back"
+                : "Suppress — switch the selected parts off for now: they're hidden and left out of the parts list, exports, clash checks and mates"
+              : "Select a part first (click it in the 3D view or the Instances list)"
+          }
         />
         <ToolGroupButton
           id="asm-copies"
@@ -230,14 +245,22 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
   const colour = useStore((s) => s.history.present.appearance?.[instance.partId] ?? DEFAULT_PART_COLOUR);
   return (
     <li
-      className={["feature-row", selected && "selected", hidden && "hidden", missing && "failed"].filter(Boolean).join(" ")}
+      className={["feature-row", selected && "selected", hidden && "hidden", missing && "failed", instance.suppressed && "suppressed"].filter(Boolean).join(" ")}
       onClick={(e) => {
         const s = useStore.getState();
         const additive = e.shiftKey || e.ctrlKey || e.metaKey;
         if (additive) s.setAsmSelection(selected ? s.asmSelection.filter((x) => x !== instance.id) : [...s.asmSelection, instance.id]);
         else s.setAsmSelection(selected && s.asmSelection.length === 1 ? [] : [instance.id]);
       }}
-      title={missing ? "Its part no longer exists in the Part Studio" : instance.fixed ? "Fixed — it stays where it is" : "Click to select; Shift-click to add"}
+      title={
+        instance.suppressed
+          ? "Suppressed — switched off for now. Select it and click Unsuppress to bring it back."
+          : missing
+            ? "Its part no longer exists in the Part Studio"
+            : instance.fixed
+              ? "Fixed — it stays where it is"
+              : "Click to select; Shift-click to add"
+      }
     >
       <span className="instance-colour" style={{ background: colour }} aria-hidden="true" />
       <span className="feature-name">{instance.name}</span>
@@ -251,6 +274,11 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
           <Icons.Warning size={16} />
         </span>
       )}
+      {instance.suppressed ? (
+        <span className="instance-suppressed muted" aria-label="Suppressed">
+          off
+        </span>
+      ) : (
       <button
         className={`icon-button small eye${hidden ? " is-hidden" : ""}`}
         onClick={(e) => {
@@ -262,27 +290,28 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
       >
         {hidden ? <Icons.EyeOff size={16} /> : <Icons.Eye size={16} />}
       </button>
+      )}
     </li>
   );
 }
 
-function MateRow({ mate, error, instanceNames }: { mate: Mate; error?: string; instanceNames: Record<string, string> }) {
+function MateRow({ mate, error, instanceNames, inactive }: { mate: Mate; error?: string; instanceNames: Record<string, string>; inactive: string | null }) {
   const editing = useStore((s) => s.mateDraft?.mate.id === mate.id);
   const Icon = MATE_ICONS[mate.type];
   const playing = useStore((s) => s.animatingMate === mate.id);
-  const canAnimate = !mate.suppressed && MATE_TYPES[mate.type].values.some((d) => d.free);
+  const canAnimate = !inactive && MATE_TYPES[mate.type].values.some((d) => d.free);
   const between = `${instanceNames[mate.a.instanceId] ?? "?"} and ${instanceNames[mate.b.instanceId] ?? "?"}`;
   return (
     <li
-      className={["feature-row", editing && "editing", error && !mate.suppressed && "failed", mate.suppressed && "suppressed"].filter(Boolean).join(" ")}
+      className={["feature-row", editing && "editing", error && !inactive && "failed", inactive && "suppressed"].filter(Boolean).join(" ")}
       onDoubleClick={() => useStore.getState().editMate(mate.id)}
-      title={mate.suppressed ? "Suppressed — not used" : error ? `Problem: ${error}` : `${MATE_TYPES[mate.type].label} joining ${between}. Double-click to edit.`}
+      title={inactive ?? (error ? `Problem: ${error}` : `${MATE_TYPES[mate.type].label} joining ${between}. Double-click to edit.`)}
     >
       <span className="feature-icon">
         <Icon size={18} />
       </span>
       <span className="feature-name">{mate.name}</span>
-      {error && !mate.suppressed && (
+      {error && !inactive && (
         <span className="feature-error-icon" aria-label="Problem">
           <Icons.Warning size={16} />
         </span>
@@ -328,7 +357,7 @@ function MatesSection({ assembly }: { assembly: Assembly }) {
       </h3>
       <ul className="feature-list">
         {mates.map((m) => (
-          <MateRow key={m.id} mate={m} error={solved?.mateErrors[m.id]} instanceNames={instanceNames} />
+          <MateRow key={m.id} mate={m} error={solved?.mateErrors[m.id]} instanceNames={instanceNames} inactive={mateInactive(assembly, m)} />
         ))}
       </ul>
       {mates.length === 0 && assembly.instances.length >= 2 && (

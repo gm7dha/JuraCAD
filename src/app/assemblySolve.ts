@@ -60,7 +60,8 @@ export function bomInfo(parts: PartMesh[], materials: Record<string, string> | u
  */
 export function explodeAssembly(assembly: Assembly, parts: PartMesh[], placements: Record<string, Placement>, amount: number | null): Record<string, Placement> {
   if (amount === null) return placements;
-  const items = assembly.instances.map((i) => {
+  // Suppressed parts aren't shown, so they don't take part in spreading the others out.
+  const items = assembly.instances.filter((i) => !i.suppressed).map((i) => {
     const part = findMesh(parts, meshIdOf(i));
     return { id: i.id, placement: placements[i.id] ?? i.placement, box: part ? partBox(part) : null, fixed: i.fixed };
   });
@@ -68,10 +69,10 @@ export function explodeAssembly(assembly: Assembly, parts: PartMesh[], placement
   return explodedPlacements(placements, addOffsets(spread, stepOffsets(assembly.explodeSteps ?? [])));
 }
 
-/** Each instance in its solved place, for exports and clash checks (copies of missing parts are left out). */
+/** Each instance in its solved place, for exports, drawings and clash checks (suppressed parts, and copies of missing parts, are left out). */
 export function instancesForKernel(assembly: Assembly, parts: PartMesh[], solved: SolveResult = solveWithParts(assembly, parts)): InstanceInput[] {
   return assembly.instances
-    .filter((i) => findMesh(parts, meshIdOf(i)))
+    .filter((i) => !i.suppressed && findMesh(parts, meshIdOf(i)))
     .map((i) => {
       const p = solved.placements[i.id] ?? i.placement;
       return { id: i.id, partId: meshIdOf(i), name: i.name, position: p.position, rotation: p.rotation, ...(i.mirrored ? { mirrored: true } : {}) };

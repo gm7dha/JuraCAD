@@ -43,6 +43,7 @@ import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, pickWidthFace, solveWithParts } from "../assembly/mates";
+import { setSuppressed as setInstancesOff } from "../assembly/suppress";
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
@@ -325,6 +326,8 @@ export interface AppState {
   removeInstances: (ids: string[]) => void;
   setAsmSelection: (ids: string[]) => void;
   toggleInstanceHidden: (id: string) => void;
+  /** Switch instances off (Onshape's Suppress) or back on; the others stay where they are. */
+  setInstancesSuppressed: (ids: string[], suppressed: boolean) => void;
   startMate: (type: MateType) => void;
   editMate: (id: string) => void;
   setMateDraft: (patch: Partial<MateDraft>) => void;
@@ -1326,6 +1329,15 @@ export const useStore = create<AppState>((set, get) => {
         const kept = settled.assemblies?.find((a) => a.id === asm.id)?.mates?.find((m) => m.id === id) ?? mate;
         return putMate(settled, asm.id, { ...kept, suppressed: !mate.suppressed });
       });
+    },
+    setInstancesSuppressed: (ids, suppressed) => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm || !ids.length) return;
+      // Everything stays where the mates put it now, so nothing jumps when a mate stops (or starts) counting.
+      const solved = solveWithParts(asm, s.parts);
+      change((doc) => updateAssembly(settleSolved(doc, asm.id, solved), asm.id, (a) => setInstancesOff(a, ids, suppressed)));
+      if (suppressed) set((st) => ({ asmSelection: st.asmSelection.filter((x) => !ids.includes(x)) }));
     },
     toggleInstanceHidden: (id) =>
       set((s) => ({ hiddenInstances: s.hiddenInstances.includes(id) ? s.hiddenInstances.filter((x) => x !== id) : [...s.hiddenInstances, id] })),

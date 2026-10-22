@@ -16,6 +16,7 @@ import { compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEu
 import { connectorFrameOnParts, framePlacement, type Frame } from "./connectors";
 import { mirrorPlacement, patternStep, placeCopy } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
+import { withoutSuppressed } from "./suppress";
 import type { PartMesh } from "../kernel/protocol";
 
 export interface MateValueDef {
@@ -266,7 +267,8 @@ export interface SolveOptions {
 
 export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: SolveOptions = {}): SolveResult {
   // Relations (gears, rack and pinion, screws) set the amounts of the mates they drive.
-  const related = applyRelations(input);
+  // Suppressed parts (and the mates on them) are left out; they stay where they were.
+  const related = applyRelations(withoutSuppressed(input));
   const assembly = related.assembly;
   const instances = new Map(assembly.instances.map((i) => [i.id, i]));
   const mateErrors: Record<string, string> = { ...related.errors };
@@ -530,6 +532,7 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
       if (Math.abs(x[i] - start[i]) > 1e-9) (adjusted[f.u.mate.id] ??= {})[f.key] = x[i];
     });
   }
+  for (const i of input.instances) if (i.suppressed && !result.placements[i.id]) result.placements[i.id] = i.placement;
   return {
     placements: result.placements,
     mateErrors,
