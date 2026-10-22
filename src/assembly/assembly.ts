@@ -4,7 +4,8 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
-import type { Assembly, AssemblyGroup, ConnectorSpot, ExplodeStep, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, JuraCADDocument } from "../model/types";
+import { customColumns, customValue } from "./properties";
+import type { Assembly, AssemblyGroup, ConnectorSpot, PartProperties, ExplodeStep, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, JuraCADDocument } from "../model/types";
 import { parseRelation } from "./relations";
 import { parsePattern, tidyPatterns } from "./patterns";
 import { parseReplicate, tidyReplicates } from "./replicate";
@@ -365,13 +366,22 @@ export interface BomRow {
   massEach?: number;
   /** A surface (a skin with no inside): it has no weight. */
   surface?: boolean;
+  /** The part's number, description and your own properties, when it has any. */
+  properties?: PartProperties;
 }
 
 /** What the parts list can say about the part an instance shows: its material (key) and solid volume (mm³; null for a surface). */
 export type BomInfo = (instance: Instance) => { material?: string; volume: number | null } | null;
 
 /** Bill of materials: each part once, with how many copies are in the assembly (in order of first use). */
-export function billOfMaterials(assembly: Assembly, partNames: Record<string, string>, configurationNames: Record<string, string> = {}, info?: BomInfo): BomRow[] {
+export function billOfMaterials(
+  assembly: Assembly,
+  partNames: Record<string, string>,
+  configurationNames: Record<string, string> = {},
+  info?: BomInfo,
+  /** Part number, description and custom properties, by part id. */
+  properties: Record<string, PartProperties> = {},
+): BomRow[] {
   const rows = new Map<string, BomRow>();
   // Suppressed parts aren't in the parts list (like Onshape).
   for (const i of assembly.instances) {
@@ -395,6 +405,7 @@ export function billOfMaterials(assembly: Assembly, partNames: Record<string, st
         ...(props ? { material: materialOf(props.material).label } : {}),
         ...(props && props.volume !== null && props.volume > 0 ? { massEach: massGrams(props.volume, props.material) } : {}),
         ...(props && props.volume === null ? { surface: true } : {}),
+        ...(properties[i.partId] ? { properties: properties[i.partId] } : {}),
       });
     }
   }
@@ -413,18 +424,25 @@ export function bomTotalMass(rows: BomRow[]): { grams: number; partial: boolean 
   return { grams, partial };
 }
 
-/** The bill of materials as a CSV file's text (opens in any spreadsheet). */
+/** The bill of materials as a CSV file's text (opens in any spreadsheet). Columns that would be empty for every part are left out. */
 export function bomCsv(rows: BomRow[]): string {
   const cell = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
   const extra = rows.some((r) => r.material !== undefined || r.massEach !== undefined);
   const grams = (g: number | undefined) => (g === undefined ? "" : String(Math.round(g * 10) / 10));
-  if (!extra) return ["Item,Part,Quantity", ...rows.map((r, i) => `${i + 1},${cell(r.name)},${r.quantity}`)].join("\n") + "\n";
-  return (
-    [
-      "Item,Part,Quantity,Material,Weight each (g),Weight (g)",
-      ...rows.map((r, i) => `${i + 1},${cell(r.name)},${r.quantity},${cell(r.material ?? "")},${grams(r.massEach)},${grams(r.massEach === undefined ? undefined : r.massEach * r.quantity)}`),
-    ].join("\n") + "\n"
-  );
+  const hasNumber = rows.some((r) => r.properties?.number);
+  const hasDescription = rows.some((r) => r.properties?.description);
+  const custom = customColumns(rows.map((r) => r.properties));
+  const head = ["Item", ...(hasNumber ? ["Part number"] : []), "Part", ...(hasDescription ? ["Description"] : []), "Quantity", ...(extra ? ["Material", "Weight each (g)", "Weight (g)"] : []), ...custom];
+  const line = (r: BomRow, i: number) => [
+    String(i + 1),
+    ...(hasNumber ? [r.properties?.number ?? ""] : []),
+    r.name,
+    ...(hasDescription ? [r.properties?.description ?? ""] : []),
+    String(r.quantity),
+    ...(extra ? [r.material ?? "", grams(r.massEach), grams(r.massEach === undefined ? undefined : r.massEach * r.quantity)] : []),
+    ...custom.map((name) => customValue(r.properties, name)),
+  ];
+  return [head.map(cell).join(","), ...rows.map((r, i) => line(r, i).map(cell).join(","))].join("\n") + "\n";
 }
 
 /** Volume (mm³) enclosed by a closed triangle mesh (x, y, z corners; three corner numbers per triangle). */

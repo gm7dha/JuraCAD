@@ -3773,7 +3773,16 @@ export class GeometryEngine {
   private meshPart(p: BuiltPart): PartMesh {
     const mesh = this.meshPartShape(p);
     const flat = this.flatOf(p);
-    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}) };
+    // The exact volume, for weights in parts lists (quick next to making the mesh).
+    let volume: number | null = null;
+    if (!p.surface) {
+      try {
+        volume = measureVolume(p.shape);
+      } catch {
+        volume = null;
+      }
+    }
+    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
   }
 
   /** A sheet metal part's flat pattern (null for other parts, or if it can't be unfolded). */

@@ -235,6 +235,8 @@ export interface JuraCADDocument {
   partStudios?: PartStudio[];
   /** Names given to parts, by part id (parts without one are "Part 1", "Part 2"…). */
   partNames?: Record<string, string>;
+  /** Part number, description and your own properties, by part id — shown in assembly parts lists. */
+  partProperties?: Record<string, PartProperties>;
   /** Assembly tabs (optional: older saves have none). */
   assemblies?: Assembly[];
   /** Drawing tabs (optional: older saves have none). */
@@ -567,6 +569,15 @@ export interface MateConnector {
   spot?: ConnectorSpot;
   /** Where the face or edge was clicked, in the part's own coordinates (mm). */
   point?: [number, number, number];
+}
+
+/** What a parts list says about a part besides its name (as in Onshape's part properties). */
+export interface PartProperties {
+  /** e.g. "BR-001". */
+  number?: string;
+  description?: string;
+  /** Your own properties, e.g. Supplier: "Screwfix", in the order they were added. */
+  custom?: { name: string; value: string }[];
 }
 
 export type ConnectorSpot = "start" | "end" | "middle" | "clicked";

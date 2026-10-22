@@ -5,7 +5,8 @@
 import { canBeDriven, canDrive, nextRelationName, RELATION_KIND_NAMES, RELATION_KINDS } from "../assembly/relations";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { billOfMaterials, bomCsv, bomTotalMass, nextPositionName, placedBox, spotBeside, type Box3 } from "../assembly/assembly";
+import { billOfMaterials, bomCsv, bomTotalMass, nextPositionName, placedBox, spotBeside, type BomRow, type Box3 } from "../assembly/assembly";
+import { Modal } from "./Modal";
 import { formatMass } from "../model/materials";
 import { eulerDegFromQuat, quatFromEulerDeg, type Placement } from "../assembly/math";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
@@ -771,9 +772,11 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
     return Object.fromEntries(parts.map((p) => [p.id, label(p)]));
   }, [parts, doc]);
   const bom = useMemo(
-    () => billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name])), bomInfo(parts, doc.materials)),
-    [assembly, partNames, doc.configurations, parts, doc.materials],
+    () => billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name])), bomInfo(parts, doc.materials), doc.partProperties),
+    [assembly, partNames, doc.configurations, parts, doc.materials, doc.partProperties],
   );
+  const [editingProps, setEditingProps] = useState<{ partId: string; name: string } | null>(null);
+  const showNumbers = bom.some((r) => r.properties?.number);
   const total = bomTotalMass(bom);
   const kernelReady = useStore((s) => s.kernelStatus === "ready");
 
@@ -803,6 +806,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
           <thead>
             <tr>
               <th>#</th>
+              {showNumbers && <th>Number</th>}
               <th>Part</th>
               <th className="bom-qty">Qty</th>
               <th className="bom-mass" title="What they weigh, made solid in the part's material (set it in the Part Studio's parts list)">Weight</th>
@@ -810,9 +814,17 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
           </thead>
           <tbody>
             {bom.map((r, n) => (
-              <tr key={r.partId} className={r.missing ? "missing" : ""}>
+              <tr
+                key={r.partId}
+                className={r.missing ? "missing" : "editable"}
+                onDoubleClick={() => !r.missing && setEditingProps({ partId: basePartId(r.partId), name: r.name })}
+              >
                 <td>{n + 1}</td>
-                <td title={r.material ? `${r.material}${r.massEach !== undefined ? ` — ${formatMass(r.massEach)} each` : ""}` : undefined}>{r.name}</td>
+                {showNumbers && <td className="bom-number">{r.properties?.number ?? ""}</td>}
+                <td title={bomRowTitle(r)}>
+                  {r.name}
+                  {r.properties?.description && <div className="bom-description muted">{r.properties.description}</div>}
+                </td>
                 <td className="bom-qty">{r.quantity}</td>
                 <td className="bom-mass muted" title={r.surface ? "Surfaces have no weight (thicken one to make it solid)" : undefined}>
                   {r.massEach !== undefined ? formatMass(r.massEach * r.quantity) : r.surface ? "—" : ""}
@@ -827,6 +839,8 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
             {total.partial ? " (some parts unknown)" : ""}
           </p>
         )}
+        {bom.length > 0 && <p className="panel-hint">Double-click a part to give it a part number, description or your own properties.</p>}
+        {editingProps && <PartPropertiesDialog partId={editingProps.partId} name={editingProps.name} onClose={() => setEditingProps(null)} />}
         {bom.length > 0 && (
           <button
             className="text-button bom-download"
@@ -838,6 +852,81 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
         )}
       </section>
     </aside>
+  );
+}
+
+/** The Part Studio part a parts list line is for (lines for other configurations or mirrored copies have extra bits on the end). */
+const basePartId = (rowId: string) => rowId.split(/[@~]/)[0];
+
+/** Hover text for a parts list line: material and weight, and the part's own properties. */
+function bomRowTitle(r: BomRow): string | undefined {
+  const bits = [
+    r.material ? `${r.material}${r.massEach !== undefined ? ` — ${formatMass(r.massEach)} each` : ""}` : "",
+    ...(r.properties?.custom ?? []).map((c) => `${c.name}: ${c.value}`),
+    r.missing ? "" : "Double-click to edit its part number, description and properties",
+  ].filter(Boolean);
+  return bits.length ? bits.join("\n") : undefined;
+}
+
+/** Edit a part's number, description and your own properties (they show in every parts list of it). */
+function PartPropertiesDialog({ partId, name, onClose }: { partId: string; name: string; onClose: () => void }) {
+  const saved = useStore((s) => s.history.present.partProperties?.[partId]);
+  const [number, setNumber] = useState(saved?.number ?? "");
+  const [description, setDescription] = useState(saved?.description ?? "");
+  const [custom, setCustom] = useState<{ name: string; value: string }[]>(saved?.custom?.length ? saved.custom : []);
+  const save = () => {
+    useStore.getState().setPartProperties(partId, { number, description, custom });
+    onClose();
+  };
+  return (
+    <Modal
+      title={`Properties of ${name}`}
+      onClose={onClose}
+      width={460}
+      footer={
+        <>
+          <button className="text-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary-button" onClick={save}>
+            Save
+          </button>
+        </>
+      }
+    >
+      <form
+        className="part-properties"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        <label className="field-label" htmlFor="part-number">
+          Part number
+        </label>
+        <input id="part-number" value={number} maxLength={60} placeholder="e.g. BR-001" onChange={(e) => setNumber(e.target.value)} />
+        <label className="field-label" htmlFor="part-description">
+          Description
+        </label>
+        <input id="part-description" value={description} maxLength={200} placeholder="e.g. Shelf bracket, left" onChange={(e) => setDescription(e.target.value)} />
+        <div className="field-label">Your own properties</div>
+        {custom.map((c, i) => (
+          <div className="custom-property" key={i}>
+            <input aria-label={`Property ${i + 1} name`} value={c.name} maxLength={40} placeholder="Name (e.g. Supplier)" onChange={(e) => setCustom(custom.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))} />
+            <input aria-label={`Property ${i + 1} value`} value={c.value} maxLength={200} placeholder="Value" onChange={(e) => setCustom(custom.map((x, k) => (k === i ? { ...x, value: e.target.value } : x)))} />
+            <button type="button" className="icon-button small" aria-label={`Remove property ${i + 1}`} title="Remove" onClick={() => setCustom(custom.filter((_, k) => k !== i))}>
+              <Icons.Trash size={15} />
+            </button>
+          </div>
+        ))}
+        <button type="button" className="text-button small-text" onClick={() => setCustom([...custom, { name: "", value: "" }])}>
+          <Icons.Plus size={14} /> Add a property
+        </button>
+        <p className="dialog-hint">They show in every parts list with this part, its CSV file and drawings. Leave a box empty to remove it.</p>
+        {/* Enter in a box saves. */}
+        <button type="submit" hidden />
+      </form>
+    </Modal>
   );
 }
 

@@ -7,6 +7,8 @@ import opencascade from "replicad-opencascadejs";
 import { setOC } from "replicad";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { billOfMaterials, meshVolume } from "../src/assembly/assembly";
+import { massGrams } from "../src/model/materials";
 import { judgeContacts, DEFAULT_CLASH_OPTIONS, type Contact } from "../src/assembly/assemblyCheck";
 import { GeometryEngine } from "../src/kernel/engine";
 import type { InstanceInput } from "../src/kernel/protocol";
@@ -93,5 +95,20 @@ describe("assembly clash check", () => {
     if (cross[0].kind === "cross") expect(cross[0].length).toBeCloseTo(5, 3);
     // Meeting at a corner (the end of one along the end of the other): touching only.
     expect(judged([put("W1", "wall", 0, 0), put("W2", "wall", 20, 0, 0, TURN_Z)]).map((c) => c.kind)).toEqual(["touch"]);
+  });
+
+  it("gives each solid part its exact volume (for weights), not the display mesh's", () => {
+    engine = new GeometryEngine();
+    const ball: Feature = { id: "ball", name: "Ball", type: "sphere" as FeatureType, operation: "new", suppressed: false, params: { ...defaultParams("sphere"), diameter: "20" } };
+    const r = engine.rebuild([ball, sk, wall]);
+    const exact = (4 / 3) * Math.PI * 1000;
+    expect(r.parts[0].volume!).toBeCloseTo(exact, 3);
+    // The mesh is made of flat triangles inside the ball, so it comes out smaller.
+    expect(meshVolume(r.parts[0].vertices, r.parts[0].triangles)).toBeLessThan(exact - 1);
+    // A surface has no volume.
+    expect(r.parts[1].volume).toBe(undefined);
+    // The parts list weighs it from the exact volume (PLA, 1.24 g/cm³).
+    const rows = billOfMaterials({ id: "a", name: "A", instances: [{ id: "i", partId: "ball", name: "Ball <1>", placement: { position: [0, 0, 0], rotation: ID }, fixed: true }] }, { ball: "Ball" }, {}, () => ({ volume: r.parts[0].volume! }));
+    expect(rows[0].massEach!).toBeCloseTo(massGrams(exact, undefined), 6);
   });
 });

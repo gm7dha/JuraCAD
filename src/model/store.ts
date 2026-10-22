@@ -32,7 +32,7 @@ import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument } from "./types";
+import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
@@ -44,6 +44,7 @@ import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, pickWidthFace, solveWithParts } from "../assembly/mates";
 import { setSuppressed as setInstancesOff } from "../assembly/suppress";
+import { setPartProperties as setPartPropertiesIn } from "../assembly/properties";
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
@@ -290,6 +291,8 @@ export interface AppState {
   renamePart: (partId: string, name: string) => void;
   /** Set what a part is made of (null = back to PLA). One undo step. */
   setPartMaterial: (partId: string, material: string | null) => void;
+  /** A part's number, description and own properties, for parts lists (blank ones are dropped). */
+  setPartProperties: (partId: string, props: PartProperties) => void;
   /** Colour a part (null = back to the default grey). One undo step. */
   setPartColour: (partId: string, colour: string | null) => void;
   /** Replace the variable list (one undo step); renames are followed everywhere. */
@@ -869,6 +872,7 @@ export const useStore = create<AppState>((set, get) => {
     setFeatureFolder: (ids, folder) => changeStudio((doc) => setFolder(doc, ids, folder)),
     renameFeatureFolder: (from, to) => changeStudio((doc) => renameFolder(doc, from, to)),
 
+    setPartProperties: (partId, props) => change((doc) => setPartPropertiesIn(doc, partId, props)),
     setPartMaterial: (partId, material) =>
       change((doc) => {
         const materials = { ...(doc.materials ?? {}) };

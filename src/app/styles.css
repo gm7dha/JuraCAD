@@ -1659,6 +1659,27 @@ kbd {
   font-size: 13px;
 }
 
+.bom-description {
+  font-size: 11.5px;
+}
+
+.bom-table tr.editable {
+  cursor: default;
+}
+
+.part-properties {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.custom-property {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
 .connector-picked {
   display: flex;
   flex-wrap: wrap;

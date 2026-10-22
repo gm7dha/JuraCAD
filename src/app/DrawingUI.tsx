@@ -19,6 +19,7 @@ import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, type Projections, t
 import { angleGeometry, dimPoint, dragDimension, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
+import { formatMass } from "../model/materials";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
@@ -27,7 +28,7 @@ import { studiosOf } from "../model/studios";
 import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut } from "../model/types";
 import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
-import { explodeAssembly, instancesForKernel } from "./assemblySolve";
+import { bomInfo, explodeAssembly, instancesForKernel } from "./assemblySolve";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { ToolGroupButton } from "./ToolGroupButton";
@@ -63,7 +64,16 @@ function bomFor(drawing: Drawing, doc: JuraCADDocument, parts: PartMesh[]): BomL
   if (!asm) return undefined;
   const names = Object.fromEntries(parts.map((p) => [p.id, p.name]));
   const configurations = Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name]));
-  return billOfMaterials(asm, names, configurations).map((r, i) => ({ item: i + 1, name: r.name, quantity: r.quantity, partId: r.partId }));
+  // With each part's number, description and weight (as in the assembly's parts list).
+  return billOfMaterials(asm, names, configurations, bomInfo(parts, doc.materials), doc.partProperties).map((r, i) => ({
+    item: i + 1,
+    name: r.name,
+    quantity: r.quantity,
+    partId: r.partId,
+    ...(r.properties?.number ? { number: r.properties.number } : {}),
+    ...(r.properties?.description ? { description: r.properties.description } : {}),
+    ...(r.massEach !== undefined ? { weight: formatMass(r.massEach) } : {}),
+  }));
 }
 
 /** A spot on one copy of each listed part, for the balloons to point at. */

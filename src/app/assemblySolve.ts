@@ -39,10 +39,10 @@ export function partBox(p: PartMesh): Box3 | null {
   return boxCache.get(p) ?? null;
 }
 
-/** Volume of each part's display mesh (mm³; null for a surface), worked out once per rebuild. */
+/** Volume of each part (mm³; null for a surface): exact from the engine, else from its display mesh; worked out once per rebuild. */
 const volumeCache = new WeakMap<PartMesh, number | null>();
 export function partVolume(p: PartMesh): number | null {
-  if (!volumeCache.has(p)) volumeCache.set(p, p.surface ? null : meshVolume(p.vertices, p.triangles));
+  if (!volumeCache.has(p)) volumeCache.set(p, p.surface ? null : p.volume ?? meshVolume(p.vertices, p.triangles));
   return volumeCache.get(p) ?? null;
 }
 
