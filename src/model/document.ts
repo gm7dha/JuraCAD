@@ -512,8 +512,19 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       // Picked sketch areas: a point inside each, and (newer files) its size. Anything else is dropped, leaving every closed shape.
       const areas = Array.isArray(f.areas)
         ? f.areas
-            .filter((p): p is number[] => Array.isArray(p) && (p.length === 2 || p.length === 3) && p.every((x) => typeof x === "number" && Number.isFinite(x)))
-            .map((p): AreaPick => (p.length === 3 && p[2] > 0 ? [p[0], p[1], p[2]] : [p[0], p[1]]))
+            .filter(
+              (p): p is (number | string)[] =>
+                Array.isArray(p) &&
+                p.length >= 2 &&
+                p.length <= 500 &&
+                [p[0], p[1], ...(p.length >= 3 ? [p[2]] : [])].every((x) => typeof x === "number" && Number.isFinite(x)) &&
+                p.slice(3).every((x) => typeof x === "string" && /^.{1,200}[+-]$/.test(x)),
+            )
+            .map((p): AreaPick => {
+              const [x, y, size] = p as number[];
+              // The size (and signature) only count with a real size; otherwise just the point, as older files had.
+              return p.length >= 3 && size > 0 ? [x, y, size, ...(p.slice(3) as string[])] : [x, y];
+            })
         : [];
       if (areas.length) feature.areas = areas;
     }

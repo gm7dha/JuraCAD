@@ -351,6 +351,8 @@ describe("round 2 review follow-ups", () => {
       expect(q[0]).toBeCloseTo(p.x, 6);
       expect(q[1]).toBeCloseTo(p.y, 6);
     }
+    // Too big for the sides (a 40 × 30 rectangle's corner can't take a round of 35): nothing changes.
+    expect(dragArcRim(s, f.arcId, 35)).toBe(s);
     // With its radius dimensioned (as the fillet made it), the drag changes nothing.
     expect(dragArcRim(f.sketch, f.arcId, 8)).toBe(f.sketch);
   });

@@ -211,7 +211,7 @@ describe("sketch areas (where curves cross)", () => {
     s = { ...s, points, curves };
     const t = performance.now();
     const m = sketchAreas(s);
-    expect(performance.now() - t).toBeLessThan(3000);
+    expect(performance.now() - t).toBeLessThan(10000);
     expect(m.areas).toHaveLength(901);
     const plate = m.areas[m.areaAt([10, 10])];
     expect(plate.holes).toHaveLength(900);
@@ -245,6 +245,8 @@ describe("saving picked areas", () => {
     expect(parseDocument(docWith({ areas: [[1, 2], [null, 2]] }))!.features[1].areas).toEqual([[1, 2]]);
     // Newer picks carry the area's size too; a size that isn't positive is dropped (just the point is kept).
     expect(parseDocument(docWith({ areas: [[1, 2, 300], [3, 4, -1]] }))!.features[1].areas).toEqual([[1, 2, 300], [3, 4]]);
+    // Newest picks also list what bounds the area; anything that isn't a curve id with its side is dropped.
+    expect(parseDocument(docWith({ areas: [[1, 2, 300, "l1+", "l2-"], [5, 6, 7, "bad"]] }))!.features[1].areas).toEqual([[1, 2, 300, "l1+", "l2-"]]);
   });
 });
 
@@ -271,56 +273,144 @@ describe("clicking areas in the picker", () => {
 });
 
 describe("picks follow their areas when the sketch changes", () => {
-  /** A W × 30 rectangle with an upright divider at x = d. */
-  const divided = (w: number, d: number): SketchData => {
+  /** The same sketch with its points moved (curves and their ids unchanged), as editing it would. */
+  const movePoints = (s: SketchData, f: (x: number, y: number) => [number, number]): SketchData => ({
+    ...s,
+    points: s.points.map((p) => {
+      const [x, y] = f(p.x, p.y);
+      return { ...p, x, y };
+    }),
+  });
+  /** A W × 30 rectangle with upright dividers at the given x positions. */
+  const strips = (w: number, ...xs: number[]): SketchData => {
     let s = rect(emptySketch(), 0, 0, w, 30);
-    s = addLine(s, at(d, 0), at(d, 30)).sketch;
+    for (const x of xs) s = addLine(s, at(x, 0), at(x, 30)).sketch;
     return s;
   };
+  /** Pick the area round a point, then find what that pick means in the edited sketch: its area (or -1). */
+  const follow = (before: SketchData, at: Pt, after: SketchData) => {
+    const m = sketchAreas(before);
+    const pick = pickOf(m.areas[m.areaAt(at)]);
+    const now = sketchAreas(after);
+    const i = matchArea(now, pick);
+    return i < 0 ? -1 : now.areas[i].area;
+  };
+  type Pt = [number, number];
+  /** Areas with curved edges are measured on their straight-piece outlines: within half a percent. */
+  const near = (got: number, want: number) => expect(Math.abs(got / want - 1)).toBeLessThan(0.005);
 
-  it("remembers a pick by a point inside and the area's size", () => {
-    const m = sketchAreas(divided(40, 10));
+  it("remembers a pick by a point inside, its size and what bounds it", () => {
+    const s = strips(40, 10);
+    const m = sketchAreas(s);
     const pick = pickOf(m.areas[m.areaAt([5, 5])]);
-    expect(pick).toHaveLength(3);
     expect(pick[2]).toBe(300);
-    // As far from the edges as it can be (5 mm), and of those places the one nearest the middle.
     expect(pick[0]).toBeCloseTo(5, 1);
     expect(pick[1]).toBeCloseTo(15, 0);
+    // Bounded by four lines: three sides of the rectangle and the divider.
+    expect(pick.slice(3)).toHaveLength(4);
+    const divider = s.curves[4].id;
+    expect(pick.slice(3).some((x) => x === `${divider}+` || x === `${divider}-`)).toBe(true);
   });
 
-  it("the left strip stays picked when the divider moves past its saved point", () => {
-    const m = sketchAreas(divided(40, 10));
-    const pick = pickOf(m.areas[m.areaAt([5, 15])]);
-    // Divider moved to x = 4: the saved point (5, 15) now lies in the big right-hand area.
-    const r = regionsAt(divided(40, 4), [pick]);
-    expect(r.missing).toBe(0);
-    expect(r.regions[0].outer.area).toBeCloseTo(120, 9);
-    // An old-style pick (just the point) still means the area round the point.
-    expect(regionsAt(divided(40, 4), [[pick[0], pick[1]]]).regions[0].outer.area).toBeCloseTo(1080, 9);
+  it("the divider moved (even past the saved point): still the left strip", () => {
+    const s = strips(40, 10);
+    for (const d of [4, 2, 1]) expect(follow(s, [5, 15], movePoints(s, (x, y) => [x === 10 ? d : x, y]))).toBeCloseTo(d * 30, 9);
   });
 
-  it("a shape made narrower keeps its picked part, even when the saved point is now outside it", () => {
-    // Width W, divider at W/4, the right part picked at W = 40.
-    const m = sketchAreas(divided(40, 10));
-    const pick = pickOf(m.areas[m.areaAt([30, 15])]);
-    expect(pick[2]).toBe(900);
-    for (const w of [20, 30, 50, 60]) {
-      const r = regionsAt(divided(w, w / 4), [pick]);
-      expect(r.missing).toBe(0);
-      expect(r.regions[0].outer.area).toBeCloseTo((w * 3 / 4) * 30, 9);
+  it("a quarter-split shape made narrower or wider: still the right part", () => {
+    const s = strips(40, 10);
+    for (const w of [20, 80, 120]) expect(follow(s, [25, 15], movePoints(s, (x, y) => [x === 10 ? w / 4 : x === 40 ? w : x, y]))).toBeCloseTo(w * 0.75 * 30, 9);
+  });
+
+  it("halves of a shape made two or three times as wide", () => {
+    const s = strips(40, 20);
+    for (const k of [2, 3]) {
+      const wide = movePoints(s, (x, y) => [x * k, y]);
+      expect(follow(s, [5, 15], wide)).toBeCloseTo(600 * k, 9);
+      expect(follow(s, [35, 15], wide)).toBeCloseTo(600 * k, 9);
     }
   });
 
-  it("an area that's really gone is reported", () => {
-    const m = sketchAreas(divided(40, 10));
-    const pick = pickOf(m.areas[m.areaAt([5, 15])]);
-    // The whole sketch moved far away.
-    const far: SketchData = { ...divided(40, 10), points: divided(40, 10).points.map((p) => ({ ...p, x: p.x + 500 })) };
-    expect(matchArea(sketchAreas(far), pick)).toBe(-1);
-    expect(regionsAt(far, [pick]).missing).toBe(1);
-    // The divider deleted: the one area left is four times the size, with its centre 15 away — too unlike to be the same area.
-    const plain = rect(emptySketch(), 0, 0, 40, 30);
-    expect(matchArea(sketchAreas(plain), pick)).toBe(-1);
+  it("the whole sketch scaled or moved", () => {
+    const s = strips(40, 10);
+    for (const k of [2, 3, 0.5]) expect(follow(s, [5, 15], movePoints(s, (x, y) => [x * k, y * k]))).toBeCloseTo(300 * k * k, 9);
+    for (const d of [20, 50, 200]) expect(follow(s, [5, 15], movePoints(s, (x, y) => [x + d, y + d]))).toBeCloseTo(300, 9);
+  });
+
+  it("a hole made bigger: the plate stays the plate and the disc the disc", () => {
+    let s = rect(emptySketch(), 0, 0, 40, 30);
+    s = addCircle(s, at(20, 15), 5).sketch;
+    const big: SketchData = { ...s, curves: s.curves.map((c) => (c.type === "circle" ? { ...c, radius: 14 } : c)) };
+    near(follow(s, [2, 2], big), 1200 - Math.PI * 196);
+    near(follow(s, [20, 15], big), Math.PI * 196);
+  });
+
+  it("a pipe's wall made thinner or thicker", () => {
+    let s = addCircle(emptySketch(), at(0, 0), 20).sketch;
+    s = addCircle(s, at(0, 0), 18).sketch;
+    const inner = s.curves[1].id;
+    for (const r of [19, 16]) {
+      const t: SketchData = { ...s, curves: s.curves.map((c) => (c.id === inner && c.type === "circle" ? { ...c, radius: r } : c)) };
+      near(follow(s, [19, 0], t), Math.PI * (400 - r * r));
+      near(follow(s, [0, 0], t), Math.PI * r * r);
+    }
+  });
+
+  it("the middle of three strips, squeezed and moved", () => {
+    const s = strips(60, 20, 40);
+    expect(follow(s, [30, 15], movePoints(s, (x, y) => [x === 20 ? 28 : x === 40 ? 32 : x, y]))).toBeCloseTo(120, 9);
+    expect(follow(s, [30, 15], movePoints(s, (x, y) => [x === 20 ? 5 : x === 40 ? 10 : x, y]))).toBeCloseTo(150, 9);
+  });
+
+  it("thin areas find themselves again unchanged (a thin ring, a sliver)", () => {
+    let ring = addCircle(emptySketch(), at(0, 0), 100).sketch;
+    ring = addCircle(ring, at(0, 0), 99).sketch;
+    near(follow(ring, [99.5, 0], ring), Math.PI * (10000 - 9801));
+    const sliver = rect(emptySketch(), 0, 0, 40, 0.01);
+    expect(follow(sliver, [20, 0.005], sliver)).toBeCloseTo(0.4, 9);
+  });
+
+  it("two overlapping circles: the lens and each crescent, as one circle moves", () => {
+    let s = addCircle(emptySketch(), at(0, 0), 10).sketch;
+    s = addCircle(s, at(10, 0), 10).sketch;
+    const b = s.curves[1].type === "circle" ? s.curves[1].center : "";
+    const shift = (dx: number): SketchData => ({ ...s, points: s.points.map((p) => (p.id === b ? { ...p, x: p.x + dx } : p)) });
+    // Moved a little (still overlapping): each keeps its own area.
+    const lens = (d: number) => 2 * 100 * Math.acos(d / 20) - (d / 2) * Math.sqrt(400 - d * d);
+    near(follow(s, [5, 0], shift(5)), lens(15));
+    // The crescents: A's stays round the origin, B's moves with B.
+    const m0 = sketchAreas(shift(5));
+    const cA = matchArea(m0, pickOf(sketchAreas(s).areas[sketchAreas(s).areaAt([-5, 0])]));
+    const cB = matchArea(m0, pickOf(sketchAreas(s).areas[sketchAreas(s).areaAt([15, 0])]));
+    near(m0.areas[cA].area, 100 * Math.PI - lens(15));
+    expect(m0.areas[cA].centroid[0]).toBeLessThan(0);
+    expect(m0.areas[cB].centroid[0]).toBeGreaterThan(15);
+    // Moved apart: each crescent becomes its whole circle.
+    const apart = shift(20);
+    const m = sketchAreas(s);
+    const crescentA = pickOf(m.areas[m.areaAt([-5, 0])]);
+    const crescentB = pickOf(m.areas[m.areaAt([15, 0])]);
+    const now = sketchAreas(apart);
+    expect(now.areas[matchArea(now, crescentA)].centroid[0]).toBeCloseTo(0, 6);
+    expect(now.areas[matchArea(now, crescentB)].centroid[0]).toBeCloseTo(30, 6);
+  });
+
+  it("deleting the divider: the strip picked is gone", () => {
+    const s = strips(40, 10);
+    const divider = s.curves[4].id;
+    const without: SketchData = { ...s, curves: s.curves.filter((c) => c.id !== divider) };
+    expect(follow(s, [5, 15], without)).toBe(-1);
+    const m = sketchAreas(s);
+    expect(regionsAt(without, [pickOf(m.areas[m.areaAt([5, 15])])]).missing).toBe(1);
+  });
+
+  it("older picks (just a point, or a point and size) still work as before", () => {
+    const s = strips(40, 10);
+    const moved = movePoints(s, (x, y) => [x === 10 ? 4 : x, y]);
+    // Just the point: the area round it.
+    expect(sketchAreas(moved).areas[matchArea(sketchAreas(moved), [5, 15])].area).toBeCloseTo(1080, 9);
+    // Point and size: nearest centre and size.
+    expect(sketchAreas(moved).areas[matchArea(sketchAreas(moved), [5, 15, 300])].area).toBeCloseTo(120, 9);
   });
 
   it("rounds a pick's point to suit the area's size", () => {

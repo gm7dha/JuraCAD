@@ -178,13 +178,15 @@ function reverseSegment(s: Segment): Segment {
   }
 }
 
-/** The sketch's solid curves as primitives. */
-function primitives(sketch: SketchData): Prim[] {
+/** The sketch's solid curves as primitives, and the id of the sketch curve each comes from. */
+function primitives(sketch: SketchData): { prims: Prim[]; ids: string[] } {
   const pts = new Map<string, Pt>(sketch.points.map((p) => [p.id, [p.x, p.y]]));
   pts.set(ORIGIN_ID, [0, 0]);
-  const out: Prim[] = [];
+  const prims: Prim[] = [];
+  const ids: string[] = [];
   for (const c of sketch.curves) {
     if (c.construction) continue;
+    const out = { push: (p: Prim) => (prims.push(p), ids.push(c.id)) };
     switch (c.type) {
       case "line": {
         const a = pts.get(c.p1), b = pts.get(c.p2);
@@ -225,7 +227,7 @@ function primitives(sketch: SketchData): Prim[] {
       }
     }
   }
-  return out;
+  return { prims, ids };
 }
 
 type Box = [number, number, number, number];
@@ -306,11 +308,19 @@ export interface SketchArea {
   area: number;
   /** Its centre of area (holes taken out); may lie outside a hollow or bent shape. */
   centroid: Pt;
+  /**
+   * What bounds it: each sketch curve round its outline and holes, with "+" when
+   * the area runs along the curve's own direction and "-" against it (sorted).
+   * Moving or resizing the sketch keeps this; changing what crosses what changes it.
+   */
+  signature: string[];
 }
 
 /** The areas of a sketch, and what's needed to join chosen ones into outlines. */
 export interface AreaMap {
   areas: SketchArea[];
+  /** Every curve id in the sketch (to tell when a curve a pick was bounded by has been deleted). */
+  curves: Set<string>;
   /** The area containing a point (the smallest one round it), or -1. */
   areaAt(p: Pt): number;
   /** The chosen areas (by index) joined where they touch, ready to extrude. */
@@ -356,7 +366,7 @@ export function sketchAreas(sketch: SketchData): AreaMap {
 }
 
 function findAreas(sketch: SketchData): AreaMap {
-  const prims = primitives(sketch);
+  const { prims, ids: curveOf } = primitives(sketch);
   const samples = prims.map((p) => {
     const n = stepsOf(p);
     const us: number[] = [];
@@ -748,7 +758,9 @@ function findAreas(sketch: SketchData): AreaMap {
       my -= hy * h.area;
     }
     const centroid: Pt = area > 1e-12 ? [mx / area, my / area] : [ox, oy];
-    return { outer: loopOf(f), holes, area, centroid };
+    const sides = new Set<string>();
+    for (const c of [f, ...holesOf[i].map((k) => outsides[k])]) for (const h of c.hs) sides.add(`${curveOf[edges[h >> 1].prim]}${h & 1 ? "-" : "+"}`);
+    return { outer: loopOf(f), holes, area, centroid, signature: [...sides].sort() };
   });
 
   const areaAt = (p: Pt): number => smallestAround(p, -1);
@@ -785,7 +797,7 @@ function findAreas(sketch: SketchData): AreaMap {
     return regions;
   };
 
-  return { areas, areaAt, join };
+  return { areas, areaAt, join, curves: new Set(sketch.curves.map((c) => c.id)) };
 }
 
 /** Distance from p to the nearest edge of a closed polygon. */
@@ -860,31 +872,62 @@ function roundTo(x: number, size: number): number {
 }
 
 /**
- * How a picked area is remembered: a point well inside it, and its size (mm²).
- * Older picks have just the point.
+ * How a picked area is remembered: a point well inside it, its size (mm²),
+ * and its signature (what bounds it: see `SketchArea.signature`). Older picks
+ * have just the point, or the point and size.
  */
-export type AreaPick = [number, number] | [number, number, number];
+export type AreaPick = [number, number] | [number, number, number, ...string[]];
 
 /** The pick to remember an area by. */
 export function pickOf(a: SketchArea): AreaPick {
   const [x, y] = pointInside(a);
   // Four significant figures are plenty to tell areas apart.
   const size = Number(a.area.toPrecision(4));
-  return [x, y, size];
+  return [x, y, size, ...a.signature];
 }
 
 /** Above this, the best match for a pick is too unlike it: the area has gone. */
 const POOR_MATCH = 2;
 
 /**
- * The area a pick means now (or -1 when nothing is like it any more). The
+ * The area a pick with a signature means now: the one bounded by most of the
+ * same curves, the same way round (shared ÷ all, of the two signatures), with
+ * a bonus for being round the saved point and a small penalty for a different
+ * size. None when a curve that bounded it has been deleted, or when no area
+ * shares at least half its signature.
+ */
+function matchBySignature(map: AreaMap, p: Pt, size: number, signature: string[]): number {
+  const mine = new Set(signature);
+  // A curve that bounded it has gone: the area it was (say, half a plate split by a deleted line) is gone too.
+  for (const s of mine) if (!map.curves.has(s.slice(0, -1))) return -1;
+  const inside = map.areaAt(p);
+  let best = -1;
+  let bestScore = -Infinity;
+  map.areas.forEach((a, i) => {
+    let shared = 0;
+    for (const s of a.signature) if (mine.has(s)) shared++;
+    const overlap = shared / (mine.size + a.signature.length - shared);
+    if (overlap < 0.5) return;
+    const score = overlap + (i === inside ? 0.5 : 0) - (size > 0 && a.area > 0 ? 0.1 * Math.abs(Math.log(a.area / size)) : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  });
+  return best;
+}
+
+/**
+ * The area a pick without a signature (older) means now (or -1 when nothing is like it any more). The
  * sketch may have changed since it was picked, so rather than just taking
  * the area the point is in, each area is scored by how far its centre is from
  * the point (compared with the picked area's size) and how different its size
  * is; the closest match wins, with being round the point as the tie-breaker.
  */
-export function matchArea(map: AreaMap, pick: AreaPick | number[]): number {
-  const [x, y, size] = pick;
+export function matchArea(map: AreaMap, pick: AreaPick | (number | string)[]): number {
+  const [x, y, size] = pick as [number, number, number?];
+  const signature = pick.slice(3).filter((v): v is string => typeof v === "string");
+  if (signature.length) return matchBySignature(map, [x, y], size ?? 0, signature);
   if (size === undefined || !(size > 0)) return map.areaAt([x, y]);
   const scale = Math.sqrt(size);
   const inside = map.areaAt([x, y]);
@@ -907,7 +950,7 @@ export function matchArea(map: AreaMap, pick: AreaPick | number[]): number {
  * the area it's in again, and areas side by side join up. `missing` counts
  * points no longer inside any area (the sketch changed round them).
  */
-export function regionsAt(sketch: SketchData, points: (AreaPick | number[])[]): { regions: Region[]; missing: number } {
+export function regionsAt(sketch: SketchData, points: (AreaPick | (number | string)[])[]): { regions: Region[]; missing: number } {
   const map = sketchAreas(sketch);
   const chosen: number[] = [];
   let missing = 0;
@@ -924,7 +967,7 @@ export function regionsAt(sketch: SketchData, points: (AreaPick | number[])[]): 
  * when the user picked areas (`points`), just those. Throws a friendly error
  * when a picked area has gone.
  */
-export function chosenRegions(sketch: SketchData, points: (AreaPick | number[])[] | undefined, verb: string): RegionResult {
+export function chosenRegions(sketch: SketchData, points: (AreaPick | (number | string)[])[] | undefined, verb: string): RegionResult {
   if (!points?.length) return findRegions(sketch);
   const r = regionsAt(sketch, points);
   if (r.missing) throw new Error(missingAreasMessage(r.missing, verb));
@@ -937,7 +980,7 @@ export function missingAreasMessage(missing: number, verb: string): string {
 }
 
 /** Which areas (by index) the picks mean now, and how many picks match nothing. */
-export function pickedAreas(map: AreaMap, points: (AreaPick | number[])[] | undefined): { picked: Set<number>; missing: number } {
+export function pickedAreas(map: AreaMap, points: (AreaPick | (number | string)[])[] | undefined): { picked: Set<number>; missing: number } {
   const picked = new Set<number>();
   let missing = 0;
   for (const p of points ?? []) {
@@ -954,7 +997,7 @@ export function pickedAreas(map: AreaMap, points: (AreaPick | number[])[] | unde
  * dropped, and the others are brought up to date. No areas left means "every
  * closed shape" (undefined).
  */
-export function toggleArea(map: AreaMap, points: (AreaPick | number[])[] | undefined, index: number): AreaPick[] | undefined {
+export function toggleArea(map: AreaMap, points: (AreaPick | (number | string)[])[] | undefined, index: number): AreaPick[] | undefined {
   const now = new Set<number>();
   for (const p of points ?? []) {
     const i = matchArea(map, p);

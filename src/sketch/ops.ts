@@ -1008,6 +1008,15 @@ export function dragArcRim(start: SketchData, arcId: string, radius: number): Sk
       return Math.hypot(p.x - q.x, p.y - q.y) > 1e-6;
     });
     if (moved) return start;
+    // Too big a round would push a joined line's end past its other end (folding the side back on itself).
+    const folds = start.curves.some((l) => {
+      if (l.type !== "line" || !(own.has(l.p1) || own.has(l.p2))) return false;
+      const [ax, ay] = pointPos(start, l.p1), [bx, by] = pointPos(start, l.p2);
+      const [cx2, cy2] = pointPos(r.sketch, l.p1), [dx2, dy2] = pointPos(r.sketch, l.p2);
+      const nx = dx2 - cx2, ny = dy2 - cy2;
+      return Math.hypot(nx, ny) < 1e-6 || nx * (bx - ax) + ny * (by - ay) <= 0;
+    });
+    if (folds) return start;
     return { ...r.sketch, constraints: start.constraints };
   }
   const [cx, cy] = pointPos(start, c.center);

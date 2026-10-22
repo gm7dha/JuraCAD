@@ -14,8 +14,8 @@
   tested in Node (`tests/engine.test.ts` loads the real OCCT engine).
 - Sketches: data and pure edits in `src/sketch/` (own constraint solver in `solver.ts`, closed-shape finding in
   `regions.ts`; the areas curves divide the plane into, where they cross, in `areas.ts` — a feature's `areas` are picks
-  [x, y, size] — a point inside each clicked area and its mm² — matched again on rebuild by `matchArea` (nearest centre and
-  size); none = every closed shape as before); the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
+  [x, y, size, ...signature] — a point inside each clicked area, its mm², and the curve ids (+/− side) bounding it —
+  matched again on rebuild by `matchArea` (most shared signature; a deleted bounding curve = gone); none = every closed shape); the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
 - Part Studios: `src/model/studios.ts`. The first studio's features are `doc.features` (old files still open);
   more are in `doc.partStudios`. Feature ids are unique across the document. Store helpers `activeStudioId`,
   `activeFeatures`, `studioParts` (cached, selector-safe); feature edits go through `changeStudio`/`inStudio`.
