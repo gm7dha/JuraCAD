@@ -165,6 +165,10 @@ const openSocket = (port, origin) =>
     ws.onerror = () => resolve(null);
   });
 check(!(await openSocket(LIVE_PORTS[0], "https://evil.example")), "A page from another website could open the live link.");
+// Pages served on this computer (a dev server, another program) are kept out too, unless JURACAD_LIVE_DEV=1.
+for (const origin of ["http://localhost:5173", "http://127.0.0.1:1234", "https://localhost"]) {
+  check(!(await openSocket(LIVE_PORTS[0], origin)), `A page from ${origin} could open the live link.`);
+}
 let ws = null;
 for (const port of LIVE_PORTS) if ((ws = await openSocket(port, "https://gm7dha.github.io"))) break;
 check(ws, `The live link isn't listening on 127.0.0.1 (ports ${LIVE_PORTS.join(", ")}).\n${stderr.slice(-2000)}`);

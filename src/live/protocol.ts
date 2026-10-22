@@ -29,15 +29,20 @@ export const MAX_MESSAGE_BYTES = 50 * 1024 * 1024;
 export const SITE_ORIGIN = "https://gm7dha.github.io";
 
 /**
- * May a web page from this origin connect? Only the JuraCAD site, and JuraCAD
- * run on this computer while it's being developed or tested (http(s)://localhost…).
- * Browsers always send the page's origin and pages can't fake it, so this keeps
- * every other website out.
+ * May a web page from this origin connect? Only the JuraCAD site. Browsers
+ * always send the page's origin and pages can't fake it, so this keeps every
+ * other website out — including pages served on this computer (a local dev
+ * server, or a page from some other program). Those are only let in when
+ * `allowLocal` is set, which the extension does only when JURACAD_LIVE_DEV=1
+ * (for JuraCAD's own tests and development).
+ *
+ * Note: the origin is the whole GitHub Pages site, so any other site the
+ * account publishes under https://gm7dha.github.io/… shares it.
  */
-export function originAllowed(origin: string | undefined | null): boolean {
+export function originAllowed(origin: string | undefined | null, allowLocal = false): boolean {
   if (!origin) return false;
   if (origin === SITE_ORIGIN) return true;
-  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/.test(origin);
+  return allowLocal && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/.test(origin);
 }
 
 /**

@@ -19,12 +19,12 @@ export function acceptKey(key: string): string {
 }
 
 /** Why this upgrade request may not connect (null = it may), with the HTTP status to answer. */
-export function upgradeProblem(req: Pick<IncomingMessage, "method" | "url" | "headers">, port: number): { status: number; why: string } | null {
+export function upgradeProblem(req: Pick<IncomingMessage, "method" | "url" | "headers">, port: number, allowLocalOrigins = false): { status: number; why: string } | null {
   const h = req.headers;
   if (req.method !== "GET") return { status: 405, why: "only GET can open the link" };
   if ((req.url ?? "").split("?")[0] !== LIVE_PATH) return { status: 404, why: `wrong path ${req.url}` };
   if (!hostAllowed(h.host, port)) return { status: 403, why: `wrong host ${h.host}` };
-  if (!originAllowed(h.origin)) return { status: 403, why: `a page from ${h.origin ?? "an unknown place"} isn't JuraCAD` };
+  if (!originAllowed(h.origin, allowLocalOrigins)) return { status: 403, why: `a page from ${h.origin ?? "an unknown place"} isn't JuraCAD` };
   if (String(h.upgrade ?? "").toLowerCase() !== "websocket") return { status: 426, why: "not a WebSocket request" };
   if (h["sec-websocket-version"] !== "13") return { status: 426, why: "an unsupported WebSocket version" };
   const key = h["sec-websocket-key"];
@@ -239,6 +239,8 @@ export interface LiveServerOptions {
   ports: readonly number[];
   /** Called for each accepted connection. Return a reason to turn it away (e.g. another tab is connected). */
   accept: (conn: WebSocketConnection, origin: string) => void;
+  /** Also let in pages served on this computer (http(s)://localhost…): only for JuraCAD's own tests and development. */
+  allowLocalOrigins?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -258,7 +260,7 @@ export async function startLiveServer(opts: LiveServerOptions): Promise<{ server
     });
     server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
       socket.on("error", () => socket.destroy());
-      const problem = upgradeProblem(req, port);
+      const problem = upgradeProblem(req, port, opts.allowLocalOrigins ?? false);
       if (problem) {
         log(`Live link: turned away a connection (${problem.why}).`);
         socket.end(`HTTP/1.1 ${problem.status} ${problem.status === 403 ? "Forbidden" : "Bad Request"}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
@@ -278,6 +280,8 @@ export async function startLiveServer(opts: LiveServerOptions): Promise<{ server
       server.listen(wanted, "127.0.0.1", () => resolve(true));
     });
     if (ok) {
+      // From now on, a problem (say, too many open files) is logged, never allowed to stop the extension.
+      server.on("error", (e) => log(`Live link: ${e instanceof Error ? e.message : String(e)}`));
       const at = server.address();
       if (at && typeof at === "object") port = at.port;
       return { server, port };

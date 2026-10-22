@@ -101,7 +101,10 @@
 - Live with Claude (Claude edits the design open in the user's tab): the extension also listens on 127.0.0.1 only
   (ports `LIVE_PORTS` 47615–47617, path `/juracad-live`, sub-protocol `juracad-live.1`), via a small hand-written
   WebSocket server (`src/mcp/websocket.ts`, Node http + RFC 6455 frames; no `ws` package). It accepts only the JuraCAD
-  site's Origin (or http://localhost dev origins), its own Host, text messages up to 50 MB, and one tab at a time.
+  site's Origin `https://gm7dha.github.io` — note that's every GitHub Pages site of the account, not just /JuraCAD/ —
+  (localhost origins only with `JURACAD_LIVE_DEV=1`, which the smoke test sets), its own Host, text messages up to
+  50 MB, and one tab at a time (a connection that doesn't say hello within 10 s is dropped, and a new tab replaces it).
+  Each hello starts a new link (versions restart at 1), so the session always re-adopts the new tab's design.
   `src/live/protocol.ts` (pure, shared) has the messages and rules; `src/live/client.ts` is the app's side (only connects
   when "Connect to Claude" is clicked; `src/app/liveLink.ts` wires it to the store, `LiveButton.tsx` is the top-bar
   control); `src/mcp/live.ts` (`LiveBridge`) is the extension's side. The app sends the whole design (as .juracad text)

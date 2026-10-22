@@ -65,7 +65,9 @@ async function main() {
   const live = new LiveBridge(VERSION, log);
   if (process.env.JURACAD_LIVE !== "off") {
     const ports = process.env.JURACAD_LIVE_PORT ? [Number(process.env.JURACAD_LIVE_PORT)] : [...LIVE_PORTS];
-    startLiveServer({ ports, accept: (conn) => live.connect(conn), log })
+    // JURACAD_LIVE_DEV=1 also lets in JuraCAD served on this computer (its own tests and development only).
+    const allowLocalOrigins = process.env.JURACAD_LIVE_DEV === "1";
+    startLiveServer({ ports, accept: (conn) => live.connect(conn), log, allowLocalOrigins })
       .then((started) => {
         if (started) {
           live.port = started.port;

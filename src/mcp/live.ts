@@ -11,6 +11,8 @@
 import type { Feature, JuraCADDocument } from "../model/types";
 import { readDocumentFile, serializeDocument } from "../model/fileFormat";
 import { MAIN_STUDIO, studioExists, studioName, studioView } from "../model/studios";
+import { resolveVariables } from "../model/variables";
+import { refreshDocumentPlanes } from "../sketch/planeFeature";
 import { isNewer, parseAppMessage, type AppMessage, type ExtensionMessage } from "../live/protocol";
 import type { LiveLink, LiveStatus, Session } from "./session";
 import type { ToolResult } from "./tools";
@@ -34,6 +36,10 @@ interface Pending {
 
 /** How long to wait for the tab to apply a change (it rebuilds the part first). */
 const REPLY_TIMEOUT_MS = 30_000;
+/** How long a late reply to a change is still listened for, after giving up waiting. */
+const LATE_REPLY_MS = 5 * 60_000;
+/** A tab must say hello this soon after connecting, or it's let go (so it can't hold the one place). */
+const HELLO_TIMEOUT_MS = 10_000;
 
 const names = (fs: Feature[]) => fs.map((f) => f.name);
 const list = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
@@ -70,8 +76,10 @@ export class LiveBridge implements LiveLink {
   doc: JuraCADDocument | null = null;
   studio = MAIN_STUDIO;
   version = 0;
-  /** The version the session last took the design from. */
-  private adopted = -1;
+  /** Counts the tabs that have connected (said hello): versions start again at 1 with each. */
+  private link = 0;
+  /** Which tab and version the session last took the design from ("link:version"), or null. */
+  private adopted: string | null = null;
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private queue: Promise<unknown> = Promise.resolve();
@@ -83,7 +91,13 @@ export class LiveBridge implements LiveLink {
     readonly extensionVersion: string,
     private readonly log: (msg: string) => void = () => {},
     private readonly replyTimeout = REPLY_TIMEOUT_MS,
+    private readonly helloTimeout = HELLO_TIMEOUT_MS,
   ) {}
+
+  /** The open design as the session should have it now. */
+  private get current(): string {
+    return `${this.link}:${this.version}`;
+  }
 
   get connected(): boolean {
     return !!this.conn && this.ready;
@@ -95,6 +109,13 @@ export class LiveBridge implements LiveLink {
 
   /** A JuraCAD tab has opened the link. Only one tab at a time: a second is turned away, with the reason. */
   connect(conn: LiveConnection): void {
+    if (this.conn && !this.ready) {
+      // The tab holding the place never said hello: let the new one have it.
+      this.log("Live link: a connection that never said hello was replaced by a new one.");
+      const old = this.conn;
+      this.disconnected(old);
+      old.close(1008, "no hello");
+    }
     if (this.conn) {
       this.send(conn, {
         type: "busy",
@@ -107,6 +128,10 @@ export class LiveBridge implements LiveLink {
     this.ready = false;
     conn.onMessage = (text) => this.receive(conn, text);
     conn.onClose = () => this.disconnected(conn);
+    const timer = setTimeout(() => {
+      if (conn === this.conn && !this.ready) this.refuse(conn, "JuraCAD didn't say hello in time. Click Connect to Claude again.");
+    }, this.helloTimeout);
+    (timer as { unref?: () => void }).unref?.();
   }
 
   private refuse(conn: LiveConnection, message: string): void {
@@ -131,6 +156,8 @@ export class LiveBridge implements LiveLink {
         const doc = this.readDesign(msg.file);
         if (!doc) return this.refuse(conn, "The design open in JuraCAD couldn't be read by the extension. Save it to a file and reload the page, or update the extension (Help › Use JuraCAD with Claude).");
         this.ready = true;
+        this.link++;
+        this.adopted = null;
         this.app = msg.app;
         this.setDesign(doc, msg.studio, msg.version);
         this.send(conn, { type: "welcome", protocol: 1, extension: this.extensionVersion });
@@ -176,6 +203,8 @@ export class LiveBridge implements LiveLink {
     if (conn !== this.conn) return;
     this.conn = null;
     this.ready = false;
+    // Whichever tab connects next, the session takes its design afresh.
+    this.adopted = null;
     for (const p of this.pending.values()) p.resolve?.({ type: "disconnected" });
     this.pending.clear();
     this.log("Live link: JuraCAD disconnected.");
@@ -213,9 +242,9 @@ export class LiveBridge implements LiveLink {
 
   private async callNow(s: Session, tool: string, run: () => Promise<ToolResult>): Promise<ToolResult> {
     if (!this.connected || !this.doc) return run();
-    if (this.adopted !== this.version) {
+    if (this.adopted !== this.current) {
       s.adopt(studioView(this.doc, this.studio), { doc: this.doc, studio: this.studio });
-      this.adopted = this.version;
+      this.adopted = this.current;
     }
     // The version and Part Studio this change is made from (more may arrive from the tab while the tool runs).
     const base = this.version;
@@ -234,17 +263,23 @@ export class LiveBridge implements LiveLink {
     let full: JuraCADDocument;
     let label: string;
     let reply: Reply;
+    let refreshed = false;
     try {
-      full = replaced ? s.doc : s.wholeDoc();
+      const whole = replaced ? s.doc : s.wholeDoc();
+      // Sketches on Plane features follow their planes, as the app does when it takes the change.
+      full = refreshDocumentPlanes(whole, resolveVariables(whole.variables).values);
+      refreshed = full !== whole;
       label = describeChange(tool, snap.doc, s.doc, replaced);
       const message = { type: "change", id, base, studio, file: serializeDocument(full), label, replace: replaced } as const;
       reply = await new Promise<Reply>((resolve) => {
         const p: Pending = { full, studio, base, resolve };
         this.pending.set(id, p);
         const timer = setTimeout(() => {
-          // Keep listening: if it's applied later, the bridge still learns the new version.
+          // Keep listening for a while: if it's applied later, the bridge still learns the new version.
           p.resolve = null;
           resolve({ type: "timeout" });
+          const forget = setTimeout(() => this.pending.get(id) === p && this.pending.delete(id), LATE_REPLY_MS);
+          (forget as { unref?: () => void }).unref?.();
         }, this.replyTimeout);
         timer.unref?.();
         p.resolve = (r) => {
@@ -257,17 +292,18 @@ export class LiveBridge implements LiveLink {
     } catch (e) {
       this.pending.delete(id);
       s.restore(snap);
-      this.adopted = -1;
+      this.adopted = null;
       return this.notApplied(`This change couldn't be sent to JuraCAD (${e instanceof Error ? e.message : String(e)}). Nothing was changed.`);
     }
     if (reply.type === "applied") {
-      this.adopted = this.version;
+      this.adopted = this.current;
       s.outer = { doc: full, studio };
+      if (refreshed) s.doc = replaced ? full : studioView(full, studio);
       return { ...result, content: [...result.content, { type: "text", text: `Live: this now shows in the user's open JuraCAD tab, as one step in its undo list ("${label}").` }] };
     }
     s.restore(snap);
     // Take the tab's design afresh next time.
-    this.adopted = -1;
+    this.adopted = null;
     if (reply.type === "refused") {
       return this.notApplied(
         reply.reason === "changed"

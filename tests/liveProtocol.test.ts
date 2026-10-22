@@ -10,13 +10,14 @@ import { describeChange } from "../src/mcp/live";
 import { createFeature, addFeature, emptyDocument } from "../src/model/document";
 
 describe("who may connect", () => {
-  it("only the JuraCAD site and JuraCAD run on this computer", () => {
+  it("only the JuraCAD site; pages on this computer only in development mode", () => {
     expect(originAllowed("https://gm7dha.github.io")).toBe(true);
-    expect(originAllowed("http://localhost:4173")).toBe(true);
-    expect(originAllowed("http://localhost")).toBe(true);
-    expect(originAllowed("http://127.0.0.1:5173")).toBe(true);
-    expect(originAllowed("http://[::1]:5173")).toBe(true);
-    expect(originAllowed("https://localhost:4443")).toBe(true);
+    for (const local of ["http://localhost:4173", "http://localhost", "http://127.0.0.1:5173", "http://[::1]:5173", "https://localhost:4443", "http://localhost:9999", "http://127.0.0.1:1234"]) {
+      // A local dev server, or a page some other program serves, can't connect to the shipped extension...
+      expect(originAllowed(local)).toBe(false);
+      // ...only when JURACAD_LIVE_DEV=1 (JuraCAD's own tests).
+      expect(originAllowed(local, true)).toBe(true);
+    }
     for (const bad of [
       undefined,
       null,
@@ -35,6 +36,7 @@ describe("who may connect", () => {
       "chrome-extension://abcdef",
     ]) {
       expect(originAllowed(bad)).toBe(false);
+      expect(originAllowed(bad, true)).toBe(false);
     }
   });
 
@@ -65,6 +67,8 @@ describe("who may connect", () => {
     const without = (k: string, v?: string) => ({ ...good, headers: { ...good.headers, [k]: v } });
     expect(upgradeProblem(without("origin", "https://evil.example"), 47615)!.status).toBe(403);
     expect(upgradeProblem(without("origin"), 47615)!.status).toBe(403);
+    expect(upgradeProblem(without("origin", "http://localhost:5173"), 47615)!.status).toBe(403);
+    expect(upgradeProblem(without("origin", "http://localhost:5173"), 47615, true)).toBeNull();
     expect(upgradeProblem(without("host", "evil.example:47615"), 47615)!.status).toBe(403);
     expect(upgradeProblem(without("sec-websocket-protocol", "chat"), 47615)!.status).toBe(400);
     expect(upgradeProblem(without("sec-websocket-key", "short"), 47615)!.status).toBe(400);

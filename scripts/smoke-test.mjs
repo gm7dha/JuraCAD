@@ -330,7 +330,8 @@ try {
   if (existsSync(extensionServer)) {
     step = "Live with Claude: starting the extension";
     const designs = mkdtempSync(join(tmpdir(), "juracad-smoke-live-"));
-    const ext = spawn(process.execPath, [extensionServer, designs], { stdio: ["pipe", "pipe", "pipe"] });
+    // JURACAD_LIVE_DEV=1: this test serves JuraCAD from localhost, which the shipped extension otherwise turns away.
+    const ext = spawn(process.execPath, [extensionServer, designs], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, JURACAD_LIVE_DEV: "1" } });
     let extLog = "";
     ext.stderr.on("data", (d) => (extLog += d));
     const replies = new Map();

@@ -92,10 +92,10 @@ class FakeApp implements LiveHost {
 
 const socketFrom = (origin: string) => (url: string, protocol: string) => new WebSocket(url, { protocols: [protocol], headers: { origin } } as unknown as string[]) as unknown as SocketLike;
 
-async function setup(doc: JuraCADDocument = emptyDocument("Lid")) {
+async function setup(doc: JuraCADDocument = emptyDocument("Lid"), opts: { allowLocalOrigins?: boolean; helloTimeout?: number } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "juracad-live-"));
-  const bridge = new LiveBridge("test-ext", () => {}, 20_000);
-  const started = await startLiveServer({ ports: [0], accept: (c) => bridge.connect(c) });
+  const bridge = new LiveBridge("test-ext", () => {}, 20_000, opts.helloTimeout);
+  const started = await startLiveServer({ ports: [0], accept: (c) => bridge.connect(c), allowLocalOrigins: opts.allowLocalOrigins });
   if (!started) throw new Error("no port");
   const session = new Session(new DesignFolder(join(dir, "JuraCAD")));
   session.live = bridge;
@@ -156,8 +156,64 @@ describe("Live with Claude", () => {
     const state = await stranger.connect();
     expect(state.kind).toBe("failed");
     expect(bridge.connected).toBe(false);
+    // Pages served on this computer (a dev server, another program's page) are kept out too.
+    for (const origin of ["http://localhost:9999", "http://127.0.0.1:1234", "http://[::1]:8080", "https://localhost"]) {
+      expect(await handshake(port, { Origin: origin })).toBe(403);
+    }
     // The right origin gets in (the server answers 101).
     expect(await handshake(port, { Origin: "https://gm7dha.github.io" })).toBe(101);
+  });
+
+  it("lets JuraCAD on this computer in only in development mode (JURACAD_LIVE_DEV=1)", async () => {
+    const { port } = await setup(emptyDocument("x"), { allowLocalOrigins: true });
+    expect(await handshake(port, { Origin: "http://localhost:4173" })).toBe(101);
+  });
+
+  it("works on the new tab's design after reconnecting, never the old one's", async () => {
+    const { bridge, session, port } = await setup(emptyDocument("First"));
+    const first = new FakeApp(emptyDocument("First"));
+    const firstClient = new LiveClient(first, socketFrom("https://gm7dha.github.io"), [port]);
+    cleanups.push(() => firstClient.disconnect());
+    await firstClient.connect();
+    await until(() => bridge.connected, "the first tab");
+    expect(await ok(session, "describe_design")).toMatch(/Design "First"/);
+    firstClient.disconnect();
+    await until(() => !bridge.connected, "the first tab to go");
+    // Another tab connects (its versions start at 1 again, like the first one's did).
+    const second = new FakeApp(emptyDocument("Second"));
+    const secondClient = new LiveClient(second, socketFrom("https://gm7dha.github.io"), [port]);
+    cleanups.push(() => secondClient.disconnect());
+    await secondClient.connect();
+    await until(() => bridge.connected, "the second tab");
+    expect(bridge.version).toBe(1);
+    expect(await ok(session, "describe_design")).toMatch(/Design "Second"/);
+    await ok(session, "add_feature", { type: "box", width: 10, depth: 10, height: 10 });
+    expect(second.doc.name).toBe("Second");
+    expect(second.doc.features.map((f) => f.type)).toEqual(["box"]);
+    expect(first.doc.features).toEqual([]);
+  });
+
+  it("lets go of a connection that never says hello, and a new tab can take its place", async () => {
+    const { bridge, port } = await setup(emptyDocument("x"), { helloTimeout: 300 });
+    // Opens the link but says nothing.
+    const silent = await new Promise<WebSocket>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${LIVE_PATH}`, { protocols: [LIVE_SUBPROTOCOL], headers: { origin: "https://gm7dha.github.io" } } as unknown as string[]);
+      ws.onopen = () => resolve(ws);
+    });
+    let closed = false;
+    silent.onclose = () => (closed = true);
+    await until(() => closed, "the silent connection to be closed");
+    // Another silent one, then a real tab: the real tab takes the place at once.
+    const silent2 = await new Promise<WebSocket>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${LIVE_PATH}`, { protocols: [LIVE_SUBPROTOCOL], headers: { origin: "https://gm7dha.github.io" } } as unknown as string[]);
+      ws.onopen = () => resolve(ws);
+    });
+    cleanups.push(() => silent2.close());
+    const app = new FakeApp(emptyDocument("Real tab"));
+    const client = new LiveClient(app, socketFrom("https://gm7dha.github.io"), [port]);
+    cleanups.push(() => client.disconnect());
+    expect((await client.connect()).kind).toBe("connected");
+    expect(bridge.connected).toBe(true);
   });
 
   it("says plainly when Claude isn't there", async () => {
