@@ -75,10 +75,10 @@ describe("arc length and arc angle dimensions", () => {
 
   it("typing an angle turns the arc's end round its centre (the start and radius stay)", () => {
     const { s, arc } = quarter();
-    let d = addDimension(s, [arc.id, arc.center]);
+    const d0 = addDimension(s, [arc.id, arc.center]);
     // Hold the start where it is, so only the end can move.
-    const id = d.sketch.constraints[0].id;
-    d = { ...d, sketch: { ...d.sketch, constraints: [...d.sketch.constraints, { id: "fx", type: "fix", refs: [arc.start], extra: [10, 0] }, { id: "fc", type: "fix", refs: [arc.center], extra: [0, 0] }] } };
+    const id = d0.sketch.constraints[0].id;
+    const d = { ...d0, sketch: { ...d0.sketch, constraints: [...d0.sketch.constraints, { id: "fx", type: "fix" as const, refs: [arc.start], extra: [10, 0] }, { id: "fc", type: "fix" as const, refs: [arc.center], extra: [0, 0] }] } };
     const r = setDimensionValue(d.sketch, id, "120");
     expect(r.error).toBeUndefined();
     const e = pointPos(r.sketch, arc.end);
@@ -150,13 +150,13 @@ describe("measuring to circles' edges", () => {
 
   it("typing a gap between the edges moves the circles to that gap", () => {
     const { s, a, b } = two();
-    let d = addDimension(s, [a.id, b.id]);
-    const id = d.sketch.constraints[0].id;
-    d = { sketch: setMeasureTo(d.sketch, id, "nearest").sketch };
+    const first = addDimension(s, [a.id, b.id]);
+    const id = first.sketch.constraints[0].id;
+    let sk: SketchData = setMeasureTo(first.sketch, id, "nearest").sketch;
     // Hold the circles' sizes too.
-    d = { sketch: addDimension(d.sketch, [a.id]).sketch };
-    d = { sketch: addDimension(d.sketch, [b.id]).sketch };
-    const r = setDimensionValue(d.sketch, id, "10");
+    sk = addDimension(sk, [a.id]).sketch;
+    sk = addDimension(sk, [b.id]).sketch;
+    const r = setDimensionValue(sk, id, "10");
     expect(r.error).toBeUndefined();
     const ca = pointPos(r.sketch, a.center);
     const cb = pointPos(r.sketch, b.center);
