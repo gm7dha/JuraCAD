@@ -1,7 +1,7 @@
 {
   "name": "juracad",
   "private": true,
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Free, open-source, browser-based parametric CAD, with Onshape-style controls.",
   "license": "MIT",
   "type": "module",
