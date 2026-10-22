@@ -582,6 +582,29 @@ describe("modelled threads, round 2 review", () => {
     expect(Math.abs(drilled - volumes()[0] - fourMm)).toBeLessThan(0.1 * fourMm);
   });
 
+  for (const gap of [0.3, 1, 1.5, 3]) {
+    it(`threads an up-to-next hole cleanly with only ${gap} mm of room past the wall`, () => {
+      const box = feature("box", { width: 40, depth: 40, height: 20 + gap });
+      const cavity = feature("box", { width: 30, depth: 30, height: gap, x: 5, y: 5, z: 10 }, "remove");
+      const sk = sketchFeature(faceAt(20 + gap), points([20, 20]));
+      const plain = holeFeature(sk.id, { diameter: 3.3 }, { standard: "M4", fit: "tapped", end: "upToNext" });
+      build([box, cavity, sk, plain]);
+      const drilled = volumes()[0];
+      const r = build([box, cavity, sk, { ...plain, hole: { ...plain.hole!, modelThread: true } }]);
+      const check = engine.check("normal").parts[0];
+      expect(check.geometryValid).toBe(true);
+      expect(r.parts).toHaveLength(1);
+      // Either a thread was cut (less material, the floor below untouched), or the plain hole and a plain message.
+      if (r.featureErrors[plain.id]) {
+        expect(r.featureErrors[plain.id]).toMatch(/thread couldn't be cut cleanly/);
+        expect(check.exactVolume!).toBeCloseTo(drilled, 3);
+      } else {
+        expect(check.exactVolume!).toBeLessThan(drilled - 1);
+        expect(drilled - check.exactVolume!).toBeLessThan(20);
+      }
+    });
+  }
+
   it("copies the thread along with the hole in a pattern", () => {
     const plate = feature("box", { width: 30, depth: 20, height: 6 });
     const sk = sketchFeature(faceAt(6), points([5, 10]));
@@ -676,13 +699,29 @@ describe("extrude ends, round 2", () => {
     expect(volumes()[2]).toBeCloseTo(underBar, 2);
   });
 
-  it("says so when a Remove extrude cuts nothing", () => {
+  it("says so when a Remove extrude is nowhere near any part", () => {
     const block = feature("box", { width: 20, depth: 20, height: 10 });
-    const sk = sketchFeature(faceAt(10), rect(5, 5, 5, 5));
-    // Going up, away from the block.
-    const ex = extrude(sk.id, { depth: 5 }, { end: "blind", flip: false }, "remove");
-    expect(build([block, sk, ex]).featureErrors[ex.id]).toMatch(/doesn't cut anything from Part 1.*Flip/);
+    const sk = sketchFeature(faceAt(10), rect(30, 5, 5, 5));
+    const ex = extrude(sk.id, { depth: 5 }, { end: "blind", flip: true }, "remove");
+    expect(build([block, sk, ex]).featureErrors[ex.id]).toMatch(/doesn't reach any part.*Flip/);
     expect(volumes()[0]).toBeCloseTo(4000, 3);
+    // Touching the part (or inside a pocket already cut) isn't flagged.
+    const near = sketchFeature(faceAt(10), rect(5, 5, 5, 5));
+    expect(build([block, near, { ...extrude(near.id, { depth: 5 }, { end: "blind", flip: false }, "remove"), id: "up" }]).featureErrors).toEqual({});
+  });
+
+  it("keeps a seed cut off the part, so its pattern and mirror still cut", () => {
+    const plate = feature("box", { width: 100, depth: 20, height: 5 });
+    const sk = sketchFeature(faceAt(5), rect(-15, 5, 10, 10));
+    const seed = extrude(sk.id, { depth: 5 }, { end: "blind", flip: true }, "remove");
+    const row: Feature = { ...feature("linearPattern", { count: 4, spacing: 25 }, "add"), pattern: { sources: [seed.id], axis: "x", flip: false } };
+    const r = build([plate, sk, seed, row]);
+    expect(r.featureErrors).toEqual({});
+    // Copies at x 10..20, 35..45 and 60..70 cut the plate (the seed itself is off it).
+    expect(volumes()[0]).toBeCloseTo(10000 - 3 * 500, 3);
+    const across: Feature = { ...feature("mirror", {}, "add"), mirror: { sources: [seed.id], plane: { kind: "default", name: "Right" } } };
+    expect(build([plate, sk, seed, across]).featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(10000 - 500, 3);
   });
 
   it("up to next says when nothing stops it", () => {

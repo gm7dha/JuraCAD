@@ -43,7 +43,7 @@ import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep } from "./stepExport";
 import { importKey, importSolids, isImportedSurface } from "./importer";
-import { edgesOf, facesOf, solidsOf } from "./topology";
+import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 /** Id of the first Part Studio (matches MAIN_STUDIO in model/studios.ts). */
@@ -248,6 +248,8 @@ function cylinderAxes(shape: Shape3D): [Vec3, Vec3][] {
 }
 
 const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+/** True when two boxes (min and max corners) overlap or touch. */
+const boxesOverlap = (a: [Vec3, Vec3], b: [Vec3, Vec3]) => [0, 1, 2].every((k) => a[0][k] <= b[1][k] + 1e-6 && b[0][k] <= a[1][k] + 1e-6);
 /** A length for a message: at most two decimals ("2.5", not "2.500000001"). */
 const fmt = (x: number) => String(Math.round(x * 100) / 100);
 
@@ -1439,7 +1441,9 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         const pitch = screw.pitch;
         const end = h.end === "blind" ? v.depth : h.end === "upToNext" ? hole.depth : span;
         const start: Vec3 = [at[0] - dir[0] * back, at[1] - dir[1] * back, at[2] - dir[2] * back];
-        const runs = materialRuns(target.shape, start, dir, v.diameter / 2, end + back).map(([a, b]): [number, number] => [a - back, b - back]);
+        // All the material along the drill (beyond the hole too, to see how much room there is past its far end).
+        const all = materialRuns(target.shape, start, dir, v.diameter / 2, span + back).map(([a, b]): [number, number] => [a - back, b - back]);
+        const runs = all.filter(([a]) => a < end - 1e-6).map(([a, b]): [number, number] => [a, Math.min(b, end)]);
         if (runs.length === 0) return hole;
         // Below a counterbore or countersink (a plain hole can start anywhere, even behind the sketch when both ways).
         const first = hole.kind === "simple" ? runs[0][0] : Math.max(runs[0][0], straightStart(hole));
@@ -1448,7 +1452,14 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         const reached = runs.filter(([a]) => a < stop);
         const last = Math.max(...reached.map(([, b]) => b));
         const comesOut = last < stop && last < end - 1e-6;
-        const to = comesOut ? last + pitch : Math.min(stop, last);
+        let to = Math.min(stop, last);
+        if (comesOut) {
+          // Run out a pitch past the far side — but the groove (about 0.4 of a pitch either side of its line) mustn't
+          // reach the next material. With too little room it ends a pitch inside the wall instead.
+          const next = all.find(([a]) => a > last + 1e-6)?.[0] ?? Infinity;
+          const runOut = Math.min(last + pitch, next - 0.5 * pitch);
+          to = runOut >= last + 0.1 * pitch ? runOut : last - pitch;
+        }
         if (to - first < pitch) throw new Error("The thread would be less than one turn long. Make the thread depth (or the hole) deeper, or untick Model the thread.");
         return { ...hole, thread: { from: first - pitch, to, pitch } };
       };
@@ -1534,7 +1545,7 @@ export class GeometryEngine {
   /** Threaded holes already made (see hole.ts), kept between rebuilds. */
   private threadedHoles: ThreadedHoleCache = new Map();
   /** The part just after a hole with modelled threads, by everything that went into it (see the rebuild loop). */
-  private threadedResults = new Map<string, { shape: Shape3D; tool: Shape3D }>();
+  private threadedResults = new Map<string, { shape: Shape3D; tool: Shape3D; error?: string }>();
   /** Every part of every Part Studio (for exports, checks and measuring). */
   private parts: BuiltPart[] = [];
   /** While a Part Studio is being built: the solids its features added or cut. */
@@ -1873,6 +1884,7 @@ export class GeometryEngine {
         target.shape = done.shape.clone();
         target.featureIds.push(feature.id);
         this.tools.set(feature.id, { shape: done.tool.clone(), operation: "remove", partId: target.id });
+        if (done.error) featureErrors[feature.id] = done.error;
         continue;
       }
 
@@ -1919,23 +1931,43 @@ export class GeometryEngine {
 
       try {
         if (!target) throw new Error("There's no part to change yet.");
-        const result = feature.operation === "add" ? target.shape.fuse(tool) : feature.operation === "intersect" ? (target.shape.intersect(tool) as Shape3D) : target.shape.cut(tool);
+        let result = feature.operation === "add" ? target.shape.fuse(tool) : feature.operation === "intersect" ? (target.shape.intersect(tool) as Shape3D) : target.shape.cut(tool);
         if (solidsOf(result).length === 0) {
           result.delete();
           throw new Error(feature.operation === "intersect" ? "This doesn't overlap the part, so nothing would be left." : "This would remove the whole part.");
         }
-        // An extrude cutting nothing is almost always a mistake: Remove only cuts the latest part.
-        if (feature.type === "extrude" && feature.operation === "remove" && Math.abs(measureVolume(target.shape) - measureVolume(result)) < 1e-9) {
-          result.delete();
-          throw new Error(`This doesn't cut anything from ${target.name} (Remove cuts the latest part). Check the direction (Flip), the depth and where the sketch is.`);
+        // A modelled thread must leave one sound piece with less in it; if not, drill the plain hole and say so.
+        // (Checked against the plain hole: the thread can only take more away.)
+        if (feature.type === "hole" && feature.hole?.modelThread) {
+          const plain = buildSolid({ ...feature, hole: { ...feature.hole, modelThread: undefined } }, values, sketches, features, this.parts);
+          const plainResult: Shape3D = target.shape.cut(plain);
+          if (this.soundCut(plainResult, result)) {
+            plain.delete();
+            plainResult.delete();
+          } else {
+            result.delete();
+            tool.delete();
+            tool = plain;
+            result = plainResult;
+            featureErrors[feature.id] = "The hole is drilled, but its thread couldn't be cut cleanly here (too little room past it, perhaps). Untick \"Model the thread\", or change the thread depth.";
+          }
         }
+        // An extrude cut that's nowhere near any part is almost always a mistake: say so (it still counts, so
+        // patterns and mirrors of it — a seed cut off the part — keep working).
+        const missed =
+          feature.type === "extrude" &&
+          feature.operation === "remove" &&
+          !features.some((f) => (f.pattern?.sources ?? f.mirror?.sources ?? []).includes(feature.id)) &&
+          !this.parts.some((p) => !p.surface && boxesOverlap(boundsOf(p.shape), boundsOf(tool))) &&
+          Math.abs(measureVolume(target.shape) - measureVolume(result)) < 1e-9;
         target.shape.delete();
         target.shape = result;
         target.featureIds.push(feature.id);
         this.tools.set(feature.id, { shape: tool.clone(), operation: feature.operation, partId: target.id });
         if (target.sheet && feature.operation === "remove") this.traceSheetCut(target, feature.id, tool);
+        if (missed) featureErrors[feature.id] = `This doesn't reach any part, so it cuts nothing (Remove cuts the latest part, ${target.name}). Check the direction (Flip), the depth and where the sketch is.`;
         if (threadKey) {
-          this.threadedResults.set(threadKey, { shape: result.clone(), tool: tool.clone() });
+          this.threadedResults.set(threadKey, { shape: result.clone(), tool: tool.clone(), ...(featureErrors[feature.id] ? { error: featureErrors[feature.id] } : {}) });
           for (const [k, old] of this.threadedResults) {
             if (this.threadedResults.size <= 6) break;
             old.shape.delete();
@@ -3447,6 +3479,22 @@ export class GeometryEngine {
       part.featureIds.push(feature.id);
     }
     return {};
+  }
+
+  /** A cut came out right: a valid solid, with as many solids and shells as `plain` (the same cut without the extras), and less in it. */
+  private soundCut(before: Shape3D, after: Shape3D): boolean {
+    if (!isValidSolid(after)) return false;
+    const count = (s: Shape3D) => {
+      const shells = shellsOf(s);
+      shells.forEach((x) => x.delete());
+      return shells.length;
+    };
+    const solids = (s: Shape3D) => {
+      const list = solidsOf(s);
+      list.forEach((x) => x.delete());
+      return list.length;
+    };
+    return count(after) === count(before) && solids(after) === solids(before) && measureVolume(after) < measureVolume(before) - 1e-3;
   }
 
   /**

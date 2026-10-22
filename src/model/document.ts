@@ -237,6 +237,11 @@ export function previewOf(draft: Feature | null): Feature | null {
   return { ...draft, hole };
 }
 
+/** While a feature is being edited: every hole previewed without its modelled thread (so a drag doesn't re-cut them all). */
+export function previewFeatures(features: Feature[]): Feature[] {
+  return features.some((f) => f.hole?.modelThread) ? features.map((f) => previewOf(f)!) : features;
+}
+
 export function featuresWithDraft(features: Feature[], draft: Feature | null): Feature[] {
   if (!draft) return features;
   return features.some((f) => f.id === draft.id)

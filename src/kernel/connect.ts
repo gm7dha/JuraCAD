@@ -1,4 +1,4 @@
-import { featuresToBuild, featuresWithDraft, previewOf } from "../model/document";
+import { featuresToBuild, featuresWithDraft, previewFeatures, previewOf } from "../model/document";
 import { resolveVariables } from "../model/variables";
 import { STORAGE_KEY, useStore } from "../model/store";
 
@@ -29,9 +29,9 @@ function currentStudios(): StudioInput[] {
     id: st.id,
     features:
       st.id === here && s.rollbackTo
-        ? featuresToBuild(st.features, st.id === editingIn ? previewOf(s.editing?.draft ?? null) : null, s.rollbackTo)
+        ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? previewOf(s.editing?.draft ?? null) : null, s.rollbackTo)
         : st.id === editingIn
-          ? featuresWithDraft(st.features, previewOf(s.editing?.draft ?? null))
+          ? featuresWithDraft(previewFeatures(st.features), previewOf(s.editing?.draft ?? null))
           : st.features,
   })), ...configuredStudios(s.history.present)];
 }

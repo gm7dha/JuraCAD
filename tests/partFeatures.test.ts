@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addFeature, createFeature, emptyDocument, parseDocument, previewOf } from "../src/model/document";
+import { addFeature, createFeature, emptyDocument, parseDocument, previewFeatures, previewOf } from "../src/model/document";
 import { visibleParamKeys } from "../src/model/features";
 import type { Feature, JuraCADDocument } from "../src/model/types";
 import { HOLE_LEAD_IN, holeProfile, holeVolume, type HoleSize } from "../src/model/holes";
@@ -245,5 +245,9 @@ describe("previewing a hole with a modelled thread", () => {
     const plain = createFeature(doc, "box");
     expect(previewOf(plain)).toBe(plain);
     expect(previewOf(null)).toBeNull();
+    // Every hole in the list, while something is being edited; a list with none is passed straight through.
+    const list = [plain, hole];
+    expect(previewFeatures(list).map((f) => !!f.hole?.modelThread)).toEqual([false, false]);
+    expect(previewFeatures([plain])).toEqual([plain]);
   });
 });
