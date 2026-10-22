@@ -5,7 +5,7 @@
  */
 import opencascade from "replicad-opencascadejs";
 import { setOC } from "replicad";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -14,7 +14,7 @@ import { parseDocument } from "../src/model/document";
 import { readDocumentFile } from "../src/model/fileFormat";
 import { DesignFolder } from "../src/mcp/files";
 import { Session } from "../src/mcp/session";
-import { callTool, TOOLS, type ToolResult } from "../src/mcp/tools";
+import { callTool, fileNameFor, TOOLS, type ToolResult } from "../src/mcp/tools";
 
 beforeAll(async () => {
   setOC(await opencascade());
@@ -85,6 +85,10 @@ describe("JuraCAD tools for Claude", () => {
       expect(t.inputSchema.type).toBe("object");
       expect(/^[a-z_]+$/.test(t.name)).toBe(true);
     }
+    // Default file names from a design's name work on every computer.
+    expect(fileNameFor('Bracket: v2 "final".')).toBe("Bracket- v2 -final-");
+    expect(fileNameFor("CON")).toBe("design");
+    expect(fileNameFor("...")).toBe("design");
   });
 
   it("builds the example bracket, checks it and saves a file the app opens to the same part", async () => {
@@ -212,6 +216,47 @@ describe("JuraCAD tools for Claude", () => {
     expect(await fails(s, "unknown_tool")).toMatch(/no tool called/);
   });
 
+  it("refuses cuts and holes that miss the part, and says how to fix them", async () => {
+    const { s } = newSession();
+    await ok(s, "new_design", { name: "Misses" });
+    await ok(s, "add_sketch", { shapes: [{ type: "rectangle", corner: [0, 0], width: 60, height: 40 }] });
+    const made = await ok(s, "add_feature", { type: "extrude", depth: 3 });
+    expect(made).toMatch(/Volume change: Part 1: new, 7200 mm³/);
+    await ok(s, "add_sketch", { name: "Pocket", on_face: "top", shapes: [{ type: "circle", center: [30, 20], diameter: 10 }] });
+    // Going up, away from the plate, the cut misses it.
+    const missed = await fails(s, "add_feature", { type: "extrude", sketch: "Pocket", depth: 2, operation: "remove", flip: false });
+    expect(missed).toMatch(/would cut only 0 mm³ from the part — it misses it[\s\S]*towards \+Z[\s\S]*"flip": true[\s\S]*Nothing was changed/);
+    // Left to itself, a cut on a face goes into the part.
+    const cut = await ok(s, "add_feature", { type: "extrude", sketch: "Pocket", depth: 2, operation: "remove" });
+    expect(cut).toMatch(/flipped/);
+    expect(cut).toMatch(/Volume change: Part 1: 7200 → 7042\.92 mm³ \(−157\.08\)/);
+    expect(exactVolume(s)[0]).toBeCloseTo(7200 - Math.PI * 25 * 2, 3);
+    // Hole points on the Top plane (the plate's bottom) drill downwards, away from it.
+    await ok(s, "add_sketch", { name: "Wrong face", plane: "Top", shapes: [{ type: "point", at: [10, 10] }] });
+    expect(await fails(s, "add_feature", { type: "hole", sketch: "Wrong face", size: "M4" })).toMatch(/holes miss the part[\s\S]*on_face/);
+    expect(exactVolume(s)[0]).toBeCloseTo(7200 - Math.PI * 25 * 2, 3);
+    // Through all goes both ways: from a plane in the middle of a block, right through it.
+    await ok(s, "new_design", { name: "Through" });
+    await ok(s, "add_feature", { type: "box", width: 20, depth: 20, height: 20 });
+    await ok(s, "add_sketch", { plane: "Top", offset: 10, shapes: [{ type: "circle", center: [10, 10], diameter: 4 }] });
+    await ok(s, "add_feature", { type: "extrude", end: "through_all", operation: "remove" });
+    expect(exactVolume(s)[0]).toBeCloseTo(8000 - Math.PI * 4 * 20, 3);
+  });
+
+  it("keeps requests to a size that builds quickly", async () => {
+    const { s } = newSession();
+    await ok(s, "new_design", { name: "Limits" });
+    expect(await fails(s, "add_sketch", { shapes: [{ type: "rectangle", corner: [0, 0], width: 20000, height: 10 }] })).toMatch(/width is 20000 mm — too big.*10000 mm/);
+    const ring = Array.from({ length: 101 }, (_, i) => [Math.cos(i / 16), Math.sin(i / 16)]);
+    expect(await fails(s, "add_sketch", { shapes: [{ type: "outline", points: ring }] })).toMatch(/at most 100 points/);
+    expect(await fails(s, "add_sketch", { shapes: Array.from({ length: 101 }, (_, i) => ({ type: "point", at: [i, 0] })) })).toMatch(/at most 100 shapes/);
+    await ok(s, "add_feature", { type: "box", width: 100, depth: 100, height: 2 });
+    await ok(s, "add_feature", { type: "cylinder", diameter: 1, height: 2, x: 1, y: 1, operation: "remove", name: "Pin hole" });
+    expect(await fails(s, "add_feature", { type: "linear_pattern", features: ["Pin hole"], direction: "x", count: 101, spacing: 0.5 })).toMatch(/at most 100 copies in each direction/);
+    expect(await fails(s, "add_feature", { type: "linear_pattern", features: ["Pin hole"], direction: "x", count: 30, spacing: 2, direction2: "y", count2: 20, spacing2: 2 })).toMatch(/at most 400 copies in all \(asked for 30 × 20 = 600\)/);
+    expect(await fails(s, "add_feature", { type: "circular_pattern", features: ["Pin hole"], count: 500, center: [50, 50, 0] })).toMatch(/at most 100 copies/);
+  });
+
   it("only reads and writes inside its own folder", async () => {
     const { s, dir, folder } = newSession();
     await ok(s, "new_design", { name: "Safe" });
@@ -226,8 +271,28 @@ describe("JuraCAD tools for Claude", () => {
     writeFileSync(join(dir, "outside.juracad"), "{}");
     symlinkSync(join(dir, "outside.juracad"), join(folder, "link.juracad"));
     expect(await fails(s, "open_design", { filename: "link" })).toMatch(/shortcut/);
-    // Saving twice to a name it didn't come from asks first.
+    // Names that don't work on Windows (or would write somewhere else there).
+    for (const [name, why] of [
+      ["bracket:v2", /can't contain \(:\)/],
+      ["what?", /can't contain \(\?\)/],
+      ['say "hi"', /can't contain \("\)/],
+      ["tab\there", /control character/],
+      ["bracket.", /ends with a dot or a space/],
+      ["CON", /Windows keeps for itself/],
+      ["com1.juracad", /Windows keeps for itself/],
+      ["Lpt9.txt", /Windows keeps for itself|should end in/],
+    ] as const) expect(await fails(s, "save_design", { filename: name })).toMatch(why);
+    // A link planted where the save goes first is never followed.
+    writeFileSync(join(dir, "victim.txt"), "keep me");
+    symlinkSync(join(dir, "victim.txt"), join(folder, ".a.juracad.saving"));
     await ok(s, "save_design", { filename: "a" });
+    expect(readFileSync(join(dir, "victim.txt"), "utf8")).toBe("keep me");
+    expect(readdirSync(folder).filter((n) => n.endsWith(".saving"))).toEqual([".a.juracad.saving"]);
+    // A folder isn't a design.
+    mkdirSync(join(folder, "parts.juracad"));
+    expect(await fails(s, "open_design", { filename: "parts.juracad" })).toMatch(/is a folder/);
+    expect(await ok(s, "list_designs")).not.toMatch(/parts\.juracad/);
+    // Saving twice to a name it didn't come from asks first.
     await ok(s, "save_design", { filename: "a" });
     await ok(s, "new_design", { name: "Other" });
     await ok(s, "add_feature", { type: "box", width: 5, depth: 5, height: 5 });

@@ -30,7 +30,7 @@
   },
   "tools": "__TOOLS__",
   "compatibility": {
-    "platforms": ["darwin", "win32", "linux"],
+    "platforms": ["darwin", "win32"],
     "runtimes": { "node": ">=18.0.0" }
   }
 }

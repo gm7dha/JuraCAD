@@ -3993,6 +3993,23 @@ export class GeometryEngine {
     });
   }
 
+  /**
+   * The volume (mm³) of the solid a feature added or cut, as last built — for
+   * checking a cut actually reached the part. Null when it made none.
+   */
+  featureToolVolume(featureId: string): number | null {
+    for (const b of this.builds.values()) {
+      const t = b.tools.get(featureId);
+      if (!t) continue;
+      try {
+        return measureVolume(t.shape);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
   get partCount(): number {
     return this.parts.length;
   }

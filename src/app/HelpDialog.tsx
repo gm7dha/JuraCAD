@@ -103,8 +103,8 @@ export function HelpDialog() {
           (one file).
         </li>
         <li>
-          Double-click the downloaded file. The Claude desktop app opens it and asks to install JuraCAD: click Install.
-          (Or in Claude open Settings › Extensions and drag the file onto the window.)
+          Double-click the downloaded file (or drag it onto the Claude desktop app's window). Claude shows the install
+          screen: click Install.
         </li>
         <li>
           Start a new chat in Claude and ask for a part. Your designs are saved in Documents › JuraCAD (you can choose

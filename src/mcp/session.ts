@@ -60,6 +60,11 @@ export class Session {
     return fn(this.engine);
   }
 
+  /** Use the engine as it was last built (whatever was built last), without building anything. */
+  engineAsBuilt<T>(fn: (engine: GeometryEngine) => T): T {
+    return fn(this.engine);
+  }
+
   /** Make `next` the design, keeping the old one for undo. */
   commit(next: JuraCADDocument): void {
     this.past.push(this.doc);

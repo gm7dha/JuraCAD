@@ -27,6 +27,9 @@ export function tidy(n: number): string {
   return String(Object.is(r, -0) ? 0 : r);
 }
 
+/** The largest size or position accepted (mm): bigger is almost always a units mistake, and slow to build. */
+export const MAX_LENGTH = 10_000;
+
 export function amount(v: unknown, where: string, scope: Scope, opts: { positive?: boolean; min?: number; integer?: boolean; unit?: string } = {}): Amount {
   const unit = opts.unit ?? "mm";
   let a: Amount;
@@ -40,6 +43,7 @@ export function amount(v: unknown, where: string, scope: Scope, opts: { positive
   } else {
     throw new InputError(`${where} is missing: give a number${unit === "mm" ? " in millimetres" : unit === "°" ? " of degrees" : ""}, e.g. ${unit === "°" ? 90 : 10}.`);
   }
+  if (unit === "mm" && Math.abs(a.value) > MAX_LENGTH) throw new InputError(`${where} is ${tidy(a.value)} mm — too big. Sizes and positions here are in millimetres and can be at most ${MAX_LENGTH} mm (10 m).`);
   if (opts.integer && !Number.isInteger(a.value)) throw new InputError(`${where} must be a whole number (got ${a.value}).`);
   if (opts.positive && !(a.value > 0)) throw new InputError(`${where} must be more than 0 (got ${tidy(a.value)}).`);
   if (opts.min !== undefined && a.value < opts.min) throw new InputError(`${where} must be at least ${opts.min} (got ${tidy(a.value)}).`);

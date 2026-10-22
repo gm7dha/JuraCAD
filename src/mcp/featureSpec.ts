@@ -10,6 +10,7 @@ import type { Feature, FeatureType, JuraCADDocument, Operation } from "../model/
 import type { PartMesh } from "../kernel/protocol";
 import { SCREW_SIZES, standardParams } from "../model/holes";
 import { planeFrame, planeOnFace, type SketchPlane, type Vec3 } from "../sketch/planes";
+import { evaluate } from "../model/expr";
 import { amount, bool, InputError, list, noExtras, oneOf, text, xy, xyz, type Obj } from "./args";
 import { pickEdges, pickFace, pickFaces, facing } from "./picks";
 import type { Session } from "./session";
@@ -53,6 +54,10 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   cylinder: ["diameter", "height", "x", "y", "z"],
   sphere: ["diameter", "x", "y", "z"],
 };
+
+/** Most copies in one direction of a pattern, and in all (bigger takes minutes to build). */
+export const MAX_PATTERN = 100;
+export const MAX_PATTERN_TOTAL = 400;
 
 /** Which kinds have New / Add / Remove / Intersect. */
 const HAS_OPERATION: FeatureKind[] = ["extrude", "revolve", "box", "cylinder", "sphere"];
@@ -131,7 +136,7 @@ export function describePlane(plane: SketchPlane): string {
 }
 
 /** Set up (or change) a sketch feature's plane and shapes. */
-export function applySketch(f: Feature, a: Obj, ctx: SpecContext): { freedom: number } | null {
+export function applySketch(f: Feature, a: Obj, ctx: SpecContext): { freedom: number; dimensioned: boolean } | null {
   noExtras(a, ["name", "plane", "offset", "on_face", "part", "shapes", ...(ctx.editing ? ["feature", "suppressed"] : [])], ctx.editing ? "edit_feature (sketch)" : "add_sketch");
   if (has(a, "on_face") && has(a, "plane")) throw new InputError('Give either "plane" (Top, Front or Right) or "on_face" (a face of a part), not both.');
   if (has(a, "offset") && has(a, "on_face")) throw new InputError('"offset" goes with "plane" (e.g. {"plane":"Top","offset":10}); to sketch on a face, leave it out.');
@@ -140,14 +145,14 @@ export function applySketch(f: Feature, a: Obj, ctx: SpecContext): { freedom: nu
   else if (has(a, "plane") || has(a, "offset")) plane = namedPlane(has(a, "plane") ? a.plane : plane?.kind === "default" ? plane.name : undefined, a.offset, ctx);
   else if (!ctx.editing) plane = { kind: "default", name: "Top" };
   let data = f.sketch?.data;
-  let freedom: number | null = null;
+  let result: { freedom: number; dimensioned: boolean } | null = null;
   if (has(a, "shapes") || !ctx.editing) {
     const built = buildSketch(a.shapes, ctx.scope);
     data = built.data;
-    freedom = built.freedom;
+    result = { freedom: built.freedom, dimensioned: built.dimensioned };
   }
   f.sketch = { plane, data: data! };
-  return freedom === null ? null : { freedom };
+  return result;
 }
 
 const END_OF = { blind: "blind", symmetric: "symmetric", through_all: "throughAll", up_to_face: "upToFace" } as const;
@@ -180,6 +185,11 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       const ex = { ...(f.extrude ?? { end: "blind" as const, flip: false }) };
       if (has(a, "end")) ex.end = END_OF[oneOf(a.end, Object.keys(END_OF) as (keyof typeof END_OF)[], "end")];
       if (has(a, "flip")) ex.flip = bool(a.flip, "flip");
+      else if (!ctx.editing && f.operation === "remove") {
+        // A cut drawn on a face of the part goes into the part (the face's normal points out of it).
+        const plane = ctx.doc.features.find((x) => x.id === f.sketchRef)?.sketch?.plane;
+        if (plane?.kind === "face" && / face of /.test(plane.label)) ex.flip = true;
+      }
       if (ex.end === "blind" || ex.end === "symmetric") param(f, a, "depth", "depth", ctx, { positive: true, required: !ctx.editing || !f.params.depth });
       else if (has(a, "depth")) throw new InputError(`"depth" isn't used when end is "${a.end ?? ex.end}"; leave it out.`);
       if (has(a, "second_depth")) {
@@ -325,6 +335,14 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
         }
       }
       f.pattern = p;
+      // Big patterns take minutes to build: keep them to a sensible size.
+      const count = (key: string) => {
+        const r = evaluate(f.params[key] ?? "1", ctx.scope);
+        return r.ok ? r.value : 1;
+      };
+      const rows = kind === "linear_pattern" ? count("count2") : 1;
+      if (count("count") > MAX_PATTERN || rows > MAX_PATTERN) throw new InputError(`A pattern can have at most ${MAX_PATTERN} copies in each direction (asked for ${Math.max(count("count"), rows)}).`);
+      if (count("count") * rows > MAX_PATTERN_TOTAL) throw new InputError(`A pattern can have at most ${MAX_PATTERN_TOTAL} copies in all (asked for ${count("count")} × ${rows} = ${count("count") * rows}). Use fewer, or bigger spacing.`);
       break;
     }
 

@@ -68,7 +68,7 @@ async function main() {
       title: t.title,
       description: t.description,
       inputSchema: t.inputSchema,
-      annotations: { title: t.title, readOnlyHint: !!t.readOnly, destructiveHint: false, openWorldHint: false },
+      annotations: { title: t.title, readOnlyHint: !!t.readOnly, destructiveHint: !!t.destructive, openWorldHint: false },
     })),
   }));
 

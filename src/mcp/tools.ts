@@ -9,13 +9,15 @@ import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, 
 import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
 import { describeHole } from "../model/holes";
 import type { Feature, JuraCADDocument } from "../model/types";
-import { planeLabel } from "../sketch/planes";
+import { planeFrame, planeLabel } from "../sketch/planes";
+import { holePositionsIn } from "../sketch/holePositions";
+import { evaluate } from "../model/expr";
 import { analyzeSketch } from "../sketch/solver";
 import { DIMENSION_TYPES } from "../sketch/types";
 import type { PartMesh } from "../kernel/protocol";
 import { InputError, list, noExtras, object, oneOf, text, type Obj } from "./args";
 import { applyFeature, applySketch, describePlane, FEATURE_KINDS, KIND_OF, type FeatureKind, type SpecContext } from "./featureSpec";
-import { describeEdge, describeFace, edgeList, faceList, PICK_HELP } from "./picks";
+import { describeEdge, describeFace, edgeList, faceList, facing, PICK_HELP } from "./picks";
 import { renderViews, RENDER_VIEWS, type RenderView } from "./render";
 import type { Session } from "./session";
 import { SHAPE_HELP } from "./sketchShapes";
@@ -33,7 +35,17 @@ export interface ToolDef {
   inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[]; additionalProperties?: boolean };
   /** Only looks; changes nothing. */
   readOnly?: boolean;
+  /** Can replace a file, or drop the design being worked on. */
+  destructive?: boolean;
   run: (s: Session, a: Obj) => ToolResult | Promise<ToolResult>;
+}
+
+/** A file name made from the design's name, safe on every computer. */
+export function fileNameFor(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-").replace(/^[.\s]+|[.\s]+$/g, "").slice(0, 120);
+  if (!cleaned || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(cleaned)) return "design";
+  return cleaned;
 }
 
 const say = (...lines: (string | false | null | undefined)[]): ToolResult => ({ content: [{ type: "text", text: lines.filter((l) => l !== false && l !== null && l !== undefined).join("\n") }] });
@@ -46,8 +58,11 @@ export const FORMAT_GUIDE = `JuraCAD conventions (the same as Onshape):
 - Axes: Z is up. The Top plane is XY (seen from above), Front is XZ (seen from −Y, so +X is right and +Z up), Right is YZ (seen from +X).
 - Building a part: add_sketch (2D shapes on a plane or on a flat face of a part) → add_feature "extrude" (or "revolve") to make a solid → then holes, fillets, chamfers, shells, patterns, mirrors. Features build in order; later ones change the result of earlier ones, and every size stays editable in the app.
 - Sketches: on the Top plane sketch x/y are world X/Y. On Front, sketch x = X and sketch y = Z. On Right, sketch x = Y and sketch y = Z. On a face, add_sketch says where its axes point. Shapes are fully dimensioned from the sketch origin automatically.
+- Sketching on a face ("on_face"): the sketch origin is where the world origin lands on that face, and its axes are — top face: x = +X, y = +Y; bottom: x = −X, y = +Y; front: x = +X, y = +Z; back: x = −X, y = +Z; right: x = +Y, y = +Z; left: x = −Y, y = +Z. add_sketch also says where they point. "top" (and "front"…) means the outermost flat face facing that way; for another face use its number from list_faces (F3) or {"near": [x, y, z]}.
 - Extrude goes along the sketch plane's normal: up (+Z) from Top, towards −Y from Front, towards +X from Right; "flip": true goes the other way. "operation": "new" makes a separate part, "add" joins the latest part, "remove" cuts it, "intersect" keeps the overlap. The first solid is new; later ones default to add.
-- Holes: draw a sketch of points (or circles) on the face, then add_feature "hole" with a screw "size" ("M4"…) and "fit" ("clearance" for the screw to pass through, "tapped" for a thread). Holes drill into the face (against the sketch's normal).
+- Cuts: "operation": "remove" on a sketch drawn on a face of the part goes into the part by default. "end": "through_all" cuts right through, both ways from the sketch. A cut or hole that misses the part (or a fillet that changes nothing) is refused with advice — usually to flip it or draw it on the right face. Every change reports how each part's volume changed.
+- Holes: draw the points (or circles) on the face the holes start from (add_sketch with "on_face"), then add_feature "hole" with a screw "size" ("M4"…) and "fit" ("clearance" for the screw to pass through, "tapped" for a thread). Holes drill into the face (against the sketch's normal).
+- Limits: sizes and positions up to 10 000 mm; patterns up to 100 copies each way (400 in all); sketches up to 100 shapes, outlines up to 100 points.
 - Picking faces and edges: ${PICK_HELP.faces} ${PICK_HELP.edges} Numbers (F3, E5) change when the part changes, so list them again after changes.
 - A sketch on a face stays where that face was when it was drawn. If an earlier change moves the face (say, a thicker plate), put the sketch back with edit_feature {"feature": "Sketch 2", "on_face": "top"}.
 - Check your work: describe_design (volumes, sizes, validity, problems) and get_views (a picture). If something went wrong, edit_feature or undo.
@@ -138,21 +153,114 @@ function newErrors(before: Record<string, string>, after: Record<string, string>
   return Object.keys(after).filter((id) => before[id] !== after[id]);
 }
 
-/** Try a changed design: keep it if it builds without new problems, otherwise explain and change nothing. */
+/** Solid volume of each part, by id. */
+function volumes(parts: PartMesh[]): Map<string, { name: string; volume: number }> {
+  return new Map(parts.filter((p) => !p.surface).map((p) => [p.id, { name: p.name, volume: p.volume ?? 0 }]));
+}
+
+const total = (v: Map<string, { volume: number }>) => [...v.values()].reduce((n, p) => n + p.volume, 0);
+
+/** "Part 1: 7200 → 7009.17 mm³ (−190.83)" for each part whose volume changed. */
+function volumeChange(before: ReturnType<typeof volumes>, after: ReturnType<typeof volumes>): string | null {
+  const lines: string[] = [];
+  for (const [id, a] of after) {
+    const b = before.get(id);
+    if (!b) lines.push(`${a.name}: new, ${r2(a.volume)} mm³`);
+    else if (Math.abs(a.volume - b.volume) > 1e-6) lines.push(`${a.name}: ${r2(b.volume)} → ${r2(a.volume)} mm³ (${a.volume > b.volume ? "+" : "−"}${r2(Math.abs(a.volume - b.volume))})`);
+  }
+  for (const [id, b] of before) if (!after.has(id)) lines.push(`${b.name}: gone (was ${r2(b.volume)} mm³)`);
+  return lines.length ? `Volume change: ${lines.join("; ")}.` : "Volume change: none.";
+}
+
+/** Which way a sketch-based feature goes, in words ("+Z"). */
+function directionOf(f: Feature, doc: JuraCADDocument): string | null {
+  const sk = doc.features.find((x) => x.id === (f.sketchRef ?? f.hole?.sketchRef))?.sketch?.plane;
+  if (!sk || f.type === "revolve") return null;
+  const n = planeFrame(sk).n;
+  const sign = f.type === "hole" ? (f.hole?.flip ? 1 : -1) : f.extrude?.flip ? -1 : 1;
+  return facing([n[0] * sign, n[1] * sign, n[2] * sign]).replace(/ \(.*\)$/, "");
+}
+
+/**
+ * Did the feature do something? A cut or hole that misses the part (or only
+ * grazes it), or a rounding that changes nothing, is almost always a mistake
+ * (usually the wrong direction), so it's refused with advice.
+ */
+function effectProblem(s: Session, f: Feature, doc: JuraCADDocument, before: ReturnType<typeof volumes>, after: ReturnType<typeof volumes>, toolVolume: number | null): string | null {
+  if (f.suppressed) return null;
+  const change = total(after) - total(before);
+  const dir = directionOf(f, doc);
+  const going = dir ? ` It goes towards ${dir} from its sketch.` : "";
+  if (f.type === "hole") {
+    const sketch = doc.features.find((x) => x.id === f.hole?.sketchRef)?.sketch;
+    const n = sketch ? holePositionsIn(sketch.data).length : 0;
+    const d = evaluate(f.params.diameter ?? "0", s.scope(doc));
+    if (!n || !d.ok) return null;
+    // At least 0.2 mm deep on average at every hole.
+    const least = n * Math.PI * (d.value / 2) ** 2 * 0.2;
+    if (-change < least) {
+      return `${f.name} would remove only ${r2(Math.max(0, -change))} mm³ — the holes miss the part (or barely touch it).${going} Draw the hole points on the face the holes start from (add_sketch with "on_face", e.g. "top"), or use "flip": true to drill the other way.`;
+    }
+    return null;
+  }
+  if (["extrude", "revolve", "box", "cylinder", "sphere"].includes(f.type)) {
+    const tool = toolVolume ?? 0;
+    const through = f.type === "extrude" && f.extrude?.end === "throughAll";
+    if (f.operation === "remove") {
+      const enough = through ? 1e-3 : Math.max(1e-3, 0.02 * tool);
+      if (-change < enough) {
+        return `${f.name} would cut only ${r2(Math.max(0, -change))} mm³ from the part — it misses it (or barely touches it).${going} ${f.type === "extrude" ? 'Try "flip": true to go the other way, or end "through_all" (which cuts both ways).' : "Check its position against the part (describe_design gives the part's size and position)."}`;
+      }
+    } else if (f.operation === "add" && tool > 1e-6 && change < 1e-3) {
+      return `${f.name} would add nothing: it's entirely inside the part already.${going} ${f.type === "extrude" ? 'Try "flip": true to go the other way.' : "Check its position."}`;
+    } else if (f.operation === "intersect" && Math.abs(change) < 1e-3) {
+      return `${f.name} would change nothing: the part is already entirely inside it.`;
+    }
+    return null;
+  }
+  if ((f.type === "fillet" || f.type === "chamfer" || f.type === "shell") && Math.abs(change) < 1e-4) {
+    return `${f.name} would change nothing. Check the ${f.type === "shell" ? "faces" : "edges"} chosen (list_${f.type === "shell" ? "faces" : "edges"} shows them).`;
+  }
+  return null;
+}
+
+/**
+ * Try a changed design: keep it if it builds without new problems and the
+ * feature does something, otherwise explain and change nothing. Returns the
+ * report of the parts, starting with how their volumes changed.
+ */
 function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, verb: string): string[] {
   const before = s.build().errors;
+  const beforeVolumes = volumes(s.build().parts);
   const after = s.build(next.features, next).errors;
   const fresh = newErrors(before, after);
+  const refuse = (why: string) => {
+    s.build();
+    throw new InputError(`Couldn't ${verb}${why}\nNothing was changed. Adjust the settings and try again${featureId && s.doc.features.some((f) => f.id === featureId) ? " (or delete_feature it)" : ""}.`);
+  };
   if (fresh.length) {
     const lines = fresh.map((id) => {
       const name = next.features.find((f) => f.id === id)?.name ?? s.doc.features.find((f) => f.id === id)?.name ?? id;
       return `- ${id === featureId ? `${name} (this one)` : name}: ${after[id]}`;
     });
-    s.build();
-    throw new InputError(`Couldn't ${verb} — it wouldn't build:\n${lines.join("\n")}\nNothing was changed. Adjust the settings and try again${featureId && s.doc.features.some((f) => f.id === featureId) ? " (or delete_feature it)" : ""}.`);
+    refuse(` — it wouldn't build:\n${lines.join("\n")}`);
+  }
+  const afterVolumes = volumes(s.build(next.features, next).parts);
+  const f = featureId ? next.features.find((x) => x.id === featureId) : undefined;
+  if (f) {
+    // What this feature itself does: the parts just before it, and just after.
+    const at = next.features.indexOf(f);
+    const isLast = at === next.features.length - 1 && next.features.slice(0, at).every((x, i) => x === s.doc.features[i]) && s.doc.features.length === at;
+    const pre = isLast ? beforeVolumes : volumes(s.build(next.features.slice(0, at), next).parts);
+    const post = isLast ? afterVolumes : volumes(s.build(next.features.slice(0, at + 1), next).parts);
+    // The solid it added or cut, from the build just made.
+    const toolVolume = s.engineAsBuilt((e) => e.featureToolVolume(f.id));
+    if (!isLast) s.build(next.features, next);
+    const problem = effectProblem(s, f, next, pre, post, toolVolume);
+    if (problem) refuse(`: ${problem}`);
   }
   s.commit(next);
-  return partsReport(s);
+  return [volumeChange(beforeVolumes, afterVolumes)!, ...partsReport(s)];
 }
 
 function context(s: Session, before: Feature[] | null, editing: boolean): SpecContext {
@@ -175,9 +283,9 @@ const SHAPES_SCHEMA = {
 };
 
 const KIND_HELP: Record<FeatureKind, string> = {
-  extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" | "up_to_face" with up_to_face, up_to_part), flip, second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), operation',
+  extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" (right through, both ways) | "up_to_face" with up_to_face, up_to_part), flip (a "remove" cut on a face sketch goes into the part unless flip is given), second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), operation',
   revolve: 'revolve: sketch, axis ("vertical" | "horizontal" — the sketch\'s axes through its origin — or {"from":[x,y],"to":[x,y]} naming a line drawn in the sketch), angle (° default 360), symmetric, flip, areas, operation',
-  hole: 'hole: sketch (whose points and circle centres mark the holes), size ("M2"…"M12") with fit ("clearance" default | "tapped"), or diameter for a custom hole; style ("simple" | "counterbore" | "countersink"), end ("through_all" default | "blind" with depth), flip. Custom holes may set counterbore_diameter/counterbore_depth/countersink_diameter/countersink_angle',
+  hole: 'hole: sketch (whose points and circle centres mark the holes — draw it on the face the holes start from, with add_sketch "on_face"), size ("M2"…"M12") with fit ("clearance" default | "tapped"), or diameter for a custom hole; style ("simple" | "counterbore" | "countersink"), end ("through_all" default | "blind" with depth), flip. Custom holes may set counterbore_diameter/counterbore_depth/countersink_diameter/countersink_angle',
   fillet: "fillet: edges (see edge choices), radius, end_radius (optional, a radius growing along the edge), part (default the latest)",
   chamfer: "chamfer: edges, distance, and optionally second_distance or angle (°), flip_side, part",
   shell: "shell: faces to leave open (empty list = hollow inside, closed), thickness, outside (walls grow outwards), part",
@@ -203,6 +311,7 @@ export const TOOLS: ToolDef[] = [
     name: "new_design",
     title: "Start a new design",
     description: "Start a new, empty design (the current one is dropped, so save it first if it matters).",
+    destructive: true,
     inputSchema: {
       type: "object",
       properties: {
@@ -226,7 +335,7 @@ export const TOOLS: ToolDef[] = [
     name: "add_sketch",
     title: "Draw a sketch",
     description:
-      'Draw a 2D sketch on a plane ("Top" = XY, "Front" = XZ, "Right" = YZ, optionally moved by "offset" mm along its normal) or on a flat face of a part ("on_face", e.g. "top" or "F3", with "part"). Shapes are placed in the sketch\'s own x, y (mm) and dimensioned from its origin, so the sketch is fully defined and editable in the app. Then use add_feature (extrude, revolve, hole). ' +
+      'Draw a 2D sketch on a plane ("Top" = XY, "Front" = XZ, "Right" = YZ, optionally moved by "offset" mm along its normal) or on a flat face of a part ("on_face": "top" = the outermost face facing +Z, likewise "bottom", "front", "back", "left", "right"; or "F3" from list_faces, or {"near":[x,y,z]}; with "part"). On a face the sketch origin is where the world origin lands on it and its axes are: top x=+X y=+Y; bottom x=−X y=+Y; front x=+X y=+Z; back x=−X y=+Z; right x=+Y y=+Z; left x=−Y y=+Z. Shapes are placed in the sketch\'s own x, y (mm) and dimensioned from its origin, so the sketch is fully defined and editable in the app. Then use add_feature (extrude, revolve, hole). ' +
       SHAPE_HELP.join("; "),
     inputSchema: {
       type: "object",
@@ -249,7 +358,11 @@ export const TOOLS: ToolDef[] = [
       const free = r?.freedom ?? 0;
       return say(
         `Added ${f.name} [id ${f.id}] on ${planeLabel(f.sketch!.plane!)}: ${f.sketch!.data.curves.filter((c) => !c.construction).length} curves, ${f.sketch!.data.points.filter((p) => p.standalone).length} points.`,
-        free === 0 ? "It's fully defined (every size and position is dimensioned)." : `It has ${free} way(s) still free to move (fine for building, but the app shows it in blue).`,
+        r && !r.dimensioned
+          ? "It has too many points to dimension them all, so it isn't fully defined (fine for building; the app shows it in blue)."
+          : free === 0
+            ? "It's fully defined (every size and position is dimensioned)."
+            : `It has ${free} way(s) still free to move (fine for building, but the app shows it in blue).`,
         `On this plane ${describePlane(f.sketch!.plane!)}.`,
         ...report,
       );
@@ -502,11 +615,12 @@ export const TOOLS: ToolDef[] = [
     name: "save_design",
     title: "Save the design",
     description: 'Save the design as a .juracad file in the JuraCAD folder (the owner opens it in JuraCAD with Open). "filename" defaults to the design\'s name. An existing file other than the one this design came from is only replaced with "overwrite": true.',
+    destructive: true,
     inputSchema: { type: "object", properties: { filename: { type: "string" }, overwrite: { type: "boolean" } } },
     run: (s, a) => {
       noExtras(a, ["filename", "overwrite"], "save_design");
       const folder = needFolder(s);
-      const name = a.filename === undefined ? s.doc.name.replace(/[\\/:*?"<>|]+/g, "-") : text(a.filename, "filename");
+      const name = a.filename === undefined ? fileNameFor(s.doc.name) : text(a.filename, "filename");
       const path = folder.pathFor(name, [FILE_EXTENSION], "file");
       if (folder.exists(path) && path !== s.file && a.overwrite !== true) {
         throw new InputError(`There's already a file called "${path.split(/[\\/]/).pop()}" in ${folder.root}. Choose another filename, or pass "overwrite": true to replace it.`);
@@ -523,6 +637,7 @@ export const TOOLS: ToolDef[] = [
     name: "open_design",
     title: "Open a design",
     description: "Open a .juracad (or older .partsmith) design from the JuraCAD folder, to look at or change it. The current design is replaced (save it first if it matters).",
+    destructive: true,
     inputSchema: { type: "object", properties: { filename: { type: "string" } }, required: ["filename"] },
     run: (s, a) => {
       noExtras(a, ["filename"], "open_design");
@@ -546,6 +661,7 @@ export const TOOLS: ToolDef[] = [
     name: "export_model",
     title: "Export for printing or making",
     description: 'Export the parts to the JuraCAD folder: "stl" or "3mf" for 3D printing, "step" (exact shapes) for other CAD programs and manufacturers. Optionally only one "part".',
+    destructive: true,
     inputSchema: {
       type: "object",
       properties: { format: { type: "string", enum: ["stl", "3mf", "step"] }, filename: { type: "string" }, part: { type: "string" }, overwrite: { type: "boolean" } },
@@ -559,7 +675,7 @@ export const TOOLS: ToolDef[] = [
       if (!b.parts.length) throw new InputError("There's nothing to export yet: no parts.");
       const ids = a.part !== undefined ? [s.part(b.parts, a.part, "part").id] : [];
       const ext = format === "step" ? ".step" : `.${format}`;
-      const path = folder.pathFor(a.filename === undefined ? s.doc.name.replace(/[\\/:*?"<>|]+/g, "-") : text(a.filename, "filename"), [ext], "file");
+      const path = folder.pathFor(a.filename === undefined ? fileNameFor(s.doc.name) : text(a.filename, "filename"), [ext], "file");
       if (folder.exists(path) && a.overwrite !== true) throw new InputError(`There's already a file called "${path.split(/[\\/]/).pop()}". Choose another filename, or pass "overwrite": true.`);
       const bytes = await s.withEngine(async (e) => {
         if (format === "stl") return new Uint8Array(e.exportStl(ids, "normal").stl);

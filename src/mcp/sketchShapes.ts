@@ -10,11 +10,19 @@
  * share corners don't end up over-defined).
  */
 import { setCurrentScope, type Scope } from "../model/expr";
-import { addArc, addCircle, addLine, addPoint, addRectangle, settle, sketchId, type Placed } from "../sketch/ops";
+import { addArc, addCircle, addLine, addPoint, addRectangle, curvePoints, settle, sketchId, type Placed } from "../sketch/ops";
 import { analyzeSketch, solveSketch } from "../sketch/solver";
 import { addCentreRectangle, addPolygon, addSlot, mergeCoincident } from "../sketch/tools";
 import { emptySketch, ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine } from "../sketch/types";
 import { amount, bool, InputError, noExtras, object, oneOf, tidy, xy, type Amount, type Obj } from "./args";
+
+/** Limits that keep a sketch quick to build (the dimensioning is checked one dimension at a time). */
+export const MAX_SHAPES = 100;
+export const MAX_OUTLINE_POINTS = 100;
+/** The most points a sketch may have in all. */
+export const MAX_POINTS = 600;
+/** Above this many points, shapes aren't dimensioned (it would take too long); they still build. */
+export const MAX_DIMENSIONED_POINTS = 120;
 
 export const SHAPE_TYPES = ["rectangle", "circle", "line", "arc", "slot", "polygon", "outline", "point"] as const;
 export type ShapeType = (typeof SHAPE_TYPES)[number];
@@ -23,6 +31,8 @@ export interface BuiltSketch {
   data: SketchData;
   /** How many ways the sketch could still move or change size (0 = fully defined). */
   freedom: number;
+  /** False when the sketch had too many points to dimension (it still builds). */
+  dimensioned: boolean;
   /** For each shape, the ids of the curves (and standalone points) it made. */
   shapes: { type: ShapeType; ids: string[] }[];
 }
@@ -93,22 +103,22 @@ function check<T extends { error?: string }>(r: T, where: string): T {
 
 /** Join points that sit in the same place (shapes drawn to meet, like a person snapping to a corner). */
 function joinTouching(s: SketchData): SketchData {
-  let sketch = s;
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (let i = 0; i < sketch.points.length && !changed; i++) {
-      for (let j = i + 1; j < sketch.points.length; j++) {
-        const a = sketch.points[i];
-        const b = sketch.points[j];
-        if (!near([a.x, a.y], [b.x, b.y])) continue;
-        const joined = { ...sketch, constraints: [...sketch.constraints, { id: sketchId("c"), type: "coincident" as const, refs: [a.id, b.id] }] };
-        const merged = mergeCoincident(joined, a.id);
-        sketch = { ...merged, points: merged.points.map((p) => (p.id === a.id ? { ...p, standalone: a.standalone || b.standalone || undefined } : p)) };
-        changed = true;
-        break;
-      }
-    }
+  const cell = (x: number) => Math.round(x * 1e5);
+  const byPlace = new Map<string, string[]>();
+  for (const p of s.points) {
+    const key = `${cell(p.x)},${cell(p.y)}`;
+    byPlace.set(key, [...(byPlace.get(key) ?? []), p.id]);
   }
+  let sketch = s;
+  for (const ids of byPlace.values()) {
+    if (ids.length < 2) continue;
+    const keep = ids[0];
+    const standalone = ids.some((id) => s.points.find((p) => p.id === id)?.standalone);
+    const joined = { ...sketch, constraints: [...sketch.constraints, ...ids.slice(1).map((id) => ({ id: sketchId("c"), type: "coincident" as const, refs: [keep, id] }))] };
+    const merged = mergeCoincident(joined, keep);
+    sketch = { ...merged, points: merged.points.map((p) => (p.id === keep && standalone ? { ...p, standalone: true } : p)) };
+  }
+  if (sketch === s) return s;
   // The same constraint twice (two points both joined to the origin, say) adds nothing.
   const seen = new Set<string>();
   const constraints = sketch.constraints.filter((c) => {
@@ -117,7 +127,26 @@ function joinTouching(s: SketchData): SketchData {
     seen.add(key);
     return true;
   });
-  return { ...sketch, points: sketch.points.map((p) => (p.standalone ? p : (({ standalone: _s, ...rest }) => (void _s, rest))(p))), constraints };
+  return { ...sketch, constraints };
+}
+
+/** Which group of joined-up curves and points each id belongs to (things not touching are separate groups). */
+function connectedGroups(s: SketchData): (id: string) => string {
+  const parent = new Map<string, string>();
+  const find = (id: string): string => {
+    let r = id;
+    while (parent.has(r) && parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(id, r);
+    return r;
+  };
+  const join = (a: string, b: string) => {
+    if (a === ORIGIN_ID || b === ORIGIN_ID) return;
+    const [ra, rb] = [find(a), find(b)];
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  for (const c of s.curves) for (const p of curvePoints(c)) join(c.id, p);
+  for (const c of s.constraints) for (const r of c.refs.slice(1)) join(c.refs[0], r);
+  return find;
 }
 
 const lineOf = (s: SketchData, id: string) => s.curves.find((c) => c.id === id) as SketchLine;
@@ -127,6 +156,7 @@ export function buildSketch(shapesIn: unknown, scope: Scope): BuiltSketch {
   if (!Array.isArray(shapesIn) || shapesIn.length === 0) {
     throw new InputError('shapes is missing: give a list of shapes, e.g. [{"type":"rectangle","corner":[0,0],"width":60,"height":40}].');
   }
+  if (shapesIn.length > MAX_SHAPES) throw new InputError(`A sketch can have at most ${MAX_SHAPES} shapes here (got ${shapesIn.length}). Split it into several sketches, or use a pattern feature for repeats.`);
   // Dimensions may use the design's variables: the solver reads them from the current scope.
   setCurrentScope(scope);
   let s = emptySketch();
@@ -287,6 +317,7 @@ export function buildSketch(shapesIn: unknown, scope: Scope): BuiltSketch {
       }
       case "outline": {
         if (!Array.isArray(o.points) || o.points.length < 2) throw new InputError(`${where}.points should be a list of at least 2 points [[x,y], [x,y], …].`);
+        if (o.points.length > MAX_OUTLINE_POINTS) throw new InputError(`${where}: an outline can have at most ${MAX_OUTLINE_POINTS} points (got ${o.points.length}). Use arcs or a slot for curves, or fewer points.`);
         const pts = (o.points as unknown[]).map((p, j) => xy(p, `${where}.points[${j}]`, scope));
         const closed = bool(o.closed, `${where}.closed`, true);
         if (closed && pts.length < 3) throw new InputError(`${where}: a closed outline needs at least 3 points.`);
@@ -298,7 +329,7 @@ export function buildSketch(shapesIn: unknown, scope: Scope): BuiltSketch {
           if (near(pt(a), pt(b))) throw new InputError(`${where}.points[${j}] and the next point are the same; remove one.`);
           const orientation = Math.abs(a[1].value - b[1].value) < 1e-9 ? "horizontal" : Math.abs(a[0].value - b[0].value) < 1e-9 ? "vertical" : null;
           const r = check(addLine(s, placed(a), placed(b), { construction, orientation }), `${where}.points[${j}]`);
-          s = joinTouching(r.sketch);
+          s = r.sketch;
           ids.push(r.lineId);
         }
         made.push({
@@ -321,33 +352,55 @@ export function buildSketch(shapesIn: unknown, scope: Scope): BuiltSketch {
       }
     }
     s = joinTouching(s);
+    if (s.points.length > MAX_POINTS) throw new InputError(`This sketch has too many points (over ${MAX_POINTS}) to build quickly. Split it into several sketches, or use a pattern feature for repeats.`);
   });
 
   // Dimension everything, keeping each dimension only if it pins something down that wasn't already.
-  let freedom = analyzeSketch(s).freedom;
-  const curveIds = new Set(s.curves.map((c) => c.id));
-  for (const shape of made) {
-    // Points made by a shape keep their ids unless joined to another, so look them up again now.
-    let candidates: Candidate[];
-    try {
-      candidates = shape.dims(s);
-    } catch {
-      continue;
+  // Shapes that don't touch are worked out separately (much quicker than the whole sketch at once).
+  const dimension = s.points.length <= MAX_DIMENSIONED_POINTS;
+  if (dimension) {
+    const groups = new Map<string, { shapes: typeof made }>();
+    const root = connectedGroups(s);
+    for (const shape of made) {
+      const key = root(shape.ids[0]);
+      if (!groups.has(key)) groups.set(key, { shapes: [] });
+      groups.get(key)!.shapes.push(shape);
     }
-    for (const c of candidates) {
-      if (freedom === 0) break;
-      if (c.refs.some((r) => r !== ORIGIN_ID && !curveIds.has(r) && !s.points.some((p) => p.id === r))) continue;
-      const next = { ...s, constraints: [...s.constraints, { id: sketchId(c.value !== undefined ? "d" : "c"), ...c }] };
-      const solved = solveSketch(next);
-      if (!solved.ok) continue;
-      const f = analyzeSketch(solved.sketch).freedom;
-      if (f < freedom) {
-        s = solved.sketch;
-        freedom = f;
+    const added: SketchConstraint[] = [];
+    for (const [key, g] of groups) {
+      const inGroup = (id: string) => id === ORIGIN_ID || root(id) === key;
+      let sub: SketchData = {
+        points: s.points.filter((p) => inGroup(p.id)),
+        curves: s.curves.filter((c) => inGroup(c.id)),
+        constraints: s.constraints.filter((c) => c.refs.every(inGroup)),
+      };
+      let freedom = analyzeSketch(sub).freedom;
+      for (const shape of g.shapes) {
+        let candidates: Candidate[];
+        try {
+          candidates = shape.dims(sub);
+        } catch {
+          continue;
+        }
+        for (const c of candidates) {
+          if (freedom === 0) break;
+          if (!c.refs.every(inGroup)) continue;
+          const con = { id: sketchId(c.value !== undefined ? "d" : "c"), ...c };
+          const solved = solveSketch({ ...sub, constraints: [...sub.constraints, con] });
+          if (!solved.ok) continue;
+          const f = analyzeSketch(solved.sketch).freedom;
+          if (f < freedom) {
+            sub = solved.sketch;
+            freedom = f;
+            added.push(con);
+          }
+        }
       }
     }
+    s = { ...s, constraints: [...s.constraints, ...added] };
   }
+  const freedom = analyzeSketch(s).freedom;
   s = settle(s).sketch;
-  return { data: s, freedom, shapes: made.map((m) => ({ type: m.type, ids: m.ids })) };
+  return { data: s, freedom, shapes: made.map((m) => ({ type: m.type, ids: m.ids })), dimensioned: dimension };
 }
 

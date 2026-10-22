@@ -73,6 +73,8 @@ check(manifest.author?.name && manifest.description, "The manifest needs an auth
 check(manifest.server?.type === "node" && existsSync(join(dir, manifest.server.entry_point)), "The server's entry point is missing.");
 check(existsSync(join(dir, "server", "replicad_single.wasm")), "The geometry engine (replicad_single.wasm) is missing.");
 check(existsSync(join(dir, manifest.icon)), "The icon is missing.");
+for (const f of ["LICENSE", "LICENSE-OpenCascade.txt", "THIRD-PARTY-NOTICES.txt"]) check(existsSync(join(dir, f)), `${f} is missing.`);
+check(!manifest.compatibility?.platforms?.includes("linux"), "Claude's desktop app runs on macOS and Windows only.");
 check(manifest.user_config?.design_folder?.type === "directory", "The design folder setting should be a directory.");
 check(manifest.server.mcp_config.args.includes("${user_config.design_folder}"), "The server should be given the design folder.");
 check(Array.isArray(manifest.tools) && manifest.tools.length >= 10, "The manifest should list the tools.");

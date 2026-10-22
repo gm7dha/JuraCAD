@@ -55,6 +55,10 @@ jobs:
             exit 1
           }
 
+      - name: Report the versions of the Claude extension's tools
+        run: |
+          echo "::notice title=Tool versions::sdk $(node -p "require('./node_modules/@modelcontextprotocol/sdk/package.json').version") zod $(node -p "require('./node_modules/zod/package.json').version") esbuild $(node -p "require('./node_modules/esbuild/package.json').version") mcpb $(npx --yes @anthropic-ai/mcpb --version 2>&1 | tail -1)"
+
       # JuraCAD for Claude: the extension for the Claude desktop app (an .mcpb
       # bundle), built from src/mcp and put on the site for download.
       - name: Build the Claude extension
