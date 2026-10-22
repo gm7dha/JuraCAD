@@ -215,6 +215,9 @@ export class LiveBridge implements LiveLink {
       s.adopt(studioView(this.doc, this.studio), { doc: this.doc, studio: this.studio });
       this.adopted = this.version;
     }
+    // The version and Part Studio this change is made from (more may arrive from the tab while the tool runs).
+    const base = this.version;
+    const studioAtStart = this.studio;
     const snap = s.snapshot();
     const result = await run();
     const replaced = s.generation !== snap.generation;
@@ -224,27 +227,37 @@ export class LiveBridge implements LiveLink {
       s.restore(snap);
       return this.notApplied("The JuraCAD tab disconnected before this change could be sent, so it wasn't made. Nothing was changed. Ask the user to click Connect to Claude again (or work on your own copy and save_design).");
     }
-    const studio = replaced ? MAIN_STUDIO : this.studio;
-    const full = replaced ? s.doc : s.wholeDoc();
-    const label = describeChange(tool, snap.doc, s.doc, replaced);
+    const studio = replaced ? MAIN_STUDIO : studioAtStart;
     const id = this.nextId++;
-    const base = this.version;
-    const reply = await new Promise<Reply>((resolve) => {
-      const p: Pending = { full, studio, base, resolve };
-      this.pending.set(id, p);
-      const timer = setTimeout(() => {
-        // Keep listening: if it's applied later, the bridge still learns the new version.
-        p.resolve = null;
-        resolve({ type: "timeout" });
-      }, this.replyTimeout);
-      timer.unref?.();
-      p.resolve = (r) => {
-        clearTimeout(timer);
-        p.resolve = null;
-        resolve(r);
-      };
-      this.send(conn, { type: "change", id, base, studio, file: serializeDocument(full), label, replace: replaced });
-    });
+    let full: JuraCADDocument;
+    let label: string;
+    let reply: Reply;
+    try {
+      full = replaced ? s.doc : s.wholeDoc();
+      label = describeChange(tool, snap.doc, s.doc, replaced);
+      const message = { type: "change", id, base, studio, file: serializeDocument(full), label, replace: replaced } as const;
+      reply = await new Promise<Reply>((resolve) => {
+        const p: Pending = { full, studio, base, resolve };
+        this.pending.set(id, p);
+        const timer = setTimeout(() => {
+          // Keep listening: if it's applied later, the bridge still learns the new version.
+          p.resolve = null;
+          resolve({ type: "timeout" });
+        }, this.replyTimeout);
+        timer.unref?.();
+        p.resolve = (r) => {
+          clearTimeout(timer);
+          p.resolve = null;
+          resolve(r);
+        };
+        this.send(conn, message);
+      });
+    } catch (e) {
+      this.pending.delete(id);
+      s.restore(snap);
+      this.adopted = -1;
+      return this.notApplied(`This change couldn't be sent to JuraCAD (${e instanceof Error ? e.message : String(e)}). Nothing was changed.`);
+    }
     if (reply.type === "applied") {
       this.adopted = this.version;
       s.outer = { doc: full, studio };

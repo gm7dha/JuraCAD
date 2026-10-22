@@ -267,6 +267,25 @@ describe("Live with Claude", () => {
     expect(app.doc.features.length).toBe(3);
   });
 
+  it("refuses a change if the user's edit arrives while the tool is still running", async () => {
+    const { app, client, bridge, session } = await setup(emptyDocument("Start"));
+    await client.connect();
+    await until(() => bridge.connected, "connected");
+    // A slow tool (like an export): the user's change reaches the extension half-way through.
+    const r = await bridge.call(session, "rename", async () => {
+      app.edit((d) => ({ ...d, name: "The user's name" }));
+      await until(() => bridge.version === 2, "the user's change");
+      session.commit({ ...session.doc, name: "Claude's name" });
+      return { content: [{ type: "text", text: "renamed" }] };
+    });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toMatch(/at the same moment/);
+    expect(app.doc.name).toBe("The user's name");
+    expect(app.applied).toEqual([]);
+    // Claude's next look is at the user's design.
+    expect(await ok(session, "describe_design")).toMatch(/Design "The user's name"/);
+  });
+
   it("works on the Part Studio on show and leaves the others alone", async () => {
     const second = "ps2";
     const { app, client, bridge, session } = await setup(addStudio(emptyDocument("Two studios"), second));
