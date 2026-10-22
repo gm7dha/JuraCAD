@@ -8,6 +8,7 @@ import { parseConfigurations } from "./configurations";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
 import { parseMaterials } from "./materials";
+import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
 import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, PartStudio } from "./types";
@@ -83,6 +84,11 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.operation = "new";
   }
   if (type === "flange" || type === "hem" || type === "cornerBreak") feature.picks = [];
+  if (type === "bend" || type === "jog") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    feature.sketchRef = sketches[sketches.length - 1]?.id;
+    feature.operation = "add";
+  }
   if (type === "tab") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
     feature.sketchRef = sketches[sketches.length - 1]?.id;
@@ -431,8 +437,10 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       const rd = (f.replaceDef ?? {}) as Record<string, unknown>;
       feature.replaceDef = { target: rd.target ? parsePlane(rd.target) ?? null : null, picking: rd.picking === "target" ? "target" : "faces" };
     }
-    if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab" || feature.type === "wrap") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
-    if ((feature.type === "sheetMetal" || feature.type === "flange" || feature.type === "hem") && f.flipSide === true) feature.flipSide = true;
+    if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab" || feature.type === "wrap" || feature.type === "bend" || feature.type === "jog") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+    if ((feature.type === "sheetMetal" || feature.type === "flange" || feature.type === "hem" || feature.type === "bend" || feature.type === "jog") && f.flipSide === true) feature.flipSide = true;
+    if ((feature.type === "bend" || feature.type === "jog") && f.keepOtherSide === true) feature.keepOtherSide = true;
+    if ((feature.type === "flange" || feature.type === "hem") && f.mitreCorners === true) feature.mitreCorners = true;
     if (feature.type === "flange" && f.closeCorners === true) feature.closeCorners = true;
     if (feature.type === "flange" && (f.reliefShape === "round" || f.reliefShape === "tear")) feature.reliefShape = f.reliefShape;
     if (feature.type === "flange" && (f.cornerRelief === "round" || f.cornerRelief === "square")) feature.cornerRelief = f.cornerRelief;
@@ -442,6 +450,11 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "cornerBreak" && f.breakStyle === "chamfer") feature.breakStyle = "chamfer";
     if (feature.type === "deleteFace" && f.leaveOpen === true) feature.leaveOpen = true;
     if (feature.type === "fill" && f.continuity === "tangent") feature.continuity = "tangent";
+    if (feature.type === "extendSurface" && f.extendTo && typeof f.extendTo === "object") {
+      const et = f.extendTo as Record<string, unknown>;
+      const target = parsePick(et.target);
+      if (et.mode === "face" || et.mode === "part") feature.extendTo = { mode: et.mode, ...(target ? { target } : {}) };
+    }
     if (feature.type === "derived") {
       const dv = (f.derived ?? {}) as Record<string, unknown>;
       if (typeof dv.studioId === "string" && typeof dv.partId === "string") feature.derived = { studioId: dv.studioId, partId: dv.partId };
@@ -549,6 +562,7 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...(typeof d.studioName === "string" && d.studioName.trim() && d.studioName.trim() !== "Part Studio 1" ? { studioName: d.studioName.trim() } : {}),
     ...(partStudios.length ? { partStudios } : {}),
     ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),
+    ...(Object.keys(parsePartProperties(d.partProperties)).length ? { partProperties: parsePartProperties(d.partProperties) } : {}),
     ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
     ...(parseDrawings(d.drawings).length ? { drawings: parseDrawings(d.drawings) } : {}),
     ...configurationsOf(d),

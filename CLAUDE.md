@@ -23,7 +23,12 @@
   just their meshes; the client carries skipped results forward and the store merges by `studioId`.
 - Assemblies: `src/assembly/` — `math.ts` (placements: move + quaternion), `assembly.ts` (pure document edits, parts
   list, parsing), `connectors.ts` (mate connector frames from display meshes), `mates.ts` (mate types, limits and the solver:
-  spreads out from fixed parts; loops are only checked), `explode.ts` (exploded-view offsets; display and drawings only), `groups.ts` (Group: parts locked together; the solver links each to the group's first part). UI in `src/app/AssemblyUI.tsx`; instances are drawn as
+  spreads out from fixed parts; loops are only checked), `explode.ts` (exploded-view offsets; display and drawings only), `groups.ts` (Group: parts locked together; the solver links each to the group's first part), `suppress.ts` (suppressed
+  instances: `withoutSuppressed` is what the solver sees; exports/checks/parts list skip them), `origin.ts` (mates to the
+  assembly origin: connector instanceId `@origin`, a virtual fixed part in the solver), `properties.ts` (part number,
+  description, custom properties: `doc.partProperties`), `assemblyCheck.ts` (clash report; `judgeContact` decides clash vs
+  touching from the engine's measurements in `src/kernel/clash.ts`). Connectors can sit at an edge's ends, halfway round,
+  or where clicked (`MateConnector.spot`/`point`, `spotFrame`). UI in `src/app/AssemblyUI.tsx`; instances are drawn as
   copies of part meshes moved with `SceneManager.setPlacements`.
 - Drawings: `src/drawing/` — `drawing.ts` (document edits, parsing), `cameras.ts` (view directions; first-angle),
   `annotations.ts` (centre marks/lines, section hatching, balloons), `sections.ts` (section cuts drawn on a view:
@@ -37,7 +42,13 @@
   A flange's `position` ("outside"/"inside" flush) cuts its edge back when the wall is made (`setBack` in sheet.ts; the
   strips cut off are `FoldedSheet.trims`). Corner break (`SheetSpec.corners`, `cornerBreakCut`, `findSheetCorner`) cuts
   wall corners; cuts are traced on walls and bends (`bendCutLines`) and the flat pattern's `boundary` is then taken from
-  the part laid flat (`laidFlat` in engine.ts).
+  the part laid flat (`laidFlat` in engine.ts). Bend/Jog are `FlangeSpec`s with a `line` (in the wall's coordinates;
+  the piece on its right moves): `splitWall` cuts the wall in two (the line is the bend's middle, so the flat pattern
+  keeps the drawn shape); bends already on that wall must be on the piece that stays (they're renumbered); `Bend.moved` is where the moving piece's frame
+  goes, and the engine (`bendMaterial`) moves the part's own material there so earlier holes come along. A flange's
+  `mitre` (gap) trims walls meeting at a corner along its diagonal as soon as both are bent (`mitreCorner`, `FoldedSheet.mitres`;
+  not one up and one down, nor walls that already have flanges); the engine
+  cuts the same off neighbours made earlier. Off unless chosen, so old files rebuild the same.
 - Surfaces: `src/kernel/surface.ts` (extrude/revolve/sweep/loft of a sketch's open or closed runs — `findChains` in
   `src/sketch/regions.ts` — as shells; Fill from edges; thicken, enclose and offset). A surface part has `surface: true`
   (BuiltPart and PartMesh); solid features add to / cut from the latest *solid* part, never a surface. replicad's
@@ -45,7 +56,8 @@
   Thicken builds a real solid (skin + offset + walls between their rims); Split takes a surface as the cutter
   (`splitBySurface`); Ruled surface sweeps strips from edges; STEP import brings surfaces in as a surface part.
   Fill `continuity: "tangent"` meets the neighbouring faces smoothly (OCCT filling, G1); Thicken `bothSides`; Delete face
-  `leaveOpen` turns a solid into a surface; Extend surface samples curved edges and fills corners; Enclose failures name
+  `leaveOpen` turns a solid into a surface; Extend surface samples curved edges and fills corners, or goes up to a face (a flat one as its whole plane) or
+  part (`extendTo`: long strips split by the target, keeping the pieces touching the surface); Enclose failures name
   the open edges (`gapReport`).
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.

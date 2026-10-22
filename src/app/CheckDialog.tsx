@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 
 import { getKernel } from "../kernel/connect";
 import { buildCheckReport, type CheckReport, type Level } from "../model/checkReport";
-import { activeAssembly, activeFeatures, studioParts, useStore } from "../model/store";
+import { activeAssembly, activeFeatures, studioParts, useLengthUnit, useStore } from "../model/store";
+import { evaluate } from "../model/expr";
+import { lengthNumber, storeLength } from "../model/units";
 import { solveWithParts } from "../assembly/mates";
-import { assemblyReport } from "../assembly/assemblyCheck";
+import { assemblyReport, DEFAULT_CLASH_OPTIONS, judgeContacts, parseClashOptions, type ClashOptions } from "../assembly/assemblyCheck";
 import { instancesForKernel } from "./assemblySolve";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
@@ -16,17 +18,40 @@ export function LevelIcon({ level }: { level: Level }) {
   return <Icons.Cross size={16} className="level-icon error" />;
 }
 
+const CLASH_KEY = "juracad.clashOptions";
+
+/** The clash check options last used (kept in this browser). */
+export function loadClashOptions(): ClashOptions {
+  try {
+    return parseClashOptions(JSON.parse(localStorage.getItem(CLASH_KEY) ?? "null"));
+  } catch {
+    return DEFAULT_CLASH_OPTIONS;
+  }
+}
+
+function saveClashOptions(o: ClashOptions) {
+  try {
+    localStorage.setItem(CLASH_KEY, JSON.stringify(o));
+  } catch {
+    // not kept; fine
+  }
+}
+
 /** Runs the check in the geometry worker and returns the report (an assembly's check when one is on show). */
-export async function runCheck(): Promise<CheckReport> {
+export async function runCheck(options: ClashOptions = loadClashOptions()): Promise<CheckReport> {
   const kernel = getKernel();
   await kernel.whenIdle();
   const asm = activeAssembly(useStore.getState());
   if (asm) {
     const s = useStore.getState();
     const solved = solveWithParts(asm, s.parts);
-    const clashes = await kernel.clashes(instancesForKernel(asm, s.parts, solved));
+    // Suppressed parts are always left out (instancesForKernel); hidden ones when asked.
+    const hidden = options.skipHidden ? asm.instances.filter((i) => !i.suppressed && s.hiddenInstances.includes(i.id)).map((i) => i.id) : [];
+    const instances = instancesForKernel(asm, s.parts, solved).filter((i) => !hidden.includes(i.id));
+    // Gaps only matter when touching parts are listed.
+    const measured = await kernel.clashes(instances, options.tolerance, !options.ignoreTouching);
     const names = Object.fromEntries(s.parts.map((p) => [p.id, p.name]));
-    return assemblyReport(asm, solved, names, clashes);
+    return assemblyReport(asm, solved, names, judgeContacts(measured, options), options, { hidden: hidden.length, suppressed: asm.instances.filter((i) => i.suppressed).length });
   }
   const s0 = useStore.getState();
   const result = await kernel.check("normal", studioParts(s0).map((p) => p.id));
@@ -87,17 +112,27 @@ export function CheckDialog() {
   const openDialog = useStore((s) => s.openDialog);
   const [report, setReport] = useState<CheckReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const inAssembly = useStore((s) => !!activeAssembly(s));
+  const [options, setOptions] = useState<ClashOptions>(loadClashOptions);
 
   useEffect(() => {
     let cancelled = false;
-    runCheck().then(
+    setReport(null);
+    setError(null);
+    runCheck(options).then(
       (r) => !cancelled && setReport(r),
       (e: Error) => !cancelled && setError(e.message),
     );
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [options]);
+
+  const change = (patch: Partial<ClashOptions>) => {
+    const next = { ...options, ...patch };
+    saveClashOptions(next);
+    setOptions(next);
+  };
 
   const close = () => openDialog(null);
 
@@ -116,6 +151,7 @@ export function CheckDialog() {
         </>
       }
     >
+      {inAssembly && <ClashOptionsBar options={options} onChange={change} />}
       {error ? (
         <p className="dialog-error">{error}</p>
       ) : report ? (
@@ -124,5 +160,43 @@ export function CheckDialog() {
         <p className="muted">Checking…</p>
       )}
     </Modal>
+  );
+}
+
+/** The assembly check's choices: touching parts, how close counts as touching, and hidden parts. */
+function ClashOptionsBar({ options, onChange }: { options: ClashOptions; onChange: (patch: Partial<ClashOptions>) => void }) {
+  const unit = useLengthUnit();
+  const shown = lengthNumber(options.tolerance, unit, unit === "in" ? 5 : 4);
+  const [text, setText] = useState(shown);
+  useEffect(() => setText(shown), [shown]);
+  const commit = () => {
+    const r = evaluate(storeLength(text, unit));
+    // 0 to 10 mm; anything else goes back to what it was.
+    if (r.ok && r.value >= 0 && r.value <= 10) onChange({ tolerance: r.value });
+    else setText(shown);
+  };
+  return (
+    <div className="clash-options" role="group" aria-label="Clash check options">
+      <label title="Parts that meet face to face (or overlap less than the amount below) aren't listed">
+        <input type="checkbox" checked={options.ignoreTouching} onChange={(e) => onChange({ ignoreTouching: e.target.checked })} /> Ignore parts that only touch
+      </label>
+      <label title="Overlaps thinner than this, and gaps smaller than it, count as touching — handy for parts that are meant to sit tight together">
+        Touching within{" "}
+        <input
+          className="clash-tolerance"
+          aria-label="Touching tolerance"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+        />{" "}
+        {unit}
+      </label>
+      <label title="Leave out parts you've hidden with the eye button (suppressed parts are always left out)">
+        <input type="checkbox" checked={options.skipHidden} onChange={(e) => onChange({ skipHidden: e.target.checked })} /> Leave out hidden parts
+      </label>
+    </div>
   );
 }

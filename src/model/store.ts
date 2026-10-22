@@ -32,7 +32,7 @@ import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument } from "./types";
+import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
@@ -42,7 +42,9 @@ import { duplicateInstances, mirroredBox, placedBox, replaceInstancePart, type B
 import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
-import { MATE_TYPES, nextMateName, pickWidthFace, solveWithParts } from "../assembly/mates";
+import { MATE_TYPES, nextMateName, pickConnector, solveWithParts } from "../assembly/mates";
+import { setSuppressed as setInstancesOff } from "../assembly/suppress";
+import { setPartProperties as setPartPropertiesIn } from "../assembly/properties";
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
@@ -239,7 +241,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -289,6 +291,8 @@ export interface AppState {
   renamePart: (partId: string, name: string) => void;
   /** Set what a part is made of (null = back to PLA). One undo step. */
   setPartMaterial: (partId: string, material: string | null) => void;
+  /** A part's number, description and own properties, for parts lists (blank ones are dropped). */
+  setPartProperties: (partId: string, props: PartProperties) => void;
   /** Colour a part (null = back to the default grey). One undo step. */
   setPartColour: (partId: string, colour: string | null) => void;
   /** Replace the variable list (one undo step); renames are followed everywhere. */
@@ -325,6 +329,8 @@ export interface AppState {
   removeInstances: (ids: string[]) => void;
   setAsmSelection: (ids: string[]) => void;
   toggleInstanceHidden: (id: string) => void;
+  /** Switch instances off (Onshape's Suppress) or back on; the others stay where they are. */
+  setInstancesSuppressed: (ids: string[], suppressed: boolean) => void;
   startMate: (type: MateType) => void;
   editMate: (id: string) => void;
   setMateDraft: (patch: Partial<MateDraft>) => void;
@@ -599,7 +605,7 @@ export const useStore = create<AppState>((set, get) => {
           .filter((p): p is TopoPick => p !== null);
       }
       // A rib (or sheet metal) uses the sketch highlighted in the list, if any.
-      if (type === "rib" || type === "sheetMetal" || type === "tab") {
+      if (type === "rib" || type === "sheetMetal" || type === "tab" || type === "bend" || type === "jog") {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) draft.sketchRef = picked.id;
       }
@@ -866,6 +872,7 @@ export const useStore = create<AppState>((set, get) => {
     setFeatureFolder: (ids, folder) => changeStudio((doc) => setFolder(doc, ids, folder)),
     renameFeatureFolder: (from, to) => changeStudio((doc) => renameFolder(doc, from, to)),
 
+    setPartProperties: (partId, props) => change((doc) => setPartPropertiesIn(doc, partId, props)),
     setPartMaterial: (partId, material) =>
       change((doc) => {
         const materials = { ...(doc.materials ?? {}) };
@@ -1070,9 +1077,7 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.mateDraft) return {};
         const m = s.mateDraft.mate;
-        let next: MateDraft = { ...m, b: c };
-        if (m.type === "width") next = { ...m, ...pickWidthFace(m, c) };
-        else if (!m.a || (m.a && m.b) || (!m.b && m.a.instanceId === c.instanceId)) next = { ...m, a: c, b: undefined };
+        const next: MateDraft = { ...m, ...pickConnector(m, c) };
         return { mateDraft: { ...s.mateDraft, mate: next } };
       }),
 
@@ -1326,6 +1331,15 @@ export const useStore = create<AppState>((set, get) => {
         const kept = settled.assemblies?.find((a) => a.id === asm.id)?.mates?.find((m) => m.id === id) ?? mate;
         return putMate(settled, asm.id, { ...kept, suppressed: !mate.suppressed });
       });
+    },
+    setInstancesSuppressed: (ids, suppressed) => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm || !ids.length) return;
+      // Everything stays where the mates put it now, so nothing jumps when a mate stops (or starts) counting.
+      const solved = solveWithParts(asm, s.parts);
+      change((doc) => updateAssembly(settleSolved(doc, asm.id, solved), asm.id, (a) => setInstancesOff(a, ids, suppressed)));
+      if (suppressed) set((st) => ({ asmSelection: st.asmSelection.filter((x) => !ids.includes(x)) }));
     },
     toggleInstanceHidden: (id) =>
       set((s) => ({ hiddenInstances: s.hiddenInstances.includes(id) ? s.hiddenInstances.filter((x) => x !== id) : [...s.hiddenInstances, id] })),

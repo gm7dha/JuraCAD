@@ -54,9 +54,22 @@ describe("groups", () => {
     close(r.placements.b.position, [0, 0, 10]);
     const gap = r.placements.a.position.map((v, k) => v - r.placements.b.position[k]);
     expect(Math.hypot(...gap)).toBeCloseTo(20, 6);
-    // The group is held by the mate to the fixed base, so dragging it is refused, saying why.
+    // The group is fastened to the fixed base (through b), so dragging a is refused, saying why.
     const plan = planDrag(asm, r, frames(), "a", [20, 0, 10], [0, 0, -1]);
-    expect("refuse" in plan ? plan.refuse : "").toMatch(/held in place/);
+    expect("refuse" in plan ? plan.refuse : "").toBe("b is fastened by Fasten 1, so it can't move. Edit the mate to change where it sits.");
+    // With a hinge there instead, dragging the group's first part turns the hinge (the whole group swings round).
+    const hinged = { ...asm, mates: [{ ...asm.mates![0], type: "revolute" as const, name: "Hinge 1" }] };
+    const hr = solveAssembly(hinged, frames());
+    expect(hr.drivenBy.a).toBe("group:g");
+    const swing = planDrag(hinged, hr, frames(), "a", [20, 0, 10], [0, 0, -1]);
+    if (!("plan" in swing)) throw new Error(`refused: ${swing.refuse}`);
+    // A quarter turn round the hinge's axis (Z, through the origin), seen from above.
+    swing.plan.update({ origin: [14, 14, 100], dir: [0, 0, -1] });
+    const turned = swing.plan.update({ origin: [0, 20, 100], dir: [0, 0, -1] });
+    expect(turned).toEqual({ kind: "mate", id: "m", values: { angle: "90" } });
+    // Solved with that angle, a has gone round with b: from (20, 0) to (0, 20).
+    const after = solveAssembly({ ...hinged, mates: [{ ...hinged.mates[0], values: { angle: "90" } }] }, frames());
+    close(after.placements.a.position, [0, 20, 10]);
     // Without the mate, dragging b moves the group's first part (a).
     const free = { ...asm, mates: [] };
     const plan2 = planDrag(free, solveAssembly(free, frames()), frames(), "b", [0, 0, 0], [0, 0, -1]);

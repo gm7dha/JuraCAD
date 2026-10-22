@@ -245,7 +245,8 @@ function RibThickenOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
-  if (draft?.type !== "rib" && draft?.type !== "thicken" && draft?.type !== "sheetMetal" && draft?.type !== "flange" && draft?.type !== "hem" && draft?.type !== "tab" && draft?.type !== "wrap") return null;
+  if (draft?.type !== "rib" && draft?.type !== "thicken" && draft?.type !== "sheetMetal" && draft?.type !== "flange" && draft?.type !== "hem" && draft?.type !== "tab" && draft?.type !== "wrap" && draft?.type !== "bend" && draft?.type !== "jog") return null;
+  const lineBend = draft.type === "bend" || draft.type === "jog";
   const at = features.findIndex((f) => f.id === draft.id);
   const sketches = (at >= 0 ? features.slice(0, at) : features).filter((f) => f.type === "sketch" && !f.suppressed);
   return (
@@ -259,10 +260,10 @@ function RibThickenOptions() {
           ))}
         </div>
       )}
-      {(draft.type === "rib" || draft.type === "sheetMetal" || draft.type === "tab" || draft.type === "wrap") && (
+      {(draft.type === "rib" || draft.type === "sheetMetal" || draft.type === "tab" || draft.type === "wrap" || lineBend) && (
         <fieldset className="param-group">
-          <legend>{draft.type === "rib" ? "Rib lines" : draft.type === "tab" ? "Shape of the tab" : draft.type === "wrap" ? "Shapes to wrap" : "Shape of the sheet"}</legend>
-          <select className="full-select" aria-label={draft.type === "rib" ? "Sketch with the rib lines" : draft.type === "tab" ? "Sketch with the tab's shape" : draft.type === "wrap" ? "Sketch with the shapes to wrap" : "Sketch with the sheet's shape"} value={draft.sketchRef ?? ""} onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}>
+          <legend>{draft.type === "rib" ? "Rib lines" : draft.type === "tab" ? "Shape of the tab" : draft.type === "wrap" ? "Shapes to wrap" : lineBend ? "Line to bend along" : "Shape of the sheet"}</legend>
+          <select className="full-select" aria-label={draft.type === "rib" ? "Sketch with the rib lines" : draft.type === "tab" ? "Sketch with the tab's shape" : draft.type === "wrap" ? "Sketch with the shapes to wrap" : lineBend ? "Sketch with the bend line" : "Sketch with the sheet's shape"} value={draft.sketchRef ?? ""} onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}>
             {!draft.sketchRef && <option value="">Choose a sketch…</option>}
             {sketches.map((f) => (
               <option key={f.id} value={f.id}>
@@ -275,6 +276,8 @@ function RibThickenOptions() {
               ? "Draw the rib as a line (or lines) across the corner it braces, on a plane through the part."
               : draft.type === "wrap"
               ? "Draw the shapes flat, on any plane. Across the sketch runs round the face, up the sketch along it."
+              : lineBend
+              ? "Sketch one line on a flat face of the sheet (its top or bottom, or a flange's face), across the wall at right angles to the edges it crosses. It's carried on past its ends. The line is the middle of the bend in the flat pattern."
               : draft.type === "tab"
               ? "Sketch on a face of the sheet (its top or bottom, or a flange's face) — closed shapes that overlap or meet the edge become part of that wall, and of its flat pattern."
               : "A closed shape makes a flat sheet (holes in it go through). Or draw the side view as connected lines — an L, U or Z — for a bent sheet: the lines are one face of the metal and the corners become bends. Then bend flanges off its edges."}
@@ -331,6 +334,18 @@ function RibThickenOptions() {
           </select>
         </>
       )}
+      {(draft.type === "flange" || draft.type === "hem") && (
+        <label className="check-row" title="Where these meet a flange or hem on the next edge round, both are trimmed along the corner's diagonal (the gap apart) instead of running into each other — so the flat pattern can be folded up. Only hems and flanges bent past 90° (leaning in) meet; at 90° or less nothing changes.">
+          <input type="checkbox" checked={!!draft.mitreCorners} onChange={(e) => setDraftField({ mitreCorners: e.target.checked || undefined })} />
+          Mitre corners where they meet others
+        </label>
+      )}
+      {lineBend && (
+        <label className="check-row" title="Normally the smaller piece of the wall bends and the bigger one stays where it is. A wall bent off another can only move its far side.">
+          <input type="checkbox" checked={!!draft.keepOtherSide} onChange={(e) => setDraftField({ keepOtherSide: e.target.checked || undefined })} />
+          Keep the other side still
+        </label>
+      )}
       {draft.type === "thicken" && (
         <label className="check-row" title="Half the thickness goes each side of the face or surface">
           <input type="checkbox" checked={!!draft.bothSides} onChange={(e) => setDraftField({ bothSides: e.target.checked || undefined })} />
@@ -344,7 +359,9 @@ function RibThickenOptions() {
           ? "Flip (fill the other side of the line)"
           : draft.type === "sheetMetal"
           ? "Flip (the metal on the other side of the sketch)"
-          : draft.type === "flange"
+          : draft.type === "jog"
+          ? "Step down instead of up"
+          : draft.type === "flange" || lineBend
           ? "Bend down instead of up"
           : draft.type === "hem"
           ? "Fold under instead of over"
@@ -381,6 +398,38 @@ function SurfaceOptions() {
           </button>
         ))}
       </div>
+    );
+  }
+  if (draft?.type === "extendSurface") {
+    const et = draft.extendTo;
+    return (
+      <>
+        <label className="field-label" htmlFor="extend-to">
+          How far
+        </label>
+        <select
+          id="extend-to"
+          className="full-select"
+          value={et?.mode ?? "distance"}
+          onChange={(e) => {
+            const mode = e.target.value;
+            setDraftField({ extendTo: mode === "face" || mode === "part" ? { mode, ...(et?.target ? { target: et.target } : {}) } : undefined });
+          }}
+        >
+          <option value="distance">By a distance</option>
+          <option value="face">Up to a face</option>
+          <option value="part">Up to a part</option>
+        </select>
+        {et && (
+          <p className={`dialog-hint field-hint${et.target ? "" : " attention"}`}>
+            {et.target
+              ? `${et.mode === "face" ? "Face" : "Part"} chosen — click a face of another part to change it.`
+              : et.mode === "face"
+              ? "Click the face to extend up to (a flat face counts as its whole plane). Click edges to choose what to extend."
+              : "Click any face of the solid part to extend up to. Click edges to choose what to extend."}
+          </p>
+        )}
+      </>
     );
   }
   if (draft?.type !== "fill") return null;
@@ -1318,7 +1367,9 @@ function PicksField() {
             : draft.type === "fill"
             ? "Click every edge round the opening (on any parts, surfaces or solids). They must join up into one ring."
             : draft.type === "extendSurface"
-            ? "Click the free edges of a surface. Each is pushed straight on, along the surface, by the distance."
+            ? draft.extendTo
+              ? "Click the free edges of a surface. Each is carried straight on, along the surface, until it meets the face or part."
+              : "Click the free edges of a surface. Each is pushed straight on, along the surface, by the distance."
             : draft.type === "ruled"
             ? "Click edges on any parts or surfaces. A straight strip is swept from each, square to the plane chosen below."
             : draft.type === "enclose"
@@ -1569,7 +1620,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button

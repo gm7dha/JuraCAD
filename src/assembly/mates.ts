@@ -10,12 +10,14 @@
  */
 import { applyRelations } from "./relations";
 import { evaluate } from "../model/expr";
-import type { Assembly, Mate, MateConnector, MateType } from "../model/types";
+import type { Assembly, Instance, Mate, MateConnector, MateType } from "../model/types";
 import { sameRef } from "../geometry/topoRef";
 import { compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement, type Vec3 } from "./math";
 import { connectorFrameOnParts, framePlacement, type Frame } from "./connectors";
 import { mirrorPlacement, patternStep, placeCopy } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
+import { withoutSuppressed } from "./suppress";
+import { isOrigin, ORIGIN_ID, originFrame } from "./origin";
 import type { PartMesh } from "../kernel/protocol";
 
 export interface MateValueDef {
@@ -266,9 +268,15 @@ export interface SolveOptions {
 
 export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: SolveOptions = {}): SolveResult {
   // Relations (gears, rack and pinion, screws) set the amounts of the mates they drive.
-  const related = applyRelations(input);
+  // Suppressed parts (and the mates on them) are left out; they stay where they were.
+  const related = applyRelations(withoutSuppressed(input));
   const assembly = related.assembly;
-  const instances = new Map(assembly.instances.map((i) => [i.id, i]));
+  // The assembly's origin, when a mate uses it: a part that's always fixed where it is.
+  const origin: Instance | null = (assembly.mates ?? []).some((m) => isOrigin(m.a) || isOrigin(m.b))
+    ? { id: ORIGIN_ID, partId: ORIGIN_ID, name: "Origin", placement: IDENTITY, fixed: true }
+    : null;
+  const everything = origin ? [origin, ...assembly.instances] : assembly.instances;
+  const instances = new Map(everything.map((i) => [i.id, i]));
   const mateErrors: Record<string, string> = { ...related.errors };
 
   // Mates that can be used: both parts present, connectors found, values readable.
@@ -302,7 +310,7 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
       continue;
     }
     if (ia.id === ib.id) {
-      mateErrors[mate.id] = "Both connectors are on the same part — pick a face or edge on another part.";
+      mateErrors[mate.id] = ia.id === ORIGIN_ID ? "Both connectors are on the origin — pick a face or edge on a part for one of them." : "Both connectors are on the same part — pick a face or edge on another part.";
       continue;
     }
     const fa = frameOf(mate, "a");
@@ -413,9 +421,9 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
     const drivenBy: Record<string, string> = {};
     const closures: { link: Link; target: Placement; already: Placement; fixedPair: boolean }[] = [];
     const starts = [
-      ...assembly.instances.filter((i) => i.fixed),
-      ...assembly.instances.filter((i) => !i.fixed && !followers.has(i.id)),
-      ...assembly.instances.filter((i) => !i.fixed && followers.has(i.id)),
+      ...everything.filter((i) => i.fixed),
+      ...everything.filter((i) => !i.fixed && !followers.has(i.id)),
+      ...everything.filter((i) => !i.fixed && followers.has(i.id)),
     ];
     for (const st of starts) {
       if (placements[st.id]) continue;
@@ -530,6 +538,9 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
       if (Math.abs(x[i] - start[i]) > 1e-9) (adjusted[f.u.mate.id] ??= {})[f.key] = x[i];
     });
   }
+  for (const i of input.instances) if (i.suppressed && !result.placements[i.id]) result.placements[i.id] = i.placement;
+  // The origin isn't a part: it's only there to be mated to.
+  delete result.placements[ORIGIN_ID];
   return {
     placements: result.placements,
     mateErrors,
@@ -623,11 +634,13 @@ export function frameLookup(assembly: Assembly, parts: PartMesh[]): FrameLookup 
 
 /** One connector's frame on its part, as its instance shows the part (null if it can't be found). */
 export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: MateConnector): Frame | null {
+  // The assembly's origin: one of its planes.
+  if (isOrigin(c)) return originFrame(c);
   // On the part as the instance shows it (which may be another configuration).
   const instance = assembly.instances.find((i) => i.id === c.instanceId);
   const mesh = instance?.configuration ? findMesh(parts, meshIdOf(instance)) : undefined;
   const f = mesh
-    ? connectorFrameOnParts([mesh], { pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
+    ? connectorFrameOnParts([mesh], { ...c, pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
     : connectorFrameOnParts(parts, c);
   // A mirrored instance shows its part flipped across its own YZ plane: so are its connectors.
   if (f && instance?.mirrored) {
@@ -644,6 +657,19 @@ export function nextMateName(assembly: Assembly, type: MateType): string {
   let n = 1;
   while (used.has(`${prefix} ${n}`)) n++;
   return `${prefix} ${n}`;
+}
+
+/**
+ * The mate dialog's next pick: the first click is the part that stays put,
+ * the second the part to move (a click on the first part again starts over).
+ * The origin always goes first — it never moves — so a part already picked
+ * moves over to second place.
+ */
+export function pickConnector(m: { type: MateType; a?: MateConnector; b?: MateConnector }, c: MateConnector): { a?: MateConnector; b?: MateConnector } {
+  if (m.type === "width") return pickWidthFace(m, c);
+  if (isOrigin(c)) return { a: c, b: [m.b, m.a].find((x) => x && !isOrigin(x)) };
+  if (!m.a || (m.a && m.b) || (!m.b && m.a.instanceId === c.instanceId)) return { a: c, b: undefined };
+  return { a: m.a, b: c };
 }
 
 /**
