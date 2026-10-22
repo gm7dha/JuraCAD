@@ -883,6 +883,20 @@ function valueNow(s: SketchData, c: SketchConstraint): string {
   return isAngleDimension(c) ? roundValue(v) : startingLength(v);
 }
 
+/** The sketch with an arc's end turned round its centre so the arc has the given angle (°) or length (mm). */
+function turnArcEnd(s: SketchData, c: SketchConstraint, value: number): SketchData {
+  const arc = curveById(s, c.refs[0]);
+  if (arc?.type !== "arc" || arc.end === ORIGIN_ID) return s;
+  const [cx, cy] = pointPos(s, arc.center);
+  const [sx, sy] = pointPos(s, arc.start);
+  const r = Math.hypot(sx - cx, sy - cy);
+  if (r <= 1e-9) return s;
+  const sweep = c.type === "arcAngle" ? (value * Math.PI) / 180 : value / r;
+  if (!(sweep > 0) || sweep >= 2 * Math.PI) return s;
+  const a = Math.atan2(sy - cy, sx - cx) + sweep;
+  return { ...s, points: s.points.map((p) => (p.id === arc.end ? { ...p, x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) } : p)) };
+}
+
 /** Change a dimension's value (any expression, e.g. "20", "10 + 5", "1 in"). */
 export function setDimensionValue(s: SketchData, id: string, value: string): EditResult {
   const c = s.constraints.find((x) => x.id === id);
@@ -893,7 +907,9 @@ export function setDimensionValue(s: SketchData, id: string, value: string): Edi
   if (c.type !== "angle" && r.value <= 0 && c.type !== "pointLineDistance") return { sketch: s, error: "Must be more than 0." };
   if (c.type === "pointLineDistance" && r.value < 0) return { sketch: s, error: "Can't be negative." };
   if (c.type === "arcAngle" && r.value >= 360) return { sketch: s, error: "An arc goes less than all the way round: use less than 360°." };
-  const solved = checkedSolve(s, { ...s, constraints: s.constraints.map((x) => (x.id === id ? { ...x, value } : x)) }, "That value", false);
+  // An arc's length or angle: turn its end round the centre to the new size first, so the solver keeps its radius.
+  const start = c.type === "arcAngle" || c.type === "arcLength" ? turnArcEnd(s, c, r.value) : s;
+  const solved = checkedSolve(s, { ...start, constraints: s.constraints.map((x) => (x.id === id ? { ...x, value } : x)) }, "That value", false);
   if (solved.error) {
     // An offset going inwards can't be wider than the rounded corners (arcs) it goes round.
     const curved = c.type === "offset" && c.refs.some((id) => curveById(s, id)?.type === "arc");
@@ -979,6 +995,21 @@ export function dragCircleRim(start: SketchData, circleId: string, radius: numbe
 export function dragArcRim(start: SketchData, arcId: string, radius: number): SketchData {
   const c = curveById(start, arcId);
   if (c?.type !== "arc" || radius <= 1e-6) return start;
+  if (start.constraints.some((k) => k.type === "tangent" && k.refs.includes(arcId))) {
+    // A rounded corner (tangent to what it joins): keep everything else where it is and let the
+    // arc's centre and ends slide to the new size, like changing a fillet's radius.
+    const own = new Set([c.center, c.start, c.end]);
+    const place = start.points.filter((p) => !own.has(p.id)).map((p) => ({ pointId: p.id, x: p.x, y: p.y }));
+    const sized: SketchData = { ...start, constraints: [...start.constraints, { id: "__rim", type: "radius", refs: [arcId], value: String(radius) }] };
+    const r = solveSketch(sized, { place });
+    if (!r.ok) return start;
+    const moved = r.sketch.points.filter((p) => !own.has(p.id)).some((p) => {
+      const q = start.points.find((x) => x.id === p.id)!;
+      return Math.hypot(p.x - q.x, p.y - q.y) > 1e-6;
+    });
+    if (moved) return start;
+    return { ...r.sketch, constraints: start.constraints };
+  }
   const [cx, cy] = pointPos(start, c.center);
   const out = (id: string) => {
     const [x, y] = pointPos(start, id);

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { addArc, addCircle, addPoint, applyRelation, arcSweep, dragPoint, addDimension, addLine, dimensionFor, dragArcRim, measure, measureToOf, pointPos, setDimensionValue, setMeasureTo } from "../src/sketch/ops";
+import { addArc, addCircle, addPoint, addRectangle, radiusOf, applyRelation, arcSweep, dragPoint, addDimension, addLine, dimensionFor, dragArcRim, measure, measureToOf, pointPos, setDimensionValue, setMeasureTo } from "../src/sketch/ops";
 import { dimensionLayout } from "../src/sketch/layout";
-import { extendAt, splitAt, trimAt } from "../src/sketch/tools";
+import { extendAt, filletCorner, splitAt, trimAt } from "../src/sketch/tools";
 import { parseSketchData } from "../src/sketch/validate";
 import { solveSketch } from "../src/sketch/solver";
 import { emptySketch, type SketchArc, type SketchCircle, type SketchData } from "../src/sketch/types";
@@ -257,9 +257,9 @@ describe("cutting or growing an arc that has a length or angle dimension", () =>
       curves: [{ id: "a", type: "arc", center: "origin", start: "s", end: "e", construction: false }],
       constraints: [],
     };
-    s = addDimension(s, ["a", "e"]).sketch; // length (offered rounded, so set exactly)
-    s = setDimensionValue(s, s.constraints[0].id, String(5 * Math.PI)).sketch;
-    s = addDimension(s, ["a"]).sketch; // radius
+    // Its length (5π, exactly) and radius.
+    s = { ...s, constraints: [{ id: "len", type: "arcLength", refs: ["a"], value: String(5 * Math.PI) }, { id: "rad", type: "radius", refs: ["a"], value: "10" }] };
+    expect(solveSketch(s).ok).toBe(true);
     return { s, arc: arcOf(s) };
   };
   const angles = (s: SketchData) =>
@@ -301,5 +301,57 @@ describe("cutting or growing an arc that has a length or angle dimension", () =>
     // Round to x = −5 on a radius-10 circle: 120° from the start.
     expect(angles(r.sketch)[0]).toBeCloseTo(120, 4);
     expect(r.sketch.constraints.some((k) => k.type === "arcLength")).toBe(false);
+  });
+});
+
+describe("round 2 review follow-ups", () => {
+  it("typing an arc's angle turns its end round and keeps its radius (nothing else holding it)", () => {
+    const s: SketchData = {
+      points: [
+        { id: "s", x: 10, y: 0 },
+        { id: "e", x: 0, y: 10 },
+      ],
+      curves: [{ id: "a", type: "arc", center: "origin", start: "s", end: "e", construction: false }],
+      constraints: [],
+    };
+    const d = addDimension(s, ["a", "origin"]);
+    const id = d.sketch.constraints[0].id;
+    const r = setDimensionValue(d.sketch, id, "150");
+    expect(r.error).toBeUndefined();
+    const arc = arcOf(r.sketch);
+    expect(radiusOf(r.sketch, arc)).toBeCloseTo(10, 6);
+    expect((arcSweep(r.sketch, arc) * 180) / Math.PI).toBeCloseTo(150, 6);
+    const l = addDimension(s, ["a", "e"]);
+    const r2 = setDimensionValue(l.sketch, l.sketch.constraints[0].id, String(4 * Math.PI)); // 72° of radius 10
+    expect(r2.error).toBeUndefined();
+    // The radius it had stays (adding the dimension rounds its length a hair, so compare with that).
+    const before = radiusOf(l.sketch, arcOf(l.sketch));
+    expect(radiusOf(r2.sketch, arcOf(r2.sketch))).toBeCloseTo(before, 6);
+    expect(before).toBeCloseTo(10, 2);
+    expect(radiusOf(r2.sketch, arcOf(r2.sketch)) * arcSweep(r2.sketch, arcOf(r2.sketch))).toBeCloseTo(4 * Math.PI, 6);
+  });
+
+  it("dragging the rim of a rounded corner (its radius not dimensioned) resizes the round, not the rectangle", () => {
+    const rect = addRectangle(emptySketch(), at(0, 0), at(40, 30));
+    const corner = rect.sketch.points.find((p) => p.x === 40 && p.y === 30)!.id;
+    const f = filletCorner(rect.sketch, corner, "5");
+    expect(f.error).toBeUndefined();
+    // Take the fillet's radius dimension away, so the round is free to change.
+    const s: SketchData = { ...f.sketch, constraints: f.sketch.constraints.filter((c) => c.type !== "radius") };
+    const out = dragArcRim(s, f.arcId, 8);
+    const arc = out.curves.find((c) => c.id === f.arcId) as SketchArc;
+    expect(radiusOf(out, arc)).toBeCloseTo(8, 6);
+    const c = pointPos(out, arc.center);
+    expect(c[0]).toBeCloseTo(32, 6);
+    expect(c[1]).toBeCloseTo(22, 6);
+    // The rectangle's other corners haven't moved.
+    for (const p of s.points) {
+      if ([arc.center, arc.start, arc.end].includes(p.id)) continue;
+      const q = pointPos(out, p.id);
+      expect(q[0]).toBeCloseTo(p.x, 6);
+      expect(q[1]).toBeCloseTo(p.y, 6);
+    }
+    // With its radius dimensioned (as the fillet made it), the drag changes nothing.
+    expect(dragArcRim(f.sketch, f.arcId, 8)).toBe(f.sketch);
   });
 });

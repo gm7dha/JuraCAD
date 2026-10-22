@@ -6,7 +6,7 @@
 import { revolution, type Shape3D } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
-import { chosenRegions } from "../sketch/areas";
+import { chosenRegions, type AreaPick } from "../sketch/areas";
 import { axisInSketch, type RevolveAxis } from "../sketch/axis";
 import type { SketchData } from "../sketch/types";
 import { loopFace, release } from "./extrude";
@@ -16,8 +16,8 @@ export interface RevolveOptions {
   /** Degrees, 0 < angle ≤ 360. */
   angle: number;
   flip: boolean;
-  /** Points inside the sketch areas to use (missing: every closed shape). */
-  areas?: [number, number][];
+  /** The sketch areas to use, as picked (missing: every closed shape). */
+  areas?: AreaPick[];
 }
 
 type P2 = [number, number];

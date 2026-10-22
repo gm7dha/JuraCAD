@@ -304,6 +304,8 @@ export interface SketchArea {
   holes: Loop[];
   /** Area in mm², not counting its holes. */
   area: number;
+  /** Its centre of area (holes taken out); may lie outside a hollow or bent shape. */
+  centroid: Pt;
 }
 
 /** The areas of a sketch, and what's needed to join chosen ones into outlines. */
@@ -325,8 +327,35 @@ function signedArea(poly: Pt[]): number {
   return a / 2;
 }
 
-/** Find the areas formed by a sketch's solid curves. */
+/** Centre of area of a polygon (either way round). */
+function polygonCentroid(poly: Pt[]): Pt {
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i];
+    const [x2, y2] = poly[(i + 1) % poly.length];
+    const k = x1 * y2 - x2 * y1;
+    a += k;
+    cx += (x1 + x2) * k;
+    cy += (y1 + y2) * k;
+  }
+  if (Math.abs(a) < 1e-12) return poly[0] ?? [0, 0];
+  return [cx / (3 * a), cy / (3 * a)];
+}
+
+/** Areas already found, per sketch (sketches are never changed in place, so the same object means the same areas). */
+const found = new WeakMap<SketchData, AreaMap>();
+
+/** Find the areas formed by a sketch's solid curves (worked out once per sketch). */
 export function sketchAreas(sketch: SketchData): AreaMap {
+  let map = found.get(sketch);
+  if (!map) {
+    map = findAreas(sketch);
+    found.set(sketch, map);
+  }
+  return map;
+}
+
+function findAreas(sketch: SketchData): AreaMap {
   const prims = primitives(sketch);
   const samples = prims.map((p) => {
     const n = stepsOf(p);
@@ -708,7 +737,18 @@ export function sketchAreas(sketch: SketchData): AreaMap {
 
   const areas: SketchArea[] = faces.map((f, i) => {
     const holes = holesOf[i].map((k) => loopOf(outsides[k]));
-    return { outer: loopOf(f), holes, area: f.area - holes.reduce((s, h) => s + h.area, 0) };
+    const area = f.area - holes.reduce((s, h) => s + h.area, 0);
+    // Centre of area: the outline's, less each hole's.
+    const [ox, oy] = polygonCentroid(f.poly);
+    let mx = ox * f.area;
+    let my = oy * f.area;
+    for (const h of holes) {
+      const [hx, hy] = polygonCentroid(h.polygon);
+      mx -= hx * h.area;
+      my -= hy * h.area;
+    }
+    const centroid: Pt = area > 1e-12 ? [mx / area, my / area] : [ox, oy];
+    return { outer: loopOf(f), holes, area, centroid };
   });
 
   const areaAt = (p: Pt): number => smallestAround(p, -1);
@@ -790,8 +830,10 @@ export function pointInside(a: SketchArea): Pt {
         const p: Pt = [x0 + ((x1 - x0) * (i + 0.5)) / (n + 1), y0 + ((y1 - y0) * (j + 0.5)) / (n + 1)];
         if (!inside(p)) continue;
         const d = clearance(p);
-        if (d > bestD) {
-          bestD = d;
+        // Of equally clear places (a long strip has a whole line of them), the one nearest the centre.
+        const tie = Math.abs(d - bestD) <= 1e-3 * bestD;
+        if ((d > bestD && !tie) || (tie && best && Math.hypot(p[0] - a.centroid[0], p[1] - a.centroid[1]) < Math.hypot(best[0] - a.centroid[0], best[1] - a.centroid[1]))) {
+          bestD = Math.max(d, bestD);
           best = p;
         }
       }
@@ -806,8 +848,58 @@ export function pointInside(a: SketchArea): Pt {
     const p = a.outer.polygon;
     best = [(p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2];
   }
-  // Kept short in the file.
-  return [Math.round(best[0] * 1e4) / 1e4, Math.round(best[1] * 1e4) / 1e4];
+  // Kept short in the file: to a ten-thousandth of the area's own size.
+  return [roundTo(best[0], Math.sqrt(a.area) * 1e-4), roundTo(best[1], Math.sqrt(a.area) * 1e-4)];
+}
+
+/** x rounded to a tidy step (a power of ten) no bigger than `size`. */
+function roundTo(x: number, size: number): number {
+  const step = 10 ** Math.floor(Math.log10(Math.max(size, 1e-9)));
+  const digits = Math.max(0, -Math.floor(Math.log10(step)));
+  return Number((Math.round(x / step) * step).toFixed(Math.min(digits, 12)));
+}
+
+/**
+ * How a picked area is remembered: a point well inside it, and its size (mm²).
+ * Older picks have just the point.
+ */
+export type AreaPick = [number, number] | [number, number, number];
+
+/** The pick to remember an area by. */
+export function pickOf(a: SketchArea): AreaPick {
+  const [x, y] = pointInside(a);
+  // Four significant figures are plenty to tell areas apart.
+  const size = Number(a.area.toPrecision(4));
+  return [x, y, size];
+}
+
+/** Above this, the best match for a pick is too unlike it: the area has gone. */
+const POOR_MATCH = 2;
+
+/**
+ * The area a pick means now (or -1 when nothing is like it any more). The
+ * sketch may have changed since it was picked, so rather than just taking
+ * the area the point is in, each area is scored by how far its centre is from
+ * the point (compared with the picked area's size) and how different its size
+ * is; the closest match wins, with being round the point as the tie-breaker.
+ */
+export function matchArea(map: AreaMap, pick: AreaPick | number[]): number {
+  const [x, y, size] = pick;
+  if (size === undefined || !(size > 0)) return map.areaAt([x, y]);
+  const scale = Math.sqrt(size);
+  const inside = map.areaAt([x, y]);
+  let best = -1;
+  let bestScore = Infinity;
+  map.areas.forEach((a, i) => {
+    if (!(a.area > 0)) return;
+    const d = Math.hypot(a.centroid[0] - x, a.centroid[1] - y) / scale;
+    const score = d + Math.abs(Math.log(a.area / size)) - (i === inside ? 0.05 : 0);
+    if (score < bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  });
+  return bestScore <= POOR_MATCH ? best : -1;
 }
 
 /**
@@ -815,12 +907,12 @@ export function pointInside(a: SketchArea): Pt {
  * the area it's in again, and areas side by side join up. `missing` counts
  * points no longer inside any area (the sketch changed round them).
  */
-export function regionsAt(sketch: SketchData, points: Pt[]): { regions: Region[]; missing: number } {
+export function regionsAt(sketch: SketchData, points: (AreaPick | number[])[]): { regions: Region[]; missing: number } {
   const map = sketchAreas(sketch);
   const chosen: number[] = [];
   let missing = 0;
   for (const p of points) {
-    const i = map.areaAt(p);
+    const i = matchArea(map, p);
     if (i < 0) missing++;
     else if (!chosen.includes(i)) chosen.push(i);
   }
@@ -832,7 +924,7 @@ export function regionsAt(sketch: SketchData, points: Pt[]): { regions: Region[]
  * when the user picked areas (`points`), just those. Throws a friendly error
  * when a picked area has gone.
  */
-export function chosenRegions(sketch: SketchData, points: Pt[] | undefined, verb: string): RegionResult {
+export function chosenRegions(sketch: SketchData, points: (AreaPick | number[])[] | undefined, verb: string): RegionResult {
   if (!points?.length) return findRegions(sketch);
   const r = regionsAt(sketch, points);
   if (r.missing) throw new Error(missingAreasMessage(r.missing, verb));
@@ -844,12 +936,12 @@ export function missingAreasMessage(missing: number, verb: string): string {
   return `${missing === 1 ? "One of the areas" : `${missing} of the areas`} picked to ${verb} ${missing === 1 ? "isn't" : "aren't"} in the sketch any more (the sketch changed round ${missing === 1 ? "it" : "them"}). Edit this feature and click the areas again, or click "Use all closed shapes".`;
 }
 
-/** Which areas (by index) the picked points are in, and how many points are in none. */
-export function pickedAreas(map: AreaMap, points: Pt[] | undefined): { picked: Set<number>; missing: number } {
+/** Which areas (by index) the picks mean now, and how many picks match nothing. */
+export function pickedAreas(map: AreaMap, points: (AreaPick | number[])[] | undefined): { picked: Set<number>; missing: number } {
   const picked = new Set<number>();
   let missing = 0;
   for (const p of points ?? []) {
-    const i = map.areaAt(p);
+    const i = matchArea(map, p);
     if (i < 0) missing++;
     else picked.add(i);
   }
@@ -857,12 +949,38 @@ export function pickedAreas(map: AreaMap, points: Pt[] | undefined): { picked: S
 }
 
 /**
- * Click an area in the picker: pick it (remembered by a point well inside it),
- * or unpick it if it was picked. Points whose area has gone are dropped. No
- * areas left means "every closed shape" (undefined).
+ * Click an area in the picker: pick it (remembered by a point well inside it
+ * and its size), or unpick it if it was picked. Picks whose area has gone are
+ * dropped, and the others are brought up to date. No areas left means "every
+ * closed shape" (undefined).
  */
-export function toggleArea(map: AreaMap, points: Pt[] | undefined, index: number): Pt[] | undefined {
-  const kept = (points ?? []).filter((p) => map.areaAt(p) >= 0);
-  const next = kept.some((p) => map.areaAt(p) === index) ? kept.filter((p) => map.areaAt(p) !== index) : [...kept, pointInside(map.areas[index])];
+export function toggleArea(map: AreaMap, points: (AreaPick | number[])[] | undefined, index: number): AreaPick[] | undefined {
+  const now = new Set<number>();
+  for (const p of points ?? []) {
+    const i = matchArea(map, p);
+    if (i >= 0) now.add(i);
+  }
+  if (now.has(index)) now.delete(index);
+  else now.add(index);
+  const next = [...now].map((i) => pickOf(map.areas[i]));
   return next.length ? next : undefined;
+}
+
+/**
+ * The areas "every closed shape" uses (no picks): those whose inside lies in
+ * one of `findRegions`' shapes (inside its outline, not in one of its holes).
+ */
+const usedByAll = new WeakMap<SketchData, Set<number>>();
+export function areasUsedByAll(sketch: SketchData): Set<number> {
+  const known = usedByAll.get(sketch);
+  if (known) return known;
+  const map = sketchAreas(sketch);
+  const { regions } = findRegions(sketch);
+  const used = new Set<number>();
+  map.areas.forEach((a, i) => {
+    const p = pointInside(a);
+    if (regions.some((r) => pointInPolygon(p, r.outer.polygon) && !r.holes.some((h) => pointInPolygon(p, h.polygon)))) used.add(i);
+  });
+  usedByAll.set(sketch, used);
+  return used;
 }

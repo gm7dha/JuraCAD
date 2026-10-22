@@ -1,3 +1,4 @@
+import type { AreaPick } from "../sketch/areas";
 import type { FastenerKind } from "./fasteners";
 import type { TopoPick } from "../geometry/topoRef";
 import type { Variable } from "./variables";
@@ -108,10 +109,11 @@ export interface Feature {
   sketchRef?: string;
   /**
    * Extrude, revolve and sweep: the areas of the sketch to use, each remembered
-   * by a point inside it (sketch mm), found again on rebuild. Missing or empty:
+   * by a point inside it (sketch mm) and its size (mm²; older picks have just
+   * the point), matched again on rebuild (see `matchArea`). Missing or empty:
    * every closed shape.
    */
-  areas?: [number, number][];
+  areas?: AreaPick[];
   /** Sweep: the sketch whose lines and arcs make the path. */
   pathRef?: string;
   /** Loft: the sketches to pass through, in order. */

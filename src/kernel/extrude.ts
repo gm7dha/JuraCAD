@@ -28,7 +28,7 @@ import {
 
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { type Loop, type Segment } from "../sketch/regions";
-import { chosenRegions } from "../sketch/areas";
+import { chosenRegions, type AreaPick } from "../sketch/areas";
 import type { SketchData } from "../sketch/types";
 import { edgesOf as edgesOfShape, facesOf, wiresOf } from "./topology";
 
@@ -40,8 +40,8 @@ export interface ExtrudeOptions {
   draft?: number;
   /** One way (blind) only: also this far the other way from the sketch. */
   depth2?: number;
-  /** Points inside the sketch areas to use (missing: every closed shape). */
-  areas?: [number, number][];
+  /** The sketch areas to use, as picked (missing: every closed shape). */
+  areas?: AreaPick[];
 }
 
 /** Free OpenCascade objects once we're done with them. */

@@ -12,6 +12,7 @@ import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
 import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, PartStudio } from "./types";
 import { MAIN_STUDIO } from "./studios";
+import type { AreaPick } from "../sketch/areas";
 
 /**
  * Pure functions for changing a document. They never modify their input;
@@ -495,9 +496,11 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "chamfer" && (f.chamferType === "twoDistances" || f.chamferType === "distanceAngle")) feature.chamferType = f.chamferType;
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "loft") && f.surface === true) feature.surface = true;
     if (feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") {
-      // Picked sketch areas: a point inside each (anything else is dropped, leaving every closed shape).
+      // Picked sketch areas: a point inside each, and (newer files) its size. Anything else is dropped, leaving every closed shape.
       const areas = Array.isArray(f.areas)
-        ? f.areas.filter((p): p is [number, number] => Array.isArray(p) && p.length === 2 && p.every((x) => typeof x === "number" && Number.isFinite(x))).map((p): [number, number] => [p[0], p[1]])
+        ? f.areas
+            .filter((p): p is number[] => Array.isArray(p) && (p.length === 2 || p.length === 3) && p.every((x) => typeof x === "number" && Number.isFinite(x)))
+            .map((p): AreaPick => (p.length === 3 && p[2] > 0 ? [p[0], p[1], p[2]] : [p[0], p[1]]))
         : [];
       if (areas.length) feature.areas = areas;
     }

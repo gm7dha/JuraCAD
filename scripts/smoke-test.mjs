@@ -345,10 +345,14 @@ try {
   await page.getByRole("radio", { name: "New" }).click();
   await page.locator("#param-depth").fill("15");
   step = "picking an area in the extrude dialog, then going back to all closed shapes";
+  await page.getByRole("button", { name: "Pick areas…" }).click();
   const areaShapes = page.locator(".area-map .area-shape");
   await areaShapes.first().waitFor({ timeout: 10_000 });
   const areaCount = await areaShapes.count();
   if (areaCount !== 2) throw new Error(`expected 2 areas (the plate and the disc in its hole), got ${areaCount}`);
+  // With nothing picked, only the plate is shaded as used (the disc is a hole).
+  const usedCount = await page.locator(".area-map .area-shape.all").count();
+  if (usedCount !== 1) throw new Error(`expected only the plate to show as used, got ${usedCount} areas`);
   await areaShapes.nth(1).click(); // the disc (smaller areas are drawn on top)
   await page.waitForFunction(() => document.querySelector(".area-picker")?.textContent?.includes("1 area picked"));
   await page.getByRole("button", { name: "Use all closed shapes" }).click();
