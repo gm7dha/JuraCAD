@@ -132,4 +132,29 @@ describe("assembly clash check", () => {
     // With a tighter tolerance it's a clash.
     expect(judged([put("Block", "block", 0), put("Pin", "pin", 0)], 0.001).map((c) => c.kind)).toEqual(["overlap"]);
   });
+
+  it("judges overlaps between parts at an angle by their real thickness", () => {
+    setup();
+    // Both boxes turned 37° about the axis (1, 2, 3); the second moved along the turned box's own sides.
+    const axis = [1, 2, 3].map((v) => v / Math.hypot(1, 2, 3));
+    const half = (37 * Math.PI) / 360;
+    const q: [number, number, number, number] = [axis[0] * Math.sin(half), axis[1] * Math.sin(half), axis[2] * Math.sin(half), Math.cos(half)];
+    const turn = (v: number[]): [number, number, number] => {
+      // v' = v + 2w(u × v) + 2u × (u × v), u = q's vector part, w = q's scalar part.
+      const [x, y, z, w] = q;
+      const c1 = [y * v[2] - z * v[1], z * v[0] - x * v[2], x * v[1] - y * v[0]];
+      const c2 = [y * c1[2] - z * c1[1], z * c1[0] - x * c1[2], x * c1[1] - y * c1[0]];
+      return [v[0] + 2 * w * c1[0] + 2 * c2[0], v[1] + 2 * w * c1[1] + 2 * c2[1], v[2] + 2 * w * c1[2] + 2 * c2[2]];
+    };
+    const at = (name: string, shift: number[]): InstanceInput => ({ id: name, partId: "box", name, position: turn(shift), rotation: q });
+    // A 0.5 cube of overlap at a corner: 2V/A says 0.17, but it's 0.5 thick — a clash at 0.2.
+    expect(judged([at("A", [0, 0, 0]), at("B", [9.5, 9.5, 9.5])], 0.2, true).map((c) => c.kind)).toEqual(["overlap"]);
+    // A 0.35 × 0.35 strip along an edge: a clash at 0.2 too.
+    expect(judged([at("A", [0, 0, 0]), at("B", [9.65, 9.65, 0])], 0.2, true).map((c) => c.kind)).toEqual(["overlap"]);
+    // A 0.15 slab across a whole face: thinner than 0.2, so touching.
+    expect(judged([at("A", [0, 0, 0]), at("B", [9.85, 0, 0])], 0.2).map((c) => c.kind)).toEqual(["touch"]);
+    // The engine measures the turned overlaps across their real thickness.
+    const m = engine.clashes([at("A", [0, 0, 0]), at("B", [9.5, 9.5, 9.5])], 0.2, false)[0];
+    expect(m.boxMin!).toBeCloseTo(0.5, 3);
+  });
 });
