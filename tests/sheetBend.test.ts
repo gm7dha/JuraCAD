@@ -93,9 +93,22 @@ describe("bend along a line", () => {
     // Too close to the plate's end: the bend would run into its corners.
     expect(err({ from: [99, 0], to: [99, 50] })).toMatch(/runs into a corner/);
     expect(foldSheet(spec([bendAt60({ angle: 180 })])).errors["b:0"]).toMatch(/more than 0° and less than 180°/);
-    // A wall that already has a flange on it.
-    const flanged = foldSheet(spec([{ id: "f", wall: "base", edge: 2, length: 10, angle: 90, down: false }, bendAt60()]));
-    expect(flanged.errors["b:0"]).toMatch(/drag this Bend above them/);
+    // A flange on an edge the line crosses, or on the side that would move.
+    expect(foldSheet(spec([{ id: "f", wall: "base", edge: 2, length: 10, angle: 90, down: false }, bendAt60()])).errors["b:0"]).toMatch(/crosses an edge that already has a flange/);
+    expect(foldSheet(spec([{ id: "f", wall: "base", edge: 1, length: 10, angle: 90, down: false }, bendAt60()])).errors["b:0"]).toMatch(/on the side that would move/);
+  });
+
+  it("bends a wall that already has a flange on the side that stays, renumbering its edges", () => {
+    // A flange off the left edge (x = 0), then a bend at x = 60.
+    const f = foldSheet(spec([{ id: "f", wall: "base", edge: 3, length: 10, angle: 90, down: false }, bendAt60()]));
+    expect(f.errors).toEqual({});
+    const fb = f.bends.find((b) => b.flangeId === "f")!;
+    // Its edge is still the left one, under its new number.
+    expect(f.walls[0].outline[fb.edge]).toEqual({ kind: "line", from: [0, 50], to: [0, 0] });
+    const a = bendAllowance(90, 2, 2, 0.5);
+    const flat = flatPattern(f);
+    close(bounds(flat.outline), [-(a + 6), 0, 100, 50], 9);
+    expect(area(flat.outline)).toBeCloseTo(5000 + 50 * (a + 6), 6);
   });
 
   it("splitWall: keeps a flange wall's bend edge first, and refuses to move it", () => {
@@ -215,6 +228,25 @@ describe("mitred corners", () => {
     expect(areas[1]).toBeCloseTo(400 - 32, 9);
   });
 
+  it("trims as soon as both are bent, so a flange on a mitred flange's tip runs the trimmed length", () => {
+    const fl = (id: string, edge: number): FlangeSpec => ({ id, wall: "base", edge, length: 20, angle: 120, down: false, mitre: 0.2 });
+    const f0 = foldSheet(spec([fl("a", 0), fl("b", 1)]));
+    const trimmed = f0.walls[1].outline.map((s) => s.kind === "line" ? s : null);
+    const tip = trimmed.findIndex((s) => s && Math.abs(s.from[1] - f0.bends[0].straight) < 1e-9 && Math.abs(s.to[1] - f0.bends[0].straight) < 1e-9);
+    expect(tip).toBeGreaterThan(0);
+    const tipLen = Math.abs(trimmed[tip]!.to[0] - trimmed[tip]!.from[0]);
+    expect(tipLen).toBeLessThan(99);
+    const f = foldSheet(spec([fl("a", 0), fl("b", 1), { id: "lip", wall: "a", edge: tip, length: 8, angle: 90, down: false }]));
+    expect(f.errors).toEqual({});
+    expect(f.walls[1].outline).toEqual(f0.walls[1].outline);
+    expect(f.bends.find((b) => b.flangeId === "lip")!.length).toBeCloseTo(tipLen, 12);
+  });
+
+  it("leaves a flange up and one down alone", () => {
+    const f = foldSheet(spec([{ id: "a", wall: "base", edge: 0, length: 20, angle: 120, down: false, mitre: 0.2 }, { id: "b", wall: "base", edge: 1, length: 20, angle: 120, down: true, mitre: 0.2 }]));
+    expect(f.mitres).toBeUndefined();
+  });
+
   it("trims flanges leaning in over the sheet, but not right-angle ones (they don't meet)", () => {
     const fl = (id: string, edge: number, angle: number): FlangeSpec => ({ id, wall: "base", edge, length: 20, angle, down: false, mitre: 0.2 });
     const square = foldSheet(spec([fl("a", 0, 90), fl("b", 1, 90)]));
@@ -254,6 +286,15 @@ describe("saving", () => {
     expect(old.features[0].mitreCorners).toBeUndefined();
     expect(visibleParamKeys(old.features[0]).has("cornerGap")).toBe(false);
     expect(visibleParamKeys(h2).has("cornerGap")).toBe(true);
+  });
+
+  it("doesn't check boxes that are hidden", () => {
+    const doc = emptyDocument();
+    const ex = { ...createFeature(doc, "extendSurface"), extendTo: { mode: "face" as const } };
+    expect(resolveParams({ ...ex, params: { ...ex.params, distance: "oops" } }).errors).toEqual({});
+    const hem = createFeature(doc, "hem");
+    expect(resolveParams({ ...hem, params: { ...hem.params, cornerGap: "0" } }).errors).toEqual({});
+    expect(resolveParams({ ...hem, mitreCorners: true, params: { ...hem.params, cornerGap: "0" } }).errors.cornerGap).toMatch(/more than 0/);
   });
 
   it("keeps Extend surface's “up to” choice; old ones extend by a distance", () => {

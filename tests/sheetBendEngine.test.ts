@@ -142,6 +142,21 @@ describe("bend along a line", () => {
     expect(build([plateSketch, sheet, fl, onFlange, bend("b", "lf", {}, { keepOtherSide: true })]).featureErrors.b).toMatch(/has to stay still/);
   });
 
+  it("bends a plate twice into a U; the second bend keeps the first side still", () => {
+    const r = build([plateSketch, sheet, lineSketch("l1", 20), bend("b1", "l1"), lineSketch("l2", 80), bend("b2", "l2")]);
+    expect(r.featureErrors).toEqual({});
+    expect(vol()).toBeCloseTo((100 - 2 * A90) * 100 + 2 * Q90 * 50, 2);
+    expect(valid()).toBe(true);
+    // Both ends stand up (20 − a/2 past the bends' tops), outside faces R + T beyond the flat part.
+    near(box(r), [20 + A90 / 2 - 4, 0, 0, 80 - A90 / 2 + 4, 50, 4 + 20 - A90 / 2]);
+    near(bounds2(r.parts[0].flat!.outline), [0, 0, 100, 50], 6);
+    expect(r.parts[0].flat!.bendLines).toHaveLength(2);
+    const laid = engine.unfold("sm")!;
+    expect(analyzeMesh(laid.vertices, laid.triangles).volume).toBeCloseTo(10000, 1);
+    // Asking the side with the first bend on it to move instead: explained.
+    expect(build([plateSketch, sheet, lineSketch("l1", 20), bend("b1", "l1"), lineSketch("l2", 80), bend("b2", "l2", {}, { keepOtherSide: true })]).featureErrors.b2).toMatch(/flange or bend on the side that would move/);
+  });
+
   it("explains what it can't do", () => {
     const two = sketchFeature("two", addLine(addLine(emptySketch(), { x: 30, y: -10 }, { x: 30, y: 60 }).sketch, { x: 70, y: -10 }, { x: 70, y: 60 }).sketch);
     expect(build([plateSketch, sheet, two, bend("b", "two")]).featureErrors.b).toMatch(/just one line/);
@@ -172,6 +187,11 @@ describe("jog", () => {
     near(bounds2(r2.parts[0].flat!.outline), [0, 0, 100, 50], 6);
     const laid = engine.unfold("sm")!;
     expect(analyzeMesh(laid.vertices, laid.triangles).volume).toBeCloseTo(10000, 1);
+  });
+
+  it("says when there isn't room past the line for the step", () => {
+    // At x = 90 only 10 mm is left; a 30 mm step needs about 31.
+    expect(build([plateSketch, sheet, lineSketch("ln", 90), bend("j", "ln", { height: "30" }, {}, "jog")]).featureErrors.j).toMatch(/Not enough room past the line for a step this high/);
   });
 
   it("says when the step is too small for its bends", () => {
@@ -222,6 +242,47 @@ describe("mitred corners", () => {
     expect(build([plateSketch, sheet, hem("h1", [right], false), hem("h2", [second], true)]).featureErrors).toEqual({});
     expect(vol()).toBeCloseTo(expected, 2);
     expect(valid()).toBe(true);
+  });
+
+  it("a flange added on a mitred flange's tip keeps the mitre: the flat pattern matches the part laid flat", () => {
+    const edges = topEdges(build([plateSketch, sheet]));
+    const pick = (x: number[]) => edges.filter((e) => x.some((i) => (i === 0 ? Math.abs(e.a[1]) < 1e-6 && Math.abs(e.b[1]) < 1e-6 : Math.abs(e.a[0] - 100) < 1e-6 && Math.abs(e.b[0] - 100) < 1e-6)));
+    const fl: Feature = { id: "fl", name: "fl", type: "flange", operation: "add", suppressed: false, params: { length: "20", angle: "120", inset: "0", cornerGap: "0.2" }, picks: pick([0, 1]).map((ref) => ({ partId: "sm", ref })), mitreCorners: true };
+    const r1 = build([plateSketch, sheet, fl]);
+    expect(r1.featureErrors).toEqual({});
+    // The bottom flange's tip: the highest edge running along x.
+    const tips = r1.parts[0].edgeRefs.filter((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[1] - e.b[1]) < 1e-6 && Math.abs(e.a[2] - e.b[2]) < 1e-6 && Math.abs(e.a[0] - e.b[0]) > 1);
+    const tip = tips.reduce((best, e) => (e.a[2] > best.a[2] ? e : best));
+    const tipLength = Math.abs(tip.a[0] - tip.b[0]);
+    expect(tipLength).toBeLessThan(99);
+    const lip: Feature = { id: "lip", name: "lip", type: "flange", operation: "add", suppressed: false, params: { length: "8", angle: "90", inset: "0" }, picks: [{ partId: "sm", ref: tip }] };
+    const r = build([plateSketch, sheet, fl, lip]);
+    expect(r.featureErrors).toEqual({});
+    expect(valid()).toBe(true);
+    const flat = r.parts[0].flat!.outline;
+    const flatArea = Math.abs(flat.reduce((a, p, i) => a + p[0] * flat[(i + 1) % flat.length][1] - flat[(i + 1) % flat.length][0] * p[1], 0) / 2);
+    const laid = engine.unfold("sm")!;
+    expect(analyzeMesh(laid.vertices, laid.triangles).volume).toBeCloseTo(flatArea * 2, 1);
+    // The lip runs the trimmed tip's length: it adds its bend and 4 mm straight (8 − R − T) along it.
+    const before = vol();
+    build([plateSketch, sheet, fl]);
+    expect(before - vol()).toBeCloseTo(tipLength * (Q90 + 4 * 2), 1);
+  });
+
+  it("leaves a flange up and a flange down alone (they never meet)", () => {
+    const edges = topEdges(build([plateSketch, sheet]));
+    const bottom = edges.find((e) => Math.abs(e.a[1]) < 1e-6 && Math.abs(e.b[1]) < 1e-6)!;
+    const right = edges.find((e) => Math.abs(e.a[0] - 100) < 1e-6 && Math.abs(e.b[0] - 100) < 1e-6)!;
+    const make = (mitre: boolean) => {
+      const up: Feature = { id: "up", name: "up", type: "flange", operation: "add", suppressed: false, params: { length: "20", angle: "120", inset: "0" }, picks: [{ partId: "sm", ref: bottom }], ...(mitre ? { mitreCorners: true } : {}) };
+      const r0 = build([plateSketch, sheet, up]);
+      // The right edge on the bottom face (z = 0) now: bend it down.
+      const r2 = r0.parts[0].edgeRefs.find((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[0] - 100) < 1e-6 && Math.abs(e.b[0] - 100) < 1e-6 && Math.abs(e.a[2]) < 1e-6 && Math.abs(e.b[2]) < 1e-6)!;
+      const down: Feature = { id: "down", name: "down", type: "flange", operation: "add", suppressed: false, params: { length: "20", angle: "120", inset: "0" }, picks: [{ partId: "sm", ref: r2 ?? right }], flipSide: true, ...(mitre ? { mitreCorners: true } : {}) };
+      expect(build([plateSketch, sheet, up, down]).featureErrors).toEqual({});
+      return vol();
+    };
+    expect(make(true)).toBeCloseTo(make(false), 3);
   });
 
   it("flanges leaning in at 120° on all four edges: trimmed so they don't run into each other", () => {

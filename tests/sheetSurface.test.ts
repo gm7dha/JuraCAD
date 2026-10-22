@@ -314,6 +314,10 @@ describe("surfaces", () => {
     expect(analyzeMesh(r.parts[0].vertices, r.parts[0].triangles).pieces).toBe(1);
     // Up to the narrow block itself: the edge's ends would run on past its sides.
     expect(Object.values(build([sk, wall, block, narrow, ext({ mode: "part", target: under(2) })]).featureErrors)[0]).toMatch(/past its sides/);
+    // A block already sitting on the edge.
+    const resting = feature("box", { width: 30, depth: 10, height: 8, x: -5, y: -5, z: 5 });
+    const touching = build([sk, wall, block, narrow, resting, ext({ mode: "part", target: { partId: resting.id, ref: build([sk, wall, block, narrow, resting]).parts[3].faceRefs[0] } })]);
+    expect(Object.values(touching.featureErrors)[0]).toMatch(/already touches an edge being extended/);
     // Not picked yet, picked on itself, a surface as "part", and an edge heading away.
     expect(build([sk, wall, block, ext({ mode: "face" })]).featureErrors).toMatchObject({ [`f${n}`]: "Click the face to extend up to." });
     const bottomEdge = r0.parts[0].edgeRefs.find((e) => e.kind === "edge" && Math.abs(e.mid[2]) < 1e-6 && Math.abs(e.mid[0] - 10) < 1e-6)!;

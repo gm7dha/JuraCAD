@@ -26,7 +26,7 @@ import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { openChain, profileSheet } from "../sheetmetal/profile";
-import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
+import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
@@ -1977,9 +1977,18 @@ export class GeometryEngine {
         const mid: P2 = e.kind === "line" ? [(e.from[0] + e.to[0]) / 2, (e.from[1] + e.to[1]) / 2] : from;
         flip = rightOf(mid) > 0;
       } else {
-        // The smaller piece moves (or the other, if asked).
+        // The side with flanges or bends already on it stays still; otherwise the smaller piece moves (or the other, if asked).
+        const folded = foldSheet(spec);
+        const sides = folded.bends
+          .filter((b) => b.parent === wall.id)
+          .map((b) => {
+            const e = wall.outline[b.edge];
+            return e.kind === "line" ? Math.sign(rightOf([(e.from[0] + e.to[0]) / 2, (e.from[1] + e.to[1]) / 2])) : 0;
+          });
         const [left, right] = sideAreas(wall.outline, from, dir);
-        flip = (right > left + 1e-9) !== !!feature.keepOtherSide;
+        const smallerRight = right <= left + 1e-9;
+        const rightMoves = sides.some((x) => x > 0) && !sides.some((x) => x < 0) ? false : sides.some((x) => x < 0) && !sides.some((x) => x > 0) ? true : smallerRight;
+        flip = rightMoves === !!feature.keepOtherSide;
       }
       if (flip) [from, to] = [to, from];
       // Cuts already made through the wall mustn't cross the bend (their material can't be bent).
@@ -1995,6 +2004,11 @@ export class GeometryEngine {
       if (jog) {
         const s = jogSpacing(values.height, values.angle, R, T, spec.k);
         if (typeof s === "string") return s;
+        // Both bends and some straight after them must fit on the moving side.
+        const a = 2 * half;
+        const room = Math.max(...outlinePoints(wall.outline).map((p) => across(p)));
+        if (room < s + a + 0.01)
+          return `Not enough room past the line for a step this high (it needs ${Math.ceil((s + a + 0.01) * 100) / 100} mm, there's ${Math.floor(room * 100) / 100} mm): move the line further from the edge, make the step lower, or tick “Keep the other side still”.`;
         // The second bend, the other way, across the piece the first one turned up (its y runs on from the bend).
         added.push({ id: `${feature.id}:1`, wall: `${feature.id}:0`, edge: -1, length: 0, angle: values.angle, down: !down, ...radius, line: { from: [1, s], to: [0, s] } });
       }
@@ -2212,6 +2226,10 @@ export class GeometryEngine {
       added.push(fl);
       spec = { ...spec, flanges: [...spec.flanges, fl] };
     }
+    const oldFold = foldSheet(part.sheet);
+    const mitredBefore = new Set((oldFold.mitres ?? []).flatMap((m) => m.walls));
+    if (added.some((f) => f.position && mitredBefore.has(f.wall)))
+      return "A flange on a mitred flange can only bend off the edge (it can't sit flush there). Set the position to “Bend off the edge”.";
     const folded = foldSheet(spec);
     const problem = added.map((f) => folded.errors[f.id]).find(Boolean);
     if (problem) return problem;
@@ -2228,7 +2246,6 @@ export class GeometryEngine {
       if (old) return "To sit flush, this flange cuts back the edge next to a flange made earlier. Pick both edges in one Flange (so they're made together), or set the position to “Bend off the edge”.";
     }
     // Walls of flanges made before, trimmed now where they meet the new ones at mitred corners: what comes off them.
-    const oldFold = foldSheet(part.sheet);
     const mitred = new Set((folded.mitres ?? []).filter((m) => m.flanges.some((id) => ids.has(id))).flatMap((m) => m.walls).filter((id) => !ids.has(id)));
     const reshaped = [...mitred]
       .map((id) => ({ was: oldFold.walls.find((w) => w.id === id), now: folded.walls.find((w) => w.id === id) }))
@@ -2413,6 +2430,8 @@ export class GeometryEngine {
     let edges: Edge[] = [];
     try {
       edges = findPickedEdges(part.shape, picks);
+      if (limit && upTo && edges.some((e) => measureDistanceBetween(e as unknown as Shape3D, limit!) < 1e-6))
+        return `That ${upTo.mode} already touches an edge being extended, so there's nothing to extend up to there. Pick a ${upTo.mode} further along, or extend by a distance.`;
       const grown = extendSurface(part.shape, edges, reach, limit ?? undefined);
       part.shape.delete();
       part.shape = grown;

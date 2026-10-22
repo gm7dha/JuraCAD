@@ -334,7 +334,7 @@ function RibThickenOptions() {
         </>
       )}
       {(draft.type === "flange" || draft.type === "hem") && (
-        <label className="check-row" title="Where these meet a flange or hem on the next edge round, both are trimmed along the corner's diagonal (the gap apart) instead of running into each other — so the flat pattern can be folded up">
+        <label className="check-row" title="Where these meet a flange or hem on the next edge round, both are trimmed along the corner's diagonal (the gap apart) instead of running into each other — so the flat pattern can be folded up. Only hems and flanges bent past 90° (leaning in) meet; at 90° or less nothing changes.">
           <input type="checkbox" checked={!!draft.mitreCorners} onChange={(e) => setDraftField({ mitreCorners: e.target.checked || undefined })} />
           Mitre corners where they meet others
         </label>

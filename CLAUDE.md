@@ -37,9 +37,10 @@
   wall corners; cuts are traced on walls and bends (`bendCutLines`) and the flat pattern's `boundary` is then taken from
   the part laid flat (`laidFlat` in engine.ts). Bend/Jog are `FlangeSpec`s with a `line` (in the wall's coordinates;
   the piece on its right moves): `splitWall` cuts the wall in two (the line is the bend's middle, so the flat pattern
-  keeps the drawn shape), only on a wall with nothing bent off it yet; `Bend.moved` is where the moving piece's frame
+  keeps the drawn shape); bends already on that wall must be on the piece that stays (they're renumbered); `Bend.moved` is where the moving piece's frame
   goes, and the engine (`bendMaterial`) moves the part's own material there so earlier holes come along. A flange's
-  `mitre` (gap) trims walls meeting at a corner along its diagonal (`mitreCorners`, `FoldedSheet.mitres`); the engine
+  `mitre` (gap) trims walls meeting at a corner along its diagonal as soon as both are bent (`mitreCorner`, `FoldedSheet.mitres`;
+  not one up and one down, nor walls that already have flanges); the engine
   cuts the same off neighbours made earlier. Off unless chosen, so old files rebuild the same.
 - Surfaces: `src/kernel/surface.ts` (extrude/revolve/sweep/loft of a sketch's open or closed runs — `findChains` in
   `src/sketch/regions.ts` — as shells; Fill from edges; thicken, enclose and offset). A surface part has `surface: true`

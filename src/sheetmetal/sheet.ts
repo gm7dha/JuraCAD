@@ -344,6 +344,8 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
   const used = new Set<string>();
   const trims: NonNullable<FoldedSheet["trims"]> = [];
   setBack(spec, base, errors, trims);
+  const mitres: NonNullable<FoldedSheet["mitres"]> = [];
+  const anyMitre = spec.flanges.some((f) => f.mitre !== undefined);
 
   spec.flanges.forEach((fl, index) => {
     if (errors[fl.id]) return;
@@ -444,9 +446,15 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     walls.push(child);
     setBack(spec, child, errors, trims);
     bends.push({ flangeId: fl.id, parent: parent.id, edge: fl.edge, child: child.id, inset, reliefs, radius: R, angle: fl.angle, down: fl.down, straight, length: len, ...g.bend });
+    // Mitred corners with flanges already on the edges either side, trimmed now so flanges made later on these walls
+    // go on their trimmed edges.
+    if (anyMitre) {
+      const k = parent.outline.length;
+      mitreCorner(spec, walls, bends, parent, (fl.edge - 1 + k) % k, mitres);
+      mitreCorner(spec, walls, bends, parent, fl.edge, mitres);
+    }
   });
-  closeCorners(spec, walls, bends);
-  const mitres = mitreCorners(spec, walls, bends);
+  closeCorners(spec, walls, bends, new Set(mitres.flatMap((m) => m.walls)));
   const cornerReliefs = findCornerReliefs(spec, walls, bends);
   for (const t of spec.tabs ?? []) {
     const w = walls.find((x) => x.id === t.wall);
@@ -543,10 +551,6 @@ function lineBend(spec: SheetSpec, fl: FlangeSpec, index: number, walls: Wall[],
     errors[fl.id] = "The wall this bend was on can't be found any more. Edit the bend and choose its sketch again.";
     return;
   }
-  if (bends.some((b) => b.parent === parent.id)) {
-    errors[fl.id] = "This wall already has flanges or bends on it. Bend it first: drag this Bend above them in the feature list.";
-    return;
-  }
   if (!(fl.angle > 0 && fl.angle < 180)) {
     errors[fl.id] = "The bend angle must be more than 0° and less than 180°.";
     return;
@@ -564,6 +568,23 @@ function lineBend(spec: SheetSpec, fl: FlangeSpec, index: number, walls: Wall[],
   if (typeof split === "string") {
     errors[fl.id] = split;
     return;
+  }
+  // Flanges and bends already on this wall must be on edges of the piece that stays still; they're renumbered.
+  const already = bends.filter((b) => b.parent === parent.id);
+  for (const b of already) {
+    if (split.crossed.includes(b.edge)) {
+      errors[fl.id] = "The bend line crosses an edge that already has a flange or bend on it. Move the line so it crosses plain edges, or make this bend first (drag it above that flange in the feature list).";
+      return;
+    }
+    if (!split.fixedFrom.includes(b.edge)) {
+      errors[fl.id] = "There's a flange or bend on the side that would move. Tick “Keep the other side still” to bend the other side, or make this bend first (drag it above that flange in the feature list).";
+      return;
+    }
+  }
+  for (const b of already) used.delete(`${parent.id}:${b.edge}`);
+  for (const b of already) {
+    b.edge = split.fixedFrom.indexOf(b.edge);
+    used.add(`${parent.id}:${b.edge}`);
   }
   parent.outline = split.fixed;
   parent.holes = split.fixedHoles;
@@ -604,7 +625,7 @@ function lineBend(spec: SheetSpec, fl: FlangeSpec, index: number, walls: Wall[],
  * wall's edge 0 (where it joins the wall before) must stay, and stays first.
  */
 export function splitWall(outline: Segment[], holes: Segment[][], p0: P2, dir: P2, h: number, keepFirst = false):
-  | { fixed: Segment[]; fixedEdge: number; moving: Segment[]; fixedHoles: Segment[][]; movingHoles: Segment[][] }
+  | { fixed: Segment[]; fixedEdge: number; moving: Segment[]; fixedHoles: Segment[][]; movingHoles: Segment[][]; fixedFrom: number[]; crossed: [number, number] }
   | string {
   const right: P2 = [dir[1], -dir[0]];
   const dist = (p: P2) => (p[0] - p0[0]) * right[0] + (p[1] - p0[1]) * right[1];
@@ -663,7 +684,16 @@ export function splitWall(outline: Segment[], holes: Segment[][], p0: P2, dir: P
     else if (Math.min(...ds) >= h - 1e-6) movingHoles.push(hole);
     else return "A hole in the sheet crosses the bend. Move the line (or the hole) so the bend misses it.";
   }
-  return { fixed: ordered.map((f) => f.seg), fixedEdge: ordered.findIndex((f) => f.orig === Infinity), moving, fixedHoles, movingHoles };
+  return {
+    fixed: ordered.map((f) => f.seg),
+    fixedEdge: ordered.findIndex((f) => f.orig === Infinity),
+    moving,
+    fixedHoles,
+    movingHoles,
+    // Which of the wall's edges each fixed edge was, if it's still whole (-1: shortened by the bend, or the cut).
+    fixedFrom: ordered.map((f) => (f.orig === c1 || f.orig === c2 || f.orig === Infinity ? -1 : f.orig)),
+    crossed: [c1, c2],
+  };
 }
 
 /**
@@ -834,7 +864,7 @@ const rectRange = (u0: number, u1: number, h: number): Segment[] => [
  * corner is closed — the first flange's wall runs on to the outside of the
  * second's, and the second's runs on to butt against the first's inside.
  */
-function closeCorners(spec: SheetSpec, walls: Wall[], bends: Bend[]): void {
+function closeCorners(spec: SheetSpec, walls: Wall[], bends: Bend[], mitred: Set<string>): void {
   const T = spec.thickness;
   const wants = new Set(spec.flanges.filter((f) => f.closeCorners).map((f) => f.id));
   if (!wants.size) return;
@@ -863,6 +893,7 @@ function closeCorners(spec: SheetSpec, walls: Wall[], bends: Bend[]): void {
     }
   }
   for (const [id, e] of ext) {
+    if (mitred.has(id)) continue; // already trimmed at its other end
     const wall = walls.find((x) => x.id === id);
     const bend = bends.find((x) => x.child === id);
     if (!wall || !bend) continue;
@@ -876,49 +907,46 @@ function closeCorners(spec: SheetSpec, walls: Wall[], bends: Bend[]): void {
  * new wall is trimmed square to itself so none of it crosses the plane
  * through the corner halfway between the two edges (square to the wall) —
  * less half the gap — so they meet along that line instead of running into
- * each other. Walls with flanges of their own, and closed corners, are left as they are.
+ * each other. Done as soon as both are bent (so flanges made later on these
+ * walls go on their trimmed edges); walls that already have flanges of their
+ * own, flanges one up and one down, and closed corners are left as they are.
  */
-function mitreCorners(spec: SheetSpec, walls: Wall[], bends: Bend[]): NonNullable<FoldedSheet["mitres"]> {
+function mitreCorner(spec: SheetSpec, walls: Wall[], bends: Bend[], w: Wall, i: number, out: NonNullable<FoldedSheet["mitres"]>): void {
   const T = spec.thickness;
-  const flange = new Map(spec.flanges.map((f) => [f.id, f]));
-  const out: NonNullable<FoldedSheet["mitres"]> = [];
-  if (!spec.flanges.some((f) => f.mitre !== undefined)) return out;
-  for (const w of walls) {
-    const k = w.outline.length;
-    for (let i = 0; i < k; i++) {
-      const a = bends.find((b) => b.parent === w.id && b.edge === i);
-      const b = bends.find((x) => x.parent === w.id && x.edge === (i + 1) % k);
-      if (!a || !b) continue;
-      const fa = flange.get(a.flangeId);
-      const fb = flange.get(b.flangeId);
-      if (!fa || !fb || fa.line || fb.line || (fa.mitre === undefined && fb.mitre === undefined) || fa.closeCorners || fb.closeCorners) continue;
-      const sa = w.outline[i];
-      const sb = w.outline[(i + 1) % k];
-      if (sa.kind !== "line" || sb.kind !== "line") continue;
-      const ea = unit2([sa.to[0] - sa.from[0], sa.to[1] - sa.from[1]]);
-      const eb = unit2([sb.to[0] - sb.from[0], sb.to[1] - sb.from[1]]);
-      // An outside corner turns left going round.
-      if (ea[0] * eb[1] - ea[1] * eb[0] < 1e-9) continue;
-      const ca = walls.find((x) => x.id === a.child);
-      const cb = walls.find((x) => x.id === b.child);
-      if (!ca || !cb || bends.some((x) => x.parent === ca.id || x.parent === cb.id)) continue;
-      const gap = Math.max(fa.mitre ?? 0, fb.mitre ?? 0);
-      // The plane through the corner, square to the wall, halfway between the edges; m points to a's side.
-      const bis = unit2([-ea[0] + eb[0], -ea[1] + eb[1]]);
-      let m2: P2 = [-bis[1], bis[0]];
-      const midA: P2 = [(sa.from[0] + sa.to[0]) / 2 - sa.to[0], (sa.from[1] + sa.to[1]) / 2 - sa.to[1]];
-      if (m2[0] * midA[0] + m2[1] * midA[1] < 0) m2 = [-m2[0], -m2[1]];
-      const m: V3 = add(mul(w.frame.u, m2[0]), mul(w.frame.v, m2[1]));
-      const corner = wallPoint(w.frame, sa.to);
-      const ta = trimByPlane(ca, T, corner, m, gap / 2);
-      const tb = trimByPlane(cb, T, corner, mul(m, -1), gap / 2);
-      if (!ta || !tb) continue;
-      ca.outline = ta;
-      cb.outline = tb;
-      out.push({ flanges: [a.flangeId, b.flangeId], walls: [ca.id, cb.id] });
-    }
-  }
-  return out;
+  const k = w.outline.length;
+  const a = bends.find((b) => b.parent === w.id && b.edge === i);
+  const b = bends.find((x) => x.parent === w.id && x.edge === (i + 1) % k);
+  if (!a || !b) return;
+  const fa = spec.flanges.find((f) => f.id === a.flangeId);
+  const fb = spec.flanges.find((f) => f.id === b.flangeId);
+  if (!fa || !fb || fa.line || fb.line || (fa.mitre === undefined && fb.mitre === undefined) || fa.closeCorners || fb.closeCorners) return;
+  // One up and one down never meet.
+  if (a.down !== b.down) return;
+  const sa = w.outline[i];
+  const sb = w.outline[(i + 1) % k];
+  if (sa.kind !== "line" || sb.kind !== "line") return;
+  const ea = unit2([sa.to[0] - sa.from[0], sa.to[1] - sa.from[1]]);
+  const eb = unit2([sb.to[0] - sb.from[0], sb.to[1] - sb.from[1]]);
+  // An outside corner turns left going round.
+  if (ea[0] * eb[1] - ea[1] * eb[0] < 1e-9) return;
+  const ca = walls.find((x) => x.id === a.child);
+  const cb = walls.find((x) => x.id === b.child);
+  // A wall with flanges of its own already can't be trimmed under them.
+  if (!ca || !cb || bends.some((x) => x.parent === ca.id || x.parent === cb.id)) return;
+  const gap = Math.max(fa.mitre ?? 0, fb.mitre ?? 0);
+  // The plane through the corner, square to the wall, halfway between the edges; m points to a's side.
+  const bis = unit2([-ea[0] + eb[0], -ea[1] + eb[1]]);
+  let m2: P2 = [-bis[1], bis[0]];
+  const midA: P2 = [(sa.from[0] + sa.to[0]) / 2 - sa.to[0], (sa.from[1] + sa.to[1]) / 2 - sa.to[1]];
+  if (m2[0] * midA[0] + m2[1] * midA[1] < 0) m2 = [-m2[0], -m2[1]];
+  const m: V3 = add(mul(w.frame.u, m2[0]), mul(w.frame.v, m2[1]));
+  const corner = wallPoint(w.frame, sa.to);
+  const ta = trimByPlane(ca, T, corner, m, gap / 2);
+  const tb = trimByPlane(cb, T, corner, mul(m, -1), gap / 2);
+  if (!ta || !tb) return;
+  ca.outline = ta;
+  cb.outline = tb;
+  out.push({ flanges: [a.flangeId, b.flangeId], walls: [ca.id, cb.id] });
 }
 
 /**
