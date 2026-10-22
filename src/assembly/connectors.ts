@@ -13,6 +13,8 @@
 import { circleThrough3D } from "../geometry/measureMath";
 import { matchRefs, type TopoPick } from "../geometry/topoRef";
 import type { PartMesh } from "../kernel/protocol";
+import type { ConnectorSpot } from "../model/types";
+import { ORIGIN_ID } from "./origin";
 import { add, cross, dot, length, normalize, quatNormalize, scale, sub, type Placement, type Quat, type Vec3 } from "./math";
 
 export interface Frame {
@@ -296,8 +298,128 @@ export function widthFrame(f1: Frame, f2: Frame): Frame | null {
   return frame(scale(add(f1.origin, f2.origin), 0.5), f1.z);
 }
 
+/** The point a fraction `t` (0…1) of the way along a line of points, by length. */
+function alongPoints(pts: Vec3[], t: number): Vec3 {
+  const lens = pts.slice(1).map((p, i) => length(sub(p, pts[i])));
+  let left = lens.reduce((a, b) => a + b, 0) * t;
+  for (let i = 0; i < lens.length; i++) {
+    if (left <= lens[i] || i === lens.length - 1) return add(pts[i], scale(sub(pts[i + 1], pts[i]), lens[i] > 0 ? Math.min(1, left / lens[i]) : 0));
+    left -= lens[i];
+  }
+  return pts[0];
+}
+
+/** The nearest point to `q` on a line of points. */
+function nearestOnPoints(pts: Vec3[], q: Vec3): Vec3 {
+  let best = pts[0];
+  let bestD = Infinity;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const d = sub(pts[i + 1], pts[i]);
+    const l2 = dot(d, d);
+    const t = l2 > 0 ? Math.max(0, Math.min(1, dot(sub(q, pts[i]), d) / l2)) : 0;
+    const p = add(pts[i], scale(d, t));
+    const dist = length(sub(q, p));
+    if (dist < bestD) [best, bestD] = [p, dist];
+  }
+  return best;
+}
+
+/** An edge's two end corners: `start` is the one nearer where the picked edge started (its ref's `a`). */
+function edgeEnds(mesh: MeshData, index: number, ref: TopoPick["ref"]): { start: Vec3; end: Vec3 } | null {
+  const pts = edgePoints(mesh, index);
+  if (pts.length < 2) return null;
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  if (ref.kind !== "edge") return { start: first, end: last };
+  return length(sub(first, ref.a)) <= length(sub(last, ref.a)) ? { start: first, end: last } : { start: last, end: first };
+}
+
+/**
+ * A connector moved to another spot on its face or edge — only its origin
+ * moves, its directions stay as they were:
+ *  - an edge's start or end corner, halfway along it ("middle": for a circle,
+ *    on the circle rather than at its centre), or the nearest point to the click;
+ *  - on a flat face, where it was clicked; on a round face (cylinder, cone),
+ *    along its axis level with the click.
+ */
+export function spotFrame(mesh: MeshData, kind: "face" | "edge", index: number, ref: TopoPick["ref"], f: Frame, spot: ConnectorSpot | undefined, point?: Vec3): Frame {
+  if (!spot) return f;
+  if (kind === "face") {
+    if (spot !== "clicked" || !point || f.surface === "sphere") return f;
+    const along = dot(sub(point, f.origin), f.z);
+    // Flat: the click itself (on the face's plane). Round: on the axis, level with the click.
+    return { ...f, origin: f.surface === "plane" ? sub(point, scale(f.z, along)) : add(f.origin, scale(f.z, along)) };
+  }
+  const pts = edgePoints(mesh, index);
+  if (pts.length < 2) return f;
+  if (spot === "start" || spot === "end") {
+    const ends = edgeEnds(mesh, index, ref);
+    return ends ? { ...f, origin: ends[spot] } : f;
+  }
+  // On a circle, put the point back onto the true circle (the mesh's straight pieces cut across it).
+  const onCircle = (q: Vec3): Vec3 => {
+    if (ref.kind !== "edge" || ref.curve !== "CIRCLE") return q;
+    const flat = (v: Vec3) => sub(v, scale(f.z, dot(v, f.z)));
+    const r = length(flat(sub(pts[0], f.origin)));
+    const d = flat(sub(q, f.origin));
+    return length(d) > 1e-12 ? add(add(f.origin, scale(f.z, dot(sub(q, f.origin), f.z))), scale(d, r / length(d))) : q;
+  };
+  if (spot === "middle") return { ...f, origin: onCircle(alongPoints(pts, 0.5)) };
+  if (spot === "clicked" && point) return { ...f, origin: onCircle(nearestOnPoints(pts, point)) };
+  return f;
+}
+
+/** True when an edge's two ends are the same point (a whole circle, a closed loop). */
+export function isClosedEdge(ref: TopoPick["ref"]): boolean {
+  return ref.kind === "edge" && length(sub(ref.a, ref.b)) < 1e-6;
+}
+
+/**
+ * Where a click on an edge most likely means (like Onshape's inferred points):
+ * near one end of an open edge (within a sixth of its length), that corner;
+ * otherwise the edge's usual spot.
+ */
+export function clickedSpot(part: PartMesh, pick: TopoPick, point: Vec3): ConnectorSpot | undefined {
+  if (pick.ref.kind !== "edge" || isClosedEdge(pick.ref)) return undefined;
+  const index = findPick(part, pick);
+  if (index < 0) return undefined;
+  const pts = edgePoints(part, index);
+  const ends = edgeEnds(part, index, pick.ref);
+  if (!ends || pts.length < 2) return undefined;
+  const total = pts.slice(1).reduce((t, p, i) => t + length(sub(p, pts[i])), 0);
+  const near = total / 6;
+  const ds = length(sub(point, ends.start));
+  const de = length(sub(point, ends.end));
+  if (Math.min(ds, de) > near) return undefined;
+  return ds <= de ? "start" : "end";
+}
+
+/** The places a connector can sit on what was picked, for the mate dialog ("" = its usual spot). */
+export function spotOptions(c: { instanceId: string; pick: TopoPick; point?: Vec3 }): { value: ConnectorSpot | ""; label: string }[] {
+  const ref = c.pick.ref;
+  if (c.instanceId === ORIGIN_ID) return [];
+  const clicked = c.point ? [{ value: "clicked" as const, label: "Where you clicked" }] : [];
+  if (ref.kind === "face") {
+    if (ref.surface === "PLANE") return [{ value: "", label: "Centre" }, ...clicked];
+    if (ref.surface.startsWith("CYLIND") || ref.surface === "CONE") return [{ value: "", label: "Middle of the axis" }, ...(c.point ? [{ value: "clicked" as const, label: "On the axis, level with the click" }] : [])];
+    return [];
+  }
+  const ends = isClosedEdge(ref) ? [] : [
+    { value: "start" as const, label: "One end" },
+    { value: "end" as const, label: "Other end" },
+  ];
+  if (ref.curve === "CIRCLE") return [{ value: "", label: "Centre" }, { value: "middle", label: "On the edge, halfway" }, ...ends, ...clicked];
+  return [{ value: "", label: "Middle" }, ...ends, ...clicked];
+}
+
 /** A connector's frame on its part as built now — halfway between both faces for a Width mate (null if it can't be found). */
-export function connectorFrameOnParts(parts: PartMesh[], c: { pick: TopoPick; pick2?: TopoPick }): Frame | null {
+export function connectorFrameOnParts(parts: PartMesh[], c: { pick: TopoPick; pick2?: TopoPick; spot?: ConnectorSpot; point?: Vec3 }): Frame | null {
+  if (!c.pick2 && c.spot) {
+    const part = parts.find((p) => p.id === c.pick.partId);
+    const index = part ? findPick(part, c.pick) : -1;
+    const f = part && index >= 0 ? connectorFrame(part, c.pick.ref.kind, index) : null;
+    return part && f ? spotFrame(part, c.pick.ref.kind, index, c.pick.ref, f, c.spot, c.point) : null;
+  }
   const f1 = frameOnParts(parts, c.pick);
   if (!c.pick2 || !f1) return f1;
   if (c.pick.ref.kind !== "face" || c.pick2.ref.kind !== "face" || c.pick.ref.surface !== "PLANE" || c.pick2.ref.surface !== "PLANE") return null;

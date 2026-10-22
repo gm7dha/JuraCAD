@@ -1659,6 +1659,18 @@ kbd {
   font-size: 13px;
 }
 
+.connector-picked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.connector-spot {
+  font-size: 12px;
+  max-width: 100%;
+}
+
 .connector-slot.filled {
   border-style: solid;
   background: var(--accent-soft);

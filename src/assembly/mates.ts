@@ -640,7 +640,7 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
   const instance = assembly.instances.find((i) => i.id === c.instanceId);
   const mesh = instance?.configuration ? findMesh(parts, meshIdOf(instance)) : undefined;
   const f = mesh
-    ? connectorFrameOnParts([mesh], { pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
+    ? connectorFrameOnParts([mesh], { ...c, pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
     : connectorFrameOnParts(parts, c);
   // A mirrored instance shows its part flipped across its own YZ plane: so are its connectors.
   if (f && instance?.mirrored) {

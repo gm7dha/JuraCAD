@@ -5,7 +5,7 @@ import opencascade from "replicad-opencascadejs";
 import { setOC } from "replicad";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { connectorFrame, framePlacement, quatFromBasis, symmetricEigen } from "../src/assembly/connectors";
+import { clickedSpot, connectorFrame, connectorFrameOnParts, framePlacement, quatFromBasis, spotOptions, symmetricEigen } from "../src/assembly/connectors";
 import { applyPlacement, cross, rotate } from "../src/assembly/math";
 import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
@@ -106,6 +106,45 @@ describe("connectors on real parts", () => {
     parallel(f.z, [0, 0, 1]);
     // As a placement, its origin maps to the connector point.
     close(applyPlacement(framePlacement(f), [0, 0, 0]), f.origin, 9);
+  });
+
+  it("moves a connector to an edge's corners, halfway round a circle, or where it was clicked", () => {
+    const k = part.edgeRefs.findIndex((e) => e.curve === "LINE" && Math.abs(e.a[2] - e.b[2]) > 19 && e.a[0] === 0 && e.a[1] === 0);
+    const ref = part.edgeRefs[k];
+    const pick = { partId: part.id, ref };
+    const at = (spot: "start" | "end" | "middle" | "clicked", point?: [number, number, number]) => connectorFrameOnParts([part], { pick, spot, point })!;
+    // The corners: "start" is the end the edge was picked from (its ref's a).
+    close(at("start").origin, ref.a);
+    close(at("end").origin, ref.b);
+    // Only the position moves: still pointing along the edge.
+    parallel(at("end").z, [0, 0, 1]);
+    close(at("clicked", [0.3, -0.2, 4]).origin, [0, 0, 4]);
+    close(at("middle").origin, [0, 0, 10]);
+    // A click near one end picks that corner; in the middle, the usual spot.
+    expect(clickedSpot(part, pick, [0, 0, ref.a[2] + (ref.b[2] > ref.a[2] ? 1 : -1)])).toBe("start");
+    expect(clickedSpot(part, pick, ref.b)).toBe("end");
+    expect(clickedSpot(part, pick, [0, 0, 10])).toBe(undefined);
+    // The hole's rim: halfway round it is on the circle (5 from the axis), level with the top.
+    const rim = part.edgeRefs.findIndex((e) => e.curve === "CIRCLE" && e.mid[2] > 19.99);
+    const r = connectorFrameOnParts([part], { pick: { partId: part.id, ref: part.edgeRefs[rim] }, spot: "middle" })!;
+    expect(Math.hypot(r.origin[0] - 20, r.origin[1] - 15)).toBeCloseTo(5, 2);
+    expect(r.origin[2]).toBeCloseTo(20, 6);
+    // A whole circle has no ends to snap to, and offers no end corners.
+    expect(clickedSpot(part, { partId: part.id, ref: part.edgeRefs[rim] }, part.edgeRefs[rim].a)).toBe(undefined);
+    expect(spotOptions({ instanceId: "i", pick: { partId: part.id, ref: part.edgeRefs[rim] } }).map((o) => o.value)).toEqual(["", "middle"]);
+    expect(spotOptions({ instanceId: "i", pick, point: [0, 0, 1] }).map((o) => o.value)).toEqual(["", "start", "end", "clicked"]);
+  });
+
+  it("puts a face's connector where it was clicked: on a flat face, or level with it on a hole's axis", () => {
+    const top = faceWhere((s, _c, nrm) => s === "PLANE" && nrm[2] > 0.99);
+    const flat = connectorFrameOnParts([part], { pick: { partId: part.id, ref: part.faceRefs[top] }, spot: "clicked", point: [3, 4, 20.001] })!;
+    close(flat.origin, [3, 4, 20]);
+    close(flat.z, [0, 0, 1], 6);
+    const hole = part.faceRefs.findIndex((f) => f.surface.startsWith("CYLIND"));
+    const onAxis = connectorFrameOnParts([part], { pick: { partId: part.id, ref: part.faceRefs[hole] }, spot: "clicked", point: [25, 15, 4] })!;
+    close(onAxis.origin, [20, 15, 4], 3);
+    // Without a spot: as before (the face's centre).
+    close(connectorFrameOnParts([part], { pick: { partId: part.id, ref: part.faceRefs[top] }, point: [3, 4, 20] })!.origin, [20, 15, 20]);
   });
 
   it("finds a ball's centre", () => {

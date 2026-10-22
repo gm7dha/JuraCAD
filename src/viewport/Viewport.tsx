@@ -7,7 +7,7 @@ import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/feature
 import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
-import { findPick, framePlacement } from "../assembly/connectors";
+import { clickedSpot, findPick, framePlacement } from "../assembly/connectors";
 import { explodeAssembly, useSolvedAssembly } from "../app/assemblySolve";
 import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
@@ -76,8 +76,11 @@ function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
     if (!instance || !part) return;
     const ref = target.item.kind === "edge" ? part.edgeRefs?.[target.item.index] : part.faceRefs?.[target.item.index];
     if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return;
-    // Picks name the part itself, whichever configuration it's shown in.
-    s.pickMateConnector({ instanceId: instance.id, pick: { partId: instance.partId, ref } });
+    // Picks name the part itself, whichever configuration it's shown in. Where it was clicked is kept
+    // (in the part's own coordinates), and a click near an edge's end puts the connector on that corner.
+    const point = target.local?.map((v) => Math.round(v * 1e6) / 1e6) as [number, number, number] | undefined;
+    const spot = point ? clickedSpot(part, { partId: part.id, ref }, point) : undefined;
+    s.pickMateConnector({ instanceId: instance.id, pick: { partId: instance.partId, ref }, ...(spot ? { spot } : {}), ...(point ? { point } : {}) });
     return;
   }
   const id = target?.kind === "part" ? target.item.partId : null;

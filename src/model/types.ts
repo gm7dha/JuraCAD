@@ -558,7 +558,18 @@ export interface MateConnector {
   pick: TopoPick;
   /** Width mates: the second flat face; the connector sits halfway between the two. */
   pick2?: TopoPick;
+  /**
+   * Where on the face or edge the connector sits, when not its usual spot (a
+   * face's centre, an edge's middle or a circle's centre): an edge's start or
+   * end corner, halfway along a curved edge, or where it was clicked (`point`).
+   * Only the connector's position changes, never its directions.
+   */
+  spot?: ConnectorSpot;
+  /** Where the face or edge was clicked, in the part's own coordinates (mm). */
+  point?: [number, number, number];
 }
+
+export type ConnectorSpot = "start" | "end" | "middle" | "clicked";
 
 export interface Mate {
   id: string;

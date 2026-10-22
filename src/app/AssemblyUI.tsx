@@ -13,13 +13,14 @@ import { evaluate } from "../model/expr";
 import { activeAssembly, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber, showLength, storeLength } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { Assembly, ExplodeStep, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
+import type { Assembly, ConnectorSpot, ExplodeStep, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
 import { stepDistance } from "../assembly/explode";
 import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
 import { bomInfo, partBox, useSolvedAssembly } from "./assemblySolve";
 import { mateInactive } from "../assembly/suppress";
 import { isOrigin, ORIGIN_ID, ORIGIN_PLANES, originConnector, originPlaneOf } from "../assembly/origin";
+import { spotOptions } from "../assembly/connectors";
 import type { PartMesh } from "../kernel/protocol";
 import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
@@ -1341,6 +1342,30 @@ function MateValueField({
   );
 }
 
+/** Where on a picked face or edge the connector sits (only when there's a choice). */
+function SpotChoice({ c, onChange }: { c: MateConnector; onChange: (c: MateConnector) => void }) {
+  const options = spotOptions(c);
+  if (options.length < 2) return null;
+  return (
+    <select
+      className="connector-spot"
+      aria-label="Where on it"
+      title="Where the mate connector sits on the face or edge"
+      value={c.spot ?? ""}
+      onChange={(e) => {
+        const { spot: _old, ...rest } = c;
+        onChange(e.target.value ? { ...rest, spot: e.target.value as ConnectorSpot } : rest);
+      }}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /** The mate dialog: pick a face or edge on two parts, choose the kind of joint and its amounts. */
 export function MateDialog() {
   const draftState = useStore((s) => s.mateDraft);
@@ -1364,8 +1389,9 @@ export function MateDialog() {
     >
       <span className="connector-number">{n}</span>
       {c && (!width || c.pick2) ? (
-        <span>
+        <span className="connector-picked">
           {nameOf(c)} — {width ? "two faces" : connectorLabel(c)}
+          {!width && <SpotChoice c={c} onChange={(next) => st.setMateDraft(n === 1 ? { a: next } : { b: next })} />}
         </span>
       ) : c && width ? (
         <span className="muted">{nameOf(c)} — now click the face opposite</span>

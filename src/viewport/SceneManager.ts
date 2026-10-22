@@ -58,7 +58,7 @@ interface PartObjects {
 
 /** What's under the pointer: a face/edge of a part, or one of the default planes. */
 export type PickTarget =
-  | { kind: "part"; item: SelectionItem; point?: [number, number, number] }
+  | { kind: "part"; item: SelectionItem; point?: [number, number, number]; /** The same point in the part's own coordinates (before it's placed in an assembly). */ local?: [number, number, number] }
   | { kind: "plane"; plane: PlaneName }
   /** A Plane feature (by its feature id). */
   | { kind: "customPlane"; id: string };
@@ -1103,14 +1103,14 @@ export class SceneManager {
       const groups = this.parts.get(partId)?.data.edgeGroups ?? [];
       const vertex = edgeHit.index ?? -1;
       const index = groups.findIndex((g) => vertex >= g.start && vertex < g.start + g.count);
-      if (index >= 0) return { kind: "part", item: { partId, kind: "edge", index }, point: edgeHit.point.toArray() as [number, number, number] };
+      if (index >= 0) return { kind: "part", item: { partId, kind: "edge", index }, point: edgeHit.point.toArray() as [number, number, number], local: edgeHit.object.worldToLocal(edgeHit.point.clone()).toArray() as [number, number, number] };
     }
     if (faceHit && faceHit.faceIndex !== undefined && faceHit.faceIndex !== null) {
       const partId = faceHit.object.userData.partId as string;
       const groups = this.parts.get(partId)?.data.faceGroups ?? [];
       const triIndex = faceHit.faceIndex * 3;
       const index = groups.findIndex((g) => triIndex >= g.start && triIndex < g.start + g.count);
-      if (index >= 0) return { kind: "part", item: { partId, kind: "face", index }, point: faceHit.point.toArray() as [number, number, number] };
+      if (index >= 0) return { kind: "part", item: { partId, kind: "face", index }, point: faceHit.point.toArray() as [number, number, number], local: faceHit.object.worldToLocal(faceHit.point.clone()).toArray() as [number, number, number] };
     }
 
     // Nothing on a part: try the planes (nearest first) — Plane features, then the default planes.

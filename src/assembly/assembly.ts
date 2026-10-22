@@ -4,7 +4,7 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
-import type { Assembly, AssemblyGroup, ExplodeStep, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, JuraCADDocument } from "../model/types";
+import type { Assembly, AssemblyGroup, ConnectorSpot, ExplodeStep, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, JuraCADDocument } from "../model/types";
 import { parseRelation } from "./relations";
 import { parsePattern, tidyPatterns } from "./patterns";
 import { parseReplicate, tidyReplicates } from "./replicate";
@@ -449,12 +449,16 @@ export function meshVolume(vertices: ArrayLike<number>, triangles: ArrayLike<num
 
 const MATE_TYPE_NAMES = new Set<string>(["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "pinSlot", "parallel", "width", "tangent"]);
 
+const SPOTS = new Set<string>(["start", "end", "middle", "clicked"]);
+
 function parseConnector(raw: unknown): MateConnector | null {
   const c = (raw ?? {}) as Record<string, unknown>;
   const pick = parsePick(c.pick);
   if (typeof c.instanceId !== "string" || !pick) return null;
   const pick2 = c.pick2 ? parsePick(c.pick2) : null;
-  return { instanceId: c.instanceId, pick, ...(pick2 ? { pick2 } : {}) };
+  const point = Array.isArray(c.point) && c.point.length === 3 && c.point.every((v) => typeof v === "number" && Number.isFinite(v)) ? (c.point as [number, number, number]) : null;
+  const spot = typeof c.spot === "string" && SPOTS.has(c.spot) && (c.spot !== "clicked" || point) ? (c.spot as ConnectorSpot) : null;
+  return { instanceId: c.instanceId, pick, ...(pick2 ? { pick2 } : {}), ...(spot ? { spot } : {}), ...(point ? { point } : {}) };
 }
 
 function parseMate(raw: unknown, ids: Set<string>): Mate | null {
