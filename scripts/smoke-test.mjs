@@ -704,6 +704,12 @@ try {
   await propsDialog.getByRole("button", { name: "Save", exact: true }).click();
   await page.waitForFunction(() => /PS-002/.test(document.querySelector(".bom-table")?.textContent ?? ""), null, { timeout: 5_000 });
   if (!/Top block/.test(await page.locator(".bom-table").innerText())) throw new Error("the parts list didn't show the description");
+  // Emptying the boxes takes them off again (and keeps the parts list as later steps expect it).
+  await page.locator(".bom-table tr", { hasText: "Part 2" }).dblclick();
+  await propsDialog.getByLabel("Part number").fill("");
+  await propsDialog.getByLabel("Description").fill("");
+  await propsDialog.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForFunction(() => !/PS-002|Top block/.test(document.querySelector(".bom-table")?.textContent ?? ""), null, { timeout: 5_000 });
   await page.getByRole("button", { name: "Export", exact: true }).click();
   await page.waitForSelector('#export-parts option[value="all"]', { state: "attached" });
   const allOption = await page.locator('#export-parts option[value="all"]').innerText();
