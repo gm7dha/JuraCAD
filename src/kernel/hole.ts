@@ -31,25 +31,38 @@ function oneHole(at: V3, dir: V3, size: HoleSize): Shape3D {
   }
 }
 
-/** All the holes a Hole feature drills, as one solid to cut away. */
-export function holeTool(plane: SketchPlane, data: SketchData, size: HoleSize, flip: boolean): Shape3D {
-  const positions = holePositionsIn(data);
-  if (positions.length === 0) {
-    throw new Error("The sketch has no points for holes. In the sketch, place points (P) where the holes go — or draw circles: their centres are used.");
-  }
+/** Where each hole starts (on the sketch) and the way it drills (unit), for a Hole feature's sketch. */
+export function holeAxes(plane: SketchPlane, data: SketchData, flip: boolean): { at: V3; dir: V3 }[] {
   const frame = planeFrame(plane);
   // Into the face by default (sketches on a face point outwards from it).
   const s = flip ? 1 : -1;
   const dir: V3 = [frame.n[0] * s, frame.n[1] * s, frame.n[2] * s];
+  return holePositionsIn(data).map(([x, y]) => ({ at: toWorld(frame, x, y), dir }));
+}
+
+/**
+ * All the holes a Hole feature drills, as one solid to cut away. `size` may
+ * differ from hole to hole (up to next: each drills to its own depth).
+ */
+export function holeTool(plane: SketchPlane, data: SketchData, size: HoleSize | ((at: V3, dir: V3) => HoleSize), flip: boolean): Shape3D {
+  const axes = holeAxes(plane, data, flip);
+  if (axes.length === 0) {
+    throw new Error("The sketch has no points for holes. In the sketch, place points (P) where the holes go — or draw circles: their centres are used.");
+  }
   let result: Shape3D | null = null;
-  for (const [x, y] of positions) {
-    const hole = oneHole(toWorld(frame, x, y), dir, size);
-    if (!result) result = hole;
-    else {
-      const merged: Shape3D = result.fuse(hole);
-      release(result, hole);
-      result = merged;
+  try {
+    for (const { at, dir } of axes) {
+      const hole = oneHole(at, dir, typeof size === "function" ? size(at, dir) : size);
+      if (!result) result = hole;
+      else {
+        const merged: Shape3D = result.fuse(hole);
+        release(result, hole);
+        result = merged;
+      }
     }
+  } catch (e) {
+    result?.delete();
+    throw e;
   }
   return result!;
 }

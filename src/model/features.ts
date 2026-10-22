@@ -72,6 +72,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "depth", label: "Depth", defaultValue: "10", positive: true, group: "size" },
       { key: "depth2", label: "Depth the other way", defaultValue: "10", positive: true, group: "size" },
       { key: "draft", label: "Draft (taper)", defaultValue: "0", group: "size", unit: "°" },
+      { key: "offset", label: "Offset (past it, or short of it with a minus amount)", defaultValue: "0", group: "size" },
     ],
   },
   revolve: {
@@ -100,6 +101,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "cboreDepth", label: "Counterbore depth", defaultValue: "3.4", positive: true, group: "size" },
       { key: "cskDiameter", label: "Countersink diameter", defaultValue: "6.3", positive: true, group: "size" },
       { key: "cskAngle", label: "Countersink angle", defaultValue: "90", positive: true, group: "size", unit: "°" },
+      { key: "threadDepth", label: "Thread depth (0 = all the way)", defaultValue: "0", min: 0, group: "size" },
     ],
   },
   transform: {
@@ -492,11 +494,15 @@ export function isSolidFeature(type: FeatureType): boolean {
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
 export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
-  if (f.type === "extrude" && (f.extrude?.end === "throughAll" || f.extrude?.end === "upToFace")) keys.delete("depth");
-  if (f.type === "extrude" && !(f.extrude?.end === "blind" && f.extrude.second && !f.surface)) keys.delete("depth2");
-  if (f.type === "extrude" && f.surface) keys.delete("draft");
+  const end = f.extrude?.end ?? "blind";
+  if (f.type === "extrude" && end !== "blind" && end !== "symmetric") keys.delete("depth");
+  if (f.type === "extrude" && !(end === "blind" && f.extrude?.second && !f.surface)) keys.delete("depth2");
+  // Up to next / up to a part stop on whatever shape they meet, so a taper can't be kept.
+  if (f.type === "extrude" && (f.surface || end === "upToNext" || end === "upToPart")) keys.delete("draft");
+  if (f.type === "extrude" && end !== "upToFace" && end !== "upToVertex") keys.delete("offset");
   // A circular pattern's axis: where along it doesn't matter, so that box is hidden.
-  if (f.type === "circularPattern") keys.delete(`c${f.pattern?.axis ?? "z"}`);
+  // An axis clicked in the 3D view says where it goes, so none of those boxes are needed.
+  if (f.type === "circularPattern") (f.pattern?.along ? ["cx", "cy", "cz"] : [`c${f.pattern?.axis ?? "z"}`]).forEach((k) => keys.delete(k));
   if (f.type === "chamfer") {
     if (f.chamferType !== "twoDistances") keys.delete("distance2");
     if (f.chamferType !== "distanceAngle") keys.delete("angle");
@@ -504,7 +510,8 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   if (f.type === "plane" && f.planeDef?.mode !== "angle") keys.delete("angle");
   if (f.type === "fastener" && f.fastener && !hasLength(f.fastener.kind)) keys.delete("length");
   if (f.type === "hole" && f.hole) {
-    if (f.hole.end === "throughAll") keys.delete("depth");
+    if (f.hole.end !== "blind") keys.delete("depth");
+    if (f.hole.fit !== "tapped" || f.hole.standard === "Custom") keys.delete("threadDepth");
     if (f.hole.kind !== "counterbore") ["cboreDiameter", "cboreDepth"].forEach((k) => keys.delete(k));
     if (f.hole.kind !== "countersink") ["cskDiameter", "cskAngle"].forEach((k) => keys.delete(k));
   }
