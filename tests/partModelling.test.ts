@@ -661,6 +661,17 @@ describe("patterns, round 2", () => {
     expect(build([disc, hole, round]).featureErrors[round.id]).toMatch(/isn't round/);
   });
 
+  it("mirrors a whole part across one of its faces (a clicked face becomes the plane)", () => {
+    const block = feature("box", { width: 10, depth: 10, height: 10 });
+    // The plane a click on the block's right-hand face (x = 10) gives.
+    const right: SketchPlane = { kind: "face", origin: [10, 0, 0], u: [0, 1, 0], v: [0, 0, 1], label: "Face of Part 1" };
+    const join: Feature = { ...feature("mirror", {}, "add"), mirror: { sources: [], plane: right, part: block.id, join: true } };
+    const r = build([block, join]);
+    expect(r.featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(2000, 3);
+    expect(boundsOf(r).max[0]).toBeCloseTo(20, 3);
+  });
+
   it("leaves out skipped copies", () => {
     const plate = feature("box", { width: 100, depth: 20, height: 5 });
     const hole = feature("cylinder", { diameter: 6, height: 5, x: 10, y: 10 }, "remove");

@@ -429,6 +429,10 @@ try {
   const patternSource = await page.locator(".feature-dialog .pick-list li").first().innerText();
   await page.locator("#param-count").fill("2");
   await page.locator("#param-spacing").fill("80");
+  // Skipping copy 2 of 2 would leave nothing: explained, and not kept.
+  await page.locator("#pattern-skip").fill("2");
+  await page.waitForSelector(".feature-dialog >> text=That skips every copy", { timeout: 5_000 });
+  await page.locator("#pattern-skip").fill("");
   await page.getByRole("button", { name: "Accept" }).click();
   await page.waitForSelector(".feature-row:not(.datum) >> text=Linear pattern 1", { timeout: 10_000 });
   await page.waitForTimeout(2_000);
@@ -448,6 +452,10 @@ try {
   if ((await page.locator("#param-diameter").inputValue()) !== "4.5") throw new Error("choosing M4 didn't fill in the 4.5 mm clearance size");
   await page.getByRole("radio", { name: "Tapped" }).click();
   if ((await page.locator("#param-diameter").inputValue()) !== "3.3") throw new Error("tapped M4 should be a 3.3 mm drill");
+  await page.getByRole("radio", { name: "Up to next" }).click();
+  if ((await page.locator("#param-depth").count()) !== 0) throw new Error("up to next shouldn't ask for a depth");
+  if ((await page.locator("#param-threadDepth").count()) !== 1) throw new Error("a tapped hole should have a thread depth box");
+  await page.getByLabel("Model the thread (for 3D printing)").check();
   await page.getByRole("button", { name: "Cancel" }).click();
 
   step = "moving a copy of a part";

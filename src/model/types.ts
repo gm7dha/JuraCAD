@@ -224,6 +224,8 @@ export interface Feature {
     along2?: TopoPick;
     /** Copies left out, by number (the original is 1; in a grid, row by row). */
     skip?: number[];
+    /** While editing a grid: a click in the 3D view sets the rows' direction (`along2`) instead of `along`. Not saved. */
+    picking?: "along2";
   };
   /**
    * Mirror: the features to mirror, and the plane to mirror them across. Or,

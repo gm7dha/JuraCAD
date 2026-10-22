@@ -182,11 +182,21 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
-  // Choosing the face an extrude goes up to.
-  if (s.editing?.draft.type === "extrude" && s.editing.draft.extrude?.end === "upToFace") {
-    if (target?.kind !== "part" || target.item.kind !== "face") return;
+  // Choosing what an extrude goes up to: a face, a corner (near the end of an edge) or a part.
+  const ex = s.editing?.draft.type === "extrude" ? s.editing.draft.extrude : undefined;
+  if (ex && (ex.end === "upToFace" || ex.end === "upToVertex" || ex.end === "upToPart")) {
+    if (target?.kind !== "part") return;
+    if (ex.end === "upToFace" && target.item.kind !== "face") return s.showToast("Click a face (not an edge) to extrude up to.");
+    if (ex.end === "upToVertex" && target.item.kind !== "edge") return s.showToast("Click near the end of an edge: the corner there is where the extrude stops.");
+    if (target.item.partId === s.editing!.draft.id) return;
     const pick = pickFor(s.parts, target.item);
-    if (pick) s.setDraftField({ extrude: { ...s.editing.draft.extrude, upTo: pick } });
+    if (!pick) return;
+    if (ex.end === "upToVertex" && pick.ref.kind === "edge") {
+      // The end of the edge nearest where it was clicked.
+      const at = target.point ?? pick.ref.mid;
+      const gap = (p: [number, number, number]) => Math.hypot(p[0] - at[0], p[1] - at[1], p[2] - at[2]);
+      s.setDraftField({ extrude: { ...ex, upTo: pick, upToEnd: gap(pick.ref.a) <= gap(pick.ref.b) ? "a" : "b" } });
+    } else s.setDraftField({ extrude: { ...ex, upTo: pick } });
     return;
   }
   // Choosing the part to move.
@@ -338,8 +348,26 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
-  // Patterns pick their features in the list, not in the 3D view.
-  if (s.editing && isPatternFeature(s.editing.draft.type)) return;
+  // Patterns pick their features in the list; in the 3D view, a click sets the direction (an edge or flat
+  // face) of a linear pattern, or the axis (a round face or edge, or a straight edge) of a circular one.
+  if (s.editing && isPatternFeature(s.editing.draft.type)) {
+    const d = s.editing.draft;
+    if ((d.type !== "linearPattern" && d.type !== "circularPattern") || !d.pattern || target?.kind !== "part") return;
+    const pick = pickFor(s.parts, target.item);
+    if (!pick) return;
+    const ref = pick.ref;
+    if (d.type === "linearPattern") {
+      const ok = ref.kind === "edge" ? ref.curve === "LINE" : ref.surface === "PLANE";
+      if (!ok) return s.showToast("Click a straight edge (the copies go along it) or a flat face (they go straight out of it).");
+      const { picking: _p, ...rest } = d.pattern;
+      s.setDraftField({ pattern: d.pattern.picking === "along2" ? { ...rest, along2: pick } : { ...rest, along: pick } });
+    } else {
+      const ok = ref.kind === "edge" ? ref.curve === "LINE" || ref.curve === "CIRCLE" : ref.surface === "CYLINDRE";
+      if (!ok) return s.showToast("For the axis, click a round face (a hole or boss), a round edge, or a straight edge.");
+      s.setDraftField({ pattern: { ...d.pattern, along: pick } });
+    }
+    return;
+  }
   // Picking edges and faces for a fillet, chamfer or shell.
   if (s.editing && isPickFeature(s.editing.draft.type)) {
     if (target?.kind !== "part") return;
@@ -439,9 +467,10 @@ export function Viewport() {
   const picks = useStore((s) =>
     s.editing?.draft.picks
       ? s.editing.draft.picks
-      : s.editing?.draft.extrude?.end === "upToFace" && s.editing.draft.extrude.upTo
+      : s.editing?.draft.extrude?.upTo && s.editing.draft.extrude.end.startsWith("upTo")
         ? s.editing.draft.extrude.upTo
-        : null,
+        : // A pattern's clicked direction (the rows' one while that's being picked).
+          (s.editing?.draft.pattern?.picking === "along2" ? s.editing.draft.pattern.along2 : s.editing?.draft.pattern?.along) ?? null,
   );
   const pickList = useMemo(() => (picks ? (Array.isArray(picks) ? picks : [picks]) : null), [picks]);
   const hiddenParts = useStore((s) => s.hiddenParts);
