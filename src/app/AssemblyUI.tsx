@@ -835,7 +835,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
                     <button
                       className="icon-button small"
                       onClick={() => setEditingProps({ partId: basePartId(r.partId), name: r.name })}
-                      aria-label={`Properties of ${r.name}`}
+                      aria-label={`Edit the properties on line ${n + 1}`}
                       title="Part number, description and your own properties"
                     >
                       <Icons.Sketch size={14} />
