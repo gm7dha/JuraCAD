@@ -8,6 +8,23 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.26 — Round 2: Claude builds parts, several sheets, Bend, suppress and more · commit `70c4e76`
+
+- **Use JuraCAD with Claude:** a Claude desktop extension (download from Help) so Claude can build parts from a
+  description with JuraCAD's own engine and save editable `.juracad` files.
+- **Sketch:** pick the areas to extrude (shapes split where lines cross, remembered by the lines around them),
+  drag an arc's rim to resize it, arc length / arc angle dimensions, circle gaps to near or far edges, midpoint.
+- **Part modelling:** holes go Up to next, have a separate thread depth and can model a real thread for printing;
+  Through all can go both ways (optional). Extrude up to next / any face / part / corner, with an offset. Click an
+  edge or face for a pattern's direction or axis; skip chosen copies.
+- **Sheet metal & surfaces:** Bend along a sketched line, Jog, mitred corners (optional), Extend surface up to a face
+  or part.
+- **Assemblies:** suppress parts, smarter clash checks (touching, surfaces, hidden parts, angled parts), drag groups
+  held by a mate, mate connectors at edge ends / middles / clicked spots, part numbers, descriptions and properties,
+  optional weights on drawings, mate to the origin.
+- **Drawings:** several sheets ("2 OF 3", all in one PDF), each view at its own scale, long hole tables wrap into
+  columns or can be dragged, chamfer callouts, arc length and H7/g6 fit dimensions.
+
 ## v0.25 — PartSmith is now JuraCAD · commit `2b05613`
 
 - **New name:** the app is now called **JuraCAD** — in the top bar, Help, What's new, the install instructions,
