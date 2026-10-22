@@ -26,7 +26,7 @@ import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { openChain, profileSheet } from "../sheetmetal/profile";
-import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, mapSegments, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type SheetSpec } from "../sheetmetal/sheet";
+import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
@@ -1604,6 +1604,11 @@ export class GeometryEngine {
         if (err) featureErrors[feature.id] = err;
         continue;
       }
+      if (feature.type === "bend" || feature.type === "jog") {
+        const err = this.applyLineBend(feature, sketches);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "tab") {
         const err = this.applyTab(feature, sketches);
         if (err) featureErrors[feature.id] = err;
@@ -1916,6 +1921,159 @@ export class GeometryEngine {
     return "Sketch the tab on a face of a sheet metal part (its top or bottom face, or a flange's face): use that face as the sketch's plane.";
   }
 
+  /**
+   * Bend (and Jog): a flat wall of a sheet metal part bent along a line
+   * sketched on its face. The material on the moving side (with any holes or
+   * cuts in it) is turned up into place; the flat pattern keeps its shape.
+   */
+  private applyLineBend(feature: Feature, sketches: SketchMap): string | null {
+    const jog = feature.type === "jog";
+    const what = jog ? "jog" : "bend";
+    const { values, errors } = resolveParams(feature);
+    const bad = FEATURE_DEFS[feature.type].params.find((p) => errors[p.key]);
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    if (!feature.sketchRef) return `Choose the sketch with the line to ${jog ? "step" : "bend"} along.`;
+    const sketch = sketches.get(feature.sketchRef);
+    if (!sketch?.sketch?.plane) return "The sketch it uses can't be found (deleted, suppressed, or after this in the list).";
+    const data = sketch.sketch.data;
+    const lines = data.curves.filter((c) => !c.construction && c.type === "line");
+    if (lines.length !== 1 || data.curves.some((c) => !c.construction && c.type !== "line"))
+      return lines.length > 1 || data.curves.some((c) => !c.construction && c.type !== "line")
+        ? `Draw just one line in the sketch: the line to ${jog ? "step" : "bend"} along. (Make any others construction lines.)`
+        : "Draw a line in the sketch, across the face, where the sheet should bend.";
+    const pos = (id: string): [number, number] => {
+      if (id === "origin") return [0, 0];
+      const p = data.points.find((q) => q.id === id);
+      return p ? [p.x, p.y] : [NaN, NaN];
+    };
+    const line = lines[0] as Extract<(typeof lines)[number], { type: "line" }>;
+    const sf = planeFrame(sketch.sketch.plane);
+    for (const part of [...this.parts].reverse()) {
+      if (!part.sheet) continue;
+      const spec = part.sheet;
+      const T = spec.thickness;
+      const wall = wallOnPlane(foldSheet(spec), T, sf.origin, sf.n);
+      if (!wall) continue;
+      const f = wall.frame;
+      const toWall = (p: [number, number]): P2 => {
+        const w = toWorld(sf, p[0], p[1]);
+        const d: Vec3 = [w[0] - f.origin[0], w[1] - f.origin[1], w[2] - f.origin[2]];
+        return [dot3(d, f.u), dot3(d, f.v)];
+      };
+      let from = toWall(pos(line.p1));
+      let to = toWall(pos(line.p2));
+      const L = Math.hypot(to[0] - from[0], to[1] - from[1]);
+      if (!(L > 1e-9)) return "The bend line has no length. Draw a line across the face.";
+      if ((spec.tabs ?? []).some((t) => t.wall === wall.id)) return `This wall has a tab on it. Make the ${what} first: drag it above the Tab in the feature list.`;
+      if ((spec.corners ?? []).some((c) => c.wall === wall.id)) return `This wall has corners rounded or cut off. Make the ${what} first: drag it above the Corner break in the feature list.`;
+      // Which side moves: the one on the line's right (going from → to).
+      const dir: P2 = [(to[0] - from[0]) / L, (to[1] - from[1]) / L];
+      const rightOf = (p: P2) => (p[0] - from[0]) * dir[1] - (p[1] - from[1]) * dir[0];
+      let flip: boolean;
+      if (wall.bendEdge !== undefined) {
+        // A wall bent off another: the side joined to it stays still.
+        if (feature.keepOtherSide) return "This wall is joined to the rest of the sheet on one side, so that side has to stay still. Untick “Keep the other side still”.";
+        const e = wall.outline[wall.bendEdge];
+        const mid: P2 = e.kind === "line" ? [(e.from[0] + e.to[0]) / 2, (e.from[1] + e.to[1]) / 2] : from;
+        flip = rightOf(mid) > 0;
+      } else {
+        // The smaller piece moves (or the other, if asked).
+        const [left, right] = sideAreas(wall.outline, from, dir);
+        flip = (right > left + 1e-9) !== !!feature.keepOtherSide;
+      }
+      if (flip) [from, to] = [to, from];
+      // Cuts already made through the wall mustn't cross the bend (their material can't be bent).
+      const R = values.radius > 0 ? values.radius : spec.radius;
+      const half = (((values.angle * Math.PI) / 180) * (R + spec.k * T)) / 2;
+      const d2: P2 = [(to[0] - from[0]) / L, (to[1] - from[1]) / L];
+      const across = (p: [number, number]) => (p[0] - from[0]) * d2[1] - (p[1] - from[1]) * d2[0];
+      if ((part.sheetCuts ?? []).some((c) => c.wall === wall.id && !c.bend && c.lines.some(([a, b]) => Math.min(across(a), across(b)) < half && Math.max(across(a), across(b)) > -half)))
+        return `A cut through the sheet crosses the ${what}. Move the line so the ${what} misses it, or drag the ${what} above that cut in the feature list.`;
+      const radius = values.radius > 0 ? { radius: values.radius } : {};
+      const down = !!feature.flipSide;
+      const added: FlangeSpec[] = [{ id: `${feature.id}:0`, wall: wall.id, edge: -1, length: 0, angle: values.angle, down, ...radius, line: { from, to } }];
+      if (jog) {
+        const s = jogSpacing(values.height, values.angle, R, T, spec.k);
+        if (typeof s === "string") return s;
+        // The second bend, the other way, across the piece the first one turned up (its y runs on from the bend).
+        added.push({ id: `${feature.id}:1`, wall: `${feature.id}:0`, edge: -1, length: 0, angle: values.angle, down: !down, ...radius, line: { from: [1, s], to: [0, s] } });
+      }
+      let shape = part.shape;
+      let next = spec;
+      try {
+        for (const fl of added) {
+          const prev = next;
+          next = { ...prev, flanges: [...prev.flanges, fl] };
+          const before = foldSheet(prev);
+          const after = foldSheet(next);
+          const problem = after.errors[fl.id];
+          if (problem) return problem;
+          const w0 = before.walls.find((w) => w.id === fl.wall)!;
+          const w1 = after.walls.find((w) => w.id === fl.wall)!;
+          const child = after.walls.find((w) => w.id === fl.id)!;
+          const bend = after.bends.find((b) => b.flangeId === fl.id)!;
+          const bent = this.bendMaterial(shape, w0, w1, child, bend, T);
+          if (shape !== part.shape) shape.delete();
+          shape = bent;
+        }
+      } catch (e) {
+        if (shape !== part.shape) shape.delete();
+        return describeError(e, `Couldn't make this ${what}.`);
+      }
+      if (!isValidSolid(shape) || solidsOf(shape).length !== 1) {
+        shape.delete();
+        return `The bent part runs into the rest of the sheet. Try a different angle, bend the other way, or keep the other side still.`;
+      }
+      part.shape.delete();
+      part.shape = shape;
+      part.sheet = next;
+      part.featureIds.push(feature.id);
+      part.sheetFeatures = [...(part.sheetFeatures ?? []), feature.id];
+      return null;
+    }
+    return `Sketch the ${what} line on a flat face of a sheet metal part (its top or bottom face, or a flange's face): use that face as the sketch's plane.`;
+  }
+
+  /**
+   * One bend along a line, made in the part's solid: the wall's material past
+   * the fixed piece (`w0` was the whole wall, `w1` is the piece that stays)
+   * is taken off, the moving piece's material turned into its new place,
+   * and the bend joined in between. Returns a new shape (the old one is kept).
+   */
+  private bendMaterial(shape: Shape3D, w0: FoldedSheet["walls"][number], w1: FoldedSheet["walls"][number], child: FoldedSheet["walls"][number], bend: FoldedSheet["bends"][number], T: number): Shape3D {
+    const whole = wallSolid({ ...w0, holes: [], tabs: [] }, T);
+    const fixed = wallSolid({ ...w1, holes: [], tabs: [] }, T);
+    const region: Shape3D = whole.cut(fixed);
+    whole.delete();
+    fixed.delete();
+    let piece: Shape3D | null = null;
+    let rest: Shape3D | null = null;
+    try {
+      piece = shape.intersect(region) as Shape3D;
+      rest = shape.cut(region) as Shape3D;
+      // Turn the moving material from the wall's frame to where it goes (each step frees the one before).
+      const to = bend.moved!;
+      const turn = turnBetween(w0.frame, to);
+      piece = piece.translate([-w0.frame.origin[0], -w0.frame.origin[1], -w0.frame.origin[2]]);
+      if (turn.angle > 1e-9) piece = piece.rotate(turn.angle, [0, 0, 0], turn.axis);
+      piece = piece.translate(to.origin);
+      // Only what's past the bend: the strip it came from is the bend now.
+      const slab = wallSolid({ ...child, holes: [], tabs: [] }, T);
+      const kept = piece.intersect(slab) as Shape3D;
+      slab.delete();
+      piece.delete();
+      piece = kept;
+      const joined = fusePieces([rest, bendSolid(bend), piece])!;
+      rest = null;
+      piece = null;
+      return joined;
+    } finally {
+      region.delete();
+      piece?.delete();
+      rest?.delete();
+    }
+  }
+
   /** Sheet metal: a flat sheet from a closed sketch, kept as a sheet so flanges can be bent off it. */
   private applySheetMetal(feature: Feature, sketches: SketchMap, nextPartNumber: number): { error?: string; newPart?: boolean } {
     const { values, errors } = resolveParams(feature);
@@ -2004,6 +2162,7 @@ export class GeometryEngine {
     const { values, errors } = resolveParams(feature);
     const bad = FEATURE_DEFS[feature.type].params.find((p) => errors[p.key]);
     if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    if (feature.mitreCorners && values.cornerGap < 0.01) return "Gap at mitred corners: make it at least 0.01 mm (the walls can't be cut to meet exactly).";
     const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
     if (picks.length === 0) return hem ? "Click the straight edges of the sheet to fold over." : "Click the straight edges of the sheet to bend flanges off.";
     const partIds = [...new Set(picks.map((p) => p.partId))];
@@ -2034,6 +2193,7 @@ export class GeometryEngine {
             radius: Math.max(0.05, values.gap / 2),
             straight: values.length,
             ...(values.inset > 0 ? { inset: values.inset } : {}),
+            ...(feature.mitreCorners ? { mitre: values.cornerGap } : {}),
           }
         : {
             id: `${feature.id}:${i}`,
@@ -2047,6 +2207,7 @@ export class GeometryEngine {
             ...(feature.reliefShape && feature.reliefShape !== "rectangle" ? { reliefShape: feature.reliefShape } : {}),
             ...(feature.cornerRelief ? { cornerRelief: feature.cornerRelief } : {}),
             ...(feature.flangePosition ? { position: feature.flangePosition } : {}),
+            ...(feature.mitreCorners ? { mitre: values.cornerGap } : {}),
           };
       added.push(fl);
       spec = { ...spec, flanges: [...spec.flanges, fl] };
@@ -2066,14 +2227,39 @@ export class GeometryEngine {
         return "That edge is next to a bend of the sheet, so the flange can't sit flush there. Set the position to “Bend off the edge”.";
       if (old) return "To sit flush, this flange cuts back the edge next to a flange made earlier. Pick both edges in one Flange (so they're made together), or set the position to “Bend off the edge”.";
     }
+    // Walls of flanges made before, trimmed now where they meet the new ones at mitred corners: what comes off them.
+    const oldFold = foldSheet(part.sheet);
+    const mitred = new Set((folded.mitres ?? []).filter((m) => m.flanges.some((id) => ids.has(id))).flatMap((m) => m.walls).filter((id) => !ids.has(id)));
+    const reshaped = [...mitred]
+      .map((id) => ({ was: oldFold.walls.find((w) => w.id === id), now: folded.walls.find((w) => w.id === id) }))
+      .filter((x): x is { was: NonNullable<typeof x.was>; now: NonNullable<typeof x.now> } => !!x.was && !!x.now && JSON.stringify(x.was.outline) !== JSON.stringify(x.now.outline));
     let pieces: Shape3D[] = [];
     let result: Shape3D | null = null;
     let base: Shape3D = part.shape;
     try {
+      for (const r of reshaped) {
+        const was = wallSolid({ ...r.was, holes: [], tabs: [] }, spec.thickness);
+        const now = wallSolid({ ...r.now, holes: [], tabs: [] }, spec.thickness);
+        try {
+          const off = was.cut(now);
+          try {
+            const cut = base.cut(off);
+            if (base !== part.shape) base.delete();
+            base = cut;
+          } finally {
+            off.delete();
+          }
+        } finally {
+          was.delete();
+          now.delete();
+        }
+      }
       if (trims.length) {
         const strips = fusePieces(trims.map((t) => wallSolid({ ...folded.walls.find((w) => w.id === t.wall)!, outline: t.outline, holes: [], tabs: [] }, spec.thickness)))!;
         try {
-          base = part.shape.cut(strips);
+          const cut = base.cut(strips);
+          if (base !== part.shape) base.delete();
+          base = cut;
         } finally {
           strips.delete();
         }

@@ -82,6 +82,11 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.operation = "new";
   }
   if (type === "flange" || type === "hem" || type === "cornerBreak") feature.picks = [];
+  if (type === "bend" || type === "jog") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    feature.sketchRef = sketches[sketches.length - 1]?.id;
+    feature.operation = "add";
+  }
   if (type === "tab") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
     feature.sketchRef = sketches[sketches.length - 1]?.id;
@@ -430,8 +435,10 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       const rd = (f.replaceDef ?? {}) as Record<string, unknown>;
       feature.replaceDef = { target: rd.target ? parsePlane(rd.target) ?? null : null, picking: rd.picking === "target" ? "target" : "faces" };
     }
-    if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab" || feature.type === "wrap") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
-    if ((feature.type === "sheetMetal" || feature.type === "flange" || feature.type === "hem") && f.flipSide === true) feature.flipSide = true;
+    if ((feature.type === "rib" || feature.type === "sheetMetal" || feature.type === "tab" || feature.type === "wrap" || feature.type === "bend" || feature.type === "jog") && typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+    if ((feature.type === "sheetMetal" || feature.type === "flange" || feature.type === "hem" || feature.type === "bend" || feature.type === "jog") && f.flipSide === true) feature.flipSide = true;
+    if ((feature.type === "bend" || feature.type === "jog") && f.keepOtherSide === true) feature.keepOtherSide = true;
+    if ((feature.type === "flange" || feature.type === "hem") && f.mitreCorners === true) feature.mitreCorners = true;
     if (feature.type === "flange" && f.closeCorners === true) feature.closeCorners = true;
     if (feature.type === "flange" && (f.reliefShape === "round" || f.reliefShape === "tear")) feature.reliefShape = f.reliefShape;
     if (feature.type === "flange" && (f.cornerRelief === "round" || f.cornerRelief === "square")) feature.cornerRelief = f.cornerRelief;

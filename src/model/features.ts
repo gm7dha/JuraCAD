@@ -334,6 +334,28 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "length", label: "Length (outside, to the tip)", defaultValue: "20", positive: true, group: "size" },
       { key: "angle", label: "Bend angle", defaultValue: "90", positive: true, group: "size", unit: "°" },
       { key: "inset", label: "Shorten each end by (a relief is cut so it can bend)", defaultValue: "0", min: 0, group: "size" },
+      { key: "cornerGap", label: "Gap at mitred corners", defaultValue: "0.2", positive: true, group: "size" },
+    ],
+  },
+  bend: {
+    type: "bend",
+    label: "Bend",
+    namePrefix: "Bend",
+    description: "Bends a flat sheet metal wall along a line sketched on its face. The flat pattern stays the shape you drew, with the line down the middle of the bend.",
+    params: [
+      { key: "angle", label: "Bend angle", defaultValue: "90", positive: true, group: "size", unit: "°" },
+      { key: "radius", label: "Bend radius (inside; 0 = the sheet's)", defaultValue: "0", min: 0, group: "size" },
+    ],
+  },
+  jog: {
+    type: "jog",
+    label: "Jog",
+    namePrefix: "Jog",
+    description: "Steps a flat sheet metal wall up (or down) along a line sketched on its face: two bends, one each way, so the far side stays parallel.",
+    params: [
+      { key: "height", label: "Height of the step (face to face)", defaultValue: "10", positive: true, group: "size" },
+      { key: "angle", label: "Bend angle", defaultValue: "90", positive: true, group: "size", unit: "°" },
+      { key: "radius", label: "Bend radius (inside; 0 = the sheet's)", defaultValue: "0", min: 0, group: "size" },
     ],
   },
   cornerBreak: {
@@ -359,6 +381,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "length", label: "Length of the folded-over part", defaultValue: "8", positive: true, group: "size" },
       { key: "gap", label: "Gap inside the fold (0 = folded flat)", defaultValue: "0", min: 0, group: "size" },
       { key: "inset", label: "Shorten each end by (a relief is cut so it can fold)", defaultValue: "0", min: 0, group: "size" },
+      { key: "cornerGap", label: "Gap at mitred corners", defaultValue: "0.2", positive: true, group: "size" },
     ],
   },
   thicken: {
@@ -490,8 +513,9 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
+  if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");
   if (f.type === "extrude" && (f.extrude?.end === "throughAll" || f.extrude?.end === "upToFace")) keys.delete("depth");
   if (f.type === "extrude" && !(f.extrude?.end === "blind" && f.extrude.second && !f.surface)) keys.delete("depth2");
   if (f.type === "extrude" && f.surface) keys.delete("draft");

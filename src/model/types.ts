@@ -8,7 +8,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -171,6 +171,10 @@ export interface Feature {
   hollow?: boolean;
   /** Flange: close the corners where these flanges meet other full-length right-angle flanges. */
   closeCorners?: boolean;
+  /** Flange and Hem: mitre the corners where these meet flanges or hems on the next edges (trimmed along the corner's diagonal, `cornerGap` apart). */
+  mitreCorners?: boolean;
+  /** Bend and Jog: keep the other side of the line still (normally the smaller piece moves). */
+  keepOtherSide?: boolean;
   /** Flange: the shape of the bend relief notches (missing = rectangle) and the relief cut where flanges meet at a corner. */
   reliefShape?: "rectangle" | "round" | "tear";
   cornerRelief?: "round" | "square";
