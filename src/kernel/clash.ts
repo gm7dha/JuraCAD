@@ -55,14 +55,36 @@ function edgesCompound(shape: Shape3D) {
 
 
 
-/** Solid ∩ solid: the shared volume, its surface area and the smallest side of the box round it. */
+/**
+ * The smallest side of the tightest box round a shape, turned to fit it (an
+ * oriented box) — so a chunk of overlap at a corner of parts at an angle is
+ * measured across its real thickness, not across a box lined up with X, Y, Z.
+ * Falls back to the lined-up box if the turned one can't be made.
+ */
+function smallestSide(shape: Shape3D): number {
+  try {
+    const oc = getOC();
+    const obb = new oc.Bnd_OBB();
+    try {
+      oc.BRepBndLib.AddOBB(shape.wrapped, obb, false, false, false);
+      if (!obb.IsVoid()) return 2 * Math.min(obb.XHSize(), obb.YHSize(), obb.ZHSize());
+    } finally {
+      obb.delete();
+    }
+  } catch {
+    // fall back below
+  }
+  const [lo, hi] = boundsOf(shape);
+  return Math.min(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+}
+
+/** Solid ∩ solid: the shared volume, its surface area and the smallest side of the turned-to-fit box round it. */
 function solidOverlap(a: Shape3D, b: Shape3D): { volume: number; area: number; boxMin: number } {
   const common = a.intersect(b);
   try {
     const volume = measureVolume(common);
     if (volume <= 1e-9) return { volume, area: 0, boxMin: 0 };
-    const [lo, hi] = boundsOf(common);
-    return { volume, area: measureArea(common), boxMin: Math.min(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) };
+    return { volume, area: measureArea(common), boxMin: smallestSide(common) };
   } finally {
     safeDelete(common);
   }
