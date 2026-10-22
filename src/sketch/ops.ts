@@ -840,6 +840,25 @@ export function dragCircleRim(start: SketchData, circleId: string, radius: numbe
   return r.ok ? r.sketch : start;
 }
 
+/**
+ * Drag an arc's rim to resize it (like a circle's): its centre stays put and
+ * its ends move straight out from (or in towards) the centre, keeping the
+ * arc's angle, as far as its relations allow.
+ */
+export function dragArcRim(start: SketchData, arcId: string, radius: number): SketchData {
+  const c = curveById(start, arcId);
+  if (c?.type !== "arc" || radius <= 1e-6) return start;
+  const [cx, cy] = pointPos(start, c.center);
+  const out = (id: string) => {
+    const [x, y] = pointPos(start, id);
+    const r = Math.hypot(x - cx, y - cy) || 1;
+    return { pointId: id, x: cx + ((x - cx) * radius) / r, y: cy + ((y - cy) * radius) / r };
+  };
+  const place = [out(c.start), out(c.end), { pointId: c.center, x: cx, y: cy }].filter((p) => p.pointId !== ORIGIN_ID);
+  const r = solveSketch(start, { place });
+  return r.ok ? r.sketch : start;
+}
+
 /** A spline's points where they are now. */
 export function splinePoints(s: SketchData, c: SketchSpline): [number, number][] {
   return c.points.map((id) => pointPos(s, id));

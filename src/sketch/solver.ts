@@ -566,6 +566,8 @@ export interface SolveOptions {
   moveRigid?: { pointIds: string[]; dx: number; dy: number };
   /** Resize this circle first (dragging its rim). */
   resize?: { circleId: string; radius: number };
+  /** Put these points here first and prefer to keep them there (dragging an arc's rim: its ends and centre). */
+  place?: { pointId: string; x: number; y: number }[];
   maxIterations?: number;
 }
 
@@ -596,7 +598,7 @@ function writeBack(sketch: SketchData, sys: System, x: Float64Array): SketchData
 
 /** Move the sketch so every constraint holds, changing it as little as possible. */
 export function solveSketch(sketch: SketchData, options: SolveOptions = {}): SolveResult {
-  const interactive = options.drag || options.moveRigid || options.resize;
+  const interactive = options.drag || options.moveRigid || options.resize || options.place?.length;
   if (!interactive) return solveOnce(sketch, options, 1);
   // First try to keep what's being dragged exactly under the pointer; if the
   // constraints make that impossible, let it give way as little as possible.
@@ -625,6 +627,13 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
       x[i] = options.resize.radius;
       weight[i] = stiffness;
     }
+  }
+  for (const p of options.place ?? []) {
+    const i = sys.pointVar.get(p.pointId);
+    if (i === undefined) continue;
+    x[i] = p.x;
+    x[i + 1] = p.y;
+    weight[i] = weight[i + 1] = stiffness;
   }
   if (options.drag) {
     const i = sys.pointVar.get(options.drag.pointId);

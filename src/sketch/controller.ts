@@ -17,6 +17,7 @@ import {
   curveById,
   dimensionFor,
   dimensionSpecAt,
+  dragArcRim,
   dragCircleRim,
   dragCurve,
   dragPoint,
@@ -874,8 +875,8 @@ export class SketchController {
     if (hit?.kind === "point" && hit.id !== ORIGIN_ID) kind = "point";
     if (hit?.kind === "curve") {
       const c = curveById(d, hit.id)!;
-      // Dragging a circle's rim resizes it; drag its centre point to move it.
-      kind = c.type === "circle" ? "rim" : "curve";
+      // Dragging a circle's or an arc's rim resizes it; drag its centre point to move it.
+      kind = c.type === "circle" || c.type === "arc" ? "rim" : "curve";
     }
     this.drag = { kind, id: hit?.id ?? "", start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit, startScreenX: e.screenX };
   }
@@ -924,6 +925,9 @@ export class SketchController {
       if (c?.type === "circle") {
         const [cx, cy] = pointPos(drag.start, c.center);
         next = dragCircleRim(drag.start, c.id, Math.hypot(e.x - cx, e.y - cy));
+      } else if (c?.type === "arc") {
+        const [cx, cy] = pointPos(drag.start, c.center);
+        next = dragArcRim(drag.start, c.id, Math.hypot(e.x - cx, e.y - cy));
       }
     }
     this.state.updateSketch(next, { record: false });
