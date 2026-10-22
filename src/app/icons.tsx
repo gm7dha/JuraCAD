@@ -583,6 +583,19 @@ export const Icons = {
       <path d="M14 4h7" />
     </Svg>
   ),
+  ChamferCallout: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 21V10l5-5h4" />
+      <path d="M6 7.5l5-4h10" />
+    </Svg>
+  ),
+  ArcLength: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 19a9 9 0 0 1 14 0" />
+      <path d="M3 12a12 12 0 0 1 18 0" />
+      <path d="M9 6.5a4 2 0 0 1 6 0" />
+    </Svg>
+  ),
   Note: (p: IconProps) => (
     <Svg {...p}>
       <rect x="4" y="4" width="16" height="16" rx="2" />

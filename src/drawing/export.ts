@@ -68,7 +68,11 @@ export function textWidth(text: string, size: number): number {
 
 /** A one-page PDF file of the sheet. */
 export function sheetPdf(prims: Prim[], size: [number, number], title = "JuraCAD drawing"): Uint8Array {
-  const [W, H] = size;
+  return sheetsPdf([{ prims, size }], title);
+}
+
+/** One page's drawing commands. */
+function pageContent(prims: Prim[]): string {
   const ops: string[] = ["1 J 1 j"];
   for (const p of prims) {
     if (p.kind === "path") {
@@ -89,14 +93,27 @@ export function sheetPdf(prims: Prim[], size: [number, number], title = "JuraCAD
       ops.push(`BT /${p.bold ? "F2" : "F1"} ${n(p.size * PT)} Tf ${n(c)} ${n(s)} ${n(-s)} ${n(c)} ${n(x * PT)} ${n(y * PT)} Tm (${pdfString(p.text)}) Tj ET`);
     }
   }
-  const content = ops.join("\n");
+  return ops.join("\n");
+}
+
+/** A PDF file with a page for each sheet (each its own paper size), in order. */
+export function sheetsPdf(pages: { prims: Prim[]; size: [number, number] }[], title = "JuraCAD drawing"): Uint8Array {
+  const count = pages.length;
+  // Objects: 1 catalog, 2 page list, then the pages, the two fonts, each page's drawing, and the title.
+  const pageObj = (i: number) => 3 + i;
+  const f1 = 3 + count;
+  const contentObj = (i: number) => 5 + count + i;
+  const contents = pages.map((p) => pageContent(p.prims));
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n(W * PT)} ${n(H * PT)}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>`,
+    `<< /Type /Pages /Kids [${pages.map((_, i) => `${pageObj(i)} 0 R`).join(" ")}] /Count ${count} >>`,
+    ...pages.map(
+      (p, i) =>
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n(p.size[0] * PT)} ${n(p.size[1] * PT)}] /Resources << /Font << /F1 ${f1} 0 R /F2 ${f1 + 1} 0 R >> >> /Contents ${contentObj(i)} 0 R >>`,
+    ),
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    ...contents.map((content) => `<< /Length ${content.length} >>\nstream\n${content}\nendstream`),
     `<< /Title (${pdfString(title)}) /Producer (JuraCAD) >>`,
   ];
   let out = "%PDF-1.4\n";
