@@ -1455,9 +1455,11 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         let to = Math.min(stop, last);
         if (comesOut) {
           // Run out a pitch past the far side — but the groove (about 0.4 of a pitch either side of its line) mustn't
-          // reach the next material. With too little room it ends a pitch inside the wall instead.
+          // reach the next material. It stops after a whole number of turns from its start: ending part way round a
+          // turn out in the open leaves a ragged end that cuts badly. With too little room it ends a pitch inside the wall.
           const next = all.find(([a]) => a > last + 1e-6)?.[0] ?? Infinity;
-          const runOut = Math.min(last + pitch, next - 0.5 * pitch);
+          const rawOut = Math.min(last + pitch, next - 0.5 * pitch);
+          const runOut = first - pitch + Math.floor((rawOut - (first - pitch)) / pitch + 1e-9) * pitch;
           to = runOut >= last + 0.1 * pitch ? runOut : last - pitch;
         }
         if (to - first < pitch) throw new Error("The thread would be less than one turn long. Make the thread depth (or the hole) deeper, or untick Model the thread.");
@@ -4274,6 +4276,23 @@ export class GeometryEngine {
       const bytes = writeStep(chosen.map((p) => ({ shape: p.shape, name: p.name, colour: colours[p.id] ?? DEFAULT_PART_COLOUR })));
       return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: chosen.length };
     });
+  }
+
+  /**
+   * The volume (mm³) of the solid a feature added or cut, as last built — for
+   * checking a cut actually reached the part. Null when it made none.
+   */
+  featureToolVolume(featureId: string): number | null {
+    for (const b of this.builds.values()) {
+      const t = b.tools.get(featureId);
+      if (!t) continue;
+      try {
+        return measureVolume(t.shape);
+      } catch {
+        return null;
+      }
+    }
+    return null;
   }
 
   get partCount(): number {

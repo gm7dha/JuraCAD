@@ -1248,6 +1248,15 @@ button:disabled {
   color: var(--error);
 }
 
+.help-steps {
+  margin: 4px 0 10px;
+  padding-left: 20px;
+}
+
+.help-steps li {
+  margin: 3px 0;
+}
+
 .help-heading {
   font-size: 13px;
   text-transform: uppercase;

@@ -9,6 +9,7 @@
  * so they can be reviewed without downloading artifacts.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { preview } from "vite";
 
@@ -293,6 +294,14 @@ try {
     await page.locator(".easter-egg img").waitFor({ timeout: 5_000 });
     await page.locator(".easter-egg").click();
     await page.locator(".easter-egg").waitFor({ state: "detached", timeout: 5_000 });
+    step = "the Help screen's Claude extension download";
+    // "Use JuraCAD with Claude": the link downloads the extension built into the site.
+    const link = page.getByRole("link", { name: "Download the JuraCAD extension for Claude" });
+    const href = await link.getAttribute("href");
+    if (href !== `${basePath}juracad-claude.mcpb`) throw new Error(`The Claude extension link goes to ${href}`);
+    const [download] = await Promise.all([page.waitForEvent("download"), link.click()]);
+    const size = (await readFile(await download.path())).length;
+    if (download.suggestedFilename() !== "juracad-claude.mcpb" || size < 1_000_000) throw new Error(`The Claude extension download is ${download.suggestedFilename()}, ${size} bytes`);
     await page.keyboard.press("Escape");
   }
 

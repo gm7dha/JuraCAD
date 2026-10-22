@@ -582,7 +582,7 @@ describe("modelled threads, round 2 review", () => {
     expect(Math.abs(drilled - volumes()[0] - fourMm)).toBeLessThan(0.1 * fourMm);
   });
 
-  for (const gap of [0.3, 1, 1.5, 3]) {
+  for (const gap of [0.3, 0.5, 0.7, 1, 1.2, 1.5, 3]) {
     it(`threads an up-to-next hole cleanly with only ${gap} mm of room past the wall`, () => {
       const box = feature("box", { width: 40, depth: 40, height: 20 + gap });
       const cavity = feature("box", { width: 30, depth: 30, height: gap, x: 5, y: 5, z: 10 }, "remove");
@@ -594,13 +594,15 @@ describe("modelled threads, round 2 review", () => {
       const check = engine.check("normal").parts[0];
       expect(check.geometryValid).toBe(true);
       expect(r.parts).toHaveLength(1);
-      // Either a thread was cut (less material, the floor below untouched), or the plain hole and a plain message.
-      if (r.featureErrors[plain.id]) {
-        expect(r.featureErrors[plain.id]).toMatch(/thread couldn't be cut cleanly/);
-        expect(check.exactVolume!).toBeCloseTo(drilled, 3);
-      } else {
-        expect(check.exactVolume!).toBeLessThan(drilled - 1);
-        expect(drilled - check.exactVolume!).toBeLessThan(20);
+      // The thread is cut, with no fallback: right through the wall when there's room for a whole turn of
+      // run-out past it (1 mm or more for M4), otherwise ending a pitch inside the wall.
+      expect(r.featureErrors).toEqual({});
+      const oneWall = grooveVolume({ origin: [20, 20, 20 + gap], axis: [0, 0, -1], radius: 1.65 }, 0.7, false, -0.7, 10.7, 0, 10);
+      const removed = drilled - check.exactVolume!;
+      if (gap >= 1) expect(Math.abs(removed - oneWall)).toBeLessThan(0.05 * oneWall);
+      else {
+        expect(removed).toBeLessThan(oneWall);
+        expect(removed).toBeGreaterThan(0.85 * oneWall);
       }
     });
   }
