@@ -8,7 +8,7 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.26.1 — Live with Claude · commit `(set when merged)`
+## v0.26.1 — Live with Claude · commit `5e885c3`
 
 - **Live with Claude:** click **Connect to Claude** in the top bar (Chrome or Edge) and Claude works on the design
   you have open, while you watch: its sketches and features appear in the feature list and the 3D view, each as one
