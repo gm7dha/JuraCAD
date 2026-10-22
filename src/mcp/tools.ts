@@ -15,8 +15,8 @@ import { evaluate } from "../model/expr";
 import { analyzeSketch } from "../sketch/solver";
 import { DIMENSION_TYPES } from "../sketch/types";
 import type { PartMesh } from "../kernel/protocol";
-import { InputError, list, noExtras, object, oneOf, text, type Obj } from "./args";
-import { applyFeature, applySketch, describePlane, FEATURE_KINDS, KIND_OF, type FeatureKind, type SpecContext } from "./featureSpec";
+import { InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, type Obj } from "./args";
+import { applyFeature, applySketch, describePlane, FEATURE_KINDS, KIND_OF, limitProblems, type FeatureKind, type SpecContext } from "./featureSpec";
 import { describeEdge, describeFace, edgeList, faceList, facing, PICK_HELP } from "./picks";
 import { renderViews, RENDER_VIEWS, type RenderView } from "./render";
 import type { Session } from "./session";
@@ -186,7 +186,7 @@ function directionOf(f: Feature, doc: JuraCADDocument): string | null {
  * grazes it), or a rounding that changes nothing, is almost always a mistake
  * (usually the wrong direction), so it's refused with advice.
  */
-function effectProblem(s: Session, f: Feature, doc: JuraCADDocument, before: ReturnType<typeof volumes>, after: ReturnType<typeof volumes>, toolVolume: number | null): string | null {
+function effectProblem(s: Session, f: Feature, doc: JuraCADDocument, before: ReturnType<typeof volumes>, after: ReturnType<typeof volumes>, toolVolume: number | null, notes: string[]): string | null {
   if (f.suppressed) return null;
   const change = total(after) - total(before);
   const dir = directionOf(f, doc);
@@ -207,9 +207,12 @@ function effectProblem(s: Session, f: Feature, doc: JuraCADDocument, before: Ret
     const tool = toolVolume ?? 0;
     const through = f.type === "extrude" && f.extrude?.end === "throughAll";
     if (f.operation === "remove") {
-      const enough = through ? 1e-3 : Math.max(1e-3, 0.02 * tool);
-      if (-change < enough) {
-        return `${f.name} would cut only ${r2(Math.max(0, -change))} mm³ from the part — it misses it (or barely touches it).${going} ${f.type === "extrude" ? 'Try "flip": true to go the other way, or end "through_all" (which cuts both ways).' : "Check its position against the part (describe_design gives the part's size and position)."}`;
+      // Nothing at all removed: it misses. A little (under 2% of the cutting shape) may be a trim, so it's kept with a note.
+      if (-change < 1e-3) {
+        return `${f.name} would cut nothing from the part — it misses it.${going} ${f.type === "extrude" ? 'Try "flip": true to go the other way, or end "through_all" (which cuts both ways).' : "Check its position against the part (describe_design gives the part's size and position)."}`;
+      }
+      if (!through && tool > 0 && -change < 0.02 * tool) {
+        notes.push(`This cut removed only ${r2(-change)} mm³ (${r2((100 * -change) / tool)}% of the cutting shape)${dir ? `, going towards ${dir}` : ""}; if you meant to cut more, check its direction and position.`);
       }
     } else if (f.operation === "add" && tool > 1e-6 && change < 1e-3) {
       return `${f.name} would add nothing: it's entirely inside the part already.${going} ${f.type === "extrude" ? 'Try "flip": true to go the other way.' : "Check its position."}`;
@@ -232,6 +235,12 @@ function effectProblem(s: Session, f: Feature, doc: JuraCADDocument, before: Ret
 function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, verb: string): string[] {
   const before = s.build().errors;
   const beforeVolumes = volumes(s.build().parts);
+  // Sizes and pattern counts, worked out with the new values (variables can change them too), before any slow build.
+  const limitsBefore = limitProblems(s.doc, s.scope());
+  const overLimits = [...limitProblems(next, s.scope(next))].filter(([id, why]) => limitsBefore.get(id) !== why);
+  if (overLimits.length) {
+    throw new InputError(`Couldn't ${verb} — ${overLimits.map(([id, why]) => `${next.features.find((x) => x.id === id)?.name ?? id}: ${why}`).join("; ")}. Nothing was changed.`);
+  }
   const after = s.build(next.features, next).errors;
   const fresh = newErrors(before, after);
   const refuse = (why: string) => {
@@ -245,6 +254,7 @@ function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, 
     });
     refuse(` — it wouldn't build:\n${lines.join("\n")}`);
   }
+  const notes: string[] = [];
   const afterVolumes = volumes(s.build(next.features, next).parts);
   const f = featureId ? next.features.find((x) => x.id === featureId) : undefined;
   if (f) {
@@ -256,11 +266,11 @@ function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, 
     // The solid it added or cut, from the build just made.
     const toolVolume = s.engineAsBuilt((e) => e.featureToolVolume(f.id));
     if (!isLast) s.build(next.features, next);
-    const problem = effectProblem(s, f, next, pre, post, toolVolume);
+    const problem = effectProblem(s, f, next, pre, post, toolVolume, notes);
     if (problem) refuse(`: ${problem}`);
   }
   s.commit(next);
-  return [volumeChange(beforeVolumes, afterVolumes)!, ...partsReport(s)];
+  return [...notes.map((n) => `Note: ${n}`), volumeChange(beforeVolumes, afterVolumes)!, ...partsReport(s)];
 }
 
 function context(s: Session, before: Feature[] | null, editing: boolean): SpecContext {
@@ -484,7 +494,9 @@ export const TOOLS: ToolDef[] = [
           vars.push({ id: newId("v"), name, value });
         }
       });
-      const { errors } = resolveVariables(vars);
+      const { errors, values: worked } = resolveVariables(vars);
+      const huge = vars.filter((v) => worked[v.name] !== undefined && Math.abs(worked[v.name]) > MAX_LENGTH);
+      if (huge.length) throw new InputError(`${huge.map((v) => `${v.name} would be ${r2(worked[v.name])}`).join("; ")} — too big. Sizes are in millimetres and can be at most ${MAX_LENGTH} mm (10 m). Nothing was changed.`);
       const bad = Object.entries(errors).map(([id, e]) => `${vars.find((v) => v.id === id)?.name}: ${e}`);
       if (bad.length) throw new InputError(`Those variables don't work out: ${bad.join("; ")}. Nothing was changed.`);
       const next = applyVariables(s.doc, vars);

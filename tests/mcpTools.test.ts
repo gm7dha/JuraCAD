@@ -225,7 +225,7 @@ describe("JuraCAD tools for Claude", () => {
     await ok(s, "add_sketch", { name: "Pocket", on_face: "top", shapes: [{ type: "circle", center: [30, 20], diameter: 10 }] });
     // Going up, away from the plate, the cut misses it.
     const missed = await fails(s, "add_feature", { type: "extrude", sketch: "Pocket", depth: 2, operation: "remove", flip: false });
-    expect(missed).toMatch(/would cut only 0 mm³ from the part — it misses it[\s\S]*towards \+Z[\s\S]*"flip": true[\s\S]*Nothing was changed/);
+    expect(missed).toMatch(/would cut nothing from the part — it misses it[\s\S]*towards \+Z[\s\S]*"flip": true[\s\S]*Nothing was changed/);
     // Left to itself, a cut on a face goes into the part.
     const cut = await ok(s, "add_feature", { type: "extrude", sketch: "Pocket", depth: 2, operation: "remove" });
     expect(cut).toMatch(/flipped/);
@@ -241,6 +241,30 @@ describe("JuraCAD tools for Claude", () => {
     await ok(s, "add_sketch", { plane: "Top", offset: 10, shapes: [{ type: "circle", center: [10, 10], diameter: 4 }] });
     await ok(s, "add_feature", { type: "extrude", end: "through_all", operation: "remove" });
     expect(exactVolume(s)[0]).toBeCloseTo(8000 - Math.PI * 4 * 20, 3);
+  });
+
+  it("keeps a thin trim, with a note, and keeps variables within the limits", async () => {
+    const { s } = newSession();
+    await ok(s, "new_design", { name: "Trim" });
+    await ok(s, "add_sketch", { shapes: [{ type: "rectangle", corner: [0, 0], width: 60, height: 40 }] });
+    await ok(s, "add_feature", { type: "extrude", depth: 3 });
+    // A 20 × 60 block from 10 mm up, coming down 50 mm, trims 0.5 mm off the plate's end.
+    await ok(s, "add_sketch", { name: "Trim", plane: "Top", offset: 10, shapes: [{ type: "rectangle", corner: [59.5, -10], width: 20, height: 60 }] });
+    const trimmed = await ok(s, "add_feature", { type: "extrude", sketch: "Trim", depth: 50, flip: true, operation: "remove" });
+    expect(trimmed).toMatch(/Note: This cut removed only 60 mm³ \(0\.1% of the cutting shape\), going towards −Z; if you meant to cut more/);
+    expect(exactVolume(s)[0]).toBeCloseTo(59.5 * 40 * 3, 3);
+
+    // A pattern count, or a size, set by a variable can't go past the limits either.
+    await ok(s, "set_variables", { variables: [{ name: "n", value: 5 }] });
+    await ok(s, "add_feature", { type: "cylinder", diameter: 1, height: 3, x: 2, y: 2, operation: "remove", name: "Pin hole" });
+    await ok(s, "add_feature", { type: "linear_pattern", features: ["Pin hole"], direction: "x", count: "n", spacing: 2 });
+    expect(await fails(s, "set_variables", { variables: [{ name: "n", value: 5000 }] })).toMatch(/Linear pattern 1: a pattern can have at most 100 copies in each direction \(this would be 5000\)[\s\S]*Nothing was changed/);
+    expect(await fails(s, "set_variables", { variables: [{ name: "big", value: 1e9 }] })).toMatch(/big would be 1000000000 — too big/);
+    await ok(s, "set_variables", { variables: [{ name: "w", value: 60 }] });
+    await ok(s, "edit_feature", { feature: "Extrude 1", depth: "w / 20" });
+    expect(await fails(s, "set_variables", { variables: [{ name: "w", value: "9000 * 3" }] })).toMatch(/too big/);
+    expect(await fails(s, "edit_feature", { feature: "Extrude 1", depth: "w * 200" })).toMatch(/depth is 12000 mm — too big/);
+    expect(s.doc.variables!.map((v) => `${v.name}=${v.value}`)).toEqual(["n=5", "w=60"]);
   });
 
   it("keeps requests to a size that builds quickly", async () => {

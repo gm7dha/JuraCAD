@@ -11,7 +11,9 @@ import type { PartMesh } from "../kernel/protocol";
 import { SCREW_SIZES, standardParams } from "../model/holes";
 import { planeFrame, planeOnFace, type SketchPlane, type Vec3 } from "../sketch/planes";
 import { evaluate } from "../model/expr";
-import { amount, bool, InputError, list, noExtras, oneOf, text, xy, xyz, type Obj } from "./args";
+import { amount, bool, InputError, list, MAX_LENGTH, noExtras, oneOf, text, tidy, xy, xyz, type Obj } from "./args";
+import { FEATURE_DEFS } from "../model/features";
+import { isAngleDimension } from "../sketch/types";
 import { pickEdges, pickFace, pickFaces, facing } from "./picks";
 import type { Session } from "./session";
 import { buildSketch } from "./sketchShapes";
@@ -383,4 +385,51 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
   }
   if (has(a, "name")) f.name = text(a.name, "name").slice(0, 80);
   if (ctx.editing && has(a, "suppressed")) f.suppressed = bool(a.suppressed, "suppressed");
+}
+
+/**
+ * Features whose sizes or pattern counts are past the limits with these
+ * variable values (by feature id, with the reason). Checked on every change,
+ * so changing a variable can't make a pattern of 5000 or a 1 km part.
+ */
+export function limitProblems(doc: JuraCADDocument, scope: Record<string, number>): Map<string, string> {
+  const out = new Map<string, string>();
+  const value = (src: string | undefined) => {
+    if (src === undefined) return null;
+    const r = evaluate(src, scope);
+    return r.ok ? r.value : null;
+  };
+  for (const f of doc.features) {
+    if (f.suppressed) continue;
+    if (f.type === "linearPattern" || f.type === "circularPattern") {
+      const count = value(f.params.count) ?? 1;
+      const rows = f.type === "linearPattern" ? (value(f.params.count2) ?? 1) : 1;
+      if (count > MAX_PATTERN || rows > MAX_PATTERN) {
+        out.set(f.id, `a pattern can have at most ${MAX_PATTERN} copies in each direction (this would be ${Math.max(count, rows)})`);
+        continue;
+      }
+      if (count * rows > MAX_PATTERN_TOTAL) {
+        out.set(f.id, `a pattern can have at most ${MAX_PATTERN_TOTAL} copies in all (this would be ${count} × ${rows} = ${count * rows})`);
+        continue;
+      }
+    }
+    for (const p of FEATURE_DEFS[f.type].params) {
+      if (p.unit !== undefined && p.unit !== "mm") continue;
+      const v = value(f.params[p.key]);
+      if (v !== null && Math.abs(v) > MAX_LENGTH) {
+        out.set(f.id, `its ${p.label.toLowerCase()} would be ${tidy(v)} mm — sizes can be at most ${MAX_LENGTH} mm (10 m)`);
+        break;
+      }
+    }
+    if (out.has(f.id) || !f.sketch) continue;
+    for (const c of f.sketch.data.constraints) {
+      if (c.value === undefined || c.driven || isAngleDimension(c)) continue;
+      const v = value(c.value);
+      if (v !== null && Math.abs(v) > MAX_LENGTH) {
+        out.set(f.id, `a dimension would be ${tidy(v)} mm — sizes can be at most ${MAX_LENGTH} mm (10 m)`);
+        break;
+      }
+    }
+  }
+  return out;
 }
