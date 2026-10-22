@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { addArc, addCircle, addPoint, applyRelation, arcSweep, dragPoint, addDimension, addLine, dimensionFor, dragArcRim, measure, measureToOf, pointPos, setDimensionValue, setMeasureTo } from "../src/sketch/ops";
 import { dimensionLayout } from "../src/sketch/layout";
+import { extendAt, splitAt, trimAt } from "../src/sketch/tools";
 import { parseSketchData } from "../src/sketch/validate";
 import { solveSketch } from "../src/sketch/solver";
 import { emptySketch, type SketchArc, type SketchCircle, type SketchData } from "../src/sketch/types";
@@ -242,5 +243,63 @@ describe("a point halfway between two points", () => {
     expect(m2[1]).toBeCloseTo((a2[1] + 30) / 2, 6);
     // Two points alone aren't enough.
     expect(applyRelation(s, "midpoint", [p.pointId, a.pointId]).error).toMatch(/three points/);
+  });
+});
+
+describe("cutting or growing an arc that has a length or angle dimension", () => {
+  // A quarter circle of radius 10 round the origin, exactly, with its length and radius dimensioned.
+  const quarterWith = () => {
+    let s: SketchData = {
+      points: [
+        { id: "s", x: 10, y: 0 },
+        { id: "e", x: 0, y: 10 },
+      ],
+      curves: [{ id: "a", type: "arc", center: "origin", start: "s", end: "e", construction: false }],
+      constraints: [],
+    };
+    s = addDimension(s, ["a", "e"]).sketch; // length (offered rounded, so set exactly)
+    s = setDimensionValue(s, s.constraints[0].id, String(5 * Math.PI)).sketch;
+    s = addDimension(s, ["a"]).sketch; // radius
+    return { s, arc: arcOf(s) };
+  };
+  const angles = (s: SketchData) =>
+    s.curves
+      .filter((c): c is SketchArc => c.type === "arc")
+      .map((c) => Math.round((arcSweep(s, c) * 180) / Math.PI * 1e6) / 1e6)
+      .sort((x, y) => x - y);
+
+  it("split: the two pieces keep their own sizes (the whole arc's length no longer applies)", () => {
+    const { s, arc } = quarterWith();
+    expect(s.constraints.some((c) => c.type === "arcLength")).toBe(true);
+    const c = pointPos(s, arc.center);
+    const a17 = (17 * Math.PI) / 180;
+    const r = splitAt(s, arc.id, { x: c[0] + 10 * Math.cos(a17), y: c[1] + 10 * Math.sin(a17) });
+    expect(r.error).toBeUndefined();
+    const got = angles(r.sketch);
+    expect(got[0]).toBeCloseTo(17, 4);
+    expect(got[1]).toBeCloseTo(73, 4);
+    expect(r.sketch.constraints.some((k) => k.type === "arcLength" || k.type === "arcAngle")).toBe(false);
+  });
+
+  it("trim: the piece left drops the whole arc's length", () => {
+    let { s } = quarterWith();
+    s = addLine(s, at(0, 0), at(20, 20)).sketch;
+    const arc = arcOf(s);
+    // Trim the half beyond 45°.
+    const r = trimAt(s, arc.id, { x: 10 * Math.cos(1.3), y: 10 * Math.sin(1.3) });
+    expect(r.error).toBeUndefined();
+    expect(r.sketch.constraints.some((k) => k.type === "arcLength")).toBe(false);
+    expect(angles(r.sketch)[0]).toBeCloseTo(45, 4);
+  });
+
+  it("extend: the arc grows round to the line and its length dimension goes", () => {
+    let { s } = quarterWith();
+    s = addLine(s, at(-5, -20), at(-5, 20)).sketch;
+    const arc = arcOf(s);
+    const r = extendAt(s, arc.id, pointPos(s, arc.end).reduce((p, v, i) => ({ ...p, [i ? "y" : "x"]: v }), { x: 0, y: 0 }));
+    expect(r.error).toBeUndefined();
+    // Round to x = −5 on a radius-10 circle: 120° from the start.
+    expect(angles(r.sketch)[0]).toBeCloseTo(120, 4);
+    expect(r.sketch.constraints.some((k) => k.type === "arcLength")).toBe(false);
   });
 });

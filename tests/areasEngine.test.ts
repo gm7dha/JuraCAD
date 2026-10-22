@@ -112,6 +112,42 @@ describe("extruding picked areas", () => {
     expect(a + b).toBeCloseTo(whole, 6);
   });
 
+  it("spline pieces walked backwards keep their shape (an S-curve over a line: equal lobes)", () => {
+    // Symmetric S through (0,0), (10,10), (20,-10), (30,0), closed off by the straight line between its ends.
+    let s = addSpline(emptySketch(), [at(0, 0), at(10, 10), at(20, -10), at(30, 0)], false).sketch;
+    s = addLine(s, at(0, 0), at(30, 0)).sketch;
+    const m = sketchAreas(s);
+    expect(m.areas).toHaveLength(2);
+    const [a, b] = m.areas.map((x) => vol(extrude(s, [pointInside(x)])));
+    expect(a).toBeCloseTo(b, 6);
+    expect(a).toBeCloseTo(921.875, 6);
+  });
+
+  it("a plate with a spline-shaped hole: picking the plate equals using every closed shape", () => {
+    for (const pts of [
+      [at(10, 10), at(30, 8), at(35, 25), at(15, 30)],
+      [at(15, 30), at(35, 25), at(30, 8), at(10, 10)], // drawn the other way round
+    ]) {
+      let s = rect(emptySketch(), 0, 0, 50, 40);
+      s = addSpline(s, pts, true).sketch;
+      const all = vol(extrude(s, undefined));
+      expect(vol(extrude(s, [[2, 2]]))).toBeCloseTo(all, 6);
+      const hole = vol(extrude(addSpline(emptySketch(), pts, true).sketch, undefined));
+      expect(all + hole).toBeCloseTo(20000, 6);
+    }
+  });
+
+  it("a closed spline drawn clockwise, cut by a line: the halves add up to the whole", () => {
+    const pts = [at(10, 20), at(30, 10), at(20, -5), at(0, 0)];
+    const whole = vol(extrude(addSpline(emptySketch(), pts, true).sketch, undefined));
+    let s = addSpline(emptySketch(), pts, true).sketch;
+    s = addLine(s, at(15, -20), at(15, 40)).sketch;
+    const m = sketchAreas(s);
+    expect(m.areas).toHaveLength(2);
+    const [a, b] = m.areas.map((x) => vol(extrude(s, [pointInside(x)])));
+    expect(a + b).toBeCloseTo(whole, 6);
+  });
+
   it("revolves only the picked area", () => {
     // A 10 × 10 square beside the up–down axis, split across the middle; spin the lower half.
     let s = rect(emptySketch(), 10, 0, 20, 10);

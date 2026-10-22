@@ -654,8 +654,10 @@ export function sketchAreas(sketch: SketchData): AreaMap {
     if (whole?.kind === "arc") segments = [{ kind: "circle", center: whole.c, radius: whole.r }];
     else if (whole?.kind === "ellipse") segments = [{ kind: "ellipse", center: whole.g.centre, rx: whole.g.rx, ry: whole.g.ry, angle: whole.g.angle }];
     else segments = runsOf(c.hs).flatMap((r) => {
-      const segs = pieceSegment(prims[r.prim], r.u0, r.u1, vpos[r.from], vpos[r.to]);
-      return r.fwd ? segs : segs.reverse().map(reverseSegment);
+      // pieceSegment runs from u0 to u1; a run walked backwards starts at the u1 end.
+      return r.fwd
+        ? pieceSegment(prims[r.prim], r.u0, r.u1, vpos[r.from], vpos[r.to])
+        : pieceSegment(prims[r.prim], r.u0, r.u1, vpos[r.to], vpos[r.from]).reverse().map(reverseSegment);
     });
     const polygon = c.area < 0 ? [...c.poly].reverse() : [...c.poly];
     return { segments, polygon, area: Math.abs(c.area) };
