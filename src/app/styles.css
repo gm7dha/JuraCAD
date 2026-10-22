@@ -2891,6 +2891,8 @@ kbd {
   max-width: 100%;
   max-height: calc(55vh - 16px);
   object-fit: contain;
+}
+
 .text-button.inline-link {
   display: inline;
   padding: 0;
