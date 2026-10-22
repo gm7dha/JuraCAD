@@ -27,16 +27,6 @@ function boundsOf(shape: Shape3D): Bounds {
   return [b.bounds[0] as [number, number, number], b.bounds[1] as [number, number, number]];
 }
 
-/** The faces of a shape gathered into one shape (its boundary — distances to it aren't 0 inside a solid). */
-function boundary(shape: Shape3D) {
-  return makeCompound(shape.faces);
-}
-
-/** All the edges of a shape gathered into one shape. */
-function edgesCompound(shape: Shape3D) {
-  return makeCompound(shape.edges);
-}
-
 const safeDelete = (s: { delete(): void } | null | undefined) => {
   try {
     s?.delete();
@@ -44,6 +34,25 @@ const safeDelete = (s: { delete(): void } | null | undefined) => {
     // already freed
   }
 };
+
+/** Pieces gathered into one shape (the pieces' own wrappers are then freed; the compound keeps what it needs). */
+function gather<T extends { delete(): void }>(pieces: T[]) {
+  const all = makeCompound(pieces as unknown as Parameters<typeof makeCompound>[0]);
+  pieces.forEach((p) => safeDelete(p));
+  return all;
+}
+
+/** The faces of a shape gathered into one shape (its boundary — distances to it aren't 0 inside a solid). */
+function boundary(shape: Shape3D) {
+  return gather(shape.faces);
+}
+
+/** All the edges of a shape gathered into one shape. */
+function edgesCompound(shape: Shape3D) {
+  return gather(shape.edges);
+}
+
+
 
 /** Solid ∩ solid: the shared volume and its surface area. */
 function solidOverlap(a: Shape3D, b: Shape3D): { volume: number; area: number } {

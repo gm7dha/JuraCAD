@@ -695,6 +695,15 @@ try {
   await page.waitForFunction(() => /Part 2/.test(document.querySelector(".bom-table")?.textContent ?? ""), null, { timeout: 5_000 });
   if ((await page.locator(".panel-section.mates .feature-row.failed").count()) > 0) throw new Error("the mate broke after unsuppressing its part");
   await page.keyboard.press("Escape");
+
+  step = "giving a part a part number";
+  await page.locator(".bom-table tr", { hasText: "Part 2" }).dblclick();
+  const propsDialog = page.getByRole("dialog", { name: /Properties of Part 2/ });
+  await propsDialog.getByLabel("Part number").fill("PS-002");
+  await propsDialog.getByLabel("Description").fill("Top block");
+  await propsDialog.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForFunction(() => /PS-002/.test(document.querySelector(".bom-table")?.textContent ?? ""), null, { timeout: 5_000 });
+  if (!/Top block/.test(await page.locator(".bom-table").innerText())) throw new Error("the parts list didn't show the description");
   await page.getByRole("button", { name: "Export", exact: true }).click();
   await page.waitForSelector('#export-parts option[value="all"]', { state: "attached" });
   const allOption = await page.locator('#export-parts option[value="all"]').innerText();
