@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.26.1 — Live with Claude · commit `(set when merged)`
+
+- **Live with Claude:** click **Connect to Claude** in the top bar (Chrome or Edge) and Claude works on the design
+  you have open, while you watch: its sketches and features appear in the feature list and the 3D view, each as one
+  step you can undo. You can keep editing too; if you both change something at once, nothing is lost. Needs the
+  updated JuraCAD extension for Claude (download it again from Help).
+
 ## v0.26 — Round 2: Claude builds parts, several sheets, Bend, suppress and more · commit `70c4e76`
 
 - **Use JuraCAD with Claude:** a Claude desktop extension (download from Help) so Claude can build parts from a

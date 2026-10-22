@@ -111,6 +111,19 @@ export function HelpDialog() {
           another folder in the extension's settings).
         </li>
       </ol>
+      <h3 className="help-heading">Live with Claude</h3>
+      <p className="small">
+        Let Claude work on the design you have open here, while you watch. With the extension installed and the Claude
+        app open, click <b>Connect to Claude</b> in the top bar (nothing connects until you do). The first time, your
+        browser may ask whether JuraCAD can reach apps on this device: click Allow. A green <b>Live with Claude</b> badge
+        shows while you're connected; click it to disconnect.
+      </p>
+      <ul className="small help-steps">
+        <li>Ask Claude for changes in the Claude app, e.g. "add four M3 holes to the lid". Its sketches and features appear in the feature list and the 3D view as it works, on the Part Studio on show.</li>
+        <li>Each of Claude's changes is one step you can undo (Ctrl+Z / ⌘Z). You can keep editing too: if you both change something at the same moment, Claude's change is turned back and it tries again, so nothing is lost. Finish any open dialog (✓ or ✗) so Claude can carry on.</li>
+        <li>Made for Chrome and Edge (Firefox should work too). Safari doesn't let websites talk to apps on your computer; there (or if connecting doesn't work), ask Claude to save the design and open the .juracad file with Open.</li>
+        <li>The link stays on this computer: only the JuraCAD website can use it, and Claude still only saves files in your JuraCAD folder.</li>
+      </ul>
       <p className="muted small">
         JuraCAD {SHORT_VERSION} ({APP_VERSION}) —{" "}
         <button type="button" className="text-button small-text inline-link" onClick={() => openDialog("whatsNew")}>

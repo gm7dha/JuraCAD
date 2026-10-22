@@ -98,6 +98,27 @@
   CI: `scripts/build-claude-extension.mjs` bundles it with esbuild (+ the wasm, manifest from `claude-extension/manifest.json`),
   `mcpb validate`/`pack` (pinned devDependency) make `dist/juracad-claude.mcpb` (downloaded from Help), and `scripts/check-claude-extension.mjs`
   unpacks it, starts it and builds a bracket over MCP. Locally, with esbuild and a stand-in SDK, both scripts run too.
+- Live with Claude (Claude edits the design open in the user's tab): the extension also listens on 127.0.0.1 only
+  (ports `LIVE_PORTS` 47615–47617, path `/juracad-live`, sub-protocol `juracad-live.1`), via a small hand-written
+  WebSocket server (`src/mcp/websocket.ts`, Node http + RFC 6455 frames; no `ws` package). It accepts only the JuraCAD
+  site's Origin `https://gm7dha.github.io` — note that's every GitHub Pages site of the account, not just /JuraCAD/ —
+  (localhost origins only with `JURACAD_LIVE_DEV=1`, which the smoke test sets), its own Host, text messages up to
+  50 MB, and one tab at a time (a connection that doesn't say hello within 10 s is dropped, and a new tab replaces it).
+  Each hello starts a new link (versions restart at 1), so the session always re-adopts the new tab's design.
+  `src/live/protocol.ts` (pure, shared) has the messages and rules; `src/live/client.ts` is the app's side (only connects
+  when "Connect to Claude" is clicked; `src/app/liveLink.ts` wires it to the store, `LiveButton.tsx` is the top-bar
+  control); `src/mcp/live.ts` (`LiveBridge`) is the extension's side. The app sends the whole design (as .juracad text)
+  and the Part Studio on show with a version number on connect and after every change (undo/redo too); while connected
+  `callTool` goes through `LiveBridge.call`: the session adopts the latest design (`Session.adopt`: `doc` is that studio's
+  view, `outer` the whole document, `wholeDoc()` puts it back together), runs the tool, and sends any change as `change`
+  (based on version N). The app applies it as one undo step (`applyClaudeChange`, label shown as a toast) only if it's
+  still at N and no dialog is open, else refuses; refused changes are rolled back (`Session.restore`) and Claude is told
+  to look again — nothing is merged silently. Tools are run one at a time. The extension exits when Claude closes its
+  input (so the port is freed). Tests: `tests/liveProtocol.test.ts` (pure), `tests/liveLink.test.ts` (real server, the
+  real client over Node's WebSocket, real OCCT); `check-claude-extension.mjs` and the smoke test also connect for real.
+  Browsers: Chrome 142+ asks the user before a public site reaches loopback ("Local Network Access"; WebSockets from
+  Chrome 147); `ws://127.0.0.1` from https isn't mixed content in Chrome/Firefox; Safari blocks it (the app then explains
+  the file route).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);

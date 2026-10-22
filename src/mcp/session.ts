@@ -10,6 +10,34 @@ import { GeometryEngine } from "../kernel/engine";
 import type { PartMesh } from "../kernel/protocol";
 import { InputError } from "./args";
 import type { DesignFolder } from "./files";
+import type { ToolResult } from "./tools";
+import { inStudio } from "../model/studios";
+
+/** What the live link with the user's JuraCAD tab says about itself (see live.ts). */
+export interface LiveStatus {
+  connected: boolean;
+  /** Plain-English summary for Claude (what's open, or how to connect). */
+  text: string;
+}
+
+/**
+ * The live link with a JuraCAD tab (src/mcp/live.ts). While it's connected,
+ * every tool works on the design open in that tab, and changes are sent back.
+ */
+export interface LiveLink {
+  call(s: Session, tool: string, run: () => Promise<ToolResult>): Promise<ToolResult>;
+  status(): LiveStatus;
+}
+
+/** Everything a tool can change, to put back if the open JuraCAD tab doesn't take a change. */
+export interface SessionSnapshot {
+  doc: JuraCADDocument;
+  past: JuraCADDocument[];
+  file: string | null;
+  saved: JuraCADDocument | null;
+  generation: number;
+  outer: Session["outer"];
+}
 
 export interface Build {
   parts: PartMesh[];
@@ -26,6 +54,16 @@ export class Session {
   file: string | null = null;
   /** The document as it was when last saved or opened (to tell if there are unsaved changes). */
   saved: JuraCADDocument | null = null;
+  /** Goes up each time the design is replaced as a whole (new_design, open_design). */
+  generation = 0;
+  /**
+   * When the design came from the user's open JuraCAD tab: the whole document
+   * and the Part Studio being worked on. `doc` is then that studio's view (its
+   * features in `features`), which is what the tools work on.
+   */
+  outer: { doc: JuraCADDocument; studio: string } | null = null;
+  /** The live link with a JuraCAD tab, when the extension has one (it may not be connected). */
+  live: LiveLink | null = null;
   private engine: GeometryEngine;
   private builtKey = "";
   private built: Build | null = null;
@@ -85,6 +123,36 @@ export class Session {
     this.past = [];
     this.file = file;
     this.saved = file ? doc : null;
+    this.outer = null;
+    this.generation++;
+  }
+
+  /** The whole document: with the other Part Studios when this is a studio of the open JuraCAD tab. */
+  wholeDoc(): JuraCADDocument {
+    return this.outer ? inStudio(this.outer.doc, this.outer.studio, () => this.doc) : this.doc;
+  }
+
+  /**
+   * Work on the design open in the user's JuraCAD tab (one Part Studio of it).
+   * Claude's own undo steps are dropped: the user may have changed anything.
+   */
+  adopt(view: JuraCADDocument, outer: { doc: JuraCADDocument; studio: string }): void {
+    this.doc = view;
+    this.past = [];
+    this.outer = outer;
+  }
+
+  snapshot(): SessionSnapshot {
+    return { doc: this.doc, past: [...this.past], file: this.file, saved: this.saved, generation: this.generation, outer: this.outer };
+  }
+
+  restore(snap: SessionSnapshot): void {
+    this.doc = snap.doc;
+    this.past = [...snap.past];
+    this.file = snap.file;
+    this.saved = snap.saved;
+    this.generation = snap.generation;
+    this.outer = snap.outer;
   }
 
   get unsaved(): boolean {
