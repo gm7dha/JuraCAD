@@ -26,7 +26,10 @@
 - Drawings: `src/drawing/` — `drawing.ts` (document edits, parsing), `cameras.ts` (view directions; first-angle),
   `annotations.ts` (centre marks/lines, section hatching, balloons), `sections.ts` (section cuts drawn on a view:
   cut plane, camera, letters; views are keyed by `viewKey` — the kind, or "section:<id>"), `sheet.ts` (lays the sheet out as simple line/text shapes in sheet mm, y up), `export.ts` (SVG and a hand-written
-  PDF from those shapes), `hidden.ts`. The engine's `project()` runs OpenCascade's hidden-line removal per view.
+  PDF from those shapes, one page per sheet), `hidden.ts`, `pages.ts` (sheets 2, 3… in `Drawing.pages`; sheet 1 is the
+  drawing's own fields, so old files open unchanged — work on a sheet with `pageOf`/`changePage`), `fits.ts` (ISO 286
+  limits and fits: H7, g6, H7/g6). A view may have its own `scale` (noted under it); the hole table wraps into columns
+  when long (`holeTableShape`) or sits where it was dragged (`holeTableAt`). The engine's `project()` runs OpenCascade's hidden-line removal per view.
   UI in `src/app/DrawingUI.tsx` (the sheet is an SVG drawn over the 3D view, which stays mounted).
 - Sheet metal: `src/sheetmetal/sheet.ts` keeps a sheet as walls joined by bends (base from a sketch, flanges off
   straight edges, flanges on flanges) and works out both the folded walls/bends and the flat pattern from that;

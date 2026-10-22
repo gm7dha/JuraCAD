@@ -5,9 +5,11 @@
 import { putShortening, removeShortening, withShortenings } from "../drawing/shorten";
 import { itemsInBox, toggled } from "../drawing/select";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { create } from "zustand";
+import { addPage, changePage, FIRST_PAGE, knownPage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage } from "../drawing/pages";
 
 import { arrangeLinedUp, arrangeViews, withoutFit, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
-import { sheetDxf, sheetPdf, sheetSvg } from "../drawing/export";
+import { sheetDxf, sheetsPdf, sheetSvg } from "../drawing/export";
 import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
 import { holeOfCircle, tapSizes } from "../drawing/holeCallouts";
@@ -16,7 +18,7 @@ import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } fro
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
 import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
-import { angleGeometry, dimPoint, dragDimension, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
+import { angleGeometry, arcOf, chamferSize, dimPoint, dragDimension, FITTABLE, fitOf, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { billOfMaterials } from "../assembly/assembly";
 import { getKernel } from "../kernel/connect";
@@ -25,7 +27,7 @@ import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
 import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut } from "../model/types";
-import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
+import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection, viewKey } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
 import { downloadFile, safeFileName } from "./download";
@@ -83,35 +85,91 @@ function balloonsFor(bom: BomLine[] | undefined, instances: InstanceInput[] | un
   return out;
 }
 
-/** Projections already worked out, by drawing (kept while switching tabs). */
+/** Projections already worked out, by drawing sheet (kept while switching tabs). */
 const projectionCache = new Map<string, { key: unknown[]; result: Projections }>();
 const inFlight = new Map<string, { key: unknown[]; promise: Promise<Projections> }>();
 const sameKey = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
-/** The drawing's views from the geometry engine, refreshed when the part or the chosen views change. */
-function useProjections(drawing: Drawing): { projections: Projections | null; subject: string | null; instances?: InstanceInput[]; busy: boolean; error: string | null; upToDate: boolean } {
-  const doc = useStore((s) => s.history.present);
-  const parts = useStore((s) => s.parts);
-  const ready = useStore((s) => s.kernelStatus === "ready");
+/** Which sheet of each drawing is on show (not saved: switching sheets isn't an undo step). */
+const useSheetPage = create<{ pages: Record<string, string>; show: (drawingId: string, pageId: string) => void }>((set) => ({
+  pages: {},
+  show: (drawingId, pageId) => set((s) => ({ pages: { ...s.pages, [drawingId]: pageId } })),
+}));
+/** The sheet of `d` on show. */
+const usePageId = (d: Drawing) => useSheetPage((s) => knownPage(d, s.pages[d.id]));
+const pageIdOf = (d: Drawing) => knownPage(d, useSheetPage.getState().pages[d.id]);
+/** Where a sheet's views are kept in the cache. */
+const cacheIdOf = (d: Drawing, pageId: string) => (pageId === FIRST_PAGE ? d.id : `${d.id}#${pageId}`);
+
+/** Change the sheet of the drawing on show (one undo step). */
+function changeShownPage(fn: (d: Drawing) => Drawing) {
+  const s = useStore.getState();
+  const d = activeDrawing(s);
+  if (d) s.changeDrawing((x) => changePage(x, pageIdOf(d), fn));
+}
+
+/** What to ask the geometry engine for a drawing sheet's views (null when its part has gone). */
+function projectionRequest(drawing: Drawing, doc: JuraCADDocument, parts: PartMesh[]): { key: unknown[]; subject: NonNullable<ReturnType<typeof drawingSubject>>; run: () => Promise<Projections> } | null {
   const subject = drawingSubject(drawing, doc, parts);
+  if (!subject) return null;
   // (Sections are asked for separately; details are worked out here from their host views.)
   const kinds = projectionKinds(drawing);
   const sections = sectionRequests(drawing);
   const breakouts = breakOutRequests(drawing);
-  // The same key object while nothing it's made of changes, so the effect below only runs on real changes.
   const tangent = drawing.tangentEdges !== false;
-  const rawKey = subject ? [...subject.key, kinds.join(","), drawing.hiddenLines, tangent, JSON.stringify(sections), JSON.stringify(breakouts)] : null;
+  const key = [...subject.key, kinds.join(","), drawing.hiddenLines, tangent, JSON.stringify(sections), JSON.stringify(breakouts)];
+  const run = () => {
+    const kernel = getKernel();
+    return kernel
+      .whenIdle()
+      .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sections, breakouts, tangent))
+      .then((list) => {
+        const result: Projections = {};
+        for (const p of list) result[p.kind] = p;
+        return result;
+      });
+  };
+  return { key, subject, run };
+}
+
+/** A sheet's views, from the cache or the geometry engine (shared with any request already running). */
+function fetchProjections(cacheId: string, req: NonNullable<ReturnType<typeof projectionRequest>>): Promise<Projections> {
+  const hit = projectionCache.get(cacheId);
+  if (hit && sameKey(hit.key, req.key)) return Promise.resolve(hit.result);
+  let job = inFlight.get(cacheId);
+  if (!job || !sameKey(job.key, req.key)) {
+    const key = req.key;
+    const promise = req.run().then((result) => {
+      projectionCache.set(cacheId, { key, result });
+      return result;
+    });
+    promise.finally(() => inFlight.get(cacheId)?.promise === promise && inFlight.delete(cacheId)).catch(() => {});
+    job = { key, promise };
+    inFlight.set(cacheId, job);
+  }
+  return job.promise;
+}
+
+/** The drawing sheet's views from the geometry engine, refreshed when the part or the chosen views change. */
+function useProjections(drawing: Drawing, cacheId: string): { projections: Projections | null; subject: string | null; instances?: InstanceInput[]; busy: boolean; error: string | null; upToDate: boolean } {
+  const doc = useStore((s) => s.history.present);
+  const parts = useStore((s) => s.parts);
+  const ready = useStore((s) => s.kernelStatus === "ready");
+  const req = projectionRequest(drawing, doc, parts);
+  const subject = req?.subject ?? null;
+  // The same key object while nothing it's made of changes, so the effect below only runs on real changes.
+  const rawKey = req ? req.key : null;
   const keyRef = useRef<unknown[] | null>(null);
   if (!rawKey) keyRef.current = null;
   else if (!keyRef.current || !sameKey(keyRef.current, rawKey)) keyRef.current = rawKey;
   const key = keyRef.current;
-  const cached = key ? projectionCache.get(drawing.id) : undefined;
+  const cached = key ? projectionCache.get(cacheId) : undefined;
   const fresh = cached && key && sameKey(cached.key, key) ? cached.result : null;
   const [state, setState] = useState<{ result: Projections | null; error: string | null; busy: boolean }>({ result: fresh, error: null, busy: false });
 
   useEffect(() => {
-    if (!key || !subject || !ready) return;
-    const hit = projectionCache.get(drawing.id);
+    if (!key || !req || !ready) return;
+    const hit = projectionCache.get(cacheId);
     if (hit && sameKey(hit.key, key)) {
       setState({ result: hit.result, error: null, busy: false });
       return;
@@ -119,33 +177,17 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
     let live = true;
     setState((s) => ({ ...s, busy: true }));
     // Share one request between the panel and the sheet.
-    let job = inFlight.get(drawing.id);
-    if (!job || !sameKey(job.key, key)) {
-      const kernel = getKernel();
-      const promise = kernel
-        .whenIdle()
-        .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sections, breakouts, tangent))
-        .then((list) => {
-          const result: Projections = {};
-          for (const p of list) result[p.kind] = p;
-          projectionCache.set(drawing.id, { key, result });
-          return result;
-        });
-      promise.finally(() => inFlight.get(drawing.id)?.promise === promise && inFlight.delete(drawing.id)).catch(() => {});
-      job = { key, promise };
-      inFlight.set(drawing.id, job);
-    }
-    job.promise.then(
-        (result) => {
-          if (live) setState({ result, error: null, busy: false });
-        },
-        (e: unknown) => live && setState({ result: null, error: e instanceof Error ? e.message : String(e), busy: false }),
-      );
+    fetchProjections(cacheId, { ...req, key }).then(
+      (result) => {
+        if (live) setState({ result, error: null, busy: false });
+      },
+      (e: unknown) => live && setState({ result: null, error: e instanceof Error ? e.message : String(e), busy: false }),
+    );
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, ready, drawing.id]);
+  }, [key, ready, cacheId]);
 
   const base = state.result ?? fresh;
   const detailsKey = JSON.stringify(drawing.details ?? []);
@@ -159,7 +201,16 @@ function useProjections(drawing: Drawing): { projections: Projections | null; su
 }
 
 /** The sheet as last laid out on screen (for saving). */
-let shownSheet: { drawingId: string; layout: SheetLayout; name: string; projections: Projections; info: SheetInfo } | null = null;
+let shownSheet: { drawingId: string; pageId: string; layout: SheetLayout; name: string; projections: Projections; info: SheetInfo } | null = null;
+
+/** The sheet on show, if it's of the drawing `d` and the sheet of it on show. */
+const shownFor = (d: Drawing | null) => (d && shownSheet?.drawingId === d.id && shownSheet.pageId === pageIdOf(d) ? shownSheet : null);
+
+/** Each view's scale for a sheet scale: its own, or the sheet's. */
+const viewScales = (d: Pick<Drawing, "views">, sheetScale: number) => {
+  const own = new Map(d.views.filter((v) => v.scale && v.kind !== "detail").map((v) => [viewKey(v), v.scale!]));
+  return (view: string) => own.get(view) ?? sheetScale;
+};
 
 /**
  * A drawing with Fit to sheet's room for its dimensions worked out again (see
@@ -172,54 +223,106 @@ function withFit(d: Drawing, projections: Projections | undefined, info: SheetIn
 
 /** Arrange: every view back in its standard place, with room made for the dimensions. */
 export function arrangeDrawing() {
-  const s = useStore.getState();
-  const d = activeDrawing(s);
-  const sheet = d && shownSheet?.drawingId === d.id ? shownSheet : null;
-  s.changeDrawing((x) => withFit(arrangeViews(x), sheet?.projections, sheet?.info));
+  const sheet = shownFor(activeDrawing(useStore.getState()));
+  changeShownPage((x) => withFit(arrangeViews(x), sheet?.projections, sheet?.info));
 }
 
 function today(): string {
   return new Date().toLocaleDateString("en-GB");
 }
 
-/** Auto dimension: add the sizes the drawing needs (see autoDimension.ts). One undo step. */
+/** Auto dimension: add the sizes the drawing sheet needs (see autoDimension.ts). One undo step. */
 export function autoDimensionDrawing() {
   const s = useStore.getState();
-  const d = activeDrawing(s);
-  if (!d || !shownSheet || shownSheet.drawingId !== d.id) {
+  const whole = activeDrawing(s);
+  const sheet = shownFor(whole);
+  if (!whole || !sheet) {
     s.showToast("The drawing isn't ready yet — wait for its views to appear, then try again.", "error");
     return;
   }
-  const added = autoDimensions(shownSheet.projections, drawingViewKeys(d), d.dimensions ?? [], shownSheet.layout.scale, () => newId("dm"), d.projection === "third");
+  const d = pageOf(whole, sheet.pageId);
+  const added = autoDimensions(sheet.projections, drawingViewKeys(d), d.dimensions ?? [], viewScales(d, sheet.layout.scale), () => newId("dm"), d.projection === "third");
   if (!added.length) {
     const hasViews = drawingViewKeys(d).some((k) => k !== "iso" && !k.startsWith("section:"));
     s.showToast(hasViews ? "Nothing more to add — it's already dimensioned." : "Auto dimension needs a front, top or side view.", "info");
     return;
   }
-  const sheet = shownSheet;
   // Room for the new dimensions round the views: more space beside the 3D view, or one scale
   // smaller (the new rows are spaced for the scale they end up at).
   const existing = d.dimensions ?? [];
-  const next = fitDrawing(d, sheet.projections, sheet.info, (scale) => [...existing, ...autoDimensions(sheet.projections, drawingViewKeys(d), existing, scale, () => newId("dm"), d.projection === "third")]);
+  const next = fitDrawing(d, sheet.projections, sheet.info, (scale) => [...existing, ...autoDimensions(sheet.projections, drawingViewKeys(d), existing, viewScales(d, scale), () => newId("dm"), d.projection === "third")]);
   const count = (next.dimensions?.length ?? 0) - existing.length;
-  s.changeDrawing(() => next);
+  s.changeDrawing((x) => changePage(x, sheet.pageId, () => next));
   s.showToast(`Added ${count} dimension${count === 1 ? "" : "s"}. Drag a number to move it, or select one and press Delete.`, "success");
 }
 
-/** Save the drawing on show as a PDF or SVG file. */
-export function exportDrawing(format: "pdf" | "svg" | "dxf") {
+/** The title block and tables' details for one sheet of a drawing. */
+function sheetInfo(page: Drawing, doc: JuraCADDocument, parts: PartMesh[], subject: string, instances: InstanceInput[] | undefined, sheetNo: number, sheetCount: number): SheetInfo {
+  const bom = bomFor(page, doc, parts);
+  const balloons = balloonsFor(bom, instances, parts);
+  return { designName: doc.name, subject, date: today(), bom, balloons, taps: tapSizes(doc, page), ...(sheetCount > 1 ? { sheetNo, sheetCount } : {}) };
+}
+
+/**
+ * Every sheet of a drawing laid out, in order (for a PDF of them all): the
+ * one on show as it is, the others from their views (worked out if need be).
+ */
+async function allSheets(whole: Drawing): Promise<SheetLayout[]> {
+  const s = useStore.getState();
+  const doc = s.history.present;
+  const ids = pageIds(whole);
+  const out: SheetLayout[] = [];
+  for (const [i, id] of ids.entries()) {
+    const shown = shownSheet?.drawingId === whole.id && shownSheet.pageId === id ? shownSheet : null;
+    if (shown) {
+      out.push(shown.layout);
+      continue;
+    }
+    const page = pageOf(whole, id);
+    const req = projectionRequest(page, doc, s.parts);
+    if (!req) throw new Error("the part this drawing shows no longer exists");
+    const base = await fetchProjections(cacheIdOf(whole, id), req);
+    const projections = withShortenings(withDetails(base, page), page);
+    out.push(layoutSheet(page, projections, sheetInfo(page, doc, s.parts, req.subject.name, req.subject.instances, i + 1, ids.length)));
+  }
+  return out;
+}
+
+/**
+ * Save the drawing on show: PDF has every sheet (a page each); SVG and DXF
+ * hold one picture, so they save the sheet on show.
+ */
+export async function exportDrawing(format: "pdf" | "svg" | "dxf") {
   const s = useStore.getState();
   const d = activeDrawing(s);
-  if (!d || !shownSheet || shownSheet.drawingId !== d.id) {
+  const sheet = shownFor(d);
+  if (!d || !sheet) {
     s.showToast("The drawing isn't ready yet — wait for its views to appear, then try again.", "error");
     return;
   }
-  const base = safeFileName(`${s.history.present.name} ${d.name}`, "drawing");
-  const title = `${s.history.present.name} — ${d.name}`;
-  if (format === "pdf") downloadFile(new Blob([sheetPdf(shownSheet.layout.prims, shownSheet.layout.size, title) as BlobPart], { type: "application/pdf" }), `${base}.pdf`);
-  else if (format === "svg") downloadFile(new Blob([sheetSvg(shownSheet.layout.prims, shownSheet.layout.size, title)], { type: "image/svg+xml" }), `${base}.svg`);
-  else downloadFile(new Blob([sheetDxf(shownSheet.layout.prims)], { type: "application/dxf" }), `${base}.dxf`);
-  s.showToast(`Saved ${base}.${format}`, "success");
+  const count = pageIds(d).length;
+  const no = pageNumber(d, sheet.pageId);
+  const docName = s.history.present.name;
+  const base = safeFileName(`${docName} ${d.name}`, "drawing");
+  const title = `${docName} — ${d.name}`;
+  if (format === "pdf") {
+    if (count > 1) s.showToast(`Getting all ${count} sheets ready…`, "info");
+    let layouts: SheetLayout[];
+    try {
+      layouts = await allSheets(d);
+    } catch (e) {
+      s.showToast(`Couldn't save the PDF: ${e instanceof Error ? e.message : String(e)}. Check each sheet shows its views, then try again.`, "error");
+      return;
+    }
+    downloadFile(new Blob([sheetsPdf(layouts.map((l) => ({ prims: l.prims, size: l.size })), title) as BlobPart], { type: "application/pdf" }), `${base}.pdf`);
+    s.showToast(count > 1 ? `Saved ${base}.pdf (all ${count} sheets, a page each)` : `Saved ${base}.pdf`, "success");
+    return;
+  }
+  // One sheet per SVG or DXF file: named after the sheet when there are several.
+  const file = count > 1 ? safeFileName(`${docName} ${d.name} sheet ${no}`, "drawing") : base;
+  if (format === "svg") downloadFile(new Blob([sheetSvg(sheet.layout.prims, sheet.layout.size, count > 1 ? `${title} — sheet ${no}` : title)], { type: "image/svg+xml" }), `${file}.svg`);
+  else downloadFile(new Blob([sheetDxf(sheet.layout.prims)], { type: "application/dxf" }), `${file}.dxf`);
+  s.showToast(count > 1 ? `Saved ${file}.${format} (sheet ${no} of ${count} — switch sheets to save another, or save a PDF for them all)` : `Saved ${file}.${format}`, "success");
 }
 
 function ToolButton({ label, icon, onClick, disabled, title }: { label: string; icon: ReactNode; onClick?: () => void; disabled?: boolean; title?: string }) {
@@ -260,6 +363,8 @@ export function DrawingToolbar() {
               ["chain", "Chain", <Icons.ChainDim key="c" />, "Chain — click a starting corner, then the next point, the next… each measured from the one before, end to end. Esc to finish", ""],
               ["ordinate", "Ordinate", <Icons.OrdinateDim key="o" />, "Ordinate — click a datum corner (0), then the points to label with their distance from it. Esc to finish", ""],
               ["holeCallout", "Hole callout", <Icons.HoleCallout key="h" />, "Hole callout — click a hole to label it with its size, depth, counterbore or countersink, thread and how many there are (e.g. 4× Ø6.6 THRU)", ""],
+              ["chamfer", "Chamfer", <Icons.ChamferCallout key="ch" />, "Chamfer — click a chamfer's slanted edge to label its size and angle (e.g. 1 × 45°)", ""],
+              ["arcLength", "Arc length", <Icons.ArcLength key="al" />, "Arc length — click an arc (part of a circle) to give the length round it", ""],
             ] as const
           ).map(([t, label, icon, title, key]) => ({
             key: t,
@@ -428,23 +533,29 @@ function SeveralSelected({ change }: { change: (fn: (d: Drawing) => Drawing) => 
 }
 
 /** The selected dimension: text before and after its number, and its tolerance. */
-function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
+function DimensionProperties({ drawing, change, projections }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void; projections: Projections | null }) {
   const selectedDim = useStore((s) => s.selectedDim);
   const unit = useLengthUnit();
   const dim = drawing.dimensions?.find((d) => d.id === selectedDim);
   if (!dim) return null;
+  // What it measures now (for checking a limits-and-fits class against).
+  const p = projections?.[dim.view];
+  const resolved = p ? resolveDim(dim, p) : null;
+  const value = resolved ? measureDim(dim, resolved) : null;
+  const fit = dim.limitsFit && value !== null ? fitOf(dim, value) : null;
+  const fittable = FITTABLE.has(dim.type) && !dim.callout;
   const edit = (patch: Partial<Dimension>) =>
     change((d) => ({
       ...d,
       dimensions: d.dimensions?.map((x) => {
         if (x.id !== dim.id) return x;
         const next: Dimension = { ...x, ...patch };
-        for (const k of ["prefix", "suffix", "tolerance", "places", "frame"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
+        for (const k of ["prefix", "suffix", "tolerance", "places", "frame", "limitsFit", "along"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
         return next;
       }),
     }));
   const t = dim.tolerance;
-  const mode = !t ? "none" : Math.abs(t.plus - t.minus) < 1e-9 ? "sym" : "limits";
+  const mode = dim.limitsFit ? "fit" : !t ? "none" : Math.abs(t.plus - t.minus) < 1e-9 ? "sym" : "limits";
   // An angle's tolerance is in degrees; a length's in the design's unit.
   const angle = dim.type === "angle";
   const tolUnit = angle ? "°" : unit;
@@ -459,35 +570,88 @@ function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (f
       <div className="drawing-fields">
         <TitleField label="Text before" value={dim.prefix ?? ""} placeholder="e.g. 4×" onCommit={(v) => edit({ prefix: v ? `${v.trimEnd()} ` : undefined })} />
         <TitleField label="Text after" value={dim.suffix ?? ""} placeholder="e.g. TYP" onCommit={(v) => edit({ suffix: v ? ` ${v.trimStart()}` : undefined })} />
-        <div className="drawing-field">
-          <span className="field-label">Tolerance</span>
-          <div className="segmented three" role="radiogroup" aria-label="Tolerance">
-            {(
-              [
-                ["none", "None"],
-                ["sym", "±"],
-                ["limits", "+ / −"],
-              ] as const
-            ).map(([m, label]) => (
-              <button
-                type="button"
-                key={m}
-                role="radio"
-                aria-checked={mode === m}
-                className={mode === m ? "selected" : ""}
-                onClick={() => {
-                  const d = angle ? 0.5 : unit === "in" ? 0.127 : 0.1;
-                  if (m === "none") edit({ tolerance: undefined });
-                  else if (m === "sym") edit({ tolerance: { plus: t?.plus ?? d, minus: t?.plus ?? d } });
-                  else edit({ tolerance: { plus: t?.plus ?? d, minus: t && mode === "limits" ? t.minus : 0 } });
-                }}
-              >
-                {label}
-              </button>
-            ))}
+        {dim.type === "chamfer" && (
+          <div className="drawing-field">
+            <span className="field-label">Distance measured</span>
+            <div className="segmented two" role="radiogroup" aria-label="Distance measured">
+              {(
+                [
+                  ["h", "Across"],
+                  ["v", "Up and down"],
+                ] as const
+              ).map(([way, label]) => {
+                const now = resolved?.b ? chamferSize(resolved.a, resolved.b, dim.along).along : (dim.along ?? "h");
+                return (
+                  <button type="button" key={way} role="radio" aria-checked={now === way} className={now === way ? "selected" : ""} onClick={() => edit({ along: way })}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-        {t && (
+        )}
+        {dim.type !== "chamfer" && (
+          <div className="drawing-field">
+            <span className="field-label">Tolerance</span>
+            <div className={`segmented ${fittable ? "four" : "three"}`} role="radiogroup" aria-label="Tolerance">
+              {(
+                [
+                  ["none", "None", "No tolerance"],
+                  ["sym", "±", "The same amount over or under"],
+                  ["limits", "+ / −", "Different amounts over and under"],
+                  ...(fittable ? ([["fit", "Fit", "A limits-and-fits class (ISO 286) such as H7, g6 or H7/g6"]] as const) : []),
+                ] as const
+              ).map(([m, label, tip]) => (
+                <button
+                  type="button"
+                  key={m}
+                  role="radio"
+                  title={tip}
+                  aria-checked={mode === m}
+                  className={mode === m ? "selected" : ""}
+                  onClick={() => {
+                    const d = angle ? 0.5 : unit === "in" ? 0.127 : 0.1;
+                    if (m === "none") edit({ tolerance: undefined, limitsFit: undefined });
+                    else if (m === "fit") edit({ tolerance: undefined, limitsFit: dim.limitsFit ?? { class: dim.type === "diameter" ? "H7" : "h7" } });
+                    else if (m === "sym") edit({ limitsFit: undefined, tolerance: { plus: t?.plus ?? d, minus: t?.plus ?? d } });
+                    else edit({ limitsFit: undefined, tolerance: { plus: t?.plus ?? d, minus: t && mode === "limits" ? t.minus : 0 } });
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {dim.limitsFit && (
+          <>
+            <TitleField
+              label="Class or fit"
+              value={dim.limitsFit.class}
+              placeholder="e.g. H7, g6 or H7/g6"
+              onCommit={(v) => {
+                const cls = v.replace(/\s+/g, "");
+                if (cls) edit({ limitsFit: { ...dim.limitsFit!, class: cls } });
+              }}
+            />
+            <label className="check-row" title="Also show the largest and smallest sizes the class allows, one above the other">
+              <input
+                type="checkbox"
+                checked={!!dim.limitsFit.limits}
+                onChange={(e) => edit({ limitsFit: e.target.checked ? { ...dim.limitsFit!, limits: true } : { class: dim.limitsFit!.class } })}
+              />
+              Show the largest and smallest sizes
+            </label>
+            {fit?.error ? (
+              <p className="panel-hint warn-text" role="note">
+                {fit.error}
+              </p>
+            ) : (
+              <p className="panel-hint">Capital letters are holes (H7), small letters shafts (g6); a fit is both, hole first (H7/g6), and shows stacked.</p>
+            )}
+          </>
+        )}
+        {t && !dim.limitsFit && dim.type !== "chamfer" && (
           <TitleField
             label={mode === "sym" ? `Tolerance ± (${tolUnit})` : `Plus (${tolUnit})`}
             value={shown(t.plus)}
@@ -497,7 +661,7 @@ function DimensionProperties({ drawing, change }: { drawing: Drawing; change: (f
             }}
           />
         )}
-        {t && mode === "limits" && (
+        {t && mode === "limits" && dim.type !== "chamfer" && (
           <TitleField
             label={`Minus (${tolUnit})`}
             value={shown(t.minus)}
@@ -566,12 +730,15 @@ function TitleField({ label, value, placeholder, multiline, onCommit }: { label:
   );
 }
 
-export function DrawingPanel({ drawing }: { drawing: Drawing }) {
+export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
   const unit = useLengthUnit();
   const doc = useStore((s) => s.history.present);
   const parts = useStore((s) => s.parts);
-  const change = useStore((s) => s.changeDrawing);
-  const { projections, subject, upToDate } = useProjections(drawing);
+  // Everything here works on the sheet on show (the title block and settings are shared by every sheet).
+  const pageId = usePageId(whole);
+  const drawing = useMemo(() => pageOf(whole, pageId), [whole, pageId]);
+  const change = changeShownPage;
+  const { projections, subject, upToDate } = useProjections(drawing, cacheIdOf(whole, pageId));
   // The scale "Fit to sheet" picks (with any room it keeps for dimensions).
   const info = useMemo<SheetInfo>(() => ({ designName: "", subject: "", date: "", bom: bomFor(drawing, doc, parts), taps: tapSizes(doc, drawing) }), [drawing, doc, parts]);
   const auto = useMemo(() => (projections ? layoutSheet({ ...drawing, scale: undefined }, projections, info) : null), [drawing, projections, info]);
@@ -581,11 +748,16 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
   return (
     <aside className="side-panel drawing-panel" aria-label="Drawing settings">
       <SeveralSelected change={change} />
-      <DimensionProperties drawing={drawing} change={change} />
+      <DimensionProperties drawing={drawing} change={change} projections={projections} />
       <NoteProperties drawing={drawing} change={change} />
       <section className="panel-section">
         <h3>Drawing</h3>
         <div className="drawing-fields">
+          {pageIds(whole).length > 1 && (
+            <p className="panel-hint">
+              Sheet {pageNumber(whole, pageId)} of {pageIds(whole).length}: its paper size, scale, views and dimensions are its own; the rest is shared by every sheet.
+            </p>
+          )}
           <div className="drawing-field">
             <label htmlFor="drawing-source">Drawing of</label>
             <select
@@ -773,13 +945,27 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
               checked={drawing.holeTable === true}
               onChange={(e) =>
                 change((d) => {
-                  const { holeTable: _old, ...rest } = d;
+                  const { holeTable: _old, holeTableAt: _at, ...rest } = d;
                   return e.target.checked ? { ...rest, holeTable: true } : rest;
                 })
               }
             />
             Hole table
           </label>
+          {drawing.holeTable && (
+            <p className="panel-hint">
+              {drawing.holeTableAt ? (
+                <>
+                  Drag the table to move it.{" "}
+                  <button type="button" className="text-button small-text" onClick={() => change((d) => (({ holeTableAt: _at, ...rest }) => rest)(d))}>
+                    Put it back above the title block
+                  </button>
+                </>
+              ) : (
+                "A long table wraps into columns. Drag it anywhere on the sheet to give the views its room."
+              )}
+            </p>
+          )}
           {drawing.source?.kind === "assembly" && (
             <label className="check-row">
               <input
@@ -812,6 +998,7 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
           )}
         </div>
       </section>
+      <ViewScales drawing={drawing} change={change} sheetScale={auto && !drawing.scale ? auto.scale : (drawing.scale ?? null)} />
       <SectionsList drawing={drawing} change={change} missed={missedSections(drawing, projections, upToDate)} />
       <DetailsList drawing={drawing} change={change} />
       <BreakOutsList drawing={drawing} change={change} />
@@ -829,6 +1016,53 @@ export function DrawingPanel({ drawing }: { drawing: Drawing }) {
         </div>
       </section>
     </aside>
+  );
+}
+
+/** Each view's scale: the sheet's (the usual), or its own, noted under the view. */
+function ViewScales({ drawing, change, sheetScale }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void; sheetScale: number | null }) {
+  const views = drawing.views.filter((v) => v.kind !== "detail");
+  if (!views.length) return null;
+  const name = (v: Drawing["views"][number]) => {
+    if (v.kind !== "section") return VIEW_LABELS[v.kind];
+    const c = drawing.sections?.find((x) => x.id === v.section);
+    return c?.aux ? `View ${c.letter}` : `Section ${c?.letter ?? ""}`;
+  };
+  return (
+    <section className="panel-section">
+      <h3>View scales</h3>
+      <div className="drawing-fields">
+        {views.map((v) => (
+          <div className="drawing-field" key={v.id}>
+            <label htmlFor={`view-scale-${v.id}`}>{name(v)}</label>
+            <select
+              id={`view-scale-${v.id}`}
+              value={v.scale ? String(v.scale) : ""}
+              onChange={(e) =>
+                change((d) =>
+                  withoutFit({
+                    ...d,
+                    views: d.views.map((x) => {
+                      if (x.id !== v.id) return x;
+                      const { scale: _old, ...rest } = x;
+                      return e.target.value ? { ...rest, scale: Number(e.target.value) } : rest;
+                    }),
+                  }),
+                )
+              }
+            >
+              <option value="">Same as the sheet{sheetScale ? ` (${scaleLabel(sheetScale)})` : ""}</option>
+              {STANDARD_SCALES.map((sc) => (
+                <option key={sc} value={String(sc)}>
+                  {scaleLabel(sc)}
+                </option>
+              ))}
+            </select>
+          </div>
+        ))}
+        <p className="panel-hint">A view at its own scale says so underneath it (e.g. SCALE 2:1). Detail views set theirs under Details.</p>
+      </div>
+    </section>
   );
 }
 
@@ -1065,9 +1299,9 @@ function snapsOf(layout: SheetLayout, projections: Projections): Snap[] {
   for (const v of layout.views) {
     const p = projections[v.key];
     if (!p) continue;
-    const at = (q: P2) => toSheetPoint(v, p, layout.scale, q[0], q[1]);
+    const at = (q: P2) => toSheetPoint(v, p, v.scale, q[0], q[1]);
     for (const q of snapPoints(p)) out.push({ kind: "point", view: v.key, at: q, sheet: at(q) });
-    for (const c of p.circles) if (!c.hidden) out.push({ kind: "circle", view: v.key, centre: [c.cx, c.cy], r: c.r, full: c.full, sheet: at([c.cx, c.cy]), sheetR: c.r * layout.scale });
+    for (const c of p.circles) if (!c.hidden) out.push({ kind: "circle", view: v.key, centre: [c.cx, c.cy], r: c.r, full: c.full, sheet: at([c.cx, c.cy]), sheetR: c.r * v.scale * (p.zoom ?? 1) });
     for (const l of p.visible) if (l.length === 4) out.push({ kind: "line", view: v.key, a: [l[0], l[1]], b: [l[2], l[3]], sheetA: at([l[0], l[1]]), sheetB: at([l[2], l[3]]) });
   }
   return out;
@@ -1113,23 +1347,30 @@ const targetOf = (s: Snap): DimTarget =>
   s.kind === "point" ? { kind: "point", at: s.at } : s.kind === "line" ? { kind: "line", a: s.a, b: s.b } : { kind: "circle", centre: s.centre, r: s.r, full: s.full };
 
 /** The sheet itself, with views you can drag about. Scroll to zoom, middle- or right-drag to pan. */
-export function DrawingSheet({ drawing }: { drawing: Drawing }) {
+export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   const docName = useStore((s) => s.history.present.name);
   const doc = useStore((s) => s.history.present);
   const allParts = useStore((s) => s.parts);
+  // The sheet on show, as a drawing of its own (see pages.ts); changes go back into it.
+  const pageId = usePageId(whole);
+  const drawing = useMemo(() => pageOf(whole, pageId), [whole, pageId]);
+  const sheetNo = pageNumber(whole, pageId);
+  const sheetCount = pageIds(whole).length;
+  const change = changeShownPage;
   const bom = useMemo(() => bomFor(drawing, doc, allParts), [drawing, doc, allParts]);
-  const change = useStore((s) => s.changeDrawing);
   const tool = useStore((s) => s.drawingTool);
   const selectedDims = useStore((s) => s.selectedDims);
   const isSelected = (id: string) => selectedDims.includes(id);
   /** A selection box being dragged out over empty paper (sheet mm). */
   const [selBox, setSelBox] = useState<{ from: P2; to: P2; additive: boolean } | null>(null);
-  const { projections, subject, instances, busy, error } = useProjections(drawing);
+  const { projections, subject, instances, busy, error } = useProjections(drawing, cacheIdOf(whole, pageId));
   const instancesKey = instances ? JSON.stringify(instances) : "";
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const balloons = useMemo(() => balloonsFor(bom, instances, allParts), [bom, instancesKey, allParts]);
   const [drag, setDrag] = useState<{ viewId: string; start: P2; from: P2; at: P2 } | null>(null);
   const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number; textAlong?: number; textAcross?: number } } | null>(null);
+  /** The hole table being dragged: where the pointer started, and its top-left corner then and now. */
+  const [tableDrag, setTableDrag] = useState<{ start: P2; from: P2; at: P2 } | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   /** A note being dragged: where the pointer started and where the note was. */
   const [noteDrag, setNoteDrag] = useState<{ id: string; start: P2; from: P2; at: P2 } | null>(null);
@@ -1161,7 +1402,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     setBreakStart(null);
     setShortStart(null);
     setRun(null);
-  }, [tool, drawing.id]);
+  }, [tool, drawing.id, pageId]);
 
   // While a view or a dimension is dragged, show it where it's going.
   const shown = useMemo(() => {
@@ -1173,15 +1414,19 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   }, [drawing, drag, dimDrag, noteDrag]);
   const unit = useLengthUnit();
   const taps = useMemo(() => tapSizes(doc, drawing), [doc, drawing]);
+  const info = useMemo<SheetInfo>(
+    () => ({ designName: docName, subject: subject ?? "", date: today(), bom, balloons, taps, ...(sheetCount > 1 ? { sheetNo, sheetCount } : {}) }),
+    [docName, subject, bom, balloons, taps, sheetNo, sheetCount],
+  );
   const layout = useMemo(
-    () => (projections ? layoutSheet(shown, projections, { designName: docName, subject: subject ?? "", date: today(), bom, balloons, taps }) : null),
+    () => (projections ? layoutSheet(shown, projections, info) : null),
     // The units change the dimension numbers and the title block.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [shown, projections, docName, subject, bom, balloons, unit, taps],
+    [shown, projections, info, unit],
   );
   useEffect(() => {
-    if (layout && projections && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, layout, name: drawing.name, projections, info: { designName: docName, subject: subject ?? "", date: today(), bom, balloons, taps } };
-  }, [layout, projections, drag, dimDrag, drawing.id, drawing.name, docName, subject, bom, balloons, taps]);
+    if (layout && projections && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, pageId, layout, name: drawing.name, projections, info };
+  }, [layout, projections, drag, dimDrag, drawing.id, pageId, drawing.name, info]);
   const snaps = useMemo(() => (layout && projections && tool !== "select" ? snapsOf(layout, projections) : []), [layout, projections, tool]);
 
   // Delete removes the selected dimension; Esc steps back.
@@ -1193,7 +1438,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       if ((e.key === "Delete" || e.key === "Backspace") && s.selectedDims.length) {
         e.preventDefault();
         const ids = s.selectedDims;
-        s.changeDrawing((d) => ids.reduce((acc, id) => removeNote(removeDimension(acc, id), id), d));
+        changeShownPage((d) => ids.reduce((acc, id) => removeNote(removeDimension(acc, id), id), d));
         s.selectDim(null);
       } else if (e.key === "Escape") {
         if (symbolStart) setSymbolStart(null);
@@ -1229,7 +1474,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   const viewAt = (key: string) => {
     const v = layout?.views.find((x) => x.key === key);
     const p = projections?.[key];
-    return v && p && layout ? (q: P2) => toSheetPoint(v, p, layout.scale, q[0], q[1]) : null;
+    return v && p && layout ? (q: P2) => toSheetPoint(v, p, v.scale, q[0], q[1]) : null;
   };
 
   /**
@@ -1247,7 +1492,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (!pending.b && f.kind === "circle") {
       const c = at(f.centre);
       const angle = Math.round((Math.atan2(cursor[1] - c[1], cursor[0] - c[0]) * 180) / Math.PI);
-      const offset = Math.max(2, Math.round((Math.hypot(cursor[0] - c[0], cursor[1] - c[1]) - f.r * (layout?.scale ?? 1)) * 10) / 10);
+      const edge = at([f.centre[0] + f.r, f.centre[1]]);
+      const offset = Math.max(2, Math.round((Math.hypot(cursor[0] - c[0], cursor[1] - c[1]) - Math.hypot(edge[0] - c[0], edge[1] - c[1])) * 10) / 10);
       return { id: "preview", view: pending.view, type: f.full ? "diameter" : "radius", a: dimPoint(f.centre, p), r: f.r, offset, angle };
     }
     if (pending.angle) {
@@ -1358,6 +1604,69 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     s.selectDim(id);
   };
 
+  /** The nearest edge under the pointer (corners don't get in the way, unlike the Dimension tool). */
+  const edgeAt = (here: P2): Extract<Snap, { kind: "line" }> | null => {
+    let best: Extract<Snap, { kind: "line" }> | null = null;
+    let bestD = tolerance();
+    for (const sn of snaps) if (sn.kind === "line" && segDist(here, sn.sheetA, sn.sheetB) < bestD) [best, bestD] = [sn, segDist(here, sn.sheetA, sn.sheetB)];
+    return best;
+  };
+  /** The nearest arc (part of a circle) under the pointer. */
+  const arcAt = (here: P2): Extract<Snap, { kind: "circle" }> | null => {
+    let best: Extract<Snap, { kind: "circle" }> | null = null;
+    let bestD = tolerance();
+    for (const sn of snaps) {
+      if (sn.kind !== "circle") continue;
+      const d = Math.abs(Math.hypot(here[0] - sn.sheet[0], here[1] - sn.sheet[1]) - sn.sheetR);
+      if (d < bestD) [best, bestD] = [sn, d];
+    }
+    return best;
+  };
+  /** A leader angle pointing away from the middle of a view (degrees). */
+  const awayFromMiddle = (p: NonNullable<Projections[string]>, at: P2) => {
+    const [x0, y0, x1, y1] = p.bounds ?? [0, 0, 0, 0];
+    const mid: P2 = [(x0 + x1) / 2, (y0 + y1) / 2];
+    return Math.hypot(at[0] - mid[0], at[1] - mid[1]) < 1e-6 ? 45 : Math.round((Math.atan2(at[1] - mid[1], at[0] - mid[0]) * 180) / Math.PI);
+  };
+  /** Chamfer: label the clicked slanted edge "1 × 45°". */
+  const chamferClick = (here: P2) => {
+    const s = useStore.getState();
+    const edge = edgeAt(here);
+    const p = edge && projections?.[edge.view];
+    if (!edge || !p) {
+      s.showToast("Click a chamfer's slanted edge on a view.", "info");
+      return;
+    }
+    const c = chamferSize(edge.a, edge.b);
+    if (c.angle < 0.5 || c.distance < 1e-6) {
+      s.showToast("That edge is level or upright. Click the slanted edge a chamfer makes, seen from the side.", "info");
+      return;
+    }
+    const id = newId("dm");
+    const mid: P2 = [(edge.a[0] + edge.b[0]) / 2, (edge.a[1] + edge.b[1]) / 2];
+    change((d) => putDimension(d, { id, view: edge.view, type: "chamfer", a: dimPoint(edge.a, p), b: dimPoint(edge.b, p), offset: 8, angle: awayFromMiddle(p, mid) }));
+    s.selectDim(id);
+  };
+  /** Arc length: the length round the clicked arc. */
+  const arcLengthClick = (here: P2) => {
+    const s = useStore.getState();
+    const snap = arcAt(here);
+    const v = snap && layout?.views.find((x) => x.key === snap.view);
+    const p = snap && projections?.[snap.view];
+    if (!snap || !v || !p) {
+      s.showToast("Click an arc (a rounded edge or part of a circle) on a view.", "info");
+      return;
+    }
+    const arc = snap.full ? null : arcOf(p, snap.centre, snap.r, fromSheetPoint(v, p, v.scale, here[0], here[1]));
+    if (!arc) {
+      s.showToast("That's a whole circle — click an arc (part of a circle) instead, or use Dimension for its size.", "info");
+      return;
+    }
+    const id = newId("dm");
+    change((d) => putDimension(d, { id, view: snap.view, type: "arcLength", a: dimPoint(snap.centre, p), r: snap.r, b: dimPoint(arc.mid, p), offset: 6 }));
+    s.selectDim(id);
+  };
+
   /** Baseline / chain / ordinate: a corner or hole centre under the pointer, as a point on its view. */
   const linearTarget = (here: P2): { view: string; at: P2 } | null => {
     const snap = findSnap(snaps, here, tolerance());
@@ -1370,7 +1679,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const t = linearTarget(here);
     const p = projections[run.view];
     if (!t || t.view !== run.view || !p) return [];
-    return nextLinear(run, p, t.at, layout.scale, drawing.dimensions ?? []).map((d, i) => ({ ...d, id: `preview${i}` }));
+    return nextLinear(run, p, t.at, layout.views.find((v) => v.key === run.view)?.scale ?? layout.scale, drawing.dimensions ?? []).map((d, i) => ({ ...d, id: `preview${i}` }));
   };
   const linearClick = (here: P2) => {
     const t = linearTarget(here);
@@ -1400,7 +1709,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     );
     const p = v && projections[v.key];
     if (!v || !p?.bounds) return null;
-    return { view: v.key, at: fromSheetPoint(v, p, layout.scale, here[0], here[1]), sheet: here };
+    return { view: v.key, at: fromSheetPoint(v, p, v.scale, here[0], here[1]), sheet: here };
   };
   /** The section line's end for the pointer: straightened when it's within a few degrees of across or up-and-down. */
   const cutEnd = (here: P2): { at: P2; sheet: P2 } | null => {
@@ -1421,8 +1730,10 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     const at = viewAt(detailStart.view);
     if (!at) return null;
     const c = at(detailStart.at);
-    return Math.hypot(here[0] - c[0], here[1] - c[1]) / layout.scale;
+    return Math.hypot(here[0] - c[0], here[1] - c[1]) / scaleOfView(detailStart.view);
   };
+  /** Paper mm per model mm on a view (its own scale, or the sheet's). */
+  const scaleOfView = (key: string) => layout?.views.find((v) => v.key === key)?.scale ?? layout?.scale ?? 1;
   const detailClick = (here: P2) => {
     if (!detailStart) {
       const p = cutPoint(here);
@@ -1431,10 +1742,12 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     }
     const r = detailRadius(here);
     const p = projections?.[detailStart.view];
-    if (!r || !p?.bounds || !layout || r * layout.scale < 2) return;
+    if (!r || !p?.bounds || !layout || r * scaleOfView(detailStart.view) < 2) return;
     const host = detailStart.view as DetailView["host"];
     const centre = toRel(p.bounds, detailStart.at);
-    change((d) => addDetail(d, { id: newId("dt"), host, centre, radius: Math.round(r * 100) / 100, zoom: 2 }));
+    // (Lettered after every section and detail on any sheet.)
+    const letter = nextLetterOnAnySheet(whole);
+    change((d) => addDetail(d, { id: newId("dt"), host, centre, radius: Math.round(r * 100) / 100, zoom: 2, letter }));
     setDetailStart(null);
     useStore.getState().setDrawingTool("select");
   };
@@ -1451,7 +1764,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (!end || !p?.bounds || !layout) return;
     const [ax, ay] = breakStart.at;
     const [bx, by] = end.at;
-    if (Math.abs(bx - ax) * layout.scale < 2 || Math.abs(by - ay) * layout.scale < 2) return;
+    if (Math.abs(bx - ax) * scaleOfView(breakStart.view) < 2 || Math.abs(by - ay) * scaleOfView(breakStart.view) < 2) return;
     const depth = Math.max(0.1, Math.round(((p.depth ?? 10) / 2) * 10) / 10);
     change((d) => putBreakOut(d, { id: newId("bo"), host: breakStart.view as BreakOut["host"], a: toRel(p.bounds!, breakStart.at), b: toRel(p.bounds!, end.at), depth }));
     setBreakStart(null);
@@ -1470,7 +1783,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (!end || !p?.bounds || !layout) return;
     const dx = Math.abs(end.at[0] - shortStart.at[0]);
     const dy = Math.abs(end.at[1] - shortStart.at[1]);
-    if (Math.max(dx, dy) * layout.scale < 3) return;
+    if (Math.max(dx, dy) * scaleOfView(shortStart.view) < 3) return;
     const axis = dx >= dy ? "x" : "y";
     const i = axis === "x" ? 0 : 1;
     const lo = p.bounds[i];
@@ -1493,12 +1806,13 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     }
     const end = cutEnd(here);
     const p = projections?.[cutStart.view];
-    if (!end || !p?.bounds || !layout || Math.hypot(end.at[0] - cutStart.at[0], end.at[1] - cutStart.at[1]) * layout.scale < 2) return;
+    if (!end || !p?.bounds || !layout || Math.hypot(end.at[0] - cutStart.at[0], end.at[1] - cutStart.at[1]) * scaleOfView(cutStart.view) < 2) return;
     const host = cutStart.view as SectionCut["host"];
     const a = toRel(p.bounds, cutStart.at);
     const b = toRel(p.bounds, end.at);
     const aux = useStore.getState().drawingTool === "auxiliary";
-    change((d) => addSection(d, { id: newId("sc"), host, a, b, ...(aux ? { aux: true } : {}) }));
+    const letter = nextLetterOnAnySheet(whole);
+    change((d) => addSection(d, { id: newId("sc"), host, a, b, letter, ...(aux ? { aux: true } : {}) }));
     setCutStart(null);
     useStore.getState().setDrawingTool("select");
   };
@@ -1535,6 +1849,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     }
     if (tool === "dimension") dimensionClick(e);
     else if (tool === "holeCallout") calloutClick(toSheet(e));
+    else if (tool === "chamfer") chamferClick(toSheet(e));
+    else if (tool === "arcLength") arcLengthClick(toSheet(e));
     else if (linear) linearClick(toSheet(e));
     else if (tool === "section" || tool === "auxiliary") sectionClick(toSheet(e));
     else if (tool === "detail") detailClick(toSheet(e));
@@ -1559,11 +1875,12 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (selBox) setSelBox({ ...selBox, to: here });
     if (drag) setDrag({ ...drag, at: [drag.from[0] + here[0] - drag.start[0], drag.from[1] + here[1] - drag.start[1]] });
     if (noteDrag) setNoteDrag({ ...noteDrag, at: [noteDrag.from[0] + here[0] - noteDrag.start[0], noteDrag.from[1] + here[1] - noteDrag.start[1]] });
+    if (tableDrag) setTableDrag({ ...tableDrag, at: [tableDrag.from[0] + here[0] - tableDrag.start[0], tableDrag.from[1] + here[1] - tableDrag.start[1]] });
     if (dimDrag) {
       const dim = drawing.dimensions?.find((x) => x.id === dimDrag.id);
       const placed = layout?.dims.find((x) => x.id === dimDrag.id);
       // Shift: move just the number (anywhere, off the line too); otherwise move the dimension.
-      const lengthDim = dim && dim.type !== "diameter" && dim.type !== "radius" && dim.type !== "ordinate" && dim.type !== "angle";
+      const lengthDim = dim && (dim.type === "horizontal" || dim.type === "vertical" || dim.type === "aligned");
       if (dim && placed && e.shiftKey && lengthDim && placed.b) {
         setDimDrag({ id: dim.id, patch: { offset: dim.offset, ...dragDimensionText(dim, placed.a, placed.b, here) } });
       } else if (dim && placed) {
@@ -1595,6 +1912,12 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         change((d) => ({ ...d, notes: d.notes?.map((x) => (x.id === id ? { ...x, at: [Math.round(at[0] * 10) / 10, Math.round(at[1] * 10) / 10] } : x)) }));
       }
     }
+    if (tableDrag) {
+      const { at, from } = tableDrag;
+      setTableDrag(null);
+      // (The views then get the room the table had: they're laid out again.)
+      if (Math.hypot(at[0] - from[0], at[1] - from[1]) > 0.5) change((d) => ({ ...d, holeTableAt: [Math.round(at[0] * 10) / 10, Math.round(at[1] * 10) / 10] }));
+    }
     if (dimDrag) {
       const { id, patch } = dimDrag;
       setDimDrag(null);
@@ -1621,6 +1944,8 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
   else if (tool === "datum" || tool === "fcf" || tool === "finish")
     message = symbolStart ? "Now click where the symbol goes. Esc to start again." : "Click the edge or surface it's for (corners and edges snap).";
   else if (tool === "holeCallout") message = "Click a hole to label it (size, depth, counterbore, thread and how many). Drag the label to move it.";
+  else if (tool === "chamfer") message = "Click a chamfer's slanted edge to label it (e.g. 1 × 45°). Drag the label to move it.";
+  else if (tool === "arcLength") message = "Click an arc to give the length round it. Drag the number to move it.";
   else if (tool === "note") message = "Click where the note goes (its top-left corner). Then type its text in the panel on the left.";
   else if (linear) {
     const what = tool === "baseline" ? "each measured from it" : tool === "chain" ? "each measured from the one before" : "each labelled with its distance from it";
@@ -1649,7 +1974,18 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
       : "Click one end of a sloping edge on the front, top or a side view (corners snap).";
 
   const hover =
-    (tool === "dimension" && cursor && !pending?.b) || (linear && cursor) ? findSnap(snaps, cursor!, tolerance()) : tool === "holeCallout" && cursor ? holeHover(cursor) : null;
+    (tool === "dimension" && cursor && !pending?.b) || (linear && cursor)
+      ? findSnap(snaps, cursor!, tolerance())
+      : tool === "holeCallout" && cursor
+        ? holeHover(cursor)
+        : tool === "chamfer" && cursor
+          ? edgeAt(cursor)
+          : tool === "arcLength" && cursor
+            ? (() => {
+                const a = arcAt(cursor);
+                return a && !a.full ? a : null;
+              })()
+            : null;
   const firstMark = (() => {
     if (linear && run) {
       const at = viewAt(run.view);
@@ -1674,7 +2010,7 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
     if (tool !== "detail" || !detailStart || !cursor || !layout) return null;
     const at = viewAt(detailStart.view);
     const r = detailRadius(cursor);
-    return at && r ? { c: at(detailStart.at), r: r * layout.scale } : null;
+    return at && r ? { c: at(detailStart.at), r: r * scaleOfView(detailStart.view) } : null;
   })();
   function holeHover(at: P2) {
     const snap = findSnap(snaps, at, tolerance());
@@ -1796,6 +2132,35 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
               <title>Drag to move this note; edit its text in the panel; Delete removes it</title>
             </rect>
           ))}
+        {tool === "select" && layout?.holeTable && (
+          <rect
+            className="drawing-note-handle"
+            x={layout.holeTable.box[0] - 1}
+            y={H - layout.holeTable.box[3] - 1}
+            width={layout.holeTable.box[2] - layout.holeTable.box[0] + 2}
+            height={layout.holeTable.box[3] - layout.holeTable.box[1] + 2}
+            data-testid="hole-table"
+            onPointerDown={(e) => {
+              if (e.button !== 0 || !layout.holeTable) return;
+              e.stopPropagation();
+              (e.target as Element).setPointerCapture(e.pointerId);
+              const corner: P2 = [layout.holeTable.box[0], layout.holeTable.box[3]];
+              setTableDrag({ start: toSheet(e), from: corner, at: corner });
+            }}
+          >
+            <title>Drag the hole table anywhere on the sheet (the views then use the room it leaves)</title>
+          </rect>
+        )}
+        {tableDrag && layout?.holeTable && (
+          <rect
+            className="drawing-cut-preview"
+            fill="none"
+            x={tableDrag.at[0]}
+            y={H - tableDrag.at[1]}
+            width={layout.holeTable.box[2] - layout.holeTable.box[0]}
+            height={layout.holeTable.box[3] - layout.holeTable.box[1]}
+          />
+        )}
         {tool === "select" &&
           layout?.dims.map((d) => (
             <circle
@@ -1861,7 +2226,68 @@ export function DrawingSheet({ drawing }: { drawing: Drawing }) {
         )}
       </svg>
       {message && <div className="drawing-message">{message}</div>}
-      {layout?.tooBig && <div className="drawing-message warn">The part is too big for this sheet even at {scaleLabel(layout.scale)}. Try a bigger sheet.</div>}
+      {layout?.tooBig &&
+        (layout.ownTooBig ? (
+          <div className="drawing-message warn">A view at its own scale is too big for this sheet. Choose a smaller scale for it under View scales, or a bigger sheet.</div>
+        ) : (
+          <div className="drawing-message warn">The part is too big for this sheet even at {scaleLabel(layout.scale)}. Try a bigger sheet.</div>
+        ))}
+      {!layout?.tooBig && layout?.holeTable?.tall && !drawing.holeTableAt && (
+        <div className="drawing-message warn">The hole table is long for this sheet. Try a bigger sheet, or drag the table out of the way.</div>
+      )}
+      <div className="drawing-sheet-tabs" role="tablist" aria-label="Sheets">
+        {pageIds(whole).map((id, i) => (
+          <button
+            type="button"
+            key={id}
+            role="tab"
+            aria-selected={id === pageId}
+            className={id === pageId ? "selected" : ""}
+            onClick={() => {
+              useSheetPage.getState().show(whole.id, id);
+              useStore.getState().selectDim(null);
+            }}
+            title={`Show sheet ${i + 1}`}
+          >
+            Sheet {i + 1}
+          </button>
+        ))}
+        {sheetCount > 1 && (
+          <button
+            type="button"
+            className="remove"
+            aria-label={`Remove sheet ${sheetNo}`}
+            title={`Remove sheet ${sheetNo} and everything on it`}
+            onClick={() => {
+              const st = useStore.getState();
+              const ids = pageIds(whole);
+              const next = ids[Math.max(0, ids.indexOf(pageId) - 1)];
+              st.changeDrawing((d) => removePage(d, pageId));
+              // (Removing sheet 1 makes sheet 2 the first.)
+              useSheetPage.getState().show(whole.id, pageId === FIRST_PAGE ? FIRST_PAGE : next);
+              st.selectDim(null);
+              st.showToast(`Removed sheet ${sheetNo} and what was on it. Undo brings it back.`, "info");
+            }}
+          >
+            <Icons.Cross size={12} />
+          </button>
+        )}
+        <button
+          type="button"
+          className="add"
+          title="Add a sheet: its own paper size, scale and views of the same part"
+          onClick={() => {
+            const st = useStore.getState();
+            const id = newId("pg");
+            st.changeDrawing((d) => addPage(d, id, pageId));
+            useSheetPage.getState().show(whole.id, id);
+            st.selectDim(null);
+            st.showToast(`Added sheet ${sheetCount + 1}. Tick the views it shows in the panel on the left.`, "success");
+          }}
+        >
+          + Sheet
+        </button>
+      </div>
       {busy && layout && <div className="drawing-busy">Updating views…</div>}
     </div>
   );
