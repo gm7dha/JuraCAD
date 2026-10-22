@@ -16,7 +16,9 @@ concurrency:
 jobs:
   build:
     name: Build and test
-    runs-on: ubuntu-latest
+    # Pinned so the machine only changes when we choose (ubuntu-latest moves to
+    # Ubuntu 26 from October 2026). Move to the next version deliberately.
+    runs-on: ubuntu-24.04
     env:
       # The site lives at https://gm7dha.github.io/<repo name>/, so the build and the
       # smoke test use the repository's name as the base path. Renaming the repo
@@ -43,9 +45,24 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+      # Failures (including a test process that crashed or ran out of memory)
+      # become annotations, and a notice sums up time and memory per file:
+      # see tests/support/ciReporter.ts.
       - name: Run tests
-        timeout-minutes: 10
-        run: npm test -- --reporter=default --reporter=github-actions
+        timeout-minutes: 15
+        run: npm test -- --reporter=default --reporter=./tests/support/ciReporter.ts
+
+      - name: Report memory problems
+        if: failure()
+        run: |
+          free -m
+          # Did the system stop a process for using too much memory?
+          oom="$(sudo dmesg 2>/dev/null | grep -iE 'out of memory|oom-kill|killed process' | tail -n 5 || true)"
+          if [ -n "$oom" ]; then
+            echo "::error title=Out of memory::$(echo "$oom" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
+          else
+            echo "::notice title=Memory::No out-of-memory kills recorded. $(free -m | awk '/^Mem:/ {print $2 " MB in total, " $7 " MB available now."}')"
+          fi
 
       - name: Build site
         run: |
