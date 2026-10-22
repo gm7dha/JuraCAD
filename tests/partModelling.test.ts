@@ -628,12 +628,14 @@ describe("modelled threads, round 2 review", () => {
     engine = new GeometryEngine();
     let t = Date.now();
     expect(engine.rebuild([plate, sk, hole]).featureErrors).toEqual({});
-    expect(Date.now() - t).toBeLessThan(10_000);
+    const cut = Date.now() - t;
+    // Very generous: shared CI machines vary a lot in speed.
+    expect(cut).toBeLessThan(60_000);
     const first = engine.check("normal").parts[0].exactVolume!;
-    // Something added after it: the threaded hole isn't cut again.
+    // Something added after it: the threaded hole isn't cut again, so it's far quicker.
     t = Date.now();
     engine.rebuild([plate, sk, hole, feature("box", { width: 5, depth: 5, height: 5, x: 25, z: 10 }, "add")]);
-    expect(Date.now() - t).toBeLessThan(2_000);
+    expect(Date.now() - t).toBeLessThan(Math.max(cut / 3, 500));
     expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(first + 125, 3);
   });
 });

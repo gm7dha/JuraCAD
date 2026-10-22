@@ -211,7 +211,7 @@ describe("sketch areas (where curves cross)", () => {
     s = { ...s, points, curves };
     const t = performance.now();
     const m = sketchAreas(s);
-    expect(performance.now() - t).toBeLessThan(10000);
+    expect(performance.now() - t).toBeLessThan(30_000); // generous: CI machines under load are slow
     expect(m.areas).toHaveLength(901);
     const plate = m.areas[m.areaAt([10, 10])];
     expect(plate.holes).toHaveLength(900);

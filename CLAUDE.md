@@ -11,7 +11,11 @@
   `.partsmith` files (new saves are `.juracad`). The `PartSmithDocument` type is a deprecated alias of `JuraCADDocument`.
 - Stack: TypeScript, React 18, Vite 5, Zustand 5, three.js, replicad 1.x + replicad-opencascadejs (OCCT WASM).
 - Geometry runs in `src/kernel/kernel.worker.ts`; the logic lives in `src/kernel/engine.ts` so it can be
-  tested in Node (`tests/engine.test.ts` loads the real OCCT engine).
+  tested in Node (`tests/engine*.test.ts` load the real OCCT engine; shared set-up in
+  `tests/support/engineHelpers.ts`). Each test file runs in its own process and OCCT never gives memory back while it
+  lives, so keep very heavy tests in a file of their own (like `engineStl.test.ts`, ~3 GB) and put no wall-clock limits
+  tighter than "generous" in tests: CI machines are often busy. CI's reporter (`tests/support/ciReporter.ts`) turns every
+  failure, including a crashed test process, into an annotation and adds a time/memory notice per file.
 - Sketches: data and pure edits in `src/sketch/` (own constraint solver in `solver.ts`, closed-shape finding in
   `regions.ts`; the areas curves divide the plane into, where they cross, in `areas.ts` — a feature's `areas` are picks
   [x, y, size, ...signature] — a point inside each clicked area, its mm², and the solid curve ids (+/− side) round its outline —

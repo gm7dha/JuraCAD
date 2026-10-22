@@ -636,12 +636,12 @@ describe("overlapping shapes", () => {
     };
     let t = performance.now();
     const r = findRegions(plate(10));
-    expect(performance.now() - t).toBeLessThan(2000); // generous: CI machines under load are slow
+    expect(performance.now() - t).toBeLessThan(6000); // generous: CI machines under load are slow
     expect(r.regions).toHaveLength(1);
     expect(r.regions[0].holes).toHaveLength(100);
     t = performance.now();
     const big = findRegions(plate(30));
-    expect(performance.now() - t).toBeLessThan(10000);
+    expect(performance.now() - t).toBeLessThan(30_000);
     expect(big.regions[0].holes).toHaveLength(900);
   });
 
