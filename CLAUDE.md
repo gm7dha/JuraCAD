@@ -83,10 +83,21 @@
   (`gh api repos/gm7dha/JuraCAD/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → add a second Part Studio with a box → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → add a section view, a detail view and an auxiliary view → draw the assembly exploded (parts list) (the page is opened with `?smoke`, which exposes `window.juracadViewport` and `window.juracadStore` so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → add a second Part Studio with a box → Help: download the Claude extension → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → add a section view, a detail view and an auxiliary view → draw the assembly exploded (parts list) (the page is opened with `?smoke`, which exposes `window.juracadViewport` and `window.juracadStore` so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.
+- JuraCAD for Claude (an MCP server, shipped as a Claude desktop extension): `src/mcp/`. `tools.ts` lists the tools
+  (name, description, JSON input schema, handler) and `callTool` runs one — plain functions of a `Session` (`session.ts`:
+  the document, undo, a `GeometryEngine`), tested without the SDK in `tests/mcpTools.test.ts` (real OCCT). Inputs are
+  checked in `args.ts` (plain-English `InputError`s that say how to fix them); `sketchShapes.ts` turns shapes into real
+  sketches with dimensions (kept only when they reduce the freedom); `featureSpec.ts` fills in the same Feature records
+  the dialogs make; `picks.ts` numbers faces/edges (F3, E5, "top", "along z") and makes TopoPicks; `render.ts` + `png.ts`
+  draw the views; `files.ts` keeps every file inside the chosen folder. A change that fails to build is refused, not kept.
+  `server.ts` is the only file using `@modelcontextprotocol/sdk` (v1, low-level `Server`); stdout is MCP, so it logs to stderr.
+  CI: `scripts/build-claude-extension.mjs` bundles it with esbuild (+ the wasm, manifest from `claude-extension/manifest.json`),
+  `mcpb validate`/`pack` (pinned devDependency) make `dist/juracad-claude.mcpb` (downloaded from Help), and `scripts/check-claude-extension.mjs`
+  unpacks it, starts it and builds a bracket over MCP. Locally, with esbuild and a stand-in SDK, both scripts run too.
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
