@@ -419,6 +419,52 @@ function buildSystem(sketch: SketchData): System {
         if (!pairs.length) throw new Error("offset has nothing to measure");
         return { size: pairs.length, eval: (x, out) => { for (const f of pairs) out.push(f(x) - value); } };
       }
+      case "arcLength":
+      case "arcAngle": {
+        const arc = curves.get(a);
+        if (arc?.type !== "arc") throw new Error(`${a} is not an arc`);
+        const cen = P(arc.center), st = P(arc.start), en = P(arc.end);
+        const target = con.type === "arcAngle" ? (value * Math.PI) / 180 : value;
+        return {
+          size: 1,
+          eval: (x, out) => {
+            const c = cen(x), s0 = st(x), e = en(x);
+            let sweep = Math.atan2(e[1] - c[1], e[0] - c[0]) - Math.atan2(s0[1] - c[1], s0[0] - c[0]);
+            while (sweep <= 0) sweep += 2 * Math.PI;
+            while (sweep > 2 * Math.PI) sweep -= 2 * Math.PI;
+            const r = Math.hypot(s0[0] - c[0], s0[1] - c[1]);
+            out.push(con.type === "arcAngle" ? (sweep - target) * Math.max(r, 1) : r * sweep - target);
+          },
+        };
+      }
+      case "rimDistance": {
+        const ra = circular(a);
+        const mode = con.extra?.[0] ?? -1;
+        const inside = con.extra?.[1] === 1;
+        if (kind(b) === "line") {
+          const [m, n] = lineEnds(b);
+          return {
+            size: 1,
+            eval: (x, out) => {
+              const u = ra.centre(x), s0 = m(x), e = n(x);
+              const dx = e[0] - s0[0], dy = e[1] - s0[1];
+              const h = Math.abs((dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1));
+              out.push(h + mode * ra.radius(x) - value);
+            },
+          };
+        }
+        const rb = circular(b);
+        return {
+          size: 1,
+          eval: (x, out) => {
+            const p = ra.centre(x), q = rb.centre(x);
+            const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+            const r1 = ra.radius(x), r2 = rb.radius(x);
+            const gap = mode > 0 ? d + r1 + r2 : inside ? Math.abs(r1 - r2) - d : d - r1 - r2;
+            out.push(gap - value);
+          },
+        };
+      }
       case "radius":
       case "diameter": {
         const c = circular(a);

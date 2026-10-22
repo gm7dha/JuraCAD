@@ -10,6 +10,7 @@ import { splinePolyline, splineTangents } from "./spline";
 import { startingLength } from "../model/units";
 import { analyzeSketch, solveSketch } from "./solver";
 import {
+  isAngleDimension,
   isDimension,
   ORIGIN_ID,
   type ConstraintType,
@@ -67,6 +68,17 @@ export function radiusOf(s: SketchData, c: SketchCircle | SketchArc): number {
   const [cx, cy] = pointPos(s, c.center);
   const [sx, sy] = pointPos(s, c.start);
   return Math.hypot(sx - cx, sy - cy);
+}
+
+/** How far round an arc goes, anticlockwise from its start to its end (radians, more than 0 and at most 2π). */
+export function arcSweep(s: SketchData, c: SketchArc): number {
+  const [cx, cy] = pointPos(s, c.center);
+  const [sx, sy] = pointPos(s, c.start);
+  const [ex, ey] = pointPos(s, c.end);
+  let sweep = Math.atan2(ey - cy, ex - cx) - Math.atan2(sy - cy, sx - cx);
+  while (sweep <= 0) sweep += 2 * Math.PI;
+  while (sweep > 2 * Math.PI) sweep -= 2 * Math.PI;
+  return sweep;
 }
 
 /** An ellipse's centre, half-lengths and turn. */
@@ -134,9 +146,119 @@ export function measure(s: SketchData, c: SketchConstraint): number {
       if ((copy?.type === "arc" || copy?.type === "circle") && (orig?.type === "arc" || orig?.type === "circle")) return Math.abs(radiusOf(s, copy) - radiusOf(s, orig));
       return 0;
     }
+    case "arcLength": {
+      const arc = curveById(s, a) as SketchArc;
+      return radiusOf(s, arc) * arcSweep(s, arc);
+    }
+    case "arcAngle":
+      return (arcSweep(s, curveById(s, a) as SketchArc) * 180) / Math.PI;
+    case "rimDistance":
+      return rimGap(s, c);
     default:
       return 0;
   }
+}
+
+/**
+ * The gap a rim distance measures: between the edges of two circles or arcs
+ * (nearest or furthest), or from a line to a circle's or arc's edge.
+ */
+function rimGap(s: SketchData, c: SketchConstraint): number {
+  const ra = curveById(s, c.refs[0]) as SketchCircle | SketchArc;
+  const other = curveById(s, c.refs[1]);
+  const mode = c.extra?.[0] ?? -1;
+  const [cx, cy] = pointPos(s, ra.center);
+  const r1 = radiusOf(s, ra);
+  if (other?.type === "line") {
+    const h = measure(s, { id: "", type: "pointLineDistance", refs: [ra.center, other.id] });
+    return h + mode * r1;
+  }
+  const rb = other as SketchCircle | SketchArc;
+  const [qx, qy] = pointPos(s, rb.center);
+  const d = Math.hypot(qx - cx, qy - cy);
+  const r2 = radiusOf(s, rb);
+  return mode > 0 ? d + r1 + r2 : c.extra?.[1] === 1 ? Math.abs(r1 - r2) - d : d - r1 - r2;
+}
+
+/** Where a distance dimension between circles, arcs and lines is measured to. */
+export type MeasureTo = "centre" | "nearest" | "furthest";
+
+/** The circles/arcs (and line) a distance dimension measures between, if it's that kind; else null. */
+function roundsMeasured(s: SketchData, c: SketchConstraint): { a: SketchCircle | SketchArc; b: SketchCircle | SketchArc | SketchLine; now: MeasureTo } | null {
+  const round = (id: string) => {
+    const k = curveById(s, id);
+    return k?.type === "circle" || k?.type === "arc" ? k : null;
+  };
+  // The circle or arc a centre point belongs to (circles first).
+  const roundAt = (pointId: string) =>
+    (s.curves.find((k) => k.type === "circle" && !k.construction && k.center === pointId) ??
+      s.curves.find((k) => k.type === "arc" && !k.construction && k.center === pointId) ??
+      s.curves.find((k) => (k.type === "circle" || k.type === "arc") && k.center === pointId)) as SketchCircle | SketchArc | undefined;
+  if (c.type === "rimDistance") {
+    const a = round(c.refs[0]);
+    const other = curveById(s, c.refs[1]);
+    const b = other?.type === "line" ? other : round(c.refs[1]);
+    return a && b ? { a, b, now: (c.extra?.[0] ?? -1) > 0 ? "furthest" : "nearest" } : null;
+  }
+  if (c.type === "distance") {
+    const a = roundAt(c.refs[0]);
+    const b = roundAt(c.refs[1]);
+    return a && b ? { a, b, now: "centre" } : null;
+  }
+  if (c.type === "pointLineDistance") {
+    const a = roundAt(c.refs[0]);
+    const line = curveById(s, c.refs[1]);
+    return a && line?.type === "line" ? { a, b: line, now: "centre" } : null;
+  }
+  return null;
+}
+
+/** Whether a dimension can be measured to centres or edges, and which it is now (null: it can't). */
+export function measureToOf(s: SketchData, c: SketchConstraint): MeasureTo | null {
+  try {
+    return roundsMeasured(s, c)?.now ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Measure a distance between circles or arcs (or one and a line) to their
+ * centres, their nearest edges or their furthest edges (Onshape's min/max).
+ * The dimension keeps its current size and place; only what it measures changes.
+ */
+export function setMeasureTo(s: SketchData, id: string, to: MeasureTo): EditResult {
+  const c = s.constraints.find((x) => x.id === id);
+  const m = c ? roundsMeasured(s, c) : null;
+  if (!c || !m) return { sketch: s, error: "Select a dimension between two circles or arcs, or a circle and a line." };
+  if (m.now === to) return { sketch: s };
+  let next: SketchConstraint;
+  if (to === "centre") {
+    next =
+      m.b.type === "line"
+        ? { ...c, type: "pointLineDistance", refs: [m.a.center, m.b.id], extra: undefined }
+        : { ...c, type: "distance", refs: [m.a.center, m.b.center], extra: undefined };
+  } else {
+    let inside = 0;
+    if (m.b.type !== "line") {
+      const [ax, ay] = pointPos(s, m.a.center);
+      const [bx, by] = pointPos(s, m.b.center);
+      const d = Math.hypot(bx - ax, by - ay);
+      const r1 = radiusOf(s, m.a), r2 = radiusOf(s, m.b);
+      inside = d + Math.min(r1, r2) <= Math.max(r1, r2) + 1e-9 ? 1 : 0;
+      if (to === "nearest" && !inside && d < r1 + r2 - 1e-9)
+        return { sketch: s, error: "Those overlap, so there's no gap between their edges. Measure between their centres or their furthest edges instead." };
+    } else if (to === "nearest" && measure(s, { id: "", type: "pointLineDistance", refs: [m.a.center, m.b.id] }) < radiusOf(s, m.a) - 1e-9) {
+      return { sketch: s, error: "The line crosses the circle, so there's no gap to its edge. Measure to its centre or its far edge instead." };
+    }
+    next = { ...c, type: "rimDistance", refs: [m.a.id, m.b.id], extra: [to === "furthest" ? 1 : -1, inside] };
+  }
+  if (next.extra === undefined) delete next.extra;
+  next.value = startingLength(measure(s, next));
+  const sketch = { ...s, constraints: s.constraints.map((x) => (x.id === id ? next : x)) };
+  if (c.driven) return { sketch };
+  const r = solveSketch(sketch);
+  return r.ok ? { sketch: r.sketch } : { sketch: s, error: "The sketch can't take that with its other constraints." };
 }
 
 /** Round a measured value for display / as a starting dimension value. */
@@ -621,6 +743,12 @@ export function dimensionFor(s: SketchData, sel: string[]): { type: ConstraintTy
     return { type: "radius", refs: [c.id] };
   }
   if (sel.length === 2 && pts.length === 2) return { type: "distance", refs: pts };
+  // An arc and its own centre: how far round it goes. An arc and one of its ends: how long it is.
+  if (sel.length === 2 && pts.length === 1 && crv.length === 1 && crv[0].type === "arc") {
+    const arc = crv[0];
+    if (pts[0] === arc.center) return { type: "arcAngle", refs: [arc.id] };
+    if (pts[0] === arc.start || pts[0] === arc.end) return { type: "arcLength", refs: [arc.id] };
+  }
   if (sel.length === 2 && pts.length === 1 && crv.length === 1 && isLine(crv[0])) return { type: "pointLineDistance", refs: [pts[0], crv[0].id] };
   // Circles and arcs are measured from their centres (like Onshape).
   if (sel.length === 2 && crv.length >= 1 && crv.every((c) => isLine(c) || isRound(c)) && crv.some(isRound)) {
@@ -709,7 +837,7 @@ export function addDimension(
   // An angle measures the wedge the label was placed in (inside, outside or supplementary).
   if (draft.type === "angle") draft.extra = angleExtraFor(s, draft, [labelOffset.x, labelOffset.y]);
   // Lengths start in the design's units (angles in degrees).
-  draft.value = draft.type === "angle" ? roundValue(measure(s, draft)) : startingLength(measure(s, draft));
+  draft.value = isAngleDimension(draft) ? roundValue(measure(s, draft)) : startingLength(measure(s, draft));
   const r = checkedSolve(s, { ...s, constraints: [...s.constraints, draft] }, "A dimension", true);
   if (r.error) {
     // With a conflict already in the sketch, nothing new can be checked: that has to be sorted out first.
@@ -750,7 +878,7 @@ const CONFLICT_FIRST = "Some of the sketch's constraints or dimensions can't all
 /** A dimension's current size as a value to store (degrees for angles, the design's units for lengths). */
 function valueNow(s: SketchData, c: SketchConstraint): string {
   const v = measure(s, c);
-  return c.type === "angle" ? roundValue(v) : startingLength(v);
+  return isAngleDimension(c) ? roundValue(v) : startingLength(v);
 }
 
 /** Change a dimension's value (any expression, e.g. "20", "10 + 5", "1 in"). */
@@ -762,6 +890,7 @@ export function setDimensionValue(s: SketchData, id: string, value: string): Edi
   if (!r.ok) return { sketch: s, error: r.error };
   if (c.type !== "angle" && r.value <= 0 && c.type !== "pointLineDistance") return { sketch: s, error: "Must be more than 0." };
   if (c.type === "pointLineDistance" && r.value < 0) return { sketch: s, error: "Can't be negative." };
+  if (c.type === "arcAngle" && r.value >= 360) return { sketch: s, error: "An arc goes less than all the way round: use less than 360°." };
   const solved = checkedSolve(s, { ...s, constraints: s.constraints.map((x) => (x.id === id ? { ...x, value } : x)) }, "That value", false);
   if (solved.error) {
     // An offset going inwards can't be wider than the rounded corners (arcs) it goes round.

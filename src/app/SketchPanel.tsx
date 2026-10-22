@@ -4,9 +4,10 @@ import { useLengthUnit, useStore } from "../model/store";
 import { showLength, storeLength } from "../model/units";
 import { planeLabel } from "../sketch/planes";
 import { findRegions } from "../sketch/regions";
+import { measureToOf } from "../sketch/ops";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
-import { makeSketchPattern, makeSketchTransform, setPatternOption, toggleSketchDimensionDriven } from "./sketchActions";
+import { makeSketchPattern, makeSketchTransform, setPatternOption, setSketchMeasureTo, toggleSketchDimensionDriven } from "./sketchActions";
 import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
 
@@ -257,6 +258,26 @@ export function SketchPanel() {
               >
                 {dim.driven ? "Let it set the size" : "Just show the size"}
               </button>
+              {(() => {
+                // Between circles/arcs (or one and a line): measure to centres or edges, like Onshape's min/max.
+                const to = measureToOf(data, dim);
+                if (!to) return null;
+                return (
+                  <div className="segmented three" role="radiogroup" aria-label="Measure to">
+                    {(
+                      [
+                        ["centre", "Centres", "Measure between the centres"],
+                        ["nearest", "Near edges", "Measure the gap between the nearest edges (Onshape's minimum)"],
+                        ["furthest", "Far edges", "Measure across the furthest edges (Onshape's maximum)"],
+                      ] as const
+                    ).map(([key, label, title]) => (
+                      <button key={key} type="button" role="radio" aria-checked={to === key} className={to === key ? "selected" : ""} title={title} onClick={() => setSketchMeasureTo(key)}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}

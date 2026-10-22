@@ -967,7 +967,14 @@ export class SketchController {
       // Only keep a second pick if it makes a valid pair; otherwise start again with it.
       const ok = next.length === 1 || typeof dimensionFor(d, next) !== "string";
       this.emit({ pending: ok ? next : [hit.id] });
-      this.state.setSketchMessage("Now click where the dimension should go.", "info");
+      // A lone arc: say how to get its angle or length instead of its radius.
+      const only = (ok ? next : [hit.id]).length === 1 ? curveById(d, hit.id) : undefined;
+      this.state.setSketchMessage(
+        only?.type === "arc"
+          ? "Now click where the radius goes — or click the arc's centre for its angle, or one of its ends for its length."
+          : "Now click where the dimension should go.",
+        "info",
+      );
       return;
     }
     if (pending.length === 0) {
