@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { evaluate } from "../model/expr";
 import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
 import { describeRef } from "../geometry/topoRef";
+import { AreaPicker } from "./AreaPicker";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
@@ -614,7 +615,7 @@ function SketchSolidOptions() {
   const pickSketch = (id: string | undefined) => {
     const data = sketches.find((f) => f.id === id)?.sketch?.data;
     setDraftField(
-      draft.type === "revolve" && data ? { sketchRef: id, revolve: { ...rev, axis: defaultAxis(data) } } : { sketchRef: id },
+      draft.type === "revolve" && data ? { sketchRef: id, areas: undefined, revolve: { ...rev, axis: defaultAxis(data) } } : { sketchRef: id, areas: undefined },
     );
   };
 
@@ -637,6 +638,9 @@ function SketchSolidOptions() {
             </option>
           ))}
         </select>
+      )}
+      {chosen && !draft.surface && (
+        <AreaPicker data={chosen} areas={draft.areas} verb={draft.type === "revolve" ? "revolve" : "extrude"} onChange={(areas) => setDraftField({ areas })} />
       )}
       {draft.type === "revolve" && (
         <>
@@ -777,10 +781,12 @@ function SweepLoftOptions() {
     </>
   );
   if (draft.type === "sweep") {
+    const profile = sketches.find((f) => f.id === draft.sketchRef)?.sketch?.data;
     return (
       <fieldset className="param-group">
         <legend>Sketches</legend>
-        {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v }))}
+        {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined }))}
+        {profile && !draft.surface && <AreaPicker data={profile} areas={draft.areas} verb="sweep" onChange={(areas) => setDraftField({ areas })} />}
         {select("Path to follow", draft.pathRef, (v) => setDraftField({ pathRef: v }))}
         <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
       </fieldset>

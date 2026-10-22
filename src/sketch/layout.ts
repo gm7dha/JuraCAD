@@ -1,7 +1,7 @@
 /**
  * Where to draw dimension lines/labels and constraint badges, in sketch mm.
  */
-import { angleRays, curveById, ellipsePoints, pointPos, radiusOf, splinePath } from "./ops";
+import { angleRays, arcSweep, curveById, ellipsePoints, pointPos, radiusOf, splinePath } from "./ops";
 import { isDimension, type SketchArc, type SketchCircle, type SketchConstraint, type SketchData, type SketchLine } from "./types";
 
 type Pt = [number, number];
@@ -139,6 +139,54 @@ export function dimensionLayout(s: SketchData, c: SketchConstraint): DimensionLa
           if (reach < r) lines.push([add(corner, scale(ray, Math.max(reach, 0))), add(corner, scale(ray, r))]);
         }
         return { lines, label, anchor: corner };
+      }
+      case "arcLength":
+      case "arcAngle": {
+        const arc = curveById(s, c.refs[0]) as SketchArc;
+        const centre = pointPos(s, arc.center);
+        const r = radiusOf(s, arc);
+        const a0 = Math.atan2(pointPos(s, arc.start)[1] - centre[1], pointPos(s, arc.start)[0] - centre[0]);
+        const sweep = arcSweep(s, arc);
+        const midDir: Pt = [Math.cos(a0 + sweep / 2), Math.sin(a0 + sweep / 2)];
+        // Length: from the middle of the arc. Angle: from its centre.
+        const anchor = c.type === "arcLength" ? add(centre, scale(midDir, r)) : centre;
+        const label = Math.hypot(offset[0], offset[1]) > 1e-9 ? add(anchor, offset) : add(centre, scale(midDir, c.type === "arcLength" ? r * 1.25 : r * 0.6));
+        // An arc round the same centre, out (or in) to the label, with lines from the arc's ends to it.
+        const R = Math.max(Math.hypot(label[0] - centre[0], label[1] - centre[1]), 1e-6);
+        const steps = Math.max(8, Math.ceil((sweep / (2 * Math.PI)) * 96));
+        const lines: Segment2[] = [];
+        const on = (a: number, rad: number): Pt => add(centre, [rad * Math.cos(a), rad * Math.sin(a)]);
+        for (let i = 0; i < steps; i++) lines.push([on(a0 + (sweep * i) / steps, R), on(a0 + (sweep * (i + 1)) / steps, R)]);
+        for (const a of [a0, a0 + sweep]) lines.push(c.type === "arcAngle" ? [centre, on(a, Math.max(R, r))] : [on(a, r), on(a, R)]);
+        return { lines, label, anchor };
+      }
+      case "rimDistance": {
+        // A line between the two edge points the gap is measured between.
+        const ra = curveById(s, c.refs[0]) as SketchCircle | SketchArc;
+        const other = curveById(s, c.refs[1]);
+        const ca = pointPos(s, ra.center);
+        const r1 = radiusOf(s, ra);
+        const far = (c.extra?.[0] ?? -1) > 0;
+        if (other?.type === "line") {
+          const [a, b] = linePts(s, other);
+          const d = unit(sub(b, a));
+          const foot = add(a, scale(d, dotp(sub(ca, a), d)));
+          const toward = Math.hypot(foot[0] - ca[0], foot[1] - ca[1]) > 1e-9 ? unit(sub(foot, ca)) : ([-d[1], d[0]] as Pt);
+          return linear(add(ca, scale(toward, far ? -r1 : r1)), foot, offset);
+        }
+        const rb = other as SketchCircle | SketchArc;
+        const cb = pointPos(s, rb.center);
+        const r2 = radiusOf(s, rb);
+        const u = Math.hypot(cb[0] - ca[0], cb[1] - ca[1]) > 1e-9 ? unit(sub(cb, ca)) : ([1, 0] as Pt);
+        if (far) return linear(sub(ca, scale(u, r1)), add(cb, scale(u, r2)), offset);
+        if (c.extra?.[1] === 1) {
+          // One inside the other: across the narrowest part of the ring between them.
+          const big = r1 >= r2 ? { c: ca, r: r1 } : { c: cb, r: r2 };
+          const small = r1 >= r2 ? { c: cb, r: r2 } : { c: ca, r: r1 };
+          const w = Math.hypot(small.c[0] - big.c[0], small.c[1] - big.c[1]) > 1e-9 ? unit(sub(small.c, big.c)) : ([1, 0] as Pt);
+          return linear(add(small.c, scale(w, small.r)), add(big.c, scale(w, big.r)), offset);
+        }
+        return linear(add(ca, scale(u, r1)), sub(cb, scale(u, r2)), offset);
       }
       default:
         return null;

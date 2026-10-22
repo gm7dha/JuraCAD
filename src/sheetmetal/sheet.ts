@@ -275,6 +275,18 @@ export function outlinePoints(segments: Segment[], steps = 12): P2[] {
           out.push([s.center[0] + x * Math.cos(s.angle) - y * Math.sin(s.angle), s.center[1] + x * Math.sin(s.angle) + y * Math.cos(s.angle)]);
         }
         break;
+      case "ellipseArc": {
+        // From its `from` end to its `to` end, whichever way round that is.
+        const at = (t: number): P2 => {
+          const x = s.rx * Math.cos(t);
+          const y = s.ry * Math.sin(t);
+          return [s.center[0] + x * Math.cos(s.angle) - y * Math.sin(s.angle), s.center[1] + x * Math.sin(s.angle) + y * Math.cos(s.angle)];
+        };
+        const p0 = at(s.t0);
+        const forward = Math.hypot(p0[0] - s.from[0], p0[1] - s.from[1]) <= Math.hypot(p0[0] - s.to[0], p0[1] - s.to[1]);
+        for (let k = 0; k < steps; k++) out.push(at(forward ? s.t0 + ((s.t1 - s.t0) * k) / steps : s.t1 - ((s.t1 - s.t0) * k) / steps));
+        break;
+      }
     }
   }
   return out;
@@ -1238,6 +1250,15 @@ export function mapSegments(segments: Segment[], map: (p: P2) => P2): Segment[] 
         const c = map(s.center);
         const a = map([s.center[0] + Math.cos(s.angle), s.center[1] + Math.sin(s.angle)]);
         return { kind: "ellipse", center: c, rx: s.rx, ry: s.ry, angle: Math.atan2(a[1] - c[1], a[0] - c[0]) };
+      }
+      case "ellipseArc": {
+        const c = map(s.center);
+        const a = map([s.center[0] + Math.cos(s.angle), s.center[1] + Math.sin(s.angle)]);
+        const b = map([s.center[0] - Math.sin(s.angle), s.center[1] + Math.cos(s.angle)]);
+        // A mirror turns the ellipse the other way round, so its parameters run backwards.
+        const mirrored = (a[0] - c[0]) * (b[1] - c[1]) - (a[1] - c[1]) * (b[0] - c[0]) < 0;
+        const angle = Math.atan2(a[1] - c[1], a[0] - c[0]);
+        return { ...s, center: c, angle, t0: mirrored ? -s.t1 : s.t0, t1: mirrored ? -s.t0 : s.t1, from: map(s.from), to: map(s.to) };
       }
     }
   });

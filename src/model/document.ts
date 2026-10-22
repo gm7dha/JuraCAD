@@ -13,6 +13,7 @@ import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
 import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, PartStudio } from "./types";
 import { MAIN_STUDIO } from "./studios";
+import type { AreaPick } from "../sketch/areas";
 
 /**
  * Pure functions for changing a document. They never modify their input;
@@ -507,6 +508,26 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if ((feature.type === "shell" || feature.type === "chamfer") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "chamfer" && (f.chamferType === "twoDistances" || f.chamferType === "distanceAngle")) feature.chamferType = f.chamferType;
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "loft") && f.surface === true) feature.surface = true;
+    if (feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") {
+      // Picked sketch areas: a point inside each, and (newer files) its size. Anything else is dropped, leaving every closed shape.
+      const areas = Array.isArray(f.areas)
+        ? f.areas
+            .filter(
+              (p): p is (number | string)[] =>
+                Array.isArray(p) &&
+                p.length >= 2 &&
+                p.length <= 100_000 &&
+                [p[0], p[1], ...(p.length >= 3 ? [p[2]] : [])].every((x) => typeof x === "number" && Number.isFinite(x)) &&
+                p.slice(3).every((x) => typeof x === "string" && /^.{1,200}[+-]$/.test(x)),
+            )
+            .map((p): AreaPick => {
+              const [x, y, size] = p as number[];
+              // The size (and signature) only count with a real size; otherwise just the point, as older files had.
+              return p.length >= 3 && size > 0 ? [x, y, size, ...(p.slice(3) as string[])] : [x, y];
+            })
+        : [];
+      if (areas.length) feature.areas = areas;
+    }
     if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }

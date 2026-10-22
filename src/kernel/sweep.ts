@@ -6,6 +6,7 @@ import { genericSweep, loft, type Shape3D, type Wire } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, findRegions, type Segment } from "../sketch/regions";
+import { chosenRegions, type AreaPick } from "../sketch/areas";
 import type { SketchData } from "../sketch/types";
 import { loopWire, release, segmentsWire } from "./extrude";
 
@@ -62,8 +63,8 @@ export function profileAt(plane: SketchPlane, data: SketchData): Vec3 | undefine
 }
 
 /** Carry each closed shape of the profile sketch along the path (holes stay holes). */
-export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData): Shape3D {
-  const { regions, problems } = findRegions(profile);
+export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData, areas?: AreaPick[]): Shape3D {
+  const { regions, problems } = chosenRegions(profile, areas, "sweep");
   if (regions.length === 0) throw new Error(`The profile sketch has no closed shapes.${problems.length ? ` ${problems.join(" ")}` : ""}`);
   const spine = pathWire(pathPlane, path, profileAt(profilePlane, profile));
   const frame = planeFrame(profilePlane);

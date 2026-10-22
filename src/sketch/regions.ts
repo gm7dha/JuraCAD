@@ -5,8 +5,9 @@
  * circles are loops on their own. A loop inside another loop becomes a hole;
  * a loop inside a hole becomes an island, and so on (even–odd nesting).
  *
- * Shapes that cross each other aren't split up yet — the loops should touch
- * only at their ends (the normal case for hobby parts).
+ * Shapes that cross each other aren't split up here (overlapping shapes are
+ * joined; see nestLoops). To use the separate areas where curves cross, a
+ * feature stores the areas the user clicked: see `areas.ts`.
  */
 import { ellipseFrom, ellipsePolyline } from "./ellipse";
 import { splineBeziers, splinePolyline } from "./spline";
@@ -23,7 +24,14 @@ export type Segment =
   /** A piece of a spline: a cubic Bézier curve. */
   | { kind: "bezier"; from: Pt; c1: Pt; c2: Pt; to: Pt }
   /** A whole ellipse: half-lengths along its turned x and y axes. */
-  | { kind: "ellipse"; center: Pt; rx: number; ry: number; angle: number };
+  | { kind: "ellipse"; center: Pt; rx: number; ry: number; angle: number }
+  /**
+   * Part of an ellipse (only from areas the user picked, where curves cut an
+   * ellipse): anticlockwise from parameter t0 to t1 (t0 < t1, radians; a point
+   * is centre + rx·cos t along the turned x axis + ry·sin t along its y axis).
+   * `from`/`to` are its ends in the order the loop walks them.
+   */
+  | { kind: "ellipseArc"; center: Pt; rx: number; ry: number; angle: number; t0: number; t1: number; from: Pt; to: Pt };
 
 export interface Loop {
   segments: Segment[];
@@ -336,7 +344,10 @@ export function findRegions(sketch: SketchData): RegionResult {
   }
 
   if (openShapes) problems.push(`${openShapes} shape${openShapes > 1 ? "s aren't" : " isn't"} closed, so ${openShapes > 1 ? "they were" : "it was"} left out.`);
-  if (branching) problems.push(`${branching} shape${branching > 1 ? "s have" : " has"} lines meeting at a junction, so ${branching > 1 ? "they were" : "it was"} left out.`);
+  if (branching)
+    problems.push(
+      `${branching} shape${branching > 1 ? "s have" : " has"} lines meeting at a junction, so ${branching > 1 ? "they were" : "it was"} left out. To use the areas between those lines, click them in the Extrude, Revolve or Sweep dialog.`,
+    );
 
   return { regions: nestLoops(loops), problems };
 }

@@ -104,7 +104,17 @@ export type DimensionType =
   | "angle"
   | "pointLineDistance"
   /** How far an offset copy is from what it was copied from. refs: pairs of [copy, original] curves (lines, arcs, circles). */
-  | "offset";
+  | "offset"
+  /** How long an arc is, measured round it. refs: [arc]. */
+  | "arcLength"
+  /** How far round an arc goes, in degrees. refs: [arc]. */
+  | "arcAngle"
+  /**
+   * The gap between two circles or arcs, or one and a line, measured to their
+   * edges rather than their centres. refs: [circle or arc, circle, arc or line];
+   * extra: [-1 nearest edges / +1 furthest edges, 1 when one circle is inside the other].
+   */
+  | "rimDistance";
 
 export type ConstraintType = RelationType | DimensionType;
 
@@ -151,6 +161,12 @@ export const DIMENSION_TYPES: ReadonlySet<ConstraintType> = new Set<ConstraintTy
   "angle",
   "pointLineDistance",
   "offset",
+  "arcLength",
+  "arcAngle",
+  "rimDistance",
 ]);
+
+/** Dimensions measured in degrees (the rest are lengths). */
+export const isAngleDimension = (c: Pick<SketchConstraint, "type">) => c.type === "angle" || c.type === "arcAngle";
 
 export const isDimension = (c: SketchConstraint) => DIMENSION_TYPES.has(c.type);
