@@ -167,7 +167,7 @@ export interface ContactMeasure {
   surfaceB?: boolean;
   /** Two solids: the volume they share (mm³) and that shared piece's surface area (mm²). */
   volume?: number;
-  /** Two solids: the smallest side of the box round the shared piece (mm). */
+  /** Two solids: the smallest side of the tightest (turned-to-fit) box round the shared piece (mm). */
   boxMin?: number;
   /** Two solids: the shared piece's area; a surface and a solid: how much of the surface is inside (mm²). */
   area?: number;
