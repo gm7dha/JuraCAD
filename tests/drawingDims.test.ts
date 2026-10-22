@@ -152,6 +152,20 @@ describe("limits and fits (ISO 286)", () => {
     expect(new TextDecoder("latin1").decode(sheetPdf(l.prims, l.size))).toContain("(H7) Tj");
   });
 
+  it("boxes just the number of a basic size with a stacked fit", () => {
+    const top: ViewProjection = { kind: "top", visible: [], hidden: [], circles: [{ cx: 20, cy: 20, r: 10, hidden: false, full: true }], points: [], bounds: [0, 0, 40, 40] };
+    const dim: Dimension = { ...dia("H7/g6"), frame: "basic" };
+    const r = resolveDim(dim, top);
+    const drawn = drawDimension(dim, r, (p) => p, measureDim(dim, r));
+    const box = drawn.prims[drawn.prims.length - 1];
+    const number = drawn.prims.find((p): p is Extract<Prim, { kind: "text" }> => p.kind === "text" && p.text === "Ø20")!;
+    const stack = drawn.prims.find((p): p is Extract<Prim, { kind: "text" }> => p.kind === "text" && p.text === "H7")!;
+    expect(box.kind === "path" && box.closed).toBe(true);
+    const xs = box.kind === "path" ? box.points.filter((_, i) => i % 2 === 0) : [];
+    expect(Math.min(...xs)).toBeLessThan(number.x);
+    expect(Math.max(...xs)).toBeLessThan(stack.x);
+  });
+
   it("keeps the stack the right way up on an upright dimension", () => {
     const p: ViewProjection = { kind: "front", visible: [[0, 0, 0, 30]], hidden: [], circles: [], points: [0, 0, 0, 30], bounds: [0, 0, 10, 30] };
     const dim: Dimension = { id: "v", view: "front", type: "vertical", a: dimPoint([0, 0], p), b: dimPoint([0, 30], p), offset: 10, limitsFit: { class: "h7" } };

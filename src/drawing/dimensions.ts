@@ -324,7 +324,7 @@ export function fitOf(dim: Pick<Dimension, "type" | "limitsFit">, value: number)
 
 /** Size of stacked text (paper mm) and the gap before it. */
 const STACK_SIZE = 2.5;
-const STACK_GAP = 0.8;
+const STACK_GAP = 1.2;
 
 /** How wide a stack of lines is on paper. */
 function stackWidth(stack: string[] | null): number {
@@ -440,7 +440,8 @@ export function drawDimension(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2,
   if (!dim.frame) return drawn;
   // A box (basic) or a rounded box (inspection) round the number.
   const texts = drawn.prims.filter((p): p is Extract<Prim, { kind: "text" }> => p.kind === "text");
-  if (texts.length !== 1) return drawn;
+  // (With a stacked fit or limits after it, the box goes round the number itself.)
+  if (texts.length !== 1 && !(texts.length > 1 && !callout?.length && fitOf(dim, value)?.stack)) return drawn;
   return { ...drawn, prims: [...drawn.prims, textFrame(texts[0], dim.frame)] };
 }
 

@@ -120,7 +120,8 @@ export function deviation(size: number, c: ToleranceClass): Deviation | { error:
     lower = ei;
     upper = ei + it;
   }
-  return { upper: upper / 1000, lower: lower / 1000 };
+  // (+ 0 so a band starting at the size reads 0, never −0.)
+  return { upper: upper / 1000 + 0, lower: lower / 1000 + 0 };
 }
 
 /** The biggest and smallest sizes a class allows (mm), or why it can't be worked out. */

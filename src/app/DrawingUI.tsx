@@ -795,7 +795,7 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
             </select>
           </div>
           <div className="drawing-field">
-            <label htmlFor="drawing-sheet">Sheet</label>
+            <label htmlFor="drawing-sheet">Paper size</label>
             <select id="drawing-sheet" value={drawing.sheet} onChange={(e) => change((d) => withFit({ ...arrangeViews(d), sheet: e.target.value as Drawing["sheet"] }, projections ?? undefined, info))}>
               {SHEET_SIZES.map((size) => (
                 <option key={size} value={size}>
