@@ -7,12 +7,14 @@ import { measureVolume, setOC, type Shape3D } from "replicad";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { GeometryEngine } from "../src/kernel/engine";
+import { analyzeMesh } from "../src/geometry/meshCheck";
 import { extrudeSketch } from "../src/kernel/extrude";
 import { revolveSketch } from "../src/kernel/revolve";
 import { facesOf, solidsOf } from "../src/kernel/topology";
 import { defaultParams } from "../src/model/features";
 import type { Feature } from "../src/model/types";
-import { pointInside, sketchAreas } from "../src/sketch/areas";
+import { pickOf, pointInside, sketchAreas } from "../src/sketch/areas";
+import { emptyDocument, parseDocument } from "../src/model/document";
 import { addCircle, addLine, addRectangle } from "../src/sketch/ops";
 import type { SketchPlane } from "../src/sketch/planes";
 import { addEllipse, addSpline } from "../src/sketch/tools";
@@ -171,6 +173,31 @@ describe("picked areas in a rebuild", () => {
     sketchRef: "s1",
     extrude: { end: "blind", flip: false },
     ...(areas ? { areas } : {}),
+  });
+
+  it("a plate with 60 holes, the plate picked: saved, opened again and rebuilt with every hole", () => {
+    // (600 holes take minutes to cut here; tests/areas.test.ts checks a 600-hole pick survives saving.)
+    let s = rect(emptySketch(), 0, 0, 60, 100);
+    const points = [...s.points];
+    const curves = [...s.curves];
+    for (let i = 0; i < 6; i++)
+      for (let j = 0; j < 10; j++) {
+        points.push({ id: `h${i}-${j}c`, x: 5 + i * 10, y: 5 + j * 10 });
+        curves.push({ id: `h${i}-${j}`, type: "circle", center: `h${i}-${j}c`, radius: 3, construction: false });
+      }
+    s = { ...s, points, curves };
+    const m = sketchAreas(s);
+    const doc = { ...emptyDocument("Plate"), features: [sketchFeature(s), extrudeFeature([pickOf(m.areas[m.areaAt([10, 10])])])] };
+    const back = parseDocument(JSON.parse(JSON.stringify(doc)))!;
+    expect(back.features[1].areas).toHaveLength(1);
+    engine = new GeometryEngine();
+    const r = engine.rebuild(back.features);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    // The plate less 60 holes of radius 3, 10 deep (the mesh is a close approximation of the round holes).
+    const a = analyzeMesh(r.parts[0].vertices, r.parts[0].triangles);
+    const exact = (60 * 100 - 60 * Math.PI * 9) * 10;
+    expect(Math.abs(a.volume / exact - 1)).toBeLessThan(0.002);
   });
 
   it("builds the picked strip, and explains when a picked area has gone", () => {

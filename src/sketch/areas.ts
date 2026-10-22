@@ -309,9 +309,11 @@ export interface SketchArea {
   /** Its centre of area (holes taken out); may lie outside a hollow or bent shape. */
   centroid: Pt;
   /**
-   * What bounds it: each sketch curve round its outline and holes, with "+" when
-   * the area runs along the curve's own direction and "-" against it (sorted).
-   * Moving or resizing the sketch keeps this; changing what crosses what changes it.
+   * What bounds it: each sketch curve round its outline (not its holes, so a
+   * plate with hundreds of holes stays short), with "+" when the area runs along
+   * the curve's own direction and "-" against it (sorted). No two areas share an
+   * outline, so this tells them apart. Moving or resizing the sketch keeps it;
+   * changing what crosses what changes it.
    */
   signature: string[];
 }
@@ -319,7 +321,7 @@ export interface SketchArea {
 /** The areas of a sketch, and what's needed to join chosen ones into outlines. */
 export interface AreaMap {
   areas: SketchArea[];
-  /** Every curve id in the sketch (to tell when a curve a pick was bounded by has been deleted). */
+  /** Every solid (non-construction) curve id in the sketch (to tell when a curve a pick was bounded by has gone). */
   curves: Set<string>;
   /** The area containing a point (the smallest one round it), or -1. */
   areaAt(p: Pt): number;
@@ -759,7 +761,7 @@ function findAreas(sketch: SketchData): AreaMap {
     }
     const centroid: Pt = area > 1e-12 ? [mx / area, my / area] : [ox, oy];
     const sides = new Set<string>();
-    for (const c of [f, ...holesOf[i].map((k) => outsides[k])]) for (const h of c.hs) sides.add(`${curveOf[edges[h >> 1].prim]}${h & 1 ? "-" : "+"}`);
+    for (const h of f.hs) sides.add(`${curveOf[edges[h >> 1].prim]}${h & 1 ? "-" : "+"}`);
     return { outer: loopOf(f), holes, area, centroid, signature: [...sides].sort() };
   });
 
@@ -797,7 +799,8 @@ function findAreas(sketch: SketchData): AreaMap {
     return regions;
   };
 
-  return { areas, areaAt, join, curves: new Set(sketch.curves.map((c) => c.id)) };
+  // Only solid curves bound anything: one turned into construction counts as gone.
+  return { areas, areaAt, join, curves: new Set(sketch.curves.filter((c) => !c.construction).map((c) => c.id)) };
 }
 
 /** Distance from p to the nearest edge of a closed polygon. */

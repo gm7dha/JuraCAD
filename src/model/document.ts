@@ -516,7 +516,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
               (p): p is (number | string)[] =>
                 Array.isArray(p) &&
                 p.length >= 2 &&
-                p.length <= 500 &&
+                p.length <= 100_000 &&
                 [p[0], p[1], ...(p.length >= 3 ? [p[2]] : [])].every((x) => typeof x === "number" && Number.isFinite(x)) &&
                 p.slice(3).every((x) => typeof x === "string" && /^.{1,200}[+-]$/.test(x)),
             )

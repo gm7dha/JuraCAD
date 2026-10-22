@@ -404,6 +404,43 @@ describe("picks follow their areas when the sketch changes", () => {
     expect(regionsAt(without, [pickOf(m.areas[m.areaAt([5, 15])])]).missing).toBe(1);
   });
 
+  it("turning the divider into construction: the strip picked is gone too", () => {
+    const s = strips(40, 10);
+    const divider = s.curves[4].id;
+    const asConstruction: SketchData = { ...s, curves: s.curves.map((c) => (c.id === divider ? { ...c, construction: true } : c)) };
+    expect(follow(s, [5, 15], asConstruction)).toBe(-1);
+  });
+
+  it("a plate with hundreds of holes: the pick stays short, and survives a save and load", () => {
+    let s = rect(emptySketch(), 0, 0, 240, 250);
+    const points = [...s.points];
+    const curves = [...s.curves];
+    for (let i = 0; i < 24; i++)
+      for (let j = 0; j < 25; j++) {
+        points.push({ id: `h${i}-${j}c`, x: 5 + i * 10, y: 5 + j * 10 });
+        curves.push({ id: `h${i}-${j}`, type: "circle", center: `h${i}-${j}c`, radius: 3, construction: false });
+      }
+    s = { ...s, points, curves };
+    const m = sketchAreas(s);
+    const pick = pickOf(m.areas[m.areaAt([10, 10])]);
+    // The plate's outline: its four sides (its 600 holes aren't listed).
+    expect(pick).toHaveLength(7);
+    const doc = emptyDocument("Plate");
+    const saved = {
+      ...doc,
+      features: [
+        { id: "s1", name: "Sketch 1", type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane: { kind: "default", name: "Top" }, data: s } },
+        { id: "e1", name: "Extrude 1", type: "extrude", operation: "new", suppressed: false, params: { depth: "10" }, sketchRef: "s1", extrude: { end: "blind", flip: false }, areas: [pick] },
+      ],
+    };
+    const back = parseDocument(JSON.parse(JSON.stringify(saved)))!;
+    expect(back.features[1].areas).toEqual([pick]);
+    const r = regionsAt(back.features[0].sketch!.data, back.features[1].areas!);
+    expect(r.missing).toBe(0);
+    expect(r.regions).toHaveLength(1);
+    expect(r.regions[0].holes).toHaveLength(600);
+  });
+
   it("older picks (just a point, or a point and size) still work as before", () => {
     const s = strips(40, 10);
     const moved = movePoints(s, (x, y) => [x === 10 ? 4 : x, y]);
