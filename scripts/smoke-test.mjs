@@ -8,8 +8,12 @@
  * SMOKE_SCREENSHOTS=1 it also attaches small screenshots (as base64 notices)
  * so they can be reviewed without downloading artifacts.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { createServer as createHttpsServer } from "node:https";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium } from "playwright";
 import { preview } from "vite";
 
@@ -304,6 +308,154 @@ try {
     if (download.suggestedFilename() !== "juracad-claude.mcpb" || size < 1_000_000) throw new Error(`The Claude extension download is ${download.suggestedFilename()}, ${size} bytes`);
     await page.keyboard.press("Escape");
   }
+
+  step = "Connect to Claude with no extension running";
+  let liveReport = "not tried";
+  {
+    // Nothing is listening yet: a friendly "not connected" with what to do (and the file route).
+    await page.getByRole("button", { name: "Connect to Claude" }).click();
+    const dialog = page.getByRole("dialog", { name: "Claude isn't connected" });
+    await dialog.waitFor({ timeout: 30_000 });
+    const help = await dialog.innerText();
+    if (!/Claude desktop app is open/.test(help) || !/\.juracad file/.test(help)) throw new Error(`The "not connected" message doesn't say what to do: ${help}`);
+    await shot("live-not-connected");
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    liveReport = "Connect to Claude with no extension said what to do";
+  }
+
+  // With the extension built (CI builds it before this test): start it the way Claude does, connect, and let
+  // "Claude" (this test, talking MCP to it) add a feature, which must appear in the open design.
+  const extensionServer = "build/claude-extension/server/index.mjs";
+  if (existsSync(extensionServer)) {
+    step = "Live with Claude: starting the extension";
+    const designs = mkdtempSync(join(tmpdir(), "juracad-smoke-live-"));
+    const ext = spawn(process.execPath, [extensionServer, designs], { stdio: ["pipe", "pipe", "pipe"] });
+    let extLog = "";
+    ext.stderr.on("data", (d) => (extLog += d));
+    const replies = new Map();
+    let pending = "";
+    ext.stdout.on("data", (d) => {
+      pending += d;
+      let nl;
+      while ((nl = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (!line) continue;
+        const msg = JSON.parse(line);
+        replies.get(msg.id)?.(msg);
+      }
+    });
+    let nextId = 1;
+    const mcp = (method, params) =>
+      new Promise((resolve, reject) => {
+        const id = nextId++;
+        const timer = setTimeout(() => reject(new Error(`the extension didn't answer ${method}\n${extLog.slice(-1500)}`)), 120_000);
+        replies.set(id, (m) => {
+          clearTimeout(timer);
+          resolve(m);
+        });
+        ext.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      });
+    const tool = async (name, args = {}) => {
+      const r = await mcp("tools/call", { name, arguments: args });
+      const text = (r.result?.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+      if (r.error || r.result?.isError) throw new Error(`${name} failed: ${JSON.stringify(r.error) ?? text}`);
+      return text;
+    };
+    try {
+      await mcp("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } });
+      ext.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+      for (let i = 0; i < 100 && !/Live link ready/.test(extLog); i++) await page.waitForTimeout(100);
+      if (!/Live link ready/.test(extLog)) throw new Error(`the extension's live link didn't start:\n${extLog.slice(-1500)}`);
+
+      step = "Live with Claude: connecting";
+      await page.getByRole("button", { name: "Connect to Claude" }).click();
+      await page.locator(".live-badge").waitFor({ timeout: 30_000 });
+      const status = await tool("live_status");
+      if (!/Live: connected/.test(status)) throw new Error(`live_status: ${status}`);
+      const before = await page.locator(".feature-row:not(.datum)").count();
+
+      step = "Live with Claude: Claude adds a feature";
+      const added = await tool("add_feature", { type: "box", name: "Box from Claude", width: 6, depth: 6, height: 6, x: -20, y: -20, z: 0, operation: "new" });
+      if (!/Live: this now shows/.test(added)) throw new Error(`add_feature didn't reach the app: ${added}`);
+      await page.locator(".feature-row", { hasText: "Box from Claude" }).waitFor({ timeout: 30_000 });
+      await page.locator(".toast", { hasText: "Claude: added Box from Claude" }).waitFor({ timeout: 10_000 });
+      await page.waitForTimeout(800);
+      await shot("live-connected");
+
+      step = "Live with Claude: the user undoes it in the app";
+      await page.getByRole("button", { name: "Undo", exact: true }).click();
+      await page.locator(".feature-row", { hasText: "Box from Claude" }).waitFor({ state: "detached", timeout: 10_000 });
+      const after = await page.locator(".feature-row:not(.datum)").count();
+      if (after !== before) throw new Error(`after undo the feature list has ${after} features, not ${before}`);
+      let described = "";
+      for (let i = 0; i < 50; i++) {
+        described = await tool("describe_design");
+        if (!/Box from Claude/.test(described)) break;
+        await page.waitForTimeout(100);
+      }
+      if (/Box from Claude/.test(described)) throw new Error("Claude still sees the box after the user undid it");
+
+      step = "Live with Claude: disconnecting";
+      await page.locator(".live-badge").click();
+      await page.getByRole("button", { name: "Disconnect" }).click();
+      await page.getByRole("button", { name: "Connect to Claude" }).waitFor();
+      for (let i = 0; i < 50 && !/Live: not connected/.test(await tool("live_status")); i++) await page.waitForTimeout(100);
+      if (!/Live: not connected/.test(await tool("live_status"))) throw new Error("the extension still thinks it's connected");
+      liveReport += `; live: Claude added a box to the open design (${before} → ${before + 1} features), the user undid it, and Claude saw that`;
+
+      // The real site is https and the link is ws:// — check Chromium allows that to 127.0.0.1 (it isn't
+      // "mixed content", because 127.0.0.1 is this computer). A blank https page with a throwaway certificate.
+      step = "Live with Claude: ws:// to 127.0.0.1 from an https page";
+      const livePort = Number(/Live link ready on 127\.0\.0\.1:(\d+)/.exec(extLog)?.[1]);
+      const certDir = mkdtempSync(join(tmpdir(), "juracad-smoke-cert-"));
+      try {
+        execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(certDir, "key.pem"), "-out", join(certDir, "cert.pem"), "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
+        const httpsServer = createHttpsServer({ key: await readFile(join(certDir, "key.pem")), cert: await readFile(join(certDir, "cert.pem")) }, (_req, res) => {
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end("<!doctype html><title>https page</title><p>https</p>");
+        });
+        await new Promise((resolve) => httpsServer.listen(4443, "127.0.0.1", resolve));
+        const context = await browser.newContext({ ignoreHTTPSErrors: true });
+        try {
+          const securePage = await context.newPage();
+          await securePage.goto("https://localhost:4443/");
+          const result = await securePage.evaluate(
+            (port) =>
+              new Promise((resolve) => {
+                let ws;
+                try {
+                  ws = new WebSocket(`ws://127.0.0.1:${port}/juracad-live`, "juracad-live.1");
+                } catch (e) {
+                  resolve(`refused: ${e.message}`);
+                  return;
+                }
+                ws.onopen = () => {
+                  resolve(`open (secure context: ${window.isSecureContext})`);
+                  ws.close();
+                };
+                ws.onerror = () => resolve("error");
+                setTimeout(() => resolve("timed out"), 15_000);
+              }),
+            livePort,
+          );
+          if (!result.startsWith("open")) throw new Error(`an https page couldn't open ws://127.0.0.1:${livePort}: ${result}`);
+          liveReport += `; an https page opened ws://127.0.0.1 (${result})`;
+        } finally {
+          await context.close();
+          httpsServer.close();
+        }
+      } finally {
+        rmSync(certDir, { recursive: true, force: true });
+      }
+    } finally {
+      ext.kill();
+      rmSync(designs, { recursive: true, force: true });
+    }
+  }
+  // The browser notes each port it tried when nothing was listening: expected here, not a fault.
+  for (let i = consoleErrors.length - 1; i >= 0; i--) if (/WebSocket connection to 'ws:\/\/127\.0\.0\.1:4761\d/.test(consoleErrors[i])) consoleErrors.splice(i, 1);
 
   step = "starting a sketch and picking the Top plane";
   await page.getByRole("button", { name: "Sketch", exact: true }).click();
@@ -1315,7 +1467,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; made a sheet metal part and saved its flat pattern as DXF.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; made a sheet metal part and saved its flat pattern as DXF. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

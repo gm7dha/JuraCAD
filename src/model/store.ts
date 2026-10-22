@@ -307,6 +307,12 @@ export interface AppState {
   openDocument: (doc: JuraCADDocument, fileName: string) => void;
   /** Note that the current design has just been saved to this file. */
   markSaved: (fileName: string) => void;
+  /**
+   * Live with Claude: show Claude's change to the design as one undo step
+   * (`replace`: a whole new design, e.g. one Claude opened). The label
+   * ("Claude: added Extrude 2") is shown as a note.
+   */
+  applyClaudeChange: (doc: JuraCADDocument, studio: string, label: string, replace: boolean) => void;
   /** Add an assembly tab and switch to it. */
   addAssembly: () => void;
   /** Add a Part Studio tab and switch to it. */
@@ -945,6 +951,19 @@ export const useStore = create<AppState>((set, get) => {
       }));
       set((s) => ({ savedDoc: s.history.present }));
       rememberFile(get().history.present, fileName);
+    },
+
+    applyClaudeChange: (doc, studio, label, replace) => {
+      set((s) => {
+        const history = commit(s.history, refreshDocumentPlanes(doc, resolveVariables(doc.variables).values));
+        if (replace) {
+          return { history, selectedFeatureId: null, selection: [], selectedPlane: null, hiddenParts: [], transparentParts: [], selectedParts: [], activeTab: null, asmSelection: [] };
+        }
+        // The user stays on their tab (Claude works on the Part Studio on show, so that's normally the one changed).
+        const keep = (id: string | null) => (id && studioFeatures(history.present, studio).some((f) => f.id === id) ? id : null);
+        return { history, selectedFeatureId: keep(s.selectedFeatureId), selection: [] };
+      });
+      get().showToast(label, "info");
     },
 
     markSaved: (fileName) => {
