@@ -123,6 +123,25 @@ describe("bend along a line", () => {
     near(bounds2(r2.parts[0].flat!.outline), [0, 0, 100 + A90 + 6, 50], 6);
   });
 
+  it("bends a flange across its middle, its far part turning in over the plate", () => {
+    const r0 = build([plateSketch, sheet]);
+    const right = r0.parts[0].edgeRefs.find((e): e is EdgeRef => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.a[0] - 100) < 1e-6 && Math.abs(e.b[0] - 100) < 1e-6 && Math.abs(e.a[2] - 2) < 1e-6)!;
+    const fl: Feature = { id: "fl", name: "fl", type: "flange", operation: "add", suppressed: false, params: { length: "30", angle: "90", inset: "0" }, picks: [{ partId: "sm", ref: right }] };
+    // On the flange's outside face (x = 104): sketch x runs along +y, sketch y up +z; a line across it at z = 20.
+    const onFlange = sketchFeature("lf", addLine(emptySketch(), { x: -10, y: 20 }, { x: 60, y: 20 }).sketch, { kind: "face", origin: [104, 0, 0], u: [0, 1, 0], v: [0, 0, 1], label: "Face of Part 1" });
+    const r = build([plateSketch, sheet, fl, onFlange, bend("b", "lf")]);
+    expect(r.featureErrors).toEqual({});
+    // The plate, two quarter bends, and the flange's 26 mm straight less one bend's allowance.
+    expect(vol()).toBeCloseTo(10000 + 2 * Q90 * 50 + (26 - A90) * 100, 2);
+    expect(valid()).toBe(true);
+    // Its far part lies flat over the plate, its top face at z = 20 − a/2 + R + T, reaching in to x = 100 − (10 − a/2).
+    near(box(r), [0, 0, 0, 104, 50, 24 - A90 / 2]);
+    // The flat pattern is just as it was before the bend.
+    near(bounds2(r.parts[0].flat!.outline), [0, 0, 100 + A90 + 26, 50], 6);
+    // That flange is joined to the plate on one side: that side has to stay still.
+    expect(build([plateSketch, sheet, fl, onFlange, bend("b", "lf", {}, { keepOtherSide: true })]).featureErrors.b).toMatch(/has to stay still/);
+  });
+
   it("explains what it can't do", () => {
     const two = sketchFeature("two", addLine(addLine(emptySketch(), { x: 30, y: -10 }, { x: 30, y: 60 }).sketch, { x: 70, y: -10 }, { x: 70, y: 60 }).sketch);
     expect(build([plateSketch, sheet, two, bend("b", "two")]).featureErrors.b).toMatch(/just one line/);
