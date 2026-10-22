@@ -252,6 +252,13 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   // Fill: the edges round an opening; Extend surface: the edges to push out.
   if (s.editing?.draft.type === "fill" || s.editing?.draft.type === "extendSurface" || s.editing?.draft.type === "ruled") {
     if (target?.kind !== "part") return;
+    // Extend up to a face or part: a face clicked (on another part) is where it stops.
+    const et = s.editing.draft.type === "extendSurface" ? s.editing.draft.extendTo : undefined;
+    if (et && target.item.kind === "face") {
+      const pick = pickFor(s.parts, target.item);
+      if (pick) s.setDraftField({ extendTo: { ...et, target: pick } });
+      return;
+    }
     if (target.item.kind !== "edge") {
       s.showToast(s.editing.draft.type === "fill" ? "Click the edges round the opening (not a face)." : s.editing.draft.type === "ruled" ? "Click the edges to sweep strips from (not a face)." : "Click the edges of the surface to extend (not a face).");
       return;
