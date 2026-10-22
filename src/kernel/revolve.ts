@@ -6,7 +6,7 @@
 import { revolution, type Shape3D } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
-import { findRegions } from "../sketch/regions";
+import { chosenRegions } from "../sketch/areas";
 import { axisInSketch, type RevolveAxis } from "../sketch/axis";
 import type { SketchData } from "../sketch/types";
 import { loopFace, release } from "./extrude";
@@ -16,6 +16,8 @@ export interface RevolveOptions {
   /** Degrees, 0 < angle ≤ 360. */
   angle: number;
   flip: boolean;
+  /** Points inside the sketch areas to use (missing: every closed shape). */
+  areas?: [number, number][];
 }
 
 type P2 = [number, number];
@@ -50,7 +52,7 @@ export function revolveSketch(plane: SketchPlane, data: SketchData, opts: Revolv
   if (!axis) throw new Error("The line to spin around isn't in the sketch any more. Pick another axis.");
 
   // Everything that's revolved must lie on one side of the axis, or the solid would pass through itself.
-  const { regions, problems } = findRegions(data);
+  const { regions, problems } = chosenRegions(data, opts.areas, "revolve");
   if (regions.length === 0) {
     throw new Error(
       `The sketch has no closed shapes to revolve.${problems.length ? ` ${problems.join(" ")}` : " Draw a closed outline beside the axis."}`,

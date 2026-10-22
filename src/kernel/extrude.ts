@@ -27,7 +27,8 @@ import {
 } from "replicad";
 
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
-import { findRegions, type Loop, type Segment } from "../sketch/regions";
+import { type Loop, type Segment } from "../sketch/regions";
+import { chosenRegions } from "../sketch/areas";
 import type { SketchData } from "../sketch/types";
 import { edgesOf as edgesOfShape, facesOf, wiresOf } from "./topology";
 
@@ -39,6 +40,8 @@ export interface ExtrudeOptions {
   draft?: number;
   /** One way (blind) only: also this far the other way from the sketch. */
   depth2?: number;
+  /** Points inside the sketch areas to use (missing: every closed shape). */
+  areas?: [number, number][];
 }
 
 /** Free OpenCascade objects once we're done with them. */
@@ -96,6 +99,16 @@ export function segmentsWire(segments: Segment[], frame: PlaneFrame, offset: num
         }
         return makeEllipse(major, minor, P(seg.center), frame.n, dir);
       }
+      case "ellipseArc": {
+        // Part of an ellipse; OpenCascade measures its angles from the longer axis.
+        const long = seg.rx >= seg.ry;
+        const a = seg.angle + (long ? 0 : Math.PI / 2);
+        const { u, v } = frame;
+        const [ca, sa] = [Math.cos(a), Math.sin(a)];
+        const dir: [number, number, number] = [u[0] * ca + v[0] * sa, u[1] * ca + v[1] * sa, u[2] * ca + v[2] * sa];
+        const shift = long ? 0 : -Math.PI / 2;
+        return makeEllipseArc(Math.max(seg.rx, seg.ry), Math.min(seg.rx, seg.ry), seg.t0 + shift, seg.t1 + shift, P(seg.center), frame.n, dir);
+      }
     }
   });
   try {
@@ -143,7 +156,7 @@ function loopPrism(loop: Loop, frame: PlaneFrame, offset: number, vector: [numbe
 }
 
 export function extrudeSketch(plane: SketchPlane, data: SketchData, opts: ExtrudeOptions): Shape3D {
-  const { regions, problems } = findRegions(data);
+  const { regions, problems } = chosenRegions(data, opts.areas, "extrude");
   if (regions.length === 0) {
     throw new Error(
       `The sketch has no closed shapes to extrude.${problems.length ? ` ${problems.join(" ")}` : " Draw a closed outline, such as a rectangle or circle."}`,
@@ -157,10 +170,10 @@ export function extrudeSketch(plane: SketchPlane, data: SketchData, opts: Extrud
   const drafted = !!opts.draft && Math.abs(opts.draft) > 1e-9;
   if (drafted && behind > 0) {
     // With a taper, each side narrows away from the sketch: two tapered halves, joined at the sketch.
-    const front = extrudeSketch(plane, data, { depth: ahead, end: "blind", flip: opts.flip, draft: opts.draft });
+    const front = extrudeSketch(plane, data, { depth: ahead, end: "blind", flip: opts.flip, draft: opts.draft, areas: opts.areas });
     let back: Shape3D;
     try {
-      back = extrudeSketch(plane, data, { depth: behind, end: "blind", flip: !opts.flip, draft: opts.draft });
+      back = extrudeSketch(plane, data, { depth: behind, end: "blind", flip: !opts.flip, draft: opts.draft, areas: opts.areas });
     } catch (e) {
       release(front);
       throw e;

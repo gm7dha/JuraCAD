@@ -2776,3 +2776,31 @@ kbd {
   font-size: inherit;
   text-decoration: underline;
 }
+
+/* Extrude / Revolve / Sweep: the sketch's areas, to click the ones to use. */
+.area-picker .area-map {
+  display: block;
+  width: 100%;
+  height: 140px;
+  margin: 4px 0 2px;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.area-shape {
+  fill: var(--line-2);
+  stroke: var(--ink-3);
+  stroke-width: 1px;
+  cursor: pointer;
+}
+.area-shape.all {
+  fill: var(--accent-soft);
+}
+.area-shape:hover {
+  fill: var(--accent-line);
+}
+.area-shape.picked {
+  fill: var(--accent);
+  fill-opacity: 0.55;
+  stroke: var(--accent-dark);
+}

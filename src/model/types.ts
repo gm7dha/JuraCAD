@@ -106,6 +106,12 @@ export interface Feature {
   sketch?: { plane: SketchPlane | null; data: SketchData };
   /** Extrude, revolve and sweep (its profile): the sketch feature to use. */
   sketchRef?: string;
+  /**
+   * Extrude, revolve and sweep: the areas of the sketch to use, each remembered
+   * by a point inside it (sketch mm), found again on rebuild. Missing or empty:
+   * every closed shape.
+   */
+  areas?: [number, number][];
   /** Sweep: the sketch whose lines and arcs make the path. */
   pathRef?: string;
   /** Loft: the sketches to pass through, in order. */

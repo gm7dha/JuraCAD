@@ -344,6 +344,16 @@ try {
   await page.getByRole("button", { name: "Extrude", exact: true }).click();
   await page.getByRole("radio", { name: "New" }).click();
   await page.locator("#param-depth").fill("15");
+  step = "picking an area in the extrude dialog, then going back to all closed shapes";
+  const areaShapes = page.locator(".area-map .area-shape");
+  await areaShapes.first().waitFor({ timeout: 10_000 });
+  const areaCount = await areaShapes.count();
+  if (areaCount !== 2) throw new Error(`expected 2 areas (the plate and the disc in its hole), got ${areaCount}`);
+  await areaShapes.nth(1).click(); // the disc (smaller areas are drawn on top)
+  await page.waitForFunction(() => document.querySelector(".area-picker")?.textContent?.includes("1 area picked"));
+  await page.getByRole("button", { name: "Use all closed shapes" }).click();
+  await page.waitForFunction(() => document.querySelector(".area-picker")?.textContent?.includes("Using every closed shape"));
+  step = "extruding the sketch";
   await page.getByRole("button", { name: "Accept" }).click();
   await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 2"), null, { timeout: 30_000 });
   const failedAfterExtrude = await page.locator(".feature-row.failed").count();

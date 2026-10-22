@@ -1099,7 +1099,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       }
       if (feature.type === "revolve") {
         const opts = feature.revolve ?? { axis: "vertical", flip: false };
-        const ropts = { axis: opts.axis, angle: v.angle, flip: opts.flip };
+        const ropts = { axis: opts.axis, angle: v.angle, flip: opts.flip, areas: feature.areas };
         const { plane, data } = sketch.sketch;
         const shape = feature.surface ? revolveSurface(plane, data, ropts) : revolveSketch(plane, data, ropts);
         // Symmetric: half the angle each way from the sketch.
@@ -1114,7 +1114,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         if (feature.operation !== "remove") throw new Error("Through all only works with Remove — it cuts right through the part.");
         // Long enough to pass through every part, both ways from the sketch.
         const depth = 2 * reach(sketch.sketch.plane, parts) + 2;
-        return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth, end: "symmetric", flip: false });
+        return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth, end: "symmetric", flip: false, areas: feature.areas });
       }
       if (opts.end === "upToFace") {
         if (!opts.upTo) throw new Error("Click the flat face to extrude up to.");
@@ -1137,10 +1137,10 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         }
         const d = (centre[0] - frame.origin[0]) * n[0] + (centre[1] - frame.origin[1]) * n[1] + (centre[2] - frame.origin[2]) * n[2];
         if (Math.abs(d) < 1e-6) throw new Error("That face is level with the sketch, so there's nothing to extrude.");
-        return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: Math.abs(d), end: "blind", flip: d < 0, draft: v.draft });
+        return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: Math.abs(d), end: "blind", flip: d < 0, draft: v.draft, areas: feature.areas });
       }
       const second = opts.end === "blind" && opts.second ? v.depth2 : 0;
-      return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip, draft: v.draft, depth2: second });
+      return extrudeSketch(sketch.sketch.plane, sketch.sketch.data, { depth: v.depth, end: opts.end, flip: opts.flip, draft: v.draft, depth2: second, areas: feature.areas });
     }
     case "sweep": {
       const need = (id: string | undefined, what: string) => {
@@ -1158,7 +1158,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       const profile = need(feature.sketchRef, "profile");
       const path = need(feature.pathRef, "path");
       if (feature.surface) return sweepSurface(profile.plane!, profile.data, path.plane!, path.data);
-      return sweepSketch(profile.plane!, profile.data, path.plane!, path.data);
+      return sweepSketch(profile.plane!, profile.data, path.plane!, path.data, feature.areas);
     }
     case "wrap": {
       // A sketch's closed shapes wrapped round a round face, raised (Add) or engraved (Remove).
