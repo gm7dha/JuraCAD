@@ -79,6 +79,8 @@ export interface PlacedView {
   centre: [number, number];
   /** The view's outline on the sheet: x0, y0, x1, y1. */
   box: [number, number, number, number];
+  /** The scale it's drawn at: its own, or the sheet's (detail views are drawn `zoom` times this). */
+  scale: number;
 }
 
 export interface PlacedDim {
@@ -103,10 +105,14 @@ export interface SheetLayout {
   scale: number;
   /** True when even the smallest scale doesn't fit (the views may run off the sheet). */
   tooBig: boolean;
+  /** True when that's because of a view drawn at its own scale (they'd fit at the sheet's). */
+  ownTooBig?: boolean;
   views: PlacedView[];
   dims: PlacedDim[];
   /** Notes: where each one's text sits (sheet mm), for picking and dragging. */
   notes: { id: string; box: [number, number, number, number] }[];
+  /** The hole table's outline (sheet mm: x0, y0, x1, y1), for dragging; and true when it's taller than the room for it. */
+  holeTable?: { box: [number, number, number, number]; tall: boolean };
   prims: Prim[];
 }
 
@@ -135,6 +141,9 @@ export interface SheetInfo {
   balloons?: { item: number; at: [number, number, number] }[];
   /** Tapped hole sizes in the design, so hole callouts can name the thread. */
   taps?: TapSize[];
+  /** Which sheet this is and how many the drawing has (the title block then says "1 OF 3"). */
+  sheetNo?: number;
+  sheetCount?: number;
 }
 
 /** A view's size on paper at scale 1 (detail views are drawn `zoom` times bigger). */
@@ -207,17 +216,49 @@ function notesOf(drawing: Drawing): string[] {
   return (drawing.title.notes ?? "").split("\n").filter((l) => l.trim()).slice(0, 8);
 }
 
-/** Height kept free at the bottom for the title block, parts list and notes. */
-export function bottomReserve(drawing: (Pick<Drawing, "title"> & Partial<Pick<Drawing, "revisions">>) | null, bom: BomLine[] | undefined, holes = 0): number {
+/**
+ * Height kept free at the bottom for the title block, parts list and notes
+ * (and the hole table, with `holes` rows, unless it's been dragged elsewhere;
+ * on a sheet of `size` a long one wraps into columns — see holeTableShape).
+ */
+export function bottomReserve(
+  drawing: (Pick<Drawing, "title"> & Partial<Pick<Drawing, "revisions" | "holeTableAt">>) | null,
+  bom: BomLine[] | undefined,
+  holes = 0,
+  size?: [number, number],
+): number {
   const notes = drawing ? notesOf(drawing as Drawing).length : 0;
   const revs = drawing?.revisions?.length ?? 0;
+  const table = holes && !drawing?.holeTableAt ? holeTableShape(holes, size).h + 3 : 0;
   return (
     TITLE_H +
     (bom?.length ? (bom.length + 1) * BOM_ROW + 3 : 0) +
-    (holes ? (holes + 1) * BOM_ROW + 3 : 0) +
+    table +
     (revs ? (revs + 1) * BOM_ROW + 3 : 0) +
     (notes ? (notes + 1) * NOTE_LINE + 3 : 0)
   );
+}
+
+/** Width of each column of a hole table that's wrapped into columns (paper mm). */
+export const HOLE_BLOCK_W = 70;
+
+/**
+ * How a hole table with `n` holes is laid out. Short tables are one column
+ * across the title block's width (as they always were). One taller than half
+ * the room above the title block is wrapped into narrower columns side by
+ * side, each with its own heading, so the views keep their room; it's only
+ * allowed to grow taller once the columns fill the sheet's width.
+ */
+export function holeTableShape(n: number, size?: [number, number]): { columns: number; rows: number; w: number; h: number; tall: boolean } {
+  const single = { columns: 1, rows: n, w: TITLE_W, h: (n + 1) * BOM_ROW, tall: false };
+  if (!size || n <= 0) return single;
+  const room = (size[1] - 2 * MARGIN - TITLE_H) / 2;
+  if (single.h + 3 <= room) return single;
+  const most = Math.max(1, Math.floor((room - 3) / BOM_ROW) - 1);
+  const maxColumns = Math.max(1, Math.floor((size[0] - 2 * MARGIN) / HOLE_BLOCK_W));
+  const columns = Math.min(maxColumns, Math.ceil(n / most));
+  const rows = Math.ceil(n / columns);
+  return { columns, rows, w: columns * HOLE_BLOCK_W, h: (rows + 1) * BOM_ROW, tall: rows > most };
 }
 
 function viewArea(size: [number, number], reserve = TITLE_H): { x0: number; y0: number; x1: number; y1: number } {
@@ -240,9 +281,11 @@ function needed(
   maxH = Infinity,
   third = false,
   sideGap = 0,
+  own: Record<string, number> = {},
 ): { w: number; h: number; cols: number[]; rows: number[]; side: { key: string; w: number; h: number; x: number; y: number }[] } {
   const shown = new Set(keys);
-  const size = (k: string) => (shown.has(k) ? paperSize(projections[k], s) : [0, 0]);
+  // (Views with their own scale stay that size whatever the sheet's scale.)
+  const size = (k: string) => (shown.has(k) ? paperSize(projections[k], own[k] ?? s) : [0, 0]);
   const [fw, fh] = size("front");
   // Columns left to right and rows top to bottom (see GRID).
   const g = third ? GRID.third : GRID.first;
@@ -250,12 +293,14 @@ function needed(
   const rows = g.rows.map((k) => (k === "front" ? fh : size(k)[1]));
   const used = (list: number[]) => list.filter((v) => v > 0);
   const gridW = used(cols).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(cols).length - 1);
-  const gridH = used(rows).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(rows).length - 1);
+  // (Room under the lowest row for a "SCALE 2:1" note when a lined-up view has its own scale.)
+  const noted = [...g.rows, ...g.cols].some((k) => shown.has(k) && own[k] !== undefined);
+  const gridH = used(rows).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(rows).length - 1) + (noted && used(rows).length ? LABEL_ROOM : 0);
   // The 3D view and the section views share a column to the right, one above another (sections with room for their names).
   const side = ["iso", ...keys.filter(isLabelled)]
     .map((key) => {
       const [w, h] = size(key);
-      return { key, w, h: h > 0 && isLabelled(key) ? h + labelRoom(key, projections[key]) : h };
+      return { key, w, h: h > 0 && (isLabelled(key) || own[key] !== undefined) ? h + labelRoom(key, projections[key]) : h };
     })
     .filter((x) => x.w > 0);
   // One above another, starting a new column beside it when the next wouldn't fit under the last.
@@ -303,10 +348,10 @@ const labelRoom = (key: string, p: ViewProjection | undefined) => LABEL_ROOM + (
 const BEND_LINE_H = 4;
 
 /** The biggest standard scale at which all the views fit on the sheet. */
-export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H, third = false, sideGap = 0): { scale: number; fits: boolean } {
+export function fitScale(projections: Projections, keys: string[], sheet: SheetSize, reserve = TITLE_H, third = false, sideGap = 0, own: Record<string, number> = {}): { scale: number; fits: boolean } {
   const area = viewArea(SHEETS[sheet], reserve);
   for (const s of STANDARD_SCALES) {
-    const n = needed(projections, keys, s, area.y1 - area.y0, third, sideGap);
+    const n = needed(projections, keys, s, area.y1 - area.y0, third, sideGap, own);
     if (n.w <= area.x1 - area.x0 && n.h <= area.y1 - area.y0) return { scale: s, fits: true };
   }
   return { scale: STANDARD_SCALES[STANDARD_SCALES.length - 1], fits: false };
@@ -415,14 +460,18 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   // Hole table: the holes on one view, tagged, with a table above the title block.
   const holeKey = drawing.holeTable ? holeTableView(drawing, projections) : null;
   const holes = holeKey ? holeRows(projections[holeKey]!) : [];
-  const reserve = bottomReserve(drawing, info.bom, holes.length);
+  const reserve = bottomReserve(drawing, info.bom, holes.length, size);
   const third = drawing.projection === "third";
-  const auto = fitScale(projections, keys, drawing.sheet, reserve, third, sideGap);
+  // Views drawn at their own scale.
+  const own: Record<string, number> = {};
+  for (const v of drawing.views) if (v.scale && v.kind !== "detail") own[viewKey(v)] = v.scale;
+  const auto = fitScale(projections, keys, drawing.sheet, reserve, third, sideGap, own);
   // (Fit to sheet can be asked to go one scale smaller, to make room for dimensions.)
   const fitted = drawing.fit?.down ? (STANDARD_SCALES[STANDARD_SCALES.indexOf(auto.scale) + 1] ?? auto.scale) : auto.scale;
   const scale = drawing.scale ?? fitted;
   const area = viewArea(size, reserve);
-  const n = needed(projections, keys, scale, area.y1 - area.y0, third, sideGap);
+  const n = needed(projections, keys, scale, area.y1 - area.y0, third, sideGap, own);
+  const scaleOf = (k: string) => own[k] ?? scale;
 
   // Automatic places: the grid of aligned views centred in the area, the 3D and section views to its right.
   const left = area.x0 + Math.max(0, (area.x1 - area.x0 - n.w) / 2);
@@ -446,7 +495,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   grid.rows.forEach((k, i) => (autoCentre[k] = [colX[1], rowY[i]]));
   const sideX = gridRight > left ? gridRight + GAP + sideGap : left;
   for (const item of n.side) {
-    const viewH = isLabelled(item.key) ? item.h - labelRoom(item.key, projections[item.key]) : item.h;
+    const viewH = isLabelled(item.key) || own[item.key] !== undefined ? item.h - labelRoom(item.key, projections[item.key]) : item.h;
     autoCentre[item.key] = [sideX + item.x + item.w / 2, top - item.y - viewH / 2];
   }
 
@@ -470,9 +519,10 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
     const p = projections[key];
     if (!p?.bounds) continue;
     const centre = centreFor(key);
+    const sc = scaleOf(key);
     // Detail views are drawn bigger than the rest.
-    const vs = scale * (p.zoom ?? 1);
-    const at = (x: number, y: number) => toSheet({ centre }, p, scale, x, y);
+    const vs = sc * (p.zoom ?? 1);
+    const at = (x: number, y: number) => toSheet({ centre }, p, sc, x, y);
     const map = (line: number[]) => {
       const out: number[] = [];
       for (let i = 0; i + 1 < line.length; i += 2) out.push(...at(line[i], line[i + 1]));
@@ -503,12 +553,16 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
       // From the side they're inside the part, so shown with the hidden lines.
       if (drawing.hiddenLines) for (const seg of t.side) draw(seg, "hidden");
     }
-    const [w, h] = paperSize(p, scale);
+    const [w, h] = paperSize(p, sc);
     const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
-    if (p.shorten?.length) prims.push(...breakSymbols(p, scale, at, box));
+    if (p.shorten?.length) prims.push(...breakSymbols(p, sc, at, box));
+    // A view at its own scale says so underneath (in its name, for views that have one).
+    const ownNote = own[key] !== undefined && Math.abs(own[key] - scale) > 1e-9 ? `SCALE ${scaleLabel(own[key])}` : null;
+    if (ownNote && !isLabelled(key)) prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: ownNote, size: 3.5, anchor: "middle", bold: true });
+    const named = (name: string) => (ownNote ? `${name}  ${ownNote}` : name);
     if (v.kind === "flat") {
       // Bend lines, numbered, and a list of the bends under the view's name.
-      prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: "FLAT PATTERN", size: 3.5, anchor: "middle", bold: true });
+      prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: named("FLAT PATTERN"), size: 3.5, anchor: "middle", bold: true });
       (p.bends ?? []).forEach((b, i) => {
         const [x0, y0, x1, y1] = map([...b.line]) as [number, number, number, number];
         prims.push({ kind: "path", points: [x0, y0, x1, y1], style: "centre" });
@@ -526,14 +580,14 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
       });
     }
     const cut = v.kind === "section" ? drawing.sections?.find((c) => c.id === v.section) : undefined;
-    if (cut) prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: sectionTitle(cut), size: 3.5, anchor: "middle", bold: true });
+    if (cut) prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: named(sectionTitle(cut)), size: 3.5, anchor: "middle", bold: true });
     const detail = v.kind === "detail" ? drawing.details?.find((x) => x.id === v.detail) : undefined;
     if (detail) {
       // The detail's circle, and its name with its own scale.
       prims.push(circle(centre[0], centre[1], (w + h) / 4, "thin"));
       prims.push({ kind: "text", x: centre[0], y: box[1] - 6, text: `DETAIL ${detail.letter} (${scaleLabel(vs)})`, size: 3.5, anchor: "middle", bold: true });
     }
-    views.push({ id: v.id, kind: v.kind, key, centre, box });
+    views.push({ id: v.id, kind: v.kind, key, centre, box, scale: sc });
   }
 
   // Where each section is cut, on the view its line was drawn on.
@@ -541,7 +595,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
     if (!views.some((v) => v.key === `section:${cut.id}`)) continue;
     const host = views.find((v) => v.key === cut.host);
     const hp = projections[cut.host];
-    if (host && hp?.bounds) prims.push(...cuttingPlane(host, hp, scale, cut));
+    if (host && hp?.bounds) prims.push(...cuttingPlane(host, hp, host.scale, cut));
   }
 
   // Where each detail comes from: a circle on its host view, with its letter.
@@ -551,8 +605,8 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
     const hp = projections[detail.host];
     if (!host || !hp?.bounds) continue;
     const [x0, y0, x1, y1] = hp.bounds;
-    const [px, py] = toSheet(host, hp, scale, x0 + detail.centre[0] * (x1 - x0), y0 + detail.centre[1] * (y1 - y0));
-    const r = detail.radius * scale;
+    const [px, py] = toSheet(host, hp, host.scale, x0 + detail.centre[0] * (x1 - x0), y0 + detail.centre[1] * (y1 - y0));
+    const r = detail.radius * host.scale;
     prims.push(circle(px, py, r, "thin"));
     prims.push({ kind: "text", x: px + r * 0.75 + 1.5, y: py + r * 0.75 + 1.5, text: detail.letter, size: 3.5, anchor: "start", bold: true });
   }
@@ -560,15 +614,15 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   // Balloons: the parts list's item numbers, pointing at the parts.
   if (info.balloons?.length && drawing.balloons !== false) {
     const host = views.find((v) => v.kind === "iso") ?? views.find((v) => v.kind === "front") ?? views.find((v) => v.kind !== "section");
-    if (host) prims.push(...balloonPrims(host, projections[host.key]!, scale, info.balloons));
+    if (host) prims.push(...balloonPrims(host, projections[host.key]!, host.scale, info.balloons));
   }
 
   // Hole tags next to each hole on the hole table's view.
   const holeHost = holeKey ? views.find((v) => v.key === holeKey) : undefined;
   if (holeHost) {
     for (const h of holes) {
-      const [x, y] = toSheet(holeHost, projections[holeKey!]!, scale, h.at[0], h.at[1]);
-      const r = (h.diameter / 2) * scale;
+      const [x, y] = toSheet(holeHost, projections[holeKey!]!, holeHost.scale, h.at[0], h.at[1]);
+      const r = (h.diameter / 2) * holeHost.scale;
       prims.push({ kind: "text", x: x + r * 0.7 + 0.8, y: y + r * 0.7 + 0.8, text: h.tag, size: 2.5, anchor: "start" });
     }
   }
@@ -580,7 +634,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
     const p = projections[dim.view];
     if (!view || !p) continue;
     const resolved = resolveDim(dim, p);
-    const at = ([x, y]: [number, number]) => toSheet(view, p, scale, x, y);
+    const at = ([x, y]: [number, number]) => toSheet(view, p, view.scale, x, y);
     const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved), dim.callout ? calloutText(p, resolved.a, info.taps ?? [], { ...dimStyle(drawing), ...(dim.places !== undefined ? { places: dim.places } : {}) }) : null, dimStyle(drawing));
     const from = prims.length;
     prims.push(...drawn.prims);
@@ -592,7 +646,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
       to: prims.length,
       a: at(resolved.a),
       b: resolved.b ? at(resolved.b) : null,
-      rad: (resolved.r ?? 0) * scale * (p.zoom ?? 1),
+      rad: (resolved.r ?? 0) * view.scale * (p.zoom ?? 1),
       ...(resolved.c && resolved.d ? { cd: [at(resolved.c), at(resolved.d)] as [[number, number], [number, number]] } : {}),
     });
   }
@@ -616,8 +670,12 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
     notes.push({ id: note.id, box: [x, y - h, x + w, y] });
   }
 
-  prims.push(...frameAndTitle(size, drawing, scale, info, holeHost ? holes : []));
-  return { layout: { size, scale, tooBig: !drawing.scale && !auto.fits, views, dims, notes, prims }, reserve };
+  const frame = frameAndTitle(size, drawing, scale, info, holeHost ? holes : []);
+  prims.push(...frame.prims);
+  const tooBig = !drawing.scale && !auto.fits;
+  // (Would they fit if every view were at the sheet's scale? Then it's a view's own scale that's too big.)
+  const ownTooBig = tooBig && Object.keys(own).length > 0 && fitScale(projections, keys, drawing.sheet, reserve, third, sideGap).fits;
+  return { layout: { size, scale, tooBig, ...(ownTooBig ? { ownTooBig } : {}), views, dims, notes, ...(frame.holeTable ? { holeTable: frame.holeTable } : {}), prims }, reserve };
 }
 
 /** The cutting line across a view, with arrows showing which way the section looks, and its letters. */
@@ -753,7 +811,7 @@ export function projectionSymbol(x: number, y: number, third: boolean): Prim[] {
 }
 
 /** The border, the title block and the projection symbol. */
-function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, info: SheetInfo, holes: HoleRow[] = []): Prim[] {
+function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, info: SheetInfo, holes: HoleRow[] = []): { prims: Prim[]; holeTable?: SheetLayout["holeTable"] } {
   const [W, H] = size;
   const out: Prim[] = [rect(MARGIN, MARGIN, W - MARGIN, H - MARGIN, "border")];
   const x0 = W - MARGIN - TITLE_W;
@@ -761,14 +819,14 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
   const y0 = MARGIN;
   out.push(rect(x0, y0, x1, y0 + TITLE_H, "border"));
   out.push(line(x0, y0 + 12, x1, y0 + 12), line(x0, y0 + 24, x1, y0 + 24));
-  const label = (x: number, y: number, text: string): Prim => ({ kind: "text", x: x + 1.5, y: y - 3, text, size: 2.2, anchor: "start" });
+  const label = (x: number, y: number, text: string, w = TITLE_W): Prim => ({ kind: "text", x: x + 1.5, y: y - 3, text, size: fitSize(text, w - 3, 2.2), anchor: "start" });
   // A value in a cell `w` wide: made smaller if it's too long to fit.
   const value = (x: number, y: number, text: string, w: number, size = 3.5, bold = false): Prim => ({ kind: "text", x: x + 1.5, y: y + 2.5, text, size: fitSize(text, w - 3, size, bold), anchor: "start", bold });
   const row = (y: number, cells: [number, string, string][], size: number, bold = false) =>
     cells.forEach(([dx, l, v], i) => {
       const w = (cells[i + 1]?.[0] ?? TITLE_W) - dx;
       if (dx > 0) out.push(line(x0 + dx, y, x0 + dx, y + 12));
-      out.push(label(x0 + dx, y + 12, l), value(x0 + dx, y + (size > 4 ? 0.5 : 1.5), v, w, size, bold));
+      out.push(label(x0 + dx, y + 12, l, w), value(x0 + dx, y + (size > 4 ? 0.5 : 1.5), v, w, size, bold));
     });
   const t = drawing.title;
   // Top row: the title, the part number and the latest revision.
@@ -788,7 +846,8 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
     [0, "DRAWN BY", t.drawnBy ?? ""],
     [50, "DATE", info.date],
     [80, "SCALE", scaleLabel(scale)],
-    [102, "SHEET", drawing.sheet],
+    // A drawing with several sheets numbers them; the paper size moves into the label.
+    (info.sheetCount ?? 1) > 1 ? [102, `SHEET ${drawing.sheet}`, `${info.sheetNo ?? 1} OF ${info.sheetCount}`] : [102, "SHEET", drawing.sheet],
     [120, "UNITS", lengthUnit()],
     [138, "PROJECTION", ""],
   ], 3.2);
@@ -817,27 +876,17 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
     top += h;
   }
 
-  // Hole table, above that: tag, position from the corner, size.
+  // Hole table, above that (unless it's been dragged elsewhere): tag, position from the corner, size.
+  let holeTable: SheetLayout["holeTable"];
   if (holes.length) {
-    const rows = [...holes].reverse();
-    const h = (rows.length + 1) * BOM_ROW;
-    const cols = [x0 + 15, x0 + 50, x0 + 85];
-    out.push(rect(x0, top, x1, top + h, "border"));
-    for (let i = 1; i <= rows.length; i++) out.push(line(x0, top + i * BOM_ROW, x1, top + i * BOM_ROW));
-    for (const cx of cols) out.push(line(cx, top, cx, top + h));
-    rows.forEach((r, i) => {
-      const y = top + i * BOM_ROW + 1.8;
-      out.push({ kind: "text", x: x0 + 7.5, y, text: r.tag, size: 3, anchor: "middle" });
-      out.push({ kind: "text", x: (cols[0] + cols[1]) / 2, y, text: lengthNumber(r.x), size: 3, anchor: "middle" });
-      out.push({ kind: "text", x: (cols[1] + cols[2]) / 2, y, text: lengthNumber(r.y), size: 3, anchor: "middle" });
-      out.push({ kind: "text", x: (cols[2] + x1) / 2, y, text: `Ø${lengthNumber(r.diameter)}`, size: 3, anchor: "middle" });
-    });
-    const hy = top + rows.length * BOM_ROW + 1.8;
-    out.push({ kind: "text", x: x0 + 7.5, y: hy, text: "HOLE", size: 2.5, anchor: "middle", bold: true });
-    out.push({ kind: "text", x: (cols[0] + cols[1]) / 2, y: hy, text: "X", size: 2.5, anchor: "middle", bold: true });
-    out.push({ kind: "text", x: (cols[1] + cols[2]) / 2, y: hy, text: "Y", size: 2.5, anchor: "middle", bold: true });
-    out.push({ kind: "text", x: (cols[2] + x1) / 2, y: hy, text: "SIZE", size: 2.5, anchor: "middle", bold: true });
-    top += h;
+    const shape = holeTableShape(holes.length, size);
+    // (Where its top-left corner was dragged to.)
+    const at = drawing.holeTableAt;
+    const left = at ? at[0] : x1 - shape.w;
+    const bottom = at ? at[1] - shape.h : top;
+    out.push(...holeTablePrims(holes, shape, left, bottom));
+    holeTable = { box: [left, bottom, left + shape.w, bottom + shape.h], tall: shape.tall };
+    if (!at) top += shape.h;
   }
 
   // Revisions, above that: letter, what changed, date (newest at the top).
@@ -865,5 +914,41 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
   const notes = notesOf(drawing);
   notes.forEach((t, i) => out.push({ kind: "text", x: x0, y: top + 4 + (notes.length - 1 - i) * NOTE_LINE, text: t, size: 3, anchor: "start" }));
   if (notes.length) out.push({ kind: "text", x: x0, y: top + 4 + notes.length * NOTE_LINE, text: "NOTES", size: 3, anchor: "start", bold: true });
+  return { prims: out, ...(holeTable ? { holeTable } : {}) };
+}
+
+/**
+ * The hole table's lines and text, from its bottom-left corner: one column
+ * across the title block's width, or wrapped into narrower columns (each
+ * with its heading), filled left to right.
+ */
+function holeTablePrims(holes: HoleRow[], shape: ReturnType<typeof holeTableShape>, left: number, bottom: number): Prim[] {
+  const out: Prim[] = [];
+  const blockW = shape.columns === 1 ? shape.w : HOLE_BLOCK_W;
+  // Column edges in a block: one column keeps its old proportions; wrapped ones are narrower.
+  const edges = shape.columns === 1 ? [15, 50, 85] : [12, 30, 48];
+  const h = (shape.rows + 1) * BOM_ROW;
+  const top = bottom + h;
+  for (let c = 0; c < shape.columns; c++) {
+    const rows = holes.slice(c * shape.rows, (c + 1) * shape.rows);
+    if (!rows.length) break;
+    const x0 = left + c * blockW;
+    const x1 = x0 + blockW;
+    const cols = edges.map((e) => x0 + e);
+    out.push(rect(x0, bottom, x1, top, "border"));
+    // The heading at the top, then the holes in order down each column.
+    for (let i = 1; i <= shape.rows; i++) out.push(line(x0, bottom + i * BOM_ROW, x1, bottom + i * BOM_ROW));
+    for (const cx of cols) out.push(line(cx, bottom, cx, top));
+    const mids = [(x0 + cols[0]) / 2, (cols[0] + cols[1]) / 2, (cols[1] + cols[2]) / 2, (cols[2] + x1) / 2];
+    const room = [cols[0] - x0, cols[1] - cols[0], cols[2] - cols[1], x1 - cols[2]].map((w) => w - 1.5);
+    const cell = (i: number, y: number, text: string, bold = false): Prim => ({ kind: "text", x: mids[i], y, text, size: fitSize(text, room[i], bold ? 2.5 : 3, bold), anchor: "middle", ...(bold ? { bold } : {}) });
+    // (Bottom row first; a short last column leaves its bottom rows blank.)
+    [...rows].reverse().forEach((r, j) => {
+      const y = bottom + (shape.rows - rows.length + j) * BOM_ROW + 1.8;
+      out.push(cell(0, y, r.tag), cell(1, y, lengthNumber(r.x)), cell(2, y, lengthNumber(r.y)), cell(3, y, `Ø${lengthNumber(r.diameter)}`));
+    });
+    const hy = top - BOM_ROW + 1.8;
+    out.push(cell(0, hy, "HOLE", true), cell(1, hy, "X", true), cell(2, hy, "Y", true), cell(3, hy, "SIZE", true));
+  }
   return out;
 }

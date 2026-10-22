@@ -8,6 +8,7 @@ import type { ViewProjection } from "../kernel/protocol";
 import type { Dimension, DimPoint } from "../model/types";
 import type { Prim } from "./sheet";
 import { textWidth } from "./export";
+import { classText, limitSizes, parseFitClass, type ToleranceClass } from "./fits";
 
 type P2 = [number, number];
 
@@ -91,12 +92,19 @@ export interface ResolvedDim {
   c?: P2;
   d?: P2;
   r?: number;
+  /** Arc lengths: where the arc starts (radians, anticlockwise from across) and how far round it goes. */
+  arc?: { from: number; sweep: number };
   /** False when what it measured can't be found any more (it's drawn where it was). */
   found: boolean;
 }
 
 /** Where a dimension's points are on the view as the part is now. */
 export function resolveDim(dim: Dimension, p: ViewProjection): ResolvedDim {
+  if (dim.type === "arcLength") {
+    const c = findCircle(dim.a, dim.r ?? 0, p);
+    const arc = arcOf(p, c.at, c.r, dim.b?.at ?? c.at);
+    return arc ? { a: c.at, r: c.r, b: arc.mid, arc: { from: arc.from, sweep: arc.sweep }, found: c.found } : { a: c.at, r: c.r, b: dim.b?.at ?? c.at, found: false };
+  }
   if (dim.type === "diameter" || dim.type === "radius") {
     const c = findCircle(dim.a, dim.r ?? 0, p);
     return { a: c.at, r: c.r, found: c.found };
@@ -109,6 +117,54 @@ export function resolveDim(dim: Dimension, p: ViewProjection): ResolvedDim {
     return { a: a.at, b: b.at, c: c.at, d: d.at, found: a.found && b.found && c.found && d.found };
   }
   return { a: a.at, b: b.at, found: a.found && b.found };
+}
+
+/**
+ * An arc's drawn line on a view (a part-circle round `centre`, radius `r`):
+ * the one nearest `near` if there are several. Where it starts (radians,
+ * anticlockwise from across), how far round it goes and its middle point.
+ */
+export function arcOf(p: ViewProjection, centre: P2, r: number, near: P2): { from: number; sweep: number; mid: P2 } | null {
+  const tol = 1e-3 * Math.max(1, r);
+  let best: { from: number; sweep: number; mid: P2 } | null = null;
+  let bestD = Infinity;
+  for (const line of p.visible) {
+    const n = line.length / 2;
+    if (n < 3) continue;
+    let ok = true;
+    for (let i = 0; i < n && ok; i++) ok = Math.abs(Math.hypot(line[2 * i] - centre[0], line[2 * i + 1] - centre[1]) - r) < tol;
+    if (!ok) continue;
+    const ang = (i: number) => Math.atan2(line[2 * i + 1] - centre[1], line[2 * i] - centre[0]);
+    // Add up the small turns from point to point (the arc may cross the ±180° line).
+    let turn = 0;
+    for (let i = 1; i < n; i++) {
+      let d = ang(i) - ang(i - 1);
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      turn += d;
+    }
+    // A whole circle isn't an arc.
+    if (Math.abs(turn) < 1e-6 || Math.abs(turn) > 2 * Math.PI - 1e-4) continue;
+    const from = turn > 0 ? ang(0) : ang(n - 1);
+    const sweep = Math.abs(turn);
+    const m = from + sweep / 2;
+    const mid: P2 = [centre[0] + r * Math.cos(m), centre[1] + r * Math.sin(m)];
+    const d = dist(mid, near);
+    if (d < bestD) {
+      best = { from, sweep, mid };
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** A chamfer's distance (along the edge chosen, or the longer leg) and angle (degrees) from its slanted edge a–b. */
+export function chamferSize(a: P2, b: P2, along?: "h" | "v"): { distance: number; angle: number; along: "h" | "v" } {
+  const dx = Math.abs(b[0] - a[0]);
+  const dy = Math.abs(b[1] - a[1]);
+  const way = along ?? (dx >= dy ? "h" : "v");
+  const [d, other] = way === "h" ? [dx, dy] : [dy, dx];
+  return { distance: d, angle: (Math.atan2(other, d) * 180) / Math.PI, along: way };
 }
 
 /** The size a dimension shows (mm). */
@@ -131,6 +187,10 @@ export function measureDim(dim: Dimension, r: ResolvedDim): number {
       const g = r.c && r.d ? angleGeometry(r.a, b, r.c, r.d, dim.rays) : null;
       return g ? g.degrees : 0;
     }
+    case "chamfer":
+      return chamferSize(r.a, b, dim.along).distance;
+    case "arcLength":
+      return (r.r ?? 0) * (r.arc?.sweep ?? 0);
   }
 }
 
@@ -222,11 +282,83 @@ export function dimLabel(dim: Dimension, value: number, style: DimStyle = {}): s
     const p = Math.max(places, auto.split(".")[1]?.length ?? 0);
     return dim.type === "angle" ? `${fixed(v, p)}°` : fixed(toUnit(v, unit), p);
   };
-  const tol = !t ? "" : Math.abs(t.plus - t.minus) < 1e-9 ? ` ±${tv(t.plus)}` : ` +${tv(t.plus)}/−${tv(t.minus)}`;
+  const fit = fitOf(dim, value);
+  const tol = fit ? fit.inline : !t ? "" : Math.abs(t.plus - t.minus) < 1e-9 ? ` ±${tv(t.plus)}` : ` +${tv(t.plus)}/−${tv(t.minus)}`;
   // Both units: the other one in brackets after the size.
   const other = unit === "in" ? "mm" : "in";
   const dual = style.dual && dim.type !== "angle" ? ` [${sign}${lengthNumber(value, other)}]` : "";
   return `${dim.prefix ?? ""}${base}${tol}${dual}${dim.suffix ?? ""}`;
+}
+
+/** Dimensions that can carry a limits-and-fits class (sizes: lengths and diameters). */
+export const FITTABLE = new Set<Dimension["type"]>(["horizontal", "vertical", "aligned", "diameter"]);
+
+/**
+ * How a dimension's limits-and-fits class reads: text straight after the
+ * size (" H7"), and/or two lines stacked after it — a fit's hole class over
+ * its shaft class (with a line between, like a fraction), or the largest size
+ * over the smallest. `error` says why the class or limits can't be worked out
+ * (the class is then shown as typed). Null when it has none.
+ */
+export function fitOf(dim: Pick<Dimension, "type" | "limitsFit">, value: number): { inline: string; stack: string[] | null; fraction: boolean; error?: string } | null {
+  const f = dim.limitsFit;
+  if (!f || !FITTABLE.has(dim.type)) return null;
+  const parsed = parseFitClass(f.class);
+  if ("error" in parsed) return { inline: ` ${f.class}`, stack: null, fraction: false, error: parsed.error };
+  const unit = lengthUnit();
+  const show = (mm: number) => fixed(toUnit(mm, unit), unit === "in" ? 4 : 3);
+  // The size the class is for: as shown (to a thousandth of a millimetre).
+  const size = Math.round(value * 1000) / 1000;
+  const classes = [parsed.hole, parsed.shaft].filter((c): c is ToleranceClass => !!c);
+  const limits = classes.map((c) => limitSizes(size, c));
+  const bad = limits.find((l): l is { error: string } => "error" in l);
+  const sizes = limits.filter((l): l is { max: number; min: number } => !("error" in l));
+  const wantLimits = !!f.limits && !bad;
+  if (classes.length === 1) {
+    const inline = ` ${classText(classes[0])}`;
+    return wantLimits ? { inline, stack: [show(sizes[0].max), show(sizes[0].min)], fraction: false } : { inline, stack: null, fraction: false, ...(f.limits && bad ? { error: bad.error } : {}) };
+  }
+  const stack = classes.map((c, i) => (wantLimits ? `${classText(c)} ${show(sizes[i].max)}/${show(sizes[i].min)}` : classText(c)));
+  return { inline: "", stack, fraction: true, ...(f.limits && bad ? { error: bad.error } : {}) };
+}
+
+/** Size of stacked text (paper mm) and the gap before it. */
+const STACK_SIZE = 2.5;
+const STACK_GAP = 0.8;
+
+/** How wide a stack of lines is on paper. */
+function stackWidth(stack: string[] | null): number {
+  return stack?.length ? STACK_GAP + Math.max(...stack.map((l) => textWidth(l, STACK_SIZE))) : 0;
+}
+
+/**
+ * Two lines stacked straight after a number (`t`, which is moved back so the
+ * whole reads centred where it was): returns the number moved and the stack,
+ * turned with it. With `fraction`, a short line between the two.
+ */
+function withStack(t: Extract<Prim, { kind: "text" }>, stack: string[], fraction: boolean): Prim[] {
+  const w = textWidth(t.text, t.size);
+  const sw = stackWidth(stack);
+  const a = ((t.rotate ?? 0) * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  // Local coordinates along the text (u) and up from its baseline (v), from the text's anchor point.
+  const x0 = t.anchor === "middle" ? -(w + sw) / 2 : t.anchor === "end" ? -(w + sw) : 0;
+  const put = (u: number, v: number): [number, number] => [t.x + u * c - v * s, t.y + u * s + v * c];
+  const [mx, my] = put(x0, 0);
+  const out: Prim[] = [{ ...t, x: mx, y: my, anchor: "start" }];
+  const left = x0 + w + STACK_GAP;
+  const mid = t.size * 0.375;
+  const [ux, uy] = put(left, mid + 0.6);
+  const [lx, ly] = put(left, mid - 0.6 - STACK_SIZE * 0.75);
+  out.push({ kind: "text", x: ux, y: uy, text: stack[0], size: STACK_SIZE, anchor: "start", ...(t.rotate ? { rotate: t.rotate } : {}) });
+  if (stack[1] !== undefined) out.push({ kind: "text", x: lx, y: ly, text: stack[1], size: STACK_SIZE, anchor: "start", ...(t.rotate ? { rotate: t.rotate } : {}) });
+  if (fraction) {
+    const [p0x, p0y] = put(left, mid);
+    const [p1x, p1y] = put(left + sw - STACK_GAP, mid);
+    out.push({ kind: "path", points: [p0x, p0y, p1x, p1y], style: "thin" });
+  }
+  return out;
 }
 
 /** How far (paper mm) a number has to be lifted off its line before it counts as moved off it. */
@@ -344,8 +476,61 @@ export function textFrame(t: Extract<Prim, { kind: "text" }>, kind: "basic" | "i
 }
 
 function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: number, callout: string[] | null | undefined, style: DimStyle): DimDrawing {
-  const text = dimLabel(dim, value, style);
+  const text = dim.type === "chamfer" ? chamferLabel(dim, r, style) : dimLabel(dim, value, style);
   const prims: Prim[] = [];
+  const fit = callout?.length ? null : fitOf(dim, value);
+  // The number, with any stacked fit or limits after it.
+  const number = (t: Extract<Prim, { kind: "text" }>): Prim[] => (fit?.stack ? withStack(t, fit.stack, fit.fraction) : [t]);
+  if (dim.type === "chamfer" && r.b) {
+    // A leader from the middle of the slanted edge out to a shoulder, with "1 × 45°" on it.
+    const pa = at(r.a);
+    const pb = at(r.b);
+    const m: P2 = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2];
+    const ang = ((dim.angle ?? 45) * Math.PI) / 180;
+    const u: P2 = [Math.cos(ang), Math.sin(ang)];
+    const elbow: P2 = [m[0] + u[0] * Math.max(dim.offset, 2), m[1] + u[1] * Math.max(dim.offset, 2)];
+    const side = u[0] >= 0 ? 1 : -1;
+    const end: P2 = [elbow[0] + side * (2 + textWidth(text, TEXT_SIZE)), elbow[1]];
+    prims.push({ kind: "path", points: [m[0], m[1], elbow[0], elbow[1], end[0], end[1]], style: "thin" });
+    prims.push(arrow(m, [-u[0], -u[1]]));
+    const label: P2 = [(elbow[0] + end[0]) / 2, elbow[1] + 1];
+    prims.push({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle" });
+    return { prims, label };
+  }
+  if (dim.type === "arcLength") {
+    // An arc round the same centre, out past the arc, with lines out to it from the arc's ends.
+    const c = at(r.a);
+    const rad = dist(c, at([r.a[0] + (r.r ?? 0), r.a[1]]));
+    const R = rad + Math.max(dim.offset, 2);
+    const from = r.arc?.from ?? 0;
+    const sweep = r.arc?.sweep ?? 0;
+    const pts: number[] = [];
+    const n = Math.max(6, Math.ceil(sweep / 0.06));
+    for (let i = 0; i <= n; i++) {
+      const t = from + (sweep * i) / n;
+      pts.push(c[0] + R * Math.cos(t), c[1] + R * Math.sin(t));
+    }
+    prims.push({ kind: "path", points: pts, style: "thin" });
+    for (const t of [from, from + sweep]) {
+      const u: P2 = [Math.cos(t), Math.sin(t)];
+      prims.push({ kind: "path", points: [c[0] + u[0] * (rad + GAP), c[1] + u[1] * (rad + GAP), c[0] + u[0] * (R + OVERSHOOT), c[1] + u[1] * (R + OVERSHOOT)], style: "thin" });
+    }
+    if (R * sweep > 2 * ARROW) {
+      prims.push(arrow([c[0] + R * Math.cos(from), c[1] + R * Math.sin(from)], [Math.sin(from), -Math.cos(from)]));
+      const e = from + sweep;
+      prims.push(arrow([c[0] + R * Math.cos(e), c[1] + R * Math.sin(e)], [-Math.sin(e), Math.cos(e)]));
+    }
+    // The number just outside the middle of the arc, reading across, with the arc sign over it.
+    const m = from + sweep / 2;
+    const u: P2 = [Math.cos(m), Math.sin(m)];
+    const w = textWidth(text, TEXT_SIZE);
+    const reach = R + 1.5 + Math.abs(u[0]) * (w / 2) + Math.abs(u[1]) * (TEXT_SIZE * 0.75 + 1.6) / 2;
+    const centre: P2 = [c[0] + u[0] * reach, c[1] + u[1] * reach];
+    const label: P2 = [centre[0], centre[1] - TEXT_SIZE * 0.375 - 0.4];
+    prims.push({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle" });
+    prims.push(arcSign(label, Math.max(w - 1, 2)));
+    return { prims, label };
+  }
   if (dim.type === "diameter" || dim.type === "radius") {
     // A hole callout: several lines stacked above the leader's shoulder (prefix on the first, suffix on the last).
     const lines = callout?.length ? callout.map((l, i, all) => `${i === 0 ? (dim.prefix ?? "") : ""}${l}${i === all.length - 1 ? (dim.suffix ?? "") : ""}`) : [text];
@@ -358,14 +543,14 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
     const out = Math.max(dim.offset, 2);
     const elbow: P2 = [onCircle[0] + u[0] * out, onCircle[1] + u[1] * out];
     const side = u[0] >= 0 ? 1 : -1;
-    const shoulder = 2 + Math.max(...lines.map((l) => l.length)) * TEXT_SIZE * 0.55;
+    const shoulder = 2 + Math.max(...lines.map((l) => l.length)) * TEXT_SIZE * 0.55 + stackWidth(fit?.stack ?? null);
     const end: P2 = [elbow[0] + side * shoulder, elbow[1]];
     const start: P2 = dim.type === "diameter" ? [c[0] - u[0] * rad, c[1] - u[1] * rad] : c;
     prims.push({ kind: "path", points: [start[0], start[1], elbow[0], elbow[1], end[0], end[1]], style: "thin" });
     prims.push(arrow(onCircle, [-u[0], -u[1]]));
     if (dim.type === "diameter") prims.push(arrow(start, u));
     const label: P2 = [(elbow[0] + end[0]) / 2, elbow[1] + 1];
-    lines.forEach((l, i) => prims.push({ kind: "text", x: label[0], y: label[1] + (lines.length - 1 - i) * TEXT_SIZE * 1.5, text: l, size: TEXT_SIZE, anchor: "middle" }));
+    lines.forEach((l, i) => prims.push(...number({ kind: "text", x: label[0], y: label[1] + (lines.length - 1 - i) * TEXT_SIZE * 1.5, text: l, size: TEXT_SIZE, anchor: "middle" })));
     return { prims, label };
   }
 
@@ -485,8 +670,29 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
   }
   const raise = 1.2 + (offLine ? lift : 0);
   const label: P2 = [mid[0] + up[0] * raise, mid[1] + up[1] * raise];
-  prims.push({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle", ...(angle !== 0 ? { rotate: angle } : {}) });
+  prims.push(...number({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle", ...(angle !== 0 ? { rotate: angle } : {}) }));
   return { prims, label };
+}
+
+/** The arc sign drawn over an arc length's number (centred above `at`, `w` wide). */
+function arcSign(at: P2, w: number): Prim {
+  const pts: number[] = [];
+  const cy = at[1] + TEXT_SIZE * 0.75 + 0.6;
+  for (let i = 0; i <= 10; i++) {
+    const t = Math.PI * (0.15 + 0.7 * (i / 10));
+    pts.push(at[0] - (w / 2) * Math.cos(t) / Math.cos(Math.PI * 0.15), cy + 1.2 * (Math.sin(t) - Math.sin(Math.PI * 0.15)) / (1 - Math.sin(Math.PI * 0.15)));
+  }
+  return { kind: "path", points: pts, style: "thin" };
+}
+
+/** A chamfer's callout: its distance and angle, "1 × 45°" (with the other unit too when asked). */
+export function chamferLabel(dim: Dimension, r: ResolvedDim, style: DimStyle = {}): string {
+  const c = chamferSize(r.a, r.b ?? r.a, dim.along);
+  const places = dim.places ?? style.places;
+  const size = places === undefined ? formatSize(c.distance) : placedLength(c.distance, places);
+  const deg = places === undefined ? Math.round(c.angle * 10) / 10 : placedAngle(c.angle, places);
+  const dual = style.dual ? ` [${lengthNumber(c.distance, lengthUnit() === "in" ? "mm" : "in")}]` : "";
+  return `${dim.prefix ?? ""}${size}${dual} × ${deg}°${dim.suffix ?? ""}`;
 }
 
 /**
@@ -531,6 +737,12 @@ export function dragDimension(
     const p = placeAngle(a, b, cd[0], cd[1], cursor);
     if (p) return p;
   }
+  if (dim.type === "chamfer" && b) {
+    // The leader from the middle of the edge to the pointer.
+    const m: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    return { offset: Math.max(2, Math.round(dist(cursor, m) * 10) / 10), angle: Math.round((Math.atan2(cursor[1] - m[1], cursor[0] - m[0]) * 180) / Math.PI) };
+  }
+  if (dim.type === "arcLength") return { offset: Math.max(2, Math.round((dist(cursor, a) - rad) * 10) / 10) };
   if (dim.type === "diameter" || dim.type === "radius") {
     const angle = (Math.atan2(cursor[1] - a[1], cursor[0] - a[0]) * 180) / Math.PI;
     return { offset: Math.max(2, Math.round((dist(cursor, a) - rad) * 10) / 10), angle: Math.round(angle) };

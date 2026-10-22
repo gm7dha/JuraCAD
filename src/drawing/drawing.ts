@@ -2,8 +2,10 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { Shortening, BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, JuraCADDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
+import type { Shortening, BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingPage, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, JuraCADDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { SECTION_HOSTS, viewKey } from "./sections";
+import { FIRST_PAGE, PAGE_FIELDS } from "./pages";
+import { FITTABLE } from "./dimensions";
 
 const drawingsOf = (doc: JuraCADDocument) => doc.drawings ?? [];
 
@@ -234,6 +236,8 @@ export function parseDrawings(raw: unknown): Drawing[] {
       const rv = (v ?? {}) as Record<string, unknown>;
       if (typeof rv.id !== "string" || typeof rv.kind !== "string") continue;
       const at = Array.isArray(rv.at) && rv.at.length === 2 && rv.at.every(num) ? (rv.at as [number, number]) : undefined;
+      // (A view's own scale; detail views have their enlargement instead.)
+      const own = num(rv.scale) && (rv.scale as number) > 0 && rv.kind !== "detail" ? { scale: Math.min(1000, rv.scale as number) } : {};
       if (rv.kind === "section") {
         let id = typeof rv.section === "string" ? rv.section : null;
         // Drawings saved before sections could be chosen had one section, front to back, at `sectionAt`.
@@ -243,7 +247,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
           id = "A";
         }
         if (!id || !sections.some((s) => s.id === id) || views.some((x) => x.kind === "section" && x.section === id)) continue;
-        views.push({ id: rv.id, kind: "section", section: id, ...(at ? { at } : {}) });
+        views.push({ id: rv.id, kind: "section", section: id, ...(at ? { at } : {}), ...own });
         continue;
       }
       if (rv.kind === "detail") {
@@ -254,7 +258,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       }
       if (!VIEW_KINDS.includes(rv.kind as ViewKind)) continue;
       if (views.some((x) => x.kind === rv.kind)) continue;
-      views.push({ id: rv.id, kind: rv.kind as ViewKind, ...(at ? { at } : {}) });
+      views.push({ id: rv.id, kind: rv.kind as ViewKind, ...(at ? { at } : {}), ...own });
     }
     // Sections without a view are dropped.
     const shownSections = sections.filter((s) => views.some((v) => v.kind === "section" && v.section === s.id));
@@ -319,9 +323,35 @@ export function parseDrawings(raw: unknown): Drawing[] {
       ...(r.dualUnits === true ? { dualUnits: true } : {}),
       ...(r.tangentEdges === false ? { tangentEdges: false } : {}),
       ...parseFit(r.fit),
+      ...(Array.isArray(r.holeTableAt) && r.holeTableAt.length === 2 && r.holeTableAt.every(num) ? { holeTableAt: r.holeTableAt as [number, number] } : {}),
+      ...parsePages(r),
     });
   }
   return out;
+}
+
+/**
+ * A drawing's sheets 2, 3… Each is read the same way as sheet 1 (so the same
+ * checks apply), as a drawing of its own with the shared settings.
+ */
+function parsePages(r: Record<string, unknown>): Pick<Drawing, "pages"> {
+  if (!Array.isArray(r.pages)) return {};
+  const shared: Record<string, unknown> = { ...r };
+  for (const k of [...PAGE_FIELDS, "pages", "sectionAt"]) delete shared[k];
+  const pages: DrawingPage[] = [];
+  for (const raw of (r.pages as unknown[]).slice(0, 50)) {
+    if (!raw || typeof raw !== "object") continue;
+    const p = raw as Record<string, unknown>;
+    if (typeof p.id !== "string" || p.id === FIRST_PAGE || pages.some((x) => x.id === p.id)) continue;
+    const fields: Record<string, unknown> = {};
+    for (const k of PAGE_FIELDS) if (p[k] !== undefined) fields[k] = p[k];
+    const [read] = parseDrawings([{ ...shared, ...fields }]);
+    if (!read) continue;
+    const page: Record<string, unknown> = { id: p.id };
+    for (const k of PAGE_FIELDS) if (read[k] !== undefined) page[k] = read[k];
+    pages.push(page as DrawingPage);
+  }
+  return pages.length ? { pages } : {};
 }
 
 /** A saved Fit to sheet plan (see Drawing.fit). */
@@ -337,7 +367,7 @@ function parseFit(raw: unknown): Pick<Drawing, "fit"> {
 export const PLACES = [0, 1, 2, 3, 4];
 const isPlaces = (v: unknown) => typeof v === "number" && PLACES.includes(v);
 
-const DIM_TYPES = new Set(["horizontal", "vertical", "aligned", "diameter", "radius", "ordinate", "angle"]);
+const DIM_TYPES = new Set(["horizontal", "vertical", "aligned", "diameter", "radius", "ordinate", "angle", "chamfer", "arcLength"]);
 
 function parseDimPoint(raw: unknown): DimPoint | null {
   const p = (raw ?? {}) as Record<string, unknown>;
@@ -363,9 +393,10 @@ function parseDimension(raw: unknown): Dimension | null {
   const a = parseDimPoint(r.a);
   if (!a) return null;
   const type = r.type as Dimension["type"];
-  const round = type === "diameter" || type === "radius";
-  const b = round ? null : parseDimPoint(r.b);
-  if (!round && !b) return null;
+  const round = type === "diameter" || type === "radius" || type === "arcLength";
+  // (An arc length also keeps a point on its arc, to tell it from other arcs round the same centre.)
+  const b = round && type !== "arcLength" ? null : parseDimPoint(r.b);
+  if ((!round || type === "arcLength") && !b) return null;
   if (round && !(num(r.r) && (r.r as number) > 0)) return null;
   if (type === "angle" && !(parseDimPoint(r.c) && parseDimPoint(r.d))) return null;
   return {
@@ -389,7 +420,17 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(type === "angle" ? angleParts(r) : {}),
     ...(isPlaces(r.places) ? { places: r.places as number } : {}),
     ...(r.frame === "basic" || r.frame === "inspection" ? { frame: r.frame } : {}),
+    ...parseLimitsFit(r.limitsFit, type),
+    ...(type === "chamfer" && (r.along === "h" || r.along === "v") ? { along: r.along } : {}),
   };
+}
+
+/** A saved limits-and-fits class ("H7", "g6", "H7/g6"), kept as typed (checked when shown). */
+function parseLimitsFit(raw: unknown, type: Dimension["type"]): Pick<Dimension, "limitsFit"> {
+  if (!raw || typeof raw !== "object" || !FITTABLE.has(type)) return {};
+  const r = raw as Record<string, unknown>;
+  const cls = typeof r.class === "string" ? r.class.replace(/\s+/g, "").slice(0, 12) : "";
+  return cls ? { limitsFit: { class: cls, ...(r.limits === true ? { limits: true as const } : {}) } } : {};
 }
 
 const CHARACTERISTICS = new Set<GdtCharacteristic>([

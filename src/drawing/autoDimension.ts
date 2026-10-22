@@ -127,9 +127,9 @@ interface Row {
 
 /**
  * The dimensions to add to a drawing. `views` are the drawing's view keys,
- * `scale` the sheet scale (paper mm per model mm), `newId` makes ids.
+ * `scale` the sheet scale (paper mm per model mm) — or each view's, for views drawn at their own — `newId` makes ids.
  */
-export function autoDimensions(projections: Projections, views: string[], existing: Dimension[], scale: number, newId: () => string, third = false): Dimension[] {
+export function autoDimensions(projections: Projections, views: string[], existing: Dimension[], scale: number | ((view: string) => number), newId: () => string, third = false): Dimension[] {
   const out: Dimension[] = [];
   const standard = ORDER.filter((k) => views.includes(k) && projections[k]?.bounds);
   if (!standard.length) return out;
@@ -188,7 +188,7 @@ export function autoDimensions(projections: Projections, views: string[], existi
     }
   }
 
-  for (const row of rows) out.push(...baseline(projections[row.view]!, row, existing, scale, newId, third, views));
+  for (const row of rows) out.push(...baseline(projections[row.view]!, row, existing, typeof scale === "function" ? scale(row.view) : scale, newId, third, views));
   out.push(...circleSizes(projections, standard, existing, newId));
   return out;
 }
