@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addFeature, createFeature, emptyDocument, parseDocument } from "../src/model/document";
+import { addFeature, createFeature, emptyDocument, parseDocument, previewOf } from "../src/model/document";
 import { visibleParamKeys } from "../src/model/features";
 import type { Feature, JuraCADDocument } from "../src/model/types";
 import { HOLE_LEAD_IN, holeProfile, holeVolume, type HoleSize } from "../src/model/holes";
@@ -98,7 +98,7 @@ describe("problems in boxes that aren't shown", () => {
 // Round 2: holes, extrude ends, picked directions, skipped copies
 
 describe("round 2 options are saved and opened again", () => {
-  const face = { partId: "p1", ref: { kind: "face" as const, surface: "CYLINDRE", center: [1, 2, 3] as [number, number, number], normal: [0, 0, 1] as [number, number, number] } };
+  const face = { partId: "p1", ref: { kind: "face" as const, surface: "CYLINDRE", center: [1, 2, 3] as [number, number, number], normal: [0, 0, 1] as [number, number, number] }, at: [0, -20, 10] as [number, number, number] };
   const edge = { partId: "p1", ref: { kind: "edge" as const, curve: "LINE", a: [0, 0, 0] as [number, number, number], b: [0, 10, 0] as [number, number, number], mid: [0, 5, 0] as [number, number, number] } };
 
   it("keeps the new extrude ends, the corner picked and the hole's thread options", () => {
@@ -107,7 +107,7 @@ describe("round 2 options are saved and opened again", () => {
     doc = addFeature(doc, box);
     const ends = ["upToNext", "upToVertex", "upToPart", "upToFace"] as const;
     const exs: Feature[] = ends.map((end) => ({ ...createFeature(doc, "extrude"), id: `ex-${end}`, extrude: { end, flip: false, upTo: end === "upToVertex" ? edge : face, ...(end === "upToVertex" ? { upToEnd: "b" as const } : {}) } }));
-    const hole: Feature = { ...createFeature(doc, "hole"), hole: { kind: "simple", standard: "M4", fit: "tapped", end: "upToNext", flip: false, modelThread: true }, params: { ...createFeature(doc, "hole").params, threadDepth: "6" } };
+    const hole: Feature = { ...createFeature(doc, "hole"), hole: { kind: "simple", standard: "M4", fit: "tapped", end: "throughAll", flip: false, modelThread: true, bothWays: true }, params: { ...createFeature(doc, "hole").params, threadDepth: "6" } };
     for (const f of [...exs, hole]) doc = addFeature(doc, f);
     const saved = roundTrip(doc)!;
     const byId = (id: string) => saved.features.find((f) => f.id === id)!;
@@ -234,5 +234,16 @@ describe("hole shapes, round 2", () => {
   it("ends flat (no drill point) when asked, for up to next", () => {
     expect(holeProfile({ ...size, flatBottom: true })).toEqual([[0, -HOLE_LEAD_IN], [2, -HOLE_LEAD_IN], [2, 10], [0, 10]]);
     expect(holeVolume({ ...size, flatBottom: true })).toBeCloseTo(Math.PI * 4 * 10, 9);
+  });
+});
+
+describe("previewing a hole with a modelled thread", () => {
+  it("shows the plain hole while the dialog is open (the thread is cut on Accept)", () => {
+    const doc = emptyDocument();
+    const hole: Feature = { ...createFeature(doc, "hole"), hole: { kind: "simple", standard: "M4", fit: "tapped", end: "blind", flip: false, modelThread: true } };
+    expect(previewOf(hole)?.hole).toEqual({ kind: "simple", standard: "M4", fit: "tapped", end: "blind", flip: false });
+    const plain = createFeature(doc, "box");
+    expect(previewOf(plain)).toBe(plain);
+    expect(previewOf(null)).toBeNull();
   });
 });

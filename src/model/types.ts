@@ -59,15 +59,16 @@ export interface HoleOptions {
   standard: string;
   fit: HoleFit;
   /**
-   * How deep: a set depth, right through (both ways from the sketch, so a
-   * sketch on a middle plane goes through everything), or through the first
-   * wall the drill meets ("upToNext").
+   * How deep: a set depth, right through (one way; `bothWays` for both), or
+   * through the first wall the drill meets ("upToNext").
    */
   end: "blind" | "throughAll" | "upToNext";
   /** Drill out of the face instead of into it. */
   flip: boolean;
   /** Tapped holes: cut a real helical thread into the wall (for 3D printing) instead of just the tap-drill hole. */
   modelThread?: boolean;
+  /** Through all: drill both ways from the sketch (for a sketch on a plane inside the part). Off: one way, as Onshape. */
+  bothWays?: boolean;
 }
 
 /** A STEP or STL file brought in from another program, kept inside the design. */

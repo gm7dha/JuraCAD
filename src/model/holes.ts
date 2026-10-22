@@ -71,6 +71,13 @@ export interface HoleSize {
   backLength?: number;
   /** End flat at `depth` instead of with a drill point (up to next: the drill breaks through there). */
   flatBottom?: boolean;
+  /**
+   * Tapped holes with the thread modelled: an ISO groove of this pitch round
+   * the wall, centred from `from` to `to` mm along the drill (the hole's
+   * radius is the tap drill's).
+   */
+  thread?: { from: number; to: number; pitch: number };
+  /** Where the straight (full-diameter) part of the hole starts, below any counterbore or countersink. */
   cboreDiameter: number;
   cboreDepth: number;
   cskDiameter: number;
@@ -142,4 +149,11 @@ export function holeVolume(h: HoleSize): number {
     v += (Math.PI * dt * (r1 * r1 + r1 * r2 + r2 * r2)) / 3; // frustum
   }
   return v;
+}
+
+/** How far down the drill the straight, full-diameter part of a hole starts (below a counterbore or countersink). */
+export function straightStart(h: HoleSize): number {
+  if (h.kind === "counterbore") return h.cboreDepth;
+  if (h.kind === "countersink") return (h.cskDiameter / 2 - h.diameter / 2) / Math.tan(((h.cskAngle / 2) * Math.PI) / 180);
+  return 0;
 }

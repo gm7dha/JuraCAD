@@ -11,8 +11,9 @@ import { analyzeMesh } from "../src/geometry/meshCheck";
 import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
-import { addPoint, addRectangle } from "../src/sketch/ops";
+import { addCircle, addPoint, addRectangle } from "../src/sketch/ops";
 import { grooveVolume } from "../src/kernel/thread";
+import { HOLE_LEAD_IN } from "../src/model/holes";
 import type { HoleOptions } from "../src/model/types";
 import type { SketchPlane } from "../src/sketch/planes";
 import { emptySketch, type SketchData } from "../src/sketch/types";
@@ -439,14 +440,30 @@ const hollowBox = () => [feature("box", { width: 40, depth: 40, height: 30 }), f
 const HOLLOW = 40 * 40 * 30 - 30 * 30 * 10;
 
 describe("holes, round 2", () => {
-  it("drills through all both ways from a sketch on a plane inside the part", () => {
+  it("drills through all one way from the sketch (as in Onshape), the other way with Flip, or both ways if asked", () => {
     const block = feature("box", { width: 20, depth: 20, height: 20, z: -10 });
     const sk = sketchFeature({ kind: "default", name: "Top" }, points([10, 10]));
-    const r = build([block, sk, holeFeature(sk.id, { diameter: 4 }, { end: "throughAll" })]);
+    const hole = holeFeature(sk.id, { diameter: 4 }, { end: "throughAll" });
+    expect(build([block, sk, hole]).featureErrors).toEqual({});
+    // Down from the Top plane only, as it always has (starting a whisker above it, to cut cleanly from a face).
+    const oneWay = 8000 - Math.PI * 4 * (10 + HOLE_LEAD_IN);
+    expect(volumes()[0]).toBeCloseTo(oneWay, 3);
+    expect(boundsOf(build([block, sk, { ...hole, hole: { ...hole.hole!, flip: true } }])).max[2]).toBeCloseTo(10, 3);
+    expect(volumes()[0]).toBeCloseTo(oneWay, 3);
+    // Both ways: right through, top to bottom.
+    const r = build([block, sk, { ...hole, hole: { ...hole.hole!, bothWays: true } }]);
     expect(r.featureErrors).toEqual({});
-    // Right through, top to bottom (it used to stop at the Top plane).
     expect(volumes()[0]).toBeCloseTo(8000 - Math.PI * 4 * 20, 3);
     expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+  });
+
+  it("keeps through-all holes one way, so a bridge above the sketch isn't drilled", () => {
+    // A slot floor at z = 10 with a bridge across above it (z 20..25): the hole drills the floor only.
+    const block = feature("box", { width: 30, depth: 20, height: 25 });
+    const slot = feature("box", { width: 30, depth: 20, height: 10, z: 10 }, "remove");
+    const sk = sketchFeature(faceAt(10), points([15, 10]));
+    build([block, slot, sk, holeFeature(sk.id, { diameter: 4 }, { end: "throughAll" })]);
+    expect(volumes()[0]).toBeCloseTo(30 * 20 * 15 - Math.PI * 4 * 10, 3);
   });
 
   it("drills through all from a top face just as before (counterbored too)", () => {
@@ -523,6 +540,81 @@ describe("holes, round 2", () => {
   });
 });
 
+describe("modelled threads, round 2 review", () => {
+  it("threads only the wall an up-to-next hole drills, not the walls past it", () => {
+    const sk = sketchFeature(faceAt(30), points([20, 20]));
+    const plain = holeFeature(sk.id, { diameter: 3.3 }, { standard: "M4", fit: "tapped", end: "upToNext" });
+    build([...hollowBox(), sk, plain]);
+    const drilled = volumes()[0];
+    expect(drilled).toBeCloseTo(HOLLOW - Math.PI * 1.65 * 1.65 * 10, 3);
+    const r = build([...hollowBox(), sk, { ...plain, hole: { ...plain.hole!, modelThread: true } }]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    // One 10 mm wall's worth of groove (the bottom wall is untouched).
+    const oneWall = grooveVolume({ origin: [20, 20, 30], axis: [0, 0, -1], radius: 1.65 }, 0.7, false, -0.7, 10.7, 0, 10);
+    expect(drilled - volumes()[0]).toBeCloseTo(oneWall, 0);
+    expect(Math.abs(drilled - volumes()[0] - oneWall)).toBeLessThan(0.05 * oneWall);
+  });
+
+  it("threads a both-ways hole from a middle plane right through, top and bottom", () => {
+    const block = feature("box", { width: 20, depth: 20, height: 12, z: -6 });
+    const sk = sketchFeature({ kind: "default", name: "Top" }, points([10, 10]));
+    const plain = holeFeature(sk.id, { diameter: 2.5 }, { standard: "M3", fit: "tapped", end: "throughAll", bothWays: true });
+    build([block, sk, plain]);
+    const drilled = volumes()[0];
+    expect(drilled).toBeCloseTo(4800 - Math.PI * 1.25 * 1.25 * 12, 3);
+    const r = build([block, sk, { ...plain, hole: { ...plain.hole!, modelThread: true } }]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    const full = grooveVolume({ origin: [10, 10, 6], axis: [0, 0, -1], radius: 1.25 }, 0.5, false, -0.5, 12.5, 0, 12);
+    expect(Math.abs(drilled - volumes()[0] - full)).toBeLessThan(0.05 * full);
+  });
+
+  it("measures the thread depth from where the hole goes into the part", () => {
+    // The sketch is 5 mm above the block: a 4 mm thread still runs 4 mm into the block.
+    const block = feature("box", { width: 20, depth: 20, height: 10 });
+    const sk = sketchFeature(faceAt(15), points([10, 10]));
+    const plain = holeFeature(sk.id, { diameter: 2.5, threadDepth: 4 }, { standard: "M3", fit: "tapped", end: "throughAll" });
+    build([block, sk, plain]);
+    const drilled = volumes()[0];
+    build([block, sk, { ...plain, hole: { ...plain.hole!, modelThread: true } }]);
+    const fourMm = grooveVolume({ origin: [10, 10, 10], axis: [0, 0, -1], radius: 1.25 }, 0.5, false, -0.5, 4, 0, 4);
+    expect(Math.abs(drilled - volumes()[0] - fourMm)).toBeLessThan(0.1 * fourMm);
+  });
+
+  it("copies the thread along with the hole in a pattern", () => {
+    const plate = feature("box", { width: 30, depth: 20, height: 6 });
+    const sk = sketchFeature(faceAt(6), points([5, 10]));
+    const plain = holeFeature(sk.id, { diameter: 2.5 }, { standard: "M3", fit: "tapped", end: "throughAll" });
+    const threaded = { ...plain, hole: { ...plain.hole!, modelThread: true } };
+    const row: Feature = { ...feature("linearPattern", { count: 2, spacing: 15 }, "add"), pattern: { sources: [plain.id], axis: "x", flip: false } };
+    build([plate, sk, plain, row]);
+    const drilled = volumes()[0];
+    build([plate, sk, threaded]);
+    const one = 3600 - Math.PI * 1.25 * 1.25 * 6 - volumes()[0];
+    const r = build([plate, sk, threaded, row]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    expect(drilled - volumes()[0]).toBeCloseTo(2 * one, 2);
+  });
+
+  it("cuts a single M4 thread through a 10 mm plate in a few seconds, and reuses it", () => {
+    const plate = feature("box", { width: 30, depth: 20, height: 10 });
+    const sk = sketchFeature(faceAt(10), points([10, 10]));
+    const hole = holeFeature(sk.id, { diameter: 3.3 }, { standard: "M4", fit: "tapped", end: "throughAll", modelThread: true });
+    engine = new GeometryEngine();
+    let t = Date.now();
+    expect(engine.rebuild([plate, sk, hole]).featureErrors).toEqual({});
+    expect(Date.now() - t).toBeLessThan(10_000);
+    const first = engine.check("normal").parts[0].exactVolume!;
+    // Something added after it: the threaded hole isn't cut again.
+    t = Date.now();
+    engine.rebuild([plate, sk, hole, feature("box", { width: 5, depth: 5, height: 5, x: 25, z: 10 }, "add")]);
+    expect(Date.now() - t).toBeLessThan(2_000);
+    expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(first + 125, 3);
+  });
+});
+
 describe("extrude ends, round 2", () => {
   const extrude = (sketchRef: string, params: Record<string, number>, ex: Feature["extrude"], op: Operation = "new"): Feature => ({ ...feature("extrude", params, op), sketchRef, extrude: ex });
 
@@ -541,6 +633,56 @@ describe("extrude ends, round 2", () => {
     const r = build([...hollowBox(), sk, extrude(sk.id, {}, { end: "upToNext", flip: true }, "remove")]);
     expect(r.featureErrors).toEqual({});
     expect(volumes()[0]).toBeCloseTo(HOLLOW - 1000, 3);
+  });
+
+  it("up to next stops under a shelf and doesn't fill the space above it", () => {
+    // A shelf over half the sketch (x 0..15 at z 20..25) and a roof over all of it (z 40).
+    const base = feature("box", { width: 40, depth: 40, height: 10 });
+    const shelf = feature("box", { width: 15, depth: 40, height: 5, z: 20 });
+    const roof = feature("box", { width: 40, depth: 40, height: 5, z: 40 });
+    const sk = sketchFeature(faceAt(10), rect(10, 10, 10, 10));
+    const ex = extrude(sk.id, {}, { end: "upToNext", flip: false });
+    const r = build([base, shelf, roof, sk, ex]);
+    expect(r.featureErrors).toEqual({});
+    // x 10..15 stops at the shelf (10 tall), x 15..20 at the roof (30 tall).
+    expect(volumes()[3]).toBeCloseTo(5 * 10 * 10 + 5 * 10 * 30, 3);
+  });
+
+  it("up to next cuts only the first stretch of material under each part of the sketch", () => {
+    // A 40 × 40 × 20 block with a step taken out (x 20..40, z 10..20).
+    const block = feature("box", { width: 40, depth: 40, height: 20 });
+    const step = feature("box", { width: 20, depth: 40, height: 10, x: 20, z: 10 }, "remove");
+    const sk = sketchFeature(faceAt(20), rect(10, 10, 20, 10));
+    const r = build([block, step, sk, extrude(sk.id, {}, { end: "upToNext", flip: true }, "remove")]);
+    expect(r.featureErrors).toEqual({});
+    // x 10..20 starts in the block and cuts right down (2000); x 20..30 starts over the step, in the open: nothing.
+    expect(volumes()[0]).toBeCloseTo(32000 - 8000 - 2000, 3);
+  });
+
+  it("up to next stops on a round bar lying across the sketch", () => {
+    // A bar (Ø10, along Y) at x = 15, z = 30; the sketch (x 10..20) is right under it.
+    const base = feature("box", { width: 40, depth: 40, height: 10 });
+    const bar: Feature = { ...feature("extrude", {}), sketchRef: "bar-sk", extrude: { end: "symmetric", flip: false } };
+    const barSketch: Feature = { ...sketchFeature({ kind: "default", name: "Front" }, emptySketch()), id: "bar-sk" };
+    const front = { kind: "face" as const, origin: [0, 0, 0] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, 0, 1] as [number, number, number], label: "front" };
+    barSketch.sketch = { plane: front, data: addCircle(emptySketch(), { x: 15, y: 30 }, 5).sketch };
+    bar.params = { ...bar.params, depth: "100" };
+    const sk = sketchFeature(faceAt(10), rect(10, 10, 10, 10));
+    const ex = extrude(sk.id, {}, { end: "upToNext", flip: false });
+    const r = build([base, barSketch, bar, sk, ex]);
+    expect(r.featureErrors).toEqual({});
+    // Up to the underside of the bar: z = 30 − √(25 − (x − 15)²), for x from 10 to 15 to 20, 10 deep.
+    const underBar = 10 * (20 * 10 - (Math.PI * 25) / 2);
+    expect(volumes()[2]).toBeCloseTo(underBar, 2);
+  });
+
+  it("says so when a Remove extrude cuts nothing", () => {
+    const block = feature("box", { width: 20, depth: 20, height: 10 });
+    const sk = sketchFeature(faceAt(10), rect(5, 5, 5, 5));
+    // Going up, away from the block.
+    const ex = extrude(sk.id, { depth: 5 }, { end: "blind", flip: false }, "remove");
+    expect(build([block, sk, ex]).featureErrors[ex.id]).toMatch(/doesn't cut anything from Part 1.*Flip/);
+    expect(volumes()[0]).toBeCloseTo(4000, 3);
   });
 
   it("up to next says when nothing stops it", () => {
@@ -605,6 +747,24 @@ describe("extrude ends, round 2", () => {
     expect(volumes()[1]).toBeCloseTo(100 * (50 - 5 - 5 / Math.cos(theta)), 3);
     // A draft needs a face parallel to the sketch.
     expect(build([slab, tilt, sk, { ...ex, params: { ...ex.params, draft: "3" } }]).featureErrors[ex.id]).toMatch(/Set the draft to 0/);
+  });
+
+  it("tells the inside and outside of a pipe apart by where the face was clicked", () => {
+    const pipe = feature("cylinder", { diameter: 60, height: 20 });
+    const bore = feature("cylinder", { diameter: 40, height: 20 }, "remove");
+    const plane: SketchPlane = { kind: "face", origin: [0, -50, 0], u: [0, 0, 1], v: [1, 0, 0], label: "front" };
+    const sk = sketchFeature(plane, rect(5, -1, 10, 2));
+    const first = build([pipe, bore]);
+    const rounds = first.parts[0].faceRefs.filter((f) => f.surface === "CYLINDRE");
+    expect(rounds).toHaveLength(2);
+    // Both round faces are described the same way (same axis, same centre): only the click point tells them apart.
+    const under = (r: number) => 2 * (0.5 * Math.sqrt(r * r - 1) + ((r * r) / 2) * Math.asin(1 / r));
+    for (const [at, r] of [[[0, -20, 10], 20], [[0, -30, 10], 30]] as [[number, number, number], number][]) {
+      const ex = extrude(sk.id, {}, { end: "upToFace", flip: false, upTo: { partId: first.parts[0].id, ref: rounds[0], at } });
+      const built = build([pipe, bore, sk, ex]);
+      expect(built.featureErrors).toEqual({});
+      expect(volumes()[1]).toBeCloseTo(10 * (2 * 50 - under(r)), 3);
+    }
   });
 
   it("extrudes up to a curved (round) face", () => {

@@ -959,7 +959,7 @@ function HoleOptions() {
           ["tapped", "Tapped", "Drill size for cutting a thread — the screw screws into the part"],
         ], (fit) => update({ fit }))}
       {seg("Depth", h.end, [
-        ["throughAll", "Through all", "Right through every part, both ways from the sketch"],
+        ["throughAll", "Through all", "Right through the part, one way from the sketch (Flip direction for the other way)"],
         ["upToNext", "Up to next", "Through the first wall the drill meets, and no further"],
         ["blind", "To a depth", "Stops at a set depth, with a drill point at the bottom"],
       ], (end) => update({ end }))}
@@ -967,6 +967,12 @@ function HoleOptions() {
         <input type="checkbox" checked={h.flip} onChange={(e) => update({ flip: e.target.checked })} />
         Flip direction
       </label>
+      {h.end === "throughAll" && (
+        <label className="check-row" title="For a sketch on a plane inside the part: drill out both sides of it">
+          <input type="checkbox" checked={!!h.bothWays} onChange={(e) => update({ bothWays: e.target.checked || undefined })} />
+          Both ways from the sketch
+        </label>
+      )}
       {h.fit === "tapped" && h.standard !== "Custom" && (
         <>
           <label className="check-row" title="Cut a real screw thread into the hole's wall, so a screw can go straight in — handy for 3D printing">
@@ -975,9 +981,10 @@ function HoleOptions() {
           </label>
           {h.modelThread && (
             <p className="dialog-hint field-hint">
-              Cuts a real helical {h.standard} thread (60°, standard pitch) into the wall. It can take a few seconds per hole to build. Threads smaller than
-              M3 rarely print well; if a printed thread is tight, run a tap through it. Patterns and mirrors of this hole copy the hole but not its thread —
-              put all the points in this hole&apos;s sketch instead.
+              Cuts a real helical {h.standard} thread (60°, standard pitch) into the wall. While this box is open the preview shows the plain hole; the
+              thread is cut when you press Accept. That takes a few seconds for each new thread size and length (about a quarter of a second a turn —
+              longer for deep holes); holes the same size share the work, and later edits reuse it. Threads smaller than M3 rarely print well; if a printed
+              thread is tight, run a tap through it. The thread depth is measured from where the hole goes into the part.
             </p>
           )}
         </>

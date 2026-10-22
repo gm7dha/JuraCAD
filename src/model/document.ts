@@ -220,6 +220,16 @@ export function insertFeatureAfter(doc: JuraCADDocument, feature: Feature, after
   return { ...doc, features: [...doc.features.slice(0, at + 1), feature, ...doc.features.slice(at + 1)] };
 }
 
+/**
+ * A feature being edited, as previewed: a hole's modelled thread takes seconds
+ * to cut, so the preview shows the plain hole and the thread is cut on Accept.
+ */
+export function previewOf(draft: Feature | null): Feature | null {
+  if (!draft?.hole?.modelThread) return draft;
+  const { modelThread: _m, ...hole } = draft.hole;
+  return { ...draft, hole };
+}
+
 export function featuresWithDraft(features: Feature[], draft: Feature | null): Feature[] {
   if (!draft) return features;
   return features.some((f) => f.id === draft.id)
@@ -411,6 +421,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         end: h.end === "blind" || h.end === "upToNext" ? h.end : "throughAll",
         flip: h.flip === true,
         ...(h.modelThread === true ? { modelThread: true } : {}),
+        ...(h.bothWays === true ? { bothWays: true } : {}),
       };
     }
     if (feature.type === "sweep") {

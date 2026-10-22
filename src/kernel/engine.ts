@@ -7,18 +7,18 @@ import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, mak
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
-import { matchRefs, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { matchRefs, refDistance, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame, toWorld } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
-import { setCurrentScope } from "../model/expr";
+import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
 import { centreRevolve, revolveSketch } from "./revolve";
-import { holeAxes, holeTool } from "./hole";
-import { HOLE_LEAD_IN, SCREW_SIZES, type HoleSize } from "../model/holes";
+import { holeTool, type ThreadedHoleCache } from "./hole";
+import { HOLE_LEAD_IN, SCREW_SIZES, straightStart, type HoleSize } from "../model/holes";
 import { copyNumber, isSkipped } from "../model/patterns";
-import { materialRuns, upToFaceSolid, upToPartsSolid } from "./upTo";
+import { materialRuns, shapeDistance, upToFaceSolid, upToPartsSolid } from "./upTo";
 import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
@@ -791,6 +791,30 @@ function findPickedFaces(shape: Shape3D, picks: TopoPick[]): Face[] {
 }
 
 /**
+ * One picked face, found on the part as it is now. When several faces look
+ * just the same (the inside and outside of a pipe share an axis and centre),
+ * the one nearest where it was clicked is taken.
+ */
+function findPickedFace(shape: Shape3D, pick: TopoPick): Face {
+  if (!pick.at) return findPickedFaces(shape, [pick])[0];
+  const faces = facesOf(shape);
+  const bounds = boundsOf(shape);
+  const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+  const gaps = faces.map((f) => refDistance(pick.ref, faceRefOf(f, bounds), size));
+  const best = Math.min(...gaps);
+  const near = faces.filter((_, i) => gaps[i] <= best + 1e-6 && Number.isFinite(best) && best <= Math.max(1, 0.3 * size));
+  if (near.length <= 1) {
+    faces.forEach((f) => f.delete());
+    return findPickedFaces(shape, [pick])[0];
+  }
+  const point = makeVertex(pick.at);
+  const chosen = near.map((f) => ({ f, d: shapeDistance(point, f) })).sort((a, b) => a.d - b.d)[0].f;
+  point.delete();
+  faces.forEach((f) => f !== chosen && f.delete());
+  return chosen;
+}
+
+/**
  * A chamfer that isn't the same both ways: `first` mm along one face and
  * `second` mm along the other ("twoDistances"), or `first` mm along one face at
  * `second` degrees ("distanceAngle"). The first distance runs along the face
@@ -1088,7 +1112,7 @@ function reach(plane: Parameters<typeof planeFrame>[0], parts: BuiltPart[]): num
   return far;
 }
 
-function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[]): Shape3D {
+function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], threaded?: ThreadedHoleCache): Shape3D {
   switch (feature.type) {
     case "extrude":
     case "revolve": {
@@ -1142,7 +1166,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         if (!opts.upTo || opts.upTo.ref.kind !== "face") throw new Error("Click the face to extrude up to.");
         const part = parts.find((p) => p.id === opts.upTo!.partId);
         if (!part) throw new Error("The part with the face to extrude up to has gone. Edit this extrude and pick another face.");
-        const [face] = findPickedFaces(part.shape, [opts.upTo]);
+        const face = findPickedFace(part.shape, opts.upTo);
         try {
           const centre = take(face.center);
           if (face.geomType === "PLANE") {
@@ -1371,42 +1395,63 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       }
       const through = h.end === "throughAll";
       const span = 2 * reach(sketch.sketch.plane, parts) + 2;
+      const back = through && h.bothWays ? span : 0;
       const size: HoleSize = {
         kind: h.kind,
         diameter: v.diameter,
         depth: v.depth,
         throughAll: through,
         throughLength: through ? span : 0,
-        // Through all goes both ways from the sketch, so a sketch on a plane inside the part drills right through.
-        backLength: through ? span : 0,
+        // Through all, both ways (if asked): also back the other way, so a sketch inside the part drills right through.
+        ...(back ? { backLength: back } : {}),
         cboreDiameter: v.cboreDiameter,
         cboreDepth: v.cboreDepth,
         cskDiameter: v.cskDiameter,
         cskAngle: v.cskAngle,
       };
-      const tapped = h.fit === "tapped" && SCREW_SIZES.some((x) => x.name === h.standard);
-      if (tapped && h.end === "blind" && v.threadDepth > v.depth + 1e-9) {
+      const screw = h.fit === "tapped" ? SCREW_SIZES.find((x) => x.name === h.standard) : undefined;
+      if (screw && h.end === "blind" && v.threadDepth > v.depth + 1e-9) {
         throw new Error(`The thread (${fmt(v.threadDepth)} mm) is deeper than the hole (${fmt(v.depth)} mm). Make the thread depth smaller, or the hole deeper.`);
       }
-      if (h.end !== "upToNext") return holeTool(sketch.sketch.plane, sketch.sketch.data, size, h.flip);
-      // Up to next: each hole drills through the first wall it meets (passing over any gap before it).
       const target = [...parts].reverse().find((p) => !p.surface);
-      if (!target) throw new Error("There's no part to drill into yet. Make a part first.");
-      return holeTool(
-        sketch.sketch.plane,
-        sketch.sketch.data,
-        (at, dir) => {
-          const runs = materialRuns(target.shape, at, dir, v.diameter / 2, span);
-          if (runs.length === 0) {
-            throw new Error(`The hole at (${at.map(fmt).join(", ")}) doesn't meet the part going that way. Tick Flip direction, or move the point onto the part.`);
-          }
-          const [, exit] = runs[0];
-          // Just past the far side so the drill breaks through cleanly, but not into anything beyond.
-          const gap = runs[1] ? runs[1][0] - exit : Infinity;
-          return { ...size, depth: exit + Math.min(HOLE_LEAD_IN, gap / 2), flatBottom: true };
-        },
-        h.flip,
-      );
+      if (h.end === "upToNext" && !target) throw new Error("There's no part to drill into yet. Make a part first.");
+      /** This hole's depth (up to next: through the first wall the drill meets, passing over any gap before it). */
+      const drilled = (at: Vec3, dir: Vec3): HoleSize => {
+        if (h.end !== "upToNext") return size;
+        const runs = materialRuns(target!.shape, at, dir, v.diameter / 2, span);
+        if (runs.length === 0) {
+          throw new Error(`The hole at (${at.map(fmt).join(", ")}) doesn't meet the part going that way. Tick Flip direction, or move the point onto the part.`);
+        }
+        const [, exit] = runs[0];
+        // Just past the far side so the drill breaks through cleanly, but not into anything beyond.
+        const gap = runs[1] ? runs[1][0] - exit : Infinity;
+        // (A modelled thread runs out past the far side: the drill goes a little further too, so they end cleanly together.)
+        const past = h.modelThread && screw ? 2 * screw.pitch : HOLE_LEAD_IN;
+        return { ...size, depth: exit + Math.min(past, gap / 2), flatBottom: true };
+      };
+      /**
+       * Modelled thread (for 3D printing): from where the drill enters the part (below any counterbore), down the
+       * thread depth (0: as far as the hole goes in the part), out past the far side where it comes out.
+       */
+      const withThread = (at: Vec3, dir: Vec3, hole: HoleSize): HoleSize => {
+        if (!h.modelThread || !screw || !target) return hole;
+        const pitch = screw.pitch;
+        const end = h.end === "blind" ? v.depth : h.end === "upToNext" ? hole.depth : span;
+        const start: Vec3 = [at[0] - dir[0] * back, at[1] - dir[1] * back, at[2] - dir[2] * back];
+        const runs = materialRuns(target.shape, start, dir, v.diameter / 2, end + back).map(([a, b]): [number, number] => [a - back, b - back]);
+        if (runs.length === 0) return hole;
+        // Below a counterbore or countersink (a plain hole can start anywhere, even behind the sketch when both ways).
+        const first = hole.kind === "simple" ? runs[0][0] : Math.max(runs[0][0], straightStart(hole));
+        let stop = v.threadDepth > 0 ? runs[0][0] + v.threadDepth : Infinity;
+        if (h.end === "blind") stop = Math.min(stop, v.depth - pitch / 2);
+        const reached = runs.filter(([a]) => a < stop);
+        const last = Math.max(...reached.map(([, b]) => b));
+        const comesOut = last < stop && last < end - 1e-6;
+        const to = comesOut ? last + pitch : Math.min(stop, last);
+        if (to - first < pitch) throw new Error("The thread would be less than one turn long. Make the thread depth (or the hole) deeper, or untick Model the thread.");
+        return { ...hole, thread: { from: first - pitch, to, pitch } };
+      };
+      return holeTool(sketch.sketch.plane, sketch.sketch.data, (at, dir) => withThread(at, dir, drilled(at, dir)), h.flip, threaded);
     }
     case "transform":
     case "sketch":
@@ -1485,6 +1530,10 @@ interface StudioBuild {
 }
 
 export class GeometryEngine {
+  /** Threaded holes already made (see hole.ts), kept between rebuilds. */
+  private threadedHoles: ThreadedHoleCache = new Map();
+  /** The part just after a hole with modelled threads, by everything that went into it (see the rebuild loop). */
+  private threadedResults = new Map<string, { shape: Shape3D; tool: Shape3D }>();
   /** Every part of every Part Studio (for exports, checks and measuring). */
   private parts: BuiltPart[] = [];
   /** While a Part Studio is being built: the solids its features added or cut. */
@@ -1784,7 +1833,7 @@ export class GeometryEngine {
           continue;
         }
         try {
-          const skin = buildSolid(feature, values, sketches, features, this.parts);
+          const skin = buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles);
           surfaceCounter++;
           this.tools.set(feature.id, { shape: skin.clone(), operation: "new", partId: feature.id });
           this.parts.push({ id: feature.id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true });
@@ -1806,9 +1855,24 @@ export class GeometryEngine {
         continue;
       }
 
+      // A hole with modelled threads is slow to cut: reuse the result while nothing before it (or it) has changed.
+      const at = features.indexOf(feature);
+      const threadKey =
+        feature.type === "hole" && feature.hole?.modelThread && target && !target.sheet && !features.slice(0, at).some((f) => f.type === "derived")
+          ? JSON.stringify([getCurrentScope(), features.slice(0, at + 1)])
+          : null;
+      const done = threadKey ? this.threadedResults.get(threadKey) : undefined;
+      if (done && target) {
+        target.shape.delete();
+        target.shape = done.shape.clone();
+        target.featureIds.push(feature.id);
+        this.tools.set(feature.id, { shape: done.tool.clone(), operation: "remove", partId: target.id });
+        continue;
+      }
+
       let tool: Shape3D;
       try {
-        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts);
+        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles);
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;
@@ -1854,14 +1918,24 @@ export class GeometryEngine {
           result.delete();
           throw new Error(feature.operation === "intersect" ? "This doesn't overlap the part, so nothing would be left." : "This would remove the whole part.");
         }
+        // An extrude cutting nothing is almost always a mistake: Remove only cuts the latest part.
+        if (feature.type === "extrude" && feature.operation === "remove" && Math.abs(measureVolume(target.shape) - measureVolume(result)) < 1e-9) {
+          result.delete();
+          throw new Error(`This doesn't cut anything from ${target.name} (Remove cuts the latest part). Check the direction (Flip), the depth and where the sketch is.`);
+        }
         target.shape.delete();
         target.shape = result;
         target.featureIds.push(feature.id);
         this.tools.set(feature.id, { shape: tool.clone(), operation: feature.operation, partId: target.id });
         if (target.sheet && feature.operation === "remove") this.traceSheetCut(target, feature.id, tool);
-        if (feature.type === "hole" && feature.hole?.modelThread) {
-          const err = this.cutHoleThreads(feature, target, values, sketches);
-          if (err) featureErrors[feature.id] = err;
+        if (threadKey) {
+          this.threadedResults.set(threadKey, { shape: result.clone(), tool: tool.clone() });
+          for (const [k, old] of this.threadedResults) {
+            if (this.threadedResults.size <= 6) break;
+            old.shape.delete();
+            old.tool.delete();
+            this.threadedResults.delete(k);
+          }
         }
       } catch (e) {
         featureErrors[feature.id] = describeError(
@@ -2506,57 +2580,6 @@ export class GeometryEngine {
       return describeError(e, "Couldn't cut the thread.");
     } finally {
       faces.forEach((f) => f.delete());
-    }
-  }
-
-  /**
-   * A tapped hole's thread, modelled for 3D printing: an ISO metric groove cut
-   * in a helix round the wall of each hole (just drilled into `part`), from
-   * the top down to the thread depth (0: the whole hole), through each wall
-   * it passes. Returns an error message, or null.
-   */
-  private cutHoleThreads(feature: Feature, part: BuiltPart, v: Record<string, number>, sketches: SketchMap): string | null {
-    const h = feature.hole!;
-    const screw = SCREW_SIZES.find((x) => x.name === h.standard);
-    // Only tapped holes of a standard size have a thread (the tick box is hidden otherwise).
-    if (h.fit !== "tapped" || !screw || !h.sketchRef) return null;
-    const plane = sketches.get(h.sketchRef)?.sketch?.plane;
-    const data = sketches.get(h.sketchRef)?.sketch?.data;
-    if (!plane || !data) return null;
-    const pitch = screw.pitch;
-    const R = v.diameter / 2;
-    const span = 2 * reach(plane, this.parts) + 2;
-    let shape = part.shape;
-    try {
-      for (const { at, dir } of holeAxes(plane, data, h.flip)) {
-        // Blind holes: the thread stops half a pitch above the bottom, where the drill point starts.
-        const probe = h.end === "blind" ? v.depth : span;
-        const stop = Math.min(v.threadDepth > 0 ? v.threadDepth : Infinity, h.end === "blind" ? v.depth - pitch / 2 : Infinity);
-        // The walls round the hole: material just outside it, stretch by stretch along it.
-        const runs = materialRuns(shape, at, dir, R + 0.3 * pitch, probe);
-        const cyl: Cylinder = { origin: at, axis: dir, radius: R };
-        for (const [a, b] of runs) {
-          if (a >= stop) break;
-          const hi = Math.min(b, stop);
-          if (hi - a < pitch) continue;
-          // On a whole-pitch grid from the top, so a thread through several walls lines up for one screw.
-          const from = Math.floor(a / pitch) * pitch - pitch;
-          // Out past the far side when the wall ends before the thread does; otherwise it stops where asked.
-          const comesOut = b < stop && b < probe - 1e-6;
-          const next = cutThread(shape, cyl, from, comesOut ? b + pitch : hi, a, hi, pitch, false);
-          if (shape !== part.shape) shape.delete();
-          shape = next;
-        }
-      }
-      if (shape === part.shape) return "There's no wall at least one thread-pitch long to cut the thread into. Make the hole or thread deeper.";
-      if (!isValidSolid(shape)) throw new Error("bad");
-      part.shape.delete();
-      part.shape = shape;
-      return null;
-    } catch (e) {
-      if (shape !== part.shape) shape.delete();
-      const why = e instanceof Error && e.message && e.message !== "bad" ? ` — ${e.message.replace(/\.$/, "")}` : "";
-      return `The hole is drilled, but its thread couldn't be cut cleanly${why}. Untick "Model the thread", or try a different depth.`;
     }
   }
 
@@ -3979,6 +4002,10 @@ export class GeometryEngine {
 
   dispose(): void {
     this.disposeParts();
+    this.threadedHoles.forEach((s) => s.delete());
+    this.threadedHoles.clear();
+    this.threadedResults.forEach((r) => (r.shape.delete(), r.tool.delete()));
+    this.threadedResults.clear();
   }
 
   private meshPart(p: BuiltPart): PartMesh {

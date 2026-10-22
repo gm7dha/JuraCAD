@@ -196,7 +196,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       const at = target.point ?? pick.ref.mid;
       const gap = (p: [number, number, number]) => Math.hypot(p[0] - at[0], p[1] - at[1], p[2] - at[2]);
       s.setDraftField({ extrude: { ...ex, upTo: pick, upToEnd: gap(pick.ref.a) <= gap(pick.ref.b) ? "a" : "b" } });
-    } else s.setDraftField({ extrude: { ...ex, upTo: pick } });
+    } else s.setDraftField({ extrude: { ...ex, upTo: target.point ? { ...pick, at: target.point } : pick } });
     return;
   }
   // Choosing the part to move.

@@ -4,9 +4,9 @@
  * long extrude is cut up by what it should stop at (the face, or the parts),
  * and only the piece that starts at the sketch is kept.
  */
-import { cast, getOC, makeCylinder, type Face, type Shape3D } from "replicad";
+import { cast, getOC, makeCompound, makeCylinder, type Face, type Shape3D } from "replicad";
 
-import { solidsOf } from "./topology";
+import { facesOf, solidsOf } from "./topology";
 
 type Vec3 = [number, number, number];
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -179,27 +179,156 @@ function splitWith(shape: Shape3D, tool: Face): Shape3D {
   }
 }
 
+/** Which way a face faces along `n`: -1 towards the sketch, 1 away, 0 side-on, null if it curves both ways. */
+function facing(face: Face, n: Vec3): -1 | 0 | 1 | null {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i <= 4; i++) {
+    for (let j = 0; j <= 4; j++) {
+      try {
+        const p = face.pointOnSurface(0.05 + 0.225 * i, 0.05 + 0.225 * j);
+        const nv = face.normalAt(p);
+        const d = nv.x * n[0] + nv.y * n[1] + nv.z * n[2];
+        p.delete();
+        nv.delete();
+        lo = Math.min(lo, d);
+        hi = Math.max(hi, d);
+      } catch {
+        // a point outside the face's surface: skip it
+      }
+    }
+  }
+  if (!Number.isFinite(lo)) return 0;
+  if (hi <= 1e-6 && lo >= -1e-6) return 0;
+  if (hi <= 1e-6) return -1;
+  if (lo >= -1e-6) return 1;
+  return null;
+}
+
+/**
+ * A curved face that faces both ways split along its outline as seen along
+ * `n` (its silhouette), for cylinders, cones and spheres. Null if it can't be.
+ */
+function splitAtSilhouette(face: Face, n: Vec3, size: number): Face[] | null {
+  const oc = getOC() as any;
+  const adaptor = new oc.BRepAdaptor_Surface(face.wrapped, true);
+  let plane: Face | null = null;
+  try {
+    const kind = face.geomType;
+    if (kind === "CYLINDRE" || kind === "CONE") {
+      const ax = kind === "CYLINDRE" ? adaptor.Cylinder().Axis() : adaptor.Cone().Axis();
+      const loc = ax.Location();
+      const d = ax.Direction();
+      const a: Vec3 = [d.X(), d.Y(), d.Z()];
+      const through: Vec3 = [loc.X(), loc.Y(), loc.Z()];
+      // The silhouette lies in the plane through the axis, square-on to the extrude direction (as far as the axis allows).
+      const k = a[0] * n[0] + a[1] * n[1] + a[2] * n[2];
+      const cut: Vec3 = [n[0] - k * a[0], n[1] - k * a[1], n[2] - k * a[2]];
+      const l = Math.hypot(...cut);
+      if (l < 1e-9) return null;
+      plane = squareFace(through, [cut[0] / l, cut[1] / l, cut[2] / l], size);
+    } else if (kind === "SPHERE") {
+      const c = adaptor.Sphere().Location();
+      plane = squareFace([c.X(), c.Y(), c.Z()], n, size);
+    } else return null;
+    const split = splitWith(face as unknown as Shape3D, plane);
+    try {
+      return facesOf(split);
+    } finally {
+      split.delete();
+    }
+  } catch (e) {
+    return null;
+  } finally {
+    plane?.delete();
+    adaptor.delete();
+  }
+}
+
+/** A flat-or-curved face swept `length` mm along `n` (a solid). */
+function sweptFace(face: Face, n: Vec3, length: number): Shape3D {
+  const oc = getOC() as any;
+  const v = new oc.gp_Vec(n[0] * length, n[1] * length, n[2] * length);
+  const maker = new oc.BRepPrimAPI_MakePrism(face.wrapped, v, false, true);
+  try {
+    return cast(maker.Shape()) as Shape3D;
+  } finally {
+    maker.delete();
+    v.delete();
+  }
+}
+
+/**
+ * What lies behind the faces of `region` as seen from the sketch: each face
+ * crossed on the way out from the sketch (except one lying on the sketch
+ * itself) swept on along `n`. Anything in there is past the first face met.
+ */
+function behindFaces(region: Shape3D, origin: Vec3, n: Vec3, length: number): Shape3D[] {
+  const out: Shape3D[] = [];
+  const size = 4 * length + 10;
+  for (const face of facesOf(region)) {
+    try {
+      let way = facing(face, n);
+      let pieces: Face[] = [face];
+      if (way === null) {
+        const split = splitAtSilhouette(face, n, size);
+        if (!split) throw new Error("Up to next can't tell where this curved face stops the extrude. Use Up to face (and click the face) instead.");
+        pieces = split;
+        way = 1;
+      }
+      for (const piece of pieces) {
+        const w = piece === face ? way : facing(piece, n);
+        if (w === 0) continue;
+        if (w === null) throw new Error("Up to next can't tell where this curved face stops the extrude. Use Up to face (and click the face) instead.");
+        // The face the sketch is on doesn't stop it.
+        const [near, far] = extentAlong(piece as unknown as Shape3D, origin, n);
+        if (far < TOUCH && near > -TOUCH) continue;
+        out.push(sweptFace(piece, n, length));
+      }
+      pieces.forEach((p) => p !== face && p.delete());
+    } finally {
+      face.delete();
+    }
+  }
+  return out;
+}
+
 /**
  * Up to the next face, or up to a part. `long` runs `length` mm from the
  * sketch plane along `n`. Where it starts in the open it stops on meeting
  * `parts` ("air": for adding, and for Up to part); where it starts inside them
  * it stops on coming out ("material": for cutting through the first wall).
+ * Either way, nothing behind the first face met is kept — not even round the
+ * side of something in the way.
  */
 export function upToPartsSolid(long: Shape3D, origin: Vec3, n: Vec3, length: number, parts: Shape3D[], keep: "air" | "material", what: string): Shape3D {
   if (parts.length === 0) throw new Error("There are no parts for it to stop at yet. Use a set depth instead.");
-  let rest: Shape3D = long.clone();
-  let inside: Shape3D[] = [];
+  const inside = parts.map((p) => long.intersect(p) as Shape3D);
+  let region: Shape3D | null = null;
+  const behind: Shape3D[] = [];
   try {
     if (keep === "air") {
+      region = long.clone();
       for (const p of parts) {
-        const next = rest.cut(p);
-        rest.delete();
-        rest = next;
+        const next: Shape3D = region.cut(p);
+        region.delete();
+        region = next;
       }
     } else {
-      inside = parts.map((p) => long.intersect(p) as Shape3D);
+      region = inside.length === 1 ? inside[0].clone() : (makeCompound(inside.map((x) => x.clone())) as Shape3D);
     }
-    const kept = keep === "air" ? startingPieces(rest, origin, n) : inside.flatMap((s) => startingPieces(s, origin, n));
+    for (const s of inside) behind.push(...behindFaces(s, origin, n, length));
+    // One at a time: they overlap, and OpenCascade cuts with overlapping tools badly.
+    for (const b of behind) {
+      try {
+        const next: Shape3D = region.cut(b);
+        region.delete();
+        region = next;
+      } finally {
+        b.delete();
+      }
+    }
+    const kept = startingPieces(region, origin, n);
     if (kept.length === 0) {
       throw new Error(
         keep === "air"
@@ -213,7 +342,7 @@ export function upToPartsSolid(long: Shape3D, origin: Vec3, n: Vec3, length: num
     }
     return joined(kept.map((k) => k.piece));
   } finally {
-    rest.delete();
+    region?.delete();
     inside.forEach((s) => s.delete());
   }
 }
