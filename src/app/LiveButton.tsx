@@ -28,7 +28,9 @@ export function LiveButton() {
       {state.kind === "connected" ? (
         <button type="button" className="live-badge" aria-label="Live with Claude" onClick={() => setOpen(true)} title="JuraCAD is connected to Claude: Claude's changes appear here as it works. Click for details or to disconnect.">
           <span className="live-dot" aria-hidden="true" />
-          <span className="button-label">Live with Claude</span>
+          <span className="button-label">
+            <span className="live-long">Live with </span>Claude
+          </span>
         </button>
       ) : (
         <button
@@ -40,7 +42,15 @@ export function LiveButton() {
           title="Let Claude (the desktop app, with the JuraCAD extension) work on this design while you watch. Nothing connects until you click."
         >
           <span className="live-dot off" aria-hidden="true" />
-          <span className="button-label">{state.kind === "connecting" ? "Connecting…" : "Connect to Claude"}</span>
+          <span className="button-label">
+            {state.kind === "connecting" ? (
+              "Connecting…"
+            ) : (
+              <>
+                <span className="live-long">Connect to </span>Claude
+              </>
+            )}
+          </span>
         </button>
       )}
       {state.kind === "connecting" && state.message !== "Looking for Claude on this computer…" && (

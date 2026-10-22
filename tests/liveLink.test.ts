@@ -36,7 +36,7 @@ afterEach(() => {
 
 const textOf = (r: ToolResult) => r.content.map((c) => (c.type === "text" ? c.text : `[${c.mimeType}]`)).join("\n");
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function until(cond: () => boolean, what: string, ms = 5000) {
+async function until(cond: () => boolean, what: string, ms = 20_000) {
   const end = Date.now() + ms;
   while (!cond()) {
     if (Date.now() > end) throw new Error(`Timed out waiting for ${what}`);

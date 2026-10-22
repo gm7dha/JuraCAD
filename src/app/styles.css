@@ -2995,3 +2995,10 @@ kbd {
   justify-content: flex-end;
   margin-top: 12px;
 }
+
+/* The top bar is full at laptop widths: "Connect to Claude" becomes "Claude" (its full name stays for screen readers). */
+@media (max-width: 1440px) {
+  .live-long {
+    display: none;
+  }
+}
