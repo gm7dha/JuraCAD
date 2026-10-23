@@ -11,6 +11,9 @@ import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GeometryEngine } from "../src/kernel/engine";
 import { parseDocument } from "../src/model/document";
+import type { Feature } from "../src/model/types";
+import { addLine } from "../src/sketch/ops";
+import { emptySketch } from "../src/sketch/types";
 import { readDocumentFile } from "../src/model/fileFormat";
 import { DesignFolder } from "../src/mcp/files";
 import { Session } from "../src/mcp/session";
@@ -193,6 +196,82 @@ describe("JuraCAD tools for Claude", () => {
     expect(exactVolume(s)[0]).toBeCloseTo(40 * 30 * 20 - 36 * 26 * 18, 1);
     await ok(s, "add_feature", { type: "chamfer", edges: [{ near: [20, 0, 0] }], distance: 1 });
     expect(exactVolume(s)[0]).toBeCloseTo(40 * 30 * 20 - 36 * 26 * 18 - 0.5 * 40, 1);
+  });
+
+  describe("planes and axes picked in the app (Live with Claude)", () => {
+    /** A 100 × 20 × 5 plate with a 6 mm hole at (10, 10) named "Cut". */
+    async function plate(s: Session) {
+      await ok(s, "new_design", { name: "Picked" });
+      await ok(s, "add_feature", { type: "box", width: 100, depth: 20, height: 5 });
+      await ok(s, "add_sketch", { on_face: "top", shapes: [{ type: "circle", center: [10, 10], diameter: 6 }] });
+      await ok(s, "add_feature", { type: "extrude", end: "through_all", operation: "remove", name: "Cut" });
+    }
+    const HOLE = Math.PI * 9 * 5;
+    /** Change one feature as the app would (as if the user clicked something), as a new design version. */
+    const appEdit = (s: Session, name: string, change: (f: Feature) => Feature, before?: Feature) => {
+      const list = s.doc.features.map((f) => (f.name === name ? change(f) : f));
+      if (before) list.splice(list.findIndex((f) => f.name === name), 0, before);
+      s.commit({ ...s.doc, features: list });
+    };
+
+    it("mirror: a plane given by Claude replaces a sketch line picked in the app", async () => {
+      const { s } = newSession();
+      await plate(s);
+      await ok(s, "add_feature", { type: "mirror", features: ["Cut"], plane: "Right", offset: 50, name: "Flip" });
+      // In the app: mirror across a construction line at x = 30 on the Top plane instead (the hole goes to x = 50).
+      const drawn = addLine(emptySketch(), { x: 30, y: 0 }, { x: 30, y: 20 }, { construction: true });
+      const sk: Feature = { id: "app-sketch", name: "Mirror line", type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane: { kind: "default", name: "Top" }, data: drawn.sketch } };
+      appEdit(s, "Flip", (f) => ({ ...f, mirror: { ...f.mirror!, line: { sketch: sk.id, line: drawn.lineId } } }), sk);
+      expect(exactVolume(s)[0]).toBeCloseTo(10000 - 2 * HOLE, 2);
+      expect(await ok(s, "describe_design")).toMatch(/across the plane through construction line 1 in Mirror line \(picked in the app; setting "plane" replaces it\)/);
+      // Claude asks for the Right plane moved 70 along: the line is dropped, and the hole really goes to x = 130… off the plate.
+      const said = await ok(s, "edit_feature", { feature: "Flip", plane: "Right", offset: 70 });
+      expect(said).toMatch(/Changed Flip/);
+      expect(said).not.toMatch(/picked in the app/);
+      const flip = s.doc.features.find((f) => f.name === "Flip")!;
+      expect(flip.mirror?.line).toBeUndefined();
+      expect(exactVolume(s)[0]).toBeCloseTo(10000 - HOLE, 2);
+      // And a clicked face is replaced the same way.
+      appEdit(s, "Flip", (f) => ({ ...f, mirror: { ...f.mirror!, planePick: { partId: s.doc.features[0].id, ref: { kind: "face", surface: "PLANE", center: [100, 10, 2.5], normal: [1, 0, 0] } } } }));
+      expect(await ok(s, "describe_design")).toMatch(/flat face of Box 1 \(picked in the app/);
+      await ok(s, "edit_feature", { feature: "Flip", plane: "Front" });
+      expect(s.doc.features.find((f) => f.name === "Flip")!.mirror).toEqual({ sources: flip.mirror!.sources, plane: { kind: "default", name: "Front" } });
+    });
+
+    it("circular pattern: an axis given by Claude replaces 'nothing chosen yet' or a clicked face", async () => {
+      const { s } = newSession();
+      await plate(s);
+      await ok(s, "add_feature", { type: "circular_pattern", features: ["Cut"], axis: "z", count: 2, center: [30, 10, 0], name: "Ring" });
+      expect(exactVolume(s)[0]).toBeCloseTo(10000 - 2 * HOLE, 2);
+      // Accepted in the app with nothing chosen: it can't build.
+      appEdit(s, "Ring", (f) => ({ ...f, pattern: { ...f.pattern!, unset: true } }));
+      expect(s.build().errors[s.doc.features.find((f) => f.name === "Ring")!.id]).toMatch(/Choose the axis/);
+      expect(await ok(s, "describe_design")).toMatch(/round nothing yet \(no axis chosen — set "axis"\)/);
+      const said = await ok(s, "edit_feature", { feature: "Ring", axis: "z" });
+      expect(said).not.toMatch(/already has those settings/);
+      expect(s.build().errors).toEqual({});
+      expect(exactVolume(s)[0]).toBeCloseTo(10000 - 2 * HOLE, 2);
+      // A round face clicked in the app (the hole itself), then Z again from Claude.
+      appEdit(s, "Ring", (f) => ({ ...f, pattern: { ...f.pattern!, along: { partId: s.doc.features[0].id, ref: { kind: "face", surface: "CYLINDRE", center: [10, 10, 2.5], normal: [0, 0, 1] } } } }));
+      expect(await ok(s, "describe_design")).toMatch(/round round face of Box 1 \(picked in the app/);
+      await ok(s, "edit_feature", { feature: "Ring", axis: "z" });
+      expect(s.doc.features.find((f) => f.name === "Ring")!.pattern?.along).toBeUndefined();
+    });
+
+    it("linear pattern: directions given by Claude replace edges or sketch lines picked in the app", async () => {
+      const { s } = newSession();
+      await plate(s);
+      await ok(s, "add_feature", { type: "linear_pattern", features: ["Cut"], direction: "x", count: 2, spacing: 20, name: "Row" });
+      const edge = { partId: s.doc.features[0].id, ref: { kind: "edge" as const, curve: "LINE", a: [0, 0, 5] as [number, number, number], b: [0, 20, 5] as [number, number, number], mid: [0, 10, 5] as [number, number, number] } };
+      appEdit(s, "Row", (f) => ({ ...f, pattern: { ...f.pattern!, along: edge, line2: { sketch: "x", line: "y" } } }));
+      expect(await ok(s, "describe_design")).toMatch(/along straight edge of Box 1 \(picked in the app; setting "direction" replaces it\)/);
+      await ok(s, "edit_feature", { feature: "Row", direction: "x", direction2: "y" });
+      const p = s.doc.features.find((f) => f.name === "Row")!.pattern!;
+      expect(p.along).toBeUndefined();
+      expect(p.line2).toBeUndefined();
+      expect(p.axis).toBe("x");
+      expect(exactVolume(s)[0]).toBeCloseTo(10000 - 2 * HOLE, 2);
+    });
   });
 
   it("explains mistakes in plain English and leaves the design unchanged", async () => {

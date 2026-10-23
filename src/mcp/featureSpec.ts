@@ -6,6 +6,7 @@
  * Used for new features (starting from the app's defaults) and for edits
  * (changing only what's given).
  */
+import { setMirrorReference, setPatternDirection } from "../model/patternRefs";
 import type { Feature, FeatureType, JuraCADDocument, Operation } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
 import { SCREW_SIZES, standardParams } from "../model/holes";
@@ -314,21 +315,22 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
 
     case "linear_pattern":
     case "circular_pattern": {
-      const p = { ...(f.pattern ?? { sources: [], axis: "x" as const, flip: false }) };
+      let p: NonNullable<Feature["pattern"]> = { ...(f.pattern ?? { sources: [], axis: "x" as const, flip: false }) };
       if (has(a, "features") || !ctx.editing) p.sources = list(a.features, "features").map((r, i) => ctx.session.feature(r, `features[${i}]`, undefined, ctx.doc).id);
       if (kind === "linear_pattern") {
-        if (has(a, "direction")) p.axis = oneOf(a.direction, ["x", "y", "z"] as const, "direction");
+        // A direction given here replaces anything clicked in the app (an edge, face or sketch line).
+        if (has(a, "direction")) p = setPatternDirection(p, { kind: "axis", axis: oneOf(a.direction, ["x", "y", "z"] as const, "direction") });
         if (has(a, "flip")) p.flip = bool(a.flip, "flip");
         param(f, a, "count", "count", ctx, { positive: true, integer: true, min: 2, unit: "", required: true });
         param(f, a, "spacing", "spacing", ctx, { positive: true, required: true });
-        if (has(a, "direction2")) p.axis2 = oneOf(a.direction2, ["x", "y", "z"] as const, "direction2");
+        if (has(a, "direction2")) p = setPatternDirection(p, { kind: "axis", axis: oneOf(a.direction2, ["x", "y", "z"] as const, "direction2") }, true);
         if (has(a, "flip2")) p.flip2 = bool(a.flip2, "flip2");
         param(f, a, "count2", "count2", ctx, { positive: true, integer: true, min: 1, unit: "" });
         param(f, a, "spacing2", "spacing2", ctx, { positive: true });
         if (Number(f.params.count2 ?? 1) > 1 && !p.axis2) throw new InputError('"count2" (rows) needs "direction2": "x", "y" or "z", different from "direction".');
       } else {
-        if (has(a, "axis")) p.axis = oneOf(a.axis, ["x", "y", "z"] as const, "axis");
-        else if (!ctx.editing) p.axis = "z";
+        if (has(a, "axis")) p = setPatternDirection(p, { kind: "axis", axis: oneOf(a.axis, ["x", "y", "z"] as const, "axis") });
+        else if (!ctx.editing) p = setPatternDirection(p, { kind: "axis", axis: "z" });
         param(f, a, "count", "count", ctx, { positive: true, integer: true, min: 2, unit: "", required: true });
         param(f, a, "angle", "angle", ctx, { positive: true, unit: "°" });
         if (has(a, "center")) {
@@ -349,7 +351,7 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
     }
 
     case "mirror": {
-      const m = { ...(f.mirror ?? { sources: [], plane: { kind: "default", name: "Right" } as SketchPlane }) };
+      let m: NonNullable<Feature["mirror"]> = { ...(f.mirror ?? { sources: [], plane: { kind: "default", name: "Right" } as SketchPlane }) };
       if (has(a, "features") && has(a, "part")) throw new InputError('Mirror either "features" (copies of them across the plane) or a whole "part", not both.');
       if (has(a, "features")) {
         m.sources = list(a.features, "features").map((r, i) => ctx.session.feature(r, `features[${i}]`, undefined, ctx.doc).id);
@@ -359,7 +361,8 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
         m.part = ctx.session.part(ctx.parts, a.part, "part").id;
         m.sources = [];
       } else if (!ctx.editing) throw new InputError('Give "features" (a list of features to mirror) or "part" (a whole part to mirror).');
-      if (has(a, "plane") || has(a, "offset")) m.plane = namedPlane(has(a, "plane") ? a.plane : "Right", a.offset, ctx);
+      // A plane given here replaces anything clicked in the app (a face or sketch line), or "none chosen yet".
+      if (has(a, "plane") || has(a, "offset")) m = setMirrorReference(m, { kind: "plane", plane: namedPlane(has(a, "plane") ? a.plane : "Right", a.offset, ctx) });
       else if (!ctx.editing) throw new InputError('Give "plane": "Top", "Front" or "Right" to mirror across (add "offset" to move it along its normal).');
       if (has(a, "join")) {
         if (!m.part) throw new InputError('"join" goes with mirroring a whole "part".');

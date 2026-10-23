@@ -66,6 +66,13 @@
   `leaveOpen` turns a solid into a surface; Extend surface samples curved edges and fills corners, or goes up to a face (a flat one as its whole plane) or
   part (`extendTo`: long strips split by the target, keeping the pieces touching the surface); Enclose failures name
   the open edges (`gapReport`).
+- Mirror planes and pattern axes: `src/model/patternRefs.ts` (pure). A mirror's plane is a default plane, a Plane
+  feature, a clicked flat face (`mirror.planePick`, found again on rebuild; `plane` keeps where it was when clicked) or a
+  sketch line (`mirror.line`: the plane through it, square to its sketch). Patterns use X/Y/Z, a clicked edge/face
+  (`pattern.along`/`along2`) or a sketch line (`pattern.line`/`line2`). `unset` = nothing chosen yet (new mirrors and
+  circular patterns made in the dialog start so, and ask); the engine's `mirrorPlane`/`pickedAxis`/`lineAxis` resolve them.
+  The dialogs' boxes are `ReferenceBox` in FeatureDialog.tsx; sketch lines are clickable in the view (`PickTarget`
+  "sketchLine", `SceneManager.setPickLines`) and the chosen plane/axis is drawn (`setReference`) while one is open.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
@@ -87,7 +94,7 @@
   (`gh api repos/gm7dha/JuraCAD/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → add a second Part Studio with a box → Help: download the Claude extension → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → add a section view, a detail view and an auxiliary view → draw the assembly exploded (parts list) (the page is opened with `?smoke`, which exposes `window.juracadViewport` and `window.juracadStore` so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → add a second Part Studio with a box → Help: download the Claude extension → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → add a section view, a detail view and an auxiliary view → draw the assembly exploded (parts list) (the page is opened with `?smoke`, which exposes `window.juracadViewport` and `window.juracadStore` so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.

@@ -4,6 +4,7 @@
  * a plain function of a Session and its input, so they're tested without any
  * MCP plumbing (tests/mcpTools.test.ts).
  */
+import { mirrorReferenceText, patternReferenceText } from "../model/patternRefs";
 import { createFeature, emptyDocument, removeFeature, renamePart, replaceFeature, addFeature, newId } from "../model/document";
 import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, OLD_FILE_EXTENSION } from "../model/fileFormat";
 import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
@@ -70,6 +71,32 @@ export const FORMAT_GUIDE = `JuraCAD conventions (the same as Onshape):
 - Live with Claude: if the user clicks "Connect to Claude" in JuraCAD's top bar (Chrome or Edge), the tools work on the design open in their JuraCAD tab instead — the Part Studio on show — and each change appears there straight away, as one step in its undo list. The user can keep editing and undoing; if they change something at the same moment, your change is refused with nothing lost, so look again (describe_design) and retry. Ask them to finish any dialog they have open if a change is refused as busy. live_status says whether you're connected. new_design and open_design then replace what's open in their tab (they can undo it), so only use them when asked. save_design still saves a .juracad file.`;
 
 /** One line about a feature, for lists. */
+/**
+ * A pattern's direction or axis for a summary: X, Y or Z, or what was clicked in the app (a sketch line, an
+ * edge or face — "edit_feature" with direction/axis replaces it), or that none is chosen yet.
+ */
+function patternWay(f: Feature, doc: JuraCADDocument, second: boolean): string {
+  const p = f.pattern;
+  if (!p) return "?";
+  const key = f.type === "circularPattern" ? "axis" : second ? "direction2" : "direction";
+  const text = patternReferenceText(p, doc.features, second);
+  if (text === null) return `nothing yet (no ${key} chosen — set "${key}")`;
+  const picked = second ? p.line2 ?? p.along2 : p.line ?? p.along;
+  if (picked) return `${text.charAt(0).toLowerCase()}${text.slice(1)} (picked in the app; setting "${key}" replaces it)`;
+  return (second ? p.axis2 ?? (p.axis === "y" ? "x" : "y") : p.axis).toUpperCase();
+}
+
+/** A mirror's plane for a summary: a named plane, or a sketch line or face clicked in the app, or none yet. */
+function mirrorWay(f: Feature, doc: JuraCADDocument): string {
+  const m = f.mirror;
+  if (!m) return "?";
+  const text = mirrorReferenceText(m, doc.features);
+  if (text === null) return 'nothing yet (no plane chosen — set "plane")';
+  if (m.line) return `the plane through ${text.charAt(0).toLowerCase()}${text.slice(1)} (picked in the app; setting "plane" replaces it)`;
+  if (m.planePick) return `${text.charAt(0).toLowerCase()}${text.slice(1)} (picked in the app; setting "plane" replaces it)`;
+  return planeLabel(m.plane);
+}
+
 export function summarize(f: Feature, doc: JuraCADDocument): string {
   const nameOf = (id?: string) => doc.features.find((x) => x.id === id)?.name ?? "(missing)";
   const p = f.params;
@@ -100,11 +127,11 @@ export function summarize(f: Feature, doc: JuraCADDocument): string {
     case "shell":
       return `shell, walls ${mm(p.thickness)}, ${f.picks?.length ? `${f.picks.length} face(s) left open` : "closed inside"}`;
     case "linearPattern":
-      return `linear pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} along ${f.pattern?.axis.toUpperCase()}, ${mm(p.spacing)} apart${Number(p.count2 ?? 1) > 1 ? `, ${p.count2} rows along ${f.pattern?.axis2?.toUpperCase()} ${mm(p.spacing2)} apart` : ""}`;
+      return `linear pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} along ${patternWay(f, doc, false)}, ${mm(p.spacing)} apart${Number(p.count2 ?? 1) > 1 ? `, ${p.count2} rows along ${patternWay(f, doc, true)} ${mm(p.spacing2)} apart` : ""}`;
     case "circularPattern":
-      return `circular pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} round ${f.pattern?.axis.toUpperCase()} over ${p.angle ?? 360}°`;
+      return `circular pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} round ${patternWay(f, doc, false)} over ${p.angle ?? 360}°`;
     case "mirror":
-      return f.mirror?.part ? `mirror of a whole part across ${planeLabel(f.mirror.plane)}${f.mirror.join ? ", joined on" : ""}` : `mirror of ${(f.mirror?.sources ?? []).map(nameOf).join(", ")} across ${f.mirror ? planeLabel(f.mirror.plane) : "?"}`;
+      return f.mirror?.part ? `mirror of a whole part across ${mirrorWay(f, doc)}${f.mirror.join ? ", joined on" : ""}` : `mirror of ${(f.mirror?.sources ?? []).map(nameOf).join(", ")} across ${mirrorWay(f, doc)}`;
     case "boolean":
       return `boolean ${f.booleanDef?.op}`;
     case "box":
