@@ -679,6 +679,7 @@ try {
   await tool("Mirror");
   const mirrorBox = '.feature-dialog fieldset[aria-label="Mirror plane"]';
   await page.waitForSelector(`${mirrorBox} >> text=Click a flat face, a plane or a sketch line in the view`, { timeout: 5_000 });
+  if (!(await page.getByRole("button", { name: "Accept" }).isDisabled())) throw new Error("a mirror with no plane chosen could be accepted");
   {
     // A spot on a flat face that isn't under the dialog: look across the view, right of the dialog.
     const dialog = await page.locator(".feature-dialog").boundingBox();

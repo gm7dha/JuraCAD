@@ -828,6 +828,42 @@ function findPickedFace(shape: Shape3D, pick: TopoPick): Face {
 }
 
 /**
+ * The round face clicked as an axis, found on the part as it is now. Round
+ * faces sharing a centre (a bore in the middle of a disc) look the same to the
+ * usual matching, so where it was clicked (`at`) tells them apart by size: the
+ * face whose radius fits the click (measured from where the picked face's
+ * centre was) is taken, then the nearest. So a bore keeps being the axis after
+ * it's moved off the middle. Null when there's no round face to go on.
+ */
+function pickedCylinder(shape: Shape3D, pick: TopoPick): Cylinder | null {
+  const at = pick.at;
+  if (!at || pick.ref.kind !== "face") return null;
+  const want = pick.ref;
+  const faces = facesOf(shape);
+  const bounds = boundsOf(shape);
+  const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+  let best: { c: Cylinder; score: number } | null = null;
+  try {
+    for (const f of faces) {
+      if (f.geomType !== "CYLINDRE") continue;
+      const d = refDistance(want, faceRefOf(f, bounds), size);
+      if (!Number.isFinite(d) || d > Math.max(1, 0.3 * size)) continue;
+      const c = cylinderOfFace(f);
+      if (!c) continue;
+      // How far the click is from this cylinder's axis, had the axis gone through where the picked face's centre was.
+      const off: Vec3 = [at[0] - want.center[0], at[1] - want.center[1], at[2] - want.center[2]];
+      const along = off[0] * c.axis[0] + off[1] * c.axis[1] + off[2] * c.axis[2];
+      const r = Math.hypot(off[0] - along * c.axis[0], off[1] - along * c.axis[1], off[2] - along * c.axis[2]);
+      const score = Math.abs(r - c.radius) + 0.25 * d;
+      if (!best || score < best.score) best = { c, score };
+    }
+  } finally {
+    faces.forEach((f) => f.delete());
+  }
+  return best?.c ?? null;
+}
+
+/**
  * A chamfer that isn't the same both ways: `first` mm along one face and
  * `second` mm along the other ("twoDistances"), or `first` mm along one face at
  * `second` degrees ("distanceAngle"). The first distance runs along the face
@@ -3560,7 +3596,11 @@ export class GeometryEngine {
       }
       throw new Error(round ? "That edge is neither straight nor round. Click a straight edge, a round edge or a round face for the axis." : "That edge is curved. Click a straight edge, or a flat face, for the direction.");
     }
-    const [face] = findPickedFaces(part.shape, [pick]);
+    if (round && pick.ref.kind === "face" && pick.ref.surface === "CYLINDRE" && pick.at) {
+      const cyl = pickedCylinder(part.shape, pick);
+      if (cyl) return { dir: cyl.axis, through: cyl.origin };
+    }
+    const [face] = pick.at ? [findPickedFace(part.shape, pick)] : findPickedFaces(part.shape, [pick]);
     try {
       if (round) {
         const cyl = cylinderOfFace(face);

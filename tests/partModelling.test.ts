@@ -1037,3 +1037,36 @@ describe("mirror planes and pattern axes picked in the view, round 3", () => {
     expect(at(35, 30)).toBe(true);
   });
 });
+
+describe("round axes, round 3 review", () => {
+  it("keeps turning round a bore picked in the middle of a disc after the bore is moved off the middle", () => {
+    const make = (bx: number) => {
+      const disc = feature("cylinder", { diameter: 80, height: 10 });
+      const bore = feature("cylinder", { diameter: 10, height: 10, x: bx }, "remove");
+      const pin = feature("cylinder", { diameter: 4, height: 10, x: bx + 15 }, "remove");
+      return [disc, bore, pin];
+    };
+    const [disc, bore, pin] = make(0);
+    // The bore and the disc's outside share a centre, so their references are the same: the click (on the bore, 5 mm out) decides.
+    const r0 = build([disc, bore]);
+    const ref = r0.parts[0].faceRefs.find((f) => f.surface === "CYLINDRE")!;
+    const pick: TopoPick = { partId: r0.parts[0].id, ref, at: [5, 0, 5] };
+    const round = (): Feature => ({ ...feature("circularPattern", { count: 4, angle: 360 }, "add"), id: "ring", pattern: { sources: [pin.id], axis: "z", flip: false, along: pick } });
+    const rims = (r: ReturnType<typeof build>) => r.parts[0].edgeRefs.filter((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2] - 10) < 1e-3);
+    const at = (r: ReturnType<typeof build>, x: number, y: number, rad: number) => rims(r).some((e) => Math.abs(Math.hypot(e.mid[0] - x, e.mid[1] - y) - rad) < 1e-3 && Math.abs(Math.hypot(e.a[0] - x, e.a[1] - y) - rad) < 1e-3);
+    let r = build([disc, bore, pin, round()]);
+    expect(r.featureErrors).toEqual({});
+    for (const [x, y] of [[15, 0], [0, 15], [-15, 0], [0, -15]]) expect(at(r, x, y, 2)).toBe(true);
+    // Bore and pin moved 20 along X: the copies go round the bore at (20, 0), not round the disc's middle.
+    const moved = make(20).map((f, i) => ({ ...f, id: [disc, bore, pin][i].id }));
+    r = build([...moved, round()]);
+    expect(r.featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(Math.PI * (1600 - 25 - 4 * 4) * 10, 1);
+    for (const [x, y] of [[35, 0], [20, 15], [5, 0], [20, -15]]) expect(at(r, x, y, 2)).toBe(true);
+    // Clicking the disc's outside (40 mm out) still means the disc.
+    const outside = { ...round(), pattern: { ...round().pattern!, along: { ...pick, at: [40, 0, 5] as [number, number, number] } } };
+    r = build([...moved, outside]);
+    expect(r.featureErrors).toEqual({});
+    for (const [x, y] of [[0, 35], [-35, 0], [0, -35]]) expect(at(r, x, y, 2)).toBe(true);
+  });
+});

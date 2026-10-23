@@ -1787,6 +1787,9 @@ export function FeatureDialog() {
   const def = FEATURE_DEFS[draft.type];
   const { errors } = resolveParams(draft);
   const hasErrors = Object.keys(errors).length > 0;
+  // A mirror or pattern with no plane, axis or direction chosen yet can't be accepted (its box says what to click).
+  const needsRef = draft.type === "mirror" ? !!draft.mirror?.unset : (draft.type === "circularPattern" || draft.type === "linearPattern") && !!draft.pattern?.unset;
+  const refHint = draft.type === "mirror" ? "Choose the mirror plane first" : draft.type === "circularPattern" ? "Choose the axis first" : "Choose the direction first";
   const groups: { title: string; params: ParamDef[] }[] = [
     { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis goes through" : "Position", params: def.params.filter((p) => p.group === "position") },
@@ -1799,7 +1802,7 @@ export function FeatureDialog() {
       aria-label={`${def.label} feature`}
       onSubmit={(e) => {
         e.preventDefault();
-        commitDraft();
+        if (!needsRef) commitDraft();
       }}
     >
       <header className="feature-dialog-header">
@@ -1808,8 +1811,8 @@ export function FeatureDialog() {
           <button
             type="submit"
             className="dialog-ok"
-            disabled={hasErrors}
-            title={hasErrors ? "Fix the highlighted values first" : "Accept (Enter)"}
+            disabled={hasErrors || needsRef}
+            title={hasErrors ? "Fix the highlighted values first" : needsRef ? refHint : "Accept (Enter)"}
             aria-label="Accept"
           >
             <Icons.Tick size={18} />
@@ -1906,7 +1909,7 @@ export function FeatureDialog() {
           </fieldset>
         ))}
 
-        {buildError && !hasErrors && (
+        {buildError && !hasErrors && !needsRef && (
           <div className="dialog-error" role="alert">
             <Icons.Warning size={16} /> {buildError}
           </div>

@@ -364,7 +364,9 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       else setMirror(setMirrorReference(m, { kind: "line", line, plane: linePlane(found) }));
     } else if (target?.kind === "part" && target.item.kind === "face") {
       const plane = planeForFace(target.item);
-      const pick = pickFor(s.parts, target.item);
+      const found = pickFor(s.parts, target.item);
+      // Where it was clicked tells apart faces that look the same.
+      const pick = found && target.point ? { ...found, at: target.point } : found;
       if (plane && pick) setMirror(setMirrorReference(m, { kind: "face", plane, pick }));
       else s.showToast("That face is curved. To mirror across, click a flat face, a plane or a sketch line.");
     } else if (target?.kind === "part") s.showToast("To mirror across, click a flat face, a plane or a sketch line (not a part's edge).");
@@ -390,7 +392,8 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       const ok = ref.kind === "edge" ? ref.curve === "LINE" || ref.curve === "CIRCLE" : ref.surface === "CYLINDRE";
       if (!ok) return s.showToast("For the axis, click a round face (a hole or boss), a round or straight edge, or a sketch line.");
     }
-    choose({ kind: "pick", pick });
+    // Where it was clicked tells apart round faces that share a centre (a bore in the middle of a disc).
+    choose({ kind: "pick", pick: target.point ? { ...pick, at: target.point } : pick });
     return;
   }
   // Picking edges and faces for a fillet, chamfer or shell.
