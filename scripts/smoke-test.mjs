@@ -680,17 +680,21 @@ try {
   const mirrorBox = '.feature-dialog fieldset[aria-label="Mirror plane"]';
   await page.waitForSelector(`${mirrorBox} >> text=Click a flat face, a plane or a sketch line in the view`, { timeout: 5_000 });
   {
-    // An upward-facing flat face that isn't under the dialog.
-    const ups = await page.evaluate(() => {
-      const v = window.juracadViewport.current;
-      return v.shownParts().flatMap((p) => p.faceRefs.map((f, i) => (f.surface === "PLANE" && f.normal[2] > 0.99 ? v.screenPointOnFace(p.id, i) : null)).filter(Boolean));
-    });
+    // A spot on a flat face that isn't under the dialog: look across the view, right of the dialog.
     const dialog = await page.locator(".feature-dialog").boundingBox();
     const canvasBox = await page.locator(".viewport-canvas").boundingBox();
-    const free = ups.find((t) => !dialog || !canvasBox || t.x + canvasBox.x > dialog.x + dialog.width + 4 || t.y + canvasBox.y > dialog.y + dialog.height + 4);
+    const free = await page.evaluate(({ left, w, h }) => {
+      const v = window.juracadViewport.current;
+      for (let y = h * 0.2; y < h * 0.9; y += 12) for (let x = left; x < w * 0.9; x += 12) if (v.pickKindAt(x, y) === "face:PLANE") return { x, y };
+      return null;
+    }, { left: dialog && canvasBox ? dialog.x + dialog.width - canvasBox.x + 20 : 300, w: canvasBox?.width ?? 800, h: canvasBox?.height ?? 600 });
     if (!free) throw new Error("couldn't find a flat face to click for the mirror plane");
     await page.locator(".viewport-canvas").click({ position: free });
-    await page.waitForSelector(`${mirrorBox} .reference-chip >> text=Flat face of`, { timeout: 5_000 });
+    await page.waitForSelector(`${mirrorBox} .reference-chip >> text=Flat face of`, { timeout: 5_000 }).catch(async () => {
+      const said = (await page.locator(".toast").allInnerTexts()).join(" / ");
+      const box = await page.locator(mirrorBox).innerText();
+      throw new Error(`clicking a flat face at (${Math.round(free.x)}, ${Math.round(free.y)}) didn't set the mirror plane. Box: ${box}. Toast: ${said || "none"}`);
+    });
     await shot("mirrorplane");
     await page.locator(mirrorBox).getByRole("radio", { name: "Top" }).click();
     await page.waitForSelector(`${mirrorBox} .reference-chip >> text=Top plane`, { timeout: 5_000 });

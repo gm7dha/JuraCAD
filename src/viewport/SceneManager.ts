@@ -375,6 +375,16 @@ export class SceneManager {
     return { x: ((c.x + 1) / 2) * this.width, y: ((1 - c.y) / 2) * this.height };
   }
 
+  /** What a click at this screen point (CSS px within the viewport) would pick, e.g. "face:PLANE" — for the browser smoke test. */
+  pickKindAt(x: number, y: number): string | null {
+    const hit = this.pickAt(x, y);
+    if (!hit) return null;
+    if (hit.kind !== "part") return hit.kind;
+    const refs = hit.item.kind === "face" ? this.parts.get(hit.item.partId)?.data.faceRefs : this.parts.get(hit.item.partId)?.data.edgeRefs;
+    const ref = refs?.[hit.item.index];
+    return `${hit.item.kind}:${ref ? (ref.kind === "face" ? ref.surface : ref.curve) : "?"}`;
+  }
+
   /** Ids of the parts (or assembly instances) on show, and what their faces look like. */
   shownParts(): { id: string; faceRefs: PartMesh["faceRefs"] }[] {
     return [...this.parts.values()].map((p) => ({ id: p.data.id, faceRefs: p.data.faceRefs }));
