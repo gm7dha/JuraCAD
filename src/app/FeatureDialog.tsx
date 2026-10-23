@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { evaluate } from "../model/expr";
 import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
@@ -10,6 +10,7 @@ import type { HoleOptions as HoleSettings } from "../model/types";
 import { holePositionCount } from "../sketch/holePositions";
 import { formatSkip, parseSkip, totalCopies } from "../model/patterns";
 import { planeLabel } from "../sketch/planes";
+import { mirrorReferenceText, patternReferenceText, setMirrorReference, setPatternDirection, type DirectionChoice } from "../model/patternRefs";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import type { Axis, ExtrudeEnd, Feature } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
@@ -1049,7 +1050,6 @@ function HoleOptions() {
   );
 }
 
-const AXIS_LABELS: Record<Axis, string> = { x: "X (red, left–right)", y: "Y (green, front–back)", z: "Z (blue, up–down)" };
 
 /** Mirror and pattern settings: which features to repeat, and how. */
 function PatternOptions() {
@@ -1064,7 +1064,6 @@ function PatternOptions() {
   const sources = (mirror ? draft.mirror?.sources : draft.pattern?.sources) ?? [];
   const named = sources.map((id) => ({ id, name: features.find((f) => f.id === id)?.name ?? "Deleted feature" }));
   const pattern = draft.pattern ?? { sources: [], axis: "x" as Axis, flip: false };
-  const plane = draft.mirror?.plane;
   const m = draft.mirror;
   // Mirror a whole part (Onshape's part mirror) instead of features.
   const partMode = mirror && m?.part !== undefined;
@@ -1072,7 +1071,6 @@ function PatternOptions() {
   const at = features.findIndex((f) => f.id === draft.id);
   const later = new Set(at >= 0 ? features.slice(at + 1).map((f) => f.id) : []);
   const partChoices = parts.filter((p) => p.id !== draft.id && !later.has(p.id.split("~")[0]));
-  const axis2 = pattern.axis2 ?? (pattern.axis === "y" ? "x" : "y");
 
   return (
     <>
@@ -1101,6 +1099,30 @@ function PatternOptions() {
             </button>
           ))}
         </div>
+      )}
+      {mirror && m && (
+        <ReferenceBox
+          label="Mirror plane"
+          text={mirrorReferenceText(m, features)}
+          prompt="Click a flat face, a plane or a sketch line in the view"
+          active
+          onClear={() => setDraftField({ mirror: setMirrorReference(m, { kind: "none" }) })}
+          hint="A flat face is followed as the part changes. A sketch line mirrors across the plane through it, standing square to its sketch."
+        >
+          <QuickChoices
+            label="Default planes"
+            options={[
+              ["Top", "Top", "Mirror up ↔ down, across the Top plane"],
+              ["Front", "Front", "Mirror front ↔ back, across the Front plane"],
+              ["Right", "Right", "Mirror left ↔ right, across the Right plane"],
+            ]}
+            value={!m.unset && !m.planePick && !m.line && m.plane.kind === "default" ? m.plane.name : null}
+            onChoose={(name) => setDraftMirrorPlane({ kind: "default", name })}
+          />
+        </ReferenceBox>
+      )}
+      {(draft.type === "linearPattern" || draft.type === "circularPattern") && (
+        <PatternDirectionBoxes />
       )}
       {partMode && m ? (
         <fieldset className="param-group">
@@ -1140,23 +1162,7 @@ function PatternOptions() {
         {named.length > 0 && <p className="muted small field-note">Click features in the list to add or remove them. Each copy adds or cuts just like the original.</p>}
       </fieldset>
       )}
-      {mirror && plane ? (
-        <fieldset className="param-group">
-          <legend>Mirror across</legend>
-          <select
-            className="full-select"
-            aria-label="Plane to mirror across"
-            value={plane.kind === "default" ? plane.name : "face"}
-            onChange={(e) => e.target.value !== "face" && setDraftMirrorPlane({ kind: "default", name: e.target.value as "Top" | "Front" | "Right" })}
-          >
-            <option value="Right">Right plane (mirrors left ↔ right)</option>
-            <option value="Front">Front plane (mirrors front ↔ back)</option>
-            <option value="Top">Top plane (mirrors up ↔ down)</option>
-            {plane.kind === "face" && <option value="face">{planeLabel(plane)}</option>}
-          </select>
-          <p className="dialog-hint field-hint">Or click a plane or flat face in the 3D view.</p>
-        </fieldset>
-      ) : draft.type === "curvePattern" ? (
+      {draft.type === "curvePattern" ? (
         <fieldset className="param-group">
           <legend>Along the path</legend>
           <select className="full-select" aria-label="Path sketch" value={draft.pathRef ?? ""} onChange={(e) => setDraftField({ pathRef: e.target.value || undefined })}>
@@ -1179,113 +1185,150 @@ function PatternOptions() {
           </label>
           <p className="dialog-hint field-hint">The copies are spaced evenly from one end of the path to the other (or all the way round a closed one). Put the original at the start of the path.</p>
         </fieldset>
-      ) : (
-        <fieldset className="param-group">
-          <legend>{draft.type === "circularPattern" ? "Around the axis" : "Along the axis"}</legend>
-          {pattern.along ? (
-            <PickedRow
-              text={`${draft.type === "circularPattern" ? "Around" : "Along"}: ${describeRef(pattern.along.ref, true).toLowerCase()} (clicked)`}
-              onClear={() => {
-                const { along: _a, ...rest } = pattern;
-                setDraftField({ pattern: rest });
-              }}
-            />
-          ) : (
-            <select
-              className="full-select"
-              aria-label="Axis"
-              value={pattern.axis}
-              onChange={(e) => {
-                const axis = e.target.value as Axis;
-                // The rows can't go the same way as the copies: swap them over.
-                setDraftField({ pattern: { ...pattern, axis, ...(pattern.axis2 === axis ? { axis2: pattern.axis } : {}) } });
-              }}
-            >
-              {(["x", "y", "z"] as const).map((a) => (
-                <option key={a} value={a}>
-                  {AXIS_LABELS[a]}
-                </option>
-              ))}
-            </select>
-          )}
-          {!pattern.along && pattern.picking !== "along2" && (
-            <p className="dialog-hint field-hint">
-              {draft.type === "circularPattern"
-                ? "Or click a round face (a hole or boss), a round edge or a straight edge in the 3D view to turn round it."
-                : "Or click a straight edge in the 3D view to go along it (or a flat face, to go straight out of it)."}
-            </p>
-          )}
-          <label className="check-row">
-            <input type="checkbox" checked={pattern.flip} onChange={(e) => setDraftField({ pattern: { ...pattern, flip: e.target.checked } })} />
-            Flip direction
-          </label>
-          {draft.type === "circularPattern" && !pattern.along && (
-            <p className="dialog-hint field-hint">The axis goes through the point under Axis position below (the origin to start with) — put it at the middle of the round part.</p>
-          )}
-          {draft.type === "linearPattern" && (
-            <>
-              <label className="field-label" htmlFor="pattern-axis2">
-                Rows go along (for a grid)
-              </label>
-              {pattern.along2 ? (
-                <PickedRow
-                  text={`Along: ${describeRef(pattern.along2.ref, true).toLowerCase()} (clicked)`}
-                  onClear={() => {
-                    const { along2: _a, picking: _p, ...rest } = pattern;
-                    setDraftField({ pattern: rest });
-                  }}
-                />
-              ) : (
-                <select
-                  id="pattern-axis2"
-                  className="full-select"
-                  aria-label="Second direction"
-                  value={axis2}
-                  onChange={(e) => setDraftField({ pattern: { ...pattern, axis2: e.target.value as Axis } })}
-                >
-                  {(["x", "y", "z"] as const).map((a) => (
-                    <option key={a} value={a} disabled={!pattern.along && a === pattern.axis}>
-                      {AXIS_LABELS[a]}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={pattern.picking === "along2"}
-                  onChange={(e) => {
-                    const { picking: _p, ...rest } = pattern;
-                    setDraftField({ pattern: e.target.checked ? { ...rest, picking: "along2" } : rest });
-                  }}
-                />
-                Clicks in the 3D view set the rows&apos; direction
-              </label>
-              <label className="check-row">
-                <input type="checkbox" checked={!!pattern.flip2} onChange={(e) => setDraftField({ pattern: { ...pattern, flip2: e.target.checked || undefined } })} />
-                Flip the rows&apos; direction
-              </label>
-              <p className="dialog-hint field-hint">Set Rows below to more than 1 for a grid.</p>
-            </>
-          )}
-        </fieldset>
-      )}
+      ) : null}
       {!mirror && <SkipCopies />}
     </>
   );
 }
 
-/** A direction or axis clicked in the 3D view, with a button to go back to choosing one from the list. */
-function PickedRow({ text, onClear }: { text: string; onClear: () => void }) {
+/**
+ * A box for something clicked in the 3D view (Onshape style): what's chosen, by
+ * name, with ✕ to clear it — or, when nothing is, what to click. Clicking the
+ * box makes it the one the next click in the view goes to (it's outlined).
+ */
+function ReferenceBox({
+  label,
+  text,
+  prompt,
+  active,
+  onActivate,
+  onClear,
+  hint,
+  children,
+}: {
+  label: string;
+  text: string | null;
+  prompt: string;
+  active: boolean;
+  onActivate?: () => void;
+  onClear: () => void;
+  hint?: string;
+  children?: ReactNode;
+}) {
   return (
-    <ul className="pick-list">
-      <li>
-        <span>{text}</span>
-        <button type="button" className="icon-button small" onClick={onClear} title="Choose from the list instead" aria-label="Clear the clicked direction">
-          <Icons.Cross size={14} />
+    <fieldset
+      className={`param-group pick-slot reference-box${active ? " active" : ""}`}
+      aria-label={label}
+      onClick={() => !active && onActivate?.()}
+      onFocus={() => !active && onActivate?.()}
+    >
+      <legend>{label}</legend>
+      {text ? (
+        <div className="reference-chip">
+          <span>{text}</span>
+          <button
+            type="button"
+            className="icon-button small"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClear();
+            }}
+            title="Clear"
+            aria-label={`Clear the ${label.toLowerCase()}`}
+          >
+            <Icons.Cross size={14} />
+          </button>
+        </div>
+      ) : (
+        <p className={`dialog-hint pick-hint${active ? " attention" : ""}`}>{active ? prompt : `Click here, then ${prompt.charAt(0).toLowerCase()}${prompt.slice(1)}`}</p>
+      )}
+      {children}
+      {hint && active && <p className="dialog-hint field-hint">{hint}</p>}
+    </fieldset>
+  );
+}
+
+/** A row of quick choices inside a ReferenceBox (the default planes, or X, Y and Z). */
+function QuickChoices<T extends string>({ label, options, value, onChoose }: { label: string; options: [T, string, string][]; value: T | null; onChoose: (v: T) => void }) {
+  return (
+    <div className="segmented three reference-quick" role="radiogroup" aria-label={label}>
+      {options.map(([v, text, hint]) => (
+        <button
+          type="button"
+          key={v}
+          role="radio"
+          aria-checked={value === v}
+          className={value === v ? "selected" : ""}
+          title={hint}
+          onClick={(e) => {
+            e.stopPropagation();
+            onChoose(v);
+          }}
+        >
+          {text}
         </button>
-      </li>
-    </ul>
+      ))}
+    </div>
+  );
+}
+
+const AXIS_CHOICES: [Axis, string, string][] = [
+  ["x", "X", "The red axis, left–right"],
+  ["y", "Y", "The green axis, front–back"],
+  ["z", "Z", "The blue axis, up–down"],
+];
+
+/** Linear and circular patterns: the direction (or axis) box, and a grid's rows box. */
+function PatternDirectionBoxes() {
+  const draft = useStore((s) => s.editing?.draft);
+  const features = useStore(activeFeatures);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (!draft?.pattern || (draft.type !== "linearPattern" && draft.type !== "circularPattern")) return null;
+  const { picking, ...pattern } = draft.pattern;
+  const circular = draft.type === "circularPattern";
+  const second = !circular && picking === "along2";
+  const choose = (choice: DirectionChoice, rows = false) => setDraftField({ pattern: { ...setPatternDirection(pattern, choice, rows), ...(rows ? { picking: "along2" as const } : {}) } });
+  const firstAxis = !pattern.unset && !pattern.along && !pattern.line ? pattern.axis : null;
+  const rowsAxis = !pattern.along2 && !pattern.line2 ? pattern.axis2 ?? (pattern.axis === "y" ? "x" : "y") : null;
+  return (
+    <>
+      <ReferenceBox
+        label={circular ? "Axis" : "Direction"}
+        text={patternReferenceText(pattern, features)}
+        prompt={circular ? "Click a round face, an edge or a sketch line in the view" : "Click an edge, a flat face or a sketch line in the view"}
+        active={!second}
+        onActivate={() => setDraftField({ pattern })}
+        onClear={() => setDraftField({ pattern: setPatternDirection(pattern, { kind: "none" }) })}
+        hint={
+          circular
+            ? "Click a hole or boss (its middle is the axis), a round or straight edge, or a sketch line. Or pick X, Y or Z — through the point under Axis goes through, below."
+            : "Click a straight edge or sketch line to go along it, or a flat face to go straight out of it."
+        }
+      >
+        <QuickChoices label={circular ? "Default axes" : "Default directions"} options={AXIS_CHOICES} value={firstAxis} onChoose={(axis) => choose({ kind: "axis", axis })} />
+        <label className="check-row" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={pattern.flip} onChange={(e) => setDraftField({ pattern: { ...draft.pattern!, flip: e.target.checked } })} />
+          {circular ? "Turn the other way" : "Flip direction"}
+        </label>
+      </ReferenceBox>
+      {!circular && (
+        <ReferenceBox
+          label="Rows go along (for a grid)"
+          text={patternReferenceText(pattern, features, true)}
+          prompt="Click an edge, a flat face or a sketch line in the view"
+          active={second}
+          onActivate={() => setDraftField({ pattern: { ...pattern, picking: "along2" } })}
+          onClear={() => setDraftField({ pattern: setPatternDirection(pattern, { kind: "none" }, true) })}
+          hint="Set Rows below to more than 1 for a grid."
+        >
+          <QuickChoices label="Rows' default directions" options={AXIS_CHOICES} value={rowsAxis} onChoose={(axis) => choose({ kind: "axis", axis }, true)} />
+          <label className="check-row" onClick={(e) => e.stopPropagation()}>
+            <input type="checkbox" checked={!!pattern.flip2} onChange={(e) => setDraftField({ pattern: { ...draft.pattern!, flip2: e.target.checked || undefined } })} />
+            Flip the rows&apos; direction
+          </label>
+        </ReferenceBox>
+      )}
+    </>
   );
 }
 
@@ -1744,9 +1787,12 @@ export function FeatureDialog() {
   const def = FEATURE_DEFS[draft.type];
   const { errors } = resolveParams(draft);
   const hasErrors = Object.keys(errors).length > 0;
+  // A mirror or pattern with no plane, axis or direction chosen yet can't be accepted (its box says what to click).
+  const needsRef = draft.type === "mirror" ? !!draft.mirror?.unset : (draft.type === "circularPattern" || draft.type === "linearPattern") && !!draft.pattern?.unset;
+  const refHint = draft.type === "mirror" ? "Choose the mirror plane first" : draft.type === "circularPattern" ? "Choose the axis first" : "Choose the direction first";
   const groups: { title: string; params: ParamDef[] }[] = [
     { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
-    { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis position" : "Position", params: def.params.filter((p) => p.group === "position") },
+    { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis goes through" : "Position", params: def.params.filter((p) => p.group === "position") },
   ];
 
   return (
@@ -1756,7 +1802,7 @@ export function FeatureDialog() {
       aria-label={`${def.label} feature`}
       onSubmit={(e) => {
         e.preventDefault();
-        commitDraft();
+        if (!needsRef) commitDraft();
       }}
     >
       <header className="feature-dialog-header">
@@ -1765,8 +1811,8 @@ export function FeatureDialog() {
           <button
             type="submit"
             className="dialog-ok"
-            disabled={hasErrors}
-            title={hasErrors ? "Fix the highlighted values first" : "Accept (Enter)"}
+            disabled={hasErrors || needsRef}
+            title={hasErrors ? "Fix the highlighted values first" : needsRef ? refHint : "Accept (Enter)"}
             aria-label="Accept"
           >
             <Icons.Tick size={18} />
@@ -1863,7 +1909,7 @@ export function FeatureDialog() {
           </fieldset>
         ))}
 
-        {buildError && !hasErrors && (
+        {buildError && !hasErrors && !needsRef && (
           <div className="dialog-error" role="alert">
             <Icons.Warning size={16} /> {buildError}
           </div>

@@ -1,4 +1,5 @@
 import { parsePick } from "../geometry/topoRef";
+import { parseLineRef } from "./patternRefs";
 import { FASTENER_KINDS, FASTENER_SIZES, type FastenerKind } from "./fasteners";
 import { parsePlane, parseSketchData } from "../sketch/validate";
 import { defaultAxis } from "../sketch/axis";
@@ -395,6 +396,9 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         ...(feature.type === "linearPattern" && pt?.flip2 === true ? { flip2: true } : {}),
         ...(feature.type !== "curvePattern" && parsePick(pt?.along) ? { along: parsePick(pt?.along)! } : {}),
         ...(feature.type === "linearPattern" && parsePick(pt?.along2) ? { along2: parsePick(pt?.along2)! } : {}),
+        ...(feature.type !== "curvePattern" && parseLineRef(pt?.line) ? { line: parseLineRef(pt?.line)! } : {}),
+        ...(feature.type === "linearPattern" && parseLineRef(pt?.line2) ? { line2: parseLineRef(pt?.line2)! } : {}),
+        ...(feature.type !== "curvePattern" && pt?.unset === true ? { unset: true } : {}),
         ...(skipList(pt?.skip).length ? { skip: skipList(pt?.skip) } : {}),
       };
       if (feature.type === "curvePattern" && typeof f.pathRef === "string") feature.pathRef = f.pathRef;
@@ -404,6 +408,9 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       feature.mirror = {
         sources: ids(mr?.sources),
         plane: parsePlane(mr?.plane) ?? { kind: "default", name: "Right" },
+        ...(parsePick(mr?.planePick) ? { planePick: parsePick(mr?.planePick)! } : {}),
+        ...(parseLineRef(mr?.line) ? { line: parseLineRef(mr?.line)! } : {}),
+        ...(mr?.unset === true ? { unset: true } : {}),
         ...(typeof mr?.part === "string" ? { part: mr.part } : {}),
         ...(mr?.join === true ? { join: true } : {}),
       };

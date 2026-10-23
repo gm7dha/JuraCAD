@@ -9,7 +9,7 @@ import { autoDimensions } from "../src/drawing/autoDimension";
 import { sheetPdf, sheetsPdf, sheetSvg, sheetDxf } from "../src/drawing/export";
 import { addPage, changePage, FIRST_PAGE, knownPage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage, withPage } from "../src/drawing/pages";
 import { addSection } from "../src/drawing/sections";
-import { holeTableShape, HOLE_BLOCK_W, layoutSheet, SHEETS, type Prim, type Projections } from "../src/drawing/sheet";
+import { holeTableShape, HOLE_BLOCK_W, layoutSheet, offSheetMessage, resizedScale, scaleView, SHEETS, viewClear, viewOnPaper, type Prim, type Projections } from "../src/drawing/sheet";
 import type { ViewProjection } from "../src/kernel/protocol";
 import { emptyDocument, parseDocument } from "../src/model/document";
 import type { Drawing, ViewKind } from "../src/model/types";
@@ -367,5 +367,171 @@ describe("long hole tables", () => {
     expect(sheetSvg(l.prims, l.size)).toContain(">B12</text>");
     expect(sheetDxf(l.prims)).toContain("\nB12\n");
     expect(new TextDecoder("latin1").decode(sheetPdf(l.prims, l.size))).toContain("(B12) Tj");
+  });
+});
+
+describe("the 3D view at its own scale", () => {
+  const four = (iso: Partial<Drawing["views"][number]> = {}, extra: Partial<Drawing> = {}): Drawing => ({
+    ...newDrawing(),
+    views: [{ id: "f", kind: "front" }, { id: "t", kind: "top" }, { id: "r", kind: "right" }, { id: "i", kind: "iso", ...iso }],
+    ...extra,
+  });
+  const box = (l: ReturnType<typeof layoutSheet>, k: string) => l.views.find((v) => v.key === k)!.box;
+  const clearAll = (l: ReturnType<typeof layoutSheet>) => {
+    for (const a of l.views) for (const b of l.views) if (a !== b) expect(overlap(a.box, b.box)).toBe(false);
+    for (const v of l.views) expect(viewClear(l, v.key)).toBe(true);
+  };
+
+  it("draws just the 3D view bigger or smaller, noted under it, clear of the others and inside the border", () => {
+    for (const sheet of ["A4", "A3"] as const)
+      for (const [sheetScale, iso] of [
+        [1, 2],
+        [1, 0.5],
+        [2, 1],
+        [undefined, 2],
+        [undefined, 0.5],
+      ] as const) {
+        const plain = layoutSheet(four({}, { sheet, ...(sheetScale ? { scale: sheetScale } : {}) }), block, info);
+        const l = layoutSheet(four({ scale: iso }, { sheet, ...(sheetScale ? { scale: sheetScale } : {}) }), block, info);
+        expect(l.tooBig).toBe(false);
+        const b = box(l, "iso");
+        // 50 × 45 at its own scale, whatever the sheet's.
+        expect(b[2] - b[0]).toBeCloseTo(50 * iso, 9);
+        expect(b[3] - b[1]).toBeCloseTo(45 * iso, 9);
+        if (l.scale !== iso) {
+          const note = l.prims.find((p) => p.kind === "text" && p.text.startsWith("SCALE "));
+          expect(note?.kind === "text" && note.text).toBe(`SCALE ${iso >= 1 ? `${iso}:1` : `1:${1 / iso}`}`);
+          if (note?.kind === "text") {
+            expect(note.x).toBeCloseTo((b[0] + b[2]) / 2, 9);
+            expect(note.y).toBeCloseTo(b[1] - 6, 9);
+          }
+        }
+        // The other views are as they'd be at the same sheet scale.
+        if (l.scale === plain.scale) for (const k of ["front", "top", "right"]) expect(box(l, k)[2] - box(l, k)[0]).toBeCloseTo(box(plain, k)[2] - box(plain, k)[0], 9);
+        clearAll(l);
+      }
+  });
+
+  it("fits the sheet round the 3D view's own size", () => {
+    // On A4 the 3D view at the sheet's scale holds it to 1:1; drawn smaller, the rest can go up to 2:1.
+    expect(layoutSheet(four(), block, info).scale).toBe(1);
+    const small = layoutSheet(four({ scale: 0.5 }), block, info);
+    expect(small.scale).toBe(2);
+    clearAll(small);
+    const big = layoutSheet(four({ scale: 2 }), block, info);
+    expect(big.scale).toBe(1);
+    clearAll(big);
+    // Too big for the sheet at any scale: it says so, and that it's the view's own scale.
+    const huge = layoutSheet(four({ scale: 5 }), block, info);
+    expect(huge.tooBig).toBe(true);
+    expect(huge.ownTooBig).toBe(true);
+  });
+
+  it("picks the standard scale nearest to where its corner is dragged", () => {
+    const c: [number, number] = [100, 100];
+    const corner: [number, number] = [125, 122.5];
+    expect(resizedScale(1, c, corner, corner)).toBe(1);
+    expect(resizedScale(1, c, corner, [150, 145])).toBe(2);
+    expect(resizedScale(1, c, corner, [100 + 25 * 1.3, 100 + 22.5 * 1.3])).toBe(1);
+    expect(resizedScale(1, c, corner, [100 + 25 * 1.6, 100 + 22.5 * 1.6])).toBe(2);
+    expect(resizedScale(1, c, corner, [100 + 25 * 3.5, 100 + 22.5 * 3.5])).toBe(5);
+    expect(resizedScale(2, c, corner, [100 + 25 * 0.5, 100 + 22.5 * 0.5])).toBe(1);
+    expect(resizedScale(1, c, corner, [100 + 25 * 0.4, 100 + 22.5 * 0.4])).toBe(0.5);
+    // Dragged right into the middle: the smallest there is, not nothing.
+    expect(resizedScale(1, c, corner, c)).toBe(0.001);
+    // A view with no size keeps its scale.
+    expect(resizedScale(1, c, c, [200, 200])).toBe(1);
+  });
+
+  it("sets and clears a view's own scale, keeping a moved 3D view where it is while it has room", () => {
+    const base = four({}, { sheet: "A3", scale: 1 });
+    const set = scaleView(base, "i", 2, block, info);
+    expect(set.views.find((v) => v.id === "i")).toEqual({ id: "i", kind: "iso", scale: 2 });
+    expect(scaleView(set, "i", undefined, block, info).views.find((v) => v.id === "i")).toEqual({ id: "i", kind: "iso" });
+    // Moved by hand into open paper: stays there at its new size.
+    const moved = four({ at: [300, 230] }, { sheet: "A3", scale: 1 });
+    const kept = scaleView(moved, "i", 2, block, info);
+    expect(kept.views.find((v) => v.id === "i")).toEqual({ id: "i", kind: "iso", at: [300, 230], scale: 2 });
+    clearAll(layoutSheet(kept, block, info));
+    // Moved next to the front view: at 2:1 it would cover it, so it goes back to its own place beside the others.
+    // (The lined-up views shift a little when the 3D view's size changes, so this is measured with it at 2:1:
+    // 27 mm from the front view's right side to its middle — 2 mm clear at 1:1, 50 mm wide at 2:1.)
+    const front = layoutSheet(four({ scale: 2 }, { sheet: "A3", scale: 1 }), block, info).views.find((v) => v.key === "front")!;
+    const near = four({ at: [front.box[2] + 27, front.centre[1]] }, { sheet: "A3", scale: 1 });
+    expect(viewClear(layoutSheet({ ...near, views: near.views.map((v) => (v.id === "i" ? { ...v, scale: 2 } : v)) }, block, info), "iso")).toBe(false);
+    const back = scaleView(near, "i", 2, block, info);
+    expect(back.views.find((v) => v.id === "i")).toEqual({ id: "i", kind: "iso", scale: 2 });
+    clearAll(layoutSheet(back, block, info));
+    // Near the edge of the paper: the same.
+    const edge = scaleView(four({ at: [390, 260] }, { sheet: "A3", scale: 1 }), "i", 5, block, info);
+    expect(edge.views.find((v) => v.id === "i")!.at).toBeUndefined();
+    // Other views and settings untouched.
+    expect(back.views.filter((v) => v.id !== "i")).toEqual(near.views.filter((v) => v.id !== "i"));
+  });
+
+  it("opens an old drawing laid out exactly as before", () => {
+    const old = four({ at: [300, 230] }, { sheet: "A3" });
+    const again = parseDrawings(JSON.parse(JSON.stringify([old])))[0];
+    expect(layoutSheet(again, block, info)).toEqual(layoutSheet(old, block, info));
+  });
+});
+
+describe("views off the sheet at a chosen scale", () => {
+  const four = (sheet: Drawing["sheet"], scale: number | undefined, iso: Partial<Drawing["views"][number]> = {}): Drawing => ({
+    ...newDrawing(),
+    sheet,
+    ...(scale !== undefined ? { scale } : {}),
+    views: [{ id: "f", kind: "front" }, { id: "t", kind: "top" }, { id: "r", kind: "right" }, { id: "i", kind: "iso", ...iso }],
+  });
+  const names: Record<string, string> = { front: "Front", top: "Top", right: "Right", iso: "3D (isometric)" };
+  const say = (l: ReturnType<typeof layoutSheet>) => offSheetMessage(l, (v) => names[v.key]);
+
+  it("names a 3D view at its own scale that runs off the paper", () => {
+    // A4 at 1:1, the 3D view at 5:1 (250 × 225): taller than the sheet.
+    const l = layoutSheet(four("A4", 1, { scale: 5 }), block, info);
+    expect(l.tooBig).toBe(false);
+    expect(l.offSheet).toEqual(["iso"]);
+    expect(say(l)).toBe("The 3D (isometric) view runs off the sheet at 5:1. Click it and choose a smaller scale, or choose a bigger sheet.");
+  });
+
+  it("counts sitting on the title block as off the sheet", () => {
+    // A3 at 1:1, the 3D view moved to (330, 60) at 2:1: 100 × 90, from y 15 — inside the border, over the title block.
+    const l = layoutSheet(four("A3", 1, { scale: 2, at: [330, 60] }), block, info);
+    const iso = l.views.find((v) => v.key === "iso")!;
+    expect(iso.box[1]).toBeCloseTo(15, 9);
+    expect(iso.box[0]).toBeGreaterThan(10);
+    expect(l.offSheet).toEqual(["iso"]);
+    expect(say(l)).toBe("The 3D (isometric) view runs off the sheet at 2:1. Click it and choose a smaller scale, or choose a bigger sheet.");
+    // Moved up clear of it: nothing to say (and no field at all).
+    const fine = layoutSheet(four("A3", 1, { scale: 2, at: [330, 200] }), block, info);
+    expect("offSheet" in fine).toBe(false);
+    expect(say(fine)).toBeNull();
+  });
+
+  it("speaks of the sheet's scale when it's views at that scale that don't fit", () => {
+    // At the sheet's own scale, moved onto the title block.
+    const placed = layoutSheet(four("A3", 1, { at: [330, 40] }), block, info);
+    expect(placed.offSheet).toEqual(["iso"]);
+    expect(say(placed)).toBe("The views run off the sheet at 1:1. Choose a smaller scale (or Fit to sheet), drag them into the free space, or choose a bigger sheet.");
+    // A4 at 5:1: the front, top and 3D views run off.
+    const big = layoutSheet(four("A4", 5), block, info);
+    expect(big.offSheet).toEqual(["front", "top", "iso"]);
+    expect(say(big)).toMatch(/^The views run off the sheet at 5:1\./);
+  });
+
+  it("says nothing when they fit, and leaves Fit to sheet to its own warning", () => {
+    for (const [sheet, scale, iso] of [
+      ["A3", 1, 2],
+      ["A4", 0.5, 2],
+      ["A4", 2, 1],
+      ["A3", 2, 2],
+    ] as const) {
+      const l = layoutSheet(four(sheet, scale, { scale: iso }), block, info);
+      expect("offSheet" in l).toBe(false);
+      for (const v of l.views) expect(viewOnPaper(l, v.key)).toBe(true);
+    }
+    const fit = layoutSheet(four("A4", undefined, { scale: 5 }), block, info);
+    expect(fit.tooBig).toBe(true);
+    expect("offSheet" in fit).toBe(false);
   });
 });

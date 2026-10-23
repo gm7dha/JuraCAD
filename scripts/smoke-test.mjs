@@ -675,6 +675,43 @@ try {
   await page.waitForTimeout(600);
   await shot("patterned");
 
+  step = "choosing a mirror plane by clicking a face";
+  await tool("Mirror");
+  const mirrorBox = '.feature-dialog fieldset[aria-label="Mirror plane"]';
+  await page.waitForSelector(`${mirrorBox} >> text=Click a flat face, a plane or a sketch line in the view`, { timeout: 5_000 });
+  if (!(await page.getByRole("button", { name: "Accept" }).isDisabled())) throw new Error("a mirror with no plane chosen could be accepted");
+  {
+    // A spot on a flat face that isn't under the dialog: look across the view, right of the dialog.
+    const dialog = await page.locator(".feature-dialog").boundingBox();
+    const canvasBox = await page.locator(".viewport-canvas").boundingBox();
+    const free = await page.evaluate(({ left, w, h }) => {
+      const v = window.juracadViewport.current;
+      for (let y = h * 0.2; y < h * 0.9; y += 12) for (let x = left; x < w * 0.9; x += 12) if (v.pickKindAt(x, y) === "face:PLANE") return { x, y };
+      return null;
+    }, { left: dialog && canvasBox ? dialog.x + dialog.width - canvasBox.x + 20 : 300, w: canvasBox?.width ?? 800, h: canvasBox?.height ?? 600 });
+    if (!free) throw new Error("couldn't find a flat face to click for the mirror plane");
+    await page.locator(".viewport-canvas").click({ position: free });
+    await page.waitForSelector(`${mirrorBox} .reference-chip >> text=Flat face of`, { timeout: 5_000 }).catch(async () => {
+      const said = (await page.locator(".toast").allInnerTexts()).join(" / ");
+      const box = await page.locator(mirrorBox).innerText();
+      throw new Error(`clicking a flat face at (${Math.round(free.x)}, ${Math.round(free.y)}) didn't set the mirror plane. Box: ${box}. Toast: ${said || "none"}`);
+    });
+    await shot("mirrorplane");
+    await page.locator(mirrorBox).getByRole("radio", { name: "Top" }).click();
+    await page.waitForSelector(`${mirrorBox} .reference-chip >> text=Top plane`, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Clear the mirror plane" }).click();
+    await page.waitForSelector(`${mirrorBox} >> text=Click a flat face, a plane or a sketch line in the view`, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Cancel" }).click();
+  }
+
+  step = "choosing a circular pattern's axis";
+  await tool("Circular");
+  const axisBox = '.feature-dialog fieldset[aria-label="Axis"]';
+  await page.waitForSelector(`${axisBox} >> text=Click a round face, an edge or a sketch line in the view`, { timeout: 5_000 });
+  await page.locator(axisBox).getByRole("radio", { name: "Z" }).click();
+  await page.waitForSelector(`${axisBox} .reference-chip >> text=Z axis`, { timeout: 5_000 });
+  await page.getByRole("button", { name: "Cancel" }).click();
+
   step = "opening the hole tool";
   await tool("Hole");
   await page.waitForSelector(".feature-dialog >> text=Where and what");
@@ -1098,6 +1135,40 @@ try {
     await page.waitForFunction((n) => document.querySelectorAll(".drawing-dim-handle").length === n, dimCount - 2, { timeout: 5_000 });
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     await page.waitForFunction((n) => document.querySelectorAll(".drawing-dim-handle").length === n, dimCount, { timeout: 5_000 });
+    await page.keyboard.press("Escape");
+  }
+  step = "setting the 3D view's scale on the sheet";
+  {
+    const iso = page.locator(".drawing-view-handle").filter({ has: page.locator("title", { hasText: "3D (isometric)" }) });
+    await iso.click({ force: true });
+    await page.waitForSelector("#selected-view-scale", { timeout: 5_000 });
+    await page.waitForSelector('[data-testid="view-resize"]', { timeout: 5_000 });
+    // A scale other than the sheet's, so it's noted under the view.
+    const sheetScale = (await page.locator('#selected-view-scale option[value=""]').textContent()) ?? "";
+    const [value, label] = sheetScale.includes("1:5") ? ["0.5", "1:2"] : ["0.2", "1:5"];
+    await page.locator("#selected-view-scale").selectOption(value);
+    await page.waitForFunction((t) => [...document.querySelectorAll(".drawing-text")].some((x) => x.textContent === t), `SCALE ${label}`, { timeout: 10_000 });
+    await shot("isoscale");
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".drawing-text")].some((x) => (x.textContent ?? "").startsWith("SCALE ")), null, { timeout: 10_000 });
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("#selected-view-scale"), null, { timeout: 5_000 });
+  }
+  step = "flipping a dimension's arrows";
+  if (dimCount >= 1) {
+    const lines = () => page.locator('[data-testid="drawing-sheet"] polyline').count();
+    const before = await lines();
+    await page.locator(".drawing-dim-handle").first().click({ force: true });
+    await page.getByRole("button", { name: "Flip arrows", exact: true }).click();
+    // Set outside, a long dimension gets a short line past each end (or loses them, flipped back in).
+    await page.waitForFunction((n) => Math.abs(document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length - n) === 2, before, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length === n, before, { timeout: 5_000 });
+    // Right-clicking its number does the same.
+    await page.locator(".drawing-dim-handle").first().click({ button: "right", force: true });
+    await page.waitForFunction((n) => Math.abs(document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length - n) === 2, before, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length === n, before, { timeout: 5_000 });
     await page.keyboard.press("Escape");
   }
   step = "baseline, chain and ordinate tools";

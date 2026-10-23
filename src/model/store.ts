@@ -32,6 +32,7 @@ import { framesOf, planeAsSketchPlane, refreshDocumentPlanes } from "../sketch/p
 import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
+import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
 import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
@@ -639,6 +640,10 @@ export const useStore = create<AppState>((set, get) => {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) draft.hole = { ...draft.hole, sketchRef: picked.id };
       }
+      // Mirror and circular patterns start with no plane or axis: the dialog asks for one to be clicked
+      // (Onshape does the same), rather than quietly using the origin.
+      if (draft.mirror) draft.mirror = { ...draft.mirror, unset: true };
+      if (type === "circularPattern" && draft.pattern) draft.pattern = { ...draft.pattern, unset: true };
       // Mirror and patterns start with the feature highlighted in the list, if it makes a solid.
       if (isPatternFeature(type)) {
         const picked = features.find((f) => f.id === s.selectedFeatureId && isSolidFeature(f.type));
@@ -813,7 +818,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setDraftMirrorPlane: (plane) =>
       set((s) =>
-        s.editing?.draft.mirror ? { editing: { ...s.editing, draft: { ...s.editing.draft, mirror: { ...s.editing.draft.mirror, plane } } } } : {},
+        s.editing?.draft.mirror ? { editing: { ...s.editing, draft: { ...s.editing.draft, mirror: setMirrorReference(s.editing.draft.mirror, { kind: "plane", plane }) } } } : {},
       ),
 
     commitDraft: () => {

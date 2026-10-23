@@ -11,6 +11,7 @@ import { matchRefs, refDistance, relativeTo, roundVec, type EdgeRef, type FaceRe
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame, toWorld } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
+import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/patternRefs";
 import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
@@ -150,6 +151,15 @@ const importedMeshes = new Map<string, PartMesh>();
 const IMPORTED_MESH_CACHE = 8;
 
 /** Turn whatever OpenCascade threw into a readable sentence. */
+/** A sketch line as an axis or direction: through its first end, pointing to its second. Throws a plain-English problem. */
+function lineAxis(features: Feature[], ref: SketchLineRef): { dir: Vec3; through: Vec3 } {
+  const line = sketchLine3D(features, ref);
+  if (typeof line === "string") throw new Error(line);
+  const d: Vec3 = [line.b[0] - line.a[0], line.b[1] - line.a[1], line.b[2] - line.a[2]];
+  const l = Math.hypot(...d);
+  return { dir: [d[0] / l, d[1] / l, d[2] / l], through: line.a };
+}
+
 export function describeError(e: unknown, fallback: string): string {
   if (e instanceof Error && e.message) return e.message;
   if (typeof e === "string" && e) return e;
@@ -816,6 +826,42 @@ function findPickedFace(shape: Shape3D, pick: TopoPick): Face {
   point.delete();
   faces.forEach((f) => f !== chosen && f.delete());
   return chosen;
+}
+
+/**
+ * The round face clicked as an axis, found on the part as it is now. Round
+ * faces sharing a centre (a bore in the middle of a disc) look the same to the
+ * usual matching, so where it was clicked (`at`) tells them apart by size: the
+ * face whose radius fits the click (measured from where the picked face's
+ * centre was) is taken, then the nearest. So a bore keeps being the axis after
+ * it's moved off the middle. Null when there's no round face to go on.
+ */
+function pickedCylinder(shape: Shape3D, pick: TopoPick): Cylinder | null {
+  const at = pick.at;
+  if (!at || pick.ref.kind !== "face") return null;
+  const want = pick.ref;
+  const faces = facesOf(shape);
+  const bounds = boundsOf(shape);
+  const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+  let best: { c: Cylinder; score: number } | null = null;
+  try {
+    for (const f of faces) {
+      if (f.geomType !== "CYLINDRE") continue;
+      const d = refDistance(want, faceRefOf(f, bounds), size);
+      if (!Number.isFinite(d) || d > Math.max(1, 0.3 * size)) continue;
+      const c = cylinderOfFace(f);
+      if (!c) continue;
+      // How far the click is from this cylinder's axis, had the axis gone through where the picked face's centre was.
+      const off: Vec3 = [at[0] - want.center[0], at[1] - want.center[1], at[2] - want.center[2]];
+      const along = off[0] * c.axis[0] + off[1] * c.axis[1] + off[2] * c.axis[2];
+      const r = Math.hypot(off[0] - along * c.axis[0], off[1] - along * c.axis[1], off[2] - along * c.axis[2]);
+      const score = Math.abs(r - c.radius) + 0.25 * d;
+      if (!best || score < best.score) best = { c, score };
+    }
+  } finally {
+    faces.forEach((f) => f.delete());
+  }
+  return best?.c ?? null;
 }
 
 /**
@@ -1936,7 +1982,7 @@ export class GeometryEngine {
         continue;
       }
       if (feature.type === "mirror" && feature.mirror?.part !== undefined) {
-        const r = this.applyMirrorPart(feature, partCounter + 1);
+        const r = this.applyMirrorPart(feature, partCounter + 1, features);
         if (r.error) featureErrors[feature.id] = r.error;
         if (r.newPart) partCounter++;
         continue;
@@ -3459,15 +3505,29 @@ export class GeometryEngine {
     let along: { dir: Vec3; through: Vec3 } | null = null;
     let along2: Vec3 | null = null;
     if (!mirror && feature.type !== "curvePattern") {
+      const p = feature.pattern;
+      if (p?.unset && !p.along && !p.line) {
+        return {
+          error:
+            feature.type === "circularPattern"
+              ? "Choose the axis to go round: click a round face (a hole or boss), a round or straight edge, or a sketch line in the 3D view — or pick X, Y or Z."
+              : "Choose the direction: click a straight edge, a flat face or a sketch line in the 3D view — or pick X, Y or Z.",
+        };
+      }
+      const later = [p?.line, p?.line2].find((l) => l && all.findIndex((f) => f.id === l.sketch) > at);
+      if (later) return { error: "The sketch with the picked line comes after this pattern in the list. Move it up, or click another line or edge." };
       try {
-        if (feature.pattern?.along) along = this.pickedAxis(feature.pattern.along, feature.type === "circularPattern");
-        if (feature.type === "linearPattern" && feature.pattern?.along2) along2 = this.pickedAxis(feature.pattern.along2, false).dir;
+        if (p?.line) along = lineAxis(all, p.line);
+        else if (p?.along) along = this.pickedAxis(p.along, feature.type === "circularPattern");
+        if (feature.type === "linearPattern" && p?.line2) along2 = lineAxis(all, p.line2).dir;
+        else if (feature.type === "linearPattern" && p?.along2) along2 = this.pickedAxis(p.along2, false).dir;
       } catch (e) {
         return { error: describeError(e, "Couldn't find the picked direction.") };
       }
     }
     if (mirror) {
-      const frame = planeFrame(feature.mirror!.plane);
+      const frame = this.mirrorPlane(feature, all);
+      if (typeof frame === "string") return { error: frame };
       placements.push((s) => s.mirror(frame.n, frame.origin));
     } else {
       const axis = AXES[feature.pattern?.axis ?? "x"];
@@ -3647,7 +3707,11 @@ export class GeometryEngine {
       }
       throw new Error(round ? "That edge is neither straight nor round. Click a straight edge, a round edge or a round face for the axis." : "That edge is curved. Click a straight edge, or a flat face, for the direction.");
     }
-    const [face] = findPickedFaces(part.shape, [pick]);
+    if (round && pick.ref.kind === "face" && pick.ref.surface === "CYLINDRE" && pick.at) {
+      const cyl = pickedCylinder(part.shape, pick);
+      if (cyl) return { dir: cyl.axis, through: cyl.origin };
+    }
+    const [face] = pick.at ? [findPickedFace(part.shape, pick)] : findPickedFaces(part.shape, [pick]);
     try {
       if (round) {
         const cyl = cylinderOfFace(face);
@@ -3663,16 +3727,55 @@ export class GeometryEngine {
   }
 
   /**
+   * The plane a mirror goes across, found as the design is now: a sketch line
+   * (the plane through it, square to its sketch), a flat face clicked on a part
+   * (followed as the part changes), or a default plane or Plane feature.
+   * Returns a plain-English problem instead when it can't be found.
+   */
+  private mirrorPlane(feature: Feature, all: Feature[]): { origin: Vec3; n: Vec3 } | string {
+    const m = feature.mirror!;
+    if (m.unset) return "Choose the mirror plane: click a flat face, a plane or a sketch line in the 3D view — or pick Top, Front or Right.";
+    if (m.line) {
+      const line = sketchLine3D(all, m.line);
+      if (typeof line === "string") return line;
+      const at = all.findIndex((f) => f.id === m.line!.sketch);
+      if (at > all.indexOf(feature)) return "The sketch with the mirror line comes after this mirror in the list. Move it up, or click another line or plane.";
+      return planeThroughLine(line);
+    }
+    if (m.planePick) {
+      const part = this.parts.find((p) => p.id === m.planePick!.partId);
+      if (!part) return "The part with the mirror face no longer exists. Edit this mirror and click another face or plane.";
+      let face: Face;
+      try {
+        face = findPickedFace(part.shape, m.planePick);
+      } catch (e) {
+        return describeError(e, "Couldn't find the mirror face.");
+      }
+      try {
+        if (face.geomType !== "PLANE") return "The mirror face isn't flat any more. Edit this mirror and click a flat face or a plane.";
+        const c = take(face.center);
+        const n = take(face.normalAt(c));
+        return { origin: c, n };
+      } finally {
+        face.delete();
+      }
+    }
+    const frame = planeFrame(m.plane);
+    return { origin: frame.origin, n: frame.n };
+  }
+
+  /**
    * Mirror a whole part across a plane: as a new part, or joined onto the
    * original (model one half, mirror it for the other).
    */
-  private applyMirrorPart(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+  private applyMirrorPart(feature: Feature, nextPartNumber: number, all: Feature[]): { error?: string; newPart?: boolean } {
     const m = feature.mirror!;
     if (!m.part) return { error: "Choose the part to mirror." };
     const part = this.parts.find((p) => p.id === m.part);
     if (!part) return { error: "The part it mirrors no longer exists (or is made later in the list). Edit this mirror and choose another part." };
     if (part.sheet) return { error: "Sheet metal parts can't be mirrored whole yet — the flat pattern couldn't follow. Mirror the features that made it, or copy it with Move / copy." };
-    const frame = planeFrame(m.plane);
+    const frame = this.mirrorPlane(feature, all);
+    if (typeof frame === "string") return { error: frame };
     // Its threads (for drawings), mirrored too.
     const reflect = (p: Vec3, point: boolean): Vec3 => {
       const k = 2 * dot3(point ? [p[0] - frame.origin[0], p[1] - frame.origin[1], p[2] - frame.origin[2]] : p, frame.n);
