@@ -58,6 +58,18 @@ const host: LiveHost = {
   },
   subscribe: (listener) => useStore.subscribe(listener),
   permission: loopbackPermission,
+  // Look for new Claude chats only while JuraCAD is in view (and straight away when it comes back).
+  watchVisibility(onChange) {
+    if (typeof document === "undefined") return () => {};
+    const shown = () => onChange(document.visibilityState === "visible");
+    const focused = () => onChange(true);
+    document.addEventListener("visibilitychange", shown);
+    window.addEventListener("focus", focused);
+    return () => {
+      document.removeEventListener("visibilitychange", shown);
+      window.removeEventListener("focus", focused);
+    };
+  },
 };
 
 export const liveClient = new LiveClient(host, (url, protocol) => new WebSocket(url, protocol) as unknown as SocketLike);
