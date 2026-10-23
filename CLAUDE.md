@@ -99,7 +99,12 @@
   `mcpb validate`/`pack` (pinned devDependency) make `dist/juracad-claude.mcpb` (downloaded from Help), and `scripts/check-claude-extension.mjs`
   unpacks it, starts it and builds a bracket over MCP. Locally, with esbuild and a stand-in SDK, both scripts run too.
 - Live with Claude (Claude edits the design open in the user's tab): the extension also listens on 127.0.0.1 only
-  (ports `LIVE_PORTS` 47615–47617, path `/juracad-live`, sub-protocol `juracad-live.1`), via a small hand-written
+  (the first free port of `LIVE_PORTS` 47615–47624: Claude starts one extension process per chat, so several run at
+  once, and the tab links ALL of them — `LiveClient` keeps one `Link` per port, each with its own versions; every user
+  change goes to all, a change from any is applied with the usual rules and then pushed to the others; while connected
+  it re-probes unlinked ports every 4 s, so later chats join by themselves, and drops links whose process exits;
+  `tests/liveLink.test.ts` "links every Claude chat" and the smoke test (two chats, then a third) cover it;
+  path `/juracad-live`, sub-protocol `juracad-live.1`), via a small hand-written
   WebSocket server (`src/mcp/websocket.ts`, Node http + RFC 6455 frames; no `ws` package). It accepts only the JuraCAD
   site's Origin `https://gm7dha.github.io` — note that's every GitHub Pages site of the account, not just /JuraCAD/ —
   (localhost origins only with `JURACAD_LIVE_DEV=1`, which the smoke test sets), its own Host, text messages up to

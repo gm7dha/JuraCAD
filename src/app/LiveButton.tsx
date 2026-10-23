@@ -63,7 +63,12 @@ export function LiveButton() {
           {state.kind === "connected" && (
             <>
               <p className="live-status ok" role="status">
-                Connected to Claude (JuraCAD extension {state.extension}).
+                Connected to Claude — {state.chats === 1 ? "1 Claude chat" : `${state.chats} Claude chats`} linked (JuraCAD
+                extension {state.extension}).
+              </p>
+              <p className="small muted">
+                Every Claude chat that has JuraCAD is linked, including ones you start later (they're found within a few
+                seconds).
               </p>
               <p className="small">
                 Ask Claude in the Claude app to change this design — say, "add four M3 holes to the lid". Its sketches and

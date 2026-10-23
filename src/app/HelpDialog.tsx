@@ -119,6 +119,7 @@ export function HelpDialog() {
         shows while you're connected; click it to disconnect.
       </p>
       <ul className="small help-steps">
+        <li>It works with every Claude chat that has JuraCAD — Claude runs the extension once per chat, and JuraCAD links them all, including chats you start after connecting (within a few seconds).</li>
         <li>Ask Claude for changes in the Claude app, e.g. "add four M3 holes to the lid". Its sketches and features appear in the feature list and the 3D view as it works, on the Part Studio on show.</li>
         <li>Each of Claude's changes is one step you can undo (Ctrl+Z / ⌘Z). You can keep editing too: if you both change something at the same moment, Claude's change is turned back and it tries again, so nothing is lost. Finish any open dialog (✓ or ✗) so Claude can carry on.</li>
         <li>Made for Chrome and Edge (Firefox should work too). Safari doesn't let websites talk to apps on your computer; there (or if connecting doesn't work), ask Claude to save the design and open the .juracad file with Open.</li>

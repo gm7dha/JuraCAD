@@ -5,9 +5,11 @@
  * (src/live/client.ts) and by the extension (src/mcp/live.ts).
  *
  * How it goes:
- * - The user clicks Connect to Claude. The app tries LIVE_PORTS on 127.0.0.1
- *   and sends "hello" with its design (a .juracad file's text), the Part Studio
- *   on show and a version number (1 to start).
+ * - The user clicks Connect to Claude. The app tries every one of LIVE_PORTS on
+ *   127.0.0.1 (one extension per Claude chat) and sends each "hello" with its
+ *   design (a .juracad file's text), the Part Studio on show and a version
+ *   number (1 to start). Each link counts its own versions. While connected,
+ *   the app looks again every few seconds for chats started since.
  * - Each change the user makes (including undo/redo) is sent as "doc" with the
  *   next version.
  * - When Claude changes the design, the extension sends "change", based on the
@@ -18,8 +20,11 @@
  *   again and retries.
  */
 
-/** The ports the extension listens on (the first free one) and the app tries, in order. */
-export const LIVE_PORTS = [47615, 47616, 47617] as const;
+/**
+ * The ports the extension listens on (the first free one). Claude starts the
+ * extension once for each chat, so several may be running: the app links all of them.
+ */
+export const LIVE_PORTS = [47615, 47616, 47617, 47618, 47619, 47620, 47621, 47622, 47623, 47624] as const;
 /** The address path and WebSocket sub-protocol both sides use (anything else is refused). */
 export const LIVE_PATH = "/juracad-live";
 export const LIVE_SUBPROTOCOL = "juracad-live.1";

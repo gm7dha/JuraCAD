@@ -1,9 +1,12 @@
 /**
  * "Live with Claude", the app's side: connects (only when the user clicks
- * Connect to Claude) to the JuraCAD extension running in the Claude desktop
- * app on this computer, sends the design and every change the user makes, and
- * applies Claude's changes. Kept free of React and the store (they come in
- * through `LiveHost`), so it's tested in Node against the real extension link.
+ * Connect to Claude) to every JuraCAD extension running on this computer —
+ * Claude starts one for each chat — sends each of them the design and every
+ * change the user makes, and applies Claude's changes from any of them.
+ * While connected it looks again every few seconds, so a chat started later
+ * is linked too, and one that has stopped is dropped quietly. Kept free of
+ * React and the store (they come in through `LiveHost`), so it's tested in
+ * Node against real extension links.
  */
 import { decideChange, LIVE_PATH, LIVE_PORTS, LIVE_SUBPROTOCOL, MAX_MESSAGE_BYTES, parseExtensionMessage, type AppMessage } from "./protocol";
 
@@ -41,7 +44,7 @@ export type SocketFactory = (url: string, protocol: string) => SocketLike;
 export type LiveState =
   | { kind: "off"; notice?: string }
   | { kind: "connecting"; message: string }
-  | { kind: "connected"; extension: string; port: number; last: string | null }
+  | { kind: "connected"; extension: string; chats: number; last: string | null }
   | { kind: "failed"; title: string; help: string[] };
 
 const OPEN = 1;
@@ -83,24 +86,37 @@ export function blockedHelp(browser: BrowserKind): { title: string; help: string
   };
 }
 
+/** One linked JuraCAD extension (one Claude chat): its own socket and its own version count. */
+interface Link {
+  socket: SocketLike;
+  port: number;
+  extension: string;
+  version: number;
+  lastKey: unknown;
+}
+
+type Outcome = { link: Link } | "nothing" | { title: string; help: string[] };
+
 export class LiveClient {
   state: LiveState = { kind: "off" };
-  private socket: SocketLike | null = null;
-  private port = 0;
-  private version = 0;
-  private lastKey: unknown = null;
+  private links = new Map<number, Link>();
   private unsubscribe: (() => void) | null = null;
   private listeners = new Set<() => void>();
   /** Bumped by connect/disconnect so an attempt that's been given up on stops. */
   private attempt = 0;
   /** True while Claude's change is being applied (the store tells its listeners straight away: that's not the user). */
   private applying = false;
+  private recheckTimer: ReturnType<typeof setTimeout> | null = null;
+  private probing = new Set<number>();
+  /** Ports whose chat belongs to another JuraCAD tab: not asked again for a while. */
+  private skipUntil = new Map<number, number>();
+  private last: string | null = null;
 
   constructor(
     private readonly host: LiveHost,
     private readonly makeSocket: SocketFactory,
     private readonly ports: readonly number[] = LIVE_PORTS,
-    private readonly timeouts = { open: 5_000, openWithPrompt: 60_000, welcome: 20_000 },
+    private readonly timeouts = { open: 5_000, openWithPrompt: 60_000, welcome: 20_000, recheck: 4_000 },
   ) {}
 
   onChange(fn: () => void): () => void {
@@ -117,7 +133,22 @@ export class LiveClient {
     return this.state.kind === "connected";
   }
 
-  /** Try each port until the extension answers. Only ever called from the user's click. */
+  /** How many Claude chats are linked now. */
+  get chats(): number {
+    return this.links.size;
+  }
+
+  /** The ports linked (for tests and the details). */
+  get linkedPorts(): number[] {
+    return [...this.links.keys()].sort((a, b) => a - b);
+  }
+
+  private showConnected(): void {
+    const newest = [...this.links.values()].pop();
+    this.setState({ kind: "connected", extension: newest?.extension ?? "", chats: this.links.size, last: this.last });
+  }
+
+  /** Look on every port for running extensions and link them all. Only ever started by the user's click. */
   async connect(): Promise<LiveState> {
     if (this.state.kind === "connected" || this.state.kind === "connecting") return this.state;
     const attempt = ++this.attempt;
@@ -128,14 +159,21 @@ export class LiveClient {
     if (permission === "prompt") {
       this.setState({ kind: "connecting", message: "Your browser may ask whether JuraCAD can reach apps on this device — click Allow." });
     }
-    let first = true;
-    for (const port of this.ports) {
-      const r = await this.tryPort(port, first && permission === "prompt" ? this.timeouts.openWithPrompt : this.timeouts.open, attempt);
-      first = false;
-      if (attempt !== this.attempt) return this.state;
-      if (r === "connected") return this.state;
-      if (typeof r === "object") return this.fail(r);
+    const wait = permission === "prompt" ? this.timeouts.openWithPrompt : this.timeouts.open;
+    const outcomes = await Promise.all(this.ports.map((port) => this.tryPort(port, wait, attempt)));
+    if (attempt !== this.attempt) {
+      outcomes.forEach((o) => typeof o === "object" && "link" in o && this.closeSocket(o.link.socket));
+      return this.state;
     }
+    for (const o of outcomes) if (typeof o === "object" && "link" in o) this.adopt(o.link);
+    if (this.links.size) {
+      this.unsubscribe = this.host.subscribe(() => this.pushAll());
+      this.showConnected();
+      this.scheduleRecheck();
+      return this.state;
+    }
+    const reason = outcomes.find((o): o is { title: string; help: string[] } => typeof o === "object" && !("link" in o));
+    if (reason) return this.fail(reason);
     const after = (await this.host.permission?.().catch(() => "unknown" as const)) ?? "unknown";
     return this.fail(after === "denied" ? blockedHelp(this.host.browser) : notFoundHelp(this.host.browser));
   }
@@ -145,8 +183,44 @@ export class LiveClient {
     return this.state;
   }
 
-  /** "connected", "next" (nothing there: try the next port), or a reason to stop trying. */
-  private tryPort(port: number, openTimeout: number, attempt: number): Promise<"connected" | "next" | { title: string; help: string[] }> {
+  /** While connected: look again for extensions started since (a new Claude chat), every few seconds. */
+  private scheduleRecheck(): void {
+    if (this.recheckTimer) clearTimeout(this.recheckTimer);
+    const attempt = this.attempt;
+    this.recheckTimer = setTimeout(async () => {
+      this.recheckTimer = null;
+      if (attempt !== this.attempt || !this.connected) return;
+      const now = Date.now();
+      const free = this.ports.filter((p) => !this.links.has(p) && !this.probing.has(p) && (this.skipUntil.get(p) ?? 0) <= now);
+      free.forEach((p) => this.probing.add(p));
+      const outcomes = await Promise.all(free.map((port) => this.tryPort(port, this.timeouts.open, attempt)));
+      free.forEach((p) => this.probing.delete(p));
+      if (attempt !== this.attempt || !this.connected) {
+        outcomes.forEach((o) => typeof o === "object" && "link" in o && this.closeSocket(o.link.socket));
+        return;
+      }
+      const added = outcomes.filter((o): o is { link: Link } => typeof o === "object" && "link" in o);
+      for (const o of added) this.adopt(o.link);
+      if (added.length) {
+        // The design may have changed while saying hello: bring the new ones up to date.
+        this.pushAll();
+        this.showConnected();
+      }
+      this.scheduleRecheck();
+    }, this.timeouts.recheck);
+  }
+
+  private closeSocket(socket: SocketLike): void {
+    socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
+    try {
+      socket.close(1000, "disconnected");
+    } catch {
+      // already closed
+    }
+  }
+
+  /** Open one port and say hello: the link, "nothing" there, or a reason to give up. */
+  private tryPort(port: number, openTimeout: number, attempt: number): Promise<Outcome> {
     return new Promise((resolve) => {
       let socket: SocketLike;
       try {
@@ -157,25 +231,19 @@ export class LiveClient {
         return;
       }
       let settled = false;
-      const done = (r: "connected" | "next" | { title: string; help: string[] }) => {
+      let hello: { key: unknown } | null = null;
+      const done = (r: Outcome) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (r !== "connected") {
-          socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
-          try {
-            socket.close();
-          } catch {
-            // already closed
-          }
-        }
+        if (typeof r !== "object" || !("link" in r)) this.closeSocket(socket);
         resolve(r);
       };
-      let timer = setTimeout(() => done("next"), openTimeout);
-      socket.onerror = () => done("next");
-      socket.onclose = () => done("next");
+      let timer = setTimeout(() => done("nothing"), openTimeout);
+      socket.onerror = () => done("nothing");
+      socket.onclose = () => done("nothing");
       socket.onopen = () => {
-        if (attempt !== this.attempt) return done("next");
+        if (attempt !== this.attempt) return done("nothing");
         clearTimeout(timer);
         timer = setTimeout(() => done({ title: "Claude didn't answer", help: ["The JuraCAD extension was found but didn't reply. Restart the Claude desktop app, then click Connect to Claude again."] }), this.timeouts.welcome);
         const now = this.host.current();
@@ -184,66 +252,68 @@ export class LiveClient {
           done({ title: "This design is too big to share live", help: ["Ask Claude to work on a saved .juracad file instead, or remove large imported models."] });
           return;
         }
-        this.version = 1;
-        this.lastKey = now.key;
-        this.sendTo(socket, { type: "hello", protocol: 1, app: this.host.appVersion, version: this.version, studio: now.studio, file });
+        hello = { key: now.key };
+        this.sendTo(socket, { type: "hello", protocol: 1, app: this.host.appVersion, version: 1, studio: now.studio, file });
       };
       socket.onmessage = (ev) => {
         const msg = parseExtensionMessage(String(ev.data));
         if ("error" in msg) return done({ title: "Claude's extension didn't understand JuraCAD", help: ["Update the JuraCAD extension (Help › Use JuraCAD with Claude) and reload this page."] });
-        if (msg.type === "busy") return done({ title: "Another JuraCAD tab is connected", help: [msg.message] });
+        // Another tab has that chat: not ours to link (others may still be free).
+        if (msg.type === "busy") {
+          this.skipUntil.set(port, Date.now() + 30_000);
+          return done({ title: "Another JuraCAD tab is connected", help: [msg.message] });
+        }
         if (msg.type === "error") return done({ title: "Claude's extension couldn't connect", help: [msg.message] });
-        if (msg.type !== "welcome") return done({ title: "Claude's extension didn't say hello", help: ["Update the JuraCAD extension (Help › Use JuraCAD with Claude) and reload this page."] });
-        if (attempt !== this.attempt) return done("next");
-        done("connected");
-        this.started(socket, port, msg.extension);
+        if (msg.type !== "welcome" || !hello) return done({ title: "Claude's extension didn't say hello", help: ["Update the JuraCAD extension (Help › Use JuraCAD with Claude) and reload this page."] });
+        if (attempt !== this.attempt) return done("nothing");
+        done({ link: { socket, port, extension: msg.extension, version: 1, lastKey: hello.key } });
       };
     });
+  }
+
+  private adopt(link: Link): void {
+    this.links.set(link.port, link);
+    link.socket.onmessage = (ev) => this.receive(link, String(ev.data));
+    link.socket.onerror = null;
+    link.socket.onclose = () => this.dropped(link);
   }
 
   private sendTo(socket: SocketLike, msg: AppMessage): void {
     if (socket.readyState === OPEN) socket.send(JSON.stringify(msg));
   }
 
-  private started(socket: SocketLike, port: number, extension: string): void {
-    this.socket = socket;
-    this.port = port;
-    this.setState({ kind: "connected", extension, port, last: null });
-    socket.onmessage = (ev) => this.receive(String(ev.data));
-    socket.onerror = null;
-    socket.onclose = () => this.closed("Claude disconnected (the Claude app or its JuraCAD extension stopped). Click Connect to Claude to connect again.");
-    this.unsubscribe = this.host.subscribe(() => this.pushIfChanged());
+  /** Send the design to every linked chat that hasn't seen it yet (the user changed it, or switched Part Studio). */
+  private pushAll(): void {
+    if (this.applying) return;
+    for (const link of [...this.links.values()]) this.pushTo(link);
   }
 
-  /** Send the design if the user changed it (or switched Part Studio). */
-  private pushIfChanged(): void {
-    if (!this.socket || this.applying) return;
+  private pushTo(link: Link): void {
     const now = this.host.current();
-    if (now.key === this.lastKey) return;
-    this.lastKey = now.key;
+    if (now.key === link.lastKey) return;
+    link.lastKey = now.key;
     const file = now.file();
     if (file.length > MAX_MESSAGE_BYTES) {
       this.disconnect("The design is now too big to share live, so JuraCAD disconnected from Claude.");
       return;
     }
-    this.version++;
-    this.sendTo(this.socket, { type: "doc", version: this.version, studio: now.studio, file });
+    link.version++;
+    this.sendTo(link.socket, { type: "doc", version: link.version, studio: now.studio, file });
   }
 
-  private receive(text: string): void {
-    const socket = this.socket;
-    if (!socket) return;
+  private receive(link: Link, text: string): void {
+    if (this.links.get(link.port) !== link) return;
     const msg = parseExtensionMessage(text);
     if ("error" in msg || msg.type === "welcome" || msg.type === "busy") return;
     if (msg.type === "error") {
-      this.disconnect(msg.message);
+      this.dropped(link, msg.message);
       return;
     }
     // Anything the user did just before this arrived goes first (and makes the change out of date).
-    this.pushIfChanged();
-    const decision = decideChange(this.version, msg.base, this.host.busy());
+    this.pushAll();
+    const decision = decideChange(link.version, msg.base, this.host.busy());
     if (!decision.apply) {
-      this.sendTo(socket, { type: "refused", id: msg.id, version: this.version, reason: decision.reason, message: decision.message });
+      this.sendTo(link.socket, { type: "refused", id: msg.id, version: link.version, reason: decision.reason, message: decision.message });
       return;
     }
     this.applying = true;
@@ -256,42 +326,46 @@ export class LiveClient {
       this.applying = false;
     }
     if (problem) {
-      this.sendTo(socket, { type: "refused", id: msg.id, version: this.version, reason: "invalid", message: problem });
+      this.sendTo(link.socket, { type: "refused", id: msg.id, version: link.version, reason: "invalid", message: problem });
       return;
     }
-    this.version = decision.version;
-    // The change is now on show: not something to send back.
-    this.lastKey = this.host.current().key;
-    this.sendTo(socket, { type: "applied", id: msg.id, version: this.version });
-    if (this.state.kind === "connected") this.setState({ ...this.state, last: msg.label });
+    link.version = decision.version;
+    // The change is on show: not something to send back to the chat that made it...
+    link.lastKey = this.host.current().key;
+    this.sendTo(link.socket, { type: "applied", id: msg.id, version: link.version });
+    // ...but every other linked chat gets the new design.
+    this.pushAll();
+    this.last = msg.label;
+    if (this.state.kind === "connected") this.showConnected();
   }
 
-  private closed(notice: string): void {
+  /** A linked chat went away (its extension stopped): drop it quietly, unless it was the last. */
+  private dropped(link: Link, why?: string): void {
+    if (this.links.get(link.port) !== link) return;
+    this.links.delete(link.port);
+    this.closeSocket(link.socket);
+    if (this.links.size) {
+      if (this.state.kind === "connected") this.showConnected();
+      return;
+    }
+    this.stop(why ?? "Claude disconnected (the Claude app or its JuraCAD extension stopped). Click Connect to Claude to connect again.");
+  }
+
+  private stop(notice: string): void {
+    this.attempt++;
+    if (this.recheckTimer) clearTimeout(this.recheckTimer);
+    this.recheckTimer = null;
     this.unsubscribe?.();
     this.unsubscribe = null;
-    this.socket = null;
-    this.setState({ kind: "off", notice });
+    for (const link of this.links.values()) this.closeSocket(link.socket);
+    this.links.clear();
+    this.skipUntil.clear();
+    this.last = null;
+    this.setState(notice ? { kind: "off", notice } : { kind: "off" });
   }
 
   /** The user clicked Disconnect (or the link must stop). */
   disconnect(notice?: string): void {
-    this.attempt++;
-    const s = this.socket;
-    if (s) {
-      s.onclose = null;
-      s.onmessage = null;
-      try {
-        s.close(1000, "disconnected");
-      } catch {
-        // already closed
-      }
-    }
-    this.closed(notice ?? "");
-    if (!notice) this.setState({ kind: "off" });
-  }
-
-  /** The port connected on (for tests and the status line). */
-  get connectedPort(): number {
-    return this.port;
+    this.stop(notice ?? "");
   }
 }

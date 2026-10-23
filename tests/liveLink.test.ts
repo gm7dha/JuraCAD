@@ -399,4 +399,82 @@ describe("Live with Claude", () => {
     await ok(session, "describe_design");
     expect(session.doc.features.length).toBe(1);
   });
+
+  it("links every Claude chat: changes from any of them appear, and all see the latest design", async () => {
+    // Three extensions running (one per Claude chat), each on its own port.
+    const instance = async (port = 0) => {
+      const bridge = new LiveBridge("test-ext", () => {}, 20_000);
+      const started = await startLiveServer({ ports: [port], accept: (c) => bridge.connect(c) });
+      if (!started) throw new Error("no port");
+      const session = new Session(null);
+      session.live = bridge;
+      const stop = () => {
+        bridge.close();
+        started.server.close();
+      };
+      cleanups.push(() => {
+        stop();
+        session.dispose();
+      });
+      return { bridge, session, port: started.port, stop };
+    };
+    const a = await instance();
+    const b = await instance();
+    const c = await instance();
+    // A port for a chat started later: find a free one now.
+    const spare = await startLiveServer({ ports: [0], accept: () => {} });
+    const laterPort = spare!.port;
+    await new Promise((r) => spare!.server.close(r));
+
+    const app = new FakeApp(emptyDocument("Shared"));
+    const client = new LiveClient(app, socketFrom("https://gm7dha.github.io"), [a.port, b.port, c.port, laterPort], { open: 2_000, openWithPrompt: 2_000, welcome: 5_000, recheck: 150 });
+    cleanups.push(() => client.disconnect());
+    const state = await client.connect();
+    expect(state.kind === "connected" && state.chats).toBe(3);
+    await until(() => a.bridge.connected && b.bridge.connected && c.bridge.connected, "all three linked");
+
+    // Claude in chat B adds a box: it appears in the tab, and A and C get the new design.
+    await ok(b.session, "add_feature", { type: "box", width: 10, depth: 10, height: 10 });
+    expect(app.doc.features.map((f) => f.type)).toEqual(["box"]);
+    expect(app.applied.map((x) => x.label)).toEqual(["Claude: added Box 1"]);
+    await until(() => a.bridge.version === 2 && c.bridge.version === 2, "A and C to get the new design");
+    expect(b.bridge.version).toBe(2);
+    expect(await ok(a.session, "describe_design")).toMatch(/Box 1/);
+    // Chat A builds on it.
+    await ok(a.session, "add_feature", { type: "cylinder", diameter: 4, height: 20 });
+    expect(app.doc.features.map((f) => f.type)).toEqual(["box", "cylinder"]);
+    await until(() => b.bridge.version === 3 && c.bridge.version === 3, "B and C to see the cylinder");
+    expect(await ok(b.session, "describe_design")).toMatch(/Cylinder 1/);
+    // The user's own change reaches every chat.
+    app.edit((d) => ({ ...d, name: "Renamed by the user" }));
+    await until(() => [a, b, c].every((x) => x.bridge.doc?.name === "Renamed by the user"), "the user's change everywhere");
+
+    // Two chats changing at the same moment: the second one's change is refused (nothing lost), and it can retry.
+    const clash = await b.bridge.call(b.session, "rename", async () => {
+      await ok(a.session, "set_variables", { variables: [{ name: "wall", value: "3" }] });
+      await until(() => b.bridge.doc?.variables?.length === 1, "B to hear of A's change");
+      b.session.commit({ ...b.session.doc, name: "B's name" });
+      return { content: [{ type: "text", text: "renamed" }] };
+    });
+    expect(clash.isError).toBe(true);
+    expect(textOf(clash)).toMatch(/at the same moment/);
+    expect(app.doc.name).toBe("Renamed by the user");
+    expect(app.doc.variables?.map((v) => v.name)).toEqual(["wall"]);
+
+    // A chat started after connecting is linked by itself within moments.
+    const d = await instance(laterPort);
+    await until(() => d.bridge.connected && client.chats === 4, "the new chat to be linked");
+    expect(await ok(d.session, "describe_design")).toMatch(/Design "Renamed by the user"[\s\S]*Box 1[\s\S]*Cylinder 1/);
+    await ok(d.session, "add_feature", { type: "sphere", diameter: 6, x: 0, y: 0, z: 30 });
+    expect(app.doc.features.map((f) => f.type)).toEqual(["box", "cylinder", "sphere"]);
+
+    // Chat B's extension stops: it's dropped quietly and the others carry on.
+    b.stop();
+    await until(() => client.chats === 3, "B to be dropped");
+    expect(client.state.kind).toBe("connected");
+    expect(client.linkedPorts).toEqual([a.port, c.port, d.port].sort((x, y) => x - y));
+    await ok(c.session, "add_feature", { type: "box", name: "From C", width: 2, depth: 2, height: 2, x: 40, y: 0, z: 0, operation: "new" });
+    expect(app.doc.features.map((f) => f.name)).toContain("From C");
+    await until(() => a.bridge.doc?.features.some((f) => f.name === "From C") === true, "A to see C's box");
+  });
 });
