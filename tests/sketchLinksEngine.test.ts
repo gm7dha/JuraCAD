@@ -13,7 +13,7 @@ import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
 import { lostLinksMessage, linkEdge } from "../src/sketch/links";
-import { addCircle, addLine, curveById, pointPos } from "../src/sketch/ops";
+import { addCircle, addLine, curveById, pointPos, type Placed } from "../src/sketch/ops";
 import { planeOnFace, type SketchPlane } from "../src/sketch/planes";
 import { snapAt } from "../src/sketch/snaps";
 import { emptySketch, type SketchData, type SketchLine } from "../src/sketch/types";
@@ -86,8 +86,8 @@ describe("sketch on a part's face", () => {
     const circle = curveById(data, c.circleId);
     const circleCentre = circle?.type === "circle" ? circle.center : "";
 
-    // The box is made wider (60) and taller (15), and the hole moves to x = 20.
-    const r = rebuild([...boxWithHole(60, 20, 15, 20), sketchFeature("sk", plane, data), extrudeFeature("ex", "sk", 5)]);
+    // The box is made wider (60) and taller (15), and the hole moves to x = 14.
+    const r = rebuild([...boxWithHole(60, 20, 15, 14), sketchFeature("sk", plane, data), extrudeFeature("ex", "sk", 5)]);
     expect(r.featureErrors).toEqual({});
     const info = r.sketchLinks!.sk;
     expect(Object.values(info.links).every((e) => e !== null)).toBe(true);
@@ -101,15 +101,15 @@ describe("sketch on a part's face", () => {
     expect([ax, ay].map((v) => Math.round(v * 1e6) / 1e6)).toEqual([60, 20]);
     expect([bx, by].map((v) => Math.round(v * 1e6) / 1e6)).toEqual([0, 10]);
     const [cx, cy] = pointPos(now, circleCentre);
-    expect(cx).toBeCloseTo(20, 6);
+    expect(cx).toBeCloseTo(14, 6);
     expect(cy).toBeCloseTo(10, 6);
-    // The extrude uses the sketch as it is now: a 3 mm circle on the new top face, 5 tall, at (20, 10).
+    // The extrude uses the sketch as it is now: a 3 mm circle on the new top face, 5 tall, at (14, 10).
     const pin = r.parts.find((p) => p.id !== "box");
     expect(pin).toBeDefined();
     const a = analyzeMesh(pin!.vertices, pin!.triangles);
     expect(a.volume).toBeCloseTo(Math.PI * 1.5 * 1.5 * 5, 0);
     expect(a.bounds!.min[2]).toBeCloseTo(15, 4);
-    expect((a.bounds!.min[0] + a.bounds!.max[0]) / 2).toBeCloseTo(20, 1);
+    expect((a.bounds!.min[0] + a.bounds!.max[0]) / 2).toBeCloseTo(14, 1);
   });
 
   it("Use from the part follows its edge too, and says so kindly when the edge has gone", () => {
@@ -121,7 +121,8 @@ describe("sketch on a part's face", () => {
     // The hole is filled in (its feature turned off): the copy stays where it was.
     const [box, cyl] = boxWithHole(40, 20, 10);
     const r = rebuild([box, { ...cyl, suppressed: true }, sketchFeature("sk", plane, used.sketch)]);
-    expect(r.featureErrors).toEqual({});
+    // Said on the sketch in the feature list too, with what to do.
+    expect(r.featureErrors.sk).toMatch(/A part edge this sketch uses can't be found any more, so its copy stays where it was\. Edit the sketch and delete it/);
     const info = r.sketchLinks!.sk;
     expect(info.links[used.curveId]).toBeNull();
     expect(info.sketch).toBeUndefined();
@@ -135,5 +136,77 @@ describe("sketch on a part's face", () => {
     expect(r.sketchLinks?.sk).toBeUndefined();
     const pin = r.parts.find((p) => p.id !== "box")!;
     expect(analyzeMesh(pin.vertices, pin.triangles).bounds!.min[2]).toBeCloseTo(10, 4);
+  });
+});
+
+/** A closed outline through these corners (sketch mm), as joined lines. */
+function outlineSketch(corners: [number, number][]): SketchData {
+  let s = emptySketch();
+  let first: string | null = null;
+  let prev: Placed | null = null;
+  corners.forEach(([x, y], i) => {
+    if (!prev) {
+      prev = { x, y };
+      return;
+    }
+    const r = addLine(s, prev, { x, y });
+    s = r.sketch;
+    const line = curveById(s, r.lineId) as SketchLine;
+    if (i === 1) first = line.p1;
+    prev = { x, y, snap: { kind: "point", id: line.p2 } };
+  });
+  const [x0, y0] = corners[0];
+  return addLine(s, prev!, { x: x0, y: y0, snap: { kind: "point", id: first! } }).sketch;
+}
+
+/** A 40 long, 20 deep block whose top rises from `left` to `right` (mm), drawn on the Front plane. */
+function block(left: number, right: number): Feature[] {
+  const sk = sketchFeature("profile", { kind: "default", name: "Front" }, outlineSketch([[0, 0], [40, 0], [40, right], [0, left]]));
+  return [sk, extrudeFeature("block", "profile", 20)];
+}
+
+describe("following a face: sloping faces and faces that go", () => {
+  const topOf = (r: ReturnType<typeof rebuild>, steep: (nz: number) => boolean) => {
+    const part = r.parts.find((p) => p.id === "block")!;
+    const ref = part.faceRefs.find((f) => f.surface === "PLANE" && steep(f.normal[2]))!;
+    return { pick: { partId: "block", ref } as TopoPick, plane: planeOnFace(ref.normal, ref.center, "Face of Part 1", { partId: "block", ref }) };
+  };
+
+  it("a sketch on a sloping face settles: rebuilding with the plane it was given asks for no further move", () => {
+    const rise = 40 * Math.tan((17 * Math.PI) / 180);
+    const first = rebuild(block(10, 10 + rise));
+    const { plane } = topOf(first, (nz) => nz > 0.9 && nz < 0.99);
+    const r1 = rebuild([...block(10, 10 + rise), sketchFeature("sk", plane, emptySketch())]);
+    expect(r1.featureErrors).toEqual({});
+    expect(r1.sketchLinks!.sk.edges.length).toBe(4);
+    expect(r1.sketchLinks!.sk.plane).toBeUndefined();
+    // The block is raised by 5: the sketch follows once, and then stays put.
+    const r2 = rebuild([...block(15, 15 + rise), sketchFeature("sk", plane, emptySketch())]);
+    const moved = r2.sketchLinks!.sk.plane!;
+    expect(moved).toBeDefined();
+    const r3 = rebuild([...block(15, 15 + rise), sketchFeature("sk", moved, emptySketch())]);
+    expect(r3.sketchLinks!.sk.plane).toBeUndefined();
+    expect(r3.sketchLinks!.sk.sketch).toBeUndefined();
+  });
+
+  it("a level face that becomes a slope is reported on the sketch, not followed", () => {
+    const first = rebuild(block(10, 10));
+    const { plane } = topOf(first, (nz) => nz > 0.999);
+    const r = rebuild([...block(10, 30), sketchFeature("sk", plane, emptySketch())]);
+    expect(r.sketchLinks!.sk.faceLost).toBe(true);
+    expect(r.featureErrors.sk).toMatch(/The face this sketch was on can't be found any more.*Pick the face again/);
+  });
+
+  it("doesn't jump onto another face when its own has gone (a boss turned off)", () => {
+    const box = feature("box", "box", { width: 40, depth: 20, height: 10, x: 0, y: 0, z: 0 });
+    const boss = feature("boss", "box", { width: 10, depth: 10, height: 5, x: 5, y: 5, z: 10 }, "add");
+    const bossTop: TopoPick = { partId: "box", ref: { kind: "face", surface: "PLANE", center: [10, 10, 15], normal: [0, 0, 1] } };
+    const plane = planeOnFace([0, 0, 1], [10, 10, 15], "Face of Part 1", bossTop);
+    const on = rebuild([box, boss, sketchFeature("sk", plane, emptySketch())]);
+    expect(on.sketchLinks!.sk.faceLost).toBeUndefined();
+    expect(on.sketchLinks!.sk.edges).toHaveLength(4);
+    const off = rebuild([box, { ...boss, suppressed: true }, sketchFeature("sk", plane, emptySketch())]);
+    expect(off.sketchLinks!.sk.faceLost).toBe(true);
+    expect(off.sketchLinks!.sk.plane).toBeUndefined();
   });
 });

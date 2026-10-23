@@ -72,7 +72,8 @@ export function projectEdge(frame: PlaneFrame, pick: TopoPick, samples?: Vec3[])
   if (ref.kind !== "edge") return null;
   const height = (p: Vec3) => (p[0] - frame.origin[0]) * frame.n[0] + (p[1] - frame.origin[1]) * frame.n[1] + (p[2] - frame.origin[2]) * frame.n[2];
   const h0 = height(ref.mid);
-  if ([ref.a, ref.b, ...(samples ?? [])].some((p) => Math.abs(height(p) - h0) > 1e-4)) return null;
+  // Edge ends are kept to 0.1 µm, so on a sloping face they can be that far off the plane.
+  if ([ref.a, ref.b, ...(samples ?? [])].some((p) => Math.abs(height(p) - h0) > 1e-3)) return null;
   const a = toSketch(frame, ref.a);
   const b = toSketch(frame, ref.b);
   const mid = toSketch(frame, ref.mid);
@@ -331,10 +332,50 @@ export function lostLinksMessage(s: SketchData, info: SketchLinkInfo | undefined
   if (!info) return null;
   const lost = s.curves.filter((c) => "link" in c && c.link && info.links[c.id] === null).length;
   const parts: string[] = [];
-  if (info.faceLost) parts.push("The face this sketch is on can't be found on the part any more, so its edges aren't shown. The sketch stays where it was.");
+  if (info.faceLost) parts.push("The face this sketch is on can't be found on the part any more, so its edges aren't shown and the sketch stays where it was. Pick the face again to put it back on the part.");
   if (lost)
     parts.push(
       `${lost === 1 ? "1 edge" : `${lost} edges`} this sketch uses ${lost === 1 ? "has" : "have"} gone from the part, so ${lost === 1 ? "it stays" : "they stay"} where ${lost === 1 ? "it was" : "they were"}. Delete ${lost === 1 ? "it" : "them"}, or use another edge.`,
     );
   return parts.length ? parts.join(" ") : null;
 }
+
+/** What to say on the sketch in the feature list when its face or edges can't be found, or null. */
+export function linkProblem(info: SketchLinkInfo | undefined): string | null {
+  if (!info) return null;
+  const lost = Object.values(info.links).filter((e) => e === null).length;
+  if (info.faceLost)
+    return "The face this sketch was on can't be found any more (the part has changed too much), so the sketch stays where it was. Edit the sketch and click Pick the face again.";
+  if (lost)
+    return `${lost === 1 ? "A part edge" : `${lost} part edges`} this sketch uses can't be found any more, so ${lost === 1 ? "its copy stays" : "their copies stay"} where ${lost === 1 ? "it was" : "they were"}. Edit the sketch and delete ${lost === 1 ? "it" : "them"} (shown in the sketch panel), or use other edges.`;
+  return null;
+}
+
+/**
+ * Drop part edges brought in only as references (construction, following an
+ * edge) that nothing uses: no other line, arc or circle shares their points and
+ * no constraint or dimension refers to them, apart from those holding them on
+ * their edge. Returns the same sketch when there's nothing to drop.
+ */
+export function pruneReferences(s: SketchData): SketchData {
+  const gone = new Set<string>();
+  for (const c of s.curves) {
+    if (!("link" in c) || !c.link || !c.construction) continue;
+    const own = new Set<string>(c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : c.type === "arc" ? [c.center, c.start, c.end] : []);
+    // A circle's rim point holds its size: it's its own.
+    for (const k of s.constraints) if (k.type === "pointOnCircle" && k.refs[1] === c.id && k.refs.length === 2) own.add(k.refs[0]);
+    const holding = (k: SketchConstraint) => (k.type === "fix" && own.has(k.refs[0])) || (k.type === "pointOnCircle" && k.refs[1] === c.id && own.has(k.refs[0]));
+    const usedByConstraint = s.constraints.some((k) => !holding(k) && k.refs.some((r) => r === c.id || own.has(r)));
+    const sharesPoint = s.curves.some((o) => o !== c && curvePointsOf(o).some((p) => own.has(p)));
+    if (!usedByConstraint && !sharesPoint) gone.add(c.id);
+  }
+  if (!gone.size) return s;
+  const curves = s.curves.filter((c) => !gone.has(c.id));
+  const kept = new Set(curves.flatMap(curvePointsOf));
+  const points = s.points.filter((p) => kept.has(p.id) || (p.standalone && !s.constraints.some((k) => k.type === "pointOnCircle" && gone.has(k.refs[1]) && k.refs[0] === p.id)));
+  const alive = new Set(["origin", ...points.map((p) => p.id), ...curves.map((c) => c.id)]);
+  return { points, curves, constraints: s.constraints.filter((k) => k.refs.every((r) => alive.has(r))) };
+}
+
+const curvePointsOf = (c: SketchCurve): string[] =>
+  c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : c.type === "spline" ? c.points : c.type === "ellipse" ? [c.center, c.major, c.minor] : [c.center, c.start, c.end];

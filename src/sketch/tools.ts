@@ -1104,7 +1104,8 @@ export function patternCurves(s: SketchData, curveIds: string[], opts: SketchPat
     for (const [from, to] of copies) constraints.push(con("patternCopy", [to, from, centreId], undefined, [turn]));
     sources.forEach((c, k) => {
       const copy = curves[before + k];
-      if (c.type === "circle" && copy?.type === "circle") constraints.push(con("equal", [copy.id, c.id]));
+      // The copy's size follows the original's (an equal marked as the pattern's, extra [1]).
+      if (c.type === "circle" && copy?.type === "circle") constraints.push(con("equal", [copy.id, c.id], undefined, [1]));
     });
   }
   return { ...settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: [...s.constraints, ...constraints] }), curveIds: curves.map((c) => c.id) };

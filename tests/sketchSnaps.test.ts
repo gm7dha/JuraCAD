@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { addCircle, addLine, addPoint, curveById, dragPoint, pointPos } from "../src/sketch/ops";
 import { attachPoint, bringIn, pickAt, snapAt } from "../src/sketch/snaps";
+import { pruneReferences } from "../src/sketch/links";
+import { strictMatch } from "../src/geometry/topoRef";
 import { followLinks, linkedPoints, lostLinksMessage, projectEdge, refSketch, linkAllEdges, linkEdge, type RefEdge } from "../src/sketch/links";
 import { planeFrame, planeOnFace } from "../src/sketch/planes";
 import { analyzeSketch, solveSketch } from "../src/sketch/solver";
+import { addDimension, setDimensionValue } from "../src/sketch/ops";
 import { patternCurves, readPatternSettings } from "../src/sketch/tools";
 import { findRegions } from "../src/sketch/regions";
 import { parsePlane, parseSketchData } from "../src/sketch/validate";
@@ -12,6 +15,7 @@ import { emptySketch, type SketchData, type SketchLine } from "../src/sketch/typ
 import type { EdgeRef, TopoPick } from "../src/geometry/topoRef";
 
 const at = (x: number, y: number) => ({ x, y });
+const ORIGIN = "origin";
 const tol = { pointTol: 1, curveTol: 0.6 };
 
 /** A line from (0,0) to (20,10). */
@@ -89,6 +93,18 @@ describe("centre snap", () => {
     expect(snapAt(c.sketch, 31.5, 40, { ...tol, acquired: [centre] }).placed).toEqual({ x: 30, y: 40, snap: { kind: "point", id: centre } });
   });
 
+  it("the centre's wider reach never wins over a line's middle or the line itself", () => {
+    const l = addLine(emptySketch(), at(0, 5), at(20, 5));
+    const c = addCircle(l.sketch, at(11.6, 5), 0.5);
+    const k = curveById(c.sketch, c.circleId)!;
+    const centre = k.type === "circle" ? k.center : "";
+    const o = { ...tol, acquired: [centre] };
+    expect(snapAt(c.sketch, 10, 5, o).placed).toEqual({ x: 10, y: 5, snap: { kind: "midpoint", id: l.lineId } });
+    expect(snapAt(c.sketch, 13, 5, o).placed).toEqual({ x: 13, y: 5, snap: { kind: "curve", id: l.lineId } });
+    // Off the line, still in reach of the centre: the centre.
+    expect(snapAt(c.sketch, 11.6, 6.9, o).placed.snap).toEqual({ kind: "point", id: centre });
+  });
+
   it("a line started on the centre shares the centre point (coincident)", () => {
     const c = addCircle(emptySketch(), at(30, 40), 10);
     const k = curveById(c.sketch, c.circleId)!;
@@ -145,6 +161,47 @@ describe("circular pattern round a chosen point", () => {
     const resized = solveSketch({ ...moved, curves: moved.curves.map((k) => (k.id === circle && k.type === "circle" ? { ...k, radius: 3 } : k)) }, { resize: { circleId: circle, radius: 3 } });
     const copy = curveById(resized.sketch, r.curveIds[1]);
     expect(copy?.type === "circle" ? copy.radius : 0).toBeCloseTo(3, 6);
+  });
+
+  it("stays quick with many copies: 119 copies re-size and drag quickly", () => {
+    const { s, centre, circle } = setup();
+    const r = patternCurves(s, [circle], { kind: "circular", count: 120, angle: 360, centre: [10, 0], centreId: centre });
+    const dim = addDimension(r.sketch, [circle]);
+    expect(dim.error).toBeUndefined();
+    const t0 = performance.now();
+    const sized = setDimensionValue(dim.sketch, dim.dimensionId, "4");
+    const took = performance.now() - t0;
+    expect(sized.error).toBeUndefined();
+    expect(took).toBeLessThan(200);
+    const last = curveById(sized.sketch, r.curveIds[118]);
+    // (A circle's size is its diameter.)
+    expect(last?.type === "circle" ? last.radius : 0).toBeCloseTo(2, 9);
+    // Every copy is exactly where it should be: copy i turned 3i° round (10, 0).
+    const k = curveById(sized.sketch, r.curveIds[29])!;
+    const p = k.type === "circle" ? pointPos(sized.sketch, k.center) : [0, 0];
+    expect(p[0]).toBeCloseTo(10, 9);
+    expect(p[1]).toBeCloseTo(10, 9);
+    const t1 = performance.now();
+    dragPoint(sized.sketch, centre, 12, 1);
+    expect(performance.now() - t1).toBeLessThan(200);
+  });
+
+  it("a copy held by something else stays in the solve, and a copy can be dragged (the pattern goes with it)", () => {
+    const { s, centre, circle } = setup();
+    const r = patternCurves(s, [circle], { kind: "circular", count: 4, angle: 360, centre: [10, 0], centreId: centre });
+    // A dimension on the second copy's centre, from the origin: it can't move independently, so the whole pattern answers to it.
+    const copy = curveById(r.sketch, r.curveIds[1])!;
+    const cc = copy.type === "circle" ? copy.center : "";
+    const dim = addDimension(r.sketch, [ORIGIN, cc]);
+    expect(dim.error).toBeUndefined();
+    expect(pointPos(dim.sketch, cc)[0]).toBeCloseTo(0, 6);
+    const dragged = dragPoint(r.sketch, cc, -2, 0);
+    const [ox, oy] = pointPos(dragged, (curveById(dragged, circle) as { center: string }).center);
+    const [cx, cy] = pointPos(dragged, centre);
+    const [px, py] = pointPos(dragged, cc);
+    // Still the original turned 180° round the centre.
+    expect(px).toBeCloseTo(2 * cx - ox, 6);
+    expect(py).toBeCloseTo(2 * cy - oy, 6);
   });
 
   it("the origin is still the default centre", () => {
@@ -292,5 +349,33 @@ describe("saved files", () => {
     const c = addCircle(centre.sketch, at(9, 0), 1);
     const pat = patternCurves(c.sketch, [c.circleId], { kind: "circular", count: 3, angle: 360, centre: [5, 0], centreId: centre.pointId });
     expect(parseSketchData(JSON.parse(JSON.stringify(pat.sketch)))).toEqual(pat.sketch);
+  });
+});
+
+describe("tidying and finding again", () => {
+  it("drops references nothing uses when the sketch closes, and keeps the ones in use", () => {
+    const refs = outline(40, 20);
+    // A line from one corner (that edge is in use), and an edge brought in then left unused.
+    const from = snapAt(emptySketch(), 40.2, 0.1, { ...tol, refs }).placed;
+    const l = addLine(emptySketch(), from, at(60, -10));
+    const spare = linkEdge(l.sketch, refs[2], true);
+    expect(spare.sketch.curves).toHaveLength(3);
+    const tidy = pruneReferences(spare.sketch);
+    expect(tidy.curves).toHaveLength(2);
+    expect(tidy.curves.some((c) => c.id === spare.curveId)).toBe(false);
+    expect(tidy.points).toHaveLength(spare.sketch.points.length - 2);
+    expect(pruneReferences(tidy)).toBe(tidy);
+    // Real copies (Use) always stay.
+    const used = linkEdge(emptySketch(), holeEdge([5, 5], 2), false);
+    expect(pruneReferences(used.sketch)).toBe(used.sketch);
+  });
+
+  it("finds an edge again only when it's clearly the same one", () => {
+    const edge = (x: number): EdgeRef => ({ kind: "edge", curve: "LINE", a: [x, 0, 10], b: [x, 20, 10], mid: [x, 10, 10] });
+    expect(strictMatch(edge(40), [edge(0), edge(40.5)], 46)).toBe(1);
+    // 15 mm away on a 46 mm part: gone, not followed.
+    expect(strictMatch(edge(40), [edge(0), edge(55)], 46)).toBeNull();
+    // Two equally good candidates: can't tell, so gone.
+    expect(strictMatch(edge(40), [edge(38), edge(42)], 46)).toBeNull();
   });
 });

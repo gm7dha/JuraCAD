@@ -21,8 +21,11 @@
   a TopoPick); lines/circles/arcs may carry `link` (the part edge they follow: "Use", or a face edge brought in as a
   construction reference when snapped to or dimensioned to — stand-in ids "ref:<n>" until then). The engine's
   `followSketch` finds the face and links again each rebuild (moves the plane with its face, re-solves via `followLinks`)
-  and returns `RebuildResult.sketchLinks`; the store syncs the open sketch from it. Circular sketch patterns round a point
-  add `patternCopy` constraints (copies stay turned round the centre; the solver lets copies give way first).
+  and returns `RebuildResult.sketchLinks`; the store syncs the open sketch from it (planes compared to 1 µm, so sloping
+  faces don't loop). Faces and links are re-found with `strictMatch` (topoRef.ts: near and unambiguous, else reported lost
+  — `linkProblem` puts it on the sketch in featureErrors). Unused references are dropped when a sketch closes
+  (`pruneReferences`). Circular sketch patterns round a point add `patternCopy` constraints (+ `equal` with extra [1] for
+  sizes); copies nothing else holds are left out of the solve and placed afterwards (`splitDerived` in solver.ts).
 - Part Studios: `src/model/studios.ts`. The first studio's features are `doc.features` (old files still open);
   more are in `doc.partStudios`. Feature ids are unique across the document. Store helpers `activeStudioId`,
   `activeFeatures`, `studioParts` (cached, selector-safe); feature edits go through `changeStudio`/`inStudio`.

@@ -1,5 +1,5 @@
 import { deleteItems } from "../sketch/ops";
-import { followLinks, type SketchLinkInfo } from "../sketch/links";
+import { followLinks, pruneReferences, type SketchLinkInfo } from "../sketch/links";
 import { create } from "zustand";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -55,6 +55,13 @@ import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
+
+/** Two sketch planes in the same place (to within a micron), whatever face they remember. */
+function samePlace(a: SketchPlane, b: SketchPlane): boolean {
+  if (a.kind !== "face" || b.kind !== "face") return a.kind === b.kind && JSON.stringify(a) === JSON.stringify(b);
+  const near = (p: number[], q: number[]) => p.every((v, i) => Math.abs(v - q[i]) < 1e-3);
+  return near(a.origin, b.origin) && near(a.u, b.u) && near(a.v, b.v);
+}
 
 /** No sketch links (one shared object, so selectors stay stable). */
 const NO_LINKS: Record<string, SketchLinkInfo> = {};
@@ -259,6 +266,8 @@ export interface AppState {
   /** Open a new sketch (plane may be chosen later). */
   startSketch: (plane: SketchPlane | null) => void;
   setSketchPlane: (plane: SketchPlane) => void;
+  /** The sketch's face can't be found: let the next click on a face or plane put the sketch there. */
+  repickSketchPlane: () => void;
   /** Replace the sketch being edited. `record` adds an undo step. */
   updateSketch: (data: SketchData, opts?: { record?: boolean; selection?: string[] }) => void;
   /** Record an undo step for a drag that's finished (`before` = sketch when the drag began). */
@@ -715,6 +724,16 @@ export const useStore = create<AppState>((set, get) => {
           : {},
       ),
 
+    repickSketchPlane: () =>
+      set((s) =>
+        s.editing?.draft.sketch && s.sketch
+          ? {
+              editing: { ...s.editing, draft: { ...s.editing.draft, sketch: { ...s.editing.draft.sketch, plane: null } } },
+              sketch: { ...s.sketch, message: { text: "Click a flat face, or Top, Front or Right, to put the sketch on.", tone: "info" } },
+            }
+          : {},
+      ),
+
     updateSketch: (data, opts = {}) =>
       set((s) => {
         if (!s.editing?.draft.sketch || !s.sketch) return {};
@@ -832,7 +851,10 @@ export const useStore = create<AppState>((set, get) => {
       }
       const { errors } = resolveParams(editing.draft);
       if (Object.keys(errors).length > 0) return false;
-      const draft = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
+      const named = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
+      // Part edges brought in just to snap to, that nothing uses any more, are tidied away.
+      const sk = named.sketch;
+      const draft = sk ? { ...named, sketch: { ...sk, data: pruneReferences(sk.data) } } : named;
       // Rolled back: a new feature goes in at the rollback point, and the bar moves down past it.
       const at = get().rollbackTo;
       changeStudio((doc) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, draft)));
@@ -1480,7 +1502,7 @@ export const useStore = create<AppState>((set, get) => {
         let editing = s.editing;
         if (editing && draft?.sketch && info) {
           const data = followLinks(draft.sketch.data, info.links);
-          const plane = info.plane && draft.sketch.plane?.kind === "face" ? info.plane : draft.sketch.plane;
+          const plane = info.plane && draft.sketch.plane?.kind === "face" && !samePlace(info.plane, draft.sketch.plane) ? info.plane : draft.sketch.plane;
           if (data !== draft.sketch.data || plane !== draft.sketch.plane) editing = { ...editing, draft: { ...draft, sketch: { plane, data } } };
         }
         // Part Studios that weren't rebuilt keep the parts they had.

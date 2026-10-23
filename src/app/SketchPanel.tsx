@@ -338,9 +338,24 @@ export function SketchPanel() {
             )}
             {(() => {
               const lost = lostLinksMessage(data, linkInfo);
+              const lostIds = data.curves.filter((c) => "link" in c && c.link && linkInfo?.links[c.id] === null).map((c) => c.id);
               return lost ? (
                 <li className="warn">
-                  <Icons.Warning size={15} /> {lost}
+                  <Icons.Warning size={15} /> {lost}{" "}
+                  {lostIds.length > 0 && (
+                    <button type="button" className="text-button" onClick={() => useStore.getState().setSketchSelection(lostIds)}>
+                      Select {lostIds.length === 1 ? "it" : "them"}
+                    </button>
+                  )}
+                  {linkInfo?.faceLost && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => useStore.getState().repickSketchPlane()}
+                    >
+                      Pick the face again
+                    </button>
+                  )}
                 </li>
               ) : linkInfo?.edges.length && empty ? (
                 <li className="muted">The face's edges show faintly: snap to their corners, middles and centres, or click one to dimension to it.</li>

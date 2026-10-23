@@ -105,12 +105,6 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
     const [px, py] = pointPos(s, ptHit.id);
     return { placed: { x: px, y: py, snap: ptHit.id === ORIGIN_ID ? { kind: "origin" } : { kind: "point", id: ptHit.id } }, hover: ptHit, hints: [] };
   }
-  const centres = centreIds(s);
-  for (const id of o.acquired ?? []) {
-    if (!centres.has(id) || ignore.has(id) || !s.points.some((p) => p.id === id)) continue;
-    const [px, py] = pointPos(s, id);
-    if (Math.hypot(px - x, py - y) <= 2 * o.pointTol) return { placed: { x: px, y: py, snap: { kind: "point", id } }, hover: { kind: "point", id }, hints: [] };
-  }
 
   // 2. The middle of a line.
   const mid = nearestMidpoint(s, x, y, o.pointTol, ignore);
@@ -130,14 +124,25 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
     if (vMid && m?.edge && m.what === "edge") return { placed: { x: vMid.at[0], y: vMid.at[1], snap: { kind: "ref", edge: m.edge, at: "mid" } }, hover: { kind: "curve", id: vMid.id }, hints: [vMid.at] };
   }
 
-  // 4. Lined up with a point passed over.
+  // 4. Nothing right under the pointer: the centre of a circle passed over reaches further.
   const curveHit = hitTest(s, x, y, 0, o.curveTol, { ignore, origin: false });
+  const onRef = !!virt && virt.curves.some((c) => distToCurve(virt, c, x, y) <= o.curveTol);
+  if (!curveHit && !onRef) {
+    const centres = centreIds(s);
+    for (const id of o.acquired ?? []) {
+      if (!centres.has(id) || ignore.has(id) || !s.points.some((p) => p.id === id)) continue;
+      const [px, py] = pointPos(s, id);
+      if (Math.hypot(px - x, py - y) <= 2 * o.pointTol) return { placed: { x: px, y: py, snap: { kind: "point", id } }, hover: { kind: "point", id }, hints: [] };
+    }
+  }
+
+  // 5. Lined up with a point passed over.
   if (!curveHit && o.acquired?.length) {
     const al = alignWith(s, x, y, o.acquired.filter((id) => !ignore.has(id)), o.pointTol * 0.8);
     if (al.alongX || al.alongY) return { placed: { x: al.x, y: al.y, snap: { kind: "align", ...(al.alongX ? { x: al.alongX } : {}), ...(al.alongY ? { y: al.alongY } : {}) } }, hover: null, hints: [] };
   }
 
-  // 5. Onto a line or curve of the sketch (its middle or centre is marked).
+  // 6. Onto a line or curve of the sketch (its middle or centre is marked).
   if (curveHit?.kind === "curve") {
     const c = curveById(s, curveHit.id)!;
     const [px, py] = onCurve(s, c, x, y);
@@ -145,7 +150,7 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
     return { placed: { x: px, y: py, snap: { kind: "curve", id: c.id } }, hover: curveHit, hints: hint ? [hint] : [] };
   }
 
-  // 6. Onto a part edge.
+  // 7. Onto a part edge.
   if (virt) {
     let best: { c: SketchCurve; d: number } | null = null;
     for (const c of virt.curves) {

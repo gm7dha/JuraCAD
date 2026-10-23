@@ -7,7 +7,7 @@ import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, mak
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
-import { matchRefs, refDistance, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { matchRefs, refDistance, relativeTo, roundVec, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame, toWorld } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
@@ -29,7 +29,7 @@ import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
-import { followLinks, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
+import { followLinks, linkProblem, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
@@ -1776,11 +1776,14 @@ export class GeometryEngine {
     const sizeOf = (b: Bounds) => Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
     if (facePick && plane.kind === "face") {
       const part = this.parts.find((p) => p.id === facePick.partId);
+      // Found strictly: a face that's gone is reported, rather than the sketch jumping onto another face.
       let face: Face | null = null;
-      try {
-        face = part ? findPickedFace(part.shape, facePick) : null;
-      } catch {
-        face = null;
+      if (part) {
+        const faces = facesOf(part.shape);
+        const fb = boundsOf(part.shape);
+        const m = strictMatch(facePick.ref, faces.map((f) => faceRefOf(f, fb)), sizeOf(fb));
+        face = m === null ? null : faces[m];
+        faces.forEach((f) => f !== face && f.delete());
       }
       if (!face || !part) faceLost = true;
       else {
@@ -1791,8 +1794,9 @@ export class GeometryEngine {
           let frame = planeFrame(plane);
           const n = frame.n;
           const shift = (ref.center[0] - plane.origin[0]) * n[0] + (ref.center[1] - plane.origin[1]) * n[1] + (ref.center[2] - plane.origin[2]) * n[2];
-          if (ref.surface === "PLANE" && Math.abs(shift) > 1e-7) {
-            followed = { ...plane, origin: roundVec([plane.origin[0] + shift * n[0], plane.origin[1] + shift * n[1], plane.origin[2] + shift * n[2]]), face: { ...facePick, ref } };
+          // Face centres are kept to 0.1 µm, so on a sloping face a tiny leftover never counts as a move (that would rebuild for ever).
+          if (ref.surface === "PLANE" && Math.abs(shift) > 1e-3) {
+            followed = { ...plane, origin: [plane.origin[0] + shift * n[0], plane.origin[1] + shift * n[1], plane.origin[2] + shift * n[2]], face: { ...facePick, ref } };
             frame = planeFrame(followed);
           }
           for (const e of edgesOf(face)) {
@@ -1829,13 +1833,8 @@ export class GeometryEngine {
         try {
           const bounds = boundsOf(part.shape);
           const refs = all.map((e) => edgeRefOf(e, bounds));
-          const match = matchRefs(
-            curves.map((c) => (c as { link: TopoPick }).link.ref),
-            refs,
-            sizeOf(bounds),
-          );
-          curves.forEach((c, i) => {
-            const m = match[i];
+          curves.forEach((c) => {
+            const m = strictMatch((c as { link: TopoPick }).link.ref, refs, sizeOf(bounds));
             links[c.id] = m === null ? null : projectEdge(frame, { partId, ref: refs[m] });
           });
         } finally {
@@ -1876,7 +1875,11 @@ export class GeometryEngine {
       if (feature.type === "sketch") {
         // Sketches make no solid themselves; extrudes later in the list use them.
         if (!feature.sketch?.plane) featureErrors[feature.id] = "Pick a plane or flat face to sketch on.";
-        else sketches.set(feature.id, this.followSketch(feature));
+        else {
+          sketches.set(feature.id, this.followSketch(feature));
+          const problem = linkProblem(this.links[feature.id]);
+          if (problem) featureErrors[feature.id] = problem;
+        }
         continue;
       }
       const def = FEATURE_DEFS[feature.type];
