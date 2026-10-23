@@ -5,10 +5,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { addDrawing, parseDrawings, putDimension } from "../src/drawing/drawing";
-import { arcOf, chamferLabel, chamferSize, dimLabel, dimPoint, dragDimension, drawDimension, fitOf, measureDim, resolveDim } from "../src/drawing/dimensions";
+import { ARROW_LEADER, arcOf, arrowsFor, chamferLabel, chamferSize, dimLabel, dimPoint, dragDimension, drawDimension, fitOf, flipArrows, measureDim, resolveDim } from "../src/drawing/dimensions";
 import { deviation, limitSizes, parseFitClass } from "../src/drawing/fits";
 import { sheetDxf, sheetPdf, sheetSvg } from "../src/drawing/export";
-import { layoutSheet, type Prim } from "../src/drawing/sheet";
+import { dimStyle, layoutSheet, type Prim } from "../src/drawing/sheet";
 import type { ViewProjection } from "../src/kernel/protocol";
 import { emptyDocument } from "../src/model/document";
 import type { Dimension, Drawing } from "../src/model/types";
@@ -292,5 +292,209 @@ describe("arc lengths", () => {
     expect(parseDrawings([d])[0].dimensions).toEqual([dim]);
     // (An arc length without its point on the arc isn't kept.)
     expect(parseDrawings([{ ...d, dimensions: [{ ...dim, b: undefined }] }])[0].dimensions).toBeUndefined();
+  });
+});
+
+describe("dimension arrows inside or outside", () => {
+  type P = [number, number];
+  const same = (p: P) => p;
+  /** The filled arrowheads: tip, and the middle of the back (the side the arrow comes from). */
+  const heads = (prims: Prim[]) =>
+    prims.flatMap((p) => (p.kind === "path" && p.fill ? [{ tip: [p.points[0], p.points[1]] as P, back: [(p.points[2] + p.points[4]) / 2, (p.points[3] + p.points[5]) / 2] as P }] : []));
+  const lines = (prims: Prim[]) => prims.flatMap((p) => (p.kind === "path" && !p.fill ? [p.points] : []));
+  const close = (a: P, b: P) => {
+    expect(a[0]).toBeCloseTo(b[0], 9);
+    expect(a[1]).toBeCloseTo(b[1], 9);
+  };
+  const pt = (x: number, y: number) => ({ at: [x, y] as P, rel: [0, 0] as P });
+  const length = (b: number, extra: Partial<Dimension> = {}): Dimension => ({ id: "w", view: "front", type: "horizontal", a: pt(0, 0), b: pt(b, 0), offset: 8, ...extra });
+  const draw = (dim: Dimension, style = {}) => drawDimension(dim, { a: dim.a.at, b: dim.b?.at, r: dim.r, found: true }, same, 0, null, style);
+
+  it("draws a long length's arrows inside, pointing out, unless set outside", () => {
+    // The dimension line runs from (0, 8) to (40, 8).
+    const auto = draw(length(40));
+    expect(auto.arrows).toBe("inside");
+    const [h1, h2] = heads(auto.prims);
+    close(h1.tip, [0, 8]);
+    close(h1.back, [3, 8]);
+    close(h2.tip, [40, 8]);
+    close(h2.back, [37, 8]);
+    // Inside is what automatic draws here, exactly.
+    expect(draw(length(40, { arrows: "inside" })).prims).toEqual(auto.prims);
+
+    const out = draw(length(40, { arrows: "outside" }));
+    expect(out.arrows).toBe("outside");
+    const [o1, o2] = heads(out.prims);
+    close(o1.tip, [0, 8]);
+    close(o1.back, [-3, 8]);
+    close(o2.tip, [40, 8]);
+    close(o2.back, [43, 8]);
+    // A short leader past each extension line, under its arrow (6 mm: twice the arrow).
+    expect(ARROW_LEADER).toBe(6);
+    const extra = lines(out.prims).filter((l) => !lines(auto.prims).some((m) => JSON.stringify(m) === JSON.stringify(l)));
+    expect(extra).toEqual([
+      [0, 8, -6, 8],
+      [40, 8, 46, 8],
+    ]);
+    // Nothing else changes: the extension lines, the dimension line and the number are where they were.
+    expect(out.prims.filter((p) => !(p.kind === "path" && p.fill)).length).toBe(auto.prims.filter((p) => !(p.kind === "path" && p.fill)).length + 2);
+    expect(out.label).toEqual(auto.label);
+  });
+
+  it("points a short length's arrows in from outside automatically (no leaders, as before), or inside when asked", () => {
+    const auto = draw(length(4));
+    expect(auto.arrows).toBe("outside");
+    const [a1, a2] = heads(auto.prims);
+    close(a1.back, [-3, 8]);
+    close(a2.back, [7, 8]);
+    // Automatic draws no leaders (exactly as before); set outside, it does.
+    expect(lines(auto.prims)).toHaveLength(3);
+    expect(lines(draw(length(4, { arrows: "outside" })).prims)).toHaveLength(5);
+    const inside = draw(length(4, { arrows: "inside" }));
+    expect(inside.arrows).toBe("inside");
+    const [i1, i2] = heads(inside.prims);
+    close(i1.tip, [0, 8]);
+    close(i1.back, [3, 8]);
+    close(i2.tip, [4, 8]);
+    close(i2.back, [1, 8]);
+  });
+
+  it("runs a slanted (aligned) dimension's leaders along it", () => {
+    // From (0, 0) to (30, 40): 50 long; the line sits 8 out to its left.
+    const dim: Dimension = { id: "s", view: "front", type: "aligned", a: pt(0, 0), b: pt(30, 40), offset: 8 };
+    const out = draw({ ...dim, arrows: "outside" });
+    const u: P = [0.6, 0.8];
+    const la: P = [-0.8 * 8, 0.6 * 8];
+    const lb: P = [30 + la[0], 40 + la[1]];
+    const [h1, h2] = heads(out.prims);
+    close(h1.tip, la);
+    close(h1.back, [la[0] - 3 * u[0], la[1] - 3 * u[1]]);
+    close(h2.tip, lb);
+    close(h2.back, [lb[0] + 3 * u[0], lb[1] + 3 * u[1]]);
+    const leaders = lines(out.prims).slice(-2);
+    const [s0, s1] = [leaders[0], leaders[1]];
+    close([s0[0], s0[1]], la);
+    close([s0[2], s0[3]], [la[0] - 6 * u[0], la[1] - 6 * u[1]]);
+    close([s1[0], s1[1]], lb);
+    close([s1[2], s1[3]], [lb[0] + 6 * u[0], lb[1] + 6 * u[1]]);
+  });
+
+  it("puts a radius's arrow outside the arc pointing in (as before), or inside pointing out", () => {
+    // Radius 10 round (0, 0), leader at 0° (straight out to the right).
+    const dim: Dimension = { id: "r", view: "front", type: "radius", a: pt(0, 0), r: 10, offset: 5, angle: 0 };
+    const auto = draw(dim);
+    expect(auto.arrows).toBe("outside");
+    const [h] = heads(auto.prims);
+    close(h.tip, [10, 0]);
+    close(h.back, [13, 0]);
+    expect(draw({ ...dim, arrows: "outside" }).prims).toEqual(auto.prims);
+    const inside = draw({ ...dim, arrows: "inside" });
+    expect(inside.arrows).toBe("inside");
+    const [i] = heads(inside.prims);
+    close(i.tip, [10, 0]);
+    close(i.back, [7, 0]);
+    // Same leader and number.
+    expect(lines(inside.prims)).toEqual(lines(auto.prims));
+    expect(inside.label).toEqual(auto.label);
+  });
+
+  it("puts a diameter's arrows outside (as before, plus a leader past the far side when set) or across inside", () => {
+    const dim: Dimension = { id: "d", view: "front", type: "diameter", a: pt(0, 0), r: 10, offset: 5, angle: 0 };
+    const auto = draw(dim);
+    expect(auto.arrows).toBe("outside");
+    const [n1, f1] = heads(auto.prims);
+    close(n1.tip, [10, 0]);
+    close(n1.back, [13, 0]);
+    close(f1.tip, [-10, 0]);
+    close(f1.back, [-13, 0]);
+    const inside = draw({ ...dim, arrows: "inside" });
+    const [n2, f2] = heads(inside.prims);
+    close(n2.tip, [10, 0]);
+    close(n2.back, [7, 0]);
+    close(f2.tip, [-10, 0]);
+    close(f2.back, [-7, 0]);
+    const out = draw({ ...dim, arrows: "outside" });
+    expect(heads(out.prims)).toEqual(heads(auto.prims));
+    expect(lines(out.prims)).toEqual([...lines(auto.prims), [-10, 0, -16, 0]]);
+  });
+
+  it("follows the drawing's setting unless the dimension has its own, and only for lengths, diameters and radii", () => {
+    expect(dimStyle({ dimArrows: "outside" })).toEqual({ arrows: "outside" });
+    expect(dimStyle({})).toEqual({});
+    expect(arrowsFor(length(40), dimStyle({ dimArrows: "outside" }))).toBe("outside");
+    expect(arrowsFor(length(40, { arrows: "inside" }), dimStyle({ dimArrows: "outside" }))).toBe("inside");
+    expect(arrowsFor(length(40), {})).toBeUndefined();
+    expect(draw(length(40), { arrows: "outside" }).prims).toEqual(draw(length(40, { arrows: "outside" })).prims);
+    // Angles, ordinates, chamfers and arc lengths aren't changed by it.
+    const angle: Dimension = { id: "a", view: "front", type: "angle", a: pt(0, 0), b: pt(10, 0), c: pt(0, 0), d: pt(10, 10), offset: 10 };
+    expect(arrowsFor(angle, { arrows: "outside" })).toBeUndefined();
+    const r = { a: angle.a.at, b: angle.b!.at, c: angle.c!.at, d: angle.d!.at, found: true };
+    expect(drawDimension(angle, r, same, 45, null, { arrows: "outside" }).prims).toEqual(drawDimension(angle, r, same, 45, null, {}).prims);
+    const ord: Dimension = { id: "o", view: "front", type: "ordinate", a: pt(0, 0), b: pt(10, 5), offset: 8, axis: "h" };
+    expect(draw(ord, { arrows: "inside" }).prims).toEqual(draw(ord).prims);
+    expect(draw(ord).arrows).toBeUndefined();
+  });
+
+  it("flips to the other way from how they're drawn", () => {
+    expect(flipArrows("inside")).toBe("outside");
+    expect(flipArrows("outside")).toBe("inside");
+  });
+
+  it("is kept in saved files (dimensions and the drawing's setting), and old files have neither", () => {
+    const d = { ...newDrawing(), dimArrows: "outside" as const, dimensions: [length(40, { arrows: "inside" }), { ...length(30), id: "x" }] };
+    const back = parseDrawings(JSON.parse(JSON.stringify([d])))[0];
+    expect(back.dimArrows).toBe("outside");
+    expect(back.dimensions![0].arrows).toBe("inside");
+    expect("arrows" in back.dimensions![1]).toBe(false);
+    // Nonsense, or on a dimension without arrows to set, is dropped.
+    const odd = parseDrawings([{ ...d, dimArrows: "sideways", dimensions: [{ ...length(40), arrows: "up" }, { id: "o", view: "front", type: "ordinate", a: pt(0, 0), b: pt(1, 1), offset: 8, axis: "h", arrows: "inside" }] }])[0];
+    expect("dimArrows" in odd).toBe(false);
+    expect(odd.dimensions!.every((x) => !("arrows" in x))).toBe(true);
+    const old = parseDrawings([{ ...newDrawing(), dimensions: [length(40)] }])[0];
+    expect("dimArrows" in old).toBe(false);
+    expect("arrows" in old.dimensions![0]).toBe(false);
+  });
+
+  it("draws the same on the sheet and in SVG, DXF and PDF, and reports which way they went", () => {
+    const front: ViewProjection = { kind: "front", visible: [[0, 0, 40, 0, 40, 20, 0, 20, 0, 0]], hidden: [], circles: [], points: [0, 0, 40, 0, 40, 20, 0, 20], bounds: [0, 0, 40, 20] };
+    const base: Drawing = { ...newDrawing(), scale: 1, views: [{ id: "f", kind: "front" }] };
+    const dim: Dimension = { id: "w", view: "front", type: "horizontal", a: dimPoint([0, 20], front), b: dimPoint([40, 20], front), offset: 8 };
+    const auto = layoutSheet(putDimension(base, dim), { front }, info);
+    const out = layoutSheet(putDimension(base, { ...dim, arrows: "outside" }), { front }, info);
+    expect(auto.dims[0].arrows).toBe("inside");
+    expect(out.dims[0].arrows).toBe("outside");
+    const [la, lb] = [auto.dims[0].a, auto.dims[0].b!].map((p) => [p[0], p[1] + 8] as P);
+    const mine = out.prims.slice(out.dims[0].from, out.dims[0].to);
+    const leaders = lines(mine).filter((l) => l.length === 4 && Math.abs(Math.abs(l[2] - l[0]) - 6) < 1e-9 && l[1] === l[3]);
+    expect(leaders).toHaveLength(2);
+    close([leaders[0][2], leaders[0][3]], [la[0] - 6, la[1]]);
+    close([leaders[1][2], leaders[1][3]], [lb[0] + 6, lb[1]]);
+    // Every file is made from the same shapes, so each has the leaders.
+    const f = (v: number) => String(Math.round(v * 1000) / 1000);
+    const svg = sheetSvg(out.prims, out.size);
+    expect(svg).toContain(`points="${f(la[0])},${f(out.size[1] - la[1])} ${f(la[0] - 6)},${f(out.size[1] - la[1])}"`);
+    expect(sheetSvg(auto.prims, auto.size)).not.toContain(`${f(la[0] - 6)},${f(out.size[1] - la[1])}`);
+    const dxf = sheetDxf(out.prims);
+    expect(dxf).toContain(`10\n${f(lb[0])}\n20\n${f(lb[1])}\n30\n0\n11\n${f(lb[0] + 6)}\n21\n${f(lb[1])}`);
+    const pdf = new TextDecoder().decode(sheetPdf(out.prims, out.size));
+    const autoPdf = new TextDecoder().decode(sheetPdf(auto.prims, auto.size));
+    const pt = (v: number) => String(Math.round(v * (72 / 25.4) * 1000) / 1000);
+    const leaderOp = `${pt(la[0])} ${pt(la[1])} m ${pt(la[0] - 6)} ${pt(la[1])} l S`;
+    expect(pdf).toContain(leaderOp);
+    expect(autoPdf).not.toContain(leaderOp);
+  });
+
+  it("leaves a drawing without the setting exactly as it was", () => {
+    // A 40 mm length and a 10 mm diameter: shapes pinned to the numbers they've always had.
+    const auto = draw(length(40));
+    expect(heads(auto.prims).map((h) => [...h.tip, ...h.back])).toEqual([
+      [0, 8, 3, 8],
+      [40, 8, 37, 8],
+    ]);
+    expect(lines(auto.prims)).toEqual([
+      [0, 1, 0, 10],
+      [40, 1, 40, 10],
+      [0, 8, 40, 8],
+    ]);
   });
 });

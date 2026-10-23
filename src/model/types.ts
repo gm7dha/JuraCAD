@@ -386,6 +386,8 @@ export interface Drawing {
   places?: number;
   /** Dimensions also give the size in the other unit, in brackets: "40 [1.575]". */
   dualUnits?: boolean;
+  /** Where dimensions' arrows go unless a dimension says otherwise (see Dimension.arrows); missing = automatic (inside when there's room). */
+  dimArrows?: "inside" | "outside";
   /**
    * How Fit to sheet makes room for the dimensions (decided when Auto dimension
    * runs or Fit to sheet is chosen): extra room beside the 3D column (paper mm)
@@ -526,6 +528,12 @@ export interface Dimension {
   limitsFit?: { class: string; limits?: true };
   /** Chamfers: the distance is measured along the edge across ("h") or up and down ("v"); missing = whichever gives the smaller angle. */
   along?: "h" | "v";
+  /**
+   * Lengths, diameters and radii: where the arrows go — "inside" (between the
+   * extension lines, or inside the circle, pointing out) or "outside" (beyond
+   * them pointing in, on a short leader). Missing = the drawing's setting.
+   */
+  arrows?: "inside" | "outside";
 }
 
 /** A note on a drawing sheet: its top-left corner (sheet mm, y up) and its lines of text. */
