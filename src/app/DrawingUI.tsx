@@ -17,8 +17,8 @@ import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } fro
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
-import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
-import { angleGeometry, arcOf, chamferSize, dimPoint, dragDimension, FITTABLE, fitOf, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
+import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, resizedScale, scaleView, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dragDimension, FITTABLE, fitOf, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
@@ -195,6 +195,26 @@ let shownSheet: { drawingId: string; pageId: string; layout: SheetLayout; name: 
 
 /** The sheet on show, if it's of the drawing `d` and the sheet of it on show. */
 const shownFor = (d: Drawing | null) => (d && shownSheet?.drawingId === d.id && shownSheet.pageId === pageIdOf(d) ? shownSheet : null);
+
+/**
+ * Which way a dimension's arrows are drawn on the sheet now (for Flip arrows):
+ * as the sheet on show drew them, else as set, else as Automatic usually draws
+ * them (lengths inside, circles outside).
+ */
+function arrowsShown(dim: Dimension, d: Pick<Drawing, "dimArrows">): "inside" | "outside" {
+  const drawn = shownSheet?.layout.dims.find((x) => x.id === dim.id)?.arrows;
+  return drawn ?? dim.arrows ?? d.dimArrows ?? (dim.type === "diameter" || dim.type === "radius" ? "outside" : "inside");
+}
+
+/** A view's name as the user knows it: "Front", "3D (isometric)", "Section A", "Auxiliary B", "Detail C". */
+function viewName(d: Pick<Drawing, "sections" | "details">, v: { kind: Drawing["views"][number]["kind"]; key: string }): string {
+  if (v.kind === "section") {
+    const c = d.sections?.find((x) => `section:${x.id}` === v.key);
+    return c?.aux ? `Auxiliary ${c.letter}` : `Section ${c?.letter ?? ""}`;
+  }
+  if (v.kind === "detail") return `Detail ${d.details?.find((c) => `detail:${c.id}` === v.key)?.letter ?? ""}`;
+  return VIEW_LABELS[v.kind];
+}
 
 /** Each view's scale for a sheet scale: its own, or the sheet's. */
 const viewScales = (d: Pick<Drawing, "views">, sheetScale: number) => {
@@ -534,13 +554,14 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
   const value = resolved ? measureDim(dim, resolved) : null;
   const fit = dim.limitsFit && value !== null ? fitOf(dim, value) : null;
   const fittable = FITTABLE.has(dim.type) && !dim.callout;
+  const round = dim.type === "diameter" || dim.type === "radius";
   const edit = (patch: Partial<Dimension>) =>
     change((d) => ({
       ...d,
       dimensions: d.dimensions?.map((x) => {
         if (x.id !== dim.id) return x;
         const next: Dimension = { ...x, ...patch };
-        for (const k of ["prefix", "suffix", "tolerance", "places", "frame", "limitsFit", "along"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
+        for (const k of ["prefix", "suffix", "tolerance", "places", "frame", "limitsFit", "along", "arrows"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
         return next;
       }),
     }));
@@ -660,6 +681,27 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
               if (n !== null) edit({ tolerance: { plus: t.plus, minus: n } });
             }}
           />
+        )}
+        {ARROWABLE.has(dim.type) && (
+          <div className="drawing-field">
+            <span className="field-label">Arrows</span>
+            <div className="segmented three" role="radiogroup" aria-label="Arrows">
+              {(
+                [
+                  [undefined, drawing.dimArrows ? "As drawing" : "Automatic", drawing.dimArrows ? `As set for the whole drawing (${drawing.dimArrows})` : "Inside when there's room, else outside"],
+                  ["inside", "Inside", round ? "Inside the circle, pointing out to its edge" : "Between the extension lines, pointing out"],
+                  ["outside", "Outside", round ? "Outside the circle, pointing in to its edge" : "Outside the extension lines, pointing in, on a short line"],
+                ] as const
+              ).map(([a, label, tip]) => (
+                <button type="button" key={label} role="radio" title={tip} aria-checked={dim.arrows === a} className={dim.arrows === a ? "selected" : ""} onClick={() => edit({ arrows: a })}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="text-button" title="Turn the arrows the other way (or right-click the dimension's number on the sheet)" onClick={() => edit({ arrows: flipArrows(arrowsShown(dim, drawing)) })}>
+              Flip arrows
+            </button>
+          </div>
         )}
         <div className="drawing-field">
           <label htmlFor="dim-places">Decimal places</label>
@@ -875,6 +917,24 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
             />
             Sizes in {unit === "in" ? "millimetres" : "inches"} too
           </label>
+          <div className="drawing-field">
+            <label htmlFor="drawing-arrows">Dimension arrows</label>
+            <select
+              id="drawing-arrows"
+              title="Where the arrows go on dimensions that don't have their own setting"
+              value={drawing.dimArrows ?? ""}
+              onChange={(e) =>
+                change((d) => {
+                  const { dimArrows: _old, ...rest } = d;
+                  return e.target.value === "inside" || e.target.value === "outside" ? { ...rest, dimArrows: e.target.value } : rest;
+                })
+              }
+            >
+              <option value="">Automatic (inside when there's room)</option>
+              <option value="inside">Inside, pointing out</option>
+              <option value="outside">Outside, pointing in</option>
+            </select>
+          </div>
         </div>
       </section>
       <section className="panel-section">
@@ -1003,7 +1063,7 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
           )}
         </div>
       </section>
-      <ViewScales drawing={drawing} change={change} sheetScale={auto && !drawing.scale ? auto.scale : (drawing.scale ?? null)} />
+      <ViewScales drawing={drawing} change={change} sheetScale={auto && !drawing.scale ? auto.scale : (drawing.scale ?? null)} projections={projections} info={info} />
       <SectionsList drawing={drawing} change={change} missed={missedSections(drawing, projections, upToDate)} />
       <DetailsList drawing={drawing} change={change} />
       <BreakOutsList drawing={drawing} change={change} />
@@ -1024,8 +1084,26 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
   );
 }
 
+/**
+ * A view at its own scale (undefined = the sheet's). A view moved by hand goes
+ * back to its own place if, at the new size, it would cover another view or
+ * run off the paper (see scaleView).
+ */
+function withViewScale(d: Drawing, viewId: string, scale: number | undefined, projections: Projections | null, info: SheetInfo): Drawing {
+  const plain = withoutFit(d);
+  if (projections) return scaleView(plain, viewId, scale, projections, info);
+  return {
+    ...plain,
+    views: plain.views.map((x) => {
+      if (x.id !== viewId) return x;
+      const { scale: _old, ...rest } = x;
+      return scale ? { ...rest, scale } : rest;
+    }),
+  };
+}
+
 /** Each view's scale: the sheet's (the usual), or its own, noted under the view. */
-function ViewScales({ drawing, change, sheetScale }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void; sheetScale: number | null }) {
+function ViewScales({ drawing, change, sheetScale, projections, info }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void; sheetScale: number | null; projections: Projections | null; info: SheetInfo }) {
   const views = drawing.views.filter((v) => v.kind !== "detail");
   if (!views.length) return null;
   const name = (v: Drawing["views"][number]) => {
@@ -1043,18 +1121,7 @@ function ViewScales({ drawing, change, sheetScale }: { drawing: Drawing; change:
             <select
               id={`view-scale-${v.id}`}
               value={v.scale ? String(v.scale) : ""}
-              onChange={(e) =>
-                change((d) =>
-                  withoutFit({
-                    ...d,
-                    views: d.views.map((x) => {
-                      if (x.id !== v.id) return x;
-                      const { scale: _old, ...rest } = x;
-                      return e.target.value ? { ...rest, scale: Number(e.target.value) } : rest;
-                    }),
-                  }),
-                )
-              }
+              onChange={(e) => change((d) => withViewScale(d, v.id, e.target.value ? Number(e.target.value) : undefined, projections, info))}
             >
               <option value="">Same as the sheet{sheetScale ? ` (${scaleLabel(sheetScale)})` : ""}</option>
               {STANDARD_SCALES.map((sc) => (
@@ -1065,7 +1132,7 @@ function ViewScales({ drawing, change, sheetScale }: { drawing: Drawing; change:
             </select>
           </div>
         ))}
-        <p className="panel-hint">A view at its own scale says so underneath it (e.g. SCALE 2:1). A section follows the view it's cut from unless it has its own. Details are drawn times bigger than the view they're taken from — set how many under Details.</p>
+        <p className="panel-hint">Or click a view on the sheet to set its scale there, and drag its corner handle to resize it. A view at its own scale says so underneath it (e.g. SCALE 2:1). A section follows the view it's cut from unless it has its own. Details are drawn times bigger than the view they're taken from — set how many under Details.</p>
       </div>
     </section>
   );
@@ -1374,6 +1441,12 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const balloons = useMemo(() => balloonsFor(bom, instances, allParts), [bom, instancesKey, allParts]);
   const [drag, setDrag] = useState<{ viewId: string; start: P2; from: P2; at: P2 } | null>(null);
+  /** The view clicked on the sheet (its scale can be set in the bar over the sheet). */
+  const [selView, setSelView] = useState<string | null>(null);
+  /** A view's corner handle being dragged: its middle and that corner then, its scale then and the one it's going to. */
+  const [resize, setResize] = useState<{ viewId: string; centre: P2; corner: P2; from: number; scale: number } | null>(null);
+  /** Where the right button went down (a right-click on a dimension flips its arrows; a right-drag pans). */
+  const rightDown = useRef<{ x: number; y: number } | null>(null);
   const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number; textAlong?: number; textAcross?: number } } | null>(null);
   /** The hole table being dragged: where the pointer started, and its top-left corner then and now. */
   const [tableDrag, setTableDrag] = useState<{ start: P2; from: P2; at: P2 } | null>(null);
@@ -1408,16 +1481,18 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     setBreakStart(null);
     setShortStart(null);
     setRun(null);
+    setSelView(null);
   }, [tool, drawing.id, pageId]);
 
   // While a view or a dimension is dragged, show it where it's going.
   const shown = useMemo(() => {
     let d = drawing;
     if (drag) d = { ...d, views: d.views.map((v) => (v.id === drag.viewId ? { ...v, at: drag.at } : v)) };
+    if (resize) d = { ...d, views: d.views.map((v) => (v.id === resize.viewId ? { ...v, scale: resize.scale } : v)) };
     if (dimDrag) d = { ...d, dimensions: d.dimensions?.map((x) => (x.id === dimDrag.id ? { ...x, ...dimDrag.patch } : x)) };
     if (noteDrag) d = { ...d, notes: d.notes?.map((x) => (x.id === noteDrag.id ? { ...x, at: noteDrag.at } : x)) };
     return d;
-  }, [drawing, drag, dimDrag, noteDrag]);
+  }, [drawing, drag, resize, dimDrag, noteDrag]);
   const unit = useLengthUnit();
   const taps = useMemo(() => tapSizes(doc, drawing), [doc, drawing]);
   const info = useMemo<SheetInfo>(
@@ -1431,8 +1506,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     [shown, projections, info, unit],
   );
   useEffect(() => {
-    if (layout && projections && !drag && !dimDrag) shownSheet = { drawingId: drawing.id, pageId, layout, name: drawing.name, projections, info };
-  }, [layout, projections, drag, dimDrag, drawing.id, pageId, drawing.name, info]);
+    if (layout && projections && !drag && !dimDrag && !resize) shownSheet = { drawingId: drawing.id, pageId, layout, name: drawing.name, projections, info };
+  }, [layout, projections, drag, dimDrag, resize, drawing.id, pageId, drawing.name, info]);
   const snaps = useMemo(() => (layout && projections && tool !== "select" ? snapsOf(layout, projections) : []), [layout, projections, tool]);
 
   // Delete removes the selected dimension; Esc steps back.
@@ -1454,6 +1529,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
         else if (shortStart) setShortStart(null);
         else if (pending) setPending(null);
         else if (run) setRun(null);
+        else if (selView) setSelView(null);
         else if (s.selectedDims.length) s.selectDim(null);
         else if (s.drawingTool !== "select") s.setDrawingTool("select");
       } else if ((e.key === "d" || e.key === "D") && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -1462,7 +1538,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending, cutStart, run, detailStart, breakStart, shortStart, symbolStart]);
+  }, [pending, cutStart, run, detailStart, breakStart, shortStart, symbolStart, selView]);
 
   const toSheet = (e: { clientX: number; clientY: number }): P2 => {
     const svg = svgRef.current;
@@ -1835,6 +1911,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
 
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (e.button === 1 || e.button === 2) {
+      if (e.button === 2) rightDown.current = { x: e.clientX, y: e.clientY };
       pan.current = { x: e.clientX, y: e.clientY, box };
       (e.target as Element).setPointerCapture?.(e.pointerId);
       e.preventDefault();
@@ -1864,6 +1941,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     else if (tool === "shorten") shortenClick(toSheet(e));
     else {
       // Empty paper: drag out a box to select dimensions and notes (Shift or Ctrl adds to what's selected).
+      setSelView(null);
       const at = toSheet(e);
       (e.target as Element).setPointerCapture?.(e.pointerId);
       setSelBox({ from: at, to: at, additive: e.shiftKey || e.ctrlKey || e.metaKey });
@@ -1880,6 +1958,10 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     if (tool !== "select") setCursor(here);
     if (selBox) setSelBox({ ...selBox, to: here });
     if (drag) setDrag({ ...drag, at: [drag.from[0] + here[0] - drag.start[0], drag.from[1] + here[1] - drag.start[1]] });
+    if (resize) {
+      const next = resizedScale(resize.from, resize.centre, resize.corner, here);
+      if (next !== resize.scale) setResize({ ...resize, scale: next });
+    }
     if (noteDrag) setNoteDrag({ ...noteDrag, at: [noteDrag.from[0] + here[0] - noteDrag.start[0], noteDrag.from[1] + here[1] - noteDrag.start[1]] });
     if (tableDrag) setTableDrag({ ...tableDrag, at: [tableDrag.from[0] + here[0] - tableDrag.start[0], tableDrag.from[1] + here[1] - tableDrag.start[1]] });
     if (dimDrag) {
@@ -1910,6 +1992,12 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       if (Math.hypot(at[0] - drag.from[0], at[1] - drag.from[1]) > 0.2) {
         change((d) => ({ ...d, views: d.views.map((v) => (v.id === viewId ? { ...v, at: [Math.round(at[0] * 10) / 10, Math.round(at[1] * 10) / 10] } : v)) }));
       }
+    }
+    if (resize) {
+      const { viewId, from, scale } = resize;
+      setResize(null);
+      // Landing on the sheet's scale: just "the same as the sheet" again.
+      if (scale !== from) change((d) => withViewScale(d, viewId, d.scale !== undefined && Math.abs(scale - d.scale) < 1e-12 ? undefined : scale, projections, info));
     }
     if (noteDrag) {
       const { id, at, from } = noteDrag;
@@ -2044,6 +2132,9 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     return drawDimension(preview, r, at, measureDim(preview, r), null, dimStyle(drawing)).prims;
   })();
   const selectedPlaced = layout?.dims.filter((d) => isSelected(d.id)) ?? [];
+  /** The view clicked on (details have their enlargement instead of a scale of their own). */
+  const selPlaced = tool === "select" ? (layout?.views.find((v) => v.id === selView && v.kind !== "detail") ?? null) : null;
+  const selDrawn = selPlaced ? drawing.views.find((v) => v.id === selPlaced.id) : undefined;
   const lost = new Set(layout?.dims.filter((d) => !d.found).map((d) => d.id));
 
   const renderPrim = (p: Prim, i: number, colour: string) => {
@@ -2098,7 +2189,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
           layout?.views.map((v) => (
             <rect
               key={v.id}
-              className={`drawing-view-handle${drag?.viewId === v.id ? " dragging" : ""}`}
+              className={`drawing-view-handle${drag?.viewId === v.id ? " dragging" : ""}${selView === v.id ? " selected" : ""}`}
               x={v.box[0] - 3}
               y={H - v.box[3] - 3}
               width={v.box[2] - v.box[0] + 6}
@@ -2107,14 +2198,33 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
                 if (e.button !== 0) return;
                 e.stopPropagation();
                 useStore.getState().selectDim(null);
+                setSelView(v.id);
                 (e.target as Element).setPointerCapture(e.pointerId);
                 const start = toSheet(e);
                 setDrag({ viewId: v.id, start, from: v.centre, at: v.centre });
               }}
             >
-              <title>{`${v.kind === "section" ? (() => { const c = drawing.sections?.find((x) => `section:${x.id}` === v.key); return c?.aux ? `Auxiliary ${c.letter}` : `Section ${c?.letter ?? ""}`; })() : v.kind === "detail" ? `Detail ${drawing.details?.find((c) => `detail:${c.id}` === v.key)?.letter ?? ""}` : VIEW_LABELS[v.kind]} view — drag to move`}</title>
+              <title>{`${viewName(drawing, v)} view — ${v.kind === "detail" ? "" : "click to set its scale, "}drag to move`}</title>
             </rect>
           ))}
+        {tool === "select" && selPlaced && !drag && (
+          <rect
+            className="drawing-view-resize"
+            x={selPlaced.box[2] + 3 - 1.8}
+            y={H - selPlaced.box[3] - 3 - 1.8}
+            width={3.6}
+            height={3.6}
+            data-testid="view-resize"
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              (e.target as Element).setPointerCapture(e.pointerId);
+              setResize({ viewId: selPlaced.id, centre: selPlaced.centre, corner: [selPlaced.box[2], selPlaced.box[3]], from: selPlaced.scale, scale: selPlaced.scale });
+            }}
+          >
+            <title>Drag to make this view bigger or smaller (it snaps to standard scales)</title>
+          </rect>
+        )}
         {tool === "select" &&
           layout?.notes.map((n) => (
             <rect
@@ -2128,6 +2238,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
                 if (e.button !== 0) return;
                 e.stopPropagation();
                 const st = useStore.getState();
+                setSelView(null);
                 if (e.ctrlKey || e.metaKey) return st.selectDims(toggled(st.selectedDims, n.id));
                 st.selectDim(n.id);
                 (e.target as Element).setPointerCapture(e.pointerId);
@@ -2180,14 +2291,24 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
                 if (e.button !== 0) return;
                 e.stopPropagation();
                 const st = useStore.getState();
+                setSelView(null);
                 if (e.ctrlKey || e.metaKey) return st.selectDims(toggled(st.selectedDims, d.id));
                 st.selectDim(d.id);
                 (e.target as Element).setPointerCapture(e.pointerId);
                 const dim = drawing.dimensions?.find((x) => x.id === d.id);
                 if (dim) setDimDrag({ id: d.id, patch: { offset: dim.offset, ...(dim.angle !== undefined ? { angle: dim.angle } : {}) } });
               }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                // Right-click (not a right-drag to pan): turn its arrows the other way.
+                const down = rightDown.current;
+                if (!d.arrows || (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4)) return;
+                const flipped = flipArrows(d.arrows);
+                change((dr) => ({ ...dr, dimensions: dr.dimensions?.map((x) => (x.id === d.id ? { ...x, arrows: flipped } : x)) }));
+                useStore.getState().selectDim(d.id);
+              }}
             >
-              <title>{d.found ? "Drag to move this dimension; Delete removes it" : "What this dimension measured has changed too much — delete it and add it again"}</title>
+              <title>{d.found ? `Drag to move this dimension; Delete removes it${d.arrows ? "; right-click to flip its arrows" : ""}` : "What this dimension measured has changed too much — delete it and add it again"}</title>
             </circle>
           ))}
         {previewPrims.map((p, i) => renderPrim(p, -1 - i, "#1f6fd1"))}
@@ -2232,6 +2353,24 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
         )}
       </svg>
       {message && <div className="drawing-message">{message}</div>}
+      {!message && selPlaced && selDrawn && (
+        <div className="drawing-view-bar" role="group" aria-label="Selected view">
+          <label htmlFor="selected-view-scale">{viewName(drawing, selPlaced)} view — scale</label>
+          <select
+            id="selected-view-scale"
+            value={selDrawn.scale ? String(selDrawn.scale) : ""}
+            onChange={(e) => change((d) => withViewScale(d, selPlaced.id, e.target.value ? Number(e.target.value) : undefined, projections, info))}
+          >
+            <option value="">Same as the sheet ({scaleLabel(layout!.scale)})</option>
+            {STANDARD_SCALES.map((sc) => (
+              <option key={sc} value={String(sc)}>
+                {scaleLabel(sc)}
+              </option>
+            ))}
+          </select>
+          <span className="drawing-view-bar-hint">or drag its corner handle</span>
+        </div>
+      )}
       {layout?.tooBig &&
         (layout.ownTooBig ? (
           <div className="drawing-message warn">A view at its own scale is too big for this sheet. Choose a smaller scale for it under View scales, or a bigger sheet.</div>

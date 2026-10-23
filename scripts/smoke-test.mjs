@@ -1100,6 +1100,40 @@ try {
     await page.waitForFunction((n) => document.querySelectorAll(".drawing-dim-handle").length === n, dimCount, { timeout: 5_000 });
     await page.keyboard.press("Escape");
   }
+  step = "setting the 3D view's scale on the sheet";
+  {
+    const iso = page.locator(".drawing-view-handle").filter({ has: page.locator("title", { hasText: "3D (isometric)" }) });
+    await iso.click({ force: true });
+    await page.waitForSelector("#selected-view-scale", { timeout: 5_000 });
+    await page.waitForSelector('[data-testid="view-resize"]', { timeout: 5_000 });
+    // A scale other than the sheet's, so it's noted under the view.
+    const sheetScale = (await page.locator('#selected-view-scale option[value=""]').textContent()) ?? "";
+    const [value, label] = sheetScale.includes("1:5") ? ["0.5", "1:2"] : ["0.2", "1:5"];
+    await page.locator("#selected-view-scale").selectOption(value);
+    await page.waitForFunction((t) => [...document.querySelectorAll(".drawing-text")].some((x) => x.textContent === t), `SCALE ${label}`, { timeout: 10_000 });
+    await shot("isoscale");
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".drawing-text")].some((x) => (x.textContent ?? "").startsWith("SCALE ")), null, { timeout: 10_000 });
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("#selected-view-scale"), null, { timeout: 5_000 });
+  }
+  step = "flipping a dimension's arrows";
+  if (dimCount >= 1) {
+    const lines = () => page.locator('[data-testid="drawing-sheet"] polyline').count();
+    const before = await lines();
+    await page.locator(".drawing-dim-handle").first().click({ force: true });
+    await page.getByRole("button", { name: "Flip arrows", exact: true }).click();
+    // Set outside, a long dimension gets a short line past each end (or loses them, flipped back in).
+    await page.waitForFunction((n) => Math.abs(document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length - n) === 2, before, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length === n, before, { timeout: 5_000 });
+    // Right-clicking its number does the same.
+    await page.locator(".drawing-dim-handle").first().click({ button: "right", force: true });
+    await page.waitForFunction((n) => Math.abs(document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length - n) === 2, before, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length === n, before, { timeout: 5_000 });
+    await page.keyboard.press("Escape");
+  }
   step = "baseline, chain and ordinate tools";
   for (const name of ["Baseline", "Chain", "Ordinate"]) {
     await tool(name);
