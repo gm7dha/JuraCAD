@@ -16,6 +16,13 @@
   `regions.ts`; the areas curves divide the plane into, where they cross, in `areas.ts` — a feature's `areas` are picks
   [x, y, size, ...signature] — a point inside each clicked area, its mm², and the solid curve ids (+/− side) round its outline —
   matched again on rebuild by `matchArea` (most shared signature; a deleted bounding curve = gone); none = every closed shape); the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
+  Snapping (points, line middles → Midpoint, circle centres, part edges, lining up, onto curves) is the pure `snapAt` in
+  `src/sketch/snaps.ts`. Part edges: `src/sketch/links.ts` — a sketch on a part face keeps the face (`SketchPlane.face`,
+  a TopoPick); lines/circles/arcs may carry `link` (the part edge they follow: "Use", or a face edge brought in as a
+  construction reference when snapped to or dimensioned to — stand-in ids "ref:<n>" until then). The engine's
+  `followSketch` finds the face and links again each rebuild (moves the plane with its face, re-solves via `followLinks`)
+  and returns `RebuildResult.sketchLinks`; the store syncs the open sketch from it. Circular sketch patterns round a point
+  add `patternCopy` constraints (copies stay turned round the centre; the solver lets copies give way first).
 - Part Studios: `src/model/studios.ts`. The first studio's features are `doc.features` (old files still open);
   more are in `doc.partStudios`. Feature ids are unique across the document. Store helpers `activeStudioId`,
   `activeFeatures`, `studioParts` (cached, selector-safe); feature edits go through `changeStudio`/`inStudio`.

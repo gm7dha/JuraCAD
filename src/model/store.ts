@@ -1,4 +1,5 @@
 import { deleteItems } from "../sketch/ops";
+import { followLinks, type SketchLinkInfo } from "../sketch/links";
 import { create } from "zustand";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -54,6 +55,8 @@ import { importName } from "./importFile";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
 
+/** No sketch links (one shared object, so selectors stay stable). */
+const NO_LINKS: Record<string, SketchLinkInfo> = {};
 /** No drawing dimensions selected (one shared array, so selectors stay stable). */
 const NO_DIMS: string[] = [];
 export interface SelectionItem {
@@ -148,6 +151,8 @@ export interface SketchSession {
   patternAngle: string;
   /** Circular pattern: the point to go round. */
   patternCentre: string;
+  /** Linear pattern: the next click on a line sets the direction. */
+  patternDirectionPick?: boolean;
   /** Move / copy tool: how far across and up (as typed), the turn (degrees, about the selection's middle), and whether to copy. */
   moveDx: string;
   moveDy: string;
@@ -206,6 +211,8 @@ export interface AppState {
   rebuildBusy: boolean;
   parts: PartMesh[];
   featureErrors: Record<string, string>;
+  /** Sketches on part faces or using part edges (by feature id), as found on the latest rebuild. */
+  sketchLinks: Record<string, SketchLinkInfo>;
   lastRebuildMs: number | null;
 
   dialog: DialogName;
@@ -268,7 +275,7 @@ export interface AppState {
   keepOfferedDimension: (id: string) => void;
   /** Drop any offered dimensions not kept yet. */
   discardOfferedDimensions: () => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "patternDirectionPick" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**
@@ -427,7 +434,7 @@ export interface AppState {
   // set by the kernel connection
   setKernelStatus: (status: AppState["kernelStatus"], error?: string) => void;
   setRebuildBusy: (busy: boolean) => void;
-  setRebuildResult: (parts: PartMesh[], featureErrors: Record<string, string>, ms: number, rebuilt?: string[], studioOrder?: string[]) => void;
+  setRebuildResult: (parts: PartMesh[], featureErrors: Record<string, string>, ms: number, rebuilt?: string[], studioOrder?: string[], sketchLinks?: Record<string, SketchLinkInfo>) => void;
 }
 
 // These browser-storage keys keep the app's old name (PartSmith) on purpose: changing them
@@ -547,6 +554,7 @@ export const useStore = create<AppState>((set, get) => {
     rebuildBusy: false,
     parts: [],
     featureErrors: {},
+    sketchLinks: NO_LINKS,
     lastRebuildMs: null,
 
     dialog: null,
@@ -1458,8 +1466,18 @@ export const useStore = create<AppState>((set, get) => {
 
     setKernelStatus: (kernelStatus, error) => set({ kernelStatus, kernelError: error ?? null }),
     setRebuildBusy: (rebuildBusy) => set({ rebuildBusy }),
-    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder) =>
+    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks) =>
       set((s) => {
+        // The sketch open for editing follows its part's face and edges, as the engine found them.
+        const links = sketchLinks && Object.keys(sketchLinks).length ? sketchLinks : NO_LINKS;
+        const draft = s.editing?.draft;
+        const info = draft?.sketch ? links[draft.id] : undefined;
+        let editing = s.editing;
+        if (editing && draft?.sketch && info) {
+          const data = followLinks(draft.sketch.data, info.links);
+          const plane = info.plane && draft.sketch.plane?.kind === "face" ? info.plane : draft.sketch.plane;
+          if (data !== draft.sketch.data || plane !== draft.sketch.plane) editing = { ...editing, draft: { ...draft, sketch: { plane, data } } };
+        }
         // Part Studios that weren't rebuilt keep the parts they had.
         let parts = built;
         if (rebuilt && studioOrder) {
@@ -1473,6 +1491,8 @@ export const useStore = create<AppState>((set, get) => {
         return {
           parts,
           featureErrors,
+          sketchLinks: links,
+          ...(editing !== s.editing ? { editing } : {}),
           lastRebuildMs: ms,
           rebuildBusy: false,
           // Drop picks and hidden flags for parts that no longer exist.

@@ -4,7 +4,7 @@
  * snap marker) for the viewport to draw.
  */
 import { useStore, type SketchTool } from "../model/store";
-import { alignWith, hitTest, inferOrientation, type Hit } from "./hit";
+import { hitTest, inferOrientation, type Hit } from "./hit";
 import { dimensionLayout, offsetFor } from "./layout";
 import {
   addArc,
@@ -21,12 +21,8 @@ import {
   dragCircleRim,
   dragCurve,
   dragPoint,
-  joinPoints,
   pointPos,
   splineHandles,
-  splinePath,
-  ellipsePoints,
-  nearestOnPath,
   pointsSharingCurve,
   radiusOf,
   setSplineHandle,
@@ -61,6 +57,9 @@ import {
   splitAt,
 } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
+import { isRefId, refSketch, type RefEdge } from "./links";
+import { attachPoint, bringIn, hintFor, pickAt, snapAt, type SnapResult } from "./snaps";
+import type { Snap } from "./ops";
 import { splinePolyline } from "./spline";
 import { ellipseFrom, ellipsePolyline, minorPointFor } from "./ellipse";
 import { rectOf, sketchItemsInBox } from "../viewport/boxSelect";
@@ -94,6 +93,8 @@ export interface SketchTransient {
   inference: { at: [number, number]; text: string } | null;
   /** Items picked so far by the dimension tool. */
   pending: string[];
+  /** Small markers: the middle of the line, or the centre of the circle or arc, under the pointer. */
+  hints?: [number, number][];
 }
 
 const POINT_PX = 9;
@@ -114,8 +115,8 @@ interface DragState {
   startScreenX?: number;
   /** Dragging from empty space draws a selection box: its far corner and whether it was dragged leftwards. */
   box?: { x: number; y: number; crossing: boolean };
-  /** Dragging a point: the point (or origin) it has snapped onto, joined when the drag ends. */
-  snapTo?: string | null;
+  /** Dragging a point: what it has snapped onto (a point, a line's middle, a part edge's corner), joined when the drag ends. */
+  snapTo?: Snap | null;
   /** Dragging a spline handle: which one. */
   handle?: SplineHandleEnd;
 }
@@ -152,6 +153,43 @@ export class SketchController {
 
   private get data(): SketchData | null {
     return this.state.editing?.draft.sketch?.data ?? null;
+  }
+
+  /** Edges of the part face the sketch is on (found on the latest rebuild). */
+  private get refs(): RefEdge[] {
+    const id = this.state.editing?.draft.id;
+    return (id && this.state.sketchLinks?.[id]?.edges) || [];
+  }
+
+  /** What's under the pointer, part edges of the face included (their stand-in ids start "ref:"). */
+  private pickAt(e: SketchPointer): Hit | null {
+    const d = this.data;
+    if (!d) return null;
+    return pickAt(d, e.x, e.y, POINT_PX * e.mmPerPx, CURVE_PX * e.mmPerPx, this.refs);
+  }
+
+  /** A line's middle or a circle's centre to mark for whatever's hovered. */
+  private hintsFor(hit: Hit | null): [number, number][] {
+    const d = this.data;
+    if (!d || hit?.kind !== "curve") return [];
+    const virtual = isRefId(hit.id);
+    const s = virtual ? refSketch(this.refs) : d;
+    const c = curveById(s, hit.id);
+    const h = c ? hintFor(s, c) : null;
+    return h ? [h] : [];
+  }
+
+  /** Bring a picked part edge into the sketch (as a reference) and give its real id; the sketch's own ids come back as they are. */
+  private realId(id: string): string | null {
+    const d = this.data;
+    if (!d || !isRefId(id)) return id;
+    const r = bringIn(d, id, this.refs);
+    if (r.error) {
+      this.state.setSketchMessage(r.error, "info");
+      return null;
+    }
+    this.state.updateSketch(r.sketch, { record: true });
+    return r.id;
   }
 
   private get tool(): SketchTool {
@@ -237,12 +275,32 @@ export class SketchController {
    * makes the copies.
    */
   private patternClick(e: SketchPointer): void {
-    const hit = this.hitAt(e);
     const st = this.state;
     const moving = this.tool === "sketchTransform";
-    if (hit?.kind === "point" && !moving && st.sketch?.patternKind === "circular") {
-      st.setSketchOptions({ patternCentre: hit.id });
-      st.setSketchMessage("Centre chosen. Click the shapes to repeat, then Make pattern in the sketch panel.", "info");
+    const circular = !moving && st.sketch?.patternKind === "circular";
+    // A circular pattern's centre can be any point: a sketch point, a circle's centre, a line's end, or a corner of the face.
+    const picked = circular ? this.pickAt(e) : null;
+    if (!moving && st.sketch?.patternKind === "linear" && st.sketch.patternDirectionPick) {
+      const over = this.pickAt(e);
+      const s = over && isRefId(over.id) ? refSketch(this.refs) : this.data!;
+      const line = over?.kind === "curve" ? curveById(s, over.id) : undefined;
+      if (line?.type !== "line") {
+        st.setSketchMessage("Click a straight line (or a straight edge of the face) to set the direction.", "info");
+        return;
+      }
+      const [a, b] = [pointPos(s, line.p1), pointPos(s, line.p2)];
+      const angle = Math.round(((Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI) * 100) / 100;
+      st.setSketchOptions({ patternAngle: String(Object.is(angle, -0) ? 0 : angle), patternDirectionPick: false });
+      st.setSketchMessage(`Direction set along that line (${angle}°). Type 180 more to go the other way.`, "info");
+      this.emit({ preview: this.patternPreview() });
+      return;
+    }
+    const hit = picked?.kind === "point" ? picked : this.hitAt(e);
+    if (hit?.kind === "point" && circular) {
+      const id = this.realId(hit.id);
+      if (!id) return;
+      st.setSketchOptions({ patternCentre: id });
+      st.setSketchMessage("Centre chosen. Click the shapes to repeat, then Make pattern in the sketch panel. The copies follow if the centre moves.", "info");
     } else if (hit?.kind === "curve") {
       const sel = st.sketch?.selection ?? [];
       st.setSketchSelection(sel.includes(hit.id) ? sel.filter((x) => x !== hit.id) : [...sel, hit.id]);
@@ -308,6 +366,11 @@ export class SketchController {
     return hitTest(d, e.x, e.y, POINT_PX * e.mmPerPx, CURVE_PX * e.mmPerPx, { ignore });
   }
 
+  /** Where the pointer snaps to while drawing (points, middles of lines, part edges, lining up, onto curves). */
+  private snapAt(e: SketchPointer): SnapResult {
+    return snapAt(this.data!, e.x, e.y, { pointTol: POINT_PX * e.mmPerPx, curveTol: CURVE_PX * e.mmPerPx, acquired: this.acquired, refs: this.refs });
+  }
+
   /** The spline handle end under the pointer, if any (handles show on selected splines). */
   private handleAt(e: SketchPointer): SplineHandleEnd | null {
     const d = this.data;
@@ -325,40 +388,9 @@ export class SketchController {
     return best;
   }
 
-  /** Where a click lands, snapped to points, the origin or curves. */
+  /** Where a click lands, snapped to points, the origin, middles of lines, part edges or curves. */
   private placeAt(e: SketchPointer): Placed {
-    const d = this.data!;
-    const hit = this.hitAt(e);
-    if (hit?.kind === "point") {
-      const [x, y] = pointPos(d, hit.id);
-      return { x, y, snap: hit.id === ORIGIN_ID ? { kind: "origin" } : { kind: "point", id: hit.id } };
-    }
-    if (!hit && this.acquired.length) {
-      // Lined up with a point the pointer passed over?
-      const al = alignWith(d, e.x, e.y, this.acquired, POINT_PX * 0.8 * e.mmPerPx);
-      if (al.alongX || al.alongY) return { x: al.x, y: al.y, snap: { kind: "align", ...(al.alongX ? { x: al.alongX } : {}), ...(al.alongY ? { y: al.alongY } : {}) } };
-    }
-    if (hit?.kind === "curve") {
-      const c = curveById(d, hit.id)!;
-      let [x, y] = [e.x, e.y];
-      if (c.type === "line") {
-        const [ax, ay] = pointPos(d, c.p1);
-        const [bx, by] = pointPos(d, c.p2);
-        const dx = bx - ax, dy = by - ay;
-        const t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1);
-        [x, y] = [ax + t * dx, ay + t * dy];
-      } else if (c.type === "spline" || c.type === "ellipse") {
-        // The nearest place on the curve (it's held there).
-        [x, y] = nearestOnPath(c.type === "spline" ? splinePath(d, c, 48) : ellipsePoints(d, c, 256), [e.x, e.y]);
-      } else {
-        const [cx, cy] = pointPos(d, c.center);
-        const r = radiusOf(d, c);
-        const a = Math.atan2(y - cy, x - cx);
-        [x, y] = [cx + r * Math.cos(a), cy + r * Math.sin(a)];
-      }
-      return { x, y, snap: { kind: "curve", id: c.id } };
-    }
-    return { x: e.x, y: e.y, snap: null };
+    return this.snapAt(e).placed;
   }
 
   private snapMarker(p: Placed): [number, number] | null {
@@ -446,8 +478,8 @@ export class SketchController {
         const r = addLine(d, start, end, { construction, orientation });
         if (!this.commit(r)) return;
         if (!construction) this.offerDimensions([[r.lineId]]);
-        // Keep drawing from the new end, unless we just closed the shape.
-        const closed = p.snap?.kind === "point" || p.snap?.kind === "origin";
+        // Keep drawing from the new end, unless we just closed the shape (or ended on a corner of the face).
+        const closed = p.snap?.kind === "point" || p.snap?.kind === "origin" || (p.snap?.kind === "ref" && p.snap.at !== "on" && p.snap.at !== "mid");
         this.placed = closed ? [] : [{ ...end, snap: { kind: "point", id: r.endId } }];
         this.emit({ preview: [], inference: null });
         return;
@@ -642,30 +674,38 @@ export class SketchController {
     const tool = this.tool;
     if (tool === "select") {
       if (dragging && this.drag) return this.selectDrag(e);
-      this.emit({ hover: this.hitAt(e), preview: [], snap: null, inference: null });
+      const hover = this.pickAt(e);
+      this.emit({ hover, preview: [], snap: null, inference: null, hints: this.hintsFor(hover) });
       return;
     }
     if (tool === "useEdge") return;
     if (tool === "sketchPattern" || tool === "sketchTransform") {
-      const hit = this.hitAt(e);
       const circular = tool === "sketchPattern" && this.state.sketch?.patternKind === "circular";
-      this.emit({ hover: hit?.kind === "curve" || (circular && hit?.kind === "point") ? hit : null, snap: null, preview: this.patternPreview() });
+      const picking = tool === "sketchPattern" && this.state.sketch?.patternKind === "linear" && this.state.sketch.patternDirectionPick;
+      const over = circular || picking ? this.pickAt(e) : null;
+      const hit = over?.kind === "point" || picking ? over : this.hitAt(e);
+      this.emit({ hover: hit?.kind === "curve" || (circular && hit?.kind === "point") ? hit : null, snap: null, preview: this.patternPreview(), hints: [] });
       return;
     }
-    if (tool === "dimension" && this.transient.pending.length) {
-      this.emit({ hover: this.hitAt(e), snap: null, ...this.dimensionPreview(e) });
+    if (tool === "dimension") {
+      const hover = this.pickAt(e);
+      if (this.transient.pending.length) this.emit({ hover, snap: null, hints: [], ...this.dimensionPreview(e) });
+      else this.emit({ hover, snap: null, preview: [], hints: this.hintsFor(hover) });
       return;
     }
-    if (tool === "dimension" || tool === "trim" || tool === "extend" || tool === "split" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
+    if (tool === "trim" || tool === "extend" || tool === "split" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
       const hit = this.hitAt(e);
-      this.emit({ hover: (tool === "trim" || tool === "extend" || tool === "split" || tool === "offset" || tool === "mirror") && hit?.kind !== "curve" ? null : hit, snap: null, preview: [] });
+      this.emit({ hover: (tool === "trim" || tool === "extend" || tool === "split" || tool === "offset" || tool === "mirror") && hit?.kind !== "curve" ? null : hit, snap: null, preview: [], hints: [] });
       return;
     }
 
-    // Passing over a point picks it up, to line up with afterwards.
+    // Passing over a point picks it up, to line up with afterwards; passing over a circle's rim picks up its centre.
     const over = this.hitAt(e);
-    if (over?.kind === "point" && this.acquired[0] !== over.id) this.acquired = [over.id, ...this.acquired.filter((x) => x !== over.id)].slice(0, 4);
-    const p = this.placeAt(e);
+    const overCurve = over?.kind === "curve" ? curveById(d, over.id) : undefined;
+    const pickedUp = over?.kind === "point" ? over.id : overCurve && (overCurve.type === "circle" || overCurve.type === "arc" || overCurve.type === "ellipse") ? overCurve.center : null;
+    if (pickedUp && this.acquired[0] !== pickedUp) this.acquired = [pickedUp, ...this.acquired.filter((x) => x !== pickedUp)].slice(0, 4);
+    const snapped = this.snapAt(e);
+    const p = snapped.placed;
     const preview: PreviewShape[] = [];
     if (p.snap?.kind === "align") {
       for (const id of [p.snap.x, p.snap.y]) if (id) preview.push({ kind: "guide", a: pointPos(d, id), b: [p.x, p.y] });
@@ -799,7 +839,7 @@ export class SketchController {
         } else preview.push({ kind: "line", a: [first.x, first.y], b: [second.x, second.y] });
       }
     }
-    this.emit({ hover: p.snap?.kind === "curve" ? { kind: "curve", id: p.snap.id } : null, preview, snap, inference });
+    this.emit({ hover: snapped.hover?.kind === "curve" ? snapped.hover : null, preview, snap, inference, hints: snapped.hints });
   }
 
   pointerUp(): void {
@@ -817,10 +857,10 @@ export class SketchController {
     }
     if (drag.moved) {
       if (drag.kind === "point" && drag.snapTo) {
-        const r = joinPoints(this.data ?? drag.start, drag.id, drag.snapTo);
+        const r = attachPoint(this.data ?? drag.start, drag.id, drag.snapTo);
         if (r.error) this.state.setSketchMessage(r.error, "error");
         else this.state.updateSketch(r.sketch, { record: false });
-        this.emit({ snap: null });
+        this.emit({ snap: null, hints: [] });
       }
       this.state.recordSketchStep(drag.start);
       return;
@@ -832,13 +872,15 @@ export class SketchController {
       if (!drag.additive) this.state.setSketchSelection([]);
       return;
     }
-    const id = drag.hit.id;
+    // A part edge of the face: bring it in (as a reference) and select that.
+    const id = this.realId(drag.hit.id);
+    if (!id) return;
     if (drag.additive) this.state.setSketchSelection(sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]);
     else this.state.setSketchSelection(sel.length === 1 && sel[0] === id ? [] : [id]);
   }
 
   pointerLeave(): void {
-    this.emit({ hover: null, snap: null, inference: null });
+    this.emit({ hover: null, snap: null, inference: null, hints: [] });
   }
 
   /** Esc: abandon a half-drawn shape. Returns true if there was one. */
@@ -855,7 +897,7 @@ export class SketchController {
     if (this.drag?.moved) this.state.updateSketch(this.drag.start, { record: false });
     this.placed = [];
     this.drag = null;
-    this.emit({ preview: [], inference: null, pending: [], snap: null });
+    this.emit({ preview: [], inference: null, pending: [], snap: null, hints: [] });
     return had;
   }
 
@@ -870,10 +912,12 @@ export class SketchController {
       this.drag = { kind: "handle", id: handle.splineId, start: d, startX: e.x, startY: e.y, moved: false, additive: false, hit: null, handle };
       return;
     }
-    const hit = this.hitAt(e);
+    const hit = this.pickAt(e);
     let kind: DragState["kind"] = "none";
-    if (hit?.kind === "point" && hit.id !== ORIGIN_ID) kind = "point";
-    if (hit?.kind === "curve") {
+    if (hit && isRefId(hit.id)) {
+      // Part edges can't be dragged: a click selects (brings in) one, a drag draws a selection box.
+    } else if (hit?.kind === "point" && hit.id !== ORIGIN_ID) kind = "point";
+    else if (hit?.kind === "curve") {
       const c = curveById(d, hit.id)!;
       // Dragging a circle's or an arc's rim resizes it; drag its centre point to move it.
       kind = c.type === "circle" || c.type === "arc" ? "rim" : "curve";
@@ -913,11 +957,13 @@ export class SketchController {
     if (drag.kind === "point") {
       // Hovering close to another point snaps onto it (and joins them when let go).
       // A wider reach than a click, so an end point dropped near another joins onto it.
-      const others = this.data ? hitTest(this.data, e.x, e.y, SNAP_PX * e.mmPerPx, 0, { ignore: pointsSharingCurve(drag.start, drag.id) }) : null;
-      drag.snapTo = others?.kind === "point" ? others.id : null;
-      const [x, y] = drag.snapTo ? pointPos(drag.start, drag.snapTo) : [e.x, e.y];
+      // Also onto the middle of a line, or a corner, centre or middle of the face's edges.
+      const found = this.data ? snapAt(drag.start, e.x, e.y, { pointTol: SNAP_PX * e.mmPerPx, curveTol: 0, refs: this.refs, ignore: pointsSharingCurve(drag.start, drag.id) }) : null;
+      const sn = found?.placed.snap;
+      drag.snapTo = sn && (sn.kind === "point" || sn.kind === "origin" || sn.kind === "midpoint" || (sn.kind === "ref" && sn.at !== "on")) ? sn : null;
+      const [x, y] = drag.snapTo ? [found!.placed.x, found!.placed.y] : [e.x, e.y];
       next = dragPoint(drag.start, drag.id, x, y);
-      this.emit({ snap: drag.snapTo ? [x, y] : null });
+      this.emit({ snap: drag.snapTo ? [x, y] : null, hints: drag.snapTo?.kind === "midpoint" ? [[x, y]] : [] });
     }
     else if (drag.kind === "curve") next = dragCurve(drag.start, drag.id, e.x - drag.startX, e.y - drag.startY);
     else {
@@ -958,10 +1004,13 @@ export class SketchController {
   }
 
   private dimensionClick(e: SketchPointer) {
-    const d = this.data!;
     this.previewKind = null;
-    const hit = this.hitAt(e);
+    const picked = this.pickAt(e);
     const pending = this.transient.pending;
+    // A part edge (or its corner) of the face: bring it in as a reference to measure from.
+    const wanted = picked && pending.length < 2 ? this.realId(picked.id) : null;
+    const hit = picked && wanted ? { ...picked, id: wanted } : picked && !isRefId(picked.id) ? picked : null;
+    const d = this.data!;
     if (hit && pending.length < 2 && !pending.includes(hit.id)) {
       const next = [...pending, hit.id];
       // Only keep a second pick if it makes a valid pair; otherwise start again with it.

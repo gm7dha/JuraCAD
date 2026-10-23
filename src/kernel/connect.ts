@@ -91,7 +91,7 @@ export function connectKernel(): () => void {
         s.showToast(result.message, "error");
         return;
       }
-      s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder);
+      s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks);
     });
   };
 

@@ -9,6 +9,7 @@ import { ellipsePoints, pointPos, radiusOf, splineHandleEnds, splinePath, spline
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import type { SketchAnalysis } from "../sketch/solver";
 import { isDimension, type SketchCurve, type SketchData } from "../sketch/types";
+import { refSketch, type RefEdge } from "../sketch/links";
 
 export const SKETCH_COLOURS = {
   free: new THREE.Color("#1f6fd1"),
@@ -21,6 +22,10 @@ export const SKETCH_COLOURS = {
   dimension: new THREE.Color("#4b5866"),
   /** Spline handles: the dots and lines you drag to reshape a curve. */
   handle: new THREE.Color("#2bb673"),
+  /** Edges of the part face the sketch is on (faint, like Onshape's). */
+  reference: new THREE.Color("#9aa6b2"),
+  /** The middle of a line or centre of a circle under the pointer. */
+  hint: new THREE.Color("#ff7a00"),
 };
 
 /** Sketch colours for a dark or light background (fully defined lines are black on light, near-white on dark). */
@@ -30,6 +35,7 @@ export function setSketchTheme(dark: boolean): void {
   SKETCH_COLOURS.dimension.set(dark ? "#b4bec9" : "#4b5866");
   SKETCH_COLOURS.free.set(dark ? "#5aa0ff" : "#1f6fd1");
   SKETCH_COLOURS.preview.set(dark ? "#5aa0ff" : "#1f6fd1");
+  SKETCH_COLOURS.reference.set(dark ? "#6c7884" : "#a9b3bd");
 }
 
 export interface ActiveSketch {
@@ -39,6 +45,8 @@ export interface ActiveSketch {
   /** Constraints that aren't satisfied: drawn red. */
   failing: Set<string>;
   selection: Set<string>;
+  /** Edges of the part face it's on, shown faintly to snap to and use. */
+  refs?: RefEdge[];
 }
 
 type Pt = [number, number];
@@ -143,8 +151,10 @@ export class SketchLayer {
   private readonly construction = new FatLines(1.8, { dashed: true, depthTest: false, renderOrder: 20 });
   private readonly dims = new FatLines(1.2, { depthTest: false, renderOrder: 19 });
   private readonly preview = new FatLines(1.8, { dashed: true, depthTest: false, renderOrder: 21 });
+  private readonly refLines = new FatLines(1.6, { depthTest: false, renderOrder: 18 });
   private readonly points: THREE.Points;
   private readonly snapMarker: THREE.Points;
+  private readonly hintMarkers: THREE.Points;
   private active: ActiveSketch | null = null;
   private transient: SketchTransient | null = null;
   private activeFrame: PlaneFrame | null = null;
@@ -162,7 +172,15 @@ export class SketchLayer {
     );
     this.snapMarker.renderOrder = 23;
     this.snapMarker.frustumCulled = false;
+    this.hintMarkers = new THREE.Points(
+      new THREE.BufferGeometry(),
+      new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, color: SKETCH_COLOURS.hint, depthTest: false, transparent: true, opacity: 0.85 }),
+    );
+    this.hintMarkers.renderOrder = 23;
+    this.hintMarkers.frustumCulled = false;
     this.group.add(
+      this.refLines.object,
+      this.hintMarkers,
       this.others.object,
       this.othersConstruction.object,
       this.dims.object,
@@ -179,7 +197,7 @@ export class SketchLayer {
   }
 
   setResolution(width: number, height: number) {
-    for (const l of [this.others, this.othersConstruction, this.solid, this.construction, this.dims, this.preview]) {
+    for (const l of [this.others, this.othersConstruction, this.solid, this.construction, this.dims, this.preview, this.refLines]) {
       l.material.resolution.set(width, height);
     }
   }
@@ -243,11 +261,27 @@ export class SketchLayer {
     const a = this.active;
     const frame = this.activeFrame;
     if (!a || !frame) {
-      for (const l of [this.solid, this.construction, this.dims, this.preview]) l.set(null, [], []);
+      for (const l of [this.solid, this.construction, this.dims, this.preview, this.refLines]) l.set(null, [], []);
       this.points.visible = false;
       this.snapMarker.visible = false;
+      this.hintMarkers.visible = false;
       return;
     }
+    // Part edges of the face it's on: faint, brighter when hovered.
+    const refSegs: [Pt, Pt][] = [];
+    const refCols: THREE.Color[] = [];
+    if (a.refs?.length) {
+      const virt = refSketch(a.refs);
+      const hovered = this.transient?.hover?.id;
+      for (const c of virt.curves) {
+        const edgeId = c.id.replace(/:s\d+$/, "");
+        for (const seg of curveSegments(virt, c)) {
+          refSegs.push(seg);
+          refCols.push(hovered === edgeId ? SKETCH_COLOURS.hover : SKETCH_COLOURS.reference);
+        }
+      }
+    }
+    this.refLines.set(frame, refSegs, refCols);
     const data = a.data;
     // Curves involved in unsatisfied constraints are drawn red.
     const conflicted = new Set<string>();
@@ -332,6 +366,15 @@ export class SketchLayer {
       this.snapMarker.geometry = g;
       this.snapMarker.visible = true;
     } else this.snapMarker.visible = false;
+    // Markers for the middle of the line / centre of the circle under the pointer.
+    const hints = t?.hints ?? [];
+    if (hints.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(hints.flatMap((h) => toWorld(frame, h[0], h[1])), 3));
+      this.hintMarkers.geometry.dispose();
+      this.hintMarkers.geometry = g;
+      this.hintMarkers.visible = true;
+    } else this.hintMarkers.visible = false;
   }
 
   /** Called every frame: keep dash lengths a constant size on screen. */
@@ -343,7 +386,9 @@ export class SketchLayer {
   }
 
   dispose() {
-    for (const l of [this.others, this.othersConstruction, this.solid, this.construction, this.dims, this.preview]) l.dispose();
+    for (const l of [this.others, this.othersConstruction, this.solid, this.construction, this.dims, this.preview, this.refLines]) l.dispose();
+    this.hintMarkers.geometry.dispose();
+    (this.hintMarkers.material as THREE.Material).dispose();
     this.points.geometry.dispose();
     (this.points.material as THREE.Material).dispose();
     this.snapMarker.geometry.dispose();
