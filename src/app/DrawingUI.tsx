@@ -3,7 +3,7 @@
  * block, its settings panel and toolbar, and saving it as PDF or SVG.
  */
 import { putShortening, removeShortening, withShortenings } from "../drawing/shorten";
-import { itemsInBox, toggled } from "../drawing/select";
+import { itemsInBox, rightClickFlip, toggled } from "../drawing/select";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { create } from "zustand";
 import { addPage, changePage, FIRST_PAGE, knownPage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage } from "../drawing/pages";
@@ -17,7 +17,7 @@ import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } fro
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
-import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, resizedScale, scaleView, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
+import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, resizedScale, scaleView, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
 import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dragDimension, FITTABLE, fitOf, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { getKernel } from "../kernel/connect";
@@ -688,8 +688,8 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
             <div className="segmented three" role="radiogroup" aria-label="Arrows">
               {(
                 [
-                  [undefined, drawing.dimArrows ? "As drawing" : "Automatic", drawing.dimArrows ? `As set for the whole drawing (${drawing.dimArrows})` : "Inside when there's room, else outside"],
-                  ["inside", "Inside", round ? "Inside the circle, pointing out to its edge" : "Between the extension lines, pointing out"],
+                  [undefined, drawing.dimArrows ? "Same as drawing" : "Automatic", drawing.dimArrows ? `As set for the whole drawing (${drawing.dimArrows})` : "Inside when there's room, else outside"],
+                  ["inside", "Inside", round ? "Inside the circle, pointing out to its edge (on a small circle they may not fit)" : "Between the extension lines, pointing out (on a short dimension they may not fit)"],
                   ["outside", "Outside", round ? "Outside the circle, pointing in to its edge" : "Outside the extension lines, pointing in, on a short line"],
                 ] as const
               ).map(([a, label, tip]) => (
@@ -1445,8 +1445,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   const [selView, setSelView] = useState<string | null>(null);
   /** A view's corner handle being dragged: its middle and that corner then, its scale then and the one it's going to. */
   const [resize, setResize] = useState<{ viewId: string; centre: P2; corner: P2; from: number; scale: number } | null>(null);
-  /** Where the right button went down (a right-click on a dimension flips its arrows; a right-drag pans). */
-  const rightDown = useRef<{ x: number; y: number } | null>(null);
+  /** The dimension whose number the right button went down on, and where (released there it flips its arrows; dragged, it pans). */
+  const rightDown = useRef<{ dimId: string; x: number; y: number } | null>(null);
   const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number; textAlong?: number; textAcross?: number } } | null>(null);
   /** The hole table being dragged: where the pointer started, and its top-left corner then and now. */
   const [tableDrag, setTableDrag] = useState<{ start: P2; from: P2; at: P2 } | null>(null);
@@ -1911,7 +1911,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
 
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (e.button === 1 || e.button === 2) {
-      if (e.button === 2) rightDown.current = { x: e.clientX, y: e.clientY };
+      // (A dimension's number records itself before this; anywhere else, there's nothing to flip.)
+      if (!(e.target as Element).closest?.("[data-dim]")) rightDown.current = null;
       pan.current = { x: e.clientX, y: e.clientY, box };
       (e.target as Element).setPointerCapture?.(e.pointerId);
       e.preventDefault();
@@ -1976,8 +1977,17 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       }
     }
   };
-  const onPointerUp = () => {
+  const onPointerUp = (e: ReactPointerEvent<SVGSVGElement>) => {
     pan.current = null;
+    // A right-click (not a right-drag to pan) on a dimension's number: turn its arrows the other way.
+    const flip = rightClickFlip(rightDown.current, { button: e.button, x: e.clientX, y: e.clientY });
+    if (e.button === 2) rightDown.current = null;
+    const flipping = flip ? layout?.dims.find((x) => x.id === flip) : undefined;
+    if (flipping?.arrows) {
+      const to = flipArrows(flipping.arrows);
+      change((dr) => ({ ...dr, dimensions: dr.dimensions?.map((x) => (x.id === flipping.id ? { ...x, arrows: to } : x)) }));
+      useStore.getState().selectDim(flipping.id);
+    }
     if (selBox) {
       setSelBox(null);
       const st = useStore.getState();
@@ -2288,6 +2298,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
               r={4}
               data-dim={d.id}
               onPointerDown={(e) => {
+                // Right button: remember it (a click flips its arrows when the button comes up) and let the sheet pan.
+                if (e.button === 2) rightDown.current = d.arrows ? { dimId: d.id, x: e.clientX, y: e.clientY } : null;
                 if (e.button !== 0) return;
                 e.stopPropagation();
                 const st = useStore.getState();
@@ -2298,15 +2310,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
                 const dim = drawing.dimensions?.find((x) => x.id === d.id);
                 if (dim) setDimDrag({ id: d.id, patch: { offset: dim.offset, ...(dim.angle !== undefined ? { angle: dim.angle } : {}) } });
               }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                // Right-click (not a right-drag to pan): turn its arrows the other way.
-                const down = rightDown.current;
-                if (!d.arrows || (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4)) return;
-                const flipped = flipArrows(d.arrows);
-                change((dr) => ({ ...dr, dimensions: dr.dimensions?.map((x) => (x.id === d.id ? { ...x, arrows: flipped } : x)) }));
-                useStore.getState().selectDim(d.id);
-              }}
+              onContextMenu={(e) => e.preventDefault()}
             >
               <title>{d.found ? `Drag to move this dimension; Delete removes it${d.arrows ? "; right-click to flip its arrows" : ""}` : "What this dimension measured has changed too much — delete it and add it again"}</title>
             </circle>
@@ -2371,6 +2375,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
           <span className="drawing-view-bar-hint">or drag its corner handle</span>
         </div>
       )}
+      {layout && !layout.tooBig && layout.offSheet && <div className="drawing-message warn">{offSheetMessage(layout, (v) => viewName(drawing, v))}</div>}
       {layout?.tooBig &&
         (layout.ownTooBig ? (
           <div className="drawing-message warn">A view at its own scale is too big for this sheet. Click the view and choose a smaller scale (or use View scales in the panel), or choose a bigger sheet.</div>

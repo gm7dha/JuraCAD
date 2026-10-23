@@ -107,6 +107,8 @@ export interface SheetLayout {
   scale: number;
   /** True when even the smallest scale doesn't fit (the views may run off the sheet). */
   tooBig: boolean;
+  /** At a chosen sheet scale: the views (keys) that run off the paper or onto the title block; missing when none do. */
+  offSheet?: string[];
   /** True when that's because of a view drawn at its own scale (they'd fit at the sheet's). */
   ownTooBig?: boolean;
   views: PlacedView[];
@@ -422,15 +424,47 @@ export function resizedScale(now: number, centre: [number, number], corner: [num
  * inside the border, off the title block and the tables above it, and clear
  * of every other view?
  */
-export function viewClear(l: SheetLayout, key: string, reserve = TITLE_H): boolean {
+export function viewClear(l: Pick<SheetLayout, "size" | "views" | "prims">, key: string, reserve = TITLE_H): boolean {
+  const v = l.views.find((x) => x.key === key);
+  if (!v) return true;
+  if (!viewOnPaper(l, key, reserve)) return false;
+  const [x0, y0, x1, y1] = withName(l, v);
+  return l.views.every((o) => o.key === key || o.box[2] <= x0 || o.box[0] >= x1 || o.box[3] <= y0 || o.box[1] >= y1);
+}
+
+/** A placed view's outline with the room for its name or "SCALE" note under it, when it has one. */
+function withName(l: Pick<SheetLayout, "prims">, v: PlacedView): [number, number, number, number] {
+  const named = l.prims.some((p) => p.kind === "text" && Math.abs(p.x - v.centre[0]) < 1e-9 && Math.abs(p.y - (v.box[1] - 6)) < 1e-9);
+  return [v.box[0], v.box[1] - (named ? LABEL_ROOM : 0), v.box[2], v.box[3]];
+}
+
+/** Is a placed view (with its name or note) inside the border and off the title block and the tables above it? */
+export function viewOnPaper(l: Pick<SheetLayout, "size" | "views" | "prims">, key: string, reserve = TITLE_H): boolean {
   const v = l.views.find((x) => x.key === key);
   if (!v) return true;
   const [W, H] = l.size;
-  const named = l.prims.some((p) => p.kind === "text" && Math.abs(p.x - v.centre[0]) < 1e-9 && Math.abs(p.y - (v.box[1] - 6)) < 1e-9);
-  const [x0, y0, x1, y1] = [v.box[0], v.box[1] - (named ? LABEL_ROOM : 0), v.box[2], v.box[3]];
-  if (x0 < MARGIN || y0 < MARGIN || x1 > W - MARGIN || y1 > H - MARGIN) return false;
-  if (x1 > W - MARGIN - TITLE_W && y0 < MARGIN + reserve) return false;
-  return l.views.every((o) => o.key === key || o.box[2] <= x0 || o.box[0] >= x1 || o.box[3] <= y0 || o.box[1] >= y1);
+  const [x0, y0, x1, y1] = withName(l, v);
+  const e = 1e-6;
+  if (x0 < MARGIN - e || y0 < MARGIN - e || x1 > W - MARGIN + e || y1 > H - MARGIN + e) return false;
+  return !(x1 > W - MARGIN - TITLE_W && y0 < MARGIN + reserve - e);
+}
+
+/**
+ * What to say when, at a chosen sheet scale, views run off the paper or onto
+ * the title block (`l.offSheet`): naming the view and its scale when it's one
+ * at a scale of its own, else about the sheet's scale. Null when all's well.
+ * `name` gives a view's name ("3D", "Front", "Section A"…).
+ */
+export function offSheetMessage(l: Pick<SheetLayout, "offSheet" | "views" | "scale">, name: (v: PlacedView) => string): string | null {
+  const off = (l.offSheet ?? []).map((k) => l.views.find((v) => v.key === k)).filter((v): v is PlacedView => !!v);
+  if (!off.length) return null;
+  const own = off.filter((v) => Math.abs(v.scale - l.scale) > 1e-9 && v.kind !== "detail");
+  if (own.length === off.length && own.length === 1) {
+    const v = own[0];
+    return `The ${name(v)} view runs off the sheet at ${scaleLabel(v.scale)}. Click it and choose a smaller scale, or choose a bigger sheet.`;
+  }
+  if (own.length === off.length) return `Some views run off the sheet at their own scales (${own.map((v) => `${name(v)} ${scaleLabel(v.scale)}`).join(", ")}). Click each and choose a smaller scale, or choose a bigger sheet.`;
+  return `The views run off the sheet at ${scaleLabel(l.scale)}. Choose a smaller scale (or Fit to sheet), drag them into the free space, or choose a bigger sheet.`;
 }
 
 /**
@@ -767,7 +801,12 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   const tooBig = !drawing.scale && !auto.fits;
   // (Would they fit if every view were at the sheet's scale? Then it's a view's own scale that's too big.)
   const ownTooBig = tooBig && Object.keys(own).length > 0 && fitScale(projections, keys, drawing.sheet, reserve, third, sideGap).fits;
-  return { layout: { size, scale, tooBig, ...(ownTooBig ? { ownTooBig } : {}), views, dims, notes, ...(frame.holeTable ? { holeTable: frame.holeTable } : {}), prims }, reserve };
+  // (At a chosen scale nothing is shrunk to fit: say which views don't.)
+  const offSheet = drawing.scale !== undefined ? views.filter((v) => !viewOnPaper({ size, views, prims }, v.key, reserve)).map((v) => v.key) : [];
+  return {
+    layout: { size, scale, tooBig, ...(ownTooBig ? { ownTooBig } : {}), ...(offSheet.length ? { offSheet } : {}), views, dims, notes, ...(frame.holeTable ? { holeTable: frame.holeTable } : {}), prims },
+    reserve,
+  };
 }
 
 /** The cutting line across a view, with arrows showing which way the section looks, and its letters. */
