@@ -16,7 +16,7 @@ import { arcOf, chamferSize, dimPoint, measureDim, resolveDim } from "../src/dra
 import { holeRows } from "../src/drawing/holeTable";
 import { addPage, changePage, pageOf } from "../src/drawing/pages";
 import { addSection, sectionRequests } from "../src/drawing/sections";
-import { layoutSheet, type Projections } from "../src/drawing/sheet";
+import { layoutSheet, scaleView, viewClear, type Projections } from "../src/drawing/sheet";
 import { emptyDocument } from "../src/model/document";
 
 beforeAll(async () => {
@@ -128,4 +128,62 @@ describe("drawing dimensions on real views", () => {
     // (No hole table there: it's sheet 1's.)
     expect(l2.holeTable).toBeUndefined();
   }, 120_000);
+});
+
+describe("arrows and the 3D view's scale on real views", () => {
+  it("puts a real hole's diameter arrows on its edge, inside or outside, and a length's leaders past its corners", () => {
+    // A 60 × 40 × 20 block with a 10 mm hole through it at (20, 20).
+    build([feature("box", { width: 60, depth: 40, height: 20 }), feature("cylinder", { diameter: 10, height: 20, x: 20, y: 20, z: 0 }, "remove")]);
+    const [front, top] = engine.project([], undefined, ["front", "top"], false);
+    const hole = top.circles.find((c) => Math.abs(c.r - 5) < 1e-6)!;
+    expect(hole).toBeDefined();
+    const [x0, , x1, y1] = front.bounds!;
+    const dia: Dimension = { id: "d", view: "top", type: "diameter", a: dimPoint([hole.cx, hole.cy], top), r: 5, offset: 6, angle: 0 };
+    const len: Dimension = { id: "w", view: "front", type: "horizontal", a: dimPoint([x0, y1], front), b: dimPoint([x1, y1], front), offset: 8 };
+    const at = (arrows?: "inside" | "outside") => {
+      const d: Drawing = { ...newDrawing(), scale: 1, views: [{ id: "f", kind: "front" }, { id: "t", kind: "top" }], dimensions: [arrows ? { ...dia, arrows } : dia, arrows ? { ...len, arrows } : len] };
+      return layoutSheet(d, { front, top }, info);
+    };
+    for (const mode of [undefined, "inside", "outside"] as const) {
+      const l = at(mode);
+      const t = l.views.find((v) => v.key === "top")!;
+      const centre = l.dims[0].a;
+      expect(l.dims[0].rad).toBeCloseTo(5, 6);
+      // Both tips sit on the hole's edge, 5 mm either side of its centre (1:1); the backs 3 mm in or out.
+      const heads = l.prims.slice(l.dims[0].from, l.dims[0].to).filter((p) => p.kind === "path" && p.fill);
+      expect(heads).toHaveLength(2);
+      const tips = heads.map((p) => (p.kind === "path" ? [p.points[0] - centre[0], p.points[1] - centre[1], (p.points[2] + p.points[4]) / 2 - centre[0]] : []));
+      expect(tips[0][0]).toBeCloseTo(5, 6);
+      expect(tips[1][0]).toBeCloseTo(-5, 6);
+      expect(tips[0][2]).toBeCloseTo(mode === "inside" ? 2 : 8, 6);
+      expect(tips[1][2]).toBeCloseTo(mode === "inside" ? -2 : -8, 6);
+      expect(centre[0]).toBeGreaterThan(t.box[0]);
+      // The 60 mm length: inside by itself (room enough); leaders 6 mm past each end only when set outside.
+      const lp = l.prims.slice(l.dims[1].from, l.dims[1].to);
+      const la = l.dims[1].a;
+      const lb = l.dims[1].b!;
+      expect(lb[0] - la[0]).toBeCloseTo(60, 6);
+      const leaders = lp.filter((p) => p.kind === "path" && !p.fill && p.points.length === 4 && Math.abs(p.points[1] - p.points[3]) < 1e-9 && Math.abs(Math.abs(p.points[2] - p.points[0]) - 6) < 1e-9);
+      expect(leaders).toHaveLength(mode === "outside" ? 2 : 0);
+      expect(l.dims[1].arrows).toBe(mode ?? "inside");
+    }
+  }, 60_000);
+
+  it("draws a real 3D view at its own scale clear of the other views", () => {
+    build([feature("box", { width: 60, depth: 40, height: 20 })]);
+    const list = engine.project([], undefined, ["front", "top", "right", "iso"], false);
+    const projections: Projections = Object.fromEntries(list.map((p) => [p.kind, p]));
+    const base: Drawing = { ...newDrawing(), sheet: "A3", views: [{ id: "f", kind: "front" }, { id: "t", kind: "top" }, { id: "r", kind: "right" }, { id: "i", kind: "iso" }] };
+    const plain = layoutSheet(base, projections, info);
+    const isoSize = (l: ReturnType<typeof layoutSheet>) => ((b) => b[2] - b[0])(l.views.find((v) => v.key === "iso")!.box);
+    for (const own of [0.5, 1, 2]) {
+      const d = scaleView(base, "i", own, projections, info);
+      const l = layoutSheet(d, projections, info);
+      expect(l.tooBig).toBe(false);
+      // Its own size: the plain one's, times its scale over the sheet's then.
+      expect(isoSize(l)).toBeCloseTo((isoSize(plain) * own) / plain.scale, 6);
+      for (const v of l.views) expect(viewClear(l, v.key)).toBe(true);
+      if (own !== l.scale) expect(texts(l)).toContain(`SCALE ${own >= 1 ? `${own}:1` : `1:${1 / own}`}`);
+    }
+  }, 60_000);
 });

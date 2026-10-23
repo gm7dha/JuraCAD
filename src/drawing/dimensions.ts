@@ -16,6 +16,22 @@ export const TEXT_SIZE = 3.5;
 const ARROW = 3;
 const GAP = 1;
 const OVERSHOOT = 2;
+/** How far (paper mm) the dimension line carries on past an extension line when its arrows are set outside. */
+export const ARROW_LEADER = 2 * ARROW;
+
+/** Dimensions whose arrows can be set inside or outside: lengths, diameters and radii. */
+export const ARROWABLE = new Set<Dimension["type"]>(["horizontal", "vertical", "aligned", "diameter", "radius"]);
+
+/** Which way a dimension's arrows go (see Dimension.arrows): its own setting, else the drawing's; undefined = automatic. */
+export function arrowsFor(dim: Pick<Dimension, "type" | "arrows">, style: DimStyle = {}): "inside" | "outside" | undefined {
+  if (!ARROWABLE.has(dim.type)) return undefined;
+  return dim.arrows ?? style.arrows;
+}
+
+/** "Flip arrows": the other way from how they're drawn now (`shown`). */
+export function flipArrows(shown: "inside" | "outside"): "inside" | "outside" {
+  return shown === "inside" ? "outside" : "inside";
+}
 
 const dist = (a: P2, b: P2) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
@@ -227,6 +243,8 @@ export function placeAngle(a: P2, b: P2, c: P2, d: P2, cursor: P2): { rays: [num
 export interface DimStyle {
   places?: number;
   dual?: boolean;
+  /** The drawing's arrows (Drawing.dimArrows); missing = automatic. */
+  arrows?: "inside" | "outside";
 }
 
 /** A number with exactly `places` decimals (no "-0"). */
@@ -429,6 +447,8 @@ export interface DimDrawing {
   prims: Prim[];
   /** Where the number sits on the sheet (for picking and dragging). */
   label: P2;
+  /** Lengths, diameters and radii: which way the arrows were drawn (for Flip arrows). */
+  arrows?: "inside" | "outside";
 }
 
 /**
@@ -548,11 +568,21 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
     const end: P2 = [elbow[0] + side * shoulder, elbow[1]];
     const start: P2 = dim.type === "diameter" ? [c[0] - u[0] * rad, c[1] - u[1] * rad] : c;
     prims.push({ kind: "path", points: [start[0], start[1], elbow[0], elbow[1], end[0], end[1]], style: "thin" });
-    prims.push(arrow(onCircle, [-u[0], -u[1]]));
-    if (dim.type === "diameter") prims.push(arrow(start, u));
+    // Automatic (and Outside): arrows outside the circle pointing in. Inside: inside it, pointing out
+    // (a radius from the centre to the arc, a diameter across). Outside, a diameter's line also
+    // carries on a little past the far side, under its arrow.
+    const mode = arrowsFor(dim, style);
+    if (mode === "inside") {
+      prims.push(arrow(onCircle, u));
+      if (dim.type === "diameter") prims.push(arrow(start, [-u[0], -u[1]]));
+    } else {
+      prims.push(arrow(onCircle, [-u[0], -u[1]]));
+      if (dim.type === "diameter") prims.push(arrow(start, u));
+      if (mode === "outside" && dim.type === "diameter") prims.push({ kind: "path", points: [start[0], start[1], start[0] - u[0] * ARROW_LEADER, start[1] - u[1] * ARROW_LEADER], style: "thin" });
+    }
     const label: P2 = [(elbow[0] + end[0]) / 2, elbow[1] + 1];
     lines.forEach((l, i) => prims.push(...number({ kind: "text", x: label[0], y: label[1] + (lines.length - 1 - i) * TEXT_SIZE * 1.5, text: l, size: TEXT_SIZE, anchor: "middle" })));
-    return { prims, label };
+    return { prims, label, arrows: mode ?? "outside" };
   }
 
   if (dim.type === "angle" && r.b && r.c && r.d) {
@@ -634,11 +664,20 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
   }
   prims.push({ kind: "path", points: [la[0], la[1], lb[0], lb[1]], style: "thin" });
   const dir: P2 = [lb[0] - la[0], lb[1] - la[1]];
-  if (Math.hypot(dir[0], dir[1]) > 2 * ARROW) {
+  const dirLen = Math.hypot(dir[0], dir[1]);
+  // Automatic: inside, unless it's too short for arrows inside — then they point in from outside.
+  const mode = arrowsFor(dim, style);
+  const inside = mode ? mode === "inside" : dirLen > 2 * ARROW;
+  if (inside) {
     prims.push(arrow(la, [-dir[0], -dir[1]]), arrow(lb, dir));
   } else {
-    // Too short for arrows inside: point them in from outside.
     prims.push(arrow(la, dir), arrow(lb, [-dir[0], -dir[1]]));
+    if (mode === "outside") {
+      // Set outside: the line carries on a little past each extension line, under its arrow.
+      const u: P2 = dirLen > EPS ? [dir[0] / dirLen, dir[1] / dirLen] : along;
+      prims.push({ kind: "path", points: [la[0], la[1], la[0] - u[0] * ARROW_LEADER, la[1] - u[1] * ARROW_LEADER], style: "thin" });
+      prims.push({ kind: "path", points: [lb[0], lb[1], lb[0] + u[0] * ARROW_LEADER, lb[1] + u[1] * ARROW_LEADER], style: "thin" });
+    }
   }
   // The number sits in the middle, unless it's been slid along the line (it can go past the ends:
   // the dimension line then carries on out to it) or moved off it (a thin leader joins it back).
@@ -672,7 +711,7 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
   const raise = 1.2 + (offLine ? lift : 0);
   const label: P2 = [mid[0] + up[0] * raise, mid[1] + up[1] * raise];
   prims.push(...number({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle", ...(angle !== 0 ? { rotate: angle } : {}) }));
-  return { prims, label };
+  return { prims, label, arrows: inside ? "inside" : "outside" };
 }
 
 /** The arc sign drawn over an arc length's number (centred above `at`, `w` wide). */

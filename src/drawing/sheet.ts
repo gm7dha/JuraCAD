@@ -98,6 +98,8 @@ export interface PlacedDim {
   rad: number;
   /** Angles: the second edge's ends on the sheet. */
   cd?: [[number, number], [number, number]];
+  /** Lengths, diameters and radii: which way their arrows are drawn. */
+  arrows?: "inside" | "outside";
 }
 
 export interface SheetLayout {
@@ -401,6 +403,57 @@ export function layoutSheet(drawing: Drawing, projections: Projections, info: Sh
   return layoutAt(drawing, projections, info, gap).layout;
 }
 
+/**
+ * Dragging a view's corner to resize it: the standard scale nearest to making
+ * that corner (at `corner` on the sheet now, with the view at scale `now`)
+ * reach the pointer, measured out from the view's middle.
+ */
+export function resizedScale(now: number, centre: [number, number], corner: [number, number], cursor: [number, number]): number {
+  const r0 = Math.hypot(corner[0] - centre[0], corner[1] - centre[1]);
+  const r1 = Math.hypot(cursor[0] - centre[0], cursor[1] - centre[1]);
+  if (!(r0 > 1e-9) || !(now > 0)) return now;
+  const want = Math.max((now * r1) / r0, 1e-9);
+  const off = (s: number) => Math.abs(Math.log(s / want));
+  return STANDARD_SCALES.reduce((best, s) => (off(s) < off(best) ? s : best));
+}
+
+/**
+ * Is a placed view (with the room for its name or "SCALE" note under it)
+ * inside the border, off the title block and the tables above it, and clear
+ * of every other view?
+ */
+export function viewClear(l: SheetLayout, key: string, reserve = TITLE_H): boolean {
+  const v = l.views.find((x) => x.key === key);
+  if (!v) return true;
+  const [W, H] = l.size;
+  const named = l.prims.some((p) => p.kind === "text" && Math.abs(p.x - v.centre[0]) < 1e-9 && Math.abs(p.y - (v.box[1] - 6)) < 1e-9);
+  const [x0, y0, x1, y1] = [v.box[0], v.box[1] - (named ? LABEL_ROOM : 0), v.box[2], v.box[3]];
+  if (x0 < MARGIN || y0 < MARGIN || x1 > W - MARGIN || y1 > H - MARGIN) return false;
+  if (x1 > W - MARGIN - TITLE_W && y0 < MARGIN + reserve) return false;
+  return l.views.every((o) => o.key === key || o.box[2] <= x0 || o.box[0] >= x1 || o.box[3] <= y0 || o.box[1] >= y1);
+}
+
+/**
+ * Give a view its own scale (`scale`; undefined = the sheet's). A view moved
+ * by hand keeps its place unless, at its new size, it would run into another
+ * view or off the paper — then it goes back to its automatic place (beside the
+ * others, where the layout keeps it clear of them).
+ */
+export function scaleView(drawing: Drawing, viewId: string, scale: number | undefined, projections: Projections, info: SheetInfo): Drawing {
+  const views = drawing.views.map((v) => {
+    if (v.id !== viewId) return v;
+    const { scale: _old, ...rest } = v;
+    return scale ? { ...rest, scale } : rest;
+  });
+  const next: Drawing = { ...drawing, views };
+  const view = views.find((v) => v.id === viewId);
+  if (!view?.at) return next;
+  const gap = next.scale === undefined ? Math.min(MAX_SIDE_GAP, Math.max(0, next.fit?.gap ?? 0)) : 0;
+  const { layout, reserve } = layoutAt(next, projections, info, gap);
+  if (viewClear(layout, viewKey(view), reserve)) return next;
+  return { ...next, views: views.map((v) => (v.id === viewId ? (({ at: _at, ...rest }) => rest)(v) : v)) };
+}
+
 /** Most extra room kept beside the 3D column for dimensions (paper mm). */
 export const MAX_SIDE_GAP = 40;
 
@@ -686,6 +739,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
       b: resolved.b ? at(resolved.b) : null,
       rad: (resolved.r ?? 0) * view.scale * (p.zoom ?? 1),
       ...(resolved.c && resolved.d ? { cd: [at(resolved.c), at(resolved.d)] as [[number, number], [number, number]] } : {}),
+      ...(drawn.arrows ? { arrows: drawn.arrows } : {}),
     });
   }
 
@@ -793,8 +847,8 @@ function balloonPrims(host: PlacedView, p: ViewProjection, scale: number, balloo
 }
 
 /** How a drawing's dimensions read (decimal places, both units). */
-export function dimStyle(d: Pick<Drawing, "places" | "dualUnits">): DimStyle {
-  return { ...(d.places !== undefined ? { places: d.places } : {}), ...(d.dualUnits ? { dual: true } : {}) };
+export function dimStyle(d: Pick<Drawing, "places" | "dualUnits" | "dimArrows">): DimStyle {
+  return { ...(d.places !== undefined ? { places: d.places } : {}), ...(d.dualUnits ? { dual: true } : {}), ...(d.dimArrows ? { arrows: d.dimArrows } : {}) };
 }
 
 /** Where a point of a view (in its own mm) lands on the sheet. */
