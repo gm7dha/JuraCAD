@@ -328,88 +328,138 @@ try {
   // "Claude" (this test, talking MCP to it) add a feature, which must appear in the open design.
   const extensionServer = "build/claude-extension/server/index.mjs";
   if (existsSync(extensionServer)) {
-    step = "Live with Claude: starting the extension";
+    step = "Live with Claude: starting two extensions (two Claude chats)";
     const designs = mkdtempSync(join(tmpdir(), "juracad-smoke-live-"));
-    // JURACAD_LIVE_DEV=1: this test serves JuraCAD from localhost, which the shipped extension otherwise turns away.
-    const ext = spawn(process.execPath, [extensionServer, designs], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, JURACAD_LIVE_DEV: "1" } });
-    let extLog = "";
-    ext.stderr.on("data", (d) => (extLog += d));
-    const replies = new Map();
-    let pending = "";
-    ext.stdout.on("data", (d) => {
-      pending += d;
-      let nl;
-      while ((nl = pending.indexOf("\n")) >= 0) {
-        const line = pending.slice(0, nl).trim();
-        pending = pending.slice(nl + 1);
-        if (!line) continue;
-        const msg = JSON.parse(line);
-        replies.get(msg.id)?.(msg);
-      }
-    });
-    let nextId = 1;
-    const mcp = (method, params) =>
-      new Promise((resolve, reject) => {
-        const id = nextId++;
-        const timer = setTimeout(() => reject(new Error(`the extension didn't answer ${method}\n${extLog.slice(-1500)}`)), 120_000);
-        replies.set(id, (m) => {
-          clearTimeout(timer);
-          resolve(m);
-        });
-        ext.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+    /** One extension process, as Claude starts one for each chat, and a little MCP client to drive it. */
+    const startExtension = (name) => {
+      // JURACAD_LIVE_DEV=1: this test serves JuraCAD from localhost, which the shipped extension otherwise turns away.
+      const ext = spawn(process.execPath, [extensionServer, designs], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, JURACAD_LIVE_DEV: "1" } });
+      let extLog = "";
+      ext.stderr.on("data", (d) => (extLog += d));
+      const replies = new Map();
+      let pending = "";
+      ext.stdout.on("data", (d) => {
+        pending += d;
+        let nl;
+        while ((nl = pending.indexOf("\n")) >= 0) {
+          const line = pending.slice(0, nl).trim();
+          pending = pending.slice(nl + 1);
+          if (!line) continue;
+          const msg = JSON.parse(line);
+          replies.get(msg.id)?.(msg);
+        }
       });
-    const tool = async (name, args = {}) => {
-      const r = await mcp("tools/call", { name, arguments: args });
-      const text = (r.result?.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
-      if (r.error || r.result?.isError) throw new Error(`${name} failed: ${JSON.stringify(r.error) ?? text}`);
-      return text;
+      let nextId = 1;
+      const mcp = (method, params) =>
+        new Promise((resolve, reject) => {
+          const id = nextId++;
+          const timer = setTimeout(() => reject(new Error(`${name}'s extension didn't answer ${method}\n${extLog.slice(-1500)}`)), 120_000);
+          replies.set(id, (m) => {
+            clearTimeout(timer);
+            resolve(m);
+          });
+          ext.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+        });
+      const tool = async (toolName, args = {}) => {
+        const r = await mcp("tools/call", { name: toolName, arguments: args });
+        const text = (r.result?.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+        if (r.error || r.result?.isError) throw new Error(`${name}: ${toolName} failed: ${JSON.stringify(r.error) ?? text}`);
+        return text;
+      };
+      const ready = async () => {
+        await mcp("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } });
+        ext.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+        for (let i = 0; i < 100 && !/Live link ready/.test(extLog); i++) await page.waitForTimeout(100);
+        if (!/Live link ready/.test(extLog)) throw new Error(`${name}'s live link didn't start:\n${extLog.slice(-1500)}`);
+      };
+      /** Wait until live_status says `want` (the tab links new chats every few seconds). */
+      const waitStatus = async (want, seconds = 15) => {
+        let status = "";
+        for (let i = 0; i < seconds * 5; i++) {
+          status = await tool("live_status");
+          if (want.test(status)) return status;
+          await page.waitForTimeout(200);
+        }
+        throw new Error(`${name}: live_status never matched ${want}: ${status}`);
+      };
+      return { tool, ready, waitStatus, log: () => extLog, kill: () => ext.kill() };
     };
+    const chats = [];
     try {
-      await mcp("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } });
-      ext.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
-      for (let i = 0; i < 100 && !/Live link ready/.test(extLog); i++) await page.waitForTimeout(100);
-      if (!/Live link ready/.test(extLog)) throw new Error(`the extension's live link didn't start:\n${extLog.slice(-1500)}`);
+      const chat1 = startExtension("chat 1");
+      chats.push(chat1);
+      await chat1.ready();
+      const chat2 = startExtension("chat 2");
+      chats.push(chat2);
+      await chat2.ready();
+      const tool = chat1.tool;
 
       step = "Live with Claude: connecting";
       await page.getByRole("button", { name: "Connect to Claude" }).click();
       await page.locator(".live-badge").waitFor({ timeout: 30_000 });
-      const status = await tool("live_status");
-      if (!/Live: connected/.test(status)) throw new Error(`live_status: ${status}`);
+      await chat1.waitStatus(/Live: connected/);
+      await chat2.waitStatus(/Live: connected/);
+      await page.locator(".live-badge").click();
+      const details = page.getByRole("dialog", { name: "Live with Claude" });
+      await details.waitFor();
+      if (!/2 Claude chats linked/.test(await details.innerText())) throw new Error(`the details don't say 2 chats are linked: ${await details.innerText()}`);
+      await page.keyboard.press("Escape");
+      await details.waitFor({ state: "detached" });
       const before = await page.locator(".feature-row:not(.datum)").count();
 
-      step = "Live with Claude: Claude adds a feature";
-      const added = await tool("add_feature", { type: "box", name: "Box from Claude", width: 6, depth: 6, height: 6, x: -20, y: -20, z: 0, operation: "new" });
+      step = "Live with Claude: Claude (in the second chat) adds a feature";
+      const added = await chat2.tool("add_feature", { type: "box", name: "Box from Claude", width: 6, depth: 6, height: 6, x: -20, y: -20, z: 0, operation: "new" });
       if (!/Live: this now shows/.test(added)) throw new Error(`add_feature didn't reach the app: ${added}`);
       await page.locator(".feature-row", { hasText: "Box from Claude" }).waitFor({ timeout: 30_000 });
       await page.locator(".toast", { hasText: "Claude: added Box from Claude" }).waitFor({ timeout: 10_000 });
       await page.waitForTimeout(800);
       await shot("live-connected");
+      // The first chat sees it too.
+      let seen = "";
+      for (let i = 0; i < 50 && !/Box from Claude/.test(seen); i++) {
+        seen = await tool("describe_design");
+        if (!/Box from Claude/.test(seen)) await page.waitForTimeout(100);
+      }
+      if (!/Box from Claude/.test(seen)) throw new Error("the first chat doesn't see the second chat's box");
 
       step = "Live with Claude: the user undoes it in the app";
       await page.getByRole("button", { name: "Undo", exact: true }).click();
       await page.locator(".feature-row", { hasText: "Box from Claude" }).waitFor({ state: "detached", timeout: 10_000 });
       const after = await page.locator(".feature-row:not(.datum)").count();
       if (after !== before) throw new Error(`after undo the feature list has ${after} features, not ${before}`);
-      let described = "";
-      for (let i = 0; i < 50; i++) {
-        described = await tool("describe_design");
-        if (!/Box from Claude/.test(described)) break;
-        await page.waitForTimeout(100);
+      for (const chat of [chat1, chat2]) {
+        let described = "";
+        for (let i = 0; i < 50; i++) {
+          described = await chat.tool("describe_design");
+          if (!/Box from Claude/.test(described)) break;
+          await page.waitForTimeout(100);
+        }
+        if (/Box from Claude/.test(described)) throw new Error("Claude still sees the box after the user undid it");
       }
-      if (/Box from Claude/.test(described)) throw new Error("Claude still sees the box after the user undid it");
+
+      step = "Live with Claude: a chat started after connecting is linked by itself";
+      const chat3 = startExtension("chat 3");
+      chats.push(chat3);
+      await chat3.ready();
+      await chat3.waitStatus(/Live: connected/);
+      // ...and when it stops, the others carry on.
+      chat3.kill();
+      await page.waitForTimeout(1500);
+      await page.locator(".live-badge").waitFor();
+      await chat1.waitStatus(/Live: connected/);
 
       step = "Live with Claude: disconnecting";
       await page.locator(".live-badge").click();
       await page.getByRole("button", { name: "Disconnect" }).click();
       await page.getByRole("button", { name: "Connect to Claude" }).waitFor();
-      for (let i = 0; i < 50 && !/Live: not connected/.test(await tool("live_status")); i++) await page.waitForTimeout(100);
-      if (!/Live: not connected/.test(await tool("live_status"))) throw new Error("the extension still thinks it's connected");
-      liveReport += `; live: Claude added a box to the open design (${before} → ${before + 1} features), the user undid it, and Claude saw that`;
+      await chat1.waitStatus(/Live: not connected/, 10);
+      await chat2.waitStatus(/Live: not connected/, 10);
+      liveReport += `; live with 2 Claude chats: the second added a box to the open design (${before} → ${before + 1} features) and the first saw it, the user undid it and both saw that; a third chat started later was linked by itself, and dropped when it stopped`;
 
       // The real site is https and the link is ws:// — check Chromium allows that to 127.0.0.1 (it isn't
       // "mixed content", because 127.0.0.1 is this computer). A blank https page with a throwaway certificate.
       step = "Live with Claude: ws:// to 127.0.0.1 from an https page";
-      const livePort = Number(/Live link ready on 127\.0\.0\.1:(\d+)/.exec(extLog)?.[1]);
+      const livePort = Number(/Live link ready on 127\.0\.0\.1:(\d+)/.exec(chat1.log())?.[1]);
       const certDir = mkdtempSync(join(tmpdir(), "juracad-smoke-cert-"));
       try {
         execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(certDir, "key.pem"), "-out", join(certDir, "cert.pem"), "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
@@ -451,12 +501,12 @@ try {
         rmSync(certDir, { recursive: true, force: true });
       }
     } finally {
-      ext.kill();
+      chats.forEach((c) => c.kill());
       rmSync(designs, { recursive: true, force: true });
     }
   }
   // The browser notes each port it tried when nothing was listening: expected here, not a fault.
-  for (let i = consoleErrors.length - 1; i >= 0; i--) if (/WebSocket connection to 'ws:\/\/127\.0\.0\.1:4761\d/.test(consoleErrors[i])) consoleErrors.splice(i, 1);
+  for (let i = consoleErrors.length - 1; i >= 0; i--) if (/WebSocket connection to 'ws:\/\/127\.0\.0\.1:476(1[5-9]|2[0-4])/.test(consoleErrors[i])) consoleErrors.splice(i, 1);
 
   step = "starting a sketch and picking the Top plane";
   await page.getByRole("button", { name: "Sketch", exact: true }).click();

@@ -157,7 +157,7 @@ check(file.format === "partsmith" && file.features.length === 5, "The saved desi
 
 // Live with Claude: the extension listens on 127.0.0.1 for the JuraCAD tab. Talk to it the way the app does
 // (src/live/protocol.ts), from the JuraCAD site's origin, using Node's own WebSocket.
-const LIVE_PORTS = [47615, 47616, 47617];
+const LIVE_PORTS = Array.from({ length: 10 }, (_, i) => 47615 + i);
 const openSocket = (port, origin) =>
   new Promise((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/juracad-live`, { protocols: ["juracad-live.1"], headers: { origin } });

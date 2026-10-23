@@ -74,7 +74,7 @@ async function main() {
           started.server.unref();
           log(`Live link ready on 127.0.0.1:${started.port}.`);
         } else {
-          live.startProblem = `ports ${ports.join(", ")} on this computer are all in use (perhaps JuraCAD is already running for another Claude window). Close the other Claude windows, or restart Claude.`;
+          live.startProblem = `ports ${ports.join(", ")} on this computer are all in use (JuraCAD may already be running for many other Claude chats). Close some other Claude chats or windows, or restart Claude.`;
           log(`Live link: ${live.startProblem}`);
         }
       })

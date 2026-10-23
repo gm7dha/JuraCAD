@@ -229,7 +229,7 @@ export class LiveBridge implements LiveLink {
       connected: false,
       text: this.startProblem
         ? `Live: not available — ${this.startProblem} The tools work on Claude's own copy of the design; save_design saves it as a .juracad file to open in JuraCAD.`
-        : `Live: not connected. The tools work on Claude's own copy of the design (save_design saves it as a .juracad file). To build live in the user's open JuraCAD instead, ask them to open https://gm7dha.github.io/JuraCAD/ in Chrome or Edge and click "Connect to Claude" in the top bar (the extension is ready ${where ?? "for it"}). Safari can't connect to apps on the computer; there, use save_design and Open.`,
+        : `Live: not connected. The tools work on Claude's own copy of the design (save_design saves it as a .juracad file). To build live in the user's open JuraCAD instead, ask them to open https://gm7dha.github.io/JuraCAD/ in Chrome or Edge and click "Connect to Claude" in the top bar (the extension is ready ${where ?? "for it"}). If the user says JuraCAD already shows a green "Live with Claude" badge, this chat started after the tab connected: the tab links new chats by itself within a few seconds, so wait a moment and call live_status again; if it still isn't connected, ask them to click the badge, Disconnect, then Connect to Claude again. Safari can't connect to apps on the computer; there, use save_design and Open.`,
     };
   }
 
