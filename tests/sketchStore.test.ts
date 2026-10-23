@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { emptyDocument, historyOf } from "../src/model/document";
 import { useStore } from "../src/model/store";
-import { addCircle, addRectangle } from "../src/sketch/ops";
+import { addCircle, addRectangle, curveById, pointPos } from "../src/sketch/ops";
+import { linkEdge, projectEdge } from "../src/sketch/links";
+import { planeFrame } from "../src/sketch/planes";
 
 const s = () => useStore.getState();
 const draftData = () => s().editing!.draft.sketch!.data;
@@ -72,5 +74,40 @@ describe("sketch sessions", () => {
     s().startCreate("extrude");
     expect(s().editing?.draft.sketchRef).toBe(saved.id);
     expect(s().editing?.draft.operation).toBe("new");
+  });
+});
+
+describe("sketches that follow the part", () => {
+  it("closing a sketch tidies away references nothing uses", () => {
+    s().startSketch({ kind: "default", name: "Top" });
+    const edge = projectEdge(planeFrame({ kind: "default", name: "Top" }), { partId: "box", ref: { kind: "edge", curve: "LINE", a: [0, 0, 0], b: [10, 0, 0], mid: [5, 0, 0] } })!;
+    s().updateSketch(addCircle(linkEdge(draftData(), edge, true).sketch, { x: 5, y: 5 }, 2).sketch);
+    expect(draftData().curves).toHaveLength(2);
+    expect(s().commitDraft()).toBe(true);
+    const saved = s().history.present.features.find((f) => f.type === "sketch");
+    expect(saved?.sketch?.data.curves.map((c) => c.type)).toEqual(["circle"]);
+  });
+
+  it("the open sketch moves its linked edges and plane to where the rebuild found them", () => {
+    const face = { partId: "box", ref: { kind: "face" as const, surface: "PLANE", center: [20, 10, 10] as [number, number, number], normal: [0, 0, 1] as [number, number, number] } };
+    const plane = { kind: "face" as const, origin: [0, 0, 10] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number], label: "Face of Part 1", face };
+    s().startSketch(plane);
+    const edge = (x: number) => projectEdge(planeFrame(plane), { partId: "box", ref: { kind: "edge", curve: "LINE", a: [x, 0, 10], b: [x, 20, 10], mid: [x, 10, 10] } })!;
+    const used = linkEdge(draftData(), edge(40), true);
+    s().updateSketch(used.sketch);
+    const id = s().editing!.draft.id;
+    const moved = { ...plane, origin: [0, 0, 15] as [number, number, number] };
+    s().setRebuildResult(s().parts, {}, 1, undefined, undefined, { [id]: { edges: [edge(60)], links: { [used.curveId]: edge(60) }, plane: moved } });
+    const line = curveById(draftData(), used.curveId);
+    expect(line?.type === "line" ? pointPos(draftData(), line.p1)[0] : NaN).toBeCloseTo(60, 6);
+    expect(s().editing?.draft.sketch?.plane).toEqual(moved);
+    expect(s().sketchLinks[id].edges).toHaveLength(1);
+    // A second result with nothing new changes nothing (no rebuild loop), even with a plane a hair's breadth away.
+    const before = s().editing;
+    s().setRebuildResult(s().parts, {}, 1, undefined, undefined, { [id]: { edges: [edge(60)], links: { [used.curveId]: edge(60) } } });
+    expect(s().editing).toBe(before);
+    const hair = { ...moved, origin: [0, 0, 15.00004] as [number, number, number] };
+    s().setRebuildResult(s().parts, {}, 1, undefined, undefined, { [id]: { edges: [edge(60)], links: { [used.curveId]: edge(60) }, plane: hair } });
+    expect(s().editing).toBe(before);
   });
 });

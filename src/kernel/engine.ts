@@ -7,7 +7,7 @@ import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, mak
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
-import { matchRefs, refDistance, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { matchRefs, refDistance, relativeTo, roundVec, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame, toWorld } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
@@ -29,6 +29,7 @@ import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
+import { followLinks, linkProblem, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
@@ -1587,6 +1588,8 @@ interface StudioBuild {
   parts: BuiltPart[];
   tools: Map<string, FeatureTool>;
   errors: Record<string, string>;
+  /** Sketches on part faces, or using part edges: what was found for them. */
+  links: Record<string, SketchLinkInfo>;
 }
 
 export class GeometryEngine {
@@ -1598,6 +1601,8 @@ export class GeometryEngine {
   private parts: BuiltPart[] = [];
   /** While a Part Studio is being built: the solids its features added or cut. */
   private tools = new Map<string, FeatureTool>();
+  /** While a Part Studio is being built: what its sketches' part faces and edges are now (see followSketch). */
+  private links: Record<string, SketchLinkInfo> = {};
   private builds = new Map<string, StudioBuild>();
 
   /**
@@ -1643,6 +1648,7 @@ export class GeometryEngine {
         if (b) this.disposeBuild(b);
         this.parts = [];
         this.tools = new Map();
+        this.links = {};
         setCurrentScope(studio.variables ?? variables);
         const errors = this.buildFeatures(studio.features);
         setCurrentScope(variables);
@@ -1650,7 +1656,7 @@ export class GeometryEngine {
         for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
         // Another configuration's copies of the parts (for assemblies).
         if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-        b = { key, parts: this.parts, tools: this.tools, errors };
+        b = { key, parts: this.parts, tools: this.tools, errors, links: this.links };
         this.builds.set(studio.id, b);
         rebuilt.push(studio.id);
         const configuration = studio.partSuffix?.replace(/^@/, "");
@@ -1662,7 +1668,10 @@ export class GeometryEngine {
     }
     this.parts = studios.flatMap((s) => this.builds.get(s.id)?.parts ?? []);
     this.tools = new Map();
-    return { parts: meshes, featureErrors, durationMs: Math.round(performance.now() - started), rebuilt, studioOrder: studios.map((s) => s.id) };
+    // Every Part Studio's sketch links (in the configuration on show), whether rebuilt now or before.
+    const sketchLinks: Record<string, SketchLinkInfo> = {};
+    for (const s of studios) if (!s.partSuffix) Object.assign(sketchLinks, this.builds.get(s.id)?.links ?? {});
+    return { parts: meshes, featureErrors, durationMs: Math.round(performance.now() - started), rebuilt, studioOrder: studios.map((s) => s.id), sketchLinks };
   }
 
   /**
@@ -1684,13 +1693,17 @@ export class GeometryEngine {
     const run = (off: Set<string>): { error?: string; featureIds: string[] } => {
       this.parts = [];
       this.tools = new Map();
+      // Trial builds mustn't touch the links of the Part Studios already built.
+      const links = this.links;
+      this.links = {};
       try {
         const errors = this.buildFeatures(upto.map((f) => (off.has(f.id) ? { ...f, suppressed: true } : f)));
         return { error: errors[featureId], featureIds: [...(this.parts.find((p) => p.id === partId)?.featureIds ?? [])] };
       } finally {
-        this.disposeBuild({ key: "", parts: this.parts, tools: this.tools, errors: {} });
+        this.disposeBuild({ key: "", parts: this.parts, tools: this.tools, errors: {}, links: {} });
         this.parts = saved.parts;
         this.tools = saved.tools;
+        this.links = links;
       }
     };
     try {
@@ -1744,6 +1757,112 @@ export class GeometryEngine {
     return shape;
   }
 
+  /**
+   * A sketch on a part's face, or using part edges, as the part is now: the
+   * face's edges (to show and snap to in the sketch), the sketch moved with
+   * its face, and its linked lines, circles and arcs moved to their edges
+   * (re-solved, so what's constrained to them follows). What was found is kept
+   * in this.links for the app. Old sketches (no face, no links) come back as they are.
+   */
+  private followSketch(feature: Feature): Feature {
+    const sk = feature.sketch!;
+    const plane = sk.plane!;
+    const facePick = plane.kind === "face" ? plane.face : undefined;
+    const linked = sk.data.curves.filter((c) => "link" in c && c.link);
+    if (!facePick && !linked.length) return feature;
+    let followed = plane;
+    let faceLost = false;
+    const edges: RefEdge[] = [];
+    const sizeOf = (b: Bounds) => Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
+    if (facePick && plane.kind === "face") {
+      const part = this.parts.find((p) => p.id === facePick.partId);
+      // Found strictly: a face that's gone is reported, rather than the sketch jumping onto another face.
+      let face: Face | null = null;
+      if (part) {
+        const faces = facesOf(part.shape);
+        const fb = boundsOf(part.shape);
+        const m = strictMatch(facePick.ref, faces.map((f) => faceRefOf(f, fb)), sizeOf(fb));
+        face = m === null ? null : faces[m];
+        faces.forEach((f) => f !== face && f.delete());
+      }
+      if (!face || !part) faceLost = true;
+      else {
+        try {
+          const bounds = boundsOf(part.shape);
+          const ref = faceRefOf(face, bounds);
+          // The sketch moves with its face (along the face's normal; it keeps its directions).
+          let frame = planeFrame(plane);
+          const n = frame.n;
+          const shift = (ref.center[0] - plane.origin[0]) * n[0] + (ref.center[1] - plane.origin[1]) * n[1] + (ref.center[2] - plane.origin[2]) * n[2];
+          // Face centres are kept to 0.1 µm, so on a sloping face a tiny leftover never counts as a move (that would rebuild for ever).
+          if (ref.surface === "PLANE" && Math.abs(shift) > 1e-3) {
+            followed = { ...plane, origin: [plane.origin[0] + shift * n[0], plane.origin[1] + shift * n[1], plane.origin[2] + shift * n[2]], face: { ...facePick, ref } };
+            frame = planeFrame(followed);
+          }
+          for (const e of edgesOf(face)) {
+            try {
+              const eref = edgeRefOf(e, bounds);
+              const samples = eref.curve === "LINE" || eref.curve === "CIRCLE" ? undefined : Array.from({ length: 17 }, (_, i) => take(e.pointAt(i / 16)));
+              const seen = projectEdge(frame, { partId: part.id, ref: eref }, samples);
+              if (seen) edges.push(seen);
+            } finally {
+              e.delete();
+            }
+          }
+        } finally {
+          face.delete();
+        }
+      }
+    }
+    // Linked curves: find each edge again on its part.
+    const links: Record<string, RefEdge | null> = {};
+    if (linked.length) {
+      const frame = planeFrame(followed);
+      const byPart = new Map<string, typeof linked>();
+      for (const c of linked) {
+        const id = (c as { link: TopoPick }).link.partId;
+        byPart.set(id, [...(byPart.get(id) ?? []), c]);
+      }
+      for (const [partId, curves] of byPart) {
+        const part = this.parts.find((p) => p.id === partId);
+        if (!part) {
+          for (const c of curves) links[c.id] = null;
+          continue;
+        }
+        const all = edgesOf(part.shape);
+        try {
+          const bounds = boundsOf(part.shape);
+          const refs = all.map((e) => edgeRefOf(e, bounds));
+          // Only edges that could be the copy: lying in the sketch's face (when it's on one and that was found),
+          // else at least flat to the sketch. Among those an edge may move further (a hole moved) and still be found.
+          const height = (p: Vec3) => (p[0] - frame.origin[0]) * frame.n[0] + (p[1] - frame.origin[1]) * frame.n[1] + (p[2] - frame.origin[2]) * frame.n[2];
+          const inFace = facePick && !faceLost;
+          const candidates = refs.map((r) => {
+            const hs = [height(r.a), height(r.b), height(r.mid)];
+            const flat = Math.max(...hs) - Math.min(...hs) < 1e-3;
+            return flat && (!inFace || Math.abs(hs[2]) < 1e-3) ? r : null;
+          });
+          curves.forEach((c) => {
+            const m = strictMatch((c as { link: TopoPick }).link.ref, candidates, sizeOf(bounds), 0.3);
+            links[c.id] = m === null ? null : projectEdge(frame, { partId, ref: refs[m] });
+          });
+        } finally {
+          all.forEach((e) => e.delete());
+        }
+      }
+    }
+    const data = followLinks(sk.data, links);
+    const changed = data !== sk.data || followed !== plane;
+    this.links[feature.id] = {
+      edges,
+      links,
+      ...(followed !== plane ? { plane: followed } : {}),
+      ...(faceLost ? { faceLost: true } : {}),
+      ...(changed ? { sketch: { plane: followed, data } } : {}),
+    };
+    return changed ? { ...feature, sketch: { plane: followed, data } } : feature;
+  }
+
   /** Build one Part Studio's features into this.parts and this.tools; returns the features' problems. */
   private buildFeatures(features: Feature[]): Record<string, string> {
     const featureErrors: Record<string, string> = {};
@@ -1765,7 +1884,11 @@ export class GeometryEngine {
       if (feature.type === "sketch") {
         // Sketches make no solid themselves; extrudes later in the list use them.
         if (!feature.sketch?.plane) featureErrors[feature.id] = "Pick a plane or flat face to sketch on.";
-        else sketches.set(feature.id, feature);
+        else {
+          sketches.set(feature.id, this.followSketch(feature));
+          const problem = linkProblem(this.links[feature.id]);
+          if (problem) featureErrors[feature.id] = problem;
+        }
         continue;
       }
       const def = FEATURE_DEFS[feature.type];

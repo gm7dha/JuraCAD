@@ -1,4 +1,5 @@
 /** Checks sketch data loaded from storage, keeping only what's well-formed. */
+import { parsePick } from "../geometry/topoRef";
 import type { SketchPlane, Vec3 } from "./planes";
 import { DIMENSION_TYPES, type ConstraintType, type SketchConstraint, type SketchCurve, type SketchData, type SketchPoint } from "./types";
 
@@ -17,6 +18,7 @@ const RELATIONS = new Set<string>([
   "pointOnCircle",
   "pointOnCurve",
   "fix",
+  "patternCopy",
 ]);
 
 const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -35,6 +37,7 @@ export function parsePlane(raw: unknown): SketchPlane | null {
       v: p.v,
       label: typeof p.label === "string" ? p.label : "Face",
       ...(typeof p.planeRef === "string" ? { planeRef: p.planeRef } : {}),
+      ...(parseFacePick(p.face) ?? {}),
     };
   }
   return null;
@@ -54,10 +57,12 @@ export function parseSketchData(raw: unknown): SketchData | null {
   for (const c of d.curves as Record<string, unknown>[]) {
     if (!c || !str(c.id)) return null;
     const construction = c.construction === true;
-    if (c.type === "line" && str(c.p1) && str(c.p2)) curves.push({ id: c.id, type: "line", p1: c.p1, p2: c.p2, construction });
-    else if (c.type === "circle" && str(c.center) && num(c.radius)) curves.push({ id: c.id, type: "circle", center: c.center, radius: c.radius, construction });
+    const linked = parsePick(c.link);
+    const link = linked?.ref.kind === "edge" ? { link: linked } : {};
+    if (c.type === "line" && str(c.p1) && str(c.p2)) curves.push({ id: c.id, type: "line", p1: c.p1, p2: c.p2, construction, ...link });
+    else if (c.type === "circle" && str(c.center) && num(c.radius)) curves.push({ id: c.id, type: "circle", center: c.center, radius: c.radius, construction, ...link });
     else if (c.type === "arc" && str(c.center) && str(c.start) && str(c.end))
-      curves.push({ id: c.id, type: "arc", center: c.center, start: c.start, end: c.end, construction });
+      curves.push({ id: c.id, type: "arc", center: c.center, start: c.start, end: c.end, construction, ...link });
     else if (c.type === "spline" && Array.isArray(c.points) && c.points.length >= 2 && c.points.every(str))
       curves.push({
         id: c.id,
@@ -86,6 +91,12 @@ export function parseSketchData(raw: unknown): SketchData | null {
     constraints.push(out);
   }
   return { points, curves, constraints };
+}
+
+/** The face a sketch sits on (so its edges can be used), if saved and well-formed. */
+function parseFacePick(raw: unknown): { face: NonNullable<Extract<SketchPlane, { kind: "face" }>["face"]> } | null {
+  const pick = parsePick(raw);
+  return pick?.ref.kind === "face" ? { face: pick } : null;
 }
 
 /** A spline's saved handles, keeping only those for its own points and with two finite numbers. */

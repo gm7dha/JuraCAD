@@ -7,7 +7,8 @@ import { findRegions } from "../sketch/regions";
 import { measureToOf } from "../sketch/ops";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
-import { makeSketchPattern, makeSketchTransform, setPatternOption, setSketchMeasureTo, toggleSketchDimensionDriven } from "./sketchActions";
+import { makeSketchPattern, makeSketchTransform, setPatternOption, setSketchMeasureTo, toggleSketchDimensionDriven, copyFaceEdges } from "./sketchActions";
+import { lostLinksMessage } from "../sketch/links";
 import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
 
@@ -53,6 +54,8 @@ export function SketchPanel() {
   const patternSpacing = useStore((s) => s.sketch?.patternSpacing ?? "10");
   const patternAngle = useStore((s) => s.sketch?.patternAngle ?? "0");
   const patternCentre = useStore((s) => s.sketch?.patternCentre ?? "origin");
+  const patternDirectionPick = useStore((s) => s.sketch?.patternDirectionPick ?? false);
+  const linkInfo = useStore((s) => (s.editing?.draft.type === "sketch" ? s.sketchLinks[s.editing.draft.id] : undefined));
   const moveDx = useStore((s) => s.sketch?.moveDx ?? "10");
   const moveDy = useStore((s) => s.sketch?.moveDy ?? "0");
   const moveAngle = useStore((s) => s.sketch?.moveAngle ?? "0");
@@ -199,10 +202,26 @@ export function SketchPanel() {
               <input value={patternAngle} spellCheck={false} aria-label={patternKind === "linear" ? "Pattern direction" : "Pattern angle"} onChange={(e) => setPatternOption({ patternAngle: e.target.value })} />
               <span className="muted">°</span>
             </label>
+            {patternKind === "linear" && (
+              <button
+                type="button"
+                className={patternDirectionPick ? "text-button selected" : "text-button"}
+                aria-pressed={patternDirectionPick}
+                title="Then click a straight line (or an edge of the face) to go the way it runs"
+                onClick={() => setSketchOptions({ patternDirectionPick: !patternDirectionPick })}
+              >
+                {patternDirectionPick ? "Click a line to set the direction…" : "Take the direction from a line"}
+              </button>
+            )}
+            {patternKind === "circular" && patternCentre !== "origin" && (
+              <button type="button" className="text-button" onClick={() => setPatternOption({ patternCentre: "origin" })} title="Go round the sketch's origin again">
+                Go round the origin instead
+              </button>
+            )}
             <p className="dialog-hint">
               {patternKind === "linear"
                 ? "Direction 0° goes right, 90° goes up. The count includes the original."
-                : `Going round ${patternCentre === "origin" ? "the origin" : "the chosen point"} — click a point to go round that instead. 360° spreads them all the way round.`}
+                : `Going round ${patternCentre === "origin" ? "the origin" : "the chosen point"} — click any point (a circle's centre, a line's end, a corner of the face) to go round that instead. 360° spreads them all the way round.`}
             </p>
             <button type="button" className="primary-button" onClick={() => makeSketchPattern()} disabled={selectionCount === 0}>
               Make pattern
@@ -236,7 +255,14 @@ export function SketchPanel() {
             </button>
           </div>
         )}
-        {tool === "useEdge" && <p className="dialog-hint">Click edges of a part to copy them into this sketch.</p>}
+        {tool === "useEdge" && <p className="dialog-hint">Click edges of a part to copy them into this sketch. They follow the part if it changes.</p>}
+        {!!linkInfo?.edges.length && (
+          <div className="tool-option">
+            <button type="button" className="text-button" onClick={() => copyFaceEdges()} title="Copy the face's outline and the edges of its holes into the sketch, ready to extrude">
+              Use all the face's edges
+            </button>
+          </div>
+        )}
         {tool === "sketchFillet" && (
           <label className="tool-option">
             Radius
@@ -310,6 +336,31 @@ export function SketchPanel() {
                   : "No closed shapes yet — Extrude needs a closed outline."}
               </li>
             )}
+            {(() => {
+              const lost = lostLinksMessage(data, linkInfo);
+              const lostIds = data.curves.filter((c) => "link" in c && c.link && linkInfo?.links[c.id] === null).map((c) => c.id);
+              return lost ? (
+                <li className="warn">
+                  <Icons.Warning size={15} /> {lost}{" "}
+                  {lostIds.length > 0 && (
+                    <button type="button" className="text-button" onClick={() => useStore.getState().setSketchSelection(lostIds)}>
+                      Select {lostIds.length === 1 ? "it" : "them"}
+                    </button>
+                  )}
+                  {linkInfo?.faceLost && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => useStore.getState().repickSketchPlane()}
+                    >
+                      Pick the face again
+                    </button>
+                  )}
+                </li>
+              ) : linkInfo?.edges.length && empty ? (
+                <li className="muted">The face's edges show faintly: snap to their corners, middles and centres, or click one to dimension to it.</li>
+              ) : null;
+            })()}
             {regions?.problems.map((p) => (
               <li key={p} className="warn">
                 {p}

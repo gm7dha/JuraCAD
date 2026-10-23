@@ -1502,6 +1502,69 @@ try {
     await page.waitForSelector(".sketch-panel", { state: "detached" });
   }
 
+  step = "sketching on a part's face: its edges show, a line snaps to a corner, Use all";
+  {
+    const face = await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      const doc = st.history.present;
+      const studio = st.activeTab && (doc.partStudios ?? []).some((x) => x.id === st.activeTab) ? st.activeTab : "main";
+      for (const p of st.parts) {
+        if ((p.studioId ?? "main") !== studio || p.surface || p.configuration) continue;
+        const ref = p.faceRefs.find((r) => r.surface === "PLANE" && r.normal[2] > 0.999);
+        if (ref) return { partId: p.id, ref };
+      }
+      return null;
+    });
+    if (!face) throw new Error("no flat top face to sketch on");
+    // As clicking the face would: a sketch on it that remembers the face.
+    await page.evaluate((f) => window.juracadStore.getState().startSketch({ kind: "face", origin: [0, 0, f.ref.center[2]], u: [1, 0, 0], v: [0, 1, 0], label: "Face of a part", face: f }), face);
+    await page.waitForSelector(".sketch-panel");
+    await page.waitForFunction(() => {
+      const st = window.juracadStore.getState();
+      return (st.sketchLinks[st.editing?.draft.id ?? ""]?.edges.length ?? 0) >= 3;
+    }, null, { timeout: 30_000 });
+    await page.waitForTimeout(600);
+    const box = await page.locator(".viewport").boundingBox();
+    const corner = await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      const e = st.sketchLinks[st.editing.draft.id].edges.find((k) => k.kind === "line");
+      return { at: e.a, screen: window.juracadViewport.current.projectSketchPoint(e.a[0], e.a[1]) };
+    });
+    // A construction line, so the outline used below stays one closed shape.
+    await page.keyboard.press("q");
+    await page.keyboard.press("l");
+    await page.mouse.move(box.x + corner.screen.x + 3, box.y + corner.screen.y + 2, { steps: 3 });
+    await page.mouse.click(box.x + corner.screen.x + 3, box.y + corner.screen.y + 2);
+    await page.mouse.click(box.x + corner.screen.x + 60, box.y + corner.screen.y - 45);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("q");
+    const snapped = await page.evaluate((want) => {
+      const d = window.juracadStore.getState().editing.draft.sketch.data;
+      const line = d.curves.find((c) => c.type === "line" && !c.link);
+      const ref = d.curves.find((c) => c.link && c.construction);
+      const start = line && d.points.find((p) => p.id === line.p1);
+      return { hasRef: !!ref, at: start ? [start.x, start.y] : null, want };
+    }, corner.at);
+    if (!snapped.hasRef || !snapped.at || Math.hypot(snapped.at[0] - snapped.want[0], snapped.at[1] - snapped.want[1]) > 1e-6)
+      throw new Error(`the line didn't snap to the face's corner: ${JSON.stringify(snapped)}`);
+    // Hovering a face edge marks its middle.
+    const quarter = await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      const e = st.sketchLinks[st.editing.draft.id].edges.filter((k) => k.kind === "line")[1];
+      return window.juracadViewport.current.projectSketchPoint(e.a[0] * 0.75 + e.b[0] * 0.25, e.a[1] * 0.75 + e.b[1] * 0.25);
+    });
+    await page.mouse.move(box.x + quarter.x, box.y + quarter.y, { steps: 3 });
+    await shot("facehint");
+    await page.getByRole("button", { name: "Use all the face's edges" }).click();
+    await page.waitForFunction(() => /\d+ closed shapes? ready to extrude/.test(document.querySelector(".sketch-status")?.textContent ?? ""), null, { timeout: 10_000 });
+    await shot("facesketch");
+    await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
+    if (await page.locator(".sketch-panel").count()) await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
+    await page.waitForSelector(".sketch-panel", { state: "detached" });
+  }
+
   step = "making a sheet metal part and its flat pattern";
   {
     await page.getByRole("button", { name: "Sketch", exact: true }).click();
@@ -1593,7 +1656,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; made a sheet metal part and saved its flat pattern as DXF. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

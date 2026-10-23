@@ -19,6 +19,7 @@ import { planeFrame, planeOnFace, type SketchPlane } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/planeFeature";
 import { resolveParams } from "../model/features";
 import { copyEdge } from "../sketch/tools";
+import { projectEdge, linkEdge, type SketchLinkInfo } from "../sketch/links";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
 import { setSketchTheme } from "./SketchLayer";
@@ -115,7 +116,9 @@ export function planeForFace(item: SelectionItem): SketchPlane | null {
   const flat = viewportApi.current?.flatFace(item);
   if (!flat) return null;
   const part = s.parts.find((p) => p.id === item.partId);
-  return planeOnFace(flat.normal, flat.point, `Face of ${part?.name ?? "part"}`);
+  // Remember the face, so its edges can be used in the sketch and the sketch moves with it.
+  const pick = pickFor(s.parts, item);
+  return planeOnFace(flat.normal, flat.point, `Face of ${part?.name ?? "part"}`, pick?.ref.kind === "face" ? pick : undefined);
 }
 
 /** A Plane feature clicked in the 3D view, as somewhere to sketch (or put text, or base a plane on). */
@@ -181,7 +184,10 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     const ref = s.parts.find((p) => p.id === target.item.partId)?.edgeRefs?.[target.item.index];
     if (!ref) return;
-    const r = copyEdge(s.editing.draft.sketch.data, planeFrame(s.editing.draft.sketch.plane), ref);
+    // Straight and round edges are copied in linked to the part (they follow it when it changes).
+    const data = s.editing.draft.sketch.data;
+    const seen = ref.curve === "UNKNOWN" ? null : projectEdge(planeFrame(s.editing.draft.sketch.plane), { partId: target.item.partId, ref });
+    const r = seen && seen.kind !== "curve" ? (({ curveId, ...rest }) => ({ ...rest, curveIds: [curveId] }))(linkEdge(data, seen, false)) : copyEdge(data, planeFrame(s.editing.draft.sketch.plane), ref);
     if (r.error) s.setSketchMessage(r.error, "error");
     else {
       s.updateSketch(r.sketch, { selection: r.curveIds });
@@ -482,13 +488,14 @@ function itemsForPicks(parts: PartMesh[], picks: TopoPick[]): SelectionItem[] {
  * Sketches to show faintly: finished ones that no extrude has used yet, or that are highlighted.
  * While a mirror or pattern is open (`referenceFor`, its id), every sketch before it is shown, so its lines can be clicked.
  */
-function visibleSketches(features: Feature[], editingId: string | null, selectedId: string | null, referenceFor: string | null = null) {
+function visibleSketches(features: Feature[], editingId: string | null, selectedId: string | null, links: Record<string, SketchLinkInfo>, referenceFor: string | null = null) {
   const used = new Set(features.filter((f) => isSketchSolid(f.type) && !f.suppressed && f.sketchRef).map((f) => f.sketchRef!));
   const at = referenceFor ? features.findIndex((f) => f.id === referenceFor) : -1;
   const earlier = referenceFor ? new Set((at >= 0 ? features.slice(0, at) : features).map((f) => f.id)) : null;
   return features
     .filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && f.id !== editingId && (!used.has(f.id) || f.id === selectedId || !!earlier?.has(f.id)))
-    .map((f) => ({ plane: f.sketch!.plane!, data: f.sketch!.data }));
+    // A sketch that follows its part is shown where the part is now.
+    .map((f) => links[f.id]?.sketch ?? { plane: f.sketch!.plane!, data: f.sketch!.data });
 }
 
 export function Viewport() {
@@ -762,10 +769,12 @@ export function Viewport() {
     const shape = refDraft && !inAssembly ? referenceShape(refDraft, features, resolveParams(refDraft).values) : null;
     viewportApi.current?.setReference(shape);
   }, [refDraft, features, inAssembly]);
+  const sketchLinks = useStore((s) => s.sketchLinks);
   const others = useMemo(
-    () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId, refDraft?.id ?? null)),
-    [features, draft?.id, selectedFeatureId, inAssembly, refDraft?.id],
+    () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId, sketchLinks, refDraft?.id ?? null)),
+    [features, draft?.id, selectedFeatureId, inAssembly, refDraft?.id, sketchLinks],
   );
+  const refEdges = draft ? sketchLinks[draft.id]?.edges : undefined;
   useEffect(() => {
     const manager = viewportApi.current;
     if (!manager) return;
@@ -774,9 +783,9 @@ export function Viewport() {
       return;
     }
     const { analysis, failing } = sketchStatus(sketchData);
-    manager.setSketchScene(others, { plane, data: sketchData, analysis, failing, selection: new Set(sketchSelection ?? []) });
+    manager.setSketchScene(others, { plane, data: sketchData, analysis, failing, selection: new Set(sketchSelection ?? []), refs: refEdges });
     // The theme changes the sketch colours, so redraw when it changes.
-  }, [others, plane, sketchData, sketchSelection, theme]);
+  }, [others, plane, sketchData, sketchSelection, theme, refEdges]);
 
   return (
     <>

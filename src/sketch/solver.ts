@@ -320,6 +320,20 @@ function buildSystem(sketch: SketchData): System {
           },
         };
       }
+      case "patternCopy": {
+        // The copy is the original turned round the centre by a set angle.
+        const p = P(a), q = P(b), c = P(con.refs[2]);
+        const t = ((con.extra?.[0] ?? 0) * Math.PI) / 180;
+        const cs = Math.cos(t), sn = Math.sin(t);
+        return {
+          size: 2,
+          eval: (x, out) => {
+            const u = p(x), w = q(x), o = c(x);
+            const dx = w[0] - o[0], dy = w[1] - o[1];
+            out.push(u[0] - (o[0] + dx * cs - dy * sn), u[1] - (o[1] + dx * sn + dy * cs));
+          },
+        };
+      }
       case "symmetric": {
         // Two points mirror images across a line: halfway between them is on the line, and the line between them is square to it.
         const p = P(a);
@@ -653,8 +667,119 @@ function writeBack(sketch: SketchData, sys: System, x: Float64Array): SketchData
   };
 }
 
+// ---------------------------------------------------------------------------
+// Pattern copies worked out rather than solved
+
+/** An `equal` made by a sketch pattern: the copy's (refs[0]) size follows the original's. */
+export const isPatternSize = (c: SketchConstraint) => c.type === "equal" && c.extra?.[0] === 1;
+
+interface Derived {
+  /** The sketch without the copies that are only placed by their pattern. */
+  reduced: SketchData;
+  /** Each such copy: the point it's a copy of, the centre, and how far round (degrees). */
+  points: Map<string, { orig: string; centre: string; deg: number }>;
+  /** Copied circles whose size is the original circle's. */
+  circles: Map<string, string>;
+}
+
+/**
+ * A circular pattern's copies that nothing else holds (no constraint or
+ * dimension on them or their lines and circles) are simply the original
+ * turned round the centre, so they're left out of the solve and placed
+ * afterwards: a pattern of 100 copies costs no more to solve than its original.
+ * Copies something else does hold stay in the solve. Null when there are none.
+ */
+function splitDerived(sketch: SketchData): Derived | null {
+  const copies = sketch.constraints.filter((c) => c.type === "patternCopy" && c.refs.length === 3);
+  if (!copies.length) return null;
+  const used = new Set<string>();
+  const copyCount = new Map<string, number>();
+  for (const k of sketch.constraints) {
+    if (k.type === "patternCopy") copyCount.set(k.refs[0], (copyCount.get(k.refs[0]) ?? 0) + 1);
+    k.refs.forEach((r, i) => {
+      if (i === 0 && (k.type === "patternCopy" || isPatternSize(k))) return;
+      used.add(r);
+    });
+  }
+  const curvesOf = new Map<string, SketchCurve[]>();
+  for (const c of sketch.curves) for (const p of curvePointIds(c)) curvesOf.set(p, [...(curvesOf.get(p) ?? []), c]);
+  const points = new Map<string, { orig: string; centre: string; deg: number }>();
+  const known = new Set(sketch.points.map((p) => p.id));
+  for (const k of copies) {
+    const [copy, orig, centre] = k.refs;
+    if (copyCount.get(copy) !== 1 || used.has(copy) || !known.has(copy) || (curvesOf.get(copy) ?? []).some((c) => used.has(c.id))) continue;
+    if (orig !== ORIGIN_ID && !known.has(orig)) continue;
+    if (centre !== ORIGIN_ID && !known.has(centre)) continue;
+    points.set(copy, { orig, centre, deg: k.extra?.[0] ?? 0 });
+  }
+  if (!points.size) return null;
+  const circles = new Map<string, string>();
+  for (const k of sketch.constraints) if (isPatternSize(k)) circles.set(k.refs[0], k.refs[1]);
+  const dropCurves = new Set(sketch.curves.filter((c) => curvePointIds(c).some((p) => points.has(p))).map((c) => c.id));
+  for (const id of [...circles.keys()]) if (!dropCurves.has(id)) circles.delete(id);
+  const reduced: SketchData = {
+    points: sketch.points.filter((p) => !points.has(p.id)),
+    curves: sketch.curves.filter((c) => !dropCurves.has(c.id)),
+    constraints: sketch.constraints.filter((k) => !(k.type === "patternCopy" && points.has(k.refs[0])) && !(isPatternSize(k) && circles.has(k.refs[0]))),
+  };
+  return { reduced, points, circles };
+}
+
+const curvePointIds = (c: SketchCurve): string[] =>
+  c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : c.type === "spline" ? c.points : c.type === "ellipse" ? [c.center, c.major, c.minor] : [c.center, c.start, c.end];
+
+/** The whole sketch from the solved reduced one: copies placed round their centres, copied circles sized like their originals. */
+function placeDerived(full: SketchData, solved: SketchData, d: Derived): SketchData {
+  const at = new Map<string, [number, number]>(solved.points.map((p) => [p.id, [p.x, p.y]]));
+  const pos = (id: string): [number, number] => (id === ORIGIN_ID ? [0, 0] : at.get(id) ?? [0, 0]);
+  const radius = new Map<string, number>();
+  for (const c of solved.curves) if (c.type === "circle") radius.set(c.id, c.radius);
+  return {
+    ...full,
+    points: full.points.map((p) => {
+      const k = d.points.get(p.id);
+      let x: number, y: number;
+      if (k) {
+        const o = pos(k.orig), c = pos(k.centre);
+        const t = (k.deg * Math.PI) / 180;
+        const dx = o[0] - c[0], dy = o[1] - c[1];
+        [x, y] = [c[0] + dx * Math.cos(t) - dy * Math.sin(t), c[1] + dx * Math.sin(t) + dy * Math.cos(t)];
+      } else [x, y] = pos(p.id);
+      return x === p.x && y === p.y ? p : { ...p, x, y };
+    }),
+    curves: full.curves.map((c) => {
+      if (c.type !== "circle") return c;
+      const r = d.circles.has(c.id) ? radius.get(d.circles.get(c.id)!) ?? c.radius : radius.get(c.id) ?? c.radius;
+      return r === c.radius ? c : { ...c, radius: r };
+    }),
+  };
+}
+
+/** Does a drag (or other pull) act on a copy that's only placed by its pattern? Then the whole sketch is solved. */
+function pullsCopy(d: Derived, o: SolveOptions): boolean {
+  if (o.drag && d.points.has(o.drag.pointId)) return true;
+  if (o.moveRigid?.pointIds.some((id) => d.points.has(id))) return true;
+  if (o.resize && d.circles.has(o.resize.circleId)) return true;
+  return !!o.place?.some((p) => d.points.has(p.pointId));
+}
+
 /** Move the sketch so every constraint holds, changing it as little as possible. */
 export function solveSketch(sketch: SketchData, options: SolveOptions = {}): SolveResult {
+  const d = splitDerived(sketch);
+  if (d && !pullsCopy(d, options)) {
+    const r = solveWhole(d.reduced, options);
+    return { ...r, sketch: placeDerived(sketch, r.sketch, d) };
+  }
+  if (d && options.drag && d.points.has(options.drag.pointId)) {
+    // Dragging a copy turns the pattern round its centre (the centre stays put; the original moves), like Onshape.
+    const centre = d.points.get(options.drag.pointId)!.centre;
+    const p = sketch.points.find((q) => q.id === centre);
+    if (p) return solveWhole(sketch, { ...options, place: [...(options.place ?? []), { pointId: centre, x: p.x, y: p.y }] });
+  }
+  return solveWhole(sketch, options);
+}
+
+function solveWhole(sketch: SketchData, options: SolveOptions): SolveResult {
   const interactive = options.drag || options.moveRigid || options.resize || options.place?.length;
   if (!interactive) return solveOnce(sketch, options, 1);
   // First try to keep what's being dragged exactly under the pointer; if the
@@ -781,6 +906,22 @@ export interface SketchAnalysis {
  * Jacobian: a point is fixed when no remaining freedom can move it.
  */
 export function analyzeSketch(sketch: SketchData): SketchAnalysis {
+  const d = splitDerived(sketch);
+  if (!d) return analyzeWhole(sketch);
+  // Copies placed by their pattern are as pinned down as their original and centre; they add no freedom.
+  const r = analyzeWhole(d.reduced);
+  const definedPoints = new Set(r.definedPoints);
+  for (const [id, k] of d.points) if (r.definedPoints.has(k.orig) && r.definedPoints.has(k.centre)) definedPoints.add(id);
+  const definedCurves = new Set(r.definedCurves);
+  for (const c of sketch.curves) {
+    if (r.definedCurves.has(c.id) || !curvePointIds(c).some((p) => d.points.has(p))) continue;
+    const pts = curvePointIds(c).every((p) => definedPoints.has(p));
+    if (c.type === "circle" ? pts && (!d.circles.has(c.id) || r.definedCurves.has(d.circles.get(c.id)!)) : pts) definedCurves.add(c.id);
+  }
+  return { freedom: r.freedom, definedPoints, definedCurves };
+}
+
+function analyzeWhole(sketch: SketchData): SketchAnalysis {
   const sys = buildSystem(sketch);
   const r = evalAll(sys, sys.x0);
   const m = r.length;

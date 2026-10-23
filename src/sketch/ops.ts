@@ -9,6 +9,7 @@ import { ellipseFrom, ellipsePolyline, type EllipseGeom } from "./ellipse";
 import { splinePolyline, splineTangents } from "./spline";
 import { startingLength } from "../model/units";
 import { analyzeSketch, solveSketch } from "./solver";
+import { linkEdge, type RefEdge } from "./links";
 import {
   isAngleDimension,
   isDimension,
@@ -37,7 +38,15 @@ export type Snap =
   | { kind: "origin" }
   | { kind: "curve"; id: string }
   /** Lined up with earlier points: straight above/below point `x` (same x), and/or level with point `y` (same y). */
-  | { kind: "align"; x?: string; y?: string };
+  | { kind: "align"; x?: string; y?: string }
+  /** The middle of a line (held there with a Midpoint constraint). */
+  | { kind: "midpoint"; id: string }
+  /**
+   * On a part edge shown in the sketch: at one of its ends, its centre, its
+   * middle, or anywhere along it. The edge is brought in (as a reference that
+   * follows the part) when the point is placed.
+   */
+  | { kind: "ref"; edge: RefEdge; at: "a" | "b" | "centre" | "mid" | "on" };
 
 export interface Placed {
   x: number;
@@ -379,6 +388,19 @@ export function onCurveType(c: SketchCurve): "pointOnLine" | "pointOnCircle" | "
 
 export function placePoint(s: SketchData, p: Placed): { sketch: SketchData; id: string } {
   if (p.snap?.kind === "point" && isPointId(s, p.snap.id) && p.snap.id !== ORIGIN_ID) return { sketch: s, id: p.snap.id };
+  if (p.snap?.kind === "ref") {
+    // Bring the part edge in (as a reference), then attach to it.
+    const at = p.snap.at;
+    const used = linkEdge(s, p.snap.edge, true);
+    if (used.error) return placePoint(s, { x: p.x, y: p.y, snap: null });
+    const end = at === "a" ? used.points.a : at === "b" ? used.points.b : at === "centre" ? used.points.c : undefined;
+    if (end) return { sketch: used.sketch, id: end };
+    const k = used.sketch;
+    const id = sketchId("p");
+    const curve = curveById(k, used.curveId);
+    const type = at === "mid" ? "midpoint" : curve ? onCurveType(curve) : "pointOnLine";
+    return { sketch: { ...k, points: [...k.points, { id, x: p.x, y: p.y }], constraints: [...k.constraints, { id: sketchId("c"), type, refs: [id, used.curveId] }] }, id };
+  }
   const id = sketchId("p");
   const points = [...s.points, { id, x: p.x, y: p.y }];
   const constraints = [...s.constraints];
@@ -387,6 +409,8 @@ export function placePoint(s: SketchData, p: Placed): { sketch: SketchData; id: 
   } else if (p.snap?.kind === "curve") {
     const c = curveById(s, p.snap.id);
     if (c) constraints.push({ id: sketchId("c"), type: onCurveType(c), refs: [id, c.id] });
+  } else if (p.snap?.kind === "midpoint") {
+    if (curveById(s, p.snap.id)?.type === "line") constraints.push({ id: sketchId("c"), type: "midpoint", refs: [id, p.snap.id] });
   } else if (p.snap?.kind === "align") {
     // Keep it lined up: straight above/below (vertical) and/or level with (horizontal) the point it snapped to.
     if (p.snap.x && (p.snap.x === ORIGIN_ID || isPointId(s, p.snap.x))) constraints.push({ id: sketchId("c"), type: "vertical", refs: [id, p.snap.x] });

@@ -5,6 +5,7 @@ import { lengthNumber, showLength, storeLength, type LengthUnit } from "../model
 import { useLengthUnit, useStore } from "../model/store";
 import { badgeAnchors, dimensionLayout, RELATION_SYMBOLS } from "../sketch/layout";
 import { measure, moveDimensionLabel, setDimensionValue } from "../sketch/ops";
+import { linkedPoints } from "../sketch/links";
 import { isAngleDimension, isDimension, type SketchConstraint, type SketchData } from "../sketch/types";
 import { sketchStatus, viewportApi } from "../viewport/Viewport";
 
@@ -22,6 +23,7 @@ const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
   pointOnCircle: "Point on circle",
   pointOnCurve: "Point on curve",
   fix: "Fixed",
+  patternCopy: "Pattern copy",
 };
 
 /** Text shown on a dimension label. A reference (driven) dimension shows the size as it is now, in brackets. */
@@ -143,6 +145,8 @@ function computePlacements(data: SketchData) {
   const dims: { constraint: SketchConstraint; placement: Placement }[] = [];
   const badges: { constraint: SketchConstraint; placement: Placement }[] = [];
   const spots = new Map<string, number>();
+  // Part edges in the sketch are held where their edge is: that's not shown as anchors on each of their points.
+  const linked = linkedPoints(data);
   for (const c of data.constraints) {
     if (isDimension(c)) {
       const l = dimensionLayout(data, c);
@@ -150,6 +154,7 @@ function computePlacements(data: SketchData) {
       continue;
     }
     if (c.type === "coincident" || c.type === "pointOnLine" || c.type === "pointOnCircle" || c.type === "pointOnCurve") continue; // too cluttered; shown as joined points
+    if (c.type === "patternCopy" || (c.type === "fix" && linked.has(c.refs[0]))) continue;
     badgeAnchors(data, c).forEach((at, i) => {
       const key = `${Math.round(at[0] * 100)},${Math.round(at[1] * 100)}`;
       const n = spots.get(key) ?? 0;

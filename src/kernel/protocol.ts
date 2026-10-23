@@ -1,3 +1,4 @@
+import type { SketchLinkInfo } from "../sketch/links";
 import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
@@ -132,6 +133,8 @@ export interface RebuildResult {
   rebuilt?: string[];
   /** Every Part Studio, in order. */
   studioOrder?: string[];
+  /** Sketches on part faces or using part edges (by feature id): the face's edges, and where linked edges are now. */
+  sketchLinks?: Record<string, SketchLinkInfo>;
 }
 
 export interface PartCheck {
