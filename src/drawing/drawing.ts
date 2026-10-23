@@ -5,7 +5,7 @@
 import type { Shortening, BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingPage, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, JuraCADDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
 import { SECTION_HOSTS, viewKey } from "./sections";
 import { FIRST_PAGE, PAGE_FIELDS } from "./pages";
-import { FITTABLE } from "./dimensions";
+import { ARROWABLE, FITTABLE } from "./dimensions";
 
 const drawingsOf = (doc: JuraCADDocument) => doc.drawings ?? [];
 
@@ -322,6 +322,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       ...(r.bomWeights === true ? { bomWeights: true } : {}),
       ...(isPlaces(r.places) ? { places: r.places as number } : {}),
       ...(r.dualUnits === true ? { dualUnits: true } : {}),
+      ...(r.dimArrows === "inside" || r.dimArrows === "outside" ? { dimArrows: r.dimArrows } : {}),
       ...(r.tangentEdges === false ? { tangentEdges: false } : {}),
       ...parseFit(r.fit),
       ...(Array.isArray(r.holeTableAt) && r.holeTableAt.length === 2 && r.holeTableAt.every(num) ? { holeTableAt: r.holeTableAt as [number, number] } : {}),
@@ -423,6 +424,7 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(r.frame === "basic" || r.frame === "inspection" ? { frame: r.frame } : {}),
     ...parseLimitsFit(r.limitsFit, type),
     ...(type === "chamfer" && (r.along === "h" || r.along === "v") ? { along: r.along } : {}),
+    ...(ARROWABLE.has(type) && (r.arrows === "inside" || r.arrows === "outside") ? { arrows: r.arrows } : {}),
   };
 }
 
