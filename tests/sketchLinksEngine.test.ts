@@ -86,8 +86,8 @@ describe("sketch on a part's face", () => {
     const circle = curveById(data, c.circleId);
     const circleCentre = circle?.type === "circle" ? circle.center : "";
 
-    // The box is made wider (60) and taller (15), and the hole moves to x = 14.
-    const r = rebuild([...boxWithHole(60, 20, 15, 14), sketchFeature("sk", plane, data), extrudeFeature("ex", "sk", 5)]);
+    // The box is made wider (60) and taller (15), and the hole moves to x = 20.
+    const r = rebuild([...boxWithHole(60, 20, 15, 20), sketchFeature("sk", plane, data), extrudeFeature("ex", "sk", 5)]);
     expect(r.featureErrors).toEqual({});
     const info = r.sketchLinks!.sk;
     expect(Object.values(info.links).every((e) => e !== null)).toBe(true);
@@ -101,15 +101,15 @@ describe("sketch on a part's face", () => {
     expect([ax, ay].map((v) => Math.round(v * 1e6) / 1e6)).toEqual([60, 20]);
     expect([bx, by].map((v) => Math.round(v * 1e6) / 1e6)).toEqual([0, 10]);
     const [cx, cy] = pointPos(now, circleCentre);
-    expect(cx).toBeCloseTo(14, 6);
+    expect(cx).toBeCloseTo(20, 6);
     expect(cy).toBeCloseTo(10, 6);
-    // The extrude uses the sketch as it is now: a 3 mm circle on the new top face, 5 tall, at (14, 10).
+    // The extrude uses the sketch as it is now: a 3 mm circle on the new top face, 5 tall, at (20, 10).
     const pin = r.parts.find((p) => p.id !== "box");
     expect(pin).toBeDefined();
     const a = analyzeMesh(pin!.vertices, pin!.triangles);
     expect(a.volume).toBeCloseTo(Math.PI * 1.5 * 1.5 * 5, 0);
     expect(a.bounds!.min[2]).toBeCloseTo(15, 4);
-    expect((a.bounds!.min[0] + a.bounds!.max[0]) / 2).toBeCloseTo(14, 1);
+    expect((a.bounds!.min[0] + a.bounds!.max[0]) / 2).toBeCloseTo(20, 1);
   });
 
   it("Use from the part follows its edge too, and says so kindly when the edge has gone", () => {
@@ -208,5 +208,73 @@ describe("following a face: sloping faces and faces that go", () => {
     const off = rebuild([box, { ...boss, suppressed: true }, sketchFeature("sk", plane, emptySketch())]);
     expect(off.sketchLinks!.sk.faceLost).toBe(true);
     expect(off.sketchLinks!.sk.plane).toBeUndefined();
+  });
+});
+
+describe("linked edges follow ordinary changes", () => {
+  /** A w × d × h plate with 6 mm holes at these x positions (y = d / 2). */
+  const plate = (w: number, d: number, h: number, holes: number[]): Feature[] => [
+    feature("box", "box", { width: w, depth: d, height: h, x: 0, y: 0, z: 0 }),
+    ...holes.map((x, i) => feature(`hole${i}`, "cylinder", { diameter: 6, height: h, x, y: d / 2, z: 0 }, "remove")),
+  ];
+  const onTop = (w: number, d: number, h: number) =>
+    planeOnFace([0, 0, 1], [0, 0, h], "Face of Part 1", { partId: "box", ref: { kind: "face", surface: "PLANE", center: [w / 2, d / 2, h], normal: [0, 0, 1] } });
+
+  /** Use every hole edge of the face, rebuild with `after`, and give where each copy's centre went (null = lost). */
+  function follow(before: Feature[], after: Feature[], plane: SketchPlane): ([number, number] | null)[] {
+    const first = rebuild([...before, sketchFeature("sk", plane, emptySketch())]);
+    let data = emptySketch();
+    const ids: string[] = [];
+    const holes = first.sketchLinks!.sk.edges.filter((e) => e.kind === "circle").sort((a, b) => a.centre![0] - b.centre![0]);
+    for (const e of holes) {
+      const u = linkEdge(data, e, false);
+      data = u.sketch;
+      ids.push(u.curveId);
+    }
+    const r = rebuild([...after, sketchFeature("sk", plane, data)]);
+    expect(r.featureErrors).toEqual({});
+    const now = r.sketchLinks!.sk.sketch?.data ?? data;
+    return ids.map((id) => {
+      if (r.sketchLinks!.sk.links[id] === null) return null;
+      const c = curveById(now, id);
+      return c?.type === "circle" ? (pointPos(now, c.center).map((v) => Math.round(v * 1e4) / 1e4) as [number, number]) : null;
+    });
+  }
+
+  it("a hole moved from x 10 to 15 in a 40 mm box", () => {
+    expect(follow(plate(40, 20, 10, [10]), plate(40, 20, 10, [15]), onTop(40, 20, 10))).toEqual([[15, 10]]);
+  });
+
+  it("a hole moved from 10 to 20 while the box grows from 40 to 60", () => {
+    expect(follow(plate(40, 20, 10, [10]), plate(60, 20, 10, [20]), onTop(40, 20, 10))).toEqual([[20, 10]]);
+  });
+
+  it("a hole moved from 50 to 80 in a 200 × 100 plate", () => {
+    expect(follow(plate(200, 100, 5, [50]), plate(200, 100, 5, [80]), onTop(200, 100, 5))).toEqual([[80, 50]]);
+  });
+
+  it("two holes: each copy follows its own hole", () => {
+    expect(follow(plate(60, 20, 10, [10, 40]), plate(60, 20, 10, [15, 40]), onTop(60, 20, 10))).toEqual([
+      [15, 10],
+      [40, 10],
+    ]);
+  });
+
+  it("an edge of a boss on the face follows the boss when it moves, not the box's edge", () => {
+    const boss = (x: number) => feature("boss", "box", { width: 10, depth: 10, height: 5, x, y: 5, z: 10 }, "add");
+    const box = feature("box", "box", { width: 40, depth: 20, height: 10, x: 0, y: 0, z: 0 });
+    const plane = onTop(40, 20, 10);
+    const first = rebuild([box, boss(5), sketchFeature("sk", plane, emptySketch())]);
+    // The boss's right-hand side where it meets the face: x = 15, y 5 to 15.
+    const side = first.sketchLinks!.sk.edges.find((e) => e.kind === "line" && Math.abs(e.a[0] - 15) < 1e-6 && Math.abs(e.b[0] - 15) < 1e-6)!;
+    expect(side).toBeDefined();
+    const u = linkEdge(emptySketch(), side, false);
+    // Moved 3 mm (its other side then sits 7 mm from where this one was, so there's no mistaking them).
+    const r = rebuild([box, boss(8), sketchFeature("sk", plane, u.sketch)]);
+    expect(r.featureErrors).toEqual({});
+    const now = r.sketchLinks!.sk.sketch!.data;
+    const line = curveById(now, u.curveId) as SketchLine;
+    expect(pointPos(now, line.p1)[0]).toBeCloseTo(18, 6);
+    expect(pointPos(now, line.p2)[0]).toBeCloseTo(18, 6);
   });
 });

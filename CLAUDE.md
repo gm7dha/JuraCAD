@@ -22,7 +22,8 @@
   construction reference when snapped to or dimensioned to — stand-in ids "ref:<n>" until then). The engine's
   `followSketch` finds the face and links again each rebuild (moves the plane with its face, re-solves via `followLinks`)
   and returns `RebuildResult.sketchLinks`; the store syncs the open sketch from it (planes compared to 1 µm, so sloping
-  faces don't loop). Faces and links are re-found with `strictMatch` (topoRef.ts: near and unambiguous, else reported lost
+  faces don't loop). Faces and links are re-found with `strictMatch` (topoRef.ts: near and unambiguous, else reported lost; faces
+  within 0.1 × part size, links within 0.3 × among edges lying in the sketch's face
   — `linkProblem` puts it on the sketch in featureErrors). Unused references are dropped when a sketch closes
   (`pruneReferences`). Circular sketch patterns round a point add `patternCopy` constraints (+ `equal` with extra [1] for
   sizes); copies nothing else holds are left out of the solve and placed afterwards (`splitDerived` in solver.ts).

@@ -1833,8 +1833,17 @@ export class GeometryEngine {
         try {
           const bounds = boundsOf(part.shape);
           const refs = all.map((e) => edgeRefOf(e, bounds));
+          // Only edges that could be the copy: lying in the sketch's face (when it's on one and that was found),
+          // else at least flat to the sketch. Among those an edge may move further (a hole moved) and still be found.
+          const height = (p: Vec3) => (p[0] - frame.origin[0]) * frame.n[0] + (p[1] - frame.origin[1]) * frame.n[1] + (p[2] - frame.origin[2]) * frame.n[2];
+          const inFace = facePick && !faceLost;
+          const candidates = refs.map((r) => {
+            const hs = [height(r.a), height(r.b), height(r.mid)];
+            const flat = Math.max(...hs) - Math.min(...hs) < 1e-3;
+            return flat && (!inFace || Math.abs(hs[2]) < 1e-3) ? r : null;
+          });
           curves.forEach((c) => {
-            const m = strictMatch((c as { link: TopoPick }).link.ref, refs, sizeOf(bounds));
+            const m = strictMatch((c as { link: TopoPick }).link.ref, candidates, sizeOf(bounds), 0.3);
             links[c.id] = m === null ? null : projectEdge(frame, { partId, ref: refs[m] });
           });
         } finally {

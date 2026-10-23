@@ -770,6 +770,12 @@ export function solveSketch(sketch: SketchData, options: SolveOptions = {}): Sol
     const r = solveWhole(d.reduced, options);
     return { ...r, sketch: placeDerived(sketch, r.sketch, d) };
   }
+  if (d && options.drag && d.points.has(options.drag.pointId)) {
+    // Dragging a copy turns the pattern round its centre (the centre stays put; the original moves), like Onshape.
+    const centre = d.points.get(options.drag.pointId)!.centre;
+    const p = sketch.points.find((q) => q.id === centre);
+    if (p) return solveWhole(sketch, { ...options, place: [...(options.place ?? []), { pointId: centre, x: p.x, y: p.y }] });
+  }
   return solveWhole(sketch, options);
 }
 

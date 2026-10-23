@@ -164,16 +164,18 @@ export function matchRefs(wants: TopoRef[], candidates: TopoRef[], size: number)
 
 /**
  * Find one reference again, strictly (for sketches that follow a part): the
- * nearest candidate counts only when it's close (within a tenth of the part's
- * size, or half a millimetre) and clearly nearer than any other — otherwise
+ * nearest candidate counts only when it's close (within `reach` of the part's
+ * size — a tenth unless said — or half a millimetre) and clearly nearer than any other.
+ * Candidates given as null are left out — otherwise
  * it's reported as gone (null) rather than jumping to a different edge or face
  * that happens to be nearby.
  */
-export function strictMatch(want: TopoRef, candidates: TopoRef[], size: number): number | null {
+export function strictMatch(want: TopoRef, candidates: (TopoRef | null)[], size: number, reach = 0.1): number | null {
   let best = -1;
   let bestD = Infinity;
   let second = Infinity;
   candidates.forEach((c, i) => {
+    if (!c) return;
     const d = refDistance(want, c, size);
     if (d < bestD) {
       second = bestD;
@@ -181,7 +183,7 @@ export function strictMatch(want: TopoRef, candidates: TopoRef[], size: number):
       best = i;
     } else if (d < second) second = d;
   });
-  if (best < 0 || bestD > Math.max(0.5, 0.1 * size)) return null;
+  if (best < 0 || bestD > Math.max(0.5, reach * size)) return null;
   // Two about as near (and neither where it was): can't tell which is meant.
   if (bestD > 1e-3 && second < 1.5 * bestD) return null;
   return best;

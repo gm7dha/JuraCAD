@@ -199,9 +199,13 @@ describe("circular pattern round a chosen point", () => {
     const [ox, oy] = pointPos(dragged, (curveById(dragged, circle) as { center: string }).center);
     const [cx, cy] = pointPos(dragged, centre);
     const [px, py] = pointPos(dragged, cc);
-    // Still the original turned 180° round the centre.
+    // Still the original turned 180° round the centre, and the centre stays where it was (the original moves instead).
     expect(px).toBeCloseTo(2 * cx - ox, 6);
     expect(py).toBeCloseTo(2 * cy - oy, 6);
+    expect(cx).toBeCloseTo(10, 6);
+    expect(cy).toBeCloseTo(0, 6);
+    expect(px).toBeCloseTo(-2, 6);
+    expect(ox).toBeCloseTo(22, 6);
   });
 
   it("the origin is still the default centre", () => {
