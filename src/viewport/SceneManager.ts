@@ -7,6 +7,7 @@ import type { DatumName, PlaneName, SelectionItem } from "../model/store";
 import type { SketchController, SketchPointer, SketchTransient } from "../sketch/controller";
 import { planeFrame, type SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
+import type { PickableLine, ReferenceShape } from "../model/patternRefs";
 import { labelSprite } from "./labels";
 import { SketchLayer, type ActiveSketch } from "./SketchLayer";
 import { VIEW_DIRECTIONS, ViewCube, type StandardView } from "./ViewCube";
@@ -61,7 +62,9 @@ export type PickTarget =
   | { kind: "part"; item: SelectionItem; point?: [number, number, number]; /** The same point in the part's own coordinates (before it's placed in an assembly). */ local?: [number, number, number] }
   | { kind: "plane"; plane: PlaneName }
   /** A Plane feature (by its feature id). */
-  | { kind: "customPlane"; id: string };
+  | { kind: "customPlane"; id: string }
+  /** A straight line in a finished sketch (`id` is the sketch feature's id), clickable while a mirror or pattern wants one. */
+  | { kind: "sketchLine"; id: string; line: string };
 
 /** A Plane feature to draw: where it is, its name, and whether it's highlighted. */
 export interface CustomPlane {
@@ -1097,6 +1100,10 @@ export class SceneManager {
     const faceHit = this.raycaster.intersectObjects(meshes, false).find(kept);
     const edgeHit = this.raycaster.intersectObjects(lines, false).find(kept);
 
+    // A sketch line (while a mirror or pattern wants one), unless it's hidden behind a face.
+    const line = this.nearestPickLine(threshold);
+    if (line && (!faceHit || line.distance <= faceHit.distance + threshold * 2)) return { kind: "sketchLine", id: line.line.sketch, line: line.line.line };
+
     // Prefer an edge when it's not hidden behind the face we hit (unless only faces are wanted).
     if (edgeHit && !this.facesOnly && (!faceHit || edgeHit.distance <= faceHit.distance + threshold * 2)) {
       const partId = edgeHit.object.userData.partId as string;
@@ -1121,6 +1128,94 @@ export class SceneManager {
     const planeHit = this.raycaster.intersectObjects(squares, false)[0];
     if (planeHit) return { kind: "plane", plane: planeHit.object.userData.plane as PlaneName };
     return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // References for Mirror and patterns: clickable sketch lines, and the chosen plane or axis drawn in the view.
+
+  private pickLines: PickableLine[] = [];
+  private hoverLine: PickableLine | null = null;
+  private reference: ReferenceShape | null = null;
+  private readonly referenceGroup = new THREE.Group();
+
+  /** Sketch lines that can be clicked (empty: none). */
+  setPickLines(lines: PickableLine[]): void {
+    this.pickLines = lines;
+    if (this.hoverLine && !lines.some((l) => l.sketch === this.hoverLine!.sketch && l.line === this.hoverLine!.line)) this.hoverLine = null;
+    this.drawReference();
+  }
+
+  /** Show the plane or axis a mirror or pattern uses (null: nothing). */
+  setReference(shape: ReferenceShape | null): void {
+    this.reference = shape;
+    this.drawReference();
+  }
+
+  private nearestPickLine(threshold: number): { line: PickableLine; distance: number } | null {
+    if (!this.pickLines.length) return null;
+    const ray = this.raycaster.ray;
+    let best: { line: PickableLine; distance: number } | null = null;
+    const onRay = new THREE.Vector3();
+    for (const l of this.pickLines) {
+      const d2 = ray.distanceSqToSegment(new THREE.Vector3(...l.a), new THREE.Vector3(...l.b), onRay);
+      if (d2 > threshold * threshold) continue;
+      const distance = onRay.distanceTo(ray.origin);
+      if (!best || distance < best.distance) best = { line: l, distance };
+    }
+    return best;
+  }
+
+  private drawReference(): void {
+    const g = this.referenceGroup;
+    for (const child of [...g.children]) {
+      g.remove(child);
+      const o = child as THREE.Mesh;
+      o.geometry?.dispose();
+      (o.material as THREE.Material | undefined)?.dispose();
+    }
+    if (!g.parent) this.scene.add(g);
+    const v = (p: readonly number[]) => new THREE.Vector3(p[0], p[1], p[2]);
+    const segment = (a: THREE.Vector3, b: THREE.Vector3, colour: string, dashed = false) => {
+      const geo = new THREE.BufferGeometry().setFromPoints([a, b]);
+      const mat = dashed
+        ? new THREE.LineDashedMaterial({ color: colour, dashSize: this.planeSize / 25, gapSize: this.planeSize / 50, depthTest: false, transparent: true })
+        : new THREE.LineBasicMaterial({ color: colour, depthTest: false, transparent: true });
+      const line = new THREE.Line(geo, mat);
+      if (dashed) line.computeLineDistances();
+      line.renderOrder = 10;
+      g.add(line);
+    };
+    const square = (o: THREE.Vector3, u: THREE.Vector3, w: THREE.Vector3) => {
+      const s = this.planeSize * 0.8;
+      const hu = u.clone().normalize().multiplyScalar(s / 2);
+      const hv = w.clone().normalize().multiplyScalar(s / 2);
+      const c = [o.clone().sub(hu).sub(hv), o.clone().add(hu).sub(hv), o.clone().add(hu).add(hv), o.clone().sub(hu).add(hv)];
+      const fill = new THREE.Mesh(
+        new THREE.BufferGeometry().setFromPoints([c[0], c[1], c[2], c[0], c[2], c[3]]),
+        new THREE.MeshBasicMaterial({ color: COLOURS.planeSelected, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false }),
+      );
+      fill.renderOrder = -1;
+      g.add(fill);
+      const outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(c), new THREE.LineBasicMaterial({ color: COLOURS.planeSelectedBorder, transparent: true, opacity: 0.95 }));
+      g.add(outline);
+    };
+    const r = this.reference;
+    if (r?.kind === "plane") square(v(r.origin), v(r.u), v(r.v));
+    if (r?.kind === "axis") {
+      const d = v(r.dir).normalize().multiplyScalar(this.planeSize * 0.75);
+      segment(v(r.through).sub(d), v(r.through).add(d), COLOURS.edgeSelected, true);
+    }
+    if (r?.kind === "line") {
+      segment(v(r.a), v(r.b), COLOURS.edgeSelected);
+      // The line carried on both ways, dashed, as the axis or the edge of the mirror plane.
+      const a = v(r.a);
+      const b = v(r.b);
+      const d = b.clone().sub(a).normalize().multiplyScalar(this.planeSize * 0.5);
+      segment(a.clone().sub(d), b.clone().add(d), COLOURS.edgeSelected, true);
+      if (r.plane) square(a.clone().add(b).multiplyScalar(0.5), v(r.plane.u), v(r.plane.v));
+    }
+    const h = this.hoverLine;
+    if (h) segment(v(h.a), v(h.b), COLOURS.edgeHover);
   }
 
   private applyHighlights(): void {
@@ -1314,6 +1409,11 @@ export class SceneManager {
     const partHit = hit?.kind === "part" ? hit.item : null;
     const planeHit = hit?.kind === "plane" ? hit.plane : null;
     const customHit = hit?.kind === "customPlane" ? hit.id : null;
+    const lineHit = hit?.kind === "sketchLine" ? this.pickLines.find((l) => l.sketch === hit.id && l.line === hit.line) ?? null : null;
+    if (lineHit !== this.hoverLine) {
+      this.hoverLine = lineHit;
+      this.drawReference();
+    }
     if (customHit !== this.hoverCustomPlane) {
       this.hoverCustomPlane = customHit;
       this.setCustomPlanes(this.customPlaneData);

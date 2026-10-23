@@ -3004,3 +3004,26 @@ kbd {
     display: none;
   }
 }
+
+/* Mirror plane / pattern axis boxes: what's chosen (with ✕), or what to click. */
+.reference-box .reference-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 4px 2px 10px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.reference-box .reference-quick {
+  margin: 4px 0 6px;
+}
+
+.reference-box .reference-quick button {
+  padding: 4px 0;
+}

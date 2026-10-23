@@ -527,7 +527,8 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   if (f.type === "extrude" && end !== "upToFace" && end !== "upToVertex") keys.delete("offset");
   // A circular pattern's axis: where along it doesn't matter, so that box is hidden.
   // An axis clicked in the 3D view says where it goes, so none of those boxes are needed.
-  if (f.type === "circularPattern") (f.pattern?.along ? ["cx", "cy", "cz"] : [`c${f.pattern?.axis ?? "z"}`]).forEach((k) => keys.delete(k));
+  // Nothing chosen yet, or a sketch line: none of them either.
+  if (f.type === "circularPattern") (f.pattern?.along || f.pattern?.line || f.pattern?.unset ? ["cx", "cy", "cz"] : [`c${f.pattern?.axis ?? "z"}`]).forEach((k) => keys.delete(k));
   if (f.type === "chamfer") {
     if (f.chamferType !== "twoDistances") keys.delete("distance2");
     if (f.chamferType !== "distanceAngle") keys.delete("angle");

@@ -675,6 +675,38 @@ try {
   await page.waitForTimeout(600);
   await shot("patterned");
 
+  step = "choosing a mirror plane by clicking a face";
+  await tool("Mirror");
+  const mirrorBox = '.feature-dialog fieldset[aria-label="Mirror plane"]';
+  await page.waitForSelector(`${mirrorBox} >> text=Click a flat face, a plane or a sketch line in the view`, { timeout: 5_000 });
+  {
+    // An upward-facing flat face that isn't under the dialog.
+    const ups = await page.evaluate(() => {
+      const v = window.juracadViewport.current;
+      return v.shownParts().flatMap((p) => p.faceRefs.map((f, i) => (f.surface === "PLANE" && f.normal[2] > 0.99 ? v.screenPointOnFace(p.id, i) : null)).filter(Boolean));
+    });
+    const dialog = await page.locator(".feature-dialog").boundingBox();
+    const canvasBox = await page.locator(".viewport-canvas").boundingBox();
+    const free = ups.find((t) => !dialog || !canvasBox || t.x + canvasBox.x > dialog.x + dialog.width + 4 || t.y + canvasBox.y > dialog.y + dialog.height + 4);
+    if (!free) throw new Error("couldn't find a flat face to click for the mirror plane");
+    await page.locator(".viewport-canvas").click({ position: free });
+    await page.waitForSelector(`${mirrorBox} .reference-chip >> text=Flat face of`, { timeout: 5_000 });
+    await shot("mirrorplane");
+    await page.locator(mirrorBox).getByRole("radio", { name: "Top" }).click();
+    await page.waitForSelector(`${mirrorBox} .reference-chip >> text=Top plane`, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Clear the mirror plane" }).click();
+    await page.waitForSelector(`${mirrorBox} >> text=Click a flat face, a plane or a sketch line in the view`, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Cancel" }).click();
+  }
+
+  step = "choosing a circular pattern's axis";
+  await tool("Circular");
+  const axisBox = '.feature-dialog fieldset[aria-label="Axis"]';
+  await page.waitForSelector(`${axisBox} >> text=Click a round face, an edge or a sketch line in the view`, { timeout: 5_000 });
+  await page.locator(axisBox).getByRole("radio", { name: "Z" }).click();
+  await page.waitForSelector(`${axisBox} .reference-chip >> text=Z axis`, { timeout: 5_000 });
+  await page.getByRole("button", { name: "Cancel" }).click();
+
   step = "opening the hole tool";
   await tool("Hole");
   await page.waitForSelector(".feature-dialog >> text=Where and what");

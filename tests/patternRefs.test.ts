@@ -15,6 +15,7 @@ import {
   sketchLine3D,
 } from "../src/model/patternRefs";
 import type { Feature } from "../src/model/types";
+import { visibleParamKeys } from "../src/model/features";
 import { addLine } from "../src/sketch/ops";
 import { emptySketch } from "../src/sketch/types";
 
@@ -130,6 +131,14 @@ describe("choosing a pattern's direction or axis", () => {
     expect(patternReferenceText(rows, [], true)).toBe("Flat face of a part");
     expect(setPatternDirection(rows, { kind: "none" }, true)).toEqual(grid);
     expect(patternReferenceText(grid, [], true)).toBe("Y axis");
+  });
+
+  it("only asks where the axis goes through for X, Y or Z", () => {
+    const keys = (pattern: NonNullable<Feature["pattern"]>) => [...visibleParamKeys({ type: "circularPattern", extrude: undefined, hole: undefined, planeDef: undefined, fastener: undefined, surface: undefined, pattern })].filter((k) => k.startsWith("c") && k.length === 2);
+    expect(keys(base)).toEqual(["cx", "cy"]);
+    expect(keys({ ...base, unset: true })).toEqual([]);
+    expect(keys({ ...base, line: { sketch: "s", line: "l" } })).toEqual([]);
+    expect(keys({ ...base, along: round })).toEqual([]);
   });
 
   it("draws a circular pattern's X, Y or Z axis through its typed point", () => {
