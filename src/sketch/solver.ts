@@ -320,6 +320,20 @@ function buildSystem(sketch: SketchData): System {
           },
         };
       }
+      case "patternCopy": {
+        // The copy is the original turned round the centre by a set angle.
+        const p = P(a), q = P(b), c = P(con.refs[2]);
+        const t = ((con.extra?.[0] ?? 0) * Math.PI) / 180;
+        const cs = Math.cos(t), sn = Math.sin(t);
+        return {
+          size: 2,
+          eval: (x, out) => {
+            const u = p(x), w = q(x), o = c(x);
+            const dx = w[0] - o[0], dy = w[1] - o[1];
+            out.push(u[0] - (o[0] + dx * cs - dy * sn), u[1] - (o[1] + dx * sn + dy * cs));
+          },
+        };
+      }
       case "symmetric": {
         // Two points mirror images across a line: halfway between them is on the line, and the line between them is square to it.
         const p = P(a);
@@ -668,6 +682,12 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
   const x = Float64Array.from(sys.x0);
   // Column weights: larger = the solver prefers not to move that unknown.
   const weight = new Float64Array(sys.n).fill(1);
+  // A pattern's copies give way first, so the originals (and the centre) stay where they are and the copies follow them.
+  for (const c of sketch.constraints) {
+    if (c.type !== "patternCopy") continue;
+    const i = sys.pointVar.get(c.refs[0]);
+    if (i !== undefined) weight[i] = weight[i + 1] = 1e-4;
+  }
 
   if (options.moveRigid) {
     for (const id of options.moveRigid.pointIds) {
