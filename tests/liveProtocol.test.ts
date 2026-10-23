@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { decideChange, hostAllowed, isNewer, LIVE_PATH, LIVE_SUBPROTOCOL, originAllowed, parseAppMessage, parseExtensionMessage } from "../src/live/protocol";
-import { blockedHelp, notFoundHelp } from "../src/live/client";
+import { blockedHelp, notFoundHelp, recheckDelay, RECHECK } from "../src/live/client";
 import { acceptKey, CLOSE, encodeFrame, FrameReader, upgradeProblem } from "../src/mcp/websocket";
 import { describeChange } from "../src/mcp/live";
 import { createFeature, addFeature, emptyDocument } from "../src/model/document";
@@ -202,6 +202,23 @@ describe("undo step labels", () => {
     expect(describeChange("new_design", two, emptyDocument("Box"), true)).toBe('Claude: started a new design, "Box"');
     expect(describeChange("open_design", two, emptyDocument("Bracket"), true)).toBe('Claude: opened "Bracket"');
     expect(describeChange("set_variables", one, { ...one, variables: [{ id: "v1", name: "t", value: "3" }] }, false)).toBe("Claude: changed the variables");
+  });
+});
+
+describe("looking for Claude chats started later", () => {
+  it("looks every 4 s for the first minute after Connect, then every 25 s", () => {
+    expect(RECHECK).toEqual({ fast: 4_000, fastFor: 60_000, slow: 25_000 });
+    expect(recheckDelay(0)).toBe(4_000);
+    expect(recheckDelay(59_999)).toBe(4_000);
+    expect(recheckDelay(60_000)).toBe(25_000);
+    expect(recheckDelay(3_600_000)).toBe(25_000);
+    // About 15 + 142 = 157 looks in the first hour, instead of 900.
+    let t = 0;
+    let looks = 0;
+    while ((t += recheckDelay(t)) <= 3_600_000) looks++;
+    expect(looks).toBeLessThan(160);
+    expect(recheckDelay(500, { fast: 100, fastFor: 1_000, slow: 5_000 })).toBe(100);
+    expect(recheckDelay(1_000, { fast: 100, fastFor: 1_000, slow: 5_000 })).toBe(5_000);
   });
 });
 

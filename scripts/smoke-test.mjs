@@ -77,6 +77,12 @@ async function shot(name) {
   }
 }
 
+/**
+ * Live with Claude looks for Claude chats on its ports; the browser logs each one nothing answers on (even a try
+ * still on its way when the test disconnects). Expected, not a fault: only refused connections to those ports.
+ */
+const liveProbeRefused = (e) => /^WebSocket connection to 'ws:\/\/127\.0\.0\.1:476(1[5-9]|2[0-4])\/juracad-live' failed: .*net::ERR_CONNECTION_REFUSED/.test(e);
+
 const statusText = () => page.locator(".status-strip").innerText();
 
 try {
@@ -505,8 +511,6 @@ try {
       rmSync(designs, { recursive: true, force: true });
     }
   }
-  // The browser notes each port it tried when nothing was listening: expected here, not a fault.
-  for (let i = consoleErrors.length - 1; i >= 0; i--) if (/WebSocket connection to 'ws:\/\/127\.0\.0\.1:476(1[5-9]|2[0-4])/.test(consoleErrors[i])) consoleErrors.splice(i, 1);
 
   step = "starting a sketch and picking the Top plane";
   await page.getByRole("button", { name: "Sketch", exact: true }).click();
@@ -1512,7 +1516,7 @@ try {
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
-  const real = consoleErrors.filter((e) => !/favicon/i.test(e));
+  const real = consoleErrors.filter((e) => !/favicon/i.test(e) && !liveProbeRefused(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
@@ -1522,7 +1526,7 @@ try {
   );
 } catch (e) {
   await shot("failure").catch(() => {});
-  annotate("error", `Smoke test failed while ${step}`, `${e instanceof Error ? e.message : e}\nConsole: ${consoleErrors.join(" | ") || "none"}`);
+  annotate("error", `Smoke test failed while ${step}`, `${e instanceof Error ? e.message : e}\nConsole: ${consoleErrors.filter((x) => !liveProbeRefused(x)).join(" | ") || "none"}`);
   process.exitCode = 1;
 } finally {
   await browser.close();

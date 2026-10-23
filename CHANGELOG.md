@@ -8,7 +8,7 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.26.2 — Live with every Claude chat · commit `(set when merged)`
+## v0.26.2 — Live with every Claude chat · commit `7ed1540`
 
 - **Live with Claude** now links every Claude chat that has JuraCAD, not just the first one found: Claude starts the
   extension once per chat, so the chat you were typing in could be left out. Chats started after you click Connect are

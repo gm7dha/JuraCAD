@@ -75,6 +75,12 @@ class FakeApp implements LiveHost {
     this.listeners.forEach((f) => f());
     return null;
   }
+  /** Set while the link watches whether the tab is in view: call it to hide or show the tab. */
+  setVisible: ((visible: boolean) => void) | null = null;
+  watchVisibility(onChange: (visible: boolean) => void) {
+    this.setVisible = onChange;
+    return () => (this.setVisible = null);
+  }
   subscribe(fn: () => void) {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -427,7 +433,7 @@ describe("Live with Claude", () => {
     await new Promise((r) => spare!.server.close(r));
 
     const app = new FakeApp(emptyDocument("Shared"));
-    const client = new LiveClient(app, socketFrom("https://gm7dha.github.io"), [a.port, b.port, c.port, laterPort], { open: 2_000, openWithPrompt: 2_000, welcome: 5_000, recheck: 150 });
+    const client = new LiveClient(app, socketFrom("https://gm7dha.github.io"), [a.port, b.port, c.port, laterPort], { open: 2_000, openWithPrompt: 2_000, welcome: 5_000, recheck: { fast: 150 } });
     cleanups.push(() => client.disconnect());
     const state = await client.connect();
     expect(state.kind === "connected" && state.chats).toBe(3);
@@ -476,5 +482,40 @@ describe("Live with Claude", () => {
     await ok(c.session, "add_feature", { type: "box", name: "From C", width: 2, depth: 2, height: 2, x: 40, y: 0, z: 0, operation: "new" });
     expect(app.doc.features.map((f) => f.name)).toContain("From C");
     await until(() => a.bridge.doc?.features.some((f) => f.name === "From C") === true, "A to see C's box");
+  });
+
+  it("looks for new chats often at first, then rarely, and not at all while the tab is hidden", async () => {
+    const { bridge, port } = await setup(emptyDocument("x"));
+    // A port with nothing on it, as most are: each look tries it.
+    const spare = await startLiveServer({ ports: [0], accept: () => {} });
+    const empty = spare!.port;
+    await new Promise((r) => spare!.server.close(r));
+    const app = new FakeApp(emptyDocument("Timing"));
+    const client = new LiveClient(app, socketFrom("https://gm7dha.github.io"), [port, empty], { open: 1_000, recheck: { fast: 50, fastFor: 1_200, slow: 60_000 } });
+    cleanups.push(() => client.disconnect());
+    await client.connect();
+    await until(() => bridge.connected, "connected");
+    expect(app.setVisible).not.toBeNull();
+    // Hidden straight away: no looking at all.
+    app.setVisible!(false);
+    const hiddenAt = client.rechecks;
+    await wait(300);
+    expect(client.rechecks).toBe(hiddenAt);
+    // Back in view: one look at once, then often (still in the first stretch).
+    app.setVisible!(true);
+    expect(client.rechecks).toBe(hiddenAt + 1);
+    await wait(500);
+    expect(client.rechecks).toBeGreaterThanOrEqual(hiddenAt + 3);
+    // After the first stretch: rarely (here once a minute), so nothing more for a good while.
+    await wait(900);
+    const settled = client.rechecks;
+    await wait(500);
+    expect(client.rechecks).toBe(settled);
+    // Focus (or showing the tab) looks straight away, whatever the schedule.
+    app.setVisible!(true);
+    expect(client.rechecks).toBe(settled + 1);
+    // Disconnecting stops watching.
+    client.disconnect();
+    expect(app.setVisible).toBeNull();
   });
 });

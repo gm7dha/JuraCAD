@@ -102,7 +102,8 @@
   (the first free port of `LIVE_PORTS` 47615–47624: Claude starts one extension process per chat, so several run at
   once, and the tab links ALL of them — `LiveClient` keeps one `Link` per port, each with its own versions; every user
   change goes to all, a change from any is applied with the usual rules and then pushed to the others; while connected
-  it re-probes unlinked ports every 4 s, so later chats join by themselves, and drops links whose process exits;
+  it re-probes unlinked ports (`recheckDelay`: every 4 s for the first minute, then every 25 s; paused while the tab
+  is hidden, at once on focus/showing — browsers log each refused port), so later chats join by themselves, and drops links whose process exits;
   `tests/liveLink.test.ts` "links every Claude chat" and the smoke test (two chats, then a third) cover it;
   path `/juracad-live`, sub-protocol `juracad-live.1`), via a small hand-written
   WebSocket server (`src/mcp/websocket.ts`, Node http + RFC 6455 frames; no `ws` package). It accepts only the JuraCAD

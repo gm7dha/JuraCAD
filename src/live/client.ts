@@ -27,6 +27,27 @@ export interface LiveHost {
   subscribe(listener: () => void): () => void;
   /** The browser's "apps on this device" (loopback) permission, if it can tell. */
   permission?: () => Promise<PermissionState>;
+  /**
+   * Call `onChange(true)` when the tab comes into view or gets focus, and
+   * `onChange(false)` when it's hidden. Returns how to stop. Optional (tests).
+   */
+  watchVisibility?: (onChange: (visible: boolean) => void) => () => void;
+}
+
+/** How often to look for Claude chats started since connecting. */
+export interface RecheckTiming {
+  /** Soon after Connect: often, as the user is likely starting a chat. */
+  fast: number;
+  /** For how long after Connect to look often. */
+  fastFor: number;
+  /** After that: now and then (each failed try is logged by the browser). */
+  slow: number;
+}
+export const RECHECK: RecheckTiming = { fast: 4_000, fastFor: 60_000, slow: 25_000 };
+
+/** The wait before the next look, `sinceConnect` ms after Connect was clicked. Pure. */
+export function recheckDelay(sinceConnect: number, t: RecheckTiming = RECHECK): number {
+  return sinceConnect < t.fastFor ? t.fast : t.slow;
 }
 
 /** The parts of a WebSocket used here (the browser's own, or Node's in tests). */
@@ -107,6 +128,11 @@ export class LiveClient {
   /** True while Claude's change is being applied (the store tells its listeners straight away: that's not the user). */
   private applying = false;
   private recheckTimer: ReturnType<typeof setTimeout> | null = null;
+  /** When the user connected (for the re-check schedule), and whether the tab is out of sight. */
+  private connectedAt = 0;
+  private hidden = false;
+  private unwatch: (() => void) | null = null;
+  private readonly timeouts: { open: number; openWithPrompt: number; welcome: number; recheck: RecheckTiming };
   private probing = new Set<number>();
   /** Ports whose chat belongs to another JuraCAD tab: not asked again for a while. */
   private skipUntil = new Map<number, number>();
@@ -116,8 +142,18 @@ export class LiveClient {
     private readonly host: LiveHost,
     private readonly makeSocket: SocketFactory,
     private readonly ports: readonly number[] = LIVE_PORTS,
-    private readonly timeouts = { open: 5_000, openWithPrompt: 60_000, welcome: 20_000, recheck: 4_000 },
-  ) {}
+    timeouts: Partial<{ open: number; openWithPrompt: number; welcome: number; recheck: Partial<RecheckTiming> }> = {},
+  ) {
+    this.timeouts = {
+      open: timeouts.open ?? 5_000,
+      openWithPrompt: timeouts.openWithPrompt ?? 60_000,
+      welcome: timeouts.welcome ?? 20_000,
+      recheck: { ...RECHECK, ...timeouts.recheck },
+    };
+  }
+
+  /** How many times the ports have been looked at again while connected (for tests). */
+  rechecks = 0;
 
   onChange(fn: () => void): () => void {
     this.listeners.add(fn);
@@ -169,6 +205,9 @@ export class LiveClient {
     if (this.links.size) {
       this.unsubscribe = this.host.subscribe(() => this.pushAll());
       this.showConnected();
+      this.connectedAt = Date.now();
+      this.hidden = false;
+      this.unwatch = this.host.watchVisibility?.((visible) => this.visibility(visible)) ?? null;
       this.scheduleRecheck();
       return this.state;
     }
@@ -183,31 +222,57 @@ export class LiveClient {
     return this.state;
   }
 
-  /** While connected: look again for extensions started since (a new Claude chat), every few seconds. */
+  /** The tab was hidden (stop looking) or came back into view / got focus (look straight away). */
+  private visibility(visible: boolean): void {
+    if (!this.connected) return;
+    if (!visible) {
+      this.hidden = true;
+      if (this.recheckTimer) clearTimeout(this.recheckTimer);
+      this.recheckTimer = null;
+      return;
+    }
+    this.hidden = false;
+    void this.recheck();
+  }
+
+  /**
+   * While connected: look again for extensions started since (a new Claude
+   * chat) — every 4 s for the first minute, then every 25 s, never while the
+   * tab is hidden. (Browsers log every port that doesn't answer.)
+   */
   private scheduleRecheck(): void {
     if (this.recheckTimer) clearTimeout(this.recheckTimer);
-    const attempt = this.attempt;
-    this.recheckTimer = setTimeout(async () => {
+    this.recheckTimer = null;
+    if (this.hidden || !this.connected) return;
+    this.recheckTimer = setTimeout(() => {
       this.recheckTimer = null;
-      if (attempt !== this.attempt || !this.connected) return;
-      const now = Date.now();
-      const free = this.ports.filter((p) => !this.links.has(p) && !this.probing.has(p) && (this.skipUntil.get(p) ?? 0) <= now);
-      free.forEach((p) => this.probing.add(p));
-      const outcomes = await Promise.all(free.map((port) => this.tryPort(port, this.timeouts.open, attempt)));
-      free.forEach((p) => this.probing.delete(p));
-      if (attempt !== this.attempt || !this.connected) {
-        outcomes.forEach((o) => typeof o === "object" && "link" in o && this.closeSocket(o.link.socket));
-        return;
-      }
-      const added = outcomes.filter((o): o is { link: Link } => typeof o === "object" && "link" in o);
-      for (const o of added) this.adopt(o.link);
-      if (added.length) {
-        // The design may have changed while saying hello: bring the new ones up to date.
-        this.pushAll();
-        this.showConnected();
-      }
-      this.scheduleRecheck();
-    }, this.timeouts.recheck);
+      void this.recheck();
+    }, recheckDelay(Date.now() - this.connectedAt, this.timeouts.recheck));
+  }
+
+  private async recheck(): Promise<void> {
+    const attempt = this.attempt;
+    if (this.recheckTimer) clearTimeout(this.recheckTimer);
+    this.recheckTimer = null;
+    if (!this.connected || this.hidden) return;
+    this.rechecks++;
+    const now = Date.now();
+    const free = this.ports.filter((p) => !this.links.has(p) && !this.probing.has(p) && (this.skipUntil.get(p) ?? 0) <= now);
+    free.forEach((p) => this.probing.add(p));
+    const outcomes = await Promise.all(free.map((port) => this.tryPort(port, this.timeouts.open, attempt)));
+    free.forEach((p) => this.probing.delete(p));
+    if (attempt !== this.attempt || !this.connected) {
+      outcomes.forEach((o) => typeof o === "object" && "link" in o && this.closeSocket(o.link.socket));
+      return;
+    }
+    const added = outcomes.filter((o): o is { link: Link } => typeof o === "object" && "link" in o);
+    for (const o of added) this.adopt(o.link);
+    if (added.length) {
+      // The design may have changed while saying hello: bring the new ones up to date.
+      this.pushAll();
+      this.showConnected();
+    }
+    this.scheduleRecheck();
   }
 
   private closeSocket(socket: SocketLike): void {
@@ -355,6 +420,8 @@ export class LiveClient {
     this.attempt++;
     if (this.recheckTimer) clearTimeout(this.recheckTimer);
     this.recheckTimer = null;
+    this.unwatch?.();
+    this.unwatch = null;
     this.unsubscribe?.();
     this.unsubscribe = null;
     for (const link of this.links.values()) this.closeSocket(link.socket);
