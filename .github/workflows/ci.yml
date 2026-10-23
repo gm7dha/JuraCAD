@@ -84,7 +84,7 @@ jobs:
         env:
           # Set to "1" to attach small screenshots as annotations for review.
           SMOKE_SCREENSHOTS: "1"
-          SMOKE_SHOW: "facesketch,sketchpattern,sketch"
+          SMOKE_SHOW: "facehint,facesketch"
         run: npm run smoke
 
       - name: Attach screenshot 1

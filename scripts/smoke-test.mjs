@@ -1459,6 +1459,8 @@ try {
       const e = st.sketchLinks[st.editing.draft.id].edges.find((k) => k.kind === "line");
       return { at: e.a, screen: window.juracadViewport.current.projectSketchPoint(e.a[0], e.a[1]) };
     });
+    // A construction line, so the outline used below stays one closed shape.
+    await page.keyboard.press("q");
     await page.keyboard.press("l");
     await page.mouse.move(box.x + corner.screen.x + 3, box.y + corner.screen.y + 2, { steps: 3 });
     await page.mouse.click(box.x + corner.screen.x + 3, box.y + corner.screen.y + 2);
@@ -1466,6 +1468,7 @@ try {
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
+    await page.keyboard.press("q");
     const snapped = await page.evaluate((want) => {
       const d = window.juracadStore.getState().editing.draft.sketch.data;
       const line = d.curves.find((c) => c.type === "line" && !c.link);
@@ -1475,8 +1478,16 @@ try {
     }, corner.at);
     if (!snapped.hasRef || !snapped.at || Math.hypot(snapped.at[0] - snapped.want[0], snapped.at[1] - snapped.want[1]) > 1e-6)
       throw new Error(`the line didn't snap to the face's corner: ${JSON.stringify(snapped)}`);
+    // Hovering a face edge marks its middle.
+    const quarter = await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      const e = st.sketchLinks[st.editing.draft.id].edges.filter((k) => k.kind === "line")[1];
+      return window.juracadViewport.current.projectSketchPoint(e.a[0] * 0.75 + e.b[0] * 0.25, e.a[1] * 0.75 + e.b[1] * 0.25);
+    });
+    await page.mouse.move(box.x + quarter.x, box.y + quarter.y, { steps: 3 });
+    await shot("facehint");
     await page.getByRole("button", { name: "Use all the face's edges" }).click();
-    await page.waitForFunction(() => /closed shape/.test(document.querySelector(".sketch-status")?.textContent ?? ""), null, { timeout: 10_000 });
+    await page.waitForFunction(() => /\d+ closed shapes? ready to extrude/.test(document.querySelector(".sketch-status")?.textContent ?? ""), null, { timeout: 10_000 });
     await shot("facesketch");
     await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
     if (await page.locator(".sketch-panel").count()) await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
