@@ -2373,7 +2373,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       )}
       {layout?.tooBig &&
         (layout.ownTooBig ? (
-          <div className="drawing-message warn">A view at its own scale is too big for this sheet. Choose a smaller scale for it under View scales, or a bigger sheet.</div>
+          <div className="drawing-message warn">A view at its own scale is too big for this sheet. Click the view and choose a smaller scale (or use View scales in the panel), or choose a bigger sheet.</div>
         ) : (
           <div className="drawing-message warn">The part is too big for this sheet even at {scaleLabel(layout.scale)}. Try a bigger sheet.</div>
         ))}
