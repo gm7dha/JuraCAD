@@ -1,8 +1,10 @@
 /**
  * A small map of a sketch's areas in the Extrude / Revolve / Sweep dialog:
  * click the areas to use (like clicking regions in Onshape). Nothing picked
- * means every closed shape, as before. The map (and the work of finding the
- * areas) only appears once asked for, or when areas are already picked.
+ * means every closed shape, as before. The areas can also be clicked in the
+ * 3D view (see `areaClicks.ts` and `SceneManager.setPickAreas`); both make the
+ * same picks, so they stay in step. The map only appears once asked for, or
+ * when areas are already picked.
  */
 import { useMemo, useState } from "react";
 
@@ -19,9 +21,9 @@ export function AreaPicker({ data, areas, verb, onChange }: { data: SketchData; 
     return (
       <div className="area-picker">
         <p className="dialog-hint field-hint">
-          Using every closed shape.{" "}
+          Using every closed shape. To {verb} only some areas, click them in the 3D view, or{" "}
           <button type="button" className="link-button" onClick={() => setOpen(true)}>
-            Pick areas…
+            pick them on a map…
           </button>
         </p>
       </div>
@@ -90,8 +92,8 @@ function AreaMap({ data, areas, verb, onChange }: { data: SketchData; areas: Are
       {missing > 0 && <p className="dialog-error">{missingAreasMessage(missing, verb)}</p>}
       <p className="dialog-hint field-hint">
         {all
-          ? `Using every closed shape (shaded). To ${verb} only some areas, click them — where lines cross, each piece is its own area.`
-          : `${picked.size} area${picked.size === 1 ? "" : "s"} picked. Click an area again to leave it out.`}
+          ? `Using every closed shape (shaded). To ${verb} only some areas, click them here or in the 3D view — where lines cross, each piece is its own area.`
+          : `${picked.size} area${picked.size === 1 ? "" : "s"} picked. Click an area again (here or in the 3D view) to leave it out.`}
         {!all && (
           <>
             {" "}

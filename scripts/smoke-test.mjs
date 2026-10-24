@@ -560,8 +560,29 @@ try {
   await page.getByRole("button", { name: "Extrude", exact: true }).click();
   await page.getByRole("radio", { name: "New" }).click();
   await page.locator("#param-depth").fill("15");
+  step = "clicking an area of the sketch in the 3D view (the disc in the plate's hole)";
+  await page.evaluate(() => window.juracadViewport.current.fit(false));
+  await page.waitForTimeout(300);
+  const areaSpots = await page.evaluate(() => window.juracadViewport.current.areaScreenPoints());
+  if (areaSpots.length !== 2) throw new Error(`expected 2 clickable areas in the 3D view, got ${areaSpots.length}`);
+  const disc = areaSpots.reduce((a, b) => (b.box < a.box ? b : a));
+  const discKind = await page.evaluate(([x, y]) => window.juracadViewport.current.pickKindAt(x, y), [disc.x, disc.y]);
+  if (discKind !== "sketchArea") throw new Error(`a click on the disc would pick ${discKind}, not the sketch area`);
+  const vpBox = await page.locator(".viewport").boundingBox();
+  await page.mouse.click(vpBox.x + disc.x, vpBox.y + disc.y);
+  // The 2D map opens by itself and agrees; the feature remembers just the disc (its size is π × r²).
+  await page.waitForFunction(() => document.querySelector(".area-picker")?.textContent?.includes("1 area picked"));
+  const clickedAreas = await page.evaluate(() => window.juracadStore.getState().editing.draft.areas);
+  if (clickedAreas?.length !== 1 || !(clickedAreas[0][2] > 0)) throw new Error(`expected one picked area, got ${JSON.stringify(clickedAreas)}`);
+  const pickedInMap = await page.locator(".area-map .area-shape.picked").count();
+  if (pickedInMap !== 1) throw new Error(`the 2D map shows ${pickedInMap} picked areas, expected 1`);
+  await shot("area-clicked");
+  // Clicking it again leaves it out: back to every closed shape.
+  await page.mouse.click(vpBox.x + disc.x, vpBox.y + disc.y);
+  await page.waitForFunction(() => !window.juracadStore.getState().editing.draft.areas);
+
   step = "picking an area in the extrude dialog, then going back to all closed shapes";
-  await page.getByRole("button", { name: "Pick areas…" }).click();
+  if ((await page.locator(".area-map").count()) === 0) await page.getByRole("button", { name: "pick them on a map…" }).click();
   const areaShapes = page.locator(".area-map .area-shape");
   await areaShapes.first().waitFor({ timeout: 10_000 });
   const areaCount = await areaShapes.count();
