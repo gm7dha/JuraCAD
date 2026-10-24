@@ -1605,9 +1605,15 @@ try {
     await tool("Text");
     await page.locator('[aria-label="Text words"]').fill("JC");
     const shapesBefore = await page.evaluate(() => /(\d+) closed shape/.exec(document.querySelector(".sketch-status")?.textContent ?? "")?.[1] ?? "0");
-    await page.mouse.click(mx - 150, my + 170);
+    await page.mouse.click(mx - 40, my + 30);
     const texts = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketch.data.texts?.map((t) => t.value) ?? []);
-    if (texts.join() !== "JC") throw new Error(`the Text tool made ${JSON.stringify(texts)}`);
+    if (texts.join() !== "JC") {
+      const why = await page.evaluate(() => {
+        const st = window.juracadStore.getState();
+        return JSON.stringify({ tool: st.sketch?.tool, message: st.sketch?.message, value: st.sketch?.textValue, size: st.sketch?.textSize, points: st.editing?.draft.sketch?.data.points.length });
+      });
+      throw new Error(`the Text tool made ${JSON.stringify(texts)} (${why}; viewport ${JSON.stringify(box)})`);
+    }
     await page.waitForFunction((n) => Number(/(\d+) closed shape/.exec(document.querySelector(".sketch-status")?.textContent ?? "")?.[1] ?? 0) > Number(n), shapesBefore, { timeout: 5_000 });
     await tool("Select");
     const mid = await page.evaluate(() => {
