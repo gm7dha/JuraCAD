@@ -8,7 +8,7 @@
  */
 import { evaluate } from "../model/expr";
 import { crossings, curveParam, nearestParam, offsetParams, offsetPieces, OFFSET_TOLERANCE, pieceOf, splineThrough, tightestBend, type CurveParam, type P2 } from "./curves";
-import { deleteItems, onCurveType, settle, sketchId, type EditResult } from "./ops";
+import { curvePoints, deleteItems, onCurveType, settle, sketchId, type EditResult } from "./ops";
 import { offsetSpan, solveSketch } from "./solver";
 import type { SketchConstraint, SketchCurve, SketchData, SketchEllipse, SketchPoint, SketchSpline } from "./types";
 
@@ -90,8 +90,16 @@ function replaceWithPieces(before: SketchData, original: Wavy, pieces: SketchCur
     }
     return best && best.d < 1e-6 ? best.id : undefined;
   };
-  const pieceWithPoint = (refs: string[]) =>
-    pieces.find((c) => c.id !== original.id && refs.some((r) => (c.type === "spline" ? c.points : c.type === "ellipse" ? [c.start, c.end] : []).includes(r)))?.id ?? pieces[0]?.id;
+  // The points a relation is about: its own point refs, and the points of the other curves it names (a tangent's joint).
+  const pointsOf = (refs: string[]) =>
+    refs.flatMap((r) => {
+      const c = draft.curves.find((k) => k.id === r && k.id !== original.id);
+      return c ? curvePoints(c) : [r];
+    });
+  const pieceWithPoint = (refs: string[]) => {
+    const pts = pointsOf(refs);
+    return pieces.find((c) => c.id !== original.id && pts.some((r) => (c.type === "spline" ? c.points : c.type === "ellipse" ? [c.start, c.end] : []).includes(r)))?.id ?? pieces[0]?.id;
+  };
   const constraints = draft.constraints.flatMap((k): SketchConstraint[] => {
     if (!k.refs.includes(original.id)) return [k];
     if (!pieces.length) return [];

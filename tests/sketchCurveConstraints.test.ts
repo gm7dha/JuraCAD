@@ -89,6 +89,13 @@ describe("Normal", () => {
     expect(Math.abs(cross)).toBeLessThan(1e-7);
   });
 
+  it("says when it conflicts", () => {
+    const a = arch();
+    const l = addLine(a.sketch, at(5, 20), at(9, 30));
+    const s = fixAll(l.sketch, [l.lineId]);
+    expect(applyRelation(s, "normal", [l.lineId, a.id]).error).toMatch(/conflict/);
+  });
+
   it("points two lines to Perpendicular", () => {
     const a = addLine(emptySketch(), at(0, 0), at(10, 0));
     const b = addLine(a.sketch, at(0, 5), at(10, 8));
@@ -225,6 +232,14 @@ describe("Curvature", () => {
     // Carrying on anticlockwise round the arc: bending left at 1 / 10.
     expect(Math.abs(curvatureAt(path, 0) - 0.1)).toBeLessThan(1e-7);
     expect(Math.abs(unitCross(path.d1(0), [-1, 0]))).toBeLessThan(1e-7);
+  });
+
+  it("says when it conflicts", () => {
+    const l = addLine(emptySketch(), at(-20, 0), at(0, 0));
+    const ln = line(l.sketch, l.lineId);
+    const sp = addSpline(l.sketch, [on(ln.p2, 0, 0), at(10, 5), at(20, 20)], false);
+    const s = fixAll(sp.sketch, [l.lineId, sp.splineId]);
+    expect(applyRelation(s, "curvature", [sp.splineId, l.lineId]).error).toMatch(/conflict/);
   });
 
   it("explains what it needs", () => {

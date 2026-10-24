@@ -414,3 +414,16 @@ describe("old sketches", () => {
     expect(parseSketchData(JSON.parse(JSON.stringify(trimmed)))).toEqual(trimmed);
   });
 });
+
+describe("relations on a cut spline", () => {
+  it("a smooth join at a spline's far end stays with the piece that keeps that end", () => {
+    const l = addLine(emptySketch(), at(40, 0), at(50, 0));
+    const line = curve<{ type: "line"; p1: string; p2: string } & SketchCurve>(l.sketch, l.lineId);
+    const sp = addSpline(l.sketch, [at(0, 0), at(10, 8), at(20, -4), at(30, 6), { x: 40, y: 0, snap: { kind: "point", id: line.p1 } }], false);
+    const s = applyRelation(sp.sketch, "tangent", [l.lineId, sp.splineId]).sketch;
+    const split = splitAt(s, sp.splineId, { x: 15, y: 3 });
+    expect(split.error).toBeUndefined();
+    const tg = split.sketch.constraints.find((k) => k.type === "tangent")!;
+    expect(tg.refs).toContain(split.lineIds[1]);
+  });
+});
