@@ -12,9 +12,10 @@
  */
 import { evaluate } from "../model/expr";
 import { splineBeziers } from "./spline";
+import { curvatureAt, curveParam, nearestParam, offsetAt, wrapParam, offsetError, offsetParams as fitParams, offsetPieces, OFFSET_TOLERANCE, splineThrough, type CurveParam } from "./curves";
 
 type Bez = [Vec, Vec, Vec, Vec];
-import { ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData } from "./types";
+import { ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData, type SketchEllipse, type SketchSpline } from "./types";
 
 type Vec = [number, number];
 
@@ -61,6 +62,12 @@ function buildSystem(sketch: SketchData): System {
     return [P(c.p1), P(c.p2)] as const;
   };
   /** Centre and radius accessors for a circle or arc. */
+  /** The centre of a circle, arc or ellipse. */
+  const centreOf = (id: string) => {
+    const c = curves.get(id);
+    if (c?.type === "ellipse") return P(c.center);
+    return circular(id).centre;
+  };
   const circular = (id: string) => {
     const c = curves.get(id);
     if (!c || c.type === "line" || c.type === "spline" || c.type === "ellipse") throw new Error(`${id} is not a circle or arc`);
@@ -104,6 +111,7 @@ function buildSystem(sketch: SketchData): System {
     if (curve?.type !== "spline") throw new Error(`${id} is not a spline`);
     const ids = curve.points.map((pid) => P(pid));
     const handles = curve.points.map((pid) => curve.tangents?.[pid]);
+    const handlesIn = curve.points.map((pid) => curve.tangentsIn?.[pid]);
     let lastKey: number[] = [];
     let last: Bez[] = [];
     const get = (x: Float64Array) => {
@@ -111,12 +119,121 @@ function buildSystem(sketch: SketchData): System {
       const key = pts.flat();
       if (key.length !== lastKey.length || key.some((v, i) => v !== lastKey[i])) {
         lastKey = key;
-        last = splineBeziers(pts, curve.closed, curve.conic, handles);
+        last = splineBeziers(pts, curve.closed, curve.conic, handles, handlesIn);
       }
       return last;
     };
     pieceCache.set(id, get);
     return get;
+  };
+
+  /** Any curve as a path walked by its parameter (see curves.ts), for the current unknowns. */
+  const paramFn = (id: string): ((x: Float64Array) => CurveParam) => {
+    const c = curves.get(id);
+    if (!c) throw new Error(`missing curve ${id}`);
+    const ids = curvePointIds(c);
+    const acc = ids.map((pid) => P(pid));
+    const ri = c.type === "circle" ? radiusVar.get(c.id)! : -1;
+    return (x) => {
+      const points = ids.map((pid, i) => {
+        const [px, py] = acc[i](x);
+        return { id: pid, x: px, y: py };
+      });
+      return curveParam({ points, curves: [], constraints: [] }, c.type === "circle" ? { ...c, radius: x[ri] } : c);
+    };
+  };
+
+  /** Ellipse "distance": zero on it, smooth either side (roughly mm). */
+  const ellipseLevel = (cen: (x: Float64Array) => Vec, ma: (x: Float64Array) => Vec, mi: (x: Float64Array) => Vec) => (x: Float64Array, u: Vec) => {
+    const c = cen(x), m = ma(x), n = mi(x);
+    const ax = [m[0] - c[0], m[1] - c[1]];
+    const rx = Math.hypot(ax[0], ax[1]) || 1e-12;
+    const ry = Math.hypot(n[0] - c[0], n[1] - c[1]) || 1e-12;
+    const q = [u[0] - c[0], u[1] - c[1]];
+    const along = (q[0] * ax[0] + q[1] * ax[1]) / rx;
+    const across = (q[1] * ax[0] - q[0] * ax[1]) / rx;
+    return (Math.hypot(along / rx, across / ry) - 1) * Math.min(rx, ry);
+  };
+
+  /**
+   * A function that's zero exactly on a curve (and changes smoothly across
+   * it): the signed distance to a line (carried on) or spline, the distance
+   * from a circle's rim, or the ellipse measure above.
+   */
+  const levelFn = (id: string): ((x: Float64Array, p: Vec) => number) => {
+    const c = curves.get(id);
+    if (!c) throw new Error(`missing curve ${id}`);
+    if (c.type === "line") {
+      const [m, n] = lineEnds(id);
+      return (x, u) => {
+        const s0 = m(x), e = n(x);
+        const dx = e[0] - s0[0], dy = e[1] - s0[1];
+        return (dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1);
+      };
+    }
+    if (c.type === "circle" || c.type === "arc") {
+      const k = circular(id);
+      return (x, u) => {
+        const cc = k.centre(x);
+        return Math.hypot(u[0] - cc[0], u[1] - cc[1]) - k.radius(x);
+      };
+    }
+    if (c.type === "ellipse") return ellipseLevel(P(c.center), P(c.major), P(c.minor));
+    const pieces = splinePieces(id);
+    return (x, u) => signedDistanceToBeziers(u, pieces(x));
+  };
+
+  /** The ends of a curve (where another can join it): line, arc, open spline or part of an ellipse. */
+  const endsOf = (c: SketchCurve): string[] =>
+    c.type === "line" ? [c.p1, c.p2] : c.type === "arc" ? [c.start, c.end] : c.type === "spline" ? (c.closed ? [] : [c.points[0], c.points[c.points.length - 1]]) : c.type === "ellipse" && c.start && c.end ? [c.start, c.end] : [];
+  /** Points lying on a curve that another curve can join it at: its ends, or a spline's own points. */
+  const joinsOf = (c: SketchCurve): string[] => (c.type === "spline" && c.conic === undefined ? c.points : endsOf(c));
+
+  /**
+   * Which way a curve runs at one of its own points, and how it bends there,
+   * walking away from that point (into the curve).
+   */
+  const frameAt = (id: string, pointId: string): ((x: Float64Array) => { dir: Vec; bend: number }) => {
+    const c = curves.get(id)!;
+    if (c.type === "line") {
+      const J = P(pointId), O = P(pointId === c.p1 ? c.p2 : c.p1);
+      return (x) => {
+        const j = J(x), o = O(x);
+        return { dir: [o[0] - j[0], o[1] - j[1]], bend: 0 };
+      };
+    }
+    if (c.type === "arc") {
+      const k = circular(id);
+      const J = P(pointId);
+      const fromStart = pointId === c.start ? 1 : -1;
+      return (x) => {
+        const j = J(x), cc = k.centre(x);
+        // Anticlockwise from the start; clockwise walking away from the end.
+        return { dir: [-(j[1] - cc[1]) * fromStart, (j[0] - cc[0]) * fromStart], bend: fromStart / (k.radius(x) || 1e-12) };
+      };
+    }
+    const param = paramFn(id);
+    const J = P(pointId);
+    if (c.type === "spline") {
+      const i = c.points.indexOf(pointId);
+      const last = !c.closed && i === c.points.length - 1;
+      return (x) => {
+        const p = param(x);
+        const u = c.conic !== undefined ? (i === 0 ? 0 : 1) : Math.min(i, p.hi);
+        const d = p.d1(u);
+        return last ? { dir: [-d[0], -d[1]], bend: -curvatureAt(p, u) } : { dir: d, bend: curvatureAt(p, u) };
+      };
+    }
+    // Part of an ellipse: at its start or end (or, for a whole one, wherever the point is).
+    const el = c as SketchEllipse;
+    const atEnd = pointId === el.end && pointId !== el.start;
+    const atStart = pointId === el.start;
+    return (x) => {
+      const p = param(x);
+      const u = atEnd ? p.hi : atStart ? p.lo : nearestParam(p, J(x));
+      const d = p.d1(u);
+      return atEnd ? { dir: [-d[0], -d[1]], bend: -curvatureAt(p, u) } : { dir: d, bend: curvatureAt(p, u) };
+    };
   };
 
   // Every arc keeps its start and end at the same distance from the centre.
@@ -156,6 +273,12 @@ function buildSystem(sketch: SketchData): System {
         out.push((u[0] * w[0] + u[1] * w[1]) / (Math.hypot(...u) + Math.hypot(...w) || 1));
       },
     });
+    // Part of an ellipse keeps its ends on it.
+    if (c.start && c.end) {
+      const level = ellipseLevel(cen, ma, mi);
+      const st = P(c.start), en = P(c.end);
+      blocks.push({ id: null, size: 2, eval: (x, out) => out.push(level(x, st(x)), level(x, en(x))) });
+    }
   }
 
   for (const con of sketch.constraints) {
@@ -227,6 +350,8 @@ function buildSystem(sketch: SketchData): System {
         return { size: 1, eval: (x, out) => out.push(c1.radius(x) - c2.radius(x)) };
       }
       case "tangent": {
+        const wavy = (k: string) => k === "spline" || k === "ellipse";
+        if (wavy(kind(a)) || wavy(kind(b))) return tangentBlock(a, b);
         if (kind(a) === "line" || kind(b) === "line") {
           const [lineId, circId] = kind(a) === "line" ? [a, b] : [b, a];
           const [p, q] = lineEnds(lineId);
@@ -276,8 +401,8 @@ function buildSystem(sketch: SketchData): System {
         };
       }
       case "concentric": {
-        const p = circular(a).centre;
-        const q = circular(b).centre;
+        const p = centreOf(a);
+        const q = centreOf(b);
         return { size: 2, eval: (x, out) => { const u = p(x), w = q(x); out.push(u[0] - w[0], u[1] - w[1]); } };
       }
       case "midpoint": {
@@ -317,6 +442,69 @@ function buildSystem(sketch: SketchData): System {
           eval: (x, out) => {
             const u = p(x), s = m(x), e = n(x);
             out.push(u[0] - (s[0] + e[0]) / 2, u[1] - (s[1] + e[1]) / 2);
+          },
+        };
+      }
+      case "patternMove": {
+        // The copy is the original moved a set distance: along a line, or at a set angle.
+        const p = P(a), q = P(b);
+        const [dist, deg] = [con.extra?.[0] ?? 0, con.extra?.[1] ?? 0];
+        const along = con.refs[2] ? dir(con.refs[2]) : null;
+        const fixed: Vec = [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)];
+        return {
+          size: 2,
+          eval: (x, out) => {
+            const u = p(x), w = q(x);
+            let d = fixed;
+            if (along) {
+              const v = along(x);
+              const l = Math.hypot(v[0], v[1]) || 1;
+              d = [v[0] / l, v[1] / l];
+            }
+            out.push(u[0] - (w[0] + d[0] * dist), u[1] - (w[1] + d[1] * dist));
+          },
+        };
+      }
+      case "normal": {
+        // A line square to a curve where they meet.
+        const [m, n] = lineEnds(a);
+        const other = curves.get(b);
+        if (!other || other.type === "line") throw new Error("Normal needs a line and a curve");
+        if (other.type === "circle" || other.type === "arc") {
+          // Square to a circle: the line (carried on) goes through its centre.
+          const c = circular(b).centre;
+          return {
+            size: 1,
+            eval: (x, out) => {
+              const u = c(x), s0 = m(x), e = n(x);
+              const dx = e[0] - s0[0], dy = e[1] - s0[1];
+              out.push((dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1));
+            },
+          };
+        }
+        const end = con.extra?.[0] === 1 ? n : m;
+        const param = paramFn(b);
+        return {
+          size: 1,
+          eval: (x, out) => {
+            const s0 = m(x), e = n(x);
+            const pth = param(x);
+            const t = pth.d1(nearestParam(pth, end(x)));
+            const dx = e[0] - s0[0], dy = e[1] - s0[1];
+            out.push((dx * t[0] + dy * t[1]) / ((Math.hypot(dx, dy) || 1) * (Math.hypot(t[0], t[1]) || 1)));
+          },
+        };
+      }
+      case "curvature": {
+        // Meeting smoothly (one row) and bending the same amount (another) where they join.
+        const joint = con.refs[2];
+        const fa = frameAt(a, joint), fb = frameAt(b, joint);
+        return {
+          size: 2,
+          eval: (x, out) => {
+            const A = fa(x), B = fb(x);
+            const la = Math.hypot(A.dir[0], A.dir[1]) || 1, lb = Math.hypot(B.dir[0], B.dir[1]) || 1;
+            out.push((A.dir[0] * B.dir[1] - A.dir[1] * B.dir[0]) / (la * lb), A.bend + B.bend);
           },
         };
       }
@@ -422,27 +610,47 @@ function buildSystem(sketch: SketchData): System {
       case "offset": {
         // Each [copy, original] pair stays `value` apart: a line's distance from the original line, an arc's or circle's radius from the original's.
         // Each pair's side (extra): a signed distance, so a copy can't flip over to the other side of its original.
-        const pairs: ((x: Float64Array) => number)[] = [];
+        const pairs: ((x: Float64Array, out: number[]) => void)[] = [];
+        let size = 0;
         for (let i = 0; i + 1 < con.refs.length; i += 2) {
           const [copy, orig] = [con.refs[i], con.refs[i + 1]];
           const side = con.extra?.[i / 2];
           const signed = (v: number) => (side === undefined ? Math.abs(v) : side * v);
-          if (kind(copy) === "line" && kind(orig) === "line") {
+          const copyCurve = curves.get(copy);
+          if (copyCurve?.type === "spline" && (kind(orig) === "spline" || kind(orig) === "ellipse")) {
+            // A spline following a spline or ellipse: each of its points sits that far from the original, square to it, at its own place along it.
+            const us = copyCurve.offsetParams;
+            if (!us || us.length !== copyCurve.points.length) throw new Error("offset copy has lost its places along the original");
+            const pts = copyCurve.points.map((id) => P(id));
+            const param = paramFn(orig);
+            const dist = side ?? 1;
+            pairs.push((x, out) => {
+              const p = param(x);
+              us.forEach((u, k) => {
+                const want = offsetAt(p, u, dist * value).at;
+                const got = pts[k](x);
+                out.push(got[0] - want[0], got[1] - want[1]);
+              });
+            });
+            size += 2 * us.length;
+          } else if (kind(copy) === "line" && kind(orig) === "line") {
             const [p] = lineEnds(copy);
             const [m, n] = lineEnds(orig);
-            pairs.push((x) => {
+            pairs.push((x, out) => {
               const u = p(x), s0 = m(x), e = n(x);
               const dx = e[0] - s0[0], dy = e[1] - s0[1];
-              return signed((dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1));
+              out.push(signed((dx * (u[1] - s0[1]) - dy * (u[0] - s0[0])) / (Math.hypot(dx, dy) || 1)) - value);
             });
+            size++;
           } else {
             const c1 = circular(copy);
             const c2 = circular(orig);
-            pairs.push((x) => signed(c1.radius(x) - c2.radius(x)));
+            pairs.push((x, out) => out.push(signed(c1.radius(x) - c2.radius(x)) - value));
+            size++;
           }
         }
         if (!pairs.length) throw new Error("offset has nothing to measure");
-        return { size: pairs.length, eval: (x, out) => { for (const f of pairs) out.push(f(x) - value); } };
+        return { size, eval: (x, out) => { for (const f of pairs) f(x, out); } };
       }
       case "arcLength":
       case "arcAngle": {
@@ -518,7 +726,75 @@ function buildSystem(sketch: SketchData): System {
     return null;
   }
 
+  /**
+   * Tangent where a spline or ellipse is involved. Where the two share a
+   * point (one's end on the other), they run the same way there. Otherwise
+   * they touch somewhere: along the spline or ellipse, the other curve's
+   * "distance" has a low or high point that is exactly zero.
+   */
+  function tangentBlock(a: string, b: string): { size: number; eval: (x: Float64Array, out: number[]) => void } {
+    const ca = curves.get(a)!, cb = curves.get(b)!;
+    const shared = endsOf(ca).find((p) => joinsOf(cb).includes(p)) ?? endsOf(cb).find((p) => joinsOf(ca).includes(p));
+    if (shared) {
+      const fa = frameAt(a, shared), fb = frameAt(b, shared);
+      return {
+        size: 1,
+        eval: (x, out) => {
+          const A = fa(x).dir, B = fb(x).dir;
+          out.push((A[0] * B[1] - A[1] * B[0]) / ((Math.hypot(A[0], A[1]) || 1) * (Math.hypot(B[0], B[1]) || 1)));
+        },
+      };
+    }
+    // Walk along the spline (or the ellipse, if there's no spline); measure from the other.
+    const walkId = ca.type === "spline" ? a : cb.type === "spline" ? b : ca.type === "ellipse" ? a : b;
+    const otherId = walkId === a ? b : a;
+    const param = paramFn(walkId);
+    const level = levelFn(otherId);
+    return { size: 1, eval: (x, out) => out.push(touchGap(param(x), (p) => level(x, p))) };
+  }
+
   return { n: init.length, pointVar, radiusVar, x0: Float64Array.from(init), blocks, skipped };
+}
+
+/**
+ * How far a path is from touching a curve (given as a function that's zero
+ * on the curve): among the places where that function has a low or high
+ * point along the path, the value nearest zero. Zero = they touch.
+ */
+function touchGap(p: CurveParam, level: (q: Vec) => number): number {
+  const us = p.samples;
+  // A closed path's last sample is its first again.
+  const n = p.closed ? us.length - 1 : us.length;
+  const g = us.slice(0, n).map((u) => level(p.at(u)));
+  const value = (u: number) => level(p.at(wrapParam(p, u)));
+  let best: number | null = null;
+  const consider = (lo: number, hi: number, high: boolean) => {
+    // Golden-section search for the low (or high) point between lo and hi.
+    const f = (u: number) => (high ? -1 : 1) * value(u);
+    const r = (Math.sqrt(5) - 1) / 2;
+    let a = lo, b = hi;
+    let c = b - r * (b - a), d = a + r * (b - a);
+    let fc = f(c), fd = f(d);
+    for (let k = 0; k < 90 && b - a > 1e-14 * Math.max(1, Math.abs(a)); k++) {
+      if (fc < fd) {
+        b = d; d = c; fd = fc; c = b - r * (b - a); fc = f(c);
+      } else {
+        a = c; c = d; fc = fd; d = a + r * (b - a); fd = f(d);
+      }
+    }
+    const v = value((a + b) / 2);
+    if (best === null || Math.abs(v) < Math.abs(best)) best = v;
+  };
+  const step = (i: number) => (us[Math.min(i + 1, us.length - 1)] - us[Math.max(i - 1, 0)]) / 2 || 1e-9;
+  for (let i = p.closed ? 0 : 1; i < (p.closed ? n : n - 1); i++) {
+    const prev = g[(i - 1 + n) % n], cur = g[i], next = g[(i + 1) % n];
+    const lo = us[i] - step(i), hi = us[i] + step(i);
+    if (cur <= prev && cur <= next) consider(lo, hi, false);
+    else if (cur >= prev && cur >= next) consider(lo, hi, true);
+  }
+  if (best !== null) return best;
+  // No low or high point (an open path heading steadily away): the nearer end, so the solver can still pull them together.
+  return Math.abs(g[0]) < Math.abs(g[n - 1]) ? g[0] : g[n - 1];
 }
 
 /**
@@ -673,13 +949,20 @@ function writeBack(sketch: SketchData, sys: System, x: Float64Array): SketchData
 /** An `equal` made by a sketch pattern: the copy's (refs[0]) size follows the original's. */
 export const isPatternSize = (c: SketchConstraint) => c.type === "equal" && c.extra?.[0] === 1;
 
+/** Where a pattern puts a copy of a point: turned round a centre, or moved along a line or at an angle. */
+type CopyRule = { orig: string; centre: string; deg: number } | { orig: string; line?: string; dist: number; angle: number };
+
+const isPatternCopy = (k: SketchConstraint) => (k.type === "patternCopy" && k.refs.length === 3) || (k.type === "patternMove" && k.refs.length >= 2);
+
 interface Derived {
   /** The sketch without the copies that are only placed by their pattern. */
   reduced: SketchData;
-  /** Each such copy: the point it's a copy of, the centre, and how far round (degrees). */
-  points: Map<string, { orig: string; centre: string; deg: number }>;
+  /** Each such copy: the point it's a copy of, and how the pattern moves it. */
+  points: Map<string, CopyRule>;
   /** Copied circles whose size is the original circle's. */
   circles: Map<string, string>;
+  /** Points of offset copies of splines and ellipses: where along the original, and how far to its left. */
+  offsets: Map<string, { orig: string; u: number; dist: number }>;
 }
 
 /**
@@ -690,46 +973,113 @@ interface Derived {
  * Copies something else does hold stay in the solve. Null when there are none.
  */
 function splitDerived(sketch: SketchData): Derived | null {
-  const copies = sketch.constraints.filter((c) => c.type === "patternCopy" && c.refs.length === 3);
-  if (!copies.length) return null;
+  const copies = sketch.constraints.filter(isPatternCopy);
+  const offsetList = curveOffsets(sketch);
+  if (!copies.length && !offsetList.length) return null;
   const used = new Set<string>();
   const copyCount = new Map<string, number>();
   for (const k of sketch.constraints) {
-    if (k.type === "patternCopy") copyCount.set(k.refs[0], (copyCount.get(k.refs[0]) ?? 0) + 1);
+    if (k.type === "patternCopy" || k.type === "patternMove") copyCount.set(k.refs[0], (copyCount.get(k.refs[0]) ?? 0) + 1);
     k.refs.forEach((r, i) => {
-      if (i === 0 && (k.type === "patternCopy" || isPatternSize(k))) return;
+      if (i === 0 && (k.type === "patternCopy" || k.type === "patternMove" || isPatternSize(k))) return;
       used.add(r);
     });
   }
   const curvesOf = new Map<string, SketchCurve[]>();
   for (const c of sketch.curves) for (const p of curvePointIds(c)) curvesOf.set(p, [...(curvesOf.get(p) ?? []), c]);
-  const points = new Map<string, { orig: string; centre: string; deg: number }>();
+  const points = new Map<string, CopyRule>();
   const known = new Set(sketch.points.map((p) => p.id));
+  const lines = new Set(sketch.curves.filter((c) => c.type === "line").map((c) => c.id));
   for (const k of copies) {
-    const [copy, orig, centre] = k.refs;
+    const [copy, orig, third] = k.refs;
     if (copyCount.get(copy) !== 1 || used.has(copy) || !known.has(copy) || (curvesOf.get(copy) ?? []).some((c) => used.has(c.id))) continue;
     if (orig !== ORIGIN_ID && !known.has(orig)) continue;
-    if (centre !== ORIGIN_ID && !known.has(centre)) continue;
-    points.set(copy, { orig, centre, deg: k.extra?.[0] ?? 0 });
+    if (k.type === "patternMove") {
+      if (third !== undefined && !lines.has(third)) continue;
+      points.set(copy, { orig, ...(third ? { line: third } : {}), dist: k.extra?.[0] ?? 0, angle: k.extra?.[1] ?? 0 });
+      continue;
+    }
+    if (third !== ORIGIN_ID && !known.has(third)) continue;
+    points.set(copy, { orig, centre: third, deg: k.extra?.[0] ?? 0 });
   }
-  if (!points.size) return null;
   const circles = new Map<string, string>();
   for (const k of sketch.constraints) if (isPatternSize(k)) circles.set(k.refs[0], k.refs[1]);
   const dropCurves = new Set(sketch.curves.filter((c) => curvePointIds(c).some((p) => points.has(p))).map((c) => c.id));
   for (const id of [...circles.keys()]) if (!dropCurves.has(id)) circles.delete(id);
+
+  // Offset copies of splines and ellipses that nothing else rests on: their points are worked out from the original afterwards.
+  const offsets = new Map<string, { orig: string; u: number; dist: number }>();
+  const byId = curveById(sketch);
+  for (const o of offsetList) {
+    const copy = byId.get(o.copy) as SketchSpline;
+    if (dropCurves.has(o.orig) || dropCurves.has(o.copy) || sketch.constraints.some((k) => k !== o.con && k.refs.includes(o.copy))) continue;
+    copy.points.forEach((pid, j) => {
+      if (used.has(pid) || points.has(pid) || offsets.has(pid) || (curvesOf.get(pid) ?? []).length > 1 || !known.has(pid)) return;
+      offsets.set(pid, { orig: o.orig, u: copy.offsetParams![j], dist: o.dist });
+    });
+  }
+  if (!points.size && !offsets.size) return null;
+  // A copy keeps (as a stand-in for the solve) only its points that something else holds.
+  const stubs = new Map<string, SketchSpline | null>();
+  for (const o of offsetList) {
+    const copy = byId.get(o.copy) as SketchSpline;
+    if (!copy.points.some((pid) => offsets.has(pid))) continue;
+    const keep = copy.points.map((pid, j) => [pid, copy.offsetParams![j]] as const).filter(([pid]) => !offsets.has(pid));
+    stubs.set(copy.id, keep.length ? { id: copy.id, type: "spline", points: keep.map(([pid]) => pid), closed: false, construction: true, offsetParams: keep.map(([, u]) => u) } : null);
+  }
   const reduced: SketchData = {
-    points: sketch.points.filter((p) => !points.has(p.id)),
-    curves: sketch.curves.filter((c) => !dropCurves.has(c.id)),
-    constraints: sketch.constraints.filter((k) => !(k.type === "patternCopy" && points.has(k.refs[0])) && !(isPatternSize(k) && circles.has(k.refs[0]))),
+    points: sketch.points.filter((p) => !points.has(p.id) && !offsets.has(p.id)),
+    curves: sketch.curves.flatMap((c) => (dropCurves.has(c.id) ? [] : stubs.has(c.id) ? (stubs.get(c.id) ? [stubs.get(c.id)!] : []) : [c])),
+    constraints: sketch.constraints.flatMap((k): SketchConstraint[] => {
+      if ((k.type === "patternCopy" || k.type === "patternMove") && points.has(k.refs[0])) return [];
+      if (isPatternSize(k) && circles.has(k.refs[0])) return [];
+      if (k.type !== "offset" || !k.refs.some((r) => stubs.get(r) === null)) return [k];
+      // Pairs whose copy is placed entirely afterwards leave the solve.
+      const refs: string[] = [];
+      const extra: number[] = [];
+      for (let i = 0; i + 1 < k.refs.length; i += 2) {
+        if (stubs.get(k.refs[i]) === null) continue;
+        refs.push(k.refs[i], k.refs[i + 1]);
+        if (k.extra?.[i / 2] !== undefined) extra.push(k.extra[i / 2]);
+      }
+      return refs.length ? [{ ...k, refs, ...(k.extra ? { extra } : {}) }] : [];
+    }),
   };
-  return { reduced, points, circles };
+  return { reduced, points, circles, offsets };
 }
 
 const curvePointIds = (c: SketchCurve): string[] =>
-  c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : c.type === "spline" ? c.points : c.type === "ellipse" ? [c.center, c.major, c.minor] : [c.center, c.start, c.end];
+  c.type === "line"
+    ? [c.p1, c.p2]
+    : c.type === "circle"
+      ? [c.center]
+      : c.type === "spline"
+        ? c.points
+        : c.type === "ellipse"
+          ? [c.center, c.major, c.minor, ...(c.start && c.end ? [c.start, c.end] : [])]
+          : [c.center, c.start, c.end];
 
 /** The whole sketch from the solved reduced one: copies placed round their centres, copied circles sized like their originals. */
 function placeDerived(full: SketchData, solved: SketchData, d: Derived): SketchData {
+  const placed = placeCopies(full, solved, d);
+  if (!d.offsets.size) return placed;
+  // Offset copies' points, from the originals where they now are.
+  const paths = new Map<string, CurveParam>();
+  const byId = curveById(placed);
+  return {
+    ...placed,
+    points: placed.points.map((p) => {
+      const o = d.offsets.get(p.id);
+      if (!o) return p;
+      let path = paths.get(o.orig);
+      if (!path) paths.set(o.orig, (path = curveParam(placed, byId.get(o.orig)!)));
+      const [x, y] = offsetAt(path, o.u, o.dist).at;
+      return x === p.x && y === p.y ? p : { ...p, x, y };
+    }),
+  };
+}
+
+function placeCopies(full: SketchData, solved: SketchData, d: Derived): SketchData {
   const at = new Map<string, [number, number]>(solved.points.map((p) => [p.id, [p.x, p.y]]));
   const pos = (id: string): [number, number] => (id === ORIGIN_ID ? [0, 0] : at.get(id) ?? [0, 0]);
   const radius = new Map<string, number>();
@@ -739,11 +1089,21 @@ function placeDerived(full: SketchData, solved: SketchData, d: Derived): SketchD
     points: full.points.map((p) => {
       const k = d.points.get(p.id);
       let x: number, y: number;
-      if (k) {
+      if (k && "centre" in k) {
         const o = pos(k.orig), c = pos(k.centre);
         const t = (k.deg * Math.PI) / 180;
         const dx = o[0] - c[0], dy = o[1] - c[1];
         [x, y] = [c[0] + dx * Math.cos(t) - dy * Math.sin(t), c[1] + dx * Math.sin(t) + dy * Math.cos(t)];
+      } else if (k) {
+        const o = pos(k.orig);
+        let d: [number, number] = [Math.cos((k.angle * Math.PI) / 180), Math.sin((k.angle * Math.PI) / 180)];
+        const line = k.line ? solved.curves.find((c) => c.id === k.line) : undefined;
+        if (line?.type === "line") {
+          const a = pos(line.p1), b = pos(line.p2);
+          const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+          d = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+        }
+        [x, y] = [o[0] + d[0] * k.dist, o[1] + d[1] * k.dist];
       } else [x, y] = pos(p.id);
       return x === p.x && y === p.y ? p : { ...p, x, y };
     }),
@@ -757,10 +1117,11 @@ function placeDerived(full: SketchData, solved: SketchData, d: Derived): SketchD
 
 /** Does a drag (or other pull) act on a copy that's only placed by its pattern? Then the whole sketch is solved. */
 function pullsCopy(d: Derived, o: SolveOptions): boolean {
-  if (o.drag && d.points.has(o.drag.pointId)) return true;
-  if (o.moveRigid?.pointIds.some((id) => d.points.has(id))) return true;
+  const placed = (id: string) => d.points.has(id) || d.offsets.has(id);
+  if (o.drag && placed(o.drag.pointId)) return true;
+  if (o.moveRigid?.pointIds.some(placed)) return true;
   if (o.resize && d.circles.has(o.resize.circleId)) return true;
-  return !!o.place?.some((p) => d.points.has(p.pointId));
+  return !!o.place?.some((p) => placed(p.pointId));
 }
 
 /** Move the sketch so every constraint holds, changing it as little as possible. */
@@ -768,15 +1129,104 @@ export function solveSketch(sketch: SketchData, options: SolveOptions = {}): Sol
   const d = splitDerived(sketch);
   if (d && !pullsCopy(d, options)) {
     const r = solveWhole(d.reduced, options);
-    return { ...r, sketch: placeDerived(sketch, r.sketch, d) };
+    return withOffsets({ ...r, sketch: placeDerived(sketch, r.sketch, d) }, options);
   }
   if (d && options.drag && d.points.has(options.drag.pointId)) {
     // Dragging a copy turns the pattern round its centre (the centre stays put; the original moves), like Onshape.
-    const centre = d.points.get(options.drag.pointId)!.centre;
-    const p = sketch.points.find((q) => q.id === centre);
-    if (p) return solveWhole(sketch, { ...options, place: [...(options.place ?? []), { pointId: centre, x: p.x, y: p.y }] });
+    const rule = d.points.get(options.drag.pointId)!;
+    const centre = "centre" in rule ? rule.centre : null;
+    const p = centre ? sketch.points.find((q) => q.id === centre) : undefined;
+    if (p) return withOffsets(solveWhole(sketch, { ...options, place: [...(options.place ?? []), { pointId: p.id, x: p.x, y: p.y }] }), options);
   }
-  return solveWhole(sketch, options);
+  return withOffsets(solveWhole(sketch, options), options);
+}
+
+// ---------------------------------------------------------------------------
+// Offset copies of splines and ellipses
+
+/** The [copy, original, signed distance] of every spline offset from a spline or ellipse. */
+function curveOffsets(s: SketchData): { con: SketchConstraint; pair: number; copy: string; orig: string; dist: number }[] {
+  const byId = curveById(s);
+  const out: { con: SketchConstraint; pair: number; copy: string; orig: string; dist: number }[] = [];
+  for (const k of s.constraints) {
+    if (k.type !== "offset" || k.driven) continue;
+    const v = evaluate(k.value ?? "");
+    if (!v.ok) continue;
+    for (let i = 0; i + 1 < k.refs.length; i += 2) {
+      const copy = byId.get(k.refs[i]);
+      const orig = byId.get(k.refs[i + 1]);
+      if (copy?.type !== "spline" || !copy.offsetParams || (orig?.type !== "spline" && orig?.type !== "ellipse")) continue;
+      out.push({ con: k, pair: i / 2, copy: copy.id, orig: orig.id, dist: (k.extra?.[i / 2] ?? 1) * v.value });
+    }
+  }
+  return out;
+}
+
+/** The parameters an offset copy's pieces run between: one per point, and round to the first again when closed. */
+export function offsetSpan(orig: CurveParam, us: number[], closed: boolean): number[] {
+  return closed ? [...us, us[0] + (orig.hi - orig.lo)] : us;
+}
+
+/**
+ * After solving, give each offset copy of a spline or ellipse the handles
+ * that make it follow the true offset (its points are already in place). If
+ * the original has changed so much that the copy strays more than the
+ * tolerance, it gets more points.
+ */
+export function refreshOffsets(s: SketchData): SketchData {
+  const list = curveOffsets(s);
+  if (!list.length) return s;
+  let out = s;
+  for (const o of list) {
+    const copy = out.curves.find((c) => c.id === o.copy);
+    const orig = out.curves.find((c) => c.id === o.orig);
+    if (copy?.type !== "spline" || !copy.offsetParams || !orig) continue;
+    const param = curveParam(out, orig);
+    const us = offsetSpan(param, copy.offsetParams, copy.closed);
+    let pieces = offsetPieces(param, o.dist, us);
+    let ids = copy.points;
+    let params = copy.offsetParams;
+    let points = out.points;
+    if (offsetError(param, o.dist, us, pieces) > OFFSET_TOLERANCE) {
+      // More points: the ends stay (they may be joined to other things); the ones between are new.
+      const knots = orig.type === "spline" && orig.conic === undefined ? Array.from({ length: Math.round(param.hi - param.lo) + 1 }, (_, i) => param.lo + i) : undefined;
+      const fresh = fitParams(param, o.dist, OFFSET_TOLERANCE / 2, knots);
+      const span = copy.closed ? fresh.slice(0, -1) : fresh;
+      const taken = new Set(out.points.map((p) => p.id));
+      let n = 0;
+      const newId = () => {
+        let id: string;
+        do id = `${copy.id}~${(n++).toString(36)}`;
+        while (taken.has(id));
+        taken.add(id);
+        return id;
+      };
+      ids = span.map((_, i) => (i === 0 ? copy.points[0] : !copy.closed && i === span.length - 1 ? copy.points[copy.points.length - 1] : newId()));
+      params = span;
+      pieces = offsetPieces(param, o.dist, offsetSpan(param, span, copy.closed));
+      const gone = new Set(copy.points.filter((id) => !ids.includes(id)));
+      const at = pieces.map((b) => b[0]);
+      if (!copy.closed) at.push(pieces[pieces.length - 1][3]);
+      points = [...out.points.filter((p) => !gone.has(p.id)), ...ids.filter((id) => !copy.points.includes(id)).map((id) => ({ id, x: at[ids.indexOf(id)][0], y: at[ids.indexOf(id)][1] }))];
+      out = { ...out, constraints: out.constraints.filter((k) => !k.refs.some((r) => gone.has(r))) };
+    }
+    const fitted = splineThrough(copy.id, ids, pieces, copy.closed, copy.construction);
+    const next: SketchCurve = { ...fitted, offsetParams: params };
+    out = { ...out, points, curves: out.curves.map((c) => (c.id === copy.id ? next : c)) };
+  }
+  return out;
+}
+
+/** Solve results with offset copies' handles brought up to date (and solved again if something else rests on those copies). */
+function withOffsets(r: SolveResult, options: SolveOptions): SolveResult {
+  const list = curveOffsets(r.sketch);
+  if (!list.length) return r;
+  const fresh = refreshOffsets(r.sketch);
+  const copies = new Set(list.map((o) => o.copy));
+  const leaning = fresh.constraints.some((k) => k.type !== "offset" && k.refs.some((id) => copies.has(id)));
+  if (!leaning) return { ...r, sketch: fresh };
+  const again = solveWhole(fresh, options);
+  return { ...again, sketch: refreshOffsets(again.sketch) };
 }
 
 function solveWhole(sketch: SketchData, options: SolveOptions): SolveResult {
@@ -911,10 +1361,20 @@ export function analyzeSketch(sketch: SketchData): SketchAnalysis {
   // Copies placed by their pattern are as pinned down as their original and centre; they add no freedom.
   const r = analyzeWhole(d.reduced);
   const definedPoints = new Set(r.definedPoints);
-  for (const [id, k] of d.points) if (r.definedPoints.has(k.orig) && r.definedPoints.has(k.centre)) definedPoints.add(id);
+  for (const [id, k] of d.points) {
+    const line = "centre" in k ? undefined : k.line ? sketch.curves.find((c) => c.id === k.line) : undefined;
+    const holders = "centre" in k ? [k.centre] : line?.type === "line" ? [line.p1, line.p2] : [];
+    if (r.definedPoints.has(k.orig) && holders.every((h) => r.definedPoints.has(h))) definedPoints.add(id);
+  }
+  // An offset copy's points are as pinned down as the original.
+  const byId = curveById(sketch);
+  for (const [id, o] of d.offsets) if (curvePointIds(byId.get(o.orig)!).every((p) => definedPoints.has(p))) definedPoints.add(id);
   const definedCurves = new Set(r.definedCurves);
   for (const c of sketch.curves) {
-    if (r.definedCurves.has(c.id) || !curvePointIds(c).some((p) => d.points.has(p))) continue;
+    if (!curvePointIds(c).some((p) => d.points.has(p) || d.offsets.has(p))) continue;
+    // Judged on all its points (the solve only saw some of them).
+    if (curvePointIds(c).some((p) => d.offsets.has(p))) definedCurves.delete(c.id);
+    else if (r.definedCurves.has(c.id)) continue;
     const pts = curvePointIds(c).every((p) => definedPoints.has(p));
     if (c.type === "circle" ? pts && (!d.circles.has(c.id) || r.definedCurves.has(d.circles.get(c.id)!)) : pts) definedCurves.add(c.id);
   }
@@ -986,7 +1446,7 @@ function analyzeWhole(sketch: SketchData): SketchAnalysis {
         : c.type === "spline"
           ? c.points.every((p) => definedPoints.has(p))
           : c.type === "ellipse"
-          ? [c.center, c.major, c.minor].every((p) => definedPoints.has(p))
+          ? curvePointIds(c).every((p) => definedPoints.has(p))
           : c.type === "circle"
           ? definedPoints.has(c.center) && determined[sys.radiusVar.get(c.id)!]
           : definedPoints.has(c.center) && definedPoints.has(c.start) && definedPoints.has(c.end);
