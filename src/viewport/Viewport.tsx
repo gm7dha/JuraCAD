@@ -8,7 +8,8 @@ import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type Se
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
 import { clickedSpot, findPick, framePlacement } from "../assembly/connectors";
-import { explodeAssembly, useSolvedAssembly } from "../app/assemblySolve";
+import { explodeAssembly, useAssemblyLeaves, useSolvedAssembly } from "../app/assemblySolve";
+import { instanceAt, leafKey, topOfKey, type Leaf } from "../assembly/subassembly";
 import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
@@ -36,36 +37,46 @@ import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, set
 const NO_COLOURS: Record<string, string> = {};
 const NO_PLACEMENTS: Record<string, number[]> = {};
 
-/** Each instance shown as a copy of its part's mesh (moved into place with setPlacements); suppressed ones aren't shown. */
-function instanceMeshes(parts: PartMesh[], assembly: Assembly): PartMesh[] {
+/**
+ * Each instance shown as a copy of its part's mesh (moved into place with setPlacements); suppressed ones aren't shown.
+ * A sub-assembly shows a copy of each part inside it, named by its path ("top/inner/part").
+ */
+function instanceMeshes(parts: PartMesh[], leaves: Leaf[]): PartMesh[] {
   const out: PartMesh[] = [];
-  for (const i of assembly.instances) {
-    if (i.suppressed) continue;
-    const part = findMesh(parts, meshIdOf(i));
-    if (part) out.push({ ...part, id: i.id, name: i.name, featureIds: [] });
+  for (const l of leaves) {
+    const part = findMesh(parts, meshIdOf(l.instance));
+    if (part) out.push({ ...part, id: l.key, name: l.name, featureIds: [] });
   }
   return out;
 }
 
+/** Hidden instances as the 3D view's meshes: a hidden sub-assembly hides every part inside it. */
+function hiddenMeshes(hidden: string[], leaves: Leaf[]): string[] {
+  if (!hidden.length) return hidden;
+  return leaves.filter((l) => hidden.some((h) => l.key === h || l.key.startsWith(`${h}/`))).map((l) => l.key);
+}
+
 /** The faces or edges picked for a mate, as shown now. */
-function connectorItems(parts: PartMesh[], assembly: Assembly, connectors: (MateConnector | undefined)[]): SelectionItem[] {
+function connectorItems(parts: PartMesh[], assembly: Assembly, assemblies: readonly Assembly[], connectors: (MateConnector | undefined)[]): SelectionItem[] {
   const items: SelectionItem[] = [];
   for (const c of connectors) {
     if (!c) continue;
-    const instance = assembly.instances.find((i) => i.id === c.instanceId);
+    // On a part inside a sub-assembly, the path leads to it.
+    const key = leafKey(c.instanceId, c.path);
+    const instance = instanceAt(assembly, assemblies, key)?.part;
     const part = instance && findMesh(parts, meshIdOf(instance));
     for (const pick of c.pick2 ? [c.pick, c.pick2] : [c.pick]) {
       const index = part ? findPick(part, pick) : -1;
-      if (instance && index >= 0) items.push({ partId: instance.id, kind: pick.ref.kind, index });
+      if (instance && index >= 0) items.push({ partId: key, kind: pick.ref.kind, index });
     }
   }
   return items;
 }
 
-/** Selected instances, as every face of each (so the whole part lights up). */
+/** Selected instances, as every face of each (so the whole part lights up; a sub-assembly, all its parts). */
 function instanceSelection(display: PartMesh[], ids: string[]): SelectionItem[] {
   const items: SelectionItem[] = [];
-  for (const p of display) if (ids.includes(p.id)) p.faceGroups.forEach((_, index) => items.push({ partId: p.id, kind: "face", index }));
+  for (const p of display) if (ids.includes(topOfKey(p.id))) p.faceGroups.forEach((_, index) => items.push({ partId: p.id, kind: "face", index }));
   return items;
 }
 
@@ -75,19 +86,22 @@ function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
   if (s.mateDraft) {
     if (target?.kind !== "part") return;
     const asm = activeAssembly(s);
-    const instance = asm?.instances.find((i) => i.id === target.item.partId);
+    // A part inside a sub-assembly: the connector is on the sub-assembly, with the path to the part.
+    const found = asm ? instanceAt(asm, s.history.present.assemblies ?? [], target.item.partId) : null;
+    const instance = found?.part;
     const part = instance && findMesh(s.parts, meshIdOf(instance));
-    if (!instance || !part) return;
+    if (!found || !instance || !part) return;
     const ref = target.item.kind === "edge" ? part.edgeRefs?.[target.item.index] : part.faceRefs?.[target.item.index];
     if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return;
     // Picks name the part itself, whichever configuration it's shown in. Where it was clicked is kept
     // (in the part's own coordinates), and a click near an edge's end puts the connector on that corner.
     const point = target.local?.map((v) => Math.round(v * 1e6) / 1e6) as [number, number, number] | undefined;
     const spot = point ? clickedSpot(part, { partId: part.id, ref }, point) : undefined;
-    s.pickMateConnector({ instanceId: instance.id, pick: { partId: instance.partId, ref }, ...(spot ? { spot } : {}), ...(point ? { point } : {}) });
+    s.pickMateConnector({ instanceId: found.top.id, ...(found.path.length ? { path: found.path } : {}), pick: { partId: instance.partId, ref }, ...(spot ? { spot } : {}), ...(point ? { point } : {}) });
     return;
   }
-  const id = target?.kind === "part" ? target.item.partId : null;
+  // A click on a part inside a sub-assembly selects the whole sub-assembly.
+  const id = target?.kind === "part" ? topOfKey(target.item.partId) : null;
   if (!id) {
     if (!additive) s.setAsmSelection([]);
     return;
@@ -452,15 +466,18 @@ function dragStart(target: PickTarget & { kind: "part" }, ray: ScreenRay, shift:
   const s = useStore.getState();
   const asm = activeAssembly(s);
   if (!asm || s.mateDraft || !target.point) return false;
-  const solved = solveWithParts(asm, s.parts);
-  // Connectors on each part as its instance shows it (mirrored, or in another configuration).
-  const r = planDrag(asm, solved, frameLookup(asm, s.parts), target.item.partId, target.point, ray.dir, shift);
+  const assemblies = s.history.present.assemblies;
+  const solved = solveWithParts(asm, s.parts, { assemblies });
+  // Connectors on each part as its instance shows it (mirrored, or in another configuration, or inside a sub-assembly).
+  // A part inside a sub-assembly drags the whole sub-assembly.
+  const id = topOfKey(target.item.partId);
+  const r = planDrag(asm, solved, frameLookup(asm, s.parts, assemblies), id, target.point, ray.dir, shift);
   if ("refuse" in r) {
     if (r.refuse) s.showToast(r.refuse);
     return false;
   }
   activeDrag = r.plan;
-  s.setAsmSelection([target.item.partId]);
+  s.setAsmSelection([id]);
   return true;
 }
 
@@ -568,7 +585,9 @@ export function Viewport() {
   const asmSelection = useStore((s) => s.asmSelection);
   const hiddenInstances = useStore((s) => s.hiddenInstances);
   // In an assembly the meshes only change when parts are rebuilt or instances added/removed, not when they move.
-  const instanceKey = assembly ? assembly.id + "|" + assembly.instances.map((i) => `${i.id}:${meshIdOf(i)}${i.suppressed ? ":off" : ""}`).join(",") : null;
+  const leaves = useAssemblyLeaves();
+  const allAssemblies = useStore((s) => s.history.present.assemblies);
+  const instanceKey = assembly ? assembly.id + "|" + leaves.map((l) => `${l.key}:${meshIdOf(l.instance)}`).join(",") : null;
   const hadNothing = useRef(true);
   // Sheet metal shown flat: each sheet part's unfolded mesh, fetched when asked for or when the parts are rebuilt.
   const showFlat = useStore((s) => s.showFlat);
@@ -595,7 +614,7 @@ export function Viewport() {
     };
   }, [showFlat, shownParts, assembly]);
   const display = useMemo(() => {
-    if (assembly) return instanceMeshes(parts, assembly);
+    if (assembly) return instanceMeshes(parts, leaves);
     if (!showFlat || !flatMeshes || flatMeshes.for !== shownParts) return shownParts;
     return shownParts.map((p) => flatMeshes.meshes[p.id] ?? p);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -609,16 +628,18 @@ export function Viewport() {
   const placements = useMemo(() => {
     if (!assembly) return NO_PLACEMENTS;
     const solvedPlaces = Object.fromEntries(assembly.instances.map((i) => [i.id, solved?.placements[i.id] ?? i.placement]));
-    const shown = explodeAssembly(assembly, parts, solvedPlaces, explode);
+    const shown = explodeAssembly(assembly, parts, solvedPlaces, explode, allAssemblies);
     return Object.fromEntries(
-      assembly.instances.map((i) => {
-        const m = placementMatrix(shown[i.id]);
+      leaves.map((l) => {
+        // Parts inside a sub-assembly ride along with it.
+        const at = shown[l.top] ?? IDENTITY;
+        const m = placementMatrix(l.path.length ? compose(at, l.relative) : at);
         // Mirrored copies: the part flipped across its own YZ plane first.
-        if (i.mirrored) for (const k of [0, 1, 2]) m[k] = -m[k];
-        return [i.id, m];
+        if (l.instance.mirrored) for (const k of [0, 1, 2]) m[k] = -m[k];
+        return [l.key, m];
       }),
     );
-  }, [assembly, solved, parts, explode]);
+  }, [assembly, solved, parts, explode, leaves, allAssemblies]);
 
   useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft && explode === null), [assembly, mateDraft, explode]);
   const editingAnything = useStore((s) => !!s.editing);
@@ -639,7 +660,7 @@ export function Viewport() {
     for (const c of [mateDraft.a, mateDraft.b]) {
       if (!c) continue;
       const instance = assembly.instances.find((i) => i.id === c.instanceId);
-      const f = connectorFrameFor(assembly, parts, c);
+      const f = connectorFrameFor(assembly, parts, c, allAssemblies);
       // The origin's connectors sit at the origin itself.
       if ((!instance && !isOrigin(c)) || !f) continue;
       const where: Placement = instance ? solved?.placements[instance.id] ?? instance.placement : IDENTITY;
@@ -647,9 +668,9 @@ export function Viewport() {
       markers.push({ origin: world.position, x: rotate(world.rotation, [1, 0, 0]), z: rotate(world.rotation, [0, 0, 1]) });
     }
     manager.setMarkers(markers);
-  }, [assembly, mateDraft, parts, solved]);
+  }, [assembly, mateDraft, parts, solved, allAssemblies]);
 
-  useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenInstances : hiddenParts), [hiddenParts, hiddenInstances, assembly]);
+  useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenMeshes(hiddenInstances, leaves) : hiddenParts), [hiddenParts, hiddenInstances, assembly, leaves]);
   const transparentParts = useStore((s) => s.transparentParts);
   useEffect(() => viewportApi.current?.setTransparent(assembly ? NO_IDS : transparentParts), [transparentParts, assembly]);
   // Plane features (and the one being made), drawn as squares you can click to sketch on.
@@ -699,9 +720,9 @@ export function Viewport() {
   const colours = useMemo(() => {
     if (!assembly) return appearance;
     const out: Record<string, string> = {};
-    for (const i of assembly.instances) if (appearance[i.partId]) out[i.id] = appearance[i.partId];
+    for (const l of leaves) if (appearance[l.instance.partId]) out[l.key] = appearance[l.instance.partId];
     return out;
-  }, [appearance, assembly]);
+  }, [appearance, assembly, leaves]);
   useEffect(() => viewportApi.current?.setPartColours(colours), [colours]);
   useEffect(() => viewportApi.current?.setSection(section ? sectionPlane(section) : null), [section]);
   const printBed = useStore((s) => s.printBed);
@@ -721,13 +742,13 @@ export function Viewport() {
       viewportApi.current?.setSelection(
         assembly
           ? mateDraft
-            ? connectorItems(parts, assembly, [mateDraft.a, mateDraft.b])
+            ? connectorItems(parts, assembly, allAssemblies ?? [], [mateDraft.a, mateDraft.b])
             : instanceSelection(display, asmSelection)
           : picks
             ? itemsForPicks(parts, pickList ?? [])
             : selection,
       ),
-    [selection, picks, parts, assembly, display, asmSelection, mateDraft],
+    [selection, picks, parts, assembly, display, asmSelection, mateDraft, allAssemblies],
   );
   useEffect(
     () => viewportApi.current?.setDatums({ selected: selectedPlane, listHover: listHoverPlane, hidden: hiddenDatums }),

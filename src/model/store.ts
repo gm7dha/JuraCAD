@@ -40,11 +40,12 @@ import { nextPatternName, removePattern, syncPattern } from "../assembly/pattern
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
 import { matchingConnectors } from "../assembly/connectors";
 import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
-import { duplicateInstances, mirroredBox, placedBox, replaceInstancePart, type Box3 } from "../assembly/assembly";
+import { duplicateInstances, placedBox, replaceInstancePart, type Box3 } from "../assembly/assembly";
 import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
-import { MATE_TYPES, nextMateName, pickConnector, solveWithParts } from "../assembly/mates";
+import { MATE_TYPES, nextMateName, pickConnector, samePieceClick, solveWithParts } from "../assembly/mates";
+import { insertProblem, insertSubAssembly, instanceAt, leafKey, ownBox, whereUsed } from "../assembly/subassembly";
 import { setSuppressed as setInstancesOff } from "../assembly/suppress";
 import { setPartProperties as setPartPropertiesIn } from "../assembly/properties";
 import { moveFeature as moveFeatureIn } from "./reorder";
@@ -348,6 +349,8 @@ export interface AppState {
   renameAssembly: (id: string, name: string) => void;
   /** Put a copy of a part into the assembly on show. */
   insertInstance: (part: { id: string; name: string }, placement?: Placement) => void;
+  /** Put a copy of another assembly into the assembly on show, as one piece (refused, with a message, if it would go round in a circle). */
+  insertSubAssembly: (assemblyId: string, placement?: Placement) => void;
   updateInstance: (id: string, patch: Partial<Pick<Instance, "name" | "placement" | "fixed" | "configuration">>) => void;
   removeInstances: (ids: string[]) => void;
   setAsmSelection: (ids: string[]) => void;
@@ -1019,7 +1022,12 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     removeAssembly: (id) => {
+      const s = get();
+      const all = s.history.present.assemblies ?? [];
+      const name = all.find((a) => a.id === id)?.name ?? "The assembly";
+      const users = whereUsed(all, id).filter((a) => a.id !== id);
       change((doc) => removeAssembly(doc, id));
+      if (users.length) s.showToast(`${name} was also taken out of ${users.map((a) => a.name).join(", ")}. Undo brings it all back.`, "info");
       if (get().activeTab === id) set({ activeTab: null, asmSelection: [] });
     },
 
@@ -1074,6 +1082,18 @@ export const useStore = create<AppState>((set, get) => {
       if (added) set({ asmSelection: [added.id] });
     },
 
+    insertSubAssembly: (assemblyId, placement) => {
+      const s = get();
+      const tab = s.activeTab;
+      if (!tab) return;
+      const problem = insertProblem(s.history.present, tab, assemblyId);
+      if (problem) return s.showToast(problem, "error");
+      const before = new Set(activeAssembly(s)?.instances.map((i) => i.id) ?? []);
+      change((doc) => insertSubAssembly(doc, tab, assemblyId, placement));
+      const added = activeAssembly(get())?.instances.find((i) => !before.has(i.id));
+      if (added) set({ asmSelection: [added.id] });
+    },
+
     updateInstance: (id, patch) => {
       const tab = get().activeTab;
       if (tab) change((doc) => updateInstance(doc, tab, id, patch));
@@ -1119,7 +1139,7 @@ export const useStore = create<AppState>((set, get) => {
           if (asm && autoName) mate.name = nextMateName(asm, patch.type);
           // Only Width mates use a second face on each part.
           if (patch.type !== "width") {
-            const one = (c?: MateConnector) => (c?.pick2 ? { instanceId: c.instanceId, pick: c.pick } : c);
+            const one = (c?: MateConnector) => (c?.pick2 ? { instanceId: c.instanceId, ...(c.path ? { path: c.path } : {}), pick: c.pick } : c);
             mate.a = one(mate.a);
             mate.b = one(mate.b);
           }
@@ -1127,13 +1147,23 @@ export const useStore = create<AppState>((set, get) => {
         return { mateDraft: { ...s.mateDraft, mate } };
       }),
 
-    pickMateConnector: (c) =>
-      set((s) => {
-        if (!s.mateDraft) return {};
-        const m = s.mateDraft.mate;
+    pickMateConnector: (c) => {
+      const s = get();
+      if (!s.mateDraft) return;
+      // Two parts inside the same sub-assembly copy: it moves as one piece, so keep the first pick and say why.
+      if (samePieceClick(s.mateDraft.mate, c)) {
+        const top = activeAssembly(s)?.instances.find((i) => i.id === c.instanceId);
+        const sub = s.history.present.assemblies?.find((a) => a.id === top?.subAssembly);
+        s.showToast(`Both faces are in ${top?.name ?? "the same sub-assembly"}, which moves as one piece. Open ${sub?.name ?? "it"} (double-click it) to mate its parts to each other.`, "info");
+        return;
+      }
+      set((st) => {
+        if (!st.mateDraft) return {};
+        const m = st.mateDraft.mate;
         const next: MateDraft = { ...m, ...pickConnector(m, c) };
-        return { mateDraft: { ...s.mateDraft, mate: next } };
-      }),
+        return { mateDraft: { ...st.mateDraft, mate: next } };
+      });
+    },
 
     commitMateDraft: () => {
       const s = get();
@@ -1144,7 +1174,7 @@ export const useStore = create<AppState>((set, get) => {
       change((doc) => {
         const withMate = putMate(doc, asm.id, mate);
         const solvedAsm = withMate.assemblies?.find((a) => a.id === asm.id);
-        return solvedAsm ? settleSolved(withMate, asm.id, solveWithParts(solvedAsm, s.parts, { hold: [mate.id] })) : withMate;
+        return solvedAsm ? settleSolved(withMate, asm.id, solveWithParts(solvedAsm, s.parts, { hold: [mate.id], assemblies: s.history.present.assemblies })) : withMate;
       });
       set({ mateDraft: null });
       return true;
@@ -1170,7 +1200,7 @@ export const useStore = create<AppState>((set, get) => {
       const mate = asm.mates?.find((m) => m.id === d.id);
       if (!mate) return;
       const moved = withDragChange(asm, d);
-      const solved = solveWithParts(moved, s.parts, { hold: [mate.id] });
+      const solved = solveWithParts(moved, s.parts, { hold: [mate.id], assemblies: s.history.present.assemblies });
       change((doc) => settleSolved(putMate(doc, asm.id, { ...mate, values: d.values }), asm.id, solved));
     },
 
@@ -1179,7 +1209,7 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       if (!asm) return;
       // Parts stay where the mates had put them.
-      change((doc) => removeMate(settleSolved(doc, asm.id, solveWithParts(asm, s.parts)), asm.id, id));
+      change((doc) => removeMate(settleSolved(doc, asm.id, solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies })), asm.id, id));
       if (s.mateDraft?.mate.id === id) set({ mateDraft: null });
     },
 
@@ -1193,7 +1223,7 @@ export const useStore = create<AppState>((set, get) => {
     savePosition: (name) => {
       const asm = activeAssembly(get());
       // Saved as shown: with the amounts loops of mates have moved to.
-      if (asm) change((doc) => savePosition(settleSolved(doc, asm.id, solveWithParts(asm, get().parts)), asm.id, newId("np"), name));
+      if (asm) change((doc) => savePosition(settleSolved(doc, asm.id, solveWithParts(asm, get().parts, { assemblies: get().history.present.assemblies })), asm.id, newId("np"), name));
     },
     applyPosition: (id) => {
       const asm = activeAssembly(get());
@@ -1226,9 +1256,8 @@ export const useStore = create<AppState>((set, get) => {
       if (!asm) return;
       const seeds = asm.instances.filter((i) => s.asmSelection.includes(i.id) && !i.copyOf);
       if (!seeds.length) return;
-      // Spaced a little more than the first part is wide, so the copies don't overlap.
-      const part = s.parts.find((p) => p.id === seeds[0].partId);
-      const box = part ? boundsOfVertices(part.vertices) : null;
+      // Spaced a little more than the first part (or sub-assembly) is wide, so the copies don't overlap.
+      const box = ownBox(asm, seeds[0], s.parts, s.history.present.assemblies ?? [], (p) => boundsOfVertices(p.vertices));
       const width = box ? box.max[0] - box.min[0] : 10;
       const pattern: AssemblyPattern =
         kind === "mirror"
@@ -1260,12 +1289,12 @@ export const useStore = create<AppState>((set, get) => {
       const source = replicateSource(asm, s.asmSelection[0]);
       if (typeof source === "string") return s.showToast(source, "info");
       const rep: Replicate = { id: newId("rp"), name: nextReplicateName(asm), seed: s.asmSelection[0], mate: source.mate.id };
-      const holes = replicateHoles(asm, rep, s.parts);
+      const holes = replicateHoles(asm, rep, s.parts, s.history.present.assemblies);
       if (!holes.length) return s.showToast("No other holes like that one were found on the part it's mated to.", "info");
       change((doc) => {
         const next = updateAssembly(doc, asm.id, (a) => syncReplicate(a, rep, holes, () => newId("i")));
         const solved = next.assemblies?.find((a) => a.id === asm.id);
-        return solved ? settlePlacements(next, asm.id, solveWithParts(solved, s.parts).placements) : next;
+        return solved ? settlePlacements(next, asm.id, solveWithParts(solved, s.parts, { assemblies: s.history.present.assemblies }).placements) : next;
       });
       set({ asmSelection: [] });
       s.showToast(`Copied into ${holes.length} more hole${holes.length === 1 ? "" : "s"}.`, "success");
@@ -1275,11 +1304,11 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       const rep = asm?.replicates?.find((r) => r.id === id);
       if (!asm || !rep) return;
-      const holes = replicateHoles(asm, rep, s.parts);
+      const holes = replicateHoles(asm, rep, s.parts, s.history.present.assemblies);
       change((doc) => {
         const next = updateAssembly(doc, asm.id, (a) => syncReplicate(a, rep, holes, () => newId("i")));
         const solved = next.assemblies?.find((a) => a.id === asm.id);
-        return solved ? settlePlacements(next, asm.id, solveWithParts(solved, s.parts).placements) : next;
+        return solved ? settlePlacements(next, asm.id, solveWithParts(solved, s.parts, { assemblies: s.history.present.assemblies }).placements) : next;
       });
       s.showToast(`${rep.name}: ${holes.length} cop${holes.length === 1 ? "y" : "ies"}.`, "success");
     },
@@ -1293,13 +1322,11 @@ export const useStore = create<AppState>((set, get) => {
       if (!asm) return;
       const ids = asm.instances.filter((i) => s.asmSelection.includes(i.id)).map((i) => i.id);
       if (!ids.length) return;
-      const { placements } = solveWithParts(asm, s.parts);
+      const { placements } = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
       // Beside everything already there (in +X), keeping the copies' places relative to each other.
       const boxOf = (i: Instance) => {
-        const part = findMesh(s.parts, meshIdOf(i));
-        const raw = part ? boundsOfVertices(part.vertices) : null;
-        // A mirrored part is flipped across its own YZ plane before it's placed.
-        const b = raw && i.mirrored ? mirroredBox(raw) : raw;
+        // (A mirrored part is flipped across its own YZ plane before it's placed; a sub-assembly's box holds all its parts.)
+        const b = ownBox(asm, i, s.parts, s.history.present.assemblies ?? [], (p) => boundsOfVertices(p.vertices));
         return b ? placedBox(b, placements[i.id] ?? i.placement) : null;
       };
       const all = asm.instances.map(boxOf).filter((b): b is Box3 => !!b);
@@ -1319,7 +1346,7 @@ export const useStore = create<AppState>((set, get) => {
       change((doc) => {
         const next = updateAssembly(doc, asm.id, (a) => replaceInstancePart(a, instanceId, { id: part.id, name: part.name }, oldName));
         const solved = next.assemblies?.find((a) => a.id === asm.id);
-        return solved ? settlePlacements(next, asm.id, solveWithParts(solved, s.parts).placements) : next;
+        return solved ? settlePlacements(next, asm.id, solveWithParts(solved, s.parts, { assemblies: s.history.present.assemblies }).placements) : next;
       });
     },
     addExplodeStep: () => {
@@ -1353,7 +1380,7 @@ export const useStore = create<AppState>((set, get) => {
       const s = get();
       const asm = activeAssembly(s);
       if (!asm) return;
-      const { placements } = solveWithParts(asm, s.parts);
+      const { placements } = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
       const made = makeGroup(asm, s.asmSelection, placements, newId("g"));
       if (made.error) {
         s.showToast(made.error);
@@ -1366,7 +1393,7 @@ export const useStore = create<AppState>((set, get) => {
       const s = get();
       const asm = activeAssembly(s);
       if (!asm) return;
-      const { placements } = solveWithParts(asm, s.parts);
+      const { placements } = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
       change((doc) => updateAssembly(settlePlacements(doc, asm.id, placements), asm.id, (a) => removeGroup(a, id)));
     },
     renameGroup: (id, name) => {
@@ -1379,7 +1406,7 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       const mate = asm?.mates?.find((m) => m.id === id);
       if (!asm || !mate) return;
-      const solved = solveWithParts(asm, s.parts);
+      const solved = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
       change((doc) => {
         const settled = settleSolved(doc, asm.id, solved);
         const kept = settled.assemblies?.find((a) => a.id === asm.id)?.mates?.find((m) => m.id === id) ?? mate;
@@ -1391,7 +1418,7 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       if (!asm || !ids.length) return;
       // Everything stays where the mates put it now, so nothing jumps when a mate stops (or starts) counting.
-      const solved = solveWithParts(asm, s.parts);
+      const solved = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
       change((doc) => updateAssembly(settleSolved(doc, asm.id, solved), asm.id, (a) => setInstancesOff(a, ids, suppressed)));
       if (suppressed) set((st) => ({ asmSelection: st.asmSelection.filter((x) => !ids.includes(x)) }));
     },
@@ -1601,11 +1628,12 @@ syncScope(useStore.getState().history.present.variables);
 useStore.subscribe((s) => syncScope(s.history.present.variables));
 
 /** The holes a replicate's copies go in: every hole like the original's on the part it's mated to (as built now). */
-function replicateHoles(a: Assembly, rep: Replicate, parts: PartMesh[]) {
+function replicateHoles(a: Assembly, rep: Replicate, parts: PartMesh[], assemblies: readonly Assembly[] = []) {
   const mate = a.mates?.find((m) => m.id === rep.mate);
   if (!mate) return [];
   const target = mate.a.instanceId === rep.seed ? mate.b : mate.a;
-  const instance = a.instances.find((i) => i.id === target.instanceId);
+  // (The holes may be in a part inside a sub-assembly.)
+  const instance = instanceAt(a, assemblies, leafKey(target.instanceId, target.path))?.part;
   const part = instance && findMesh(parts, meshIdOf(instance));
   // Picks name the part itself, whichever configuration it's shown in.
   return part && instance ? matchingConnectors(part, { ...target.pick, partId: part.id }).map((p) => ({ ...p, partId: instance.partId })) : [];

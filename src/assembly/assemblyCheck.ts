@@ -9,6 +9,7 @@ import type { ContactMeasure } from "../kernel/protocol";
 import { formatArea, formatLength, formatVolume, lengthUnit } from "../model/units";
 import type { SolveResult } from "./mates";
 import { mateInactive } from "./suppress";
+import { partInstances } from "./assembly";
 
 const worst = (levels: Level[]): Level => (levels.includes("error") ? "error" : levels.includes("warn") ? "warn" : "ok");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -120,23 +121,31 @@ export function assemblyReport(
   contacts: (Contact | { a: string; b: string; volume: number; kind?: undefined })[],
   options: ClashOptions = DEFAULT_CLASH_OPTIONS,
   leftOut: LeftOut = {},
+  /** Every assembly in the document, so the parts inside sub-assemblies are counted (and checked for missing parts). */
+  assemblies: readonly Assembly[] = [],
 ): CheckReport {
   const sections: PartReport[] = [];
   const section = (partId: string, name: string, findings: Finding[]) =>
     sections.push({ partId, name, level: worst(findings.map((f) => f.level)), findings, size: "", volume: "", volumeMm3: 0 });
 
-  const active = assembly.instances.filter((i) => !i.suppressed);
-  const missing = active.filter((i) => partNames[i.partId] === undefined);
+  // Every part, however deep inside sub-assemblies.
+  const active = partInstances(assembly, assemblies);
+  const missing = active.filter((p) => partNames[p.instance.partId] === undefined);
   if (missing.length) {
     section(
       "missing",
       "Missing parts",
-      missing.map((i) => ({ level: "error" as const, text: `${i.name}: its part no longer exists in the Part Studio. Delete it, or undo the change that removed the part.` })),
+      missing.map((p) => ({
+        level: "error" as const,
+        text: !assembly.instances.includes(p.instance)
+          ? `${p.name}: its part no longer exists in the Part Studio. Open the sub-assembly and delete it, or undo the change that removed the part.`
+          : `${p.name}: its part no longer exists in the Part Studio. Delete it, or undo the change that removed the part.`,
+      })),
     );
   }
 
   // Mates that are switched off, or on a suppressed part, aren't problems.
-  const inUse = (assembly.mates ?? []).filter((m) => !mateInactive(assembly, m));
+  const inUse = (assembly.mates ?? []).filter((m) => !mateInactive(assembly, m, assemblies));
   const mateProblems = inUse.filter((m) => solved.mateErrors[m.id]);
   section(
     "mates",

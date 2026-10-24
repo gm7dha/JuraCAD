@@ -44,14 +44,18 @@ export async function runCheck(options: ClashOptions = loadClashOptions()): Prom
   const asm = activeAssembly(useStore.getState());
   if (asm) {
     const s = useStore.getState();
-    const solved = solveWithParts(asm, s.parts);
-    // Suppressed parts are always left out (instancesForKernel); hidden ones when asked.
-    const hidden = options.skipHidden ? asm.instances.filter((i) => !i.suppressed && s.hiddenInstances.includes(i.id)).map((i) => i.id) : [];
-    const instances = instancesForKernel(asm, s.parts, solved).filter((i) => !hidden.includes(i.id));
+    const assemblies = s.history.present.assemblies ?? [];
+    const solved = solveWithParts(asm, s.parts, { assemblies });
+    // Suppressed parts are always left out (instancesForKernel); hidden ones when asked. Parts inside
+    // sub-assemblies are checked too — against each other and against everything else.
+    const all = instancesForKernel(asm, s.parts, assemblies, solved);
+    const isHidden = (key: string) => options.skipHidden && s.hiddenInstances.some((h) => key === h || key.startsWith(`${h}/`));
+    const instances = all.filter((i) => !isHidden(i.id));
+    const hidden = all.filter((i) => isHidden(i.id));
     // Gaps only matter when touching parts are listed.
     const measured = await kernel.clashes(instances, options.tolerance, !options.ignoreTouching);
     const names = Object.fromEntries(s.parts.map((p) => [p.id, p.name]));
-    return assemblyReport(asm, solved, names, judgeContacts(measured, options), options, { hidden: hidden.length, suppressed: asm.instances.filter((i) => i.suppressed).length });
+    return assemblyReport(asm, solved, names, judgeContacts(measured, options), options, { hidden: hidden.length, suppressed: asm.instances.filter((i) => i.suppressed).length }, assemblies);
   }
   const s0 = useStore.getState();
   const result = await kernel.check("normal", studioParts(s0).map((p) => p.id));

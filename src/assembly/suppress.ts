@@ -6,6 +6,7 @@
  */
 import type { Assembly, Mate } from "../model/types";
 import { tidyGroups } from "./groups";
+import { pathProblem } from "./paths";
 
 /** True when the instance is switched off. */
 export function isSuppressed(a: Assembly, instanceId: string): boolean {
@@ -16,10 +17,13 @@ export function isSuppressed(a: Assembly, instanceId: string): boolean {
  * Why a mate isn't doing anything, in plain words: it's suppressed itself, or
  * one of its parts is. Null when it's in use.
  */
-export function mateInactive(a: Assembly, mate: Mate): string | null {
+export function mateInactive(a: Assembly, mate: Mate, assemblies: readonly Assembly[] = []): string | null {
   if (mate.suppressed) return "Suppressed — not used";
   const off = [mate.a.instanceId, mate.b.instanceId].map((id) => a.instances.find((i) => i.id === id)).find((i) => i?.suppressed);
-  return off ? `Not used while ${off.name} is suppressed` : null;
+  if (off) return `Not used while ${off.name} is suppressed`;
+  // On a part inside a sub-assembly that's suppressed there.
+  const inner = [pathProblem(a, mate.a, assemblies), pathProblem(a, mate.b, assemblies)].find((p) => p?.kind === "suppressed");
+  return inner ? `Not used while ${inner.text}` : null;
 }
 
 /**
