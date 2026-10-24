@@ -1,7 +1,7 @@
 /** Checks sketch data loaded from storage, keeping only what's well-formed. */
 import { parsePick } from "../geometry/topoRef";
 import type { SketchPlane, Vec3 } from "./planes";
-import { DIMENSION_TYPES, type ConstraintType, type SketchConstraint, type SketchCurve, type SketchData, type SketchPoint } from "./types";
+import { DIMENSION_TYPES, type ConstraintType, type CurveLink, type SketchConstraint, type SketchCurve, type SketchData, type SketchImage, type SketchPoint, type SketchText } from "./types";
 
 const RELATIONS = new Set<string>([
   "coincident",
@@ -57,8 +57,7 @@ export function parseSketchData(raw: unknown): SketchData | null {
   for (const c of d.curves as Record<string, unknown>[]) {
     if (!c || !str(c.id)) return null;
     const construction = c.construction === true;
-    const linked = parsePick(c.link);
-    const link = linked?.ref.kind === "edge" ? { link: linked } : {};
+    const link = parseLink(c.link);
     if (c.type === "line" && str(c.p1) && str(c.p2)) curves.push({ id: c.id, type: "line", p1: c.p1, p2: c.p2, construction, ...link });
     else if (c.type === "circle" && str(c.center) && num(c.radius)) curves.push({ id: c.id, type: "circle", center: c.center, radius: c.radius, construction, ...link });
     else if (c.type === "arc" && str(c.center) && str(c.start) && str(c.end))
@@ -90,7 +89,48 @@ export function parseSketchData(raw: unknown): SketchData | null {
     if (c.driven === true && DIMENSION_TYPES.has(out.type)) out.driven = true;
     constraints.push(out);
   }
-  return { points, curves, constraints };
+  const out: SketchData = { points, curves, constraints };
+  // Text and pictures (newer sketches only); ones that aren't well-formed are left out.
+  const texts = Array.isArray(d.texts) ? (d.texts as unknown[]).map(parseText).filter((t): t is SketchText => !!t) : [];
+  if (texts.length) out.texts = texts;
+  const images = Array.isArray(d.images) ? (d.images as unknown[]).map(parseImage).filter((m): m is SketchImage => !!m) : [];
+  if (images.length) out.images = images;
+  return out;
+}
+
+/** A curve's link to a part edge (or, for Intersect, to where the sketch cuts the part). */
+function parseLink(raw: unknown): { link?: CurveLink } {
+  const linked = parsePick(raw);
+  if (linked?.ref.kind !== "edge") return {};
+  const cut = (raw as Record<string, unknown>).cut;
+  if (!cut || typeof cut !== "object") return { link: linked };
+  const face = parsePick({ partId: linked.partId, ref: (cut as Record<string, unknown>).face });
+  return { link: { ...linked, cut: face?.ref.kind === "face" ? { face: face.ref } : {} } };
+}
+
+function parseText(raw: unknown): SketchText | null {
+  if (!raw || typeof raw !== "object") return null;
+  const t = raw as Record<string, unknown>;
+  if (!str(t.id) || !str(t.anchor) || typeof t.value !== "string" || !num(t.size) || t.size <= 0) return null;
+  return {
+    id: t.id,
+    anchor: t.anchor,
+    value: t.value,
+    size: t.size,
+    angle: num(t.angle) ? t.angle : 0,
+    font: t.font === "bold" ? "bold" : "regular",
+    ...(t.anchorAt === "centre" ? { anchorAt: "centre" as const } : {}),
+    construction: t.construction === true,
+  };
+}
+
+function parseImage(raw: unknown): SketchImage | null {
+  if (!raw || typeof raw !== "object") return null;
+  const m = raw as Record<string, unknown>;
+  if (!str(m.id) || typeof m.src !== "string" || !m.src.startsWith("data:image/")) return null;
+  if (!num(m.x) || !num(m.y) || !num(m.width) || !num(m.height) || m.width <= 0 || m.height <= 0) return null;
+  const opacity = num(m.opacity) ? Math.max(0, Math.min(1, m.opacity)) : 0.5;
+  return { id: m.id, src: m.src, x: m.x, y: m.y, width: m.width, height: m.height, opacity, ...(typeof m.name === "string" && m.name ? { name: m.name } : {}) };
 }
 
 /** The face a sketch sits on (so its edges can be used), if saved and well-formed. */

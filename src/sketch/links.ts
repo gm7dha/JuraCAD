@@ -15,7 +15,7 @@
 import { sameRef, type EdgeRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { pointPos, settle, sketchId, type EditResult } from "./ops";
 import { toSketch, type PlaneFrame, type SketchPlane } from "./planes";
-import type { SketchArc, SketchCircle, SketchConstraint, SketchCurve, SketchData, SketchLine, SketchPoint } from "./types";
+import type { CurveLink, SketchArc, SketchCircle, SketchConstraint, SketchCurve, SketchData, SketchLine, SketchPoint } from "./types";
 
 type P2 = [number, number];
 
@@ -171,6 +171,7 @@ export function linkEdge(
   s: SketchData,
   edge: RefEdge,
   construction: boolean,
+  cut?: CurveLink["cut"],
 ): EditResult & { curveId: string; points: { a?: string; b?: string; c?: string } } {
   const known = linkedCurveFor(s, edge.pick);
   if (known) {
@@ -179,7 +180,7 @@ export function linkEdge(
   }
   if (edge.kind === "curve") return { sketch: s, curveId: "", points: {}, error: "Only straight and round edges can be used in a sketch for now. Snap to its ends instead." };
   const pt = (p: P2): SketchPoint => ({ id: sketchId("p"), x: p[0], y: p[1] });
-  const link = { partId: edge.pick.partId, ref: edge.pick.ref };
+  const link: CurveLink = { partId: edge.pick.partId, ref: edge.pick.ref, ...(cut ? { cut } : {}) };
   const points: SketchPoint[] = [];
   const constraints: SketchConstraint[] = [];
   let curve: SketchCurve;
@@ -360,7 +361,8 @@ export function linkProblem(info: SketchLinkInfo | undefined): string | null {
 export function pruneReferences(s: SketchData): SketchData {
   const gone = new Set<string>();
   for (const c of s.curves) {
-    if (!("link" in c) || !c.link || !c.construction) continue;
+    // Intersect's curves were asked for, so they stay.
+    if (!("link" in c) || !c.link || !c.construction || c.link.cut) continue;
     const own = new Set<string>(c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : c.type === "arc" ? [c.center, c.start, c.end] : []);
     // A circle's rim point holds its size: it's its own.
     for (const k of s.constraints) if (k.type === "pointOnCircle" && k.refs[1] === c.id && k.refs.length === 2) own.add(k.refs[0]);
@@ -374,7 +376,7 @@ export function pruneReferences(s: SketchData): SketchData {
   const kept = new Set(curves.flatMap(curvePointsOf));
   const points = s.points.filter((p) => kept.has(p.id) || (p.standalone && !s.constraints.some((k) => k.type === "pointOnCircle" && gone.has(k.refs[1]) && k.refs[0] === p.id)));
   const alive = new Set(["origin", ...points.map((p) => p.id), ...curves.map((c) => c.id)]);
-  return { points, curves, constraints: s.constraints.filter((k) => k.refs.every((r) => alive.has(r))) };
+  return { ...s, points, curves, constraints: s.constraints.filter((k) => k.refs.every((r) => alive.has(r))) };
 }
 
 const curvePointsOf = (c: SketchCurve): string[] =>
