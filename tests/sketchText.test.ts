@@ -199,3 +199,13 @@ describe("pictures to trace over", () => {
     expect(deleteWithExtras(r.sketch, [r.imageId]).images).toBeUndefined();
   });
 });
+
+describe("box selection", () => {
+  it("takes text whose box is inside (or, dragged leftwards, touched)", async () => {
+    const { sketchItemsInBox, rectOf } = await import("../src/viewport/boxSelect");
+    const r = addText(emptySketch(), { x: 0, y: 0 }, { ...DEFAULT_TEXT, value: "OI", size: 10 });
+    expect(sketchItemsInBox(r.sketch, rectOf(-1, -1, 15, 11), false)).toEqual([r.textId]);
+    expect(sketchItemsInBox(r.sketch, rectOf(-1, -1, 5, 11), false)).toEqual([]);
+    expect(sketchItemsInBox(r.sketch, rectOf(-1, -1, 5, 11), true)).toEqual([r.textId]);
+  });
+});

@@ -5,6 +5,7 @@
  */
 import { curvePoints, ellipsePoints, pointPos, radiusOf, splinePath } from "../sketch/ops";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "../sketch/types";
+import { textBox, textsOf } from "../sketch/sketchText";
 
 export interface Rect {
   x0: number;
@@ -88,7 +89,7 @@ function curvePolyline(s: SketchData, c: SketchCurve): number[] {
   return out;
 }
 
-/** Lines, arcs, circles and loose points of a sketch chosen by a box (in sketch mm). */
+/** Lines, arcs, circles, text and loose points of a sketch chosen by a box (in sketch mm). */
 export function sketchItemsInBox(s: SketchData, r: Rect, crossing: boolean): string[] {
   const out: string[] = [];
   for (const c of s.curves) {
@@ -97,9 +98,17 @@ export function sketchItemsInBox(s: SketchData, r: Rect, crossing: boolean): str
     for (let i = 0; i + 3 < pts.length; i += 2) segs.push(pts[i], pts[i + 1], pts[i + 2], pts[i + 3]);
     if (shapeInBox(r, pts, segs, crossing)) out.push(c.id);
   }
+  // Text, by the box round it (its point goes with it, rather than on its own).
+  const anchors = new Set(textsOf(s).map((t) => t.anchor));
+  for (const t of textsOf(s)) {
+    const pts = textBox(s, t).flat();
+    const segs: number[] = [];
+    for (let i = 0; i < 8; i += 2) segs.push(pts[i], pts[i + 1], pts[(i + 2) % 8], pts[(i + 3) % 8]);
+    if (shapeInBox(r, pts, segs, crossing)) out.push(t.id);
+  }
   const onCurves = new Set(s.curves.flatMap(curvePoints));
   for (const p of s.points) {
-    if (p.id === ORIGIN_ID || onCurves.has(p.id)) continue;
+    if (p.id === ORIGIN_ID || onCurves.has(p.id) || anchors.has(p.id)) continue;
     if (inRect(r, p.x, p.y)) out.push(p.id);
   }
   return out;

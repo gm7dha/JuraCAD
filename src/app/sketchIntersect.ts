@@ -23,7 +23,8 @@ export async function intersectWith(partId: string, face: FaceRef | null): Promi
   }
   const now = useStore.getState();
   const data = now.editing?.draft.sketch?.data;
-  if (!data || !now.sketch || now.editing?.draft.sketch?.plane !== plane) return;
+  // The sketch was closed, or put on another plane, while the engine worked.
+  if (!data || !now.sketch || JSON.stringify(now.editing?.draft.sketch?.plane) !== JSON.stringify(plane)) return;
   if ("error" in result) {
     now.setSketchMessage(result.error, "error");
     return;
