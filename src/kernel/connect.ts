@@ -29,20 +29,36 @@ function currentStudios(): StudioInput[] {
     id: st.id,
     features:
       st.id === here && s.rollbackTo
-        ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? previewOf(s.editing?.draft ?? null) : null, s.rollbackTo)
+        ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? withoutPictures(previewOf(s.editing?.draft ?? null)) : null, s.rollbackTo)
         : st.id === editingIn
-          ? featuresWithDraft(previewFeatures(st.features), previewOf(s.editing?.draft ?? null))
+          ? featuresWithDraft(previewFeatures(st.features), withoutPictures(previewOf(s.editing?.draft ?? null)))
           : st.features,
   })), ...configuredStudios(s.history.present)];
 }
 
-/** Folders are only for the feature list: leave them out so moving features between folders doesn't rebuild anything. */
+/** The feature being edited without its sketch's pictures (see withoutFolders). */
+function withoutPictures<T extends Feature | null>(f: T): T {
+  if (!f?.sketch?.data.images) return f;
+  const { images: _i, ...data } = f.sketch.data;
+  return { ...f, sketch: { ...f.sketch, data } };
+}
+
+/**
+ * Folders are only for the feature list, and pictures in sketches only for
+ * tracing over: leave them out, so moving features between folders doesn't
+ * rebuild anything and pictures aren't copied to the geometry engine.
+ */
 const foldersCache = new WeakMap<Feature[], Feature[]>();
 function withoutFolders(list: Feature[]): Feature[] {
-  if (!list.some((f) => f.folder)) return list;
+  if (!list.some((f) => f.folder || f.sketch?.data.images)) return list;
   let out = foldersCache.get(list);
   if (!out) {
-    out = list.map((f) => (f.folder ? (({ folder: _f, ...rest }) => rest)(f) : f));
+    out = list.map((f) => {
+      const { folder: _f, ...rest } = f;
+      if (!rest.sketch?.data.images) return f.folder ? rest : f;
+      const { images: _i, ...data } = rest.sketch.data;
+      return { ...rest, sketch: { ...rest.sketch, data } };
+    });
     foldersCache.set(list, out);
   }
   return out;

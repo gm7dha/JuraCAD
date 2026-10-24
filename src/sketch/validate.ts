@@ -124,10 +124,14 @@ function parseText(raw: unknown): SketchText | null {
   };
 }
 
+/** The longest picture (as a data: URL) a file may hold. */
+export const MAX_PICTURE_CHARS = 6 * 1024 * 1024;
+
 function parseImage(raw: unknown): SketchImage | null {
   if (!raw || typeof raw !== "object") return null;
   const m = raw as Record<string, unknown>;
-  if (!str(m.id) || typeof m.src !== "string" || !m.src.startsWith("data:image/")) return null;
+  // Pictures are made small when they're added; a huge one (from a hand-edited file) is left out.
+  if (!str(m.id) || typeof m.src !== "string" || !m.src.startsWith("data:image/") || m.src.length > MAX_PICTURE_CHARS) return null;
   if (!num(m.x) || !num(m.y) || !num(m.width) || !num(m.height) || m.width <= 0 || m.height <= 0) return null;
   const opacity = num(m.opacity) ? Math.max(0, Math.min(1, m.opacity)) : 0.5;
   return { id: m.id, src: m.src, x: m.x, y: m.y, width: m.width, height: m.height, opacity, ...(typeof m.name === "string" && m.name ? { name: m.name } : {}) };

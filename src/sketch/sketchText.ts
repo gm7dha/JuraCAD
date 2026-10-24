@@ -122,8 +122,23 @@ export function textBox(s: SketchData, t: SketchText): Pt[] {
   return [place([x0, y0]), place([x1, y0]), place([x1, y1]), place([x0, y1])];
 }
 
-/** Ids the pieces of a text's outlines go by in areas (one per letter outline). */
-export const textPieceId = (t: SketchText, k: number) => `${t.id}.${k}`;
+/** A short fingerprint of a text's words and font (FNV-1a, base 36). */
+function wordsKey(t: SketchText): string {
+  let h = 0x811c9dc5;
+  for (const ch of `${t.font}|${t.value}`) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+}
+
+/**
+ * Ids the pieces of a text's outlines go by in areas (one per letter outline).
+ * They include the words and font, so a letter picked to extrude is "gone"
+ * when the words change (rather than quietly becoming another letter); moving,
+ * turning or resizing the text keeps them.
+ */
+export const textPieceId = (t: SketchText, k: number) => `${t.id}.${wordsKey(t)}.${k}`;
 
 /** The text whose box is under (x, y) (within `tol` of it), or null. The smallest wins when boxes overlap. */
 export function textAt(s: SketchData, x: number, y: number, tol: number): string | null {
@@ -213,31 +228,37 @@ export function deleteWithExtras(s: SketchData, ids: string[]): SketchData {
   const toDelete = [...rest, ...anchors];
   const base: SketchData = { ...s, texts, images };
   const out = toDelete.length ? deleteItems(base, toDelete) : base;
-  return tidyExtras({ ...out, texts: out.texts ?? texts, images: out.images ?? images });
+  // The lists stay, even empty: an empty list says "deleted", where a missing one means "not touched" (see keepSketchExtras).
+  return { ...out, texts: dropOrphans(out, texts), images };
 }
 
-/** Drop texts whose anchor point has gone, and empty lists (so a sketch without any stays as older files have it). */
-function tidyExtras(s: SketchData): SketchData {
+/** Texts whose anchor point is still in the sketch. */
+function dropOrphans(s: SketchData, texts: SketchText[]): SketchText[] {
   const ids = new Set(s.points.map((p) => p.id));
-  const texts = s.texts?.filter((t) => t.anchor === "origin" || ids.has(t.anchor));
-  const out: SketchData = { ...s };
-  if (texts?.length) out.texts = texts;
-  else delete out.texts;
-  if (s.images?.length) out.images = s.images;
-  else delete out.images;
-  return out;
+  return texts.every((t) => t.anchor === "origin" || ids.has(t.anchor)) ? texts : texts.filter((t) => t.anchor === "origin" || ids.has(t.anchor));
 }
 
 /**
  * The sketch after an edit, keeping the texts and pictures from before it when
- * the edit didn't know about them (it built the sketch from points, curves and
- * constraints only). Texts whose anchor point the edit deleted go too.
+ * the edit didn't know about them: it built the sketch from points, curves and
+ * constraints only, so has no `texts` / `images` at all. A list that's there,
+ * even empty, is what the edit meant. Texts whose anchor point the edit deleted go too.
  */
 export function keepSketchExtras(prev: SketchData, next: SketchData): SketchData {
   const texts = next.texts ?? prev.texts;
   const images = next.images ?? prev.images;
-  if (texts === next.texts && images === next.images && (!texts || texts.every((t) => t.anchor === "origin" || next.points.some((p) => p.id === t.anchor)))) return next;
-  return tidyExtras({ ...next, ...(texts ? { texts } : {}), ...(images ? { images } : {}) });
+  const kept = texts ? dropOrphans(next, texts) : undefined;
+  if (kept === next.texts && images === next.images) return next;
+  return { ...next, ...(kept ? { texts: kept } : {}), ...(images ? { images } : {}) };
+}
+
+/** A sketch as it's saved: without empty text and picture lists (so a sketch without any is just as older files have it). */
+export function withoutEmptyExtras(s: SketchData): SketchData {
+  if (s.texts?.length !== 0 && s.images?.length !== 0) return s;
+  const out = { ...s };
+  if (out.texts?.length === 0) delete out.texts;
+  if (out.images?.length === 0) delete out.images;
+  return out;
 }
 
 /** Is this id a text or a picture in the sketch? */

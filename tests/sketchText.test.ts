@@ -15,10 +15,11 @@ import {
   imageAt,
   keepSketchExtras,
   textAt,
+  withoutEmptyExtras,
   textBox,
   textContours,
 } from "../src/sketch/sketchText";
-import { pruneReferences } from "../src/sketch/links";
+import { followLinks, linkEdge, pruneReferences, type RefEdge } from "../src/sketch/links";
 import { parseSketchData } from "../src/sketch/validate";
 import { emptySketch } from "../src/sketch/types";
 
@@ -135,7 +136,7 @@ describe("sketch text", () => {
     const kept = keepSketchExtras(r.sketch, rect);
     expect(kept.texts).toEqual([t]);
     const gone = keepSketchExtras(r.sketch, deleteItems(r.sketch, [t.anchor]));
-    expect(gone.texts).toBeUndefined();
+    expect(gone.texts).toEqual([]);
     // Unchanged when nothing needs carrying.
     expect(keepSketchExtras(r.sketch, r.sketch)).toBe(r.sketch);
   });
@@ -144,7 +145,7 @@ describe("sketch text", () => {
     const r = addText(emptySketch(), { x: 0, y: 0 }, { ...DEFAULT_TEXT, value: "O", size: 10 });
     const t = r.sketch.texts![0];
     const d = deleteWithExtras(r.sketch, [t.id]);
-    expect(d.texts).toBeUndefined();
+    expect(d.texts).toEqual([]);
     expect(d.points).toHaveLength(0);
 
     const rect = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 10 }).sketch;
@@ -196,7 +197,7 @@ describe("pictures to trace over", () => {
     const r = addImage(emptySketch(), png, { width: 10, height: 10 }, 20);
     expect(parseSketchData(JSON.parse(JSON.stringify(r.sketch)))).toEqual(r.sketch);
     expect(parseSketchData({ ...r.sketch, images: [{ ...r.sketch.images![0], src: "javascript:alert(1)" }] })!.images).toBeUndefined();
-    expect(deleteWithExtras(r.sketch, [r.imageId]).images).toBeUndefined();
+    expect(deleteWithExtras(r.sketch, [r.imageId]).images).toEqual([]);
   });
 });
 
@@ -207,5 +208,102 @@ describe("box selection", () => {
     expect(sketchItemsInBox(r.sketch, rectOf(-1, -1, 15, 11), false)).toEqual([r.textId]);
     expect(sketchItemsInBox(r.sketch, rectOf(-1, -1, 5, 11), false)).toEqual([]);
     expect(sketchItemsInBox(r.sketch, rectOf(-1, -1, 5, 11), true)).toEqual([r.textId]);
+  });
+});
+
+describe("deleting text and pictures stays done", () => {
+  it("the only picture, deleted, doesn't come back through the next edit", () => {
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const r = addImage(emptySketch(), png, { width: 10, height: 10 }, 20);
+    const deleted = keepSketchExtras(r.sketch, deleteWithExtras(r.sketch, [r.imageId]));
+    expect(deleted.images).toEqual([]);
+    // A later edit that knows nothing about pictures.
+    const bare = { points: deleted.points, curves: deleted.curves, constraints: deleted.constraints };
+    const next = keepSketchExtras(deleted, addRectangle(bare, { x: 0, y: 0 }, { x: 5, y: 5 }).sketch);
+    expect(next.images).toEqual([]);
+    expect(withoutEmptyExtras(next).images).toBeUndefined();
+  });
+
+  it("text on a rectangle's corner, deleted, stays deleted (the corner stays)", () => {
+    const rect = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 10 }).sketch;
+    const corner = rect.points[0];
+    const t = addText(rect, { x: corner.x, y: corner.y, snap: { kind: "point", id: corner.id } }, { ...DEFAULT_TEXT, value: "O" });
+    const deleted = keepSketchExtras(t.sketch, deleteWithExtras(t.sketch, [t.textId]));
+    expect(deleted.texts).toEqual([]);
+    const moved = keepSketchExtras(deleted, dragPoint({ points: deleted.points, curves: deleted.curves, constraints: deleted.constraints }, corner.id, 1, 1));
+    expect(moved.texts).toEqual([]);
+    expect(moved.curves).toHaveLength(4);
+  });
+
+  it("an empty list is left out when saved (as older files have it)", () => {
+    const s = { ...emptySketch(), texts: [], images: [] };
+    expect(withoutEmptyExtras(s)).toEqual(emptySketch());
+    const r = addText(emptySketch(), { x: 0, y: 0 }, { ...DEFAULT_TEXT });
+    expect(withoutEmptyExtras(r.sketch)).toBe(r.sketch);
+  });
+});
+
+describe("following the part keeps text", () => {
+  it("followLinks moves the linked line and leaves the text alone", () => {
+    const edge = (a: [number, number], b: [number, number]): RefEdge => ({
+      pick: { partId: "box", ref: { kind: "edge", curve: "LINE", a: [a[0], a[1], 0], b: [b[0], b[1], 0], mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, 0] } },
+      kind: "line",
+      a,
+      b,
+      mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
+    });
+    const linked = linkEdge(emptySketch(), edge([0, 0], [40, 0]), true);
+    const t = addText(linked.sketch, { x: 5, y: 5 }, { ...DEFAULT_TEXT, value: "OI" });
+    const followed = followLinks(t.sketch, { [linked.curveId]: edge([0, 0], [50, 0]) });
+    expect(followed).not.toBe(t.sketch);
+    expect(followed.texts).toEqual(t.sketch.texts);
+    expect(findRegions(followed).regions).toHaveLength(2);
+  });
+});
+
+describe("a picked letter when the words change", () => {
+  it("is gone (not quietly another letter) after the words change; kept when the text only moves or grows", () => {
+    const r = addText(emptySketch(), { x: 0, y: 0 }, { ...DEFAULT_TEXT, value: "OIO", size: 10 });
+    const t = r.sketch.texts![0];
+    const map = sketchAreas(r.sketch);
+    // The last O: the O-shaped area furthest right.
+    const os = map.areas.map((a, i) => ({ a, i })).filter(({ a }) => Math.abs(a.area - 75) < 1e-6);
+    const last = os.sort((p, q) => q.a.centroid[0] - p.a.centroid[0])[0];
+    const pick = pickOf(last.a);
+    const changed = changeText(r.sketch, t.id, { value: "IOIO" }).sketch;
+    expect(matchArea(sketchAreas(changed), pick)).toBe(-1);
+    const grown = changeText(dragPoint(r.sketch, t.anchor, 3, 0), t.id, { size: 12 }).sketch;
+    const i = matchArea(sketchAreas(grown), pick);
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(sketchAreas(grown).areas[i].area).toBeCloseTo(75 * 1.44, 6);
+    expect(sketchAreas(grown).areas[i].centroid[0]).toBeCloseTo(3 + 12 * 2.4 + 6, 6);
+  });
+});
+
+describe("pictures in a file", () => {
+  it("a huge picture in a file is left out when it's opened", () => {
+    const png = "data:image/png;base64,";
+    const r = addImage(emptySketch(), png + "A".repeat(10), { width: 10, height: 10 }, 20);
+    const big = { ...r.sketch, images: [{ ...r.sketch.images![0], src: png + "A".repeat(7 * 1024 * 1024) }] };
+    expect(parseSketchData(JSON.parse(JSON.stringify(big)))!.images).toBeUndefined();
+    expect(parseSketchData(JSON.parse(JSON.stringify(r.sketch)))!.images).toHaveLength(1);
+  });
+});
+
+describe("Claude replacing a sketch's shapes", () => {
+  it("keeps the text (on a loose point where it was) and pictures", async () => {
+    const { keepTextAndPictures } = await import("../src/mcp/featureSpec");
+    const rect = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 10 }).sketch;
+    const corner = rect.points[0];
+    const t = addText(rect, { x: corner.x, y: corner.y, snap: { kind: "point", id: corner.id } }, { ...DEFAULT_TEXT, value: "O" });
+    const pic = addImage(t.sketch, "data:image/png;base64,AA", { width: 2, height: 1 }, 20);
+    const fresh = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 30, y: 20 }).sketch;
+    const kept = keepTextAndPictures(pic.sketch, fresh);
+    expect(kept.texts).toEqual(pic.sketch.texts);
+    expect(kept.images).toEqual(pic.sketch.images);
+    const anchor = kept.points.find((p) => p.id === corner.id)!;
+    expect([anchor.x, anchor.y, anchor.standalone]).toEqual([corner.x, corner.y, true]);
+    expect(kept.curves).toEqual(fresh.curves);
+    expect(keepTextAndPictures(rect, fresh)).toBe(fresh);
   });
 });

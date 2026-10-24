@@ -250,6 +250,7 @@ function joinTouchingEnds(s: SketchData, curveIds: string[]): SketchData {
   const gone = new Set([...keep].filter(([a, b]) => a !== b).map(([a]) => a));
   if (!gone.size) return s;
   return {
+    ...s,
     points: s.points.filter((p) => !gone.has(p.id)),
     curves: s.curves.map((c) => (c.type === "line" ? { ...c, p1: to(c.p1), p2: to(c.p2) } : c.type === "arc" ? { ...c, start: to(c.start), end: to(c.end) } : c)),
     // The merged points' own fixes go (the kept point is fixed in the same place).
@@ -315,6 +316,8 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
   for (const c of s.curves) if (c.type === "circle" && radii.has(c.id) && Math.abs(radii.get(c.id)! - c.radius) > 1e-9) moved = true;
   if (!moved) return s;
   const data: SketchData = {
+    // Texts and pictures (and anything else the sketch holds) stay as they are.
+    ...s,
     points: s.points.map((p) => {
       const to = moves.get(p.id);
       return to ? { ...p, x: to[0], y: to[1] } : p;

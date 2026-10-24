@@ -11,7 +11,7 @@ import type { EdgeRef, FaceRef } from "../src/geometry/topoRef";
 import { GeometryEngine } from "../src/kernel/engine";
 import { linkEdge, projectEdge } from "../src/sketch/links";
 import { pointPos } from "../src/sketch/ops";
-import { planeFrame, type SketchPlane } from "../src/sketch/planes";
+import { planeFrame, planeOnFace, type SketchPlane } from "../src/sketch/planes";
 import { addText, DEFAULT_TEXT } from "../src/sketch/sketchText";
 import { emptySketch, type SketchData } from "../src/sketch/types";
 import { extrudeFeature, feature, loadOpenCascade, meshOf, sketchFeature } from "./support/engineHelpers";
@@ -180,5 +180,39 @@ describe("Intersect", () => {
     build([b]);
     const r = engine!.intersect(b.id, { kind: "default", name: "Top" }, { kind: "face", surface: "PLANE", center: [20, 0, 10], normal: [0, 0, 1] });
     expect("error" in r && r.error).toMatch(/doesn't cut through that face/);
+  });
+});
+
+describe("text on a part's face that follows the part", () => {
+  it("keeps its text when the box is widened (the sketch moves with a linked edge)", () => {
+    FONTS.regular = {
+      resolution: 1000,
+      boundingBox: { yMin: 0, yMax: 1000 },
+      glyphs: {
+        O: { ha: 1200, o: "m 0 0 l 1000 0 l 1000 1000 l 0 1000 m 250 250 l 250 750 l 750 750 l 750 250" },
+        I: { ha: 1200, o: "m 0 0 l 200 0 l 200 1000 l 0 1000" },
+      },
+    };
+    try {
+      const box = (w: number) => ({ ...feature("box", { width: w, depth: 20, height: 10, x: 0, y: 0, z: 0 }), id: "box" });
+      const topPick = { partId: "box", ref: { kind: "face" as const, surface: "PLANE", center: [20, 10, 10] as [number, number, number], normal: [0, 0, 1] as [number, number, number] } };
+      const plane = planeOnFace([0, 0, 1], [0, 0, 10], "Top face", topPick);
+      const first = build([box(40), sketchFeature(plane, emptySketch())]);
+      const edges = Object.values(first.sketchLinks!)[0].edges;
+      const right = edges.find((e) => e.kind === "line" && Math.abs(e.a[0] - 40) < 1e-6 && Math.abs(e.b[0] - 40) < 1e-6)!;
+      const linked = linkEdge(emptySketch(), right, true);
+      const t = addText(linked.sketch, { x: 5, y: 5 }, { ...DEFAULT_TEXT, value: "OI", size: 10 });
+      const sk = sketchFeature(plane, t.sketch);
+      const r = build([box(50), sk, extrudeFeature(sk.id, 1, { operation: "new" })]);
+      expect(r.featureErrors).toEqual({});
+      const info = r.sketchLinks![sk.id];
+      expect(info.sketch).toBeDefined();
+      expect(info.sketch!.data.texts?.map((x) => x.value)).toEqual(["OI"]);
+      // The letters: (100 − 25) + 20 mm², 1 mm thick.
+      const letters = r.parts.find((p) => p.id !== "box")!;
+      expect(meshOf({ parts: [letters] }).volume).toBeCloseTo(95, 3);
+    } finally {
+      FONTS.regular = real.regular;
+    }
   });
 });

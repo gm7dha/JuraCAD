@@ -146,3 +146,47 @@ describe("Insert DXF", () => {
     expect(areaOf(second.sketch)).toBeCloseTo(800 - Math.PI * 16, 0);
   });
 });
+
+describe("Insert DXF with broken or huge files", () => {
+  it("huge angles don't hang: arcs and ellipses come in within one turn", () => {
+    for (const a0 of [1e20, 1e300]) {
+      const d = parseDxf(dxf([["0", "ARC", 10, 0, 20, 0, 40, 10, 50, a0, 51, 90]]));
+      const r = insertDxf(emptySketch(), d, 1);
+      expect(r.error).toBeUndefined();
+      expect(r.sketch.curves[0].type).toBe("arc");
+    }
+    const e = parseDxf(dxf([["0", "ELLIPSE", 10, 0, 20, 0, 11, 10, 21, 0, 40, 0.5, 41, 1e18, 42, 1e18 + 1]]));
+    expect(insertDxf(emptySketch(), e, 1).count).toBe(1);
+    // Parameters 0 to 1e9 (far more than a turn): a whole ellipse.
+    const big = parseDxf(dxf([["0", "ELLIPSE", 10, 0, 20, 0, 11, 10, 21, 0, 40, 0.5, 41, 0, 42, 1e9]]));
+    const r = insertDxf(emptySketch(), big, 1);
+    expect(r.sketch.curves.map((c) => c.type)).toEqual(["ellipse"]);
+    // Part of an ellipse with huge but close parameters: a spline with a handful of points.
+    const part = parseDxf(dxf([["0", "ELLIPSE", 10, 0, 20, 0, 11, 10, 21, 0, 40, 0.5, 41, 1e6, 42, 1e6 + 1]]));
+    const sp = insertDxf(emptySketch(), part, 1).sketch.curves[0];
+    expect(sp.type === "spline" && sp.points.length).toBeLessThanOrEqual(65);
+  });
+
+  it("shapes with numbers that aren't numbers are left out, and said so", () => {
+    const d = parseDxf(dxf([...rect, ["0", "LWPOLYLINE", 90, 2, 70, 0, 10, "abc", 20, 0, 10, 5, 20, 5], ["0", "LINE", 10, 0, 20, "1e999", 11, 1, 21, 1]]));
+    expect(d.entities).toHaveLength(4);
+    expect(d.skipped).toEqual({ "shapes with unreadable numbers": 2 });
+    const r = insertDxf(emptySketch(), d, 1);
+    expect(r.sketch.points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true);
+  });
+
+  it("refuses drawings with too many shapes, or too big a file, kindly", () => {
+    const many = Array.from({ length: 20001 }, (_, i) => ["0", "LINE", 10, i, 20, 0, 11, i, 21, 1]);
+    expect(() => parseDxf(dxf(many))).toThrow(/more than 20,000 shapes/);
+    const lines = Array.from({ length: 20000 }, (_, i) => ["0", "LINE", 10, i, 20, 0, 11, i, 21, 1]);
+    expect(parseDxf(dxf(lines)).entities).toHaveLength(20000);
+    expect(() => parseDxf("0\nSECTION\n" + " ".repeat(21 * 1024 * 1024))).toThrow(/too big/);
+  });
+});
+
+describe("Insert DXF: one very long polyline", () => {
+  it("is refused kindly when it has too many points", () => {
+    const pts = Array.from({ length: 50001 }, (_, i) => [10, i, 20, i % 2]).flat();
+    expect(() => parseDxf(dxf([["0", "LWPOLYLINE", 90, 50001, 70, 0, ...pts]]))).toThrow(/more than 50,000 points/);
+  });
+});

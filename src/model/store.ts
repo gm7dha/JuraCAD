@@ -1,6 +1,6 @@
 import { deleteItems } from "../sketch/ops";
 import { followLinks, pruneReferences, type SketchLinkInfo } from "../sketch/links";
-import { isExtraId, keepSketchExtras } from "../sketch/sketchText";
+import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
 import { create } from "zustand";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -875,7 +875,7 @@ export const useStore = create<AppState>((set, get) => {
       const named = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
       // Part edges brought in just to snap to, that nothing uses any more, are tidied away.
       const sk = named.sketch;
-      const draft = sk ? { ...named, sketch: { ...sk, data: pruneReferences(sk.data) } } : named;
+      const draft = sk ? { ...named, sketch: { ...sk, data: withoutEmptyExtras(pruneReferences(sk.data)) } } : named;
       // Rolled back: a new feature goes in at the rollback point, and the bar moves down past it.
       const at = get().rollbackTo;
       changeStudio((doc) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, draft)));

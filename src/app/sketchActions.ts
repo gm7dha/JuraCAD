@@ -5,7 +5,7 @@ import { patternCurves, readPatternSettings, readTransformSettings, transformCur
 import { viewportApi } from "../viewport/Viewport";
 import { linkAllEdges } from "../sketch/links";
 import { addImage, changeText, deleteWithExtras, textById } from "../sketch/sketchText";
-import { insertDxf, insertSummary, parseDxf } from "../sketch/dxf";
+import { DxfError, insertDxf, insertSummary, MAX_DXF_SIZE, parseDxf } from "../sketch/dxf";
 import { evaluate } from "../model/expr";
 import type { SketchData } from "../sketch/types";
 
@@ -198,16 +198,21 @@ export async function insertDxfFile(file: File): Promise<void> {
     s.setSketchMessage("The scale must be a number more than 0 (1 = full size).", "error");
     return;
   }
-  let drawing;
-  try {
-    drawing = parseDxf(await file.text());
-  } catch (e) {
-    s.setSketchMessage(e instanceof Error ? e.message : "That file couldn't be read.", "error");
+  if (file.size > MAX_DXF_SIZE) {
+    s.setSketchMessage("That DXF file is too big to bring in (over 20 MB). Open it in a drawing program and save just the part you need.", "error");
     return;
   }
-  const now = sketchData();
-  if (!now) return;
-  const r = insertDxf(now, drawing, scale, useStore.getState().sketch?.construction ?? false);
+  let drawing;
+  let r;
+  try {
+    drawing = parseDxf(await file.text());
+    const now = sketchData();
+    if (!now) return;
+    r = insertDxf(now, drawing, scale, useStore.getState().sketch?.construction ?? false);
+  } catch (e) {
+    useStore.getState().setSketchMessage(e instanceof DxfError ? e.message : "That DXF file couldn't be brought in — it may be damaged. Try saving it again from the program that made it.", "error");
+    return;
+  }
   if (r.error) {
     s.setSketchMessage(r.error, "error");
     return;
@@ -216,8 +221,34 @@ export async function insertDxfFile(file: File): Promise<void> {
   useStore.getState().setSketchMessage(`${insertSummary(drawing, r.count, scale)} It's selected: use Move / copy to place it, or Delete to take it out again.`, "info");
 }
 
-/** Pictures bigger than this aren't laid on a sketch (they'd make the saved file huge). */
-const MAX_PICTURE_BYTES = 4 * 1024 * 1024;
+/** Picture files bigger than this aren't read at all. */
+const MAX_PICTURE_BYTES = 20 * 1024 * 1024;
+/** Pictures are kept at most this many pixels across (or up). */
+const MAX_PICTURE_PIXELS = 1600;
+
+/** A picture made at most MAX_PICTURE_PIXELS across, as a JPEG (on white), when it's bigger than that or over 1 MB. */
+async function shrinkPicture(src: string, size: { width: number; height: number }): Promise<string> {
+  const big = Math.max(size.width, size.height);
+  if (big <= MAX_PICTURE_PIXELS && src.length <= 1.4 * 1024 * 1024) return src;
+  const k = Math.min(1, MAX_PICTURE_PIXELS / big);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(size.width * k));
+  canvas.height = Math.max(1, Math.round(size.height * k));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return src;
+  const img = await new Promise<HTMLImageElement | null>((resolve) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => resolve(null);
+    i.src = src;
+  });
+  if (!img) return src;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const out = canvas.toDataURL("image/jpeg", 0.85);
+  return out.length < src.length ? out : src;
+}
 
 /** Insert image: lay a picture on the sketch plane to trace over. */
 export async function insertImageFile(file: File): Promise<void> {
@@ -228,7 +259,7 @@ export async function insertImageFile(file: File): Promise<void> {
     return;
   }
   if (file.size > MAX_PICTURE_BYTES) {
-    s.setSketchMessage("That picture is too big (over 4 MB). Make it smaller and try again — it's only for tracing over.", "error");
+    s.setSketchMessage("That picture is too big (over 20 MB). Make it smaller and try again — it's only for tracing over.", "error");
     return;
   }
   const src = await new Promise<string | null>((resolve) => {
@@ -250,9 +281,11 @@ export async function insertImageFile(file: File): Promise<void> {
     s.setSketchMessage("That picture couldn't be read. Try a PNG or JPEG file.", "error");
     return;
   }
+  // Big pictures are made smaller (it's only for tracing over), so the saved file stays small.
+  const shrunk = await shrinkPicture(src, size);
   // Its printed size at 96 dots per inch, kept between 10 and 500 mm.
   const width = Math.max(10, Math.min(500, Math.round((size.width * 25.4) / 96)));
-  const r = addImage(data, src, size, width, [0, 0], file.name);
+  const r = addImage(data, shrunk, size, width, [0, 0], file.name);
   if (r.error) {
     s.setSketchMessage(r.error, "error");
     return;

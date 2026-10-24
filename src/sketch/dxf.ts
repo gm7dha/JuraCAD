@@ -48,16 +48,59 @@ const UNITS: Record<number, [number, string]> = {
   14: [100, "decimetres"],
 };
 
+/** A problem with the file, in plain English (anything else thrown while reading one is a bug or a damaged file). */
+export class DxfError extends Error {}
+
+/** Files bigger than this (characters) aren't read: they'd freeze the page. */
+export const MAX_DXF_SIZE = 20 * 1024 * 1024;
+/** Nor drawings with more than this many shapes. */
+export const MAX_DXF_ENTITIES = 20000;
+
+const TWO_PI = 2 * Math.PI;
+/** An angle brought into 0…period (so huge values from a broken file can't make loops run for ever). */
+const wrapAngle = (a: number, period: number) => ((a % period) + period) % period;
+
+/** Every number in an entity is a real, finite number (a broken file can hold "abc" or 1e999). */
+function finite(e: DxfEntity): boolean {
+  const nums: number[] = [];
+  const add = (...v: number[]) => nums.push(...v);
+  switch (e.kind) {
+    case "line":
+      add(...e.a, ...e.b);
+      break;
+    case "circle":
+      add(...e.c, e.r);
+      break;
+    case "arc":
+      add(...e.c, e.r, e.a0, e.a1);
+      break;
+    case "point":
+      add(...e.p);
+      break;
+    case "polyline":
+      for (const q of e.points) add(...q.p, q.bulge);
+      break;
+    case "spline":
+      add(e.degree, ...e.control.flat(), ...e.knots, ...e.weights, ...e.fit.flat());
+      break;
+    case "ellipse":
+      add(...e.c, ...e.major, e.ratio, e.t0, e.t1);
+      break;
+  }
+  return nums.every(Number.isFinite);
+}
+
 /** Read a DXF file's text. Throws a plain-English error when it isn't a DXF drawing. */
 export function parseDxf(text: string): DxfDrawing {
+  if (text.length > MAX_DXF_SIZE) throw new DxfError("That DXF file is too big to bring in (over 20 MB). Open it in a drawing program and save just the part you need.");
   const lines = text.split(/\r\n|\r|\n/);
   const pairs: [number, string][] = [];
   for (let i = 0; i + 1 < lines.length; i += 2) {
     const code = Number(lines[i].trim());
-    if (!Number.isInteger(code)) throw new Error("That doesn't look like a DXF file (or it's a binary DXF, which can't be read). Save it as an ASCII DXF and try again.");
+    if (!Number.isInteger(code)) throw new DxfError("That doesn't look like a DXF file (or it's a binary DXF, which can't be read). Save it as an ASCII DXF and try again.");
     pairs.push([code, lines[i + 1].trim()]);
   }
-  if (!pairs.some(([c, v]) => c === 0 && v === "SECTION")) throw new Error("That doesn't look like a DXF file. Choose a .dxf drawing.");
+  if (!pairs.some(([c, v]) => c === 0 && v === "SECTION")) throw new DxfError("That doesn't look like a DXF file. Choose a .dxf drawing.");
 
   // Units, from the header.
   let unitMm: number | null = null;
@@ -85,10 +128,12 @@ export function parseDxf(text: string): DxfDrawing {
     } else items[items.length - 1]?.g.push([c, v]);
   }
 
+  /** A value by its code: the fallback when it's missing, NaN when it isn't a number (the entity is then left out). */
   const num = (g: [number, string][], code: number, fallback = 0) => {
     const f = g.find(([c]) => c === code);
-    const n = f ? Number(f[1]) : NaN;
-    return Number.isFinite(n) ? n : fallback;
+    if (!f || f[1] === "") return fallback;
+    const n = Number(f[1]);
+    return Number.isFinite(n) ? n : NaN;
   };
   const all = (g: [number, string][], code: number) => g.filter(([c]) => c === code).map(([, v]) => Number(v));
   /** Points from paired x (code) and y (code + 10) values, in order. */
@@ -168,8 +213,17 @@ export function parseDxf(text: string): DxfDrawing {
       default:
         skipped[type] = (skipped[type] ?? 0) + 1;
     }
+    if (entities.length > MAX_DXF_ENTITIES)
+      throw new DxfError(`That drawing has more than ${MAX_DXF_ENTITIES.toLocaleString("en")} shapes, too many for a sketch. Open it in a drawing program and save just the part you need.`);
   }
-  return { entities, unitMm, unitName, skipped };
+  // Long polylines and splines count by their points.
+  const pieces = entities.reduce((n, e) => n + (e.kind === "polyline" ? e.points.length : e.kind === "spline" ? e.control.length + e.fit.length : 1), 0);
+  if (pieces > 2.5 * MAX_DXF_ENTITIES)
+    throw new DxfError(`That drawing has more than ${(2.5 * MAX_DXF_ENTITIES).toLocaleString("en")} points and pieces, too many for a sketch. Open it in a drawing program and save just the part you need.`);
+  // Shapes with broken numbers in them are left out (and counted).
+  const good = entities.filter(finite);
+  if (good.length < entities.length) skipped["shapes with unreadable numbers"] = entities.length - good.length;
+  return { entities: good, unitMm, unitName, skipped };
 }
 
 /** A point on a B-spline (de Boor), with weights for a rational one. */
@@ -198,7 +252,7 @@ function deBoor(degree: number, control: Pt[], knots: number[], weights: number[
 export function sampleSpline(e: Extract<DxfEntity, { kind: "spline" }>): Pt[] {
   const { degree, control, knots, weights } = e;
   if (control.length < 2) return [...control];
-  if (knots.length !== control.length + degree + 1 || degree < 1) return [...control];
+  if (!Number.isInteger(degree) || degree < 1 || degree > 11 || knots.length !== control.length + degree + 1) return [...control];
   const t0 = knots[degree];
   const t1 = knots[control.length];
   const steps = Math.max(8, Math.min(200, control.length * 4));
@@ -297,9 +351,9 @@ export function insertDxf(s: SketchData, drawing: DxfDrawing, scale: number, con
         }
         break;
       case "arc": {
-        const a0 = (e.a0 * Math.PI) / 180;
-        let a1 = (e.a1 * Math.PI) / 180;
-        while (a1 <= a0) a1 += 2 * Math.PI;
+        const a0 = (wrapAngle(e.a0, 360) * Math.PI) / 180;
+        let a1 = (wrapAngle(e.a1, 360) * Math.PI) / 180;
+        if (a1 <= a0) a1 += TWO_PI;
         arc(e.c, e.r, a0, a1);
         count++;
         break;
@@ -331,7 +385,7 @@ export function insertDxf(s: SketchData, drawing: DxfDrawing, scale: number, con
             const [from, to] = b > 0 ? [p, q] : [q, p];
             let a1 = ang(to);
             const a0 = ang(from);
-            while (a1 <= a0) a1 += 2 * Math.PI;
+            if (a1 <= a0) a1 += TWO_PI;
             arc(c, r, a0, a1);
           }
         }
@@ -350,7 +404,8 @@ export function insertDxf(s: SketchData, drawing: DxfDrawing, scale: number, con
       case "ellipse": {
         const len = Math.hypot(e.major[0], e.major[1]);
         if (len * k <= tol || !(e.ratio > 0)) break;
-        const whole = Math.abs(e.t1 - e.t0 - 2 * Math.PI) < 1e-6 || Math.abs(e.t1 - e.t0) < 1e-9;
+        const turn = e.t1 - e.t0;
+        const whole = Math.abs(turn - TWO_PI) < 1e-6 || Math.abs(turn) < 1e-9 || Math.abs(turn) > TWO_PI;
         if (whole) {
           const major: Pt = [e.c[0] + e.major[0], e.c[1] + e.major[1]];
           const minor: Pt = [e.c[0] - e.major[1] * e.ratio, e.c[1] + e.major[0] * e.ratio];
@@ -359,12 +414,14 @@ export function insertDxf(s: SketchData, drawing: DxfDrawing, scale: number, con
           break;
         }
         // Part of an ellipse: a spline through points along it.
-        let t1 = e.t1;
-        while (t1 <= e.t0) t1 += 2 * Math.PI;
+        // Parameters brought into one turn, so the steps stay few.
+        const t0 = wrapAngle(e.t0, TWO_PI);
+        let t1 = wrapAngle(e.t1, TWO_PI);
+        if (t1 <= t0) t1 += TWO_PI;
         const ang = Math.atan2(e.major[1], e.major[0]);
-        const steps = Math.max(6, Math.ceil(((t1 - e.t0) / (2 * Math.PI)) * 32));
+        const steps = Math.min(64, Math.max(6, Math.ceil(((t1 - t0) / TWO_PI) * 32)));
         const pts = Array.from({ length: steps + 1 }, (_, i): Pt => {
-          const t = e.t0 + ((t1 - e.t0) * i) / steps;
+          const t = t0 + ((t1 - t0) * i) / steps;
           const x = len * Math.cos(t);
           const y = len * e.ratio * Math.sin(t);
           return [e.c[0] + x * Math.cos(ang) - y * Math.sin(ang), e.c[1] + x * Math.sin(ang) + y * Math.cos(ang)];
