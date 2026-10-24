@@ -914,19 +914,21 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
       <RelationsSection assembly={assembly} />
       <PositionsSection assembly={assembly} />
       <section className="panel-section parts">
-        <h3>
-          Parts list <span className="count">({partCount})</span>
-        </h3>
-        {hasSubs && (
-          <div className="segmented bom-structure" role="group" aria-label="How sub-assemblies are listed">
-            <button type="button" className={!structured ? "selected" : ""} aria-pressed={!structured} onClick={() => setStructured(false)} title="Every part counted, however deep inside sub-assemblies">
-              Flattened
-            </button>
-            <button type="button" className={structured ? "selected" : ""} aria-pressed={structured} onClick={() => setStructured(true)} title="Each sub-assembly on one line, with what's in one of it underneath">
-              Structured
-            </button>
-          </div>
-        )}
+        <div className="bom-header">
+          <h3>
+            Parts list <span className="count">({partCount})</span>
+          </h3>
+          {hasSubs && (
+            <span className="bom-structure" role="group" aria-label="How sub-assemblies are listed">
+              <button type="button" className={!structured ? "selected" : ""} aria-pressed={!structured} onClick={() => setStructured(false)} title="Every part counted, however deep inside sub-assemblies">
+                Flattened
+              </button>
+              <button type="button" className={structured ? "selected" : ""} aria-pressed={structured} onClick={() => setStructured(true)} title="Each sub-assembly on one line, with what's in one of it underneath">
+                Structured
+              </button>
+            </span>
+          )}
+        </div>
         <table className="bom-table" aria-label="Parts list">
           <thead>
             <tr>

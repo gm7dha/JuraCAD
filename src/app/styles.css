@@ -3079,11 +3079,41 @@ kbd {
   transform: rotate(-90deg);
 }
 
-.segmented.bom-structure {
-  grid-template-columns: repeat(2, 1fr);
-  /* In the parts list's column: keep its height (it clips its corners, so it would otherwise shrink away). */
+/* The parts list's heading, with the Flattened / Structured switch on the right when there are sub-assemblies. */
+.bom-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
   flex: none;
-  margin: 0 10px 6px;
+}
+
+.bom-structure {
+  display: inline-flex;
+  margin-right: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow: hidden;
+  flex: none;
+}
+
+.bom-structure button {
+  border: none;
+  background: var(--panel);
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.bom-structure button + button {
+  border-left: 1px solid var(--line);
+}
+
+.bom-structure button.selected {
+  background: var(--accent);
+  color: #fff;
 }
 
 .bom-table tr.bom-subassembly td {

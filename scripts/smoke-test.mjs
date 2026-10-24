@@ -1134,6 +1134,7 @@ try {
     await page.getByRole("button", { name: "Structured", exact: true }).click();
     const structured = await page.locator(".bom-table").innerText();
     if (!/Assembly 1\s+2\b/.test(structured) || !/1\.1\s+Bracket\s+2\b/.test(structured)) throw new Error(`the structured parts list reads "${structured.replace(/\n/g, " / ")}"`);
+    await shot("subassembly-structured");
     await page.getByRole("button", { name: "Flattened", exact: true }).click();
     // Double-click a sub-assembly to open it.
     await page.locator(".feature-row >> text=Assembly 1 <1>").dblclick();
