@@ -8,7 +8,8 @@ import { describe, expect, it } from "vitest";
 import { addAssembly, billOfMaterials, bomCsv, bomTotalMass, parseAssemblies, partInstances, removeAssembly, renameAssembly, putMate, type BomInfo } from "../src/assembly/assembly";
 import { applyPlacement, IDENTITY, quatFromAxisAngle, type Placement, type Vec3 } from "../src/assembly/math";
 import { solvedInside, solveAssembly } from "../src/assembly/mates";
-import { pickConnector } from "../src/assembly/mates";
+import { pickConnector, samePieceClick, solveWithParts } from "../src/assembly/mates";
+import { mateInactive } from "../src/assembly/suppress";
 import { syncPattern } from "../src/assembly/patterns";
 import { instanceAt, insertProblem, insertSubAssembly, kernelInstances, ownBox, leavesOf, leafKey, pathOfKey, topOfKey, tidySubAssemblies, usesAssembly, whereUsed } from "../src/assembly/subassembly";
 import { emptyDocument } from "../src/model/document";
@@ -285,11 +286,21 @@ describe("saved files", () => {
 
 describe("mates and patterns with sub-assemblies", () => {
   const face = { partId: "bolt", ref: { kind: "face" as const, surface: "PLANE", center: [0, 0, 0] as Vec3, normal: [0, 0, 1] as Vec3 } };
-  it("treats two clicks inside the same sub-assembly copy as the same piece", () => {
+  it("refuses a second click on another part inside the same sub-assembly copy (it moves as one piece)", () => {
     const first = pickConnector({ type: "fastened" }, { instanceId: "s1", path: ["p1"], pick: face });
-    // A second click on another part of the same copy starts again (it can't be mated to itself).
-    const second = pickConnector({ type: "fastened", ...first }, { instanceId: "s1", path: ["p2"], pick: face });
-    expect(second).toEqual({ a: { instanceId: "s1", path: ["p2"], pick: face }, b: undefined });
+    // Another part of the same copy: refused (the store keeps the first pick and explains).
+    expect(samePieceClick({ type: "fastened", ...first }, { instanceId: "s1", path: ["p2"], pick: face })).toBe(true);
+    expect(samePieceClick({ type: "fastened", ...first }, { instanceId: "s1", path: ["p1", "q"], pick: face })).toBe(true);
+    // The same part again, another copy, a plain part, or the first click: fine.
+    expect(samePieceClick({ type: "fastened", ...first }, { instanceId: "s1", path: ["p1"], pick: face })).toBe(false);
+    expect(samePieceClick({ type: "fastened", ...first }, { instanceId: "s2", path: ["p1"], pick: face })).toBe(false);
+    expect(samePieceClick({ type: "fastened" }, { instanceId: "s1", path: ["p2"], pick: face })).toBe(false);
+    expect(samePieceClick({ type: "fastened", a: { instanceId: "x", pick: face } }, { instanceId: "x", pick: face })).toBe(false);
+    // Once both sides are picked, a click starts again as usual.
+    const both = { type: "fastened" as const, ...first, b: { instanceId: "s2", path: ["p1"], pick: face } };
+    expect(samePieceClick(both, { instanceId: "s1", path: ["p2"], pick: face })).toBe(false);
+    // Width: the second face of a side must be on the same part.
+    expect(samePieceClick({ type: "width", a: { instanceId: "s1", path: ["p1"], pick: face } }, { instanceId: "s1", path: ["p2"], pick: face })).toBe(true);
     const other = pickConnector({ type: "fastened", ...first }, { instanceId: "s2", path: ["p1"], pick: face });
     expect(other.b).toEqual({ instanceId: "s2", path: ["p1"], pick: face });
   });
@@ -305,6 +316,49 @@ describe("mates and patterns with sub-assemblies", () => {
     ]);
     const mir = syncPattern(a, { id: "q", name: "Mirror 1", kind: "mirror", seeds: ["s1"], count: 2, amount: "0", axis: "x" }, () => `m${++n}`);
     expect(mir.instances.map((i) => i.id)).toEqual(["s1"]);
+  });
+});
+
+describe("when the way to a part inside a sub-assembly breaks", () => {
+  const face = { partId: "bolt", ref: { kind: "face" as const, surface: "PLANE", center: [0, 0, 0] as Vec3, normal: [0, 0, 1] as Vec3 } };
+  const H: Assembly = { id: "H", name: "Hinge", instances: [part("p1", "bolt", IDENTITY, { name: "Pin <1>", fixed: true }), part("p2", "bolt", IDENTITY, { name: "Pin <2>" })] };
+  const m: Mate = { id: "m", name: "Fasten 1", type: "fastened", a: { instanceId: "base", pick: face }, b: { instanceId: "h1", path: ["p2"], pick: face }, flip: false, values: {} };
+  const T: Assembly = { id: "T", name: "Top", instances: [part("base", "bolt", IDENTITY, { fixed: true }), sub("h1", "H", IDENTITY, { name: "Hinge <1>" })], mates: [m] };
+
+  it("says the part inside is suppressed, and shows the mate as not used", () => {
+    const off: Assembly = { ...H, instances: H.instances.map((i) => (i.id === "p2" ? { ...i, suppressed: true } : i)) };
+    expect(mateInactive(T, m, [T, off])).toBe("Not used while Pin <2> inside Hinge <1> is suppressed");
+    expect(mateInactive(T, m, [T, H])).toBeNull();
+    expect(solveWithParts(T, [], { assemblies: [T, off] }).mateErrors.m).toBe("Pin <2> inside Hinge <1> is suppressed. Unsuppress it, or edit the mate and pick another face.");
+  });
+
+  it("says the part inside was removed", () => {
+    const less: Assembly = { ...H, instances: [H.instances[0]] };
+    expect(solveWithParts(T, [], { assemblies: [T, less] }).mateErrors.m).toBe("The part it used inside Hinge <1> was removed from Hinge. Edit the mate and pick a face again.");
+    expect(mateInactive(T, m, [T, less])).toBeNull();
+  });
+
+  it("drops mates that reach a part through a copy of a deleted assembly", () => {
+    // Top holds Mid, which holds a copy of Hinge; a mate in Top reaches Pin <2> through it.
+    const Mid: Assembly = { id: "M", name: "Mid", instances: [sub("h9", "H", IDENTITY, { fixed: true })] };
+    const deep: Mate = { ...m, b: { instanceId: "mid", path: ["h9", "p2"], pick: face } };
+    const Top: Assembly = { id: "T", name: "Top", instances: [part("base", "bolt", IDENTITY, { fixed: true }), sub("mid", "M")], mates: [deep] };
+    const after = removeAssembly(docWith([Top, Mid, H]), "H");
+    expect(after.assemblies!.map((a) => [a.id, a.instances.map((i) => i.id), a.mates?.length ?? 0])).toEqual([
+      ["T", ["base", "mid"], 0],
+      ["M", [], 0],
+    ]);
+  });
+});
+
+describe("assemblies without sub-assemblies", () => {
+  it("put each part exactly where it was (no extra rounding)", () => {
+    const q = quatFromAxisAngle([1, 2, 3], 0.7);
+    const A: Assembly = { id: "A", name: "A", instances: [part("a", "bolt", at(1.1, 2.2, 3.3, q))] };
+    const placed = { a: at(0.1 + 0.2, 1 / 3, 7, q) };
+    const k = kernelInstances(leavesOf(A, [], [A]), [{ id: "bolt" }] as never, placed, () => IDENTITY);
+    expect(k[0].position).toEqual(placed.a.position);
+    expect(k[0].rotation).toEqual(placed.a.rotation);
   });
 });
 

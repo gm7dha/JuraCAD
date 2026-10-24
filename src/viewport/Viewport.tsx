@@ -632,7 +632,8 @@ export function Viewport() {
     return Object.fromEntries(
       leaves.map((l) => {
         // Parts inside a sub-assembly ride along with it.
-        const m = placementMatrix(compose(shown[l.top] ?? IDENTITY, l.relative));
+        const at = shown[l.top] ?? IDENTITY;
+        const m = placementMatrix(l.path.length ? compose(at, l.relative) : at);
         // Mirrored copies: the part flipped across its own YZ plane first.
         if (l.instance.mirrored) for (const k of [0, 1, 2]) m[k] = -m[k];
         return [l.key, m];

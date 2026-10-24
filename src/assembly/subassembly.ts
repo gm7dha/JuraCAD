@@ -143,7 +143,9 @@ export function kernelInstances(leaves: readonly Leaf[], parts: readonly PartMes
   const out: InstanceInput[] = [];
   for (const l of leaves) {
     if (!findMesh(parts, meshIdOf(l.instance))) continue;
-    const p = compose(tops[l.top] ?? fallback(l.top), l.relative);
+    // (A plain part takes its place as it is, so assemblies without sub-assemblies come out exactly as before.)
+    const at = tops[l.top] ?? fallback(l.top);
+    const p = l.path.length ? compose(at, l.relative) : at;
     out.push({ id: l.key, partId: meshIdOf(l.instance), name: l.name, position: p.position, rotation: p.rotation, ...(l.instance.mirrored ? { mirrored: true } : {}) });
   }
   return out;

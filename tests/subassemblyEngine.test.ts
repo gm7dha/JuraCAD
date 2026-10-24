@@ -6,7 +6,7 @@
  */
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { billOfMaterials } from "../src/assembly/assembly";
+import { billOfMaterials, replaceInstancePart } from "../src/assembly/assembly";
 import { DEFAULT_CLASH_OPTIONS, judgeContacts } from "../src/assembly/assemblyCheck";
 import { compose, IDENTITY, type Placement } from "../src/assembly/math";
 import { connectorFrameFor, solveWithParts } from "../src/assembly/mates";
@@ -196,5 +196,36 @@ describe("sub-assemblies on real parts", () => {
     } finally {
       back.dispose();
     }
+  });
+});
+
+describe("replacing a part inside a sub-assembly", () => {
+  it("keeps the parent's mates on the new part (the most similar face), not the old one", () => {
+    // A 4 × 4 × 20 pin at x = 100: its bottom face centre is (102, 2, 0).
+    const pin = feature("box", { width: 4, depth: 4, height: 20, x: 100 });
+    const all3 = engine.rebuild([block, plate, pin]).parts;
+    const [cubeP, plateP3] = all3;
+    // L: just the cube. T: the plate fixed, and a copy of L fastened by the cube's bottom onto the plate's top (60, 10, 5).
+    const L: Assembly = { id: "L", name: "Leg", instances: [inst("lp", block.id, IDENTITY, true)] };
+    const T: Assembly = {
+      id: "T",
+      name: "Table",
+      instances: [inst("tp", plate.id, IDENTITY, true), inst("tl", "", at(300, 0, 0), false, { subAssembly: "L" })],
+      mates: [fasten("m", { instanceId: "tp", pick: face(plateP3, [0, 0, 1]) }, { instanceId: "tl", path: ["lp"], pick: face(cubeP, [0, 0, -1]) })],
+    };
+    const before = solveWithParts(T, all3, { assemblies: [T, L] });
+    expect(before.mateErrors).toEqual({});
+    close(before.placements.tl.position, [55, 5, 5]);
+    // Replace the cube with the pin inside L (as the Part box in L does): T's mate now sits on the pin's bottom.
+    const L2 = replaceInstancePart(L, "lp", { id: pin.id, name: "Pin" });
+    expect(L2.instances[0].partId).toBe(pin.id);
+    const after = solveWithParts(T, all3, { assemblies: [T, L2] });
+    expect(after.mateErrors).toEqual({});
+    close(after.placements.tl.position, [60 - 102, 10 - 2, 5]);
+    // And with a part that has no matching face, the mate says so instead of staying where it was.
+    const ball = feature("sphere", { diameter: 10, x: 200 });
+    const withBall = engine.rebuild([block, plate, pin, ball]).parts;
+    const L3 = replaceInstancePart(L, "lp", { id: ball.id, name: "Ball" });
+    expect(solveWithParts(T, withBall, { assemblies: [T, L3] }).mateErrors.m).toMatch(/can't be found/);
   });
 });

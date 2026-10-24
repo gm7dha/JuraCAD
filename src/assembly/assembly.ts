@@ -46,13 +46,19 @@ export function addAssembly(doc: JuraCADDocument, id = newId("a")): JuraCADDocum
 
 /** Remove an assembly, and its copies inside other assemblies (with the mates on them). */
 export function removeAssembly(doc: JuraCADDocument, id: string): JuraCADDocument {
+  const all = assembliesOf(doc);
+  // Copies of it in other assemblies go; so do mates anywhere that reach a part through one of those copies.
+  const gone = new Set(all.flatMap((a) => a.instances.filter((i) => i.subAssembly === id).map((i) => i.id)));
+  const through = (c: MateConnector) => (c.path ?? []).some((p) => gone.has(p));
   return withAssemblies(
     doc,
-    assembliesOf(doc)
+    all
       .filter((a) => a.id !== id)
       .map((a) => {
         const uses = a.instances.filter((i) => i.subAssembly === id).map((i) => i.id);
-        return uses.length ? tidyExplodeSteps(withoutInstances(a, uses)) : a;
+        const left = uses.length ? tidyExplodeSteps(withoutInstances(a, uses)) : a;
+        const mates = left.mates ?? [];
+        return mates.some((m) => through(m.a) || through(m.b)) ? tidyReplicates(withMates(left, mates.filter((m) => !through(m.a) && !through(m.b)))) : left;
       }),
   );
 }

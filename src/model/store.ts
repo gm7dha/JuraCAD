@@ -44,7 +44,7 @@ import { duplicateInstances, placedBox, replaceInstancePart, type Box3 } from ".
 import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
-import { MATE_TYPES, nextMateName, pickConnector, solveWithParts } from "../assembly/mates";
+import { MATE_TYPES, nextMateName, pickConnector, samePieceClick, solveWithParts } from "../assembly/mates";
 import { insertProblem, insertSubAssembly, instanceAt, leafKey, ownBox, whereUsed } from "../assembly/subassembly";
 import { setSuppressed as setInstancesOff } from "../assembly/suppress";
 import { setPartProperties as setPartPropertiesIn } from "../assembly/properties";
@@ -1147,13 +1147,23 @@ export const useStore = create<AppState>((set, get) => {
         return { mateDraft: { ...s.mateDraft, mate } };
       }),
 
-    pickMateConnector: (c) =>
-      set((s) => {
-        if (!s.mateDraft) return {};
-        const m = s.mateDraft.mate;
+    pickMateConnector: (c) => {
+      const s = get();
+      if (!s.mateDraft) return;
+      // Two parts inside the same sub-assembly copy: it moves as one piece, so keep the first pick and say why.
+      if (samePieceClick(s.mateDraft.mate, c)) {
+        const top = activeAssembly(s)?.instances.find((i) => i.id === c.instanceId);
+        const sub = s.history.present.assemblies?.find((a) => a.id === top?.subAssembly);
+        s.showToast(`Both faces are in ${top?.name ?? "the same sub-assembly"}, which moves as one piece. Open ${sub?.name ?? "it"} (double-click it) to mate its parts to each other.`, "info");
+        return;
+      }
+      set((st) => {
+        if (!st.mateDraft) return {};
+        const m = st.mateDraft.mate;
         const next: MateDraft = { ...m, ...pickConnector(m, c) };
-        return { mateDraft: { ...s.mateDraft, mate: next } };
-      }),
+        return { mateDraft: { ...st.mateDraft, mate: next } };
+      });
+    },
 
     commitMateDraft: () => {
       const s = get();

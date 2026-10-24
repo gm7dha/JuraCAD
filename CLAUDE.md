@@ -57,7 +57,11 @@
   (keys "top/inner/part" — the 3D view's mesh ids, `instanceAt` resolves one) and `kernelInstances` (exports, drawings,
   clash check); the parts list takes `{ assemblies, structured }`; pass `assemblies` to `solveWithParts` whenever the
   assembly may hold sub-assemblies. Circles are refused (`insertProblem`) and dropped when a file is read
-  (`tidySubAssemblies`); deleting an assembly takes its copies out of the others. Hidden keys may be paths.
+  (`tidySubAssemblies`); deleting an assembly takes its copies out of the others (and mates reaching through them). Hidden keys may be paths.
+  `paths.ts` (`pathProblem`) says why a connector's path no longer leads to a part (suppressed → the mate shows as not
+  used via `mateInactive(…, assemblies)`; gone → a plain mate error). Connectors are always looked up on the part the
+  instance shows now (so replacing a part inside a sub-assembly carries parents' mates over). The mate dialog refuses two
+  parts in the same copy (`samePieceClick`).
 - Drawings: `src/drawing/` — `drawing.ts` (document edits, parsing), `cameras.ts` (view directions; first-angle),
   `annotations.ts` (centre marks/lines, section hatching, balloons), `sections.ts` (section cuts drawn on a view:
   cut plane, camera, letters; views are keyed by `viewKey` — the kind, or "section:<id>"), `sheet.ts` (lays the sheet out as simple line/text shapes in sheet mm, y up), `export.ts` (SVG and a hand-written

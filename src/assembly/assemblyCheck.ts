@@ -145,7 +145,7 @@ export function assemblyReport(
   }
 
   // Mates that are switched off, or on a suppressed part, aren't problems.
-  const inUse = (assembly.mates ?? []).filter((m) => !mateInactive(assembly, m));
+  const inUse = (assembly.mates ?? []).filter((m) => !mateInactive(assembly, m, assemblies));
   const mateProblems = inUse.filter((m) => solved.mateErrors[m.id]);
   section(
     "mates",

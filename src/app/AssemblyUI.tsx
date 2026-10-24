@@ -458,6 +458,7 @@ function MateRow({ mate, error, instanceNames, inactive }: { mate: Mate; error?:
 
 function MatesSection({ assembly }: { assembly: Assembly }) {
   const { solved } = useSolvedAssembly();
+  const allAssemblies = useStore((s) => s.history.present.assemblies);
   const mates = assembly.mates ?? [];
   const instanceNames = useMemo(() => ({ ...Object.fromEntries(assembly.instances.map((i) => [i.id, i.name])), [ORIGIN_ID]: "the origin" }), [assembly.instances]);
   return (
@@ -467,7 +468,7 @@ function MatesSection({ assembly }: { assembly: Assembly }) {
       </h3>
       <ul className="feature-list">
         {mates.map((m) => (
-          <MateRow key={m.id} mate={m} error={solved?.mateErrors[m.id]} instanceNames={instanceNames} inactive={mateInactive(assembly, m)} />
+          <MateRow key={m.id} mate={m} error={solved?.mateErrors[m.id]} instanceNames={instanceNames} inactive={mateInactive(assembly, m, allAssemblies)} />
         ))}
       </ul>
       {mates.length === 0 && assembly.instances.length >= 2 && (

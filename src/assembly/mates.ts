@@ -18,6 +18,7 @@ import { mirrorPlacement, patternStep, placeCopy } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
 import { withoutSuppressed } from "./suppress";
 import { isOrigin, ORIGIN_ID, originFrame } from "./origin";
+import { pathProblem } from "./paths";
 import type { PartMesh } from "../kernel/protocol";
 
 export interface MateValueDef {
@@ -627,7 +628,14 @@ function solveLinear(M: number[][], b: number[]): number[] | null {
 
 /** Solve using the parts as built now (pass the document's assemblies when it may hold sub-assemblies). */
 export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: SolveOptions = {}): SolveResult {
-  return solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies), options);
+  const r = solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies), options);
+  // A connector on a part inside a sub-assembly: say plainly when the way to it is switched off or gone.
+  for (const m of assembly.mates ?? []) {
+    if (!r.mateErrors[m.id]) continue;
+    const problem = pathProblem(assembly, m.a, options.assemblies) ?? pathProblem(assembly, m.b, options.assemblies);
+    if (problem) r.mateErrors[m.id] = problem.kind === "suppressed" ? `${problem.text}. Unsuppress it, or edit the mate and pick another face.` : problem.text;
+  }
+  return r;
 }
 
 /**
@@ -652,7 +660,9 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
   // On the part as the instance shows it (which may be another configuration).
   const instance = assembly.instances.find((i) => i.id === c.instanceId);
   if (instance?.subAssembly) return frameInside(instance.subAssembly, parts, c, assemblies, within);
-  const mesh = instance?.configuration ? findMesh(parts, meshIdOf(instance)) : undefined;
+  // Always on the part the instance shows now (if it was replaced, the most similar face or edge of the new one).
+  const mesh = instance ? findMesh(parts, meshIdOf(instance)) : undefined;
+  if (instance && !mesh) return null;
   const f = mesh
     ? connectorFrameOnParts([mesh], { ...c, pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
     : connectorFrameOnParts(parts, c);
@@ -713,6 +723,21 @@ export function nextMateName(assembly: Assembly, type: MateType): string {
   let n = 1;
   while (used.has(`${prefix} ${n}`)) n++;
   return `${prefix} ${n}`;
+}
+
+/**
+ * True when a click would join a face of one part inside a sub-assembly copy
+ * to another part inside the same copy. The copy moves as one piece, so that
+ * mate can't do anything: the click is refused (the picks so far are kept) and
+ * the sub-assembly should be opened to mate its own parts.
+ */
+export function samePieceClick(m: { type: MateType; a?: MateConnector; b?: MateConnector }, c: MateConnector): boolean {
+  if (isOrigin(c)) return false;
+  // The side the click would add to: the first part while the second isn't picked (or, for Width mates, a side still waiting for its second face).
+  const open = m.type === "width" ? (m.a && !m.a.pick2 ? m.a : m.a && !m.b ? m.a : m.b && !m.b.pick2 ? m.b : undefined) : m.a && !m.b ? m.a : undefined;
+  if (!open || open.instanceId !== c.instanceId) return false;
+  const key = (x: MateConnector) => (x.path ?? []).join("/");
+  return (!!open.path?.length || !!c.path?.length) && key(open) !== key(c);
 }
 
 /**
