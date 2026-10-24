@@ -75,6 +75,9 @@ ctx.onmessage = (event) => {
           body = { type: "unfold", result };
           break;
         }
+        case "intersect":
+          body = { type: "intersect", result: engine.intersect(request.partId, request.plane, request.face) };
+          break;
         case "measureParts":
           body = { type: "measure", result: engine.measureParts(request.partIds) };
           break;

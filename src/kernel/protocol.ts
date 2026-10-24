@@ -1,4 +1,5 @@
 import type { SketchLinkInfo } from "../sketch/links";
+import type { SketchPlane } from "../sketch/planes";
 import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
@@ -218,6 +219,7 @@ export type KernelRequest =
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
   | { type: "unfold"; partId: string }
+  | { type: "intersect"; partId: string; plane: SketchPlane; face?: FaceRef }
   | { type: "deleteFaceBlockers"; features: Feature[]; featureId: string; variables: Record<string, number> }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
 
@@ -228,6 +230,7 @@ export type KernelResponseBody =
   | { type: "exportStep"; result: StepResult }
   | { type: "measure"; result: Measurement }
   | { type: "unfold"; result: PartMesh | null }
+  | { type: "intersect"; result: { edges: EdgeRef[] } | { error: string } }
   | { type: "deleteFaceBlockers"; result: DeleteFaceBlockers }
   | { type: "export3mf"; result: ThreeMfResult }
   | { type: "clashes"; result: ContactMeasure[] }

@@ -13,6 +13,7 @@ import { ellipseFrom, ellipsePolyline } from "./ellipse";
 import { splineBeziers, splinePolyline } from "./spline";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
 import { splineHandles } from "./ops";
+import { textContours, textsOf } from "./sketchText";
 
 export type Pt = [number, number];
 
@@ -176,6 +177,16 @@ function sketchGraph(sketch: SketchData) {
     const hs = splineHandles(c);
     const segs: Segment[] = splineBeziers(ps, true, undefined, hs).map(([from, c1, c2, to]) => ({ kind: "bezier", from, c1, c2, to }));
     loops.push(makeLoop(segs, splinePolyline(ps, true, undefined, undefined, hs)));
+  }
+
+  // Each letter outline of a text is a loop too (holes such as the inside of an "o" nest as usual).
+  for (const t of textsOf(sketch)) {
+    if (t.construction) continue;
+    for (const c of textContours(sketch, t)) {
+      const segs: Segment[] = c.map((p, i) => ({ kind: "line", from: p, to: c[(i + 1) % c.length] }));
+      const loop = makeLoop(segs, [...c]);
+      if (loop.area > 1e-9) loops.push(loop);
+    }
   }
 
   // Join lines, arcs and open splines at shared end points (merged by position, so separate

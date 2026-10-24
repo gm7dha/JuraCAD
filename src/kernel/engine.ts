@@ -9,7 +9,7 @@ import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../g
 import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, refDistance, relativeTo, roundVec, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
-import { planeFrame, toWorld } from "../sketch/planes";
+import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
 import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/patternRefs";
 import { getCurrentScope, setCurrentScope } from "../model/expr";
@@ -30,6 +30,7 @@ import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { followLinks, linkProblem, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
+import type { CurveLink } from "../sketch/types";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
@@ -209,6 +210,35 @@ export function faceRefOf(f: Face, bounds: Bounds): FaceRef {
     // some surfaces have no normal at their centre of mass; direction is then ignored
   }
   return { kind: "face", surface: f.geomType, center: roundVec(center), normal: roundVec(normal), rel: relativeTo(center, bounds[0], bounds[1]) };
+}
+
+/**
+ * Intersect: the edges where a sketch's plane cuts through a shape (a whole
+ * part, or one face of it). The caller deletes them. None when the plane misses it.
+ */
+function planeCutEdges(shape: Shape3D | Face, frame: PlaneFrame, bounds: Bounds): Edge[] {
+  const [lo, hi] = bounds;
+  const mid: Vec3 = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  const n = frame.n;
+  const h = (mid[0] - frame.origin[0]) * n[0] + (mid[1] - frame.origin[1]) * n[1] + (mid[2] - frame.origin[2]) * n[2];
+  // A square on the plane, centred under the part's middle and well bigger than it.
+  const c: Vec3 = [mid[0] - h * n[0], mid[1] - h * n[1], mid[2] - h * n[2]];
+  const r = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
+  const at = (a: number, b: number): Vec3 => [c[0] + a * frame.u[0] + b * frame.v[0], c[1] + a * frame.u[1] + b * frame.v[1], c[2] + a * frame.u[2] + b * frame.v[2]];
+  const sheet = makePolygon([at(-r, -r), at(r, -r), at(r, r), at(-r, r)]);
+  const oc = getOC();
+  const op = new oc.BRepAlgoAPI_Section(shape.wrapped, sheet.wrapped, true);
+  let cutShape: Shape3D | null = null;
+  try {
+    cutShape = cast(op.Shape()) as unknown as Shape3D;
+    return edgesOf(cutShape);
+  } catch {
+    return [];
+  } finally {
+    cutShape?.delete();
+    op.delete();
+    sheet.delete();
+  }
 }
 
 function boundsOf(shape: Shape3D): Bounds {
@@ -1842,8 +1872,22 @@ export class GeometryEngine {
             const flat = Math.max(...hs) - Math.min(...hs) < 1e-3;
             return flat && (!inFace || Math.abs(hs[2]) < 1e-3) ? r : null;
           });
+          // Intersect's curves: found again among where the plane cuts the part (or their face) now.
+          const cutsBy = new Map<string, EdgeRef[] | null>();
+          const cutsFor = (face?: FaceRef) => {
+            const key = face ? JSON.stringify(face) : "";
+            if (!cutsBy.has(key)) cutsBy.set(key, this.cutRefs(part, frame, face));
+            return cutsBy.get(key)!;
+          };
           curves.forEach((c) => {
-            const m = strictMatch((c as { link: TopoPick }).link.ref, candidates, sizeOf(bounds), 0.3);
+            const link = (c as { link: CurveLink }).link;
+            if (link.cut) {
+              const cuts = cutsFor(link.cut.face);
+              const m = cuts ? strictMatch(link.ref, cuts, sizeOf(bounds), 0.3) : null;
+              links[c.id] = m === null ? null : projectEdge(frame, { partId, ref: cuts![m] });
+              return;
+            }
+            const m = strictMatch(link.ref, candidates, sizeOf(bounds), 0.3);
             links[c.id] = m === null ? null : projectEdge(frame, { partId, ref: refs[m] });
           });
         } finally {
@@ -4345,6 +4389,43 @@ export class GeometryEngine {
     const names = chosen.map((p) => p.name).join(", ");
     return { stl: writeBinaryStl(meshes, `JuraCAD export: ${names}`), triangleCount };
     });
+  }
+
+  /**
+   * Intersect (in a sketch): where the sketch's plane cuts through a part, or
+   * through just one face of it (`face`). Edges as references to link to, or a
+   * plain-English problem.
+   */
+  intersect(partId: string, plane: SketchPlane, face?: FaceRef): { edges: EdgeRef[] } | { error: string } {
+    const part = this.parts.find((p) => p.id === partId);
+    if (!part) return { error: "That part isn't there any more. Click another." };
+    const r = this.cutRefs(part, planeFrame(plane), face);
+    if (r === null) return { error: "That face can't be found on the part any more. Click it again." };
+    if (!r.length) return { error: face ? "The sketch's plane doesn't cut through that face. Click a face the sketch passes through (seen side-on), or turn on \"Whole part\"." : "The sketch's plane doesn't cut through that part." };
+    return { edges: r };
+  }
+
+  /** The edges (as references) where a plane cuts a part, or one face of it; null when that face can't be found. */
+  private cutRefs(part: BuiltPart, frame: PlaneFrame, face?: FaceRef): EdgeRef[] | null {
+    const bounds = boundsOf(part.shape);
+    let target: Shape3D | Face = part.shape;
+    let picked: Face | null = null;
+    if (face) {
+      const faces = facesOf(part.shape);
+      const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+      const m = strictMatch(face, faces.map((f) => faceRefOf(f, bounds)), size);
+      picked = m === null ? null : faces[m];
+      faces.forEach((f) => f !== picked && f.delete());
+      if (!picked) return null;
+      target = picked;
+    }
+    const edges = planeCutEdges(target, frame, bounds);
+    try {
+      return edges.map((e) => edgeRefOf(e, bounds));
+    } finally {
+      edges.forEach((e) => e.delete());
+      picked?.delete();
+    }
   }
 
   /** Measure one or two picked edges/faces: lengths, areas, round sizes, and the gap and angle between them. */

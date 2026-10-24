@@ -1,4 +1,5 @@
-import type { TopoPick } from "../geometry/topoRef";
+import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
+import type { SketchPlane } from "../sketch/planes";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
 import type { CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
@@ -117,6 +118,11 @@ export class KernelClient {
   /** A sheet metal part laid out flat, as a mesh to show in place of the folded one (null if it can't be). */
   unfold(partId: string): Promise<PartMesh | null> {
     return this.send({ type: "unfold", partId }).then((body) => (body.type === "unfold" ? body.result : null));
+  }
+
+  /** Intersect: where a sketch's plane cuts a part (or one face of it), as edges to bring into the sketch. */
+  intersect(partId: string, plane: SketchPlane, face?: FaceRef): Promise<{ edges: EdgeRef[] } | { error: string }> {
+    return this.send({ type: "intersect", partId, plane, face }).then((body) => (body.type === "intersect" ? body.result : { error: "Something went wrong working out where the sketch cuts the part." }));
   }
 
   measure(picks: TopoPick[]): Promise<Measurement> {

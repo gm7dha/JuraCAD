@@ -57,6 +57,7 @@ import {
   splitAt,
 } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
+import { addText, imageAt, imageById, readTextSettings, textAt, textById } from "./sketchText";
 import { isRefId, refSketch, type RefEdge } from "./links";
 import { attachPoint, bringIn, hintFor, pickAt, snapAt, type SnapResult } from "./snaps";
 import type { Snap } from "./ops";
@@ -104,7 +105,7 @@ const DRAG_PX = 3;
 const SNAP_PX = 14;
 
 interface DragState {
-  kind: "point" | "curve" | "rim" | "handle" | "none";
+  kind: "point" | "curve" | "rim" | "handle" | "image" | "none";
   id: string;
   start: SketchData;
   startX: number;
@@ -437,7 +438,7 @@ export class SketchController {
       this.emit({ hover: null });
       return;
     }
-    if (tool === "useEdge") return;
+    if (tool === "useEdge" || tool === "intersect") return;
     if (tool === "mirror") return this.mirrorClick(e);
     if (tool === "sketchPattern" || tool === "sketchTransform") return this.patternClick(e);
     if (tool === "sketchFillet") {
@@ -460,6 +461,17 @@ export class SketchController {
       case "point": {
         const r = addPoint(d, p);
         this.commit(r, [r.pointId]);
+        return;
+      }
+      case "text": {
+        const settings = readTextSettings(this.state.sketch ?? {});
+        if (typeof settings === "string") {
+          this.state.setSketchMessage(settings, "error");
+          return;
+        }
+        const r = addText(d, p, settings, construction);
+        if (this.commit(r, [r.textId]))
+          this.state.setSketchMessage("Text added. Change its words, size or turn in the sketch panel (double-click text to edit it later); dimension its point to place it exactly.", "info");
         return;
       }
       case "line": {
@@ -674,11 +686,11 @@ export class SketchController {
     const tool = this.tool;
     if (tool === "select") {
       if (dragging && this.drag) return this.selectDrag(e);
-      const hover = this.pickAt(e);
+      const hover = this.pickAt(e) ?? this.extraAt(e);
       this.emit({ hover, preview: [], snap: null, inference: null, hints: this.hintsFor(hover) });
       return;
     }
-    if (tool === "useEdge") return;
+    if (tool === "useEdge" || tool === "intersect") return;
     if (tool === "sketchPattern" || tool === "sketchTransform") {
       const circular = tool === "sketchPattern" && this.state.sketch?.patternKind === "circular";
       const picking = tool === "sketchPattern" && this.state.sketch?.patternKind === "linear" && this.state.sketch.patternDirectionPick;
@@ -914,6 +926,24 @@ export class SketchController {
     }
     const hit = this.pickAt(e);
     let kind: DragState["kind"] = "none";
+    // Text (dragged by its point) or a picture under the pointer, when there's nothing else there.
+    const extra = hit ? null : this.extraAt(e);
+    if (extra) {
+      const text = textById(d, extra.id);
+      const now = Date.now();
+      // A double-click on text: select it and put the cursor in the sketch panel's text box.
+      if (text && this.lastTextClick?.id === text.id && now - this.lastTextClick.at < 450) {
+        this.lastTextClick = null;
+        this.state.setSketchSelection([text.id]);
+        this.state.setSketchOptions({ textFocus: now });
+        this.drag = null;
+        return;
+      }
+      this.lastTextClick = text ? { id: text.id, at: now } : null;
+      if (text) this.drag = { kind: text.anchor === ORIGIN_ID ? "none" : "point", id: text.anchor, start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit: extra, startScreenX: e.screenX };
+      else this.drag = { kind: "image", id: extra.id, start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit: extra, startScreenX: e.screenX };
+      return;
+    }
     if (hit && isRefId(hit.id)) {
       // Part edges can't be dragged: a click selects (brings in) one, a drag draws a selection box.
     } else if (hit?.kind === "point" && hit.id !== ORIGIN_ID) kind = "point";
@@ -923,6 +953,19 @@ export class SketchController {
       kind = c.type === "circle" || c.type === "arc" ? "rim" : "curve";
     }
     this.drag = { kind, id: hit?.id ?? "", start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit, startScreenX: e.screenX };
+  }
+
+  /** When text was last clicked (for telling a double-click). */
+  private lastTextClick: { id: string; at: number } | null = null;
+
+  /** Text or a picture under the pointer (text first; a picture only where nothing else is). */
+  private extraAt(e: SketchPointer): Hit | null {
+    const d = this.data;
+    if (!d) return null;
+    const t = textAt(d, e.x, e.y, CURVE_PX * e.mmPerPx);
+    if (t) return { kind: "curve", id: t };
+    const m = imageAt(d, e.x, e.y);
+    return m ? { kind: "curve", id: m } : null;
   }
 
   private selectDrag(e: SketchPointer) {
@@ -966,6 +1009,10 @@ export class SketchController {
       this.emit({ snap: drag.snapTo ? [x, y] : null, hints: drag.snapTo?.kind === "midpoint" ? [[x, y]] : [] });
     }
     else if (drag.kind === "curve") next = dragCurve(drag.start, drag.id, e.x - drag.startX, e.y - drag.startY);
+    else if (drag.kind === "image") {
+      const m = imageById(drag.start, drag.id);
+      if (m) next = { ...drag.start, images: (drag.start.images ?? []).map((x) => (x.id === m.id ? { ...m, x: m.x + e.x - drag.startX, y: m.y + e.y - drag.startY } : x)) };
+    }
     else {
       const c = curveById(drag.start, drag.id);
       if (c?.type === "circle") {

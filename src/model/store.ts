@@ -1,5 +1,6 @@
 import { deleteItems } from "../sketch/ops";
 import { followLinks, pruneReferences, type SketchLinkInfo } from "../sketch/links";
+import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
 import { create } from "zustand";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -122,7 +123,9 @@ export type SketchTool =
   | "mirror"
   | "sketchPattern"
   | "sketchTransform"
-  | "useEdge";
+  | "useEdge"
+  | "text"
+  | "intersect";
 
 /** State while a sketch is open for editing. */
 export interface SketchSession {
@@ -167,6 +170,19 @@ export interface SketchSession {
   moveDy: string;
   moveAngle: string;
   moveCopy: boolean;
+  /** Text tool: the settings for new text (a selected text shows its own instead). */
+  textValue?: string;
+  textSize?: string;
+  textAngle?: string;
+  textFont?: "regular" | "bold";
+  textAnchorAt?: "start" | "centre";
+  /** Bumped to put the cursor in the sketch panel's text box (a double-click on text). */
+  textFocus?: number;
+  /** Intersect: clicking a face takes where the sketch cuts the whole part, not just that face. */
+  intersectWhole?: boolean;
+  /** Insert DXF: the panel's box is open, and the scale to bring the next file in at. */
+  dxfOpen?: boolean;
+  dxfScale?: string;
 }
 
 /** Section view (display only — not saved): cut the view along a default plane. */
@@ -286,7 +302,7 @@ export interface AppState {
   keepOfferedDimension: (id: string) => void;
   /** Drop any offered dimensions not kept yet. */
   discardOfferedDimensions: () => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "patternDirectionPick" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "patternDirectionPick" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy" | "textValue" | "textSize" | "textAngle" | "textFont" | "textAnchorAt" | "textFocus" | "intersectWhole" | "dxfOpen" | "dxfScale">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**
@@ -527,7 +543,7 @@ const newSession = (): SketchSession => ({
 
 /** Is this id (point, curve or constraint) still in the sketch? */
 const existsIn = (d: SketchData, id: string) =>
-  d.points.some((p) => p.id === id) || d.curves.some((c) => c.id === id) || d.constraints.some((c) => c.id === id) || id === "origin";
+  d.points.some((p) => p.id === id) || d.curves.some((c) => c.id === id) || d.constraints.some((c) => c.id === id) || id === "origin" || isExtraId(d, id);
 
 export const useStore = create<AppState>((set, get) => {
   /** Apply a document change and record it for undo. */
@@ -737,10 +753,12 @@ export const useStore = create<AppState>((set, get) => {
           : {},
       ),
 
-    updateSketch: (data, opts = {}) =>
+    updateSketch: (next, opts = {}) =>
       set((s) => {
         if (!s.editing?.draft.sketch || !s.sketch) return {};
         const prev = s.editing.draft.sketch.data;
+        // Texts and pictures stay, even through edits that only know about points, curves and constraints.
+        const data = keepSketchExtras(prev, next);
         if (prev === data) return opts.selection ? { sketch: { ...s.sketch, selection: opts.selection } } : {};
         return {
           editing: { ...s.editing, draft: { ...s.editing.draft, sketch: { ...s.editing.draft.sketch, data } } },
@@ -857,7 +875,7 @@ export const useStore = create<AppState>((set, get) => {
       const named = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
       // Part edges brought in just to snap to, that nothing uses any more, are tidied away.
       const sk = named.sketch;
-      const draft = sk ? { ...named, sketch: { ...sk, data: pruneReferences(sk.data) } } : named;
+      const draft = sk ? { ...named, sketch: { ...sk, data: withoutEmptyExtras(pruneReferences(sk.data)) } } : named;
       // Rolled back: a new feature goes in at the rollback point, and the bar moves down past it.
       const at = get().rollbackTo;
       changeStudio((doc) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, draft)));

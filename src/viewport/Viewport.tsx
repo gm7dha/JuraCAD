@@ -16,6 +16,7 @@ import type { PartMesh } from "../kernel/protocol";
 import { getKernel } from "../kernel/connect";
 import type { Feature } from "../model/types";
 import { SketchController } from "../sketch/controller";
+import { intersectWith } from "../app/sketchIntersect";
 import { planeFrame, planeOnFace, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/planeFeature";
 import { resolveParams } from "../model/features";
@@ -196,6 +197,13 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       if (plane) s.setSketchPlane(plane);
       else s.setSketchMessage("That face is curved. Pick a flat face or one of the planes.", "error");
     }
+    return;
+  }
+  // Intersect: where the sketch's plane cuts the clicked face (or its whole part).
+  if (s.sketch?.tool === "intersect" && s.editing?.draft.sketch?.plane) {
+    if (target?.kind !== "part") return;
+    const pick = target.item.kind === "face" ? pickFor(s.parts, target.item) : null;
+    void intersectWith(target.item.partId, pick?.ref.kind === "face" ? pick.ref : null);
     return;
   }
   // Copying part edges into the open sketch ("Use").
@@ -755,7 +763,7 @@ export function Viewport() {
     [selectedPlane, listHoverPlane, hiddenDatums],
   );
 
-  const usingEdges = useStore((s) => s.sketch?.tool === "useEdge");
+  const usingEdges = useStore((s) => s.sketch?.tool === "useEdge" || s.sketch?.tool === "intersect");
   useEffect(() => viewportApi.current?.setSketchPicksParts(usingEdges), [usingEdges]);
 
   // Sketch tools are active while a sketch with a plane is open.

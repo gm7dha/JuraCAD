@@ -1599,6 +1599,57 @@ try {
     await page.getByRole("button", { name: "Make pattern" }).click();
     now = await curves();
     if (now.filter((c) => c === "circle").length !== 3) throw new Error(`pattern made ${now.join(",")}`);
+
+    // Text: type the words, click where they go; the letters are closed shapes. A double-click puts the cursor back in the words box.
+    await page.keyboard.press("Escape");
+    await tool("Text");
+    await page.locator('[aria-label="Text words"]').fill("JC");
+    const shapesBefore = await page.evaluate(() => /(\d+) closed shape/.exec(document.querySelector(".sketch-status")?.textContent ?? "")?.[1] ?? "0");
+    await page.mouse.click(mx - 40, my + 30);
+    const texts = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketch.data.texts?.map((t) => t.value) ?? []);
+    if (texts.join() !== "JC") {
+      const why = await page.evaluate(() => {
+        const st = window.juracadStore.getState();
+        return JSON.stringify({ tool: st.sketch?.tool, message: st.sketch?.message, value: st.sketch?.textValue, size: st.sketch?.textSize, points: st.editing?.draft.sketch?.data.points.length });
+      });
+      throw new Error(`the Text tool made ${JSON.stringify(texts)} (${why}; viewport ${JSON.stringify(box)})`);
+    }
+    await page.waitForFunction((n) => Number(/(\d+) closed shape/.exec(document.querySelector(".sketch-status")?.textContent ?? "")?.[1] ?? 0) > Number(n), shapesBefore, { timeout: 5_000 });
+    await tool("Select");
+    const mid = await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      const d = st.editing.draft.sketch.data;
+      const t = d.texts[0];
+      const p = d.points.find((q) => q.id === t.anchor);
+      return window.juracadViewport.current.projectSketchPoint(p.x + t.size * 0.4, p.y + t.size * 0.35);
+    });
+    await page.mouse.dblclick(box.x + mid.x, box.y + mid.y);
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Text words", null, { timeout: 5_000 });
+    await page.keyboard.type("AD");
+    // The design is in inches by now: 0.5 in = 12.7 mm.
+    await page.locator('[aria-label="Text size"]').fill("0.5");
+    await page.locator('[aria-label="Text size"]').press("Enter");
+    const edited = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketch.data.texts.map((t) => `${t.value}@${Math.round(t.size * 1000) / 1000}`));
+    if (edited.join() !== "AD@12.7" && edited.join() !== "AD@0.5") throw new Error(`editing the text gave ${JSON.stringify(edited)}`);
+    await shot("sketchtext");
+
+    // Insert DXF: a 10 × 10 square (in inches, so 254 mm across), brought in at half size.
+    await tool("Insert DXF");
+    await page.locator('[aria-label="DXF scale"]').fill("0.5");
+    const dxfLines = [[0, 0, 10, 0], [10, 0, 10, 10], [10, 10, 0, 10], [0, 10, 0, 0]].flatMap(([a, b, c, d]) => ["0", "LINE", "8", "0", "10", a, "20", b, "11", c, "21", d]);
+    const dxfText = ["0", "SECTION", "2", "HEADER", "9", "$INSUNITS", "70", "1", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES", ...dxfLines, "0", "ENDSEC", "0", "EOF"].join("\n");
+    const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.getByRole("button", { name: "Choose a DXF file…" }).click()]);
+    await chooser.setFiles({ name: "square.dxf", mimeType: "application/dxf", buffer: Buffer.from(dxfText) });
+    await page.waitForFunction(() => /Brought in 4 shapes/.test(document.querySelector(".sketch-panel")?.textContent ?? ""), null, { timeout: 5_000 });
+    // What came in is selected: its corners are 127 mm apart.
+    const across = await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      const d = st.editing.draft.sketch.data;
+      const ids = new Set(d.curves.filter((c) => st.sketch.selection.includes(c.id)).flatMap((c) => [c.p1, c.p2]));
+      const xs = d.points.filter((p) => ids.has(p.id)).map((p) => p.x);
+      return Math.max(...xs) - Math.min(...xs);
+    });
+    if (Math.abs(across - 127) > 1e-6) throw new Error(`the inserted DXF square is ${across} mm across, not 127`);
     await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
     if (await page.locator(".sketch-panel").count()) await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
     await page.waitForSelector(".sketch-panel", { state: "detached" });
@@ -1758,7 +1809,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${subReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${subReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

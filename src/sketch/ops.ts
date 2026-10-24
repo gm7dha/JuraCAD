@@ -558,7 +558,7 @@ export function deleteItems(s: SketchData, ids: string[]): SketchData {
     }
     return c.refs.every((r) => alive.has(r)) ? [c] : [];
   });
-  return solveSketch({ points, curves, constraints }).sketch;
+  return solveSketch({ ...s, points, curves, constraints }).sketch;
 }
 
 export function toggleConstruction(s: SketchData, curveIds: string[]): SketchData {
