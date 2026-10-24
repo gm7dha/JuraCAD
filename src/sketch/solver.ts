@@ -734,26 +734,133 @@ function buildSystem(sketch: SketchData): System {
    */
   function tangentBlock(a: string, b: string): { size: number; eval: (x: Float64Array, out: number[]) => void } {
     const ca = curves.get(a)!, cb = curves.get(b)!;
+    const unitCross = (A: Vec, B: Vec) => (A[0] * B[1] - A[1] * B[0]) / ((Math.hypot(A[0], A[1]) || 1) * (Math.hypot(B[0], B[1]) || 1));
+    const sameWay = (fa: (x: Float64Array) => Vec, fb: (x: Float64Array) => Vec) => ({ size: 1, eval: (x: Float64Array, out: number[]) => out.push(unitCross(fa(x), fb(x))) });
+    const frameDir = (id: string, pointId: string) => {
+      const f = frameAt(id, pointId);
+      return (x: Float64Array) => f(x).dir;
+    };
+    // They meet where one ends on the other: the same point, ...
     const shared = endsOf(ca).find((p) => joinsOf(cb).includes(p)) ?? endsOf(cb).find((p) => joinsOf(ca).includes(p));
-    if (shared) {
-      const fa = frameAt(a, shared), fb = frameAt(b, shared);
-      return {
-        size: 1,
-        eval: (x, out) => {
-          const A = fa(x).dir, B = fb(x).dir;
-          out.push((A[0] * B[1] - A[1] * B[0]) / ((Math.hypot(A[0], A[1]) || 1) * (Math.hypot(B[0], B[1]) || 1)));
-        },
-      };
+    if (shared) return sameWay(frameDir(a, shared), frameDir(b, shared));
+    // ... two points joined with Coincident, ...
+    const joined = (one: SketchCurve, two: SketchCurve) => {
+      for (const k of sketch.constraints) {
+        if (k.type !== "coincident" || k.driven) continue;
+        const [p, q] = k.refs;
+        if (endsOf(one).includes(p) && joinsOf(two).includes(q)) return [p, q] as const;
+        if (endsOf(one).includes(q) && joinsOf(two).includes(p)) return [q, p] as const;
+      }
+      return null;
+    };
+    const ab = joined(ca, cb);
+    if (ab) return sameWay(frameDir(a, ab[0]), frameDir(b, ab[1]));
+    const ba = joined(cb, ca);
+    if (ba) return sameWay(frameDir(a, ba[1]), frameDir(b, ba[0]));
+    // ... or one's end held on the other: the same way as the other runs there.
+    // (Applying Tangent holds an end that merely lies on the other curve there first: see ops.ts.)
+    const heldOn = (one: SketchCurve, two: SketchCurve) =>
+      endsOf(one).find((p) => sketch.constraints.some((k) => (k.type === "pointOnLine" || k.type === "pointOnCircle" || k.type === "pointOnCurve") && k.refs[0] === p && k.refs[1] === two.id));
+    for (const [one, two] of [[ca, cb], [cb, ca]] as const) {
+      const end = heldOn(one, two);
+      if (!end) continue;
+      const fOne = frameDir(one.id, end);
+      const along = dirNear(two.id);
+      const at = P(end);
+      return sameWay(fOne, (x) => along(x, at(x)));
     }
-    // Walk along the spline (or the ellipse, if there's no spline); measure from the other.
+    // Otherwise they touch somewhere: walk along the spline (or the ellipse, if there's no spline); measure from the other.
     const walkId = ca.type === "spline" ? a : cb.type === "spline" ? b : ca.type === "ellipse" ? a : b;
     const otherId = walkId === a ? b : a;
     const param = paramFn(walkId);
+    const otherParam = paramFn(otherId);
     const level = levelFn(otherId);
-    return { size: 1, eval: (x, out) => out.push(touchGap(param(x), (p) => level(x, p))) };
+    const lineOther = curves.get(otherId)!.type === "line";
+    // Where they touch (u along the walked curve, v along the other), carried from one evaluation to the next: a
+    // few Newton steps from there are far cheaper than searching the whole curve each time.
+    let last: [number, number] | null = null;
+    return {
+      size: 1,
+      eval: (x, out) => {
+        const p = param(x), q = otherParam(x);
+        let found = last ? touchPoint(p, q, last[0], last[1], lineOther) : null;
+        if (!found) {
+          // Search: the low or high point of the other's "distance" along this one, then the nearest place on the other.
+          const u = touchParam(p, (pt) => level(x, pt));
+          if (u !== null) found = touchPoint(p, q, u, nearestParam(q, p.at(u)), lineOther);
+        }
+        if (!found) {
+          last = null;
+          out.push(touchGap(p, (pt) => level(x, pt)));
+          return;
+        }
+        last = found;
+        const [u, v] = found;
+        const a = p.at(u), b = q.at(v), d = q.d1(v);
+        out.push(((a[0] - b[0]) * -d[1] + (a[1] - b[1]) * d[0]) / (Math.hypot(d[0], d[1]) || 1));
+      },
+    };
+  }
+
+  /** Which way a curve runs at the place on it nearest q. */
+  function dirNear(id: string): (x: Float64Array, q: Vec) => Vec {
+    const c = curves.get(id)!;
+    if (c.type === "line") {
+      const d = dir(id);
+      return (x) => d(x);
+    }
+    if (c.type === "circle" || c.type === "arc") {
+      const k = circular(id);
+      return (x, q) => {
+        const cc = k.centre(x);
+        return [-(q[1] - cc[1]), q[0] - cc[0]];
+      };
+    }
+    const param = paramFn(id);
+    return (x, q) => {
+      const p = param(x);
+      return p.d1(nearestParam(p, q));
+    };
   }
 
   return { n: init.length, pointVar, radiusVar, x0: Float64Array.from(init), blocks, skipped };
+}
+
+/**
+ * Where two paths run the same way with the first's point square across from
+ * the second's (Newton on both parameters from u, v): the place they touch, or
+ * would if moved together. Null if it doesn't settle within the paths.
+ */
+function touchPoint(p: CurveParam, q: CurveParam, u: number, v: number, qUnbounded: boolean): [number, number] | null {
+  for (let k = 0; k < 30; k++) {
+    const P1 = p.d1(u), P2 = p.d2(u), Q1 = q.d1(v), Q2 = q.d2(v);
+    const r: Vec = [p.at(u)[0] - q.at(v)[0], p.at(u)[1] - q.at(v)[1]];
+    const f1 = P1[0] * Q1[1] - P1[1] * Q1[0];
+    const f2 = r[0] * Q1[0] + r[1] * Q1[1];
+    const a11 = P2[0] * Q1[1] - P2[1] * Q1[0], a12 = P1[0] * Q2[1] - P1[1] * Q2[0];
+    const a21 = P1[0] * Q1[0] + P1[1] * Q1[1], a22 = -(Q1[0] * Q1[0] + Q1[1] * Q1[1]) + r[0] * Q2[0] + r[1] * Q2[1];
+    const det = a11 * a22 - a12 * a21;
+    if (!Number.isFinite(det) || Math.abs(det) < 1e-300) return null;
+    const du = (-f1 * a22 + f2 * a12) / det;
+    const dv = (-f2 * a11 + f1 * a21) / det;
+    u += du;
+    v += dv;
+    if (p.closed) u = wrapParam(p, u);
+    if (q.closed) v = wrapParam(q, v);
+    const span = Math.max(1, Math.abs(u), Math.abs(v));
+    if (Math.abs(du) < 1e-14 * span && Math.abs(dv) < 1e-14 * span) {
+      const inside = (c: CurveParam, t: number) => c.closed || (t >= c.lo - 1e-9 && t <= c.hi + 1e-9);
+      return inside(p, u) && (qUnbounded || inside(q, v)) ? [u, v] : null;
+    }
+  }
+  return null;
+}
+
+/** Along a path, where a curve's "distance" (zero on it) has the low or high point nearest zero; null if none. */
+function touchParam(p: CurveParam, level: (q: Vec) => number): number | null {
+  let found: number | null = null;
+  touchGap(p, level, (u) => (found = u));
+  return found;
 }
 
 /**
@@ -761,7 +868,7 @@ function buildSystem(sketch: SketchData): System {
  * on the curve): among the places where that function has a low or high
  * point along the path, the value nearest zero. Zero = they touch.
  */
-function touchGap(p: CurveParam, level: (q: Vec) => number): number {
+function touchGap(p: CurveParam, level: (q: Vec) => number, where?: (u: number) => void): number {
   const us = p.samples;
   // A closed path's last sample is its first again.
   const n = p.closed ? us.length - 1 : us.length;
@@ -783,7 +890,10 @@ function touchGap(p: CurveParam, level: (q: Vec) => number): number {
       }
     }
     const v = value((a + b) / 2);
-    if (best === null || Math.abs(v) < Math.abs(best)) best = v;
+    if (best === null || Math.abs(v) < Math.abs(best)) {
+      best = v;
+      where?.(wrapParam(p, (a + b) / 2));
+    }
   };
   const step = (i: number) => (us[Math.min(i + 1, us.length - 1)] - us[Math.max(i - 1, 0)]) / 2 || 1e-9;
   for (let i = p.closed ? 0 : 1; i < (p.closed ? n : n - 1); i++) {
@@ -793,8 +903,15 @@ function touchGap(p: CurveParam, level: (q: Vec) => number): number {
     else if (cur >= prev && cur >= next) consider(lo, hi, true);
   }
   if (best !== null) return best;
-  // No low or high point (an open path heading steadily away): the nearer end, so the solver can still pull them together.
-  return Math.abs(g[0]) < Math.abs(g[n - 1]) ? g[0] : g[n - 1];
+  // No low or high point (an open path heading steadily away). Touching can then only be at an end, and only if
+  // it runs the same way as the curve there as well as being on it: the nearer end's gap and how far off square.
+  const u = Math.abs(g[0]) < Math.abs(g[n - 1]) ? us[0] : us[n - 1];
+  const q = p.at(u);
+  const h = 1e-6 * Math.max(1, Math.abs(q[0]), Math.abs(q[1]));
+  const grad: Vec = [(level([q[0] + h, q[1]]) - level([q[0] - h, q[1]])) / (2 * h), (level([q[0], q[1] + h]) - level([q[0], q[1] - h])) / (2 * h)];
+  const d = p.d1(u);
+  const off = (grad[0] * d[0] + grad[1] * d[1]) / ((Math.hypot(grad[0], grad[1]) || 1) * (Math.hypot(d[0], d[1]) || 1));
+  return Math.hypot(level(q), off);
 }
 
 /**
@@ -821,7 +938,8 @@ function signedDistanceToBeziers(p: Vec, pieces: Bez[]): number {
   let best = Infinity;
   let bestPiece = -1;
   let bestT = 0;
-  const STEPS = 12;
+  // Enough to find the right stretch of a spline that loops back near itself.
+  const STEPS = 24;
   pieces.forEach((bz, i) => {
     for (let k = 0; k <= STEPS; k++) {
       const q = at(bz, k / STEPS);
@@ -858,18 +976,60 @@ function evalAll(sys: System, x: Float64Array): number[] {
   return out;
 }
 
-/** Numerical Jacobian (m × n), central differences. */
+/**
+ * Which unknowns each block reads, found once by watching one evaluation.
+ * A column of the Jacobian then only re-runs the blocks that read it.
+ */
+const dependsCache = new WeakMap<System, { rows: number[]; columns: number[][] }>();
+function dependencies(sys: System, x: Float64Array): { rows: number[]; columns: number[][] } {
+  const known = dependsCache.get(sys);
+  if (known) return known;
+  const columns: number[][] = Array.from({ length: sys.n }, () => []);
+  const rows: number[] = [];
+  let row = 0;
+  sys.blocks.forEach((b, bi) => {
+    const read = new Set<number>();
+    const watched = new Proxy(Float64Array.from(x), {
+      get(t, k) {
+        if (typeof k === "string") {
+          const i = Number(k);
+          if (Number.isInteger(i) && i >= 0) read.add(i);
+        }
+        return Reflect.get(t, k);
+      },
+    });
+    const out: number[] = [];
+    b.eval(watched as unknown as Float64Array, out);
+    rows.push(row);
+    row += out.length;
+    for (const i of read) if (i < sys.n) columns[i].push(bi);
+  });
+  const deps = { rows, columns };
+  dependsCache.set(sys, deps);
+  return deps;
+}
+
+/** Numerical Jacobian (m × n), central differences — re-running only the blocks that read each unknown. */
 function jacobian(sys: System, x: Float64Array, m: number): Float64Array {
   const J = new Float64Array(m * sys.n);
+  const { rows, columns } = dependencies(sys, x);
   const xp = Float64Array.from(x);
+  const rp: number[] = [];
+  const rm: number[] = [];
   for (let j = 0; j < sys.n; j++) {
     const h = 1e-6 * Math.max(1, Math.abs(x[j]));
-    xp[j] = x[j] + h;
-    const rp = evalAll(sys, xp);
-    xp[j] = x[j] - h;
-    const rm = evalAll(sys, xp);
-    xp[j] = x[j];
-    for (let i = 0; i < m; i++) J[i * sys.n + j] = (rp[i] - rm[i]) / (2 * h);
+    for (const bi of columns[j]) {
+      const b = sys.blocks[bi];
+      rp.length = 0;
+      rm.length = 0;
+      xp[j] = x[j] + h;
+      b.eval(xp, rp);
+      xp[j] = x[j] - h;
+      b.eval(xp, rm);
+      xp[j] = x[j];
+      const r0 = rows[bi];
+      for (let i = 0; i < rp.length && r0 + i < m; i++) J[(r0 + i) * sys.n + j] = (rp[i] - rm[i]) / (2 * h);
+    }
   }
   return J;
 }
@@ -1188,10 +1348,23 @@ export function refreshOffsets(s: SketchData): SketchData {
     let params = copy.offsetParams;
     let points = out.points;
     if (offsetError(param, o.dist, us, pieces) > OFFSET_TOLERANCE) {
-      // More points: the ends stay (they may be joined to other things); the ones between are new.
+      // More points. The ends stay, and so does every point something else uses (a line drawn from it, a
+      // constraint on it), at its own place along the original; the others are replaced.
       const knots = orig.type === "spline" && orig.conic === undefined ? Array.from({ length: Math.round(param.hi - param.lo) + 1 }, (_, i) => param.lo + i) : undefined;
       const fresh = fitParams(param, o.dist, OFFSET_TOLERANCE / 2, knots);
       const span = copy.closed ? fresh.slice(0, -1) : fresh;
+      const others = new Set<string>();
+      for (const c of out.curves) if (c.id !== copy.id) for (const pid of curvePointIds(c)) others.add(pid);
+      for (const k of out.constraints) for (const r of k.refs) others.add(r);
+      const last = copy.points.length - 1;
+      const kept = new Map<number, string>();
+      copy.points.forEach((pid, j) => {
+        if (j === 0 || (!copy.closed && j === last) || others.has(pid)) kept.set(copy.offsetParams![j], pid);
+      });
+      const merged = [...new Set([...span, ...kept.keys()])].sort((x, y) => x - y);
+      // Fresh places within a hair of a kept point's place are the same place.
+      const near = (u: number) => [...kept.keys()].find((k) => Math.abs(k - u) < 1e-9);
+      const all = merged.filter((u) => kept.has(u) || near(u) === undefined);
       const taken = new Set(out.points.map((p) => p.id));
       let n = 0;
       const newId = () => {
@@ -1201,14 +1374,13 @@ export function refreshOffsets(s: SketchData): SketchData {
         taken.add(id);
         return id;
       };
-      ids = span.map((_, i) => (i === 0 ? copy.points[0] : !copy.closed && i === span.length - 1 ? copy.points[copy.points.length - 1] : newId()));
-      params = span;
-      pieces = offsetPieces(param, o.dist, offsetSpan(param, span, copy.closed));
+      ids = all.map((u) => kept.get(u) ?? newId());
+      params = all;
+      pieces = offsetPieces(param, o.dist, offsetSpan(param, all, copy.closed));
       const gone = new Set(copy.points.filter((id) => !ids.includes(id)));
       const at = pieces.map((b) => b[0]);
       if (!copy.closed) at.push(pieces[pieces.length - 1][3]);
       points = [...out.points.filter((p) => !gone.has(p.id)), ...ids.filter((id) => !copy.points.includes(id)).map((id) => ({ id, x: at[ids.indexOf(id)][0], y: at[ids.indexOf(id)][1] }))];
-      out = { ...out, constraints: out.constraints.filter((k) => !k.refs.some((r) => gone.has(r))) };
     }
     const fitted = splineThrough(copy.id, ids, pieces, copy.closed, copy.construction);
     const next: SketchCurve = { ...fitted, offsetParams: params };
@@ -1363,7 +1535,9 @@ export function analyzeSketch(sketch: SketchData): SketchAnalysis {
   const definedPoints = new Set(r.definedPoints);
   for (const [id, k] of d.points) {
     const line = "centre" in k ? undefined : k.line ? sketch.curves.find((c) => c.id === k.line) : undefined;
-    const holders = "centre" in k ? [k.centre] : line?.type === "line" ? [line.p1, line.p2] : [];
+    // A row along a line only needs the line's direction pinned down: both ends, or held level or upright.
+    const level = line?.type === "line" && sketch.constraints.some((c) => (c.type === "horizontal" || c.type === "vertical") && c.refs.length === 1 && c.refs[0] === line.id);
+    const holders = "centre" in k ? [k.centre] : line?.type === "line" && !level ? [line.p1, line.p2] : [];
     if (r.definedPoints.has(k.orig) && holders.every((h) => r.definedPoints.has(h))) definedPoints.add(id);
   }
   // An offset copy's points are as pinned down as the original.

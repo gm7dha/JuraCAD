@@ -578,6 +578,14 @@ export function deleteItems(s: SketchData, ids: string[]): SketchData {
       if (refs.length === c.refs.length) return [c];
       return [{ ...c, refs, ...(c.extra ? { extra } : {}) }];
     }
+    if (c.type === "patternMove" && c.refs.length === 3 && !alive.has(c.refs[2]) && alive.has(c.refs[0]) && alive.has(c.refs[1])) {
+      // The row's direction line is gone: the copies carry on the way it pointed, at a set angle.
+      const line = s.curves.find((k) => k.id === c.refs[2]);
+      if (line?.type !== "line") return [];
+      const [a, b] = [pointPos(s, line.p1), pointPos(s, line.p2)];
+      const angle = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+      return [{ ...c, refs: c.refs.slice(0, 2), extra: [c.extra?.[0] ?? 0, angle] }];
+    }
     return c.refs.every((r) => alive.has(r)) ? [c] : [];
   });
   return solveSketch({ ...s, points, curves, constraints }).sketch;
@@ -700,7 +708,21 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
         return "Equal makes lines the same length, or circles and arcs the same size — not a line and an arc together. Select only lines, or only circles and arcs.";
       break;
     case "tangent":
-      if (only(2) && crv.length === 2 && crv.some(isWavy)) return [mk("tangent", [crv[0].id, crv[1].id])];
+      if (only(2) && crv.length === 2 && crv.some(isWavy)) {
+        // An end that sits on the other curve (without being joined to it) is held there, so they meet smoothly at that point.
+        const held: SketchConstraint[] = [];
+        for (const [one, two] of [[crv[0], crv[1]], [crv[1], crv[0]]] as const) {
+          const path = curveParam(s, two);
+          for (const p of curveEnds(one)) {
+            if (curvePoints(two).includes(p)) continue;
+            const q = pointPos(s, p);
+            const f = path.at(nearestParam(path, q));
+            const joined = s.constraints.some((k) => k.refs[0] === p && k.refs[1] === two.id) || s.constraints.some((k) => k.type === "coincident" && k.refs.includes(p) && k.refs.some((r) => r !== p && curvePoints(two).includes(r)));
+            if (!joined && !held.length && Math.hypot(q[0] - f[0], q[1] - f[1]) < 1e-6) held.push(mk(onCurveType(two), [p, two.id]));
+          }
+        }
+        return [...held, mk("tangent", [crv[0].id, crv[1].id])];
+      }
       if (only(2) && lines.length === 1 && rounds.length === 1) return [mk("tangent", [lines[0].id, rounds[0].id])];
       if (only(2) && rounds.length === 2) {
         const [c1, c2] = rounds;

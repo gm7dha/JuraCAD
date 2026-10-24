@@ -192,6 +192,49 @@ describe("Tangent with splines and ellipses", () => {
     expect(unitDot(pa.d1(pa.hi), pb.d1(0))).toBeGreaterThan(0.99);
   });
 
+  it("joins a line smoothly to a spline's end when they're joined by Coincident (not the same point)", () => {
+    const a = arch();
+    const sp = spline(a.sketch);
+    const l = addLine(a.sketch, at(-1, 2), at(-15, -10));
+    const ln = line(l.sketch, l.lineId);
+    const joined = applyRelation(l.sketch, "coincident", [ln.p1, sp.points[0]]);
+    expect(joined.error).toBeUndefined();
+    const r = applyRelation(joined.sketch, "tangent", [l.lineId, a.id]);
+    expect(r.error).toBeUndefined();
+    const path = curveParam(r.sketch, spline(r.sketch));
+    const ln2 = line(r.sketch, l.lineId);
+    const d: [number, number] = [pointPos(r.sketch, ln2.p2)[0] - pointPos(r.sketch, ln2.p1)[0], pointPos(r.sketch, ln2.p2)[1] - pointPos(r.sketch, ln2.p1)[1]];
+    expect(Math.abs(unitCross(d, path.d1(0)))).toBeLessThan(1e-7);
+  });
+
+  it("joins smoothly where a spline's end is held on a line", () => {
+    const l = addLine(emptySketch(), at(-20, 0), at(20, 0));
+    const ln = line(l.sketch, l.lineId);
+    const s0 = fixAll(l.sketch, [ln.p1, ln.p2]);
+    const sp = addSpline(s0, [{ x: 5, y: 0, snap: { kind: "curve", id: l.lineId } }, at(15, 6), at(25, 15)], false);
+    expect(sp.sketch.constraints.some((k) => k.type === "pointOnLine")).toBe(true);
+    const r = applyRelation(sp.sketch, "tangent", [l.lineId, sp.splineId]);
+    expect(r.error).toBeUndefined();
+    const path = curveParam(r.sketch, spline(r.sketch));
+    expect(Math.abs(unitCross(path.d1(0), [1, 0]))).toBeLessThan(1e-7);
+    expect(Math.abs(path.at(0)[1])).toBeLessThan(1e-7);
+  });
+
+  it("a circle through a spline's end is made to meet it smoothly there, not just accepted", () => {
+    const a = arch();
+    // A circle round (0, 10) through the spline's start (0, 0), which leaves at 45°.
+    const c = addCircle(a.sketch, at(0, 10), 10);
+    const r = applyRelation(c.sketch, "tangent", [c.circleId, a.id]);
+    expect(r.error).toBeUndefined();
+    const circle = r.sketch.curves.find((k) => k.id === c.circleId) as SketchCircle;
+    const centre = pointPos(r.sketch, circle.center);
+    const path = curveParam(r.sketch, spline(r.sketch));
+    const start = path.at(0);
+    // Still through the start, and square to the radius there.
+    expect(Math.abs(Math.hypot(start[0] - centre[0], start[1] - centre[1]) - circle.radius)).toBeLessThan(1e-7);
+    expect(Math.abs(unitDot(path.d1(0), [start[0] - centre[0], start[1] - centre[1]]))).toBeLessThan(1e-7);
+  });
+
   it("says when touching can't happen", () => {
     // A fixed ellipse and a fixed level line far above it can't touch.
     const e = addEllipse(emptySketch(), at(0, 0), at(20, 0), [0, 10]);
@@ -277,6 +320,20 @@ describe("saved sketches", () => {
     const back = parseSketchData(JSON.parse(JSON.stringify(r)))!;
     expect(back.constraints.find((k) => k.type === "normal")).toEqual(r.constraints.find((k) => k.type === "normal"));
     expect(solveSketch(back).ok).toBe(true);
+  });
+
+  it("dragging stays quick with two splines touching and 40 other lines (about 50 ms a step or better)", () => {
+    const a = arch();
+    const b = addSpline(a.sketch, [at(0, 25), at(10, 15), at(20, 25)], false);
+    let s = applyRelation(b.sketch, "tangent", [a.id, b.splineId]).sketch;
+    for (let i = 0; i < 40; i++) s = addLine(s, at(50 + i, 0), at(50 + i, 10)).sketch;
+    const first = spline(s, b.splineId).points[0];
+    const t = performance.now();
+    for (let i = 0; i < 10; i++) s = dragPoint(s, first, i * 0.3, 25 + i * 0.2);
+    // Generous for busy CI machines: typically a few ms a step here.
+    expect((performance.now() - t) / 10).toBeLessThan(400);
+    const r = solveSketch(s);
+    expect(r.ok).toBe(true);
   });
 
   it("drag stays quick with tangents on splines", () => {

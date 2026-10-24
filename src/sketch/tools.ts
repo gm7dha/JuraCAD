@@ -444,6 +444,12 @@ function paramOf(s: SketchData, c: SketchCurve, p: P2): number {
   return norm(Math.atan2(p[1] - C[1], p[0] - C[0]) - arcSpan(s, c)[0]);
 }
 
+/** The end point of `c` sitting at p (to a millionth of a millimetre), if there is one. */
+function endAt(s: SketchData, c: SketchCurve, p: P2): string | null {
+  const ends = c.type === "line" ? [c.p1, c.p2] : c.type === "arc" ? [c.start, c.end] : c.type === "spline" ? (c.closed ? [] : [c.points[0], c.points[c.points.length - 1]]) : c.type === "ellipse" && c.start && c.end ? [c.start, c.end] : [];
+  return ends.find((id) => id !== ORIGIN_ID && len(sub(pointPos(s, id), p)) < 1e-6) ?? null;
+}
+
 /** Constraints that stay true when a curve is shortened (others, like its length, are dropped). */
 const KEEPS_WHEN_TRIMMED = new Set(["horizontal", "vertical", "parallel", "perpendicular", "tangent", "pointOnLine", "pointOnCircle", "concentric", "radius", "diameter", "equal", "fix", "offset", "pointOnCurve"]);
 
@@ -470,14 +476,24 @@ export function trimAt(s: SketchData, curveId: string, at: { x: number; y: numbe
   const before = inside.filter((c) => c.at < click).sort((a, b) => b.at - a.at)[0];
   const after = inside.filter((c) => c.at > click).sort((a, b) => a.at - b.at)[0];
 
+  const reused = new Set<string>();
   const newPoint = (cut: Cut) => {
-    const id = sketchId("p");
     const other = curveById(s, cut.by)!;
+    // Where the other curve ends right on this one (a T), cut at its end point: no new point needed.
+    const end = endAt(s, other, cut.point);
+    if (end) {
+      reused.add(end);
+      return { point: { id: end, x: cut.point[0], y: cut.point[1] }, pts: [] as SketchPoint[], constraints: [] as SketchConstraint[] };
+    }
+    const id = sketchId("p");
     const on: SketchConstraint[] = [con(onCurveType(other), [id, cut.by])];
-    return { point: { id, x: cut.point[0], y: cut.point[1] }, constraints: on };
+    const point = { id, x: cut.point[0], y: cut.point[1] };
+    return { point, pts: [point], constraints: on };
   };
   // A shortened line is no longer equal in length to anything (an arc keeps its radius, so stays equal).
-  const keep = s.constraints.filter((k) => !k.refs.includes(curveId) || (KEEPS_WHEN_TRIMMED.has(k.type) && !(k.type === "equal" && target.type === "line")));
+  // A reused end point is now the curve's own end, so it no longer needs holding on it.
+  const keep0 = s.constraints.filter((k) => !k.refs.includes(curveId) || (KEEPS_WHEN_TRIMMED.has(k.type) && !(k.type === "equal" && target.type === "line")));
+  const keep = () => keep0.filter((k) => !((k.type === "pointOnLine" || k.type === "pointOnCircle") && reused.has(k.refs[0]) && k.refs[1] === curveId));
   const others = s.curves.filter((c) => c.id !== curveId);
 
   if (target.type === "circle") {
@@ -488,7 +504,7 @@ export function trimAt(s: SketchData, curveId: string, at: { x: number; y: numbe
     const a = newPoint(hi);
     const b = newPoint(lo);
     const arc: SketchArc = { id: curveId, type: "arc", center: target.center, start: a.point.id, end: b.point.id, construction: target.construction };
-    return settle({ points: [...s.points, a.point, b.point], curves: [...others, arc], constraints: [...keep, ...a.constraints, ...b.constraints] });
+    return settle({ points: [...s.points, ...a.pts, ...b.pts], curves: [...others, arc], constraints: [...keep(), ...a.constraints, ...b.constraints] });
   }
 
   const start = target.type === "line" ? target.p1 : target.start;
@@ -498,23 +514,23 @@ export function trimAt(s: SketchData, curveId: string, at: { x: number; y: numbe
 
   if (!before && after) {
     const a = newPoint(after);
-    return tidy(s, { points: [...s.points, a.point], curves: [...others, piece(a.point.id, finish, curveId)], constraints: [...keep, ...a.constraints] });
+    return tidy(s, { points: [...s.points, ...a.pts], curves: [...others, piece(a.point.id, finish, curveId)], constraints: [...keep(), ...a.constraints] });
   }
   if (before && !after) {
     const b = newPoint(before);
-    return tidy(s, { points: [...s.points, b.point], curves: [...others, piece(start, b.point.id, curveId)], constraints: [...keep, ...b.constraints] });
+    return tidy(s, { points: [...s.points, ...b.pts], curves: [...others, piece(start, b.point.id, curveId)], constraints: [...keep(), ...b.constraints] });
   }
   // A piece in the middle: split into two.
   const b = newPoint(before!);
   const a = newPoint(after!);
   const secondId = sketchId(target.type === "line" ? "l" : "a");
-  const copied = keep
+  const copied = keep()
     .filter((k) => k.refs.includes(curveId) && (k.type === "horizontal" || k.type === "vertical"))
     .map((k) => ({ ...k, id: sketchId("c"), refs: k.refs.map((r) => (r === curveId ? secondId : r)) }));
   return tidy(s, {
-    points: [...s.points, b.point, a.point],
+    points: [...s.points, ...b.pts, ...a.pts],
     curves: [...others, piece(start, b.point.id, curveId), piece(a.point.id, finish, secondId)],
-    constraints: [...keep, ...b.constraints, ...a.constraints, ...copied],
+    constraints: [...keep(), ...b.constraints, ...a.constraints, ...copied],
   });
 }
 

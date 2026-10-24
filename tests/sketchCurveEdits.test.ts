@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addCircle, addLine, applyRelation, dragPoint, pointPos, setDimensionValue, type Placed } from "../src/sketch/ops";
+import { addCircle, addLine, applyRelation, deleteItems, dragPoint, pointPos, setDimensionValue, type Placed } from "../src/sketch/ops";
 import { addConic, addEllipse, addSpline, offsetCurves, patternCurves, readPatternSettings, splitAt, trimAt } from "../src/sketch/tools";
 import { conicAt } from "../src/sketch/spline";
 import { curveParam, nearestParam, OFFSET_TOLERANCE, type CurveParam } from "../src/sketch/curves";
@@ -425,5 +425,109 @@ describe("relations on a cut spline", () => {
     expect(split.error).toBeUndefined();
     const tg = split.sketch.constraints.find((k) => k.type === "tangent")!;
     expect(tg.refs).toContain(split.lineIds[1]);
+  });
+});
+
+describe("offset copies refitted after big changes", () => {
+  const setup = () => {
+    const r = addSpline(emptySketch(), [at(0, 0), at(20, 6), at(40, 0)], false);
+    const o = offsetCurves(r.sketch, r.splineId, { x: 20, y: 10 }, "2");
+    const copy = curve<SketchSpline>(o.sketch, o.curveIds[0]);
+    const midIndex = (copy.points.length - 1) / 2;
+    return { r, o, copy, mid: copy.points[midIndex] };
+  };
+  const reshape = (s: SketchData, splineId: string) => {
+    const sp = curve<SketchSpline>(s, splineId);
+    for (const y of [10, 14, 18, 22]) s = dragPoint(s, sp.points[1], 20, y);
+    return s;
+  };
+
+  it("keeps a point a line was drawn from", () => {
+    const { r, o, copy, mid } = setup();
+    expect(Number.isInteger((copy.points.length - 1) / 2)).toBe(true);
+    const [mx, my] = pointPos(o.sketch, mid);
+    const l = addLine(o.sketch, { x: mx, y: my, snap: { kind: "point", id: mid } }, at(mx, my + 15));
+    const s = reshape(l.sketch, r.splineId);
+    const after = curve<SketchSpline>(s, o.curveIds[0]);
+    expect(after.points.length).toBeGreaterThan(copy.points.length);
+    expect(after.points).toContain(mid);
+    const line = curve<{ type: "line"; p1: string; p2: string } & SketchCurve>(s, l.lineId);
+    expect(line.p1).toBe(mid);
+    expect(s.points.some((p) => p.id === line.p1)).toBe(true);
+    expect(findRegions(s).problems).toBeDefined();
+    expect(solveSketch(s).ok).toBe(true);
+    // The kept point is still on the offset, and the copy is still within the tolerance.
+    const orig = curveParam(s, curve(s, r.splineId));
+    expect(Math.abs(gap([orig], pointPos(s, mid)) - 2)).toBeLessThan(1e-6);
+    const cp = curveParam(s, after);
+    expect(Math.max(...samples(cp, 400).map((q) => Math.abs(gap([orig], q) - 2)))).toBeLessThan(OFFSET_TOLERANCE);
+  });
+
+  it("keeps a point joined by Coincident, and the join", () => {
+    const { r, o, mid } = setup();
+    const [mx, my] = pointPos(o.sketch, mid);
+    const l = addLine(o.sketch, at(mx + 0.5, my + 0.5), at(mx, my + 15));
+    const line = curve<{ type: "line"; p1: string; p2: string } & SketchCurve>(l.sketch, l.lineId);
+    const joined = applyRelation(l.sketch, "coincident", [line.p1, mid]);
+    expect(joined.error).toBeUndefined();
+    const s = reshape(joined.sketch, r.splineId);
+    expect(s.constraints.some((k) => k.type === "coincident" && k.refs.includes(mid))).toBe(true);
+    expect(curve<SketchSpline>(s, o.curveIds[0]).points).toContain(mid);
+    const [a, b] = [pointPos(s, line.p1), pointPos(s, mid)];
+    expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThan(1e-6);
+  });
+});
+
+describe("trimming at a T", () => {
+  it("cuts a line at the end of a line that stops on it, reusing that point", () => {
+    const base = addLine(emptySketch(), at(0, 0), at(40, 0));
+    const stem = addLine(base.sketch, at(20, 15), { x: 20, y: 0, snap: { kind: "curve", id: base.lineId } });
+    const before = stem.sketch.points.length;
+    const t = trimAt(stem.sketch, base.lineId, { x: 30, y: 0 });
+    expect(t.error).toBeUndefined();
+    // The far end goes with the piece cut away; no new point is added.
+    expect(t.sketch.points).toHaveLength(before - 1);
+    const line = curve<{ type: "line"; p1: string; p2: string } & SketchCurve>(t.sketch, base.lineId);
+    expect([line.p1, line.p2]).toContain(stem.endId);
+    expect(t.sketch.constraints.some((k) => k.type === "pointOnLine" && k.refs[0] === stem.endId && k.refs[1] === base.lineId)).toBe(false);
+  });
+
+  it("cuts a spline at the end of a line that stops on it", () => {
+    const r = wavySpline();
+    const path = curveParam(r.sketch, curve(r.sketch, r.splineId));
+    const q = path.at(1.5);
+    const stem = addLine(r.sketch, at(q[0], q[1] + 20), { x: q[0], y: q[1], snap: { kind: "curve", id: r.splineId } });
+    const before = stem.sketch.points.length;
+    const t = trimAt(stem.sketch, r.splineId, { x: 35, y: 4 });
+    expect(t.error).toBeUndefined();
+    const sp = curve<SketchSpline>(t.sketch, r.splineId);
+    expect(sp.points[sp.points.length - 1]).toBe(stem.endId);
+    expect(t.sketch.points.length).toBeLessThan(before);
+    expect(t.sketch.constraints.some((k) => k.type === "pointOnCurve" && k.refs[0] === stem.endId)).toBe(false);
+    expect(mismatch([curveParam(t.sketch, sp)], [path])).toBeLessThan(1e-6);
+  });
+});
+
+describe("linear pattern along a line, more", () => {
+  const rowAlong = () => {
+    const l = addLine(emptySketch(), at(0, -5), at(10, -5), { construction: true, orientation: "horizontal" });
+    const c = addCircle(l.sketch, at(0, 0), 2);
+    const p = patternCurves(c.sketch, [c.circleId], { kind: "linear", count: 3, spacing: 10, angle: 0, lineId: l.lineId });
+    return { l, c, p };
+  };
+
+  it("deleting the direction line keeps the copies following, the way it pointed", () => {
+    const { l, c, p } = rowAlong();
+    const gone = deleteItems(p.sketch, [l.lineId]);
+    expect(gone.constraints.filter((k) => k.type === "patternMove")).toHaveLength(2);
+    const centre = curve<SketchCircle>(gone, c.circleId).center;
+    const moved = dragPoint(gone, centre, 3, 4);
+    expect(pointPos(moved, curve<SketchCircle>(moved, p.curveIds[1]).center).map((v) => Math.round(v * 1e9) / 1e9)).toEqual([23, 4]);
+  });
+
+  it("copies count as pinned down when the line's direction is (a level line), not only both its ends", () => {
+    const { c, p } = rowAlong();
+    const s = applyRelation(p.sketch, "fix", [curve<SketchCircle>(p.sketch, c.circleId).center]).sketch;
+    expect(analyzeSketch(s).definedPoints.has(curve<SketchCircle>(s, p.curveIds[1]).center)).toBe(true);
   });
 });

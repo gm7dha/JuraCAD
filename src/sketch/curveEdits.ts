@@ -8,7 +8,7 @@
  */
 import { evaluate } from "../model/expr";
 import { crossings, curveParam, nearestParam, offsetParams, offsetPieces, OFFSET_TOLERANCE, pieceOf, splineThrough, tightestBend, type CurveParam, type P2 } from "./curves";
-import { curvePoints, deleteItems, onCurveType, settle, sketchId, type EditResult } from "./ops";
+import { curveEnds, curvePoints, deleteItems, onCurveType, settle, sketchId, type EditResult } from "./ops";
 import { offsetSpan, solveSketch } from "./solver";
 import type { SketchConstraint, SketchCurve, SketchData, SketchEllipse, SketchPoint, SketchSpline } from "./types";
 
@@ -104,6 +104,8 @@ function replaceWithPieces(before: SketchData, original: Wavy, pieces: SketchCur
     if (!k.refs.includes(original.id)) return [k];
     if (!pieces.length) return [];
     if (k.type === "pointOnCurve") {
+      // A point that's now one of the pieces' own ends needs no holding.
+      if (pieces.some((c) => curvePoints(c).includes(k.refs[0]))) return [];
       const on = onPiece(k.refs[0]);
       return on ? [{ ...k, refs: [k.refs[0], on] }] : [];
     }
@@ -145,10 +147,16 @@ function cutsOn(s: SketchData, target: Wavy, path: CurveParam): Cut[] {
 }
 
 /** A new point at a cut, held on the curve that cuts there. */
-function cutPoint(s: SketchData, cut: Cut): { point: SketchPoint; constraint: SketchConstraint } {
-  const id = sketchId("p");
+function cutPoint(s: SketchData, cut: Cut): { point: SketchPoint; constraint: SketchConstraint | null; reused: boolean } {
   const other = s.curves.find((c) => c.id === cut.by)!;
-  return { point: { id, x: cut.p[0], y: cut.p[1] }, constraint: con(onCurveType(other), [id, cut.by]) };
+  // Where the other curve ends right on this one (a T), cut at its end point: no new point needed.
+  const end = curveEnds(other).find((id) => {
+    const q = s.points.find((p) => p.id === id);
+    return q && dist([q.x, q.y], cut.p) < 1e-6;
+  });
+  if (end) return { point: { id: end, x: cut.p[0], y: cut.p[1] }, constraint: null, reused: true };
+  const id = sketchId("p");
+  return { point: { id, x: cut.p[0], y: cut.p[1] }, constraint: con(onCurveType(other), [id, cut.by]), reused: false };
 }
 
 /**
@@ -174,7 +182,11 @@ export function trimWavy(s: SketchData, target: Wavy, at: { x: number; y: number
     const b = cutPoint(s, before);
     let u1 = before.u;
     while (u1 <= after.u + eps) u1 += span;
-    const sk: SketchData = { ...s, points: [...s.points, a.point, b.point], constraints: [...s.constraints, a.constraint, b.constraint] };
+    const sk: SketchData = {
+      ...s,
+      points: [...s.points, ...[a, b].filter((k) => !k.reused).map((k) => k.point)],
+      constraints: [...s.constraints, ...[a, b].flatMap((k) => (k.constraint ? [k.constraint] : []))],
+    };
     const piece = pieceOf(sk, target, after.u, u1, a.point.id, b.point.id, target.id, newId);
     return orBefore(s, replaceWithPieces(sk, target, [piece.curve], piece.points, "Trimming there"));
   }
@@ -188,8 +200,8 @@ export function trimWavy(s: SketchData, target: Wavy, at: { x: number; y: number
   const pieces: SketchCurve[] = [];
   const add = (c: Cut) => {
     const k = cutPoint(s, c);
-    extraPoints.push(k.point);
-    extraCons.push(k.constraint);
+    if (!k.reused) extraPoints.push(k.point);
+    if (k.constraint) extraCons.push(k.constraint);
     return k.point.id;
   };
   const sk = (): SketchData => ({ ...s, points: [...s.points, ...extraPoints], constraints: [...s.constraints, ...extraCons] });
