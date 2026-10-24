@@ -442,15 +442,37 @@ export function offsetError(p: CurveParam, dist: number, us: number[], pieces: B
 /** How closely offset copies of splines and ellipses follow the true offset (mm). */
 export const OFFSET_TOLERANCE = 0.001;
 
-/** Parameters to fit an offset through: the original's own pieces (for a spline), each split evenly until the fit is within `tol`. */
+/** The most points an offset copy gets: past this the fit stops refining (the warning explains why). */
+export const MAX_OFFSET_POINTS = 129;
+
+/**
+ * Parameters to fit an offset through: the original's own pieces (for a
+ * spline; else four), with only the stretches that miss `tol` split in half,
+ * again and again, until all are within it or the copy would have more than
+ * MAX_OFFSET_POINTS points.
+ */
 export function offsetParams(p: CurveParam, dist: number, tol = OFFSET_TOLERANCE, knots?: number[]): number[] {
-  const base = knots ?? [p.lo, p.hi];
-  for (let split = base.length > 2 ? 1 : 4; split <= 512; split *= 2) {
-    const us: number[] = [];
-    for (let i = 0; i + 1 < base.length; i++) for (let k = 0; k < split; k++) us.push(base[i] + ((base[i + 1] - base[i]) * k) / split);
-    us.push(base[base.length - 1]);
-    if (offsetError(p, dist, us, offsetPieces(p, dist, us)) <= tol) return us;
+  let us = knots && knots.length > 2 ? [...knots] : range(p.lo, p.hi, 4);
+  const pieceError = (a: number, b: number) => offsetError(p, dist, [a, b], offsetPieces(p, dist, [a, b]));
+  let errs = us.slice(0, -1).map((u, i) => pieceError(u, us[i + 1]));
+  while (errs.some((e) => e > tol)) {
+    const next: number[] = [us[0]];
+    const nextErrs: number[] = [];
+    let room = MAX_OFFSET_POINTS - us.length;
+    for (let i = 0; i + 1 < us.length; i++) {
+      if (errs[i] > tol && room > 0) {
+        const m = (us[i] + us[i + 1]) / 2;
+        next.push(m, us[i + 1]);
+        nextErrs.push(pieceError(us[i], m), pieceError(m, us[i + 1]));
+        room--;
+      } else {
+        next.push(us[i + 1]);
+        nextErrs.push(errs[i]);
+      }
+    }
+    if (next.length === us.length) break;
+    us = next;
+    errs = nextErrs;
   }
-  const us = range(p.lo, p.hi, 1024);
   return us;
 }

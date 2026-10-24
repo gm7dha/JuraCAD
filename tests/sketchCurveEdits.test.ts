@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { addCircle, addLine, applyRelation, deleteItems, dragPoint, pointPos, setDimensionValue, type Placed } from "../src/sketch/ops";
 import { addConic, addEllipse, addSpline, offsetCurves, patternCurves, readPatternSettings, splitAt, trimAt } from "../src/sketch/tools";
 import { conicAt } from "../src/sketch/spline";
-import { curveParam, nearestParam, OFFSET_TOLERANCE, type CurveParam } from "../src/sketch/curves";
+import { curveParam, MAX_OFFSET_POINTS, nearestParam, OFFSET_TOLERANCE, type CurveParam } from "../src/sketch/curves";
 import { findRegions } from "../src/sketch/regions";
-import { analyzeSketch, solveSketch } from "../src/sketch/solver";
+import { analyzeSketch, offsetWarnings, solveSketch } from "../src/sketch/solver";
 import { emptySketch, type SketchCircle, type SketchCurve, type SketchData, type SketchEllipse, type SketchSpline } from "../src/sketch/types";
 import { parseSketchData } from "../src/sketch/validate";
 
@@ -26,6 +26,12 @@ function mismatch(from: CurveParam[], to: CurveParam[]): number {
   return worst;
 }
 
+/** Largest error of an offset copy's distance from its original, over many places along it. */
+const offsetErrorOf = (s: SketchData, copyId: string, origId: string, d: number) => {
+  const copy = curveParam(s, curve(s, copyId));
+  const orig = curveParam(s, curve(s, origId));
+  return Math.max(...samples(copy, 400).map((q) => Math.abs(gap([orig], q) - d)));
+};
 const linear = (o: ReturnType<typeof readPatternSettings>) => (typeof o === "string" || o.kind !== "linear" ? null : o);
 const wavySpline = () => addSpline(emptySketch(), [at(0, 0), at(10, 8), at(20, -4), at(30, 6), at(40, 0)], false);
 /** A gentler wave (its tightest bend has a radius of about 4.7 mm), for offsets. */
@@ -529,5 +535,63 @@ describe("linear pattern along a line, more", () => {
     const { c, p } = rowAlong();
     const s = applyRelation(p.sketch, "fix", [curve<SketchCircle>(p.sketch, c.circleId).center]).sketch;
     expect(analyzeSketch(s).definedPoints.has(curve<SketchCircle>(s, p.curveIds[1]).center)).toBe(true);
+  });
+});
+
+describe("offset copies when the original bends too tightly", () => {
+  it("stays small and quick with something held on it, and says why it can't follow", () => {
+    const r = addSpline(emptySketch(), [at(0, 0), at(6.3242, 7.4799), at(12, 0)], false);
+    const o = offsetCurves(r.sketch, r.splineId, { x: 6, y: 10 }, "1.65");
+    expect(o.error).toBeUndefined();
+    const copyId = o.curveIds[0];
+    // A line's end held on the copy.
+    const l = addLine(o.sketch, at(3, 12), at(-5, 20));
+    const ln = curve<{ type: "line"; p1: string; p2: string } & SketchCurve>(l.sketch, l.lineId);
+    let s = applyRelation(l.sketch, "coincident", [ln.p1, copyId]).sketch;
+    expect(s.constraints.some((k) => k.type === "pointOnCurve" && k.refs[1] === copyId)).toBe(true);
+    const last = curve<SketchSpline>(s, r.splineId).points[2];
+    for (const [x, y] of [[6, -6], [0, -10], [-6, -12], [-11.068, -12.922]]) {
+      const t = performance.now();
+      s = dragPoint(s, last, x, y);
+      expect(performance.now() - t).toBeLessThan(1000); // generous for CI; a few ms here
+      expect(curve<SketchSpline>(s, copyId).points.length).toBeLessThanOrEqual(MAX_OFFSET_POINTS);
+    }
+    const t = performance.now();
+    analyzeSketch(s);
+    expect(performance.now() - t).toBeLessThan(1000);
+    expect(offsetWarnings(s)[0]).toMatch(/bends more tightly/);
+    // Relaxed again, the warning goes and the copy is back within the tolerance.
+    s = dragPoint(s, last, 12, 0);
+    expect(offsetWarnings(s)).toEqual([]);
+  });
+
+  it("gets fewer points again once the shape relaxes", () => {
+    const r = addSpline(emptySketch(), [at(0, 0), at(6.3242, 7.4799), at(12, 0)], false);
+    const o = offsetCurves(r.sketch, r.splineId, { x: 6, y: 10 }, "1.65");
+    const count = (s: SketchData) => curve<SketchSpline>(s, o.curveIds[0]).points.length;
+    const start = count(o.sketch);
+    const last = curve<SketchSpline>(o.sketch, r.splineId).points[2];
+    let s = o.sketch;
+    for (const [x, y] of [[6, -6], [0, -10], [-6, -12]]) s = dragPoint(s, last, x, y);
+    const many = count(s);
+    expect(many).toBeGreaterThan(start);
+    for (const [x, y] of [[0, -5], [12, 0]]) s = dragPoint(s, last, x, y);
+    expect(count(s)).toBeLessThan(many);
+    expect(count(s)).toBeLessThanOrEqual(start);
+    expect(offsetErrorOf(s, o.curveIds[0], r.splineId, 1.65)).toBeLessThan(OFFSET_TOLERANCE);
+  });
+
+  it("only splits the stretches that need it", () => {
+    // A long thin closed spline offset outwards: most of it is gentle.
+    const r = addSpline(emptySketch(), [at(0, 0), at(30, 1), at(60, 0), at(30, -1)], true);
+    const o = offsetCurves(r.sketch, r.splineId, { x: 30, y: 5 }, "1.15");
+    expect(o.error).toBeUndefined();
+    expect(curve<SketchSpline>(o.sketch, o.curveIds[0]).points.length).toBeLessThanOrEqual(MAX_OFFSET_POINTS);
+  });
+
+  it("won't tie an offset copy to its own original", () => {
+    const r = gentle();
+    const o = offsetCurves(r.sketch, r.splineId, { x: 15, y: 9 }, "2");
+    expect(applyRelation(o.sketch, "tangent", [o.curveIds[0], r.splineId]).error).toMatch(/offset copy/);
   });
 });

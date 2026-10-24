@@ -4,6 +4,7 @@ import { useLengthUnit, useStore } from "../model/store";
 import { showLength, storeLength } from "../model/units";
 import { planeLabel } from "../sketch/planes";
 import { findRegions } from "../sketch/regions";
+import { offsetWarnings } from "../sketch/solver";
 import { measureToOf } from "../sketch/ops";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -73,6 +74,7 @@ export function SketchPanel() {
   const plane = draft?.sketch?.plane ?? null;
   const status = useMemo(() => (data ? sketchStatus(data) : null), [data]);
   const regions = useMemo(() => (data ? findRegions(data) : null), [data]);
+  const offsetNotes = useMemo(() => (data ? offsetWarnings(data) : []), [data]);
   useEffect(() => setConfirmCancel(false), [data]);
 
   if (!draft || !data) return null;
@@ -375,6 +377,11 @@ export function SketchPanel() {
             )}
           </ul>
         )}
+        {offsetNotes.map((note, i) => (
+          <p key={i} className="dialog-error" role="status">
+            {note}
+          </p>
+        ))}
         {message && (
           <p className={message.tone === "error" ? "dialog-error" : "dialog-hint"} role={message.tone === "error" ? "alert" : "status"}>
             {message.text}

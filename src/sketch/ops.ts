@@ -801,6 +801,17 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
 
 /** Apply a relation (horizontal, tangent, …) to the selection. */
 export function applyRelation(s: SketchData, tool: RelationTool, selection: string[]): EditResult {
+  // An offset copy of a spline or ellipse is already held by its original: nothing else may tie the two together.
+  for (const k of s.constraints) {
+    if (k.type !== "offset") continue;
+    for (let i = 0; i + 1 < k.refs.length; i += 2) {
+      const copy = curveById(s, k.refs[i]);
+      if (copy?.type !== "spline" || !copy.offsetParams) continue;
+      const touchesCopy = selection.some((id) => id === copy.id || copy.points.includes(id));
+      if (touchesCopy && selection.includes(k.refs[i + 1]))
+        return { sketch: s, error: "That's an offset copy of the other: it already follows it at the offset distance, so it can't be tied to it any other way. Change the offset's distance instead." };
+    }
+  }
   const made = relationConstraints(s, tool, selection);
   if (typeof made === "string") return { sketch: s, error: made };
   let start = s;

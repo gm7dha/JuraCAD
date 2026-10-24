@@ -12,7 +12,7 @@
  */
 import { evaluate } from "../model/expr";
 import { splineBeziers } from "./spline";
-import { curvatureAt, curveParam, nearestParam, offsetAt, wrapParam, offsetError, offsetParams as fitParams, offsetPieces, OFFSET_TOLERANCE, splineThrough, type CurveParam } from "./curves";
+import { curvatureAt, curveParam, nearestParam, offsetAt, wrapParam, offsetError, offsetParams as fitParams, offsetPieces, OFFSET_TOLERANCE, splineThrough, tightestBend, type CurveParam } from "./curves";
 
 type Bez = [Vec, Vec, Vec, Vec];
 import { ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData, type SketchEllipse, type SketchSpline } from "./types";
@@ -776,8 +776,11 @@ function buildSystem(sketch: SketchData): System {
     const otherParam = paramFn(otherId);
     const level = levelFn(otherId);
     const lineOther = curves.get(otherId)!.type === "line";
-    // Where they touch (u along the walked curve, v along the other), carried from one evaluation to the next: a
-    // few Newton steps from there are far cheaper than searching the whole curve each time.
+    // NOTE: this block remembers state. `last` is where they touched (u along the walked curve, v along the
+    // other) the previous time it was evaluated; each evaluation starts its Newton steps from there, which is far
+    // cheaper than searching the whole curve each time. The value it returns is still the exact gap at that
+    // touching place (found to ~1e-14), so it doesn't depend on the history unless the curves touch in more than
+    // one place and Newton lands on a different one; if Newton fails, it searches again and remembers anew.
     let last: [number, number] | null = null;
     return {
       size: 1,
@@ -1347,11 +1350,22 @@ export function refreshOffsets(s: SketchData): SketchData {
     let ids = copy.points;
     let params = copy.offsetParams;
     let points = out.points;
-    if (offsetError(param, o.dist, us, pieces) > OFFSET_TOLERANCE) {
-      // More points. The ends stay, and so does every point something else uses (a line drawn from it, a
-      // constraint on it), at its own place along the original; the others are replaced.
+    // Fit again when the copy strays past the tolerance, or when far fewer points would now do. Not when the
+    // original bends tighter than the offset distance: no fit can follow that (offsetWarnings explains), so
+    // the copy keeps the points it has.
+    let fresh: number[] | null = null;
+    if (!offsetTooTight(param, o.dist)) {
       const knots = orig.type === "spline" && orig.conic === undefined ? Array.from({ length: Math.round(param.hi - param.lo) + 1 }, (_, i) => param.lo + i) : undefined;
-      const fresh = fitParams(param, o.dist, OFFSET_TOLERANCE / 2, knots);
+      const fit = () => fitParams(param, o.dist, OFFSET_TOLERANCE / 2, knots);
+      if (offsetError(param, o.dist, us, pieces) > OFFSET_TOLERANCE) fresh = fit();
+      else if (copy.points.length > 17) {
+        const f = fit();
+        if (2 * f.length <= copy.points.length) fresh = f;
+      }
+    }
+    if (fresh) {
+      // The ends stay, and so does every point something else uses (a line drawn from it, a constraint on it),
+      // at its own place along the original; the others are replaced.
       const span = copy.closed ? fresh.slice(0, -1) : fresh;
       const others = new Set<string>();
       for (const c of out.curves) if (c.id !== copy.id) for (const pid of curvePointIds(c)) others.add(pid);
@@ -1385,6 +1399,24 @@ export function refreshOffsets(s: SketchData): SketchData {
     const fitted = splineThrough(copy.id, ids, pieces, copy.closed, copy.construction);
     const next: SketchCurve = { ...fitted, offsetParams: params };
     out = { ...out, points, curves: out.curves.map((c) => (c.id === copy.id ? next : c)) };
+  }
+  return out;
+}
+
+/** Does the original bend more tightly than the offset distance somewhere on the copy's side? */
+function offsetTooTight(param: CurveParam, dist: number): boolean {
+  return tightestBend(param, Math.sign(dist) || 1) * Math.abs(dist) >= 0.999;
+}
+
+/** Plain-English notes about offset copies that can't follow their original any more (it now bends too tightly). */
+export function offsetWarnings(s: SketchData): string[] {
+  const out: string[] = [];
+  for (const o of curveOffsets(s)) {
+    const orig = s.curves.find((c) => c.id === o.orig);
+    if (orig && offsetTooTight(curveParam(s, orig), o.dist))
+      out.push(
+        `An offset copy can't follow its ${orig.type === "ellipse" ? "ellipse" : "spline"} any more: it now bends more tightly than the offset distance on that side. Use a smaller distance, or reshape it more gently.`,
+      );
   }
   return out;
 }
