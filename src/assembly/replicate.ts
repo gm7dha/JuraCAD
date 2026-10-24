@@ -41,10 +41,11 @@ export function syncReplicate(a: Assembly, rep: Replicate, holes: TopoPick[], ne
   const mates: Mate[] = [];
   holes.forEach((hole, n) => {
     const index = n + 1;
-    const was = old.find((i) => i.replicaOf!.index === index && i.partId === seed.partId);
+    const was = old.find((i) => i.replicaOf!.index === index && i.partId === seed.partId && i.subAssembly === seed.subAssembly);
     const copy: Instance = was ?? {
       id: newId(),
       partId: seed.partId,
+      ...(seed.subAssembly ? { subAssembly: seed.subAssembly } : {}),
       name: nextInstanceName({ ...a, instances: [...instances, ...copies] }, seed.name.replace(/ <\d+>$/, "")),
       placement: seed.placement,
       fixed: false,
@@ -56,7 +57,8 @@ export function syncReplicate(a: Assembly, rep: Replicate, holes: TopoPick[], ne
     const before = oldMates.find((m) => (m.a.instanceId === copy.id || m.b.instanceId === copy.id) && m.replicateOf === rep.id);
     // The copy's own connector sits where the original's does (the same corner, the same spot).
     const own = { ...(side === "a" ? mate.a : mate.b), instanceId: copies[copies.length - 1].id };
-    const into = { instanceId: target.instanceId, pick: hole };
+    // (The holes may be on a part inside a sub-assembly: the same path leads to them.)
+    const into = { instanceId: target.instanceId, ...(target.path ? { path: target.path } : {}), pick: hole };
     mates.push({
       ...mate,
       id: before?.id ?? newId(),

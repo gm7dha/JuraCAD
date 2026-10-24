@@ -48,7 +48,9 @@ export function ExportDialog() {
   const asm = useStore(activeAssembly);
   const allParts = useStore((s) => s.parts);
   const studio = useStore(studioParts);
-  const instances = useMemo(() => (asm ? instancesForKernel(asm, allParts) : null), [asm, allParts]);
+  const assemblies = useStore((s) => s.history.present.assemblies);
+  // Parts inside sub-assemblies come too, each in its place.
+  const instances = useMemo(() => (asm ? instancesForKernel(asm, allParts, assemblies) : null), [asm, allParts, assemblies]);
   const parts = instances ?? studio;
   const openDialog = useStore((s) => s.openDialog);
   const showToast = useStore((s) => s.showToast);

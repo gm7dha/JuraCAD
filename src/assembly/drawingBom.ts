@@ -25,7 +25,8 @@ export function bomInfo(parts: PartMesh[], materials: Record<string, string> | u
 }
 
 /**
- * The parts list for an assembly drawing (none for a part): with each part's
+ * The parts list for an assembly drawing (none for a part), flattened (parts
+ * inside sub-assemblies counted once for each copy of it): with each part's
  * number and description when it has them, and its weight only when the
  * drawing asks for weights ("Show weights in the parts list").
  */
@@ -35,7 +36,7 @@ export function drawingBom(drawing: Pick<Drawing, "source" | "bomWeights">, doc:
   if (!asm) return undefined;
   const names = Object.fromEntries(parts.map((p) => [p.id, p.name]));
   const configurations = Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name]));
-  return billOfMaterials(asm, names, configurations, drawing.bomWeights ? bomInfo(parts, doc.materials) : undefined, doc.partProperties).map((r, i) => ({
+  return billOfMaterials(asm, names, configurations, drawing.bomWeights ? bomInfo(parts, doc.materials) : undefined, doc.partProperties, { assemblies: doc.assemblies }).map((r, i) => ({
     item: i + 1,
     name: r.name,
     quantity: r.quantity,

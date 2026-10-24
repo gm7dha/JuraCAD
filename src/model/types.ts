@@ -596,8 +596,14 @@ export interface PartStudio {
 /** One copy of a part placed in an assembly. */
 export interface Instance {
   id: string;
-  /** The Part Studio part it shows (the id of the feature that made the part). */
+  /** The Part Studio part it shows (the id of the feature that made the part); "" for a sub-assembly. */
   partId: string;
+  /**
+   * A sub-assembly (as in Onshape): this instance shows another assembly of the
+   * document (its id), all its parts moving together as one piece, placed where
+   * that assembly's own mates put them. Missing = an ordinary part.
+   */
+  subAssembly?: string;
   /** e.g. "Part 1 <2>". */
   name: string;
   placement: Placement;
@@ -660,6 +666,11 @@ export type MateType = "fastened" | "revolute" | "slider" | "cylindrical" | "pla
 /** One end of a mate: a face or edge on an instance, remembered by what it looks like. */
 export interface MateConnector {
   instanceId: string;
+  /**
+   * When the instance is a sub-assembly: the instances inside it, one per level,
+   * down to the part the face or edge is on (missing for an ordinary part).
+   */
+  path?: string[];
   /** The face or edge (its partId is the Part Studio part). */
   pick: TopoPick;
   /** Width mates: the second flat face; the connector sits halfway between the two. */

@@ -9,10 +9,10 @@
  * part is reached two ways) are closed by adjusting the mates' movements.
  */
 import { applyRelations } from "./relations";
-import { evaluate } from "../model/expr";
+import { evaluate, getCurrentScope, type Scope } from "../model/expr";
 import type { Assembly, Instance, Mate, MateConnector, MateType } from "../model/types";
 import { sameRef } from "../geometry/topoRef";
-import { compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, sub, type Placement, type Vec3 } from "./math";
+import { applyPlacement, compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, rotate, sub, type Placement, type Vec3 } from "./math";
 import { connectorFrameOnParts, framePlacement, type Frame } from "./connectors";
 import { mirrorPlacement, patternStep, placeCopy } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
@@ -264,6 +264,12 @@ export interface SolveOptions {
    * the loop can't close any other way.
    */
   hold?: readonly string[];
+  /**
+   * Every assembly in the document, so connectors on parts inside a
+   * sub-assembly can be found (each sub-assembly placed by its own mates).
+   * Not needed when the assembly has no sub-assemblies.
+   */
+  assemblies?: readonly Assembly[];
 }
 
 export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: SolveOptions = {}): SolveResult {
@@ -619,25 +625,33 @@ function solveLinear(M: number[][], b: number[]): number[] | null {
   return a.map((row, i) => row[n] / row[i]);
 }
 
-/** Solve using the parts as built now. */
+/** Solve using the parts as built now (pass the document's assemblies when it may hold sub-assemblies). */
 export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: SolveOptions = {}): SolveResult {
-  return solveAssembly(assembly, frameLookup(assembly, parts), options);
+  return solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies), options);
 }
 
 /**
  * Where each mate's connectors are on the parts as built now — on the part as
- * each instance shows it (another configuration, or mirrored).
+ * each instance shows it (another configuration, or mirrored, or a part inside
+ * a sub-assembly, where that sub-assembly's own mates put it).
  */
-export function frameLookup(assembly: Assembly, parts: PartMesh[]): FrameLookup {
-  return (mate, side) => connectorFrameFor(assembly, parts, mate[side]);
+export function frameLookup(assembly: Assembly, parts: PartMesh[], assemblies?: readonly Assembly[]): FrameLookup {
+  return (mate, side) => connectorFrameFor(assembly, parts, mate[side], assemblies);
 }
 
-/** One connector's frame on its part, as its instance shows the part (null if it can't be found). */
-export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: MateConnector): Frame | null {
+/**
+ * One connector's frame on its instance, as the instance shows its part (null
+ * if it can't be found). On a sub-assembly, the frame is in the sub-assembly's
+ * own coordinates: the part's frame moved to where the part sits inside it.
+ * `within` lists the assemblies already being looked into (so a loop of
+ * sub-assemblies can't go round for ever).
+ */
+export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: MateConnector, assemblies?: readonly Assembly[], within: readonly string[] = []): Frame | null {
   // The assembly's origin: one of its planes.
   if (isOrigin(c)) return originFrame(c);
   // On the part as the instance shows it (which may be another configuration).
   const instance = assembly.instances.find((i) => i.id === c.instanceId);
+  if (instance?.subAssembly) return frameInside(instance.subAssembly, parts, c, assemblies, within);
   const mesh = instance?.configuration ? findMesh(parts, meshIdOf(instance)) : undefined;
   const f = mesh
     ? connectorFrameOnParts([mesh], { ...c, pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
@@ -648,6 +662,48 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
     return { ...f, origin: flipX(f.origin), z: flipX(f.z), x: flipX(f.x) };
   }
   return f;
+}
+
+/** A frame moved by a placement. */
+export function placeFrame(p: Placement, f: Frame): Frame {
+  return { ...f, origin: applyPlacement(p, f.origin), z: rotate(p.rotation, f.z), x: rotate(p.rotation, f.x) };
+}
+
+/** A connector on a part inside sub-assembly `subId` (its `path` leads to the part), in the sub-assembly's coordinates. */
+function frameInside(subId: string, parts: PartMesh[], c: MateConnector, assemblies: readonly Assembly[] | undefined, within: readonly string[]): Frame | null {
+  const sub = assemblies?.find((a) => a.id === subId);
+  const [first, ...rest] = c.path ?? [];
+  if (!sub || !first || within.includes(subId)) return null;
+  const inner = sub.instances.find((i) => i.id === first);
+  if (!inner || inner.suppressed) return null;
+  const deeper = within.concat(subId);
+  const { path: _p, ...plain } = c;
+  const f = connectorFrameFor(sub, parts, { ...plain, instanceId: first, ...(rest.length ? { path: rest } : {}) }, assemblies, deeper);
+  if (!f) return null;
+  return placeFrame(solvedInside(sub, parts, assemblies, deeper)[first] ?? inner.placement, f);
+}
+
+/** Solved sub-assemblies, by the document's assemblies, the parts as built and the variables' values (all unchanged objects mean the same answer). */
+const insideCache = new WeakMap<readonly Assembly[], WeakMap<readonly PartMesh[], WeakMap<Scope, Map<string, Record<string, Placement>>>>>();
+
+/**
+ * Where an assembly's own mates put each of its instances, when it's used as
+ * a sub-assembly (it moves as one piece, so this never changes with where it's
+ * placed). Worked out once for each state of the document and parts.
+ */
+export function solvedInside(sub: Assembly, parts: readonly PartMesh[], assemblies?: readonly Assembly[], within: readonly string[] = [sub.id]): Record<string, Placement> {
+  const solve = () => solveAssembly(sub, (m, side) => connectorFrameFor(sub, parts as PartMesh[], m[side], assemblies, within)).placements;
+  if (!assemblies) return solve();
+  let byParts = insideCache.get(assemblies);
+  if (!byParts) insideCache.set(assemblies, (byParts = new WeakMap()));
+  let byScope = byParts.get(parts);
+  if (!byScope) byParts.set(parts, (byScope = new WeakMap()));
+  const scope = getCurrentScope();
+  let byId = byScope.get(scope);
+  if (!byId) byScope.set(scope, (byId = new Map()));
+  let out = byId.get(sub.id);
+  if (!out) byId.set(sub.id, (out = solve()));
+  return out;
 }
 
 /** Next free mate name, e.g. "Hinge 2". */

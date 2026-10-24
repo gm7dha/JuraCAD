@@ -29,6 +29,7 @@ import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevis
 import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection, viewKey } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
+import { solveWithParts } from "../assembly/mates";
 import { drawingBom } from "../assembly/drawingBom";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
@@ -50,11 +51,11 @@ function drawingSubject(
   }
   const asm = doc.assemblies?.find((a) => a.id === src.id);
   if (!asm) return null;
-  let instances = instancesForKernel(asm, parts);
-  if (drawing.exploded) {
-    const spread = explodeAssembly(asm, parts, Object.fromEntries(instances.map((i) => [i.id, { position: i.position, rotation: i.rotation }])), asm.explode ?? 1);
-    instances = instances.map((i) => ({ ...i, position: spread[i.id]?.position ?? i.position }));
-  }
+  // Parts inside sub-assemblies are drawn too, carried along with them (exploded, a sub-assembly moves out as one piece).
+  const assemblies = doc.assemblies ?? [];
+  const solved = solveWithParts(asm, parts, { assemblies });
+  const tops = Object.fromEntries(asm.instances.map((i) => [i.id, solved.placements[i.id] ?? i.placement]));
+  const instances = instancesForKernel(asm, parts, assemblies, solved, drawing.exploded ? explodeAssembly(asm, parts, tops, asm.explode ?? 1, assemblies) : tops);
   return { name: asm.name, partIds: [], instances, key: [JSON.stringify(instances), ...instances.map((i) => findMesh(parts, i.partId))] };
 }
 

@@ -44,17 +44,38 @@ export function addAssembly(doc: JuraCADDocument, id = newId("a")): JuraCADDocum
   return withAssemblies(doc, [...assembliesOf(doc), { id, name: nextAssemblyName(doc), instances: [] }]);
 }
 
+/** Remove an assembly, and its copies inside other assemblies (with the mates on them). */
 export function removeAssembly(doc: JuraCADDocument, id: string): JuraCADDocument {
   return withAssemblies(
     doc,
-    assembliesOf(doc).filter((a) => a.id !== id),
+    assembliesOf(doc)
+      .filter((a) => a.id !== id)
+      .map((a) => {
+        const uses = a.instances.filter((i) => i.subAssembly === id).map((i) => i.id);
+        return uses.length ? tidyExplodeSteps(withoutInstances(a, uses)) : a;
+      }),
   );
 }
 
+/** Rename an assembly; its copies in other assemblies still carrying the old name ("Hinge <2>") follow. */
 export function renameAssembly(doc: JuraCADDocument, id: string, name: string): JuraCADDocument {
   const trimmed = name.trim();
-  if (!trimmed) return doc;
-  return updateAssembly(doc, id, (a) => ({ ...a, name: trimmed }));
+  const old = assembliesOf(doc).find((a) => a.id === id);
+  if (!trimmed || !old) return doc;
+  return withAssemblies(
+    doc,
+    assembliesOf(doc).map((a) => {
+      const renamed = a.id === id ? { ...a, name: trimmed } : a;
+      if (!a.instances.some((i) => i.subAssembly === id)) return renamed;
+      return {
+        ...renamed,
+        instances: renamed.instances.map((i) => {
+          const m = /^(.*) <(\d+)>$/.exec(i.name);
+          return i.subAssembly === id && m && m[1] === old.name ? { ...i, name: `${trimmed} <${m[2]}>` } : i;
+        }),
+      };
+    }),
+  );
 }
 
 /** "Part 1 <3>" when there are already copies <1> and <2> of Part 1. */
@@ -186,7 +207,8 @@ function nextFreeName(used: Set<string>, name: string): string {
  */
 export function replaceInstancePart(a: Assembly, instanceId: string, part: { id: string; name: string }, oldPartName?: string): Assembly {
   const target = a.instances.find((i) => i.id === instanceId);
-  if (!target || target.partId === part.id) return a;
+  // (A sub-assembly isn't a part: there's nothing to replace.)
+  if (!target || target.partId === part.id || target.subAssembly) return a;
   const reps = new Set((a.replicates ?? []).filter((r) => r.seed === instanceId).map((r) => r.id));
   const changing = new Set(a.instances.filter((i) => i.id === instanceId || i.copyOf?.seed === instanceId || (i.replicaOf && reps.has(i.replicaOf.replicate))).map((i) => i.id));
   const instances: Instance[] = [];
@@ -259,17 +281,20 @@ export function removeRelation(doc: JuraCADDocument, assemblyId: string, id: str
 
 /** Remove instances, and the mates that joined them to anything. */
 export function removeInstances(doc: JuraCADDocument, assemblyId: string, ids: string[]): JuraCADDocument {
+  return updateAssembly(doc, assemblyId, (a) => withoutInstances(a, ids));
+}
+
+/** An assembly without these instances, and the mates (patterns, groups, steps…) that used them. */
+export function withoutInstances(a: Assembly, ids: string[]): Assembly {
   const gone = new Set(ids);
-  return updateAssembly(doc, assemblyId, (a) =>
-    tidyExplodeSteps(tidyGroups(tidyReplicates(
-      tidyPatterns(
-        withMates(
-          { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
-          (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
-        ),
+  return tidyExplodeSteps(tidyGroups(tidyReplicates(
+    tidyPatterns(
+      withMates(
+        { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
+        (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
       ),
-    ))),
-  );
+    ),
+  )));
 }
 
 /** The assembly with just these mates (and the relations between mates still there). */
@@ -368,12 +393,35 @@ export interface BomRow {
   surface?: boolean;
   /** The part's number, description and your own properties, when it has any. */
   properties?: PartProperties;
+  /** A sub-assembly's line (structured parts list): the lines after it with a deeper `level` are what's in one of it. */
+  subAssembly?: boolean;
+  /** Structured parts list: 0 for what's in the assembly itself, 1 for what's inside its sub-assemblies, and so on. */
+  level?: number;
+  /** Structured parts list: the item number, "2" or "2.1" (missing: the line's place in the list). */
+  item?: string;
+}
+
+/** How a parts list looks into sub-assemblies (as Onshape offers). */
+export interface BomOptions {
+  /** Every assembly in the document, so sub-assemblies can be looked into. */
+  assemblies?: readonly Assembly[];
+  /**
+   * Structured: each sub-assembly is one line, with what's in one of it listed
+   * underneath (indented). Otherwise (flattened) every part is counted, however
+   * deep, as if it were in the assembly itself.
+   */
+  structured?: boolean;
 }
 
 /** What the parts list can say about the part an instance shows: its material (key) and solid volume (mm³; null for a surface). */
 export type BomInfo = (instance: Instance) => { material?: string; volume: number | null } | null;
 
-/** Bill of materials: each part once, with how many copies are in the assembly (in order of first use). */
+/**
+ * Bill of materials: each part once, with how many copies are in the assembly
+ * (in order of first use). Parts inside sub-assemblies are counted too: once
+ * for every copy of the sub-assembly (flattened), or listed under the
+ * sub-assembly's own line (`structured`).
+ */
 export function billOfMaterials(
   assembly: Assembly,
   partNames: Record<string, string>,
@@ -381,35 +429,89 @@ export function billOfMaterials(
   info?: BomInfo,
   /** Part number, description and custom properties, by part id. */
   properties: Record<string, PartProperties> = {},
+  options: BomOptions = {},
 ): BomRow[] {
-  const rows = new Map<string, BomRow>();
-  // Suppressed parts aren't in the parts list (like Onshape).
-  for (const i of assembly.instances) {
-    if (i.suppressed) continue;
+  const all = options.assemblies ?? [];
+  const partRow = (rows: Map<string, BomRow>, i: Instance, count: number) => {
     // A part in another configuration is a different line ("Bracket (Large)").
     const cfgKey = i.configuration && configurationNames[i.configuration] ? `${i.partId}@${i.configuration}` : i.partId;
     // A mirrored copy is the opposite hand: a different part to make.
     const key = i.mirrored ? `${cfgKey}~mirrored` : cfgKey;
     const row = rows.get(key);
-    if (row) row.quantity++;
-    else {
-      const name = partNames[i.partId];
-      const base = name ?? i.name.replace(/\s*<\d+>$/, "");
-      const cfg = cfgKey !== i.partId ? ` (${configurationNames[i.configuration!]})` : "";
-      const props = name !== undefined ? info?.(i) : null;
-      rows.set(key, {
-        partId: key,
-        name: base + cfg + (i.mirrored ? " (mirrored)" : ""),
-        quantity: 1,
-        missing: name === undefined,
-        ...(props ? { material: materialOf(props.material).label } : {}),
-        ...(props && props.volume !== null && props.volume > 0 ? { massEach: massGrams(props.volume, props.material) } : {}),
-        ...(props && props.volume === null ? { surface: true } : {}),
-        ...(properties[i.partId] ? { properties: properties[i.partId] } : {}),
-      });
+    if (row) {
+      row.quantity += count;
+      return;
     }
-  }
-  return [...rows.values()];
+    const name = partNames[i.partId];
+    const base = name ?? i.name.replace(/\s*<\d+>$/, "");
+    const cfg = cfgKey !== i.partId ? ` (${configurationNames[i.configuration!]})` : "";
+    const props = name !== undefined ? info?.(i) : null;
+    rows.set(key, {
+      partId: key,
+      name: base + cfg + (i.mirrored ? " (mirrored)" : ""),
+      quantity: count,
+      missing: name === undefined,
+      ...(props ? { material: materialOf(props.material).label } : {}),
+      ...(props && props.volume !== null && props.volume > 0 ? { massEach: massGrams(props.volume, props.material) } : {}),
+      ...(props && props.volume === null ? { surface: true } : {}),
+      ...(properties[i.partId] ? { properties: properties[i.partId] } : {}),
+    });
+  };
+  /** The sub-assembly an instance shows (none if it's missing, or would go round in a circle). */
+  const subOf = (i: Instance, within: string[]) => {
+    const sub = all.find((a) => a.id === i.subAssembly);
+    return sub && !within.includes(sub.id) ? sub : null;
+  };
+  // Flattened: every part, however deep, counted once for each copy of what it's in.
+  const flat = (a: Assembly, count: number, rows: Map<string, BomRow>, within: string[]) => {
+    // Suppressed parts aren't in the parts list (like Onshape).
+    for (const i of a.instances) {
+      if (i.suppressed) continue;
+      if (i.subAssembly) {
+        const sub = subOf(i, within);
+        if (sub) flat(sub, count, rows, [...within, sub.id]);
+      } else partRow(rows, i, count);
+    }
+    return rows;
+  };
+  if (!options.structured) return [...flat(assembly, 1, new Map(), [assembly.id]).values()];
+
+  // Structured: this level's parts and sub-assemblies, each sub-assembly followed by what's in one of it.
+  const level = (a: Assembly, depth: number, prefix: string, within: string[]): BomRow[] => {
+    const rows = new Map<string, BomRow>();
+    const inside = new Map<string, Assembly>();
+    for (const i of a.instances) {
+      if (i.suppressed) continue;
+      if (!i.subAssembly) {
+        partRow(rows, i, 1);
+        continue;
+      }
+      const sub = subOf(i, within);
+      if (!sub) continue;
+      const key = `asm:${sub.id}`;
+      const row = rows.get(key);
+      if (row) row.quantity++;
+      else {
+        rows.set(key, { partId: key, name: sub.name, quantity: 1, missing: false, subAssembly: true });
+        inside.set(key, sub);
+      }
+    }
+    const out: BomRow[] = [];
+    [...rows.values()].forEach((r, n) => {
+      const item = `${prefix}${n + 1}`;
+      const sub = inside.get(r.partId);
+      if (!sub) {
+        out.push({ ...r, level: depth, item });
+        return;
+      }
+      // What one of it weighs: everything in it (unknown if any part's weight is).
+      const weight = bomTotalMass([...flat(sub, 1, new Map(), [...within, sub.id]).values()]);
+      out.push({ ...r, level: depth, item, ...(!weight.partial && weight.grams > 0 ? { massEach: weight.grams } : {}) });
+      out.push(...level(sub, depth + 1, `${item}.`, [...within, sub.id]));
+    });
+    return out;
+  };
+  return level(assembly, 0, "", [assembly.id]);
 }
 
 /** What everything in the parts list weighs together (grams), and whether any part's weight is unknown (surfaces weigh nothing). */
@@ -417,7 +519,8 @@ export function bomTotalMass(rows: BomRow[]): { grams: number; partial: boolean 
   let grams = 0;
   let partial = false;
   for (const r of rows) {
-    if (r.surface) continue;
+    // (In a structured list, what's inside a sub-assembly is already in its line's weight.)
+    if (r.surface || (r.level ?? 0) > 0) continue;
     if (r.massEach === undefined) partial = true;
     else grams += r.massEach * r.quantity;
   }
@@ -434,7 +537,7 @@ export function bomCsv(rows: BomRow[]): string {
   const custom = customColumns(rows.map((r) => r.properties));
   const head = ["Item", ...(hasNumber ? ["Part number"] : []), "Part", ...(hasDescription ? ["Description"] : []), "Quantity", ...(extra ? ["Material", "Weight each (g)", "Weight (g)"] : []), ...custom];
   const line = (r: BomRow, i: number) => [
-    String(i + 1),
+    r.item ?? String(i + 1),
     ...(hasNumber ? [r.properties?.number ?? ""] : []),
     r.name,
     ...(hasDescription ? [r.properties?.description ?? ""] : []),
@@ -461,6 +564,65 @@ export function meshVolume(vertices: ArrayLike<number>, triangles: ArrayLike<num
 }
 
 // ---------------------------------------------------------------------------
+// Sub-assemblies (the rest is in subassembly.ts)
+
+/** Does assembly `outerId` contain `innerId`, at any depth? (An assembly counts as containing itself.) */
+export function usesAssembly(assemblies: readonly Assembly[], outerId: string, innerId: string): boolean {
+  const seen = new Set<string>();
+  const walk = (id: string): boolean => {
+    if (id === innerId) return true;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    const a = assemblies.find((x) => x.id === id);
+    return !!a && a.instances.some((i) => !!i.subAssembly && walk(i.subAssembly));
+  };
+  return walk(outerId);
+}
+
+/**
+ * After reading a file: sub-assembly instances that show an assembly that
+ * isn't there, or that would put an assembly inside itself (directly or round
+ * a circle), are taken out with their mates. The first assembly keeps its
+ * sub-assemblies; a later one that would close a circle loses that instance.
+ */
+export function tidySubAssemblies(assemblies: Assembly[]): Assembly[] {
+  let out = assemblies;
+  // Later assemblies first, so in a circle it's the later one that loses its copy.
+  for (const a of [...assemblies].reverse()) {
+    const current = () => out.find((x) => x.id === a.id)!;
+    const bad = current().instances.filter((i) => i.subAssembly !== undefined && (!out.some((x) => x.id === i.subAssembly) || usesAssembly(out, i.subAssembly, a.id)));
+    if (!bad.length) continue;
+    // Each bad one goes before the next is judged (taking one out may break the circle).
+    for (const i of bad) {
+      if (!current().instances.some((x) => x.id === i.id)) continue;
+      if (out.some((x) => x.id === i.subAssembly) && !usesAssembly(out, i.subAssembly!, a.id)) continue;
+      out = out.map((x) => (x.id === a.id ? withoutInstances(x, [i.id]) : x));
+    }
+  }
+  return out;
+}
+
+/**
+ * Every part instance an assembly shows, looking into sub-assemblies (not
+ * placed: for counting and naming). Suppressed ones, at any level, are left out.
+ */
+export function partInstances(assembly: Assembly, assemblies: readonly Assembly[] = []): { instance: Instance; name: string }[] {
+  const out: { instance: Instance; name: string }[] = [];
+  const walk = (a: Assembly, names: string[], within: string[]) => {
+    for (const i of a.instances) {
+      if (i.suppressed) continue;
+      if (!i.subAssembly) out.push({ instance: i, name: [...names, i.name].join(" / ") });
+      else {
+        const sub = assemblies.find((x) => x.id === i.subAssembly);
+        if (sub && !within.includes(sub.id)) walk(sub, [...names, i.name], [...within, sub.id]);
+      }
+    }
+  };
+  walk(assembly, [], [assembly.id]);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Reading from files and browser storage
 
 
@@ -476,7 +638,8 @@ function parseConnector(raw: unknown): MateConnector | null {
   const pick2 = c.pick2 ? parsePick(c.pick2) : null;
   const point = Array.isArray(c.point) && c.point.length === 3 && c.point.every((v) => typeof v === "number" && Number.isFinite(v)) ? (c.point as [number, number, number]) : null;
   const spot = typeof c.spot === "string" && SPOTS.has(c.spot) && (c.spot !== "clicked" || point) ? (c.spot as ConnectorSpot) : null;
-  return { instanceId: c.instanceId, pick, ...(pick2 ? { pick2 } : {}), ...(spot ? { spot } : {}), ...(point ? { point } : {}) };
+  const path = Array.isArray(c.path) && c.path.length && c.path.every((x) => typeof x === "string" && x) ? (c.path as string[]) : null;
+  return { instanceId: c.instanceId, ...(path ? { path } : {}), pick, ...(pick2 ? { pick2 } : {}), ...(spot ? { spot } : {}), ...(point ? { point } : {}) };
 }
 
 function parseMate(raw: unknown, ids: Set<string>): Mate | null {
@@ -535,17 +698,20 @@ export function parseAssemblies(raw: unknown): Assembly[] {
     for (const i of Array.isArray(r.instances) ? r.instances : []) {
       if (!i || typeof i !== "object") continue;
       const ri = i as Record<string, unknown>;
-      if (typeof ri.id !== "string" || typeof ri.partId !== "string" || ids.has(ri.id)) continue;
+      const sub = typeof ri.subAssembly === "string" && ri.subAssembly ? ri.subAssembly : null;
+      if (typeof ri.id !== "string" || (typeof ri.partId !== "string" && !sub) || ids.has(ri.id)) continue;
       ids.add(ri.id);
       const copy = (ri.copyOf ?? null) as Record<string, unknown> | null;
       instances.push({
         id: ri.id,
-        partId: ri.partId,
+        // A sub-assembly shows a whole assembly (checked once every assembly is read: tidySubAssemblies).
+        partId: sub ? "" : (ri.partId as string),
+        ...(sub ? { subAssembly: sub } : {}),
         name: typeof ri.name === "string" && ri.name.trim() ? ri.name : "Part",
         placement: parsePlacement(ri.placement),
         fixed: ri.fixed === true,
-        ...(typeof ri.configuration === "string" && ri.configuration ? { configuration: ri.configuration } : {}),
-        ...(ri.mirrored === true ? { mirrored: true } : {}),
+        ...(typeof ri.configuration === "string" && ri.configuration && !sub ? { configuration: ri.configuration } : {}),
+        ...(ri.mirrored === true && !sub ? { mirrored: true } : {}),
         ...(ri.suppressed === true ? { suppressed: true } : {}),
         ...(ri.replicaOf && typeof (ri.replicaOf as Record<string, unknown>).replicate === "string" && Number.isInteger((ri.replicaOf as Record<string, unknown>).index)
           ? { replicaOf: { replicate: (ri.replicaOf as { replicate: string }).replicate, index: (ri.replicaOf as { index: number }).index }, fixed: false }
@@ -603,7 +769,8 @@ export function parseAssemblies(raw: unknown): Assembly[] {
       })))),
     );
   }
-  return out;
+  // Sub-assemblies that are missing, or would go round in a circle, are taken out.
+  return tidySubAssemblies(out);
 }
 
 // ---------------------------------------------------------------------------

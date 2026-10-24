@@ -70,7 +70,8 @@ export function mirrorPlacement(p: Pick<AssemblyPattern, "axis" | "centre">, q: 
 /** Make the copies match the pattern: add the missing ones, drop extras, and put each in place. */
 export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string): Assembly {
   const step = patternStep(p);
-  const seeds = p.seeds.map((id) => a.instances.find((i) => i.id === id)).filter((i): i is Instance => !!i && !i.copyOf);
+  // (A sub-assembly can be repeated in a line or round, but not mirrored: its mirror image would be a different assembly.)
+  const seeds = p.seeds.map((id) => a.instances.find((i) => i.id === id)).filter((i): i is Instance => !!i && !i.copyOf && !(p.kind === "mirror" && i.subAssembly));
   const keep: Instance[] = [];
   let instances = a.instances.filter((i) => i.copyOf?.pattern !== p.id);
   const old = a.instances.filter((i) => i.copyOf?.pattern === p.id);
@@ -78,10 +79,10 @@ export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string
   for (const seed of seeds) {
     for (let k = 1; k < count; k++) {
       const placement = "step" in step ? placeCopy(p, step.step, seed.placement, k) : seed.placement;
-      const was = old.find((i) => i.copyOf!.seed === seed.id && i.copyOf!.index === k && i.partId === seed.partId);
+      const was = old.find((i) => i.copyOf!.seed === seed.id && i.copyOf!.index === k && i.partId === seed.partId && i.subAssembly === seed.subAssembly);
       const made: Instance = was
         ? { ...was, placement }
-        : { id: newId(), partId: seed.partId, name: nextInstanceName({ ...a, instances: [...instances, ...keep] }, seed.name.replace(/ <\d+>$/, "")), placement, fixed: false, copyOf: { pattern: p.id, seed: seed.id, index: k } };
+        : { id: newId(), partId: seed.partId, ...(seed.subAssembly ? { subAssembly: seed.subAssembly } : {}), name: nextInstanceName({ ...a, instances: [...instances, ...keep] }, seed.name.replace(/ <\d+>$/, "")), placement, fixed: false, copyOf: { pattern: p.id, seed: seed.id, index: k } };
       // A mirrored copy is the part's mirror image (and a mirror of a mirror is the part itself).
       const { mirrored: _m, ...unflipped } = made;
       const copy: Instance = p.kind === "mirror" && !seed.mirrored ? { ...unflipped, mirrored: true } : p.kind !== "mirror" && seed.mirrored ? { ...unflipped, mirrored: true } : unflipped;
