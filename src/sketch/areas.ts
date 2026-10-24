@@ -1013,8 +1013,41 @@ export function toggleArea(map: AreaMap, points: (AreaPick | (number | string)[]
 }
 
 /**
+ * Any point inside an area (not in a hole), found quickly: across the middle
+ * of its outline's box, the widest stretch that's inside. No sketch curve
+ * runs through an area, so any inside point says the same about it. Falls
+ * back to the slower `pointInside` for a stretch-less (very thin) area.
+ */
+export function quickPointInside(a: SketchArea): Pt {
+  const box = boxOfPts(a.outer.polygon);
+  // A little off the middle, so the line is unlikely to pass exactly through a corner.
+  const y = box[1] + (box[3] - box[1]) * 0.5123;
+  const xs: number[] = [];
+  for (const poly of [a.outer.polygon, ...a.holes.map((h) => h.polygon)]) {
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i];
+      const [xj, yj] = poly[j];
+      if (yi > y !== yj > y) xs.push(xi + ((y - yi) * (xj - xi)) / (yj - yi));
+    }
+  }
+  xs.sort((p, q) => p - q);
+  let best: Pt | null = null;
+  let width = 0;
+  // Holes lie inside the outline and apart, so every other stretch is inside.
+  for (let i = 0; i + 1 < xs.length; i += 2) {
+    if (xs[i + 1] - xs[i] > width) {
+      width = xs[i + 1] - xs[i];
+      best = [(xs[i] + xs[i + 1]) / 2, y];
+    }
+  }
+  return best ?? pointInside(a);
+}
+
+/**
  * The areas "every closed shape" uses (no picks): those whose inside lies in
  * one of `findRegions`' shapes (inside its outline, not in one of its holes).
+ * Kept quick for busy sketches (a plate with hundreds of holes): one cheap
+ * inside point per area, and outlines whose box misses it aren't looked at.
  */
 const usedByAll = new WeakMap<SketchData, Set<number>>();
 export function areasUsedByAll(sketch: SketchData): Set<number> {
@@ -1022,10 +1055,12 @@ export function areasUsedByAll(sketch: SketchData): Set<number> {
   if (known) return known;
   const map = sketchAreas(sketch);
   const { regions } = findRegions(sketch);
+  const shapes = regions.map((r) => ({ outer: r.outer.polygon, box: boxOfPts(r.outer.polygon), holes: r.holes.map((h) => ({ poly: h.polygon, box: boxOfPts(h.polygon) })) }));
+  const inside = (p: Pt, poly: Pt[], box: Box) => inBox(p, box, 0) && pointInPolygon(p, poly);
   const used = new Set<number>();
   map.areas.forEach((a, i) => {
-    const p = pointInside(a);
-    if (regions.some((r) => pointInPolygon(p, r.outer.polygon) && !r.holes.some((h) => pointInPolygon(p, h.polygon)))) used.add(i);
+    const p = quickPointInside(a);
+    if (shapes.some((r) => inside(p, r.outer, r.box) && !r.holes.some((h) => inside(p, h.poly, h.box)))) used.add(i);
   });
   usedByAll.set(sketch, used);
   return used;

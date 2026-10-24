@@ -7,17 +7,25 @@
  */
 import type { Feature } from "../model/types";
 import { areasUsedByAll, pickedAreas, sketchAreas, toggleArea, type AreaMap, type AreaPick } from "./areas";
-import { dot, toSketch, type PlaneFrame, type Vec3 } from "./planes";
+import type { SketchLinkInfo } from "./links";
+import { dot, toSketch, type PlaneFrame, type SketchPlane, type Vec3 } from "./planes";
 import type { Pt } from "./regions";
 import type { SketchData } from "./types";
 
 /** How an area is drawn: picked (strong), used by "every closed shape" (medium), or just clickable (faint). */
 export type AreaShade = "picked" | "used" | "none";
 
+/**
+ * Above this many areas (a fine grid of lines), "every closed shape" isn't
+ * shaded: working out which areas it uses isn't worth the wait there.
+ */
+export const MAX_SHADED_AREAS = 1000;
+
 /** Each area's shade (by index in `sketchAreas(sketch).areas`), the same rule as the 2D map. */
 export function areaShades(sketch: SketchData, areas: (AreaPick | (number | string)[])[] | undefined): AreaShade[] {
   const map = sketchAreas(sketch);
   if (!areas?.length) {
+    if (map.areas.length > MAX_SHADED_AREAS) return map.areas.map(() => "none");
     const used = areasUsedByAll(sketch);
     return map.areas.map((_a, i) => (used.has(i) ? "used" : "none"));
   }
@@ -64,4 +72,26 @@ export function areaClickMode(draft: Pick<Feature, "type" | "sketchRef" | "surfa
   if (draft.type !== "extrude" && draft.type !== "revolve" && draft.type !== "sweep") return "off";
   const end = draft.type === "extrude" ? draft.extrude?.end : undefined;
   return end === "upToFace" || end === "upToVertex" || end === "upToPart" ? "afterParts" : "first";
+}
+
+/**
+ * The sketch an Extrude, Revolve or Sweep really uses: a sketch on a part's
+ * face follows the face, so when the engine moved it (`SketchLinkInfo.sketch`)
+ * its areas are there, not where the sketch was saved. The 3D view, its clicks
+ * and the 2D map all use this, so area numbers mean the same everywhere.
+ */
+export function followedSketch(feature: Pick<Feature, "id" | "sketch"> | undefined, links: Record<string, SketchLinkInfo | undefined>): { plane: SketchPlane | null; data: SketchData } | null {
+  const saved = feature?.sketch;
+  if (!feature || !saved) return null;
+  const link = links[feature.id];
+  if (link?.sketch) return link.sketch;
+  return { plane: link?.plane ?? saved.plane ?? null, data: saved.data };
+}
+
+/** Each area's outline and holes, as one array per area map (the same array each time, so drawings can be kept). */
+const outlinesOf = new WeakMap<AreaMap, { outer: Pt[]; holes: Pt[][] }[]>();
+export function areaOutlines(map: AreaMap): { outer: Pt[]; holes: Pt[][] }[] {
+  let o = outlinesOf.get(map);
+  if (!o) outlinesOf.set(map, (o = map.areas.map((a) => ({ outer: a.outer.polygon, holes: a.holes.map((h) => h.polygon) }))));
+  return o;
 }
