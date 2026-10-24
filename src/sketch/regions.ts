@@ -95,17 +95,26 @@ export function pointInPolygon(p: Pt, poly: Pt[]): boolean {
   return inside;
 }
 
-/** Distance from `p` to the nearest edge of a closed polygon. */
-function distanceToOutline(p: Pt, poly: Pt[]): number {
-  let best = Infinity;
+/**
+ * Is `p` within `eps` of a closed polygon's outline ("edge"), else inside it or
+ * outside? The same answer as measuring the distance to the outline, then `pointInPolygon`, in one
+ * pass and without square roots (this runs for every sample of every loop).
+ */
+function placeAgainst(p: Pt, poly: Pt[], eps: number): "edge" | "in" | "out" {
+  const [px, py] = p;
+  const e2 = eps * eps;
+  let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [ax, ay] = poly[j];
-    const dx = poly[i][0] - ax, dy = poly[i][1] - ay;
+    const ax = poly[j][0], ay = poly[j][1];
+    const bx = poly[i][0], by = poly[i][1];
+    const dx = bx - ax, dy = by - ay;
     const l2 = dx * dx + dy * dy;
-    const t = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / l2)) : 0;
-    best = Math.min(best, Math.hypot(ax + t * dx - p[0], ay + t * dy - p[1]));
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+    const ex = ax + t * dx - px, ey = ay + t * dy - py;
+    if (ex * ex + ey * ey <= e2) return "edge";
+    if (by > py !== ay > py && px < ((ax - bx) * (py - by)) / (ay - by) + bx) inside = !inside;
   }
-  return best;
+  return inside ? "in" : "out";
 }
 
 /** Do two outlines properly cross each other somewhere (not just touch)? */
@@ -401,7 +410,15 @@ function nestLoops(loops: Loop[]): Region[] {
    * Where loop `i`'s outline sits against the loops `others` (taken together):
    * how many sample points are inside one of them, and how many are outside all.
    */
+  const tallies = new Map<string, { inside: number; outside: number }>();
   const tally = (i: number, others: number[]) => {
+    // The same question is often asked again (nesting, then depth): answer it once.
+    const key = `${i}:${others.join(",")}`;
+    let t = tallies.get(key);
+    if (!t) tallies.set(key, (t = countAgainst(i, others)));
+    return t;
+  };
+  const countAgainst = (i: number, others: number[]) => {
     let inside = 0;
     let outside = 0;
     for (const p of samplesFor(i)) {
@@ -410,8 +427,9 @@ function nestLoops(loops: Loop[]): Region[] {
       for (const j of others) {
         const b = boxes[j];
         if (p[0] < b[0] - eps || p[0] > b[2] + eps || p[1] < b[1] - eps || p[1] > b[3] + eps) continue;
-        if (distanceToOutline(p, loops[j].polygon) <= eps) onEdge = true;
-        else if (pointInPolygon(p, loops[j].polygon)) {
+        const where = placeAgainst(p, loops[j].polygon, eps);
+        if (where === "edge") onEdge = true;
+        else if (where === "in") {
           isIn = true;
           break;
         }

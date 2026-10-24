@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { areaClickMode, areaShades, areaUnderRay, clickAreaAt, rayOnPlane } from "../src/sketch/areaClicks";
-import { pickOf, sketchAreas, toggleArea } from "../src/sketch/areas";
-import { addLine, addRectangle } from "../src/sketch/ops";
-import { planeFrame, type PlaneFrame } from "../src/sketch/planes";
+import { areaClickMode, areaOutlines, areaShades, areaUnderRay, clickAreaAt, followedSketch, MAX_SHADED_AREAS, rayOnPlane } from "../src/sketch/areaClicks";
+import { areasUsedByAll, pickOf, sketchAreas, toggleArea } from "../src/sketch/areas";
+import { addCircle, addLine, addRectangle } from "../src/sketch/ops";
+import { planeFrame, type PlaneFrame, type SketchPlane } from "../src/sketch/planes";
 import { emptySketch, type SketchData } from "../src/sketch/types";
 
 const at = (x: number, y: number) => ({ x, y });
@@ -108,5 +108,61 @@ describe("clicking sketch areas in the 3D view", () => {
     for (const end of ["upToFace", "upToVertex", "upToPart"] as const) {
       expect(areaClickMode({ type: "extrude", sketchRef: "s1", extrude: { end, flip: false } })).toBe("afterParts");
     }
+  });
+
+  it("uses the sketch as it follows its face (where the engine moved it), not where it was saved", () => {
+    const plate = addRectangle(emptySketch(), at(0, 0), at(40, 30)).sketch;
+    const saved = addCircle(plate, at(10, 10), 2).sketch;
+    const moved = addCircle(plate, at(13, 10), 2).sketch;
+    const feature = { id: "s1", sketch: { plane: { kind: "default", name: "Top" } as const, data: saved } };
+    const follows = followedSketch(feature, { s1: { edges: [], links: {}, sketch: { plane: { kind: "default", name: "Top" }, data: moved } } })!;
+    expect(follows.data).toBe(moved);
+    // The hole is at x = 13 now: a click at 13.5 picks the disc in it (π × 2² mm²), not the plate.
+    const picks = clickAreaAt(follows.data, top, [13.5, 10, 0], undefined)!;
+    expect(picks[0][2]).toBeCloseTo(Math.PI * 4, 1); // a circle is drawn as 72 straight pieces
+    // With the saved sketch the same click lands on the plate.
+    expect(clickAreaAt(saved, top, [13.5, 10, 0], undefined)![0][2]).toBeCloseTo(1200 - Math.PI * 4, 0);
+    // Not moved: the saved sketch (and a moved plane on its own).
+    expect(followedSketch(feature, {})!.data).toBe(saved);
+    const plane: SketchPlane = { kind: "face", origin: [0, 0, 5], u: [1, 0, 0], v: [0, 1, 0], label: "Face" };
+    expect(followedSketch(feature, { s1: { edges: [], links: {}, plane } })).toEqual({ plane, data: saved });
+    expect(followedSketch(undefined, {})).toBeNull();
+  });
+
+  it("keeps one outline list per sketch, so the 3D drawing is only remade when the areas change", () => {
+    const s = split();
+    expect(areaOutlines(sketchAreas(s))).toBe(areaOutlines(sketchAreas(s)));
+    expect(areaOutlines(sketchAreas(s))).toHaveLength(2);
+  });
+
+  it("shades a plate with 900 holes quickly (it took 7.5 s)", () => {
+    let s = addRectangle(emptySketch(), at(0, 0), at(310, 310)).sketch;
+    for (let i = 0; i < 30; i++) for (let j = 0; j < 30; j++) s = addCircle(s, at(10 + i * 10, 10 + j * 10), 3).sketch;
+    const map = sketchAreas(s); // found once per sketch anyway (the 2D map needs it too)
+    expect(map.areas).toHaveLength(901);
+    const t = performance.now();
+    const shades = areaShades(s, undefined);
+    expect(performance.now() - t).toBeLessThan(2000);
+    // Only the plate is used; the discs in its holes aren't.
+    expect(shades.filter((x) => x === "used")).toHaveLength(1);
+    expect(map.areas[shades.indexOf("used")].area).toBeCloseTo(310 * 310 - 900 * Math.PI * 9, -2); // within 50 mm² (circles are many-sided)
+  });
+
+  it("doesn't shade a fine grid of lines (9801 areas), and answers at once", () => {
+    let g = emptySketch();
+    for (let i = 0; i < 100; i++) {
+      g = addLine(g, at(i, -0.5), at(i, 99.5)).sketch;
+      g = addLine(g, at(-0.5, i), at(99.5, i)).sketch;
+    }
+    const map = sketchAreas(g);
+    expect(map.areas.length).toBeGreaterThan(MAX_SHADED_AREAS);
+    const t = performance.now();
+    const shades = areaShades(g, undefined);
+    expect(performance.now() - t).toBeLessThan(500);
+    expect(shades.every((x) => x === "none")).toBe(true);
+    // Working it out anyway is quick too now (it took 4 s): crossing lines make no closed shapes.
+    const t2 = performance.now();
+    expect(areasUsedByAll(g).size).toBe(0);
+    expect(performance.now() - t2).toBeLessThan(2000);
   });
 });
