@@ -85,7 +85,7 @@ describe("drawing dimensions on real views", () => {
     expect(l.dims.every((x) => x.found)).toBe(true);
     expect(texts(l)).toContain("7.85");
     expect(texts(l)).toContain("2 × 45°");
-  }, 60_000);
+  }, 120_000);
 
   it("keeps a real plate's views apart when the top view is at its own scale", () => {
     build([feature("box", { width: 120, depth: 80, height: 10 })]);
@@ -99,7 +99,7 @@ describe("drawing dimensions on real views", () => {
     for (const a of l.views) for (const b of l.views) if (a !== b) expect(overlap(a.box, b.box)).toBe(false);
     const top = l.views.find((v) => v.key === "top")!;
     expect(top.box[2] - top.box[0]).toBeCloseTo(240, 3);
-  }, 60_000);
+  }, 120_000);
 
   it("lists 25 real holes in a wrapped table, with the views still on the sheet", () => {
     // A 150 × 100 × 5 plate with 25 holes in a 5 × 5 grid, two sizes.
@@ -127,7 +127,7 @@ describe("drawing dimensions on real views", () => {
     expect(texts(l2)).toContain("2 OF 2");
     // (No hole table there: it's sheet 1's.)
     expect(l2.holeTable).toBeUndefined();
-  }, 120_000);
+  }, 240_000);
 });
 
 describe("arrows and the 3D view's scale on real views", () => {
@@ -167,7 +167,7 @@ describe("arrows and the 3D view's scale on real views", () => {
       expect(leaders).toHaveLength(mode === "outside" ? 2 : 0);
       expect(l.dims[1].arrows).toBe(mode ?? "inside");
     }
-  }, 60_000);
+  }, 120_000);
 
   it("draws a real 3D view at its own scale clear of the other views", () => {
     build([feature("box", { width: 60, depth: 40, height: 20 })]);
@@ -185,5 +185,5 @@ describe("arrows and the 3D view's scale on real views", () => {
       for (const v of l.views) expect(viewClear(l, v.key)).toBe(true);
       if (own !== l.scale) expect(texts(l)).toContain(`SCALE ${own >= 1 ? `${own}:1` : `1:${1 / own}`}`);
     }
-  }, 60_000);
+  }, 120_000);
 });

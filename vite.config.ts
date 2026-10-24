@@ -31,8 +31,17 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
-    // Loading the OpenCascade engine takes a few seconds in CI.
-    testTimeout: 60_000,
+    // Each test file runs in its own process ("forks"), so the memory a file's
+    // OpenCascade engine grabs is freed when that file ends (OpenCascade never
+    // gives memory back while its process lives). The heaviest test files use
+    // up to ~3 GB; Node's own memory limit is raised so it's never the thing
+    // that stops a test.
+    pool: "forks",
+    poolOptions: { forks: { execArgv: ["--max-old-space-size=4096"] } },
+    // Notes each test file's peak memory for tests/support/ciReporter.ts.
+    setupFiles: ["tests/support/memory.ts"],
+    // Generous, as engine tests slow down a lot when a shared CI machine is busy.
+    testTimeout: 120_000,
     hookTimeout: 120_000,
   },
 });
