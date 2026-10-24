@@ -1095,8 +1095,9 @@ try {
       const a = s.history.present.assemblies.find((x) => x.name === "Assembly 2");
       return { id: a.id, second: a.instances.find((i) => i.name === "Assembly 1 <2>").id, own: a.instances.find((i) => i.name === "Part 2 <1>").id };
     });
-    // Fix Part 2 <1>, so it's the sub-assembly that moves to meet it.
-    await page.locator(".feature-row >> text=Part 2 <1>").click();
+    // Fix Part 2 <1>, so it's the sub-assembly that moves to meet it. (Just inserted, it may be selected already.)
+    const ownRow = page.locator(".feature-row", { hasText: "Part 2 <1>" }).first();
+    if (!/\bselected\b/.test((await ownRow.getAttribute("class")) ?? "")) await ownRow.click();
     await page.getByRole("button", { name: "Fix", exact: true }).click();
     await page.keyboard.press("Escape");
     const before = await page.evaluate(({ id, second }) => JSON.stringify(window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.id === second).placement), asm2);
