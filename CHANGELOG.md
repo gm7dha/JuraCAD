@@ -8,6 +8,18 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.27 — Sketch snaps and face edges, mirror and pattern pickers, drawing arrows · commit `bf07c73`
+
+- **Sketch:** snap to a line's middle and to circle/arc centres; a circular pattern can go round any point you click
+  (the copies follow it); sketching on a face shows its edges and holes faintly to snap, dimension and constrain to,
+  and they follow the part when it changes ("Use all the face's edges" copies the outline).
+- **Mirror and patterns:** a clear "Mirror plane" box (click a face, plane or sketch line, or Top/Front/Right) and an
+  "Axis" box for circular patterns (a round face or edge, a straight edge, a sketch line, or X/Y/Z); the choice is
+  shown in the view and follows the part.
+- **Drawings:** click the 3D view to set its own scale (or drag its corner); a warning when a view runs off the sheet
+  at a fixed scale; dimension arrows Automatic, Inside or Outside, with Flip arrows.
+- **Live with Claude** confirmed working in Chrome; looks for new chats less often after the first minute.
+
 ## v0.26.2 — Live with every Claude chat · commit `7ed1540`
 
 - **Live with Claude** now links every Claude chat that has JuraCAD, not just the first one found: Claude starts the
