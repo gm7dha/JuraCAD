@@ -19,6 +19,7 @@ import { stepDistance } from "../assembly/explode";
 import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
 import { bomInfo, partBox, useSolvedAssembly } from "./assemblySolve";
+import { insertProblem, instanceAt, leafKey, ownBox } from "../assembly/subassembly";
 import { mateInactive } from "../assembly/suppress";
 import { isOrigin, ORIGIN_ID, ORIGIN_PLANES, originConnector, originPlaneOf } from "../assembly/origin";
 import { spotOptions } from "../assembly/connectors";
@@ -54,19 +55,34 @@ const MATE_ICONS: Record<MateType, (p: { size?: number }) => ReactNode> = {
 };
 
 
+/** Boxes round everything already in the assembly on show (parts and sub-assemblies), where they are. */
+function boxesInAssembly(): Box3[] {
+  const s = useStore.getState();
+  const asm = activeAssembly(s);
+  const boxes: Box3[] = [];
+  for (const i of asm?.instances ?? []) {
+    const b = ownBox(asm!, i, s.parts, s.history.present.assemblies ?? [], partBox);
+    if (b) boxes.push(placedBox(b, i.placement));
+  }
+  return boxes;
+}
+
 /** Put a copy of a part into the assembly on show, beside what's already there. */
 export function insertPart(part: PartMesh) {
   const s = useStore.getState();
-  const asm = activeAssembly(s);
-  if (!asm) return;
-  const boxes: Box3[] = [];
-  for (const i of asm.instances) {
-    const p = s.parts.find((x) => x.id === i.partId);
-    const b = p && partBox(p);
-    if (b) boxes.push(placedBox(b, i.placement));
-  }
+  if (!activeAssembly(s)) return;
   const box = partBox(part);
-  s.insertInstance({ id: part.id, name: part.name }, box ? spotBeside(boxes, box) : undefined);
+  s.insertInstance({ id: part.id, name: part.name }, box ? spotBeside(boxesInAssembly(), box) : undefined);
+}
+
+/** Put a copy of another assembly into the assembly on show (a sub-assembly), beside what's already there. */
+export function insertAssembly(sub: Assembly) {
+  const s = useStore.getState();
+  if (!activeAssembly(s)) return;
+  // Its box: round all its parts, where its own mates put them.
+  const probe: Assembly = { id: "@insert", name: "", instances: [{ id: "@sub", partId: "", subAssembly: sub.id, name: sub.name, placement: { position: [0, 0, 0], rotation: [0, 0, 0, 1] }, fixed: true }] };
+  const box = ownBox(probe, probe.instances[0], s.parts, s.history.present.assemblies ?? [], partBox);
+  s.insertSubAssembly(sub.id, box ? spotBeside(boxesInAssembly(), box) : undefined);
 }
 
 export function AssemblyToolbar() {
@@ -97,7 +113,7 @@ export function AssemblyToolbar() {
           icon={<Icons.Insert />}
           onClick={() => useStore.getState().openDialog(insertOpen ? null : "insert")}
           active={insertOpen}
-          title="Insert — put copies of your Part Studio parts into this assembly"
+          title="Insert — put copies of your Part Studio parts, or of other assemblies, into this assembly"
         />
         <ToolButton
           label={allFixed ? "Unfix" : "Fix"}
@@ -246,7 +262,10 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
   const selected = useStore((s) => s.asmSelection.includes(instance.id));
   const hidden = useStore((s) => s.hiddenInstances.includes(instance.id));
   const colour = useStore((s) => s.history.present.appearance?.[instance.partId] ?? DEFAULT_PART_COLOUR);
+  const sub = useStore((s) => (instance.subAssembly ? s.history.present.assemblies?.find((a) => a.id === instance.subAssembly) : undefined));
+  const [open, setOpen] = useState(false);
   return (
+    <>
     <li
       className={["feature-row", selected && "selected", hidden && "hidden", missing && "failed", instance.suppressed && "suppressed"].filter(Boolean).join(" ")}
       onClick={(e) => {
@@ -255,17 +274,41 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
         if (additive) s.setAsmSelection(selected ? s.asmSelection.filter((x) => x !== instance.id) : [...s.asmSelection, instance.id]);
         else s.setAsmSelection(selected && s.asmSelection.length === 1 ? [] : [instance.id]);
       }}
+      // Double-click a sub-assembly to open it (its own tab) and change it: every copy follows.
+      onDoubleClick={sub ? () => useStore.getState().setActiveTab(sub.id) : undefined}
       title={
         instance.suppressed
           ? "Suppressed — switched off for now. Select it and click Unsuppress to bring it back."
           : missing
             ? "Its part no longer exists in the Part Studio"
-            : instance.fixed
-              ? "Fixed — it stays where it is"
-              : "Click to select; Shift-click to add"
+            : sub
+              ? `A copy of ${sub.name}, moving as one piece${instance.fixed ? " (fixed)" : ""}. Double-click to open ${sub.name} and change it — every copy follows.`
+              : instance.fixed
+                ? "Fixed — it stays where it is"
+                : "Click to select; Shift-click to add"
       }
     >
-      <span className="instance-colour" style={{ background: colour }} aria-hidden="true" />
+      {sub ? (
+        <button
+          className="icon-button small subassembly-toggle"
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(!open);
+          }}
+          aria-expanded={open}
+          aria-label={open ? `Hide the parts in ${instance.name}` : `Show the parts in ${instance.name}`}
+          title={open ? "Hide its parts" : "Show its parts"}
+        >
+          {open ? <Icons.ChevronLeft size={14} /> : <Icons.ChevronRight size={14} />}
+        </button>
+      ) : (
+        <span className="instance-colour" style={{ background: colour }} aria-hidden="true" />
+      )}
+      {sub && (
+        <span className="feature-icon" aria-label="Sub-assembly">
+          <Icons.Assembly size={15} />
+        </span>
+      )}
       <span className="feature-name">{instance.name}</span>
       {instance.fixed && (
         <span className="instance-fixed" title="Fixed" aria-label="Fixed">
@@ -295,6 +338,70 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
       </button>
       )}
     </li>
+    {sub && open && <SubAssemblyRows sub={sub} prefix={instance.id} depth={1} within={[sub.id]} />}
+    </>
+  );
+}
+
+/** What's inside a sub-assembly, indented under it: its parts (each can be hidden) and its own sub-assemblies. */
+function SubAssemblyRows({ sub, prefix, depth, within }: { sub: Assembly; prefix: string; depth: number; within: string[] }) {
+  const all = useStore((s) => s.history.present.assemblies);
+  const hiddenList = useStore((s) => s.hiddenInstances);
+  const appearance = useStore((s) => s.history.present.appearance);
+  const shown = sub.instances.filter((i) => !i.suppressed);
+  if (!shown.length) return <li className="feature-row nested muted" style={{ paddingLeft: 12 + 16 * depth }}>(empty)</li>;
+  return (
+    <>
+      {shown.map((i) => {
+        const key = `${prefix}/${i.id}`;
+        const hidden = hiddenList.includes(key);
+        const inner = i.subAssembly && !within.includes(i.subAssembly) ? all?.find((a) => a.id === i.subAssembly) : undefined;
+        return (
+          <SubRow key={key} rowKey={key} name={i.name} hidden={hidden} depth={depth} colour={appearance?.[i.partId] ?? DEFAULT_PART_COLOUR} inner={inner} within={within} />
+        );
+      })}
+    </>
+  );
+}
+
+function SubRow({ rowKey, name, hidden, depth, colour, inner, within }: { rowKey: string; name: string; hidden: boolean; depth: number; colour: string; inner?: Assembly; within: string[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <li
+        className={["feature-row", "nested", hidden && "hidden"].filter(Boolean).join(" ")}
+        style={{ paddingLeft: 12 + 16 * depth }}
+        title={inner ? `A copy of ${inner.name} inside it. Double-click to open ${inner.name}.` : "A part inside the sub-assembly. Mate to it by clicking its faces; open the sub-assembly to move it."}
+        onDoubleClick={inner ? () => useStore.getState().setActiveTab(inner.id) : undefined}
+      >
+        {inner ? (
+          <button
+            className="icon-button small subassembly-toggle"
+            onClick={() => setOpen(!open)}
+            aria-expanded={open}
+            aria-label={open ? `Hide the parts in ${name}` : `Show the parts in ${name}`}
+            title={open ? "Hide its parts" : "Show its parts"}
+          >
+            {open ? <Icons.ChevronLeft size={14} /> : <Icons.ChevronRight size={14} />}
+          </button>
+        ) : (
+          <span className="instance-colour" style={{ background: colour }} aria-hidden="true" />
+        )}
+        <span className="feature-name">{name}</span>
+        <button
+          className={`icon-button small eye${hidden ? " is-hidden" : ""}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            useStore.getState().toggleInstanceHidden(rowKey);
+          }}
+          aria-label={hidden ? `Show ${name}` : `Hide ${name}`}
+          title={hidden ? "Show" : "Hide"}
+        >
+          {hidden ? <Icons.EyeOff size={16} /> : <Icons.Eye size={16} />}
+        </button>
+      </li>
+      {inner && open && <SubAssemblyRows sub={inner} prefix={rowKey} depth={depth + 1} within={[...within, inner.id]} />}
+    </>
   );
 }
 
@@ -771,10 +878,18 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
     };
     return Object.fromEntries(parts.map((p) => [p.id, label(p)]));
   }, [parts, doc]);
+  // With sub-assemblies, the parts list can be flattened (every part counted) or structured (each sub-assembly a line, its parts under it).
+  const hasSubs = assembly.instances.some((i) => i.subAssembly);
+  const [structured, setStructured] = useState(false);
   const bom = useMemo(
-    () => billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name])), bomInfo(parts, doc.materials), doc.partProperties),
-    [assembly, partNames, doc.configurations, parts, doc.materials, doc.partProperties],
+    () =>
+      billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name])), bomInfo(parts, doc.materials), doc.partProperties, {
+        assemblies: doc.assemblies,
+        structured: hasSubs && structured,
+      }),
+    [assembly, partNames, doc.configurations, parts, doc.materials, doc.partProperties, doc.assemblies, hasSubs, structured],
   );
+  const partCount = bom.reduce((n, r) => n + (r.subAssembly ? 0 : r.quantity * (r.level ? levelMultiplier(bom, r) : 1)), 0);
   const [editingProps, setEditingProps] = useState<{ partId: string; name: string } | null>(null);
   const showNumbers = bom.some((r) => r.properties?.number);
   const total = bomTotalMass(bom);
@@ -788,10 +903,10 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
         </h3>
         <ul className="feature-list">
           {assembly.instances.map((i) => (
-            <InstanceRow key={i.id} instance={i} missing={kernelReady && !partNames[i.partId]} />
+            <InstanceRow key={i.id} instance={i} missing={kernelReady && !i.subAssembly && !partNames[i.partId]} />
           ))}
         </ul>
-        {assembly.instances.length === 0 && <p className="panel-hint">Click Insert to bring in parts from the Part Studio.</p>}
+        {assembly.instances.length === 0 && <p className="panel-hint">Click Insert to bring in parts from the Part Studio, or other assemblies.</p>}
       </section>
       <MatesSection assembly={assembly} />
       <GroupsSection assembly={assembly} />
@@ -800,8 +915,18 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
       <PositionsSection assembly={assembly} />
       <section className="panel-section parts">
         <h3>
-          Parts list <span className="count">({bom.reduce((n, r) => n + r.quantity, 0)})</span>
+          Parts list <span className="count">({partCount})</span>
         </h3>
+        {hasSubs && (
+          <div className="segmented bom-structure" role="group" aria-label="How sub-assemblies are listed">
+            <button type="button" className={!structured ? "selected" : ""} aria-pressed={!structured} onClick={() => setStructured(false)} title="Every part counted, however deep inside sub-assemblies">
+              Flattened
+            </button>
+            <button type="button" className={structured ? "selected" : ""} aria-pressed={structured} onClick={() => setStructured(true)} title="Each sub-assembly on one line, with what's in one of it underneath">
+              Structured
+            </button>
+          </div>
+        )}
         <table className="bom-table" aria-label="Parts list">
           <thead>
             <tr>
@@ -816,14 +941,14 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
           <tbody>
             {bom.map((r, n) => (
               <tr
-                key={r.partId}
-                className={r.missing ? "missing" : "editable"}
-                onDoubleClick={() => !r.missing && setEditingProps({ partId: basePartId(r.partId), name: r.name })}
+                key={`${r.item ?? n}:${r.partId}`}
+                className={[r.missing ? "missing" : r.subAssembly ? "" : "editable", r.subAssembly && "bom-subassembly"].filter(Boolean).join(" ")}
+                onDoubleClick={() => !r.missing && !r.subAssembly && setEditingProps({ partId: basePartId(r.partId), name: r.name })}
               >
-                <td>{n + 1}</td>
+                <td>{r.item ?? n + 1}</td>
                 {showNumbers && <td className="bom-number">{r.properties?.number ?? ""}</td>}
-                <td title={bomRowTitle(r)}>
-                  {r.name}
+                <td title={r.subAssembly ? `A sub-assembly: the lines under it are what's in one of it` : bomRowTitle(r)} style={r.level ? { paddingLeft: 6 + 12 * r.level } : undefined}>
+                  {r.subAssembly && <Icons.Assembly size={13} />} {r.name}
                   {r.properties?.description && <div className="bom-description muted">{r.properties.description}</div>}
                 </td>
                 <td className="bom-qty">{r.quantity}</td>
@@ -831,7 +956,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
                   {r.massEach !== undefined ? formatMass(r.massEach * r.quantity) : r.surface ? "—" : ""}
                 </td>
                 <td className="bom-edit">
-                  {!r.missing && (
+                  {!r.missing && !r.subAssembly && (
                     <button
                       className="icon-button small"
                       onClick={() => setEditingProps({ partId: basePartId(r.partId), name: r.name })}
@@ -866,6 +991,17 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
       </section>
     </aside>
   );
+}
+
+/** Structured parts list: how many of a nested line's sub-assembly there are in all (its line's quantity times its parents'). */
+function levelMultiplier(rows: BomRow[], row: BomRow): number {
+  let n = 1;
+  let at = rows.indexOf(row);
+  for (let level = row.level ?? 0; level > 0; level--) {
+    while (at > 0 && (rows[at].level ?? 0) >= level) at--;
+    n *= rows[at].quantity;
+  }
+  return n;
 }
 
 /** The Part Studio part a parts list line is for (lines for other configurations or mirrored copies have extra bits on the end). */
@@ -952,6 +1088,8 @@ export function InsertPanel() {
   const studios = useMemo(() => studiosOf(doc), [doc]);
   if (!open || !asm) return null;
   const close = () => useStore.getState().openDialog(null);
+  // Other assemblies, to put in as sub-assemblies.
+  const others = (doc.assemblies ?? []).filter((a) => a.id !== asm.id);
   return (
     <div className="feature-dialog" role="dialog" aria-label="Insert parts">
       <header className="feature-dialog-header">
@@ -992,6 +1130,28 @@ export function InsertPanel() {
             </div>
               );
             })}
+          </>
+        )}
+        {others.length > 0 && (
+          <>
+            <div className="insert-studio">Assemblies</div>
+            <p className="dialog-hint">Put a whole assembly in as one piece (a sub-assembly). Its parts stay where its own mates put them; change it in its own tab and every copy follows.</p>
+            <ul className="insert-list">
+              {others.map((a) => {
+                const problem = insertProblem(doc, asm.id, a.id);
+                const count = asm.instances.filter((i) => i.subAssembly === a.id).length;
+                return (
+                  <li key={a.id}>
+                    <button className="insert-row" onClick={() => insertAssembly(a)} disabled={!!problem} title={problem ?? `Put a copy of ${a.name} into ${asm.name}`} aria-label={`Insert ${a.name}`}>
+                      <Icons.Assembly size={16} />
+                      <span className="feature-name">{a.name}</span>
+                      {count > 0 && <span className="muted small">×{count}</span>}
+                      <Icons.Plus size={16} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           </>
         )}
       </div>
@@ -1104,7 +1264,17 @@ export function InstancePanel() {
           <input type="checkbox" checked={instance.fixed} onChange={(e) => update(instance.id, { fixed: e.target.checked })} />
           Fixed (stays where it is)
         </label>
-        {!instance.copyOf && !instance.replicaOf && choosable.some((p) => p.id !== instance.partId) && (
+        {instance.subAssembly && (
+          <>
+            <p className="dialog-hint">
+              A copy of <strong>{doc.assemblies?.find((a) => a.id === instance.subAssembly)?.name ?? "another assembly"}</strong>, moving as one piece. Mate it by clicking a face of any part inside it.
+            </p>
+            <button type="button" className="text-button" onClick={() => useStore.getState().setActiveTab(instance.subAssembly!)}>
+              Open {doc.assemblies?.find((a) => a.id === instance.subAssembly)?.name ?? "it"} to change it
+            </button>
+          </>
+        )}
+        {!instance.subAssembly && !instance.copyOf && !instance.replicaOf && choosable.some((p) => p.id !== instance.partId) && (
           <div className="param-field compact">
             <label htmlFor="instance-part">Part</label>
             <select
@@ -1135,7 +1305,7 @@ export function InstancePanel() {
             </select>
           </div>
         )}
-        {configurations.length > 0 && !instance.copyOf && (
+        {configurations.length > 0 && !instance.copyOf && !instance.subAssembly && (
           <div className="param-field compact">
             <label htmlFor="instance-configuration">Configuration</label>
             <select
@@ -1482,7 +1652,14 @@ export function MateDialog() {
   const { errors } = mateValues(mate);
   const limits = mateLimits(mate);
   const problem = ready ? solved?.mateErrors[mate.id] : undefined;
-  const nameOf = (c?: MateConnector) => (c ? (isOrigin(c) ? "Origin" : asm.instances.find((i) => i.id === c.instanceId)?.name ?? "?") : "");
+  const nameOf = (c?: MateConnector) => {
+    if (!c) return "";
+    if (isOrigin(c)) return "Origin";
+    const top = asm.instances.find((i) => i.id === c.instanceId);
+    if (!top || !c.path?.length) return top?.name ?? "?";
+    // A part inside a sub-assembly: "Hinge <1> / Pin <2>".
+    return `${top.name} / ${instanceAt(asm, st.history.present.assemblies ?? [], leafKey(c.instanceId, c.path))?.part.name ?? "?"}`;
+  };
   const slot = (c: MateConnector | undefined, n: 1 | 2) => (
     <div
       className={`connector-slot${c && (!width || c.pick2) ? " filled" : ""}${

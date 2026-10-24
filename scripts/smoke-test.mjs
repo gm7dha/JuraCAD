@@ -1064,6 +1064,85 @@ try {
     await page.getByRole("button", { name: "Delete", exact: true }).click();
     await page.waitForFunction(() => ![...document.querySelectorAll(".feature-row")].some((r) => r.textContent?.includes("Part 2 <2>")), null, { timeout: 5_000 });
   }
+  step = "putting an assembly inside another (sub-assemblies)";
+  let subReport = "";
+  {
+    // Assembly 2: two copies of Assembly 1 (Bracket ×2 and Part 2, fastened) and a Part 2 of its own.
+    await page.getByRole("button", { name: "Add a tab" }).click();
+    await page.getByRole("menuitem", { name: "Assembly" }).click();
+    await page.waitForSelector(".tab.active >> text=Assembly 2");
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    // Assembly 2 can't go inside itself: only Assembly 1 is offered.
+    if ((await page.getByRole("button", { name: "Insert Assembly 2", exact: true }).count()) !== 0) throw new Error("an assembly is offered for inserting into itself");
+    await page.getByRole("button", { name: "Insert Assembly 1", exact: true }).click();
+    await page.getByRole("button", { name: "Insert Assembly 1", exact: true }).click();
+    await page.getByRole("button", { name: "Insert Part 2", exact: true }).click();
+    await page.waitForSelector(".feature-row >> text=Assembly 1 <2>");
+    await page.getByRole("button", { name: "Done" }).click();
+    const flat = await page.locator(".bom-table").innerText();
+    if (!/Bracket\s+4\b/.test(flat) || !/Part 2\s+3\b/.test(flat)) throw new Error(`the flattened parts list reads "${flat.replace(/\n/g, " / ")}"`);
+    // Its parts show in the list under it.
+    await page.getByRole("button", { name: "Show the parts in Assembly 1 <1>" }).click();
+    await page.waitForSelector(".feature-row.nested >> text=Bracket <2>", { timeout: 5_000 });
+    await page.getByRole("button", { name: "Hide the parts in Assembly 1 <1>" }).click();
+    await page.keyboard.press("f");
+    await page.waitForTimeout(600);
+    await shot("subassembly");
+
+    // Fasten Part 2 <1> to the top of a part inside the second copy: the whole copy moves.
+    const asm2 = await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const a = s.history.present.assemblies.find((x) => x.name === "Assembly 2");
+      return { id: a.id, second: a.instances.find((i) => i.name === "Assembly 1 <2>").id, own: a.instances.find((i) => i.name === "Part 2 <1>").id };
+    });
+    // Fix Part 2 <1>, so it's the sub-assembly that moves to meet it.
+    await page.locator(".feature-row >> text=Part 2 <1>").click();
+    await page.getByRole("button", { name: "Fix", exact: true }).click();
+    await page.keyboard.press("Escape");
+    const before = await page.evaluate(({ id, second }) => JSON.stringify(window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.id === second).placement), asm2);
+    await page.getByRole("button", { name: "Fasten", exact: true }).click();
+    await page.waitForSelector('form[aria-label="Mate"]');
+    const spots = await page.evaluate(({ second, own }) => {
+      const v = window.juracadViewport.current;
+      const up = (p) => v.screenPointOnFace(p.id, p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99));
+      const shown = v.shownParts();
+      const inside = shown.filter((p) => p.id.startsWith(`${second}/`)).map(up).filter(Boolean);
+      return { own: up(shown.find((p) => p.id === own)), inside: inside[inside.length - 1] ?? null, keys: shown.map((p) => p.id) };
+    }, asm2);
+    if (!spots.own || !spots.inside) throw new Error(`couldn't find faces to mate (meshes: ${spots.keys.join(", ")})`);
+    await canvas.click({ position: spots.own });
+    await canvas.click({ position: spots.inside });
+    await page.waitForSelector(".connector-slot.filled >> nth=1", { timeout: 5_000 });
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForSelector('form[aria-label="Mate"]', { state: "detached" });
+    await page.waitForSelector(".panel-section.mates .feature-row >> text=Fasten 1");
+    if ((await page.locator(".panel-section.mates .feature-row.failed").count()) > 0) {
+      throw new Error(`the mate to a part inside the sub-assembly has a problem: ${await page.locator(".panel-section.mates .feature-row.failed").first().getAttribute("title")}`);
+    }
+    const mated = await page.evaluate(({ id, second }) => {
+      const a = window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id);
+      const m = a.mates[0];
+      return { b: m.b.instanceId, path: m.b.path ?? null, a: m.a.instanceId, placement: JSON.stringify(a.instances.find((i) => i.id === second).placement) };
+    }, asm2);
+    if (!mated.path?.length || (mated.a !== asm2.second && mated.b !== asm2.second)) throw new Error(`the mate isn't on a part inside the sub-assembly: ${JSON.stringify(mated)}`);
+    if (mated.placement === before) throw new Error("the sub-assembly didn't move to meet the mate");
+    await page.keyboard.press("f");
+    await page.waitForTimeout(600);
+    await shot("subassembly-mated");
+    // Structured parts list: the sub-assembly on one line, what's in one of it underneath.
+    await page.getByRole("button", { name: "Structured", exact: true }).click();
+    const structured = await page.locator(".bom-table").innerText();
+    if (!/Assembly 1\s+2\b/.test(structured) || !/1\.1\s+Bracket\s+2\b/.test(structured)) throw new Error(`the structured parts list reads "${structured.replace(/\n/g, " / ")}"`);
+    await page.getByRole("button", { name: "Flattened", exact: true }).click();
+    // Double-click a sub-assembly to open it.
+    await page.locator(".feature-row >> text=Assembly 1 <1>").dblclick();
+    await page.waitForSelector(".tab.active >> text=Assembly 1", { timeout: 5_000 });
+    subReport = `a sub-assembly: Assembly 1 inserted twice into Assembly 2 (Bracket ×4, Part 2 ×3), mated by a part inside it (the whole copy moved), structured parts list`;
+    // Take Assembly 2 away again, so the rest of the test sees the same document.
+    await page.evaluate((id) => window.juracadStore.getState().removeAssembly(id), asm2.id);
+    await page.waitForFunction(() => ![...document.querySelectorAll(".tab")].some((t) => t.textContent?.includes("Assembly 2")), null, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Assembly 1" }).click();
+  }
   await page.getByRole("button", { name: "Part Studio 1" }).click();
 
   step = "adding a second Part Studio";
@@ -1677,7 +1756,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${subReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

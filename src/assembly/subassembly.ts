@@ -12,7 +12,7 @@
 import { newId } from "../model/document";
 import type { Assembly, Instance, JuraCADDocument } from "../model/types";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
-import { nextInstanceName, placedBox, updateAssembly, usesAssembly, type Box3 } from "./assembly";
+import { mirroredBox, nextInstanceName, placedBox, updateAssembly, usesAssembly, type Box3 } from "./assembly";
 
 export { tidySubAssemblies, usesAssembly } from "./assembly";
 import { findMesh, meshIdOf } from "./configured";
@@ -156,11 +156,23 @@ export function topBox(leaves: readonly Leaf[], parts: readonly PartMesh[], boxO
     const mesh = findMesh(parts, meshIdOf(l.instance));
     let b = mesh ? boxOf(mesh) : null;
     if (!b) continue;
-    if (l.instance.mirrored) b = { min: [-b.max[0], b.min[1], b.min[2]], max: [-b.min[0], b.max[1], b.max[2]] };
+    if (l.instance.mirrored) b = mirroredBox(b);
     const placed = placedBox(b, l.relative);
     box = box
       ? { min: [0, 1, 2].map((k) => Math.min(box!.min[k], placed.min[k])) as Box3["min"], max: [0, 1, 2].map((k) => Math.max(box!.max[k], placed.max[k])) as Box3["max"] }
       : placed;
   }
   return box;
+}
+
+/**
+ * The box round an instance before it's placed: its part's (flipped when
+ * mirrored), or for a sub-assembly, the box round all its parts. Null when
+ * nothing of it is built.
+ */
+export function ownBox(assembly: Assembly, i: Instance, parts: readonly PartMesh[], assemblies: readonly Assembly[], boxOf: (p: PartMesh) => Box3 | null): Box3 | null {
+  if (i.subAssembly) return topBox(leavesOfTop(leavesOf(assembly, parts, assemblies), i.id), parts, boxOf);
+  const mesh = findMesh(parts, meshIdOf(i));
+  const b = mesh ? boxOf(mesh) : null;
+  return b && i.mirrored ? mirroredBox(b) : b;
 }

@@ -96,9 +96,9 @@ describe("sub-assemblies on real parts", () => {
 
   it("follows a change to the sub-assembly's own mates in every place it's used", () => {
     // Mated by the cube inside: the cube's bottom sits on the base, the plate below it.
-    const onCube = (S: Assembly) => top({ instanceId: "s1", path: ["sb"], pick: face(blockP, [0, 0, -1]) }, 2);
+    const onCube = () => top({ instanceId: "s1", path: ["sb"], pick: face(blockP, [0, 0, -1]) }, 2);
     let S = hinge();
-    let A = onCube(S);
+    let A = onCube();
     let w = worldPlaces(A, [A, S]);
     close(w["s1/sb"].position, [0, 0, 10]);
     close(w["s1/sp"].position, [-55, -5, 5]);
@@ -107,14 +107,14 @@ describe("sub-assemblies on real parts", () => {
     close(w["s2/sb"].position, [255, 5, 5]);
     // Open S and give its mate a 3 mm gap: nothing in A changes, yet A follows.
     S = hinge("3");
-    A = onCube(S);
+    A = onCube();
     w = worldPlaces(A, [A, S]);
     close(w["s1/sb"].position, [0, 0, 10]);
     close(w["s1/sp"].position, [-55, -5, 2]);
     close(w["s2/sb"].position, [255, 5, 8]);
     // The same through a part's shape: a thicker plate pushes the cube up inside S, so S sits lower in A.
     const thicker = engine.rebuild([block, { ...plate, params: { ...plate.params, height: "7" } }]).parts;
-    const r = solveWithParts(onCube(hinge()), thicker, { assemblies: [onCube(hinge()), hinge()] });
+    const r = solveWithParts(onCube(), thicker, { assemblies: [onCube(), hinge()] });
     close(r.placements.s1.position, [-55, -5, 3]);
     parts = engine.rebuild([block, plate]).parts;
     [blockP, plateP] = parts;

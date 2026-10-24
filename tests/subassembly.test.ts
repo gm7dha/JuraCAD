@@ -10,7 +10,7 @@ import { applyPlacement, IDENTITY, quatFromAxisAngle, type Placement, type Vec3 
 import { solvedInside, solveAssembly } from "../src/assembly/mates";
 import { pickConnector } from "../src/assembly/mates";
 import { syncPattern } from "../src/assembly/patterns";
-import { instanceAt, insertProblem, insertSubAssembly, kernelInstances, leavesOf, leafKey, pathOfKey, topOfKey, tidySubAssemblies, usesAssembly, whereUsed } from "../src/assembly/subassembly";
+import { instanceAt, insertProblem, insertSubAssembly, kernelInstances, ownBox, leavesOf, leafKey, pathOfKey, topOfKey, tidySubAssemblies, usesAssembly, whereUsed } from "../src/assembly/subassembly";
 import { emptyDocument } from "../src/model/document";
 import type { Assembly, Instance, JuraCADDocument, Mate } from "../src/model/types";
 
@@ -148,6 +148,20 @@ describe("parts inside sub-assemblies", () => {
     close(solvedInside(B, [], all).b1.position, [10, 0, 0]);
   });
 
+  it("has a box round all its parts (for exploded views and placing new copies beside it)", () => {
+    // Every part is a 1 mm cube at its origin; mirrored ones span −1…0 in X.
+    const cube = () => ({ min: [0, 0, 0] as Vec3, max: [1, 1, 1] as Vec3 });
+    const meshes = [{ id: "pin" }, { id: "plate" }] as never;
+    // B's own place doesn't matter: the box is in its own coordinates. The pin sits at (8, 1, 3) turned (a cube from x 7…8),
+    // the plate at (0, 0, 50).
+    const box = ownBox(A, A.instances[0], meshes, all, cube)!;
+    close(box.min, [0, 0, 3]);
+    close(box.max, [8, 2, 51]);
+    const mirrored = ownBox(A, { ...A.instances[1], mirrored: true }, meshes, all, cube)!;
+    close(mirrored.min, [-1, 0, 0]);
+    close(mirrored.max, [0, 1, 1]);
+  });
+
   it("never goes round a circle, even in a broken file", () => {
     const loopA: Assembly = { id: "A", name: "A", instances: [sub("x", "B")] };
     const loopB: Assembly = { id: "B", name: "B", instances: [sub("y", "A"), part("p", "bolt")] };
@@ -263,7 +277,7 @@ describe("saved files", () => {
     expect(a.mates!.map((m) => [m.id, m.b.path])).toEqual([["m1", undefined]]);
     expect(b.instances.map((i) => i.id)).toEqual(["j1"]);
     expect(c.instances).toEqual([]);
-    const good = parseAssemblies([{ ...raw[0], mates: [{ ...raw[0].mates[0], b: { instanceId: "s1", path: ["j1"], pick } }] }, raw[1]]);
+    const good = parseAssemblies([{ ...raw[0], mates: [{ ...raw[0].mates![0], b: { instanceId: "s1", path: ["j1"], pick } }] }, raw[1]]);
     expect(good[0].mates![0].b.path).toEqual(["j1"]);
     expect(tidySubAssemblies(good)).toEqual(good);
   });

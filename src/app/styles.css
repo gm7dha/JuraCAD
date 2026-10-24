@@ -3061,3 +3061,34 @@ kbd {
   color: var(--ink-3);
   font-size: 12px;
 }
+
+/* ------------------------------------------------------------------ sub-assemblies */
+
+.feature-row.nested {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.subassembly-toggle {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.subassembly-toggle[aria-expanded="true"] svg {
+  transform: rotate(-90deg);
+}
+
+.segmented.bom-structure {
+  grid-template-columns: repeat(2, 1fr);
+  margin: 0 0 6px;
+}
+
+.bom-table tr.bom-subassembly td {
+  font-weight: 600;
+}
+
+.insert-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
