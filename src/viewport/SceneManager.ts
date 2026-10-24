@@ -73,7 +73,10 @@ export type PickTarget =
 /** A sketch's areas to draw on its plane and make clickable (see `setPickAreas`). */
 export interface PickAreas {
   frame: PlaneFrame;
-  shapes: { outer: Pt[]; holes: Pt[][]; shade: AreaShade }[];
+  /** Each area's outline and holes (sketch coordinates). The same array again means the same areas: only their colours are redone. */
+  outlines: { outer: Pt[]; holes: Pt[][] }[];
+  /** How each area is shaded (same order). */
+  shades: AreaShade[];
   /** The area round a sketch point, or -1. */
   areaAt: (p: Pt) => number;
   /** True: an area under the pointer wins over parts. False: only clicks that miss every part reach the areas. */
@@ -1164,65 +1167,124 @@ export class SceneManager {
   private pickAreas: PickAreas | null = null;
   private hoverArea = -1;
   private readonly areasGroup = new THREE.Group();
-  private areaMaterials: { fill: THREE.MeshBasicMaterial; edge: THREE.LineBasicMaterial; shade: AreaShade }[] = [];
+  /**
+   * All the areas drawn as one mesh (fills) and one set of line pieces (outlines), whatever their number:
+   * each area's vertices are a range, coloured (with see-through-ness) per vertex.
+   */
+  private areaDrawing: {
+    outlines: PickAreas["outlines"];
+    frameKey: string;
+    fill: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+    edges: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+    fillRanges: [number, number][];
+    edgeRanges: [number, number][];
+  } | null = null;
 
-  /** Draw these areas on their sketch plane and let them be clicked (null: none). */
+  /** Draw these areas on their sketch plane and let them be clicked (null: none). Only colours are redone when the areas and plane are unchanged. */
   setPickAreas(areas: PickAreas | null): void {
     this.pickAreas = areas;
-    if (!areas || this.hoverArea >= areas.shapes.length) this.hoverArea = -1;
-    const g = this.areasGroup;
-    for (const child of [...g.children]) {
-      g.remove(child);
-      const o = child as THREE.Mesh;
-      o.geometry?.dispose();
-      (o.material as THREE.Material | undefined)?.dispose();
+    if (!areas || this.hoverArea >= areas.outlines.length) this.hoverArea = -1;
+    const frameKey = areas ? JSON.stringify(areas.frame) : "";
+    const d = this.areaDrawing;
+    if (d && (!areas || d.outlines !== areas.outlines || d.frameKey !== frameKey)) {
+      this.areasGroup.remove(d.fill, d.edges);
+      d.fill.geometry.dispose();
+      d.fill.material.dispose();
+      d.edges.geometry.dispose();
+      d.edges.material.dispose();
+      this.areaDrawing = null;
     }
-    this.areaMaterials = [];
-    if (!g.parent) this.scene.add(g);
+    if (!this.areasGroup.parent) this.scene.add(this.areasGroup);
     if (!areas) return;
+    if (!this.areaDrawing) this.areaDrawing = this.buildAreas(areas, frameKey);
+    this.colourAreas();
+  }
+
+  private buildAreas(areas: PickAreas, frameKey: string): NonNullable<SceneManager["areaDrawing"]> {
     const { origin, u, v, n } = areas.frame;
     const place = new THREE.Matrix4().makeBasis(new THREE.Vector3(...u), new THREE.Vector3(...v), new THREE.Vector3(...n)).setPosition(...origin);
-    const path = (poly: Pt[], to: THREE.Path) => {
-      poly.forEach(([x, y], i) => (i ? to.lineTo(x, y) : to.moveTo(x, y)));
-      to.closePath();
-      return to;
+    const fillPos: number[] = [];
+    const edgePos: number[] = [];
+    const fillRanges: [number, number][] = [];
+    const edgeRanges: [number, number][] = [];
+    const v2 = (poly: Pt[]) => {
+      const pts = poly.map(([x, y]) => new THREE.Vector2(x, y));
+      // Triangulation wants no repeated last point.
+      if (pts.length > 1 && pts[0].equals(pts[pts.length - 1])) pts.pop();
+      return pts;
     };
-    const loop = (poly: Pt[], mat: THREE.LineBasicMaterial) => {
-      const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(poly.map(([x, y]) => new THREE.Vector3(x, y, 0))), mat);
-      line.matrixAutoUpdate = false;
-      line.matrix.copy(place);
-      line.renderOrder = 6;
-      line.raycast = () => {};
-      g.add(line);
+    for (const a of areas.outlines) {
+      const outer = v2(a.outer);
+      const holes = a.holes.map(v2);
+      const startF = fillPos.length / 3;
+      const all = [outer, ...holes].flat();
+      for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(outer, holes)) for (const q of [all[i], all[j], all[k]]) fillPos.push(q.x, q.y, 0);
+      fillRanges.push([startF, fillPos.length / 3 - startF]);
+      const startE = edgePos.length / 3;
+      for (const loop of [outer, ...holes]) loop.forEach((q, i) => {
+        const r = loop[(i + 1) % loop.length];
+        edgePos.push(q.x, q.y, 0, r.x, r.y, 0);
+      });
+      edgeRanges.push([startE, edgePos.length / 3 - startE]);
+    }
+    const geometry = (pos: number[]) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array((pos.length / 3) * 4), 4));
+      return g;
     };
-    areas.shapes.forEach((a) => {
-      const shape = path(a.outer, new THREE.Shape()) as THREE.Shape;
-      shape.holes = a.holes.map((h) => path(h, new THREE.Path()));
-      const fill = new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
-      const edge = new THREE.LineBasicMaterial({ transparent: true, depthTest: false });
-      this.areaMaterials.push({ fill, edge, shade: a.shade });
-      const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), fill);
-      mesh.matrixAutoUpdate = false;
-      mesh.matrix.copy(place);
-      mesh.renderOrder = 5;
-      mesh.raycast = () => {};
-      g.add(mesh);
-      loop(a.outer, edge);
-      for (const h of a.holes) loop(h, edge);
-    });
-    this.colourAreas();
+    const fill = new THREE.Mesh(geometry(fillPos), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+    const edges = new THREE.LineSegments(geometry(edgePos), new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthTest: false }));
+    for (const [o, order] of [[fill, 5], [edges, 6]] as const) {
+      o.matrixAutoUpdate = false;
+      o.matrix.copy(place);
+      o.renderOrder = order;
+      o.raycast = () => {};
+      o.frustumCulled = false;
+    }
+    this.areasGroup.add(fill, edges);
+    return { outlines: areas.outlines, frameKey, fill, edges, fillRanges, edgeRanges };
   }
 
   /** Faint when just clickable, medium when "every closed shape" uses it, strong when picked; orange under the pointer. */
   private colourAreas(): void {
-    this.areaMaterials.forEach((m, i) => {
-      const hover = i === this.hoverArea;
-      const colour = hover ? COLOURS.partHover : m.shade === "none" ? COLOURS.part : COLOURS.partSelected;
-      m.fill.color.set(colour);
-      m.fill.opacity = (m.shade === "picked" ? 0.55 : m.shade === "used" ? 0.25 : 0.12) + (hover ? 0.2 : 0);
-      m.edge.color.set(hover ? COLOURS.edgeHover : m.shade === "none" ? COLOURS.part : COLOURS.edgeSelected);
-      m.edge.opacity = m.shade === "none" && !hover ? 0.5 : 0.9;
-    });
+    const d = this.areaDrawing;
+    if (!d) return;
+    d.fillRanges.forEach((_r, i) => this.paintArea(i, false));
+    for (const o of [d.fill, d.edges]) {
+      const attr = o.geometry.getAttribute("color") as THREE.BufferAttribute;
+      attr.clearUpdateRanges(); // all of it
+      attr.needsUpdate = true;
+    }
+  }
+
+  /** Recolour one area (just its own vertices; `upload` sends just those to the graphics card). */
+  private paintArea(i: number, upload: boolean): void {
+    const d = this.areaDrawing;
+    if (!d || i < 0 || i >= d.fillRanges.length) return;
+    const shade = this.pickAreas?.shades[i] ?? "none";
+    const hover = i === this.hoverArea;
+    const c = new THREE.Color();
+    const paint = (o: THREE.Mesh | THREE.LineSegments, [start, count]: [number, number], colour: string, alpha: number) => {
+      const attr = o.geometry.getAttribute("color") as THREE.BufferAttribute;
+      c.set(colour);
+      for (let k = start; k < start + count; k++) attr.setXYZW(k, c.r, c.g, c.b, alpha);
+      if (upload && count) {
+        attr.addUpdateRange(start * 4, count * 4);
+        attr.needsUpdate = true;
+      }
+    };
+    paint(d.fill, d.fillRanges[i], hover ? COLOURS.partHover : shade === "none" ? COLOURS.part : COLOURS.partSelected, (shade === "picked" ? 0.55 : shade === "used" ? 0.25 : 0.12) + (hover ? 0.2 : 0));
+    paint(d.edges, d.edgeRanges[i], hover ? COLOURS.edgeHover : shade === "none" ? COLOURS.part : COLOURS.edgeSelected, shade === "none" && !hover ? 0.5 : 0.9);
+  }
+
+  /** The pointer moved onto another area (or off them all): recolour just the two. */
+  private setHoverArea(i: number): void {
+    if (i === this.hoverArea) return;
+    const was = this.hoverArea;
+    this.hoverArea = i;
+    this.paintArea(was, true);
+    this.paintArea(i, true);
   }
 
   /** The area under the raycaster's current ray (-1: none). */
@@ -1248,7 +1310,7 @@ export class SceneManager {
     const a = this.pickAreas;
     if (!a) return [];
     const { origin: o, u, v } = a.frame;
-    return a.shapes.map(({ outer }) => {
+    return a.outlines.map(({ outer }) => {
       const xs = outer.map((q) => q[0]);
       const ys = outer.map((q) => q[1]);
       const x = xs.reduce((t, q) => t + q, 0) / xs.length;
@@ -1463,10 +1525,7 @@ export class SceneManager {
     this.pendingMove = null;
     this.sketchController?.pointerLeave();
     this.viewCube.setHover(null, null, this.width);
-    if (this.hoverArea >= 0) {
-      this.hoverArea = -1;
-      this.colourAreas();
-    }
+    this.setHoverArea(-1);
     if (this.hover) {
       this.hover = null;
       this.applyHighlights();
@@ -1543,10 +1602,7 @@ export class SceneManager {
     const customHit = hit?.kind === "customPlane" ? hit.id : null;
     const lineHit = hit?.kind === "sketchLine" ? this.pickLines.find((l) => l.sketch === hit.id && l.line === hit.line) ?? null : null;
     const areaHit = hit?.kind === "sketchArea" ? hit.index : -1;
-    if (areaHit !== this.hoverArea) {
-      this.hoverArea = areaHit;
-      this.colourAreas();
-    }
+    this.setHoverArea(areaHit);
     if (areaHit >= 0) this.renderer.domElement.style.cursor = "pointer";
     if (lineHit !== this.hoverLine) {
       this.hoverLine = lineHit;

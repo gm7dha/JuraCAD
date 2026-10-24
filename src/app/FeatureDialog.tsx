@@ -4,6 +4,7 @@ import { evaluate } from "../model/expr";
 import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
 import { describeRef } from "../geometry/topoRef";
 import { AreaPicker } from "./AreaPicker";
+import { followedSketch } from "../sketch/areaClicks";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
@@ -605,6 +606,7 @@ function SketchSolidOptions() {
   const mode = useStore((s) => s.editing?.mode);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
+  const sketchLinks = useStore((s) => s.sketchLinks);
   if (!draft || !isSketchSolid(draft.type)) return null;
   // Only sketches above this extrude in the list can be used.
   const index = features.findIndex((f) => f.id === draft.id);
@@ -642,7 +644,7 @@ function SketchSolidOptions() {
         </select>
       )}
       {chosen && !draft.surface && (
-        <AreaPicker data={chosen} areas={draft.areas} verb={draft.type === "revolve" ? "revolve" : "extrude"} onChange={(areas) => setDraftField({ areas })} />
+        <AreaPicker data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? chosen} areas={draft.areas} verb={draft.type === "revolve" ? "revolve" : "extrude"} onChange={(areas) => setDraftField({ areas })} />
       )}
       {draft.type === "revolve" && (
         <>
@@ -805,6 +807,7 @@ function SweepLoftOptions() {
   const mode = useStore((s) => s.editing?.mode);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
+  const sketchLinks = useStore((s) => s.sketchLinks);
   if (!draft || (draft.type !== "sweep" && draft.type !== "loft")) return null;
   const index = features.findIndex((f) => f.id === draft.id);
   const sketches = (mode === "edit" && index >= 0 ? features.slice(0, index) : features).filter((f) => f.type === "sketch");
@@ -827,7 +830,7 @@ function SweepLoftOptions() {
       <fieldset className="param-group">
         <legend>Sketches</legend>
         {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined }))}
-        {profile && !draft.surface && <AreaPicker data={profile} areas={draft.areas} verb="sweep" onChange={(areas) => setDraftField({ areas })} />}
+        {profile && !draft.surface && <AreaPicker data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile} areas={draft.areas} verb="sweep" onChange={(areas) => setDraftField({ areas })} />}
         {select("Path to follow", draft.pathRef, (v) => setDraftField({ pathRef: v }))}
         <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
       </fieldset>

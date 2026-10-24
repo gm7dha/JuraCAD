@@ -9,6 +9,7 @@
 import { useMemo, useState } from "react";
 
 import { areasUsedByAll, missingAreasMessage, pickedAreas, sketchAreas, toggleArea, type AreaPick } from "../sketch/areas";
+import { MAX_SHADED_AREAS } from "../sketch/areaClicks";
 import type { Pt } from "../sketch/regions";
 import type { SketchData } from "../sketch/types";
 
@@ -37,7 +38,7 @@ function AreaMap({ data, areas, verb, onChange }: { data: SketchData; areas: Are
   const { picked, missing } = useMemo(() => pickedAreas(map, areas), [map, areas]);
   const all = !areas?.length;
   // With nothing picked: the areas every closed shape covers (not holes) show as used.
-  const used = useMemo(() => (all ? areasUsedByAll(data) : null), [all, data]);
+  const used = useMemo(() => (all && map.areas.length <= MAX_SHADED_AREAS ? areasUsedByAll(data) : null), [all, data, map]);
   // Bigger areas first, so smaller ones inside them (drawn on top) can be clicked.
   const order = useMemo(() => map.areas.map((_a, i) => i).sort((a, b) => map.areas[b].outer.area - map.areas[a].outer.area), [map]);
   if (map.areas.length === 0) return <p className="dialog-hint field-hint">The sketch has no closed areas to pick.</p>;
