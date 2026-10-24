@@ -3082,15 +3082,17 @@ kbd {
 /* The parts list's heading, with the Flattened / Structured switch on the right when there are sub-assemblies. */
 .bom-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 6px;
+  column-gap: 6px;
   flex: none;
 }
 
 .bom-structure {
   display: inline-flex;
-  margin-right: 10px;
+  /* (Lines up with the heading's text when a narrow panel puts it on a line of its own.) */
+  margin: 0 10px 4px 12px;
   border: 1px solid var(--line);
   border-radius: 5px;
   overflow: hidden;
