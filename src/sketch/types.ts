@@ -1,4 +1,4 @@
-import type { TopoPick } from "../geometry/topoRef";
+import type { FaceRef, TopoPick } from "../geometry/topoRef";
 
 /**
  * Sketch data. Everything is stored in the sketch's own 2D coordinates (u, v)
@@ -16,7 +16,14 @@ export const ORIGIN_ID = "origin";
  * of the face the sketch is on used as a reference): the edge it came from, found
  * again on every rebuild so the copy moves when the part changes.
  */
-export type CurveLink = TopoPick;
+export type CurveLink = TopoPick & {
+  /**
+   * Intersect: the curve isn't one of the part's edges but where the sketch's
+   * plane cuts through the part (or, with `face`, through just that face of
+   * it). On rebuild it's found again among those cut lines.
+   */
+  cut?: { face?: FaceRef };
+};
 
 export interface SketchPoint {
   id: string;
@@ -201,10 +208,49 @@ export interface SketchConstraint {
   driven?: boolean;
 }
 
+/**
+ * Text in a sketch (Onshape's sketch Text): its letters' outlines are closed
+ * shapes to extrude, cut or emboss. It hangs from `anchor`, a point of the
+ * sketch, so it can be dimensioned and constrained like any point.
+ */
+export interface SketchText {
+  id: string;
+  /** The point the text is placed by. */
+  anchor: string;
+  value: string;
+  /** Letter size (the font's full height), mm. */
+  size: number;
+  /** Turned this far anticlockwise about the anchor (degrees). */
+  angle: number;
+  font: "regular" | "bold";
+  /** Where the anchor is: the start of the first line's baseline (the default), or the middle of the text. */
+  anchorAt?: "start" | "centre";
+  construction: boolean;
+}
+
+/** A picture laid on the sketch plane to trace over (shown only while sketching; never part of a shape). */
+export interface SketchImage {
+  id: string;
+  /** The picture, as a data: URL. */
+  src: string;
+  /** Its bottom-left corner (sketch mm), and its size on the sketch (mm). */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** 0 (invisible) to 1 (solid). */
+  opacity: number;
+  name?: string;
+}
+
 export interface SketchData {
   points: SketchPoint[];
   curves: SketchCurve[];
   constraints: SketchConstraint[];
+  /** Text (missing in older files and sketches without any). */
+  texts?: SketchText[];
+  /** Pictures to trace over (missing in older files and sketches without any). */
+  images?: SketchImage[];
 }
 
 export const emptySketch = (): SketchData => ({ points: [], curves: [], constraints: [] });

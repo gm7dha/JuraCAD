@@ -15,7 +15,7 @@
 import { sameRef, type EdgeRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { pointPos, settle, sketchId, type EditResult } from "./ops";
 import { toSketch, type PlaneFrame, type SketchPlane } from "./planes";
-import type { SketchArc, SketchCircle, SketchConstraint, SketchCurve, SketchData, SketchLine, SketchPoint } from "./types";
+import type { CurveLink, SketchArc, SketchCircle, SketchConstraint, SketchCurve, SketchData, SketchLine, SketchPoint } from "./types";
 
 type P2 = [number, number];
 
@@ -171,6 +171,7 @@ export function linkEdge(
   s: SketchData,
   edge: RefEdge,
   construction: boolean,
+  cut?: CurveLink["cut"],
 ): EditResult & { curveId: string; points: { a?: string; b?: string; c?: string } } {
   const known = linkedCurveFor(s, edge.pick);
   if (known) {
@@ -179,7 +180,7 @@ export function linkEdge(
   }
   if (edge.kind === "curve") return { sketch: s, curveId: "", points: {}, error: "Only straight and round edges can be used in a sketch for now. Snap to its ends instead." };
   const pt = (p: P2): SketchPoint => ({ id: sketchId("p"), x: p[0], y: p[1] });
-  const link = { partId: edge.pick.partId, ref: edge.pick.ref };
+  const link: CurveLink = { partId: edge.pick.partId, ref: edge.pick.ref, ...(cut ? { cut } : {}) };
   const points: SketchPoint[] = [];
   const constraints: SketchConstraint[] = [];
   let curve: SketchCurve;
@@ -249,6 +250,7 @@ function joinTouchingEnds(s: SketchData, curveIds: string[]): SketchData {
   const gone = new Set([...keep].filter(([a, b]) => a !== b).map(([a]) => a));
   if (!gone.size) return s;
   return {
+    ...s,
     points: s.points.filter((p) => !gone.has(p.id)),
     curves: s.curves.map((c) => (c.type === "line" ? { ...c, p1: to(c.p1), p2: to(c.p2) } : c.type === "arc" ? { ...c, start: to(c.start), end: to(c.end) } : c)),
     // The merged points' own fixes go (the kept point is fixed in the same place).
@@ -314,6 +316,8 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
   for (const c of s.curves) if (c.type === "circle" && radii.has(c.id) && Math.abs(radii.get(c.id)! - c.radius) > 1e-9) moved = true;
   if (!moved) return s;
   const data: SketchData = {
+    // Texts and pictures (and anything else the sketch holds) stay as they are.
+    ...s,
     points: s.points.map((p) => {
       const to = moves.get(p.id);
       return to ? { ...p, x: to[0], y: to[1] } : p;
@@ -360,7 +364,8 @@ export function linkProblem(info: SketchLinkInfo | undefined): string | null {
 export function pruneReferences(s: SketchData): SketchData {
   const gone = new Set<string>();
   for (const c of s.curves) {
-    if (!("link" in c) || !c.link || !c.construction) continue;
+    // Intersect's curves were asked for, so they stay.
+    if (!("link" in c) || !c.link || !c.construction || c.link.cut) continue;
     const own = new Set<string>(c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : c.type === "arc" ? [c.center, c.start, c.end] : []);
     // A circle's rim point holds its size: it's its own.
     for (const k of s.constraints) if (k.type === "pointOnCircle" && k.refs[1] === c.id && k.refs.length === 2) own.add(k.refs[0]);
@@ -374,7 +379,7 @@ export function pruneReferences(s: SketchData): SketchData {
   const kept = new Set(curves.flatMap(curvePointsOf));
   const points = s.points.filter((p) => kept.has(p.id) || (p.standalone && !s.constraints.some((k) => k.type === "pointOnCircle" && gone.has(k.refs[1]) && k.refs[0] === p.id)));
   const alive = new Set(["origin", ...points.map((p) => p.id), ...curves.map((c) => c.id)]);
-  return { points, curves, constraints: s.constraints.filter((k) => k.refs.every((r) => alive.has(r))) };
+  return { ...s, points, curves, constraints: s.constraints.filter((k) => k.refs.every((r) => alive.has(r))) };
 }
 
 const curvePointsOf = (c: SketchCurve): string[] =>

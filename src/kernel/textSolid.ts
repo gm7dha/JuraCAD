@@ -4,10 +4,8 @@
  */
 import { assembleWire, basicFaceExtrusion, makeBox, makeCompound, makeFace, makeLine, Vector, type Edge, type Shape3D, type Wire } from "replicad";
 
-import regular from "three/examples/fonts/helvetiker_regular.typeface.json";
-import bold from "three/examples/fonts/helvetiker_bold.typeface.json";
-
-import { nestContours, polygonArea, textOutlines, type TypefaceFont } from "../geometry/text";
+import { FONTS } from "../geometry/fonts";
+import { nestContours, polygonArea, textOutlines } from "../geometry/text";
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { release } from "./extrude";
 
@@ -25,7 +23,7 @@ export interface TextOptions {
   flip: boolean;
 }
 
-export const FONTS = { regular: regular as unknown as TypefaceFont, bold: bold as unknown as TypefaceFont };
+export { FONTS };
 
 export function textSolid(plane: SketchPlane, o: TextOptions): Shape3D {
   const { contours } = textOutlines(o.bold ? FONTS.bold : FONTS.regular, o.value, o.size);

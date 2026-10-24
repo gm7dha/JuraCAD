@@ -8,8 +8,16 @@ import { dimensionLayout } from "../sketch/layout";
 import { ellipsePoints, pointPos, radiusOf, splineHandleEnds, splinePath, splinePoints } from "../sketch/ops";
 import { planeFrame, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import type { SketchAnalysis } from "../sketch/solver";
-import { isDimension, type SketchCurve, type SketchData } from "../sketch/types";
+import { isDimension, type SketchCurve, type SketchData, type SketchImage } from "../sketch/types";
 import { refSketch, type RefEdge } from "../sketch/links";
+import { imagesOf, textBox, textContours, textsOf } from "../sketch/sketchText";
+
+/** A text's letter outlines as line pieces. */
+function textSegments(s: SketchData, t: Parameters<typeof textContours>[1]): [Pt, Pt][] {
+  const out: [Pt, Pt][] = [];
+  for (const c of textContours(s, t)) c.forEach((p, i) => out.push([p, c[(i + 1) % c.length]]));
+  return out;
+}
 
 export const SKETCH_COLOURS = {
   free: new THREE.Color("#1f6fd1"),
@@ -155,6 +163,8 @@ export class SketchLayer {
   private readonly points: THREE.Points;
   private readonly snapMarker: THREE.Points;
   private readonly hintMarkers: THREE.Points;
+  /** Pictures laid on the sketch being edited, to trace over. */
+  private readonly pictures = new Pictures();
   private active: ActiveSketch | null = null;
   private transient: SketchTransient | null = null;
   private activeFrame: PlaneFrame | null = null;
@@ -179,6 +189,7 @@ export class SketchLayer {
     this.hintMarkers.renderOrder = 23;
     this.hintMarkers.frustumCulled = false;
     this.group.add(
+      this.pictures.group,
       this.refLines.object,
       this.hintMarkers,
       this.others.object,
@@ -218,6 +229,9 @@ export class SketchLayer {
         for (const [p, q] of segs) {
           (c.construction ? consW : solidW).push([toWorld(frame, p[0], p[1]), toWorld(frame, q[0], q[1])]);
         }
+      }
+      for (const t of textsOf(data)) {
+        for (const [p, q] of textSegments(data, t)) (t.construction ? consW : solidW).push([toWorld(frame, p[0], p[1]), toWorld(frame, q[0], q[1])]);
       }
     }
     this.setWorldLines(this.others, solidW, SKETCH_COLOURS.inactive);
@@ -262,6 +276,7 @@ export class SketchLayer {
     const frame = this.activeFrame;
     if (!a || !frame) {
       for (const l of [this.solid, this.construction, this.dims, this.preview, this.refLines]) l.set(null, [], []);
+      this.pictures.show(null, []);
       this.points.visible = false;
       this.snapMarker.visible = false;
       this.hintMarkers.visible = false;
@@ -310,6 +325,37 @@ export class SketchLayer {
         consCols.push(colour, colour);
       }
     }
+    // Text: its letters, and (when selected or under the pointer) a faint box round it.
+    for (const t of textsOf(data)) {
+      const colour = this.colourFor(t.id, a.analysis.definedPoints.has(t.anchor));
+      for (const seg of textSegments(data, t)) {
+        (t.construction ? consSegs : solidSegs).push(seg);
+        (t.construction ? consCols : solidCols).push(colour);
+      }
+      if (a.selection.has(t.id) || this.transient?.hover?.id === t.id) {
+        const box = textBox(data, t);
+        box.forEach((p, i) => {
+          consSegs.push([p, box[(i + 1) % 4]]);
+          consCols.push(colour);
+        });
+      }
+    }
+    // Pictures: a box round one that's selected or under the pointer.
+    for (const m of imagesOf(data)) {
+      if (!a.selection.has(m.id) && this.transient?.hover?.id !== m.id) continue;
+      const colour = this.colourFor(m.id, false);
+      const box: Pt[] = [
+        [m.x, m.y],
+        [m.x + m.width, m.y],
+        [m.x + m.width, m.y + m.height],
+        [m.x, m.y + m.height],
+      ];
+      box.forEach((p, i) => {
+        consSegs.push([p, box[(i + 1) % 4]]);
+        consCols.push(colour);
+      });
+    }
+    this.pictures.show(frame, imagesOf(data));
     // Spline handles (on selected splines): a line through each point, with a dot at each end to drag.
     const handles = splineHandleEnds(data, a.selection);
     for (const h of handles) {
@@ -386,6 +432,7 @@ export class SketchLayer {
   }
 
   dispose() {
+    this.pictures.dispose();
     for (const l of [this.others, this.othersConstruction, this.solid, this.construction, this.dims, this.preview, this.refLines]) l.dispose();
     this.hintMarkers.geometry.dispose();
     (this.hintMarkers.material as THREE.Material).dispose();
@@ -393,5 +440,62 @@ export class SketchLayer {
     (this.points.material as THREE.Material).dispose();
     this.snapMarker.geometry.dispose();
     (this.snapMarker.material as THREE.Material).dispose();
+  }
+}
+
+/** Pictures on the sketch plane: one see-through square each, behind the sketch's lines. */
+class Pictures {
+  readonly group = new THREE.Group();
+  private readonly textures = new Map<string, THREE.Texture>();
+  private shown = "";
+
+  show(frame: PlaneFrame | null, images: SketchImage[]) {
+    const key = frame ? JSON.stringify([frame, images.map((m) => [m.id, m.x, m.y, m.width, m.height, m.opacity, m.src.length])]) : "";
+    if (key === this.shown) return;
+    this.shown = key;
+    for (const child of [...this.group.children]) {
+      const mesh = child as THREE.Mesh;
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+      this.group.remove(mesh);
+    }
+    if (!frame) return;
+    const used = new Set<string>();
+    for (const m of images) {
+      used.add(m.src);
+      let tex = this.textures.get(m.src);
+      if (!tex) {
+        tex = new THREE.TextureLoader().load(m.src);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        this.textures.set(m.src, tex);
+      }
+      const corners: Pt[] = [
+        [m.x, m.y],
+        [m.x + m.width, m.y],
+        [m.x + m.width, m.y + m.height],
+        [m.x, m.y + m.height],
+      ];
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(corners.flatMap((p) => toWorld(frame, p[0], p[1])), 3));
+      g.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+      g.setIndex([0, 1, 2, 0, 2, 3]);
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: m.opacity, side: THREE.DoubleSide, depthWrite: false, depthTest: false });
+      const mesh = new THREE.Mesh(g, mat);
+      // Over the part (so it can be seen on a face) but under the sketch's lines.
+      mesh.renderOrder = 15;
+      mesh.frustumCulled = false;
+      this.group.add(mesh);
+    }
+    for (const [src, tex] of this.textures)
+      if (!used.has(src)) {
+        tex.dispose();
+        this.textures.delete(src);
+      }
+  }
+
+  dispose() {
+    this.show(null, []);
+    for (const tex of this.textures.values()) tex.dispose();
+    this.textures.clear();
   }
 }

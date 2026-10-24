@@ -11,6 +11,7 @@ import { makeSketchPattern, makeSketchTransform, setPatternOption, setSketchMeas
 import { lostLinksMessage } from "../sketch/links";
 import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
+import { SketchExtrasPanel } from "./SketchExtrasPanel";
 
 /** A conic's fullness: a slider from flat to full, and the number (0.5 = a parabola). */
 function ConicFullness({ value, onChange }: { value: number; onChange: (v: number) => void }) {
@@ -255,6 +256,7 @@ export function SketchPanel() {
             </button>
           </div>
         )}
+        <SketchExtrasPanel data={data} />
         {tool === "useEdge" && <p className="dialog-hint">Click edges of a part to copy them into this sketch. They follow the part if it changes.</p>}
         {!!linkInfo?.edges.length && (
           <div className="tool-option">

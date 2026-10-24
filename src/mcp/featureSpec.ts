@@ -18,7 +18,7 @@ import { isAngleDimension } from "../sketch/types";
 import { pickEdges, pickFace, pickFaces, facing } from "./picks";
 import type { Session } from "./session";
 import { buildSketch } from "./sketchShapes";
-import type { SketchLine } from "../sketch/types";
+import type { SketchData, SketchLine } from "../sketch/types";
 
 /** The feature kinds Claude can add, by the name used in the tools. */
 export const FEATURE_KINDS = {
@@ -151,7 +151,8 @@ export function applySketch(f: Feature, a: Obj, ctx: SpecContext): { freedom: nu
   let result: { freedom: number; dimensioned: boolean } | null = null;
   if (has(a, "shapes") || !ctx.editing) {
     const built = buildSketch(a.shapes, ctx.scope);
-    data = built.data;
+    // New shapes replace the drawing; text and pictures added in the app stay.
+    data = data ? keepTextAndPictures(data, built.data) : built.data;
     result = { freedom: built.freedom, dimensioned: built.dimensioned };
   }
   f.sketch = { plane, data: data! };
@@ -435,4 +436,14 @@ export function limitProblems(doc: JuraCADDocument, scope: Record<string, number
     }
   }
   return out;
+}
+
+/** The text (with the points it hangs from, as loose points) and pictures of `old`, added to `next`. */
+export function keepTextAndPictures(old: SketchData, next: SketchData): SketchData {
+  const texts = old.texts ?? [];
+  const images = old.images ?? [];
+  if (!texts.length && !images.length) return next;
+  const have = new Set(next.points.map((p) => p.id));
+  const anchors = old.points.filter((p) => texts.some((t) => t.anchor === p.id) && !have.has(p.id)).map((p) => ({ id: p.id, x: p.x, y: p.y, standalone: true }));
+  return { ...next, points: [...next.points, ...anchors], ...(texts.length ? { texts } : {}), ...(images.length ? { images } : {}) };
 }

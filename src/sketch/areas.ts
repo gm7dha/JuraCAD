@@ -22,6 +22,7 @@ import { splineHandles, splineHandlesIn } from "./ops";
 import { ellipseSpan } from "./curves";
 import { findRegions, pointInPolygon, type Loop, type Pt, type Region, type RegionResult, type Segment } from "./regions";
 import { ORIGIN_ID, type SketchData } from "./types";
+import { textContours, textPieceId, textsOf } from "./sketchText";
 
 type Bez = [Pt, Pt, Pt, Pt];
 
@@ -232,6 +233,20 @@ function primitives(sketch: SketchData): { prims: Prim[]; ids: string[] } {
         break;
       }
     }
+  }
+  // Text: each letter outline is a ring of straight pieces, going by its own id (the text's id and the outline's number).
+  for (const t of textsOf(sketch)) {
+    if (t.construction) continue;
+    textContours(sketch, t).forEach((c, k) => {
+      const id = textPieceId(t, k);
+      c.forEach((a, i) => {
+        const b = c[(i + 1) % c.length];
+        if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-9) {
+          prims.push({ kind: "line", a, b });
+          ids.push(id);
+        }
+      });
+    });
   }
   return { prims, ids };
 }
@@ -806,7 +821,9 @@ function findAreas(sketch: SketchData): AreaMap {
   };
 
   // Only solid curves bound anything: one turned into construction counts as gone.
-  return { areas, areaAt, join, curves: new Set(sketch.curves.filter((c) => !c.construction).map((c) => c.id)) };
+  const curves = new Set(sketch.curves.filter((c) => !c.construction).map((c) => c.id));
+  for (const t of textsOf(sketch)) if (!t.construction) textContours(sketch, t).forEach((_c, k) => curves.add(textPieceId(t, k)));
+  return { areas, areaAt, join, curves };
 }
 
 /** Distance from p to the nearest edge of a closed polygon. */
