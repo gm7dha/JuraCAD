@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectFailures, crashHint, escapeData, escapeProperty, lineIn } from "./support/ciReporter";
+import { collectFailures, countTests, crashHint, escapeData, escapeProperty, lineIn } from "./support/ciReporter";
 
 describe("CI reporter", () => {
   it("escapes text for GitHub annotations", () => {
@@ -36,6 +36,7 @@ describe("CI reporter", () => {
     expect(f).toHaveLength(1);
     expect(f[0]).toMatchObject({ file: "tests/a.test.ts", line: 12, title: "group › breaks" });
     expect(f[0].text).toMatch(/expected 1 to be 2/);
+    expect(countTests([file])).toEqual({ tests: 2, failed: 1, skipped: 0 });
   });
 
   it("reports crashed test processes and unfinished files, which have no test to point at", () => {

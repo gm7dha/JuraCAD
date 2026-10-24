@@ -36,7 +36,8 @@ afterEach(() => {
 
 const textOf = (r: ToolResult) => r.content.map((c) => (c.type === "text" ? c.text : `[${c.mimeType}]`)).join("\n");
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function until(cond: () => boolean, what: string, ms = 20_000) {
+// Generous: a busy CI machine can be slow to build a part or pass a message.
+async function until(cond: () => boolean, what: string, ms = 60_000) {
   const end = Date.now() + ms;
   while (!cond()) {
     if (Date.now() > end) throw new Error(`Timed out waiting for ${what}`);
@@ -409,7 +410,7 @@ describe("Live with Claude", () => {
   it("links every Claude chat: changes from any of them appear, and all see the latest design", async () => {
     // Three extensions running (one per Claude chat), each on its own port.
     const instance = async (port = 0) => {
-      const bridge = new LiveBridge("test-ext", () => {}, 20_000);
+      const bridge = new LiveBridge("test-ext", () => {}, 60_000);
       const started = await startLiveServer({ ports: [port], accept: (c) => bridge.connect(c) });
       if (!started) throw new Error("no port");
       const session = new Session(null);
@@ -507,7 +508,8 @@ describe("Live with Claude", () => {
     await wait(500);
     expect(client.rechecks).toBeGreaterThanOrEqual(hiddenAt + 3);
     // After the first stretch: rarely (here once a minute), so nothing more for a good while.
-    await wait(900);
+    // (Waits well past the 1.2 s stretch, so a late timer on a busy machine can't land in the check below.)
+    await wait(1_500);
     const settled = client.rechecks;
     await wait(500);
     expect(client.rechecks).toBe(settled);

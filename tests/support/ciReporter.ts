@@ -122,6 +122,21 @@ export function collectFailures(files: Task[], errors: unknown[], root: string):
   return out;
 }
 
+/** How many tests ran, failed and were skipped. */
+export function countTests(files: Task[]): { tests: number; failed: number; skipped: number } {
+  const c = { tests: 0, failed: 0, skipped: 0 };
+  const walk = (t: Task) => {
+    if (t.tasks === undefined) {
+      c.tests++;
+      if (t.result?.state === "fail") c.failed++;
+      else if (t.mode === "skip" || t.mode === "todo" || t.result?.state === "skip") c.skipped++;
+    }
+    for (const k of t.tasks ?? []) walk(k);
+  };
+  for (const f of files) for (const t of f.tasks ?? []) walk(t);
+  return c;
+}
+
 /** Sum of the resident memory of this process's children (the test workers), in bytes. Linux only. */
 function childrenRss(): number {
   let total = 0;
@@ -175,8 +190,10 @@ export default class CiReporter {
         const name = f.filepath ? relative(this.root, f.filepath).replace(/^tests\//, "") : f.name;
         return `${name} ${((f.result?.duration ?? 0) / 1000).toFixed(0)} s${typeof peak === "number" ? ` (${(peak / 1024).toFixed(1)} GB)` : ""}`;
       });
+    const counts = countTests(files);
     const summary =
-      `Tests took ${((Date.now() - this.started) / 1000).toFixed(0)} s. ` +
+      `${counts.tests} tests in ${files.length} files (${counts.failed} failed, ${counts.skipped} skipped); ` +
+      `they took ${((Date.now() - this.started) / 1000).toFixed(0)} s. ` +
       `Slowest files: ${slowest.join(", ")}. ` +
       `Test processes used up to ${gb(this.mostInWorkers)} together; ` +
       `free memory went down to ${gb(this.lowestFree)} of ${gb(totalmem())}.`;
