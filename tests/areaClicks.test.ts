@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { areaClickMode, areaOutlines, areaShades, areaUnderRay, clickAreaAt, followedSketch, MAX_SHADED_AREAS, rayOnPlane } from "../src/sketch/areaClicks";
 import { areasUsedByAll, pickOf, sketchAreas, toggleArea } from "../src/sketch/areas";
 import { addCircle, addLine, addRectangle } from "../src/sketch/ops";
-import { planeFrame, type PlaneFrame } from "../src/sketch/planes";
+import { planeFrame, type PlaneFrame, type SketchPlane } from "../src/sketch/planes";
 import { emptySketch, type SketchData } from "../src/sketch/types";
 
 const at = (x: number, y: number) => ({ x, y });
@@ -124,7 +124,7 @@ describe("clicking sketch areas in the 3D view", () => {
     expect(clickAreaAt(saved, top, [13.5, 10, 0], undefined)![0][2]).toBeCloseTo(1200 - Math.PI * 4, 0);
     // Not moved: the saved sketch (and a moved plane on its own).
     expect(followedSketch(feature, {})!.data).toBe(saved);
-    const plane = { kind: "face", origin: [0, 0, 5], u: [1, 0, 0], v: [0, 1, 0], label: "Face" } as const;
+    const plane: SketchPlane = { kind: "face", origin: [0, 0, 5], u: [1, 0, 0], v: [0, 1, 0], label: "Face" };
     expect(followedSketch(feature, { s1: { edges: [], links: {}, plane } })).toEqual({ plane, data: saved });
     expect(followedSketch(undefined, {})).toBeNull();
   });
