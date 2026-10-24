@@ -16,6 +16,7 @@
  * All positions are sketch millimetres.
  */
 import { FONTS } from "../geometry/fonts";
+import { evaluate } from "../model/expr";
 import { textOutlines } from "../geometry/text";
 import { addPoint, curvePoints, deleteItems, pointPos, sketchId, type EditResult, type Placed } from "./ops";
 import type { SketchData, SketchImage, SketchText } from "./types";
@@ -37,6 +38,29 @@ export interface TextSettings {
 }
 
 export const DEFAULT_TEXT: TextSettings = { value: "Text", size: 10, angle: 0, font: "regular", anchorAt: "start" };
+
+/** The Text tool's boxes as typed (size and turn may be sums or variables). */
+export interface TypedTextSettings {
+  textValue?: string;
+  textSize?: string;
+  textAngle?: string;
+  textFont?: TextSettings["font"];
+  textAnchorAt?: TextSettings["anchorAt"];
+}
+
+/** The Text tool's settings from what's typed in the sketch panel, or a problem in plain English. */
+export function readTextSettings(o: TypedTextSettings): TextSettings | string {
+  const num = (text: string | undefined, fallback: number): number | null => {
+    if (text === undefined || text.trim() === "") return fallback;
+    const r = evaluate(text);
+    return r.ok && Number.isFinite(r.value) ? r.value : null;
+  };
+  const size = num(o.textSize, DEFAULT_TEXT.size);
+  const angle = num(o.textAngle, DEFAULT_TEXT.angle);
+  if (size === null) return "The text size must be a number (mm).";
+  if (angle === null) return "The turn must be a number of degrees.";
+  return { value: o.textValue ?? DEFAULT_TEXT.value, size, angle, font: o.textFont ?? DEFAULT_TEXT.font, anchorAt: o.textAnchorAt ?? DEFAULT_TEXT.anchorAt };
+}
 
 interface LocalText {
   /** Each letter outline, relative to the anchor before turning. */

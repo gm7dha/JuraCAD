@@ -875,6 +875,30 @@ export const Icons = {
       <path d="M4 16 12 20l8-4" strokeWidth={2.6} />
     </Svg>
   ),
+  /** Intersect: a plane slicing a block, its cut line drawn thick. */
+  Intersect: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 8h10v10H5z" />
+      <path d="M3 13h18" strokeDasharray="2 2" />
+      <path d="M5 13h10" strokeWidth={2.6} />
+    </Svg>
+  ),
+  /** Insert DXF: a sheet with a drawing on it and an arrow in. */
+  InsertDxf: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M6 3h9l4 4v14H6z" />
+      <path d="M9 17l3-6 3 6" />
+      <path d="M9 11h6" />
+    </Svg>
+  ),
+  /** Insert image: a picture frame with a hill and a sun. */
+  Picture: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 5h16v14H4z" />
+      <path d="M4 16l5-5 4 4 3-3 4 4" />
+      <circle cx="15.5" cy="9" r="1.5" />
+    </Svg>
+  ),
   Sweep: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 18c4 0 5-12 10-12h6" />

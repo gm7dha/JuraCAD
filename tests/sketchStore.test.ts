@@ -5,6 +5,7 @@ import { useStore } from "../src/model/store";
 import { addCircle, addRectangle, curveById, pointPos } from "../src/sketch/ops";
 import { linkEdge, projectEdge } from "../src/sketch/links";
 import { planeFrame } from "../src/sketch/planes";
+import { addText, DEFAULT_TEXT } from "../src/sketch/sketchText";
 
 const s = () => useStore.getState();
 const draftData = () => s().editing!.draft.sketch!.data;
@@ -24,6 +25,18 @@ describe("sketch sessions", () => {
     s().setSketchPlane({ kind: "default", name: "Front" });
     expect(s().editing?.draft.sketch?.plane).toEqual({ kind: "default", name: "Front" });
     expect(s().sketch?.message).toBeNull();
+  });
+
+  it("keeps text through edits that only know about lines and points, and keeps it selected", () => {
+    s().startSketch({ kind: "default", name: "Top" });
+    const t = addText(draftData(), { x: 0, y: 0 }, { ...DEFAULT_TEXT, value: "Hi" });
+    s().updateSketch(t.sketch, { selection: [t.textId] });
+    const bare = { points: draftData().points, curves: draftData().curves, constraints: draftData().constraints };
+    s().updateSketch(addRectangle(bare, { x: 20, y: 0 }, { x: 30, y: 10 }).sketch);
+    expect(draftData().texts?.map((x) => x.value)).toEqual(["Hi"]);
+    expect(draftData().curves).toHaveLength(4);
+    expect(s().sketch?.selection).toEqual([t.textId]);
+    expect(s().commitDraft()).toBe(true);
   });
 
   it("starts on the selected plane", () => {

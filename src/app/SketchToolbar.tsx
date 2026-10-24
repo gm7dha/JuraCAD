@@ -6,7 +6,7 @@ import { RELATION_SYMBOLS } from "../sketch/layout";
 import { Icons } from "./icons";
 import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
-import { applySketchRelation, deleteSketchSelection, setSketchTool, toggleSketchConstruction } from "./sketchActions";
+import { applySketchRelation, deleteSketchSelection, insertImageFile, pickFile, setSketchTool, toggleSketchConstruction } from "./sketchActions";
 
 const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hint: string }[] = [
   { tool: "select", label: "Select", key: "Esc", icon: <Icons.Select />, hint: "Click to select, drag to move" },
@@ -35,6 +35,8 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "sketchTransform", label: "Move / copy", key: "", icon: <Icons.Move />, hint: "Click shapes, then move, turn or copy them by the amounts in the sketch panel" },
   { tool: "sketchPattern", label: "Pattern", key: "", icon: <Icons.SketchPattern />, hint: "Click shapes to repeat them in a row or round a centre (set how many and how far apart in the sketch panel)" },
   { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part to copy them into the sketch (they follow the part if it changes)" },
+  { tool: "intersect", label: "Intersect", key: "", icon: <Icons.Intersect />, hint: "Click a face of a part the sketch passes through: where the sketch cuts it comes in as dashed lines that follow the part" },
+  { tool: "text", label: "Text", key: "", icon: <Icons.Text />, hint: "Type the words in the sketch panel, then click where they go. Their letters are shapes you can extrude" },
 ];
 
 /** Tools shown as one button with a ▾ list (the first is shown until another is used). */
@@ -45,6 +47,7 @@ const FAMILIES: { name: string; tools: SketchTool[] }[] = [
   { name: "spline", tools: ["spline", "conic"] },
   { name: "trim", tools: ["trim", "extend", "split"] },
   { name: "copy", tools: ["mirror", "sketchPattern", "sketchTransform"] },
+  { name: "use", tools: ["useEdge", "intersect"] },
 ];
 
 const RELATIONS: RelationTool[] = [
@@ -117,6 +120,28 @@ export function SketchToolbar() {
             />
           );
         })}
+        <ToolGroupButton
+          id="sketch-insert"
+          name="insert"
+          items={[
+            {
+              key: "dxf",
+              label: "Insert DXF",
+              icon: <Icons.InsertDxf />,
+              title: "Insert DXF — bring a 2D drawing (DXF file) into this sketch as lines, arcs and circles you can edit",
+              disabled: !hasPlane,
+              onClick: () => useStore.getState().setSketchOptions({ dxfOpen: true }),
+            },
+            {
+              key: "image",
+              label: "Insert image",
+              icon: <Icons.Picture />,
+              title: "Insert image — lay a picture on the sketch to trace over (it isn't part of the shape)",
+              disabled: !hasPlane,
+              onClick: () => pickFile("image/*", (f) => void insertImageFile(f)),
+            },
+          ]}
+        />
         <ToolBtn
           label="Construction"
           icon={<Icons.Construction />}

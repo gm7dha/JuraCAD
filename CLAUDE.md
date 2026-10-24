@@ -36,6 +36,13 @@
   — `linkProblem` puts it on the sketch in featureErrors). Unused references are dropped when a sketch closes
   (`pruneReferences`). Circular sketch patterns round a point add `patternCopy` constraints (+ `equal` with extra [1] for
   sizes); copies nothing else holds are left out of the solve and placed afterwards (`splitDerived` in solver.ts).
+  Text and pictures: `src/sketch/sketchText.ts` — `SketchData.texts` (hangs from an `anchor` point, so it's dimensioned and
+  constrained as a point; letter outlines from `geometry/fonts.ts` are loops in regions.ts and line pieces with ids
+  "<textId>.<k>" in areas.ts) and `.images` (data: URLs to trace over; drawn by SketchLayer, never shapes). Many ops build a
+  sketch from points/curves/constraints only, so `store.updateSketch` runs `keepSketchExtras` (old sketches have neither field).
+  Intersect: a link with `cut` ({} = whole part, `face` = one face) is re-found among where the sketch plane cuts the part
+  (`GeometryEngine.intersect`/`cutRefs`, BRepAlgoAPI_Section with a big square on the plane); `pruneReferences` keeps them.
+  Insert DXF: `src/sketch/dxf.ts` (parse ENTITIES + $INSUNITS; lines, arcs, circles, (LW)polylines with bulges, splines, ellipses, points).
 - Part Studios: `src/model/studios.ts`. The first studio's features are `doc.features` (old files still open);
   more are in `doc.partStudios`. Feature ids are unique across the document. Store helpers `activeStudioId`,
   `activeFeatures`, `studioParts` (cached, selector-safe); feature edits go through `changeStudio`/`inStudio`.

@@ -1,9 +1,13 @@
 /** Actions used by both the sketch toolbar and keyboard shortcuts. */
 import { useStore, type SketchTool } from "../model/store";
-import { applyRelation, deleteItems, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
+import { applyRelation, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
 import { patternCurves, readPatternSettings, readTransformSettings, transformCurves } from "../sketch/tools";
 import { viewportApi } from "../viewport/Viewport";
 import { linkAllEdges } from "../sketch/links";
+import { addImage, changeText, deleteWithExtras, textById } from "../sketch/sketchText";
+import { insertDxf, insertSummary, parseDxf } from "../sketch/dxf";
+import { evaluate } from "../model/expr";
+import type { SketchData } from "../sketch/types";
 
 const sketchData = () => useStore.getState().editing?.draft.sketch?.data ?? null;
 
@@ -84,7 +88,7 @@ export function deleteSketchSelection(): boolean {
   const s = useStore.getState();
   const data = sketchData();
   if (!data || !s.sketch || s.sketch.selection.length === 0) return false;
-  s.updateSketch(deleteItems(data, s.sketch.selection), { record: true, selection: [] });
+  s.updateSketch(deleteWithExtras(data, s.sketch.selection), { record: true, selection: [] });
   s.setSketchMessage(null);
   return true;
 }
@@ -95,8 +99,11 @@ export function toggleSketchConstruction() {
   const data = sketchData();
   if (!data || !s.sketch) return;
   const curves = s.sketch.selection.filter((id) => data.curves.some((c) => c.id === id));
-  if (curves.length) {
-    s.updateSketch(toggleConstruction(data, curves), { record: true });
+  const texts = s.sketch.selection.filter((id) => textById(data, id));
+  if (curves.length || texts.length) {
+    let next: SketchData = curves.length ? toggleConstruction(data, curves) : data;
+    for (const id of texts) next = changeText(next, id, { construction: !textById(data, id)!.construction }).sketch;
+    s.updateSketch(next, { record: true });
   } else {
     s.setSketchConstruction(!s.sketch.construction);
   }
@@ -172,4 +179,98 @@ export function copyFaceEdges(): boolean {
   s.updateSketch(r.sketch, { record: true, selection: r.curveIds });
   s.setSketchMessage(`Used ${r.curveIds.length} edge${r.curveIds.length === 1 ? "" : "s"} of the face. They follow the part if it changes.`, "info");
   return true;
+}
+
+/** A number typed in the sketch panel (or a sum or variable), or null when it isn't one. */
+function typedNumber(text: string | undefined, fallback: number): number | null {
+  if (text === undefined || text.trim() === "") return fallback;
+  const r = evaluate(text);
+  return r.ok && Number.isFinite(r.value) ? r.value : null;
+}
+
+/** Insert DXF: read the file and add its drawing to the open sketch. */
+export async function insertDxfFile(file: File): Promise<void> {
+  const s = useStore.getState();
+  const data = sketchData();
+  if (!data || !s.sketch) return;
+  const scale = typedNumber(s.sketch.dxfScale, 1);
+  if (scale === null || !(scale > 0)) {
+    s.setSketchMessage("The scale must be a number more than 0 (1 = full size).", "error");
+    return;
+  }
+  let drawing;
+  try {
+    drawing = parseDxf(await file.text());
+  } catch (e) {
+    s.setSketchMessage(e instanceof Error ? e.message : "That file couldn't be read.", "error");
+    return;
+  }
+  const now = sketchData();
+  if (!now) return;
+  const r = insertDxf(now, drawing, scale, useStore.getState().sketch?.construction ?? false);
+  if (r.error) {
+    s.setSketchMessage(r.error, "error");
+    return;
+  }
+  useStore.getState().updateSketch(r.sketch, { record: true, selection: r.curveIds });
+  useStore.getState().setSketchMessage(`${insertSummary(drawing, r.count, scale)} It's selected: use Move / copy to place it, or Delete to take it out again.`, "info");
+}
+
+/** Pictures bigger than this aren't laid on a sketch (they'd make the saved file huge). */
+const MAX_PICTURE_BYTES = 4 * 1024 * 1024;
+
+/** Insert image: lay a picture on the sketch plane to trace over. */
+export async function insertImageFile(file: File): Promise<void> {
+  const s = useStore.getState();
+  if (!sketchData() || !s.sketch) return;
+  if (!/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(file.type)) {
+    s.setSketchMessage("Choose a picture (PNG, JPEG, GIF, WebP or SVG).", "error");
+    return;
+  }
+  if (file.size > MAX_PICTURE_BYTES) {
+    s.setSketchMessage("That picture is too big (over 4 MB). Make it smaller and try again — it's only for tracing over.", "error");
+    return;
+  }
+  const src = await new Promise<string | null>((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+  const size = src
+    ? await new Promise<{ width: number; height: number }>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+        img.onerror = () => resolve({ width: 0, height: 0 });
+        img.src = src;
+      })
+    : { width: 0, height: 0 };
+  const data = sketchData();
+  if (!data || !src) {
+    s.setSketchMessage("That picture couldn't be read. Try a PNG or JPEG file.", "error");
+    return;
+  }
+  // Its printed size at 96 dots per inch, kept between 10 and 500 mm.
+  const width = Math.max(10, Math.min(500, Math.round((size.width * 25.4) / 96)));
+  const r = addImage(data, src, size, width, [0, 0], file.name);
+  if (r.error) {
+    s.setSketchMessage(r.error, "error");
+    return;
+  }
+  useStore.getState().updateSketch(r.sketch, { record: true, selection: [r.imageId] });
+  useStore.getState().setSketchTool("select");
+  useStore.getState().setSketchSelection([r.imageId]);
+  useStore.getState().setSketchMessage("Picture added. Drag it to move it; set its width and how see-through it is in the sketch panel. It's only for tracing over — it isn't extruded or saved in exports.", "info");
+}
+
+/** Ask for a file (of the kinds in `accept`) and pass it on. */
+export function pickFile(accept: string, then: (file: File) => void) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = accept;
+  input.onchange = () => {
+    const f = input.files?.[0];
+    if (f) then(f);
+  };
+  input.click();
 }
