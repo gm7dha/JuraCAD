@@ -3081,7 +3081,9 @@ kbd {
 
 .segmented.bom-structure {
   grid-template-columns: repeat(2, 1fr);
-  margin: 0 0 6px;
+  /* In the parts list's column: keep its height (it clips its corners, so it would otherwise shrink away). */
+  flex: none;
+  margin: 0 10px 6px;
 }
 
 .bom-table tr.bom-subassembly td {
