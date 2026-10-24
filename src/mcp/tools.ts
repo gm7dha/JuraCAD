@@ -4,6 +4,7 @@
  * a plain function of a Session and its input, so they're tested without any
  * MCP plumbing (tests/mcpTools.test.ts).
  */
+import { mirrorReferenceText, patternReferenceText } from "../model/patternRefs";
 import { createFeature, emptyDocument, removeFeature, renamePart, replaceFeature, addFeature, newId } from "../model/document";
 import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, OLD_FILE_EXTENSION } from "../model/fileFormat";
 import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
@@ -66,9 +67,36 @@ export const FORMAT_GUIDE = `JuraCAD conventions (the same as Onshape):
 - Picking faces and edges: ${PICK_HELP.faces} ${PICK_HELP.edges} Numbers (F3, E5) change when the part changes, so list them again after changes.
 - A sketch on a face stays where that face was when it was drawn. If an earlier change moves the face (say, a thicker plate), put the sketch back with edit_feature {"feature": "Sketch 2", "on_face": "top"}.
 - Check your work: describe_design (volumes, sizes, validity, problems) and get_views (a picture). If something went wrong, edit_feature or undo.
-- Save with save_design; the owner opens the .juracad file in JuraCAD (https://gm7dha.github.io/JuraCAD/) with Open, where every feature and dimension can be changed.`;
+- Save with save_design; the owner opens the .juracad file in JuraCAD (https://gm7dha.github.io/JuraCAD/) with Open, where every feature and dimension can be changed.
+- Live with Claude: if the user clicks "Connect to Claude" in JuraCAD's top bar (Chrome or Edge), the tools work on the design open in their JuraCAD tab instead — the Part Studio on show — and each change appears there straight away, as one step in its undo list. The user can keep editing and undoing; if they change something at the same moment, your change is refused with nothing lost, so look again (describe_design) and retry. Ask them to finish any dialog they have open if a change is refused as busy. live_status says whether you're connected. new_design and open_design then replace what's open in their tab (they can undo it), so only use them when asked. save_design still saves a .juracad file.`;
 
 /** One line about a feature, for lists. */
+/**
+ * A pattern's direction or axis for a summary: X, Y or Z, or what was clicked in the app (a sketch line, an
+ * edge or face — "edit_feature" with direction/axis replaces it), or that none is chosen yet.
+ */
+function patternWay(f: Feature, doc: JuraCADDocument, second: boolean): string {
+  const p = f.pattern;
+  if (!p) return "?";
+  const key = f.type === "circularPattern" ? "axis" : second ? "direction2" : "direction";
+  const text = patternReferenceText(p, doc.features, second);
+  if (text === null) return `nothing yet (no ${key} chosen — set "${key}")`;
+  const picked = second ? p.line2 ?? p.along2 : p.line ?? p.along;
+  if (picked) return `${text.charAt(0).toLowerCase()}${text.slice(1)} (picked in the app; setting "${key}" replaces it)`;
+  return (second ? p.axis2 ?? (p.axis === "y" ? "x" : "y") : p.axis).toUpperCase();
+}
+
+/** A mirror's plane for a summary: a named plane, or a sketch line or face clicked in the app, or none yet. */
+function mirrorWay(f: Feature, doc: JuraCADDocument): string {
+  const m = f.mirror;
+  if (!m) return "?";
+  const text = mirrorReferenceText(m, doc.features);
+  if (text === null) return 'nothing yet (no plane chosen — set "plane")';
+  if (m.line) return `the plane through ${text.charAt(0).toLowerCase()}${text.slice(1)} (picked in the app; setting "plane" replaces it)`;
+  if (m.planePick) return `${text.charAt(0).toLowerCase()}${text.slice(1)} (picked in the app; setting "plane" replaces it)`;
+  return planeLabel(m.plane);
+}
+
 export function summarize(f: Feature, doc: JuraCADDocument): string {
   const nameOf = (id?: string) => doc.features.find((x) => x.id === id)?.name ?? "(missing)";
   const p = f.params;
@@ -99,11 +127,11 @@ export function summarize(f: Feature, doc: JuraCADDocument): string {
     case "shell":
       return `shell, walls ${mm(p.thickness)}, ${f.picks?.length ? `${f.picks.length} face(s) left open` : "closed inside"}`;
     case "linearPattern":
-      return `linear pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} along ${f.pattern?.axis.toUpperCase()}, ${mm(p.spacing)} apart${Number(p.count2 ?? 1) > 1 ? `, ${p.count2} rows along ${f.pattern?.axis2?.toUpperCase()} ${mm(p.spacing2)} apart` : ""}`;
+      return `linear pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} along ${patternWay(f, doc, false)}, ${mm(p.spacing)} apart${Number(p.count2 ?? 1) > 1 ? `, ${p.count2} rows along ${patternWay(f, doc, true)} ${mm(p.spacing2)} apart` : ""}`;
     case "circularPattern":
-      return `circular pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} round ${f.pattern?.axis.toUpperCase()} over ${p.angle ?? 360}°`;
+      return `circular pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} round ${patternWay(f, doc, false)} over ${p.angle ?? 360}°`;
     case "mirror":
-      return f.mirror?.part ? `mirror of a whole part across ${planeLabel(f.mirror.plane)}${f.mirror.join ? ", joined on" : ""}` : `mirror of ${(f.mirror?.sources ?? []).map(nameOf).join(", ")} across ${f.mirror ? planeLabel(f.mirror.plane) : "?"}`;
+      return f.mirror?.part ? `mirror of a whole part across ${mirrorWay(f, doc)}${f.mirror.join ? ", joined on" : ""}` : `mirror of ${(f.mirror?.sources ?? []).map(nameOf).join(", ")} across ${mirrorWay(f, doc)}`;
     case "boolean":
       return `boolean ${f.booleanDef?.op}`;
     case "box":
@@ -318,9 +346,21 @@ export const TOOLS: ToolDef[] = [
     run: () => say(FORMAT_GUIDE),
   },
   {
+    name: "live_status",
+    title: "Live with JuraCAD?",
+    description:
+      "Is Claude connected live to the user's open JuraCAD tab (they click \"Connect to Claude\" in JuraCAD's top bar)? When connected, every tool works on the design open there and changes appear in it straight away; otherwise the tools work on Claude's own copy and save_design saves a file.",
+    inputSchema: { type: "object", properties: {} },
+    readOnly: true,
+    run: (s, a) => {
+      noExtras(a, [], "live_status");
+      return say(s.live ? s.live.status().text : "Live: this copy of the extension has no live link; the tools work on Claude's own copy of the design.");
+    },
+  },
+  {
     name: "new_design",
     title: "Start a new design",
-    description: "Start a new, empty design (the current one is dropped, so save it first if it matters).",
+    description: "Start a new, empty design (the current one is dropped, so save it first if it matters). When live, this replaces the design open in the user's JuraCAD tab (they can undo it there), so only do it when they ask.",
     destructive: true,
     inputSchema: {
       type: "object",
@@ -464,9 +504,13 @@ export const TOOLS: ToolDef[] = [
   {
     name: "undo",
     title: "Undo",
-    description: "Undo the last change to the design (one step each time).",
+    description: "Undo your last change to the design (one step each time). When live, only your own changes since the user last edited in JuraCAD can be undone here; the user can undo anything in the app.",
     inputSchema: { type: "object", properties: {} },
-    run: (s) => (s.undo() ? say("Undone. The design is back as it was before the last change.", ...partsReport(s)) : say("There's nothing to undo.")),
+    run: (s) => {
+      if (s.undo()) return say("Undone. The design is back as it was before the last change.", ...partsReport(s));
+      if (s.live?.status().connected) return say("There's nothing of yours to undo since the user last changed the design in JuraCAD. (They can undo anything there with Undo, Ctrl+Z / ⌘Z.)");
+      return say("There's nothing to undo.");
+    },
   },
   {
     name: "set_variables",
@@ -521,18 +565,21 @@ export const TOOLS: ToolDef[] = [
   {
     name: "describe_design",
     title: "Describe the design",
-    description: "The design as it is now: every feature (with ids and any problems in plain English), the variables, and each part's volume, size, position, face and edge counts, and whether it's a sound, closed solid.",
+    description: "The design as it is now (when live, the one open in the user's JuraCAD tab): every feature (with ids and any problems in plain English), the variables, and each part's volume, size, position, face and edge counts, and whether it's a sound, closed solid.",
     inputSchema: { type: "object", properties: {} },
     readOnly: true,
     run: (s) => {
       const b = s.build();
       const doc = s.doc;
       const checks = b.parts.length ? s.withEngine((e) => e.check("coarse")) : { parts: [], overlaps: [] };
+      const live = s.live?.status();
       const lines = [
-        `Design "${doc.name}"${s.file ? `, file ${s.file}` : ", not saved yet"}${s.unsaved && s.file ? " (unsaved changes)" : ""}.`,
+        live?.connected
+          ? `Design "${doc.name}", open live in the user's JuraCAD tab (the Part Studio on show there).`
+          : `Design "${doc.name}"${s.file ? `, file ${s.file}` : ", not saved yet"}${s.unsaved && s.file ? " (unsaved changes)" : ""}.`,
         doc.variables?.length ? `Variables: ${doc.variables.map((v) => `${v.name} = ${v.value}`).join(", ")}.` : null,
         doc.features.length ? `Features, in build order:\n${doc.features.map((f) => featureLine(f, doc, b.errors)).join("\n")}` : "No features yet.",
-        doc.partStudios?.length ? `(This file also has ${doc.partStudios.length} more Part Studio(s), which these tools leave as they are.)` : null,
+        (s.outer ? s.outer.doc.partStudios?.length : doc.partStudios?.length) ? `(The design also has ${s.outer ? `${s.outer.doc.partStudios!.length + 1} Part Studios in all; these tools work on the one on show and leave the others` : `${doc.partStudios!.length} more Part Studio(s), which these tools leave`} as they are.)` : null,
         b.parts.length ? "Parts:" : "No parts yet.",
         ...b.parts.map((p) => {
           const c = checks.parts.find((x) => x.partId === p.id);
@@ -638,7 +685,8 @@ export const TOOLS: ToolDef[] = [
         throw new InputError(`There's already a file called "${path.split(/[\\/]/).pop()}" in ${folder.root}. Choose another filename, or pass "overwrite": true to replace it.`);
       }
       const b = s.build();
-      folder.write(path, serializeDocument(s.doc));
+      // When live, the whole design open in JuraCAD (every Part Studio), not just the one worked on.
+      folder.write(path, serializeDocument(s.wholeDoc()));
       s.file = path;
       s.saved = s.doc;
       const errs = Object.keys(b.errors).length;
@@ -648,7 +696,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "open_design",
     title: "Open a design",
-    description: "Open a .juracad (or older .partsmith) design from the JuraCAD folder, to look at or change it. The current design is replaced (save it first if it matters).",
+    description: "Open a .juracad (or older .partsmith) design from the JuraCAD folder, to look at or change it. The current design is replaced (save it first if it matters). When live, it opens in the user's JuraCAD tab, replacing what's there (they can undo it).",
     destructive: true,
     inputSchema: { type: "object", properties: { filename: { type: "string" } }, required: ["filename"] },
     run: (s, a) => {
@@ -709,13 +757,17 @@ function needFolder(s: Session) {
 export async function callTool(s: Session, name: string, args: unknown): Promise<ToolResult> {
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) return { content: [{ type: "text", text: `There's no tool called "${name}". The tools are: ${TOOLS.map((t) => t.name).join(", ")}.` }], isError: true };
-  try {
-    const a = args === undefined || args === null ? {} : object(args, "The input");
-    return await tool.run(s, a);
-  } catch (e) {
-    if (e instanceof InputError) return { content: [{ type: "text", text: e.message }], isError: true };
-    const msg = e instanceof Error ? e.message : String(e);
-    return { content: [{ type: "text", text: `Something went wrong inside JuraCAD (${msg}). The design wasn't changed by this. Try describe_design, or a different approach.` }], isError: true };
-  }
+  const run = async (): Promise<ToolResult> => {
+    try {
+      const a = args === undefined || args === null ? {} : object(args, "The input");
+      return await tool.run(s, a);
+    } catch (e) {
+      if (e instanceof InputError) return { content: [{ type: "text", text: e.message }], isError: true };
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text", text: `Something went wrong inside JuraCAD (${msg}). The design wasn't changed by this. Try describe_design, or a different approach.` }], isError: true };
+    }
+  };
+  // Live: on the design open in the user's JuraCAD tab, with any change sent back to it.
+  return s.live ? s.live.call(s, name, run) : run();
 }
 

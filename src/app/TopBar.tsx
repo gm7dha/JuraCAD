@@ -11,6 +11,7 @@ import { setThemeChoice, themeChoice, type ThemeChoice } from "./theme";
 import { SHORT_VERSION } from "../version";
 import { versionIsNew } from "./WhatsNewDialog";
 import { detectPlatform, shortcut } from "./platform";
+import { LiveButton } from "./LiveButton";
 
 export function TopBar() {
   const doc = useDocument();
@@ -77,6 +78,7 @@ export function TopBar() {
         {fresh && <span className="badge-dot" aria-label="(new)" />}
       </button>
       <div className="topbar-spacer" />
+      <LiveButton />
       {!installed && (
         <button className="text-button" onClick={() => (canInstall ? void installApp() : setInstallHelp(true))} title="Install JuraCAD as an app on this computer — it then opens in its own window and works offline">
           <Icons.Export size={18} style={{ transform: "rotate(180deg)" }} /> <span className="button-label">Install</span>

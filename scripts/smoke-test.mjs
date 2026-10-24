@@ -8,8 +8,12 @@
  * SMOKE_SCREENSHOTS=1 it also attaches small screenshots (as base64 notices)
  * so they can be reviewed without downloading artifacts.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { createServer as createHttpsServer } from "node:https";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium } from "playwright";
 import { preview } from "vite";
 
@@ -72,6 +76,12 @@ async function shot(name) {
     writeFileSync(`${base}.b64`, small);
   }
 }
+
+/**
+ * Live with Claude looks for Claude chats on its ports; the browser logs each one nothing answers on (even a try
+ * still on its way when the test disconnects). Expected, not a fault: only refused connections to those ports.
+ */
+const liveProbeRefused = (e) => /^WebSocket connection to 'ws:\/\/127\.0\.0\.1:476(1[5-9]|2[0-4])\/juracad-live' failed: .*net::ERR_CONNECTION_REFUSED/.test(e);
 
 const statusText = () => page.locator(".status-strip").innerText();
 
@@ -305,6 +315,203 @@ try {
     await page.keyboard.press("Escape");
   }
 
+  step = "Connect to Claude with no extension running";
+  let liveReport = "not tried";
+  {
+    // Nothing is listening yet: a friendly "not connected" with what to do (and the file route).
+    await page.getByRole("button", { name: "Connect to Claude" }).click();
+    const dialog = page.getByRole("dialog", { name: "Claude isn't connected" });
+    await dialog.waitFor({ timeout: 30_000 });
+    const help = await dialog.innerText();
+    if (!/Claude desktop app is open/.test(help) || !/\.juracad file/.test(help)) throw new Error(`The "not connected" message doesn't say what to do: ${help}`);
+    await shot("live-not-connected");
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    liveReport = "Connect to Claude with no extension said what to do";
+  }
+
+  // With the extension built (CI builds it before this test): start it the way Claude does, connect, and let
+  // "Claude" (this test, talking MCP to it) add a feature, which must appear in the open design.
+  const extensionServer = "build/claude-extension/server/index.mjs";
+  if (existsSync(extensionServer)) {
+    step = "Live with Claude: starting two extensions (two Claude chats)";
+    const designs = mkdtempSync(join(tmpdir(), "juracad-smoke-live-"));
+    /** One extension process, as Claude starts one for each chat, and a little MCP client to drive it. */
+    const startExtension = (name) => {
+      // JURACAD_LIVE_DEV=1: this test serves JuraCAD from localhost, which the shipped extension otherwise turns away.
+      const ext = spawn(process.execPath, [extensionServer, designs], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, JURACAD_LIVE_DEV: "1" } });
+      let extLog = "";
+      ext.stderr.on("data", (d) => (extLog += d));
+      const replies = new Map();
+      let pending = "";
+      ext.stdout.on("data", (d) => {
+        pending += d;
+        let nl;
+        while ((nl = pending.indexOf("\n")) >= 0) {
+          const line = pending.slice(0, nl).trim();
+          pending = pending.slice(nl + 1);
+          if (!line) continue;
+          const msg = JSON.parse(line);
+          replies.get(msg.id)?.(msg);
+        }
+      });
+      let nextId = 1;
+      const mcp = (method, params) =>
+        new Promise((resolve, reject) => {
+          const id = nextId++;
+          const timer = setTimeout(() => reject(new Error(`${name}'s extension didn't answer ${method}\n${extLog.slice(-1500)}`)), 120_000);
+          replies.set(id, (m) => {
+            clearTimeout(timer);
+            resolve(m);
+          });
+          ext.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+        });
+      const tool = async (toolName, args = {}) => {
+        const r = await mcp("tools/call", { name: toolName, arguments: args });
+        const text = (r.result?.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+        if (r.error || r.result?.isError) throw new Error(`${name}: ${toolName} failed: ${JSON.stringify(r.error) ?? text}`);
+        return text;
+      };
+      const ready = async () => {
+        await mcp("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } });
+        ext.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+        for (let i = 0; i < 100 && !/Live link ready/.test(extLog); i++) await page.waitForTimeout(100);
+        if (!/Live link ready/.test(extLog)) throw new Error(`${name}'s live link didn't start:\n${extLog.slice(-1500)}`);
+      };
+      /** Wait until live_status says `want` (the tab links new chats every few seconds). */
+      const waitStatus = async (want, seconds = 15) => {
+        let status = "";
+        for (let i = 0; i < seconds * 5; i++) {
+          status = await tool("live_status");
+          if (want.test(status)) return status;
+          await page.waitForTimeout(200);
+        }
+        throw new Error(`${name}: live_status never matched ${want}: ${status}`);
+      };
+      return { tool, ready, waitStatus, log: () => extLog, kill: () => ext.kill() };
+    };
+    const chats = [];
+    try {
+      const chat1 = startExtension("chat 1");
+      chats.push(chat1);
+      await chat1.ready();
+      const chat2 = startExtension("chat 2");
+      chats.push(chat2);
+      await chat2.ready();
+      const tool = chat1.tool;
+
+      step = "Live with Claude: connecting";
+      await page.getByRole("button", { name: "Connect to Claude" }).click();
+      await page.locator(".live-badge").waitFor({ timeout: 30_000 });
+      await chat1.waitStatus(/Live: connected/);
+      await chat2.waitStatus(/Live: connected/);
+      await page.locator(".live-badge").click();
+      const details = page.getByRole("dialog", { name: "Live with Claude" });
+      await details.waitFor();
+      if (!/2 Claude chats linked/.test(await details.innerText())) throw new Error(`the details don't say 2 chats are linked: ${await details.innerText()}`);
+      await page.keyboard.press("Escape");
+      await details.waitFor({ state: "detached" });
+      const before = await page.locator(".feature-row:not(.datum)").count();
+
+      step = "Live with Claude: Claude (in the second chat) adds a feature";
+      const added = await chat2.tool("add_feature", { type: "box", name: "Box from Claude", width: 6, depth: 6, height: 6, x: -20, y: -20, z: 0, operation: "new" });
+      if (!/Live: this now shows/.test(added)) throw new Error(`add_feature didn't reach the app: ${added}`);
+      await page.locator(".feature-row", { hasText: "Box from Claude" }).waitFor({ timeout: 30_000 });
+      await page.locator(".toast", { hasText: "Claude: added Box from Claude" }).waitFor({ timeout: 10_000 });
+      await page.waitForTimeout(800);
+      await shot("live-connected");
+      // The first chat sees it too.
+      let seen = "";
+      for (let i = 0; i < 50 && !/Box from Claude/.test(seen); i++) {
+        seen = await tool("describe_design");
+        if (!/Box from Claude/.test(seen)) await page.waitForTimeout(100);
+      }
+      if (!/Box from Claude/.test(seen)) throw new Error("the first chat doesn't see the second chat's box");
+
+      step = "Live with Claude: the user undoes it in the app";
+      await page.getByRole("button", { name: "Undo", exact: true }).click();
+      await page.locator(".feature-row", { hasText: "Box from Claude" }).waitFor({ state: "detached", timeout: 10_000 });
+      const after = await page.locator(".feature-row:not(.datum)").count();
+      if (after !== before) throw new Error(`after undo the feature list has ${after} features, not ${before}`);
+      for (const chat of [chat1, chat2]) {
+        let described = "";
+        for (let i = 0; i < 50; i++) {
+          described = await chat.tool("describe_design");
+          if (!/Box from Claude/.test(described)) break;
+          await page.waitForTimeout(100);
+        }
+        if (/Box from Claude/.test(described)) throw new Error("Claude still sees the box after the user undid it");
+      }
+
+      step = "Live with Claude: a chat started after connecting is linked by itself";
+      const chat3 = startExtension("chat 3");
+      chats.push(chat3);
+      await chat3.ready();
+      await chat3.waitStatus(/Live: connected/);
+      // ...and when it stops, the others carry on.
+      chat3.kill();
+      await page.waitForTimeout(1500);
+      await page.locator(".live-badge").waitFor();
+      await chat1.waitStatus(/Live: connected/);
+
+      step = "Live with Claude: disconnecting";
+      await page.locator(".live-badge").click();
+      await page.getByRole("button", { name: "Disconnect" }).click();
+      await page.getByRole("button", { name: "Connect to Claude" }).waitFor();
+      await chat1.waitStatus(/Live: not connected/, 10);
+      await chat2.waitStatus(/Live: not connected/, 10);
+      liveReport += `; live with 2 Claude chats: the second added a box to the open design (${before} → ${before + 1} features) and the first saw it, the user undid it and both saw that; a third chat started later was linked by itself, and dropped when it stopped`;
+
+      // The real site is https and the link is ws:// — check Chromium allows that to 127.0.0.1 (it isn't
+      // "mixed content", because 127.0.0.1 is this computer). A blank https page with a throwaway certificate.
+      step = "Live with Claude: ws:// to 127.0.0.1 from an https page";
+      const livePort = Number(/Live link ready on 127\.0\.0\.1:(\d+)/.exec(chat1.log())?.[1]);
+      const certDir = mkdtempSync(join(tmpdir(), "juracad-smoke-cert-"));
+      try {
+        execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(certDir, "key.pem"), "-out", join(certDir, "cert.pem"), "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
+        const httpsServer = createHttpsServer({ key: await readFile(join(certDir, "key.pem")), cert: await readFile(join(certDir, "cert.pem")) }, (_req, res) => {
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end("<!doctype html><title>https page</title><p>https</p>");
+        });
+        await new Promise((resolve) => httpsServer.listen(4443, "127.0.0.1", resolve));
+        const context = await browser.newContext({ ignoreHTTPSErrors: true });
+        try {
+          const securePage = await context.newPage();
+          await securePage.goto("https://localhost:4443/");
+          const result = await securePage.evaluate(
+            (port) =>
+              new Promise((resolve) => {
+                let ws;
+                try {
+                  ws = new WebSocket(`ws://127.0.0.1:${port}/juracad-live`, "juracad-live.1");
+                } catch (e) {
+                  resolve(`refused: ${e.message}`);
+                  return;
+                }
+                ws.onopen = () => {
+                  resolve(`open (secure context: ${window.isSecureContext})`);
+                  ws.close();
+                };
+                ws.onerror = () => resolve("error");
+                setTimeout(() => resolve("timed out"), 15_000);
+              }),
+            livePort,
+          );
+          if (!result.startsWith("open")) throw new Error(`an https page couldn't open ws://127.0.0.1:${livePort}: ${result}`);
+          liveReport += `; an https page opened ws://127.0.0.1 (${result})`;
+        } finally {
+          await context.close();
+          httpsServer.close();
+        }
+      } finally {
+        rmSync(certDir, { recursive: true, force: true });
+      }
+    } finally {
+      chats.forEach((c) => c.kill());
+      rmSync(designs, { recursive: true, force: true });
+    }
+  }
+
   step = "starting a sketch and picking the Top plane";
   await page.getByRole("button", { name: "Sketch", exact: true }).click();
   await page.waitForSelector(".sketch-panel");
@@ -467,6 +674,43 @@ try {
   await page.keyboard.press("f");
   await page.waitForTimeout(600);
   await shot("patterned");
+
+  step = "choosing a mirror plane by clicking a face";
+  await tool("Mirror");
+  const mirrorBox = '.feature-dialog fieldset[aria-label="Mirror plane"]';
+  await page.waitForSelector(`${mirrorBox} >> text=Click a flat face, a plane or a sketch line in the view`, { timeout: 5_000 });
+  if (!(await page.getByRole("button", { name: "Accept" }).isDisabled())) throw new Error("a mirror with no plane chosen could be accepted");
+  {
+    // A spot on a flat face that isn't under the dialog: look across the view, right of the dialog.
+    const dialog = await page.locator(".feature-dialog").boundingBox();
+    const canvasBox = await page.locator(".viewport-canvas").boundingBox();
+    const free = await page.evaluate(({ left, w, h }) => {
+      const v = window.juracadViewport.current;
+      for (let y = h * 0.2; y < h * 0.9; y += 12) for (let x = left; x < w * 0.9; x += 12) if (v.pickKindAt(x, y) === "face:PLANE") return { x, y };
+      return null;
+    }, { left: dialog && canvasBox ? dialog.x + dialog.width - canvasBox.x + 20 : 300, w: canvasBox?.width ?? 800, h: canvasBox?.height ?? 600 });
+    if (!free) throw new Error("couldn't find a flat face to click for the mirror plane");
+    await page.locator(".viewport-canvas").click({ position: free });
+    await page.waitForSelector(`${mirrorBox} .reference-chip >> text=Flat face of`, { timeout: 5_000 }).catch(async () => {
+      const said = (await page.locator(".toast").allInnerTexts()).join(" / ");
+      const box = await page.locator(mirrorBox).innerText();
+      throw new Error(`clicking a flat face at (${Math.round(free.x)}, ${Math.round(free.y)}) didn't set the mirror plane. Box: ${box}. Toast: ${said || "none"}`);
+    });
+    await shot("mirrorplane");
+    await page.locator(mirrorBox).getByRole("radio", { name: "Top" }).click();
+    await page.waitForSelector(`${mirrorBox} .reference-chip >> text=Top plane`, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Clear the mirror plane" }).click();
+    await page.waitForSelector(`${mirrorBox} >> text=Click a flat face, a plane or a sketch line in the view`, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Cancel" }).click();
+  }
+
+  step = "choosing a circular pattern's axis";
+  await tool("Circular");
+  const axisBox = '.feature-dialog fieldset[aria-label="Axis"]';
+  await page.waitForSelector(`${axisBox} >> text=Click a round face, an edge or a sketch line in the view`, { timeout: 5_000 });
+  await page.locator(axisBox).getByRole("radio", { name: "Z" }).click();
+  await page.waitForSelector(`${axisBox} .reference-chip >> text=Z axis`, { timeout: 5_000 });
+  await page.getByRole("button", { name: "Cancel" }).click();
 
   step = "opening the hole tool";
   await tool("Hole");
@@ -893,6 +1137,40 @@ try {
     await page.waitForFunction((n) => document.querySelectorAll(".drawing-dim-handle").length === n, dimCount, { timeout: 5_000 });
     await page.keyboard.press("Escape");
   }
+  step = "setting the 3D view's scale on the sheet";
+  {
+    const iso = page.locator(".drawing-view-handle").filter({ has: page.locator("title", { hasText: "3D (isometric)" }) });
+    await iso.click({ force: true });
+    await page.waitForSelector("#selected-view-scale", { timeout: 5_000 });
+    await page.waitForSelector('[data-testid="view-resize"]', { timeout: 5_000 });
+    // A scale other than the sheet's, so it's noted under the view.
+    const sheetScale = (await page.locator('#selected-view-scale option[value=""]').textContent()) ?? "";
+    const [value, label] = sheetScale.includes("1:5") ? ["0.5", "1:2"] : ["0.2", "1:5"];
+    await page.locator("#selected-view-scale").selectOption(value);
+    await page.waitForFunction((t) => [...document.querySelectorAll(".drawing-text")].some((x) => x.textContent === t), `SCALE ${label}`, { timeout: 10_000 });
+    await shot("isoscale");
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".drawing-text")].some((x) => (x.textContent ?? "").startsWith("SCALE ")), null, { timeout: 10_000 });
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("#selected-view-scale"), null, { timeout: 5_000 });
+  }
+  step = "flipping a dimension's arrows";
+  if (dimCount >= 1) {
+    const lines = () => page.locator('[data-testid="drawing-sheet"] polyline').count();
+    const before = await lines();
+    await page.locator(".drawing-dim-handle").first().click({ force: true });
+    await page.getByRole("button", { name: "Flip arrows", exact: true }).click();
+    // Set outside, a long dimension gets a short line past each end (or loses them, flipped back in).
+    await page.waitForFunction((n) => Math.abs(document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length - n) === 2, before, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length === n, before, { timeout: 5_000 });
+    // Right-clicking its number does the same.
+    await page.locator(".drawing-dim-handle").first().click({ button: "right", force: true });
+    await page.waitForFunction((n) => Math.abs(document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length - n) === 2, before, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length === n, before, { timeout: 5_000 });
+    await page.keyboard.press("Escape");
+  }
   step = "baseline, chain and ordinate tools";
   for (const name of ["Baseline", "Chain", "Ordinate"]) {
     await tool(name);
@@ -1224,6 +1502,69 @@ try {
     await page.waitForSelector(".sketch-panel", { state: "detached" });
   }
 
+  step = "sketching on a part's face: its edges show, a line snaps to a corner, Use all";
+  {
+    const face = await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      const doc = st.history.present;
+      const studio = st.activeTab && (doc.partStudios ?? []).some((x) => x.id === st.activeTab) ? st.activeTab : "main";
+      for (const p of st.parts) {
+        if ((p.studioId ?? "main") !== studio || p.surface || p.configuration) continue;
+        const ref = p.faceRefs.find((r) => r.surface === "PLANE" && r.normal[2] > 0.999);
+        if (ref) return { partId: p.id, ref };
+      }
+      return null;
+    });
+    if (!face) throw new Error("no flat top face to sketch on");
+    // As clicking the face would: a sketch on it that remembers the face.
+    await page.evaluate((f) => window.juracadStore.getState().startSketch({ kind: "face", origin: [0, 0, f.ref.center[2]], u: [1, 0, 0], v: [0, 1, 0], label: "Face of a part", face: f }), face);
+    await page.waitForSelector(".sketch-panel");
+    await page.waitForFunction(() => {
+      const st = window.juracadStore.getState();
+      return (st.sketchLinks[st.editing?.draft.id ?? ""]?.edges.length ?? 0) >= 3;
+    }, null, { timeout: 30_000 });
+    await page.waitForTimeout(600);
+    const box = await page.locator(".viewport").boundingBox();
+    const corner = await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      const e = st.sketchLinks[st.editing.draft.id].edges.find((k) => k.kind === "line");
+      return { at: e.a, screen: window.juracadViewport.current.projectSketchPoint(e.a[0], e.a[1]) };
+    });
+    // A construction line, so the outline used below stays one closed shape.
+    await page.keyboard.press("q");
+    await page.keyboard.press("l");
+    await page.mouse.move(box.x + corner.screen.x + 3, box.y + corner.screen.y + 2, { steps: 3 });
+    await page.mouse.click(box.x + corner.screen.x + 3, box.y + corner.screen.y + 2);
+    await page.mouse.click(box.x + corner.screen.x + 60, box.y + corner.screen.y - 45);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("q");
+    const snapped = await page.evaluate((want) => {
+      const d = window.juracadStore.getState().editing.draft.sketch.data;
+      const line = d.curves.find((c) => c.type === "line" && !c.link);
+      const ref = d.curves.find((c) => c.link && c.construction);
+      const start = line && d.points.find((p) => p.id === line.p1);
+      return { hasRef: !!ref, at: start ? [start.x, start.y] : null, want };
+    }, corner.at);
+    if (!snapped.hasRef || !snapped.at || Math.hypot(snapped.at[0] - snapped.want[0], snapped.at[1] - snapped.want[1]) > 1e-6)
+      throw new Error(`the line didn't snap to the face's corner: ${JSON.stringify(snapped)}`);
+    // Hovering a face edge marks its middle.
+    const quarter = await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      const e = st.sketchLinks[st.editing.draft.id].edges.filter((k) => k.kind === "line")[1];
+      return window.juracadViewport.current.projectSketchPoint(e.a[0] * 0.75 + e.b[0] * 0.25, e.a[1] * 0.75 + e.b[1] * 0.25);
+    });
+    await page.mouse.move(box.x + quarter.x, box.y + quarter.y, { steps: 3 });
+    await shot("facehint");
+    await page.getByRole("button", { name: "Use all the face's edges" }).click();
+    await page.waitForFunction(() => /\d+ closed shapes? ready to extrude/.test(document.querySelector(".sketch-status")?.textContent ?? ""), null, { timeout: 10_000 });
+    await shot("facesketch");
+    await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
+    if (await page.locator(".sketch-panel").count()) await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
+    await page.waitForSelector(".sketch-panel", { state: "detached" });
+  }
+
   step = "making a sheet metal part and its flat pattern";
   {
     await page.getByRole("button", { name: "Sketch", exact: true }).click();
@@ -1309,17 +1650,17 @@ try {
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
-  const real = consoleErrors.filter((e) => !/favicon/i.test(e));
+  const real = consoleErrors.filter((e) => !/favicon/i.test(e) && !liveProbeRefused(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; made a sheet metal part and saved its flat pattern as DXF.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
-  annotate("error", `Smoke test failed while ${step}`, `${e instanceof Error ? e.message : e}\nConsole: ${consoleErrors.join(" | ") || "none"}`);
+  annotate("error", `Smoke test failed while ${step}`, `${e instanceof Error ? e.message : e}\nConsole: ${consoleErrors.filter((x) => !liveProbeRefused(x)).join(" | ") || "none"}`);
   process.exitCode = 1;
 } finally {
   await browser.close();

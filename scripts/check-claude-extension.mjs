@@ -4,7 +4,9 @@
  * Unpacks the .mcpb (a zip), checks its manifest, starts its server with Node
  * and talks MCP to it over stdin/stdout: lists the tools, builds the example
  * bracket (plate, four M4 holes, rounded corners), checks the volume, looks at
- * it and saves a .juracad file — then checks that file.
+ * it and saves a .juracad file — then checks that file. Then it connects to
+ * the live link (Live with Claude) as the JuraCAD tab would, builds over it,
+ * and checks the extension stops when Claude closes it.
  * Fails (exit code 1, with GitHub annotations in CI) if anything is wrong.
  */
 import { spawn } from "node:child_process";
@@ -153,7 +155,57 @@ check(existsSync(saved), `No design was saved at ${saved}.`);
 const file = JSON.parse(readFileSync(saved, "utf8"));
 check(file.format === "partsmith" && file.features.length === 5, "The saved design isn't a JuraCAD file with the 5 features.");
 
+// Live with Claude: the extension listens on 127.0.0.1 for the JuraCAD tab. Talk to it the way the app does
+// (src/live/protocol.ts), from the JuraCAD site's origin, using Node's own WebSocket.
+const LIVE_PORTS = Array.from({ length: 10 }, (_, i) => 47615 + i);
+const openSocket = (port, origin) =>
+  new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/juracad-live`, { protocols: ["juracad-live.1"], headers: { origin } });
+    ws.onopen = () => resolve(ws);
+    ws.onerror = () => resolve(null);
+  });
+check(!(await openSocket(LIVE_PORTS[0], "https://evil.example")), "A page from another website could open the live link.");
+// Pages served on this computer (a dev server, another program) are kept out too, unless JURACAD_LIVE_DEV=1.
+for (const origin of ["http://localhost:5173", "http://127.0.0.1:1234", "https://localhost"]) {
+  check(!(await openSocket(LIVE_PORTS[0], origin)), `A page from ${origin} could open the live link.`);
+}
+let ws = null;
+for (const port of LIVE_PORTS) if ((ws = await openSocket(port, "https://gm7dha.github.io"))) break;
+check(ws, `The live link isn't listening on 127.0.0.1 (ports ${LIVE_PORTS.join(", ")}).\n${stderr.slice(-2000)}`);
+const fromExtension = [];
+let answer = null;
+const nextMessage = () => new Promise((resolve) => (answer = resolve));
+ws.onmessage = (e) => {
+  const msg = JSON.parse(String(e.data));
+  fromExtension.push(msg);
+  if (msg.type === "change") ws.send(JSON.stringify({ type: "applied", id: msg.id, version: msg.base + 1 }));
+  answer?.(msg);
+};
+const liveFile = (name, features = []) => JSON.stringify({ format: "partsmith", version: 1, name, features });
+const welcome = nextMessage();
+ws.send(JSON.stringify({ type: "hello", protocol: 1, app: pkg.version, version: 1, studio: "main", file: liveFile("Live check") }));
+check((await welcome).type === "welcome", `The live link didn't welcome JuraCAD: ${JSON.stringify(fromExtension)}`);
+check(/Live: connected/.test(text(await call("live_status", {}))), "live_status doesn't say it's connected.");
+const live = text(await call("add_feature", { type: "box", width: 20, depth: 10, height: 5 }));
+check(/Live: this now shows in the user's open JuraCAD tab/.test(live), `A live change didn't say it was shown:\n${live}`);
+let changes = fromExtension.filter((m) => m.type === "change");
+check(changes.length === 1 && changes[0].base === 1 && /^Claude: added /.test(changes[0].label), `Expected one change based on version 1: ${JSON.stringify(changes).slice(0, 500)}`);
+const liveDoc = JSON.parse(changes[0].file);
+check(liveDoc.name === "Live check" && liveDoc.features.length === 1 && liveDoc.features[0].type === "box", "The live change isn't the open design plus a box.");
+// The user changes the design in the app (version 3): Claude's next change is made on top of it.
+ws.send(JSON.stringify({ type: "doc", version: 3, studio: "main", file: liveFile("Renamed in the app", liveDoc.features) }));
+await call("add_feature", { type: "cylinder", diameter: 4, height: 10 });
+changes = fromExtension.filter((m) => m.type === "change");
+const second = JSON.parse(changes[1]?.file ?? "{}");
+check(changes.length === 2 && changes[1].base === 3 && second.name === "Renamed in the app" && second.features?.length === 2, "Claude's second live change wasn't made on the user's latest design.");
+ws.close();
+
 clearTimeout(timer);
-child.kill();
+// When Claude closes the extension (its input), it must stop, freeing the live link's port.
+const stopped = new Promise((resolve) => child.once("exit", () => resolve(true)));
+child.stdin.end();
+const exited = await Promise.race([stopped, new Promise((resolve) => setTimeout(() => resolve(false), 5000))]);
+if (!exited) child.kill();
+check(exited, "The extension kept running after Claude closed it (it would keep the live link's port busy).");
 rmSync(work, { recursive: true, force: true });
-console.log(`The Claude extension works: ${tools.length} tools; built the bracket (${volume} mm³), drew it and saved ${file.features.length} features.`);
+console.log(`The Claude extension works: ${tools.length} tools; built the bracket (${volume} mm³), drew it and saved ${file.features.length} features; built live over the local link (${changes.length} changes, each applied once).`);

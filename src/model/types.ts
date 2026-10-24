@@ -7,6 +7,7 @@ import type { HoleFit, HoleKind } from "./holes";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
+import type { SketchLineRef } from "./patternRefs";
 
 /** The kinds of feature JuraCAD can build. */
 export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog";
@@ -237,6 +238,12 @@ export interface Feature {
     along?: TopoPick;
     /** Linear grid: the second direction picked in the 3D view instead of `axis2`. */
     along2?: TopoPick;
+    /** A sketch line instead of `axis`/`along`: a linear pattern goes along it (as drawn), a circular one round it. */
+    line?: SketchLineRef;
+    /** Linear grid: the rows go along this sketch line. */
+    line2?: SketchLineRef;
+    /** Nothing chosen yet for the direction or axis (a new circular pattern, or cleared): it asks for one. */
+    unset?: boolean;
     /** Copies left out, by number (the original is 1; in a grid, row by row). */
     skip?: number[];
     /** While editing a grid: a click in the 3D view sets the rows' direction (`along2`) instead of `along`. Not saved. */
@@ -247,7 +254,19 @@ export interface Feature {
    * with `part`, a whole part mirrored: as a new part, or joined onto the
    * original (`join`) — model half, mirror the rest.
    */
-  mirror?: { sources: string[]; plane: SketchPlane; part?: string; join?: boolean };
+  mirror?: {
+    sources: string[];
+    /** The plane (for a clicked face or line: where it was when picked — the engine finds it again). */
+    plane: SketchPlane;
+    /** A flat face of a part clicked as the plane: followed as the part changes. */
+    planePick?: TopoPick;
+    /** A sketch line: mirrors across the plane through it, square to its sketch. */
+    line?: SketchLineRef;
+    /** No plane chosen yet (a new mirror, or cleared): it asks for one. */
+    unset?: boolean;
+    part?: string;
+    join?: boolean;
+  };
   /** Import: the file, stored in the design. */
   import?: ImportedFile;
   /** Fillet and chamfer: the edges (or faces, meaning all their edges) to round or bevel. Shell: the faces to remove. */
@@ -367,6 +386,8 @@ export interface Drawing {
   places?: number;
   /** Dimensions also give the size in the other unit, in brackets: "40 [1.575]". */
   dualUnits?: boolean;
+  /** Where dimensions' arrows go unless a dimension says otherwise (see Dimension.arrows); missing = automatic (inside when there's room). */
+  dimArrows?: "inside" | "outside";
   /**
    * How Fit to sheet makes room for the dimensions (decided when Auto dimension
    * runs or Fit to sheet is chosen): extra room beside the 3D column (paper mm)
@@ -507,6 +528,12 @@ export interface Dimension {
   limitsFit?: { class: string; limits?: true };
   /** Chamfers: the distance is measured along the edge across ("h") or up and down ("v"); missing = whichever gives the smaller angle. */
   along?: "h" | "v";
+  /**
+   * Lengths, diameters and radii: where the arrows go — "inside" (between the
+   * extension lines, or inside the circle, pointing out) or "outside" (beyond
+   * them pointing in, on a short leader). Missing = the drawing's setting.
+   */
+  arrows?: "inside" | "outside";
 }
 
 /** A note on a drawing sheet: its top-left corner (sheet mm, y up) and its lines of text. */

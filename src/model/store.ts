@@ -1,4 +1,5 @@
 import { deleteItems } from "../sketch/ops";
+import { followLinks, pruneReferences, type SketchLinkInfo } from "../sketch/links";
 import { create } from "zustand";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -31,6 +32,7 @@ import { framesOf, planeAsSketchPlane, refreshDocumentPlanes } from "../sketch/p
 import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
+import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
 import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
@@ -54,6 +56,15 @@ import { importName } from "./importFile";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
 
+/** Two sketch planes in the same place (to within a micron), whatever face they remember. */
+function samePlace(a: SketchPlane, b: SketchPlane): boolean {
+  if (a.kind !== "face" || b.kind !== "face") return a.kind === b.kind && JSON.stringify(a) === JSON.stringify(b);
+  const near = (p: number[], q: number[]) => p.every((v, i) => Math.abs(v - q[i]) < 1e-3);
+  return near(a.origin, b.origin) && near(a.u, b.u) && near(a.v, b.v);
+}
+
+/** No sketch links (one shared object, so selectors stay stable). */
+const NO_LINKS: Record<string, SketchLinkInfo> = {};
 /** No drawing dimensions selected (one shared array, so selectors stay stable). */
 const NO_DIMS: string[] = [];
 export interface SelectionItem {
@@ -148,6 +159,8 @@ export interface SketchSession {
   patternAngle: string;
   /** Circular pattern: the point to go round. */
   patternCentre: string;
+  /** Linear pattern: the next click on a line sets the direction. */
+  patternDirectionPick?: boolean;
   /** Move / copy tool: how far across and up (as typed), the turn (degrees, about the selection's middle), and whether to copy. */
   moveDx: string;
   moveDy: string;
@@ -206,6 +219,8 @@ export interface AppState {
   rebuildBusy: boolean;
   parts: PartMesh[];
   featureErrors: Record<string, string>;
+  /** Sketches on part faces or using part edges (by feature id), as found on the latest rebuild. */
+  sketchLinks: Record<string, SketchLinkInfo>;
   lastRebuildMs: number | null;
 
   dialog: DialogName;
@@ -251,6 +266,8 @@ export interface AppState {
   /** Open a new sketch (plane may be chosen later). */
   startSketch: (plane: SketchPlane | null) => void;
   setSketchPlane: (plane: SketchPlane) => void;
+  /** The sketch's face can't be found: let the next click on a face or plane put the sketch there. */
+  repickSketchPlane: () => void;
   /** Replace the sketch being edited. `record` adds an undo step. */
   updateSketch: (data: SketchData, opts?: { record?: boolean; selection?: string[] }) => void;
   /** Record an undo step for a drag that's finished (`before` = sketch when the drag began). */
@@ -268,7 +285,7 @@ export interface AppState {
   keepOfferedDimension: (id: string) => void;
   /** Drop any offered dimensions not kept yet. */
   discardOfferedDimensions: () => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "patternDirectionPick" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**
@@ -307,6 +324,12 @@ export interface AppState {
   openDocument: (doc: JuraCADDocument, fileName: string) => void;
   /** Note that the current design has just been saved to this file. */
   markSaved: (fileName: string) => void;
+  /**
+   * Live with Claude: show Claude's change to the design as one undo step
+   * (`replace`: a whole new design, e.g. one Claude opened). The label
+   * ("Claude: added Extrude 2") is shown as a note.
+   */
+  applyClaudeChange: (doc: JuraCADDocument, studio: string, label: string, replace: boolean) => void;
   /** Add an assembly tab and switch to it. */
   addAssembly: () => void;
   /** Add a Part Studio tab and switch to it. */
@@ -421,7 +444,7 @@ export interface AppState {
   // set by the kernel connection
   setKernelStatus: (status: AppState["kernelStatus"], error?: string) => void;
   setRebuildBusy: (busy: boolean) => void;
-  setRebuildResult: (parts: PartMesh[], featureErrors: Record<string, string>, ms: number, rebuilt?: string[], studioOrder?: string[]) => void;
+  setRebuildResult: (parts: PartMesh[], featureErrors: Record<string, string>, ms: number, rebuilt?: string[], studioOrder?: string[], sketchLinks?: Record<string, SketchLinkInfo>) => void;
 }
 
 // These browser-storage keys keep the app's old name (PartSmith) on purpose: changing them
@@ -541,6 +564,7 @@ export const useStore = create<AppState>((set, get) => {
     rebuildBusy: false,
     parts: [],
     featureErrors: {},
+    sketchLinks: NO_LINKS,
     lastRebuildMs: null,
 
     dialog: null,
@@ -625,6 +649,10 @@ export const useStore = create<AppState>((set, get) => {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) draft.hole = { ...draft.hole, sketchRef: picked.id };
       }
+      // Mirror and circular patterns start with no plane or axis: the dialog asks for one to be clicked
+      // (Onshape does the same), rather than quietly using the origin.
+      if (draft.mirror) draft.mirror = { ...draft.mirror, unset: true };
+      if (type === "circularPattern" && draft.pattern) draft.pattern = { ...draft.pattern, unset: true };
       // Mirror and patterns start with the feature highlighted in the list, if it makes a solid.
       if (isPatternFeature(type)) {
         const picked = features.find((f) => f.id === s.selectedFeatureId && isSolidFeature(f.type));
@@ -692,6 +720,16 @@ export const useStore = create<AppState>((set, get) => {
               sketch: s.sketch ? { ...s.sketch, message: null } : s.sketch,
               selectedPlane: null,
               selection: [],
+            }
+          : {},
+      ),
+
+    repickSketchPlane: () =>
+      set((s) =>
+        s.editing?.draft.sketch && s.sketch
+          ? {
+              editing: { ...s.editing, draft: { ...s.editing.draft, sketch: { ...s.editing.draft.sketch, plane: null } } },
+              sketch: { ...s.sketch, message: { text: "Click a flat face, or Top, Front or Right, to put the sketch on.", tone: "info" } },
             }
           : {},
       ),
@@ -799,7 +837,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setDraftMirrorPlane: (plane) =>
       set((s) =>
-        s.editing?.draft.mirror ? { editing: { ...s.editing, draft: { ...s.editing.draft, mirror: { ...s.editing.draft.mirror, plane } } } } : {},
+        s.editing?.draft.mirror ? { editing: { ...s.editing, draft: { ...s.editing.draft, mirror: setMirrorReference(s.editing.draft.mirror, { kind: "plane", plane }) } } } : {},
       ),
 
     commitDraft: () => {
@@ -813,7 +851,10 @@ export const useStore = create<AppState>((set, get) => {
       }
       const { errors } = resolveParams(editing.draft);
       if (Object.keys(errors).length > 0) return false;
-      const draft = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
+      const named = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
+      // Part edges brought in just to snap to, that nothing uses any more, are tidied away.
+      const sk = named.sketch;
+      const draft = sk ? { ...named, sketch: { ...sk, data: pruneReferences(sk.data) } } : named;
       // Rolled back: a new feature goes in at the rollback point, and the bar moves down past it.
       const at = get().rollbackTo;
       changeStudio((doc) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, draft)));
@@ -945,6 +986,19 @@ export const useStore = create<AppState>((set, get) => {
       }));
       set((s) => ({ savedDoc: s.history.present }));
       rememberFile(get().history.present, fileName);
+    },
+
+    applyClaudeChange: (doc, studio, label, replace) => {
+      set((s) => {
+        const history = commit(s.history, refreshDocumentPlanes(doc, resolveVariables(doc.variables).values));
+        if (replace) {
+          return { history, selectedFeatureId: null, selection: [], selectedPlane: null, hiddenParts: [], transparentParts: [], selectedParts: [], activeTab: null, asmSelection: [] };
+        }
+        // The user stays on their tab (Claude works on the Part Studio on show, so that's normally the one changed).
+        const keep = (id: string | null) => (id && studioFeatures(history.present, studio).some((f) => f.id === id) ? id : null);
+        return { history, selectedFeatureId: keep(s.selectedFeatureId), selection: [] };
+      });
+      get().showToast(label, "info");
     },
 
     markSaved: (fileName) => {
@@ -1439,8 +1493,18 @@ export const useStore = create<AppState>((set, get) => {
 
     setKernelStatus: (kernelStatus, error) => set({ kernelStatus, kernelError: error ?? null }),
     setRebuildBusy: (rebuildBusy) => set({ rebuildBusy }),
-    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder) =>
+    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks) =>
       set((s) => {
+        // The sketch open for editing follows its part's face and edges, as the engine found them.
+        const links = sketchLinks && Object.keys(sketchLinks).length ? sketchLinks : NO_LINKS;
+        const draft = s.editing?.draft;
+        const info = draft?.sketch ? links[draft.id] : undefined;
+        let editing = s.editing;
+        if (editing && draft?.sketch && info) {
+          const data = followLinks(draft.sketch.data, info.links);
+          const plane = info.plane && draft.sketch.plane?.kind === "face" && !samePlace(info.plane, draft.sketch.plane) ? info.plane : draft.sketch.plane;
+          if (data !== draft.sketch.data || plane !== draft.sketch.plane) editing = { ...editing, draft: { ...draft, sketch: { plane, data } } };
+        }
         // Part Studios that weren't rebuilt keep the parts they had.
         let parts = built;
         if (rebuilt && studioOrder) {
@@ -1454,6 +1518,8 @@ export const useStore = create<AppState>((set, get) => {
         return {
           parts,
           featureErrors,
+          sketchLinks: links,
+          ...(editing !== s.editing ? { editing } : {}),
           lastRebuildMs: ms,
           rebuildBusy: false,
           // Drop picks and hidden flags for parts that no longer exist.

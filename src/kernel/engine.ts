@@ -7,10 +7,11 @@ import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, mak
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
-import { matchRefs, refDistance, relativeTo, roundVec, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { matchRefs, refDistance, relativeTo, roundVec, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame, toWorld } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
+import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/patternRefs";
 import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
@@ -28,6 +29,7 @@ import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
+import { followLinks, linkProblem, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
@@ -149,6 +151,15 @@ const importedMeshes = new Map<string, PartMesh>();
 const IMPORTED_MESH_CACHE = 8;
 
 /** Turn whatever OpenCascade threw into a readable sentence. */
+/** A sketch line as an axis or direction: through its first end, pointing to its second. Throws a plain-English problem. */
+function lineAxis(features: Feature[], ref: SketchLineRef): { dir: Vec3; through: Vec3 } {
+  const line = sketchLine3D(features, ref);
+  if (typeof line === "string") throw new Error(line);
+  const d: Vec3 = [line.b[0] - line.a[0], line.b[1] - line.a[1], line.b[2] - line.a[2]];
+  const l = Math.hypot(...d);
+  return { dir: [d[0] / l, d[1] / l, d[2] / l], through: line.a };
+}
+
 export function describeError(e: unknown, fallback: string): string {
   if (e instanceof Error && e.message) return e.message;
   if (typeof e === "string" && e) return e;
@@ -815,6 +826,42 @@ function findPickedFace(shape: Shape3D, pick: TopoPick): Face {
   point.delete();
   faces.forEach((f) => f !== chosen && f.delete());
   return chosen;
+}
+
+/**
+ * The round face clicked as an axis, found on the part as it is now. Round
+ * faces sharing a centre (a bore in the middle of a disc) look the same to the
+ * usual matching, so where it was clicked (`at`) tells them apart by size: the
+ * face whose radius fits the click (measured from where the picked face's
+ * centre was) is taken, then the nearest. So a bore keeps being the axis after
+ * it's moved off the middle. Null when there's no round face to go on.
+ */
+function pickedCylinder(shape: Shape3D, pick: TopoPick): Cylinder | null {
+  const at = pick.at;
+  if (!at || pick.ref.kind !== "face") return null;
+  const want = pick.ref;
+  const faces = facesOf(shape);
+  const bounds = boundsOf(shape);
+  const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+  let best: { c: Cylinder; score: number } | null = null;
+  try {
+    for (const f of faces) {
+      if (f.geomType !== "CYLINDRE") continue;
+      const d = refDistance(want, faceRefOf(f, bounds), size);
+      if (!Number.isFinite(d) || d > Math.max(1, 0.3 * size)) continue;
+      const c = cylinderOfFace(f);
+      if (!c) continue;
+      // How far the click is from this cylinder's axis, had the axis gone through where the picked face's centre was.
+      const off: Vec3 = [at[0] - want.center[0], at[1] - want.center[1], at[2] - want.center[2]];
+      const along = off[0] * c.axis[0] + off[1] * c.axis[1] + off[2] * c.axis[2];
+      const r = Math.hypot(off[0] - along * c.axis[0], off[1] - along * c.axis[1], off[2] - along * c.axis[2]);
+      const score = Math.abs(r - c.radius) + 0.25 * d;
+      if (!best || score < best.score) best = { c, score };
+    }
+  } finally {
+    faces.forEach((f) => f.delete());
+  }
+  return best?.c ?? null;
 }
 
 /**
@@ -1541,6 +1588,8 @@ interface StudioBuild {
   parts: BuiltPart[];
   tools: Map<string, FeatureTool>;
   errors: Record<string, string>;
+  /** Sketches on part faces, or using part edges: what was found for them. */
+  links: Record<string, SketchLinkInfo>;
 }
 
 export class GeometryEngine {
@@ -1552,6 +1601,8 @@ export class GeometryEngine {
   private parts: BuiltPart[] = [];
   /** While a Part Studio is being built: the solids its features added or cut. */
   private tools = new Map<string, FeatureTool>();
+  /** While a Part Studio is being built: what its sketches' part faces and edges are now (see followSketch). */
+  private links: Record<string, SketchLinkInfo> = {};
   private builds = new Map<string, StudioBuild>();
 
   /**
@@ -1597,6 +1648,7 @@ export class GeometryEngine {
         if (b) this.disposeBuild(b);
         this.parts = [];
         this.tools = new Map();
+        this.links = {};
         setCurrentScope(studio.variables ?? variables);
         const errors = this.buildFeatures(studio.features);
         setCurrentScope(variables);
@@ -1604,7 +1656,7 @@ export class GeometryEngine {
         for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
         // Another configuration's copies of the parts (for assemblies).
         if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-        b = { key, parts: this.parts, tools: this.tools, errors };
+        b = { key, parts: this.parts, tools: this.tools, errors, links: this.links };
         this.builds.set(studio.id, b);
         rebuilt.push(studio.id);
         const configuration = studio.partSuffix?.replace(/^@/, "");
@@ -1616,7 +1668,10 @@ export class GeometryEngine {
     }
     this.parts = studios.flatMap((s) => this.builds.get(s.id)?.parts ?? []);
     this.tools = new Map();
-    return { parts: meshes, featureErrors, durationMs: Math.round(performance.now() - started), rebuilt, studioOrder: studios.map((s) => s.id) };
+    // Every Part Studio's sketch links (in the configuration on show), whether rebuilt now or before.
+    const sketchLinks: Record<string, SketchLinkInfo> = {};
+    for (const s of studios) if (!s.partSuffix) Object.assign(sketchLinks, this.builds.get(s.id)?.links ?? {});
+    return { parts: meshes, featureErrors, durationMs: Math.round(performance.now() - started), rebuilt, studioOrder: studios.map((s) => s.id), sketchLinks };
   }
 
   /**
@@ -1638,13 +1693,17 @@ export class GeometryEngine {
     const run = (off: Set<string>): { error?: string; featureIds: string[] } => {
       this.parts = [];
       this.tools = new Map();
+      // Trial builds mustn't touch the links of the Part Studios already built.
+      const links = this.links;
+      this.links = {};
       try {
         const errors = this.buildFeatures(upto.map((f) => (off.has(f.id) ? { ...f, suppressed: true } : f)));
         return { error: errors[featureId], featureIds: [...(this.parts.find((p) => p.id === partId)?.featureIds ?? [])] };
       } finally {
-        this.disposeBuild({ key: "", parts: this.parts, tools: this.tools, errors: {} });
+        this.disposeBuild({ key: "", parts: this.parts, tools: this.tools, errors: {}, links: {} });
         this.parts = saved.parts;
         this.tools = saved.tools;
+        this.links = links;
       }
     };
     try {
@@ -1698,6 +1757,112 @@ export class GeometryEngine {
     return shape;
   }
 
+  /**
+   * A sketch on a part's face, or using part edges, as the part is now: the
+   * face's edges (to show and snap to in the sketch), the sketch moved with
+   * its face, and its linked lines, circles and arcs moved to their edges
+   * (re-solved, so what's constrained to them follows). What was found is kept
+   * in this.links for the app. Old sketches (no face, no links) come back as they are.
+   */
+  private followSketch(feature: Feature): Feature {
+    const sk = feature.sketch!;
+    const plane = sk.plane!;
+    const facePick = plane.kind === "face" ? plane.face : undefined;
+    const linked = sk.data.curves.filter((c) => "link" in c && c.link);
+    if (!facePick && !linked.length) return feature;
+    let followed = plane;
+    let faceLost = false;
+    const edges: RefEdge[] = [];
+    const sizeOf = (b: Bounds) => Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
+    if (facePick && plane.kind === "face") {
+      const part = this.parts.find((p) => p.id === facePick.partId);
+      // Found strictly: a face that's gone is reported, rather than the sketch jumping onto another face.
+      let face: Face | null = null;
+      if (part) {
+        const faces = facesOf(part.shape);
+        const fb = boundsOf(part.shape);
+        const m = strictMatch(facePick.ref, faces.map((f) => faceRefOf(f, fb)), sizeOf(fb));
+        face = m === null ? null : faces[m];
+        faces.forEach((f) => f !== face && f.delete());
+      }
+      if (!face || !part) faceLost = true;
+      else {
+        try {
+          const bounds = boundsOf(part.shape);
+          const ref = faceRefOf(face, bounds);
+          // The sketch moves with its face (along the face's normal; it keeps its directions).
+          let frame = planeFrame(plane);
+          const n = frame.n;
+          const shift = (ref.center[0] - plane.origin[0]) * n[0] + (ref.center[1] - plane.origin[1]) * n[1] + (ref.center[2] - plane.origin[2]) * n[2];
+          // Face centres are kept to 0.1 µm, so on a sloping face a tiny leftover never counts as a move (that would rebuild for ever).
+          if (ref.surface === "PLANE" && Math.abs(shift) > 1e-3) {
+            followed = { ...plane, origin: [plane.origin[0] + shift * n[0], plane.origin[1] + shift * n[1], plane.origin[2] + shift * n[2]], face: { ...facePick, ref } };
+            frame = planeFrame(followed);
+          }
+          for (const e of edgesOf(face)) {
+            try {
+              const eref = edgeRefOf(e, bounds);
+              const samples = eref.curve === "LINE" || eref.curve === "CIRCLE" ? undefined : Array.from({ length: 17 }, (_, i) => take(e.pointAt(i / 16)));
+              const seen = projectEdge(frame, { partId: part.id, ref: eref }, samples);
+              if (seen) edges.push(seen);
+            } finally {
+              e.delete();
+            }
+          }
+        } finally {
+          face.delete();
+        }
+      }
+    }
+    // Linked curves: find each edge again on its part.
+    const links: Record<string, RefEdge | null> = {};
+    if (linked.length) {
+      const frame = planeFrame(followed);
+      const byPart = new Map<string, typeof linked>();
+      for (const c of linked) {
+        const id = (c as { link: TopoPick }).link.partId;
+        byPart.set(id, [...(byPart.get(id) ?? []), c]);
+      }
+      for (const [partId, curves] of byPart) {
+        const part = this.parts.find((p) => p.id === partId);
+        if (!part) {
+          for (const c of curves) links[c.id] = null;
+          continue;
+        }
+        const all = edgesOf(part.shape);
+        try {
+          const bounds = boundsOf(part.shape);
+          const refs = all.map((e) => edgeRefOf(e, bounds));
+          // Only edges that could be the copy: lying in the sketch's face (when it's on one and that was found),
+          // else at least flat to the sketch. Among those an edge may move further (a hole moved) and still be found.
+          const height = (p: Vec3) => (p[0] - frame.origin[0]) * frame.n[0] + (p[1] - frame.origin[1]) * frame.n[1] + (p[2] - frame.origin[2]) * frame.n[2];
+          const inFace = facePick && !faceLost;
+          const candidates = refs.map((r) => {
+            const hs = [height(r.a), height(r.b), height(r.mid)];
+            const flat = Math.max(...hs) - Math.min(...hs) < 1e-3;
+            return flat && (!inFace || Math.abs(hs[2]) < 1e-3) ? r : null;
+          });
+          curves.forEach((c) => {
+            const m = strictMatch((c as { link: TopoPick }).link.ref, candidates, sizeOf(bounds), 0.3);
+            links[c.id] = m === null ? null : projectEdge(frame, { partId, ref: refs[m] });
+          });
+        } finally {
+          all.forEach((e) => e.delete());
+        }
+      }
+    }
+    const data = followLinks(sk.data, links);
+    const changed = data !== sk.data || followed !== plane;
+    this.links[feature.id] = {
+      edges,
+      links,
+      ...(followed !== plane ? { plane: followed } : {}),
+      ...(faceLost ? { faceLost: true } : {}),
+      ...(changed ? { sketch: { plane: followed, data } } : {}),
+    };
+    return changed ? { ...feature, sketch: { plane: followed, data } } : feature;
+  }
+
   /** Build one Part Studio's features into this.parts and this.tools; returns the features' problems. */
   private buildFeatures(features: Feature[]): Record<string, string> {
     const featureErrors: Record<string, string> = {};
@@ -1719,7 +1884,11 @@ export class GeometryEngine {
       if (feature.type === "sketch") {
         // Sketches make no solid themselves; extrudes later in the list use them.
         if (!feature.sketch?.plane) featureErrors[feature.id] = "Pick a plane or flat face to sketch on.";
-        else sketches.set(feature.id, feature);
+        else {
+          sketches.set(feature.id, this.followSketch(feature));
+          const problem = linkProblem(this.links[feature.id]);
+          if (problem) featureErrors[feature.id] = problem;
+        }
         continue;
       }
       const def = FEATURE_DEFS[feature.type];
@@ -1825,7 +1994,7 @@ export class GeometryEngine {
         continue;
       }
       if (feature.type === "mirror" && feature.mirror?.part !== undefined) {
-        const r = this.applyMirrorPart(feature, partCounter + 1);
+        const r = this.applyMirrorPart(feature, partCounter + 1, features);
         if (r.error) featureErrors[feature.id] = r.error;
         if (r.newPart) partCounter++;
         continue;
@@ -3348,15 +3517,29 @@ export class GeometryEngine {
     let along: { dir: Vec3; through: Vec3 } | null = null;
     let along2: Vec3 | null = null;
     if (!mirror && feature.type !== "curvePattern") {
+      const p = feature.pattern;
+      if (p?.unset && !p.along && !p.line) {
+        return {
+          error:
+            feature.type === "circularPattern"
+              ? "Choose the axis to go round: click a round face (a hole or boss), a round or straight edge, or a sketch line in the 3D view — or pick X, Y or Z."
+              : "Choose the direction: click a straight edge, a flat face or a sketch line in the 3D view — or pick X, Y or Z.",
+        };
+      }
+      const later = [p?.line, p?.line2].find((l) => l && all.findIndex((f) => f.id === l.sketch) > at);
+      if (later) return { error: "The sketch with the picked line comes after this pattern in the list. Move it up, or click another line or edge." };
       try {
-        if (feature.pattern?.along) along = this.pickedAxis(feature.pattern.along, feature.type === "circularPattern");
-        if (feature.type === "linearPattern" && feature.pattern?.along2) along2 = this.pickedAxis(feature.pattern.along2, false).dir;
+        if (p?.line) along = lineAxis(all, p.line);
+        else if (p?.along) along = this.pickedAxis(p.along, feature.type === "circularPattern");
+        if (feature.type === "linearPattern" && p?.line2) along2 = lineAxis(all, p.line2).dir;
+        else if (feature.type === "linearPattern" && p?.along2) along2 = this.pickedAxis(p.along2, false).dir;
       } catch (e) {
         return { error: describeError(e, "Couldn't find the picked direction.") };
       }
     }
     if (mirror) {
-      const frame = planeFrame(feature.mirror!.plane);
+      const frame = this.mirrorPlane(feature, all);
+      if (typeof frame === "string") return { error: frame };
       placements.push((s) => s.mirror(frame.n, frame.origin));
     } else {
       const axis = AXES[feature.pattern?.axis ?? "x"];
@@ -3536,7 +3719,11 @@ export class GeometryEngine {
       }
       throw new Error(round ? "That edge is neither straight nor round. Click a straight edge, a round edge or a round face for the axis." : "That edge is curved. Click a straight edge, or a flat face, for the direction.");
     }
-    const [face] = findPickedFaces(part.shape, [pick]);
+    if (round && pick.ref.kind === "face" && pick.ref.surface === "CYLINDRE" && pick.at) {
+      const cyl = pickedCylinder(part.shape, pick);
+      if (cyl) return { dir: cyl.axis, through: cyl.origin };
+    }
+    const [face] = pick.at ? [findPickedFace(part.shape, pick)] : findPickedFaces(part.shape, [pick]);
     try {
       if (round) {
         const cyl = cylinderOfFace(face);
@@ -3552,16 +3739,55 @@ export class GeometryEngine {
   }
 
   /**
+   * The plane a mirror goes across, found as the design is now: a sketch line
+   * (the plane through it, square to its sketch), a flat face clicked on a part
+   * (followed as the part changes), or a default plane or Plane feature.
+   * Returns a plain-English problem instead when it can't be found.
+   */
+  private mirrorPlane(feature: Feature, all: Feature[]): { origin: Vec3; n: Vec3 } | string {
+    const m = feature.mirror!;
+    if (m.unset) return "Choose the mirror plane: click a flat face, a plane or a sketch line in the 3D view — or pick Top, Front or Right.";
+    if (m.line) {
+      const line = sketchLine3D(all, m.line);
+      if (typeof line === "string") return line;
+      const at = all.findIndex((f) => f.id === m.line!.sketch);
+      if (at > all.indexOf(feature)) return "The sketch with the mirror line comes after this mirror in the list. Move it up, or click another line or plane.";
+      return planeThroughLine(line);
+    }
+    if (m.planePick) {
+      const part = this.parts.find((p) => p.id === m.planePick!.partId);
+      if (!part) return "The part with the mirror face no longer exists. Edit this mirror and click another face or plane.";
+      let face: Face;
+      try {
+        face = findPickedFace(part.shape, m.planePick);
+      } catch (e) {
+        return describeError(e, "Couldn't find the mirror face.");
+      }
+      try {
+        if (face.geomType !== "PLANE") return "The mirror face isn't flat any more. Edit this mirror and click a flat face or a plane.";
+        const c = take(face.center);
+        const n = take(face.normalAt(c));
+        return { origin: c, n };
+      } finally {
+        face.delete();
+      }
+    }
+    const frame = planeFrame(m.plane);
+    return { origin: frame.origin, n: frame.n };
+  }
+
+  /**
    * Mirror a whole part across a plane: as a new part, or joined onto the
    * original (model one half, mirror it for the other).
    */
-  private applyMirrorPart(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+  private applyMirrorPart(feature: Feature, nextPartNumber: number, all: Feature[]): { error?: string; newPart?: boolean } {
     const m = feature.mirror!;
     if (!m.part) return { error: "Choose the part to mirror." };
     const part = this.parts.find((p) => p.id === m.part);
     if (!part) return { error: "The part it mirrors no longer exists (or is made later in the list). Edit this mirror and choose another part." };
     if (part.sheet) return { error: "Sheet metal parts can't be mirrored whole yet — the flat pattern couldn't follow. Mirror the features that made it, or copy it with Move / copy." };
-    const frame = planeFrame(m.plane);
+    const frame = this.mirrorPlane(feature, all);
+    if (typeof frame === "string") return { error: frame };
     // Its threads (for drawings), mirrored too.
     const reflect = (p: Vec3, point: boolean): Vec3 => {
       const k = 2 * dot3(point ? [p[0] - frame.origin[0], p[1] - frame.origin[1], p[2] - frame.origin[2]] : p, frame.n);

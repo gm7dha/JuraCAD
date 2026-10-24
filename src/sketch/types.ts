@@ -1,3 +1,5 @@
+import type { TopoPick } from "../geometry/topoRef";
+
 /**
  * Sketch data. Everything is stored in the sketch's own 2D coordinates (u, v)
  * in millimetres; `planes.ts` maps them into 3D.
@@ -8,6 +10,13 @@
 
 /** ID of the fixed sketch origin point (0, 0). It is never stored in `points`. */
 export const ORIGIN_ID = "origin";
+
+/**
+ * A line, circle or arc can follow a part's edge (Onshape's "Use", or an edge
+ * of the face the sketch is on used as a reference): the edge it came from, found
+ * again on every rebuild so the copy moves when the part changes.
+ */
+export type CurveLink = TopoPick;
 
 export interface SketchPoint {
   id: string;
@@ -23,6 +32,8 @@ export interface SketchLine {
   p1: string;
   p2: string;
   construction: boolean;
+  /** Follows this part edge (see CurveLink). */
+  link?: CurveLink;
 }
 
 export interface SketchCircle {
@@ -31,6 +42,8 @@ export interface SketchCircle {
   center: string;
   radius: number;
   construction: boolean;
+  /** Follows this part edge (see CurveLink). */
+  link?: CurveLink;
 }
 
 /** Arc running anticlockwise from `start` to `end` around `center`. */
@@ -41,6 +54,8 @@ export interface SketchArc {
   start: string;
   end: string;
   construction: boolean;
+  /** Follows this part edge (see CurveLink). */
+  link?: CurveLink;
 }
 
 /**
@@ -91,7 +106,13 @@ export type RelationType =
   | "pointOnCircle"
   /** A point held on a spline or ellipse: refs [point, curve]. */
   | "pointOnCurve"
-  | "fix";
+  | "fix"
+  /**
+   * A circular pattern's copy of a point: refs [copy, original, centre]; extra [degrees].
+   * The copy stays the original turned that far round the centre, so the
+   * pattern follows when either moves.
+   */
+  | "patternCopy";
 
 /** Dimensions (have a value the user types). */
 export type DimensionType =

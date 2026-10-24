@@ -3,6 +3,7 @@ import { useStore, type SketchTool } from "../model/store";
 import { applyRelation, deleteItems, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
 import { patternCurves, readPatternSettings, readTransformSettings, transformCurves } from "../sketch/tools";
 import { viewportApi } from "../viewport/Viewport";
+import { linkAllEdges } from "../sketch/links";
 
 const sketchData = () => useStore.getState().editing?.draft.sketch?.data ?? null;
 
@@ -154,4 +155,21 @@ export function setSketchMeasureTo(to: MeasureTo) {
   if (r.sketch === data) return;
   s.updateSketch(r.sketch, { record: true });
   s.setSketchMessage(to === "centre" ? "Measured between the centres now." : to === "nearest" ? "Measured to the nearest edges now (the gap between them)." : "Measured to the furthest edges now (the overall size).", "info");
+}
+
+/** Copy every edge of the face the sketch is on into the sketch (Use), linked so they follow the part. */
+export function copyFaceEdges(): boolean {
+  const s = useStore.getState();
+  const data = sketchData();
+  const id = s.editing?.draft.id;
+  const edges = id ? s.sketchLinks[id]?.edges : undefined;
+  if (!data || !s.sketch || !edges?.length) return false;
+  const r = linkAllEdges(data, edges);
+  if (r.error) {
+    s.setSketchMessage(r.error, "error");
+    return false;
+  }
+  s.updateSketch(r.sketch, { record: true, selection: r.curveIds });
+  s.setSketchMessage(`Used ${r.curveIds.length} edge${r.curveIds.length === 1 ? "" : "s"} of the face. They follow the part if it changes.`, "info");
+  return true;
 }

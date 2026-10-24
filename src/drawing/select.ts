@@ -26,3 +26,18 @@ export function itemsInBox(layout: Pick<SheetLayout, "dims" | "notes">, from: [n
 export function toggled(ids: readonly string[], id: string): string[] {
   return ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
 }
+
+/** How far (screen pixels) the pointer may move between right-button down and up for it to count as a click. */
+export const RIGHT_CLICK_SLOP = 4;
+
+/**
+ * Right-clicking a dimension's number flips its arrows; right-dragging pans.
+ * Decided when the button comes up (macOS sends its context-menu event as the
+ * button goes down, before anyone knows whether it's a drag): `down` is where
+ * the right button went down on a dimension's number (null if it wasn't),
+ * `up` the button that came up and where. The dimension to flip, or null.
+ */
+export function rightClickFlip(down: { dimId: string; x: number; y: number } | null, up: { button: number; x: number; y: number }): string | null {
+  if (!down || up.button !== 2) return null;
+  return Math.hypot(up.x - down.x, up.y - down.y) <= RIGHT_CLICK_SLOP ? down.dimId : null;
+}

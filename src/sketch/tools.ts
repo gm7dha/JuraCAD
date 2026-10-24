@@ -5,7 +5,7 @@
  */
 import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
-import { addArc, addCircle, addRectangle, circleThrough, curveById, curvePoints, deleteItems, ellipsePoints, mirrorPoint, onCurveType, placePoint, pointPos, radiusOf, settle, sketchId, splinePath, type EditResult, type Placed } from "./ops";
+import { addArc, addCircle, addRectangle, circleThrough, curveById, curvePoints, deleteItems, ellipsePoints, isPointId, mirrorPoint, onCurveType, placePoint, pointPos, radiusOf, settle, sketchId, splinePath, type EditResult, type Placed } from "./ops";
 import { minorPointFor } from "./ellipse";
 import { ORIGIN_ID, type SketchEllipse, type SketchSpline, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
@@ -23,11 +23,12 @@ const dot = (a: P2, b: P2) => a[0] * b[0] + a[1] * b[1];
 /** Angle normalised to [0, 2π). */
 const norm = (a: number) => ((a % TAU) + TAU) % TAU;
 
-const con = (type: SketchConstraint["type"], refs: string[], value?: string): SketchConstraint => ({
+const con = (type: SketchConstraint["type"], refs: string[], value?: string, extra?: number[]): SketchConstraint => ({
   id: sketchId("c"),
   type,
   refs,
   ...(value !== undefined ? { value } : {}),
+  ...(extra !== undefined ? { extra } : {}),
 });
 
 // ---------------------------------------------------------------------------
@@ -1060,7 +1061,7 @@ export type SketchPatternOptions =
   /** `count` copies in a row (including the original), `spacing` mm apart, heading `angle` degrees from the X direction. */
   | { kind: "linear"; count: number; spacing: number; angle: number }
   /** `count` copies (including the original) spread over `angle` degrees around `centre` (360 = all the way round). */
-  | { kind: "circular"; count: number; angle: number; centre: P2 };
+  | { kind: "circular"; count: number; angle: number; centre: P2; centreId?: string };
 
 /** Where each copy of a point goes: copy i (1 … count-1). */
 export function patternTransform(opts: SketchPatternOptions, i: number): (p: P2) => P2 {
@@ -1092,12 +1093,35 @@ export function patternCurves(s: SketchData, curveIds: string[], opts: SketchPat
   if (opts.kind === "circular" && !(Math.abs(opts.angle) > 1e-9)) return fail("Give the pattern an angle to spread over.");
   const points: SketchPoint[] = [];
   const curves: SketchCurve[] = [];
-  for (let i = 1; i < count; i++) copyCurvesWith(s, sources, patternTransform(opts, i), points, curves);
-  return { ...settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: s.constraints }), curveIds: curves.map((c) => c.id) };
+  const constraints: SketchConstraint[] = [];
+  const centreId = opts.kind === "circular" && opts.centreId && isPointId(s, opts.centreId) ? opts.centreId : null;
+  for (let i = 1; i < count; i++) {
+    const before = curves.length;
+    const copies = copyCurvesWith(s, sources, patternTransform(opts, i), points, curves);
+    if (!centreId || opts.kind !== "circular") continue;
+    // Round a point of the sketch: each copy stays turned round it, so the copies follow when the centre or the originals move.
+    const turn = patternStep(opts) * i;
+    for (const [from, to] of copies) constraints.push(con("patternCopy", [to, from, centreId], undefined, [turn]));
+    sources.forEach((c, k) => {
+      const copy = curves[before + k];
+      // The copy's size follows the original's (an equal marked as the pattern's, extra [1]).
+      if (c.type === "circle" && copy?.type === "circle") constraints.push(con("equal", [copy.id, c.id], undefined, [1]));
+    });
+  }
+  return { ...settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: [...s.constraints, ...constraints] }), curveIds: curves.map((c) => c.id) };
 }
 
-/** Copies of `sources` with every point moved by `move` (points that don't move are shared); added to `points` and `curves`. */
-function copyCurvesWith(s: SketchData, sources: SketchCurve[], move: (p: P2) => P2, points: SketchPoint[], curves: SketchCurve[]): void {
+/** How far round each copy of a circular pattern turns from the one before (degrees). */
+function patternStep(opts: Extract<SketchPatternOptions, { kind: "circular" }>): number {
+  const full = Math.abs(Math.abs(opts.angle) - 360) < 1e-9;
+  return full ? opts.angle / opts.count : opts.angle / Math.max(1, opts.count - 1);
+}
+
+/**
+ * Copies of `sources` with every point moved by `move` (points that don't move are shared); added to `points` and `curves`.
+ * Returns which point each new point is a copy of. Copies don't follow part edges (they aren't linked).
+ */
+function copyCurvesWith(s: SketchData, sources: SketchCurve[], move: (p: P2) => P2, points: SketchPoint[], curves: SketchCurve[]): Map<string, string> {
   {
     const copies = new Map<string, string>();
     const copyOf = (id: string): string => {
@@ -1123,6 +1147,7 @@ function copyCurvesWith(s: SketchData, sources: SketchCurve[], move: (p: P2) => 
         curves.push({ id: sketchId("el"), type: "ellipse", center: copyOf(c.center), major: copyOf(c.major), minor: copyOf(c.minor), construction: c.construction });
       else curves.push({ id: sketchId("a"), type: "arc", center: copyOf(c.center), start: copyOf(c.start), end: copyOf(c.end), construction: c.construction });
     }
+    return copies;
   }
 }
 
@@ -1218,7 +1243,8 @@ export function readPatternSettings(s: SketchData, set: PatternSettings): Sketch
     return { kind: "linear", count: set.patternCount, spacing: spacing.value, angle: angle.value };
   }
   const known = set.patternCentre === ORIGIN_ID || s.points.some((p) => p.id === set.patternCentre);
-  return { kind: "circular", count: set.patternCount, angle: angle.value, centre: pointPos(s, known ? set.patternCentre : ORIGIN_ID) };
+  const centreId = known ? set.patternCentre : ORIGIN_ID;
+  return { kind: "circular", count: set.patternCount, angle: angle.value, centre: pointPos(s, centreId), centreId };
 }
 
 // ---------------------------------------------------------------------------

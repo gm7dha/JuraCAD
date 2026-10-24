@@ -11,7 +11,7 @@ import { analyzeMesh } from "../src/geometry/meshCheck";
 import { GeometryEngine } from "../src/kernel/engine";
 import { defaultParams } from "../src/model/features";
 import type { Feature, FeatureType, Operation } from "../src/model/types";
-import { addCircle, addPoint, addRectangle } from "../src/sketch/ops";
+import { addCircle, addLine, addPoint, addRectangle } from "../src/sketch/ops";
 import { grooveVolume } from "../src/kernel/thread";
 import { HOLE_LEAD_IN } from "../src/model/holes";
 import type { HoleOptions } from "../src/model/types";
@@ -894,5 +894,181 @@ describe("patterns, round 2", () => {
     // Skipping everything is an error that says what to do.
     const none = { ...ring, pattern: { ...ring.pattern!, skip: [2, 3, 4, 5, 6] } };
     expect(build([disc, pin, none]).featureErrors[ring.id]).toMatch(/Every copy is skipped/);
+  });
+});
+
+describe("mirror planes and pattern axes picked in the view, round 3", () => {
+  /** A two-step block: 20 long and 10 high, then 20 more at half height — the step's riser is a face at x = `w`. */
+  const stepped = (w: number, w2: number) => {
+    const high = feature("box", { width: w, depth: 10, height: 10 });
+    const low = feature("box", { width: w2, depth: 10, height: 5, x: w }, "add");
+    return [high, low];
+  };
+
+  it("mirrors a hole across a flat face away from the origin, and follows the face when the part changes", () => {
+    const [high, low] = stepped(20, 20);
+    const hole = feature("cylinder", { diameter: 4, height: 10, x: 5, y: 5 }, "remove");
+    const riser = pickAt(build([high, low]), "face", [20, 5, 7.5]);
+    expect(riser.ref.kind === "face" && riser.ref.surface).toBe("PLANE");
+    const m: Feature = {
+      ...feature("mirror", {}, "add"),
+      // `plane` is only what it was when clicked: the engine finds the face again.
+      mirror: { sources: [hole.id], plane: { kind: "face", origin: [20, 0, 0], u: [0, 1, 0], v: [0, 0, 1], label: "Face of Box" }, planePick: riser },
+    };
+    let r = build([high, low, hole, m]);
+    expect(r.featureErrors).toEqual({});
+    // The copy lands at x = 35, in the lower step (5 mm deep there).
+    expect(volumes()[0]).toBeCloseTo(3000 - Math.PI * 4 * 10 - Math.PI * 4 * 5, 2);
+    const lowRims = r.parts[0].edgeRefs.filter((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2] - 5) < 1e-3);
+    expect(lowRims).toHaveLength(1);
+    expect(Math.abs(Math.hypot(lowRims[0].mid[0] - 35, lowRims[0].mid[1] - 5) - 2)).toBeLessThan(1e-3);
+
+    // Make the tall step 26 long and the low one 30: the riser moves to x = 26, so the copy goes to x = 47.
+    const [high2, low2] = [{ ...high, params: { ...high.params, width: "26" } }, { ...low, params: { ...low.params, width: "30", x: "26" } }];
+    r = build([high2, low2, hole, m]);
+    expect(r.featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(26 * 100 + 30 * 50 - Math.PI * 4 * 10 - Math.PI * 4 * 5, 2);
+    const moved = r.parts[0].edgeRefs.filter((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2] - 5) < 1e-3);
+    expect(moved).toHaveLength(1);
+    expect(Math.abs(Math.hypot(moved[0].mid[0] - 47, moved[0].mid[1] - 5) - 2)).toBeLessThan(1e-3);
+
+    // A whole part mirrored across the clicked face too (joined on): the riser at x = 20 doubles the tall step.
+    const whole: Feature = { ...feature("mirror", {}, "add"), mirror: { sources: [], plane: { kind: "default", name: "Right" }, planePick: riser, part: high.id, join: true } };
+    r = build([high, low, whole]);
+    expect(r.featureErrors).toEqual({});
+    // Tall step 0…20 mirrored to 20…40 (it swallows the low step): 40 × 10 × 10.
+    expect(volumes()[0]).toBeCloseTo(4000, 2);
+    expect(boundsOf(r).max[0]).toBeCloseTo(40, 3);
+  });
+
+  it("mirrors across the plane through a sketch line, square to its sketch", () => {
+    const plate = feature("box", { width: 60, depth: 10, height: 5 });
+    const hole = feature("cylinder", { diameter: 4, height: 5, x: 10, y: 5 }, "remove");
+    const drawn = addLine(emptySketch(), { x: 30, y: 0 }, { x: 30, y: 10 }, { construction: true });
+    const sk = sketchFeature({ kind: "default", name: "Top" }, drawn.sketch);
+    const m: Feature = { ...feature("mirror", {}, "add"), mirror: { sources: [hole.id], plane: { kind: "default", name: "Right" }, line: { sketch: sk.id, line: drawn.lineId } } };
+    const r = build([plate, sk, hole, m]);
+    expect(r.featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(3000 - 2 * Math.PI * 4 * 5, 2);
+    const top = r.parts[0].edgeRefs.filter((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2] - 5) < 1e-3);
+    expect(top).toHaveLength(2);
+    // One rim round x = 10, the mirror image round x = 50 (not x = −10, as across the Right plane).
+    expect(top.some((e) => Math.abs(Math.hypot(e.mid[0] - 50, e.mid[1] - 5) - 2) < 1e-3)).toBe(true);
+    // A slanted line: across x = y (through the origin, in the Top sketch) the hole at (10, 5) goes to (5, 10).
+    const slant = addLine(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 20 });
+    const sk2 = sketchFeature({ kind: "default", name: "Top" }, slant.sketch);
+    const square = feature("box", { width: 20, depth: 20, height: 5 });
+    const m2: Feature = { ...m, id: "m-slant", mirror: { sources: [hole.id], plane: { kind: "default", name: "Right" }, line: { sketch: sk2.id, line: slant.lineId } } };
+    const r2 = build([square, sk2, hole, m2]);
+    expect(r2.featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(2000 - 2 * Math.PI * 4 * 5, 2);
+    const rims2 = r2.parts[0].edgeRefs.filter((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2] - 5) < 1e-3);
+    expect(rims2.some((e) => Math.abs(Math.hypot(e.mid[0] - 5, e.mid[1] - 10) - 2) < 1e-3)).toBe(true);
+    // The line deleted: says what to do.
+    const gone = { ...sk, sketch: { ...sk.sketch!, data: emptySketch() } };
+    expect(build([plate, gone, hole, m]).featureErrors[m.id]).toMatch(/has been deleted.*Click another/);
+  });
+
+  it("asks for a mirror plane, or an axis, when none has been chosen yet", () => {
+    const plate = feature("box", { width: 60, depth: 10, height: 5 });
+    const hole = feature("cylinder", { diameter: 4, height: 5, x: 10, y: 5 }, "remove");
+    const m: Feature = { ...feature("mirror", {}, "add"), mirror: { sources: [hole.id], plane: { kind: "default", name: "Right" }, unset: true } };
+    expect(build([plate, hole, m]).featureErrors[m.id]).toMatch(/Choose the mirror plane: click a flat face/);
+    const c: Feature = { ...feature("circularPattern", { count: 3 }, "add"), pattern: { sources: [hole.id], axis: "z", flip: false, unset: true } };
+    expect(build([plate, hole, c]).featureErrors[c.id]).toMatch(/Choose the axis to go round/);
+  });
+
+  it("goes round a hole's round face away from the origin, and keeps it when the plate and hole move", () => {
+    const run = (cx: number, size: number) => {
+      const plate = feature("box", { width: size, depth: 100, height: 10 });
+      const centre = feature("cylinder", { diameter: 10, height: 10, x: cx, y: 40 }, "remove");
+      const small = feature("cylinder", { diameter: 4, height: 10, x: cx + 15, y: 40 }, "remove");
+      return { plate, centre, small };
+    };
+    const a = run(60, 100);
+    // Click the inside of the big hole (its round face).
+    const face = pickAt(build([a.plate, a.centre]), "face", [65, 40, 5]);
+    expect(face.ref.kind === "face" && face.ref.surface).toBe("CYLINDRE");
+    const round = (sources: string[]): Feature => ({ ...feature("circularPattern", { count: 4, angle: 360 }, "add"), id: "round", pattern: { sources, axis: "z", flip: false, along: face } });
+    let r = build([a.plate, a.centre, a.small, round([a.small.id])]);
+    expect(r.featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(100000 - Math.PI * 25 * 10 - 4 * Math.PI * 4 * 10, 1);
+    const near = (rims: TopoPick["ref"][], x: number, y: number, rad: number) =>
+      rims.some((e) => e.kind === "edge" && Math.abs(Math.hypot(e.mid[0] - x, e.mid[1] - y) - rad) < 1e-3 && Math.abs(Math.hypot(e.a[0] - x, e.a[1] - y) - rad) < 1e-3);
+    let rims = r.parts[0].edgeRefs.filter((e) => e.curve === "CIRCLE" && e.mid[2] > 9.99);
+    for (const [x, y] of [[75, 40], [60, 55], [45, 40], [60, 25]]) expect(near(rims, x, y, 2)).toBe(true);
+
+    // The plate made wider and both holes moved 2 mm along: the picked face is found again, and the copies follow.
+    const b = run(62, 120);
+    r = build([{ ...b.plate, id: a.plate.id }, { ...b.centre, id: a.centre.id }, { ...b.small, id: a.small.id }, round([a.small.id])]);
+    expect(r.featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(120000 - Math.PI * 25 * 10 - 4 * Math.PI * 4 * 10, 1);
+    rims = r.parts[0].edgeRefs.filter((e) => e.curve === "CIRCLE" && e.mid[2] > 9.99);
+    for (const [x, y] of [[77, 40], [62, 55], [47, 40], [62, 25]]) expect(near(rims, x, y, 2)).toBe(true);
+  });
+
+  it("goes round a straight edge, and round a sketch line", () => {
+    const plate = feature("box", { width: 40, depth: 40, height: 10 });
+    const boss = feature("cylinder", { diameter: 4, height: 5, x: 35, y: 20, z: 10 }, "add");
+    // The upright corner edge at x = y = 40.
+    const corner = pickAt(build([plate]), "edge", [40, 40, 5]);
+    expect(corner.ref.kind === "edge" && corner.ref.curve).toBe("LINE");
+    const round: Feature = { ...feature("circularPattern", { count: 4, angle: 360 }, "add"), pattern: { sources: [boss.id], axis: "z", flip: false, along: corner } };
+    let r = build([plate, boss, round]);
+    expect(r.featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(16000 + 4 * Math.PI * 4 * 5, 2);
+    // Round (40, 40): (35, 20) → (60, 35), (45, 60), (20, 45) — whichever way the edge points.
+    const tops = () => r.parts[0].edgeRefs.filter((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2] - 15) < 1e-3);
+    const at = (x: number, y: number) => tops().some((e) => Math.abs(Math.hypot(e.mid[0] - x, e.mid[1] - y) - 2) < 1e-3);
+    for (const [x, y] of [[35, 20], [60, 35], [45, 60], [20, 45]]) expect(at(x, y)).toBe(true);
+
+    // An upright line drawn on the Front plane at x = 40 (y = 0): the same copies, turned round (40, 0) instead.
+    const drawn = addLine(emptySketch(), { x: 40, y: 0 }, { x: 40, y: 10 });
+    const sk = sketchFeature({ kind: "default", name: "Front" }, drawn.sketch);
+    const byLine: Feature = { ...round, pattern: { sources: [boss.id], axis: "x", flip: false, line: { sketch: sk.id, line: drawn.lineId } } };
+    r = build([plate, boss, sk, byLine]);
+    expect(r.featureErrors).toEqual({});
+    // Round (40, 0): (35, 20) → (20, −5), (45, −20), (60, 5) (in some order).
+    for (const [x, y] of [[35, 20], [20, -5], [45, -20], [60, 5]]) expect(at(x, y)).toBe(true);
+    // A linear pattern along a sketch line goes the way it was drawn.
+    const along = addLine(emptySketch(), { x: 0, y: 0 }, { x: 0, y: 10 });
+    const sk2 = sketchFeature({ kind: "default", name: "Top" }, along.sketch);
+    const row: Feature = { ...feature("linearPattern", { count: 2, spacing: 10 }, "add"), pattern: { sources: [boss.id], axis: "x", flip: false, line: { sketch: sk2.id, line: along.lineId } } };
+    r = build([plate, boss, sk2, row]);
+    expect(r.featureErrors).toEqual({});
+    expect(at(35, 30)).toBe(true);
+  });
+});
+
+describe("round axes, round 3 review", () => {
+  it("keeps turning round a bore picked in the middle of a disc after the bore is moved off the middle", () => {
+    const make = (bx: number) => {
+      const disc = feature("cylinder", { diameter: 80, height: 10 });
+      const bore = feature("cylinder", { diameter: 10, height: 10, x: bx }, "remove");
+      const pin = feature("cylinder", { diameter: 4, height: 10, x: bx + 15 }, "remove");
+      return [disc, bore, pin];
+    };
+    const [disc, bore, pin] = make(0);
+    // The bore and the disc's outside share a centre, so their references are the same: the click (on the bore, 5 mm out) decides.
+    const r0 = build([disc, bore]);
+    const ref = r0.parts[0].faceRefs.find((f) => f.surface === "CYLINDRE")!;
+    const pick: TopoPick = { partId: r0.parts[0].id, ref, at: [5, 0, 5] };
+    const round = (): Feature => ({ ...feature("circularPattern", { count: 4, angle: 360 }, "add"), id: "ring", pattern: { sources: [pin.id], axis: "z", flip: false, along: pick } });
+    const rims = (r: ReturnType<typeof build>) => r.parts[0].edgeRefs.filter((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2] - 10) < 1e-3);
+    const at = (r: ReturnType<typeof build>, x: number, y: number, rad: number) => rims(r).some((e) => Math.abs(Math.hypot(e.mid[0] - x, e.mid[1] - y) - rad) < 1e-3 && Math.abs(Math.hypot(e.a[0] - x, e.a[1] - y) - rad) < 1e-3);
+    let r = build([disc, bore, pin, round()]);
+    expect(r.featureErrors).toEqual({});
+    for (const [x, y] of [[15, 0], [0, 15], [-15, 0], [0, -15]]) expect(at(r, x, y, 2)).toBe(true);
+    // Bore and pin moved 20 along X: the copies go round the bore at (20, 0), not round the disc's middle.
+    const moved = make(20).map((f, i) => ({ ...f, id: [disc, bore, pin][i].id }));
+    r = build([...moved, round()]);
+    expect(r.featureErrors).toEqual({});
+    expect(volumes()[0]).toBeCloseTo(Math.PI * (1600 - 25 - 4 * 4) * 10, 1);
+    for (const [x, y] of [[35, 0], [20, 15], [5, 0], [20, -15]]) expect(at(r, x, y, 2)).toBe(true);
+    // Clicking the disc's outside (40 mm out) still means the disc.
+    const outside = { ...round(), pattern: { ...round().pattern!, along: { ...pick, at: [40, 0, 5] as [number, number, number] } } };
+    r = build([...moved, outside]);
+    expect(r.featureErrors).toEqual({});
+    for (const [x, y] of [[0, 35], [-35, 0], [0, -35]]) expect(at(r, x, y, 2)).toBe(true);
   });
 });

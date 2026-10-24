@@ -19,6 +19,7 @@ import { planeFrame, planeOnFace, type SketchPlane } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/planeFeature";
 import { resolveParams } from "../model/features";
 import { copyEdge } from "../sketch/tools";
+import { projectEdge, linkEdge, type SketchLinkInfo } from "../sketch/links";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
 import { setSketchTheme } from "./SketchLayer";
@@ -27,6 +28,7 @@ import { SceneManager, type PickTarget, type ScreenRay } from "./SceneManager";
 import { planDrag, type DragPlan } from "../assembly/drag";
 import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mates";
 import { sectionPlane } from "./section";
+import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, setPatternDirection, sketchLine3D, type DirectionChoice, type PickableLine } from "../model/patternRefs";
 
 /** Shared empty colour list (a selector must not make a new object each time). */
 const NO_COLOURS: Record<string, string> = {};
@@ -114,7 +116,9 @@ export function planeForFace(item: SelectionItem): SketchPlane | null {
   const flat = viewportApi.current?.flatFace(item);
   if (!flat) return null;
   const part = s.parts.find((p) => p.id === item.partId);
-  return planeOnFace(flat.normal, flat.point, `Face of ${part?.name ?? "part"}`);
+  // Remember the face, so its edges can be used in the sketch and the sketch moves with it.
+  const pick = pickFor(s.parts, item);
+  return planeOnFace(flat.normal, flat.point, `Face of ${part?.name ?? "part"}`, pick?.ref.kind === "face" ? pick : undefined);
 }
 
 /** A Plane feature clicked in the 3D view, as somewhere to sketch (or put text, or base a plane on). */
@@ -134,6 +138,7 @@ export function viewNormalToPlaneFeature(id: string): boolean {
 }
 
 const NO_IDS: string[] = [];
+const NO_LINES: PickableLine[] = [];
 const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap", "enclose", "offsetSurface"]);
 
 /** Apply a click in the viewport to the selection, like Onshape. */
@@ -179,7 +184,10 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     const ref = s.parts.find((p) => p.id === target.item.partId)?.edgeRefs?.[target.item.index];
     if (!ref) return;
-    const r = copyEdge(s.editing.draft.sketch.data, planeFrame(s.editing.draft.sketch.plane), ref);
+    // Straight and round edges are copied in linked to the part (they follow it when it changes).
+    const data = s.editing.draft.sketch.data;
+    const seen = ref.curve === "UNKNOWN" ? null : projectEdge(planeFrame(s.editing.draft.sketch.plane), { partId: target.item.partId, ref });
+    const r = seen && seen.kind !== "curve" ? (({ curveId, ...rest }) => ({ ...rest, curveIds: [curveId] }))(linkEdge(data, seen, false)) : copyEdge(data, planeFrame(s.editing.draft.sketch.plane), ref);
     if (r.error) s.setSketchMessage(r.error, "error");
     else {
       s.updateSketch(r.sketch, { selection: r.curveIds });
@@ -350,34 +358,48 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     else s.setDraftField({ planeDef: { ...pd, ref: picked, ...(pd.mode === "midplane" ? { ref2: undefined } : {}) } });
     return;
   }
-  // Choosing the plane to mirror across.
-  if (s.editing?.draft.type === "mirror") {
+  // Choosing the plane to mirror across: a default plane, a flat face (followed as the part changes) or a sketch line.
+  if (s.editing?.draft.type === "mirror" && s.editing.draft.mirror) {
+    const m = s.editing.draft.mirror;
+    const setMirror = (mirror: typeof m) => s.setDraftField({ mirror });
     if (target?.kind === "plane") s.setDraftMirrorPlane({ kind: "default", name: target.plane });
-    else if (target?.kind === "part" && target.item.kind === "face") {
+    else if (target?.kind === "sketchLine") {
+      const line = { sketch: target.id, line: target.line };
+      const found = sketchLine3D(activeFeatures(s), line);
+      if (typeof found === "string") s.showToast(found);
+      else setMirror(setMirrorReference(m, { kind: "line", line, plane: linePlane(found) }));
+    } else if (target?.kind === "part" && target.item.kind === "face") {
       const plane = planeForFace(target.item);
-      if (plane) s.setDraftMirrorPlane(plane);
-      else s.showToast("That face is curved. Pick a flat face or one of the planes to mirror across.");
-    }
+      const found = pickFor(s.parts, target.item);
+      // Where it was clicked tells apart faces that look the same.
+      const pick = found && target.point ? { ...found, at: target.point } : found;
+      if (plane && pick) setMirror(setMirrorReference(m, { kind: "face", plane, pick }));
+      else s.showToast("That face is curved. To mirror across, click a flat face, a plane or a sketch line.");
+    } else if (target?.kind === "part") s.showToast("To mirror across, click a flat face, a plane or a sketch line (not a part's edge).");
     return;
   }
-  // Patterns pick their features in the list; in the 3D view, a click sets the direction (an edge or flat
-  // face) of a linear pattern, or the axis (a round face or edge, or a straight edge) of a circular one.
+  // Patterns pick their features in the list; in the 3D view, a click sets the direction (an edge, a flat
+  // face or a sketch line) of a linear pattern, or the axis (a round face or edge, a straight edge or a sketch line) of a circular one.
   if (s.editing && isPatternFeature(s.editing.draft.type)) {
     const d = s.editing.draft;
-    if ((d.type !== "linearPattern" && d.type !== "circularPattern") || !d.pattern || target?.kind !== "part") return;
+    if ((d.type !== "linearPattern" && d.type !== "circularPattern") || !d.pattern) return;
+    const second = d.type === "linearPattern" && d.pattern.picking === "along2";
+    const { picking: _p, ...pattern } = d.pattern;
+    const choose = (choice: DirectionChoice) => s.setDraftField({ pattern: setPatternDirection(pattern, choice, second) });
+    if (target?.kind === "sketchLine") return choose({ kind: "line", line: { sketch: target.id, line: target.line } });
+    if (target?.kind !== "part") return;
     const pick = pickFor(s.parts, target.item);
     if (!pick) return;
     const ref = pick.ref;
     if (d.type === "linearPattern") {
       const ok = ref.kind === "edge" ? ref.curve === "LINE" : ref.surface === "PLANE";
-      if (!ok) return s.showToast("Click a straight edge (the copies go along it) or a flat face (they go straight out of it).");
-      const { picking: _p, ...rest } = d.pattern;
-      s.setDraftField({ pattern: d.pattern.picking === "along2" ? { ...rest, along2: pick } : { ...rest, along: pick } });
+      if (!ok) return s.showToast("Click a straight edge or a sketch line (the copies go along it), or a flat face (they go straight out of it).");
     } else {
       const ok = ref.kind === "edge" ? ref.curve === "LINE" || ref.curve === "CIRCLE" : ref.surface === "CYLINDRE";
-      if (!ok) return s.showToast("For the axis, click a round face (a hole or boss), a round edge, or a straight edge.");
-      s.setDraftField({ pattern: { ...d.pattern, along: pick } });
+      if (!ok) return s.showToast("For the axis, click a round face (a hole or boss), a round or straight edge, or a sketch line.");
     }
+    // Where it was clicked tells apart round faces that share a centre (a bore in the middle of a disc).
+    choose({ kind: "pick", pick: target.point ? { ...pick, at: target.point } : pick });
     return;
   }
   // Picking edges and faces for a fillet, chamfer or shell.
@@ -399,6 +421,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
+  if (target.kind === "sketchLine") return;
   if (target.kind === "plane") {
     // Clicking the selected plane again deselects it.
     selectPlane(selectedPlane === target.plane ? null : target.plane);
@@ -461,12 +484,18 @@ function itemsForPicks(parts: PartMesh[], picks: TopoPick[]): SelectionItem[] {
   return items;
 }
 
-/** Sketches to show faintly: finished ones that no extrude has used yet, or that are highlighted. */
-function visibleSketches(features: Feature[], editingId: string | null, selectedId: string | null) {
+/**
+ * Sketches to show faintly: finished ones that no extrude has used yet, or that are highlighted.
+ * While a mirror or pattern is open (`referenceFor`, its id), every sketch before it is shown, so its lines can be clicked.
+ */
+function visibleSketches(features: Feature[], editingId: string | null, selectedId: string | null, links: Record<string, SketchLinkInfo>, referenceFor: string | null = null) {
   const used = new Set(features.filter((f) => isSketchSolid(f.type) && !f.suppressed && f.sketchRef).map((f) => f.sketchRef!));
+  const at = referenceFor ? features.findIndex((f) => f.id === referenceFor) : -1;
+  const earlier = referenceFor ? new Set((at >= 0 ? features.slice(0, at) : features).map((f) => f.id)) : null;
   return features
-    .filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && f.id !== editingId && (!used.has(f.id) || f.id === selectedId))
-    .map((f) => ({ plane: f.sketch!.plane!, data: f.sketch!.data }));
+    .filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && f.id !== editingId && (!used.has(f.id) || f.id === selectedId || !!earlier?.has(f.id)))
+    // A sketch that follows its part is shown where the part is now.
+    .map((f) => links[f.id]?.sketch ?? { plane: f.sketch!.plane!, data: f.sketch!.data });
 }
 
 export function Viewport() {
@@ -481,8 +510,10 @@ export function Viewport() {
       ? s.editing.draft.picks
       : s.editing?.draft.extrude?.upTo && s.editing.draft.extrude.end.startsWith("upTo")
         ? s.editing.draft.extrude.upTo
-        : // A pattern's clicked direction (the rows' one while that's being picked).
-          (s.editing?.draft.pattern?.picking === "along2" ? s.editing.draft.pattern.along2 : s.editing?.draft.pattern?.along) ?? null,
+        : // A mirror's clicked face, or a pattern's clicked direction (the rows' one while that's being picked).
+          s.editing?.draft.mirror?.planePick ??
+          (s.editing?.draft.pattern?.picking === "along2" ? s.editing.draft.pattern.along2 : s.editing?.draft.pattern?.along) ??
+          null,
   );
   const pickList = useMemo(() => (picks ? (Array.isArray(picks) ? picks : [picks]) : null), [picks]);
   const hiddenParts = useStore((s) => s.hiddenParts);
@@ -727,10 +758,23 @@ export function Viewport() {
   const inAssembly = assembly !== null;
   const theme = useStore((s) => s.theme);
   useEffect(() => setSketchTheme(theme === "dark"), [theme]);
+  // A mirror or pattern open: its sketch lines can be clicked, and the plane or axis it uses is drawn.
+  const refDraft = useStore((s) => {
+    const d = s.editing?.draft;
+    return d && (d.type === "mirror" || d.type === "linearPattern" || d.type === "circularPattern") ? d : null;
+  });
+  const pickLines = useMemo(() => (refDraft && !inAssembly ? pickableSketchLines(features, refDraft.id) : NO_LINES), [refDraft, features, inAssembly]);
+  useEffect(() => viewportApi.current?.setPickLines(pickLines), [pickLines]);
+  useEffect(() => {
+    const shape = refDraft && !inAssembly ? referenceShape(refDraft, features, resolveParams(refDraft).values) : null;
+    viewportApi.current?.setReference(shape);
+  }, [refDraft, features, inAssembly]);
+  const sketchLinks = useStore((s) => s.sketchLinks);
   const others = useMemo(
-    () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId)),
-    [features, draft?.id, selectedFeatureId, inAssembly],
+    () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId, sketchLinks, refDraft?.id ?? null)),
+    [features, draft?.id, selectedFeatureId, inAssembly, refDraft?.id, sketchLinks],
   );
+  const refEdges = draft ? sketchLinks[draft.id]?.edges : undefined;
   useEffect(() => {
     const manager = viewportApi.current;
     if (!manager) return;
@@ -739,9 +783,9 @@ export function Viewport() {
       return;
     }
     const { analysis, failing } = sketchStatus(sketchData);
-    manager.setSketchScene(others, { plane, data: sketchData, analysis, failing, selection: new Set(sketchSelection ?? []) });
+    manager.setSketchScene(others, { plane, data: sketchData, analysis, failing, selection: new Set(sketchSelection ?? []), refs: refEdges });
     // The theme changes the sketch colours, so redraw when it changes.
-  }, [others, plane, sketchData, sketchSelection, theme]);
+  }, [others, plane, sketchData, sketchSelection, theme, refEdges]);
 
   return (
     <>

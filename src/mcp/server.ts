@@ -6,6 +6,10 @@
  * Started as: node server/index.mjs <folder for designs>
  * Talks MCP over stdin/stdout, so nothing else may be printed to stdout:
  * all logging goes to stderr.
+ *
+ * It also listens on 127.0.0.1 (this computer only) for "Live with Claude":
+ * when the user clicks Connect to Claude in JuraCAD, the tools work on the
+ * design open in that tab (src/mcp/live.ts, src/live/protocol.ts).
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -17,6 +21,9 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import opencascade from "replicad-opencascadejs";
 import { setOC } from "replicad";
 import { DesignFolder } from "./files";
+import { LiveBridge } from "./live";
+import { startLiveServer } from "./websocket";
+import { LIVE_PORTS } from "../live/protocol";
 import { Session } from "./session";
 import { callTool, FORMAT_GUIDE, TOOLS } from "./tools";
 
@@ -54,6 +61,29 @@ async function main() {
   engineReady.catch((e) => log("The geometry engine failed to load:", e));
   let session: Session | null = null;
 
+  // Live with Claude: wait (on this computer only) for a JuraCAD tab to connect.
+  const live = new LiveBridge(VERSION, log);
+  if (process.env.JURACAD_LIVE !== "off") {
+    const ports = process.env.JURACAD_LIVE_PORT ? [Number(process.env.JURACAD_LIVE_PORT)] : [...LIVE_PORTS];
+    // JURACAD_LIVE_DEV=1 also lets in JuraCAD served on this computer (its own tests and development only).
+    const allowLocalOrigins = process.env.JURACAD_LIVE_DEV === "1";
+    startLiveServer({ ports, accept: (conn) => live.connect(conn), log, allowLocalOrigins })
+      .then((started) => {
+        if (started) {
+          live.port = started.port;
+          started.server.unref();
+          log(`Live link ready on 127.0.0.1:${started.port}.`);
+        } else {
+          live.startProblem = `ports ${ports.join(", ")} on this computer are all in use (JuraCAD may already be running for many other Claude chats). Close some other Claude chats or windows, or restart Claude.`;
+          log(`Live link: ${live.startProblem}`);
+        }
+      })
+      .catch((e) => {
+        live.startProblem = `the link couldn't start (${e instanceof Error ? e.message : String(e)}).`;
+        log(`Live link: ${live.startProblem}`);
+      });
+  } else live.startProblem = "it's switched off for this copy of the extension.";
+
   const server = new Server(
     { name: "juracad", version: VERSION },
     {
@@ -78,11 +108,22 @@ async function main() {
     } catch (e) {
       return { content: [{ type: "text" as const, text: `JuraCAD's geometry engine couldn't start (${e instanceof Error ? e.message : String(e)}). Try restarting Claude; if it keeps happening, reinstall the JuraCAD extension.` }], isError: true };
     }
-    session ??= new Session(folder);
+    if (!session) {
+      session = new Session(folder);
+      session.live = live;
+    }
     const result = await callTool(session, request.params.name, request.params.arguments ?? {});
     return { content: result.content, ...(result.isError ? { isError: true } : {}) };
   });
 
+  // When Claude stops the extension (closes our input), stop too, so the live link's port is freed.
+  const stop = () => {
+    live.close();
+    setTimeout(() => process.exit(0), 50);
+  };
+  server.onclose = stop;
+  process.stdin.on("end", stop);
+  process.stdin.on("close", stop);
   await server.connect(new StdioServerTransport());
   log("ready");
 }

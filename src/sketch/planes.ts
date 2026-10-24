@@ -5,6 +5,8 @@
  * default direction for Extrude.
  */
 
+import type { TopoPick } from "../geometry/topoRef";
+
 export type Vec3 = [number, number, number];
 
 export type DefaultPlane = "Top" | "Front" | "Right";
@@ -16,7 +18,20 @@ export type SketchPlane =
    * is captured when picked; for a Plane feature it's kept up to date when the
    * plane changes (see planeFeature.ts).
    */
-  | { kind: "face"; origin: Vec3; u: Vec3; v: Vec3; label: string; planeRef?: string };
+  | {
+      kind: "face";
+      origin: Vec3;
+      u: Vec3;
+      v: Vec3;
+      label: string;
+      planeRef?: string;
+      /**
+       * The part face it's on, when sketched on a part (older sketches don't
+       * have it): its edges can be used in the sketch, and the sketch moves
+       * with the face when the part changes.
+       */
+      face?: TopoPick;
+    };
 
 export interface PlaneFrame {
   origin: Vec3;
@@ -72,7 +87,7 @@ export function toSketch(frame: PlaneFrame, p: Vec3): [number, number] {
  * The sketch origin is where the world origin projects onto the face, and
  * sketch "up" follows world Z where possible, so coordinates stay intuitive.
  */
-export function planeOnFace(normal: Vec3, pointOnFace: Vec3, label: string): SketchPlane {
+export function planeOnFace(normal: Vec3, pointOnFace: Vec3, label: string, face?: TopoPick): SketchPlane {
   const n = normalize(normal);
   // Pick "up": world Z projected onto the plane, or world Y for horizontal faces.
   const ref: Vec3 = Math.abs(n[2]) > 0.9 ? [0, 1, 0] : [0, 0, 1];
@@ -81,7 +96,7 @@ export function planeOnFace(normal: Vec3, pointOnFace: Vec3, label: string): Ske
   const u = normalize(cross(v, n));
   const t = dot(pointOnFace, n);
   const origin: Vec3 = [t * n[0], t * n[1], t * n[2]];
-  return { kind: "face", origin, u, v, label };
+  return { kind: "face", origin, u, v, label, ...(face ? { face } : {}) };
 }
 
 export function planeLabel(plane: SketchPlane): string {
