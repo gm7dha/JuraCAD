@@ -5,7 +5,9 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { PartMesh } from "../kernel/protocol";
 import type { DatumName, PlaneName, SelectionItem } from "../model/store";
 import type { SketchController, SketchPointer, SketchTransient } from "../sketch/controller";
-import { planeFrame, type SketchPlane } from "../sketch/planes";
+import { planeFrame, type PlaneFrame, type SketchPlane } from "../sketch/planes";
+import { rayOnPlane, type AreaShade } from "../sketch/areaClicks";
+import type { Pt } from "../sketch/regions";
 import type { SketchData } from "../sketch/types";
 import type { PickableLine, ReferenceShape } from "../model/patternRefs";
 import { labelSprite } from "./labels";
@@ -64,7 +66,19 @@ export type PickTarget =
   /** A Plane feature (by its feature id). */
   | { kind: "customPlane"; id: string }
   /** A straight line in a finished sketch (`id` is the sketch feature's id), clickable while a mirror or pattern wants one. */
-  | { kind: "sketchLine"; id: string; line: string };
+  | { kind: "sketchLine"; id: string; line: string }
+  /** One of the areas of the sketch an Extrude, Revolve or Sweep uses (index into `sketchAreas(sketch).areas`), clickable while its dialog is open. */
+  | { kind: "sketchArea"; index: number };
+
+/** A sketch's areas to draw on its plane and make clickable (see `setPickAreas`). */
+export interface PickAreas {
+  frame: PlaneFrame;
+  shapes: { outer: Pt[]; holes: Pt[][]; shade: AreaShade }[];
+  /** The area round a sketch point, or -1. */
+  areaAt: (p: Pt) => number;
+  /** True: an area under the pointer wins over parts. False: only clicks that miss every part reach the areas. */
+  first: boolean;
+}
 
 /** A Plane feature to draw: where it is, its name, and whether it's highlighted. */
 export interface CustomPlane {
@@ -1107,6 +1121,9 @@ export class SceneManager {
     }
     // With a section on, ignore anything in the part that's cut away.
     const kept = (h: THREE.Intersection) => !this.section || this.section.distanceToPoint(h.point) >= -1e-6;
+    // A sketch area (while an Extrude, Revolve or Sweep is open): before parts, unless the extrude's end is being picked.
+    const area = this.areaUnderPointer();
+    if (area >= 0 && this.pickAreas?.first) return { kind: "sketchArea", index: area };
     const faceHit = this.raycaster.intersectObjects(meshes, false).find(kept);
     const edgeHit = this.raycaster.intersectObjects(lines, false).find(kept);
 
@@ -1130,6 +1147,7 @@ export class SceneManager {
       if (index >= 0) return { kind: "part", item: { partId, kind: "face", index }, point: faceHit.point.toArray() as [number, number, number], local: faceHit.object.worldToLocal(faceHit.point.clone()).toArray() as [number, number, number] };
     }
 
+    if (area >= 0) return { kind: "sketchArea", index: area };
     // Nothing on a part: try the planes (nearest first) — Plane features, then the default planes.
     const custom = this.raycaster.intersectObjects(this.customPlanesGroup.children.map((g) => g.children[0]), false)[0];
     if (custom) return { kind: "customPlane", id: custom.object.userData.customPlane as string };
@@ -1138,6 +1156,106 @@ export class SceneManager {
     const planeHit = this.raycaster.intersectObjects(squares, false)[0];
     if (planeHit) return { kind: "plane", plane: planeHit.object.userData.plane as PlaneName };
     return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // A sketch's areas, clickable while an Extrude, Revolve or Sweep is open (as in Onshape).
+
+  private pickAreas: PickAreas | null = null;
+  private hoverArea = -1;
+  private readonly areasGroup = new THREE.Group();
+  private areaMaterials: { fill: THREE.MeshBasicMaterial; edge: THREE.LineBasicMaterial; shade: AreaShade }[] = [];
+
+  /** Draw these areas on their sketch plane and let them be clicked (null: none). */
+  setPickAreas(areas: PickAreas | null): void {
+    this.pickAreas = areas;
+    if (!areas || this.hoverArea >= areas.shapes.length) this.hoverArea = -1;
+    const g = this.areasGroup;
+    for (const child of [...g.children]) {
+      g.remove(child);
+      const o = child as THREE.Mesh;
+      o.geometry?.dispose();
+      (o.material as THREE.Material | undefined)?.dispose();
+    }
+    this.areaMaterials = [];
+    if (!g.parent) this.scene.add(g);
+    if (!areas) return;
+    const { origin, u, v, n } = areas.frame;
+    const place = new THREE.Matrix4().makeBasis(new THREE.Vector3(...u), new THREE.Vector3(...v), new THREE.Vector3(...n)).setPosition(...origin);
+    const path = (poly: Pt[], to: THREE.Path) => {
+      poly.forEach(([x, y], i) => (i ? to.lineTo(x, y) : to.moveTo(x, y)));
+      to.closePath();
+      return to;
+    };
+    const loop = (poly: Pt[], mat: THREE.LineBasicMaterial) => {
+      const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(poly.map(([x, y]) => new THREE.Vector3(x, y, 0))), mat);
+      line.matrixAutoUpdate = false;
+      line.matrix.copy(place);
+      line.renderOrder = 6;
+      line.raycast = () => {};
+      g.add(line);
+    };
+    areas.shapes.forEach((a) => {
+      const shape = path(a.outer, new THREE.Shape()) as THREE.Shape;
+      shape.holes = a.holes.map((h) => path(h, new THREE.Path()));
+      const fill = new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
+      const edge = new THREE.LineBasicMaterial({ transparent: true, depthTest: false });
+      this.areaMaterials.push({ fill, edge, shade: a.shade });
+      const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), fill);
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.copy(place);
+      mesh.renderOrder = 5;
+      mesh.raycast = () => {};
+      g.add(mesh);
+      loop(a.outer, edge);
+      for (const h of a.holes) loop(h, edge);
+    });
+    this.colourAreas();
+  }
+
+  /** Faint when just clickable, medium when "every closed shape" uses it, strong when picked; orange under the pointer. */
+  private colourAreas(): void {
+    this.areaMaterials.forEach((m, i) => {
+      const hover = i === this.hoverArea;
+      const colour = hover ? COLOURS.partHover : m.shade === "none" ? COLOURS.part : COLOURS.partSelected;
+      m.fill.color.set(colour);
+      m.fill.opacity = (m.shade === "picked" ? 0.55 : m.shade === "used" ? 0.25 : 0.12) + (hover ? 0.2 : 0);
+      m.edge.color.set(hover ? COLOURS.edgeHover : m.shade === "none" ? COLOURS.part : COLOURS.edgeSelected);
+      m.edge.opacity = m.shade === "none" && !hover ? 0.5 : 0.9;
+    });
+  }
+
+  /** The area under the raycaster's current ray (-1: none). */
+  private areaUnderPointer(): number {
+    const a = this.pickAreas;
+    if (!a) return -1;
+    const r = this.raycaster.ray;
+    const hit = rayOnPlane(a.frame, r.origin.toArray() as [number, number, number], r.direction.toArray() as [number, number, number]);
+    if (!hit) return -1;
+    // With a section on, areas in the part of the view cut away can't be clicked.
+    if (this.section) {
+      const p = r.at(hit.distance, new THREE.Vector3());
+      if (this.section.distanceToPoint(p) < -1e-6) return -1;
+    }
+    return a.areaAt(hit.at);
+  }
+
+  /**
+   * For the browser smoke test: each clickable area's outline-points middle on screen (CSS px; inside round
+   * or other convex areas) and the size of its outline's box (mm²).
+   */
+  areaScreenPoints(): { x: number; y: number; box: number }[] {
+    const a = this.pickAreas;
+    if (!a) return [];
+    const { origin: o, u, v } = a.frame;
+    return a.shapes.map(({ outer }) => {
+      const xs = outer.map((q) => q[0]);
+      const ys = outer.map((q) => q[1]);
+      const x = xs.reduce((t, q) => t + q, 0) / xs.length;
+      const y = ys.reduce((t, q) => t + q, 0) / ys.length;
+      const p = new THREE.Vector3(o[0] + x * u[0] + y * v[0], o[1] + x * u[1] + y * v[1], o[2] + x * u[2] + y * v[2]).project(this.camera);
+      return { x: ((p.x + 1) / 2) * this.width, y: ((1 - p.y) / 2) * this.height, box: (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys)) };
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -1272,7 +1390,7 @@ export class SceneManager {
     if (this.dragEnabled && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const hit = this.pickAt(x, y);
       this.drag = hit?.kind === "part" ? { target: hit, started: false, refused: false } : null;
-      this.lastDragDebug = `press hit ${hit ? (hit.kind === "part" ? hit.item.partId : hit.kind === "plane" ? hit.plane : hit.id) : "nothing"}`;
+      this.lastDragDebug = `press hit ${hit ? (hit.kind === "part" ? hit.item.partId : hit.kind === "plane" ? hit.plane : hit.kind === "sketchArea" ? "sketch area" : hit.id) : "nothing"}`;
     }
     if (e.button === 2) {
       // Ctrl + right-drag pans, as in Onshape (⌘ + right-drag too, for Macs).
@@ -1345,6 +1463,10 @@ export class SceneManager {
     this.pendingMove = null;
     this.sketchController?.pointerLeave();
     this.viewCube.setHover(null, null, this.width);
+    if (this.hoverArea >= 0) {
+      this.hoverArea = -1;
+      this.colourAreas();
+    }
     if (this.hover) {
       this.hover = null;
       this.applyHighlights();
@@ -1420,6 +1542,12 @@ export class SceneManager {
     const planeHit = hit?.kind === "plane" ? hit.plane : null;
     const customHit = hit?.kind === "customPlane" ? hit.id : null;
     const lineHit = hit?.kind === "sketchLine" ? this.pickLines.find((l) => l.sketch === hit.id && l.line === hit.line) ?? null : null;
+    const areaHit = hit?.kind === "sketchArea" ? hit.index : -1;
+    if (areaHit !== this.hoverArea) {
+      this.hoverArea = areaHit;
+      this.colourAreas();
+    }
+    if (areaHit >= 0) this.renderer.domElement.style.cursor = "pointer";
     if (lineHit !== this.hoverLine) {
       this.hoverLine = lineHit;
       this.drawReference();
