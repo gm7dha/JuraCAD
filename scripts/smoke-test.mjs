@@ -1325,22 +1325,27 @@ try {
     const sideSpot = await page.evaluate(({ id }) => {
       const v = window.juracadViewport.current;
       const first = window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.name === "Assembly 1 <1>").id;
+      // A flat face whose spot isn't under the Mirror panel (or anything else drawn over the view).
+      const box = v.canvas.getBoundingClientRect();
       for (const p of v.shownParts().filter((m) => m.id.startsWith(`${first}/`))) {
-        const at = v.screenPointOnFace(p.id, p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99));
-        if (at) return at;
+        for (let k = 0; k < p.faceRefs.length; k++) {
+          if (p.faceRefs[k].surface !== "PLANE") continue;
+          const at = v.screenPointOnFace(p.id, k);
+          if (at && document.elementFromPoint(box.left + at.x, box.top + at.y) === v.canvas && v.pickKindAt(at.x, at.y) === "face:PLANE") return at;
+        }
       }
       return null;
     }, asm2);
     if (!sideSpot) throw new Error("couldn't find a face to mirror across");
     await canvas.click({ position: sideSpot });
-    await page.waitForSelector("text=A face of Assembly 1 <1> /", { timeout: 5_000 }).catch(async () => {
-      throw new Error(`clicking a face inside Assembly 1 <1> didn't set the mirror plane (panel: "${(await page.locator('[aria-label="Pattern Mirror 1"]').innerText()).replace(/\n/g, " / ")}")`);
+    await page.waitForSelector("text=A face of", { timeout: 5_000 }).then(() => {}, async () => {
+      throw new Error(`clicking a flat face didn't set the mirror plane (panel: "${(await page.locator('[aria-label="Pattern Mirror 1"]').innerText()).replace(/\n/g, " / ")}")`);
     });
     await page.getByLabel("Same part for symmetric parts").check();
     const mirrorState = await page.evaluate(({ id }) => {
       const a = window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id);
       const p = a.patterns.find((x) => x.kind === "mirror");
-      return { plane: !!p?.plane?.path?.length, same: !!p?.samePart, copies: a.instances.filter((i) => i.copyOf?.pattern === p?.id).map((i) => !!i.mirrored) };
+      return { plane: !!p?.plane, inner: !!p?.plane?.path?.length, same: !!p?.samePart, copies: a.instances.filter((i) => i.copyOf?.pattern === p?.id).map((i) => !!i.mirrored) };
     }, asm2);
     if (!mirrorState.plane || !mirrorState.same || mirrorState.copies.length !== 1) throw new Error(`the mirror isn't across the face: ${JSON.stringify(mirrorState)}`);
     if ((await page.locator('[aria-label="Pattern Mirror 1"] .param-message.error').count()) > 0) {
@@ -1353,7 +1358,7 @@ try {
     await page.waitForTimeout(600);
     await shot("subassembly-mirror");
     await page.getByRole("button", { name: "Close pattern" }).click();
-    subReport += `; its STEP file kept the structure (Assembly 1 defined once, used twice; ${shapes} part shape(s)); an exploded view step moved one part inside a copy; Part 2 mirrored across a face inside a copy ${sameHand ? "as the same part (symmetric)" : "as a mirror image"}`;
+    subReport += `; its STEP file kept the structure (Assembly 1 defined once, used twice; ${shapes} part shape(s)); an exploded view step moved one part inside a copy; Part 2 mirrored across a face${mirrorState.inner ? " of a part inside a copy" : ""} ${sameHand ? "as the same part (symmetric)" : "as a mirror image"}`;
 
     // Double-click a sub-assembly to open it.
     await page.locator(".feature-row >> text=Assembly 1 <1>").dblclick();
