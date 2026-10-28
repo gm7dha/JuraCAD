@@ -1,4 +1,4 @@
-import type { SketchLinkInfo } from "../sketch/links";
+import type { RefEdge, SketchLinkInfo } from "../sketch/links";
 import type { SketchPlane } from "../sketch/planes";
 import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
@@ -74,8 +74,6 @@ export interface StudioInput {
   /** A Part Studio built again in another configuration: its variables, and what's added to its parts' ids ("@<configuration>"). */
   variables?: Record<string, number>;
   partSuffix?: string;
-  /** The sketch open for editing (its feature id): it's also offered other sketches and every part's edges to snap to. */
-  editing?: string;
 }
 
 /** Display mesh for one part, ready to hand to three.js. */
@@ -223,6 +221,7 @@ export type KernelRequest =
   | { type: "unfold"; partId: string }
   | { type: "intersect"; partId: string; plane: SketchPlane; face?: FaceRef }
   | { type: "deleteFaceBlockers"; features: Feature[]; featureId: string; variables: Record<string, number> }
+  | { type: "sketchCandidates"; studioId: string; sketchId: string; known?: number }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
 
 export type KernelResponseBody =
@@ -234,6 +233,7 @@ export type KernelResponseBody =
   | { type: "unfold"; result: PartMesh | null }
   | { type: "intersect"; result: { edges: EdgeRef[] } | { error: string } }
   | { type: "deleteFaceBlockers"; result: DeleteFaceBlockers }
+  | { type: "sketchCandidates"; result: { version: number; list?: RefEdge[] } | null }
   | { type: "export3mf"; result: ThreeMfResult }
   | { type: "clashes"; result: ContactMeasure[] }
   | { type: "project"; result: ViewProjection[] };

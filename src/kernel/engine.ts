@@ -1633,6 +1633,20 @@ interface StudioBuild {
   errors: Record<string, string>;
   /** Sketches on part faces, or using part edges: what was found for them. */
   links: Record<string, SketchLinkInfo>;
+  /** Each sketch: what it could snap to, as things were where it sits (see sketchCandidates). */
+  snaps: Map<string, SketchSnap>;
+}
+
+/** What a sketch could snap to, kept from a build: the parts (shared copies) and sketches before it, and the list it's in. */
+interface SketchSnap {
+  /** The sketch as built (moved with its face). */
+  sketch: Feature;
+  index: number;
+  features: Feature[];
+  earlier: [string, Feature][];
+  parts: { id: string; shape: Shape3D }[];
+  faceEdges: RefEdge[];
+  shared: string;
 }
 
 export class GeometryEngine {
@@ -1685,8 +1699,7 @@ export class GeometryEngine {
     this.studiosBuilt = new Set();
     for (const studio of ordered) {
       const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"));
-      // The sketch being edited is also offered everything else to snap to, so opening one rebuilds.
-      const key = JSON.stringify(studio.features) + shared + (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") + (deps.length ? JSON.stringify(deps) : "") + (studio.editing ? `|editing ${studio.editing}` : "");
+      const key = JSON.stringify(studio.features) + shared + (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") + (deps.length ? JSON.stringify(deps) : "");
       let b = this.builds.get(studio.id);
       if (!b || b.key !== key) {
         if (b) this.disposeBuild(b);
@@ -1694,21 +1707,25 @@ export class GeometryEngine {
         this.tools = new Map();
         this.links = {};
         setCurrentScope(studio.variables ?? variables);
-        this.editingSketch = studio.partSuffix ? null : studio.editing ?? null;
+        // What each sketch could snap to is kept (cheaply) for when one is opened — not for other configurations.
+        this.snaps = studio.partSuffix ? null : new Map();
         // Parts brought in from other Part Studios (Derived) count too.
         this.buildShared = shared + JSON.stringify([studio.variables ?? null, deps]);
         let errors: Record<string, string>;
         try {
           errors = this.buildFeatures(studio.features);
-        } finally {
-          this.editingSketch = null;
+        } catch (e) {
+          this.disposeSnaps(this.snaps);
+          this.snaps = null;
+          throw e;
         }
         setCurrentScope(variables);
         // Names the user gave parts (used in the lists and in exported files).
         for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
         // Another configuration's copies of the parts (for assemblies).
         if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-        b = { key, parts: this.parts, tools: this.tools, errors, links: this.links };
+        b = { key, parts: this.parts, tools: this.tools, errors, links: this.links, snaps: this.snaps ?? new Map() };
+        this.snaps = null;
         this.builds.set(studio.id, b);
         rebuilt.push(studio.id);
         const configuration = studio.partSuffix?.replace(/^@/, "");
@@ -1752,7 +1769,7 @@ export class GeometryEngine {
         const errors = this.buildFeatures(upto.map((f) => (off.has(f.id) ? { ...f, suppressed: true } : f)));
         return { error: errors[featureId], featureIds: [...(this.parts.find((p) => p.id === partId)?.featureIds ?? [])] };
       } finally {
-        this.disposeBuild({ key: "", parts: this.parts, tools: this.tools, errors: {}, links: {} });
+        this.disposeBuild({ key: "", parts: this.parts, tools: this.tools, errors: {}, links: {}, snaps: new Map() });
         this.parts = saved.parts;
         this.tools = saved.tools;
         this.links = links;
@@ -1819,14 +1836,13 @@ export class GeometryEngine {
    * kept in this.links for the app. Old sketches (no face, no links) come back
    * as they are. `sketches`: the sketches before this one, as built.
    */
-  private followSketch(feature: Feature, sketches: SketchMap = new Map(), features: Feature[] = []): Feature {
+  private followSketch(feature: Feature, sketches: SketchMap = new Map()): Feature {
     const sk = feature.sketch!;
     const plane = sk.plane!;
     const facePick = plane.kind === "face" ? plane.face : undefined;
     const linked = sk.data.curves.filter((c) => "link" in c && c.link);
     const linkedPts = sk.data.points.filter((p) => p.link);
-    const editing = this.editingSketch === feature.id;
-    if (!facePick && !linked.length && !linkedPts.length && !editing) return feature;
+    if (!facePick && !linked.length && !linkedPts.length) return feature;
     let followed = plane;
     let faceLost = false;
     const edges: RefEdge[] = [];
@@ -1962,7 +1978,6 @@ export class GeometryEngine {
       edges,
       links,
       ...(linkedPts.length ? { pointLinks } : {}),
-      ...(editing ? { candidates: this.sketchCandidates(feature, frame, edges, sketches, features) } : {}),
       ...(followed !== plane ? { plane: followed } : {}),
       ...(faceLost ? { faceLost: true } : {}),
       ...(changed ? { sketch: { plane: followed, data } } : {}),
@@ -1970,29 +1985,80 @@ export class GeometryEngine {
     return changed ? { ...feature, sketch: { plane: followed, data } } : feature;
   }
 
-  /** The sketch being edited in the Part Studio being built (it's offered everything else to snap to). */
-  private editingSketch: string | null = null;
+  /** While a Part Studio is being built: what each sketch could snap to, kept for when it's opened (see sketchCandidates). */
+  private snaps: Map<string, SketchSnap> | null = null;
   /** What decides the variables in this build (part of the candidates' cache key). */
   private buildShared = "";
   /** The last list of things to snap to, and what it was worked out from (opening a sketch and drawing in it reuses it). */
-  private candidateCache: { key: string; list: RefEdge[] } | null = null;
+  private candidateCache: { key: string; list: RefEdge[]; version: number } | null = null;
+  /** How many times the list has been worked out rather than reused (for tests). */
+  candidateRuns = 0;
+
+  /** Keep what a sketch could snap to, as things are where it sits in the list (copies of the parts are cheap: they share the shapes). */
+  private recordSnap(feature: Feature, followed: Feature, sketches: SketchMap, features: Feature[]): void {
+    if (!this.snaps || !followed.sketch?.plane) return;
+    const old = this.snaps.get(feature.id);
+    if (old) this.disposeSnaps(new Map([[feature.id, old]]));
+    this.snaps.set(feature.id, {
+      sketch: followed,
+      index: features.indexOf(feature),
+      features,
+      earlier: [...sketches.entries()],
+      parts: this.parts.map((p) => ({ id: p.id, shape: p.shape.clone() })),
+      faceEdges: this.links[feature.id]?.edges ?? [],
+      shared: this.buildShared,
+    });
+  }
+
+  private disposeSnaps(snaps: Map<string, SketchSnap> | null | undefined): void {
+    for (const snap of snaps?.values() ?? [])
+      for (const p of snap.parts) {
+        try {
+          p.shape.delete();
+        } catch {
+          // already freed
+        }
+      }
+    snaps?.clear();
+  }
 
   /**
    * Everything a sketch can snap to besides its face's edges: every part's
-   * edges as built so far (seen square-on to the sketch), and every other
-   * sketch — those earlier in the list as built, later ones as drawn (shown,
-   * but they say why they can't be used). Kept while nothing before the sketch
-   * (and no other sketch) changes, so drawing in a busy design stays quick.
+   * edges as they were where the sketch sits in the list (seen square-on to
+   * it), and every other sketch — those earlier in the list as built, later
+   * ones as drawn (shown, but they say why they can't be used). Worked out
+   * from the last build without building anything again, and kept while
+   * nothing before the sketch (and no other sketch) changes, so opening a
+   * sketch and drawing in it stay quick. Null when that sketch isn't built.
    */
-  private sketchCandidates(feature: Feature, frame: PlaneFrame, faceEdges: RefEdge[], sketches: SketchMap, features: Feature[]): RefEdge[] {
-    const at = features.indexOf(feature) >= 0 ? features.indexOf(feature) : features.findIndex((f) => f.id === feature.id);
-    const before = at >= 0 ? features.slice(0, at) : [];
-    const later = at >= 0 ? features.slice(at + 1).filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane) : [];
-    const key = JSON.stringify([frame, before, later.map((f) => [f.id, f.name, f.sketch]), this.buildShared, faceEdges.length]);
-    if (this.candidateCache?.key === key) return this.candidateCache.list;
+  sketchCandidates(studioId: string, sketchId: string): RefEdge[] | null {
+    return this.sketchCandidatesSince(studioId, sketchId)?.list ?? null;
+  }
+
+  /**
+   * The same, numbered: `known` is the number of a list the app already has —
+   * when that's still right, no list is sent back (they can be big).
+   */
+  sketchCandidatesSince(studioId: string, sketchId: string, known?: number): { version: number; list?: RefEdge[] } | null {
+    const r = this.workOutCandidates(studioId, sketchId);
+    if (!r) return null;
+    return r.version === known ? { version: r.version } : { version: r.version, list: r.list };
+  }
+
+  private workOutCandidates(studioId: string, sketchId: string): { list: RefEdge[]; version: number } | null {
+    const snap = this.builds.get(studioId)?.snaps.get(sketchId);
+    const plane = snap?.sketch.sketch?.plane;
+    if (!snap || !plane) return null;
+    const frame = planeFrame(plane);
+    const { features, index } = snap;
+    const before = index >= 0 ? features.slice(0, index) : [];
+    const later = index >= 0 ? features.slice(index + 1).filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane) : [];
+    const key = JSON.stringify([frame, before, later.map((f) => [f.id, f.name, f.sketch]), snap.shared, snap.faceEdges.map((e) => e.pick)]);
+    if (this.candidateCache?.key === key) return this.candidateCache;
+    this.candidateRuns++;
     const out: RefEdge[] = [];
     const LIMIT = 20000;
-    for (const part of this.parts) {
+    for (const part of snap.parts) {
       if (out.length >= LIMIT) break;
       const all = edgesOf(part.shape);
       try {
@@ -2001,7 +2067,7 @@ export class GeometryEngine {
           if (out.length >= LIMIT) return;
           const ref = edgeRefOf(e, bounds);
           // The face's own edges are already shown (and work as before).
-          if (faceEdges.some((f) => f.pick?.partId === part.id && sameRef(f.pick.ref, ref))) return;
+          if (snap.faceEdges.some((f) => f.pick?.partId === part.id && sameRef(f.pick.ref, ref))) return;
           const seen = seeEdge(frame, { partId: part.id, ref }, edgeSamples(e, ref));
           if (seen) out.push(seen);
         });
@@ -2009,14 +2075,14 @@ export class GeometryEngine {
         all.forEach((e) => e.delete());
       }
     }
-    for (const [id, f] of sketches) {
-      if (id === feature.id || !f.sketch?.plane) continue;
+    for (const [id, f] of snap.earlier) {
+      if (id === sketchId || !f.sketch?.plane) continue;
       out.push(...sketchRefs({ id, name: f.name, plane: f.sketch.plane, data: f.sketch.data }, frame));
     }
     for (const f of later) out.push(...sketchRefs({ id: f.id, name: f.name, plane: f.sketch!.plane!, data: f.sketch!.data, later: true }, frame));
     const list = out.length > LIMIT ? out.slice(0, LIMIT) : out;
-    this.candidateCache = { key, list };
-    return list;
+    this.candidateCache = { key, list, version: this.candidateRuns };
+    return this.candidateCache;
   }
 
   /** Build one Part Studio's features into this.parts and this.tools; returns the features' problems. */
@@ -2041,7 +2107,9 @@ export class GeometryEngine {
         // Sketches make no solid themselves; extrudes later in the list use them.
         if (!feature.sketch?.plane) featureErrors[feature.id] = "Pick a plane or flat face to sketch on.";
         else {
-          sketches.set(feature.id, this.followSketch(feature, sketches, features));
+          const followed = this.followSketch(feature, sketches);
+          this.recordSnap(feature, followed, sketches, features);
+          sketches.set(feature.id, followed);
           const problem = linkProblem(this.links[feature.id], feature.sketch.data);
           if (problem) featureErrors[feature.id] = problem;
         }
@@ -4859,6 +4927,7 @@ export class GeometryEngine {
     }
     b.parts = [];
     b.tools.clear();
+    this.disposeSnaps(b.snaps);
   }
 
   private disposeParts(): void {

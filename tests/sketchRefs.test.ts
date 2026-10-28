@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { EdgeRef, Vec3 } from "../src/geometry/topoRef";
 import { followLinks, laterMessage, linkEdge, linkPoint, linkProblem, lostLinkIds, lostLinksMessage, pruneReferences, refSketch, type RefEdge, type SketchLinkInfo } from "../src/sketch/links";
 import { addCircle, addDimension, addLine, addPoint, curveById, pointPos, type Placed } from "../src/sketch/ops";
+import { tangentLineAt } from "../src/sketch/tangents";
 import { circleCentre3, edgePoint3, seeEdge, seeSketchCurve, sketchPointAt, sketchRefs, type SourceSketch } from "../src/sketch/projected";
 import { planeFrame, planeOnFace, type SketchPlane } from "../src/sketch/planes";
 import { attachPoint, bringIn, pickAt, snapAt } from "../src/sketch/snaps";
@@ -216,6 +217,9 @@ describe("bringing in and following", () => {
     expect(refs.every((r) => r.source?.later)).toBe(true);
     const msg = laterMessage(refs[0]);
     expect(msg).toBe('"Sketch 1" comes after this sketch in the feature list, so this sketch can\'t use it (they\'d depend on each other). Drag this sketch below it in the feature list first.');
+    // Drawing doesn't snap to them (so the click isn't wasted)…
+    expect(snapAt(emptySketch(), 3.1, 0.1, { ...tol, refs }).placed.snap).toBeNull();
+    // …clicking one with Select or Dimension says why it can't be used.
     const hit = pickAt(emptySketch(), 3.1, 0.1, 1, 0.5, refs);
     expect(bringIn(emptySketch(), hit!.id, refs).error).toBe(msg);
     const line = refs.find((r) => r.kind === "line")!;
@@ -269,6 +273,60 @@ describe("picking", () => {
     expect(at.snap).toMatchObject({ kind: "ref", at: "a", edge: faceCorner });
     const p = addPoint(emptySketch(), at);
     expect(p.sketch.curves.some((c) => "link" in c && c.link && "partId" in c.link && !c.link.project)).toBe(true);
+  });
+});
+
+describe("busy designs", () => {
+  /** A plate with a 60 × 60 grid of holes (3,600 circles) and the 3,600 corners of a grid of lines, all from elsewhere. */
+  function busy(): RefEdge[] {
+    const refs: RefEdge[] = [];
+    const pick = (i: number) => ({ partId: "plate", ref: { kind: "edge" as const, curve: "CIRCLE", a: [i, 0, 0] as Vec3, b: [i, 0, 0] as Vec3, mid: [i, 1, 0] as Vec3 } });
+    for (let i = 0; i < 60; i++)
+      for (let j = 0; j < 60; j++) {
+        const c: P2 = [i * 10, j * 10];
+        refs.push({ pick: pick(i * 60 + j), project: true, kind: "circle", a: [c[0] + 2, c[1]], b: [c[0] + 2, c[1]], mid: [c[0] - 2, c[1]], centre: c, radius: 2 });
+        refs.push({ kind: "line", a: [c[0] + 5, c[1] + 5], b: [c[0] + 9, c[1] + 5], mid: [c[0] + 7, c[1] + 5], source: { sketch: "skA", item: `l${i}-${j}`, ends: { a: `a${i}-${j}`, b: `b${i}-${j}` } } });
+      }
+    return refs;
+  }
+
+  it("snapping, picking and tangent lines only look near the pointer (a few ms with 7,200 references)", () => {
+    const refs = busy();
+    const s = emptySketch();
+    // The first call lays the references out on a grid (once per list).
+    snapAt(s, 1, 1, { ...tol, refs });
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), (seed / 0x7fffffff) * 600);
+    const t0 = performance.now();
+    for (let k = 0; k < 200; k++) snapAt(s, rnd(), rnd(), { ...tol, refs });
+    const t1 = performance.now();
+    for (let k = 0; k < 200; k++) pickAt(s, rnd(), rnd(), 1, 0.5, refs);
+    const t2 = performance.now();
+    for (let k = 0; k < 200; k++) tangentLineAt(s, { x: 0, y: 2, snap: null }, rnd(), rnd(), 1, refs);
+    const t3 = performance.now();
+    // Generous for busy CI machines: before the grid, one move took over 100 ms with a sixth of these.
+    expect((t1 - t0) / 200).toBeLessThan(10);
+    expect((t2 - t1) / 200).toBeLessThan(10);
+    expect((t3 - t2) / 200).toBeLessThan(10);
+    // And they still find the right things: the hole at (300, 300), its centre, a line's end.
+    expect(snapAt(s, 300.3, 299.8, { ...tol, refs }).placed).toMatchObject({ x: 300, y: 300, snap: { kind: "ref", at: "centre" } });
+    expect(snapAt(s, 305.2, 305.1, { ...tol, refs }).placed).toMatchObject({ x: 305, y: 305, snap: { kind: "ref", at: "a" } });
+    const hole = refs.findIndex((e) => e.centre?.[0] === 300 && e.centre?.[1] === 300);
+    expect(pickAt(s, 302.1, 300, 0.5, 0.3, refs)?.id).toBe(`ref:${hole}`);
+  });
+
+  it("hiding something doesn't renumber the rest", () => {
+    const refs = busy();
+    const s = emptySketch();
+    const hole = refs.findIndex((e) => e.centre?.[0] === 300 && e.centre?.[1] === 300);
+    const lineEnd = refs.findIndex((e) => e.source?.item === "l30-30");
+    expect(pickAt(s, 305.1, 305, 1, 0.5, refs)?.id).toBe(`ref:${lineEnd}:a`);
+    // The plate is hidden: its holes are skipped, but the line from the other sketch keeps its id.
+    const hidePlate = (e: RefEdge) => e.pick?.partId === "plate";
+    expect(pickAt(s, 305.1, 305, 1, 0.5, refs, hidePlate)?.id).toBe(`ref:${lineEnd}:a`);
+    expect(pickAt(s, 302.1, 300, 0.5, 0.3, refs, hidePlate)).toBeNull();
+    expect(snapAt(s, 300.3, 299.8, { ...tol, refs, skip: hidePlate }).placed.snap).toBeNull();
+    expect(pickAt(s, 302.1, 300, 0.5, 0.3, refs)?.id).toBe(`ref:${hole}`);
   });
 });
 

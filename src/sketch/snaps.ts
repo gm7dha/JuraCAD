@@ -6,7 +6,8 @@
  * middle, a circle's or arc's centre.
  */
 import { alignWith, distToCurve, hitTest, type Hit } from "./hit";
-import { isFaceEdge, isRefId, linkEdge, linkPoint, parseRefId, refSketch, type RefEdge } from "./links";
+import { isFaceEdge, isRefId, linkEdge, linkPoint, parseRefId, refSketchOf, type RefEdge } from "./links";
+import { refIndex } from "./refIndex";
 import { curveById, ellipsePoints, joinPoints, nearestOnPath, pointPos, radiusOf, sketchId, splinePath, type EditResult, type Placed, type Snap } from "./ops";
 import { solveSketch } from "./solver";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
@@ -20,8 +21,10 @@ export interface SnapOptions {
   curveTol: number;
   /** Points the pointer has passed over, most recent first (to line up with). Circle centres here snap from further away. */
   acquired?: string[];
-  /** Part edges shown in the sketch. */
+  /** Part edges shown in the sketch, and things from elsewhere it can use (see links.ts). */
   refs?: RefEdge[];
+  /** References to leave out (hidden sketches and parts); their place in `refs` (and so their ids) stays. */
+  skip?: (e: RefEdge) => boolean;
   /** Points and curves to leave out (e.g. what's being dragged). */
   ignore?: Set<string>;
 }
@@ -93,7 +96,9 @@ function centreIds(s: SketchData): Set<string> {
 export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): SnapResult {
   const ignore = o.ignore ?? new Set<string>();
   const refs = o.refs ?? [];
-  const virt = refs.length ? refSketch(refs) : null;
+  // Only the references near the pointer are looked at (a busy design offers thousands); things in
+  // sketches further down the list aren't snapped to (they can't be used — clicking one says why).
+  const virt = refs.length ? nearRefs(refs, x, y, Math.max(2 * o.pointTol, o.curveTol), (e) => !!e.source?.later || !!o.skip?.(e)) : null;
   const refOf = (id: string) => {
     const r = parseRefId(id);
     return r ? { edge: refs[r.index], what: r.what } : null;
@@ -189,6 +194,15 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
 }
 
 /**
+ * The references within `r` of (x, y) as stand-in geometry (ids keep their
+ * place in the whole list), leaving out any `skip` says to.
+ */
+export function nearRefs(refs: RefEdge[], x: number, y: number, r: number, skip?: (e: RefEdge) => boolean): SketchData {
+  const near = refIndex(refs).near(x, y, r);
+  return refSketchOf(refs, skip ? near.filter((i) => !skip(refs[i])) : near);
+}
+
+/**
  * A point of something from elsewhere (another sketch, a part off the face)
  * often sits exactly on a corner of the face's own edges (the same corner,
  * seen square-on): the face's own is used then, so it works as before.
@@ -210,10 +224,10 @@ function preferFace(virt: SketchData, refs: RefEdge[], hit: Hit | null): Hit | n
  * centre): the sketch's own points and curves first, then part edges shown in
  * the sketch (as their stand-in ids).
  */
-export function pickAt(s: SketchData, x: number, y: number, pointTol: number, curveTol: number, refs: RefEdge[] = []): Hit | null {
+export function pickAt(s: SketchData, x: number, y: number, pointTol: number, curveTol: number, refs: RefEdge[] = [], skip?: (e: RefEdge) => boolean): Hit | null {
   const own = hitTest(s, x, y, pointTol, curveTol);
   if (own?.kind === "point" || !refs.length) return own;
-  const virt = refSketch(refs);
+  const virt = nearRefs(refs, x, y, Math.max(pointTol, curveTol), skip);
   const v = preferFace(virt, refs, hitTest(virt, x, y, pointTol, curveTol, { origin: false }));
   const point = v?.kind === "point" && !/:q\d+$/.test(v.id);
   // The face's corners come before the sketch's own lines (as before); things from elsewhere only where the sketch has nothing.

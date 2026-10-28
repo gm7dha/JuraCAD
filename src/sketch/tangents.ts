@@ -16,6 +16,7 @@ import type { RefEdge } from "./links";
 import { addLine, curveById, pointPos, radiusOf, type EditResult, type Placed, type Snap } from "./ops";
 import { linkedCurveFor } from "./links";
 import { solveSketch } from "./solver";
+import { refIndex } from "./refIndex";
 import { sketchId } from "./ops";
 import type { SketchConstraint, SketchData } from "./types";
 
@@ -149,8 +150,17 @@ export function roundUnder(rounds: Round[], p: Placed): Round | null {
  * start touching that circle. Only offered when the pointer is within `reach`
  * (mm) of where the line would touch. Null when there's none.
  */
-export function tangentLineAt(s: SketchData, start: Placed, x: number, y: number, reach: number, refs: RefEdge[] = []): TangentLine | null {
-  const rounds = roundsOf(s, refs);
+export function tangentLineAt(s: SketchData, start: Placed, x: number, y: number, reach: number, refs: RefEdge[] = [], skip?: (e: RefEdge) => boolean): TangentLine | null {
+  // Only circles near the pointer (or the start) matter: look those up, not every reference there is.
+  let nearby: RefEdge[] = [];
+  if (refs.length) {
+    const index = refIndex(refs);
+    const at = new Set([...index.near(x, y, reach), ...index.near(start.x, start.y, reach)]);
+    nearby = [...at].sort((a, b) => a - b).map((i) => refs[i]).filter((e) => (e.kind === "circle" || e.kind === "arc") && !e.source?.later && !skip?.(e));
+    // The circle the start snapped onto, wherever it is.
+    if (start.snap?.kind === "ref" && !nearby.includes(start.snap.edge)) nearby.push(start.snap.edge);
+  }
+  const rounds = roundsOf(s, nearby);
   if (!rounds.length) return null;
   // Started on a circle's rim: by what the click snapped to, or (for circles shown from elsewhere,
   // which aren't snapped onto) by being right on the rim.

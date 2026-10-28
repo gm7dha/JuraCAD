@@ -13,7 +13,7 @@
  * Any sketch can also use what's elsewhere: other sketches' points, lines,
  * circles and arcs, and every part's corners, edges and circle centres, seen
  * square-on to the sketch (projected onto its plane). The engine lists them
- * for the sketch being edited (`SketchLinkInfo.candidates`, see
+ * for the sketch being edited (`GeometryEngine.sketchCandidates`, kept in the store as `sketchCandidates`; see
  * projected.ts). Snapping to one of their points brings in just that point (a
  * fixed construction point that follows it, `SketchPoint.link`); snapping onto
  * or dimensioning to one of their lines, circles or arcs brings that curve in.
@@ -72,11 +72,6 @@ export interface SketchLinkInfo {
   links: Record<string, RefEdge | null>;
   /** For each linked point: where it is now, or null when what it follows can't be found. Missing when there are none. */
   pointLinks?: Record<string, P2 | null>;
-  /**
-   * The sketch being edited only: everything else it can snap to and use —
-   * other sketches' geometry and every part's edges, seen square-on to it.
-   */
-  candidates?: RefEdge[];
   /** The sketch's plane, moved to where its face is now (only when the face has moved). */
   plane?: SketchPlane;
   /** The face the sketch was put on can't be found any more. */
@@ -152,9 +147,18 @@ export function parseRefId(id: string): { index: number; what: "a" | "b" | "c" |
 export function refSketch(edges: RefEdge[]): SketchData {
   const known = refSketchCache.get(edges);
   if (known) return known;
+  const out = refSketchOf(edges, edges.map((_, i) => i));
+  refSketchCache.set(edges, out);
+  return out;
+}
+
+/** Just some of the references as stand-in geometry (for those near the pointer); ids keep their place in the whole list. */
+export function refSketchOf(edges: RefEdge[], indices: number[]): SketchData {
   const points: SketchPoint[] = [];
   const curves: SketchCurve[] = [];
-  edges.forEach((e, i) => {
+  for (const i of indices) {
+    const e = edges[i];
+    if (!e) continue;
     const id = `${REF_PREFIX}${i}`;
     const pt = (suffix: string, p: P2) => {
       points.push({ id: `${id}:${suffix}`, x: p[0], y: p[1] });
@@ -174,10 +178,8 @@ export function refSketch(edges: RefEdge[]): SketchData {
       // A circle seen at a slant: its centre can be snapped to.
       if (e.centre) pt("c", e.centre);
     }
-  });
-  const out: SketchData = { points, curves, constraints: [] };
-  refSketchCache.set(edges, out);
-  return out;
+  }
+  return { points, curves, constraints: [] };
 }
 const refSketchCache = new WeakMap<RefEdge[], SketchData>();
 

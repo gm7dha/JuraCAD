@@ -62,7 +62,7 @@ import { ORIGIN_ID, type SketchData } from "./types";
 import { addText, imageAt, imageById, readTextSettings, textAt, textById } from "./sketchText";
 import { isRefId, laterMessage, parseRefId, refSketch, type RefEdge } from "./links";
 import { addTangentLine, tangentLineAt, type TangentLine } from "./tangents";
-import { attachPoint, bringIn, hintFor, pickAt, snapAt, type SnapResult } from "./snaps";
+import { attachPoint, bringIn, hintFor, nearRefs, pickAt, snapAt, type SnapResult } from "./snaps";
 import type { Snap } from "./ops";
 import { splinePolyline } from "./spline";
 import { ellipseFrom, ellipsePolyline, minorPointFor } from "./ellipse";
@@ -168,32 +168,42 @@ export class SketchController {
     return this.state.editing?.draft.sketch?.data ?? null;
   }
 
-  /** The part face's edges, and everything else the sketch can snap to (found on the latest rebuild), worked out once per rebuild. */
-  private refsCache: { edges: RefEdge[]; candidates: RefEdge[]; hidden: string[]; features: Feature[]; list: RefEdge[] } | null = null;
+  /** The part face's edges and everything else the sketch can snap to, put together once per answer from the engine. */
+  private refsCache: { edges: RefEdge[]; candidates: RefEdge[]; list: RefEdge[] } | null = null;
 
   /**
    * Edges of the part face the sketch is on (first, so their "ref:<n>" ids
-   * match what the view draws), then the geometry of the other sketches shown
-   * in the view and the edges of every part that isn't hidden, seen square-on
-   * to the sketch.
+   * match what the view draws), then the other sketches' geometry and every
+   * part's edges, seen square-on to the sketch. Nothing is taken out of the
+   * list (hidden things are skipped when looking, see `skipRef`), so the ids
+   * stay the same when something is hidden or shown.
    */
   private get refs(): RefEdge[] {
-    const id = this.state.editing?.draft.id;
-    const info = id ? this.state.sketchLinks?.[id] : undefined;
-    const edges = info?.edges ?? NO_REFS;
-    const candidates = info?.candidates ?? NO_REFS;
+    const st = this.state;
+    const id = st.editing?.draft.id;
+    const edges = (id && st.sketchLinks?.[id]?.edges) || NO_REFS;
+    const candidates = id && st.sketchCandidates?.id === id ? st.sketchCandidates.list : NO_REFS;
+    const c = this.refsCache;
+    if (c && c.edges === edges && c.candidates === candidates) return c.list;
+    const list = candidates.length ? [...edges, ...candidates] : edges;
+    this.refsCache = { edges, candidates, list };
+    return list;
+  }
+
+  private skipCache: { hidden: string[]; features: Feature[]; skip: (e: RefEdge) => boolean } | null = null;
+
+  /** Whether a reference is left out: a hidden part's edge, or a sketch that isn't shown in the view. */
+  private get skipRef(): (e: RefEdge) => boolean {
     const hidden = this.state.hiddenParts;
     const features = activeFeatures(this.state);
-    const c = this.refsCache;
-    if (c && c.edges === edges && c.candidates === candidates && c.hidden === hidden && c.features === features) return c.list;
-    let list = edges;
-    if (candidates.length) {
-      const used = usedSketches(features);
-      const shown = new Set(features.filter((f) => f.type === "sketch" && sketchVisible(f, used)).map((f) => f.id));
-      list = [...edges, ...candidates.filter((r) => (r.pick ? !hidden.includes(r.pick.partId) : !r.source || shown.has(r.source.sketch)))];
-    }
-    this.refsCache = { edges, candidates, hidden, features, list };
-    return list;
+    const c = this.skipCache;
+    if (c && c.hidden === hidden && c.features === features) return c.skip;
+    const used = usedSketches(features);
+    const shown = new Set(features.filter((f) => f.type === "sketch" && sketchVisible(f, used)).map((f) => f.id));
+    const hiddenSet = new Set(hidden);
+    const skip = (e: RefEdge) => (e.project && e.pick ? hiddenSet.has(e.pick.partId) : !!e.source && !shown.has(e.source.sketch));
+    this.skipCache = { hidden, features, skip };
+    return skip;
   }
 
   /** How many of the references are the face's own edges (drawn by the view); the rest are drawn only when hovered. */
@@ -222,18 +232,17 @@ export class SketchController {
   /** Points of other sketches and parts near the pointer (not the face's own edges, which are drawn). */
   private nearbyPoints(e: SketchPointer): [number, number][] {
     const refs = this.refs;
-    const skip = this.faceEdgeCount;
-    if (refs.length <= skip) return [];
-    const virt = refSketch(refs);
+    const faceCount = this.faceEdgeCount;
+    if (refs.length <= faceCount) return [];
     const reach = NEARBY_PX * e.mmPerPx;
+    const skip = this.skipRef;
+    const virt = nearRefs(refs, e.x, e.y, reach, (r) => !!r.source?.later || skip(r));
     const found: { at: [number, number]; d: number }[] = [];
     for (const p of virt.points) {
-      const dx = p.x - e.x, dy = p.y - e.y;
-      if (Math.abs(dx) > reach || Math.abs(dy) > reach) continue;
-      const d = Math.hypot(dx, dy);
+      const d = Math.hypot(p.x - e.x, p.y - e.y);
       if (d > reach) continue;
       const r = parseRefId(p.id);
-      if (!r || r.index < skip || r.what === "q" || refs[r.index]?.source?.later) continue;
+      if (!r || r.index < faceCount || r.what === "q") continue;
       found.push({ at: [p.x, p.y], d });
     }
     found.sort((a, b) => a.d - b.d);
@@ -244,7 +253,7 @@ export class SketchController {
   private pickAt(e: SketchPointer): Hit | null {
     const d = this.data;
     if (!d) return null;
-    return pickAt(d, e.x, e.y, POINT_PX * e.mmPerPx, CURVE_PX * e.mmPerPx, this.refs);
+    return pickAt(d, e.x, e.y, POINT_PX * e.mmPerPx, CURVE_PX * e.mmPerPx, this.refs, this.skipRef);
   }
 
   /** A line's middle or a circle's centre to mark for whatever's hovered. */
@@ -447,7 +456,7 @@ export class SketchController {
 
   /** Where the pointer snaps to while drawing (points, middles of lines, part edges, lining up, onto curves). */
   private snapAt(e: SketchPointer): SnapResult {
-    return snapAt(this.data!, e.x, e.y, { pointTol: POINT_PX * e.mmPerPx, curveTol: CURVE_PX * e.mmPerPx, acquired: this.acquired, refs: this.refs });
+    return snapAt(this.data!, e.x, e.y, { pointTol: POINT_PX * e.mmPerPx, curveTol: CURVE_PX * e.mmPerPx, acquired: this.acquired, refs: this.refs, skip: this.skipRef });
   }
 
   /** The spline handle end under the pointer, if any (handles show on selected splines). */
@@ -961,8 +970,7 @@ export class SketchController {
   private tangentFor(first: Placed, p: Placed, e: SketchPointer): TangentLine | null {
     const sn = p.snap?.kind;
     if (sn === "point" || sn === "origin" || sn === "midpoint" || (p.snap?.kind === "ref" && p.snap.at !== "on")) return null;
-    const refs = this.refs.filter((r) => !r.source?.later);
-    return tangentLineAt(this.data!, first, e.x, e.y, TANGENT_PX * e.mmPerPx, refs.length === this.refs.length ? this.refs : refs);
+    return tangentLineAt(this.data!, first, e.x, e.y, TANGENT_PX * e.mmPerPx, this.refs, this.skipRef);
   }
 
   pointerUp(): void {
@@ -1130,7 +1138,7 @@ export class SketchController {
       // Hovering close to another point snaps onto it (and joins them when let go).
       // A wider reach than a click, so an end point dropped near another joins onto it.
       // Also onto the middle of a line, or a corner, centre or middle of the face's edges.
-      const found = this.data ? snapAt(drag.start, e.x, e.y, { pointTol: SNAP_PX * e.mmPerPx, curveTol: 0, refs: this.refs, ignore: pointsSharingCurve(drag.start, drag.id) }) : null;
+      const found = this.data ? snapAt(drag.start, e.x, e.y, { pointTol: SNAP_PX * e.mmPerPx, curveTol: 0, refs: this.refs, skip: this.skipRef, ignore: pointsSharingCurve(drag.start, drag.id) }) : null;
       const sn = found?.placed.snap;
       drag.snapTo = sn && (sn.kind === "point" || sn.kind === "origin" || sn.kind === "midpoint" || (sn.kind === "ref" && sn.at !== "on")) ? sn : null;
       const [x, y] = drag.snapTo ? [found!.placed.x, found!.placed.y] : [e.x, e.y];

@@ -25,10 +25,10 @@ const sketch = (id: string, plane: SketchPlane, data: SketchData, name = id): Fe
 /** A box w × 20 × 10 with its corner at (0, 0, 5): off the Top plane (z = 5 to 15). */
 const box = (w: number): Feature => ({ ...feature("box", { width: w, depth: 20, height: 10, x: 0, y: 0, z: 5 }), id: "box", name: "Box" });
 
-function build(features: Feature[], editing?: string) {
+function build(features: Feature[]) {
   engine?.dispose();
   engine = new GeometryEngine();
-  return engine.rebuildStudios([{ id: "main", features, ...(editing ? { editing } : {}) }]);
+  return engine.rebuildStudios([{ id: "main", features }]);
 }
 
 const r6 = (p: [number, number]) => p.map((v) => Math.round(v * 1e6) / 1e6 + 0);
@@ -37,23 +37,24 @@ const tol = { pointTol: 1, curveTol: 0.5 };
 describe("a part off the sketch's plane", () => {
   it("offers the box's corners and edges seen from above, only to the sketch being edited", () => {
     const features = [box(40), sketch("sk", TOP, emptySketch())];
-    const r = build(features, "sk");
+    const r = build(features);
     expect(r.featureErrors).toEqual({});
-    const cands = r.sketchLinks!.sk.candidates!;
+    const cands = engine.sketchCandidates("main", "sk")!;
     // Seen from above, every corner is one of the four (0,0), (40,0), (40,20), (0,20); the upright edges are single points there.
     const corners = new Set(cands.flatMap((e) => (e.kind === "point" ? [e.a] : e.kind === "line" ? [e.a, e.b] : [])).map((p) => r6(p).join(",")));
     expect([...corners].sort()).toEqual(["0,0", "0,20", "40,0", "40,20"]);
     expect(cands.filter((e) => e.kind === "point")).toHaveLength(4);
     expect(cands.filter((e) => e.kind === "line")).toHaveLength(8);
     expect(cands.every((e) => e.pick?.partId === "box" && e.project)).toBe(true);
-    // Not being edited: nothing extra is worked out.
-    const plain = build(features);
-    expect(plain.sketchLinks?.sk).toBeUndefined();
+    // Nothing is worked out until a sketch asks (opening one).
+    build(features);
+    expect(engine.candidateRuns).toBe(0);
+    expect(engine.sketchCandidates("main", "nope")).toBeNull();
   });
 
   it("a line to the box's far corner, and one along its top edge, follow the box when it's made wider", () => {
-    const first = build([box(40), sketch("sk", TOP, emptySketch())], "sk");
-    const refs = first.sketchLinks!.sk.candidates!;
+    build([box(40), sketch("sk", TOP, emptySketch())]);
+    const refs = engine.sketchCandidates("main", "sk")!;
     const corner = snapAt(emptySketch(), 39.7, 19.8, { ...tol, refs }).placed;
     // An end of one of the edges meeting there (or the upright edge seen end-on).
     expect(corner.snap?.kind).toBe("ref");
@@ -83,8 +84,8 @@ describe("a part off the sketch's plane", () => {
   });
 
   it("says plainly when the part a point came from has gone", () => {
-    const first = build([box(40), sketch("sk", TOP, emptySketch())], "sk");
-    const corner = first.sketchLinks!.sk.candidates!.find((e) => e.kind === "point" && r6(e.a).join(",") === "40,20")!;
+    build([box(40), sketch("sk", TOP, emptySketch())]);
+    const corner = engine.sketchCandidates("main", "sk")!.find((e) => e.kind === "point" && r6(e.a).join(",") === "40,20")!;
     const p = linkPoint(emptySketch(), corner, "a");
     const r = build([sketch("sk", TOP, p.sketch)]);
     expect(r.sketchLinks!.sk.pointLinks![p.pointId]).toBeNull();
@@ -106,8 +107,8 @@ describe("another sketch", () => {
 
   it("a sketch on Front uses Sketch A's circle centre and line; they follow when Sketch A changes", () => {
     const a = sketchA(10);
-    const first = build([a.f, sketch("skB", FRONT, emptySketch())], "skB");
-    const refs: RefEdge[] = first.sketchLinks!.skB.candidates!;
+    build([a.f, sketch("skB", FRONT, emptySketch())]);
+    const refs: RefEdge[] = engine.sketchCandidates("main", "skB")!;
     // A's circle is square to Front, so its centre is offered as a point at (10, 0); A's line as the line (0,0)→(15,0).
     const centre = snapAt(emptySketch(), 10.2, 0.3, { ...tol, refs }).placed;
     expect(centre.snap).toMatchObject({ kind: "ref", at: "a" });
@@ -146,13 +147,13 @@ describe("another sketch", () => {
   it("only sketches earlier in the list count: a later one is offered marked as such, and a link to one is reported", () => {
     const a = sketchA(10);
     // Sketch B first, then A.
-    const first = build([sketch("skB", FRONT, emptySketch()), a.f], "skB");
-    const cands = first.sketchLinks!.skB.candidates!;
+    build([sketch("skB", FRONT, emptySketch()), a.f]);
+    const cands = engine.sketchCandidates("main", "skB")!;
     expect(cands.length).toBeGreaterThan(0);
     expect(cands.every((e) => e.source?.later && e.source.name === "Sketch A")).toBe(true);
     // A link made while A was earlier, after B is moved above A: not found, said plainly.
-    const earlier = build([a.f, sketch("skB", FRONT, emptySketch())], "skB");
-    const p = linkPoint(emptySketch(), earlier.sketchLinks!.skB.candidates!.find((e) => e.kind === "point")!, "a");
+    build([a.f, sketch("skB", FRONT, emptySketch())]);
+    const p = linkPoint(emptySketch(), engine.sketchCandidates("main", "skB")!.find((e) => e.kind === "point")!, "a");
     expect(p.error).toBeUndefined();
     const r = build([sketch("skB", FRONT, p.sketch), a.f]);
     expect(r.sketchLinks!.skB.pointLinks![p.pointId]).toBeNull();
@@ -161,19 +162,38 @@ describe("another sketch", () => {
     );
   });
 
-  it("keeps what's offered while drawing (worked out once while nothing before the sketch changes)", () => {
+  it("opening or closing a sketch rebuilds nothing; what it's offered is worked out once while nothing before it changes", () => {
     const a = sketchA(10);
     engine?.dispose();
     engine = new GeometryEngine();
-    const one = engine.rebuildStudios([{ id: "main", features: [box(40), a.f, sketch("skB", FRONT, emptySketch())], editing: "skB" }]);
-    // Drawing in Sketch B changes only Sketch B: the same list comes back.
+    const features = [box(40), a.f, sketch("skB", FRONT, emptySketch())];
+    // A second Part Studio deriving the box from this one.
+    const derived: Feature = { ...feature("derived", {}), id: "der", name: "Derived", derived: { studioId: "main", partId: "box" } };
+    const studios = (f: Feature[]) => [
+      { id: "main", features: f },
+      { id: "other", features: [derived] },
+    ];
+    const first = engine.rebuildStudios(studios(features));
+    expect(first.rebuilt).toEqual(["main", "other"]);
+    // Opening Sketch B: the app asks for what it can snap to — nothing is built again.
+    const one = engine.sketchCandidatesSince("main", "skB")!;
+    expect(one.list!.length).toBeGreaterThan(0);
+    expect(engine.candidateRuns).toBe(1);
+    // The same design again (as when the sketch is opened, then closed unchanged): nothing rebuilt, here or in the other studio.
+    expect(engine.rebuildStudios(studios(features)).rebuilt).toEqual([]);
+    // Asked again with the list it has: same number, no list sent.
+    expect(engine.sketchCandidatesSince("main", "skB", one.version)).toEqual({ version: one.version });
+    // Drawing in Sketch B rebuilds that studio (as always), but the list is reused, not worked out again.
     const drawn = addLine(emptySketch(), { x: 1, y: 1 } as Placed, { x: 5, y: 5 } as Placed).sketch;
-    const two = engine.rebuildStudios([{ id: "main", features: [box(40), a.f, sketch("skB", FRONT, drawn)], editing: "skB" }]);
-    expect(two.sketchLinks!.skB.candidates).toEqual(one.sketchLinks!.skB.candidates);
-    const internal = (engine as unknown as { candidateCache: { list: RefEdge[] } }).candidateCache.list;
-    expect(internal.length).toBe(one.sketchLinks!.skB.candidates!.length);
+    const two = engine.rebuildStudios(studios([box(40), a.f, sketch("skB", FRONT, drawn)]));
+    expect(two.rebuilt).toContain("main");
+    expect(engine.sketchCandidatesSince("main", "skB", one.version)).toEqual({ version: one.version });
+    expect(engine.candidateRuns).toBe(1);
     // Changing the box changes it.
-    const three = engine.rebuildStudios([{ id: "main", features: [box(50), a.f, sketch("skB", FRONT, drawn)], editing: "skB" }]);
-    expect(three.sketchLinks!.skB.candidates).not.toEqual(one.sketchLinks!.skB.candidates);
+    engine.rebuildStudios(studios([box(50), a.f, sketch("skB", FRONT, drawn)]));
+    const three = engine.sketchCandidatesSince("main", "skB", one.version)!;
+    expect(three.version).not.toBe(one.version);
+    expect(three.list).not.toEqual(one.list);
+    expect(engine.candidateRuns).toBe(2);
   });
 });

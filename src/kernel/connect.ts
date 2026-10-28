@@ -26,11 +26,8 @@ function currentStudios(): StudioInput[] {
   const s = useStore.getState();
   const here = activeStudioId(s);
   const editingIn = s.editing ? here : null;
-  // A sketch open for editing is also offered other sketches and every part's edges to snap to.
-  const editingSketch = s.editing?.draft.type === "sketch" ? s.editing.draft.id : null;
   return [...studiosOf(s.history.present).map((st) => ({ ...st, features: featuresForEngine(st.features) })).map((st) => ({
     id: st.id,
-    ...(st.id === editingIn && editingSketch ? { editing: editingSketch } : {}),
     features:
       st.id === here && s.rollbackTo
         ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? featureForEngine(previewOf(s.editing?.draft ?? null)) : null, s.rollbackTo)
@@ -84,7 +81,32 @@ export function connectKernel(): () => void {
         return;
       }
       s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks);
+      refreshCandidates();
     });
+  };
+
+  /**
+   * The sketch open for editing: ask the engine what else it can snap to
+   * (other sketches, every part's edges). Worked out from what's already
+   * built, so opening or closing a sketch never rebuilds anything.
+   */
+  const refreshCandidates = () => {
+    const s = useStore.getState();
+    const draft = s.editing?.draft;
+    const studio = activeStudioId(s);
+    if (!draft || draft.type !== "sketch" || !draft.sketch?.plane || !studio) {
+      if (s.sketchCandidates) s.setSketchCandidates(null);
+      return;
+    }
+    const held = s.sketchCandidates?.id === draft.id && s.sketchCandidates.studioId === studio ? s.sketchCandidates : null;
+    kernel.sketchCandidates(studio, draft.id, held?.version).then(
+      (r) => {
+        const now = useStore.getState();
+        if (!r || now.editing?.draft.id !== draft.id) return;
+        if (r.list) now.setSketchCandidates({ id: draft.id, studioId: studio, version: r.version, list: r.list });
+      },
+      () => undefined,
+    );
   };
 
   kernel.ready.then(
