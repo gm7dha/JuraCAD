@@ -1,5 +1,6 @@
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { SketchPlane } from "../sketch/planes";
+import type { RefEdge } from "../sketch/links";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
 import type { CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
@@ -127,6 +128,16 @@ export class KernelClient {
 
   measure(picks: TopoPick[]): Promise<Measurement> {
     return this.send({ type: "measure", picks }).then((body) => body.result as Measurement);
+  }
+
+  /**
+   * What a sketch can snap to besides its face's edges (other sketches, every
+   * part's edges), worked out from the last build (nothing is rebuilt). With
+   * `known` (the number of the list already held) and nothing changed, no list
+   * comes back. Null when that sketch isn't built.
+   */
+  sketchCandidates(studioId: string, sketchId: string, known?: number): Promise<{ version: number; list?: RefEdge[] } | null> {
+    return this.send({ type: "sketchCandidates", studioId, sketchId, known }).then((body) => (body.type === "sketchCandidates" ? body.result : null));
   }
 
   /** Which fillets / chamfers stop a Delete face working (see GeometryEngine.deleteFaceBlockers). */

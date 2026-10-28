@@ -1,5 +1,5 @@
 import { deleteItems } from "../sketch/ops";
-import { followLinks, pruneReferences, type SketchLinkInfo } from "../sketch/links";
+import { followLinks, pruneReferences, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
 import { create } from "zustand";
 
@@ -237,6 +237,13 @@ export interface AppState {
   featureErrors: Record<string, string>;
   /** Sketches on part faces or using part edges (by feature id), as found on the latest rebuild. */
   sketchLinks: Record<string, SketchLinkInfo>;
+  /**
+   * The sketch open for editing: what else it can snap to (other sketches,
+   * every part's edges, seen square-on to it), from the engine. Null when
+   * no sketch is open (or the engine hasn't answered yet).
+   */
+  sketchCandidates: { id: string; studioId: string; version: number; list: RefEdge[] } | null;
+  setSketchCandidates: (c: { id: string; studioId: string; version: number; list: RefEdge[] } | null) => void;
   lastRebuildMs: number | null;
 
   dialog: DialogName;
@@ -586,6 +593,8 @@ export const useStore = create<AppState>((set, get) => {
     parts: [],
     featureErrors: {},
     sketchLinks: NO_LINKS,
+    sketchCandidates: null,
+    setSketchCandidates: (sketchCandidates) => set({ sketchCandidates }),
     lastRebuildMs: null,
 
     dialog: null,
@@ -1552,7 +1561,7 @@ export const useStore = create<AppState>((set, get) => {
         const info = draft?.sketch ? links[draft.id] : undefined;
         let editing = s.editing;
         if (editing && draft?.sketch && info) {
-          const data = followLinks(draft.sketch.data, info.links);
+          const data = followLinks(draft.sketch.data, info.links, info.pointLinks);
           const plane = info.plane && draft.sketch.plane?.kind === "face" && !samePlace(info.plane, draft.sketch.plane) ? info.plane : draft.sketch.plane;
           if (data !== draft.sketch.data || plane !== draft.sketch.plane) editing = { ...editing, draft: { ...draft, sketch: { plane, data } } };
         }

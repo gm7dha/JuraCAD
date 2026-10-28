@@ -9,7 +9,7 @@ import { measureToOf } from "../sketch/ops";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { makeSketchPattern, makeSketchTransform, setPatternOption, setSketchMeasureTo, toggleSketchDimensionDriven, copyFaceEdges } from "./sketchActions";
-import { lostLinksMessage } from "../sketch/links";
+import { lostLinkIds, lostLinksMessage } from "../sketch/links";
 import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
 import { SketchExtrasPanel } from "./SketchExtrasPanel";
@@ -342,7 +342,7 @@ export function SketchPanel() {
             )}
             {(() => {
               const lost = lostLinksMessage(data, linkInfo);
-              const lostIds = data.curves.filter((c) => "link" in c && c.link && linkInfo?.links[c.id] === null).map((c) => c.id);
+              const lostIds = lostLinkIds(data, linkInfo);
               return lost ? (
                 <li className="warn">
                   <Icons.Warning size={15} /> {lost}{" "}

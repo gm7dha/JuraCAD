@@ -121,7 +121,7 @@ describe("Intersect", () => {
     const edges = intersect(b.id);
     expect(edges).toHaveLength(4);
     const data = bringIn(edges, b.id);
-    expect(data.curves.every((c) => c.construction && "link" in c && c.link?.cut)).toBe(true);
+    expect(data.curves.every((c) => c.construction && "link" in c && c.link && "cut" in c.link && c.link.cut)).toBe(true);
     expect(corners(data)).toEqual(["0,0", "0,10", "40,0", "40,10"]);
 
     // Wider and taller: the curves move to the new cross-section.
@@ -142,7 +142,7 @@ describe("Intersect", () => {
     const data = bringIn(edges, b.id, topFace);
     const line = data.curves[0];
     expect(line.type).toBe("line");
-    expect(line.type === "line" && line.link?.cut?.face?.surface).toBe("PLANE");
+    expect(line.type === "line" && line.link && "cut" in line.link && line.link.cut?.face?.surface).toBe("PLANE");
 
     const sk = sketchFeature(front, data);
     const r = build([{ ...box(60, 15), id: b.id }, sk]);

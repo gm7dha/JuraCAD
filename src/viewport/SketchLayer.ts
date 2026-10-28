@@ -163,6 +163,8 @@ export class SketchLayer {
   private readonly points: THREE.Points;
   private readonly snapMarker: THREE.Points;
   private readonly hintMarkers: THREE.Points;
+  /** Other sketches' and parts' points near the pointer that it can snap to (faint). */
+  private readonly nearbyMarkers: THREE.Points;
   /** Pictures laid on the sketch being edited, to trace over. */
   private readonly pictures = new Pictures();
   private active: ActiveSketch | null = null;
@@ -188,7 +190,14 @@ export class SketchLayer {
     );
     this.hintMarkers.renderOrder = 23;
     this.hintMarkers.frustumCulled = false;
+    this.nearbyMarkers = new THREE.Points(
+      new THREE.BufferGeometry(),
+      new THREE.PointsMaterial({ size: 5, sizeAttenuation: false, color: SKETCH_COLOURS.reference, depthTest: false, transparent: true, opacity: 0.8 }),
+    );
+    this.nearbyMarkers.renderOrder = 18;
+    this.nearbyMarkers.frustumCulled = false;
     this.group.add(
+      this.nearbyMarkers,
       this.pictures.group,
       this.refLines.object,
       this.hintMarkers,
@@ -280,6 +289,7 @@ export class SketchLayer {
       this.points.visible = false;
       this.snapMarker.visible = false;
       this.hintMarkers.visible = false;
+      this.nearbyMarkers.visible = false;
       return;
     }
     // Part edges of the face it's on: faint, brighter when hovered.
@@ -421,6 +431,16 @@ export class SketchLayer {
       this.hintMarkers.geometry = g;
       this.hintMarkers.visible = true;
     } else this.hintMarkers.visible = false;
+    // Points elsewhere (other sketches, parts) near the pointer that it can snap to.
+    const nearby = t?.nearby ?? [];
+    if (nearby.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(nearby.flatMap((h) => toWorld(frame, h[0], h[1])), 3));
+      this.nearbyMarkers.geometry.dispose();
+      this.nearbyMarkers.geometry = g;
+      (this.nearbyMarkers.material as THREE.PointsMaterial).color.copy(SKETCH_COLOURS.reference);
+      this.nearbyMarkers.visible = true;
+    } else this.nearbyMarkers.visible = false;
   }
 
   /** Called every frame: keep dash lengths a constant size on screen. */
@@ -436,6 +456,8 @@ export class SketchLayer {
     for (const l of [this.others, this.othersConstruction, this.solid, this.construction, this.dims, this.preview, this.refLines]) l.dispose();
     this.hintMarkers.geometry.dispose();
     (this.hintMarkers.material as THREE.Material).dispose();
+    this.nearbyMarkers.geometry.dispose();
+    (this.nearbyMarkers.material as THREE.Material).dispose();
     this.points.geometry.dispose();
     (this.points.material as THREE.Material).dispose();
     this.snapMarker.geometry.dispose();

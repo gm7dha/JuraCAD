@@ -66,6 +66,9 @@ ctx.onmessage = (event) => {
         case "clashes":
           body = { type: "clashes", result: engine.clashes(request.instances, request.tolerance ?? 0, request.withGaps !== false) };
           break;
+        case "sketchCandidates":
+          body = { type: "sketchCandidates", result: engine.sketchCandidatesSince(request.studioId, request.sketchId, request.known) };
+          break;
         case "deleteFaceBlockers":
           body = { type: "deleteFaceBlockers", result: engine.deleteFaceBlockers(request.features, request.featureId, request.variables) };
           break;
