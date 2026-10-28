@@ -111,6 +111,18 @@ describe("dragging an angle's number", () => {
     expect(paths(draw(withDimPatch(dim, { textAngle: 10 }), p))).toHaveLength(paths(draw(dim, p)).length);
   });
 
+  it("once past an arm, keeps its angle when dragged again without Shift (back over the arc, it can switch again)", () => {
+    const past = withDimPatch(dim, { offset: 20, rays: [1, 1], textAngle: 67.5 });
+    const again = drag(past, placed, spot(23, 100));
+    expect(again.rays).toEqual([1, 1]);
+    expect(again.textAngle).toBe(77.5);
+    close(draw(again, p).label, spot(23, 100));
+    // Put back over its own arc, a later drag across a line switches as usual.
+    const inside = drag(past, placed, spot(23, 30));
+    expect(inside.textAngle).toBe(7.5);
+    expect(drag(inside, placed, spot(23, 120)).rays).toEqual([-1, 1]);
+  });
+
   it("angleArc gives the arc the drawing uses (the shorter way round)", () => {
     expect(angleArc([1, 0], [0, 1])).toEqual({ a1: 0, sweep: Math.PI / 2 });
     const back = angleArc([0, 1], [1, 0]);

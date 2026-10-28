@@ -557,7 +557,11 @@ function dragAngleLabel(dim: Dimension, placed: DragPlace, to: P2, lift: boolean
   const q: P2 = [to[0], to[1] + TEXT_SIZE * 0.35];
   const w: P2 = [q[0] - base.vertex[0], q[1] - base.vertex[1]];
   const s = (u: P2) => (u[0] * w[0] + u[1] * w[1] >= 0 ? 1 : -1);
-  const rays: [number, number] = lift ? (dim.rays ?? [1, 1]) : [s(base.u1), s(base.u2)];
+  // A number already put past an arm (with Shift) keeps its angle when dragged again, rather than
+  // switching to the angle it happens to be over; dragged back over its arc and let go, it switches again.
+  const now = angleGeometry(placed.a, placed.b, c, d, dim.rays);
+  const outside = !!now && Math.abs(((dim.textAngle ?? 0) * Math.PI) / 180) > angleArc(now.u1, now.u2).sweep / 2;
+  const rays: [number, number] = lift || outside ? (dim.rays ?? [1, 1]) : [s(base.u1), s(base.u2)];
   const g = angleGeometry(placed.a, placed.b, c, d, rays)!;
   const { a1, sweep } = angleArc(g.u1, g.u2);
   const offset = Math.max(4, Math.round((Math.hypot(w[0], w[1]) - 3) * 10) / 10);

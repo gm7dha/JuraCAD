@@ -145,7 +145,7 @@
   number goes anywhere, inside the circle too (`Dimension.textAt`, model mm from the centre; `circleLeader`; `angle`/`offset`
   kept roughly in step); chamfers the same (`textAt` from the edge's middle, `dimensionPaperScale`); angles — distance sets the
   arc radius, direction slides the number round it (`textAngle`, degrees from the arc's middle), crossing a line measures the
-  supplementary/opposite angle (`rays`, as Onshape), Shift keeps the angle and lets it pass an arm (`arcBeyond` carries the arc
+  supplementary/opposite angle (`rays`, as Onshape), Shift keeps the angle and lets it pass an arm (`arcBeyond` carries the arc; one already past keeps its angle on a plain drag too)
   on); arc lengths the same (PlacedDim `arc`/`width`); ordinates — out along the leader is `offset`, sideways a dog-leg
   (`textAlong`, `ordinateJog`); a length slid past an extension line carries its line under the measured text when
   `fitText` (set by new drags; missing = the old chars × 0.55 estimate); missing = drawn exactly as before. Zooming: `src/viewport/zoomGuard.ts` — non-passive wheel and
