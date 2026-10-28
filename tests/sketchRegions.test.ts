@@ -273,5 +273,10 @@ describe("what an open feature does to the parts", () => {
     expect(draftEffect(parts.slice(0, 1), { id: "x", operation: "intersect" }).text).toBe("Keeps only the overlap with Part 1.");
     expect(draftEffect(parts.slice(2, 3), { id: "x", operation: "new" }).text).toBe("Makes a new part: Part 3.");
     expect(draftEffect(parts.slice(0, 2), { id: "y", operation: "add" })).toEqual({ changed: [], text: null });
+    // Parts it merged in are named.
+    const merged = [{ id: "a", name: "Part 1", featureIds: ["a", "x"], joined: [{ feature: "x", names: ["Part 2", "Part 3"] }] }];
+    expect(draftEffect(merged, { id: "x", operation: "add" }).text).toBe("Adds to Part 1, joining Part 2 and Part 3 into it.");
+    expect(draftEffect([...merged, parts[1]], { id: "x", operation: "add" }).text).toBe("Adds to Part 1 (joining Part 2 and Part 3 into it) and Part 2.");
+    expect(draftEffect(merged, { id: "z", operation: "add" }).text).toBeNull();
   });
 });

@@ -86,6 +86,8 @@ export interface PartMesh {
   configuration?: string;
   /** IDs of the features that built or changed this part. */
   featureIds: string[];
+  /** Parts a feature merged into this one (an Add touching several parts), by the feature's id: their names. */
+  joined?: { feature: string; names: string[] }[];
   vertices: Float32Array;
   normals: Float32Array;
   triangles: Uint32Array;
