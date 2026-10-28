@@ -114,6 +114,12 @@ export interface Feature {
   suppressed: boolean;
   /** The folder it's shown in, in the feature list (just for tidiness; doesn't change the model). */
   folder?: string;
+  /**
+   * Sketches and Plane features: shown in the 3D view (true) or hidden (false),
+   * set with the eye in the feature list. Missing = automatic, as in Onshape: a
+   * plane is shown, and a sketch is shown until a feature uses it (see visibility.ts).
+   */
+  visible?: boolean;
   /** Parameter values as typed, e.g. { width: "20", height: "10 + 5" }. */
   params: Record<string, string>;
   /** Sketch features: where the sketch is and what's drawn. A null plane means "not chosen yet". */
@@ -307,6 +313,8 @@ export interface JuraCADDocument {
   materials?: Record<string, string>;
   /** Name of the first Part Studio (whose features are `features`); "Part Studio 1" when not set. */
   studioName?: string;
+  /** Of the Origin and the Top/Front/Right planes, the ones hidden in the first Part Studio (missing = all shown). */
+  hiddenDatums?: DatumName[];
   /** More Part Studios (optional: older saves have just the one). */
   partStudios?: PartStudio[];
   /** Names given to parts, by part id (parts without one are "Part 1", "Part 2"…). */
@@ -598,7 +606,14 @@ export interface PartStudio {
   id: string;
   name: string;
   features: Feature[];
+  /** Of the Origin and the Top/Front/Right planes, the ones hidden in this Part Studio (missing = all shown). */
+  hiddenDatums?: DatumName[];
 }
+
+/** The default planes, as in Onshape. Top = XY, Front = XZ, Right = YZ. */
+export type PlaneName = "Top" | "Front" | "Right";
+/** Default geometry listed at the top of the feature list. */
+export type DatumName = "Origin" | PlaneName;
 
 /** One copy of a part placed in an assembly. */
 export interface Instance {

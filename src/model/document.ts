@@ -14,6 +14,7 @@ import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
 import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, PartStudio } from "./types";
 import { MAIN_STUDIO } from "./studios";
+import { parseHiddenDatums } from "./visibility";
 import type { AreaPick } from "../sketch/areas";
 
 /**
@@ -362,6 +363,8 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       suppressed: f.suppressed === true,
       params: { ...defaultParams(f.type as FeatureType), ...params },
       ...(typeof f.folder === "string" && f.folder.trim() ? { folder: f.folder.trim().slice(0, 60) } : {}),
+      // Shown or hidden with the eye (sketches and planes only; missing = automatic).
+      ...((f.type === "sketch" || f.type === "plane") && typeof f.visible === "boolean" ? { visible: f.visible } : {}),
     };
     if (feature.type === "sketch") {
       const sk = f.sketch as Record<string, unknown> | undefined;
@@ -596,7 +599,8 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     if (typeof r.id !== "string" || r.id === MAIN_STUDIO || partStudios.some((x) => x.id === r.id) || !Array.isArray(r.features)) continue;
     const list = parseFeatures(r.features, seen);
     if (!list) return null;
-    partStudios.push({ id: r.id, name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : "Part Studio", features: list });
+    const hidden = parseHiddenDatums(r.hiddenDatums);
+    partStudios.push({ id: r.id, name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : "Part Studio", features: list, ...(hidden ? { hiddenDatums: hidden } : {}) });
   }
   return {
     format: "partsmith",
@@ -608,6 +612,7 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...(Object.keys(parseMaterials(d.materials)).length ? { materials: parseMaterials(d.materials) } : {}),
     ...(d.units === "in" ? { units: "in" as const } : {}),
     ...(typeof d.studioName === "string" && d.studioName.trim() && d.studioName.trim() !== "Part Studio 1" ? { studioName: d.studioName.trim() } : {}),
+    ...(parseHiddenDatums(d.hiddenDatums) ? { hiddenDatums: parseHiddenDatums(d.hiddenDatums) } : {}),
     ...(partStudios.length ? { partStudios } : {}),
     ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),
     ...(Object.keys(parsePartProperties(d.partProperties)).length ? { partProperties: parsePartProperties(d.partProperties) } : {}),
