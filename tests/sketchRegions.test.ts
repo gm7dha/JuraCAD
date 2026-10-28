@@ -14,6 +14,7 @@ import {
   areaClickChange,
   areaClickMode,
   areaShades,
+  areaSelectionLapses,
   areasTaken,
   clickableAreaSketches,
   freeAreas,
@@ -116,6 +117,10 @@ describe("clicking areas of any sketch while a feature is open", () => {
     expect(clickableAreaSketches(features, features[1]).map((f) => f.id)).toEqual(["s1"]);
     // A sweep's path sketch isn't offered for its profile.
     expect(clickableAreaSketches(features, { id: "w", sketchRef: "s2", pathRef: "s1" }).map((f) => f.id)).toEqual(["s2"]);
+    // Nothing below the rollback bar (the bar after Extrude 1: Sketch 2 isn't built yet).
+    expect(clickableAreaSketches(features, draft, "e1").map((f) => f.id)).toEqual(["s1"]);
+    // With nothing open (selecting before a feature): every built sketch.
+    expect(clickableAreaSketches(features, { id: "" }).map((f) => f.id)).toEqual(["s1", "s2"]);
     // A sketch with no plane yet isn't either.
     expect(clickableAreaSketches([sketch("s1", data, { sketch: { plane: null, data } })], draft)).toEqual([]);
   });
@@ -171,11 +176,39 @@ describe("separate pieces become separate parts (saved in the file)", () => {
   it("new extrudes, revolves and sweeps are marked; older features without the mark open unchanged", () => {
     const doc = emptyDocument("Test");
     for (const type of ["extrude", "revolve", "sweep"] as const) expect(createFeature(doc, type).apart).toBe(true);
+    expect(createFeature(doc, "hole").apart).toBe(true);
     expect(createFeature(doc, "box").apart).toBeUndefined();
     const withMark = { ...doc, features: [sketch("s1", twoCircles()), extrude("e1", "s1", undefined, { apart: true }), extrude("e2", "s1")] };
     const back = parseDocument(JSON.parse(JSON.stringify(withMark)))!;
     expect(back.features[1].apart).toBe(true);
     expect(back.features[2].apart).toBeUndefined();
     expect("apart" in back.features[2]).toBe(false);
+  });
+});
+
+describe("when selected areas are let go", () => {
+  const base = { history: { present: {} }, activeTab: null as string | null, editing: null as unknown, sketch: null as unknown, selectedFeatureId: null as string | null };
+  it("keeps them while nothing else happens", () => {
+    expect(areaSelectionLapses(base, { ...base })).toBe(false);
+    // The list's highlight being cleared (selecting areas does that) keeps them.
+    expect(areaSelectionLapses({ ...base, selectedFeatureId: "s1" }, base)).toBe(false);
+  });
+  it("lets go on a design change, another tab, a sketch or dialog opening, or a feature picked in the list", () => {
+    expect(areaSelectionLapses(base, { ...base, history: { present: {} } })).toBe(true);
+    expect(areaSelectionLapses(base, { ...base, activeTab: "asm1" })).toBe(true);
+    expect(areaSelectionLapses(base, { ...base, editing: {} })).toBe(true);
+    expect(areaSelectionLapses(base, { ...base, sketch: {} })).toBe(true);
+    expect(areaSelectionLapses(base, { ...base, selectedFeatureId: "e1" })).toBe(true);
+  });
+});
+
+describe("working out used areas once per design", () => {
+  it("gives the same answer from the cache, and a new one when the design changes", () => {
+    const data = twoCircles();
+    const features = [sketch("s1", data), extrude("e1", "s1", [pickAt(data, 0, 0)])];
+    const a = areasTaken(features, "s1", data, "e2");
+    expect(areasTaken(features, "s1", data, "e2")).toBe(a);
+    const changed = [...features.slice(0, 1), extrude("e1", "s1", [pickAt(data, 40, 0)])];
+    expect([...areasTaken(changed, "s1", data, "e2")]).toEqual([indexAt(data, 40, 0)]);
   });
 });

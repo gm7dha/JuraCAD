@@ -35,7 +35,7 @@ import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
-import { followedSketch, freeAreas, type AreaSelection } from "../sketch/areaClicks";
+import { areaSelectionLapses, followedSketch, freeAreas, type AreaSelection } from "../sketch/areaClicks";
 import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties, PlaneName, DatumName } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
@@ -621,10 +621,12 @@ export const useStore = create<AppState>((set, get) => {
     startCreate: (type) => {
       const s = get();
       if (type === "sketch") {
-        // On the highlighted plane, or Plane feature, if any.
+        // On the highlighted plane, or Plane feature, if any — or the plane of the sketch whose areas are selected.
         const planeFeature = activeFeatures(s).find((f) => f.id === s.selectedFeatureId && f.type === "plane");
         const frame = planeFeature ? framesOf(activeFeatures(s)).get(planeFeature.id) : undefined;
-        s.startSketch(planeFeature && frame ? planeAsSketchPlane(planeFeature, frame) : s.selectedPlane ? { kind: "default", name: s.selectedPlane } : null);
+        const sel = s.areaSelection;
+        const areaPlane = sel ? (followedSketch(activeFeatures(s).find((f) => f.id === sel.sketch && f.type === "sketch"), s.sketchLinks)?.plane ?? null) : null;
+        s.startSketch(planeFeature && frame ? planeAsSketchPlane(planeFeature, frame) : s.selectedPlane ? { kind: "default", name: s.selectedPlane } : areaPlane);
         return;
       }
       const draft = createFeature(view(), type);
@@ -641,7 +643,9 @@ export const useStore = create<AppState>((set, get) => {
         // Areas clicked in the 3D view beforehand (as in Onshape): use them.
         const sel = s.areaSelection;
         const chosen = sel ? features.find((f) => f.id === sel.sketch && f.type === "sketch" && !f.suppressed) : undefined;
-        if (sel && chosen?.sketch) {
+        // A sketch highlighted in the list wins (the two aren't normally selected together).
+        const listed = features.some((f) => f.id === s.selectedFeatureId && f.type === "sketch");
+        if (sel && chosen?.sketch && !listed) {
           draft.sketchRef = chosen.id;
           draft.areas = sel.areas;
           if (type === "revolve") draft.revolve = { axis: defaultAxis(chosen.sketch.data), flip: false };
@@ -1631,6 +1635,12 @@ export const useStore = create<AppState>((set, get) => {
         };
       }),
   };
+});
+
+// Areas selected with nothing open last only while nothing else happens: a change to the design (undo, redo, a new
+// or opened file, a change from Claude), another tab, a sketch or feature dialog, or a feature picked in the list.
+useStore.subscribe((now, before) => {
+  if (now.areaSelection && areaSelectionLapses(before, now)) useStore.setState({ areaSelection: null });
 });
 
 /** The assembly on show, or null when the Part Studio is on show (or the assembly was undone away). */

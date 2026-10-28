@@ -173,6 +173,14 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     const data = followedSketch(sketch, s.sketchLinks)?.data;
     if (!sketch || !data) return;
     if (!s.editing) {
+      // An area lying on a part's face: clicking it once selects the area; clicking it again (while it's the only
+      // thing selected) selects the face instead, so faces under a sketch on show can still be picked.
+      const sel = s.areaSelection;
+      const only = sel?.sketch === sketch.id && sel.areas.length === 1 && selectedAreaShades(sel, sketch.id, data)[target.index] === "picked";
+      if (target.under && only && !additive) {
+        s.setSelection([target.under.item]);
+        return;
+      }
       s.setAreaSelection(selectArea(s.areaSelection, sketch.id, data, target.index));
       return;
     }
@@ -827,49 +835,64 @@ export function Viewport() {
     viewportApi.current?.setReference(shape);
   }, [refDraft, features, inAssembly]);
   const sketchLinks = useStore((s) => s.sketchLinks);
-  // An Extrude, Revolve or Sweep open: the areas of its sketch, and (fainter) of every earlier sketch, even hidden
-  // ones, are drawn on their planes and can be clicked. With nothing open, the areas of the sketches on show can be
-  // clicked to select them for the next Extrude, Revolve or Sweep (as in Onshape).
+  // An Extrude, Revolve or Sweep open: the areas of its sketch, and (fainter) of every earlier sketch, are drawn on
+  // their planes and can be clicked; other sketches that are hidden only show under the pointer. With nothing open,
+  // the areas of the sketches on show can be clicked to select them for the next feature (as in Onshape).
   const areaDraft = useStore((s) => (s.editing && areaClickMode(s.editing.draft) !== "off" ? s.editing.draft : null));
   const areaMode = areaClickMode(areaDraft);
   const idle = useStore((s) => !s.editing && !s.sketch && !s.mateDraft && !activeDrawing(s) && !s.showFlat);
   const areaSelection = useStore((s) => s.areaSelection);
+  const rollbackTo = useStore((s) => s.rollbackTo);
+  // Only what decides which sketches are offered (not every keystroke in the dialog).
+  const draftId = areaDraft?.id;
+  const draftSketch = areaDraft?.sketchRef;
+  const draftPath = areaDraft?.pathRef;
+  const used = useMemo(() => usedSketches(features), [features]);
   const areaSketches = useMemo(() => {
     if (inAssembly) return [];
-    if (areaDraft) return clickableAreaSketches(features, areaDraft);
+    if (draftId) return clickableAreaSketches(features, { id: draftId, sketchRef: draftSketch, pathRef: draftPath }, rollbackTo);
     if (!idle) return [];
-    const used = usedSketches(features);
-    return features.filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && sketchVisible(f, used));
-  }, [inAssembly, areaDraft, idle, features]);
+    return clickableAreaSketches(features, { id: "" }, rollbackTo).filter((f) => sketchVisible(f, used));
+  }, [inAssembly, draftId, draftSketch, draftPath, idle, features, rollbackTo, used]);
   // Each sketch as the engine uses it (a sketch on a part's face is where the face is now), keyed on its plane's values
-  // and data so a rebuild handing over equal new objects redraws nothing.
+  // and data so a rebuild handing over equal new objects redraws nothing. What other features use is worked out here too.
   const followedAreas = useMemo(
     () =>
       areaSketches.flatMap((f) => {
         const followed = followedSketch(f, sketchLinks);
         if (!followed?.plane) return [];
         const map = sketchAreas(followed.data);
-        return map.areas.length ? [{ feature: f, data: followed.data, map, frameKey: JSON.stringify(planeFrame(followed.plane)) }] : [];
+        const taken = draftId ? areasTaken(features, f.id, followed.data, draftId) : undefined;
+        return map.areas.length ? [{ feature: f, data: followed.data, map, taken, frameKey: JSON.stringify(planeFrame(followed.plane)) }] : [];
       }),
-    [areaSketches, sketchLinks],
+    [areaSketches, sketchLinks, features, draftId],
   );
   const frames = useRef(new Map<string, PlaneFrame>());
+  const draftAreas = areaDraft?.areas;
   const pickAreas = useMemo((): PickAreas | null => {
     if (!followedAreas.length) return null;
-    const sets: PickAreaSet[] = followedAreas.map(({ feature, data, map, frameKey }) => {
+    const sets: PickAreaSet[] = followedAreas.map(({ feature, data, map, taken, frameKey }) => {
       let frame = frames.current.get(frameKey);
       if (!frame) frames.current.set(frameKey, (frame = JSON.parse(frameKey) as PlaneFrame));
-      const own = areaDraft ? feature.id === areaDraft.sketchRef : true;
-      const taken = areaDraft ? areasTaken(features, feature.id, data, areaDraft.id) : undefined;
-      const shades = !areaDraft
+      const own = draftId ? feature.id === draftSketch : true;
+      const shades = !draftId
         ? selectedAreaShades(areaSelection, feature.id, data)
         : own
-          ? areaShades(data, areaDraft.areas, taken)
+          ? areaShades(data, draftAreas, taken)
           : areaShades(data, [], taken).map((x) => (x === "used" ? "none" : x));
-      return { sketch: feature.id, frame, outlines: areaOutlines(map), shades, areaAt: (p) => map.areaAt(p), ...(own ? {} : { faint: true }) };
+      return {
+        sketch: feature.id,
+        frame,
+        outlines: areaOutlines(map),
+        shades,
+        areaAt: (p) => map.areaAt(p),
+        ...(own ? {} : { faint: true }),
+        // Another sketch that's hidden: only under the pointer, so it isn't drawn over the parts.
+        ...(!own && !sketchVisible(feature, used) ? { hoverOnly: true } : {}),
+      };
     });
-    return { sets, mode: areaDraft && areaMode !== "off" ? areaMode : "nearest" };
-  }, [followedAreas, areaDraft, areaMode, areaSelection, features]);
+    return { sets, mode: draftId && areaMode !== "off" ? areaMode : "nearest" };
+  }, [followedAreas, draftId, draftSketch, draftAreas, areaMode, areaSelection, used]);
   useEffect(() => viewportApi.current?.setPickAreas(pickAreas), [pickAreas]);
   const others = useMemo(
     () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId, sketchLinks, refDraft?.id ?? null)),

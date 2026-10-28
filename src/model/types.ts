@@ -134,11 +134,13 @@ export interface Feature {
    */
   areas?: AreaPick[];
   /**
-   * Extrude, revolve and sweep (solids): pieces that don't touch the part they'd
-   * join become parts of their own, as in Onshape (with New, each separate piece
-   * is its own part; with Add, a piece that touches no part is a new part).
-   * Set on features made since this was added; missing (older files) keeps every piece
-   * in one part, so old designs rebuild exactly as before.
+   * Extrude, revolve, sweep and hole: Onshape-style parts. With New, each
+   * separate piece is its own part; with Add, each piece joins every part it
+   * touches (merged into the oldest), or is a new part if it touches none;
+   * with Remove (and holes), it cuts every solid part it reaches. Set on
+   * features made since this was added; missing (older files) keeps the old
+   * rules (one part; Add and Remove work on the latest part), so old designs
+   * rebuild exactly as before.
    */
   apart?: boolean;
   /** Sweep: the sketch whose lines and arcs make the path. */

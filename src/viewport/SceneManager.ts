@@ -70,7 +70,13 @@ export type PickTarget =
   /** A straight line in a finished sketch (`id` is the sketch feature's id), clickable while a mirror or pattern wants one. */
   | { kind: "sketchLine"; id: string; line: string }
   /** An area of a sketch (`sketch`: its feature id; `index` into `sketchAreas(sketch).areas`): see `setPickAreas`. */
-  | { kind: "sketchArea"; sketch: string; index: number };
+  | {
+      kind: "sketchArea";
+      sketch: string;
+      index: number;
+      /** With nothing open: a part's face right there too (the area lies on it), so a second click can pick the face. */
+      under?: { item: SelectionItem; point: [number, number, number]; local: [number, number, number] };
+    };
 
 /** One sketch's areas to draw on its plane and make clickable (see `setPickAreas`). */
 export interface PickAreaSet {
@@ -85,6 +91,8 @@ export interface PickAreaSet {
   areaAt: (p: Pt) => number;
   /** Drawn fainter: not the sketch the feature uses now. */
   faint?: boolean;
+  /** Drawn only under the pointer (a hidden sketch that isn't the feature's own). */
+  hoverOnly?: boolean;
 }
 
 /** Sketch areas that can be clicked, and when they win over parts. */
@@ -1155,7 +1163,21 @@ export class SceneManager {
     const faceHit = this.raycaster.intersectObjects(meshes, false).find(kept);
     const edgeHit = this.raycaster.intersectObjects(lines, false).find(kept);
     // Nothing open: an area wins when it's in front of the part (or on its face), unless an edge in front of it is under the pointer.
-    if (area && areaTarget && this.pickAreas?.mode === "nearest" && (!faceHit || area.distance <= faceHit.distance + threshold) && (!edgeHit || this.facesOnly || edgeHit.distance > area.distance + threshold * 2)) return areaTarget;
+    if (area && areaTarget && this.pickAreas?.mode === "nearest" && (!faceHit || area.distance <= faceHit.distance + threshold) && (!edgeHit || this.facesOnly || edgeHit.distance > area.distance + threshold * 2)) {
+      // The area lies on a face: say which, so clicking a selected area again can pick the face.
+      if (faceHit && faceHit.faceIndex !== undefined && faceHit.faceIndex !== null && Math.abs(faceHit.distance - area.distance) <= threshold) {
+        const partId = faceHit.object.userData.partId as string;
+        const groups = this.parts.get(partId)?.data.faceGroups ?? [];
+        const triIndex = faceHit.faceIndex * 3;
+        const index = groups.findIndex((g) => triIndex >= g.start && triIndex < g.start + g.count);
+        if (index >= 0)
+          return {
+            ...areaTarget,
+            under: { item: { partId, kind: "face", index }, point: faceHit.point.toArray() as [number, number, number], local: faceHit.object.worldToLocal(faceHit.point.clone()).toArray() as [number, number, number] },
+          };
+      }
+      return areaTarget;
+    }
 
     // A sketch line (while a mirror or pattern wants one), unless it's hidden behind a face.
     const line = this.nearestPickLine(threshold);
@@ -1307,7 +1329,7 @@ export class SceneManager {
       }
     };
     // With nothing open, areas only show under the pointer or when selected (the sketch's own lines are drawn anyway).
-    const quiet = this.pickAreas?.mode === "nearest" && shade === "none" && !hover;
+    const quiet = (this.pickAreas?.mode === "nearest" || a.hoverOnly) && (shade === "none" || (a.hoverOnly && shade === "taken")) && !hover;
     // Areas of sketches other than the feature's own are fainter still.
     const faint = a.faint ? 0.5 : 1;
     const fillColour = hover ? COLOURS.partHover : shade === "picked" || shade === "used" ? COLOURS.partSelected : shade === "taken" ? COLOURS.areaTaken : COLOURS.part;
@@ -1332,18 +1354,23 @@ export class SceneManager {
     if (!sets?.length) return null;
     const r = this.raycaster.ray;
     let best: { set: number; index: number; distance: number } | null = null;
-    for (let set = 0; set < sets.length; set++) {
-      const a = sets[set];
-      const hit = rayOnPlane(a.frame, r.origin.toArray() as [number, number, number], r.direction.toArray() as [number, number, number]);
-      if (!hit) continue;
-      // With a section on, areas in the part of the view cut away can't be clicked.
-      if (this.section) {
-        const p = r.at(hit.distance, new THREE.Vector3());
-        if (this.section.distanceToPoint(p) < -1e-6) continue;
+    // The feature's own sketch (not faint) wins wherever its area is under the pointer; then the nearest of the others.
+    const passes = [sets.map((_a, i) => i).filter((i) => !sets[i].faint), sets.map((_a, i) => i).filter((i) => sets[i].faint)];
+    for (const pass of passes) {
+      if (best) break;
+      for (const set of pass) {
+        const a = sets[set];
+        const hit = rayOnPlane(a.frame, r.origin.toArray() as [number, number, number], r.direction.toArray() as [number, number, number]);
+        if (!hit) continue;
+        // With a section on, areas in the part of the view cut away can't be clicked.
+        if (this.section) {
+          const p = r.at(hit.distance, new THREE.Vector3());
+          if (this.section.distanceToPoint(p) < -1e-6) continue;
+        }
+        if (best && hit.distance >= best.distance - 1e-6) continue;
+        const index = a.areaAt(hit.at);
+        if (index >= 0) best = { set, index, distance: hit.distance };
       }
-      if (best && hit.distance >= best.distance - 1e-6) continue;
-      const index = a.areaAt(hit.at);
-      if (index >= 0) best = { set, index, distance: hit.distance };
     }
     return best;
   }

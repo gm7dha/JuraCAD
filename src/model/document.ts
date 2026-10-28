@@ -136,6 +136,8 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
     feature.operation = "remove";
     feature.hole = { sketchRef: sketches[sketches.length - 1]?.id, kind: "simple", standard: "M3", fit: "clearance", end: "throughAll", flip: false };
+    // Drills every part it reaches (as in Onshape), not just the latest.
+    feature.apart = true;
   }
   if (type === "mirror" || type === "linearPattern" || type === "circularPattern" || type === "curvePattern") {
     feature.operation = "add";
@@ -570,8 +572,8 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
             })
         : [];
       if (areas.length) feature.areas = areas;
-      if (f.apart === true) feature.apart = true;
     }
+    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "hole") && f.apart === true) feature.apart = true;
     if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }

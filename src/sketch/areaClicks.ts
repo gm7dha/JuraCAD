@@ -56,7 +56,20 @@ export function usesAreas(f: Pick<Feature, "type" | "surface">): boolean {
  * it except `exceptId` — its picked areas, or with none picked the areas
  * "every closed shape" covers. Shown shaded so it's clear what's left.
  */
+const takenCache = new WeakMap<Feature[], Map<string, { data: SketchData; taken: Set<number> }>>();
 export function areasTaken(features: Feature[], sketchId: string, data: SketchData, exceptId?: string): Set<number> {
+  // Worked out once per list of features (a dialog re-draws on every key pressed; the list only changes with the design).
+  let known = takenCache.get(features);
+  if (!known) takenCache.set(features, (known = new Map()));
+  const key = `${sketchId}\u0000${exceptId ?? ""}`;
+  const hit = known.get(key);
+  if (hit && hit.data === data) return hit.taken;
+  const taken = takenBy(features, sketchId, data, exceptId);
+  known.set(key, { data, taken });
+  return taken;
+}
+
+function takenBy(features: Feature[], sketchId: string, data: SketchData, exceptId?: string): Set<number> {
   const map = sketchAreas(data);
   const taken = new Set<number>();
   for (const f of features) {
@@ -151,14 +164,18 @@ export function areaOutlines(map: AreaMap): { outer: Pt[]; holes: Pt[][] }[] {
 
 /**
  * The sketches whose areas can be clicked while `draft` is open (as in Onshape,
- * hidden ones too — they're drawn faintly only while the dialog is open):
+ * hidden ones too — those show only under the pointer, and only while the dialog is open):
  * unsuppressed sketches with a plane above the feature in the list (all of
- * them for a new one), the feature's own sketch first. A sweep's path sketch
- * is left out (its profile must be another sketch).
+ * them for a new one, but none below the rollback bar), the feature's own
+ * sketch first. A sweep's path sketch is left out (its profile must be
+ * another sketch).
  */
-export function clickableAreaSketches(features: Feature[], draft: Pick<Feature, "id" | "sketchRef" | "pathRef">): Feature[] {
-  const at = features.findIndex((f) => f.id === draft.id);
-  const before = at >= 0 ? features.slice(0, at) : features;
+export function clickableAreaSketches(features: Feature[], draft: Pick<Feature, "id"> & Partial<Pick<Feature, "sketchRef" | "pathRef">>, rollbackTo?: string | null): Feature[] {
+  // Never below the rollback bar (features after it aren't built).
+  const bar = rollbackTo ? features.findIndex((f) => f.id === rollbackTo) : -1;
+  const built = bar >= 0 ? features.slice(0, bar + 1) : features;
+  const at = built.findIndex((f) => f.id === draft.id);
+  const before = at >= 0 ? built.slice(0, at) : built;
   const list = before.filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && (f.id === draft.sketchRef || f.id !== draft.pathRef));
   const own = list.filter((f) => f.id === draft.sketchRef);
   return own.length ? [...own, ...list.filter((f) => f.id !== draft.sketchRef)] : list;
@@ -210,4 +227,23 @@ export function selectedAreaShades(selection: AreaSelection | null, sketchId: st
   const map = sketchAreas(data);
   const picked = selection?.sketch === sketchId ? pickedAreas(map, selection.areas).picked : NO_AREAS;
   return map.areas.map((_a, i) => (picked.has(i) ? "picked" : "none"));
+}
+
+/**
+ * Whether areas selected with nothing open should be let go after a store
+ * change from `before` to `now`: the design changed (undo, redo, a new or
+ * opened file, a change from Claude), another tab is on show, a sketch or a
+ * feature dialog opened, or a feature was picked in the list.
+ */
+export function areaSelectionLapses(
+  before: { history: { present: unknown }; activeTab: unknown; editing: unknown; sketch: unknown; selectedFeatureId: string | null },
+  now: { history: { present: unknown }; activeTab: unknown; editing: unknown; sketch: unknown; selectedFeatureId: string | null },
+): boolean {
+  return (
+    now.history.present !== before.history.present ||
+    now.activeTab !== before.activeTab ||
+    (!!now.editing && !before.editing) ||
+    (!!now.sketch && !before.sketch) ||
+    (!!now.selectedFeatureId && now.selectedFeatureId !== before.selectedFeatureId)
+  );
 }
