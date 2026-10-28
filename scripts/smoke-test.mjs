@@ -1617,8 +1617,8 @@ try {
       let turn = a2 - a1;
       while (turn > Math.PI) turn -= 2 * Math.PI;
       while (turn < -Math.PI) turn += 2 * Math.PI;
-      // A quarter of the way from the middle of the opposite angle towards one side (so it's slid off the middle, too).
-      const t = a1 + turn / 2 + Math.PI + turn / 4;
+      // Two thirds of the way from the middle of the opposite angle to one side (so it's slid off the middle, too).
+      const t = a1 + turn / 2 + Math.PI + turn / 3;
       const to = { x: cx + reach * Math.cos(t), y: cy - reach * Math.sin(t) };
       await page.keyboard.down("Shift");
       const after = await dragBy({ x: to.x - start.x, y: to.y - start.y }, "Shift-dragging into the opposite angle");
