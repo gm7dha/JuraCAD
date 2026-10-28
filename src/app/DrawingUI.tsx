@@ -3,7 +3,8 @@
  * block, its settings panel and toolbar, and saving it as PDF or SVG.
  */
 import { putShortening, removeShortening, withShortenings } from "../drawing/shorten";
-import { itemsInBox, rightClickFlip, toggled } from "../drawing/select";
+import { dimTextOutlines, itemsInBox, rightClickFlip, toggled } from "../drawing/select";
+import { guardZoom, sheetWheelFactor, SHEET_MIN_WIDTH, zoomBox } from "../viewport/zoomGuard";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { create } from "zustand";
 import { addPage, changePage, FIRST_PAGE, knownPage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage } from "../drawing/pages";
@@ -17,8 +18,8 @@ import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } fro
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
-import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, resizedScale, scaleView, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type Prim, type SheetLayout } from "../drawing/sheet";
-import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dragDimension, FITTABLE, fitOf, placeAngle, dragDimensionText, drawDimension, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
+import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, resizedScale, scaleView, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type PlacedDim, type Prim, type SheetLayout } from "../drawing/sheet";
+import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dragDimension, dragDimensionLabel, FITTABLE, fitOf, placeAngle, drawDimension, withDimPatch, type DimPatch, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
@@ -562,7 +563,7 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
       dimensions: d.dimensions?.map((x) => {
         if (x.id !== dim.id) return x;
         const next: Dimension = { ...x, ...patch };
-        for (const k of ["prefix", "suffix", "tolerance", "places", "frame", "limitsFit", "along", "arrows"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
+        for (const k of ["prefix", "suffix", "tolerance", "places", "frame", "limitsFit", "along", "arrows", "textAlong", "textAcross", "textAt"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
         return next;
       }),
     }));
@@ -701,6 +702,13 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
             </div>
             <button type="button" className="text-button" title="Turn the arrows the other way (or right-click the dimension's number on the sheet)" onClick={() => edit({ arrows: flipArrows(arrowsShown(dim, drawing)) })}>
               Flip arrows
+            </button>
+          </div>
+        )}
+        {(dim.textAlong || dim.textAcross || dim.textAt) && (
+          <div className="drawing-field">
+            <button type="button" className="text-button" title="Put the number back where it goes by itself (the dimension line stays where it is)" onClick={() => edit({ textAlong: undefined, textAcross: undefined, textAt: undefined })}>
+              Put the number back
             </button>
           </div>
         )}
@@ -1448,7 +1456,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   const [resize, setResize] = useState<{ viewId: string; centre: P2; corner: P2; from: number; scale: number } | null>(null);
   /** The dimension whose number the right button went down on, and where (released there it flips its arrows; dragged, it pans). */
   const rightDown = useRef<{ dimId: string; x: number; y: number } | null>(null);
-  const [dimDrag, setDimDrag] = useState<{ id: string; patch: { offset: number; angle?: number; textAlong?: number; textAcross?: number } } | null>(null);
+  // A dimension being dragged by its number: what's changing, and how far its label point is from the pointer (so the number doesn't jump).
+  const [dimDrag, setDimDrag] = useState<{ id: string; patch: DimPatch; grab: P2 } | null>(null);
   /** The hole table being dragged: where the pointer started, and its top-left corner then and now. */
   const [tableDrag, setTableDrag] = useState<{ start: P2; from: P2; at: P2 } | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
@@ -1490,7 +1499,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     let d = drawing;
     if (drag) d = { ...d, views: d.views.map((v) => (v.id === drag.viewId ? { ...v, at: drag.at } : v)) };
     if (resize) d = { ...d, views: d.views.map((v) => (v.id === resize.viewId ? { ...v, scale: resize.scale } : v)) };
-    if (dimDrag) d = { ...d, dimensions: d.dimensions?.map((x) => (x.id === dimDrag.id ? { ...x, ...dimDrag.patch } : x)) };
+    if (dimDrag) d = { ...d, dimensions: d.dimensions?.map((x) => (x.id === dimDrag.id ? withDimPatch(x, dimDrag.patch) : x)) };
     if (noteDrag) d = { ...d, notes: d.notes?.map((x) => (x.id === noteDrag.id ? { ...x, at: noteDrag.at } : x)) };
     return d;
   }, [drawing, drag, resize, dimDrag, noteDrag]);
@@ -1900,15 +1909,25 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     useStore.getState().setDrawingTool("select");
   };
 
-  const onWheel = (e: React.WheelEvent) => {
-    const [x, y] = toSheet(e);
-    const sy = H - y;
-    const k = Math.exp(e.deltaY * 0.0015);
-    const [bx, by, bw, bh] = box;
-    const nw = Math.min(Math.max(bw * k, 20), (W + 2 * pad) * 4);
-    const f = nw / bw;
-    setBox([x - (x - bx) * f, sy - (sy - by) * f, nw, bh * f]);
-  };
+  /** Start dragging a dimension by its number (`at`: where the pointer went down, sheet mm). */
+  const startDimDrag = (d: PlacedDim, at: P2) => setDimDrag({ id: d.id, patch: {}, grab: [d.label[0] - at[0], d.label[1] - at[1]] });
+
+  // Scroll (or pinch) to zoom about the pointer — and never zoom the whole page: that needs a listener
+  // that isn't passive (React's onWheel is), and Safari's own pinch events stopped too.
+  const areaRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const area = areaRef.current;
+    const svg = svgRef.current;
+    if (!area || !svg) return;
+    const maxW = (W + 2 * pad) * 4;
+    const zoom = (factor: number, x: number, y: number) => setBox((b) => zoomBox(b, svg.getBoundingClientRect(), [x, y], factor, SHEET_MIN_WIDTH, maxW));
+    return guardZoom(area, {
+      // The sheet and the notes over it (not the sheet tabs or the selected view's bar, which are ordinary controls).
+      owns: (t) => t instanceof Element && area.contains(t) && !t.closest(".drawing-sheet-tabs, .drawing-view-bar"),
+      wheel: (e) => zoom(sheetWheelFactor(e), e.clientX, e.clientY),
+      pinch: zoom,
+    });
+  }, [W]);
 
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (e.button === 1 || e.button === 2) {
@@ -1969,12 +1988,11 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     if (dimDrag) {
       const dim = drawing.dimensions?.find((x) => x.id === dimDrag.id);
       const placed = layout?.dims.find((x) => x.id === dimDrag.id);
-      // Shift: move just the number (anywhere, off the line too); otherwise move the dimension.
-      const lengthDim = dim && (dim.type === "horizontal" || dim.type === "vertical" || dim.type === "aligned");
-      if (dim && placed && e.shiftKey && lengthDim && placed.b) {
-        setDimDrag({ id: dim.id, patch: { offset: dim.offset, ...dragDimensionText(dim, placed.a, placed.b, here) } });
-      } else if (dim && placed) {
-        setDimDrag({ id: dim.id, patch: { ...dragDimension(dim, placed.a, placed.b, placed.rad, here, placed.cd), textAcross: 0 } });
+      if (dim && placed) {
+        // Lengths, diameters and radii: the number stays under the pointer (Shift lifts a length's number off its line).
+        const to: P2 = [here[0] + dimDrag.grab[0], here[1] + dimDrag.grab[1]];
+        const free = dragDimensionLabel(dim, placed, to, e.shiftKey);
+        setDimDrag({ ...dimDrag, patch: free ?? { ...dragDimension(dim, placed.a, placed.b, placed.rad, here, placed.cd), textAcross: 0 } });
       }
     }
   };
@@ -2026,7 +2044,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     if (dimDrag) {
       const { id, patch } = dimDrag;
       setDimDrag(null);
-      change((d) => ({ ...d, dimensions: d.dimensions?.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+      // (Just a click: nothing moved.)
+      if (Object.keys(patch).length) change((d) => ({ ...d, dimensions: d.dimensions?.map((x) => (x.id === id ? withDimPatch(x, patch) : x)) }));
     }
   };
 
@@ -2180,12 +2199,11 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   };
 
   return (
-    <div className={`drawing-area${tool !== "select" ? " dimensioning" : ""}`}>
+    <div ref={areaRef} className={`drawing-area${tool !== "select" ? " dimensioning" : ""}`}>
       <svg
         ref={svgRef}
         className="drawing-svg"
         viewBox={box.join(" ")}
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -2290,32 +2308,58 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
           />
         )}
         {tool === "select" &&
-          layout?.dims.map((d) => (
-            <circle
-              key={d.id}
-              className={`drawing-dim-handle${isSelected(d.id) ? " selected" : ""}`}
-              cx={d.label[0]}
-              cy={H - d.label[1] - 1.5}
-              r={4}
-              data-dim={d.id}
-              onPointerDown={(e) => {
-                // Right button: remember it (a click flips its arrows when the button comes up) and let the sheet pan.
-                if (e.button === 2) rightDown.current = d.arrows ? { dimId: d.id, x: e.clientX, y: e.clientY } : null;
-                if (e.button !== 0) return;
-                e.stopPropagation();
-                const st = useStore.getState();
-                setSelView(null);
-                if (e.ctrlKey || e.metaKey) return st.selectDims(toggled(st.selectedDims, d.id));
-                st.selectDim(d.id);
-                (e.target as Element).setPointerCapture(e.pointerId);
-                const dim = drawing.dimensions?.find((x) => x.id === d.id);
-                if (dim) setDimDrag({ id: d.id, patch: { offset: dim.offset, ...(dim.angle !== undefined ? { angle: dim.angle } : {}) } });
-              }}
-              onContextMenu={(e) => e.preventDefault()}
-            >
-              <title>{d.found ? `Drag to move this dimension; Delete removes it${d.arrows ? "; right-click to flip its arrows" : ""}` : "What this dimension measured has changed too much — delete it and add it again"}</title>
-            </circle>
-          ))}
+          layout?.dims.map((d) => {
+            const onPointerDown = (e: ReactPointerEvent<SVGElement>) => {
+              // Right button: remember it (a click flips its arrows when the button comes up) and let the sheet pan.
+              if (e.button === 2) rightDown.current = d.arrows ? { dimId: d.id, x: e.clientX, y: e.clientY } : null;
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              const st = useStore.getState();
+              setSelView(null);
+              if (e.ctrlKey || e.metaKey) return st.selectDims(toggled(st.selectedDims, d.id));
+              st.selectDim(d.id);
+              (e.target as Element).setPointerCapture(e.pointerId);
+              startDimDrag(d, toSheet(e));
+            };
+            const kind = drawing.dimensions?.find((x) => x.id === d.id)?.type;
+            const how =
+              kind === "horizontal" || kind === "vertical" || kind === "aligned"
+                ? "Drag the number along the line, or out to move the line (Shift-drag lifts it off the line)"
+                : kind === "diameter" || kind === "radius"
+                  ? "Drag the number anywhere (the leader follows)"
+                  : "Drag to move this dimension";
+            const tip = d.found
+              ? `${how}; Delete removes it${d.arrows ? "; right-click to flip its arrows" : ""}`
+              : "What this dimension measured has changed too much — delete it and add it again";
+            return (
+              <g key={d.id}>
+                {/* The whole number (and any lines stacked after it) can be grabbed, not just its middle. */}
+                {dimTextOutlines(layout.prims, d.from, d.to).map((pts, i) => (
+                  <polygon
+                    key={i}
+                    className="drawing-dim-text"
+                    points={pts.map((v, k) => (k % 2 ? H - v : v)).join(" ")}
+                    data-dim={d.id}
+                    onPointerDown={onPointerDown}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <title>{tip}</title>
+                  </polygon>
+                ))}
+                <circle
+                  className={`drawing-dim-handle${isSelected(d.id) ? " selected" : ""}`}
+                  cx={d.label[0]}
+                  cy={H - d.label[1] - 1.5}
+                  r={4}
+                  data-dim={d.id}
+                  onPointerDown={onPointerDown}
+                  onContextMenu={(e) => e.preventDefault()}
+                >
+                  <title>{tip}</title>
+                </circle>
+              </g>
+            );
+          })}
         {previewPrims.map((p, i) => renderPrim(p, -1 - i, "#1f6fd1"))}
         {firstMark?.point && <circle cx={firstMark.point[0]} cy={H - firstMark.point[1]} r={1.2} className="drawing-snap picked" />}
         {firstMark?.line && (

@@ -3,7 +3,8 @@
  * dragged left to right, only what's wholly inside; right to left, anything
  * the box touches. Sheet mm, y up.
  */
-import type { SheetLayout } from "./sheet";
+import type { Prim, SheetLayout } from "./sheet";
+import { textFrame } from "./dimensions";
 
 export function itemsInBox(layout: Pick<SheetLayout, "dims" | "notes">, from: [number, number], to: [number, number]): string[] {
   const x0 = Math.min(from[0], to[0]);
@@ -40,4 +41,21 @@ export const RIGHT_CLICK_SLOP = 4;
 export function rightClickFlip(down: { dimId: string; x: number; y: number } | null, up: { button: number; x: number; y: number }): string | null {
   if (!down || up.button !== 2) return null;
   return Math.hypot(up.x - down.x, up.y - down.y) <= RIGHT_CLICK_SLOP ? down.dimId : null;
+}
+
+/**
+ * The outlines (sheet mm, y up: x, y, x, y…) round each piece of text among
+ * `prims[from…to)` — a dimension's number and anything stacked after it — so
+ * the whole of the number can be grabbed, turned with it.
+ */
+export function dimTextOutlines(prims: readonly Prim[], from: number, to: number): number[][] {
+  const out: number[][] = [];
+  for (let i = from; i < to && i < prims.length; i++) {
+    const p = prims[i];
+    if (p.kind === "text") {
+      const f = textFrame(p, "basic");
+      if (f.kind === "path") out.push(f.points);
+    }
+  }
+  return out;
 }

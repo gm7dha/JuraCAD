@@ -412,6 +412,9 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(num(r.angle) ? { angle: r.angle as number } : {}),
     ...(num(r.textAlong) && r.textAlong !== 0 ? { textAlong: r.textAlong as number } : {}),
     ...(num(r.textAcross) && r.textAcross !== 0 ? { textAcross: r.textAcross as number } : {}),
+    ...((type === "diameter" || type === "radius") && Array.isArray(r.textAt) && r.textAt.length === 2 && num(r.textAt[0]) && num(r.textAt[1])
+      ? { textAt: [r.textAt[0] as number, r.textAt[1] as number] as [number, number] }
+      : {}),
     ...(type === "ordinate" ? { axis: r.axis === "v" ? ("v" as const) : ("h" as const) } : {}),
     ...(r.tolerance && typeof r.tolerance === "object" && num((r.tolerance as Record<string, unknown>).plus) && num((r.tolerance as Record<string, unknown>).minus)
       ? { tolerance: { plus: Math.abs((r.tolerance as { plus: number }).plus), minus: Math.abs((r.tolerance as { minus: number }).minus) } }

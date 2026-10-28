@@ -426,6 +426,83 @@ export function dragDimensionText(dim: Dimension, a: P2, b: P2, cursor: P2): { t
   return { textAlong: Math.abs(alongBy) < 2 ? 0 : r(alongBy), textAcross: Math.abs(acrossBy) <= OFF_LINE ? 0 : r(acrossBy) };
 }
 
+/**
+ * A diameter's or radius's leader when its number has been dragged to
+ * `textAt` (paper mm from the circle's centre `c`; see Dimension.textAt). The
+ * number sits on a level shoulder `shoulder` long, reached from its end nearer
+ * the centre (the elbow); the leader runs straight from the centre through the
+ * elbow, so it always points at the middle of the circle. `inner`: the elbow is
+ * inside the circle (the line then stops at the circle's edge).
+ */
+export function circleLeader(c: P2, rad: number, textAt: [number, number], shoulder: number): { u: P2; onCircle: P2; elbow: P2; end: P2; label: P2; inner: boolean } {
+  const label: P2 = [c[0] + textAt[0], c[1] + textAt[1]];
+  const side = textAt[0] >= 0 ? 1 : -1;
+  const elbow: P2 = [label[0] - (side * shoulder) / 2, label[1] - 1];
+  const end: P2 = [label[0] + (side * shoulder) / 2, label[1] - 1];
+  const reach = dist(elbow, c);
+  // (Right on the centre: lead off sideways, towards the number.)
+  const u: P2 = reach > EPS ? [(elbow[0] - c[0]) / reach, (elbow[1] - c[1]) / reach] : [side, 0];
+  const onCircle: P2 = [c[0] + u[0] * rad, c[1] + u[1] * rad];
+  return { u, onCircle, elbow, end, label, inner: reach < rad };
+}
+
+/**
+ * Dragging a dimension by its number so the number stays under the pointer:
+ * `to` is where its label point (DimDrawing.label) should be, in sheet mm, and
+ * `placed` is the dimension as laid out on the sheet (PlacedDim: a, b, rad).
+ *
+ * Lengths: moving across the line moves the line with it (its offset); moving
+ * along slides the number along (past an extension line, the line carries on out
+ * to it); a number already lifted off its line keeps its lift. With `lift`
+ * (Shift held) the line stays put and the number moves off it (a thin leader
+ * joins it back). Diameters and radii: the number goes exactly there — inside or
+ * outside the circle — and the leader follows (`angle` and `offset` are kept
+ * roughly in step, for older copies of the app). Other kinds: null (they're
+ * dragged with dragDimension).
+ */
+export function dragDimensionLabel(
+  dim: Dimension,
+  placed: { a: P2; b: P2 | null; rad: number },
+  to: P2,
+  lift = false,
+): Partial<Pick<Dimension, "offset" | "angle" | "textAlong" | "textAcross" | "textAt">> | null {
+  const r = (v: number) => Math.round(v * 10) / 10;
+  if (dim.type === "diameter" || dim.type === "radius") {
+    const c = placed.a;
+    const v: P2 = [to[0] - c[0], to[1] - c[1]];
+    return {
+      textAt: [r(v[0]), r(v[1])],
+      angle: Math.round((Math.atan2(v[1], v[0]) * 180) / Math.PI),
+      offset: Math.max(2, r(Math.hypot(v[0], v[1]) - placed.rad)),
+    };
+  }
+  if (!(dim.type === "horizontal" || dim.type === "vertical" || dim.type === "aligned") || !placed.b) return null;
+  const { up } = dimensionLine(dim, placed.a, placed.b);
+  if (lift) {
+    // dragDimensionText holds the middle of the number's height; the label point is on its baseline.
+    const middle: P2 = [to[0] + up[0] * TEXT_SIZE * 0.35, to[1] + up[1] * TEXT_SIZE * 0.35];
+    return { offset: dim.offset, ...dragDimensionText(dim, placed.a, placed.b, middle) };
+  }
+  // The point on the (moved) dimension line under the number: the label sits `raise` above it.
+  const lifted = dim.textAcross ?? 0;
+  const raise = 1.2 + (Math.abs(lifted) > OFF_LINE ? lifted : 0);
+  const onLine: P2 = [to[0] - up[0] * raise, to[1] - up[1] * raise];
+  const { offset, textAlong } = dragDimension(dim, placed.a, placed.b, placed.rad, onLine);
+  return { offset, textAlong: textAlong ?? 0 };
+}
+
+/** What dragging a dimension changes. */
+export type DimPatch = Partial<Pick<Dimension, "offset" | "angle" | "textAlong" | "textAcross" | "textAt" | "rays">>;
+
+/** A dimension with a drag's changes made (a number slid or lifted back to 0 is just "not moved"). */
+export function withDimPatch(dim: Dimension, patch: DimPatch): Dimension {
+  const next: Dimension = { ...dim, ...patch };
+  if (!next.textAlong) delete next.textAlong;
+  if (!next.textAcross) delete next.textAcross;
+  if (!next.textAt) delete next.textAt;
+  return next;
+}
+
 /** A filled arrowhead with its tip at `tip`, pointing along `dir`. */
 function arrow(tip: P2, dir: P2): Prim {
   const l = Math.hypot(dir[0], dir[1]) || 1;
@@ -558,20 +635,36 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
     const c = at(r.a);
     const edge = at([r.a[0] + (r.r ?? 0), r.a[1]]);
     const rad = dist(c, edge);
-    const ang = ((dim.angle ?? 45) * Math.PI) / 180;
-    const u: P2 = [Math.cos(ang), Math.sin(ang)];
-    const onCircle: P2 = [c[0] + u[0] * rad, c[1] + u[1] * rad];
-    const out = Math.max(dim.offset, 2);
-    const elbow: P2 = [onCircle[0] + u[0] * out, onCircle[1] + u[1] * out];
-    const side = u[0] >= 0 ? 1 : -1;
     const shoulder = 2 + Math.max(...lines.map((l) => l.length)) * TEXT_SIZE * 0.55 + stackWidth(fit?.stack ?? null);
-    const end: P2 = [elbow[0] + side * shoulder, elbow[1]];
+    const placed = dim.textAt ? circleLeader(c, rad, dim.textAt, shoulder) : null;
+    let u: P2;
+    let onCircle: P2;
+    let elbow: P2;
+    let end: P2;
+    if (placed) {
+      ({ u, onCircle, elbow, end } = placed);
+    } else {
+      const ang = ((dim.angle ?? 45) * Math.PI) / 180;
+      u = [Math.cos(ang), Math.sin(ang)];
+      onCircle = [c[0] + u[0] * rad, c[1] + u[1] * rad];
+      const out = Math.max(dim.offset, 2);
+      elbow = [onCircle[0] + u[0] * out, onCircle[1] + u[1] * out];
+      const side = u[0] >= 0 ? 1 : -1;
+      end = [elbow[0] + side * shoulder, elbow[1]];
+    }
     const start: P2 = dim.type === "diameter" ? [c[0] - u[0] * rad, c[1] - u[1] * rad] : c;
-    prims.push({ kind: "path", points: [start[0], start[1], elbow[0], elbow[1], end[0], end[1]], style: "thin" });
+    if (placed?.inner) {
+      // The number dragged inside the circle: the radius (or diameter) line, and a short shoulder off it under the number.
+      prims.push({ kind: "path", points: [start[0], start[1], onCircle[0], onCircle[1]], style: "thin" });
+      prims.push({ kind: "path", points: [elbow[0], elbow[1], end[0], end[1]], style: "thin" });
+    } else {
+      prims.push({ kind: "path", points: [start[0], start[1], elbow[0], elbow[1], end[0], end[1]], style: "thin" });
+    }
     // Automatic (and Outside): arrows outside the circle pointing in. Inside: inside it, pointing out
     // (a radius from the centre to the arc, a diameter across). Outside, a diameter's line also
-    // carries on a little past the far side, under its arrow.
-    const mode = arrowsFor(dim, style);
+    // carries on a little past the far side, under its arrow. (Automatic with the number dragged
+    // inside the circle: inside.)
+    const mode = arrowsFor(dim, style) ?? (placed?.inner ? "inside" : undefined);
     if (mode === "inside") {
       prims.push(arrow(onCircle, u));
       if (dim.type === "diameter") prims.push(arrow(start, [-u[0], -u[1]]));
@@ -580,7 +673,7 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
       if (dim.type === "diameter") prims.push(arrow(start, u));
       if (mode === "outside" && dim.type === "diameter") prims.push({ kind: "path", points: [start[0], start[1], start[0] - u[0] * ARROW_LEADER, start[1] - u[1] * ARROW_LEADER], style: "thin" });
     }
-    const label: P2 = [(elbow[0] + end[0]) / 2, elbow[1] + 1];
+    const label: P2 = placed ? placed.label : [(elbow[0] + end[0]) / 2, elbow[1] + 1];
     lines.forEach((l, i) => prims.push(...number({ kind: "text", x: label[0], y: label[1] + (lines.length - 1 - i) * TEXT_SIZE * 1.5, text: l, size: TEXT_SIZE, anchor: "middle" })));
     return { prims, label, arrows: mode ?? "outside" };
   }
