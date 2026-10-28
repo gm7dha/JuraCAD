@@ -8,6 +8,23 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.28 — Curve constraints, snapping to everything, sub-assemblies, one sketch many shapes · commit `13556f8`
+
+- **One sketch, several shapes:** click any shape of a sketch (before or while making an Extrude, Revolve or Sweep)
+  to use just that shape; shapes other features already use are greyed. Separate pieces become separate parts, as in
+  Onshape: Add joins the parts a piece touches (all of them), and cuts and holes go into every part they reach.
+- **Sketch:** Tangent, Normal and Curvature between splines, ellipses, circles, arcs and lines; Trim, Split and Offset
+  for splines and ellipses; linear patterns stay linked. Lines snap tangent to two circles (outer and crossing). Snap
+  to points, line ends, middles and centres of other sketches and of the part's edges, even off the sketch's plane —
+  they follow when the original changes. Text, Intersect, Insert DXF and Insert image. Click sketch areas in the 3D view.
+- **Eye to show/hide** planes, Top/Front/Right, the origin and sketches (used sketches hide themselves; Show/Hide all
+  sketches); **P** shows or hides all planes. Shortcuts no longer act behind an open popup.
+- **Sweep:** Twist (up to 10 turns) and Keep profile orientation.
+- **Assemblies:** sub-assemblies — put one assembly inside another.
+- **Drawings:** drag a dimension's number anywhere; pinch or Ctrl+scroll zooms the view, never the whole page.
+- **Fixed:** saving to a file (and Live with Claude) kept losing part numbers, descriptions, custom properties and
+  configurations.
+
 ## v0.27 — Sketch snaps and face edges, mirror and pattern pickers, drawing arrows · commit `bf07c73`
 
 - **Sketch:** snap to a line's middle and to circle/arc centres; a circular pattern can go round any point you click
