@@ -836,8 +836,10 @@ export function applyRelation(s: SketchData, tool: RelationTool, picked: string[
   // Without giving up early (see solveOnce): a relation is applied once, and a refusal should be a real one.
   const r = checkedSolve(start, { ...start, constraints: [...start.constraints, ...made] }, RELATION_LABELS[tool], true, true);
   // Also when it worked but only by stretching the line far out of shape or carrying it far away.
-  const unkept = !r.error && tool === "tangent" && !lineKept(start, r.sketch, made);
-  if ((r.error && tool === "tangent" && /conflict/.test(r.error)) || unkept) {
+  // (Only with a spline or ellipse: Tangents between lines, circles and arcs behave exactly as they always have.)
+  const toWavy = made.some((k) => k.type === "tangent" && k.refs.some((id) => isWavy(curveById(start, id))));
+  const unkept = !r.error && toWavy && !lineKept(start, r.sketch, made);
+  if ((r.error && toWavy && /conflict/.test(r.error)) || unkept) {
     // A line far from the curve, or running a different way, can leave the solver stuck before it touches. Try
     // again with the line first laid onto the curve where it would touch it most easily, then solved from there.
     for (const laid of lineLaidOn(start, made)) {

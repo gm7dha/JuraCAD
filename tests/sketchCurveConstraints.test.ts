@@ -5,7 +5,7 @@ import { addArc } from "../src/sketch/ops";
 import { addEllipse, addSpline } from "../src/sketch/tools";
 import { curvatureAt, curveParam, nearestParam } from "../src/sketch/curves";
 import { analyzeSketch, solveSketch } from "../src/sketch/solver";
-import { emptySketch, type SketchCircle, type SketchData, type SketchEllipse, type SketchLine, type SketchSpline } from "../src/sketch/types";
+import { emptySketch, type SketchArc, type SketchCircle, type SketchData, type SketchEllipse, type SketchLine, type SketchSpline } from "../src/sketch/types";
 import { parseSketchData } from "../src/sketch/validate";
 
 const at = (x: number, y: number): Placed => ({ x, y, snap: null });
@@ -536,5 +536,57 @@ describe("a relation the solver nearly gives up on", () => {
     const r = applyRelation(s, "normal", ["s1", "l0"]);
     expect(r.error).toBeUndefined();
     expect(performance.now() - t).toBeLessThan(10000); // generous for CI
+  });
+});
+
+describe("Tangent between a line and a circle or arc", () => {
+  /** A fixed circle and a free line, or a fixed arc and a free line, both as the review found them. */
+  const circleCase = (cx: number, cy: number, r: number, a: [number, number], b: [number, number]) => {
+    const c = addCircle(emptySketch(), at(cx, cy), r);
+    const l = addLine(fixAll(c.sketch, [c.circleId]), at(...a), at(...b));
+    return { sketch: l.sketch, lineId: l.lineId, curveId: c.circleId };
+  };
+  const arcCase = (cx: number, cy: number, r: number, a: [number, number], b: [number, number]) => {
+    const k = Math.SQRT1_2;
+    const c = addArc(emptySketch(), at(cx + r, cy), at(cx, cy + r), { x: cx + r * k, y: cy + r * k });
+    const l = addLine(fixAll(c.sketch, [c.arcId]), at(...a), at(...b));
+    return { sketch: l.sketch, lineId: l.lineId, curveId: c.arcId };
+  };
+  const touches = (s: SketchData, lineId: string, curveId: string) => {
+    const ln = line(s, lineId);
+    const c = s.curves.find((k) => k.id === curveId) as SketchCircle | SketchArc;
+    const [p, q] = [pointPos(s, ln.p1), pointPos(s, ln.p2)];
+    const o = pointPos(s, c.center);
+    const rad = c.type === "circle" ? c.radius : Math.hypot(pointPos(s, c.start)[0] - o[0], pointPos(s, c.start)[1] - o[1]);
+    const d = Math.abs((q[0] - p[0]) * (o[1] - p[1]) - (q[1] - p[1]) * (o[0] - p[0])) / Math.hypot(q[0] - p[0], q[1] - p[1]);
+    return Math.abs(d - rad);
+  };
+
+  it("is applied to a fixed circle however far the line must swing (found in review)", () => {
+    const t = circleCase(-3.93, -18.04, 4.22, [18.94, -9.26], [15.54, -4.8]);
+    const r = applyRelation(t.sketch, "tangent", [t.lineId, t.curveId]);
+    expect(r.error).toBeUndefined();
+    expect(touches(r.sketch, t.lineId, t.curveId)).toBeLessThan(1e-6);
+  });
+
+  it("is applied to a fixed arc however far the line must swing (found in review)", () => {
+    const t = arcCase(8.8, -2.77, 4.93, [42.09, 45.42], [37.43, 50.29]);
+    const r = applyRelation(t.sketch, "tangent", [t.lineId, t.curveId]);
+    expect(r.error).toBeUndefined();
+    expect(touches(r.sketch, t.lineId, t.curveId)).toBeLessThan(1e-6);
+  });
+
+  it("is never refused for a free line and a fixed circle or arc, wherever they lie", () => {
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const val = (lo: number, hi: number) => +(lo + (hi - lo) * rnd()).toFixed(2);
+    for (let i = 0; i < 120; i++) {
+      const make = i % 2 ? arcCase : circleCase;
+      const a: [number, number] = [val(-50, 50), val(-50, 50)];
+      const ang = rnd() * 2 * Math.PI, len = val(2, 20);
+      const t = make(val(-20, 20), val(-20, 20), val(1, 10), a, [a[0] + len * Math.cos(ang), a[1] + len * Math.sin(ang)]);
+      const r = applyRelation(t.sketch, "tangent", [t.lineId, t.curveId]);
+      expect(r.error, `case ${i}`).toBeUndefined();
+    }
   });
 });
