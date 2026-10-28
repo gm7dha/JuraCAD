@@ -2089,15 +2089,19 @@ try {
       return { areas: d.areas?.length ?? 0, operation: d.operation };
     });
     if (second.areas !== 1 || second.operation !== "add") throw new Error(`Extrude 2 should start with the circle that's left, adding, got ${JSON.stringify(second)}`);
+    // The view fits itself round the first part (animated): let it settle, then look straight down again.
+    await page.waitForTimeout(800);
+    await page.evaluate(() => window.juracadViewport.current.fit(false));
+    await page.waitForTimeout(300);
     const during = await spots();
     if (during.length !== 2) throw new Error(`the hidden sketch's 2 areas should be clickable while Extrude is open, got ${during.length}`);
     // The small circle (used by Extrude 1) is shaded as used elsewhere, the big one as picked.
     const shades = await page.evaluate(() => window.juracadViewport.current.pickAreas.sets[0].shades);
     if (!shades.includes("taken") || !shades.includes("picked")) throw new Error(`expected one area used elsewhere and one picked, got ${JSON.stringify(shades)}`);
     // Clicking the big circle leaves it out; clicking it again picks it.
-    await clickSpot(biggest(during));
+    await clickSpot(biggest(await spots()));
     await page.waitForFunction(() => !window.juracadStore.getState().editing.draft.areas).catch(() => why('() => !window.juracadStore.getState().editing.draft.areas);'));
-    await clickSpot(biggest(during));
+    await clickSpot(biggest(await spots()));
     await page.waitForFunction(() => window.juracadStore.getState().editing.draft.areas?.length === 1).catch(() => why('() => window.juracadStore.getState().editing.draft.areas?.le'));
     await page.locator("#param-depth").fill("10");
     await page.getByRole("button", { name: "Accept" }).click();
