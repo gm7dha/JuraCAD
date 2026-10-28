@@ -261,6 +261,14 @@ describe("picking", () => {
     expect(pickAt(emptySketch(), 5, 0.1, 1, 0.5, [elsewhere])?.id).toBe("ref:0:a");
     const faceCorner: RefEdge = { pick: { partId: "box", ref: { kind: "edge", curve: "LINE", a: [5, 0.2, 0], b: [5, 9, 0], mid: [5, 4.6, 0] } }, kind: "line", a: [5, 0.2], b: [5, 9], mid: [5, 4.6] };
     expect(pickAt(l.sketch, 5, 0.1, 1, 0.5, [faceCorner])?.id).toBe("ref:0:a");
+    // The same corner seen from elsewhere too (listed after the face's edges): the face's own is used, bringing in its edge.
+    const sameSpot: RefEdge = { pick: { partId: "box", ref: { kind: "edge", curve: "LINE", a: [5, 0.2, 0], b: [5, 0.2, -10], mid: [5, 0.2, -5] } }, project: true, kind: "point", a: [5, 0.2], b: [5, 0.2], mid: [5, 0.2] };
+    const refs = [faceCorner, sameSpot];
+    expect(pickAt(emptySketch(), 5, 0.25, 1, 0.5, refs)?.id).toBe("ref:0:a");
+    const at = snapAt(emptySketch(), 5, 0.25, { ...tol, refs }).placed;
+    expect(at.snap).toMatchObject({ kind: "ref", at: "a", edge: faceCorner });
+    const p = addPoint(emptySketch(), at);
+    expect(p.sketch.curves.some((c) => "link" in c && c.link && "partId" in c.link && !c.link.project)).toBe(true);
   });
 });
 
