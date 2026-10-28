@@ -170,8 +170,13 @@ export class Session {
     if (this.wholeBuilt && key === this.wholeKey) return this.wholeBuilt;
     setCurrentScope(scope);
     this.wholeEngine ??= this.makeEngine();
-    const r = this.wholeEngine.rebuildStudios(studios, scope, doc.partNames ?? {});
-    setCurrentScope(this.scope());
+    let r: ReturnType<GeometryEngine["rebuildStudios"]>;
+    try {
+      r = this.wholeEngine.rebuildStudios(studios, scope, doc.partNames ?? {});
+    } finally {
+      // Back to the design's own values, even if the build failed.
+      setCurrentScope(this.scope());
+    }
     const rebuilt = new Map<string, PartMesh[]>(r.rebuilt.map((id) => [id, []]));
     for (const p of r.parts) rebuilt.get(p.studioId ?? "")?.push(p);
     for (const [id, list] of rebuilt) this.wholeMeshes.set(id, list);

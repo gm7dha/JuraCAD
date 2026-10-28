@@ -2,7 +2,8 @@ import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { crc32, encodePng } from "../src/mcp/png";
 import { renderViews } from "../src/mcp/render";
-import { sheetPicture } from "../src/mcp/sheetPicture";
+import { clipToBox, sheetPicture } from "../src/mcp/sheetPicture";
+import type { Prim } from "../src/drawing/sheet";
 import { glyph, UNKNOWN_GLYPH } from "../src/mcp/font5x7";
 
 /** A cube from (0,0,0) to (10,10,h) as triangles, and its 12 edges as line pairs. */
@@ -101,5 +102,27 @@ describe("pictures of drawing sheets", () => {
       expect(g).toHaveLength(7);
       for (const row of g) expect(row).toHaveLength(5);
     }
+  });
+
+  it("only steps along what's on the paper, so views drawn far too big can't freeze it", () => {
+    // As a 20 m view at 100:1 would give: lines 2 km long, a filled shape and text far off the sheet.
+    const prims: Prim[] = [];
+    for (let i = 0; i < 200; i++) prims.push({ kind: "path", points: [-1_000_000, 10 + i * 0.1, 1_000_000, 10 + i * 0.1], style: i % 2 ? "hidden" : "visible" });
+    prims.push({ kind: "path", points: [-100_000, -100_000, 100_000, -100_000, 0, 100_000], closed: true, fill: true, style: "thin" });
+    prims.push({ kind: "text", x: 50_000, y: 50_000, text: "far away", size: 5, anchor: "start" });
+    const started = Date.now();
+    const img = sheetPicture(prims, [100, 50], 400);
+    // Generous (CI machines are busy): stepping along every line would take minutes.
+    expect(Date.now() - started).toBeLessThan(5000);
+    const p = pixels(img.png);
+    // The part of the lines on the paper is still drawn.
+    expect(p.at(200, 160).every((v) => v < 200)).toBe(true);
+  });
+
+  it("clips a segment to a box (Liang–Barsky)", () => {
+    expect(clipToBox(-10, 5, 30, 5, 0, 0, 20, 10)).toEqual([0.25, 0.75]);
+    expect(clipToBox(5, 5, 6, 6, 0, 0, 20, 10)).toEqual([0, 1]);
+    expect(clipToBox(-10, 20, 30, 20, 0, 0, 20, 10)).toBeNull();
+    expect(clipToBox(5, -5, 5, -1, 0, 0, 20, 10)).toBeNull();
   });
 });

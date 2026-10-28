@@ -267,7 +267,11 @@ export class LiveBridge implements LiveLink {
     // Cancelled by Claude before the change went to the tab: it's simply not made.
     if (signal?.aborted) {
       s.restore(snap);
-      return this.notApplied("Cancelled: the call was stopped before its change was sent to JuraCAD, so nothing was changed.");
+      return this.notApplied(
+        s.wroteFile
+          ? "Cancelled: the call was stopped before its change was sent to JuraCAD, so the design wasn't changed — but the file it had already saved in the JuraCAD folder stays."
+          : "Cancelled: the call was stopped before its change was sent to JuraCAD, so nothing was changed.",
+      );
     }
     const conn = this.conn;
     if (!conn || !this.ready || !this.doc) {

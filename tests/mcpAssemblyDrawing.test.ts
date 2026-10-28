@@ -7,7 +7,7 @@
  */
 import opencascade from "replicad-opencascadejs";
 import { setOC } from "replicad";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -248,6 +248,10 @@ describe("drawings made by Claude", () => {
     await ok(s, "export_drawing", { format: "svg", filename: "base" });
     expect(readFileSync(join(folder, "base.svg"), "utf8")).toMatch(/<svg/);
     expect(await fails(s, "export_drawing", { format: "svg", filename: "base" })).toMatch(/already a file called "base\.svg"/);
+    // Nothing outside the chosen folder.
+    expect(await fails(s, "export_drawing", { format: "pdf", filename: "../outside" })).toMatch(/isn't a plain file name/);
+    expect(await fails(s, "export_drawing", { format: "dxf", filename: "/tmp/outside" })).toMatch(/isn't a plain file name/);
+    expect(existsSync(join(folder, "..", "outside.pdf"))).toBe(false);
 
     // It's an ordinary drawing in the saved file.
     await ok(s, "save_design", {});

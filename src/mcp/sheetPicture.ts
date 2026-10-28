@@ -67,17 +67,59 @@ function drawPath(paper: Paper, p: Extract<Prim, { kind: "path" }>, at: (x: numb
   const period = dash ? dash.reduce((a, b) => a + b, 0) : 0;
   let travelled = 0;
   for (let i = 0; i + 1 < pts.length; i++) {
-    const [x0, y0] = pts[i];
-    const [x1, y1] = pts[i + 1];
-    const len = Math.hypot(x1 - x0, y1 - y0);
-    const n = Math.max(1, Math.ceil(len));
-    for (let s = 0; s <= n; s++) {
-      const t = s / n;
-      if (dash && period > 0 && !inDash(dash, (travelled + t * len) % period)) continue;
-      paper.dot(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, colour, radius);
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[i + 1];
+    const len = Math.hypot(bx - ax, by - ay);
+    if (!Number.isFinite(len)) continue;
+    // Only the part on the paper is stepped along (a view drawn far too big can run metres off it).
+    const on = clipToBox(ax, ay, bx, by, -2, -2, paper.width + 2, paper.height + 2);
+    if (on) {
+      const [t0, t1] = on;
+      const x0 = ax + (bx - ax) * t0;
+      const y0 = ay + (by - ay) * t0;
+      const x1 = ax + (bx - ax) * t1;
+      const y1 = ay + (by - ay) * t1;
+      const piece = len * (t1 - t0);
+      const n = Math.max(1, Math.ceil(piece));
+      for (let s = 0; s <= n; s++) {
+        const t = s / n;
+        if (dash && period > 0 && !inDash(dash, (travelled + len * t0 + t * piece) % period)) continue;
+        paper.dot(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, colour, radius);
+      }
     }
     travelled += len;
   }
+}
+
+/**
+ * The part of the segment a→b inside the box, as fractions [t0, t1] along it
+ * (Liang–Barsky), or null when it misses the box.
+ */
+export function clipToBox(ax: number, ay: number, bx: number, by: number, x0: number, y0: number, x1: number, y1: number): [number, number] | null {
+  const dx = bx - ax;
+  const dy = by - ay;
+  let t0 = 0;
+  let t1 = 1;
+  for (const [p, q] of [
+    [-dx, ax - x0],
+    [dx, x1 - ax],
+    [-dy, ay - y0],
+    [dy, y1 - ay],
+  ]) {
+    if (p === 0) {
+      if (q < 0) return null;
+      continue;
+    }
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return null;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return null;
+      if (r < t1) t1 = r;
+    }
+  }
+  return [t0, t1];
 }
 
 function inDash(dash: number[], along: number): boolean {
@@ -102,7 +144,12 @@ function fillPolygon(paper: Paper, pts: [number, number][], colour: readonly num
       if ((ay <= yc && by > yc) || (by <= yc && ay > yc)) xs.push(ax + ((yc - ay) / (by - ay)) * (bx - ax));
     }
     xs.sort((a, b) => a - b);
-    for (let j = 0; j + 1 < xs.length; j += 2) for (let x = Math.round(xs[j]); x <= Math.round(xs[j + 1]); x++) paper.dot(x, y, colour);
+    for (let j = 0; j + 1 < xs.length; j += 2) {
+      // (Kept to the paper, however far the shape reaches off it.)
+      const from = Math.max(0, Math.round(xs[j]));
+      const to = Math.min(paper.width - 1, Math.round(xs[j + 1]));
+      for (let x = from; x <= to; x++) paper.dot(x, y, colour);
+    }
   }
 }
 
@@ -117,6 +164,9 @@ function drawText(paper: Paper, p: Extract<Prim, { kind: "text" }>, at: (x: numb
   const cos = Math.cos(a);
   const sin = Math.sin(a);
   const [ox, oy] = at(p.x, p.y);
+  // Text whose start is far off the paper can't reach it.
+  const reach = width + 7 * unit;
+  if (!Number.isFinite(ox + oy) || ox < -reach || oy < -reach || ox > paper.width + reach || oy > paper.height + reach) return;
   const colour = [0, 0, 0];
   chars.forEach((ch, n) => {
     const g = glyph(ch);

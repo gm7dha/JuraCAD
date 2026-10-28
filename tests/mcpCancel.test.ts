@@ -184,4 +184,22 @@ describe("cancelling a call while live with a JuraCAD tab", () => {
     expect(last.base).toBe(2);
     expect(JSON.parse(last.file!).features).toHaveLength(2);
   });
+
+  it("says a file already saved stays, when a call that saved one is cancelled before its change is sent", async () => {
+    const { s } = newSession();
+    const bridge = new LiveBridge("test", () => {}, 20_000);
+    s.live = bridge;
+    const sent = fakeTab(bridge, (msg, reply) => reply({ type: "applied", id: msg.id, version: msg.base + 1 }));
+    const ac = new AbortController();
+    // A tool that writes a file and changes the design, cancelled just as it finishes.
+    const r = await bridge.call(s, "test_tool", async () => {
+      s.commit({ ...s.doc, name: "Changed" });
+      s.wroteFile = true;
+      ac.abort();
+      return { content: [{ type: "text", text: "done" }] };
+    }, ac.signal);
+    expect(textOf(r)).toMatch(/design wasn't changed — but the file it had already saved in the JuraCAD folder stays/);
+    expect(s.doc.name).toBe("Live design");
+    expect(sent.filter((m) => m.type === "change")).toHaveLength(0);
+  });
 });
