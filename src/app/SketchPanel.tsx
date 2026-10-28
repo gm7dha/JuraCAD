@@ -361,8 +361,6 @@ export function SketchPanel() {
                 </li>
               ) : linkInfo?.edges.length && empty ? (
                 <li className="muted">The face's edges show faintly: snap to their corners, middles and centres, or click one to dimension to it.</li>
-              ) : linkInfo?.candidates?.length && empty ? (
-                <li className="muted">Corners and centres of other sketches and parts show faintly as you get near them: snap to them, or click one to dimension to it. They follow if those change.</li>
               ) : null;
             })()}
             {regions?.problems.map((p) => (
