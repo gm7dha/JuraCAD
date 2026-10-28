@@ -2,14 +2,16 @@
  * Drawings with more than one sheet. Sheet 1 is the drawing's own views,
  * dimensions and so on (so drawings saved before sheets existed open
  * unchanged); sheets 2, 3… are kept in `Drawing.pages`. Each sheet has its
- * own paper size, scale, views and annotations; what's drawn, the title
- * block and the drawing's settings are shared.
+ * own paper size, scale, views and annotations. A sheet can also draw a
+ * different part or assembly (`DrawingPage.source`) and have its own title and
+ * part number (`DrawingPage.partTitle`); the rest of the title block and the
+ * drawing's settings are shared.
  *
  * Everything that works on a drawing (laying it out, adding views,
  * dimensions…) works on one sheet at a time through `pageOf`, which gives a
  * sheet as a drawing of its own; `withPage` puts the changed sheet back.
  */
-import type { Drawing, DrawingPage, PageField } from "../model/types";
+import type { Drawing, DrawingPage, PageField, PartTitle, ViewKind } from "../model/types";
 import { nextSectionLetter } from "./sections";
 
 /** The parts of a drawing that belong to one sheet. */
@@ -47,7 +49,27 @@ function omit(d: Drawing): Omit<Drawing, PageField | "pages"> {
   return out as Omit<Drawing, PageField | "pages">;
 }
 
-/** One sheet of a drawing, as a drawing of its own (without `pages`). */
+/** True when two sources are the same part or assembly (or both nothing). */
+export function sameSource(a: Drawing["source"] | undefined, b: Drawing["source"] | undefined): boolean {
+  return (a ?? null) === (b ?? null) || (!!a && !!b && a.kind === b.kind && a.id === b.id);
+}
+
+/** A title block's own entries (title and part number), without empty ones. */
+function partTitleOf(t: Drawing["title"]): PartTitle {
+  return { ...(t.title ? { title: t.title } : {}), ...(t.partNumber ? { partNumber: t.partNumber } : {}) };
+}
+
+const samePartTitle = (a: PartTitle, b: PartTitle) => (a.title ?? "") === (b.title ?? "") && (a.partNumber ?? "") === (b.partNumber ?? "");
+
+/** A title block with these own entries in place of its title and part number. */
+function withPartTitle(t: Drawing["title"], own: PartTitle): Drawing["title"] {
+  const { title: _t, partNumber: _n, ...rest } = t;
+  const out: Drawing["title"] = { ...(own.title ? { title: own.title } : {}), ...rest };
+  if (own.partNumber) out.partNumber = own.partNumber;
+  return out;
+}
+
+/** One sheet of a drawing, as a drawing of its own (without `pages`): its source and title block as that sheet shows them. */
 export function pageOf(d: Drawing, id: string): Drawing {
   const page = d.pages?.find((p) => p.id === id);
   if (!page) {
@@ -55,21 +77,63 @@ export function pageOf(d: Drawing, id: string): Drawing {
     const { pages: _p, ...rest } = d;
     return rest;
   }
-  const { id: _id, ...fields } = page;
-  return { ...omit(d), ...fields };
+  const { id: _id, source, partTitle, ...fields } = page;
+  const out: Drawing = { ...omit(d), ...fields };
+  if (source !== undefined) out.source = source;
+  // A sheet of another part has none of sheet 1's title and part number.
+  if (partTitle || source !== undefined) out.title = withPartTitle(d.title, partTitle ?? {});
+  return out;
 }
 
-/** Put a sheet (changed by working on `pageOf(d, id)`) back into its drawing. */
+/**
+ * Put a sheet (changed by working on `pageOf(d, id)`) back into its drawing.
+ * Sheets 2, 3…: a part or title and part number that differ from sheet 1's
+ * become the sheet's own; everything else in the title block is shared.
+ * Sheet 1: choosing another part leaves the other sheets showing what they did.
+ */
 export function withPage(d: Drawing, id: string, page: Drawing): Drawing {
   const index = d.pages?.findIndex((p) => p.id === id) ?? -1;
   if (index < 0) {
     // Sheet 1: its fields are the drawing's own.
     const { pages: _p, ...rest } = page;
-    return d.pages?.length ? { ...rest, pages: d.pages } : rest;
+    if (!d.pages?.length) return rest;
+    return { ...rest, pages: sameSource(page.source, d.source) ? d.pages : keepShowing(d, rest) };
   }
+  const entry = d.pages![index];
+  const before = pageOf(d, id);
+  // Another part chosen on it (and its title left as it was): the title and part number were the old part's, so they go.
+  const shown = !sameSource(page.source, before.source) && samePartTitle(partTitleOf(page.title), partTitleOf(before.title)) ? {} : partTitleOf(page.title);
+  const hasTitle = Object.keys(shown).length > 0;
+  // Its own part: one that isn't sheet 1's. Switched back to sheet 1's part, it follows sheet 1 again
+  // (unless it keeps a title of its own).
+  const ownSource = !sameSource(page.source, d.source) || (entry.source !== undefined && !!entry.partTitle && hasTitle);
+  // Its own title and part number: a sheet of its own part has them (an empty title is the same as none);
+  // a sheet of sheet 1's part shares sheet 1's, unless it was left its own when sheet 1 changed (see keepShowing).
+  const own = ownSource ? (hasTitle ? shown : undefined) : entry.partTitle && entry.source === undefined ? shown : undefined;
   const shared = omit(page);
-  const pages = d.pages!.map((p, i) => (i === index ? ({ id, ...pick(page) } as DrawingPage) : p));
-  return { ...shared, ...pick(d), sheet: d.sheet, views: d.views, pages } as Drawing;
+  // Editing the title block of a sheet that shares sheet 1's changes sheet 1's, as it always has;
+  // otherwise the shared title block keeps sheet 1's title and part number.
+  if (ownSource || entry.partTitle || entry.source !== undefined) shared.title = withPartTitle(page.title, partTitleOf(d.title));
+  const next: DrawingPage = { id, ...pick(page), ...(ownSource ? { source: page.source } : {}), ...(own ? { partTitle: own } : {}) } as DrawingPage;
+  const pages = d.pages!.map((p, i) => (i === index ? next : p));
+  return { ...shared, source: d.source, ...pick(d), sheet: d.sheet, views: d.views, pages } as Drawing;
+}
+
+/**
+ * The other sheets of `d`, set so that under `next` (the drawing with a
+ * different sheet 1) each still shows the part, title and part number it did.
+ */
+function keepShowing(d: Drawing, next: Omit<Drawing, "pages">): DrawingPage[] {
+  return (d.pages ?? []).map((p) => {
+    const was = pageOf(d, p.id);
+    const out: DrawingPage = { ...p };
+    if (!sameSource(was.source, next.source)) out.source = was.source;
+    const t = partTitleOf(was.title);
+    if (out.partTitle) return out;
+    // A sheet now showing its own part keeps the title it had; one still showing sheet 1's keeps it if sheet 1's changed.
+    if (out.source !== undefined ? Object.keys(t).length > 0 : !samePartTitle(t, partTitleOf(next.title))) out.partTitle = t;
+    return out;
+  });
 }
 
 /** Change one sheet of a drawing. */
@@ -77,10 +141,26 @@ export function changePage(d: Drawing, id: string, fn: (page: Drawing) => Drawin
   return withPage(d, id, fn(pageOf(d, id)));
 }
 
-/** Add an empty sheet after the last, the same paper size as `like`; returns the drawing and the new sheet's id. */
-export function addPage(d: Drawing, newId: string, like = FIRST_PAGE): Drawing {
+/** The views a sheet of another part starts with (as a new drawing does): ids as `toggleView` makes them. */
+const NEW_SHEET_VIEWS: ViewKind[] = ["front", "top", "right", "iso"];
+
+/**
+ * Add a sheet after the last, the same paper size as `like`; returns the
+ * drawing with it. With no `source` it's an empty sheet of the part (or
+ * assembly) `like` shows, with its title and part number. With a `source`,
+ * a sheet of that part or assembly, starting with the usual views.
+ */
+export function addPage(d: Drawing, newId: string, like = FIRST_PAGE, source?: Drawing["source"]): Drawing {
+  const from = d.pages?.find((p) => p.id === like);
   const sheet = pageOf(d, knownPage(d, like)).sheet;
-  return { ...d, pages: [...(d.pages ?? []), { id: newId, sheet, views: [] }] };
+  if (source === undefined) {
+    const own = from && from.source !== undefined ? { source: from.source } : {};
+    const title = from?.partTitle ? { partTitle: from.partTitle } : {};
+    return { ...d, pages: [...(d.pages ?? []), { id: newId, sheet, views: [], ...own, ...title }] };
+  }
+  const page: DrawingPage = { id: newId, sheet, views: NEW_SHEET_VIEWS.map((kind) => ({ id: `${d.id}-${kind}`, kind })) };
+  if (!sameSource(source, d.source)) page.source = source;
+  return { ...d, pages: [...(d.pages ?? []), page] };
 }
 
 /**
@@ -95,8 +175,11 @@ export function removePage(d: Drawing, id: string): Drawing {
     return pages.length ? { ...rest, pages } : rest;
   }
   const [next, ...later] = d.pages;
-  const { id: _id, ...fields } = next;
-  return { ...omit(d), ...fields, ...(later.length ? { pages: later } : {}) };
+  const first = pageOf(d, next.id);
+  const { pages: _p, ...rest } = first;
+  if (!later.length) return rest;
+  // The sheets after it keep showing what they did.
+  return { ...rest, pages: keepShowing({ ...d, pages: later }, rest) };
 }
 
 /**
@@ -106,4 +189,22 @@ export function removePage(d: Drawing, id: string): Drawing {
 export function nextLetterOnAnySheet(d: Drawing): string {
   const all = pageIds(d).map((id) => pageOf(d, id));
   return nextSectionLetter({ sections: all.flatMap((p) => p.sections ?? []), details: all.flatMap((p) => p.details ?? []) } as Drawing);
+}
+
+/**
+ * Why a sheet can't be laid out because what it draws has gone (or was never
+ * chosen): named by its number when the drawing has several sheets.
+ */
+export function missingPartMessage(d: Pick<Drawing, "pages">, id: string, chosen: boolean): string {
+  const many = pageIds(d).length > 1;
+  const who = many ? `Sheet ${pageNumber(d, id)}` : "This drawing";
+  return chosen ? `${many ? `${who}'s` : "This drawing's"} part no longer exists — choose another in the panel on ${many ? "that sheet" : "the left"}` : `${who} has nothing chosen to draw — choose a part in the panel on ${many ? "that sheet" : "the left"}`;
+}
+
+/** What to say when sheet `n` has been added (see addPage): of `name`, or empty (no `source`) of this sheet's part. */
+export function addedSheetMessage(d: Pick<Drawing, "source">, n: number, source: Drawing["source"] | undefined, name: string | null): string {
+  if (source === undefined) return `Added sheet ${n}. Tick the views it shows in the panel on the left.`;
+  const of = `Added sheet ${n} of ${name ?? "it"}`;
+  // A sheet of sheet 1's own part shares sheet 1's title block.
+  return sameSource(source, d.source) ? `${of}, with the usual views. Its title and part number are sheet 1's.` : `${of}. Its title and part number are its own: fill them in under Title block.`;
 }

@@ -1608,6 +1608,30 @@ try {
       await shot("anglecross");
       await undoTo(made.offset);
     }
+    // 3. With Shift, round into the opposite angle: it measures the outside (reflex) angle, 360° less.
+    {
+      const start = await textBox();
+      const reach = Math.hypot(start.x - cx, start.y - cy);
+      const a1 = Math.atan2(pick.u1[1], pick.u1[0]);
+      const a2 = Math.atan2(pick.u2[1], pick.u2[0]);
+      let turn = a2 - a1;
+      while (turn > Math.PI) turn -= 2 * Math.PI;
+      while (turn < -Math.PI) turn += 2 * Math.PI;
+      // Two thirds of the way from the middle of the opposite angle to one side (so it's slid off the middle, too).
+      const t = a1 + turn / 2 + Math.PI + turn / 3;
+      const to = { x: cx + reach * Math.cos(t), y: cy - reach * Math.sin(t) };
+      await page.keyboard.down("Shift");
+      const after = await dragBy({ x: to.x - start.x, y: to.y - start.y }, "Shift-dragging into the opposite angle");
+      await page.keyboard.up("Shift");
+      if (after.reflex !== true || JSON.stringify(after.rays) !== "[1,1]") throw new Error(`Shift-dragged into the opposite angle, it isn't the outside angle (reflex ${after.reflex}, rays ${JSON.stringify(after.rays)})`);
+      const want = label(360 - pick.deg);
+      if ((await shownText()) !== want) throw new Error(`the outside angle reads ${await shownText()}, not ${want}`);
+      // The panel says so too.
+      if (!(await page.getByLabel("Measure the outside angle").isChecked())) throw new Error("the panel's Measure the outside angle isn't ticked");
+      await shot("anglereflex");
+      await undoTo(made.offset);
+      if ((await dimNow()).reflex) throw new Error("undo didn't take the outside angle away");
+    }
     // And take the angle away again (it was added as one undo step), so the steps after see the drawing as it was.
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     await page.waitForFunction((n) => window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).length === n, before.length, { timeout: 5_000 });
@@ -1690,6 +1714,7 @@ try {
   step = "adding a second sheet";
   {
     await page.getByRole("button", { name: "+ Sheet", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^Empty sheet/ }).click();
     await page.waitForSelector('[role="tab"][aria-selected="true"]:has-text("Sheet 2")', { timeout: 5_000 });
     await page.locator(".drawing-panel").getByLabel("Top", { exact: true }).check();
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "2 OF 2"), null, { timeout: 60_000 });
@@ -1705,6 +1730,36 @@ try {
     if (!pdf2.includes("/Count 2") || !pdf2.includes("(1 OF 2) Tj") || !pdf2.includes("(2 OF 2) Tj")) throw new Error("the PDF doesn't have both sheets");
     await page.getByRole("tab", { name: "Sheet 1", exact: true }).click();
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "1 OF 2"), null, { timeout: 60_000 });
+  }
+  step = "a sheet of another part";
+  {
+    const sheetTexts = () => page.evaluate(() => [...document.querySelectorAll(".drawing-text")].map((t) => t.textContent));
+    const sourceOf = () => page.evaluate(() => {
+      const d = window.juracadStore.getState().history.present.drawings[0];
+      return { first: d.source, pages: (d.pages ?? []).map((p) => p.source ?? null) };
+    });
+    const before = await sourceOf();
+    await page.getByRole("button", { name: "+ Sheet", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Assembly 1", exact: true }).click();
+    await page.waitForSelector('[role="tab"][aria-selected="true"]:has-text("Sheet 3")', { timeout: 5_000 });
+    // It starts with the usual views of the assembly, its parts list and its own name in the title block.
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "3 OF 3"), null, { timeout: 60_000 });
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "QTY"), null, { timeout: 60_000 });
+    await page.waitForFunction(() => document.querySelectorAll(".drawing-view-handle").length === 4, null, { timeout: 60_000 });
+    if (!(await sheetTexts()).includes("Assembly 1")) throw new Error("sheet 3's title block doesn't name Assembly 1");
+    if ((await page.locator("#drawing-source").inputValue()).split(":")[0] !== "assembly") throw new Error("sheet 3's panel doesn't say it draws the assembly");
+    // Its own part number, which sheet 1 doesn't get.
+    const partNo = page.locator(".drawing-panel").getByLabel("Part number", { exact: true });
+    await partNo.fill("ASM-100");
+    await partNo.press("Enter");
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "ASM-100"), null, { timeout: 10_000 });
+    const after = await sourceOf();
+    if (JSON.stringify(after.first) !== JSON.stringify(before.first) || after.pages.length !== 2 || after.pages[1]?.kind !== "assembly") throw new Error(`adding a sheet of the assembly changed the others: ${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+    await shot("sheetpart");
+    await page.getByRole("tab", { name: "Sheet 1", exact: true }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "1 OF 3"), null, { timeout: 60_000 });
+    const first = await sheetTexts();
+    if (first.includes("ASM-100") || first.includes("QTY")) throw new Error("sheet 1 shows sheet 3's part number or parts list");
   }
   step = "drawing the assembly";
   await page.locator("#drawing-source").selectOption({ label: "Assembly 1" });
