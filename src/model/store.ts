@@ -1546,7 +1546,7 @@ export const useStore = create<AppState>((set, get) => {
         const info = draft?.sketch ? links[draft.id] : undefined;
         let editing = s.editing;
         if (editing && draft?.sketch && info) {
-          const data = followLinks(draft.sketch.data, info.links);
+          const data = followLinks(draft.sketch.data, info.links, info.pointLinks);
           const plane = info.plane && draft.sketch.plane?.kind === "face" && !samePlace(info.plane, draft.sketch.plane) ? info.plane : draft.sketch.plane;
           if (data !== draft.sketch.data || plane !== draft.sketch.plane) editing = { ...editing, draft: { ...draft, sketch: { plane, data } } };
         }

@@ -74,6 +74,8 @@ export interface StudioInput {
   /** A Part Studio built again in another configuration: its variables, and what's added to its parts' ids ("@<configuration>"). */
   variables?: Record<string, number>;
   partSuffix?: string;
+  /** The sketch open for editing (its feature id): it's also offered other sketches and every part's edges to snap to. */
+  editing?: string;
 }
 
 /** Display mesh for one part, ready to hand to three.js. */

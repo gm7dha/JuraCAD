@@ -6,7 +6,7 @@
  * middle, a circle's or arc's centre.
  */
 import { alignWith, distToCurve, hitTest, type Hit } from "./hit";
-import { isRefId, parseRefId, refSketch, linkEdge, type RefEdge } from "./links";
+import { isFaceEdge, isRefId, linkEdge, linkPoint, parseRefId, refSketch, type RefEdge } from "./links";
 import { curveById, ellipsePoints, joinPoints, nearestOnPath, pointPos, radiusOf, sketchId, splinePath, type EditResult, type Placed, type Snap } from "./ops";
 import { solveSketch } from "./solver";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
@@ -121,7 +121,7 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
     }
     const vMid = nearestMidpoint(virt, x, y, o.pointTol, new Set());
     const m = vMid ? refOf(vMid.id) : null;
-    if (vMid && m?.edge && m.what === "edge") return { placed: { x: vMid.at[0], y: vMid.at[1], snap: { kind: "ref", edge: m.edge, at: "mid" } }, hover: { kind: "curve", id: vMid.id }, hints: [vMid.at] };
+    if (vMid && m?.edge && m.what === "edge" && m.edge.kind === "line") return { placed: { x: vMid.at[0], y: vMid.at[1], snap: { kind: "ref", edge: m.edge, at: "mid" } }, hover: { kind: "curve", id: vMid.id }, hints: [vMid.at] };
   }
 
   // 4. Nothing right under the pointer: the centre of a circle passed over reaches further.
@@ -150,10 +150,14 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
     return { placed: { x: px, y: py, snap: { kind: "curve", id: c.id } }, hover: curveHit, hints: hint ? [hint] : [] };
   }
 
-  // 7. Onto a part edge.
+  // 7. Onto an edge of the face. (Things from elsewhere — other sketches, parts off the sketch — are
+  // snapped to at their points only, so drawing near them doesn't tie a shape to them by accident;
+  // click one with the dimension tool, or start a tangent line, to use the curve itself.)
   if (virt) {
     let best: { c: SketchCurve; d: number } | null = null;
     for (const c of virt.curves) {
+      const edge = refOf(c.id)?.edge;
+      if (!edge || !isFaceEdge(edge)) continue;
       const d = distToCurve(virt, c, x, y);
       if (d <= o.curveTol && (!best || d < best.d)) best = { c, d };
     }
@@ -162,7 +166,7 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
       const [px, py] = onCurve(virt, best.c, x, y);
       const edgeId = best.c.id.replace(/:s\d+$/, "");
       // Only straight and round edges can be brought in to snap along.
-      const along = r.edge.kind !== "curve";
+      const along = r.edge.kind === "line" || r.edge.kind === "circle" || r.edge.kind === "arc";
       const hint = r.edge.kind === "curve" ? null : hintFor(virt, best.c);
       return {
         placed: along ? { x: px, y: py, snap: { kind: "ref", edge: r.edge, at: "on" } } : { x, y, snap: null },
@@ -191,16 +195,22 @@ export function pickAt(s: SketchData, x: number, y: number, pointTol: number, cu
 }
 
 /**
- * Turn a picked part-edge stand-in ("ref:…") into real sketch ids: the edge
- * is brought in as a reference (construction that follows the part) and the
- * id of its curve, end or centre returned. Ids of the sketch's own geometry
- * come back unchanged.
+ * Turn a picked stand-in ("ref:…") into real sketch ids: a face edge is
+ * brought in as a reference (construction that follows the part) and the id
+ * of its curve, end or centre returned; another sketch's point, or a part's
+ * corner or centre off the face, comes in as a single point that follows it.
+ * Ids of the sketch's own geometry come back unchanged.
  */
 export function bringIn(s: SketchData, id: string, refs: RefEdge[]): EditResult & { id: string } {
   if (!isRefId(id)) return { sketch: s, id };
   const r = parseRefId(id);
   const edge = r ? refs[r.index] : undefined;
   if (!r || !edge || r.what === "q") return { sketch: s, id, error: "That part edge can't be used here." };
+  // Another sketch's point, or a part's corner or centre off the face: just that point comes in.
+  if (!isFaceEdge(edge) && r.what !== "edge") {
+    const p = linkPoint(s, edge, r.what === "c" ? "centre" : r.what);
+    return p.error ? { sketch: s, id, error: p.error } : { sketch: p.sketch, id: p.pointId };
+  }
   const used = linkEdge(s, edge, true);
   if (used.error) return { ...used, id };
   const real = r.what === "edge" ? used.curveId : r.what === "c" ? used.points.c : used.points[r.what];
@@ -217,6 +227,12 @@ export function attachPoint(s: SketchData, pointId: string, snap: Snap): EditRes
   if (snap.kind === "origin") return joinPoints(s, pointId, ORIGIN_ID);
   if (snap.kind === "midpoint") return addMidpoint(s, pointId, snap.id);
   if (snap.kind === "ref") {
+    if (!isFaceEdge(snap.edge) && snap.at !== "on") {
+      const p = linkPoint(s, snap.edge, snap.at);
+      if (p.error) return { sketch: s, error: p.error };
+      const j = joinPoints(p.sketch, pointId, p.pointId);
+      return j.error ? { sketch: s, error: j.error } : j;
+    }
     const used = linkEdge(s, snap.edge, true);
     if (used.error) return { sketch: s, error: used.error };
     const end = snap.at === "a" ? used.points.a : snap.at === "b" ? used.points.b : snap.at === "centre" ? used.points.c : undefined;

@@ -58,7 +58,8 @@ import {
 } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
 import { addText, imageAt, imageById, readTextSettings, textAt, textById } from "./sketchText";
-import { isRefId, refSketch, type RefEdge } from "./links";
+import { isRefId, laterMessage, parseRefId, refSketch, type RefEdge } from "./links";
+import { addTangentLine, tangentLineAt, type TangentLine } from "./tangents";
 import { attachPoint, bringIn, hintFor, pickAt, snapAt, type SnapResult } from "./snaps";
 import type { Snap } from "./ops";
 import { splinePolyline } from "./spline";
@@ -96,9 +97,18 @@ export interface SketchTransient {
   pending: string[];
   /** Small markers: the middle of the line, or the centre of the circle or arc, under the pointer. */
   hints?: [number, number][];
+  /** Points of other sketches and parts near the pointer that it can snap to (drawn faintly). */
+  nearby?: [number, number][];
 }
 
 const POINT_PX = 9;
+/** How close (px) the pointer must come to where a line would touch a circle for the tangent line to be offered. */
+const TANGENT_PX = 14;
+/** How near (px) the pointer shows other sketches' and parts' points it can snap to. */
+const NEARBY_PX = 60;
+/** At most this many of those are shown at once. */
+const NEARBY_MAX = 80;
+const NO_REFS: RefEdge[] = [];
 const CURVE_PX = 6;
 const DRAG_PX = 3;
 /** How close (px) a dragged point must come to another to snap onto it. */
@@ -156,10 +166,69 @@ export class SketchController {
     return this.state.editing?.draft.sketch?.data ?? null;
   }
 
-  /** Edges of the part face the sketch is on (found on the latest rebuild). */
+  /** The part face's edges, and everything else the sketch can snap to (found on the latest rebuild), worked out once per rebuild. */
+  private refsCache: { edges: RefEdge[]; candidates: RefEdge[]; hidden: string[]; list: RefEdge[] } | null = null;
+
+  /**
+   * Edges of the part face the sketch is on (first, so their "ref:<n>" ids
+   * match what the view draws), then other sketches' geometry and the edges
+   * of every part that isn't hidden, seen square-on to the sketch.
+   */
   private get refs(): RefEdge[] {
     const id = this.state.editing?.draft.id;
-    return (id && this.state.sketchLinks?.[id]?.edges) || [];
+    const info = id ? this.state.sketchLinks?.[id] : undefined;
+    const edges = info?.edges ?? NO_REFS;
+    const candidates = info?.candidates ?? NO_REFS;
+    const hidden = this.state.hiddenParts;
+    const c = this.refsCache;
+    if (c && c.edges === edges && c.candidates === candidates && c.hidden === hidden) return c.list;
+    const list = candidates.length ? [...edges, ...candidates.filter((r) => !r.pick || !hidden.includes(r.pick.partId))] : edges;
+    this.refsCache = { edges, candidates, hidden, list };
+    return list;
+  }
+
+  /** How many of the references are the face's own edges (drawn by the view); the rest are drawn only when hovered. */
+  private get faceEdgeCount(): number {
+    const id = this.state.editing?.draft.id;
+    return (id && this.state.sketchLinks?.[id]?.edges.length) || 0;
+  }
+
+  /** A reference from elsewhere under the pointer, drawn faintly (the face's own edges are always drawn). */
+  private refOutline(hover: Hit | null): PreviewShape[] {
+    if (!hover || !isRefId(hover.id)) return [];
+    const r = parseRefId(hover.id);
+    if (!r || r.index < this.faceEdgeCount) return [];
+    const e = this.refs[r.index];
+    if (!e) return [];
+    if (e.kind === "line") return [{ kind: "guide", a: e.a, b: e.b }];
+    if (e.kind === "circle") return [{ kind: "circle", c: e.centre!, r: e.radius! }];
+    if (e.kind === "arc") {
+      const c = e.centre!;
+      return [{ kind: "arc", c, r: e.radius!, a0: Math.atan2(e.start![1] - c[1], e.start![0] - c[0]), a1: Math.atan2(e.end![1] - c[1], e.end![0] - c[0]) }];
+    }
+    const path = e.path ?? [];
+    return path.slice(1).map((q, i) => ({ kind: "guide" as const, a: path[i], b: q }));
+  }
+
+  /** Points of other sketches and parts near the pointer (not the face's own edges, which are drawn). */
+  private nearbyPoints(e: SketchPointer): [number, number][] {
+    const refs = this.refs;
+    const skip = this.faceEdgeCount;
+    if (refs.length <= skip) return [];
+    const virt = refSketch(refs);
+    const reach = NEARBY_PX * e.mmPerPx;
+    const found: { at: [number, number]; d: number }[] = [];
+    for (const p of virt.points) {
+      const dx = p.x - e.x, dy = p.y - e.y;
+      if (Math.abs(dx) > reach || Math.abs(dy) > reach) continue;
+      const d = Math.hypot(dx, dy);
+      if (d > reach) continue;
+      const r = parseRefId(p.id);
+      if (!r || r.index < skip || r.what === "q" || refs[r.index]?.source?.later) continue;
+      found.push({ at: [p.x, p.y], d });
+    }
+    found.sort((a, b) => a.d - b.d);
+    return found.slice(0, NEARBY_MAX).map((f) => f.at);
   }
 
   /** What's under the pointer, part edges of the face included (their stand-in ids start "ref:"). */
@@ -455,6 +524,11 @@ export class SketchController {
     // Drawing on: any size offered for the last shape and not typed is dropped.
     this.state.discardOfferedDimensions();
     const p = this.placeAt(e);
+    // Something from a sketch further down the list can't be used (they'd depend on each other).
+    if (p.snap?.kind === "ref" && p.snap.edge.source?.later) {
+      this.state.setSketchMessage(laterMessage(p.snap.edge), "info");
+      return;
+    }
     const construction = this.state.sketch?.construction ?? false;
 
     switch (tool) {
@@ -480,6 +554,15 @@ export class SketchController {
           return;
         }
         const start = this.placed[0];
+        const tangent = this.tangentFor(start, p, e);
+        if (tangent) {
+          const t = addTangentLine(d, start, tangent, construction);
+          if (!this.commit(t)) return;
+          if (!construction) this.offerDimensions([[t.lineId]]);
+          this.placed = [{ x: tangent.end[0], y: tangent.end[1], snap: { kind: "point", id: t.endId } }];
+          this.emit({ preview: [], inference: null });
+          return;
+        }
         let end = p;
         let orientation: "horizontal" | "vertical" | null = null;
         if (!p.snap) {
@@ -687,7 +770,7 @@ export class SketchController {
     if (tool === "select") {
       if (dragging && this.drag) return this.selectDrag(e);
       const hover = this.pickAt(e) ?? this.extraAt(e);
-      this.emit({ hover, preview: [], snap: null, inference: null, hints: this.hintsFor(hover) });
+      this.emit({ hover, preview: this.refOutline(hover), snap: null, inference: null, hints: this.hintsFor(hover), nearby: this.nearbyPoints(e) });
       return;
     }
     if (tool === "useEdge" || tool === "intersect") return;
@@ -701,8 +784,8 @@ export class SketchController {
     }
     if (tool === "dimension") {
       const hover = this.pickAt(e);
-      if (this.transient.pending.length) this.emit({ hover, snap: null, hints: [], ...this.dimensionPreview(e) });
-      else this.emit({ hover, snap: null, preview: [], hints: this.hintsFor(hover) });
+      if (this.transient.pending.length) this.emit({ hover, snap: null, hints: [], nearby: this.nearbyPoints(e), ...this.dimensionPreview(e) });
+      else this.emit({ hover, snap: null, preview: this.refOutline(hover), hints: this.hintsFor(hover), nearby: this.nearbyPoints(e) });
       return;
     }
     if (tool === "trim" || tool === "extend" || tool === "split" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
@@ -725,7 +808,12 @@ export class SketchController {
     let inference: SketchTransient["inference"] = null;
     let snap = this.snapMarker(p);
     const first = this.placed[0];
-    if (tool === "line" && first) {
+    const tangent = tool === "line" && first ? this.tangentFor(first, p, e) : null;
+    if (tangent) {
+      preview.push({ kind: "line", a: tangent.start, b: tangent.end });
+      snap = tangent.end;
+      inference = { at: tangent.end, text: "Tangent" };
+    } else if (tool === "line" && first) {
       let end: [number, number] = [p.x, p.y];
       if (!p.snap) {
         const inf = inferOrientation(first.x, first.y, p.x, p.y);
@@ -851,7 +939,21 @@ export class SketchController {
         } else preview.push({ kind: "line", a: [first.x, first.y], b: [second.x, second.y] });
       }
     }
-    this.emit({ hover: snapped.hover?.kind === "curve" ? snapped.hover : null, preview, snap, inference, hints: snapped.hints });
+    preview.push(...this.refOutline(snapped.hover));
+    this.emit({ hover: snapped.hover?.kind === "curve" ? snapped.hover : null, preview, snap, inference, hints: snapped.hints, nearby: this.nearbyPoints(e) });
+  }
+
+  /**
+   * While drawing a line: the tangent line to offer, when the line started on
+   * a circle or arc and the pointer is near where it would touch another (or
+   * from any start, near where it would touch a circle). Not when the pointer
+   * has snapped onto a point.
+   */
+  private tangentFor(first: Placed, p: Placed, e: SketchPointer): TangentLine | null {
+    const sn = p.snap?.kind;
+    if (sn === "point" || sn === "origin" || sn === "midpoint" || (p.snap?.kind === "ref" && p.snap.at !== "on")) return null;
+    const refs = this.refs.filter((r) => !r.source?.later);
+    return tangentLineAt(this.data!, first, e.x, e.y, TANGENT_PX * e.mmPerPx, refs.length === this.refs.length ? this.refs : refs);
   }
 
   pointerUp(): void {
@@ -892,7 +994,7 @@ export class SketchController {
   }
 
   pointerLeave(): void {
-    this.emit({ hover: null, snap: null, inference: null, hints: [] });
+    this.emit({ hover: null, snap: null, inference: null, hints: [], nearby: [] });
   }
 
   /** Esc: abandon a half-drawn shape. Returns true if there was one. */

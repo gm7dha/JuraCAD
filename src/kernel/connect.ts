@@ -25,8 +25,11 @@ function currentStudios(): StudioInput[] {
   const s = useStore.getState();
   const here = activeStudioId(s);
   const editingIn = s.editing ? here : null;
+  // A sketch open for editing is also offered other sketches and every part's edges to snap to.
+  const editingSketch = s.editing?.draft.type === "sketch" ? s.editing.draft.id : null;
   return [...studiosOf(s.history.present).map((st) => ({ ...st, features: withoutFolders(st.features) })).map((st) => ({
     id: st.id,
+    ...(st.id === editingIn && editingSketch ? { editing: editingSketch } : {}),
     features:
       st.id === here && s.rollbackTo
         ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? withoutPictures(previewOf(s.editing?.draft ?? null)) : null, s.rollbackTo)

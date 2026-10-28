@@ -257,7 +257,7 @@ describe("part edges in a face sketch", () => {
     expect(r.error).toBeUndefined();
     const ref = r.sketch.curves.find((c) => c.id !== r.lineId)!;
     expect(ref.construction).toBe(true);
-    expect("link" in ref && ref.link?.partId).toBe("box");
+    expect("link" in ref && (ref.link as TopoPick | undefined)?.partId).toBe("box");
     const line = curveById(r.sketch, r.lineId) as SketchLine;
     expect(pointPos(r.sketch, line.p1)).toEqual([40, 20]);
     expect(analyzeSketch(r.sketch).definedPoints.has(line.p1)).toBe(true);
@@ -278,7 +278,7 @@ describe("part edges in a face sketch", () => {
     const links: Record<string, RefEdge | null> = {};
     for (const c of s.curves) {
       if (!("link" in c) || !c.link) continue;
-      const i = refs.findIndex((e) => e.pick.ref === (c.link as TopoPick).ref || JSON.stringify(e.pick.ref) === JSON.stringify(c.link!.ref));
+      const i = refs.findIndex((e) => e.pick!.ref === (c.link as TopoPick).ref || JSON.stringify(e.pick!.ref) === JSON.stringify((c.link as TopoPick).ref));
       links[c.id] = now[i];
     }
     const moved = followLinks(s, links);

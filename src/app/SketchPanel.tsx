@@ -8,7 +8,7 @@ import { measureToOf } from "../sketch/ops";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { makeSketchPattern, makeSketchTransform, setPatternOption, setSketchMeasureTo, toggleSketchDimensionDriven, copyFaceEdges } from "./sketchActions";
-import { lostLinksMessage } from "../sketch/links";
+import { lostLinkIds, lostLinksMessage } from "../sketch/links";
 import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
 import { SketchExtrasPanel } from "./SketchExtrasPanel";
@@ -340,7 +340,7 @@ export function SketchPanel() {
             )}
             {(() => {
               const lost = lostLinksMessage(data, linkInfo);
-              const lostIds = data.curves.filter((c) => "link" in c && c.link && linkInfo?.links[c.id] === null).map((c) => c.id);
+              const lostIds = lostLinkIds(data, linkInfo);
               return lost ? (
                 <li className="warn">
                   <Icons.Warning size={15} /> {lost}{" "}
@@ -361,6 +361,8 @@ export function SketchPanel() {
                 </li>
               ) : linkInfo?.edges.length && empty ? (
                 <li className="muted">The face's edges show faintly: snap to their corners, middles and centres, or click one to dimension to it.</li>
+              ) : linkInfo?.candidates?.length && empty ? (
+                <li className="muted">Corners and centres of other sketches and parts show faintly as you get near them: snap to them, or click one to dimension to it. They follow if those change.</li>
               ) : null;
             })()}
             {regions?.problems.map((p) => (
