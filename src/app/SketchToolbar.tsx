@@ -63,6 +63,7 @@ const RELATIONS: RelationTool[] = [
   "symmetric",
   "normal",
   "curvature",
+  "pierce",
   "fix",
 ];
 
@@ -164,7 +165,7 @@ export function SketchToolbar() {
             title={`${RELATION_LABELS[r]} — ${RELATION_HINTS[r]}`}
             aria-label={RELATION_LABELS[r]}
           >
-            <span className="relation-symbol">{RELATION_SYMBOLS[r]}</span>
+            <span className="relation-symbol">{r === "pierce" ? "⊗" : RELATION_SYMBOLS[r]}</span>
             <span>{RELATION_LABELS[r]}</span>
           </button>
         ))}

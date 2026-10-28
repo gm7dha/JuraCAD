@@ -8,7 +8,8 @@
  * Pure: positions in, sketch millimetres out.
  */
 import type { EdgeRef, TopoPick, Vec3 } from "../geometry/topoRef";
-import { projectEdge, type RefEdge } from "./links";
+import { crossings, curveParam, type CurveParam } from "./curves";
+import { projectEdge, type CurveShape, type RefEdge } from "./links";
 import { pointPos, radiusOf } from "./ops";
 import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from "./planes";
 import type { SketchData, SketchItemLink } from "./types";
@@ -178,4 +179,165 @@ export function sketchRefs(src: SourceSketch, frame: PlaneFrame): RefEdge[] {
   }
   for (const p of s.points) if (p.standalone) lone(p.id);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Curved part edges brought in exactly ("Use" on a spline or ellipse)
+
+/**
+ * A curved part edge's exact shape, in 3D, from the geometry engine: points
+ * along it with its direction and speed there (each piece between two
+ * points is a cubic matching both ends: `tangents` are per piece, as a
+ * sketch spline's handles are), and for an ellipse also its centre and axes
+ * (the ends of its long and short axes from the centre, as vectors) and where
+ * it starts and stops (its own angle, radians, increasing along the edge).
+ */
+export interface CurveShape3 {
+  points: Vec3[];
+  tangents: Vec3[];
+  ellipse?: { centre: Vec3; major: Vec3; minor: Vec3; t0: number; t1: number; whole: boolean };
+}
+
+const vecIn = (frame: PlaneFrame, v: Vec3): P2 => [dot(v, frame.u), dot(v, frame.v)];
+
+/**
+ * A curved edge's shape seen square-on to the sketch: an ellipse when it is
+ * one lying flat to the sketch (in its plane or parallel to it), else a
+ * spline through its points (a curve at a slant is seen squashed, which the
+ * spline follows just as well).
+ */
+export function seeShape(frame: PlaneFrame, shape: CurveShape3): CurveShape | null {
+  const el = shape.ellipse;
+  if (el) {
+    const n = cross(el.major, el.minor);
+    const nl = Math.hypot(...n);
+    const flat = nl > 1e-12 && Math.abs(dot(n, frame.n)) / nl > 1 - 1e-9;
+    if (flat) {
+      const at = (t: number): Vec3 => add(el.centre, add(scale(el.major, Math.cos(t)), scale(el.minor, Math.sin(t))));
+      const centre = toSketch(frame, el.centre);
+      const major = toSketch(frame, add(el.centre, el.major));
+      const minor = toSketch(frame, add(el.centre, el.minor));
+      if (el.whole) return { kind: "ellipse", centre, major, minor };
+      // Seen from the side its own angle runs clockwise, its start and end swap (sketch ellipses run anticlockwise).
+      const anticlockwise = dot(n, frame.n) > 0;
+      const a = toSketch(frame, at(el.t0));
+      const b = toSketch(frame, at(el.t1));
+      return { kind: "ellipse", centre, major, minor, start: anticlockwise ? a : b, end: anticlockwise ? b : a };
+    }
+  }
+  if (shape.points.length < 2 || shape.points.length !== shape.tangents.length) return null;
+  const points = shape.points.map((p) => toSketch(frame, p));
+  const tangents = shape.tangents.map((t) => vecIn(frame, t));
+  // Seen end-on somewhere (no length on paper): can't be a spline.
+  if (points.every((p) => dist2(p, points[0]) < 1e-6)) return null;
+  return { kind: "spline", points, tangents };
+}
+
+// ---------------------------------------------------------------------------
+// Pierce: where a curve from elsewhere passes through the sketch's plane
+
+/** The place in a list nearest to `near` (the first when there's no `near`), or null for an empty list. */
+export function nearestPlace(places: P2[], near?: P2): P2 | null {
+  if (!places.length) return null;
+  if (!near) return places[0];
+  let best = places[0];
+  for (const p of places) if (dist2(p, near) < dist2(best, near)) best = p;
+  return best;
+}
+
+/**
+ * Where another sketch's curve passes through this sketch's plane (`frame`),
+ * in this sketch's coordinates. None when its sketch is parallel to this one
+ * (it never passes through), or when it doesn't reach the line where the two
+ * planes meet. Every kind of curve is followed exactly (lines, circles, arcs,
+ * splines, conics and ellipses).
+ */
+export function sketchCurvePierces(src: SourceSketch, item: string, frame: PlaneFrame): P2[] {
+  const s = src.data;
+  const c = s.curves.find((k) => k.id === item);
+  if (!c) return [];
+  const from = planeFrame(src.plane);
+  if (parallel(from, frame)) return [];
+  // Height above this sketch's plane is h0 + a·x + b·y in the other sketch: zero along one line there.
+  const h0 = dot(sub(from.origin, frame.origin), frame.n);
+  const a = dot(from.u, frame.n);
+  const b = dot(from.v, frame.n);
+  const k = a * a + b * b;
+  if (k < 1e-18) return [];
+  const q0: P2 = [(-h0 * a) / k, (-h0 * b) / k];
+  const dir: P2 = [-b / Math.sqrt(k), a / Math.sqrt(k)];
+  let reach = Math.hypot(...q0) + 1;
+  for (const p of s.points) reach = Math.max(reach, Math.hypot(p.x - q0[0], p.y - q0[1]) * 2 + 1);
+  if (c.type === "circle") reach += 2 * c.radius;
+  const meet: CurveParam = { lo: -reach, hi: reach, closed: false, at: (u) => [q0[0] + dir[0] * u, q0[1] + dir[1] * u], d1: () => dir, d2: () => [0, 0], samples: [-reach, reach] };
+  try {
+    return crossings(curveParam(s, c), meet).map((x) => toSketch(frame, toWorld(from, x.p[0], x.p[1])));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Where a part edge passes through the sketch's plane, from points along it
+ * (`at(f)`, f from 0 to 1 along the edge): the stretches where it changes
+ * side, homed in on by halving. None when it never crosses, or lies in the
+ * plane (all of it on it). `samples` points are tried first; a straight
+ * edge needs just its two ends.
+ */
+export function edgePierces(frame: PlaneFrame, at: (f: number) => Vec3, samples: number): P2[] {
+  const h = (f: number) => dot(sub(at(f), frame.origin), frame.n);
+  const fs = Array.from({ length: samples + 1 }, (_, i) => i / samples);
+  const hs = fs.map(h);
+  const tol = 1e-7;
+  // Lying in the plane: no single place where it passes through.
+  if (hs.every((x) => Math.abs(x) < tol)) return [];
+  const out: P2[] = [];
+  const push = (f: number) => {
+    const p = toSketch(frame, at(f));
+    if (!out.some((q) => dist2(p, q) < 1e-6)) out.push(p);
+  };
+  for (let i = 0; i < fs.length; i++) {
+    if (Math.abs(hs[i]) < tol) {
+      push(fs[i]);
+      continue;
+    }
+    if (i + 1 < fs.length && Math.abs(hs[i + 1]) >= tol && Math.sign(hs[i]) !== Math.sign(hs[i + 1])) {
+      let lo = fs[i], hi = fs[i + 1], hl = hs[i];
+      for (let k = 0; k < 60 && hi - lo > 1e-15; k++) {
+        const m = (lo + hi) / 2;
+        const hm = h(m);
+        if (Math.sign(hm) === Math.sign(hl)) {
+          lo = m;
+          hl = hm;
+        } else hi = m;
+      }
+      push((lo + hi) / 2);
+    }
+  }
+  return out;
+}
+
+/**
+ * The places another sketch's curves pass through this sketch's plane, as
+ * lone points to snap to (Pierce): each follows where its curve passes
+ * through. None when the two sketches are parallel.
+ */
+export function sketchPierceRefs(src: SourceSketch, frame: PlaneFrame): RefEdge[] {
+  if (parallel(planeFrame(src.plane), frame)) return [];
+  const out: RefEdge[] = [];
+  for (const c of src.data.curves) {
+    for (const p of sketchCurvePierces(src, c.id, frame))
+      out.push({ kind: "point", a: p, b: p, mid: p, pierce: true, source: { sketch: src.id, item: c.id, ...(src.name ? { name: src.name } : {}), ...(src.later ? { later: true } : {}) } });
+  }
+  return out;
+}
+
+/** The places a part edge passes through the sketch's plane, as lone points to snap to (Pierce). */
+export function edgePierceRefs(frame: PlaneFrame, pick: TopoPick, at: (f: number) => Vec3): RefEdge[] {
+  const ref = pick.ref;
+  if (ref.kind !== "edge") return [];
+  const h = (p: Vec3) => dot(sub(p, frame.origin), frame.n);
+  // A straight edge lying flat to the plane never passes through it (and one in it doesn't count).
+  if (ref.curve === "LINE" && Math.abs(h(ref.a) - h(ref.b)) < 1e-7) return [];
+  return edgePierces(frame, at, ref.curve === "LINE" ? 1 : 32).map((p): RefEdge => ({ pick, project: true, pierce: true, kind: "point", a: p, b: p, mid: p }));
 }

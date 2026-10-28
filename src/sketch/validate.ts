@@ -76,6 +76,7 @@ export function parseSketchData(raw: unknown): SketchData | null {
         ...splineHandlesOf(c.tangents, c.points as string[]),
         ...splineHandlesOf(c.tangentsIn, c.points as string[], "tangentsIn"),
         ...(Array.isArray(c.offsetParams) && c.offsetParams.length === c.points.length && c.offsetParams.every(num) ? { offsetParams: c.offsetParams as number[] } : {}),
+        ...link,
       });
     else if (c.type === "ellipse" && str(c.center) && str(c.major) && str(c.minor))
       curves.push({
@@ -87,6 +88,7 @@ export function parseSketchData(raw: unknown): SketchData | null {
         construction,
         // Part of an ellipse: both ends, or it's the whole ellipse.
         ...(str(c.start) && str(c.end) ? { start: c.start, end: c.end } : {}),
+        ...link,
       });
     else return null;
   }
@@ -128,15 +130,15 @@ function parseLink(raw: unknown): { link?: CurveLink } {
   return { link: { ...linked, cut: face?.ref.kind === "face" ? { face: face.ref } : {} } };
 }
 
-const POINT_ENDS = new Set(["a", "b", "centre", "mid"]);
+const POINT_ENDS = new Set(["a", "b", "centre", "mid", "pierce"]);
 
 /** A reference point's link: another sketch's point (or line middle), or a part edge's end, middle or centre. Anything else is dropped. */
 function parsePointLink(raw: unknown): { link?: PointLink } {
   if (!raw || typeof raw !== "object") return {};
   const r = raw as Record<string, unknown>;
-  if (str(r.sketch) && str(r.item)) return { link: { sketch: r.sketch, item: r.item, ...(r.end === "mid" ? { end: "mid" as const } : {}) } };
+  if (str(r.sketch) && str(r.item)) return { link: { sketch: r.sketch, item: r.item, ...(r.end === "mid" || r.end === "pierce" ? { end: r.end } : {}) } };
   const pick = parsePick(raw);
-  if (pick?.ref.kind === "edge" && typeof r.end === "string" && POINT_ENDS.has(r.end)) return { link: { partId: pick.partId, ref: pick.ref, end: r.end as "a" | "b" | "centre" | "mid" } };
+  if (pick?.ref.kind === "edge" && typeof r.end === "string" && POINT_ENDS.has(r.end)) return { link: { partId: pick.partId, ref: pick.ref, end: r.end as "a" | "b" | "centre" | "mid" | "pierce" } };
   return {};
 }
 

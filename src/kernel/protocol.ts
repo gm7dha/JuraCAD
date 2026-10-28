@@ -220,6 +220,7 @@ export type KernelRequest =
   | { type: "measureParts"; partIds: string[] }
   | { type: "unfold"; partId: string }
   | { type: "intersect"; partId: string; plane: SketchPlane; face?: FaceRef }
+  | { type: "useEdge"; partId: string; ref: EdgeRef; plane: SketchPlane }
   | { type: "deleteFaceBlockers"; features: Feature[]; featureId: string; variables: Record<string, number> }
   | { type: "sketchCandidates"; studioId: string; sketchId: string; known?: number }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
@@ -232,6 +233,7 @@ export type KernelResponseBody =
   | { type: "measure"; result: Measurement }
   | { type: "unfold"; result: PartMesh | null }
   | { type: "intersect"; result: { edges: EdgeRef[] } | { error: string } }
+  | { type: "useEdge"; result: { edge: RefEdge } | { error: string } }
   | { type: "deleteFaceBlockers"; result: DeleteFaceBlockers }
   | { type: "sketchCandidates"; result: { version: number; list?: RefEdge[] } | null }
   | { type: "export3mf"; result: ThreeMfResult }

@@ -7,7 +7,7 @@
  * the original when it changes (see `offset` in solver.ts).
  */
 import { evaluate } from "../model/expr";
-import { crossings, curveParam, ellipseSpan, nearestParam, offsetParams, offsetPieces, OFFSET_TOLERANCE, pieceOf, splinePieces, splineThrough, tightestBend, type CurveParam, type P2 } from "./curves";
+import { crossings, curveParam, ellipseSpan, nearestParam, offsetParams, offsetPieces, OFFSET_TOLERANCE, pieceOf, splinePieces, splineThrough, type CurveParam, type P2 } from "./curves";
 import { bezierAt, bezierD1, bezierD2, conicAt, conicBetween, cubicOn } from "./spline";
 import { curveEnds, curvePoints, deleteItems, onCurveType, settle, sketchId, type EditResult } from "./ops";
 import { offsetSpan, solveSketch } from "./solver";

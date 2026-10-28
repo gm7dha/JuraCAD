@@ -30,8 +30,8 @@ import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { followLinks, linkProblem, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
-import { edgePoint3, seeEdge, seeSketchCurve, sketchPointAt, sketchRefs, type SourceSketch } from "../sketch/projected";
-import { isPartLink, type CurveLink, type PartLink } from "../sketch/types";
+import { edgePierceRefs, edgePierces, edgePoint3, nearestPlace, seeEdge, seeShape, seeSketchCurve, sketchCurvePierces, sketchPierceRefs, sketchPointAt, sketchRefs, type CurveShape3, type SourceSketch } from "../sketch/projected";
+import { isPartLink, type CurveLink, type PartLink, type SketchCurve } from "../sketch/types";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
@@ -198,6 +198,90 @@ function edgeSamples(e: Edge, ref: EdgeRef): Vec3[] | undefined {
     return Array.from({ length: n + 1 }, (_, i) => take(e.pointAt(i / n)));
   } catch {
     return undefined;
+  }
+}
+
+/** Along an edge (0 at its start, 1 at its end, by its own parameter), as a point. */
+function edgeAt(e: Edge): (f: number) => Vec3 {
+  return (f) => take(e.pointAt(Math.max(0, Math.min(1, f))));
+}
+
+/**
+ * A curved edge's exact shape for "Use" (see CurveShape3): `pieces` cubic
+ * pieces matching its position and direction at each end, or, without
+ * `pieces`, as few as keep within 0.5 µm of it (halving until they do, at most
+ * 128). An ellipse also gets its centre, axes and span.
+ */
+export function edgeShape(e: Edge, pieces?: number): CurveShape3 | null {
+  const oc = getOC() as any;
+  const adaptor = new oc.BRepAdaptor_Curve(e.wrapped);
+  try {
+    const first = adaptor.FirstParameter();
+    const last = adaptor.LastParameter();
+    if (!Number.isFinite(first) || !Number.isFinite(last) || last - first < 1e-12) return null;
+    const pnt = new oc.gp_Pnt();
+    const vec = new oc.gp_Vec();
+    const sample = (n: number) => {
+      const points: Vec3[] = [];
+      const tangents: Vec3[] = [];
+      for (let i = 0; i <= n; i++) {
+        adaptor.D1(first + ((last - first) * i) / n, pnt, vec);
+        points.push([pnt.X(), pnt.Y(), pnt.Z()]);
+        // Per piece: d(point)/d(piece parameter) = D1 × the parameter span of one piece.
+        const k = (last - first) / n;
+        tangents.push([vec.X() * k, vec.Y() * k, vec.Z() * k]);
+      }
+      return { points, tangents };
+    };
+    const missBy = (sh: { points: Vec3[]; tangents: Vec3[] }, n: number) => {
+      let worst = 0;
+      for (let i = 0; i < n; i++) {
+        const [p0, p1, t0, t1] = [sh.points[i], sh.points[i + 1], sh.tangents[i], sh.tangents[i + 1]];
+        adaptor.D0(first + ((last - first) * (i + 0.5)) / n, pnt);
+        const want: Vec3 = [pnt.X(), pnt.Y(), pnt.Z()];
+        // A cubic matching both ends, at its middle: the average of the ends plus an eighth of the difference of their directions.
+        const mid = [0, 1, 2].map((j) => (p0[j] + p1[j]) / 2 + (t0[j] - t1[j]) / 8);
+        worst = Math.max(worst, Math.hypot(mid[0] - want[0], mid[1] - want[1], mid[2] - want[2]));
+      }
+      return worst;
+    };
+    let shape: { points: Vec3[]; tangents: Vec3[] };
+    if (pieces) shape = sample(pieces);
+    else {
+      let n = 4;
+      shape = sample(n);
+      while (n < 128 && missBy(shape, n) > 5e-4) {
+        n *= 2;
+        shape = sample(n);
+      }
+    }
+    pnt.delete();
+    vec.delete();
+    let ellipse: CurveShape3["ellipse"];
+    if (e.geomType === "ELLIPSE") {
+      const el = adaptor.Ellipse();
+      const c = el.Location();
+      const xa = el.XAxis();
+      const ya = el.YAxis();
+      const xd = xa.Direction();
+      const yd = ya.Direction();
+      const R = el.MajorRadius();
+      const r = el.MinorRadius();
+      ellipse = {
+        centre: [c.X(), c.Y(), c.Z()],
+        major: [xd.X() * R, xd.Y() * R, xd.Z() * R],
+        minor: [yd.X() * r, yd.Y() * r, yd.Z() * r],
+        t0: first,
+        t1: last,
+        whole: Math.abs(last - first - 2 * Math.PI) < 1e-9,
+      };
+      [c, xa, ya, xd, yd, el].forEach((o) => o.delete());
+    }
+    return { ...shape, ...(ellipse ? { ellipse } : {}) };
+  } catch {
+    return null;
+  } finally {
+    adaptor.delete();
   }
 }
 
@@ -1877,7 +1961,10 @@ export class GeometryEngine {
               const eref = edgeRefOf(e, bounds);
               const samples = eref.curve === "LINE" || eref.curve === "CIRCLE" ? undefined : Array.from({ length: 17 }, (_, i) => take(e.pointAt(i / 16)));
               const seen = projectEdge(frame, { partId: part.id, ref: eref }, samples);
-              if (seen) edges.push(seen);
+              // A curved edge (a spline or an ellipse) carries its exact shape, so it can be used too.
+              const sh = seen?.kind === "curve" ? edgeShape(e) : null;
+              const shape = sh ? seeShape(frame, sh) : null;
+              if (seen) edges.push(shape ? { ...seen, shape } : seen);
             } finally {
               e.delete();
             }
@@ -1891,7 +1978,14 @@ export class GeometryEngine {
     // Linked curves: find each edge again on its part, or each curve in its sketch.
     const links: Record<string, RefEdge | null> = {};
     const pointLinks: Record<string, [number, number] | null> = {};
-    const sameKind = (c: { type: string }, e: RefEdge | null) => (e && e.kind === c.type ? e : null);
+    // A spline or ellipse follows a curved edge by its exact shape (worked out with as many pieces as the spline has).
+    const sameKind = (c: { type: string }, e: RefEdge | null) => (!e ? null : c.type === "spline" || c.type === "ellipse" ? (e.shape?.kind === c.type ? e : null) : e.kind === c.type ? e : null);
+    const shaped = (c: SketchCurve, e: RefEdge | null, edge: Edge): RefEdge | null => {
+      if (!e || (c.type !== "spline" && c.type !== "ellipse")) return e;
+      const sh = edgeShape(edge, c.type === "spline" ? (c.closed ? c.points.length : c.points.length - 1) : undefined);
+      const seen = sh ? seeShape(frame, sh) : null;
+      return seen ? { ...e, shape: seen } : null;
+    };
     const partLinked = linked.filter((c) => isPartLink((c as { link: CurveLink }).link));
     const partPoints = linkedPts.filter((p) => "partId" in p.link!);
     if (partLinked.length || partPoints.length) {
@@ -1937,16 +2031,21 @@ export class GeometryEngine {
             if (link.project) {
               // From anywhere on the part, seen square-on to the sketch.
               const m = strictMatch(link.ref, refs, sizeOf(bounds), 0.3);
-              links[c.id] = m === null ? null : sameKind(c, seeEdge(frame, { partId, ref: refs[m] }, edgeSamples(all[m], refs[m])));
+              links[c.id] = m === null ? null : sameKind(c, shaped(c, seeEdge(frame, { partId, ref: refs[m] }, edgeSamples(all[m], refs[m])), all[m]));
               return;
             }
             const m = strictMatch(link.ref, candidates, sizeOf(bounds), 0.3);
-            links[c.id] = m === null ? null : projectEdge(frame, { partId, ref: refs[m] });
+            links[c.id] = m === null ? null : c.type === "spline" || c.type === "ellipse" ? sameKind(c, shaped(c, projectEdge(frame, { partId, ref: refs[m] }), all[m])) : projectEdge(frame, { partId, ref: refs[m] });
           });
           // Points following a corner, the middle or the centre of an edge, from anywhere on the part.
           points.forEach((p) => {
-            const link = p.link as { ref: EdgeRef; end: "a" | "b" | "centre" | "mid" };
+            const link = p.link as { ref: EdgeRef; end: "a" | "b" | "centre" | "mid" | "pierce" };
             const m = strictMatch(link.ref, refs, sizeOf(bounds), 0.3);
+            if (link.end === "pierce") {
+              // Where the edge passes through the plane now: the place nearest where the point was, so it keeps to its own.
+              pointLinks[p.id] = m === null ? null : nearestPlace(edgePierces(frame, edgeAt(all[m]), refs[m].curve === "LINE" ? 1 : 64), [p.x, p.y]);
+              return;
+            }
             const at = m === null ? null : edgePoint3(refs[m], link.end);
             pointLinks[p.id] = at ? toSketch(frame, at) : null;
           });
@@ -1970,7 +2069,8 @@ export class GeometryEngine {
       const link = p.link!;
       if ("partId" in link) continue;
       const src = sourceOf(link.sketch);
-      pointLinks[p.id] = src ? sketchPointAt(src, link, frame) : null;
+      if (link.end === "pierce") pointLinks[p.id] = src ? nearestPlace(sketchCurvePierces(src, link.item, frame), [p.x, p.y]) : null;
+      else pointLinks[p.id] = src ? sketchPointAt(src, link as typeof link & { end?: "mid" }, frame) : null;
     }
     const data = followLinks(sk.data, links, pointLinks);
     const changed = data !== sk.data || followed !== plane;
@@ -2070,6 +2170,9 @@ export class GeometryEngine {
           if (snap.faceEdges.some((f) => f.pick?.partId === part.id && sameRef(f.pick.ref, ref))) return;
           const seen = seeEdge(frame, { partId: part.id, ref }, edgeSamples(e, ref));
           if (seen) out.push(seen);
+          // Where it passes through the sketch's plane (to snap to, or Pierce). A straight edge's ends say exactly where.
+          const lerp = (f: number): Vec3 => [ref.a[0] + (ref.b[0] - ref.a[0]) * f, ref.a[1] + (ref.b[1] - ref.a[1]) * f, ref.a[2] + (ref.b[2] - ref.a[2]) * f];
+          out.push(...edgePierceRefs(frame, { partId: part.id, ref }, ref.curve === "LINE" ? lerp : edgeAt(e)));
         });
       } finally {
         all.forEach((e) => e.delete());
@@ -2077,9 +2180,13 @@ export class GeometryEngine {
     }
     for (const [id, f] of snap.earlier) {
       if (id === sketchId || !f.sketch?.plane) continue;
-      out.push(...sketchRefs({ id, name: f.name, plane: f.sketch.plane, data: f.sketch.data }, frame));
+      const src = { id, name: f.name, plane: f.sketch.plane, data: f.sketch.data };
+      out.push(...sketchRefs(src, frame), ...sketchPierceRefs(src, frame));
     }
-    for (const f of later) out.push(...sketchRefs({ id: f.id, name: f.name, plane: f.sketch!.plane!, data: f.sketch!.data, later: true }, frame));
+    for (const f of later) {
+      const src = { id: f.id, name: f.name, plane: f.sketch!.plane!, data: f.sketch!.data, later: true };
+      out.push(...sketchRefs(src, frame), ...sketchPierceRefs(src, frame));
+    }
     const list = out.length > LIMIT ? out.slice(0, LIMIT) : out;
     this.candidateCache = { key, list, version: this.candidateRuns };
     return this.candidateCache;
@@ -4852,6 +4959,36 @@ export class GeometryEngine {
     if (r === null) return { error: "That face can't be found on the part any more. Click it again." };
     if (!r.length) return { error: face ? "The sketch's plane doesn't cut through that face. Click a face the sketch passes through (seen side-on), or turn on \"Whole part\"." : "The sketch's plane doesn't cut through that part." };
     return { edges: r };
+  }
+
+  /**
+   * "Use" on a curved edge (a spline, an ellipse, or a circle at a slant to
+   * the sketch): the edge as seen in the sketch, with its exact shape to copy
+   * in — an ellipse when it is one lying flat to the sketch, else a spline
+   * that keeps within half a micron of it. The copy follows the edge after.
+   */
+  useEdge(partId: string, ref: EdgeRef, plane: SketchPlane): { edge: RefEdge } | { error: string } {
+    const part = this.parts.find((p) => p.id === partId);
+    if (!part) return { error: "That part isn't there any more. Click another edge." };
+    const frame = planeFrame(plane);
+    const all = edgesOf(part.shape);
+    try {
+      const bounds = boundsOf(part.shape);
+      const refs = all.map((e) => edgeRefOf(e, bounds));
+      const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+      const m = strictMatch(ref, refs, size);
+      if (m === null) return { error: "That edge can't be found on the part any more. Click it again." };
+      const pick = { partId, ref: refs[m] };
+      const seen = projectEdge(frame, pick, edgeSamples(all[m], refs[m])) ?? seeEdge(frame, pick, edgeSamples(all[m], refs[m]));
+      if (!seen) return { error: "That edge can't be seen in this sketch." };
+      if (seen.kind !== "curve") return { edge: seen };
+      const sh = edgeShape(all[m]);
+      const shape = sh ? seeShape(frame, sh) : null;
+      if (!shape) return { error: "That edge is seen end-on from this sketch, so there's no curve to copy in. Pick an edge that runs across the sketch." };
+      return { edge: { ...seen, shape } };
+    } finally {
+      all.forEach((e) => e.delete());
+    }
   }
 
   /** The edges (as references) where a plane cuts a part, or one face of it; null when that face can't be found. */
