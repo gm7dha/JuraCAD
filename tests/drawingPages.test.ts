@@ -38,10 +38,9 @@ describe("sheets", () => {
     expect(d3.sheet).toBe("A4");
     expect(d3.scale).toBeUndefined();
     expect(d3.pages).toEqual([{ id: "p2", sheet: "A3", scale: 2, views: [{ id: "v", kind: "top" }] }]);
-    // The settings and the rest of the title block are shared: changing them on sheet 2 changes them for all
-    // (the title and part number are each sheet's own).
-    const d4 = changePage(d3, "p2", (p) => ({ ...p, title: { drawnBy: "Shared" }, hiddenLines: false }));
-    expect(pageOf(d4, FIRST_PAGE).title).toEqual({ drawnBy: "Shared" });
+    // The title block and settings are shared: changing them on sheet 2 changes them for all.
+    const d4 = changePage(d3, "p2", (p) => ({ ...p, title: { title: "Shared" }, hiddenLines: false }));
+    expect(pageOf(d4, FIRST_PAGE).title).toEqual({ title: "Shared" });
     expect(pageOf(d4, FIRST_PAGE).hiddenLines).toBe(false);
     // Removing something on a sheet removes it (not just leaves sheet 1's).
     const withDim = changePage(d4, FIRST_PAGE, (p) => putDimension(p, { id: "x", view: "front", type: "horizontal", a: { at: [0, 0], rel: [0, 0] }, b: { at: [40, 0], rel: [1, 0] }, offset: 8 }));

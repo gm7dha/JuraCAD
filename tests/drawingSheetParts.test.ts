@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { addDrawing, parseDrawings } from "../src/drawing/drawing";
 import { sheetDxf, sheetSvg } from "../src/drawing/export";
-import { addPage, changePage, FIRST_PAGE, pageOf, removePage, sameSource } from "../src/drawing/pages";
+import { addedSheetMessage, addPage, changePage, FIRST_PAGE, missingPartMessage, pageOf, removePage, sameSource } from "../src/drawing/pages";
 import { layoutSheet, type Prim, type Projections } from "../src/drawing/sheet";
 import type { ViewProjection } from "../src/kernel/protocol";
 import { emptyDocument } from "../src/model/document";
@@ -55,17 +55,62 @@ describe("a sheet of another part", () => {
     d = changePage(d, "p2", (p) => ({ ...p, source: asm }));
     expect(d.source).toEqual(bracket);
     expect(d.pages![0].source).toEqual(asm);
+    // (Sheet 1's title and part number were the bracket's: the assembly's sheet doesn't take them.)
+    expect(d.pages![0].partTitle).toBeUndefined();
+    expect(pageOf(d, "p2").title).toEqual({ drawnBy: "Sam" });
+    expect(d.title).toEqual(start().title);
     expect(pageOf(d, "p3").source).toEqual(bracket);
-    // Choosing sheet 1's part again there: it shows that part.
+    // Choosing sheet 1's part again there: it follows sheet 1 again, nothing of its own saved, sheet 1's title back.
     const back = changePage(d, "p2", (p) => ({ ...p, source: bracket }));
-    expect(back.pages![0].source).toEqual(bracket);
+    expect(back.pages![0]).toEqual({ id: "p2", sheet: "A4", views: [] });
     expect(sameSource(pageOf(back, "p2").source, bracket)).toBe(true);
-    // A sheet of sheet 1's part follows sheet 1's title and part number until it's given its own.
-    d = changePage(d, FIRST_PAGE, (p) => ({ ...p, title: { ...p.title, partNumber: "BRK-2" } }));
-    expect(pageOf(d, "p3").title.partNumber).toBe("BRK-2");
-    d = changePage(d, "p3", (p) => ({ ...p, title: { ...p.title, partNumber: "BRK-2-SHT3" } }));
-    expect(d.pages![1].partTitle).toEqual({ title: "Bracket", partNumber: "BRK-2-SHT3" });
-    expect(d.title.partNumber).toBe("BRK-2");
+    expect(pageOf(back, "p2").title).toEqual(start().title);
+    expect(back.title).toEqual(start().title);
+    // The same when it had a title of its own: that was the assembly's, so it goes too.
+    const framed = changePage(d, "p2", (p) => ({ ...p, title: { ...p.title, title: "Frame" } }));
+    expect(framed.pages![0].partTitle).toEqual({ title: "Frame" });
+    const titled = changePage(framed, "p2", (p) => ({ ...p, source: bracket }));
+    expect(titled.pages![0]).toEqual({ id: "p2", sheet: "A4", views: [] });
+    expect(pageOf(titled, "p2").title).toEqual(start().title);
+    expect(titled.title).toEqual(start().title);
+    // Choosing another part with a new title typed at the same time keeps that title.
+    const both = changePage(d, "p2", (p) => ({ ...p, source: pin, title: { ...p.title, title: "Pin" } }));
+    expect(both.pages![0]).toMatchObject({ source: pin, partTitle: { title: "Pin" } });
+  });
+
+  it("a sheet of sheet 1's part shares sheet 1's title block: editing it there edits sheet 1's, as before", () => {
+    let d = addPage(addPage(start(), "p2"), "p3");
+    d = changePage(d, "p3", (p) => ({ ...p, title: { ...p.title, partNumber: "BRK-2", title: "Bracket mk2" } }));
+    expect(d.title).toEqual({ title: "Bracket mk2", partNumber: "BRK-2", drawnBy: "Sam" });
+    expect(d.pages).toEqual([
+      { id: "p2", sheet: "A4", views: [] },
+      { id: "p3", sheet: "A4", views: [] },
+    ]);
+    expect(pageOf(d, "p2").title).toEqual(d.title);
+    // And from sheet 1, every such sheet follows.
+    d = changePage(d, FIRST_PAGE, (p) => ({ ...p, title: { ...p.title, partNumber: "BRK-3" } }));
+    expect(pageOf(d, "p3").title.partNumber).toBe("BRK-3");
+    // A drawing saved before sheets had parts: editing sheet 2's title never splits it off.
+    const old = parseDrawings([{ ...JSON.parse(JSON.stringify(start())), pages: [{ id: "p2", sheet: "A3", views: [{ id: "v", kind: "top" }] }] }])[0];
+    const edited = changePage(old, "p2", (p) => ({ ...p, title: { ...p.title, title: "Shared" } }));
+    expect(edited.pages).toEqual(old.pages);
+    expect(edited.title.title).toBe("Shared");
+  });
+
+  it("says whose title block a new sheet has", () => {
+    const d = start();
+    expect(addedSheetMessage(d, 2, undefined, null)).toBe("Added sheet 2. Tick the views it shows in the panel on the left.");
+    expect(addedSheetMessage(d, 2, bracket, "Bracket")).toBe("Added sheet 2 of Bracket, with the usual views. Its title and part number are sheet 1's.");
+    expect(addedSheetMessage(d, 3, pin, "Pin")).toBe("Added sheet 3 of Pin. Its title and part number are its own: fill them in under Title block.");
+    // (And that's what addPage does: a sheet of sheet 1's part shows sheet 1's title block.)
+    expect(pageOf(addPage(d, "p2", FIRST_PAGE, bracket), "p2").title).toEqual(d.title);
+  });
+
+  it("names the sheet whose part has gone", () => {
+    const d = addPage(addPage(start(), "p2"), "p3", FIRST_PAGE, pin);
+    expect(missingPartMessage(d, "p3", true)).toBe("Sheet 3's part no longer exists — choose another in the panel on that sheet");
+    expect(missingPartMessage(d, "p2", false)).toBe("Sheet 2 has nothing chosen to draw — choose a part in the panel on that sheet");
+    expect(missingPartMessage(start(), FIRST_PAGE, true)).toBe("This drawing's part no longer exists — choose another in the panel on the left");
   });
 
   it("choosing another part on sheet 1 leaves the other sheets showing theirs", () => {

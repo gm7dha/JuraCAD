@@ -7,7 +7,7 @@ import { dimTextOutlines, itemsInBox, rightClickFlip, toggled } from "../drawing
 import { guardZoom, sheetWheelFactor, SHEET_MIN_WIDTH, zoomBox } from "../viewport/zoomGuard";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { create } from "zustand";
-import { addPage, changePage, FIRST_PAGE, knownPage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage } from "../drawing/pages";
+import { addPage, changePage, FIRST_PAGE, knownPage, missingPartMessage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage, addedSheetMessage } from "../drawing/pages";
 
 import { arrangeLinedUp, arrangeViews, withoutFit, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetsPdf, sheetSvg } from "../drawing/export";
@@ -319,13 +319,16 @@ async function allSheets(whole: Drawing): Promise<SheetLayout[]> {
     }
     const page = pageOf(whole, id);
     const req = projectionRequest(page, doc, s.parts);
-    if (!req) throw new Error("the part this drawing shows no longer exists");
+    if (!req) throw new MissingPart(missingPartMessage(whole, id, !!page.source));
     const base = await fetchProjections(cacheIdOf(whole, id), req);
     const projections = withShortenings(withDetails(base, page), page);
     out.push(layoutSheet(page, projections, sheetInfo(page, doc, s.parts, req.subject.name, req.subject.instances, i + 1, ids.length)));
   }
   return out;
 }
+
+/** A sheet whose part or assembly has gone (its message names the sheet). */
+class MissingPart extends Error {}
 
 /**
  * Save the drawing on show: PDF has every sheet (a page each); SVG and DXF
@@ -350,7 +353,8 @@ export async function exportDrawing(format: "pdf" | "svg" | "dxf") {
     try {
       layouts = await allSheets(d);
     } catch (e) {
-      s.showToast(`Couldn't save the PDF: ${e instanceof Error ? e.message : String(e)}. Check each sheet shows its views, then try again.`, "error");
+      if (e instanceof MissingPart) s.showToast(`Couldn't save the PDF. ${e.message}.`, "error");
+      else s.showToast(`Couldn't save the PDF: ${e instanceof Error ? e.message : String(e)}. Check each sheet shows its views, then try again.`, "error");
       return;
     }
     downloadFile(new Blob([sheetsPdf(layouts.map((l) => ({ prims: l.prims, size: l.size })), title) as BlobPart], { type: "application/pdf" }), `${base}.pdf`);
@@ -811,8 +815,7 @@ function AddSheetMenu({ whole, pageId, subject, onClose }: { whole: Drawing; pag
     st.changeDrawing((d) => addPage(d, id, pageId, source));
     useSheetPage.getState().show(whole.id, id);
     st.selectDim(null);
-    if (source === undefined) st.showToast(`Added sheet ${n}. Tick the views it shows in the panel on the left.`, "success");
-    else st.showToast(`Added sheet ${n} of ${sourceName(source, doc, parts) ?? "it"}. Its title and part number are its own: fill them in under Title block.`, "success");
+    st.showToast(addedSheetMessage(whole, n, source, source ? sourceName(source, doc, parts) : null), "success");
   };
   return (
     <div className="drawing-add-sheet-menu" role="menu" aria-label="Add a sheet">

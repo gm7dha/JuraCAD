@@ -100,14 +100,20 @@ export function withPage(d: Drawing, id: string, page: Drawing): Drawing {
     return { ...rest, pages: sameSource(page.source, d.source) ? d.pages : keepShowing(d, rest) };
   }
   const entry = d.pages![index];
-  const ownSource = entry.source !== undefined || !sameSource(page.source, d.source);
-  const shown = partTitleOf(page.title);
-  const differs = !samePartTitle(shown, partTitleOf(d.title));
-  // (On a sheet of another part an empty title is the same as none; on a sheet of sheet 1's part it's its own.)
-  const own = ownSource ? (Object.keys(shown).length ? shown : undefined) : entry.partTitle || differs ? shown : undefined;
+  const before = pageOf(d, id);
+  // Another part chosen on it (and its title left as it was): the title and part number were the old part's, so they go.
+  const shown = !sameSource(page.source, before.source) && samePartTitle(partTitleOf(page.title), partTitleOf(before.title)) ? {} : partTitleOf(page.title);
+  const hasTitle = Object.keys(shown).length > 0;
+  // Its own part: one that isn't sheet 1's. Switched back to sheet 1's part, it follows sheet 1 again
+  // (unless it keeps a title of its own).
+  const ownSource = !sameSource(page.source, d.source) || (entry.source !== undefined && !!entry.partTitle && hasTitle);
+  // Its own title and part number: a sheet of its own part has them (an empty title is the same as none);
+  // a sheet of sheet 1's part shares sheet 1's, unless it was left its own when sheet 1 changed (see keepShowing).
+  const own = ownSource ? (hasTitle ? shown : undefined) : entry.partTitle && entry.source === undefined ? shown : undefined;
   const shared = omit(page);
-  // (The shared title block keeps sheet 1's title and part number.)
-  if (own || differs) shared.title = withPartTitle(page.title, partTitleOf(d.title));
+  // Editing the title block of a sheet that shares sheet 1's changes sheet 1's, as it always has;
+  // otherwise the shared title block keeps sheet 1's title and part number.
+  if (ownSource || entry.partTitle || entry.source !== undefined) shared.title = withPartTitle(page.title, partTitleOf(d.title));
   const next: DrawingPage = { id, ...pick(page), ...(ownSource ? { source: page.source } : {}), ...(own ? { partTitle: own } : {}) } as DrawingPage;
   const pages = d.pages!.map((p, i) => (i === index ? next : p));
   return { ...shared, source: d.source, ...pick(d), sheet: d.sheet, views: d.views, pages } as Drawing;
@@ -183,4 +189,22 @@ export function removePage(d: Drawing, id: string): Drawing {
 export function nextLetterOnAnySheet(d: Drawing): string {
   const all = pageIds(d).map((id) => pageOf(d, id));
   return nextSectionLetter({ sections: all.flatMap((p) => p.sections ?? []), details: all.flatMap((p) => p.details ?? []) } as Drawing);
+}
+
+/**
+ * Why a sheet can't be laid out because what it draws has gone (or was never
+ * chosen): named by its number when the drawing has several sheets.
+ */
+export function missingPartMessage(d: Pick<Drawing, "pages">, id: string, chosen: boolean): string {
+  const many = pageIds(d).length > 1;
+  const who = many ? `Sheet ${pageNumber(d, id)}` : "This drawing";
+  return chosen ? `${many ? `${who}'s` : "This drawing's"} part no longer exists — choose another in the panel on ${many ? "that sheet" : "the left"}` : `${who} has nothing chosen to draw — choose a part in the panel on ${many ? "that sheet" : "the left"}`;
+}
+
+/** What to say when sheet `n` has been added (see addPage): of `name`, or empty (no `source`) of this sheet's part. */
+export function addedSheetMessage(d: Pick<Drawing, "source">, n: number, source: Drawing["source"] | undefined, name: string | null): string {
+  if (source === undefined) return `Added sheet ${n}. Tick the views it shows in the panel on the left.`;
+  const of = `Added sheet ${n} of ${name ?? "it"}`;
+  // A sheet of sheet 1's own part shares sheet 1's title block.
+  return sameSource(source, d.source) ? `${of}, with the usual views. Its title and part number are sheet 1's.` : `${of}. Its title and part number are its own: fill them in under Title block.`;
 }
