@@ -2,6 +2,7 @@
  * The design Claude is working on: the document (exactly what a .juracad file
  * holds), its undo history, and the geometry engine that builds it.
  */
+import { featuresForEngine } from "../kernel/buildInput";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { emptyDocument } from "../model/document";
 import { resolveVariables } from "../model/variables";
@@ -83,7 +84,8 @@ export class Session {
   /** Build these features (by default the whole design) with the real geometry engine. */
   build(features: Feature[] = this.doc.features, doc = this.doc): Build {
     const scope = this.scope(doc);
-    const key = JSON.stringify([features, scope, doc.partNames ?? {}]);
+    // Folders, sketch pictures and the eye don't change shapes: leave them out, so clicking them doesn't rebuild.
+    const key = JSON.stringify([featuresForEngine(features), scope, doc.partNames ?? {}]);
     if (this.built && key === this.builtKey) return this.built;
     setCurrentScope(scope);
     const r = this.engine.rebuild(features, scope, doc.partNames ?? {});

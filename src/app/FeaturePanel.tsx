@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
-import { activeFeatures, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
+import { activeFeatures, activeHiddenDatums, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
+import { featureVisible, hasEye } from "../model/visibility";
 import { nextFolderName } from "../model/document";
 import type { Feature, FeatureType } from "../model/types";
 import { viewNormalToPlaneFeature, viewportApi } from "../viewport/Viewport";
@@ -114,7 +115,7 @@ function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }
   );
 }
 
-function EyeButton({ hidden, name, onToggle }: { hidden: boolean; name: string; onToggle: () => void }) {
+function EyeButton({ hidden, name, onToggle, disabled, title }: { hidden: boolean; name: string; onToggle: () => void; disabled?: boolean; title?: string }) {
   return (
     <button
       className={`icon-button small eye${hidden ? " is-hidden" : ""}`}
@@ -123,8 +124,9 @@ function EyeButton({ hidden, name, onToggle }: { hidden: boolean; name: string; 
         onToggle();
       }}
       onDoubleClick={(e) => e.stopPropagation()}
+      disabled={disabled}
       aria-label={hidden ? `Show ${name}` : `Hide ${name}`}
-      title={hidden ? "Show" : "Hide"}
+      title={title ?? (hidden ? "Show" : "Hide")}
     >
       {hidden ? <Icons.EyeOff size={16} /> : <Icons.Eye size={16} />}
     </button>
@@ -136,7 +138,7 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
   const isPlane = name !== "Origin";
   const plane = isPlane ? (name as PlaneName) : null;
   const selected = useStore((s) => plane !== null && s.selectedPlane === plane);
-  const hidden = useStore((s) => s.hiddenDatums.includes(name));
+  const hidden = useStore((s) => activeHiddenDatums(s).includes(name));
   const selectPlane = useStore((s) => s.selectPlane);
   const setListHoverPlane = useStore((s) => s.setListHoverPlane);
   const toggleDatum = useStore((s) => s.toggleDatum);
@@ -156,6 +158,8 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
         ]
       : []),
     { label: hidden ? "Show" : "Hide", action: () => toggleDatum(name) },
+    "divider",
+    ...SKETCH_VISIBILITY_MENU,
   ];
 
   return (
@@ -258,6 +262,10 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
     const at = list.findIndex((f) => f.id === s.rollbackTo);
     return at >= 0 && list.findIndex((f) => f.id === feature.id) > at;
   });
+  // Sketches and planes have an eye. Used sketches hide by themselves (as in Onshape); one being edited is always shown.
+  const eye = hasEye(feature);
+  const shown = useStore((s) => !eye || featureVisible(feature, activeFeatures(s)));
+  const setVisible = (visible: boolean) => useStore.getState().setFeaturesVisible([feature.id], visible);
   const op =
     feature.operation === "new" || feature.type === "sketch" || isPickFeature(feature.type) || isPatternFeature(feature.type) || feature.type === "hole" || feature.type === "transform" ? "" : ` (${OPERATION_LABELS[feature.operation]})`;
 
@@ -272,6 +280,8 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
     },
     { label: feature.suppressed ? "Unsuppress" : "Suppress", action: () => toggleSuppressed(feature.id) },
     ...(feature.type === "plane" ? [{ label: "View normal to", action: () => viewNormalToPlaneFeature(feature.id) }] : []),
+    ...(eye && !editing ? [{ label: shown ? "Hide" : "Show", action: () => setVisible(!shown) }] : []),
+    ...(feature.type === "sketch" ? SKETCH_VISIBILITY_MENU : []),
     { label: "Roll back to here", action: () => useStore.getState().setRollback(feature.id) },
     feature.folder
       ? { label: `Take out of "${feature.folder}"`, action: () => useStore.getState().setFeatureFolder([feature.id], null) }
@@ -301,6 +311,7 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
         feature.suppressed && "suppressed",
         isSource && "source",
         rolledBack && "rolled-back",
+        !shown && !editing && "geometry-hidden",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -363,9 +374,21 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
           <Icons.Warning size={16} />
         </span>
       )}
+      {eye &&
+        (editing ? (
+          <EyeButton hidden={false} name={feature.name} onToggle={() => {}} disabled title="Always shown while you're editing it" />
+        ) : (
+          <EyeButton hidden={!shown} name={feature.name} onToggle={() => setVisible(!shown)} />
+        ))}
     </li>
   );
 }
+
+/** Right-click menu entries that show or hide every sketch of the Part Studio on show. */
+const SKETCH_VISIBILITY_MENU: MenuEntry[] = [
+  { label: "Show all sketches", action: () => useStore.getState().setAllSketchesVisible(true) },
+  { label: "Hide all sketches", action: () => useStore.getState().setAllSketchesVisible(false) },
+];
 
 /** Onshape's rollback bar: the model is shown as it was at this point; new features go in here. */
 function RollbackBar() {
@@ -675,7 +698,13 @@ export function FeaturePanel() {
   return (
     <aside className="side-panel" aria-label="Feature list">
       <ConfigurationPicker />
-      <section className="panel-section features">
+      <section
+        className="panel-section features"
+        // Right-click on the list (not on a row, whose own menu comes first): show or hide all sketches.
+        onContextMenu={(e) => {
+          if (!e.defaultPrevented) onMenu(e, SKETCH_VISIBILITY_MENU);
+        }}
+      >
         <h3 className="panel-heading-row">
           <span>
             Features <span className="count">({features.length})</span>

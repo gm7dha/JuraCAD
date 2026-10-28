@@ -3,8 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
-import { isPatternFeature, isPickFeature, isSketchSolid } from "../model/features";
-import { activeAssembly, activeFeatures, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
+import { isPatternFeature, isPickFeature } from "../model/features";
+import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
+import { activeAssembly, activeFeatures, activeHiddenDatums, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
 import { clickedSpot, findPick, framePlacement } from "../assembly/connectors";
@@ -524,11 +525,13 @@ function itemsForPicks(parts: PartMesh[], picks: TopoPick[]): SelectionItem[] {
  * While a mirror or pattern is open (`referenceFor`, its id), every sketch before it is shown, so its lines can be clicked.
  */
 function visibleSketches(features: Feature[], editingId: string | null, selectedId: string | null, links: Record<string, SketchLinkInfo>, referenceFor: string | null = null) {
-  const used = new Set(features.filter((f) => isSketchSolid(f.type) && !f.suppressed && f.sketchRef).map((f) => f.sketchRef!));
+  // Shown: as its eye says (used sketches hide by themselves), plus the one picked in the list, and — while a mirror or
+  // pattern is open — the sketches before it, so their lines can be clicked.
+  const used = usedSketches(features);
   const at = referenceFor ? features.findIndex((f) => f.id === referenceFor) : -1;
   const earlier = referenceFor ? new Set((at >= 0 ? features.slice(0, at) : features).map((f) => f.id)) : null;
   return features
-    .filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && f.id !== editingId && (!used.has(f.id) || f.id === selectedId || !!earlier?.has(f.id)))
+    .filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && f.id !== editingId && (sketchVisible(f, used) || f.id === selectedId || !!earlier?.has(f.id)))
     // A sketch that follows its part is shown where the part is now.
     .map((f) => links[f.id]?.sketch ?? { plane: f.sketch!.plane!, data: f.sketch!.data });
 }
@@ -554,7 +557,7 @@ export function Viewport() {
   const hiddenParts = useStore((s) => s.hiddenParts);
   const selectedPlane = useStore((s) => s.selectedPlane);
   const listHoverPlane = useStore((s) => s.listHoverPlane);
-  const hiddenDatums = useStore((s) => s.hiddenDatums);
+  const hiddenDatums = useStore(activeHiddenDatums);
   const features = useStore(activeFeatures);
   const selectedFeatureId = useStore((s) => s.selectedFeatureId);
   const draft = useStore((s) => (s.editing?.draft.type === "sketch" ? s.editing.draft : null));
@@ -585,7 +588,7 @@ export function Viewport() {
     manager.setParts(studioParts(s));
     manager.setPartColours(s.history.present.appearance ?? {});
     manager.setSelection(s.selection);
-    manager.setDatums({ selected: s.selectedPlane, listHover: s.listHoverPlane, hidden: s.hiddenDatums });
+    manager.setDatums({ selected: s.selectedPlane, listHover: s.listHoverPlane, hidden: activeHiddenDatums(s) });
     return () => {
       unguard();
       viewportApi.current = null;
@@ -698,7 +701,8 @@ export function Viewport() {
     }
     const frames = framesOf(listFeatures);
     const list = listFeatures
-      .filter((f) => f.type === "plane" && frames.has(f.id) && f.id !== planeDraft?.id)
+      // Hidden planes aren't drawn, so can't be clicked (one being edited is, below).
+      .filter((f) => f.type === "plane" && frames.has(f.id) && f.id !== planeDraft?.id && planeVisible(f))
       .map((f) => ({ id: f.id, ...frames.get(f.id)!, label: f.name, highlight: f.id === pickedFeatureForPlanes }));
     if (planeDraft?.planeDef) {
       const { values, errors } = resolveParams(planeDraft);

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { emptyDocument, historyOf } from "../src/model/document";
-import { useStore } from "../src/model/store";
+import { activeHiddenDatums, useStore } from "../src/model/store";
 
 const s = () => useStore.getState();
 
@@ -26,7 +26,6 @@ beforeEach(() => {
     editing: null,
     selection: [],
     selectedPlane: null,
-    hiddenDatums: [],
     selectedFeatureId: null,
   });
 });
@@ -77,15 +76,32 @@ describe("default planes", () => {
     expect(s().selectedPlane).toBeNull();
   });
 
-  it("hides and shows planes, deselecting a hidden plane", () => {
+  it("hides and shows planes, deselecting a hidden plane (saved in the design, undoable)", () => {
     s().selectPlane("Front");
     s().toggleDatum("Front");
-    expect(s().hiddenDatums).toEqual(["Front"]);
+    expect(activeHiddenDatums(s())).toEqual(["Front"]);
+    expect(s().history.present.hiddenDatums).toEqual(["Front"]);
     expect(s().selectedPlane).toBeNull();
     s().toggleDatum("Front");
-    expect(s().hiddenDatums).toEqual([]);
+    expect(activeHiddenDatums(s())).toEqual([]);
+    expect(s().history.present.hiddenDatums).toBeUndefined();
     s().toggleDatum("Origin");
-    expect(s().hiddenDatums).toEqual(["Origin"]);
+    expect(activeHiddenDatums(s())).toEqual(["Origin"]);
+    s().undo();
+    expect(activeHiddenDatums(s())).toEqual([]);
+  });
+
+  it("shows and hides sketches and planes with the eye, and all sketches at once", () => {
+    s().startCreate("sketch");
+    s().setSketchPlane({ kind: "default", name: "Top" });
+    expect(s().commitDraft()).toBe(true);
+    const sketch = s().history.present.features.at(-1)!.id;
+    s().setFeaturesVisible([sketch], false);
+    expect(s().history.present.features.find((f) => f.id === sketch)!.visible).toBe(false);
+    s().setAllSketchesVisible(true);
+    expect(s().history.present.features.find((f) => f.id === sketch)!.visible).toBe(true);
+    s().undo();
+    expect(s().history.present.features.find((f) => f.id === sketch)!.visible).toBe(false);
   });
 });
 

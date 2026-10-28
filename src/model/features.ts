@@ -162,7 +162,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     label: "Sweep",
     namePrefix: "Sweep",
     description: "Carries a sketch's closed shape along a path drawn in another sketch — for pipes, handles and rails.",
-    params: [],
+    params: [{ key: "twist", label: "Twist (turn along the whole path)", defaultValue: "0", group: "size", unit: "°" }],
   },
   loft: {
     type: "loft",
@@ -515,8 +515,10 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
+  // A profile kept facing one way can't also twist.
+  if (f.type === "sweep" && f.sweepControl?.lockOrientation) keys.delete("twist");
   if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");
   if (f.type === "extendSurface" && f.extendTo) keys.delete("distance");
   const end = f.extrude?.end ?? "blind";

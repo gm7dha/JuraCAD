@@ -269,7 +269,7 @@ try {
   await page.waitForTimeout(500);
   const rightRow = page.locator(".feature-row.datum", { hasText: "Right" });
   await rightRow.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Hide" }).click();
+  await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
   if (!(await rightRow.getAttribute("class")).includes("hidden")) throw new Error("hiding the Right plane didn't work");
   await rightRow.hover();
   await page.getByRole("button", { name: "Show Right" }).click();
@@ -610,6 +610,48 @@ try {
   const extrudeCheck = await page.locator(".check-report").innerText();
   if (!/Part 2/.test(extrudeCheck)) throw new Error(`check report didn't include Part 2: ${extrudeCheck}`);
   await page.getByRole("button", { name: "Close", exact: true }).first().click();
+
+  step = "showing and hiding the extruded sketch and the Top plane with their eyes";
+  {
+    const sketchInfo = () =>
+      page.evaluate(() => {
+        // The sketch just extruded (the last one so far).
+        const f = window.juracadStore.getState().history.present.features.filter((x) => x.type === "sketch").at(-1);
+        window.__smokeSketch = f.id;
+        return { name: f.name, visible: f.visible };
+      });
+    const { name: sketchName, visible: before } = await sketchInfo();
+    // Used by the extrude, so (as in Onshape) it hid by itself: its eye offers to show it.
+    if (before !== undefined) throw new Error(`the sketch's visibility was set before anyone clicked its eye: ${before}`);
+    const sketchRow = page.locator(".feature-row:not(.datum)", { hasText: sketchName }).first();
+    await sketchRow.getByRole("button", { name: `Show ${sketchName}` }).click();
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.features.find((x) => x.type === "sketch" && x.id === window.__smokeSketch).visible === true);
+    await sketchRow.hover();
+    await sketchRow.getByRole("button", { name: `Hide ${sketchName}` }).click();
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.features.find((x) => x.type === "sketch" && x.id === window.__smokeSketch).visible === false);
+    // Right-click: Show all sketches.
+    await sketchRow.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Show all sketches" }).click();
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.features.filter((x) => x.type === "sketch").every((x) => x.visible === true));
+    // The Top plane: hide it, then show it again (saved in the design).
+    const topRow = page.locator(".feature-row.datum", { hasText: "Top" });
+    await topRow.hover();
+    await topRow.getByRole("button", { name: "Hide Top" }).click();
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.hiddenDatums?.includes("Top"));
+    await topRow.getByRole("button", { name: "Show Top" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().history.present.hiddenDatums);
+    // Undo all five changes: the sketch is back to automatic (hidden, as it's used) for the steps after this.
+    await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      for (let i = 0; i < 5; i++) st.undo();
+    });
+    await page.waitForFunction(
+      () =>
+        window.juracadStore.getState().history.present.features.find((x) => x.type === "sketch" && x.id === window.__smokeSketch).visible === undefined &&
+        !window.juracadStore.getState().history.present.hiddenDatums,
+    );
+    if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after undoing the show/hide steps");
+  }
 
   step = "filleting the edges of a face";
   await page.keyboard.press("Shift+Digit5");

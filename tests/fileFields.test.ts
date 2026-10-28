@@ -33,6 +33,7 @@ function everyField(): Required<JuraCADDocument> {
     appearance: { [box.id]: "#3366cc" },
     materials: { [box.id]: "petg" },
     studioName: "Brackets",
+    hiddenDatums: ["Top"],
     partStudios: doc.partStudios!,
     partNames: { [box.id]: "Base plate" },
     partProperties: { [box.id]: { number: "BR-001", description: "Base", custom: [{ name: "Supplier", value: "Screwfix" }] } },
