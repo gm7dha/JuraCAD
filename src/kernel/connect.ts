@@ -7,11 +7,12 @@ let storageWarned = false;
 import { activeStudioId } from "../model/store";
 import { studiosOf } from "../model/studios";
 import type { StudioInput } from "./protocol";
-import type { Feature, JuraCADDocument } from "../model/types";
+import type { JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
 import { switchConfiguration } from "../model/configurations";
 import { setCurrentScope } from "../model/expr";
 import { KernelClient } from "./client";
+import { featureForEngine, featuresForEngine } from "./buildInput";
 
 let client: KernelClient | null = null;
 
@@ -25,43 +26,15 @@ function currentStudios(): StudioInput[] {
   const s = useStore.getState();
   const here = activeStudioId(s);
   const editingIn = s.editing ? here : null;
-  return [...studiosOf(s.history.present).map((st) => ({ ...st, features: withoutFolders(st.features) })).map((st) => ({
+  return [...studiosOf(s.history.present).map((st) => ({ ...st, features: featuresForEngine(st.features) })).map((st) => ({
     id: st.id,
     features:
       st.id === here && s.rollbackTo
-        ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? withoutPictures(previewOf(s.editing?.draft ?? null)) : null, s.rollbackTo)
+        ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? featureForEngine(previewOf(s.editing?.draft ?? null)) : null, s.rollbackTo)
         : st.id === editingIn
-          ? featuresWithDraft(previewFeatures(st.features), withoutPictures(previewOf(s.editing?.draft ?? null)))
+          ? featuresWithDraft(previewFeatures(st.features), featureForEngine(previewOf(s.editing?.draft ?? null)))
           : st.features,
   })), ...configuredStudios(s.history.present)];
-}
-
-/** The feature being edited without its sketch's pictures (see withoutFolders). */
-function withoutPictures<T extends Feature | null>(f: T): T {
-  if (!f?.sketch?.data.images) return f;
-  const { images: _i, ...data } = f.sketch.data;
-  return { ...f, sketch: { ...f.sketch, data } };
-}
-
-/**
- * Folders are only for the feature list, and pictures in sketches only for
- * tracing over: leave them out, so moving features between folders doesn't
- * rebuild anything and pictures aren't copied to the geometry engine.
- */
-const foldersCache = new WeakMap<Feature[], Feature[]>();
-function withoutFolders(list: Feature[]): Feature[] {
-  if (!list.some((f) => f.folder || f.sketch?.data.images)) return list;
-  let out = foldersCache.get(list);
-  if (!out) {
-    out = list.map((f) => {
-      const { folder: _f, ...rest } = f;
-      if (!rest.sketch?.data.images) return f.folder ? rest : f;
-      const { images: _i, ...data } = rest.sketch.data;
-      return { ...rest, sketch: { ...rest.sketch, data } };
-    });
-    foldersCache.set(list, out);
-  }
-  return out;
 }
 
 /** Part Studios that assemblies show in another configuration, built again in it ("<studio>@<configuration>"). */
@@ -73,7 +46,7 @@ function configuredStudios(doc: JuraCADDocument): StudioInput[] {
     const shown = switchConfiguration(doc, configurationId);
     const studio = studiosOf(shown).find((x) => x.id === studioId);
     if (!studio) continue;
-    list.push({ id: `${studioId}@${configurationId}`, features: studio.features, variables: resolveVariables(shown.variables).values, partSuffix: `@${configurationId}` });
+    list.push({ id: `${studioId}@${configurationId}`, features: featuresForEngine(studio.features), variables: resolveVariables(shown.variables).values, partSuffix: `@${configurationId}` });
   }
   // Working out another configuration changes the values boxes use: put the ones on show back.
   if (list.length) setCurrentScope(resolveVariables(doc.variables).values);

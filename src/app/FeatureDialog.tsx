@@ -833,6 +833,16 @@ function SweepLoftOptions() {
         {profile && !draft.surface && <AreaPicker data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile} areas={draft.areas} verb="sweep" onChange={(areas) => setDraftField({ areas })} />}
         {select("Path to follow", draft.pathRef, (v) => setDraftField({ pathRef: v }))}
         <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
+        <label className="check-row" title="The shape doesn't tilt to follow the path's bends: it stays parallel to the plane it was drawn on all the way along">
+          <input
+            type="checkbox"
+            aria-label="Keep profile orientation"
+            checked={!!draft.sweepControl?.lockOrientation}
+            onChange={(e) => setDraftField({ sweepControl: e.target.checked ? { lockOrientation: true } : undefined })}
+          />
+          Keep profile orientation (don&apos;t turn with the path)
+        </label>
+        {!draft.sweepControl?.lockOrientation && <p className="dialog-hint field-hint">Twist turns the shape steadily round the path as it goes — e.g. 90° for a quarter turn by the end, up to 3600° (10 turns). Use a minus amount to turn the other way.</p>}
       </fieldset>
     );
   }

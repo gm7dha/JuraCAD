@@ -269,7 +269,7 @@ try {
   await page.waitForTimeout(500);
   const rightRow = page.locator(".feature-row.datum", { hasText: "Right" });
   await rightRow.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Hide" }).click();
+  await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
   if (!(await rightRow.getAttribute("class")).includes("hidden")) throw new Error("hiding the Right plane didn't work");
   await rightRow.hover();
   await page.getByRole("button", { name: "Show Right" }).click();
@@ -610,6 +610,48 @@ try {
   const extrudeCheck = await page.locator(".check-report").innerText();
   if (!/Part 2/.test(extrudeCheck)) throw new Error(`check report didn't include Part 2: ${extrudeCheck}`);
   await page.getByRole("button", { name: "Close", exact: true }).first().click();
+
+  step = "showing and hiding the extruded sketch and the Top plane with their eyes";
+  {
+    const sketchInfo = () =>
+      page.evaluate(() => {
+        // The sketch just extruded (the last one so far).
+        const f = window.juracadStore.getState().history.present.features.filter((x) => x.type === "sketch").at(-1);
+        window.__smokeSketch = f.id;
+        return { name: f.name, visible: f.visible };
+      });
+    const { name: sketchName, visible: before } = await sketchInfo();
+    // Used by the extrude, so (as in Onshape) it hid by itself: its eye offers to show it.
+    if (before !== undefined) throw new Error(`the sketch's visibility was set before anyone clicked its eye: ${before}`);
+    const sketchRow = page.locator(".feature-row:not(.datum)", { hasText: sketchName }).first();
+    await sketchRow.getByRole("button", { name: `Show ${sketchName}` }).click();
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.features.find((x) => x.type === "sketch" && x.id === window.__smokeSketch).visible === true);
+    await sketchRow.hover();
+    await sketchRow.getByRole("button", { name: `Hide ${sketchName}` }).click();
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.features.find((x) => x.type === "sketch" && x.id === window.__smokeSketch).visible === false);
+    // Right-click: Show all sketches.
+    await sketchRow.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Show all sketches" }).click();
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.features.filter((x) => x.type === "sketch").every((x) => x.visible === true));
+    // The Top plane: hide it, then show it again (saved in the design).
+    const topRow = page.locator(".feature-row.datum", { hasText: "Top" });
+    await topRow.hover();
+    await topRow.getByRole("button", { name: "Hide Top" }).click();
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.hiddenDatums?.includes("Top"));
+    await topRow.getByRole("button", { name: "Show Top" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().history.present.hiddenDatums);
+    // Undo all five changes: the sketch is back to automatic (hidden, as it's used) for the steps after this.
+    await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      for (let i = 0; i < 5; i++) st.undo();
+    });
+    await page.waitForFunction(
+      () =>
+        window.juracadStore.getState().history.present.features.find((x) => x.type === "sketch" && x.id === window.__smokeSketch).visible === undefined &&
+        !window.juracadStore.getState().history.present.hiddenDatums,
+    );
+    if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after undoing the show/hide steps");
+  }
 
   step = "filleting the edges of a face";
   await page.keyboard.press("Shift+Digit5");
@@ -1273,6 +1315,53 @@ try {
     await page.waitForFunction((n) => document.querySelectorAll('[data-testid="drawing-sheet"] polyline').length === n, before, { timeout: 5_000 });
     await page.keyboard.press("Escape");
   }
+  step = "dragging a dimension's number (the line follows)";
+  if (dimCount >= 1) {
+    const id = await page.locator(".drawing-dim-handle").first().getAttribute("data-dim");
+    const dimNow = () => page.evaluate((id) => window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).find((x) => x.id === id), id);
+    const before = await dimNow();
+    if (!before || before.type !== "horizontal") throw new Error(`expected the first dimension to be horizontal, it's ${JSON.stringify(before)}`);
+    // The number's own grab area (the whole of the text, not just a dot in its middle).
+    const textBox = async () => {
+      const b = await page.locator(`.drawing-dim-text[data-dim="${id}"]`).first().boundingBox();
+      if (!b) throw new Error("the dimension's number has no grab area");
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    };
+    const start = await textBox();
+    // Grab it a little off-centre: it mustn't jump to the pointer.
+    const grab = { x: start.x + 1.5 * mm, y: start.y + 0.5 * mm };
+    await page.mouse.move(grab.x, grab.y);
+    await page.mouse.down();
+    await page.mouse.move(grab.x + 12 * mm, grab.y + 3 * mm, { steps: 2 });
+    await page.mouse.move(grab.x + 25 * mm, grab.y + 5 * mm, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForFunction(([id, along]) => (window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).find((x) => x.id === id)?.textAlong ?? 0) !== along, [id, before.textAlong ?? 0], { timeout: 5_000 });
+    const after = await dimNow();
+    // 25 mm along (to the right), 5 mm further out (down the screen, below the part): the line moves with it.
+    const along = (after.textAlong ?? 0) - (before.textAlong ?? 0);
+    const out = after.offset - before.offset;
+    if (Math.abs(along - 25) > 0.4 || Math.abs(out + 5) > 0.4) throw new Error(`dragging the number moved it ${along} mm along and the line ${out} mm (expected 25 and -5)`);
+    const end = await textBox();
+    if (Math.abs(end.x - start.x - 25 * mm) > 0.5 * mm || Math.abs(end.y - start.y - 5 * mm) > 0.5 * mm) {
+      throw new Error(`the number moved ${(end.x - start.x) / mm} mm across and ${(end.y - start.y) / mm} mm down on screen (expected 25 and 5)`);
+    }
+    // The dimension line is drawn 1.2 mm under the number's baseline: find it on the sheet at its new height.
+    const lineFound = await page.evaluate((id) => {
+      const poly = document.querySelector(`.drawing-dim-text[data-dim="${id}"]`);
+      const ys = poly.getAttribute("points").trim().split(/[\s,]+/).map(Number).filter((_, i) => i % 2 === 1);
+      // (The grab area reaches 0.8 mm below the baseline; SVG y runs down.)
+      const lineY = Math.max(...ys) - 0.8 + 1.2;
+      return [...document.querySelectorAll('[data-testid="drawing-sheet"] polyline')].some((pl) => {
+        const v = pl.getAttribute("points").trim().split(/[\s,]+/).map(Number);
+        return v.length === 4 && Math.abs(v[1] - lineY) < 0.02 && Math.abs(v[3] - lineY) < 0.02 && Math.abs(v[0] - v[2]) > 5;
+      });
+    }, id);
+    if (!lineFound) throw new Error("the dimension line didn't follow the number");
+    await shot("dimdrag");
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(([id, offset]) => window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).find((x) => x.id === id)?.offset === offset, [id, before.offset], { timeout: 5_000 });
+    await page.keyboard.press("Escape");
+  }
   step = "baseline, chain and ordinate tools";
   for (const name of ["Baseline", "Chain", "Ordinate"]) {
     await tool(name);
@@ -1374,6 +1463,67 @@ try {
   await page.waitForSelector(".drawing-busy, .drawing-sheet", { timeout: 5_000 }).catch(() => {});
   await page.waitForTimeout(3000);
   await shot("asmdrawing");
+  step = "zooming the drawing sheet never zooms the page";
+  {
+    // A wheel listener on the window runs last, so it sees whether the app stopped the browser's own zoom.
+    await page.evaluate(() => {
+      window.__wheels = [];
+      window.addEventListener("wheel", (e) => window.__wheels.push({ prevented: e.defaultPrevented, ctrl: e.ctrlKey }), { passive: true });
+    });
+    const sheet = page.locator('[data-testid="drawing-sheet"]');
+    const viewBox = () => sheet.getAttribute("viewBox");
+    const width = async () => Number((await viewBox()).split(" ")[2]);
+    const pageZoom = () => page.evaluate(() => [window.visualViewport?.scale ?? 1, window.devicePixelRatio]);
+    const zoomBefore = await pageZoom();
+    const w0 = await width();
+    // A pinch (Chrome sends it as Ctrl + wheel), fired straight at the sheet.
+    const pinch = await page.evaluate(() => {
+      const svg = document.querySelector('[data-testid="drawing-sheet"]');
+      const r = svg.getBoundingClientRect();
+      const e = new WheelEvent("wheel", { deltaY: -20, ctrlKey: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true });
+      svg.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+    if (!pinch) throw new Error("a pinch on the drawing sheet wasn't stopped (the page would zoom)");
+    await page.waitForFunction((w) => Number(document.querySelector('[data-testid="drawing-sheet"]').getAttribute("viewBox").split(" ")[2]) < w, w0, { timeout: 5_000 });
+    // The real thing: Ctrl held and the mouse wheel turned over the sheet.
+    const box = await sheet.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    const w1 = await width();
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, -200);
+    await page.keyboard.up("Control");
+    await page.waitForFunction((w) => Number(document.querySelector('[data-testid="drawing-sheet"]').getAttribute("viewBox").split(" ")[2]) < w, w1, { timeout: 5_000 });
+    // Zoomed in as far as it goes: still stopped.
+    for (let i = 0; i < 40; i++) {
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, -500);
+      await page.keyboard.up("Control");
+    }
+    await page.waitForTimeout(300);
+    if ((await width()) !== 20) throw new Error(`the sheet should stop zooming in at 20 mm across, it's at ${await width()}`);
+    const wheels = await page.evaluate(() => window.__wheels);
+    const ctrlWheels = wheels.filter((w) => w.ctrl);
+    if (ctrlWheels.length < 10 || ctrlWheels.some((w) => !w.prevented)) throw new Error(`Ctrl + wheel over the sheet wasn't always stopped: ${JSON.stringify(wheels)}`);
+    const zoomAfter = await pageZoom();
+    if (zoomAfter[0] !== zoomBefore[0] || zoomAfter[1] !== zoomBefore[1]) throw new Error(`the page zoomed: ${zoomBefore} → ${zoomAfter}`);
+    // Safari's pinch events are stopped on the sheet too.
+    const gesture = await page.evaluate(() => {
+      const svg = document.querySelector('[data-testid="drawing-sheet"]');
+      const e = new Event("gesturestart", { bubbles: true, cancelable: true });
+      svg.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+    if (!gesture) throw new Error("Safari's pinch on the sheet wasn't stopped");
+    // Elsewhere (the panel beside the sheet) the page can still be zoomed as usual.
+    const elsewhere = await page.evaluate(() => {
+      const panel = document.querySelector(".drawing-panel");
+      const e = new WheelEvent("wheel", { deltaY: -20, ctrlKey: true, bubbles: true, cancelable: true });
+      panel.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+    if (elsewhere) throw new Error("Ctrl + wheel over the drawing panel was stopped too (only the sheet should be)");
+  }
   step = "opening what's new";
   await page.locator(".phase-badge").click();
   await page.waitForSelector(".whats-new-list li", { timeout: 5_000 });
@@ -1551,6 +1701,56 @@ try {
     await page.locator(".dimension-editor").waitFor({ state: "detached", timeout: 5_000 });
     const kept = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketch.data.constraints.filter((c) => c.value !== undefined).map((c) => c.value));
     if (kept.length !== 1 || !/^30( in)?$/.test(kept[0])) throw new Error(`typing the width straight after drawing kept ${JSON.stringify(kept)}`);
+
+    // Pinching (Ctrl + wheel) over the sketch zooms the view, never the page — also over its dimension labels.
+    {
+      await page.evaluate(() => (window.__savedView = window.juracadViewport.current.saveView()));
+      const zoomNow = () => page.evaluate(() => window.juracadViewport.current.saveView().zoom);
+      const fire = (selector, init) =>
+        page.evaluate(
+          ([selector, init]) => {
+            const el = document.querySelector(selector);
+            const r = el.getBoundingClientRect();
+            const e = init.gesture
+              ? Object.assign(new Event(init.gesture, { bubbles: true, cancelable: true }), { scale: init.scale, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })
+              : new WheelEvent("wheel", { deltaY: init.deltaY, ctrlKey: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true });
+            el.dispatchEvent(e);
+            return e.defaultPrevented;
+          },
+          [selector, init],
+        );
+      const z0 = await zoomNow();
+      if (!(await fire(".viewport-canvas", { deltaY: -20 }))) throw new Error("a pinch on the 3D view wasn't stopped (the page would zoom)");
+      const z1 = await zoomNow();
+      if (!(z1 > z0)) throw new Error(`a pinch on the 3D view didn't zoom it (${z0} → ${z1})`);
+      await page.locator(".dimension-label").first().waitFor({ timeout: 5_000 });
+      if (!(await fire(".dimension-label", { deltaY: -20 }))) throw new Error("a pinch over a sketch dimension wasn't stopped (the page would zoom)");
+      const z2 = await zoomNow();
+      if (!(z2 > z1)) throw new Error(`a pinch over a sketch dimension didn't zoom the view (${z1} → ${z2})`);
+      // Safari's pinch: its gesture events are stopped and zoom the view.
+      if (!(await fire(".viewport-canvas", { gesture: "gesturestart", scale: 1 }))) throw new Error("Safari's pinch on the 3D view wasn't stopped");
+      if (!(await fire(".viewport-canvas", { gesture: "gesturechange", scale: 1.5 }))) throw new Error("Safari's pinch on the 3D view wasn't stopped");
+      const z3 = await zoomNow();
+      if (Math.abs(z3 / z2 - 1.5) > 0.01) throw new Error(`Safari's pinch (×1.5) zoomed the view ×${z3 / z2}`);
+      await fire(".viewport-canvas", { gesture: "gestureend", scale: 1.5 });
+      // Zoomed in as far as it goes: still stopped.
+      for (let i = 0; i < 30; i++) await fire(".viewport-canvas", { deltaY: -1000 });
+      if (!(await fire(".viewport-canvas", { deltaY: -1000 }))) throw new Error("a pinch at the 3D view's zoom limit wasn't stopped");
+      // The real thing: Ctrl held and the wheel turned.
+      const vb = await page.locator(".viewport").boundingBox();
+      await page.mouse.move(vb.x + vb.width / 2, vb.y + vb.height / 2);
+      const scale0 = await page.evaluate(() => [window.visualViewport?.scale ?? 1, window.devicePixelRatio]);
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, 300);
+      await page.keyboard.up("Control");
+      await page.waitForTimeout(200);
+      const scale1 = await page.evaluate(() => [window.visualViewport?.scale ?? 1, window.devicePixelRatio]);
+      if (scale0[0] !== scale1[0] || scale0[1] !== scale1[1]) throw new Error(`the page zoomed: ${scale0} → ${scale1}`);
+      // Back to how it was, for the clicks that follow.
+      await page.evaluate(() => window.juracadViewport.current.restoreView(window.__savedView));
+      await page.waitForTimeout(600);
+      if (Math.abs((await zoomNow()) - z0) > 1e-9 * z0) throw new Error("the view didn't go back after the zoom test");
+    }
 
     await page.keyboard.press("l");
     await page.mouse.click(mx - 150, my + 80);

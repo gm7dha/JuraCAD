@@ -1328,8 +1328,9 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       if (feature.sketchRef && feature.sketchRef === feature.pathRef) throw new Error("The profile and the path must be different sketches.");
       const profile = need(feature.sketchRef, "profile");
       const path = need(feature.pathRef, "path");
-      if (feature.surface) return sweepSurface(profile.plane!, profile.data, path.plane!, path.data);
-      return sweepSketch(profile.plane!, profile.data, path.plane!, path.data, feature.areas);
+      const control = { twist: v.twist ?? 0, lockOrientation: feature.sweepControl?.lockOrientation === true };
+      if (feature.surface) return sweepSurface(profile.plane!, profile.data, path.plane!, path.data, control);
+      return sweepSketch(profile.plane!, profile.data, path.plane!, path.data, feature.areas, control);
     }
     case "wrap": {
       // A sketch's closed shapes wrapped round a round face, raised (Add) or engraved (Remove).

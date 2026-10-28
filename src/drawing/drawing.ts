@@ -180,6 +180,8 @@ export function arrangeViews(d: Drawing): Drawing {
 // Reading from files
 
 const num = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+/** A dragged dimension number's place (model mm from its circle's centre), kept within 10 m. */
+const clampAt = (v: number) => Math.max(-10000, Math.min(10000, v));
 const text = (v: unknown, max = 200) => (typeof v === "string" && v.trim() ? v.slice(0, max) : undefined);
 
 export function parseDrawings(raw: unknown): Drawing[] {
@@ -412,6 +414,9 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(num(r.angle) ? { angle: r.angle as number } : {}),
     ...(num(r.textAlong) && r.textAlong !== 0 ? { textAlong: r.textAlong as number } : {}),
     ...(num(r.textAcross) && r.textAcross !== 0 ? { textAcross: r.textAcross as number } : {}),
+    ...((type === "diameter" || type === "radius") && Array.isArray(r.textAt) && r.textAt.length === 2 && num(r.textAt[0]) && num(r.textAt[1])
+      ? { textAt: [clampAt(r.textAt[0] as number), clampAt(r.textAt[1] as number)] as [number, number] }
+      : {}),
     ...(type === "ordinate" ? { axis: r.axis === "v" ? ("v" as const) : ("h" as const) } : {}),
     ...(r.tolerance && typeof r.tolerance === "object" && num((r.tolerance as Record<string, unknown>).plus) && num((r.tolerance as Record<string, unknown>).minus)
       ? { tolerance: { plus: Math.abs((r.tolerance as { plus: number }).plus), minus: Math.abs((r.tolerance as { minus: number }).minus) } }
