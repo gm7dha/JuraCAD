@@ -100,6 +100,9 @@ export interface PlacedDim {
   cd?: [[number, number], [number, number]];
   /** Lengths, diameters and radii: which way their arrows are drawn. */
   arrows?: "inside" | "outside";
+  /** Arc lengths: where the arc starts and how far round it goes (radians), and how wide its number is (for dragging it). */
+  arc?: { from: number; sweep: number };
+  width?: number;
 }
 
 export interface SheetLayout {
@@ -774,6 +777,8 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
       rad: (resolved.r ?? 0) * view.scale * (p.zoom ?? 1),
       ...(resolved.c && resolved.d ? { cd: [at(resolved.c), at(resolved.d)] as [[number, number], [number, number]] } : {}),
       ...(drawn.arrows ? { arrows: drawn.arrows } : {}),
+      ...(dim.type === "arcLength" && resolved.arc ? { arc: resolved.arc } : {}),
+      ...(drawn.width !== undefined ? { width: drawn.width } : {}),
     });
   }
 

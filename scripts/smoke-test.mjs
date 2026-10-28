@@ -1462,6 +1462,157 @@ try {
     await page.waitForFunction(([id, offset]) => window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).find((x) => x.id === id)?.offset === offset, [id, before.offset], { timeout: 5_000 });
     await page.keyboard.press("Escape");
   }
+  step = "dragging an angle dimension's number (the arc follows; across an arm it measures the other angle)";
+  {
+    const allDims = () => page.evaluate(() => window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []));
+    const before = await allDims();
+    const view = before[0]?.view ?? "front";
+    // A slanted (not square) corner made from three of the view's own corner points, so the angle is
+    // found exactly where it's put whatever the part looks like: the widest one between 20° and 70°.
+    const pick = await page.evaluate((view) => {
+      const v = window.juracadDrawing.viewPoints(view);
+      if (!v || !v.bounds) return null;
+      const [x0, y0, x1, y1] = v.bounds;
+      const pts = [];
+      for (let i = 0; i + 1 < v.points.length; i += 2) pts.push([v.points[i], v.points[i + 1]]);
+      const size = Math.hypot(x1 - x0, y1 - y0);
+      let best = null;
+      for (const p of pts)
+        for (const q of pts)
+          for (const r of pts) {
+            const u = [q[0] - p[0], q[1] - p[1]];
+            const w = [r[0] - p[0], r[1] - p[1]];
+            const lu = Math.hypot(...u);
+            const lw = Math.hypot(...w);
+            if (lu < 0.25 * size || lw < 0.25 * size) continue;
+            const deg = (Math.acos((u[0] * w[0] + u[1] * w[1]) / lu / lw) * 180) / Math.PI;
+            if (deg < 20 || deg > 70) continue;
+            const score = Math.min(lu, lw) - Math.abs(deg - 45) * 0.01 * size;
+            if (!best || score > best.score) best = { p, q, r, deg, score };
+          }
+      if (!best) return null;
+      const rel = (a) => [Math.round(((a[0] - x0) / (x1 - x0)) * 1e6) / 1e6, Math.round(((a[1] - y0) / (y1 - y0)) * 1e6) / 1e6];
+      const dp = (a) => ({ at: a, rel: rel(a) });
+      return { a: dp(best.p), b: dp(best.q), d: dp(best.r), deg: best.deg, u1: [best.q[0] - best.p[0], best.q[1] - best.p[1]], u2: [best.r[0] - best.p[0], best.r[1] - best.p[1]] };
+    }, view);
+    if (!pick) throw new Error("couldn't find a slanted corner among the view's points for the angle");
+    await page.evaluate(([view, g]) => {
+      window.juracadStore.getState().changeDrawing((d) => ({ ...d, dimensions: [...(d.dimensions ?? []), { id: "smoke-angle", view, type: "angle", a: g.a, b: g.b, c: g.a, d: g.d, offset: 15, rays: [1, 1] }] }));
+    }, [view, pick]);
+    await page.waitForSelector('.drawing-dim-text[data-dim="smoke-angle"]', { timeout: 5_000 });
+    const id = "smoke-angle";
+    const dimNow = async () => (await allDims()).find((x) => x.id === id);
+    const made = await dimNow();
+    const label = (deg) => `${Math.round(deg * 10) / 10}°`;
+    const shownText = () => page.evaluate((id) => {
+      const poly = document.querySelector(`.drawing-dim-text[data-dim="${id}"]`);
+      const ys = poly.getAttribute("points").trim().split(/[\s,]+/).map(Number);
+      const xs = ys.filter((_, i) => i % 2 === 0);
+      const yy = ys.filter((_, i) => i % 2 === 1);
+      const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...yy), Math.max(...yy)];
+      // The text whose anchor point lies inside the grab area round it.
+      return [...document.querySelectorAll(".drawing-text")].find((t) => {
+        const x = Number(t.getAttribute("x"));
+        const y = Number(t.getAttribute("y"));
+        return x >= x0 && x <= x1 && y >= y0 && y <= y1;
+      })?.textContent;
+    }, id);
+    if ((await shownText()) !== label(pick.deg)) throw new Error(`the new angle reads ${await shownText()}, not ${label(pick.deg)}`);
+    const textBox = async () => {
+      const b = await page.locator(`.drawing-dim-text[data-dim="${id}"]`).first().boundingBox();
+      if (!b) throw new Error("the angle's number has no grab area");
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    };
+    /** The centre (sheet mm, SVG coordinates) of a drawn arc whose points all lie `R` from it, or null. */
+    const arcCentre = (R) =>
+      page.evaluate((R) => {
+        for (const pl of document.querySelectorAll('[data-testid="drawing-sheet"] polyline')) {
+          const v = pl.getAttribute("points").trim().split(/[\s,]+/).map(Number);
+          if (v.length < 14) continue;
+          const n = v.length / 2;
+          const P = (i) => [v[2 * i], v[2 * i + 1]];
+          const [a, b, c] = [P(0), P(Math.floor(n / 2)), P(n - 1)];
+          const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+          if (Math.abs(d) < 1e-9) continue;
+          const s2 = (p) => p[0] * p[0] + p[1] * p[1];
+          const ux = (s2(a) * (b[1] - c[1]) + s2(b) * (c[1] - a[1]) + s2(c) * (a[1] - b[1])) / d;
+          const uy = (s2(a) * (c[0] - b[0]) + s2(b) * (a[0] - c[0]) + s2(c) * (b[0] - a[0])) / d;
+          let ok = true;
+          for (let i = 0; i < n && ok; i++) ok = Math.abs(Math.hypot(v[2 * i] - ux, v[2 * i + 1] - uy) - R) < 0.05;
+          if (ok) return { x: ux, y: uy };
+        }
+        return null;
+      }, R);
+    const corner = await arcCentre(15);
+    if (!corner) throw new Error("the new angle's arc (15 mm round its corner) isn't drawn");
+    const { x: cx, y: cy } = await page.locator('[data-testid="drawing-sheet"]').evaluate((svg, c) => {
+      const pt = svg.createSVGPoint();
+      pt.x = c.x;
+      pt.y = c.y;
+      const q = pt.matrixTransform(svg.getScreenCTM());
+      return { x: q.x, y: q.y };
+    }, corner);
+    /** Drag the number (grabbed off-centre, so it mustn't jump) by `move` screen pixels; checks it ends exactly that far away. */
+    const dragBy = async (move, what) => {
+      const start = await textBox();
+      const grab = { x: start.x - 1.2 * mm, y: start.y + 0.4 * mm };
+      await page.mouse.move(grab.x, grab.y);
+      await page.mouse.down();
+      await page.mouse.move(grab.x + move.x / 2, grab.y + move.y / 2, { steps: 2 });
+      await page.mouse.move(grab.x + move.x, grab.y + move.y, { steps: 4 });
+      await page.mouse.up();
+      await page.waitForFunction((id) => !!window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).find((x) => x.id === id)?.textAngle, id, { timeout: 5_000 }).catch(async () => {
+        throw new Error(`${what}: the number wasn't slid round the arc (now ${JSON.stringify(await dimNow())})`);
+      });
+      const end = await textBox();
+      if (Math.abs(end.x - start.x - move.x) > 0.3 * mm || Math.abs(end.y - start.y - move.y) > 0.3 * mm) {
+        throw new Error(`${what}: the number moved (${(end.x - start.x) / mm}, ${(end.y - start.y) / mm}) mm on screen, not (${move.x / mm}, ${move.y / mm}) with the pointer`);
+      }
+      return dimNow();
+    };
+    const undoTo = async (offset) => {
+      await page.getByRole("button", { name: "Undo", exact: true }).click();
+      await page.waitForFunction(([id, offset]) => {
+        const d = window.juracadStore.getState().history.present.drawings.flatMap((x) => x.dimensions ?? []).find((x) => x.id === id);
+        return d && d.offset === offset && d.textAngle === undefined && JSON.stringify(d.rays) === "[1,1]";
+      }, [id, offset], { timeout: 5_000 });
+    };
+    // 1. Out from the corner by 6 mm and 2.5 mm round the arc: the arc moves out, the same angle measured.
+    {
+      const start = await textBox();
+      const len = Math.hypot(start.x - cx, start.y - cy);
+      const out = { x: (start.x - cx) / len, y: (start.y - cy) / len };
+      const after = await dragBy({ x: (6 * out.x - 2.5 * out.y) * mm, y: (6 * out.y + 2.5 * out.x) * mm }, "dragging round the arc");
+      if (JSON.stringify(after.rays) !== "[1,1]") throw new Error(`dragging within the angle changed which angle is measured (${JSON.stringify(after.rays)})`);
+      if (!(after.offset > made.offset)) throw new Error(`the arc didn't move out with the number (radius ${made.offset} → ${after.offset})`);
+      if (!(await arcCentre(after.offset))) throw new Error(`no arc of radius ${after.offset} mm round the corner after the drag`);
+      await shot("angledrag");
+      await undoTo(made.offset);
+    }
+    // 2. Across the first arm (20° past it, away from the second): it measures the supplementary angle there.
+    {
+      const start = await textBox();
+      const reach = Math.hypot(start.x - cx, start.y - cy);
+      const a1 = Math.atan2(pick.u1[1], pick.u1[0]);
+      const a2 = Math.atan2(pick.u2[1], pick.u2[0]);
+      let turn = a2 - a1;
+      while (turn > Math.PI) turn -= 2 * Math.PI;
+      while (turn < -Math.PI) turn += 2 * Math.PI;
+      const t = a1 - Math.sign(turn) * (20 * Math.PI) / 180;
+      // (The view's y runs up, the screen's down.)
+      const to = { x: cx + reach * Math.cos(t), y: cy - reach * Math.sin(t) };
+      const after = await dragBy({ x: to.x - start.x, y: to.y - start.y }, "dragging across an arm");
+      if (JSON.stringify(after.rays) !== "[1,-1]") throw new Error(`dragged across the first arm, it measures rays ${JSON.stringify(after.rays)}, not the supplementary angle [1,-1]`);
+      const want = label(180 - pick.deg);
+      if ((await shownText()) !== want) throw new Error(`dragged across an arm it reads ${await shownText()}, not ${want}`);
+      await shot("anglecross");
+      await undoTo(made.offset);
+    }
+    // And take the angle away again (it was added as one undo step), so the steps after see the drawing as it was.
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction((n) => window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).length === n, before.length, { timeout: 5_000 });
+    await page.keyboard.press("Escape");
+  }
   step = "baseline, chain and ordinate tools";
   for (const name of ["Baseline", "Chain", "Ordinate"]) {
     await tool(name);

@@ -523,8 +523,24 @@ export interface Dimension {
   offset: number;
   /** Circles: direction of the leader (degrees). */
   angle?: number;
-  /** Lengths: how far the number has been slid along the dimension line from the middle (paper mm). */
+  /**
+   * Lengths: how far the number has been slid along the dimension line from the middle (paper mm).
+   * Ordinates: how far the number has been moved sideways off the leader's line (paper mm, + = right
+   * of an upright leader, up from a level one); the leader then jogs across to it.
+   */
   textAlong?: number;
+  /**
+   * Lengths: when the number has been slid past an extension line, the dimension line carries on
+   * under the whole of it as measured (a stacked fit or limits too). Missing = the older rough
+   * estimate of its width, so drawings dragged before still look exactly as they did.
+   */
+  fitText?: true;
+  /**
+   * Angles and arc lengths: where the number has been slid round the arc, in degrees from the arc's
+   * middle (+ = anticlockwise on the sheet). Beyond the arc's ends the arc carries on out to it.
+   * Missing = in the middle.
+   */
+  textAngle?: number;
   /** Lengths: how far the number has been lifted off the dimension line (paper mm, + = above as read; joined by a leader). */
   textAcross?: number;
   /**
@@ -533,7 +549,8 @@ export interface Dimension {
    * so it stays the same distance out from the circle when the view's scale
    * changes. It's the point under the middle of its text (DimDrawing.label).
    * The leader then runs from the circle out (or in) to it. Missing = at the
-   * end of the leader set by `angle` and `offset`.
+   * end of the leader set by `angle` and `offset`. Chamfers: the same, from
+   * the middle of the slanted edge (the leader runs from there).
    */
   textAt?: [number, number];
   /** Tolerance: how much bigger (plus) or smaller (minus) it may be, mm. Equal → "±". */

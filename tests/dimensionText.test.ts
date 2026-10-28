@@ -63,8 +63,9 @@ describe("dragging a length dimension's number", () => {
     expect(moved.textAlong).toBe(50);
     const drawn = draw(moved, p, 40);
     expect(texts(drawn)[0].x).toBeCloseTo(70, 9);
-    // From the extension line at x = 40 out past the far side of "40" (half its width + 1 mm).
-    const half = (2 * 3.5 * 0.55) / 2 + 1;
+    // From the extension line at x = 40 out past the far side of "40" (half its measured width + 1 mm).
+    expect(moved.fitText).toBe(true);
+    const half = textWidth("40", 3.5) / 2 + 1;
     const reach = paths(drawn).find((x) => x.points.length === 4 && x.points[1] === 10 && x.points[3] === 10 && x.points[0] === 40);
     expect(reach).toBeDefined();
     expect(reach!.points[2]).toBeCloseTo(70 + half, 9);
@@ -276,8 +277,9 @@ describe("dragging a dimension line between the two points it measures", () => {
 });
 
 describe("dimensions not dragged by their number stay as they were", () => {
-  it("angles, chamfers, arc lengths and ordinates aren't moved this way", () => {
-    for (const type of ["angle", "chamfer", "arcLength", "ordinate"] as const) {
+  it("angles and arc lengths without what they need to be dragged give nothing (rather than a wrong move)", () => {
+    // (An angle needs its second edge, an arc length its arc; dimensionFree.test.ts drags them properly.)
+    for (const type of ["angle", "arcLength"] as const) {
       const d = { id: "x", view: "front", type, a: { at: [0, 0], rel: [0, 0] }, b: { at: [10, 0], rel: [1, 0] }, offset: 8 } as Dimension;
       expect(dragDimensionLabel(d, { a: [0, 0], b: [10, 0], rad: 0 }, [5, 5])).toBeNull();
     }

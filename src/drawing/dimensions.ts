@@ -230,13 +230,27 @@ export function angleGeometry(a: P2, b: P2, c: P2, d: P2, rays: [number, number]
   return { vertex, u1, u2, degrees };
 }
 
+/**
+ * Which of the four angles two lines make a direction `w` (from where they
+ * meet) lies in: the arms' directions (+1 along `u1`/`u2`, −1 the other way),
+ * from w = α·u1 + β·u2 — so it changes just as the pointer crosses a line
+ * (as in Onshape: across one line, the supplementary angle; across both, the
+ * opposite one). Right on a line counts as along it.
+ */
+export function angleRays(u1: P2, u2: P2, w: P2): [number, number] {
+  const cross = (p: P2, q: P2) => p[0] * q[1] - p[1] * q[0];
+  const k = cross(u1, u2);
+  const alpha = cross(w, u2) / k;
+  const beta = cross(u1, w) / k;
+  return [alpha >= 0 ? 1 : -1, beta >= 0 ? 1 : -1];
+}
+
 /** An angle dimension's arms and arc radius (paper mm) for the pointer at `cursor` (all in sheet mm): the angle the pointer is in. */
 export function placeAngle(a: P2, b: P2, c: P2, d: P2, cursor: P2): { rays: [number, number]; offset: number } | null {
   const g = angleGeometry(a, b, c, d);
   if (!g) return null;
   const w: P2 = [cursor[0] - g.vertex[0], cursor[1] - g.vertex[1]];
-  const s = (u: P2) => (u[0] * w[0] + u[1] * w[1] >= 0 ? 1 : -1);
-  return { rays: [s(g.u1), s(g.u2)], offset: Math.max(4, Math.round(Math.hypot(...w) * 10) / 10) };
+  return { rays: angleRays(g.u1, g.u2, w), offset: Math.max(4, Math.round(Math.hypot(...w) * 10) / 10) };
 }
 
 /** Drawing-wide settings for how dimensions read (see Drawing.places and Drawing.dualUnits). */
@@ -458,17 +472,37 @@ export function circleLeader(c: P2, rad: number, textAt: [number, number], shoul
  * joins it back). Diameters and radii: the number goes exactly there — inside or
  * outside the circle — and the leader follows (`angle` and `offset` are kept
  * roughly in step, for older copies of the app); `paperPerMm` is the view's
- * scale (paper mm per model mm: dimensionScale), as textAt is kept in model mm.
- * Other kinds: null (they're dragged with dragDimension).
+ * scale (paper mm per model mm: dimensionPaperScale), as textAt is kept in model mm.
+ *
+ * Angles: the pointer's distance from the corner sets the arc's radius and the
+ * number slides round the arc (`textAngle`); moving into another of the four
+ * angles the two lines make measures that one instead (as Onshape does); with
+ * `lift` (Shift) the angle measured stays and the number can go past an arm,
+ * the arc carrying on out to it. Arc lengths: the same, past the arc's ends.
+ * Chamfers: the number goes exactly there, the leader following (`textAt`, in
+ * model mm from the edge's middle). Ordinates: out along the leader moves its
+ * end (`offset`); sideways moves the number across with a jog in the leader
+ * (`textAlong`). Null when what it measures can't be worked out.
  */
 export function dragDimensionLabel(
   dim: Dimension,
-  placed: { a: P2; b: P2 | null; rad: number },
+  placed: DragPlace,
   to: P2,
   lift = false,
   paperPerMm = 1,
-): Partial<Pick<Dimension, "offset" | "angle" | "textAlong" | "textAcross" | "textAt">> | null {
+): DimPatch | null {
   const r = (v: number) => Math.round(v * 10) / 10;
+  if (dim.type === "angle") return dragAngleLabel(dim, placed, to, lift);
+  if (dim.type === "arcLength") return dragArcLengthLabel(placed, to);
+  if (dim.type === "ordinate") return placed.b ? dragOrdinateLabel(dim, placed.a, placed.b, to) : null;
+  if (dim.type === "chamfer") {
+    if (!placed.b) return null;
+    const m: P2 = [(placed.a[0] + placed.b[0]) / 2, (placed.a[1] + placed.b[1]) / 2];
+    const v: P2 = [to[0] - m[0], to[1] - m[1]];
+    const k = paperPerMm > 0 ? paperPerMm : 1;
+    const mm = (x: number) => Math.round((x / k) * 1000) / 1000;
+    return { textAt: [mm(v[0]), mm(v[1])], angle: Math.round((Math.atan2(v[1], v[0]) * 180) / Math.PI), offset: Math.max(2, r(Math.hypot(v[0], v[1]))) };
+  }
   if (dim.type === "diameter" || dim.type === "radius") {
     const c = placed.a;
     const v: P2 = [to[0] - c[0], to[1] - c[1]];
@@ -493,7 +527,92 @@ export function dragDimensionLabel(
   const raise = 1.2 + (Math.abs(lifted) > OFF_LINE ? lifted : 0);
   const onLine: P2 = [to[0] - up[0] * raise, to[1] - up[1] * raise];
   const { offset, textAlong } = dragDimension(dim, placed.a, placed.b, placed.rad, onLine);
-  return { offset, textAlong: textAlong ?? 0 };
+  return { offset, textAlong: textAlong ?? 0, fitText: true };
+}
+
+/** What dragging a number needs to know about the dimension as laid out on the sheet (PlacedDim). */
+export interface DragPlace {
+  a: P2;
+  b: P2 | null;
+  rad: number;
+  /** Angles: the second edge's ends. */
+  cd?: [P2, P2];
+  /** Arc lengths: where the arc starts and how far round it goes (radians), and how wide the number is. */
+  arc?: { from: number; sweep: number };
+  width?: number;
+}
+
+/** Where an angle's arc runs from one arm to the other: the start (radians) and how far round, the shorter way. */
+export function angleArc(u1: P2, u2: P2): { a1: number; sweep: number } {
+  let a1 = Math.atan2(u1[1], u1[0]);
+  const a2 = Math.atan2(u2[1], u2[0]);
+  let sweep = a2 - a1;
+  while (sweep > Math.PI) sweep -= 2 * Math.PI;
+  while (sweep < -Math.PI) sweep += 2 * Math.PI;
+  if (sweep < 0) [a1, sweep] = [a2, -sweep];
+  return { a1, sweep };
+}
+
+/** Radians to degrees, to a hundredth, in (−180, 180]. */
+const roundTurn = (rad: number) => {
+  const d = Math.round(((wrapPi(rad) * 180) / Math.PI) * 100) / 100;
+  return d === -180 ? 180 : d;
+};
+
+/** How close (paper mm, round the arc) a number must be to the arc's middle to snap back to it. */
+const SNAP_MIDDLE = 2;
+
+function dragAngleLabel(dim: Dimension, placed: DragPlace, to: P2, lift: boolean): DimPatch | null {
+  if (!placed.b || !placed.cd) return null;
+  const [c, d] = placed.cd;
+  const base = angleGeometry(placed.a, placed.b, c, d);
+  if (!base) return null;
+  // The label sits 3 mm beyond the arc, 0.35 of the text's height below the line out from the corner.
+  const q: P2 = [to[0], to[1] + TEXT_SIZE * 0.35];
+  const w: P2 = [q[0] - base.vertex[0], q[1] - base.vertex[1]];
+  // A number already put past an arm (with Shift) keeps its angle when dragged again, rather than
+  // switching to the angle it happens to be over; dragged back over its arc and let go, it switches again.
+  const now = angleGeometry(placed.a, placed.b, c, d, dim.rays);
+  const outside = !!now && Math.abs(((dim.textAngle ?? 0) * Math.PI) / 180) > angleArc(now.u1, now.u2).sweep / 2;
+  const rays: [number, number] = lift || outside ? (dim.rays ?? [1, 1]) : angleRays(base.u1, base.u2, w);
+  const g = angleGeometry(placed.a, placed.b, c, d, rays)!;
+  const { a1, sweep } = angleArc(g.u1, g.u2);
+  const offset = Math.max(4, Math.round((Math.hypot(w[0], w[1]) - 3) * 10) / 10);
+  const turn = roundTurn(Math.atan2(w[1], w[0]) - (a1 + sweep / 2));
+  const snapped = Math.abs((turn * Math.PI) / 180) * offset < SNAP_MIDDLE ? 0 : turn;
+  return { offset, rays, textAngle: snapped };
+}
+
+function dragArcLengthLabel(placed: DragPlace, to: P2): DimPatch | null {
+  if (!placed.arc) return null;
+  const { from, sweep } = placed.arc;
+  const w = placed.width ?? 0;
+  // The label is under the middle of the number, whose centre is `reach` out from the arc's centre.
+  const centre: P2 = [to[0], to[1] + TEXT_SIZE * 0.375 + 0.4];
+  const v: P2 = [centre[0] - placed.a[0], centre[1] - placed.a[1]];
+  const t = Math.atan2(v[1], v[0]);
+  const R = Math.hypot(v[0], v[1]) - 1.5 - (Math.abs(Math.cos(t)) * w) / 2 - (Math.abs(Math.sin(t)) * (TEXT_SIZE * 0.75 + 1.6)) / 2;
+  const offset = Math.max(2, Math.round((R - placed.rad) * 10) / 10);
+  const turn = roundTurn(t - (from + sweep / 2));
+  const snapped = Math.abs((turn * Math.PI) / 180) * (placed.rad + offset) < SNAP_MIDDLE ? 0 : turn;
+  return { offset, textAngle: snapped };
+}
+
+function dragOrdinateLabel(dim: Dimension, pa: P2, pb: P2, to: P2): DimPatch {
+  const r = (v: number) => Math.round(v * 10) / 10;
+  const vertical = dim.axis !== "v";
+  const across: P2 = vertical ? [0, 1] : [-1, 0];
+  const side: P2 = vertical ? [1, 0] : [0, 1];
+  const h = (p: P2) => p[0] * across[0] + p[1] * across[1];
+  // The label is 1 mm beyond the leader's end, on the side of the point the pointer is.
+  const sign = Math.sign(h(to) - h(pb)) || 1;
+  const end = h(to) - sign;
+  const hi = Math.max(h(pa), h(pb));
+  const lo = Math.min(h(pa), h(pb));
+  // Between the two points, it stays at the nearer one's level (as when the line is dragged).
+  const offset = end >= hi ? r(end - hi) : end <= lo ? Math.min(-0.1, r(end - lo)) : end - lo < hi - end ? -0.1 : 0;
+  const jog = (to[0] - pb[0]) * side[0] + (to[1] - pb[1]) * side[1];
+  return { offset, textAlong: Math.abs(jog) < 1 ? 0 : r(jog) };
 }
 
 /** Paper mm per model mm for a circle's dimension on the sheet: its radius there (`rad`) over its radius as measured now. */
@@ -502,8 +621,20 @@ export function dimensionScale(dim: Dimension, rad: number, p: ViewProjection | 
   return r && rad > 0 ? rad / r : 1;
 }
 
+/**
+ * Paper mm per model mm for a dimension on the sheet: circles and arcs from
+ * their radius there (`placed.rad`), chamfers from their edge; 1 otherwise.
+ */
+export function dimensionPaperScale(dim: Dimension, placed: { a: P2; b: P2 | null; rad: number }, p: ViewProjection | undefined): number {
+  if (dim.type === "chamfer") {
+    const r = p ? resolveDim(dim, p) : { a: dim.a.at, b: dim.b?.at };
+    return r.b && placed.b ? paperScaleOf(r.a, r.b, placed.a, placed.b) : 1;
+  }
+  return dimensionScale(dim, placed.rad, p);
+}
+
 /** What dragging a dimension changes. */
-export type DimPatch = Partial<Pick<Dimension, "offset" | "angle" | "textAlong" | "textAcross" | "textAt" | "rays">>;
+export type DimPatch = Partial<Pick<Dimension, "offset" | "angle" | "textAlong" | "textAcross" | "textAt" | "rays" | "textAngle" | "fitText">>;
 
 /** A dimension with a drag's changes made (a number slid or lifted back to 0 is just "not moved"). */
 export function withDimPatch(dim: Dimension, patch: DimPatch): Dimension {
@@ -511,6 +642,9 @@ export function withDimPatch(dim: Dimension, patch: DimPatch): Dimension {
   if (!next.textAlong) delete next.textAlong;
   if (!next.textAcross) delete next.textAcross;
   if (!next.textAt) delete next.textAt;
+  if (!next.textAngle) delete next.textAngle;
+  // (Only matters while the number is slid along its line.)
+  if (!next.fitText || !next.textAlong) delete next.fitText;
   return next;
 }
 
@@ -537,6 +671,8 @@ export interface DimDrawing {
   label: P2;
   /** Lengths, diameters and radii: which way the arrows were drawn (for Flip arrows). */
   arrows?: "inside" | "outside";
+  /** Arc lengths: how wide the number is (paper mm), for dragging it. */
+  width?: number;
 }
 
 /**
@@ -595,6 +731,20 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
     const pa = at(r.a);
     const pb = at(r.b);
     const m: P2 = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2];
+    if (dim.textAt) {
+      // Dragged: the number exactly where it was put (textAt is in the view's millimetres, so scaled like the edge).
+      const k = paperScaleOf(r.a, r.b, pa, pb);
+      const label: P2 = [m[0] + dim.textAt[0] * k, m[1] + dim.textAt[1] * k];
+      const shoulder = 2 + textWidth(text, TEXT_SIZE);
+      const side = dim.textAt[0] >= 0 ? 1 : -1;
+      const elbow: P2 = [label[0] - (side * shoulder) / 2, label[1] - 1];
+      const end: P2 = [label[0] + (side * shoulder) / 2, label[1] - 1];
+      prims.push({ kind: "path", points: [m[0], m[1], elbow[0], elbow[1], end[0], end[1]], style: "thin" });
+      // (Right on the edge's middle: the arrow points along the shoulder.)
+      prims.push(arrow(m, dist(m, elbow) > EPS ? [m[0] - elbow[0], m[1] - elbow[1]] : [m[0] - end[0], m[1] - end[1]]));
+      prims.push({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle" });
+      return { prims, label };
+    }
     const ang = ((dim.angle ?? 45) * Math.PI) / 180;
     const u: P2 = [Math.cos(ang), Math.sin(ang)];
     const elbow: P2 = [m[0] + u[0] * Math.max(dim.offset, 2), m[1] + u[1] * Math.max(dim.offset, 2)];
@@ -629,16 +779,21 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
       const e = from + sweep;
       prims.push(arrow([c[0] + R * Math.cos(e), c[1] + R * Math.sin(e)], [-Math.sin(e), Math.cos(e)]));
     }
-    // The number just outside the middle of the arc, reading across, with the arc sign over it.
-    const m = from + sweep / 2;
+    // The number just outside the middle of the arc (or slid round it), reading across, with the arc sign over it.
+    const m = from + sweep / 2 + ((dim.textAngle ?? 0) * Math.PI) / 180;
     const u: P2 = [Math.cos(m), Math.sin(m)];
     const w = textWidth(text, TEXT_SIZE);
+    // Slid past an end of the arc: the arc (and its arrow's line) carries on out under the number.
+    if (dim.textAngle) {
+      const over = arcBeyond(from, sweep, m, R, w);
+      if (over) prims.push(arcPath(c, R, over[0], over[1]));
+    }
     const reach = R + 1.5 + Math.abs(u[0]) * (w / 2) + Math.abs(u[1]) * (TEXT_SIZE * 0.75 + 1.6) / 2;
     const centre: P2 = [c[0] + u[0] * reach, c[1] + u[1] * reach];
     const label: P2 = [centre[0], centre[1] - TEXT_SIZE * 0.375 - 0.4];
     prims.push({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle" });
     prims.push(arcSign(label, Math.max(w - 1, 2)));
-    return { prims, label };
+    return { prims, label, width: w };
   }
   if (dim.type === "diameter" || dim.type === "radius") {
     // A hole callout: several lines stacked above the leader's shoulder (prefix on the first, suffix on the last).
@@ -728,7 +883,12 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
       const firstIs1 = Math.abs(Math.atan2(g.u1[1], g.u1[0]) - a1) < 1e-9 || Math.abs(Math.abs(Math.atan2(g.u1[1], g.u1[0]) - a1) - 2 * Math.PI) < 1e-9;
       extend(firstIs1 ? pa0 : pc0, firstIs1 ? pb0 : pd0, end1, arm1);
       extend(firstIs1 ? pc0 : pa0, firstIs1 ? pd0 : pb0, end2, arm2);
-      const mid = a1 + sweep / 2;
+      const mid = a1 + sweep / 2 + ((dim.textAngle ?? 0) * Math.PI) / 180;
+      if (dim.textAngle) {
+        // Slid past an arm: the arc carries on out under the number.
+        const over = arcBeyond(a1, sweep, mid, R, textWidth(text, TEXT_SIZE));
+        if (over) prims.push(arcPath(g.vertex, R, over[0], over[1]));
+      }
       const label: P2 = [g.vertex[0] + (R + 3) * Math.cos(mid), g.vertex[1] + (R + 3) * Math.sin(mid) - TEXT_SIZE * 0.35];
       prims.push({ kind: "text", x: label[0], y: label[1], text, size: TEXT_SIZE, anchor: "middle" });
       return { prims, label };
@@ -745,11 +905,18 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
     const h = (p: P2) => p[0] * across[0] + p[1] * across[1];
     const base = dim.offset >= 0 ? Math.max(h(pa), h(pb)) + dim.offset : Math.min(h(pa), h(pb)) + dim.offset;
     const sign = Math.sign(base - h(pb)) || 1;
-    const end: P2 = [pb[0] + across[0] * (base - h(pb)), pb[1] + across[1] * (base - h(pb))];
+    const jog = dim.textAlong ?? 0;
+    const side: P2 = vertical ? [1, 0] : [0, 1];
+    const end: P2 = [pb[0] + across[0] * (base - h(pb)) + side[0] * jog, pb[1] + across[1] * (base - h(pb)) + side[1] * jog];
     const start: P2 = [pb[0] + across[0] * sign * GAP, pb[1] + across[1] * sign * GAP];
-    prims.push({ kind: "path", points: [start[0], start[1], end[0], end[1]], style: "thin" });
     // The number just beyond the end of the leader, reading away from the part.
     const out: P2 = [across[0] * sign, across[1] * sign];
+    if (jog) {
+      // Moved sideways: the leader runs straight out, jogs across, and runs straight out again to the number.
+      prims.push({ kind: "path", points: ordinateJog(start, end, out, side, jog, Math.abs(base - h(pb)) - GAP), style: "thin" });
+    } else {
+      prims.push({ kind: "path", points: [start[0], start[1], end[0], end[1]], style: "thin" });
+    }
     const label: P2 = [end[0] + out[0] * 1, end[1] + out[1] * 1];
     if (vertical) {
       prims.push({ kind: "text", x: label[0] + TEXT_SIZE * 0.35, y: label[1], text, size: TEXT_SIZE, anchor: sign > 0 ? "start" : "end", rotate: 90 });
@@ -806,7 +973,8 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
     const t = (p: P2) => p[0] * along[0] + p[1] * along[1];
     const lo = Math.min(t(la), t(lb));
     const hi = Math.max(t(la), t(lb));
-    const half = (text.length * TEXT_SIZE * 0.55) / 2 + 1;
+    // (fitText: the whole number as measured, stacked lines too; else the older rough estimate.)
+    const half = (dim.fitText ? textWidth(text, TEXT_SIZE) + stackWidth(fit?.stack ?? null) : text.length * TEXT_SIZE * 0.55) / 2 + 1;
     const tm = t(mid);
     const from = tm - half < lo ? tm - half : tm + half > hi ? tm + half : null;
     if (from !== null) {
@@ -831,6 +999,59 @@ function arcSign(at: P2, w: number): Prim {
     pts.push(at[0] - (w / 2) * Math.cos(t) / Math.cos(Math.PI * 0.15), cy + 1.2 * (Math.sin(t) - Math.sin(Math.PI * 0.15)) / (1 - Math.sin(Math.PI * 0.15)));
   }
   return { kind: "path", points: pts, style: "thin" };
+}
+
+/** A thin arc round `c` (radius `R`) from angle `t0` to `t1` (radians, either way round). */
+function arcPath(c: P2, R: number, t0: number, t1: number): Prim {
+  const pts: number[] = [];
+  const n = Math.max(2, Math.ceil(Math.abs(t1 - t0) / 0.06));
+  for (let i = 0; i <= n; i++) {
+    const t = t0 + ((t1 - t0) * i) / n;
+    pts.push(c[0] + R * Math.cos(t), c[1] + R * Math.sin(t));
+  }
+  return { kind: "path", points: pts, style: "thin" };
+}
+
+/** An angle (radians) brought into (−π, π]. */
+function wrapPi(t: number): number {
+  let v = t;
+  while (v > Math.PI) v -= 2 * Math.PI;
+  while (v <= -Math.PI) v += 2 * Math.PI;
+  return v;
+}
+
+/**
+ * A number slid round an arc (from `from`, `sweep` round, radius `R`) to the
+ * direction `at`, `w` wide and reading across: when it's past an end, the
+ * extra arc from that end out to under its far side ([start, end] radians);
+ * null while it's over the arc itself.
+ */
+export function arcBeyond(from: number, sweep: number, at: number, R: number, w: number): [number, number] | null {
+  const off = wrapPi(at - (from + sweep / 2));
+  if (Math.abs(off) <= sweep / 2) return null;
+  // Half the number's width as seen round the arc, and a millimetre more.
+  const half = (Math.abs(Math.sin(at)) * w) / 2 + Math.abs(Math.cos(at)) * TEXT_SIZE * 0.375 + 1;
+  const mid = from + sweep / 2;
+  return off > 0 ? [from + sweep, mid + off + half / Math.max(R, 1)] : [from, mid + off - half / Math.max(R, 1)];
+}
+
+/**
+ * An ordinate's leader moved sideways by `jog`: straight out from `start`,
+ * a slanted dog-leg across, then straight out again to `end` (which is
+ * already moved across). `out`: the way it runs; `side`: the way it jogs;
+ * `length`: how far it runs out in all.
+ */
+export function ordinateJog(start: P2, end: P2, out: P2, side: P2, jog: number, length: number): number[] {
+  const run = Math.max(0, Math.min(3, length / 3));
+  const k2: P2 = [end[0] - out[0] * run, end[1] - out[1] * run];
+  const k1: P2 = [k2[0] - out[0] * run - side[0] * jog, k2[1] - out[1] * run - side[1] * jog];
+  return [start[0], start[1], k1[0], k1[1], k2[0], k2[1], end[0], end[1]];
+}
+
+/** Paper mm per view mm from two view points (`a`, `b`) and where they are on the sheet (`pa`, `pb`); 1 if they coincide. */
+function paperScaleOf(a: P2, b: P2, pa: P2, pb: P2): number {
+  const d = dist(a, b);
+  return d > EPS ? dist(pa, pb) / d : 1;
 }
 
 /** A chamfer's callout: its distance and angle, "1 × 45°" (with the other unit too when asked). */
