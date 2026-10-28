@@ -8,7 +8,7 @@
  * a sweep's profile or path, a loft, a hole's points…); the eye in the feature
  * list shows or hides it for good. Planes are shown until hidden.
  */
-import { MAIN_STUDIO } from "./studios";
+import { inStudio, MAIN_STUDIO, studioFeatures } from "./studios";
 import type { DatumName, Feature, JuraCADDocument } from "./types";
 
 export const DATUM_NAMES: readonly DatumName[] = ["Origin", "Top", "Front", "Right"];
@@ -109,6 +109,38 @@ export function setDatumHidden(doc: JuraCADDocument, studioId: string, datum: Da
       return next.length ? { ...rest, hiddenDatums: next } : rest;
     }),
   };
+}
+
+/** The default planes (the Origin isn't a plane: P leaves it alone, as in Onshape). */
+export const DEFAULT_PLANES: readonly DatumName[] = ["Top", "Front", "Right"];
+
+/**
+ * Whether any plane of a Part Studio is shown: Top, Front, Right or a Plane
+ * feature (suppressed ones aren't drawn, so they don't count).
+ */
+export function anyPlaneShown(doc: JuraCADDocument, studioId: string): boolean {
+  const hidden = hiddenDatumsOf(doc, studioId);
+  if (DEFAULT_PLANES.some((d) => !hidden.includes(d))) return true;
+  return studioFeatures(doc, studioId).some((f) => f.type === "plane" && !f.suppressed && planeVisible(f));
+}
+
+/** "Show all planes" / "Hide all planes": Top, Front, Right and every Plane feature of a Part Studio. */
+export function setAllPlanesVisible(doc: JuraCADDocument, studioId: string, visible: boolean): JuraCADDocument {
+  let out = DEFAULT_PLANES.reduce((d, name) => setDatumHidden(d, studioId, name, !visible), doc);
+  out = inStudio(out, studioId, (view) =>
+    setFeaturesVisible(
+      view,
+      view.features.filter((f) => f.type === "plane").map((f) => f.id),
+      visible,
+    ),
+  );
+  return out;
+}
+
+/** The P key (as in Onshape): if any plane is shown, hide them all; otherwise show them all. */
+export function toggleAllPlanes(doc: JuraCADDocument, studioId: string): { doc: JuraCADDocument; visible: boolean } {
+  const visible = !anyPlaneShown(doc, studioId);
+  return { doc: setAllPlanesVisible(doc, studioId, visible), visible };
 }
 
 /** A saved list of hidden datums, cleaned up (unknown names and repeats dropped); undefined when there's nothing. */

@@ -159,7 +159,7 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
       : []),
     { label: hidden ? "Show" : "Hide", action: () => toggleDatum(name) },
     "divider",
-    ...SKETCH_VISIBILITY_MENU,
+    ...VISIBILITY_MENU,
   ];
 
   return (
@@ -281,7 +281,7 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
     { label: feature.suppressed ? "Unsuppress" : "Suppress", action: () => toggleSuppressed(feature.id) },
     ...(feature.type === "plane" ? [{ label: "View normal to", action: () => viewNormalToPlaneFeature(feature.id) }] : []),
     ...(eye && !editing ? [{ label: shown ? "Hide" : "Show", action: () => setVisible(!shown) }] : []),
-    ...(feature.type === "sketch" ? SKETCH_VISIBILITY_MENU : []),
+    ...(feature.type === "sketch" || feature.type === "plane" ? VISIBILITY_MENU : []),
     { label: "Roll back to here", action: () => useStore.getState().setRollback(feature.id) },
     feature.folder
       ? { label: `Take out of "${feature.folder}"`, action: () => useStore.getState().setFeatureFolder([feature.id], null) }
@@ -384,10 +384,12 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
   );
 }
 
-/** Right-click menu entries that show or hide every sketch of the Part Studio on show. */
-const SKETCH_VISIBILITY_MENU: MenuEntry[] = [
+/** Right-click menu entries that show or hide every sketch, or every plane (P), of the Part Studio on show. */
+const VISIBILITY_MENU: MenuEntry[] = [
   { label: "Show all sketches", action: () => useStore.getState().setAllSketchesVisible(true) },
   { label: "Hide all sketches", action: () => useStore.getState().setAllSketchesVisible(false) },
+  { label: "Show all planes (P)", action: () => useStore.getState().setAllPlanesVisible(true) },
+  { label: "Hide all planes (P)", action: () => useStore.getState().setAllPlanesVisible(false) },
 ];
 
 /** Onshape's rollback bar: the model is shown as it was at this point; new features go in here. */
@@ -700,9 +702,9 @@ export function FeaturePanel() {
       <ConfigurationPicker />
       <section
         className="panel-section features"
-        // Right-click on the list (not on a row, whose own menu comes first): show or hide all sketches.
+        // Right-click on the list (not on a row, whose own menu comes first): show or hide all sketches or planes.
         onContextMenu={(e) => {
-          if (!e.defaultPrevented) onMenu(e, SKETCH_VISIBILITY_MENU);
+          if (!e.defaultPrevented) onMenu(e, VISIBILITY_MENU);
         }}
       >
         <h3 className="panel-heading-row">
