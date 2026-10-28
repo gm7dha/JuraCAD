@@ -30,6 +30,7 @@ import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevis
 import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection, viewKey } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { explodeAssembly, instancesForKernel } from "./assemblySolve";
+import { stepPartOffsets } from "../assembly/explode";
 import { solveWithParts } from "../assembly/mates";
 import { drawingBom } from "../assembly/drawingBom";
 import { downloadFile, safeFileName } from "./download";
@@ -57,7 +58,9 @@ function drawingSubject(
   const assemblies = doc.assemblies ?? [];
   const solved = solveWithParts(asm, parts, { assemblies });
   const tops = Object.fromEntries(asm.instances.map((i) => [i.id, solved.placements[i.id] ?? i.placement]));
-  const instances = instancesForKernel(asm, parts, assemblies, solved, drawing.exploded ? explodeAssembly(asm, parts, tops, asm.explode ?? 1, assemblies) : tops);
+  const instances = drawing.exploded
+    ? instancesForKernel(asm, parts, assemblies, solved, explodeAssembly(asm, parts, tops, asm.explode ?? 1, assemblies), stepPartOffsets(asm.explodeSteps ?? []))
+    : instancesForKernel(asm, parts, assemblies, solved, tops);
   return { name: asm.name, partIds: [], instances, key: [JSON.stringify(instances), ...instances.map((i) => findMesh(parts, i.partId))] };
 }
 

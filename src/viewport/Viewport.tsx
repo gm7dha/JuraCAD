@@ -10,6 +10,7 @@ import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../a
 import { isOrigin } from "../assembly/origin";
 import { clickedSpot, findPick, framePlacement } from "../assembly/connectors";
 import { explodeAssembly, useAssemblyLeaves, useSolvedAssembly } from "../app/assemblySolve";
+import { stepPartOffsets } from "../assembly/explode";
 import { instanceAt, leafKey, topOfKey, type Leaf } from "../assembly/subassembly";
 import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
@@ -39,6 +40,7 @@ import { guardViewportZoom } from "./zoomGuard";
 /** Shared empty colour list (a selector must not make a new object each time). */
 const NO_COLOURS: Record<string, string> = {};
 const NO_PLACEMENTS: Record<string, number[]> = {};
+const NO_SHIFT: Record<string, [number, number, number]> = {};
 
 /**
  * Each instance shown as a copy of its part's mesh (moved into place with setPlacements); suppressed ones aren't shown.
@@ -64,11 +66,12 @@ function connectorItems(parts: PartMesh[], assembly: Assembly, assemblies: reado
   const items: SelectionItem[] = [];
   for (const c of connectors) {
     if (!c) continue;
-    // On a part inside a sub-assembly, the path leads to it.
-    const key = leafKey(c.instanceId, c.path);
-    const instance = instanceAt(assembly, assemblies, key)?.part;
-    const part = instance && findMesh(parts, meshIdOf(instance));
-    for (const pick of c.pick2 ? [c.pick, c.pick2] : [c.pick]) {
+    // On a part inside a sub-assembly, the path leads to it (a Width mate's second face may be on another part of the copy).
+    const sides: [TopoPick, string[] | undefined][] = c.pick2 ? [[c.pick, c.path], [c.pick2, c.path2 ?? c.path]] : [[c.pick, c.path]];
+    for (const [pick, path] of sides) {
+      const key = leafKey(c.instanceId, path);
+      const instance = instanceAt(assembly, assemblies, key)?.part;
+      const part = instance && findMesh(parts, meshIdOf(instance));
       const index = part ? findPick(part, pick) : -1;
       if (instance && index >= 0) items.push({ partId: key, kind: pick.ref.kind, index });
     }
@@ -79,32 +82,48 @@ function connectorItems(parts: PartMesh[], assembly: Assembly, assemblies: reado
 /** Selected instances, as every face of each (so the whole part lights up; a sub-assembly, all its parts). */
 function instanceSelection(display: PartMesh[], ids: string[]): SelectionItem[] {
   const items: SelectionItem[] = [];
-  for (const p of display) if (ids.includes(topOfKey(p.id))) p.faceGroups.forEach((_, index) => items.push({ partId: p.id, kind: "face", index }));
+  // (In an exploded view a part inside a sub-assembly can be selected on its own: its "top/inner/part" key.)
+  for (const p of display) if (ids.includes(topOfKey(p.id)) || ids.includes(p.id)) p.faceGroups.forEach((_, index) => items.push({ partId: p.id, kind: "face", index }));
   return items;
 }
 
 /** A click in an assembly selects whole instances (or, while making a mate, a face or edge for it). */
+/** The face or edge clicked, as a mate connector on its instance (null when it isn't a face or edge of a part). */
+function connectorAt(target: PickTarget | null): MateConnector | null {
+  const s = useStore.getState();
+  if (target?.kind !== "part") return null;
+  const asm = activeAssembly(s);
+  // A part inside a sub-assembly: the connector is on the sub-assembly, with the path to the part.
+  const found = asm ? instanceAt(asm, s.history.present.assemblies ?? [], target.item.partId) : null;
+  const instance = found?.part;
+  const part = instance && findMesh(s.parts, meshIdOf(instance));
+  if (!found || !instance || !part) return null;
+  const ref = target.item.kind === "edge" ? part.edgeRefs?.[target.item.index] : part.faceRefs?.[target.item.index];
+  if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return null;
+  // Picks name the part itself, whichever configuration it's shown in. Where it was clicked is kept
+  // (in the part's own coordinates), and a click near an edge's end puts the connector on that corner.
+  const point = target.local?.map((v) => Math.round(v * 1e6) / 1e6) as [number, number, number] | undefined;
+  const spot = point ? clickedSpot(part, { partId: part.id, ref }, point) : undefined;
+  return { instanceId: found.top.id, ...(found.path.length ? { path: found.path } : {}), pick: { partId: instance.partId, ref }, ...(spot ? { spot } : {}), ...(point ? { point } : {}) };
+}
+
 function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
   if (s.mateDraft) {
-    if (target?.kind !== "part") return;
-    const asm = activeAssembly(s);
-    // A part inside a sub-assembly: the connector is on the sub-assembly, with the path to the part.
-    const found = asm ? instanceAt(asm, s.history.present.assemblies ?? [], target.item.partId) : null;
-    const instance = found?.part;
-    const part = instance && findMesh(s.parts, meshIdOf(instance));
-    if (!found || !instance || !part) return;
-    const ref = target.item.kind === "edge" ? part.edgeRefs?.[target.item.index] : part.faceRefs?.[target.item.index];
-    if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return;
-    // Picks name the part itself, whichever configuration it's shown in. Where it was clicked is kept
-    // (in the part's own coordinates), and a click near an edge's end puts the connector on that corner.
-    const point = target.local?.map((v) => Math.round(v * 1e6) / 1e6) as [number, number, number] | undefined;
-    const spot = point ? clickedSpot(part, { partId: part.id, ref }, point) : undefined;
-    s.pickMateConnector({ instanceId: found.top.id, ...(found.path.length ? { path: found.path } : {}), pick: { partId: instance.partId, ref }, ...(spot ? { spot } : {}), ...(point ? { point } : {}) });
+    const c = connectorAt(target);
+    if (c) s.pickMateConnector(c);
     return;
   }
-  // A click on a part inside a sub-assembly selects the whole sub-assembly.
-  const id = target?.kind === "part" ? topOfKey(target.item.partId) : null;
+  // A Mirror waiting for the face to mirror across.
+  if (s.mirrorFacePick && s.editingPattern) {
+    const c = connectorAt(target);
+    if (c) s.pickMirrorFace(c);
+    return;
+  }
+  // A click on a part inside a sub-assembly selects the whole sub-assembly — except in an exploded view,
+  // where it selects just that part, so an exploded view step can move it on its own.
+  const exploded = activeAssembly(s)?.explode !== undefined;
+  const id = target?.kind === "part" ? (exploded ? target.item.partId : topOfKey(target.item.partId)) : null;
   if (!id) {
     if (!additive) s.setAsmSelection([]);
     return;
@@ -655,6 +674,8 @@ export function Viewport() {
   }, [parts, shownParts, instanceKey, showFlat, flatMeshes]);
   const { solved } = useSolvedAssembly();
   const mateDraft = useStore((s) => s.mateDraft?.mate ?? null);
+  // An open Mirror across a face: that face lights up.
+  const mirrorFace = useStore((s) => (s.editingPattern ? activeAssembly(s)?.patterns?.find((p) => p.id === s.editingPattern)?.plane ?? null : null));
   // Exploded view: shown spread apart, except while a mate is being made.
   const explodePreview = useStore((s) => s.explodePreview);
   // Null when not exploded (0 = exploded view steps only).
@@ -663,11 +684,15 @@ export function Viewport() {
     if (!assembly) return NO_PLACEMENTS;
     const solvedPlaces = Object.fromEntries(assembly.instances.map((i) => [i.id, solved?.placements[i.id] ?? i.placement]));
     const shown = explodeAssembly(assembly, parts, solvedPlaces, explode, allAssemblies);
+    // Exploded view steps can also move a part inside a sub-assembly on its own.
+    const inner = explode === null ? NO_SHIFT : stepPartOffsets(assembly.explodeSteps ?? []);
     return Object.fromEntries(
       leaves.map((l) => {
         // Parts inside a sub-assembly ride along with it.
         const at = shown[l.top] ?? IDENTITY;
         const m = placementMatrix(l.path.length ? compose(at, l.relative) : at);
+        const d = l.path.length ? inner[l.key] : undefined;
+        if (d) for (const k of [0, 1, 2]) m[12 + k] += d[k];
         // Mirrored copies: the part flipped across its own YZ plane first.
         if (l.instance.mirrored) for (const k of [0, 1, 2]) m[k] = -m[k];
         return [l.key, m];
@@ -778,12 +803,14 @@ export function Viewport() {
         assembly
           ? mateDraft
             ? connectorItems(parts, assembly, allAssemblies ?? [], [mateDraft.a, mateDraft.b])
-            : instanceSelection(display, asmSelection)
+            : mirrorFace
+              ? connectorItems(parts, assembly, allAssemblies ?? [], [mirrorFace])
+              : instanceSelection(display, asmSelection)
           : picks
             ? itemsForPicks(parts, pickList ?? [])
             : selection,
       ),
-    [selection, picks, parts, assembly, display, asmSelection, mateDraft, allAssemblies],
+    [selection, picks, parts, assembly, display, asmSelection, mateDraft, allAssemblies, mirrorFace],
   );
   useEffect(
     () => viewportApi.current?.setDatums({ selected: selectedPlane, listHover: listHoverPlane, hidden: hiddenDatums }),

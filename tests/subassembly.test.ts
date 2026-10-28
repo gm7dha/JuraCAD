@@ -299,8 +299,12 @@ describe("mates and patterns with sub-assemblies", () => {
     // Once both sides are picked, a click starts again as usual.
     const both = { type: "fastened" as const, ...first, b: { instanceId: "s2", path: ["p1"], pick: face } };
     expect(samePieceClick(both, { instanceId: "s1", path: ["p2"], pick: face })).toBe(false);
-    // Width: the second face of a side must be on the same part.
-    expect(samePieceClick({ type: "width", a: { instanceId: "s1", path: ["p1"], pick: face } }, { instanceId: "s1", path: ["p2"], pick: face })).toBe(true);
+    // Width: the second face of a side may be on another part of the same copy (a slot made by two plates)…
+    const slot = { type: "width" as const, a: { instanceId: "s1", path: ["p1"], pick: face } };
+    expect(samePieceClick(slot, { instanceId: "s1", path: ["p2"], pick: face })).toBe(false);
+    expect(pickConnector(slot, { instanceId: "s1", path: ["p2"], pick: face }).a).toEqual({ instanceId: "s1", path: ["p1"], pick: face, pick2: face, path2: ["p2"] });
+    // …but once that side has both faces, the other side can't be in the same copy.
+    expect(samePieceClick({ type: "width", a: { ...slot.a, pick2: face, path2: ["p2"] } }, { instanceId: "s1", path: ["p3"], pick: face })).toBe(true);
     const other = pickConnector({ type: "fastened", ...first }, { instanceId: "s2", path: ["p1"], pick: face });
     expect(other.b).toEqual({ instanceId: "s2", path: ["p1"], pick: face });
   });

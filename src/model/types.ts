@@ -716,6 +716,17 @@ export interface AssemblyPattern {
   flip?: boolean;
   /** Circular: a point the axis passes through (mm). */
   centre?: [number, number, number];
+  /**
+   * Mirror: across this flat face (on any part, also one inside a sub-assembly)
+   * instead of the plane square to `axis` — it follows the face as its part moves.
+   */
+  plane?: MateConnector;
+  /**
+   * Mirror: copies of symmetric parts show the same part, turned to fill the
+   * mirror image (Onshape's "mirror as instance"), rather than its mirror image,
+   * so the parts list counts them as one part.
+   */
+  samePart?: boolean;
 }
 
 /** Kinds of mate (Onshape names in brackets where they differ): Fasten, Hinge (revolute), Slider, Cylindrical, Planar, Ball. */
@@ -733,6 +744,12 @@ export interface MateConnector {
   pick: TopoPick;
   /** Width mates: the second flat face; the connector sits halfway between the two. */
   pick2?: TopoPick;
+  /**
+   * Width mates on a sub-assembly: the way down to the second face's part, when
+   * it's another part of the same copy than the first face's (a slot made by
+   * two plates). Missing = the same part as `pick`.
+   */
+  path2?: string[];
   /**
    * Where on the face or edge the connector sits, when not its usual spot (a
    * face's centre, an edge's middle or a circle's centre): an edge's start or
@@ -819,8 +836,14 @@ export interface Assembly {
 /** One step of an exploded view: some parts moved along X, Y or Z by a distance. */
 export interface ExplodeStep {
   id: string;
-  /** The parts moved (instance ids). */
+  /** The parts moved (instance ids; a sub-assembly moves as one piece). */
   instances: string[];
+  /**
+   * Parts inside sub-assemblies moved on their own (optional: older saves have
+   * none): each one's sub-assembly (a top-level instance) and the instances
+   * inside it, one per level, down to the part — like MateConnector.path.
+   */
+  parts?: { instanceId: string; path: string[] }[];
   axis: "x" | "y" | "z";
   /** Go the other way (−X…). */
   flip?: boolean;

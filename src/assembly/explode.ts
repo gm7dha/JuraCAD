@@ -88,6 +88,31 @@ export function stepOffsets(steps: readonly ExplodeStep[]): Record<string, Vec3>
   return out;
 }
 
+/** The key of a part inside a sub-assembly that a step moves ("top/inner/part", as the 3D view names it). */
+export const stepPartKey = (p: { instanceId: string; path: readonly string[] }): string => [p.instanceId, ...p.path].join("/");
+
+/**
+ * The steps' moves of parts inside sub-assemblies, added up for each (by its
+ * "top/inner/part" key). They come on top of wherever the sub-assembly itself
+ * is shown (a sub-assembly moved by a step carries its parts along first).
+ */
+export function stepPartOffsets(steps: readonly ExplodeStep[]): Record<string, Vec3> {
+  const out: Record<string, Vec3> = {};
+  for (const step of steps) {
+    if (!step.parts?.length) continue;
+    const d = stepDistance(step);
+    if ("error" in d) continue;
+    const dir = AXES[step.axis];
+    const k = (step.flip ? -1 : 1) * d.value;
+    for (const p of step.parts) {
+      const key = stepPartKey(p);
+      const o = out[key] ?? [0, 0, 0];
+      out[key] = [o[0] + dir[0] * k, o[1] + dir[1] * k, o[2] + dir[2] * k];
+    }
+  }
+  return out;
+}
+
 /** Two sets of offsets added together. */
 export function addOffsets(a: Record<string, Vec3>, b: Record<string, Vec3>): Record<string, Vec3> {
   const out: Record<string, Vec3> = { ...a };
@@ -115,7 +140,13 @@ export function tidyExplodeSteps(a: Assembly): Assembly {
   if (!a.explodeSteps) return a;
   const present = new Set(a.instances.map((i) => i.id));
   const { explodeSteps: _old, ...rest } = a;
-  const steps = a.explodeSteps.map((s) => ({ ...s, instances: s.instances.filter((id) => present.has(id)) })).filter((s) => s.instances.length);
+  const steps = a.explodeSteps
+    .map((s): ExplodeStep => {
+      const { parts: _old, ...plain } = s;
+      const parts = s.parts?.filter((p) => present.has(p.instanceId)) ?? [];
+      return { ...plain, instances: s.instances.filter((id) => present.has(id)), ...(parts.length ? { parts } : {}) };
+    })
+    .filter((s) => s.instances.length || s.parts?.length);
   return steps.length ? { ...rest, explodeSteps: steps } : rest;
 }
 
@@ -124,10 +155,22 @@ export function parseExplodeStep(raw: unknown): ExplodeStep | null {
   const r = (raw ?? {}) as Record<string, unknown>;
   if (typeof r.id !== "string" || !Array.isArray(r.instances)) return null;
   const instances = [...new Set(r.instances.filter((x): x is string => typeof x === "string"))];
-  if (!instances.length) return null;
+  // Parts inside sub-assemblies: a sub-assembly and the path down to the part (each listed once).
+  const seen = new Set<string>();
+  const parts = (Array.isArray(r.parts) ? r.parts : []).flatMap((raw): { instanceId: string; path: string[] }[] => {
+    const p = (raw ?? {}) as Record<string, unknown>;
+    if (typeof p.instanceId !== "string" || !p.instanceId || !Array.isArray(p.path) || !p.path.length || !p.path.every((x) => typeof x === "string" && x)) return [];
+    const part = { instanceId: p.instanceId, path: p.path as string[] };
+    const key = stepPartKey(part);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [part];
+  });
+  if (!instances.length && !parts.length) return null;
   return {
     id: r.id,
     instances,
+    ...(parts.length ? { parts } : {}),
     axis: r.axis === "x" || r.axis === "y" ? r.axis : "z",
     ...(r.flip === true ? { flip: true } : {}),
     distance: typeof r.distance === "string" ? r.distance : typeof r.distance === "number" && Number.isFinite(r.distance) ? String(r.distance) : "20",

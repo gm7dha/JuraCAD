@@ -13,12 +13,13 @@ import { evaluate, getCurrentScope, type Scope } from "../model/expr";
 import type { Assembly, Instance, Mate, MateConnector, MateType } from "../model/types";
 import { sameRef } from "../geometry/topoRef";
 import { applyPlacement, compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, rotate, sub, type Placement, type Vec3 } from "./math";
-import { connectorFrameOnParts, framePlacement, type Frame } from "./connectors";
-import { mirrorPlacement, patternStep, placeCopy } from "./patterns";
+import { connectorFrameOnParts, framePlacement, widthFrame, type Frame } from "./connectors";
+import { axisPlane, mirrorAcross, OWN_YZ, patternStep, placeCopy, type MirrorPlane, type OwnPlane } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
 import { withoutSuppressed } from "./suppress";
 import { isOrigin, ORIGIN_ID, originFrame } from "./origin";
 import { pathProblem } from "./paths";
+import { ownSymmetry } from "./symmetry";
 import type { PartMesh } from "../kernel/protocol";
 
 export interface MateValueDef {
@@ -271,9 +272,61 @@ export interface SolveOptions {
    * Not needed when the assembly has no sub-assemblies.
    */
   assemblies?: readonly Assembly[];
+  /**
+   * Mirrors that show a symmetric part as itself (the same hand as its original):
+   * the plane of its own that the part is symmetric across (solveWithParts works it
+   * out from the part's shape). Missing or null: the part isn't (known to be) symmetric.
+   */
+  symmetry?: (instance: Instance) => OwnPlane | null;
+  /** (Inside the solver) mirrors across faces: each one's plane where the face ended up, worked out by a first pass. */
+  facePlanes?: Record<string, MirrorPlane | string>;
+}
+
+/** A connector on its own, looked up like a mate's first side. */
+const asMate = (c: MateConnector): Mate => ({ id: "", name: "", type: "fastened", a: c, b: c, flip: false, values: {} });
+
+/**
+ * Where each face-mirror's face is, from a first solve with those mirrors' copies
+ * left to sit where they are (so a face on any part, placed by its own mates,
+ * gives the plane), as a plane — or a plain-English reason it can't be used.
+ */
+function mirrorFacePlanes(input: Assembly, frameOf: FrameLookup, options: SolveOptions): Record<string, MirrorPlane | string> {
+  const faced = (input.patterns ?? []).filter((p) => p.kind === "mirror" && p.plane);
+  const skip: Record<string, string> = Object.fromEntries(faced.map((p) => [p.id, "(first pass)"]));
+  const first = solveAssembly(input, frameOf, { ...options, facePlanes: skip });
+  const out: Record<string, MirrorPlane | string> = {};
+  for (const p of faced) {
+    const c = p.plane!;
+    const on = input.instances.find((i) => i.id === c.instanceId);
+    if (!isOrigin(c) && !on) {
+      out[p.id] = "The face it mirrors across was on a part that's been removed. Pick another face, or one of the assembly's planes.";
+      continue;
+    }
+    if (on?.copyOf?.pattern === p.id) {
+      out[p.id] = "It can't mirror across a face of one of its own copies. Pick a face on another part, or one of the assembly's planes.";
+      continue;
+    }
+    if (on?.suppressed) {
+      out[p.id] = `The face it mirrors across is on ${on.name}, which is suppressed. Unsuppress it, or pick another face.`;
+      continue;
+    }
+    const f = frameOf(asMate(c), "a");
+    if (!f || f.surface !== "plane") {
+      out[p.id] = "The face it mirrors across can't be found any more (or isn't flat). Pick a flat face again, or one of the assembly's planes.";
+      continue;
+    }
+    const at = on ? first.placements[on.id] ?? on.placement : IDENTITY;
+    const w = placeFrame(at, f);
+    out[p.id] = { point: w.origin, normal: w.z };
+  }
+  return out;
 }
 
 export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: SolveOptions = {}): SolveResult {
+  // Mirrors across a face: find where the face is first (its part placed by its own mates), then mirror across it.
+  if (!options.facePlanes && (input.patterns ?? []).some((p) => p.kind === "mirror" && p.plane)) {
+    return solveAssembly(input, frameOf, { ...options, facePlanes: mirrorFacePlanes(input, frameOf, options) });
+  }
   // Relations (gears, rack and pinion, screws) set the amounts of the mates they drive.
   // Suppressed parts (and the mates on them) are left out; they stay where they were.
   const related = applyRelations(withoutSuppressed(input));
@@ -378,8 +431,26 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
     for (const i of assembly.instances) {
       if (i.copyOf?.pattern !== p.id || !instances.has(i.copyOf.seed)) continue;
       if (p.kind === "mirror") {
+        // Across a face: the plane where the face is (or, in the first pass, the copy isn't held yet).
+        const face = p.plane ? options.facePlanes?.[p.id] : undefined;
+        if (p.plane && typeof face !== "object") {
+          if (face && face !== "(first pass)") patternErrors[p.id] = face;
+          continue;
+        }
+        const plane: MirrorPlane = typeof face === "object" ? face : axisPlane(p);
+        // A mirror-image copy shows the part flipped across its own YZ plane. A copy showing the same hand as its
+        // original (a symmetric part shown as itself) is turned instead, using the plane the part is symmetric across.
+        const seed = instances.get(i.copyOf.seed)!;
+        let own = OWN_YZ;
+        if (!!i.mirrored === !!seed.mirrored) {
+          const sym = options.symmetry?.(seed) ?? null;
+          if (!sym && !patternErrors[p.id])
+            patternErrors[p.id] = `${seed.name} isn't symmetric (any more), so showing the same part can't make a true mirror image. Untick "Same part for symmetric parts" to make a mirror-image copy.`;
+          // (On a mirrored original, the part's own plane is flipped across its YZ plane too.)
+          if (sym) own = seed.mirrored && sym.axis === "x" ? { axis: "x", at: -sym.at } : sym;
+        }
         // Mirroring is its own undoing: the copy is the original's mirror image, and the other way round.
-        const flip = (q: Placement) => mirrorPlacement(p, q);
+        const flip = (q: Placement) => mirrorAcross(plane, q, own);
         copyLinks.push({ u: null, patternId: p.id, a: i.copyOf.seed, b: i.id, fwd: flip, back: flip });
         continue;
       }
@@ -626,13 +697,20 @@ function solveLinear(M: number[][], b: number[]): number[] | null {
   return a.map((row, i) => row[n] / row[i]);
 }
 
+/** Mirrored copies of symmetric parts shown as the part itself: the plane each part is symmetric across (from its shape). */
+const symmetryOn = (parts: readonly PartMesh[]) => (i: Instance) => {
+  const mesh = i.subAssembly ? undefined : findMesh(parts, meshIdOf(i));
+  return mesh ? ownSymmetry(mesh) : null;
+};
+
 /** Solve using the parts as built now (pass the document's assemblies when it may hold sub-assemblies). */
 export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: SolveOptions = {}): SolveResult {
-  const r = solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies), options);
+  const r = solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies), { symmetry: symmetryOn(parts), ...options });
   // A connector on a part inside a sub-assembly: say plainly when the way to it is switched off or gone.
   for (const m of assembly.mates ?? []) {
     if (!r.mateErrors[m.id]) continue;
-    const problem = pathProblem(assembly, m.a, options.assemblies) ?? pathProblem(assembly, m.b, options.assemblies);
+    const second = (c: MateConnector) => (c.path2 ? pathProblem(assembly, { instanceId: c.instanceId, path: c.path2 }, options.assemblies) : null);
+    const problem = pathProblem(assembly, m.a, options.assemblies) ?? pathProblem(assembly, m.b, options.assemblies) ?? second(m.a) ?? second(m.b);
     if (problem) r.mateErrors[m.id] = problem.kind === "suppressed" ? `${problem.text}. Unsuppress it, or edit the mate and pick another face.` : problem.text;
   }
   return r;
@@ -659,6 +737,15 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
   if (isOrigin(c)) return originFrame(c);
   // On the part as the instance shows it (which may be another configuration).
   const instance = assembly.instances.find((i) => i.id === c.instanceId);
+  // A Width mate's two faces on two parts of one sub-assembly copy (a slot made by two plates): each face found
+  // on its own part, in the sub-assembly's coordinates, and the connector halfway between them.
+  if (c.pick2 && c.path2 && instance?.subAssembly) {
+    if (c.pick.ref.kind !== "face" || c.pick2.ref.kind !== "face" || c.pick.ref.surface !== "PLANE" || c.pick2.ref.surface !== "PLANE") return null;
+    const { pick2, path2, spot: _s, point: _p, ...first } = c;
+    const f1 = connectorFrameFor(assembly, parts, first, assemblies, within);
+    const f2 = connectorFrameFor(assembly, parts, { instanceId: c.instanceId, path: path2, pick: pick2 }, assemblies, within);
+    return f1 && f2 ? widthFrame(f1, f2) : null;
+  }
   if (instance?.subAssembly) return frameInside(instance.subAssembly, parts, c, assemblies, within);
   // Always on the part the instance shows now (if it was replaced, the most similar face or edge of the new one).
   const mesh = instance ? findMesh(parts, meshIdOf(instance)) : undefined;
@@ -702,7 +789,7 @@ const insideCache = new WeakMap<readonly Assembly[], WeakMap<readonly PartMesh[]
  * placed). Worked out once for each state of the document and parts.
  */
 export function solvedInside(sub: Assembly, parts: readonly PartMesh[], assemblies?: readonly Assembly[], within: readonly string[] = [sub.id]): Record<string, Placement> {
-  const solve = () => solveAssembly(sub, (m, side) => connectorFrameFor(sub, parts as PartMesh[], m[side], assemblies, within)).placements;
+  const solve = () => solveAssembly(sub, (m, side) => connectorFrameFor(sub, parts as PartMesh[], m[side], assemblies, within), { symmetry: symmetryOn(parts) }).placements;
   if (!assemblies) return solve();
   let byParts = insideCache.get(assemblies);
   if (!byParts) insideCache.set(assemblies, (byParts = new WeakMap()));
@@ -736,6 +823,8 @@ export function samePieceClick(m: { type: MateType; a?: MateConnector; b?: MateC
   // The side the click would add to: the first part while the second isn't picked (or, for Width mates, a side still waiting for its second face).
   const open = m.type === "width" ? (m.a && !m.a.pick2 ? m.a : m.a && !m.b ? m.a : m.b && !m.b.pick2 ? m.b : undefined) : m.a && !m.b ? m.a : undefined;
   if (!open || open.instanceId !== c.instanceId) return false;
+  // A Width mate's second face may be on another part of the same copy (a slot made by two plates): that's allowed.
+  if (m.type === "width" && !open.pick2) return false;
   const key = (x: MateConnector) => (x.path ?? []).join("/");
   return (!!open.path?.length || !!c.path?.length) && key(open) !== key(c);
 }
@@ -759,8 +848,12 @@ export function pickConnector(m: { type: MateType; a?: MateConnector; b?: MateCo
  * part other than the one being picked moves on to (or starts) the other side.
  */
 export function pickWidthFace(m: { a?: MateConnector; b?: MateConnector }, c: MateConnector): { a?: MateConnector; b?: MateConnector } {
+  // The second face of a side: on the same part, or (in a sub-assembly copy) on another part of the same copy.
+  const samePath = (side: MateConnector) => (side.path ?? []).join("/") === (c.path ?? []).join("/");
   const add = (side: MateConnector | undefined) =>
-    side && side.instanceId === c.instanceId && !side.pick2 && !sameRef(side.pick.ref, c.pick.ref) ? { ...side, pick2: c.pick } : null;
+    side && side.instanceId === c.instanceId && !side.pick2 && !(samePath(side) && sameRef(side.pick.ref, c.pick.ref))
+      ? { ...side, pick2: c.pick, ...(samePath(side) ? {} : { path2: c.path ?? [] }) }
+      : null;
   if (!m.a) return { a: c, b: undefined };
   if (!m.a.pick2) {
     const a = add(m.a);
