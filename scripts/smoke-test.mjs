@@ -816,13 +816,16 @@ try {
   await page.getByRole("button", { name: "Cancel" }).click();
 
   step = "moving a copy of a part";
+  const partsBeforeMove = await page.locator(".part-row").count();
   await page.getByRole("button", { name: "Move", exact: true }).click();
   await page.waitForSelector(".feature-dialog >> text=Make a copy");
   await page.getByLabel("Make a copy (keep the original where it is)").check();
   await page.locator("#param-dz").fill("60");
   await page.getByRole("button", { name: "Accept" }).click();
   await page.waitForSelector(".feature-row:not(.datum) >> text=Transform 1", { timeout: 10_000 });
-  await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 4"), null, { timeout: 30_000 });
+  // The copy is one more part (the pattern of the revolve already made its own part, as in Onshape); wait for that rebuild.
+  await page.waitForFunction((n) => document.querySelectorAll(".part-row").length === n + 1, partsBeforeMove, { timeout: 30_000 });
+  await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
   if ((await page.locator(".feature-row.failed").count()) > 0) {
     const info = await page.evaluate(() => {
       const s = window.juracadStore.getState();
