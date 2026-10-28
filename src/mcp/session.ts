@@ -2,7 +2,7 @@
  * The design Claude is working on: the document (exactly what a .juracad file
  * holds), its undo history, and the geometry engine that builds it.
  */
-import { featuresForEngine } from "../kernel/buildInput";
+import { documentStudioInputs, featuresForEngine } from "../kernel/buildInput";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { emptyDocument } from "../model/document";
 import { resolveVariables } from "../model/variables";
@@ -26,7 +26,8 @@ export interface LiveStatus {
  * every tool works on the design open in that tab, and changes are sent back.
  */
 export interface LiveLink {
-  call(s: Session, tool: string, run: () => Promise<ToolResult>): Promise<ToolResult>;
+  /** `signal`: aborted when Claude cancels the call (the change is then not sent, if it hasn't been yet). */
+  call(s: Session, tool: string, run: () => Promise<ToolResult>, signal?: AbortSignal): Promise<ToolResult>;
   status(): LiveStatus;
 }
 
@@ -43,6 +44,23 @@ export interface SessionSnapshot {
 export interface Build {
   parts: PartMesh[];
   errors: Record<string, string>;
+}
+
+/**
+ * Thrown at a checkpoint when Claude has cancelled the call (MCP's
+ * notifications/cancelled): the tool stops there and callTool puts the design
+ * back as it was.
+ */
+export class Cancelled extends Error {
+  constructor() {
+    super("The call was cancelled.");
+  }
+}
+
+/** Let waiting messages (such as a cancellation from Claude) arrive: two turns of Node's event loop. */
+export function yieldToEvents(): Promise<void> {
+  const hop = () => new Promise<void>((resolve) => (typeof setImmediate === "function" ? setImmediate(resolve) : setTimeout(resolve, 0)));
+  return hop().then(hop);
 }
 
 const MAX_UNDO = 100;
@@ -65,15 +83,55 @@ export class Session {
   outer: { doc: JuraCADDocument; studio: string } | null = null;
   /** The live link with a JuraCAD tab, when the extension has one (it may not be connected). */
   live: LiveLink | null = null;
+  /** Calls run one at a time (Claude may send several at once; tools wait at checkpoints, so they'd otherwise interleave). */
+  private queue: Promise<unknown> = Promise.resolve();
+  /** Set while a call runs: aborted when Claude cancels it. */
+  signal: AbortSignal | null = null;
+  /** Set when the call running now has written a file (which can't be taken back if it's cancelled after). */
+  wroteFile = false;
   private engine: GeometryEngine;
   private builtKey = "";
   private built: Build | null = null;
+  /** A second engine for the whole document (every Part Studio), for assemblies and drawings; made when first needed. */
+  private wholeEngine: GeometryEngine | null = null;
+  private wholeKey = "";
+  private wholeBuilt: Build | null = null;
+  /** The meshes of each Part Studio as last built by the whole-document engine (it only sends those it rebuilt). */
+  private wholeMeshes = new Map<string, PartMesh[]>();
 
   constructor(
     readonly folder: DesignFolder | null,
-    makeEngine: () => GeometryEngine = () => new GeometryEngine(),
+    private readonly makeEngine: () => GeometryEngine = () => new GeometryEngine(),
   ) {
     this.engine = makeEngine();
+  }
+
+  /** Run calls one after another, in the order they came. */
+  serial<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(fn);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
+  /** Has Claude cancelled the call running now? */
+  get cancelled(): boolean {
+    return !!this.signal?.aborted;
+  }
+
+  /** Stop here if the call has been cancelled. */
+  throwIfCancelled(): void {
+    if (this.cancelled) throw new Cancelled();
+  }
+
+  /**
+   * Between slow steps: let a cancellation from Claude arrive, and stop if it
+   * has. (Building is done in one go, so a call stops at the next of these.)
+   */
+  async checkpoint(): Promise<void> {
+    this.throwIfCancelled();
+    if (!this.signal) return;
+    await yieldToEvents();
+    this.throwIfCancelled();
   }
 
   /** The values of the design's variables, by name. */
@@ -98,6 +156,40 @@ export class Session {
   withEngine<T>(fn: (engine: GeometryEngine) => T): T {
     this.build();
     return fn(this.engine);
+  }
+
+  /**
+   * Build the whole document — every Part Studio, and Part Studios shown in
+   * other configurations by assemblies — for assemblies and drawings. Parts
+   * made in other configurations have `configuration` set.
+   */
+  buildAll(doc = this.wholeDoc()): Build {
+    const scope = this.scope(doc);
+    const studios = documentStudioInputs(doc);
+    const key = JSON.stringify([studios, scope, doc.partNames ?? {}]);
+    if (this.wholeBuilt && key === this.wholeKey) return this.wholeBuilt;
+    setCurrentScope(scope);
+    this.wholeEngine ??= this.makeEngine();
+    let r: ReturnType<GeometryEngine["rebuildStudios"]>;
+    try {
+      r = this.wholeEngine.rebuildStudios(studios, scope, doc.partNames ?? {});
+    } finally {
+      // Back to the design's own values, even if the build failed.
+      setCurrentScope(this.scope());
+    }
+    const rebuilt = new Map<string, PartMesh[]>(r.rebuilt.map((id) => [id, []]));
+    for (const p of r.parts) rebuilt.get(p.studioId ?? "")?.push(p);
+    for (const [id, list] of rebuilt) this.wholeMeshes.set(id, list);
+    for (const id of [...this.wholeMeshes.keys()]) if (!r.studioOrder.includes(id)) this.wholeMeshes.delete(id);
+    this.wholeBuilt = { parts: r.studioOrder.flatMap((id) => this.wholeMeshes.get(id) ?? []), errors: r.featureErrors };
+    this.wholeKey = key;
+    return this.wholeBuilt;
+  }
+
+  /** Use the whole-document engine (building everything first if needed). */
+  withWholeEngine<T>(fn: (engine: GeometryEngine, build: Build) => T): T {
+    const b = this.buildAll();
+    return fn(this.wholeEngine!, b);
   }
 
   /** Use the engine as it was last built (whatever was built last), without building anything. */
@@ -187,5 +279,6 @@ export class Session {
 
   dispose(): void {
     this.engine.dispose();
+    this.wholeEngine?.dispose();
   }
 }

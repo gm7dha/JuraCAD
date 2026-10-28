@@ -20,39 +20,15 @@ import { InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, type Obj }
 import { applyFeature, applySketch, describePlane, FEATURE_KINDS, KIND_OF, limitProblems, type FeatureKind, type SpecContext } from "./featureSpec";
 import { describeEdge, describeFace, edgeList, faceList, facing, PICK_HELP } from "./picks";
 import { renderViews, RENDER_VIEWS, type RenderView } from "./render";
-import type { Session } from "./session";
+import { Cancelled, type Session } from "./session";
+import { describeChange } from "./live";
 import { SHAPE_HELP } from "./sketchShapes";
+import { checkFree, fileNameFor, needFolder, r1, r2, say, writeOut, type ToolDef, type ToolResult } from "./toolKit";
+import { ASSEMBLY_TOOLS, assemblyViews, exportAssemblyBytes, findAssembly, instanceFaces } from "./assemblyTools";
+import { DRAWING_TOOLS } from "./drawingTools";
 
-export type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
-export interface ToolResult {
-  content: Content[];
-  isError?: boolean;
-}
-
-export interface ToolDef {
-  name: string;
-  title: string;
-  description: string;
-  inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[]; additionalProperties?: boolean };
-  /** Only looks; changes nothing. */
-  readOnly?: boolean;
-  /** Can replace a file, or drop the design being worked on. */
-  destructive?: boolean;
-  run: (s: Session, a: Obj) => ToolResult | Promise<ToolResult>;
-}
-
-/** A file name made from the design's name, safe on every computer. */
-export function fileNameFor(name: string): string {
-  // eslint-disable-next-line no-control-regex
-  const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-").replace(/^[.\s]+|[.\s]+$/g, "").slice(0, 120);
-  if (!cleaned || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(cleaned)) return "design";
-  return cleaned;
-}
-
-const say = (...lines: (string | false | null | undefined)[]): ToolResult => ({ content: [{ type: "text", text: lines.filter((l) => l !== false && l !== null && l !== undefined).join("\n") }] });
-
-const r2 = (v: number) => Math.round(v * 100) / 100 || 0;
-const r1 = (v: number) => Math.round(v * 10) / 10 || 0;
+export type { Content, ToolDef, ToolResult } from "./toolKit";
+export { fileNameFor } from "./toolKit";
 
 export const FORMAT_GUIDE = `JuraCAD conventions (the same as Onshape):
 - Units: millimetres for every length, degrees for angles. Any number may instead be maths or a variable as text: "w / 2", "1 in", "thickness * 2".
@@ -66,7 +42,10 @@ export const FORMAT_GUIDE = `JuraCAD conventions (the same as Onshape):
 - Limits: sizes and positions up to 10 000 mm; patterns up to 100 copies each way (400 in all); sketches up to 100 shapes, outlines up to 100 points.
 - Picking faces and edges: ${PICK_HELP.faces} ${PICK_HELP.edges} Numbers (F3, E5) change when the part changes, so list them again after changes.
 - A sketch on a face stays where that face was when it was drawn. If an earlier change moves the face (say, a thicker plate), put the sketch back with edit_feature {"feature": "Sketch 2", "on_face": "top"}.
-- Check your work: describe_design (volumes, sizes, validity, problems) and get_views (a picture). If something went wrong, edit_feature or undo.
+- Check your work: describe_design (volumes, sizes, validity, problems) and get_views (a picture). If something went wrong, edit_feature or undo (undo also takes back assembly and drawing steps, one at a time).
+- Assemblies (parts put together, as in Onshape): create_assembly → insert_into_assembly (copies are named "Base <1>", "Base <2>"…; the first copy in is fixed; parts can come from any Part Studio) → add_mate between two copies: "first" stays put, "second" moves to meet it. On a flat face the connector is the face's centre with Z out of the face; on a round edge or face it's the centre and axis. By default the two Z directions point at each other (a lid's bottom face onto a box's top face); "flip": true points them the same way. Fasten holds solid; hinge turns; slider slides; cylindrical slides and turns; planar, pin_slot, parallel, width, tangent and ball as described in add_mate. Faces and edges of a copy are chosen as it sits in the assembly now ("top" is its face facing +Z there): list_faces / list_edges with "assembly" and "instance". A mate that can't be satisfied is refused with the reason. Then describe_assembly (where each copy is, the mates, the parts list), check_assembly (clashes), get_views {"assembly": …} (a picture), explode_assembly (a spread-out view; pictures and drawings only), export_model {"assembly": …} (STEP/STL/3MF with every copy in its place), and place_instance to move, fix or switch off a copy.
+- Drawings (2D engineering drawings, as in Onshape): create_drawing of a part or an assembly (paper, scale "fit" or "1:2", views front/top/right/left/back/bottom/iso, first- or third-angle projection, title block) → auto_dimension (the usual sizes) and/or add_dimension (between two model points [x, y, z] as the view sees them — each snaps to the nearest corner, end or circle centre — or a circle's size) → add_section_view (a cut along a line on a view) and add_detail_view (a circle shown bigger) → edit_drawing to change settings and the title block → view_drawing (a picture of the sheet) → export_drawing (PDF of every sheet, or SVG/DXF of one). describe_drawing gives each view's directions (front: across = X, up = Z; top: X, Y; right: Y, Z), extent and circles. Assembly drawings get a parts list and numbered balloons; "exploded": true draws the assembly spread apart.
+- Cancelling: if Claude cancels a call while it's running, the call stops at its next step and nothing is changed (a file it had already finished writing stays). When live, a change already sent to the user's tab is kept as the tab decides.
 - Save with save_design; the owner opens the .juracad file in JuraCAD (https://gm7dha.github.io/JuraCAD/) with Open, where every feature and dimension can be changed.
 - Live with Claude: if the user clicks "Connect to Claude" in JuraCAD's top bar (in Safari it goes through a small "JuraCAD ↔ Claude" window that must stay open), the tools work on the design open in their JuraCAD tab instead — the Part Studio on show — and each change appears there straight away, as one step in its undo list. The user can keep editing and undoing; if they change something at the same moment, your change is refused with nothing lost, so look again (describe_design) and retry. Ask them to finish any dialog they have open if a change is refused as busy. live_status says whether you're connected. new_design and open_design then replace what's open in their tab (they can undo it), so only use them when asked. save_design still saves a .juracad file.`;
 
@@ -112,7 +91,8 @@ export function summarize(f: Feature, doc: JuraCADDocument): string {
     case "extrude": {
       const e = f.extrude!;
       const how = e.end === "throughAll" ? "through all" : e.end === "upToFace" ? "up to a face" : e.end === "symmetric" ? `${mm(p.depth)} (half each way)` : `${mm(p.depth)}${e.second ? ` + ${mm(p.depth2)} the other way` : ""}`;
-      return `extrude ${nameOf(f.sketchRef)} ${how}${e.flip ? ", flipped" : ""}${p.draft && p.draft !== "0" ? `, draft ${p.draft}°` : ""}, ${op}`;
+      const more = (f.moreAreas ?? []).map((m) => nameOf(m.sketch));
+      return `extrude ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} ${how}${e.flip ? ", flipped" : ""}${p.draft && p.draft !== "0" ? `, draft ${p.draft}°` : ""}, ${op}`;
     }
     case "revolve":
       return `revolve ${nameOf(f.sketchRef)} ${p.angle ?? 360}° about ${f.revolve?.axis === "vertical" || f.revolve?.axis === "horizontal" ? `the sketch's ${f.revolve.axis} axis` : "a sketch line"}, ${op}`;
@@ -260,7 +240,7 @@ function effectProblem(s: Session, f: Feature, doc: JuraCADDocument, before: Ret
  * feature does something, otherwise explain and change nothing. Returns the
  * report of the parts, starting with how their volumes changed.
  */
-function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, verb: string): string[] {
+async function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, verb: string): Promise<string[]> {
   const before = s.build().errors;
   const beforeVolumes = volumes(s.build().parts);
   // Sizes and pattern counts, worked out with the new values (variables can change them too), before any slow build.
@@ -269,6 +249,8 @@ function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, 
   if (overLimits.length) {
     throw new InputError(`Couldn't ${verb} — ${overLimits.map(([id, why]) => `${next.features.find((x) => x.id === id)?.name ?? id}: ${why}`).join("; ")}. Nothing was changed.`);
   }
+  // (Between builds, a cancelled call stops: nothing has been changed yet.)
+  await s.checkpoint();
   const after = s.build(next.features, next).errors;
   const fresh = newErrors(before, after);
   const refuse = (why: string) => {
@@ -289,6 +271,7 @@ function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, 
     // What this feature itself does: the parts just before it, and just after.
     const at = next.features.indexOf(f);
     const isLast = at === next.features.length - 1 && next.features.slice(0, at).every((x, i) => x === s.doc.features[i]) && s.doc.features.length === at;
+    if (!isLast) await s.checkpoint();
     const pre = isLast ? beforeVolumes : volumes(s.build(next.features.slice(0, at), next).parts);
     const post = isLast ? afterVolumes : volumes(s.build(next.features.slice(0, at + 1), next).parts);
     // The solid it added or cut, from the build just made.
@@ -297,6 +280,7 @@ function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, 
     const problem = effectProblem(s, f, next, pre, post, toolVolume, notes);
     if (problem) refuse(`: ${problem}`);
   }
+  s.throwIfCancelled();
   s.commit(next);
   return [...notes.map((n) => `Note: ${n}`), volumeChange(beforeVolumes, afterVolumes)!, ...partsReport(s)];
 }
@@ -335,6 +319,16 @@ const KIND_HELP: Record<FeatureKind, string> = {
   cylinder: "cylinder: diameter, height (Z), x, y, z (centre of its base), operation",
   sphere: "sphere: diameter, x, y, z (its centre), operation",
 };
+
+/** A part (list_faces / list_edges), or with "assembly" and "instance", a copy of one as it sits in an assembly. */
+function partOrInstance(s: Session, a: Obj) {
+  if (a.instance !== undefined) {
+    if (a.part !== undefined) throw new InputError('Give either "part" or "instance" (a copy in an assembly), not both.');
+    return instanceFaces(s, a.assembly, a.instance);
+  }
+  if (a.assembly !== undefined) throw new InputError('With "assembly", say which copy: "instance", e.g. "Bracket <1>" (describe_assembly lists them).');
+  return s.part(s.build().parts, a.part, "part");
+}
 
 export const TOOLS: ToolDef[] = [
   {
@@ -399,12 +393,12 @@ export const TOOLS: ToolDef[] = [
       },
       required: ["shapes"],
     },
-    run: (s, a) => {
+    run: async (s, a) => {
       const ctx = context(s, null, false);
       const f = createFeature(s.doc, "sketch");
       const r = applySketch(f, a, ctx);
       if (a.name !== undefined) f.name = text(a.name, "name").slice(0, 80);
-      const report = tryChange(s, addFeature(s.doc, f), f.id, "add the sketch");
+      const report = await tryChange(s, addFeature(s.doc, f), f.id, "add the sketch");
       const free = r?.freedom ?? 0;
       return say(
         `Added ${f.name} [id ${f.id}] on ${planeLabel(f.sketch!.plane!)}: ${f.sketch!.data.curves.filter((c) => !c.construction).length} curves, ${f.sketch!.data.points.filter((p) => p.standalone).length} points.`,
@@ -434,7 +428,7 @@ export const TOOLS: ToolDef[] = [
       required: ["type"],
       additionalProperties: true,
     },
-    run: (s, a) => {
+    run: async (s, a) => {
       const kind = oneOf(a.type, Object.keys(FEATURE_KINDS) as FeatureKind[], "type");
       const ctx = context(s, null, false);
       const f = createFeature(s.doc, FEATURE_KINDS[kind], undefined);
@@ -442,7 +436,7 @@ export const TOOLS: ToolDef[] = [
         f.operation = s.build().parts.some((p) => !p.surface) ? "add" : "new";
       }
       applyFeature(f, kind, a, ctx);
-      const report = tryChange(s, addFeature(s.doc, f), f.id, `add the ${kind.replace("_", " ")}`);
+      const report = await tryChange(s, addFeature(s.doc, f), f.id, `add the ${kind.replace("_", " ")}`);
       return say(`Added ${f.name} [id ${f.id}]: ${summarize(f, s.doc)}.`, ...report);
     },
   },
@@ -457,7 +451,7 @@ export const TOOLS: ToolDef[] = [
       required: ["feature"],
       additionalProperties: true,
     },
-    run: (s, a) => {
+    run: async (s, a) => {
       const old = s.feature(a.feature, "feature");
       const at = s.doc.features.indexOf(old);
       const ctx = context(s, s.doc.features.slice(0, at), true);
@@ -476,7 +470,7 @@ export const TOOLS: ToolDef[] = [
         } else applyFeature(f, kind, a, ctx);
       }
       if (JSON.stringify(f) === JSON.stringify(old)) return say(`${old.name} already has those settings; nothing changed.`);
-      const report = tryChange(s, replaceFeature(s.doc, f), f.id, `change ${old.name}`);
+      const report = await tryChange(s, replaceFeature(s.doc, f), f.id, `change ${old.name}`);
       // Sketches on faces stay where the face was when they were drawn (as in the app).
       const onFaces = s.doc.features.slice(at + 1).filter((x) => x.type === "sketch" && x.sketch?.plane?.kind === "face" && !x.sketch.plane.planeRef && / face of /.test(x.sketch.plane.label));
       return say(
@@ -492,12 +486,12 @@ export const TOOLS: ToolDef[] = [
     title: "Delete a feature",
     description: 'Delete a feature (by name or id). Refused, with the reason, if later features depend on it (delete or change those first).',
     inputSchema: { type: "object", properties: { feature: { type: "string" } }, required: ["feature"] },
-    run: (s, a) => {
+    run: async (s, a) => {
       noExtras(a, ["feature"], "delete_feature");
       const f = s.feature(a.feature, "feature");
-      const users = s.doc.features.filter((x) => x.sketchRef === f.id || x.hole?.sketchRef === f.id || x.pattern?.sources.includes(f.id) || x.mirror?.sources.includes(f.id));
+      const users = s.doc.features.filter((x) => x.sketchRef === f.id || x.moreAreas?.some((m) => m.sketch === f.id) || x.hole?.sketchRef === f.id || x.pattern?.sources.includes(f.id) || x.mirror?.sources.includes(f.id));
       if (users.length) throw new InputError(`${f.name} is used by ${users.map((u) => u.name).join(", ")}. Delete ${users.length > 1 ? "those" : "that"} first (or change ${users.length > 1 ? "them" : "it"} to use something else). Nothing was changed.`);
-      const report = tryChange(s, removeFeature(s.doc, f.id), null, `delete ${f.name}`);
+      const report = await tryChange(s, removeFeature(s.doc, f.id), null, `delete ${f.name}`);
       return say(`Deleted ${f.name}.`, ...report);
     },
   },
@@ -507,7 +501,11 @@ export const TOOLS: ToolDef[] = [
     description: "Undo your last change to the design (one step each time). When live, only your own changes since the user last edited in JuraCAD can be undone here; the user can undo anything in the app.",
     inputSchema: { type: "object", properties: {} },
     run: (s) => {
-      if (s.undo()) return say("Undone. The design is back as it was before the last change.", ...partsReport(s));
+      const undone = s.doc;
+      if (s.undo()) {
+        const what = describeChange("undo_step", s.doc, undone, false).replace(/^Claude: /, "");
+        return say(`Undone — took back: ${what}. The design is back as it was before that change.`, ...partsReport(s));
+      }
       if (s.live?.status().connected) return say("There's nothing of yours to undo since the user last changed the design in JuraCAD. (They can undo anything there with Undo, Ctrl+Z / ⌘Z.)");
       return say("There's nothing to undo.");
     },
@@ -522,7 +520,7 @@ export const TOOLS: ToolDef[] = [
       properties: { variables: { type: "array", items: { type: "object", properties: { name: { type: "string" }, value: {} }, required: ["name", "value"] } } },
       required: ["variables"],
     },
-    run: (s, a) => {
+    run: async (s, a) => {
       noExtras(a, ["variables"], "set_variables");
       const vars: Variable[] = [...(s.doc.variables ?? [])];
       list(a.variables, "variables").forEach((raw, i) => {
@@ -544,7 +542,7 @@ export const TOOLS: ToolDef[] = [
       const bad = Object.entries(errors).map(([id, e]) => `${vars.find((v) => v.id === id)?.name}: ${e}`);
       if (bad.length) throw new InputError(`Those variables don't work out: ${bad.join("; ")}. Nothing was changed.`);
       const next = applyVariables(s.doc, vars);
-      const report = tryChange(s, next, null, "change the variables");
+      const report = await tryChange(s, next, null, "change the variables");
       const values = resolveVariables(vars).values;
       return say(`Variables: ${vars.map((v) => `${v.name} = ${v.value}${String(values[v.name]) !== v.value ? ` (${r2(values[v.name])})` : ""}`).join(", ")}.`, ...report);
     },
@@ -587,6 +585,8 @@ export const TOOLS: ToolDef[] = [
           return `- ${partLine(p)}; ${sound}${c?.thinnest ? `; thinnest wall about ${r2(c.thinnest.thickness)} mm` : ""}`;
         }),
         checks.overlaps?.length ? `Overlapping parts: ${checks.overlaps.map((o) => `${o.a} and ${o.b} (${r1(o.volume)} mm³)`).join("; ")}.` : null,
+        doc.assemblies?.length ? `Assemblies: ${doc.assemblies.map((x) => `"${x.name}" (${x.instances.length} copies, ${(x.mates ?? []).length} mates)`).join(", ")} — describe_assembly for more.` : null,
+        doc.drawings?.length ? `Drawings: ${doc.drawings.map((x) => `"${x.name}"`).join(", ")} — describe_drawing for more.` : null,
         Object.keys(b.errors).length ? `Problems:\n${problems(s, b.errors).join("\n")}` : "No problems.",
       ];
       return say(...lines);
@@ -595,24 +595,34 @@ export const TOOLS: ToolDef[] = [
   {
     name: "list_faces",
     title: "List a part's faces",
-    description: "Every face of a part, numbered F1, F2… with its kind, which way it faces, centre and area — to choose faces for sketches, shells and extrudes. Numbers change when the part changes.",
-    inputSchema: { type: "object", properties: { part: { type: "string", description: "Default the latest part." } } },
+    description: 'Every face of a part, numbered F1, F2… with its kind, which way it faces, centre and area — to choose faces for sketches, shells and extrudes. Numbers change when the part changes. With "assembly" and "instance" (a copy\'s name): that copy\'s faces where it sits in the assembly (same numbers as its part), to choose faces for add_mate.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        part: { type: "string", description: "Default the latest part." },
+        assembly: { type: "string", description: "With instance: a copy's faces as it sits in this assembly (for add_mate)." },
+        instance: { type: "string", description: 'A copy in the assembly, e.g. "Bracket <1>".' },
+      },
+    },
     readOnly: true,
     run: (s, a) => {
-      noExtras(a, ["part"], "list_faces");
-      const p = s.part(s.build().parts, a.part, "part");
+      noExtras(a, ["part", "assembly", "instance"], "list_faces");
+      const p = partOrInstance(s, a);
       return say(`${p.name} has ${p.faceRefs.length} faces:`, ...faceList(p).map(describeFace));
     },
   },
   {
     name: "list_edges",
     title: "List a part's edges",
-    description: 'Every edge of a part, numbered E1, E2… with its kind, ends and length — to choose edges for fillets and chamfers. Optionally only those along an axis ("along": "x"|"y"|"z") or round ones ("along": "round"). Numbers change when the part changes.',
-    inputSchema: { type: "object", properties: { part: { type: "string" }, along: { type: "string", enum: ["x", "y", "z", "round"] } } },
+    description: 'Every edge of a part, numbered E1, E2… with its kind, ends and length — to choose edges for fillets and chamfers. Optionally only those along an axis ("along": "x"|"y"|"z") or round ones ("along": "round"). Numbers change when the part changes. With "assembly" and "instance": that copy\'s edges where it sits in the assembly, for add_mate.',
+    inputSchema: {
+      type: "object",
+      properties: { part: { type: "string" }, along: { type: "string", enum: ["x", "y", "z", "round"] }, assembly: { type: "string" }, instance: { type: "string", description: "A copy in an assembly: its edges as it sits there." } },
+    },
     readOnly: true,
     run: (s, a) => {
-      noExtras(a, ["part", "along"], "list_edges");
-      const p = s.part(s.build().parts, a.part, "part");
+      noExtras(a, ["part", "along", "assembly", "instance"], "list_edges");
+      const p = partOrInstance(s, a);
       const along = a.along === undefined ? null : oneOf(a.along, ["x", "y", "z", "round"] as const, "along");
       const edges = edgeList(p).filter((e) => {
         if (!along) return true;
@@ -629,24 +639,29 @@ export const TOOLS: ToolDef[] = [
   {
     name: "get_views",
     title: "Look at the part",
-    description: `A picture (PNG) of the parts from several directions, shaded with edges, to check the shape. Views: ${RENDER_VIEWS.join(", ")} (default iso, top, front, right). Each view has small X (red), Y (green), Z (blue) arrows.`,
+    description: `A picture (PNG) of the parts from several directions, shaded with edges, to check the shape. Views: ${RENDER_VIEWS.join(", ")} (default iso, top, front, right). Each view has small X (red), Y (green), Z (blue) arrows. With "assembly": that assembly, each copy where its mates put it (spread apart if its exploded view is on), in different colours. For a drawing, use view_drawing.`,
     inputSchema: {
       type: "object",
       properties: {
         views: { type: "array", items: { type: "string", enum: [...RENDER_VIEWS] } },
         part: { type: "string", description: "Only this part (default all)." },
+        assembly: { type: "string", description: "Look at this assembly instead." },
         size: { type: "number", description: "Pixels per view, 200–600 (default 360)." },
       },
     },
     readOnly: true,
     run: (s, a) => {
-      noExtras(a, ["views", "part", "size"], "get_views");
-      const b = s.build();
-      if (!b.parts.length) throw new InputError("There's nothing to look at yet: no parts. Add a sketch and extrude it first.");
+      noExtras(a, ["views", "part", "assembly", "size"], "get_views");
       const views = (a.views === undefined ? ["iso", "top", "front", "right"] : list(a.views, "views")).map((v, i) => oneOf(v, RENDER_VIEWS, `views[${i}]`)) as RenderView[];
       if (views.length > 6) throw new InputError("Ask for at most 6 views at a time.");
       const size = a.size === undefined ? 360 : Math.round(Number(a.size));
       if (!(size >= 200 && size <= 600)) throw new InputError("size must be between 200 and 600 pixels.");
+      if (a.assembly !== undefined) {
+        if (a.part !== undefined) throw new InputError('Give either "part" or "assembly", not both.');
+        return assemblyViews(s, a.assembly, views, size);
+      }
+      const b = s.build();
+      if (!b.parts.length) throw new InputError("There's nothing to look at yet: no parts. Add a sketch and extrude it first.");
       const parts = a.part !== undefined ? [s.part(b.parts, a.part, "part")] : b.parts;
       const colours: [number, number, number][] = [[176, 196, 222], [222, 190, 150], [170, 210, 170], [215, 170, 200]];
       const img = renderViews(parts.map((p, i) => ({ vertices: p.vertices, triangles: p.triangles, lines: p.lines, colour: colours[i % colours.length] })), views, size);
@@ -686,7 +701,7 @@ export const TOOLS: ToolDef[] = [
       }
       const b = s.build();
       // When live, the whole design open in JuraCAD (every Part Studio), not just the one worked on.
-      folder.write(path, serializeDocument(s.wholeDoc()));
+      writeOut(s, path, serializeDocument(s.wholeDoc()));
       s.file = path;
       s.saved = s.doc;
       const errs = Object.keys(b.errors).length;
@@ -720,54 +735,89 @@ export const TOOLS: ToolDef[] = [
   {
     name: "export_model",
     title: "Export for printing or making",
-    description: 'Export the parts to the JuraCAD folder: "stl" or "3mf" for 3D printing, "step" (exact shapes) for other CAD programs and manufacturers. Optionally only one "part".',
+    description:
+      'Export to the JuraCAD folder: "stl" or "3mf" for 3D printing, "step" (exact shapes) for other CAD programs and manufacturers. By default the parts of the Part Studio; optionally only one "part". With "assembly" (its name), the assembly\'s parts instead, each where its mates put it (one body per copy, named after the copy).',
     destructive: true,
     inputSchema: {
       type: "object",
-      properties: { format: { type: "string", enum: ["stl", "3mf", "step"] }, filename: { type: "string" }, part: { type: "string" }, overwrite: { type: "boolean" } },
+      properties: {
+        format: { type: "string", enum: ["stl", "3mf", "step"] },
+        filename: { type: "string" },
+        part: { type: "string" },
+        assembly: { type: "string", description: "Export this assembly instead (its name, e.g. \"Assembly 1\")." },
+        overwrite: { type: "boolean" },
+      },
       required: ["format"],
     },
     run: async (s, a) => {
-      noExtras(a, ["format", "filename", "part", "overwrite"], "export_model");
+      noExtras(a, ["format", "filename", "part", "assembly", "overwrite"], "export_model");
       const folder = needFolder(s);
       const format = oneOf(a.format, ["stl", "3mf", "step"] as const, "format");
+      const ext = format === "step" ? ".step" : `.${format}`;
+      if (a.assembly !== undefined) {
+        if (a.part !== undefined) throw new InputError('Give either "part" or "assembly", not both.');
+        const asm = findAssembly(s, a.assembly);
+        const path = folder.pathFor(a.filename === undefined ? fileNameFor(`${s.doc.name} ${asm.name}`) : text(a.filename, "filename"), [ext], "file");
+        checkFree(s, path, a.overwrite);
+        const { bytes, count } = await exportAssemblyBytes(s, asm, format);
+        writeOut(s, path, bytes);
+        return say(`Exported ${asm.name} (${count} part${count === 1 ? "" : "s"}, each in its place) to ${path} (${Math.max(1, Math.round(bytes.length / 1024))} KB).`);
+      }
       const b = s.build();
       if (!b.parts.length) throw new InputError("There's nothing to export yet: no parts.");
       const ids = a.part !== undefined ? [s.part(b.parts, a.part, "part").id] : [];
-      const ext = format === "step" ? ".step" : `.${format}`;
       const path = folder.pathFor(a.filename === undefined ? fileNameFor(s.doc.name) : text(a.filename, "filename"), [ext], "file");
-      if (folder.exists(path) && a.overwrite !== true) throw new InputError(`There's already a file called "${path.split(/[\\/]/).pop()}". Choose another filename, or pass "overwrite": true.`);
+      checkFree(s, path, a.overwrite);
+      await s.checkpoint();
       const bytes = await s.withEngine(async (e) => {
         if (format === "stl") return new Uint8Array(e.exportStl(ids, "normal").stl);
         if (format === "3mf") return new Uint8Array(e.export3mf(ids, "normal", s.doc.name, s.doc.appearance ?? {}).data);
         return new Uint8Array((await e.exportStep(ids, s.doc.appearance ?? {})).step);
       });
-      folder.write(path, bytes);
+      writeOut(s, path, bytes);
       return say(`Exported ${ids.length ? "the part" : `${b.parts.length} part(s)`} to ${path} (${Math.max(1, Math.round(bytes.length / 1024))} KB).`);
     },
   },
+  ...ASSEMBLY_TOOLS,
+  ...DRAWING_TOOLS,
 ];
 
-function needFolder(s: Session) {
-  if (!s.folder) throw new InputError("No folder for designs is set up. In Claude, open Settings › Extensions › JuraCAD and choose a folder.");
-  return s.folder;
-}
-
 /** Run a tool by name: problems with the input come back as a plain-English error for Claude to fix. */
-export async function callTool(s: Session, name: string, args: unknown): Promise<ToolResult> {
+export async function callTool(s: Session, name: string, args: unknown, signal?: AbortSignal): Promise<ToolResult> {
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) return { content: [{ type: "text", text: `There's no tool called "${name}". The tools are: ${TOOLS.map((t) => t.name).join(", ")}.` }], isError: true };
   const run = async (): Promise<ToolResult> => {
+    // Cancelled while waiting its turn: don't start.
+    if (signal?.aborted) return cancelledResult();
+    const snap = s.snapshot();
+    s.signal = signal ?? null;
+    s.wroteFile = false;
     try {
       const a = args === undefined || args === null ? {} : object(args, "The input");
-      return await tool.run(s, a);
+      const result = await tool.run(s, a);
+      // Cancelled at the very end: the change is taken back too (unless a file was already written).
+      if (signal?.aborted && !s.wroteFile) {
+        s.restore(snap);
+        return cancelledResult();
+      }
+      return result;
     } catch (e) {
+      if (e instanceof Cancelled || (signal?.aborted && !s.wroteFile)) {
+        s.restore(snap);
+        return cancelledResult();
+      }
       if (e instanceof InputError) return { content: [{ type: "text", text: e.message }], isError: true };
       const msg = e instanceof Error ? e.message : String(e);
       return { content: [{ type: "text", text: `Something went wrong inside JuraCAD (${msg}). The design wasn't changed by this. Try describe_design, or a different approach.` }], isError: true };
+    } finally {
+      s.signal = null;
     }
   };
-  // Live: on the design open in the user's JuraCAD tab, with any change sent back to it.
-  return s.live ? s.live.call(s, name, run) : run();
+  // One call at a time. Live: on the design open in the user's JuraCAD tab, with any change sent back to it.
+  return s.serial(() => (s.live ? s.live.call(s, name, run, signal) : run()));
 }
 
+/** What a cancelled call says (Claude has stopped waiting, so it's mostly for logs and tests). */
+export function cancelledResult(): ToolResult {
+  return { content: [{ type: "text", text: "Cancelled: the call was stopped before it finished, and nothing was changed." }], isError: true };
+}
