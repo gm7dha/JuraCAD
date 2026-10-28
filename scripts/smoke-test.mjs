@@ -1428,9 +1428,13 @@ try {
     // An angle at the corner where the first dimension starts: between the line to its other end and the
     // line to a point of the second dimension off that line. (Clicking edges depends on how the part looks;
     // this uses points the dimensions already found on the view.)
-    const [first, second] = before;
-    const off = [second.a, second.b].find((q) => Math.abs((q.at[1] - first.a.at[1]) * (first.b.at[0] - first.a.at[0]) - (q.at[0] - first.a.at[0]) * (first.b.at[1] - first.a.at[1])) > 1e-3);
-    if (!off) throw new Error("no point off the first dimension's line to make an angle with");
+    const first = before[0];
+    const offLine = (q) => Math.abs((q.at[1] - first.a.at[1]) * (first.b.at[0] - first.a.at[0]) - (q.at[0] - first.a.at[0]) * (first.b.at[1] - first.a.at[1])) > 1e-3;
+    // (Both dimensions may run along the same edge: then a point half-way up the view, which the
+    // drawing finds again as the corner nearest there.)
+    const span = Math.abs(first.b.at[0] - first.a.at[0]) / Math.max(1e-9, Math.abs(first.b.rel[0] - first.a.rel[0]));
+    const up = { at: [first.a.at[0], first.a.at[1] + 0.5 * span], rel: [first.a.rel[0], Math.min(1, first.a.rel[1] + 0.5)] };
+    const off = before.flatMap((x) => [x.a, x.b].filter(Boolean)).find(offLine) ?? up;
     await page.evaluate(([first, off]) => {
       window.juracadStore.getState().changeDrawing((d) => ({ ...d, dimensions: [...(d.dimensions ?? []), { id: "smoke-angle", view: first.view, type: "angle", a: first.a, b: first.b, c: first.a, d: off, offset: 15, rays: [1, 1] }] }));
     }, [first, off]);
