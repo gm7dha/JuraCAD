@@ -230,13 +230,27 @@ export function angleGeometry(a: P2, b: P2, c: P2, d: P2, rays: [number, number]
   return { vertex, u1, u2, degrees };
 }
 
+/**
+ * Which of the four angles two lines make a direction `w` (from where they
+ * meet) lies in: the arms' directions (+1 along `u1`/`u2`, −1 the other way),
+ * from w = α·u1 + β·u2 — so it changes just as the pointer crosses a line
+ * (as in Onshape: across one line, the supplementary angle; across both, the
+ * opposite one). Right on a line counts as along it.
+ */
+export function angleRays(u1: P2, u2: P2, w: P2): [number, number] {
+  const cross = (p: P2, q: P2) => p[0] * q[1] - p[1] * q[0];
+  const k = cross(u1, u2);
+  const alpha = cross(w, u2) / k;
+  const beta = cross(u1, w) / k;
+  return [alpha >= 0 ? 1 : -1, beta >= 0 ? 1 : -1];
+}
+
 /** An angle dimension's arms and arc radius (paper mm) for the pointer at `cursor` (all in sheet mm): the angle the pointer is in. */
 export function placeAngle(a: P2, b: P2, c: P2, d: P2, cursor: P2): { rays: [number, number]; offset: number } | null {
   const g = angleGeometry(a, b, c, d);
   if (!g) return null;
   const w: P2 = [cursor[0] - g.vertex[0], cursor[1] - g.vertex[1]];
-  const s = (u: P2) => (u[0] * w[0] + u[1] * w[1] >= 0 ? 1 : -1);
-  return { rays: [s(g.u1), s(g.u2)], offset: Math.max(4, Math.round(Math.hypot(...w) * 10) / 10) };
+  return { rays: angleRays(g.u1, g.u2, w), offset: Math.max(4, Math.round(Math.hypot(...w) * 10) / 10) };
 }
 
 /** Drawing-wide settings for how dimensions read (see Drawing.places and Drawing.dualUnits). */
@@ -556,12 +570,11 @@ function dragAngleLabel(dim: Dimension, placed: DragPlace, to: P2, lift: boolean
   // The label sits 3 mm beyond the arc, 0.35 of the text's height below the line out from the corner.
   const q: P2 = [to[0], to[1] + TEXT_SIZE * 0.35];
   const w: P2 = [q[0] - base.vertex[0], q[1] - base.vertex[1]];
-  const s = (u: P2) => (u[0] * w[0] + u[1] * w[1] >= 0 ? 1 : -1);
   // A number already put past an arm (with Shift) keeps its angle when dragged again, rather than
   // switching to the angle it happens to be over; dragged back over its arc and let go, it switches again.
   const now = angleGeometry(placed.a, placed.b, c, d, dim.rays);
   const outside = !!now && Math.abs(((dim.textAngle ?? 0) * Math.PI) / 180) > angleArc(now.u1, now.u2).sweep / 2;
-  const rays: [number, number] = lift || outside ? (dim.rays ?? [1, 1]) : [s(base.u1), s(base.u2)];
+  const rays: [number, number] = lift || outside ? (dim.rays ?? [1, 1]) : angleRays(base.u1, base.u2, w);
   const g = angleGeometry(placed.a, placed.b, c, d, rays)!;
   const { a1, sweep } = angleArc(g.u1, g.u2);
   const offset = Math.max(4, Math.round((Math.hypot(w[0], w[1]) - 3) * 10) / 10);

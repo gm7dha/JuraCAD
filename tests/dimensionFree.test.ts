@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { angleArc, arcBeyond, dimensionPaperScale, dimPoint, dragDimensionLabel, drawDimension, measureDim, resolveDim, TEXT_SIZE, withDimPatch, type DimDrawing, type DragPlace } from "../src/drawing/dimensions";
+import { angleArc, angleRays, arcBeyond, placeAngle, dimensionPaperScale, dimPoint, dragDimensionLabel, drawDimension, measureDim, resolveDim, TEXT_SIZE, withDimPatch, type DimDrawing, type DragPlace } from "../src/drawing/dimensions";
 import { addDrawing, parseDrawings, putDimension } from "../src/drawing/drawing";
 import { sheetDxf, sheetSvg, textWidth } from "../src/drawing/export";
 import { layoutSheet, type Prim } from "../src/drawing/sheet";
@@ -135,6 +135,51 @@ describe("dragging an angle's number", () => {
     // At 2:1 the corner is still at the origin; the number is still 7.5° past the middle, 23 mm out (paper).
     close(draw(moved, p, twice).label, spot(23, 30));
   });
+});
+
+// ---------------------------------------------------------------------------
+describe("which angle a 30° corner measures, by where the pointer is (as Onshape: it changes as a line is crossed)", () => {
+  // Arms along +x and up at 30°; their lines split the plane into 30°, 150°, 30° and 150° angles.
+  const tip: P2 = [40 * Math.cos(30 * DEG), 20];
+  const p = proj([0, 0, 40, 0, tip[0], tip[1]]);
+  const dim: Dimension = { id: "g", view: "front", type: "angle", a: dimPoint([0, 0], p), b: dimPoint([40, 0], p), c: dimPoint([0, 0], p), d: dimPoint(tip, p), offset: 8 };
+  const placed: DragPlace = { a: [0, 0], b: [40, 0], rad: 0, cd: [[0, 0], tip] };
+  const at = (deg: number): P2 => [20 * Math.cos(deg * DEG), 20 * Math.sin(deg * DEG)];
+  const cases: [number, [number, number], string][] = [
+    [15, [1, 1], "30°"],
+    [35, [-1, 1], "150°"],
+    [60, [-1, 1], "150°"],
+    [170, [-1, 1], "150°"],
+    [185, [-1, -1], "30°"],
+    [200, [-1, -1], "30°"],
+    [205, [-1, -1], "30°"],
+    [215, [1, -1], "150°"],
+    [260, [1, -1], "150°"],
+    [355, [1, -1], "150°"],
+  ];
+
+  for (const [deg, rays, text] of cases) {
+    it(`at ${deg}°: ${text}`, () => {
+      expect(angleRays([1, 0], [Math.cos(30 * DEG), Math.sin(30 * DEG)], at(deg))).toEqual(rays);
+      // Placing a new angle and dragging a number both pick it so.
+      expect(placeAngle([0, 0], [40, 0], [0, 0], tip, at(deg))!.rays).toEqual(rays);
+      const moved = drag(dim, placed, [at(deg)[0], at(deg)[1] - TEXT_SIZE * 0.35]);
+      expect(moved.rays).toEqual(rays);
+      const drawn = draw(moved, p);
+      expect(texts(drawn)[0].text).toBe(text);
+      // And the number is still under the pointer, over its own arc (not off past an arm) — at 200° it's
+      // 5° (under 2 mm round the arc) from the middle of the opposite angle (195°), so it snaps there.
+      if (deg === 200) {
+        expect(moved.textAngle).toBeUndefined();
+        close(drawn.label, [20 * Math.cos(195 * DEG), 20 * Math.sin(195 * DEG) - TEXT_SIZE * 0.35]);
+      } else close(drawn.label, [at(deg)[0], at(deg)[1] - TEXT_SIZE * 0.35]);
+      const g = angleArc(...((): [P2, P2] => {
+        const u2: P2 = [Math.cos(30 * DEG), Math.sin(30 * DEG)];
+        return [[rays[0], 0], [u2[0] * rays[1], u2[1] * rays[1]]];
+      })());
+      expect(Math.abs(((moved.textAngle ?? 0) * DEG))).toBeLessThanOrEqual(g.sweep / 2 + 1e-9);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

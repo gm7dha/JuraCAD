@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./app/App";
 import { viewportApi } from "./viewport/Viewport";
+import { drawingSmokeApi } from "./app/DrawingUI";
 import "./app/styles.css";
 import { useStore } from "./model/store";
 import { initTheme } from "./app/theme";
@@ -23,6 +24,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 if (new URLSearchParams(window.location.search).has("smoke")) {
   (window as unknown as { juracadViewport: typeof viewportApi }).juracadViewport = viewportApi;
   (window as unknown as { juracadStore: typeof useStore }).juracadStore = useStore;
+  (window as unknown as { juracadDrawing: typeof drawingSmokeApi }).juracadDrawing = drawingSmokeApi;
 }
 
 // Light or dark, before the first paint.
