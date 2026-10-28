@@ -273,8 +273,7 @@ export function offsetWavy(s: SketchData, target: Wavy, at: { x: number; y: numb
   // Which side: the curve's left (as it runs) or its right.
   const side = d[0] * (at.y - q[1]) - d[1] * (at.x - q[0]) >= 0 ? 1 : -1;
   const signed = side * r.value;
-  if (tightestBend(path, side) * r.value >= 0.999)
-    return fail(`That offset is more than the tightest bend of the ${named(target)} can take on that side — use a smaller distance, or offset the other way.`);
+  // Past the tightest bend on that side the copy folds back over itself there: it's still made (the sketch panel warns, see offsetCheck.ts).
   const knots = target.type === "spline" && target.conic === undefined ? Array.from({ length: Math.round(path.hi - path.lo) + 1 }, (_, i) => path.lo + i) : undefined;
   const us = offsetParams(path, signed, OFFSET_TOLERANCE / 2, knots);
   const params = path.closed ? us.slice(0, -1) : us;
