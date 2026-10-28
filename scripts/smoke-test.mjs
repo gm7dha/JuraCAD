@@ -468,6 +468,47 @@ try {
       await chat2.waitStatus(/Live: not connected/, 10);
       liveReport += `; live with 2 Claude chats: the second added a box to the open design (${before} → ${before + 1} features) and the first saw it, the user undid it and both saw that; a third chat started later was linked by itself, and dropped when it stopped`;
 
+      // Safari's way: the tab opens the extension's small link window (http://127.0.0.1) and talks to it with
+      // postMessage; the window opens the WebSockets. ?liveRelay makes any browser use it, so it's tested here for real.
+      step = "Live with Claude through the link window (Safari's way)";
+      {
+        const relayContext = await browser.newContext({ viewport: { width: 1180, height: 760 } });
+        try {
+          const relayTab = await relayContext.newPage();
+          relayTab.on("pageerror", (e) => consoleErrors.push(`(link window tab) ${e.message}`));
+          await relayTab.goto(`http://localhost:4173${basePath}?smoke&liveRelay`);
+          const connectButton = relayTab.getByRole("button", { name: "Connect to Claude" });
+          await connectButton.waitFor({ timeout: 60_000 });
+          const [linkWindow] = await Promise.all([relayTab.waitForEvent("popup", { timeout: 30_000 }), connectButton.click()]);
+          await relayTab.locator(".live-badge").waitFor({ timeout: 60_000 });
+          if (!/^http:\/\/127\.0\.0\.1:476(1[5-9]|2[0-4])\/juracad-relay$/.test(linkWindow.url())) throw new Error(`the link window is at ${linkWindow.url()}`);
+          const windowText = await linkWindow.locator("#status").innerText();
+          if (!/Keep this window open/.test(windowText)) throw new Error(`the link window says: ${windowText}`);
+          await chat1.waitStatus(/Live: connected/);
+          await chat2.waitStatus(/Live: connected/);
+          await relayTab.locator(".live-badge").click();
+          const relayDetails = relayTab.getByRole("dialog", { name: "Live with Claude" });
+          await relayDetails.waitFor();
+          const relayDetailsText = await relayDetails.innerText();
+          if (!/2 Claude chats linked/.test(relayDetailsText) || !/keep it open/.test(relayDetailsText)) throw new Error(`the details (link window) say: ${relayDetailsText}`);
+          await relayTab.keyboard.press("Escape");
+          await relayDetails.waitFor({ state: "detached" });
+          const viaWindow = await chat1.tool("add_feature", { type: "box", name: "Box via the link window", width: 5, depth: 5, height: 5, x: 30, y: 30, z: 0, operation: "new" });
+          if (!/Live: this now shows/.test(viaWindow)) throw new Error(`add_feature through the link window didn't reach the app: ${viaWindow}`);
+          await relayTab.locator(".feature-row", { hasText: "Box via the link window" }).waitFor({ timeout: 30_000 });
+          // Closing the link window disconnects, and says why.
+          await linkWindow.close();
+          const closedNotice = relayTab.getByRole("dialog", { name: "Connect to Claude" });
+          await closedNotice.waitFor({ timeout: 15_000 });
+          if (!/window was closed/.test(await closedNotice.innerText())) throw new Error(`after closing the link window the app says: ${await closedNotice.innerText()}`);
+          await chat1.waitStatus(/Live: not connected/, 10);
+          await chat2.waitStatus(/Live: not connected/, 10);
+          liveReport += "; through Safari's link window (a popup from the extension, forced with ?liveRelay): linked both chats, Claude added a box, and closing the window disconnected";
+        } finally {
+          await relayContext.close();
+        }
+      }
+
       // The real site is https and the link is ws:// — check Chromium allows that to 127.0.0.1 (it isn't
       // "mixed content", because 127.0.0.1 is this computer). A blank https page with a throwaway certificate.
       step = "Live with Claude: ws:// to 127.0.0.1 from an https page";

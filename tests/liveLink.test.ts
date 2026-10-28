@@ -18,12 +18,15 @@ import { readDocumentFile, serializeDocument } from "../src/model/fileFormat";
 import { addStudio, MAIN_STUDIO, studioFeatures } from "../src/model/studios";
 import type { JuraCADDocument } from "../src/model/types";
 import { LiveClient, type LiveHost, type SocketLike } from "../src/live/client";
-import { LIVE_PATH, LIVE_SUBPROTOCOL } from "../src/live/protocol";
+import { LIVE_PATH, LIVE_SUBPROTOCOL, RELAY_PATH, RELAY_SCRIPT_PATH, relayUrl } from "../src/live/protocol";
+import { relayScript } from "../src/live/relayPage";
+import { RelayTransport } from "../src/live/relayTransport";
 import { DesignFolder } from "../src/mcp/files";
 import { LiveBridge } from "../src/mcp/live";
 import { Session } from "../src/mcp/session";
 import { callTool, type ToolResult } from "../src/mcp/tools";
 import { startLiveServer } from "../src/mcp/websocket";
+import { RelaySim, type SocketMaker } from "./support/relaySim";
 
 beforeAll(async () => {
   setOC(await opencascade());
@@ -519,5 +522,162 @@ describe("Live with Claude", () => {
     // Disconnecting stops watching.
     client.disconnect();
     expect(app.setVisible).toBeNull();
+  });
+});
+
+describe("Safari: through the link window", () => {
+  /** One extension (one Claude chat): the real server and bridge; it serves the link window on its port. */
+  const relayPorts: number[] = [];
+  const instance = async (port = 0) => {
+    const bridge = new LiveBridge("test-ext", () => {}, 60_000);
+    const started = await startLiveServer({ ports: [port], accept: (c) => bridge.connect(c), relayPorts });
+    if (!started) throw new Error("no port");
+    if (!relayPorts.includes(started.port)) relayPorts.push(started.port);
+    const session = new Session(null);
+    session.live = bridge;
+    const stop = () => {
+      bridge.close();
+      started.server.close();
+    };
+    cleanups.push(() => {
+      stop();
+      session.dispose();
+    });
+    return { bridge, session, port: started.port, stop };
+  };
+  /** The link window's sockets: Node's own WebSocket, sending the window's origin as a browser would. */
+  const pageSockets: SocketMaker = (url, protocol, origin) => new WebSocket(url, { protocols: [protocol], headers: { origin } } as unknown as string[]) as unknown as ReturnType<SocketMaker>;
+  const freePort = async () => {
+    const spare = await startLiveServer({ ports: [0], accept: () => {} });
+    const port = spare!.port;
+    await new Promise((r) => spare!.server.close(r));
+    return port;
+  };
+  /** A Safari tab: JuraCAD on `tabOrigin`, linked like liveLink.ts does it (prepare/release/onLost). */
+  const safariTab = (ports: number[], served: () => readonly number[], tabOrigin = "https://gm7dha.github.io") => {
+    const sim = new RelaySim({ tabOrigin, served, relayPorts, makeSocket: pageSockets });
+    const relay = new RelayTransport(sim.env, ports, { portWait: 1_500, tick: 20, heartbeat: 100 });
+    const app = new FakeApp(emptyDocument("Safari design"));
+    Object.assign(app, { browser: "safari", prepare: () => relay.start(), release: () => relay.stop() });
+    const client = new LiveClient(app, relay.makeSocket, ports, { open: 3_000, welcome: 10_000, recheck: { fast: 200 } });
+    relay.onLost = (why) => client.disconnect(why === "closed" ? "The link window was closed." : "The link window was reloaded.");
+    cleanups.push(() => {
+      client.disconnect();
+      relay.stop();
+      sim.popup?.close();
+    });
+    return { sim, relay, app, client };
+  };
+
+  it("serves the link window over plain http on 127.0.0.1 only", async () => {
+    const a = await instance();
+    const get = (path: string, host: string) =>
+      new Promise<{ status: number; headers: Record<string, unknown>; body: string }>((resolve, reject) => {
+        const req = request({ host: "127.0.0.1", port: a.port, path, headers: { Host: host } }, (res) => {
+          let body = "";
+          res.on("data", (d: Buffer) => (body += d));
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body }));
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    const page = await get(RELAY_PATH, `127.0.0.1:${a.port}`);
+    expect(page.status).toBe(200);
+    expect(page.body).toContain(`<script src="${RELAY_SCRIPT_PATH}"></script>`);
+    expect(String(page.headers["content-security-policy"])).toMatch(/frame-ancestors 'none'/);
+    expect(page.headers["x-frame-options"]).toBe("DENY");
+    const script = await get(RELAY_SCRIPT_PATH, `127.0.0.1:${a.port}`);
+    expect(script.status).toBe(200);
+    expect(script.body).toBe(relayScript({ ports: relayPorts }));
+    // Not under another name (DNS tricks), and nothing else is served.
+    expect((await get(RELAY_PATH, `evil.example:${a.port}`)).status).toBe(403);
+    expect((await get(RELAY_PATH, `localhost:${a.port}`)).status).toBe(426);
+    expect((await get("/", `127.0.0.1:${a.port}`)).status).toBe(426);
+    // The window's origin may open the live link; a made-up local page may not.
+    expect(await handshake(a.port, { Origin: `http://127.0.0.1:${a.port}` })).toBe(101);
+    expect(await handshake(a.port, { Origin: "http://127.0.0.1:1" })).toBe(403);
+  });
+
+  it("links every Claude chat through the window: Claude's changes appear, the user's reach Claude, and Disconnect closes it", async () => {
+    const a = await instance();
+    const b = await instance();
+    // Nothing on the first port: the window moves on to the next one, which serves it.
+    const dead = await freePort();
+    // (And one for a chat started later: the live ports are fixed, as in real life.)
+    const laterPort = await freePort();
+    const ports = [dead, a.port, b.port, laterPort];
+    relayPorts.push(dead, laterPort);
+    const { sim, relay, app, client } = safariTab(ports, () => [a.port, b.port]);
+    const state = await client.connect();
+    expect(state.kind === "connected" && state.chats).toBe(2);
+    expect(sim.opened).toBe(1);
+    expect(sim.popup!.visited).toEqual([relayUrl(dead), relayUrl(a.port)]);
+    expect(relay.windowPort).toBe(a.port);
+    await until(() => a.bridge.connected && b.bridge.connected, "both chats linked");
+
+    // Claude (chat B) adds a box: it appears in the tab as one undo step, and chat A sees it.
+    await ok(b.session, "add_feature", { type: "box", width: 10, depth: 10, height: 10 });
+    expect(app.doc.features.map((f) => f.type)).toEqual(["box"]);
+    expect(app.applied.map((x) => x.label)).toEqual(["Claude: added Box 1"]);
+    await until(() => a.bridge.version === 2, "chat A to get the new design");
+    expect(await ok(a.session, "describe_design")).toMatch(/Box 1/);
+    // The user's own change reaches both.
+    app.edit((d) => ({ ...d, name: "Renamed in Safari" }));
+    await until(() => [a, b].every((x) => x.bridge.doc?.name === "Renamed in Safari"), "the user's change everywhere");
+    // Both changing at once: refused, nothing lost (the usual rules hold through the window).
+    const clash = await a.bridge.call(a.session, "rename", async () => {
+      app.edit((d) => ({ ...d, name: "User's name" }));
+      await until(() => a.bridge.doc?.name === "User's name", "A to hear of it");
+      a.session.commit({ ...a.session.doc, name: "Claude's name" });
+      return { content: [{ type: "text", text: "renamed" }] };
+    });
+    expect(clash.isError).toBe(true);
+    expect(app.doc.name).toBe("User's name");
+
+    // A chat started later is linked by itself (the window opens the new port).
+    const c = await instance(laterPort);
+    await until(() => c.bridge.connected && client.chats === 3, "the later chat");
+
+    // The extension that served the window stops: the window is already loaded, so the others carry on.
+    a.stop();
+    await until(() => client.chats === 2, "A to be dropped");
+    await ok(c.session, "add_feature", { type: "cylinder", diameter: 4, height: 20 });
+    expect(app.doc.features.map((f) => f.type)).toEqual(["box", "cylinder"]);
+
+    client.disconnect();
+    expect(sim.popup!.closed).toBe(true);
+    await until(() => !b.bridge.connected && !c.bridge.connected, "everyone to be let go");
+  });
+
+  it("closing or reloading the window disconnects, with a reason; Connect opens it again", async () => {
+    const a = await instance();
+    const first = safariTab([a.port], () => [a.port]);
+    expect((await first.client.connect()).kind).toBe("connected");
+    await until(() => a.bridge.connected, "linked");
+    first.sim.popup!.close();
+    await until(() => first.client.state.kind === "off", "the tab to notice");
+    expect(first.client.state.kind === "off" && first.client.state.notice).toBe("The link window was closed.");
+    await until(() => !a.bridge.connected, "the extension to be let go");
+    // Connect again: the window opens again and links.
+    expect((await first.client.connect()).kind).toBe("connected");
+    await until(() => a.bridge.connected, "linked again");
+    expect(first.sim.opened).toBe(2);
+    // The user reloads the window: its links are gone, so the tab stops showing a link that's dead.
+    first.sim.popup!.reload();
+    await until(() => first.client.state.kind === "off", "the reload to be noticed");
+    expect(first.client.state.kind === "off" && first.client.state.notice).toBe("The link window was reloaded.");
+    await until(() => !a.bridge.connected, "the extension to be let go after the reload");
+    // And Connect links again.
+    expect((await first.client.connect()).kind).toBe("connected");
+    await until(() => a.bridge.connected, "linked after the reload");
+  });
+
+  it("a page from another website can't use the window, even with Claude running", async () => {
+    const a = await instance();
+    const evil = safariTab([a.port], () => [a.port], "https://evil.example");
+    const state = await evil.client.connect();
+    expect(state.kind).toBe("failed");
+    expect(a.bridge.connected).toBe(false);
+    expect(evil.sim.popup!.closed).toBe(true);
   });
 });
