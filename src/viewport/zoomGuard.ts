@@ -19,13 +19,15 @@ export const SHEET_MIN_WIDTH = 20;
 
 /**
  * How much one wheel event zooms the drawing sheet: the factor on how much of
- * it is shown (above 1 zooms out). A mouse wheel's notch is as before; lines and
- * pages (Firefox) count as 16 and 100 pixels; a pinch's small steps count ten
- * times (as the 3D view does); one event never zooms more than about 1.65 times.
+ * it is shown (above 1 zooms out). A mouse wheel's notch is as before (also with
+ * Ctrl held); lines and pages (Firefox) count as 16 and 100 pixels; a trackpad
+ * pinch (`pinch`: Ctrl set by the browser, not held on the keyboard — see
+ * guardZoom) sends small steps, so they count ten times, as in the 3D view. One
+ * event never zooms more than about 1.65 times.
  */
-export function sheetWheelFactor(e: { deltaY: number; deltaMode?: number; ctrlKey?: boolean }): number {
+export function sheetWheelFactor(e: { deltaY: number; deltaMode?: number }, pinch = false): number {
   let d = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1);
-  if (e.ctrlKey) d *= 10;
+  if (pinch) d *= 10;
   return Math.exp(Math.max(-0.5, Math.min(0.5, d * 0.0015)));
 }
 
@@ -80,26 +82,42 @@ type GestureLike = Event & { scale?: number; clientX?: number; clientY?: number 
 /**
  * Listen on `el` for wheel and pinch events over the view (`owns(target)`):
  * stop the browser zooming the page, and pass them on — `wheel` gets each wheel
- * event, `pinch` each step of a Safari pinch (the factor on how much is shown,
- * and where). Returns a function that stops listening.
+ * event and whether it's a trackpad pinch, `pinch` each step of a Safari pinch
+ * (the factor on how much is shown, and where). Returns a function that stops
+ * listening.
+ *
+ * A pinch and Ctrl + mouse wheel both come as wheel events with `ctrlKey` set;
+ * they're told apart, as three's OrbitControls does, by whether the Control key
+ * itself went down on the keyboard (watched on `keys`, normally the document).
  */
 export function guardZoom(
   el: Element,
   opts: {
     owns: (target: EventTarget | null) => boolean;
-    wheel: (e: WheelEvent) => void;
+    wheel: (e: WheelEvent, pinch: boolean) => void;
     pinch: (factor: number, clientX: number, clientY: number) => void;
   },
+  keys: EventTarget | null = (el as Partial<Element>).ownerDocument ?? null,
 ): () => void {
   let lastScale = 1;
   let lastPinchWheel = -Infinity;
+  let controlHeld = false;
+  const onKeyDown = (ev: Event) => {
+    if ((ev as KeyboardEvent).key === "Control") controlHeld = true;
+  };
+  const onKeyUp = (ev: Event) => {
+    if ((ev as KeyboardEvent).key === "Control") controlHeld = false;
+  };
+  // (Let go of Control in another window: it's not held any more.)
+  const onBlur = () => (controlHeld = false);
   const onWheel = (ev: Event) => {
     const e = ev as WheelEvent;
     if (!opts.owns(e.target)) return;
     // Always — also when the view is already zoomed in (or out) as far as it goes.
     e.preventDefault();
-    if (e.ctrlKey && e.isTrusted) lastPinchWheel = performance.now();
-    opts.wheel(e);
+    const pinch = !!e.ctrlKey && !controlHeld;
+    if (pinch && e.isTrusted) lastPinchWheel = performance.now();
+    opts.wheel(e, pinch);
   };
   const onGesture = (ev: Event) => {
     const e = ev as GestureLike;
@@ -115,11 +133,19 @@ export function guardZoom(
     }
   };
   const active = { passive: false } as AddEventListenerOptions;
+  const watch = { passive: true, capture: true } as AddEventListenerOptions;
   el.addEventListener("wheel", onWheel, active);
   for (const t of ["gesturestart", "gesturechange", "gestureend"]) el.addEventListener(t, onGesture, active);
+  keys?.addEventListener("keydown", onKeyDown, watch);
+  keys?.addEventListener("keyup", onKeyUp, watch);
+  const win = (keys as Partial<Document> | null)?.defaultView ?? null;
+  win?.addEventListener("blur", onBlur);
   return () => {
     el.removeEventListener("wheel", onWheel, active);
     for (const t of ["gesturestart", "gesturechange", "gestureend"]) el.removeEventListener(t, onGesture, active);
+    keys?.removeEventListener("keydown", onKeyDown, watch);
+    keys?.removeEventListener("keyup", onKeyUp, watch);
+    win?.removeEventListener("blur", onBlur);
   };
 }
 

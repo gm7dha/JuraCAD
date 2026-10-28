@@ -19,7 +19,7 @@ import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } fro
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
 import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, resizedScale, scaleView, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type PlacedDim, type Prim, type SheetLayout } from "../drawing/sheet";
-import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dragDimension, dragDimensionLabel, FITTABLE, fitOf, placeAngle, drawDimension, withDimPatch, type DimPatch, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
+import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dimensionScale, dragDimension, dragDimensionLabel, FITTABLE, fitOf, placeAngle, drawDimension, withDimPatch, type DimPatch, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
@@ -1924,7 +1924,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     return guardZoom(area, {
       // The sheet and the notes over it (not the sheet tabs or the selected view's bar, which are ordinary controls).
       owns: (t) => t instanceof Element && area.contains(t) && !t.closest(".drawing-sheet-tabs, .drawing-view-bar"),
-      wheel: (e) => zoom(sheetWheelFactor(e), e.clientX, e.clientY),
+      wheel: (e, pinch) => zoom(sheetWheelFactor(e, pinch), e.clientX, e.clientY),
       pinch: zoom,
     });
   }, [W]);
@@ -1991,7 +1991,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       if (dim && placed) {
         // Lengths, diameters and radii: the number stays under the pointer (Shift lifts a length's number off its line).
         const to: P2 = [here[0] + dimDrag.grab[0], here[1] + dimDrag.grab[1]];
-        const free = dragDimensionLabel(dim, placed, to, e.shiftKey);
+        const free = dragDimensionLabel(dim, placed, to, e.shiftKey, dimensionScale(dim, placed.rad, projections?.[dim.view]));
         setDimDrag({ ...dimDrag, patch: free ?? { ...dragDimension(dim, placed.a, placed.b, placed.rad, here, placed.cd), textAcross: 0 } });
       }
     }

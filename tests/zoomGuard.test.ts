@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { gestureFactor, guardZoom, orbitWheelDelta, sheetWheelFactor, SHEET_MIN_WIDTH, zoomBox } from "../src/viewport/zoomGuard";
 
 describe("how far a wheel or pinch zooms the drawing sheet", () => {
-  it("a mouse wheel's notch zooms as it always has", () => {
-    expect(sheetWheelFactor({ deltaY: 100, deltaMode: 0, ctrlKey: false })).toBeCloseTo(Math.exp(0.15), 12);
-    expect(sheetWheelFactor({ deltaY: -100, deltaMode: 0, ctrlKey: false })).toBeCloseTo(Math.exp(-0.15), 12);
+  it("a mouse wheel's notch zooms as it always has (Ctrl held on the keyboard too)", () => {
+    expect(sheetWheelFactor({ deltaY: 100, deltaMode: 0 })).toBeCloseTo(Math.exp(0.15), 12);
+    expect(sheetWheelFactor({ deltaY: -100, deltaMode: 0 }, false)).toBeCloseTo(Math.exp(-0.15), 12);
   });
 
   it("counts Firefox's lines and pages as pixels", () => {
@@ -14,9 +14,9 @@ describe("how far a wheel or pinch zooms the drawing sheet", () => {
   });
 
   it("makes a pinch's small steps count, but never jumps more than about 1.65 times at once", () => {
-    expect(sheetWheelFactor({ deltaY: -4, ctrlKey: true })).toBeCloseTo(Math.exp(-0.06), 12);
-    expect(sheetWheelFactor({ deltaY: -1000, ctrlKey: true })).toBeCloseTo(Math.exp(-0.5), 12);
-    expect(sheetWheelFactor({ deltaY: 1000, ctrlKey: true })).toBeCloseTo(Math.exp(0.5), 12);
+    expect(sheetWheelFactor({ deltaY: -4 }, true)).toBeCloseTo(Math.exp(-0.06), 12);
+    expect(sheetWheelFactor({ deltaY: -1000 }, true)).toBeCloseTo(Math.exp(-0.5), 12);
+    expect(sheetWheelFactor({ deltaY: 1000 }, true)).toBeCloseTo(Math.exp(0.5), 12);
   });
 
   it("Safari's pinch scale becomes the same kind of factor", () => {
@@ -105,6 +105,26 @@ describe("guarding a view against the page zooming", () => {
     el.dispatchEvent(after);
     expect(after.defaultPrevented).toBe(false);
     expect(wheels).toHaveLength(2);
+  });
+
+  it("tells a trackpad pinch from Ctrl held on the keyboard with the mouse wheel", () => {
+    const el = new EventTarget() as unknown as Element;
+    const keys = new EventTarget();
+    const seen: boolean[] = [];
+    const stop = guardZoom(el, { owns: () => true, wheel: (_, pinch) => seen.push(pinch), pinch: () => {} }, keys);
+    // A pinch: Ctrl set on the wheel event, but the key never pressed.
+    el.dispatchEvent(event("wheel", { deltaY: -3, ctrlKey: true }));
+    // Ctrl pressed, the wheel turned; then let go.
+    keys.dispatchEvent(event("keydown", { key: "Control" }));
+    el.dispatchEvent(event("wheel", { deltaY: -100, ctrlKey: true }));
+    keys.dispatchEvent(event("keyup", { key: "Control" }));
+    el.dispatchEvent(event("wheel", { deltaY: -3, ctrlKey: true }));
+    // A plain wheel is never a pinch.
+    el.dispatchEvent(event("wheel", { deltaY: 100 }));
+    expect(seen).toEqual([true, false, true, false]);
+    stop();
+    keys.dispatchEvent(event("keydown", { key: "Control" }));
+    expect(seen).toHaveLength(4);
   });
 
   it("leaves events elsewhere alone (the page can still be zoomed there)", () => {

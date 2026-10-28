@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { circleLeader, dimPoint, dragDimensionLabel, drawDimension, resolveDim, withDimPatch, type DimDrawing } from "../src/drawing/dimensions";
+import { circleLeader, dimensionScale, dimPoint, dragDimension, dragDimensionLabel, drawDimension, resolveDim, withDimPatch, type DimDrawing } from "../src/drawing/dimensions";
 import { addDrawing, parseDrawings, putDimension } from "../src/drawing/drawing";
 import { sheetDxf, sheetSvg, textWidth } from "../src/drawing/export";
 import { dimTextOutlines } from "../src/drawing/select";
@@ -24,8 +24,8 @@ const texts = (d: DimDrawing) => d.prims.filter((x): x is Extract<Prim, { kind: 
 const paths = (d: DimDrawing) => d.prims.filter((x): x is Extract<Prim, { kind: "path" }> => x.kind === "path");
 
 /** Drag `dim` so its number's label point lands on `to`; returns the dimension as changed. */
-function dragTo(dim: Dimension, placed: { a: P2; b: P2 | null; rad: number }, to: P2, lift = false): Dimension {
-  const patch = dragDimensionLabel(dim, placed, to, lift);
+function dragTo(dim: Dimension, placed: { a: P2; b: P2 | null; rad: number }, to: P2, lift = false, scale = 1): Dimension {
+  const patch = dragDimensionLabel(dim, placed, to, lift, scale);
   expect(patch).toBeTruthy();
   return withDimPatch(dim, patch!);
 }
@@ -191,6 +191,48 @@ describe("dragging a diameter's or radius's number", () => {
     expect(draw({ ...moved, arrows: "outside" }, big, 40).arrows).toBe("outside");
   });
 
+  it("is kept in the view's millimetres, so it stays put relative to the circle when the scale changes", () => {
+    // Ø20 drawn at 2:1 (radius 20 on paper): the number dropped 30 right and 24 up on paper is 15, 12 in the view.
+    const big = proj([], [{ cx: 0, cy: 0, r: 10 }]);
+    const d: Dimension = { id: "b", view: "front", type: "diameter", a: dimPoint([0, 0], big), r: 10, offset: 8 };
+    const twice = (q: P2): P2 => [q[0] * 2 + 100, q[1] * 2 + 50];
+    expect(dimensionScale(d, 20, big)).toBe(2);
+    const moved = dragTo(d, { a: [100, 50], b: null, rad: 20 }, [130, 74], false, 2);
+    expect(moved.textAt).toEqual([15, 12]);
+    expect(moved.offset).toBe(Math.round((Math.hypot(30, 24) - 20) * 10) / 10);
+    const at2 = drawDimension(moved, resolveDim(moved, big), twice, 20);
+    expect(at2.label).toEqual([130, 74]);
+    expect(at2.arrows).toBe("outside");
+    // At 6:1 the circle is three times bigger on paper and so is the number's distance: still outside it.
+    const six = (q: P2): P2 => [q[0] * 6 + 100, q[1] * 6 + 50];
+    const at6 = drawDimension(moved, resolveDim(moved, big), six, 20);
+    expect(at6.label[0]).toBeCloseTo(190, 9);
+    expect(at6.label[1]).toBeCloseTo(122, 9);
+    expect(at6.arrows).toBe("outside");
+    // The same through a whole sheet, at two view scales: the number sits 15, 12 view-mm from the centre either way.
+    for (const scale of [1, 3]) {
+      let dr = addDrawing(emptyDocument(), "d1", { kind: "part", id: "f1" }).drawings![0];
+      dr = putDimension({ ...dr, views: dr.views.map((v) => ({ ...v, scale })) }, moved);
+      const l = layoutSheet(dr, { front: big }, { designName: "x", subject: "y", date: "1/1/2026" });
+      const pd = l.dims[0];
+      expect(pd.rad).toBeCloseTo(10 * scale, 9);
+      expect(pd.label[0] - pd.a[0]).toBeCloseTo(15 * scale, 9);
+      expect(pd.label[1] - pd.a[1]).toBeCloseTo(12 * scale, 9);
+    }
+  });
+
+  it("inside the circle with arrows set Outside, the arrow at the edge has a line behind it", () => {
+    const big = proj([], [{ cx: 0, cy: 0, r: 20 }]);
+    const d: Dimension = { id: "b", view: "front", type: "radius", a: dimPoint([0, 0], big), r: 20, offset: 8, arrows: "outside", textAt: [2, 5] };
+    const drawn = draw(d, big, 20);
+    expect(drawn.arrows).toBe("outside");
+    const g = circleLeader([0, 0], 20, [2, 5], 2 + 3 * 3.5 * 0.55);
+    const tail = paths(drawn).find((x) => !x.fill && x.points.length === 4 && Math.abs(x.points[0] - g.onCircle[0]) < 1e-9 && Math.abs(x.points[1] - g.onCircle[1]) < 1e-9);
+    expect(tail).toBeDefined();
+    // Out from the edge, 6 mm (ARROW_LEADER), under the arrow pointing in.
+    expect(Math.hypot(tail!.points[2], tail!.points[3])).toBeCloseTo(26, 9);
+  });
+
   it("a radius leads from the centre", () => {
     const r: Dimension = { ...dia, type: "radius" };
     const drawn = draw(dragTo(r, placed, [30, 25]), p, 5);
@@ -203,6 +245,33 @@ describe("dragging a diameter's or radius's number", () => {
     const g = circleLeader([0, 0], 5, [4, 1], 8);
     expect(g.u).toEqual([1, 0]);
     expect(g.inner).toBe(true);
+  });
+});
+
+describe("dragging a dimension line between the two points it measures", () => {
+  // Points at different heights (0 and 10): between them, the line stays at the nearer one's level instead of leaping across.
+  const h: Dimension = { id: "h", view: "front", type: "horizontal", a: { at: [0, 0], rel: [0, 0] }, b: { at: [40, 10], rel: [1, 1] }, offset: 5 };
+  it("horizontal: sticks to the top in the upper half, the bottom in the lower half", () => {
+    expect(dragDimension(h, [0, 0], [40, 10], 0, [20, 8]).offset).toBe(0);
+    expect(dragDimension(h, [0, 0], [40, 10], 0, [20, 5.01]).offset).toBe(0);
+    expect(dragDimension(h, [0, 0], [40, 10], 0, [20, 4.9]).offset).toBe(-0.1);
+    expect(dragDimension(h, [0, 0], [40, 10], 0, [20, 2]).offset).toBe(-0.1);
+    // Outside the band, as before.
+    expect(dragDimension(h, [0, 0], [40, 10], 0, [20, 14]).offset).toBe(4);
+    expect(dragDimension(h, [0, 0], [40, 10], 0, [20, -3]).offset).toBe(-3);
+    // And drawn there: the line at y = 10, or just under y = 0.
+    const p = proj([0, 0, 40, 10]);
+    const dim = { ...h, a: dimPoint([0, 0], p), b: dimPoint([40, 10], p) };
+    const lineY = (offset: number) => paths(draw({ ...dim, offset }, p, 40)).find((x) => x.points.length === 4 && Math.abs(x.points[1] - x.points[3]) < 1e-9 && x.points[0] === 0 && x.points[2] === 40)!.points[1];
+    expect(lineY(0)).toBe(10);
+    expect(lineY(-0.1)).toBeCloseTo(-0.1, 9);
+  });
+  it("vertical: sticks to the left in the left half, the right in the right half", () => {
+    const v: Dimension = { ...h, type: "vertical", b: { at: [10, 40], rel: [1, 1] } };
+    expect(dragDimension(v, [0, 0], [10, 40], 0, [3, 20]).offset).toBe(0);
+    expect(dragDimension(v, [0, 0], [10, 40], 0, [7, 20]).offset).toBe(-0.1);
+    expect(dragDimension(v, [0, 0], [10, 40], 0, [-4, 20]).offset).toBe(4);
+    expect(dragDimension(v, [0, 0], [10, 40], 0, [13, 20]).offset).toBe(-3);
   });
 });
 
@@ -254,6 +323,8 @@ describe("a dragged number in saved files and exports", () => {
     const back = parseDrawings(JSON.parse(JSON.stringify([d])))[0].dimensions!;
     expect(back.find((x) => x.id === "c")!.textAt).toEqual([20, 15]);
     expect(back.find((x) => x.id === "h")!.textAt).toBeUndefined();
+    const far = parseDrawings(JSON.parse(JSON.stringify([{ ...d, dimensions: [{ ...dia, textAt: [1e9, -1e9] }] }])))[0].dimensions!;
+    expect(far[0].textAt).toEqual([10000, -10000]);
     const junk = parseDrawings(JSON.parse(JSON.stringify([{ ...d, dimensions: [{ ...dia, textAt: ["a", 2] }, { ...dia, id: "c2", textAt: [1] }] }])))[0].dimensions!;
     expect(junk.map((x) => x.textAt)).toEqual([undefined, undefined]);
   });

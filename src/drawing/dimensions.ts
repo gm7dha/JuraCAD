@@ -428,7 +428,7 @@ export function dragDimensionText(dim: Dimension, a: P2, b: P2, cursor: P2): { t
 
 /**
  * A diameter's or radius's leader when its number has been dragged to
- * `textAt` (paper mm from the circle's centre `c`; see Dimension.textAt). The
+ * `textAt` (here in paper mm from the circle's centre `c`; Dimension.textAt is in model mm). The
  * number sits on a level shoulder `shoulder` long, reached from its end nearer
  * the centre (the elbow); the leader runs straight from the centre through the
  * elbow, so it always points at the middle of the circle. `inner`: the elbow is
@@ -457,21 +457,26 @@ export function circleLeader(c: P2, rad: number, textAt: [number, number], shoul
  * (Shift held) the line stays put and the number moves off it (a thin leader
  * joins it back). Diameters and radii: the number goes exactly there — inside or
  * outside the circle — and the leader follows (`angle` and `offset` are kept
- * roughly in step, for older copies of the app). Other kinds: null (they're
- * dragged with dragDimension).
+ * roughly in step, for older copies of the app); `paperPerMm` is the view's
+ * scale (paper mm per model mm: dimensionScale), as textAt is kept in model mm.
+ * Other kinds: null (they're dragged with dragDimension).
  */
 export function dragDimensionLabel(
   dim: Dimension,
   placed: { a: P2; b: P2 | null; rad: number },
   to: P2,
   lift = false,
+  paperPerMm = 1,
 ): Partial<Pick<Dimension, "offset" | "angle" | "textAlong" | "textAcross" | "textAt">> | null {
   const r = (v: number) => Math.round(v * 10) / 10;
   if (dim.type === "diameter" || dim.type === "radius") {
     const c = placed.a;
     const v: P2 = [to[0] - c[0], to[1] - c[1]];
+    // Saved in the view's millimetres (to a thousandth), so it follows the view's scale.
+    const k = paperPerMm > 0 ? paperPerMm : 1;
+    const m = (x: number) => Math.round((x / k) * 1000) / 1000;
     return {
-      textAt: [r(v[0]), r(v[1])],
+      textAt: [m(v[0]), m(v[1])],
       angle: Math.round((Math.atan2(v[1], v[0]) * 180) / Math.PI),
       offset: Math.max(2, r(Math.hypot(v[0], v[1]) - placed.rad)),
     };
@@ -489,6 +494,12 @@ export function dragDimensionLabel(
   const onLine: P2 = [to[0] - up[0] * raise, to[1] - up[1] * raise];
   const { offset, textAlong } = dragDimension(dim, placed.a, placed.b, placed.rad, onLine);
   return { offset, textAlong: textAlong ?? 0 };
+}
+
+/** Paper mm per model mm for a circle's dimension on the sheet: its radius there (`rad`) over its radius as measured now. */
+export function dimensionScale(dim: Dimension, rad: number, p: ViewProjection | undefined): number {
+  const r = p ? resolveDim(dim, p).r : dim.r;
+  return r && rad > 0 ? rad / r : 1;
 }
 
 /** What dragging a dimension changes. */
@@ -636,7 +647,9 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
     const edge = at([r.a[0] + (r.r ?? 0), r.a[1]]);
     const rad = dist(c, edge);
     const shoulder = 2 + Math.max(...lines.map((l) => l.length)) * TEXT_SIZE * 0.55 + stackWidth(fit?.stack ?? null);
-    const placed = dim.textAt ? circleLeader(c, rad, dim.textAt, shoulder) : null;
+    // (textAt is in the view's millimetres: on paper it's scaled like the circle.)
+    const k = r.r ? rad / r.r : 1;
+    const placed = dim.textAt ? circleLeader(c, rad, [dim.textAt[0] * k, dim.textAt[1] * k], shoulder) : null;
     let u: P2;
     let onCircle: P2;
     let elbow: P2;
@@ -672,6 +685,8 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
       prims.push(arrow(onCircle, [-u[0], -u[1]]));
       if (dim.type === "diameter") prims.push(arrow(start, u));
       if (mode === "outside" && dim.type === "diameter") prims.push({ kind: "path", points: [start[0], start[1], start[0] - u[0] * ARROW_LEADER, start[1] - u[1] * ARROW_LEADER], style: "thin" });
+      // (The number inside the circle: the arrow at the edge needs a line behind it too.)
+      if (placed?.inner) prims.push({ kind: "path", points: [onCircle[0], onCircle[1], onCircle[0] + u[0] * ARROW_LEADER, onCircle[1] + u[1] * ARROW_LEADER], style: "thin" });
     }
     const label: P2 = placed ? placed.label : [(elbow[0] + end[0]) / 2, elbow[1] + 1];
     lines.forEach((l, i) => prims.push(...number({ kind: "text", x: label[0], y: label[1] + (lines.length - 1 - i) * TEXT_SIZE * 1.5, text: l, size: TEXT_SIZE, anchor: "middle" })));
@@ -890,13 +905,14 @@ export function dragDimension(
   if (dim.type === "horizontal" || (dim.type === "ordinate" && dim.axis !== "v")) {
     const minY = Math.min(a[1], q[1]);
     const maxY = Math.max(a[1], q[1]);
-    const offset = r(cursor[1] >= (minY + maxY) / 2 ? cursor[1] - maxY : cursor[1] - minY);
+    // (Between the two points the line stays at the nearer one's level, rather than leaping to the far side.)
+    const offset = cursor[1] >= (minY + maxY) / 2 ? Math.max(0, r(cursor[1] - maxY)) : Math.min(-0.1, r(cursor[1] - minY));
     return dim.type === "ordinate" ? { offset } : { offset, textAlong: slide([1, 0]) };
   }
   if (dim.type === "vertical" || dim.type === "ordinate") {
     const minX = Math.min(a[0], q[0]);
     const maxX = Math.max(a[0], q[0]);
-    const offset = r(cursor[0] <= (minX + maxX) / 2 ? minX - cursor[0] : maxX - cursor[0]);
+    const offset = cursor[0] <= (minX + maxX) / 2 ? Math.max(0, r(minX - cursor[0])) : Math.min(-0.1, r(maxX - cursor[0]));
     return dim.type === "ordinate" ? { offset } : { offset, textAlong: slide([0, 1]) };
   }
   const d = dist(a, q) || 1;
