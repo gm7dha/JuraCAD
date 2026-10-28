@@ -129,6 +129,13 @@ export interface Feature {
   areas?: AreaPick[];
   /** Sweep: the sketch whose lines and arcs make the path. */
   pathRef?: string;
+  /**
+   * Sweep: how the profile is carried. `lockOrientation` keeps it facing the
+   * same way all along, like Onshape's "Keep profile orientation" (then any
+   * twist is ignored). Missing: it turns to follow the path, as before.
+   * (The twist itself is the "twist" box, in degrees.)
+   */
+  sweepControl?: { lockOrientation?: boolean };
   /** Loft: the sketches to pass through, in order. */
   sections?: string[];
   /** Text: what it says, where it goes, and how. */

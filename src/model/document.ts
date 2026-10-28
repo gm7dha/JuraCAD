@@ -446,6 +446,8 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "sweep") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       if (typeof f.pathRef === "string") feature.pathRef = f.pathRef;
+      const c = f.sweepControl as Record<string, unknown> | undefined;
+      if (c && typeof c === "object" && c.lockOrientation === true) feature.sweepControl = { lockOrientation: true };
     }
     if (feature.type === "text") {
       const t = (f.text ?? {}) as Record<string, unknown>;

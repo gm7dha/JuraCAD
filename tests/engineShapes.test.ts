@@ -846,3 +846,143 @@ describe("surfaces", () => {
     expect(build([box, onto]).featureErrors[onto.id]).toMatch(/only surfaces/);
   });
 });
+
+describe("sweep twist and keep orientation", () => {
+  const vol = () => engine.check("normal").parts[0].exactVolume!;
+  const valid = () => engine.check("normal").parts[0].geometryValid;
+  const straight = () => sketchFeature({ kind: "default", name: "Top" }, lineSketch(0, 0, 100, 0));
+  /** Where the end face (x = 100) reaches, across the path. */
+  const endSpan = (r: { parts: { vertices: Float32Array }[] }, x = 100) => {
+    const v = r.parts[0].vertices;
+    const span = { y: [Infinity, -Infinity], z: [Infinity, -Infinity] };
+    for (let i = 0; i < v.length; i += 3) {
+      if (v[i] < x - 1e-3) continue;
+      span.y = [Math.min(span.y[0], v[i + 1]), Math.max(span.y[1], v[i + 1])];
+      span.z = [Math.min(span.z[0], v[i + 2]), Math.max(span.z[1], v[i + 2])];
+    }
+    return span;
+  };
+
+  it("twists a bar along a straight path: same volume, end turned by the twist", () => {
+    const path = straight();
+    // An 8 × 4 rectangle round the path (8 across in Y, 4 up in Z): 32 mm² × 100 mm.
+    const prof = sketchFeature({ kind: "default", name: "Right" }, rectSketch(-4, -2, 8, 4));
+    const sweep = (twist: number): Feature => ({ ...feature("sweep", { twist }), sketchRef: prof.id, pathRef: path.id });
+    // No twist: exactly what a sweep made before Twist existed (no "twist" box at all) makes.
+    const before: Feature = { ...sweep(0), params: {} };
+    const old = build([path, prof, before]);
+    const zero = build([path, prof, sweep(0)]);
+    expect(Array.from(zero.parts[0].vertices)).toEqual(Array.from(old.parts[0].vertices));
+    expect(Array.from(zero.parts[0].triangles)).toEqual(Array.from(old.parts[0].triangles));
+    for (const twist of [90, 180, 360, -90, 720]) {
+      const r = build([path, prof, sweep(twist)]);
+      expect(r.featureErrors).toEqual({});
+      expect(valid()).toBe(true);
+      expect(relativeError(vol(), 32 * 100)).toBeLessThan(1e-4);
+      expect(r.parts[0].faceRefs).toHaveLength(6);
+      // A quarter turn (or three) swaps the rectangle's width and height at the far end; a half or whole turn doesn't.
+      const quarter = Math.abs(twist) % 180 === 90;
+      const span = endSpan(r);
+      expect(span.y[1] - span.y[0]).toBeCloseTo(quarter ? 4 : 8, 2);
+      expect(span.z[1] - span.z[0]).toBeCloseTo(quarter ? 8 : 4, 2);
+    }
+    // Which way: a plus twist turns anticlockwise seen from the end looking back (+Y round to +Z, going along +X).
+    const off = sketchFeature({ kind: "default", name: "Right" }, rectSketch(4, -1, 2, 2));
+    const r = build([path, off, { ...feature("sweep", { twist: 90 }), sketchRef: off.id, pathRef: path.id }]);
+    expect(valid()).toBe(true);
+    expect(relativeError(vol(), 4 * 100)).toBeLessThan(1e-4);
+    const span = endSpan(r);
+    expect(span.y[0]).toBeCloseTo(-1, 2);
+    expect(span.y[1]).toBeCloseTo(1, 2);
+    expect(span.z[0]).toBeCloseTo(4, 2);
+    expect(span.z[1]).toBeCloseTo(6, 2);
+  });
+
+  it("twists along curved paths (a line into an arc, and a spline) without changing the volume", () => {
+    let d = lineSketch(0, 0, 30, 0);
+    d = addArc(d, { x: 30, y: 0 }, { x: 60, y: 30 }, { x: 30 + 30 * Math.sin(Math.PI / 4), y: 30 - 30 * Math.cos(Math.PI / 4) }).sketch;
+    const bend = sketchFeature({ kind: "default", name: "Top" }, d);
+    const sp = addSpline(emptySketch(), [{ x: 0, y: 0 }, { x: 20, y: 10 }, { x: 40, y: 0 }, { x: 70, y: 20 }].map((q) => ({ ...q, snap: null })), false);
+    const curvy = sketchFeature({ kind: "default", name: "Top" }, sp.sketch);
+    const prof = sketchFeature({ kind: "default", name: "Right" }, rectSketch(-4, -2, 8, 4));
+    for (const path of [bend, curvy]) {
+      build([path, prof, { ...feature("sweep", {}), sketchRef: prof.id, pathRef: path.id }]);
+      const plain = vol();
+      for (const twist of [90, 180, 360]) {
+        const r = build([path, prof, { ...feature("sweep", { twist }), sketchRef: prof.id, pathRef: path.id }]);
+        expect(r.featureErrors).toEqual({});
+        expect(valid()).toBe(true);
+        expect(relativeError(vol(), plain)).toBeLessThan(1e-3);
+      }
+    }
+    // The bend: (30 + a quarter of a 30 mm circle) × 32 mm².
+    build([bend, prof, { ...feature("sweep", { twist: 180 }), sketchRef: prof.id, pathRef: bend.id }]);
+    expect(relativeError(vol(), (30 + (Math.PI / 2) * 30) * 32)).toBeLessThan(2e-3);
+    // The end face (at y = 30, the path heading +Y): flat (8 across in X, 4 up) untwisted; a quarter turn stands it on end.
+    const endAt30 = (r: { parts: { vertices: Float32Array }[] }) => {
+      const v = r.parts[0].vertices;
+      const x = [Infinity, -Infinity];
+      const z = [Infinity, -Infinity];
+      for (let i = 0; i < v.length; i += 3) {
+        if (v[i + 1] < 30 - 1e-3) continue;
+        x[0] = Math.min(x[0], v[i]);
+        x[1] = Math.max(x[1], v[i]);
+        z[0] = Math.min(z[0], v[i + 2]);
+        z[1] = Math.max(z[1], v[i + 2]);
+      }
+      return [x[1] - x[0], z[1] - z[0]];
+    };
+    const flat = endAt30(build([bend, prof, { ...feature("sweep", {}), sketchRef: prof.id, pathRef: bend.id }]));
+    expect(flat[0]).toBeCloseTo(8, 2);
+    expect(flat[1]).toBeCloseTo(4, 2);
+    const turned = endAt30(build([bend, prof, { ...feature("sweep", { twist: 90 }), sketchRef: prof.id, pathRef: bend.id }]));
+    expect(turned[0]).toBeCloseTo(4, 2);
+    expect(turned[1]).toBeCloseTo(8, 2);
+  });
+
+  it("explains when a twist can't be done: sharp corners and closed loops", () => {
+    const prof = sketchFeature({ kind: "default", name: "Right" }, rectSketch(-4, -2, 8, 4));
+    const corner = sketchFeature({ kind: "default", name: "Top" }, addLine(lineSketch(0, 0, 40, 0), { x: 40, y: 0 }, { x: 40, y: 40 }).sketch);
+    const r = build([corner, prof, { ...feature("sweep", { twist: 90 }), sketchRef: prof.id, pathRef: corner.id }]);
+    expect(Object.values(r.featureErrors)[0]).toMatch(/smooth path with no sharp corners/);
+    // The same corner without a twist still sweeps, as before.
+    expect(build([corner, prof, { ...feature("sweep", {}), sketchRef: prof.id, pathRef: corner.id }]).featureErrors).toEqual({});
+    const ring = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 20, y: 0 }, 20).sketch);
+    const small = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 0, y: 0 }, 2).sketch);
+    const loop = build([ring, small, { ...feature("sweep", { twist: 90 }), sketchRef: small.id, pathRef: ring.id }]);
+    expect(Object.values(loop.featureErrors)[0]).toMatch(/two ends/);
+  });
+
+  it("keeps the profile facing the same way round a bend (Keep profile orientation)", () => {
+    let d = lineSketch(0, 0, 30, 0);
+    d = addArc(d, { x: 30, y: 0 }, { x: 60, y: 30 }, { x: 30 + 30 * Math.sin(Math.PI / 4), y: 30 - 30 * Math.cos(Math.PI / 4) }).sketch;
+    const bend = sketchFeature({ kind: "default", name: "Top" }, d);
+    const prof = sketchFeature({ kind: "default", name: "Right" }, rectSketch(-4, -2, 8, 4));
+    const locked: Feature = { ...feature("sweep", { twist: 90 }), sketchRef: prof.id, pathRef: bend.id, sweepControl: { lockOrientation: true } };
+    const r = build([bend, prof, locked]);
+    expect(r.featureErrors).toEqual({});
+    expect(valid()).toBe(true);
+    // The rectangle stays upright in the YZ plane (the twist is ignored): along the straight 30 mm it sweeps 30 × 32;
+    // round the arc it moves 30 in X, sweeping 30 × 8 × 4 more.
+    expect(vol()).toBeCloseTo(30 * 32 + 30 * 32, 3);
+    const b = meshOf(r).bounds!;
+    expect(b.max[0]).toBeCloseTo(60, 3);
+    expect(b.max[1]).toBeCloseTo(34, 3);
+    expect(b.min[2]).toBeCloseTo(-2, 3);
+    // Round a sharp corner it would end edge-on (flat): explained instead.
+    const corner = sketchFeature({ kind: "default", name: "Top" }, addLine(lineSketch(0, 0, 40, 0), { x: 40, y: 0 }, { x: 40, y: 40 }).sketch);
+    const bad = build([corner, prof, { ...locked, pathRef: corner.id }]);
+    expect(Object.values(bad.featureErrors)[0]).toMatch(/facing the same way/);
+  });
+
+  it("twists surface sweeps too", () => {
+    const path = straight();
+    const strip = sketchFeature({ kind: "default", name: "Right" }, lineSketch(-5, 0, 5, 0));
+    const r = build([path, strip, { ...feature("sweep", { twist: 90 }), sketchRef: strip.id, pathRef: path.id, surface: true }]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts[0].faceRefs).toHaveLength(1);
+    const span = endSpan(r);
+    expect(span.y[1] - span.y[0]).toBeCloseTo(0, 2);
+    expect(span.z[1] - span.z[0]).toBeCloseTo(10, 2);
+  });
+});
