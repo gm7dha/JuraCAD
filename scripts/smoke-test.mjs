@@ -653,6 +653,27 @@ try {
     if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after undoing the show/hide steps");
   }
 
+  step = "pressing P to hide and show all planes, then undoing it";
+  {
+    await page.evaluate(() => document.activeElement?.blur?.());
+    const datums = () => page.evaluate(() => JSON.stringify(window.juracadStore.getState().history.present.hiddenDatums ?? []));
+    const steps = await page.evaluate(() => window.juracadStore.getState().history.past.length);
+    await page.keyboard.press("p");
+    await page.waitForFunction(() => JSON.stringify(window.juracadStore.getState().history.present.hiddenDatums) === JSON.stringify(["Top", "Front", "Right"]));
+    // The Origin is left alone (as in Onshape), and the rows show the planes as hidden.
+    if ((await page.locator(".feature-row.datum.hidden", { hasText: "Top" }).count()) !== 1) throw new Error("the Top row didn't show as hidden after P");
+    await page.keyboard.press("p");
+    await page.waitForFunction(() => !window.juracadStore.getState().history.present.hiddenDatums);
+    const after = await page.evaluate(() => window.juracadStore.getState().history.past.length);
+    if (after !== steps + 2) throw new Error(`P should be one undo step each time: ${steps} → ${after}`);
+    // Undo: back to hidden (the second press), then shown again (the first).
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.hiddenDatums?.length === 3);
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(() => !window.juracadStore.getState().history.present.hiddenDatums);
+    if ((await datums()) !== "[]") throw new Error(`planes weren't all shown after undo: ${await datums()}`);
+  }
+
   step = "filleting the edges of a face";
   await page.keyboard.press("Shift+Digit5");
   await page.keyboard.press("f");

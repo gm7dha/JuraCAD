@@ -200,6 +200,15 @@ function useShortcuts() {
           if (s.selectedFeatureId && activeFeatures(s).find((f) => f.id === s.selectedFeatureId)?.type === "plane" && viewNormalToPlaneFeature(s.selectedFeatureId)) break;
           s.showToast("Select a face or plane first, then press N.");
           break;
+        case "p":
+        case "P": {
+          // As in Onshape: show or hide all planes. Not in a sketch, where P is the Point tool.
+          if (e.shiftKey || s.sketch || s.editing?.draft.type === "sketch") break;
+          e.preventDefault();
+          const shown = s.toggleAllPlanes();
+          s.showToast(shown ? "Planes shown." : "Planes hidden — press P to show them again.");
+          break;
+        }
         case "?":
           s.openDialog("help");
           break;
