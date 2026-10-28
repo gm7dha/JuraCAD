@@ -88,16 +88,18 @@ describe("an extra sketch that's gone", () => {
   ];
   it("suppressed: the extrude is built from the sketch that's left, with a warning naming the lost sketch", () => {
     const r = build(twoSketches({ suppressed: true }));
-    expect(Object.keys(r.featureErrors)).toEqual(["e1"]);
-    expect(r.featureErrors.e1).toBe('Sketch s2 is suppressed, so its areas are left out of this extrude. Edit it and click "use only Sketch s1" (or un-suppress Sketch s2).');
+    // A warning, not a failure.
+    expect(r.featureErrors).toEqual({});
+    expect(Object.keys(r.featureWarnings ?? {})).toEqual(["e1"]);
+    expect(r.featureWarnings!.e1).toBe('Sketch s2 is suppressed, so its areas are left out of this extrude. Edit it and click "use only Sketch s1" (or un-suppress Sketch s2).');
     expect(r.parts).toHaveLength(1);
     expect(size(r.parts[0]).height).toBeCloseTo(30, 6);
     close(size(r.parts[0]).volume, Math.PI * 25 * 30);
   });
   it("deleted: the same, and later features still build", () => {
     const r = build(twoSketches().filter((f) => f.id !== "s2"));
-    expect(Object.keys(r.featureErrors)).toEqual(["e1"]);
-    expect(r.featureErrors.e1).toMatch(/^One of its other sketches has been deleted, so its areas are left out of this extrude\. Edit it and click "use only Sketch s1"/);
+    expect(r.featureErrors).toEqual({});
+    expect(r.featureWarnings!.e1).toMatch(/^One of its other sketches has been deleted, so its areas are left out of this extrude\. Edit it and click "use only Sketch s1"/);
     expect(r.parts).toHaveLength(1);
   });
 });
@@ -176,5 +178,18 @@ describe("an Add that joins two parts says so", () => {
     expect(draftEffect(r.parts, { id: "e3", operation: "add" }).text).toBe("Adds to Part 1, joining Part 2 into it.");
     // Earlier features didn't join anything.
     expect(draftEffect(r.parts, { id: "e2", operation: "add" }).text).toBe("Adds to Part 1.");
+    // Shortened so it no longer reaches Part 2: nothing is merged, and the dialog stops saying so.
+    const short = addRectangle(emptySketch(), { x: -3, y: -2 }, { x: 15, y: 2 }).sketch;
+    const after = engine!.rebuild([
+      sketch("s1", both),
+      extrude("e1", "s1", "new", 60, { apart: true, areas: [pickAt(both, 0, 0)] }),
+      extrude("e2", "s1", "add", 10, { apart: true, areas: [pickAt(both, 40, 0)] }),
+      sketch("s2", short, faceAt(10)),
+      extrude("e3", "s2", "add", 5, { apart: true }),
+    ]);
+    expect(after.featureErrors).toEqual({});
+    expect(after.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2"]);
+    expect(after.parts.every((p) => !p.joined)).toBe(true);
+    expect(draftEffect(after.parts, { id: "e3", operation: "add" }).text).toBe("Adds to Part 1.");
   });
 });

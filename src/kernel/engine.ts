@@ -1675,6 +1675,8 @@ interface StudioBuild {
   parts: BuiltPart[];
   tools: Map<string, FeatureTool>;
   errors: Record<string, string>;
+  /** Features built, but with something to tell (see RebuildResult.featureWarnings). */
+  warnings?: Record<string, string>;
   /** Sketches on part faces, or using part edges: what was found for them. */
   links: Record<string, SketchLinkInfo>;
   /** Each sketch: what it could snap to, as things were where it sits (see sketchCandidates). */
@@ -1733,6 +1735,7 @@ export class GeometryEngine {
     const rebuilt: string[] = [];
     const meshes: PartMesh[] = [];
     const featureErrors: Record<string, string> = {};
+    const featureWarnings: Record<string, string> = {};
     const shared = JSON.stringify([variables, partNames]);
     // Part Studios using parts from others (Derived) are built after them, and again whenever they change.
     const sourcesOf = (s: StudioInput) => [...new Set(s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId))].filter((id) => id !== s.id);
@@ -1771,7 +1774,7 @@ export class GeometryEngine {
         for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
         // Another configuration's copies of the parts (for assemblies).
         if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-        b = { key, parts: this.parts, tools: this.tools, errors, links: this.links, snaps: this.snaps ?? new Map() };
+        b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, links: this.links, snaps: this.snaps ?? new Map() };
         this.snaps = null;
         this.builds.set(studio.id, b);
         rebuilt.push(studio.id);
@@ -1779,7 +1782,10 @@ export class GeometryEngine {
         for (const p of b.parts) meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}) });
       }
       // Problems are shown for the configuration on show only.
-      if (!studio.partSuffix) Object.assign(featureErrors, b.errors);
+      if (!studio.partSuffix) {
+        Object.assign(featureErrors, b.errors);
+        Object.assign(featureWarnings, b.warnings ?? {});
+      }
       this.studiosBuilt.add(studio.id);
     }
     this.parts = studios.flatMap((s) => this.builds.get(s.id)?.parts ?? []);
@@ -1787,7 +1793,15 @@ export class GeometryEngine {
     // Every Part Studio's sketch links (in the configuration on show), whether rebuilt now or before.
     const sketchLinks: Record<string, SketchLinkInfo> = {};
     for (const s of studios) if (!s.partSuffix) Object.assign(sketchLinks, this.builds.get(s.id)?.links ?? {});
-    return { parts: meshes, featureErrors, durationMs: Math.round(performance.now() - started), rebuilt, studioOrder: studios.map((s) => s.id), sketchLinks };
+    return {
+      parts: meshes,
+      featureErrors,
+      ...(Object.keys(featureWarnings).length ? { featureWarnings } : {}),
+      durationMs: Math.round(performance.now() - started),
+      rebuilt,
+      studioOrder: studios.map((s) => s.id),
+      sketchLinks,
+    };
   }
 
   /**
@@ -2133,8 +2147,13 @@ export class GeometryEngine {
   }
 
   /** Build one Part Studio's features into this.parts and this.tools; returns the features' problems. */
+  /** Warnings from the latest `buildFeatures` (features built, but with something to tell). */
+  private warnings: Record<string, string> = {};
+
   private buildFeatures(features: Feature[]): Record<string, string> {
     const featureErrors: Record<string, string> = {};
+    const warnings: Record<string, string> = {};
+    this.warnings = warnings;
     let partCounter = 0;
     let surfaceCounter = 0;
     const sketches: SketchMap = new Map();
@@ -2355,8 +2374,8 @@ export class GeometryEngine {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;
       }
-      // Built, but with something to tell (a lost extra sketch); a later problem with it replaces this.
-      if (notes.length) featureErrors[feature.id] = notes.join(" ");
+      // Built, but with something to tell (a lost extra sketch): a warning, not a failure.
+      if (notes.length) warnings[feature.id] = notes.join(" ");
 
       if (feature.operation === "new" && feature.type === "import") {
         // A STEP file may hold several parts: each solid becomes its own part, and any surfaces one surface part.

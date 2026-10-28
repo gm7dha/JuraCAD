@@ -43,6 +43,8 @@ export interface SessionSnapshot {
 export interface Build {
   parts: PartMesh[];
   errors: Record<string, string>;
+  /** Features built, but with something to tell (not failures). */
+  warnings: Record<string, string>;
 }
 
 const MAX_UNDO = 100;
@@ -89,7 +91,7 @@ export class Session {
     if (this.built && key === this.builtKey) return this.built;
     setCurrentScope(scope);
     const r = this.engine.rebuild(features, scope, doc.partNames ?? {});
-    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors };
+    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {} };
     this.builtKey = key;
     return this.built;
   }

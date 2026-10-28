@@ -69,6 +69,7 @@ function samePlace(a: SketchPlane, b: SketchPlane): boolean {
 
 /** No sketch links (one shared object, so selectors stay stable). */
 const NO_LINKS: Record<string, SketchLinkInfo> = {};
+const NO_WARNINGS: Record<string, string> = {};
 /** No drawing dimensions selected (one shared array, so selectors stay stable). */
 const NO_DIMS: string[] = [];
 export interface SelectionItem {
@@ -238,6 +239,8 @@ export interface AppState {
   rebuildBusy: boolean;
   parts: PartMesh[];
   featureErrors: Record<string, string>;
+  /** Features built, but with something to tell (an amber note, not a failure): feature ID → message. */
+  featureWarnings: Record<string, string>;
   /** Sketches on part faces or using part edges (by feature id), as found on the latest rebuild. */
   sketchLinks: Record<string, SketchLinkInfo>;
   /**
@@ -481,7 +484,15 @@ export interface AppState {
   // set by the kernel connection
   setKernelStatus: (status: AppState["kernelStatus"], error?: string) => void;
   setRebuildBusy: (busy: boolean) => void;
-  setRebuildResult: (parts: PartMesh[], featureErrors: Record<string, string>, ms: number, rebuilt?: string[], studioOrder?: string[], sketchLinks?: Record<string, SketchLinkInfo>) => void;
+  setRebuildResult: (
+    parts: PartMesh[],
+    featureErrors: Record<string, string>,
+    ms: number,
+    rebuilt?: string[],
+    studioOrder?: string[],
+    sketchLinks?: Record<string, SketchLinkInfo>,
+    featureWarnings?: Record<string, string>,
+  ) => void;
 }
 
 // These browser-storage keys keep the app's old name (PartSmith) on purpose: changing them
@@ -601,6 +612,7 @@ export const useStore = create<AppState>((set, get) => {
     rebuildBusy: false,
     parts: [],
     featureErrors: {},
+    featureWarnings: NO_WARNINGS,
     sketchLinks: NO_LINKS,
     sketchCandidates: null,
     setSketchCandidates: (sketchCandidates) => set({ sketchCandidates }),
@@ -1602,7 +1614,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setKernelStatus: (kernelStatus, error) => set({ kernelStatus, kernelError: error ?? null }),
     setRebuildBusy: (rebuildBusy) => set({ rebuildBusy }),
-    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks) =>
+    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings) =>
       set((s) => {
         // The sketch open for editing follows its part's face and edges, as the engine found them.
         const links = sketchLinks && Object.keys(sketchLinks).length ? sketchLinks : NO_LINKS;
@@ -1627,6 +1639,7 @@ export const useStore = create<AppState>((set, get) => {
         return {
           parts,
           featureErrors,
+          featureWarnings: featureWarnings && Object.keys(featureWarnings).length ? featureWarnings : NO_WARNINGS,
           sketchLinks: links,
           ...(editing !== s.editing ? { editing } : {}),
           lastRebuildMs: ms,

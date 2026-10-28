@@ -262,6 +262,7 @@ function effectProblem(s: Session, f: Feature, doc: JuraCADDocument, before: Ret
  */
 function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, verb: string): string[] {
   const before = s.build().errors;
+  const warnedBefore = s.build().warnings;
   const beforeVolumes = volumes(s.build().parts);
   // Sizes and pattern counts, worked out with the new values (variables can change them too), before any slow build.
   const limitsBefore = limitProblems(s.doc, s.scope());
@@ -283,6 +284,9 @@ function tryChange(s: Session, next: JuraCADDocument, featureId: string | null, 
     refuse(` — it wouldn't build:\n${lines.join("\n")}`);
   }
   const notes: string[] = [];
+  // Built, but with something to tell (not failures): new ones are passed on as notes.
+  const warned = s.build(next.features, next).warnings;
+  for (const [id, why] of Object.entries(warned)) if (warnedBefore[id] !== why) notes.push(`${next.features.find((x) => x.id === id)?.name ?? id}: ${why}`);
   const afterVolumes = volumes(s.build(next.features, next).parts);
   const f = featureId ? next.features.find((x) => x.id === featureId) : undefined;
   if (f) {
