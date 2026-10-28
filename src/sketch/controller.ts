@@ -58,6 +58,7 @@ import {
   splitAt,
 } from "./tools";
 import { ORIGIN_ID, type SketchData } from "./types";
+import { placedByOffset } from "./solver";
 import { addText, imageAt, imageById, readTextSettings, textAt, textById } from "./sketchText";
 import { isRefId, refSketch, type RefEdge } from "./links";
 import { attachPoint, bringIn, hintFor, pickAt, snapAt, type SnapResult } from "./snaps";
@@ -953,7 +954,11 @@ export class SketchController {
     }
     if (hit && isRefId(hit.id)) {
       // Part edges can't be dragged: a click selects (brings in) one, a drag draws a selection box.
-    } else if (hit?.kind === "point" && hit.id !== ORIGIN_ID) kind = "point";
+    } else if (hit?.kind === "point" && hit.id !== ORIGIN_ID) {
+      kind = "point";
+      if (placedByOffset(d, hit.id))
+        this.state.setSketchMessage("That point is on an offset copy, which follows its original: drag the original instead (or change the offset's distance).", "info");
+    }
     else if (hit?.kind === "curve") {
       const c = curveById(d, hit.id)!;
       // Dragging a circle's or an arc's rim resizes it; drag its centre point to move it.

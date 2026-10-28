@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { addCircle, addLine, applyRelation, dragPoint, type RelationTool } from "../src/sketch/ops";
 import { addConic, addEllipse, addSpline, offsetCurves, splitAt, trimAt } from "../src/sketch/tools";
 import { emptySketch, type SketchData } from "../src/sketch/types";
+import { placedByOffset } from "../src/sketch/solver";
 
 const at = (x: number, y: number) => ({ x, y, snap: null });
 
@@ -141,5 +142,15 @@ describe("dragging an offset copy", () => {
     const before = o.sketch.points.find((p) => p.id === mid)!;
     const after = dragPoint(o.sketch, mid, before.x + 5, before.y + 5).points.find((p) => p.id === mid)!;
     expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(1e-9);
+  });
+});
+
+describe("telling an offset copy's point from others", () => {
+  it("knows a point only its original places", () => {
+    const sp = addSpline(emptySketch(), [at(0, 0), at(15, 6), at(30, -3)], false);
+    const o = offsetCurves(sp.sketch, sp.splineId, at(15, 9), "2");
+    const copy = o.sketch.curves.find((c) => c.id === o.curveIds[0]) as { points: string[] };
+    expect(placedByOffset(o.sketch, copy.points[1])).toBe(true);
+    expect(placedByOffset(o.sketch, (o.sketch.curves.find((c) => c.id === sp.splineId) as { points: string[] }).points[1])).toBe(false);
   });
 });

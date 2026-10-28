@@ -7,7 +7,7 @@
 import { evaluate } from "../model/expr";
 import { ellipseAt as ellipseAtParam, ellipseFrom, ellipsePolyline, type EllipseGeom } from "./ellipse";
 import { splinePolyline, splineTangents } from "./spline";
-import { curveParam, ellipseSpan, nearestParam } from "./curves";
+import { curvatureAt, curveParam, ellipseSpan, nearestParam } from "./curves";
 import { startingLength } from "../model/units";
 import { analyzeSketch, solveSketch } from "./solver";
 import { linkEdge, type RefEdge } from "./links";
@@ -829,7 +829,77 @@ export function applyRelation(s: SketchData, tool: RelationTool, picked: string[
     start = turnedTowards(s, made, tool);
   }
   const r = checkedSolve(start, { ...start, constraints: [...start.constraints, ...made] }, RELATION_LABELS[tool], true);
+  if (r.error && tool === "tangent" && /conflict/.test(r.error)) {
+    // A line far from the curve, or running a different way, can leave the solver stuck before it touches. Try
+    // again with the line first laid onto the curve where it would touch it most easily, then solved from there.
+    for (const laid of lineLaidOn(start, made)) {
+      const again = checkedSolve(laid, { ...laid, constraints: [...laid.constraints, ...made] }, RELATION_LABELS[tool], true);
+      if (!again.error) return again;
+    }
+  }
   return r.error ? { sketch: s, error: r.error } : r;
+}
+
+/**
+ * For a new Tangent between a line and a spline or ellipse (not joined): the
+ * line turned about its middle and moved so it just touches the curve, at the
+ * few places along the curve that need the least change (running the same way
+ * as the line already does where possible, then nearest), best first. Empty if
+ * not that case.
+ */
+function lineLaidOn(s: SketchData, made: SketchConstraint[]): SketchData[] {
+  const t = made.find((k) => k.type === "tangent");
+  if (!t) return [];
+  const [a, b] = t.refs.map((id) => curveById(s, id));
+  const line = isLine(a) ? a : isLine(b) ? b : null;
+  const wavy = isWavy(a) ? a : isWavy(b) ? b : null;
+  if (!line || !wavy || made.some((k) => k !== t)) return [];
+  const P = pointPos(s, line.p1), Q = pointPos(s, line.p2);
+  const len = Math.hypot(Q[0] - P[0], Q[1] - P[1]);
+  if (len < 1e-9) return [];
+  const d: [number, number] = [(Q[0] - P[0]) / len, (Q[1] - P[1]) / len];
+  const mid: [number, number] = [(P[0] + Q[0]) / 2, (P[1] + Q[1]) / 2];
+  const path = curveParam(s, wavy);
+  // Score each place along the curve: how far the line must turn (to run the same way, either direction) and move.
+  // Not right at an open curve's ends (touching there doesn't count), nor where it hardly bends (a line can't
+  // rest against a curve where it straightens out and turns back).
+  const n = 400;
+  const us: number[] = [];
+  const scores: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    const u = path.lo + ((path.hi - path.lo) * i) / n;
+    const t1 = path.d1(u);
+    const sp = Math.hypot(t1[0], t1[1]) || 1;
+    const sin = Math.abs((t1[0] * d[1] - t1[1] * d[0]) / sp);
+    const q = path.at(u);
+    const gap = Math.abs((q[0] - mid[0]) * -d[1] + (q[1] - mid[1]) * d[0]);
+    const flat = Math.abs(curvatureAt(path, u)) * len < 1e-3;
+    const nearEnd = !path.closed && (i < 2 || i > n - 2);
+    us.push(u);
+    scores.push(nearEnd || flat ? Infinity : sin * len + gap);
+  }
+  // The best few places (each the best of its stretch).
+  const picks = us
+    .map((u, i) => ({ u, score: scores[i], i }))
+    .filter((c) => Number.isFinite(c.score) && (c.i === 0 || scores[c.i - 1] >= c.score) && (c.i === n || scores[c.i + 1] >= c.score))
+    .sort((x, y) => x.score - y.score)
+    .slice(0, 3);
+  return picks.map(({ u }) => {
+    const t1 = path.d1(u);
+    const sp = Math.hypot(t1[0], t1[1]) || 1;
+    // Keep the line's own way round.
+    const sign = t1[0] * d[0] + t1[1] * d[1] >= 0 ? 1 : -1;
+    const nd: [number, number] = [(sign * t1[0]) / sp, (sign * t1[1]) / sp];
+    const q = path.at(u);
+    // Slide along the new direction so the line's middle stays as near where it was as it can.
+    const along = (mid[0] - q[0]) * nd[0] + (mid[1] - q[1]) * nd[1];
+    const c: [number, number] = [q[0] + nd[0] * along, q[1] + nd[1] * along];
+    const ends = new Map<string, [number, number]>([
+      [line.p1, [c[0] - (nd[0] * len) / 2, c[1] - (nd[1] * len) / 2]],
+      [line.p2, [c[0] + (nd[0] * len) / 2, c[1] + (nd[1] * len) / 2]],
+    ]);
+    return { ...s, points: s.points.map((p) => (ends.has(p.id) ? { ...p, x: ends.get(p.id)![0], y: ends.get(p.id)![1] } : p)) };
+  });
 }
 
 /** Lines about to be made horizontal/vertical that run (nearly) the other way, turned about their middles to the new direction. */

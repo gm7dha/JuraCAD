@@ -10,7 +10,7 @@ import { parseSketchData } from "../src/sketch/validate";
 
 const at = (x: number, y: number): Placed => ({ x, y, snap: null });
 const on = (id: string, x: number, y: number): Placed => ({ x, y, snap: { kind: "point", id } });
-const fixAll = (s: SketchData, ids: string[]) => applyRelation(s, "fix", ids).sketch;
+const fixAll = (s: SketchData, ids: string[]) => (ids.length ? applyRelation(s, "fix", ids).sketch : s);
 const spline = (s: SketchData, id?: string) => s.curves.find((c): c is SketchSpline => c.type === "spline" && (!id || c.id === id))!;
 const line = (s: SketchData, id: string) => s.curves.find((c): c is SketchLine => c.id === id)!;
 const unitCross = (a: [number, number], b: [number, number]) => (a[0] * b[1] - a[1] * b[0]) / (Math.hypot(...a) * Math.hypot(...b));
@@ -345,5 +345,45 @@ describe("saved sketches", () => {
     for (let i = 0; i < 10; i++) k = dragPoint(k, spline(k, b.splineId).points[0], i * 0.3, 25 + i * 0.2);
     expect(performance.now() - t).toBeLessThan(4000); // generous: CI machines are slow
     expect(solveSketch(k).ok).toBe(true);
+  });
+});
+
+describe("Tangent to a spline: solvable cases are solved", () => {
+  it("a spline held by two touching tangents can still be dragged", () => {
+    const sp = addSpline(emptySketch(), [at(0, 0), at(8, 12), at(16, 4), at(24, 14), at(32, 2)], false);
+    const c = addCircle(sp.sketch, at(8, 25), 4);
+    let s = applyRelation(c.sketch, "tangent", [c.circleId, sp.splineId]).sketch;
+    const l = addLine(s, at(-5, -10), at(35, -10));
+    const t = applyRelation(l.sketch, "tangent", [l.lineId, sp.splineId]);
+    expect(t.error).toBeUndefined();
+    s = applyRelation(t.sketch, "fix", [l.lineId]).sketch;
+    const p3 = spline(s, sp.splineId).points[2];
+    for (const [x, y] of [[16, 4.5], [16.2, 4], [16, 5], [17, 4]]) expect(solveSketch(s, { drag: { pointId: p3, x, y } }).ok).toBe(true);
+  });
+
+  it("a free line can always be made to touch a held spline", () => {
+    let state = 7;
+    const r = () => ((state = (state * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const R = (a: number, b: number) => a + (b - a) * r();
+    let refused = 0;
+    const trials = 150;
+    for (let i = 0; i < trials; i++) {
+      const sp = addSpline(emptySketch(), [0, 10, 20, 30, 40].map((x) => at(x, R(-8, 8))), false);
+      const s = fixAll(sp.sketch, [sp.splineId]);
+      const x = R(-10, 50), y = R(-30, 30), a = R(0, Math.PI), L = R(10, 50);
+      const l = addLine(s, at(x, y), at(x + L * Math.cos(a), y + L * Math.sin(a)));
+      if (applyRelation(l.sketch, "tangent", [l.lineId, sp.splineId]).error) refused++;
+    }
+    expect(refused).toBe(0);
+    // Two found by a reviewer.
+    const s1 = fixAll(addSpline(emptySketch(), [at(0, 3.509), at(10, 3.148), at(20, 7.015), at(30, 6.765), at(40, 1.098)], false).sketch, []);
+    const one = s1.curves[0].id;
+    const held = fixAll(s1, [one]);
+    const turn = (11.82 * Math.PI) / 180;
+    const l1 = addLine(held, at(13.861, -27.657), at(13.861 + 37.1 * Math.cos(turn), -27.657 + 37.1 * Math.sin(turn)));
+    expect(applyRelation(l1.sketch, "tangent", [l1.lineId, one]).error).toBeUndefined();
+    const s2 = addSpline(emptySketch(), [at(0, -3.851), at(10, 0.926), at(20, -4.236), at(30, -7.885), at(40, 6.586)], false);
+    const l2 = addLine(fixAll(s2.sketch, [s2.splineId]), at(14.488, 16.49), at(56.831, 33.14));
+    expect(applyRelation(l2.sketch, "tangent", [l2.lineId, s2.splineId]).error).toBeUndefined();
   });
 });

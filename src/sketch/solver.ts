@@ -19,6 +19,9 @@ import { ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData, ty
 
 type Vec = [number, number];
 
+/** A block of residuals (without its constraint id). */
+type Block = Omit<System["blocks"][number], "id">;
+
 interface System {
   n: number;
   /** Variable index for each point's x (y is +1), and each circle's radius. */
@@ -26,7 +29,13 @@ interface System {
   radiusVar: Map<string, number>;
   x0: Float64Array;
   /** Residual blocks: one per constraint (plus hidden arc constraints). */
-  blocks: { id: string | null; size: number; eval: (x: Float64Array, out: number[]) => void }[];
+  blocks: {
+    id: string | null;
+    size: number;
+    eval: (x: Float64Array, out: number[]) => void;
+    /** Run once at the start of each solver step (before its Jacobian); true if the block's answers there changed. */
+    prepare?: (x: Float64Array) => boolean;
+  }[];
   /** Constraints that couldn't be used (e.g. a dimension with an invalid value), with the reason. */
   skipped: Map<string, string>;
   /**
@@ -104,7 +113,7 @@ function buildSystem(sketch: SketchData): System {
 
   const blocks: System["blocks"] = [];
   let searching = false;
-  const pending: { size: number; eval: (x: Float64Array, out: number[]) => void }[] = [];
+  const pending: Block[] = [];
 
   /**
    * A spline's Bézier pieces for the current unknowns, worked out once and
@@ -366,7 +375,7 @@ function buildSystem(sketch: SketchData): System {
     value: number,
     a: string,
     b: string,
-  ): { size: number; eval: (x: Float64Array, out: number[]) => void } | null {
+  ): Block | null {
     switch (con.type) {
       case "coincident": {
         const p = P(a);
@@ -805,7 +814,7 @@ function buildSystem(sketch: SketchData): System {
    * they touch somewhere: along the spline or ellipse, the other curve's
    * "distance" has a low or high point that is exactly zero.
    */
-  function tangentBlock(a: string, b: string): { size: number; eval: (x: Float64Array, out: number[]) => void } {
+  function tangentBlock(a: string, b: string): Block {
     const ca = curves.get(a)!, cb = curves.get(b)!;
     const unitCross = (A: Vec, B: Vec) => (A[0] * B[1] - A[1] * B[0]) / ((Math.hypot(A[0], A[1]) || 1) * (Math.hypot(B[0], B[1]) || 1));
     const sameWay = (fa: (x: Float64Array) => Vec, fb: (x: Float64Array) => Vec) => ({ size: 1, eval: (x: Float64Array, out: number[]) => out.push(unitCross(fa(x), fb(x))) });
@@ -856,26 +865,52 @@ function buildSystem(sketch: SketchData): System {
     // touching place (found to ~1e-14), so it doesn't depend on the history unless the curves touch in more than
     // one place and Newton lands on a different one; if Newton fails, it searches again and remembers anew.
     let last: [number, number] | null = null;
-    // The whole-curve search is slow, so it runs at most once per system (one solve); after that, a failed
-    // Newton start is handled cheaply by `nearestApproach` below.
-    let searched = false;
+    // The whole-curve search is slow, so it isn't run for every evaluation (each Jacobian column would run it):
+    // only once per solver step (`prepare`, at the step's starting point), and once before the first step.
     let seed: [number, number] | null = null;
-    // Where they came nearest last time, when they can't run side by side (a warm start for nearestApproach).
-    let approach: [number, number] | null = null;
+    let searchedOnce = false;
+    // Whole-curve searches left in this step, and the end used when there's no low or high point.
+    let searchesLeft = 3;
+    let endU: number | null = null;
+    // The low or high point of the other's "distance" along this one that the last search found (kept even when
+    // Newton can't make it a touching place): the fallback below follows it.
+    let extreme: { u: number; high: boolean; half: number; v: number } | null = null;
+    const search = (x: Float64Array, p: CurveParam, q: CurveParam): [number, number] | null => {
+      // The low or high point of the other's "distance" along this one, then the nearest place on the other.
+      let hit: { u: number; high: boolean; half: number } | null = null;
+      touchGap(p, (pt) => level(x, pt), (u, high, half) => (hit = { u, high, half }));
+      extreme = null;
+      if (!hit) return null;
+      const h = hit as { u: number; high: boolean; half: number };
+      seed = [h.u, nearestParam(q, p.at(h.u))];
+      extreme = { ...h, v: seed[1] };
+      return touchPoint(p, q, seed[0], seed[1], lineOther);
+    };
     return {
       // Two rows: the gap, and (only while they can meet just at an end) how far off running the same way they are.
       size: 2,
+      prepare: (x) => {
+        searchesLeft = 3;
+        const p = param(x), q = otherParam(x);
+        if (last && touchPoint(p, q, last[0], last[1], lineOther)) return false;
+        const found = search(x, p, q);
+        if (!found) return false;
+        last = found;
+        return true;
+      },
       eval: (x, out) => {
         const p = param(x), q = otherParam(x);
         let found = last ? touchPoint(p, q, last[0], last[1], lineOther) : null;
-        if (!found && !searched) {
-          searched = true;
-          // Search: the low or high point of the other's "distance" along this one, then the nearest place on the other.
-          const u = touchParam(p, (pt) => level(x, pt));
-          if (u !== null) {
-            seed = [u, nearestParam(q, p.at(u))];
-            found = touchPoint(p, q, seed[0], seed[1], lineOther);
-          }
+        // Search the whole curve when Newton can't follow from last time, except inside a Jacobian (its columns
+        // are tiny nudges from a point `prepare` already searched at; searching for each would be very slow).
+        // Outside one (a step being tried, the first evaluation, a freedom analysis) the value must be the true
+        // touching gap there, or steps that would work get turned down.
+        // (A few searches per step at most: a step's tries after that use the cheap ways below.)
+        const mayFullySearch = !inJacobian && searchesLeft > 0;
+        if (!found && mayFullySearch && !(last === null && searchedOnce)) {
+          searchedOnce = true;
+          searchesLeft--;
+          found = search(x, p, q);
         }
         if (found) {
           last = found;
@@ -884,12 +919,44 @@ function buildSystem(sketch: SketchData): System {
           out.push(((a[0] - b[0]) * -d[1] + (a[1] - b[1]) * d[0]) / (Math.hypot(d[0], d[1]) || 1), 0);
           return;
         }
-        // Nowhere they run the same way side by side: they can only touch at an end. How far apart they are at
-        // their nearest approach (keeping each place on its curve), and how far off running the same way there.
-        const start = approach ?? last ?? seed ?? [p.lo, nearestParam(q, p.at(p.lo))];
-        const near = nearestApproach(p, q, start[0], start[1], lineOther);
-        approach = [near.u, near.v];
-        out.push(near.gap, near.off);
+        if (mayFullySearch || (!extreme && endU === null)) {
+          // Nowhere they run the same way side by side: the other's "distance" at its low or high point along this
+          // curve nearest zero (zero only if they touch), searched for along the whole curve.
+          if (mayFullySearch) searchesLeft--;
+          let hit: { u: number; high: boolean; half: number } | null = null;
+          endU = null;
+          const value = touchGap(p, (pt) => level(x, pt), (u, high, half) => (hit = { u, high, half }), (u) => (endU = u));
+          const h = hit as { u: number; high: boolean; half: number } | null;
+          extreme = h ? { ...h, v: extreme?.v ?? 0 } : null;
+          out.push(value, 0);
+          return;
+        }
+        if (extreme) {
+          // Inside a Jacobian: the same low or high point, followed from where it was just found (cheap).
+          const e = extreme;
+          const v = e.v;
+          // The same "distance" the search used, so the low or high point is the same one.
+          const f = (u: number) => (e.high ? -1 : 1) * level(x, p.at(wrapParam(p, u)));
+          const r = (Math.sqrt(5) - 1) / 2;
+          let lo = e.u - e.half, hi = e.u + e.half;
+          let c = hi - r * (hi - lo), d = lo + r * (hi - lo);
+          let fc = f(c), fd = f(d);
+          for (let k = 0; k < 40 && hi - lo > 1e-12 * Math.max(1, Math.abs(lo)); k++) {
+            if (fc < fd) {
+              hi = d; d = c; fd = fc; c = hi - r * (hi - lo); fc = f(c);
+            } else {
+              lo = c; c = d; fc = fd; d = lo + r * (hi - lo); fd = f(d);
+            }
+          }
+          const u = (lo + hi) / 2;
+          const value = f(u) * (e.high ? -1 : 1);
+          extreme = { ...e, u: wrapParam(p, u), v };
+          out.push(value, 0);
+          return;
+        }
+        // No low or high point at all (an open curve heading steadily away): as touchGap does, the nearer end's
+        // gap and how far off running the same way it is, together (at the end found last time).
+        out.push(endGap(p, (pt) => level(x, pt), endU ?? p.lo), 0);
       },
     };
   }
@@ -967,64 +1034,14 @@ function nearestFrom(p: CurveParam, q: Vec, u: number): number | null {
   return null;
 }
 
-/**
- * Where two paths come nearest when they can't run side by side (Newton on
- * both parameters from u, v, each kept within its path): the gap there, with
- * how far off running the same way they are. Both zero only if they meet at an
- * end running the same way. A few cheap steps, never a search of the whole curve.
- */
-function nearestApproach(p: CurveParam, q: CurveParam, u: number, v: number, qUnbounded: boolean): { gap: number; off: number; u: number; v: number } {
-  const keep = (c: CurveParam, t: number, unbounded = false) => (c.closed ? wrapParam(c, t) : unbounded ? t : Math.max(c.lo, Math.min(c.hi, t)));
-  const sub2 = (a: Vec, b: Vec): Vec => [a[0] - b[0], a[1] - b[1]];
-  const dot2 = (a: Vec, b: Vec) => a[0] * b[0] + a[1] * b[1];
-  u = keep(p, u);
-  v = keep(q, v, qUnbounded);
-  for (let k = 0; k < 20; k++) {
-    const P1 = p.d1(u), P2 = p.d2(u), Q1 = q.d1(v), Q2 = q.d2(v);
-    const r = sub2(p.at(u), q.at(v));
-    // Nearest approach: the line between them square to both (where they can be).
-    const f1 = dot2(r, P1), f2 = dot2(r, Q1);
-    const a11 = dot2(P1, P1) + dot2(r, P2), a12 = -dot2(Q1, P1);
-    const a21 = dot2(P1, Q1), a22 = -dot2(Q1, Q1) + dot2(r, Q2);
-    const det = a11 * a22 - a12 * a21;
-    let nu = u, nv = v;
-    if (Number.isFinite(det) && Math.abs(det) > 1e-300) {
-      nu = u + (-f1 * a22 + f2 * a12) / det;
-      nv = v + (-f2 * a11 + f1 * a21) / det;
-    }
-    nu = keep(p, nu);
-    nv = keep(q, nv, qUnbounded);
-    // One held at its end: the other moves to the place nearest it.
-    if (nu !== u || nv !== v) {
-      const q1 = q.d1(nv), rr = sub2(p.at(nu), q.at(nv));
-      const dv = -dot2(rr, q1) / (-dot2(q1, q1) + dot2(rr, q.d2(nv)) || 1);
-      if (nu === p.lo || nu === p.hi) nv = keep(q, nv + dv, qUnbounded);
-    }
-    const moved = Math.abs(nu - u) + Math.abs(nv - v);
-    u = nu;
-    v = nv;
-    if (moved < 1e-13 * Math.max(1, Math.abs(u), Math.abs(v))) break;
-  }
-  const P1 = p.d1(u), Q1 = q.d1(v);
-  const r = sub2(p.at(u), q.at(v));
-  const gap = (r[0] * -Q1[1] + r[1] * Q1[0]) / (Math.hypot(Q1[0], Q1[1]) || 1);
-  const off = (P1[0] * Q1[1] - P1[1] * Q1[0]) / ((Math.hypot(P1[0], P1[1]) || 1) * (Math.hypot(Q1[0], Q1[1]) || 1));
-  return { gap, off, u, v };
-}
 
-/** Along a path, where a curve's "distance" (zero on it) has the low or high point nearest zero; null if none. */
-function touchParam(p: CurveParam, level: (q: Vec) => number): number | null {
-  let found: number | null = null;
-  touchGap(p, level, (u) => (found = u));
-  return found;
-}
 
 /**
  * How far a path is from touching a curve (given as a function that's zero
  * on the curve): among the places where that function has a low or high
  * point along the path, the value nearest zero. Zero = they touch.
  */
-function touchGap(p: CurveParam, level: (q: Vec) => number, where?: (u: number) => void): number {
+function touchGap(p: CurveParam, level: (q: Vec) => number, where?: (u: number, high: boolean, half: number) => void, atEnd?: (u: number) => void): number {
   const us = p.samples;
   // A closed path's last sample is its first again.
   const n = p.closed ? us.length - 1 : us.length;
@@ -1048,7 +1065,7 @@ function touchGap(p: CurveParam, level: (q: Vec) => number, where?: (u: number) 
     const v = value((a + b) / 2);
     if (best === null || Math.abs(v) < Math.abs(best)) {
       best = v;
-      where?.(wrapParam(p, (a + b) / 2));
+      where?.(wrapParam(p, (a + b) / 2), high, (hi - lo) / 2);
     }
   };
   const step = (i: number) => (us[Math.min(i + 1, us.length - 1)] - us[Math.max(i - 1, 0)]) / 2 || 1e-9;
@@ -1060,8 +1077,14 @@ function touchGap(p: CurveParam, level: (q: Vec) => number, where?: (u: number) 
   }
   if (best !== null) return best;
   // No low or high point (an open path heading steadily away). Touching can then only be at an end, and only if
-  // it runs the same way as the curve there as well as being on it: the nearer end's gap and how far off square.
+  // it runs the same way as the curve there as well as being on it.
   const u = Math.abs(g[0]) < Math.abs(g[n - 1]) ? us[0] : us[n - 1];
+  atEnd?.(u);
+  return endGap(p, level, u);
+}
+
+/** At an end u of a path: its gap from the curve and how far off square it runs, together (zero only if it touches there). */
+function endGap(p: CurveParam, level: (q: Vec) => number, u: number): number {
   const q = p.at(u);
   const h = 1e-6 * Math.max(1, Math.abs(q[0]), Math.abs(q[1]));
   const grad: Vec = [(level([q[0] + h, q[1]]) - level([q[0] - h, q[1]])) / (2 * h), (level([q[0], q[1] + h]) - level([q[0], q[1] - h])) / (2 * h)];
@@ -1125,6 +1148,13 @@ function signedDistanceToBeziers(p: Vec, pieces: Bez[]): number {
   return side >= 0 ? dist : -dist;
 }
 
+/** Let blocks that search once per solver step do so at x; true if any now answer differently. */
+function prepareAll(sys: System, x: Float64Array): boolean {
+  let changed = false;
+  for (const b of sys.blocks) if (b.prepare?.(x)) changed = true;
+  return changed;
+}
+
 function evalAll(sys: System, x: Float64Array): number[] {
   const out: number[] = [];
   for (const b of sys.blocks) b.eval(x, out);
@@ -1164,8 +1194,20 @@ function dependencies(sys: System, x: Float64Array): { rows: number[]; columns: 
   return deps;
 }
 
+/** True while a Jacobian is being worked out (blocks may then skip costly searches). */
+let inJacobian = false;
+
 /** Numerical Jacobian (m × n), central differences — re-running only the blocks that read each unknown. */
 function jacobian(sys: System, x: Float64Array, m: number): Float64Array {
+  inJacobian = true;
+  try {
+    return jacobianOf(sys, x, m);
+  } finally {
+    inJacobian = false;
+  }
+}
+
+function jacobianOf(sys: System, x: Float64Array, m: number): Float64Array {
   const J = new Float64Array(m * sys.n);
   const { rows, columns } = dependencies(sys, x);
   const xp = Float64Array.from(x);
@@ -1445,6 +1487,11 @@ function pullsCopy(d: Derived, o: SolveOptions): boolean {
   return !!o.place?.some((p) => placed(p.pointId));
 }
 
+/** Is this a point of an offset copy that only its original places (so dragging it does nothing)? */
+export function placedByOffset(sketch: SketchData, pointId: string): boolean {
+  return !!splitDerived(sketch)?.offsets.has(pointId);
+}
+
 /** Move the sketch so every constraint holds, changing it as little as possible. */
 export function solveSketch(sketch: SketchData, options: SolveOptions = {}): SolveResult {
   const d = splitDerived(sketch);
@@ -1648,26 +1695,32 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
     }
   }
 
+  prepareAll(sys, x);
   let r = evalAll(sys, x);
   const m = r.length;
   const maxIterations = options.maxIterations ?? 60;
   // Largest residual after each step (for giving up on hopeless searching solves; see System.searching).
   const history: number[] = [];
   for (let iter = 0; iter < maxIterations && maxAbs(r) > SOLVE_TOLERANCE * 0.01; iter++) {
-    if (sys.searching) {
+    // Blocks that search afresh once per step (a touching Tangent) may now answer differently here.
+    if (iter > 0 && prepareAll(sys, x)) r = evalAll(sys, x);
+    if (sys.searching && !(globalThis as any).__noGiveUp) {
       history.push(maxAbs(r));
       // At the rate it has improved over the last 8 steps, it couldn't be met in the steps left: give up now.
       // (Sketches without such blocks run exactly as before.)
-      if (history.length > 8) {
+      // (Not judged too early, and with room to spare: a solve often speeds up once it's near.)
+      if (history.length > 10) {
         const now = history[history.length - 1];
         const rate = Math.pow(now / history[history.length - 9], 1 / 8);
         const needed = rate >= 1 ? Infinity : Math.log((SOLVE_TOLERANCE * 100) / now) / Math.log(rate);
-        if (needed > maxIterations - iter) break;
+        if (needed > 1.5 * (maxIterations - iter)) break;
       }
       // Already met (well within the tolerance) and only creeping closer: the searching blocks' own rounding
       // won't let it go much further, so stop polishing.
       const n = history.length;
       if (n >= 2 && history[n - 1] <= SOLVE_TOLERANCE * 10 && history[n - 1] > 0.5 * history[n - 2]) break;
+      // Met (within the tolerance) and no longer getting anywhere over the last few steps: stop.
+      if (n >= 4 && history[n - 1] <= SOLVE_TOLERANCE * 100 && Math.min(history[n - 1], history[n - 2], history[n - 3]) >= 0.9 * history[n - 4]) break;
     }
     const J = jacobian(sys, x, m);
     // Weighted minimum-norm step: Δ = -W⁻² Jᵀ (J W⁻² Jᵀ + λI)⁻¹ r
@@ -1784,6 +1837,7 @@ export function analyzeSketch(sketch: SketchData): SketchAnalysis {
 
 function analyzeWhole(sketch: SketchData): SketchAnalysis {
   const sys = buildSystem(sketch);
+  prepareAll(sys, sys.x0);
   const r = evalAll(sys, sys.x0);
   const m = r.length;
   const n = sys.n;
