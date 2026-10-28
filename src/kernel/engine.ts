@@ -4093,8 +4093,18 @@ export class GeometryEngine {
                   return { error: `This would remove the whole of ${this.parts.find((p) => p.id === id)?.name ?? "a part"}.` };
                 }
               }
+            } else if (tool.operation === "new") {
+              // Copies of a New feature are new parts (each separate piece its own), as in Onshape.
+              for (const copy of copies) {
+                const xs = solidsOf(copy);
+                if (xs.length > 1) plan.created.push(...xs);
+                else {
+                  xs.forEach((x) => x.delete());
+                  plan.created.push(copy.clone());
+                }
+              }
             } else {
-              // Each copy joins what it touches, or is a part of its own (as the feature itself does).
+              // Copies of an Add join what they touch, or are parts of their own (as the feature itself does).
               const order = [part, ...[...this.parts].reverse().filter((p) => p !== part && !p.surface)];
               const split = copies.map((c) => solidsOf(c));
               const pieces = copies.flatMap((c, i) => (split[i].length > 1 ? split[i] : [c]));

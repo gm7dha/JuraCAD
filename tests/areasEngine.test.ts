@@ -365,8 +365,23 @@ describe("one sketch with two circles, each extruded on its own (as in Onshape)"
     expect(r.featureErrors).toEqual({});
     expect(r.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2", "Part 3"]);
     close(volumes(r)["Part 3"], Math.PI * 225 * 10);
+    // The new part can be moved (as Move/copy starts on the latest part).
     engine.dispose();
-    // Spaced 20: the copy overlaps the big cylinder, so it joins Part 2.
+    engine = new GeometryEngine();
+    const newId = r.parts[2].id;
+    const move: Feature = { id: "t1", name: "Move", type: "transform", operation: "add", suppressed: false, params: { ...defaultParams("transform"), dz: "60" }, transform: { partId: newId, axis: "z", about: "centre", copy: true } };
+    const moved = engine.rebuild([...twoParts(), pattern(100), move]);
+    expect(moved.featureErrors).toEqual({});
+    expect(moved.parts).toHaveLength(4);
+    engine.dispose();
+    // Copies of a New feature are new parts even where they overlap (as in Onshape).
+    engine.dispose();
+    engine = new GeometryEngine();
+    const ofNew = engine.rebuild([...twoParts(), { ...pattern(20), pattern: { sources: ["e1"], axis: "x", flip: false } }]);
+    expect(ofNew.featureErrors).toEqual({});
+    expect(ofNew.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2", "Part 3"]);
+    engine.dispose();
+    // Spaced 20: the copy of the Add overlaps the big cylinder, so it joins Part 2.
     engine = new GeometryEngine();
     const near = engine.rebuild([...twoParts(), pattern(20)]);
     expect(near.featureErrors).toEqual({});

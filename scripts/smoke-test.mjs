@@ -824,7 +824,12 @@ try {
   await page.waitForSelector(".feature-row:not(.datum) >> text=Transform 1", { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 4"), null, { timeout: 30_000 });
   if ((await page.locator(".feature-row.failed").count()) > 0) {
-    throw new Error(`the move failed: ${await page.locator(".feature-row.failed").first().getAttribute("title")}`);
+    const info = await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const t = s.history.present.features.find((f) => f.type === "transform");
+      return `moves ${t?.transform?.partId}; parts ${s.parts.map((p) => `${p.name}=${p.id}`).join(", ")}`;
+    });
+    throw new Error(`the move failed: ${await page.locator(".feature-row.failed").first().getAttribute("title")} (${info})`);
   }
 
   step = "adding a variable";
