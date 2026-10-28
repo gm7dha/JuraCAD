@@ -219,6 +219,22 @@
   sketches with dimensions (kept only when they reduce the freedom); `featureSpec.ts` fills in the same Feature records
   the dialogs make; `picks.ts` numbers faces/edges (F3, E5, "top", "along z") and makes TopoPicks; `render.ts` + `png.ts`
   draw the views; `files.ts` keeps every file inside the chosen folder. A change that fails to build is refused, not kept.
+  `toolKit.ts` holds what every tool shares (ToolDef, `say`, `writeOut` — the only way tools write files). Assemblies:
+  `assemblyTools.ts` (create_assembly, insert_into_assembly, place_instance, remove_from_assembly, add_mate, delete_mate,
+  describe_assembly, check_assembly, explode_assembly; get_views/list_faces/list_edges/export_model take "assembly"/"instance"):
+  the same pure edits as the app (`src/assembly`; `placed.ts` has explodeAssembly/instancesForKernel/partBox, re-exported by
+  app/assemblySolve.ts); a copy's faces are picked as it sits in the assembly (placed refs, then the part's own ref by index);
+  a change that makes a working mate fail is refused; parts are left where the solve put them (`settleSolved`). Drawings:
+  `drawingTools.ts` (create_drawing, edit_drawing, add_section_view, add_detail_view, auto_dimension, add_dimension,
+  describe_drawing, view_drawing, export_drawing) lays sheets out with the app's own code (`src/drawing/sheetSource.ts`:
+  drawingSubject, projectionPlan, finishProjections, sheetInfo, viewScales — shared with DrawingUI.tsx); `sheetPicture.ts`
+  rasterises a sheet's prims (font `font5x7.ts`). Assemblies and drawings need every Part Studio's parts: `Session.buildAll()`
+  builds the whole document (+ configured studios, `documentStudioInputs` in kernel/buildInput.ts) on a second engine.
+  Cancelling (MCP notifications/cancelled → server.ts passes `extra.signal` to `callTool`): tools call `await s.checkpoint()`
+  between slow steps (builds, each drawing view, before writing); it yields to the event loop (two setImmediate hops, so
+  the cancel notification is read) and throws `Cancelled`; callTool then restores the snapshot (also when cancelled after
+  the tool finished, unless a file was written). LiveBridge doesn't send a cancelled call's change; once sent, the tab's
+  reply decides (so the session stays in step). Tests: tests/mcpAssemblyDrawing.test.ts, tests/mcpCancel.test.ts.
   `server.ts` is the only file using `@modelcontextprotocol/sdk` (v1, low-level `Server`); stdout is MCP, so it logs to stderr.
   CI: `scripts/build-claude-extension.mjs` bundles it with esbuild (+ the wasm, manifest from `claude-extension/manifest.json`),
   `mcpb validate`/`pack` (pinned devDependency) make `dist/juracad-claude.mcpb` (downloaded from Help), and `scripts/check-claude-extension.mjs`
