@@ -1680,7 +1680,9 @@ try {
     const why = await page.evaluate(() => {
       const s = window.juracadStore.getState();
       const names = Object.fromEntries([...s.history.present.features, ...(s.history.present.partStudios ?? []).flatMap((p) => p.features)].map((f) => [f.id, `${f.name} (${f.type} ${f.operation}${f.apart ? ", apart" : ""})`]));
-      return Object.entries(s.featureErrors).map(([id, e]) => `${names[id] ?? id}: ${e}`).join(" | ");
+      const t = s.history.present.features.find((f) => f.type === "transform");
+      const list = s.history.present.features.map((f) => `${f.id}:${f.type}${f.suppressed ? "(off)" : ""}`).join(",");
+      return `${Object.entries(s.featureErrors).map(([id, e]) => `${names[id] ?? id}: ${e}`).join(" | ")} — moves ${t?.transform?.partId}; parts ${s.parts.map((p) => `${p.name}=${p.id}${p.studioId ? "@" + p.studioId : ""}`).join(", ")}; features ${list}`;
     });
     throw new Error(`a feature failed after adding a plane: ${why}`);
   }
