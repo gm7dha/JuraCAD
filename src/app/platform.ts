@@ -51,6 +51,7 @@ export function helpRows(p: Platform) {
   const keys: [string, string][] = [
     ["F", "Zoom to fit"],
     ["N", "View normal to the selected face or plane"],
+    ["P", "Show or hide all planes (Top, Front, Right and your own planes)"],
     [`${k.shift} + 1 / 2`, "Front / back view"],
     [`${k.shift} + 3 / 4`, "Left / right view"],
     [`${k.shift} + 5 / 6`, "Top / bottom view"],

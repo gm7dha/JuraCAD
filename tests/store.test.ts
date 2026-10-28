@@ -105,6 +105,54 @@ describe("default planes", () => {
   });
 });
 
+describe("P: show or hide all planes", () => {
+  it("hides then shows Top/Front/Right and Plane features, one undo step each, leaving the Origin alone", () => {
+    s().startCreate("plane");
+    expect(s().commitDraft()).toBe(true);
+    const plane = s().history.present.features.at(-1)!;
+    expect(plane.type).toBe("plane");
+    const planeShown = () => s().history.present.features.find((f) => f.id === plane.id)!.visible;
+    s().toggleDatum("Origin");
+    s().selectPlane("Top");
+    const steps = s().history.past.length;
+
+    expect(s().toggleAllPlanes()).toBe(false);
+    expect(activeHiddenDatums(s())).toEqual(["Origin", "Top", "Front", "Right"]);
+    expect(planeShown()).toBe(false);
+    expect(s().selectedPlane).toBeNull();
+    expect(s().history.past.length).toBe(steps + 1);
+
+    expect(s().toggleAllPlanes()).toBe(true);
+    expect(activeHiddenDatums(s())).toEqual(["Origin"]);
+    expect(planeShown()).toBe(true);
+    expect(s().history.past.length).toBe(steps + 2);
+
+    s().undo();
+    expect(activeHiddenDatums(s())).toEqual(["Origin", "Top", "Front", "Right"]);
+    expect(planeShown()).toBe(false);
+    s().undo();
+    expect(activeHiddenDatums(s())).toEqual(["Origin"]);
+    expect(planeShown()).toBeUndefined();
+  });
+
+  it("deselects a Plane feature picked in the list when it hides it (as its eye does), but not other features", () => {
+    s().startCreate("plane");
+    expect(s().commitDraft()).toBe(true);
+    const plane = s().history.present.features.at(-1)!.id;
+    useStore.setState({ selectedFeatureId: plane });
+    s().setAllPlanesVisible(true); // already shown: nothing to deselect
+    expect(s().selectedFeatureId).toBe(plane);
+    s().toggleAllPlanes();
+    expect(s().selectedFeatureId).toBeNull();
+
+    s().toggleAllPlanes();
+    const box = addBox();
+    useStore.setState({ selectedFeatureId: box });
+    s().toggleAllPlanes();
+    expect(s().selectedFeatureId).toBe(box);
+  });
+});
+
 describe("fillet picks", () => {
   const edge = (x: number) => ({ kind: "edge" as const, curve: "LINE", a: [x, 0, 0] as [number, number, number], b: [x, 10, 0] as [number, number, number], mid: [x, 5, 0] as [number, number, number] });
   const part = {

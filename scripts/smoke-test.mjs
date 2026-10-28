@@ -325,6 +325,12 @@ try {
     const help = await dialog.innerText();
     if (!/Claude desktop app is open/.test(help) || !/\.juracad file/.test(help)) throw new Error(`The "not connected" message doesn't say what to do: ${help}`);
     await shot("live-not-connected");
+    // Shortcut keys pressed while this popup is open belong to it: P mustn't hide the planes behind it.
+    const stepsBefore = await page.evaluate(() => window.juracadStore.getState().history.past.length);
+    await page.keyboard.press("p");
+    await page.waitForTimeout(200);
+    const afterP = await page.evaluate(() => ({ steps: window.juracadStore.getState().history.past.length, hidden: window.juracadStore.getState().history.present.hiddenDatums }));
+    if (afterP.steps !== stepsBefore || afterP.hidden) throw new Error(`P changed the design while the Connect to Claude popup was open: ${JSON.stringify(afterP)}`);
     await page.keyboard.press("Escape");
     await dialog.waitFor({ state: "detached" });
     liveReport = "Connect to Claude with no extension said what to do";
@@ -651,6 +657,27 @@ try {
         !window.juracadStore.getState().history.present.hiddenDatums,
     );
     if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after undoing the show/hide steps");
+  }
+
+  step = "pressing P to hide and show all planes, then undoing it";
+  {
+    await page.evaluate(() => document.activeElement?.blur?.());
+    const datums = () => page.evaluate(() => JSON.stringify(window.juracadStore.getState().history.present.hiddenDatums ?? []));
+    const steps = await page.evaluate(() => window.juracadStore.getState().history.past.length);
+    await page.keyboard.press("p");
+    await page.waitForFunction(() => JSON.stringify(window.juracadStore.getState().history.present.hiddenDatums) === JSON.stringify(["Top", "Front", "Right"]));
+    // The Origin is left alone (as in Onshape), and the rows show the planes as hidden.
+    if ((await page.locator(".feature-row.datum.hidden", { hasText: "Top" }).count()) !== 1) throw new Error("the Top row didn't show as hidden after P");
+    await page.keyboard.press("p");
+    await page.waitForFunction(() => !window.juracadStore.getState().history.present.hiddenDatums);
+    const after = await page.evaluate(() => window.juracadStore.getState().history.past.length);
+    if (after !== steps + 2) throw new Error(`P should be one undo step each time: ${steps} → ${after}`);
+    // Undo: back to hidden (the second press), then shown again (the first).
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(() => window.juracadStore.getState().history.present.hiddenDatums?.length === 3);
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(() => !window.juracadStore.getState().history.present.hiddenDatums);
+    if ((await datums()) !== "[]") throw new Error(`planes weren't all shown after undo: ${await datums()}`);
   }
 
   step = "filleting the edges of a face";
