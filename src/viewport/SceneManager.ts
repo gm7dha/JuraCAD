@@ -706,6 +706,11 @@ export class SceneManager {
     return this.camera.up.toArray() as [number, number, number];
   }
 
+  /** Whether the view is still turning or zooming to where it was sent (for the browser smoke test). */
+  cameraMoving(): boolean {
+    return this.animation !== null;
+  }
+
   restoreView(v: { dir: THREE.Vector3; target: THREE.Vector3; zoom: number; up?: THREE.Vector3 }): void {
     this.animateTo(v, true);
   }

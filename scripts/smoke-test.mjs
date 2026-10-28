@@ -2306,11 +2306,17 @@ try {
     await page.keyboard.press("Escape");
     await page.locator('[aria-label="Sketch"] [aria-label="Accept"]').click();
     await page.waitForSelector(".sketch-panel", { state: "detached" });
-    await page.waitForTimeout(300);
-    const spots = () => page.evaluate(() => window.juracadViewport.current.areaScreenPoints());
+    // Closing the sketch turns the view back to where it was (animated): screen spots are only right once it stops.
+    const settled = () => page.waitForFunction(() => !window.juracadViewport.current.cameraMoving(), null, { timeout: 10_000 });
+    await settled();
+    const spots = async () => {
+      await settled();
+      return page.evaluate(() => window.juracadViewport.current.areaScreenPoints());
+    };
     const smallest = (list) => list.reduce((a, b) => (b.box < a.box ? b : a));
     const biggest = (list) => list.reduce((a, b) => (b.box > a.box ? b : a));
     const clickSpot = async (spot) => {
+      await settled();
       const kind = await page.evaluate(([x, y]) => window.juracadViewport.current.pickKindAt(x, y), [spot.x, spot.y]);
       if (kind !== "sketchArea") throw new Error(`a click on the circle would pick ${kind}, not the sketch area`);
       await page.mouse.click(box.x + spot.x, box.y + spot.y);
