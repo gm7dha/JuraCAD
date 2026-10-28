@@ -269,7 +269,7 @@ try {
   await page.waitForTimeout(500);
   const rightRow = page.locator(".feature-row.datum", { hasText: "Right" });
   await rightRow.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Hide" }).click();
+  await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
   if (!(await rightRow.getAttribute("class")).includes("hidden")) throw new Error("hiding the Right plane didn't work");
   await rightRow.hover();
   await page.getByRole("button", { name: "Show Right" }).click();
