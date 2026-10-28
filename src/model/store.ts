@@ -660,7 +660,9 @@ export const useStore = create<AppState>((set, get) => {
       }
       // Transform the part that's selected in the 3D view (or the latest part).
       if (type === "transform" && draft.transform) {
-        const mine = studioParts(s);
+        // Not a part only a cancelled dialog's preview made (it goes with the next rebuild).
+        const kept = new Set(features.map((f) => f.id));
+        const mine = studioParts(s).filter((p) => kept.has(p.id.split("~")[0]));
         const partId = s.selection[0]?.partId ?? mine[mine.length - 1]?.id;
         if (partId) draft.transform = { ...draft.transform, partId };
       }
