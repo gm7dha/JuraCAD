@@ -2224,8 +2224,9 @@ export class GeometryEngine {
         continue;
       }
       if (isPatternFeature(feature.type)) {
-        const r = this.applyPattern(feature, features);
+        const r = this.applyPattern(feature, features, partCounter);
         if (r.error) featureErrors[feature.id] = r.error;
+        partCounter += r.newParts ?? 0;
         continue;
       }
 
@@ -2256,7 +2257,9 @@ export class GeometryEngine {
       }
       // Wrap goes on the part whose face it's wrapped round; everything else on the latest solid part.
       const wrapOn = feature.type === "wrap" ? this.parts.find((p) => p.id === feature.picks?.find((x) => x.ref.kind === "face")?.partId) : undefined;
-      const target = wrapOn ?? [...this.parts].reverse().find((p) => !p.surface);
+      let target = wrapOn ?? [...this.parts].reverse().find((p) => !p.surface);
+      // Onshape-style cuts (features made since separate pieces became parts): every solid part the cut reaches.
+      const cutsAll = !!feature.apart && feature.operation === "remove" && !wrapOn && this.parts.filter((p) => !p.surface).length > 1;
       if (feature.operation !== "new" && !target) {
         featureErrors[feature.id] =
           feature.type === "hole"
@@ -2270,7 +2273,7 @@ export class GeometryEngine {
       // A hole with modelled threads is slow to cut: reuse the result while nothing before it (or it) has changed.
       const at = features.indexOf(feature);
       const threadKey =
-        feature.type === "hole" && feature.hole?.modelThread && target && !target.sheet && !features.slice(0, at).some((f) => f.type === "derived")
+        feature.type === "hole" && feature.hole?.modelThread && target && !target.sheet && !cutsAll && !features.slice(0, at).some((f) => f.type === "derived")
           ? JSON.stringify([getCurrentScope(), features.slice(0, at + 1)])
           : null;
       const done = threadKey ? this.threadedResults.get(threadKey) : undefined;
@@ -2307,6 +2310,43 @@ export class GeometryEngine {
           this.parts.push({ id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true, meshKey: `${importKey(feature.import!)}#s` });
         }
         tool.delete();
+        continue;
+      }
+
+      if (cutsAll) {
+        const hits = this.partsReached(tool);
+        if (hits.length === 1) target = hits[0];
+        else if (hits.length > 1) {
+          const error = this.cutParts(feature, tool, hits);
+          if (error) featureErrors[feature.id] = error;
+          tool.delete();
+          continue;
+        }
+        // Reaching no part: the latest part, so the usual "doesn't reach any part" message is given.
+      }
+      // Onshape-style (features made since separate pieces became parts): each separate piece is a part.
+      if (feature.operation === "new" && feature.apart) {
+        const pieces = solidsOf(tool);
+        if (pieces.length > 1) {
+          this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
+          pieces.forEach((solid, i) => {
+            partCounter++;
+            this.parts.push({ id: i === 0 ? feature.id : `${feature.id}~${i + 1}`, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid });
+          });
+          tool.delete();
+          continue;
+        }
+        pieces.forEach((p) => p.delete());
+      }
+      if (feature.operation === "add" && feature.apart && target) {
+        try {
+          const made = this.addApart(feature, tool, target, partCounter);
+          partCounter += made;
+        } catch (e) {
+          featureErrors[feature.id] = describeError(e, "Couldn't merge this into the part.");
+        } finally {
+          tool.delete();
+        }
         continue;
       }
 
@@ -2360,7 +2400,10 @@ export class GeometryEngine {
         target.featureIds.push(feature.id);
         this.tools.set(feature.id, { shape: tool.clone(), operation: feature.operation, partId: target.id });
         if (target.sheet && feature.operation === "remove") this.traceSheetCut(target, feature.id, tool);
-        if (missed) featureErrors[feature.id] = `This doesn't reach any part, so it cuts nothing (Remove cuts the latest part, ${target.name}). Check the direction (Flip), the depth and where the sketch is.`;
+        if (missed)
+          featureErrors[feature.id] = feature.apart
+            ? "This doesn't reach any part, so it cuts nothing. Check the direction (Flip), the depth and where the sketch is."
+            : `This doesn't reach any part, so it cuts nothing (Remove cuts the latest part, ${target.name}). Check the direction (Flip), the depth and where the sketch is.`;
         if (threadKey) {
           this.threadedResults.set(threadKey, { shape: result.clone(), tool: tool.clone(), ...(featureErrors[feature.id] ? { error: featureErrors[feature.id] } : {}) });
           for (const [k, old] of this.threadedResults) {
@@ -2381,6 +2424,187 @@ export class GeometryEngine {
     }
 
     return featureErrors;
+  }
+
+  /**
+   * Add, as in Onshape: each separate piece of the new solid joins the parts
+   * it touches (every one of them, merged into the oldest); a piece that
+   * touches no part becomes a part of its own. All or nothing: the parts are
+   * only changed once everything has worked. Returns how many new parts were
+   * made. A single piece touching only the latest part is fused exactly as an
+   * older Add is.
+   */
+  private addApart(feature: Feature, tool: Shape3D, target: BuiltPart, partCounter: number): number {
+    const all = solidsOf(tool);
+    const pieces = all.length > 1 ? all : [tool];
+    if (all.length <= 1) all.forEach((p) => p.delete());
+    const order = [target, ...[...this.parts].reverse().filter((p) => p !== target && !p.surface)];
+    const plan = { working: new Map<string, Shape3D>(), removed: new Map<string, string>(), created: [] as Shape3D[] };
+    try {
+      this.joinApart(pieces, order, plan);
+    } catch (e) {
+      this.dropPlan(plan);
+      throw e;
+    } finally {
+      if (all.length > 1) all.forEach((p) => p.delete());
+    }
+    const { made, home } = this.commitPlan(feature, plan, partCounter, target.id);
+    this.tools.set(feature.id, { shape: tool.clone(), operation: "add", partId: home });
+    return made;
+  }
+
+  /** The solid parts a cutting tool really reaches (shares some volume with), oldest first. */
+  private partsReached(tool: Shape3D): BuiltPart[] {
+    const box = boundsOf(tool);
+    return this.parts.filter((p) => {
+      if (p.surface || !boxesOverlap(boundsOf(p.shape), box)) return false;
+      try {
+        const common = p.shape.intersect(tool) as Shape3D;
+        try {
+          return measureVolume(common) > 1e-9;
+        } finally {
+          common.delete();
+        }
+      } catch {
+        return true;
+      }
+    });
+  }
+
+  /** Cut a tool from several parts (all or nothing). Returns an error message, or undefined. */
+  private cutParts(feature: Feature, tool: Shape3D, parts: BuiltPart[]): string | undefined {
+    const results: Shape3D[] = [];
+    try {
+      for (const part of parts) {
+        const result = part.shape.cut(tool);
+        results.push(result);
+        if (solidsOf(result).length === 0) throw new Error(`This would remove the whole of ${part.name}.`);
+      }
+    } catch (e) {
+      results.forEach((r) => r.delete());
+      return describeError(e, "Couldn't cut this from the parts.");
+    }
+    parts.forEach((part, i) => {
+      part.shape.delete();
+      part.shape = results[i];
+      part.featureIds.push(feature.id);
+      if (part.sheet) this.traceSheetCut(part, feature.id, tool);
+    });
+    this.tools.set(feature.id, { shape: tool.clone(), operation: "remove", partId: parts[parts.length - 1].id });
+    return undefined;
+  }
+
+  /**
+   * Work out where pieces go when they join what they touch (Add, and pattern
+   * or mirror copies of such features): each piece is fused with every part
+   * (in `order`) or earlier new piece it touches — touching meaning the fuse
+   * leaves no more separate solids than the part had — and those are merged
+   * into the oldest of them; a piece touching nothing is a new part.
+   * Shapes are worked on in `plan` (owned there), never on the parts.
+   */
+  private joinApart(pieces: Shape3D[], order: BuiltPart[], plan: { working: Map<string, Shape3D>; removed: Map<string, string>; created: Shape3D[] }): void {
+    const count = (s: Shape3D) => {
+      const xs = solidsOf(s);
+      xs.forEach((x) => x.delete());
+      return xs.length;
+    };
+    const age = (p: BuiltPart) => this.parts.indexOf(p);
+    for (const piece of pieces) {
+      const box = boundsOf(piece);
+      const shapeOf = (p: BuiltPart) => plan.working.get(p.id) ?? p.shape;
+      const touching: { part: BuiltPart; joined: Shape3D }[] = [];
+      for (const part of order) {
+        if (plan.removed.has(part.id) || !boxesOverlap(boundsOf(shapeOf(part)), box)) continue;
+        const before = count(shapeOf(part));
+        const joined = shapeOf(part).fuse(piece);
+        if (count(joined) <= before) touching.push({ part, joined });
+        else joined.delete();
+      }
+      // New pieces made earlier in this feature (pattern copies can touch each other).
+      const touchingNew: number[] = [];
+      plan.created.forEach((c, i) => {
+        if (!boxesOverlap(boundsOf(c), box)) return;
+        const joined = c.fuse(piece);
+        if (count(joined) <= count(c)) touchingNew.push(i);
+        joined.delete();
+      });
+      if (!touching.length) {
+        // A new part (joined with the new pieces it touches).
+        let shape = piece.clone();
+        for (const i of [...touchingNew].reverse()) {
+          const next = shape.fuse(plan.created[i]);
+          shape.delete();
+          plan.created[i].delete();
+          plan.created.splice(i, 1);
+          shape = next;
+        }
+        plan.created.push(shape);
+        continue;
+      }
+      touching.sort((a, b) => age(a.part) - age(b.part));
+      const keep = touching[0];
+      let merged = keep.joined;
+      for (const other of touching.slice(1)) {
+        other.joined.delete();
+        const next = merged.fuse(shapeOf(other.part));
+        merged.delete();
+        merged = next;
+        plan.working.get(other.part.id)?.delete();
+        plan.working.delete(other.part.id);
+        plan.removed.set(other.part.id, keep.part.id);
+        for (const [gone, into] of plan.removed) if (into === other.part.id) plan.removed.set(gone, keep.part.id);
+      }
+      for (const i of [...touchingNew].reverse()) {
+        const next = merged.fuse(plan.created[i]);
+        merged.delete();
+        plan.created[i].delete();
+        plan.created.splice(i, 1);
+        merged = next;
+      }
+      plan.working.get(keep.part.id)?.delete();
+      plan.working.set(keep.part.id, merged);
+    }
+  }
+
+  private dropPlan(plan: { working: Map<string, Shape3D>; created: Shape3D[] }): void {
+    plan.working.forEach((s) => s.delete());
+    plan.created.forEach((s) => s.delete());
+    plan.working.clear();
+    plan.created.length = 0;
+  }
+
+  /** Make a `joinApart` plan real: changed parts, merged parts taken out (their features go to the part they joined), new parts added. Returns how many new parts, and the first part changed or made. */
+  private commitPlan(feature: Feature, plan: { working: Map<string, Shape3D>; removed: Map<string, string>; created: Shape3D[] }, partCounter: number, fallbackId: string): { made: number; home: string } {
+    let home: string | undefined;
+    for (const [id, shape] of plan.working) {
+      const part = this.parts.find((p) => p.id === id)!;
+      part.shape.delete();
+      part.shape = shape;
+      if (!part.featureIds.includes(feature.id)) part.featureIds.push(feature.id);
+      home ??= id;
+    }
+    for (const [gone, into] of plan.removed) {
+      const part = this.parts.find((p) => p.id === gone);
+      const keep = this.parts.find((p) => p.id === into);
+      if (!part) continue;
+      if (keep) for (const f of part.featureIds) if (!keep.featureIds.includes(f)) keep.featureIds.push(f);
+      // Earlier features on it now belong to the part it joined (patterns of them work on that).
+      for (const t of this.tools.values()) if (t.partId === gone) t.partId = into;
+      part.shape.delete();
+      this.parts = this.parts.filter((p) => p !== part);
+    }
+    const taken = new Set(this.parts.map((p) => p.id));
+    plan.created.forEach((shape, i) => {
+      let id = feature.id;
+      for (let k = 2; taken.has(id); k++) id = `${feature.id}~${k}`;
+      taken.add(id);
+      this.parts.push({ id, name: `Part ${partCounter + i + 1}`, featureIds: [feature.id], shape });
+      home ??= id;
+    });
+    const made = plan.created.length;
+    plan.working.clear();
+    plan.created.length = 0;
+    return { made, home: home ?? fallbackId };
   }
 
   /** Split a part in two along a plane: both halves as parts, or just one side kept. */
@@ -3710,7 +3934,7 @@ export class GeometryEngine {
    * Mirror or pattern: repeat what earlier features did (add or cut their
    * solid) at mirrored, shifted or turned positions. Returns an error message, or null.
    */
-  private applyPattern(feature: Feature, all: Feature[]): { error?: string } {
+  private applyPattern(feature: Feature, all: Feature[], partCounter = 0): { error?: string; newParts?: number } {
     const def = FEATURE_DEFS[feature.type];
     const { values, errors } = resolveParams(feature);
     const badParam = def.params.find((p) => errors[p.key]);
@@ -3836,7 +4060,9 @@ export class GeometryEngine {
 
     // Work on copies of the parts, and only keep them if everything succeeds.
     const working = new Map<string, Shape3D>();
-    const release = () => working.forEach((s) => s.delete());
+    // Copies of Onshape-style features (`apart`): parts merged together, and new parts.
+    const plan = { working, removed: new Map<string, string>(), created: [] as Shape3D[] };
+    const release = () => this.dropPlan(plan);
     try {
       for (const source of ordered) {
         const tool = this.tools.get(source.id)!;
@@ -3844,6 +4070,54 @@ export class GeometryEngine {
         if (!part) {
           release();
           return { error: `The part ${source.name} belonged to no longer exists.` };
+        }
+        if (source.apart && !part.surface) {
+          const copies = placements.map((place) => place(tool.shape.clone()));
+          try {
+            if (tool.operation === "remove") {
+              // Each copy cuts every solid part it reaches.
+              for (const copy of copies) {
+                const box = boundsOf(copy);
+                for (const p of this.parts) {
+                  if (p.surface || plan.removed.has(p.id)) continue;
+                  const now = working.get(p.id) ?? p.shape;
+                  if (!boxesOverlap(boundsOf(now), box)) continue;
+                  const next = now.cut(copy);
+                  working.get(p.id)?.delete();
+                  working.set(p.id, next);
+                }
+              }
+              for (const [id, shape] of working) {
+                if (solidsOf(shape).length === 0) {
+                  release();
+                  return { error: `This would remove the whole of ${this.parts.find((p) => p.id === id)?.name ?? "a part"}.` };
+                }
+              }
+            } else if (tool.operation === "new") {
+              // Copies of a New feature are new parts (each separate piece its own), as in Onshape.
+              for (const copy of copies) {
+                const xs = solidsOf(copy);
+                if (xs.length > 1) plan.created.push(...xs);
+                else {
+                  xs.forEach((x) => x.delete());
+                  plan.created.push(copy.clone());
+                }
+              }
+            } else {
+              // Copies of an Add join what they touch, or are parts of their own (as the feature itself does).
+              const order = [part, ...[...this.parts].reverse().filter((p) => p !== part && !p.surface)];
+              const split = copies.map((c) => solidsOf(c));
+              const pieces = copies.flatMap((c, i) => (split[i].length > 1 ? split[i] : [c]));
+              try {
+                this.joinApart(pieces, order, plan);
+              } finally {
+                split.forEach((xs) => xs.forEach((x) => x.delete()));
+              }
+            }
+          } finally {
+            copies.forEach((c) => c.delete());
+          }
+          continue;
         }
         let shape = working.get(part.id) ?? part.shape.clone();
         if (part.surface) {
@@ -3881,13 +4155,8 @@ export class GeometryEngine {
       release();
       return { error: describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`) };
     }
-    for (const [id, shape] of working) {
-      const part = this.parts.find((p) => p.id === id)!;
-      part.shape.delete();
-      part.shape = shape;
-      part.featureIds.push(feature.id);
-    }
-    return {};
+    const { made } = this.commitPlan(feature, plan, partCounter, "");
+    return made ? { newParts: made } : {};
   }
 
   /** A cut came out right: a valid solid, with as many solids and shells as `plain` (the same cut without the extras), and less in it. */

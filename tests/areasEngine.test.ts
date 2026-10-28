@@ -15,8 +15,8 @@ import { defaultParams } from "../src/model/features";
 import type { Feature } from "../src/model/types";
 import { pickOf, pointInside, sketchAreas, type AreaPick } from "../src/sketch/areas";
 import { emptyDocument, parseDocument } from "../src/model/document";
-import { addCircle, addLine, addRectangle } from "../src/sketch/ops";
-import type { SketchPlane } from "../src/sketch/planes";
+import { addCircle, addLine, addPoint, addRectangle } from "../src/sketch/ops";
+import { planeOnFace, type SketchPlane } from "../src/sketch/planes";
 import { addEllipse, addSpline } from "../src/sketch/tools";
 import { emptySketch, type SketchData } from "../src/sketch/types";
 
@@ -214,5 +214,196 @@ describe("picked areas in a rebuild", () => {
     r = engine.rebuild([sketchFeature(moved), extrudeFeature([[5, 15]])]);
     expect(r.featureErrors.e1).toMatch(/One of the areas picked to extrude isn't in the sketch any more/);
     expect(r.featureErrors.e1).toMatch(/click the areas again/);
+  });
+});
+
+describe("one sketch with two circles, each extruded on its own (as in Onshape)", () => {
+  let engine: GeometryEngine | undefined;
+  afterEach(() => engine?.dispose());
+  // The owner's screenshot: a small circle (r 5) extruded tall, a big one (r 15) extruded short.
+  let s = addCircle(emptySketch(), at(0, 0), 5).sketch;
+  s = addCircle(s, at(40, 0), 15).sketch;
+  const map = sketchAreas(s);
+  const small = pickOf(map.areas[map.areaAt([0, 0])]);
+  const big = pickOf(map.areas[map.areaAt([40, 0])]);
+  const sketch: Feature = { id: "s1", name: "Sketch 1", type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane: TOP, data: s } };
+  const extrude = (id: string, operation: "new" | "add", depth: number, areas: AreaPick[] | undefined, apart = true): Feature => ({
+    id,
+    name: id,
+    type: "extrude",
+    operation,
+    suppressed: false,
+    params: { ...defaultParams("extrude"), depth: String(depth) },
+    sketchRef: "s1",
+    extrude: { end: "blind", flip: false },
+    ...(areas ? { areas } : {}),
+    ...(apart ? { apart: true } : {}),
+  });
+  /** Height (top of the mesh) and volume of a built part. */
+  const sizeOf = (p: { vertices: Float32Array; triangles: Uint32Array }) => {
+    let top = -Infinity;
+    let bottom = Infinity;
+    for (let i = 2; i < p.vertices.length; i += 3) {
+      top = Math.max(top, p.vertices[i]);
+      bottom = Math.min(bottom, p.vertices[i]);
+    }
+    return { height: top - bottom, volume: analyzeMesh(p.vertices, p.triangles).volume };
+  };
+  const close = (actual: number, exact: number) => expect(Math.abs(actual / exact - 1)).toBeLessThan(0.005);
+
+  it("Extrude 1 (New, the small circle, 60 tall) and Extrude 2 (Add, the big circle, 10 tall) make two parts", () => {
+    engine = new GeometryEngine();
+    const r = engine.rebuild([sketch, extrude("e1", "new", 60, [small]), extrude("e2", "add", 10, [big])]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2"]);
+    const [p1, p2] = r.parts.map(sizeOf);
+    expect(p1.height).toBeCloseTo(60, 6);
+    expect(p2.height).toBeCloseTo(10, 6);
+    close(p1.volume, Math.PI * 25 * 60);
+    close(p2.volume, Math.PI * 225 * 10);
+    // Each part is made by its own extrude.
+    expect(r.parts[1].id).toBe("e2");
+  });
+
+  it("New with both circles: two parts, one per circle", () => {
+    engine = new GeometryEngine();
+    const r = engine.rebuild([sketch, extrude("e1", "new", 20, undefined)]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => [p.id, p.name])).toEqual([
+      ["e1", "Part 1"],
+      ["e1~2", "Part 2"],
+    ]);
+    const vols = r.parts.map((p) => sizeOf(p).volume).sort((a, b) => a - b);
+    close(vols[0], Math.PI * 25 * 20);
+    close(vols[1], Math.PI * 225 * 20);
+  });
+
+  it("Add that touches the part still joins it (a boss on top of the cylinder)", () => {
+    // A second sketch on the top of Extrude 1 (z = 60), a small circle on it extruded 5 with Add.
+    const boss = addCircle(emptySketch(), at(0, 0), 3).sketch;
+    const sketch2: Feature = { id: "s2", name: "Sketch 2", type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane: planeOnFace([0, 0, 1], [0, 0, 60], "Top face"), data: boss } };
+    engine = new GeometryEngine();
+    const r = engine.rebuild([sketch, extrude("e1", "new", 60, [small]), sketch2, { ...extrude("e2", "add", 5, undefined), sketchRef: "s2" }]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    expect(sizeOf(r.parts[0]).height).toBeCloseTo(65, 6);
+    close(sizeOf(r.parts[0]).volume, Math.PI * 25 * 60 + Math.PI * 9 * 5);
+  });
+
+  it("Add joins the part it touches even when that isn't the latest one", () => {
+    const boss = addCircle(emptySketch(), at(0, 0), 3).sketch;
+    const sketch2: Feature = { id: "s2", name: "Sketch 2", type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane: planeOnFace([0, 0, 1], [0, 0, 60], "Top face"), data: boss } };
+    engine = new GeometryEngine();
+    const r = engine.rebuild([sketch, extrude("e1", "new", 60, [small]), extrude("e2", "add", 10, [big]), sketch2, { ...extrude("e3", "add", 5, undefined), sketchRef: "s2" }]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2"]);
+    expect(sizeOf(r.parts[0]).height).toBeCloseTo(65, 6);
+    close(sizeOf(r.parts[0]).volume, Math.PI * 25 * 60 + Math.PI * 9 * 5);
+    close(sizeOf(r.parts[1]).volume, Math.PI * 225 * 10);
+  });
+
+  const topOf = (z: number, data: SketchData, id: string): Feature => ({ id, name: id, type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane: planeOnFace([0, 0, 1], [0, 0, z], "Top face"), data } });
+  const volumes = (r: { parts: { name: string; vertices: Float32Array; triangles: Uint32Array }[] }) => Object.fromEntries(r.parts.map((p) => [p.name, sizeOf(p).volume]));
+  const twoParts = () => [sketch, extrude("e1", "new", 60, [small]), extrude("e2", "add", 10, [big])];
+
+  it("a hole drilled into the tall cylinder (Part 1) cuts it, though Part 2 is the latest part", () => {
+    const points = addPoint(emptySketch(), { x: 0, y: 0 }).sketch;
+    const hole: Feature = {
+      id: "h1",
+      name: "Hole 1",
+      type: "hole",
+      operation: "remove",
+      suppressed: false,
+      params: { ...defaultParams("hole"), diameter: "4" },
+      hole: { sketchRef: "s2", kind: "simple", standard: "Custom", fit: "clearance", end: "throughAll", flip: false },
+      apart: true,
+    };
+    engine = new GeometryEngine();
+    const r = engine.rebuild([...twoParts(), topOf(60, points, "s2"), hole]);
+    expect(r.featureErrors).toEqual({});
+    const v = volumes(r);
+    close(v["Part 1"], Math.PI * 25 * 60 - Math.PI * 4 * 60);
+    close(v["Part 2"], Math.PI * 225 * 10);
+  });
+
+  it("a Remove reaching both parts cuts both; one reaching neither says so", () => {
+    // A 100 × 4 slot across both cylinders, cut 5 deep from z = 10 down.
+    const slot = addRectangle(emptySketch(), at(-20, -2), at(80, 2)).sketch;
+    engine = new GeometryEngine();
+    const cut = { ...extrude("c1", "remove" as "add", 5, undefined), sketchRef: "s2", extrude: { end: "blind" as const, flip: true } };
+    const r = engine.rebuild([...twoParts(), topOf(10, slot, "s2"), cut]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(2);
+    const v = volumes(r);
+    // The slot crosses each cylinder through its middle: the strip |y| < 2 of the disc, 5 deep.
+    const strip = (r: number) => 2 * (2 * Math.sqrt(r * r - 4) + r * r * Math.asin(2 / r));
+    close(v["Part 1"], Math.PI * 25 * 60 - strip(5) * 5);
+    close(v["Part 2"], Math.PI * 225 * 10 - strip(15) * 5);
+    engine.dispose();
+    engine = new GeometryEngine();
+    const far = addRectangle(emptySketch(), at(200, 200), at(210, 210)).sketch;
+    const miss = engine.rebuild([...twoParts(), topOf(10, far, "s2"), cut]);
+    expect(miss.featureErrors.c1).toMatch(/doesn't reach any part/);
+    expect(miss.featureErrors.c1).not.toMatch(/latest part/);
+  });
+
+  it("an Add touching both parts merges them into one (the older one's name)", () => {
+    // A bar from the small cylinder to the big one, on top of the big one (z = 10 up to 15).
+    const bar = addRectangle(emptySketch(), at(-3, -2), at(45, 2)).sketch;
+    engine = new GeometryEngine();
+    const r = engine.rebuild([...twoParts(), topOf(10, bar, "s2"), { ...extrude("e3", "add", 5, undefined), sketchRef: "s2" }]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => p.name)).toEqual(["Part 1"]);
+    // Both cylinders plus the bar less where it overlaps them.
+    expect(sizeOf(r.parts[0]).volume).toBeGreaterThan(Math.PI * 25 * 60 + Math.PI * 225 * 10);
+  });
+
+  it("pattern copies of a separate part become parts of their own; a copy touching a part joins it", () => {
+    const pattern = (spacing: number): Feature => ({ id: "p1", name: "Pattern", type: "linearPattern", operation: "add", suppressed: false, params: { ...defaultParams("linearPattern"), count: "2", spacing: String(spacing) }, pattern: { sources: ["e2"], axis: "x", flip: false } });
+    engine = new GeometryEngine();
+    const r = engine.rebuild([...twoParts(), pattern(100)]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2", "Part 3"]);
+    close(volumes(r)["Part 3"], Math.PI * 225 * 10);
+    // The new part can be moved (as Move/copy starts on the latest part).
+    engine.dispose();
+    engine = new GeometryEngine();
+    const newId = r.parts[2].id;
+    const move: Feature = { id: "t1", name: "Move", type: "transform", operation: "add", suppressed: false, params: { ...defaultParams("transform"), dz: "60" }, transform: { partId: newId, axis: "z", about: "centre", copy: true } };
+    const moved = engine.rebuild([...twoParts(), pattern(100), move]);
+    expect(moved.featureErrors).toEqual({});
+    expect(moved.parts).toHaveLength(4);
+    engine.dispose();
+    // Copies of a New feature are new parts even where they overlap (as in Onshape).
+    engine.dispose();
+    engine = new GeometryEngine();
+    const ofNew = engine.rebuild([...twoParts(), { ...pattern(20), pattern: { sources: ["e1"], axis: "x", flip: false } }]);
+    expect(ofNew.featureErrors).toEqual({});
+    expect(ofNew.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2", "Part 3"]);
+    engine.dispose();
+    // Spaced 20: the copy of the Add overlaps the big cylinder, so it joins Part 2.
+    engine = new GeometryEngine();
+    const near = engine.rebuild([...twoParts(), pattern(20)]);
+    expect(near.featureErrors).toEqual({});
+    expect(near.parts.map((p) => p.name)).toEqual(["Part 1", "Part 2"]);
+  });
+
+  it("New with two circles, then moving the second part (id ~2) moves it", () => {
+    engine = new GeometryEngine();
+    const move: Feature = { id: "t1", name: "Move", type: "transform", operation: "add", suppressed: false, params: { ...defaultParams("transform"), dx: "100" }, transform: { partId: "e1~2", axis: "z", about: "centre", copy: false } };
+    const r = engine.rebuild([sketch, extrude("e1", "new", 20, undefined), move]);
+    expect(r.featureErrors).toEqual({});
+    const moved = r.parts.find((p) => p.id === "e1~2")!;
+    let minX = Infinity;
+    for (let i = 0; i < moved.vertices.length; i += 3) minX = Math.min(minX, moved.vertices[i]);
+    expect(Math.abs(minX - 125)).toBeLessThan(0.1);
+  });
+
+  it("old files (extrudes without the mark) still keep both circles in one part, exactly as before", () => {
+    engine = new GeometryEngine();
+    const r = engine.rebuild([sketch, extrude("e1", "new", 60, [small], false), extrude("e2", "add", 10, [big], false)]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    close(sizeOf(r.parts[0]).volume, Math.PI * 25 * 60 + Math.PI * 225 * 10);
   });
 });

@@ -2932,6 +2932,11 @@ kbd {
 .area-shape.all {
   fill: var(--accent-soft);
 }
+/* Already used by another feature (still clickable). */
+.area-shape.taken {
+  fill: var(--ink-3);
+  fill-opacity: 0.35;
+}
 .area-shape:hover {
   fill: var(--accent-line);
 }

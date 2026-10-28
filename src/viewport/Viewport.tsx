@@ -5,7 +5,7 @@ import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
-import { activeAssembly, activeFeatures, activeHiddenDatums, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
 import { clickedSpot, findPick, framePlacement } from "../assembly/connectors";
@@ -27,9 +27,9 @@ import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solve
 import type { SketchData } from "../sketch/types";
 import { setSketchTheme } from "./SketchLayer";
 import { partsOfFeature } from "../model/partLinks";
-import { SceneManager, type PickAreas, type PickTarget, type ScreenRay } from "./SceneManager";
-import { areaClickMode, areaOutlines, areaShades, followedSketch } from "../sketch/areaClicks";
-import { sketchAreas, toggleArea } from "../sketch/areas";
+import { SceneManager, type PickAreas, type PickAreaSet, type PickTarget, type ScreenRay } from "./SceneManager";
+import { areaClickChange, areaClickMode, areaOutlines, areaShades, areasTaken, clickableAreaSketches, followedSketch, selectArea, selectedAreaShades } from "../sketch/areaClicks";
+import { sketchAreas } from "../sketch/areas";
 import { planDrag, type DragPlan } from "../assembly/drag";
 import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mates";
 import { sectionPlane } from "./section";
@@ -165,10 +165,29 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
   if (activeAssembly(s)) return handleAssemblyPick(target, additive);
   // An area of the sketch an Extrude, Revolve or Sweep uses: pick it, or leave it out again (as the 2D map does).
+  // Another sketch's area: that sketch becomes the feature's sketch. With nothing open: select it for the next feature.
   if (target?.kind === "sketchArea") {
     const d = s.editing?.draft;
-    const data = d?.sketchRef ? followedSketch(activeFeatures(s).find((f) => f.id === d.sketchRef), s.sketchLinks)?.data : undefined;
-    if (d && data && areaClickMode(d) !== "off") s.setDraftField({ areas: toggleArea(sketchAreas(data), d.areas, target.index) });
+    const features = activeFeatures(s);
+    const sketch = features.find((f) => f.id === target.sketch);
+    const data = followedSketch(sketch, s.sketchLinks)?.data;
+    if (!sketch || !data) return;
+    if (!s.editing) {
+      // An area lying on a part's face: clicking it once selects the area; clicking it again (while it's the only
+      // thing selected) selects the face instead, so faces under a sketch on show can still be picked.
+      const sel = s.areaSelection;
+      const only = sel?.sketch === sketch.id && sel.areas.length === 1 && selectedAreaShades(sel, sketch.id, data)[target.index] === "picked";
+      if (target.under && only && !additive) {
+        s.setSelection([target.under.item]);
+        return;
+      }
+      s.setAreaSelection(selectArea(s.areaSelection, sketch.id, data, target.index));
+      return;
+    }
+    if (!d || areaClickMode(d) === "off") return;
+    const { patch, message } = areaClickChange(d, sketch, data, target.index);
+    s.setDraftField(patch);
+    if (message) s.showToast(message, "info");
     return;
   }
   // Parts shown flat are just for looking at: their faces and edges aren't the real ones.
@@ -816,23 +835,64 @@ export function Viewport() {
     viewportApi.current?.setReference(shape);
   }, [refDraft, features, inAssembly]);
   const sketchLinks = useStore((s) => s.sketchLinks);
-  // An Extrude, Revolve or Sweep open: its sketch's areas are drawn on the sketch plane and can be clicked.
+  // An Extrude, Revolve or Sweep open: the areas of its sketch, and (fainter) of every earlier sketch, are drawn on
+  // their planes and can be clicked; other sketches that are hidden only show under the pointer. With nothing open,
+  // the areas of the sketches on show can be clicked to select them for the next feature (as in Onshape).
   const areaDraft = useStore((s) => (s.editing && areaClickMode(s.editing.draft) !== "off" ? s.editing.draft : null));
   const areaMode = areaClickMode(areaDraft);
-  const areaSketch = areaDraft && !inAssembly ? features.find((f) => f.id === areaDraft.sketchRef && f.type === "sketch") : undefined;
-  // A sketch on a part's face is where the face is now (as the engine uses it).
-  const followed = followedSketch(areaSketch, sketchLinks);
-  const areaData = followed?.data;
-  // Keyed on where the plane is, not the object (a rebuild hands over an equal new one).
-  const planeValues = followed?.plane ? JSON.stringify(planeFrame(followed.plane)) : null;
-  const areaFrame = useMemo(() => (planeValues ? (JSON.parse(planeValues) as PlaneFrame) : null), [planeValues]);
-  const areaPicks = areaDraft?.areas;
-  const areaMap = useMemo(() => (areaData && areaMode !== "off" ? sketchAreas(areaData) : null), [areaData, areaMode]);
-  const areaShading = useMemo(() => (areaData && areaMap ? areaShades(areaData, areaPicks) : null), [areaData, areaMap, areaPicks]);
+  const idle = useStore((s) => !s.editing && !s.sketch && !s.mateDraft && !activeDrawing(s) && !s.showFlat);
+  const areaSelection = useStore((s) => s.areaSelection);
+  const rollbackTo = useStore((s) => s.rollbackTo);
+  // Only what decides which sketches are offered (not every keystroke in the dialog).
+  const draftId = areaDraft?.id;
+  const draftSketch = areaDraft?.sketchRef;
+  const draftPath = areaDraft?.pathRef;
+  const used = useMemo(() => usedSketches(features), [features]);
+  const areaSketches = useMemo(() => {
+    if (inAssembly) return [];
+    if (draftId) return clickableAreaSketches(features, { id: draftId, sketchRef: draftSketch, pathRef: draftPath }, rollbackTo);
+    if (!idle) return [];
+    return clickableAreaSketches(features, { id: "" }, rollbackTo).filter((f) => sketchVisible(f, used));
+  }, [inAssembly, draftId, draftSketch, draftPath, idle, features, rollbackTo, used]);
+  // Each sketch as the engine uses it (a sketch on a part's face is where the face is now), keyed on its plane's values
+  // and data so a rebuild handing over equal new objects redraws nothing. What other features use is worked out here too.
+  const followedAreas = useMemo(
+    () =>
+      areaSketches.flatMap((f) => {
+        const followed = followedSketch(f, sketchLinks);
+        if (!followed?.plane) return [];
+        const map = sketchAreas(followed.data);
+        const taken = draftId ? areasTaken(features, f.id, followed.data, draftId) : undefined;
+        return map.areas.length ? [{ feature: f, data: followed.data, map, taken, frameKey: JSON.stringify(planeFrame(followed.plane)) }] : [];
+      }),
+    [areaSketches, sketchLinks, features, draftId],
+  );
+  const frames = useRef(new Map<string, PlaneFrame>());
+  const draftAreas = areaDraft?.areas;
   const pickAreas = useMemo((): PickAreas | null => {
-    if (!areaMap?.areas.length || !areaFrame || !areaShading) return null;
-    return { frame: areaFrame, outlines: areaOutlines(areaMap), shades: areaShading, areaAt: (p) => areaMap.areaAt(p), first: areaMode === "first" };
-  }, [areaMap, areaFrame, areaShading, areaMode]);
+    if (!followedAreas.length) return null;
+    const sets: PickAreaSet[] = followedAreas.map(({ feature, data, map, taken, frameKey }) => {
+      let frame = frames.current.get(frameKey);
+      if (!frame) frames.current.set(frameKey, (frame = JSON.parse(frameKey) as PlaneFrame));
+      const own = draftId ? feature.id === draftSketch : true;
+      const shades = !draftId
+        ? selectedAreaShades(areaSelection, feature.id, data)
+        : own
+          ? areaShades(data, draftAreas, taken)
+          : areaShades(data, [], taken).map((x) => (x === "used" ? "none" : x));
+      return {
+        sketch: feature.id,
+        frame,
+        outlines: areaOutlines(map),
+        shades,
+        areaAt: (p) => map.areaAt(p),
+        ...(own ? {} : { faint: true }),
+        // Another sketch that's hidden: only under the pointer, so it isn't drawn over the parts.
+        ...(!own && !sketchVisible(feature, used) ? { hoverOnly: true } : {}),
+      };
+    });
+    return { sets, mode: draftId && areaMode !== "off" ? areaMode : "nearest" };
+  }, [followedAreas, draftId, draftSketch, draftAreas, areaMode, areaSelection, used]);
   useEffect(() => viewportApi.current?.setPickAreas(pickAreas), [pickAreas]);
   const others = useMemo(
     () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId, sketchLinks, refDraft?.id ?? null)),

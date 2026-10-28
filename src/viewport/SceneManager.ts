@@ -31,6 +31,8 @@ const COLOURS = {
   planeHoverBorder: "#ff8a00",
   planeSelected: "#5b9dff",
   planeSelectedBorder: "#1f6fd1",
+  /** A sketch area another feature already uses. */
+  areaTaken: "#8a8f96",
   /** Inside of a part when it's cut open by a section view. */
   sectionCut: "#d9774f",
 };
@@ -67,11 +69,19 @@ export type PickTarget =
   | { kind: "customPlane"; id: string }
   /** A straight line in a finished sketch (`id` is the sketch feature's id), clickable while a mirror or pattern wants one. */
   | { kind: "sketchLine"; id: string; line: string }
-  /** One of the areas of the sketch an Extrude, Revolve or Sweep uses (index into `sketchAreas(sketch).areas`), clickable while its dialog is open. */
-  | { kind: "sketchArea"; index: number };
+  /** An area of a sketch (`sketch`: its feature id; `index` into `sketchAreas(sketch).areas`): see `setPickAreas`. */
+  | {
+      kind: "sketchArea";
+      sketch: string;
+      index: number;
+      /** With nothing open: a part's face right there too (the area lies on it), so a second click can pick the face. */
+      under?: { item: SelectionItem; point: [number, number, number]; local: [number, number, number] };
+    };
 
-/** A sketch's areas to draw on its plane and make clickable (see `setPickAreas`). */
-export interface PickAreas {
+/** One sketch's areas to draw on its plane and make clickable (see `setPickAreas`). */
+export interface PickAreaSet {
+  /** The sketch feature's id. */
+  sketch: string;
   frame: PlaneFrame;
   /** Each area's outline and holes (sketch coordinates). The same array again means the same areas: only their colours are redone. */
   outlines: { outer: Pt[]; holes: Pt[][] }[];
@@ -79,8 +89,20 @@ export interface PickAreas {
   shades: AreaShade[];
   /** The area round a sketch point, or -1. */
   areaAt: (p: Pt) => number;
-  /** True: an area under the pointer wins over parts. False: only clicks that miss every part reach the areas. */
-  first: boolean;
+  /** Drawn fainter: not the sketch the feature uses now. */
+  faint?: boolean;
+  /** Drawn only under the pointer (a hidden sketch that isn't the feature's own). */
+  hoverOnly?: boolean;
+}
+
+/** Sketch areas that can be clicked, and when they win over parts. */
+export interface PickAreas {
+  sets: PickAreaSet[];
+  /**
+   * "first": an area under the pointer wins over parts; "afterParts": only clicks that miss every part reach the
+   * areas; "nearest" (nothing open): whichever is nearer, and areas only show under the pointer or when selected.
+   */
+  mode: "first" | "afterParts" | "nearest";
 }
 
 /** A Plane feature to draw: where it is, its name, and whether it's highlighted. */
@@ -1136,9 +1158,26 @@ export class SceneManager {
     const kept = (h: THREE.Intersection) => !this.section || this.section.distanceToPoint(h.point) >= -1e-6;
     // A sketch area (while an Extrude, Revolve or Sweep is open): before parts, unless the extrude's end is being picked.
     const area = this.areaUnderPointer();
-    if (area >= 0 && this.pickAreas?.first) return { kind: "sketchArea", index: area };
+    const areaTarget = area ? ({ kind: "sketchArea", sketch: this.pickAreas!.sets[area.set].sketch, index: area.index } as const) : null;
+    if (areaTarget && this.pickAreas?.mode === "first") return areaTarget;
     const faceHit = this.raycaster.intersectObjects(meshes, false).find(kept);
     const edgeHit = this.raycaster.intersectObjects(lines, false).find(kept);
+    // Nothing open: an area wins when it's in front of the part (or on its face), unless an edge in front of it is under the pointer.
+    if (area && areaTarget && this.pickAreas?.mode === "nearest" && (!faceHit || area.distance <= faceHit.distance + threshold) && (!edgeHit || this.facesOnly || edgeHit.distance > area.distance + threshold * 2)) {
+      // The area lies on a face: say which, so clicking a selected area again can pick the face.
+      if (faceHit && faceHit.faceIndex !== undefined && faceHit.faceIndex !== null && Math.abs(faceHit.distance - area.distance) <= threshold) {
+        const partId = faceHit.object.userData.partId as string;
+        const groups = this.parts.get(partId)?.data.faceGroups ?? [];
+        const triIndex = faceHit.faceIndex * 3;
+        const index = groups.findIndex((g) => triIndex >= g.start && triIndex < g.start + g.count);
+        if (index >= 0)
+          return {
+            ...areaTarget,
+            under: { item: { partId, kind: "face", index }, point: faceHit.point.toArray() as [number, number, number], local: faceHit.object.worldToLocal(faceHit.point.clone()).toArray() as [number, number, number] },
+          };
+      }
+      return areaTarget;
+    }
 
     // A sketch line (while a mirror or pattern wants one), unless it's hidden behind a face.
     const line = this.nearestPickLine(threshold);
@@ -1160,7 +1199,7 @@ export class SceneManager {
       if (index >= 0) return { kind: "part", item: { partId, kind: "face", index }, point: faceHit.point.toArray() as [number, number, number], local: faceHit.object.worldToLocal(faceHit.point.clone()).toArray() as [number, number, number] };
     }
 
-    if (area >= 0) return { kind: "sketchArea", index: area };
+    if (areaTarget && this.pickAreas?.mode !== "nearest") return areaTarget;
     // Nothing on a part: try the planes (nearest first) — Plane features, then the default planes.
     const custom = this.raycaster.intersectObjects(this.customPlanesGroup.children.map((g) => g.children[0]), false)[0];
     if (custom) return { kind: "customPlane", id: custom.object.userData.customPlane as string };
@@ -1172,45 +1211,47 @@ export class SceneManager {
   }
 
   // -------------------------------------------------------------------------
-  // A sketch's areas, clickable while an Extrude, Revolve or Sweep is open (as in Onshape).
+  // Sketch areas, clickable while an Extrude, Revolve or Sweep is open (every earlier sketch's, hidden ones too),
+  // or, with nothing open, the areas of the sketches on show (to select before choosing Extrude), as in Onshape.
 
   private pickAreas: PickAreas | null = null;
-  private hoverArea = -1;
+  private hoverArea: { set: number; index: number } | null = null;
   private readonly areasGroup = new THREE.Group();
   /**
-   * All the areas drawn as one mesh (fills) and one set of line pieces (outlines), whatever their number:
-   * each area's vertices are a range, coloured (with see-through-ness) per vertex.
+   * Each sketch's areas drawn as one mesh (fills) and one set of line pieces (outlines), whatever their number:
+   * each area's vertices are a range, coloured (with see-through-ness) per vertex. Kept per sketch.
    */
-  private areaDrawing: {
-    outlines: PickAreas["outlines"];
+  private areaDrawings = new Map<string, {
+    outlines: PickAreaSet["outlines"];
     frameKey: string;
     fill: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
     edges: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
     fillRanges: [number, number][];
     edgeRanges: [number, number][];
-  } | null = null;
+  }>();
 
-  /** Draw these areas on their sketch plane and let them be clicked (null: none). Only colours are redone when the areas and plane are unchanged. */
+  /** Draw these sketches' areas on their planes and let them be clicked (null: none). Only colours are redone for sketches whose areas and plane are unchanged. */
   setPickAreas(areas: PickAreas | null): void {
     this.pickAreas = areas;
-    if (!areas || this.hoverArea >= areas.outlines.length) this.hoverArea = -1;
-    const frameKey = areas ? JSON.stringify(areas.frame) : "";
-    const d = this.areaDrawing;
-    if (d && (!areas || d.outlines !== areas.outlines || d.frameKey !== frameKey)) {
+    const sets = areas?.sets ?? [];
+    if (this.hoverArea && (this.hoverArea.set >= sets.length || this.hoverArea.index >= sets[this.hoverArea.set].outlines.length)) this.hoverArea = null;
+    const keep = new Map(sets.map((a) => [a.sketch, a] as const));
+    for (const [id, d] of this.areaDrawings) {
+      const a = keep.get(id);
+      if (a && d.outlines === a.outlines && d.frameKey === JSON.stringify(a.frame)) continue;
       this.areasGroup.remove(d.fill, d.edges);
       d.fill.geometry.dispose();
       d.fill.material.dispose();
       d.edges.geometry.dispose();
       d.edges.material.dispose();
-      this.areaDrawing = null;
+      this.areaDrawings.delete(id);
     }
     if (!this.areasGroup.parent) this.scene.add(this.areasGroup);
-    if (!areas) return;
-    if (!this.areaDrawing) this.areaDrawing = this.buildAreas(areas, frameKey);
+    for (const a of sets) if (!this.areaDrawings.has(a.sketch)) this.areaDrawings.set(a.sketch, this.buildAreas(a));
     this.colourAreas();
   }
 
-  private buildAreas(areas: PickAreas, frameKey: string): NonNullable<SceneManager["areaDrawing"]> {
+  private buildAreas(areas: PickAreaSet): NonNullable<ReturnType<SceneManager["areaDrawings"]["get"]>> {
     const { origin, u, v, n } = areas.frame;
     const place = new THREE.Matrix4().makeBasis(new THREE.Vector3(...u), new THREE.Vector3(...v), new THREE.Vector3(...n)).setPosition(...origin);
     const fillPos: number[] = [];
@@ -1253,27 +1294,30 @@ export class SceneManager {
       o.frustumCulled = false;
     }
     this.areasGroup.add(fill, edges);
-    return { outlines: areas.outlines, frameKey, fill, edges, fillRanges, edgeRanges };
+    return { outlines: areas.outlines, frameKey: JSON.stringify(areas.frame), fill, edges, fillRanges, edgeRanges };
   }
 
-  /** Faint when just clickable, medium when "every closed shape" uses it, strong when picked; orange under the pointer. */
+  /** Faint when just clickable, grey when another feature uses it, medium when "every closed shape" uses it, strong when picked; orange under the pointer. */
   private colourAreas(): void {
-    const d = this.areaDrawing;
-    if (!d) return;
-    d.fillRanges.forEach((_r, i) => this.paintArea(i, false));
-    for (const o of [d.fill, d.edges]) {
-      const attr = o.geometry.getAttribute("color") as THREE.BufferAttribute;
-      attr.clearUpdateRanges(); // all of it
-      attr.needsUpdate = true;
-    }
+    (this.pickAreas?.sets ?? []).forEach((a, set) => {
+      const d = this.areaDrawings.get(a.sketch);
+      if (!d) return;
+      d.fillRanges.forEach((_r, i) => this.paintArea(set, i, false));
+      for (const o of [d.fill, d.edges]) {
+        const attr = o.geometry.getAttribute("color") as THREE.BufferAttribute;
+        attr.clearUpdateRanges(); // all of it
+        attr.needsUpdate = true;
+      }
+    });
   }
 
   /** Recolour one area (just its own vertices; `upload` sends just those to the graphics card). */
-  private paintArea(i: number, upload: boolean): void {
-    const d = this.areaDrawing;
-    if (!d || i < 0 || i >= d.fillRanges.length) return;
-    const shade = this.pickAreas?.shades[i] ?? "none";
-    const hover = i === this.hoverArea;
+  private paintArea(set: number, i: number, upload: boolean): void {
+    const a = this.pickAreas?.sets[set];
+    const d = a ? this.areaDrawings.get(a.sketch) : undefined;
+    if (!a || !d || i < 0 || i >= d.fillRanges.length) return;
+    const shade = a.shades[i] ?? "none";
+    const hover = this.hoverArea?.set === set && this.hoverArea.index === i;
     const c = new THREE.Color();
     const paint = (o: THREE.Mesh | THREE.LineSegments, [start, count]: [number, number], colour: string, alpha: number) => {
       const attr = o.geometry.getAttribute("color") as THREE.BufferAttribute;
@@ -1284,49 +1328,68 @@ export class SceneManager {
         attr.needsUpdate = true;
       }
     };
-    paint(d.fill, d.fillRanges[i], hover ? COLOURS.partHover : shade === "none" ? COLOURS.part : COLOURS.partSelected, (shade === "picked" ? 0.55 : shade === "used" ? 0.25 : 0.12) + (hover ? 0.2 : 0));
-    paint(d.edges, d.edgeRanges[i], hover ? COLOURS.edgeHover : shade === "none" ? COLOURS.part : COLOURS.edgeSelected, shade === "none" && !hover ? 0.5 : 0.9);
+    // With nothing open, areas only show under the pointer or when selected (the sketch's own lines are drawn anyway).
+    const quiet = (this.pickAreas?.mode === "nearest" || a.hoverOnly) && (shade === "none" || (a.hoverOnly && shade === "taken")) && !hover;
+    // Areas of sketches other than the feature's own are fainter still.
+    const faint = a.faint ? 0.5 : 1;
+    const fillColour = hover ? COLOURS.partHover : shade === "picked" || shade === "used" ? COLOURS.partSelected : shade === "taken" ? COLOURS.areaTaken : COLOURS.part;
+    const fillAlpha = quiet ? 0 : (shade === "picked" ? 0.55 : shade === "used" ? 0.25 : shade === "taken" ? 0.3 * faint : 0.12 * faint) + (hover ? 0.2 : 0);
+    paint(d.fill, d.fillRanges[i], fillColour, fillAlpha);
+    const edgeColour = hover ? COLOURS.edgeHover : shade === "picked" || shade === "used" ? COLOURS.edgeSelected : COLOURS.part;
+    paint(d.edges, d.edgeRanges[i], edgeColour, quiet ? 0 : shade === "picked" || shade === "used" || hover ? 0.9 : 0.5 * faint);
   }
 
   /** The pointer moved onto another area (or off them all): recolour just the two. */
-  private setHoverArea(i: number): void {
-    if (i === this.hoverArea) return;
+  private setHoverArea(next: { set: number; index: number } | null): void {
     const was = this.hoverArea;
-    this.hoverArea = i;
-    this.paintArea(was, true);
-    this.paintArea(i, true);
+    if (was?.set === next?.set && was?.index === next?.index) return;
+    this.hoverArea = next;
+    if (was) this.paintArea(was.set, was.index, true);
+    if (next) this.paintArea(next.set, next.index, true);
   }
 
-  /** The area under the raycaster's current ray (-1: none). */
-  private areaUnderPointer(): number {
-    const a = this.pickAreas;
-    if (!a) return -1;
+  /** The nearest area under the raycaster's current ray (null: none). On the same plane, the earlier sketch in the list wins. */
+  private areaUnderPointer(): { set: number; index: number; distance: number } | null {
+    const sets = this.pickAreas?.sets;
+    if (!sets?.length) return null;
     const r = this.raycaster.ray;
-    const hit = rayOnPlane(a.frame, r.origin.toArray() as [number, number, number], r.direction.toArray() as [number, number, number]);
-    if (!hit) return -1;
-    // With a section on, areas in the part of the view cut away can't be clicked.
-    if (this.section) {
-      const p = r.at(hit.distance, new THREE.Vector3());
-      if (this.section.distanceToPoint(p) < -1e-6) return -1;
+    let best: { set: number; index: number; distance: number } | null = null;
+    // The feature's own sketch (not faint) wins wherever its area is under the pointer; then the nearest of the others.
+    const passes = [sets.map((_a, i) => i).filter((i) => !sets[i].faint), sets.map((_a, i) => i).filter((i) => sets[i].faint)];
+    for (const pass of passes) {
+      if (best) break;
+      for (const set of pass) {
+        const a = sets[set];
+        const hit = rayOnPlane(a.frame, r.origin.toArray() as [number, number, number], r.direction.toArray() as [number, number, number]);
+        if (!hit) continue;
+        // With a section on, areas in the part of the view cut away can't be clicked.
+        if (this.section) {
+          const p = r.at(hit.distance, new THREE.Vector3());
+          if (this.section.distanceToPoint(p) < -1e-6) continue;
+        }
+        if (best && hit.distance >= best.distance - 1e-6) continue;
+        const index = a.areaAt(hit.at);
+        if (index >= 0) best = { set, index, distance: hit.distance };
+      }
     }
-    return a.areaAt(hit.at);
+    return best;
   }
 
   /**
    * For the browser smoke test: each clickable area's outline-points middle on screen (CSS px; inside round
-   * or other convex areas) and the size of its outline's box (mm²).
+   * or other convex areas), the size of its outline's box (mm²) and the sketch it's in.
    */
-  areaScreenPoints(): { x: number; y: number; box: number }[] {
-    const a = this.pickAreas;
-    if (!a) return [];
-    const { origin: o, u, v } = a.frame;
-    return a.outlines.map(({ outer }) => {
-      const xs = outer.map((q) => q[0]);
-      const ys = outer.map((q) => q[1]);
-      const x = xs.reduce((t, q) => t + q, 0) / xs.length;
-      const y = ys.reduce((t, q) => t + q, 0) / ys.length;
-      const p = new THREE.Vector3(o[0] + x * u[0] + y * v[0], o[1] + x * u[1] + y * v[1], o[2] + x * u[2] + y * v[2]).project(this.camera);
-      return { x: ((p.x + 1) / 2) * this.width, y: ((1 - p.y) / 2) * this.height, box: (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys)) };
+  areaScreenPoints(): { x: number; y: number; box: number; sketch: string }[] {
+    return (this.pickAreas?.sets ?? []).flatMap((a) => {
+      const { origin: o, u, v } = a.frame;
+      return a.outlines.map(({ outer }) => {
+        const xs = outer.map((q) => q[0]);
+        const ys = outer.map((q) => q[1]);
+        const x = xs.reduce((t, q) => t + q, 0) / xs.length;
+        const y = ys.reduce((t, q) => t + q, 0) / ys.length;
+        const p = new THREE.Vector3(o[0] + x * u[0] + y * v[0], o[1] + x * u[1] + y * v[1], o[2] + x * u[2] + y * v[2]).project(this.camera);
+        return { x: ((p.x + 1) / 2) * this.width, y: ((1 - p.y) / 2) * this.height, box: (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys)), sketch: a.sketch };
+      });
     });
   }
 
@@ -1535,7 +1598,7 @@ export class SceneManager {
     this.pendingMove = null;
     this.sketchController?.pointerLeave();
     this.viewCube.setHover(null, null, this.width);
-    this.setHoverArea(-1);
+    this.setHoverArea(null);
     if (this.hover) {
       this.hover = null;
       this.applyHighlights();
@@ -1611,9 +1674,9 @@ export class SceneManager {
     const planeHit = hit?.kind === "plane" ? hit.plane : null;
     const customHit = hit?.kind === "customPlane" ? hit.id : null;
     const lineHit = hit?.kind === "sketchLine" ? this.pickLines.find((l) => l.sketch === hit.id && l.line === hit.line) ?? null : null;
-    const areaHit = hit?.kind === "sketchArea" ? hit.index : -1;
-    this.setHoverArea(areaHit);
-    if (areaHit >= 0) this.renderer.domElement.style.cursor = "pointer";
+    const areaSet = hit?.kind === "sketchArea" ? (this.pickAreas?.sets.findIndex((a) => a.sketch === hit.sketch) ?? -1) : -1;
+    this.setHoverArea(hit?.kind === "sketchArea" && areaSet >= 0 ? { set: areaSet, index: hit.index } : null);
+    if (areaSet >= 0) this.renderer.domElement.style.cursor = "pointer";
     if (lineHit !== this.hoverLine) {
       this.hoverLine = lineHit;
       this.drawReference();
