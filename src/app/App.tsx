@@ -19,6 +19,7 @@ import { MeasurePanel } from "./MeasurePanel";
 import { SectionPanel } from "./SectionPanel";
 import { PrintBedPanel } from "./PrintBedPanel";
 import { openFile, openFromFile, saveToFile } from "./fileActions";
+import { inPopup } from "./popupGuard";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
 import { SketchOverlay } from "./SketchOverlay";
 import { SketchPanel } from "./SketchPanel";
@@ -108,11 +109,13 @@ function useShortcuts() {
       // Save and open work everywhere, even while typing (and stop the browser saving the web page).
       if (mod && !e.altKey && (e.key.toLowerCase() === "s" || e.key.toLowerCase() === "o")) {
         e.preventDefault();
-        if (s.dialog) return;
+        if (s.dialog || inPopup(e.target, document)) return;
         if (e.key.toLowerCase() === "s") void saveToFile(e.shiftKey);
         else void openFromFile();
         return;
       }
+      // Keys pressed in a popup (Live with Claude, Install as an app, Settings…) are the popup's own.
+      if (inPopup(e.target, document)) return;
       if (sketchShortcut(e)) {
         e.preventDefault();
         return;
