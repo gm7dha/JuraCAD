@@ -134,6 +134,23 @@ describe("P: show or hide all planes", () => {
     expect(activeHiddenDatums(s())).toEqual(["Origin"]);
     expect(planeShown()).toBeUndefined();
   });
+
+  it("deselects a Plane feature picked in the list when it hides it (as its eye does), but not other features", () => {
+    s().startCreate("plane");
+    expect(s().commitDraft()).toBe(true);
+    const plane = s().history.present.features.at(-1)!.id;
+    useStore.setState({ selectedFeatureId: plane });
+    s().setAllPlanesVisible(true); // already shown: nothing to deselect
+    expect(s().selectedFeatureId).toBe(plane);
+    s().toggleAllPlanes();
+    expect(s().selectedFeatureId).toBeNull();
+
+    s().toggleAllPlanes();
+    const box = addBox();
+    useStore.setState({ selectedFeatureId: box });
+    s().toggleAllPlanes();
+    expect(s().selectedFeatureId).toBe(box);
+  });
 });
 
 describe("fillet picks", () => {

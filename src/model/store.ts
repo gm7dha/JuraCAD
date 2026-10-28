@@ -954,8 +954,10 @@ export const useStore = create<AppState>((set, get) => {
     setAllPlanesVisible: (visible) => {
       const studio = activeStudioId(get()) ?? MAIN_STUDIO;
       change((doc) => setAllPlanesVisible(doc, studio, visible));
-      // A hidden plane can't stay selected.
+      // A hidden plane can't stay selected (Top/Front/Right, or a Plane feature, as with its eye).
       if (!visible && get().selectedPlane) set({ selectedPlane: null });
+      const picked = get().selectedFeatureId;
+      if (!visible && picked && activeFeatures(get()).find((f) => f.id === picked)?.type === "plane") set({ selectedFeatureId: null });
     },
     toggleAllPlanes: () => {
       const studio = activeStudioId(get()) ?? MAIN_STUDIO;
