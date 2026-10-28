@@ -70,6 +70,9 @@ export interface SweepControl {
   lockOrientation?: boolean;
 }
 
+/** The biggest twist allowed, either way (10 full turns): more takes too long to build, and soon fails. */
+export const MAX_TWIST = 3600;
+
 /** A point and the path's direction there, sampled along the spine (world mm). */
 interface PathSample {
   p: Vec3;
@@ -126,6 +129,9 @@ function samplePath(spine: Wire, perPiece: number): PathSample[][] {
  * profile to keep facing it.
  */
 export function twistGuide(spine: Wire, twistDeg: number): Wire {
+  if (Math.abs(twistDeg) > MAX_TWIST + 1e-9) {
+    throw new Error(`A twist can be at most ${MAX_TWIST}° (${MAX_TWIST / 360} full turns) either way. Use a smaller twist, or split the path into pieces and sweep each.`);
+  }
   const turns = Math.abs(twistDeg) / 360;
   const pieces = samplePath(spine, Math.max(24, Math.ceil(96 * turns)));
   const pts: PathSample[] = [];
@@ -174,7 +180,11 @@ export function twistGuide(spine: Wire, twistDeg: number): Wire {
     guide.push([pts[i].p[0] + d[0] * radius, pts[i].p[1] + d[1] * radius, pts[i].p[2] + d[2] * radius]);
   }
   const edge = makeBSplineApproximation(guide, { tolerance: radius * 1e-4, degMax: 8, degMin: 3 });
-  return assembleWire([edge]);
+  try {
+    return assembleWire([edge]);
+  } finally {
+    edge.delete();
+  }
 }
 
 /**

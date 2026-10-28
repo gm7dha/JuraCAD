@@ -951,6 +951,12 @@ describe("sweep twist and keep orientation", () => {
     const small = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 0, y: 0 }, 2).sketch);
     const loop = build([ring, small, { ...feature("sweep", { twist: 90 }), sketchRef: small.id, pathRef: ring.id }]);
     expect(Object.values(loop.featureErrors)[0]).toMatch(/two ends/);
+    // More than 10 full turns either way: too slow to build (and soon fails), so explained instead.
+    const line = sketchFeature({ kind: "default", name: "Top" }, lineSketch(0, 0, 100, 0));
+    for (const twist of [3601, -7200]) {
+      const many = build([line, prof, { ...feature("sweep", { twist }), sketchRef: prof.id, pathRef: line.id }]);
+      expect(Object.values(many.featureErrors)[0]).toMatch(/at most 3600° \(10 full turns\)/);
+    }
   });
 
   it("keeps the profile facing the same way round a bend (Keep profile orientation)", () => {

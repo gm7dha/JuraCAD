@@ -842,7 +842,7 @@ function SweepLoftOptions() {
           />
           Keep profile orientation (don&apos;t turn with the path)
         </label>
-        {!draft.sweepControl?.lockOrientation && <p className="dialog-hint field-hint">Twist turns the shape steadily round the path as it goes — e.g. 90° for a quarter turn by the end. Use a minus amount to turn the other way.</p>}
+        {!draft.sweepControl?.lockOrientation && <p className="dialog-hint field-hint">Twist turns the shape steadily round the path as it goes — e.g. 90° for a quarter turn by the end, up to 3600° (10 turns). Use a minus amount to turn the other way.</p>}
       </fieldset>
     );
   }

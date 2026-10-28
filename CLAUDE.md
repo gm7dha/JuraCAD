@@ -51,6 +51,7 @@
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /
   `PartStudio.hiddenDatums`, read with the `activeHiddenDatums` selector. All saved in the file and undoable.
+  `visible` (like folders and sketch pictures) is left out of what the engine gets (`src/kernel/buildInput.ts`), so eye clicks never rebuild.
 - Part Studios: `src/model/studios.ts`. The first studio's features are `doc.features` (old files still open);
   more are in `doc.partStudios`. Feature ids are unique across the document. Store helpers `activeStudioId`,
   `activeFeatures`, `studioParts` (cached, selector-safe); feature edits go through `changeStudio`/`inStudio`.
@@ -105,7 +106,7 @@
   cuts the same off neighbours made earlier. Off unless chosen, so old files rebuild the same.
 - Sweep: `src/kernel/sweep.ts`. Twist (the "twist" box, degrees; + = anticlockwise seen from the path's end looking back)
   winds a guide curve round the path on a rotation-minimising frame (`twistGuide`) and gives it to OCCT's pipe shell as an
-  auxiliary spine; smooth open paths only. `sweepControl.lockOrientation` ("Keep profile orientation") uses a fixed
+  auxiliary spine; smooth open paths only, at most `MAX_TWIST` (3600°) either way. `sweepControl.lockOrientation` ("Keep profile orientation") uses a fixed
   trihedron and ignores the twist. Twist 0 and no lock take the original `genericSweep` path untouched.
 - Surfaces: `src/kernel/surface.ts` (extrude/revolve/sweep/loft of a sketch's open or closed runs — `findChains` in
   `src/sketch/regions.ts` — as shells; Fill from edges; thicken, enclose and offset). A surface part has `surface: true`

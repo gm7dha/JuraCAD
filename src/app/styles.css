@@ -440,7 +440,8 @@ button:disabled {
 
 .feature-row.datum.hidden .feature-name,
 .feature-row.datum.hidden .feature-icon,
-.feature-row.geometry-hidden .feature-icon {
+.feature-row.geometry-hidden .feature-icon,
+.feature-row.geometry-hidden .feature-name {
   color: var(--ink-3);
   opacity: 0.6;
 }
