@@ -834,12 +834,15 @@ export function applyRelation(s: SketchData, tool: RelationTool, picked: string[
     start = turnedTowards(s, made, tool);
   }
   const r = checkedSolve(start, { ...start, constraints: [...start.constraints, ...made] }, RELATION_LABELS[tool], true);
-  if (r.error && tool === "tangent" && /conflict/.test(r.error)) {
+  // Also when it worked but only by stretching the line far out of shape or carrying it far away.
+  const unkept = !r.error && tool === "tangent" && !lineKept(start, r.sketch, made);
+  if ((r.error && tool === "tangent" && /conflict/.test(r.error)) || unkept) {
     // A line far from the curve, or running a different way, can leave the solver stuck before it touches. Try
     // again with the line first laid onto the curve where it would touch it most easily, then solved from there.
     for (const laid of lineLaidOn(start, made)) {
       const again = checkedSolve(laid, { ...laid, constraints: [...laid.constraints, ...made] }, RELATION_LABELS[tool], true);
-      if (!again.error) return again;
+      // Only a sensible answer: the line not stretched or shrunk past double, nor carried off far away.
+      if (!again.error && lineKept(start, again.sketch, made)) return again;
     }
   }
   return r.error ? { sketch: s, error: r.error } : r;
@@ -852,6 +855,25 @@ export function applyRelation(s: SketchData, tool: RelationTool, picked: string[
  * as the line already does where possible, then nearest), best first. Empty if
  * not that case.
  */
+/** Did the Tangent's line keep about its length (within ×2) and stay near where it was (within a few lengths)? */
+function lineKept(before: SketchData, after: SketchData, made: SketchConstraint[]): boolean {
+  const t = made.find((k) => k.type === "tangent");
+  const line = t?.refs.map((id) => curveById(before, id)).find(isLine);
+  if (!line) return true;
+  const ends = (k: SketchData) => [pointPos(k, line.p1), pointPos(k, line.p2)];
+  const [a0, b0] = ends(before), [a1, b1] = ends(after);
+  const l0 = Math.hypot(b0[0] - a0[0], b0[1] - a0[1]), l1 = Math.hypot(b1[0] - a1[0], b1[1] - a1[1]);
+  const moved = Math.hypot((a1[0] + b1[0] - a0[0] - b0[0]) / 2, (a1[1] + b1[1] - a0[1] - b0[1]) / 2);
+  return l1 <= 2 * l0 && l1 >= l0 / 2 && moved <= 4 * l0;
+}
+
+/** Is this point held where it is: fixed, joined to the origin or another point, held on a curve, or shared with another curve? */
+function heldPoint(s: SketchData, id: string, own: string): boolean {
+  if (id === ORIGIN_ID) return true;
+  if (s.curves.some((c) => c.id !== own && curvePoints(c).includes(id))) return true;
+  return s.constraints.some((k) => k.refs.includes(id) && (k.type === "fix" || k.type === "coincident" || k.type === "pointOnLine" || k.type === "pointOnCircle" || k.type === "pointOnCurve" || k.type === "midpoint"));
+}
+
 function lineLaidOn(s: SketchData, made: SketchConstraint[]): SketchData[] {
   const t = made.find((k) => k.type === "tangent");
   if (!t) return [];
@@ -865,6 +887,56 @@ function lineLaidOn(s: SketchData, made: SketchConstraint[]): SketchData[] {
   const d: [number, number] = [(Q[0] - P[0]) / len, (Q[1] - P[1]) / len];
   const mid: [number, number] = [(P[0] + Q[0]) / 2, (P[1] + Q[1]) / 2];
   const path = curveParam(s, wavy);
+  const held1 = heldPoint(s, line.p1, line.id), held2 = heldPoint(s, line.p2, line.id);
+  if (held1 && held2) return [];
+  if (held1 || held2) {
+    // One end is held: turn the line about it to the lines from that point that touch the curve (where the curve
+    // runs straight towards or away from the point), keeping the line's length; nearest turns first.
+    const [E, otherId] = held1 ? [P, line.p2] : [Q, line.p1];
+    const away: [number, number] = held1 ? d : [-d[0], -d[1]];
+    const n = 400;
+    const f = (u: number) => {
+      const c = path.at(u), t1 = path.d1(u);
+      return (c[0] - E[0]) * t1[1] - (c[1] - E[1]) * t1[0];
+    };
+    const found: { u: number; turn: number }[] = [];
+    let prevU = path.lo, prevF = f(prevU);
+    for (let i = 1; i <= n; i++) {
+      const u = path.lo + ((path.hi - path.lo) * i) / n;
+      const fu = f(u);
+      if (prevF === 0 || prevF * fu < 0) {
+        // Bisect to where the curve runs straight towards the point.
+        let lo = prevU, hi = u, flo = prevF;
+        for (let k = 0; k < 60; k++) {
+          const m = (lo + hi) / 2, fm = f(m);
+          if (flo * fm <= 0) hi = m;
+          else [lo, flo] = [m, fm];
+        }
+        const r = (lo + hi) / 2;
+        const c = path.at(r);
+        const dist = Math.hypot(c[0] - E[0], c[1] - E[1]);
+        const nearEnd = !path.closed && (r - path.lo < 0.005 * (path.hi - path.lo) || path.hi - r < 0.005 * (path.hi - path.lo));
+        if (dist > 1e-6 && !nearEnd && Math.abs(curvatureAt(path, r)) * len >= 1e-3) {
+          const w: [number, number] = [(c[0] - E[0]) / dist, (c[1] - E[1]) / dist];
+          // Either way along that line from the held end: whichever is nearer the line's way now.
+          found.push({ u: r, turn: Math.acos(Math.min(1, Math.abs(w[0] * away[0] + w[1] * away[1]))) });
+        }
+      }
+      prevU = u;
+      prevF = fu;
+    }
+    return found
+      .sort((x, y) => x.turn - y.turn)
+      .slice(0, 3)
+      .map(({ u }) => {
+        const c = path.at(u);
+        const dist = Math.hypot(c[0] - E[0], c[1] - E[1]);
+        let w: [number, number] = [(c[0] - E[0]) / dist, (c[1] - E[1]) / dist];
+        if (w[0] * away[0] + w[1] * away[1] < 0) w = [-w[0], -w[1]];
+        const to: [number, number] = [E[0] + w[0] * len, E[1] + w[1] * len];
+        return { ...s, points: s.points.map((p) => (p.id === otherId ? { ...p, x: to[0], y: to[1] } : p)) };
+      });
+  }
   // Score each place along the curve: how far the line must turn (to run the same way, either direction) and move.
   // Not right at an open curve's ends (touching there doesn't count), nor where it hardly bends (a line can't
   // rest against a curve where it straightens out and turns back).

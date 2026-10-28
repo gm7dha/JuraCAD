@@ -869,6 +869,29 @@ function buildSystem(sketch: SketchData): System {
     // only once per solver step (`prepare`, at the step's starting point), and once before the first step.
     let seed: [number, number] | null = null;
     let searchedOnce = false;
+    // For a spline, the search's first look along this curve measures the distance from the spline by Newton steps
+    // from the place found for the previous sample (its nearest place moves along smoothly), falling back to the
+    // full measure when that doesn't settle: the same values, much quicker than searching the spline each time.
+    const otherSpline = curves.get(otherId)!.type === "spline";
+    // Where on the spline the last quick measure found nearest, kept from one evaluation to the next.
+    let quickV: number | null = null;
+    const quick = (x: Float64Array, q: CurveParam, warm = false): ((pt: Vec) => number) | undefined => {
+      if (!otherSpline) return undefined;
+      // A sweep along the whole curve starts afresh; following one place starts from last time's.
+      let v: number | null = warm ? quickV : null;
+      return (pt) => {
+        if (v === null) v = quickV = nearestParam(q, pt);
+        const near = nearestFrom(q, pt, v);
+        // Newton didn't settle from there: the full measure for this one (keeping the start for the next).
+        if (near === null) return level(x, pt);
+        v = quickV = near;
+        const b = q.at(near), d = q.d1(near);
+        const along = Math.hypot(d[0], d[1]) || 1;
+        // At one of an open spline's ends the nearest place isn't square across: use the full measure there.
+        if (!q.closed && (near <= q.lo + 1e-9 || near >= q.hi - 1e-9)) return level(x, pt);
+        return (d[0] * (pt[1] - b[1]) - d[1] * (pt[0] - b[0])) / along;
+      };
+    };
     // Whole-curve searches left in this step, and the end used when there's no low or high point.
     let searchesLeft = 3;
     let endU: number | null = null;
@@ -878,7 +901,7 @@ function buildSystem(sketch: SketchData): System {
     const search = (x: Float64Array, p: CurveParam, q: CurveParam): [number, number] | null => {
       // The low or high point of the other's "distance" along this one, then the nearest place on the other.
       let hit: { u: number; high: boolean; half: number } | null = null;
-      touchGap(p, (pt) => level(x, pt), (u, high, half) => (hit = { u, high, half }));
+      touchGap(p, (pt) => level(x, pt), (u, high, half) => (hit = { u, high, half }), undefined, quick(x, q));
       extreme = null;
       if (!hit) return null;
       const h = hit as { u: number; high: boolean; half: number };
@@ -925,7 +948,7 @@ function buildSystem(sketch: SketchData): System {
           if (mayFullySearch) searchesLeft--;
           let hit: { u: number; high: boolean; half: number } | null = null;
           endU = null;
-          const value = touchGap(p, (pt) => level(x, pt), (u, high, half) => (hit = { u, high, half }), (u) => (endU = u));
+          const value = touchGap(p, (pt) => level(x, pt), (u, high, half) => (hit = { u, high, half }), (u) => (endU = u), quick(x, q));
           const h = hit as { u: number; high: boolean; half: number } | null;
           extreme = h ? { ...h, v: extreme?.v ?? 0 } : null;
           out.push(value, 0);
@@ -935,8 +958,10 @@ function buildSystem(sketch: SketchData): System {
           // Inside a Jacobian: the same low or high point, followed from where it was just found (cheap).
           const e = extreme;
           const v = e.v;
-          // The same "distance" the search used, so the low or high point is the same one.
-          const f = (u: number) => (e.high ? -1 : 1) * level(x, p.at(wrapParam(p, u)));
+          // The same "distance" the search used, so the low or high point is the same one (measured the quick way
+          // for a spline: its nearest place moves only a little between these tries).
+          const measure = quick(x, q, true) ?? ((pt: Vec) => level(x, pt));
+          const f = (u: number) => (e.high ? -1 : 1) * measure(p.at(wrapParam(p, u)));
           const r = (Math.sqrt(5) - 1) / 2;
           let lo = e.u - e.half, hi = e.u + e.half;
           let c = hi - r * (hi - lo), d = lo + r * (hi - lo);
@@ -1028,7 +1053,10 @@ function nearestFrom(p: CurveParam, q: Vec, u: number): number | null {
     // Only towards a nearest place (df > 0), not a farthest one.
     if (!(df > 0)) return null;
     const step = f / df;
-    u = wrapParam(p, u - step);
+    const next = wrapParam(p, u - step);
+    // Pushed past an open curve's end: the end is the nearest place.
+    if (!p.closed && next !== u - step && next === u) return u;
+    u = next;
     if (Math.abs(step) < 1e-14 * Math.max(1, Math.abs(u))) return u;
   }
   return null;
@@ -1041,11 +1069,18 @@ function nearestFrom(p: CurveParam, q: Vec, u: number): number | null {
  * on the curve): among the places where that function has a low or high
  * point along the path, the value nearest zero. Zero = they touch.
  */
-function touchGap(p: CurveParam, level: (q: Vec) => number, where?: (u: number, high: boolean, half: number) => void, atEnd?: (u: number) => void): number {
+function touchGap(
+  p: CurveParam,
+  level: (q: Vec) => number,
+  where?: (u: number, high: boolean, half: number) => void,
+  atEnd?: (u: number) => void,
+  coarse?: (q: Vec) => number,
+): number {
   const us = p.samples;
   // A closed path's last sample is its first again.
   const n = p.closed ? us.length - 1 : us.length;
-  const g = us.slice(0, n).map((u) => level(p.at(u)));
+  // The first look along the curve may use a quicker measure of the same "distance" (`coarse`).
+  const g = us.slice(0, n).map((u) => (coarse ?? level)(p.at(u)));
   const value = (u: number) => level(p.at(wrapParam(p, u)));
   let best: number | null = null;
   const consider = (lo: number, hi: number, high: boolean) => {
@@ -1279,6 +1314,8 @@ export interface SolveOptions {
   /** Put these points here first and prefer to keep them there (dragging an arc's rim: its ends and centre). */
   place?: { pointId: string; x: number; y: number }[];
   maxIterations?: number;
+  /** Never give up early (searching solves normally stop once they plainly can't be met; see System.searching). */
+  patient?: boolean;
 }
 
 export interface SolveResult {
@@ -1701,10 +1738,12 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
   const maxIterations = options.maxIterations ?? 60;
   // Largest residual after each step (for giving up on hopeless searching solves; see System.searching).
   const history: number[] = [];
+  // The step at which a solve that looks hopeless is given up (see below); null while it looks fine.
+  let giveUpAt: number | null = null;
   for (let iter = 0; iter < maxIterations && maxAbs(r) > SOLVE_TOLERANCE * 0.01; iter++) {
     // Blocks that search afresh once per step (a touching Tangent) may now answer differently here.
     if (iter > 0 && prepareAll(sys, x)) r = evalAll(sys, x);
-    if (sys.searching && !(globalThis as any).__noGiveUp) {
+    if (sys.searching && !options.patient) {
       history.push(maxAbs(r));
       // At the rate it has improved over the last 8 steps, it couldn't be met in the steps left: give up now.
       // (Sketches without such blocks run exactly as before.)
@@ -1713,7 +1752,13 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
         const now = history[history.length - 1];
         const rate = Math.pow(now / history[history.length - 9], 1 / 8);
         const needed = rate >= 1 ? Infinity : Math.log((SOLVE_TOLERANCE * 100) / now) / Math.log(rate);
-        if (needed > 1.5 * (maxIterations - iter)) break;
+        if (needed > 1.5 * (maxIterations - iter)) {
+          // Not moving at all: give up now. Still creeping: some solves crawl for a while and then suddenly
+          // succeed, so allow a set number of steps more first.
+          if (rate > 0.995) break;
+          if (giveUpAt === null) giveUpAt = iter + 30;
+          if (iter >= giveUpAt) break;
+        }
       }
       // Already met (well within the tolerance) and only creeping closer: the searching blocks' own rounding
       // won't let it go much further, so stop polishing.

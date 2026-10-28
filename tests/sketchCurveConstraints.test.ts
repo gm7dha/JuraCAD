@@ -387,3 +387,66 @@ describe("Tangent to a spline: solvable cases are solved", () => {
     expect(applyRelation(l2.sketch, "tangent", [l2.lineId, s2.splineId]).error).toBeUndefined();
   });
 });
+
+describe("Tangent keeps a line's size when one end is held", () => {
+  const len = (s: SketchData, id: string) => {
+    const l = line(s, id);
+    const [p, q] = [pointPos(s, l.p1), pointPos(s, l.p2)];
+    return Math.hypot(q[0] - p[0], q[1] - p[1]);
+  };
+
+  it("turns a line with a fixed end about that end, keeping its length", () => {
+    const a = addSpline(emptySketch(), [at(0, 0.592), at(10, -5.621), at(20, 3.911), at(30, 1.057), at(40, -4.535)], false);
+    const l = addLine(fixAll(a.sketch, [a.splineId]), at(47.275, -27.198), at(44.889, -14.331));
+    const before = len(l.sketch, l.lineId);
+    const s = fixAll(l.sketch, [line(l.sketch, l.lineId).p1]);
+    const r = applyRelation(s, "tangent", [l.lineId, a.splineId]);
+    expect(r.error).toBeUndefined();
+    expect(pointPos(r.sketch, line(r.sketch, l.lineId).p1)).toEqual([47.275, -27.198]);
+    const after = len(r.sketch, l.lineId);
+    expect(after).toBeGreaterThan(before / 2);
+    expect(after).toBeLessThan(before * 2);
+  });
+
+  it("turns a line from the origin about the origin", () => {
+    const b = addSpline(emptySketch(), [at(12.29, -16.99), at(20.29, -9.51), at(28.29, -14.97), at(36.29, -14.35), at(44.29, -17.82)], false);
+    const l = addLine(fixAll(b.sketch, [b.splineId]), { x: 0, y: 0, snap: { kind: "origin" } }, at(13, 13.5));
+    const before = len(l.sketch, l.lineId);
+    const r = applyRelation(l.sketch, "tangent", [l.lineId, b.splineId]);
+    expect(r.error).toBeUndefined();
+    const after = len(r.sketch, l.lineId);
+    expect(after).toBeGreaterThan(before / 2);
+    expect(after).toBeLessThan(before * 2);
+    expect(Math.hypot(...pointPos(r.sketch, line(r.sketch, l.lineId).p1))).toBeLessThan(1e-9);
+  });
+});
+
+describe("solves that crawl before they succeed", () => {
+  it("aren't given up on: every drag that a patient solve meets is met", () => {
+    let wrong = 0;
+    for (let seed = 1; seed <= 25; seed++) {
+      let state = seed;
+      const r = () => ((state = (state * 1664525 + 1013904223) >>> 0) / 4294967296);
+      const R = (a: number, b: number) => a + (b - a) * r();
+      let s: SketchData = emptySketch();
+      for (let i = 0; i < 5; i++) {
+        const k = Math.floor(r() * 4), x = R(-30, 30), y = R(-30, 30);
+        if (k === 0) s = addSpline(s, [at(x, y), at(x + R(3, 10), y + R(-8, 8)), at(x + R(10, 20), y + R(-8, 8))], false).sketch;
+        else if (k === 1) s = addEllipse(s, at(x, y), at(x + R(4, 12), y + R(-3, 3)), [x, y + R(2, 6)]).sketch;
+        else if (k === 2) s = addLine(s, at(x, y), at(x + R(-15, 15), y + R(-15, 15))).sketch;
+        else s = addCircle(s, at(x, y), R(1, 6)).sketch;
+      }
+      for (let i = 0; i < 12; i++) {
+        const ids = s.curves.map((c) => c.id);
+        if (r() < 0.5) s = applyRelation(s, r() < 0.7 ? "tangent" : "normal", [ids[Math.floor(r() * ids.length)], ids[Math.floor(r() * ids.length)]]).sketch;
+        else {
+          const p = s.points[Math.floor(r() * s.points.length)];
+          const drag = { pointId: p.id, x: p.x + R(-3, 3), y: p.y + R(-3, 3) };
+          if (solveSketch(s, { drag, patient: true }).ok && !solveSketch(s, { drag }).ok) wrong++;
+          s = dragPoint(s, drag.pointId, drag.x, drag.y);
+        }
+      }
+    }
+    expect(wrong).toBe(0);
+  });
+});
