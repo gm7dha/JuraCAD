@@ -143,6 +143,18 @@ export interface Feature {
    * rebuild exactly as before.
    */
   apart?: boolean;
+  /**
+   * Extrude, revolve and sweep made since v0.29: Intersect keeps, in every
+   * solid part the feature reaches, only the overlap (as Remove cuts every part
+   * it reaches). Missing (older files): Intersect works on the latest part only.
+   */
+  intersectAll?: boolean;
+  /**
+   * Extrude: areas from other sketches as well as `sketchRef`'s (as Onshape
+   * lets one extrude use regions of several sketches). Each is extruded from
+   * its own sketch with the same settings. Missing: just `sketchRef`.
+   */
+  moreAreas?: { sketch: string; areas: AreaPick[] }[];
   /** Sweep: the sketch whose lines and arcs make the path. */
   pathRef?: string;
   /**

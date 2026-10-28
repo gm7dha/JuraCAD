@@ -25,6 +25,7 @@ export function usedSketches(features: Feature[]): Set<string> {
   for (const f of features) {
     if (f.suppressed || f.type === "sketch") continue;
     if (f.sketchRef) used.add(f.sketchRef);
+    for (const m of f.moreAreas ?? []) used.add(m.sketch);
     if (f.pathRef) used.add(f.pathRef);
     if (f.hole?.sketchRef) used.add(f.hole.sketchRef);
     for (const id of f.sections ?? []) used.add(id);

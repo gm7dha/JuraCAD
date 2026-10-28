@@ -73,7 +73,10 @@ function takenBy(features: Feature[], sketchId: string, data: SketchData, except
   const map = sketchAreas(data);
   const taken = new Set<number>();
   for (const f of features) {
-    if (f.id === exceptId || f.suppressed || f.sketchRef !== sketchId || !usesAreas(f)) continue;
+    if (f.id === exceptId || f.suppressed || !usesAreas(f)) continue;
+    // Areas it takes from this sketch as one of several.
+    for (const m of f.moreAreas ?? []) if (m.sketch === sketchId) for (const i of pickedAreas(map, m.areas).picked) taken.add(i);
+    if (f.sketchRef !== sketchId) continue;
     if (f.areas?.length) for (const i of pickedAreas(map, f.areas).picked) taken.add(i);
     else if (map.areas.length <= MAX_SHADED_AREAS) for (const i of areasUsedByAll(data)) taken.add(i);
   }
@@ -184,23 +187,42 @@ export function clickableAreaSketches(features: Feature[], draft: Pick<Feature, 
 /**
  * Clicking area `index` of sketch `sketchId` (its areas worked out from
  * `data`) while a feature is open: the same sketch toggles the area, as the 2D
- * map does; another sketch becomes the feature's sketch, with just that area
- * picked (a feature takes its areas from one sketch, as JuraCAD's Sketch box
- * shows). `message` says so when a sketch was already chosen.
+ * map does. Another sketch: an Extrude with areas already picked takes areas
+ * of several sketches (as in Onshape), so the area is added to (or taken out
+ * of) `moreAreas`; otherwise that sketch becomes the feature's sketch, with
+ * just that area picked, and `message` says so when a sketch was already chosen.
+ * When the feature's own sketch is left with nothing picked while other
+ * sketches still have areas, the next of those becomes its sketch (nothing
+ * picked would mean every closed shape).
  */
 export function areaClickChange(
-  draft: Pick<Feature, "type" | "name" | "sketchRef" | "areas" | "revolve" | "pathRef">,
+  draft: Pick<Feature, "type" | "name" | "sketchRef" | "areas" | "revolve" | "pathRef" | "moreAreas" | "surface">,
   sketch: { id: string; name: string },
   data: SketchData,
   index: number,
-  previousName?: string,
-): { patch: Partial<Pick<Feature, "sketchRef" | "areas" | "revolve">>; message?: string } {
+): { patch: Partial<Pick<Feature, "sketchRef" | "areas" | "revolve" | "moreAreas">>; message?: string } {
   const map = sketchAreas(data);
-  if (sketch.id === draft.sketchRef) return { patch: { areas: toggleArea(map, draft.areas, index) } };
-  const patch: Partial<Pick<Feature, "sketchRef" | "areas" | "revolve">> = { sketchRef: sketch.id, areas: toggleArea(map, undefined, index) };
+  const more = draft.moreAreas ?? [];
+  const tidy = (sketchRef: string | undefined, areas: AreaPick[] | undefined, rest: { sketch: string; areas: AreaPick[] }[]) => {
+    const kept = rest.filter((m) => m.areas.length);
+    if (!areas?.length && kept.length) return { sketchRef: kept[0].sketch, areas: kept[0].areas, moreAreas: kept.length > 1 ? kept.slice(1) : undefined };
+    return { sketchRef, areas, moreAreas: kept.length ? kept : undefined };
+  };
+  if (sketch.id === draft.sketchRef) {
+    const areas = toggleArea(map, draft.areas, index);
+    return { patch: more.length ? tidy(draft.sketchRef, areas, more) : { areas } };
+  }
+  // Several sketches: an extrude (solid) whose own areas are picked, or a sketch it already takes areas from.
+  const inMore = more.find((m) => m.sketch === sketch.id);
+  if (draft.type === "extrude" && !draft.surface && (draft.areas?.length || inMore)) {
+    const toggled = toggleArea(map, inMore?.areas, index) ?? [];
+    const rest = inMore ? more.map((m) => (m.sketch === sketch.id ? { ...m, areas: toggled } : m)) : [...more, { sketch: sketch.id, areas: toggled }];
+    return { patch: tidy(draft.sketchRef, draft.areas, rest) };
+  }
+  const patch: Partial<Pick<Feature, "sketchRef" | "areas" | "revolve" | "moreAreas">> = { sketchRef: sketch.id, areas: toggleArea(map, undefined, index), ...(more.length ? { moreAreas: undefined } : {}) };
   if (draft.type === "revolve") patch.revolve = { ...(draft.revolve ?? { flip: false }), axis: defaultAxis(data) };
   const message = draft.sketchRef
-    ? `${draft.name} now uses ${sketch.name}. A feature takes its areas from one sketch${previousName ? `, so ${previousName} is no longer used` : ""}.`
+    ? `${draft.name} now uses ${sketch.name}. ${draft.type === "extrude" ? "To use areas of several sketches, pick an area of the first sketch, then click areas in the others." : "A revolve or sweep takes its areas from one sketch."}`
     : undefined;
   return { patch, ...(message ? { message } : {}) };
 }
@@ -246,4 +268,16 @@ export function areaSelectionLapses(
     (!!now.sketch && !before.sketch) ||
     (!!now.selectedFeatureId && now.selectedFeatureId !== before.selectedFeatureId)
   );
+}
+
+/**
+ * The sketches a feature's dialog offers: those above the feature in the list
+ * when it's being edited; for a new feature, every sketch above the rollback
+ * bar (it goes in there), or all of them.
+ */
+export function sketchesOffered(features: Feature[], draftId: string, editing: boolean, rollbackTo?: string | null): Feature[] {
+  const at = features.findIndex((f) => f.id === draftId);
+  const bar = rollbackTo ? features.findIndex((f) => f.id === rollbackTo) : -1;
+  const before = editing && at >= 0 ? features.slice(0, at) : bar >= 0 ? features.slice(0, bar + 1) : features;
+  return before.filter((f) => f.type === "sketch");
 }

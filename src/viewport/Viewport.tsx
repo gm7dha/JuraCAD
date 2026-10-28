@@ -26,7 +26,7 @@ import { projectEdge, linkEdge, type SketchLinkInfo } from "../sketch/links";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
 import { setSketchTheme } from "./SketchLayer";
-import { partsOfFeature } from "../model/partLinks";
+import { draftEffect, partsOfFeature } from "../model/partLinks";
 import { SceneManager, type PickAreas, type PickAreaSet, type PickTarget, type ScreenRay } from "./SceneManager";
 import { areaClickChange, areaClickMode, areaOutlines, areaShades, areasTaken, clickableAreaSketches, followedSketch, selectArea, selectedAreaShades } from "../sketch/areaClicks";
 import { sketchAreas } from "../sketch/areas";
@@ -736,6 +736,12 @@ export function Viewport() {
   // Picked parts, or the parts a picked feature made (or a Boolean being set up uses), light up.
   const booleanDef = useStore((s) => (s.editing?.draft.type === "boolean" ? s.editing.draft.booleanDef ?? null : null));
   const deleting = useStore((s) => (s.editing?.draft.type === "deletePart" ? s.editing.draft.deleteParts ?? NO_IDS : null));
+  // An Extrude, Revolve, Sweep or Hole open: the parts it joins or cuts (from its preview) light up.
+  const effectDraft = useStore((s) => {
+    const d = s.editing?.draft;
+    return d && ["extrude", "revolve", "sweep", "hole"].includes(d.type) && d.operation !== "new" && !d.surface ? d : null;
+  });
+  const affected = useMemo(() => (effectDraft ? draftEffect(parts, effectDraft).changed : NO_IDS), [effectDraft?.id, effectDraft?.operation, parts]);
   useEffect(() => {
     const lit = assembly
       ? []
@@ -743,13 +749,15 @@ export function Viewport() {
         ? deleting
         : booleanDef
         ? [...booleanDef.targets, ...booleanDef.tools]
+        : affected.length
+          ? affected
         : selectedParts.length
           ? selectedParts
           : pickedFeature
             ? partsOfFeature(parts, pickedFeature, studioFeatures)
             : [];
     viewportApi.current?.setSelectedParts(lit);
-  }, [selectedParts, assembly, pickedFeature, parts, studioFeatures, booleanDef, deleting]);
+  }, [selectedParts, assembly, pickedFeature, parts, studioFeatures, booleanDef, deleting, affected]);
   const section = useStore((s) => s.section);
   const appearance = useStore((s) => s.history.present.appearance ?? NO_COLOURS);
   const colours = useMemo(() => {
@@ -869,17 +877,22 @@ export function Viewport() {
   );
   const frames = useRef(new Map<string, PlaneFrame>());
   const draftAreas = areaDraft?.areas;
+  const draftMore = areaDraft?.moreAreas;
   const pickAreas = useMemo((): PickAreas | null => {
     if (!followedAreas.length) return null;
     const sets: PickAreaSet[] = followedAreas.map(({ feature, data, map, taken, frameKey }) => {
       let frame = frames.current.get(frameKey);
       if (!frame) frames.current.set(frameKey, (frame = JSON.parse(frameKey) as PlaneFrame));
-      const own = draftId ? feature.id === draftSketch : true;
+      // Areas it takes from this sketch as one of several (an extrude using more than one sketch).
+      const more = draftMore?.find((m) => m.sketch === feature.id);
+      const own = draftId ? feature.id === draftSketch || !!more : true;
       const shades = !draftId
         ? selectedAreaShades(areaSelection, feature.id, data)
-        : own
+        : feature.id === draftSketch
           ? areaShades(data, draftAreas, taken)
-          : areaShades(data, [], taken).map((x) => (x === "used" ? "none" : x));
+          : more
+            ? areaShades(data, more.areas, taken)
+            : areaShades(data, [], taken).map((x) => (x === "used" ? "none" : x));
       return {
         sketch: feature.id,
         frame,
@@ -892,7 +905,7 @@ export function Viewport() {
       };
     });
     return { sets, mode: draftId && areaMode !== "off" ? areaMode : "nearest" };
-  }, [followedAreas, draftId, draftSketch, draftAreas, areaMode, areaSelection, used]);
+  }, [followedAreas, draftId, draftSketch, draftAreas, draftMore, areaMode, areaSelection, used]);
   useEffect(() => viewportApi.current?.setPickAreas(pickAreas), [pickAreas]);
   const others = useMemo(
     () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId, sketchLinks, refDraft?.id ?? null)),
