@@ -196,7 +196,6 @@ function useProjections(drawing: Drawing, cacheId: string): { projections: Proje
 /** The sheet as last laid out on screen (for saving). */
 let shownSheet: { drawingId: string; pageId: string; layout: SheetLayout; name: string; projections: Projections; info: SheetInfo } | null = null;
 
-/** The sheet on show, if it's of the drawing `d` and the sheet of it on show. */
 /** For the browser smoke test (?smoke): a view's corner and end points on the sheet on show, and its bounds. */
 export const drawingSmokeApi = {
   viewPoints(view: string): { points: number[]; bounds: [number, number, number, number] | null } | null {
@@ -205,6 +204,7 @@ export const drawingSmokeApi = {
   },
 };
 
+/** The sheet on show, if it's of the drawing `d` and the sheet of it on show. */
 const shownFor = (d: Drawing | null) => (d && shownSheet?.drawingId === d.id && shownSheet.pageId === pageIdOf(d) ? shownSheet : null);
 
 /**
