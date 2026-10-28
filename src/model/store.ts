@@ -35,6 +35,7 @@ import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
+import { followedSketch, freeAreas, type AreaSelection } from "../sketch/areaClicks";
 import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties, PlaneName, DatumName } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
@@ -216,6 +217,8 @@ export interface AppState {
   printBed: { printer: string; custom?: [number, number, number] } | null;
   /** Faces and edges picked in the viewport. */
   selection: SelectionItem[];
+  /** Sketch areas clicked in the 3D view with nothing open: the next Extrude, Revolve or Sweep uses them (as in Onshape). */
+  areaSelection: AreaSelection | null;
   hiddenParts: string[];
   /** Parts drawn see-through (display only, not saved). */
   transparentParts: string[];
@@ -444,6 +447,7 @@ export interface AppState {
   redo: () => void;
   selectFeature: (id: string | null) => void;
   setSelection: (items: SelectionItem[]) => void;
+  setAreaSelection: (selection: AreaSelection | null) => void;
   toggleHidden: (partId: string) => void;
   setShowFlat: (on: boolean) => void;
   setSelectedParts: (ids: string[]) => void;
@@ -576,6 +580,7 @@ export const useStore = create<AppState>((set, get) => {
     sketch: null,
     selectedFeatureId: null,
     selection: [],
+    areaSelection: null,
     section: null,
     printBed: null,
     hiddenParts: [],
@@ -626,6 +631,23 @@ export const useStore = create<AppState>((set, get) => {
         if (picked) {
           draft.sketchRef = picked.id;
           if (type === "revolve" && picked.sketch) draft.revolve = { axis: defaultAxis(picked.sketch.data), flip: false };
+        }
+      }
+      if (isSketchSolid(type) || type === "sweep") {
+        // Areas clicked in the 3D view beforehand (as in Onshape): use them.
+        const sel = s.areaSelection;
+        const chosen = sel ? features.find((f) => f.id === sel.sketch && f.type === "sketch" && !f.suppressed) : undefined;
+        if (sel && chosen?.sketch) {
+          draft.sketchRef = chosen.id;
+          draft.areas = sel.areas;
+          if (type === "revolve") draft.revolve = { axis: defaultAxis(chosen.sketch.data), flip: false };
+          // A sweep's path is another sketch.
+          if (type === "sweep" && draft.pathRef === chosen.id) draft.pathRef = features.filter((f) => f.type === "sketch" && !f.suppressed && f.id !== chosen.id).at(-1)?.id;
+        } else if (draft.sketchRef && type !== "sweep") {
+          // A sketch other features already use: start with the areas that are left (Extrude 2 of the other circle).
+          const data = followedSketch(features.find((f) => f.id === draft.sketchRef), s.sketchLinks)?.data;
+          const free = data ? freeAreas(features, draft.sketchRef, data) : undefined;
+          if (free) draft.areas = free;
         }
       }
       // Transform the part that's selected in the 3D view (or the latest part).
@@ -696,7 +718,7 @@ export const useStore = create<AppState>((set, get) => {
           .map((item) => pickFor(s.parts, item))
           .filter((p): p is TopoPick => p !== null);
       }
-      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], selectedPlane: null, showFlat: false });
+      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], areaSelection: null, selectedPlane: null, showFlat: false });
     },
 
     startImport: (file) => {
@@ -1466,7 +1488,9 @@ export const useStore = create<AppState>((set, get) => {
     // Picking a feature or picking parts: one at a time (the other side is then shown as "linked").
     selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane, selectedParts: id ? [] : s.selectedParts })),
     setSelection: (items) =>
-      set((s) => ({ selection: items, selectedPlane: items.length > 0 ? null : s.selectedPlane })),
+      set((s) => ({ selection: items, selectedPlane: items.length > 0 ? null : s.selectedPlane, areaSelection: null })),
+    // Areas are selected on their own: faces, edges and planes are let go (and the other way round).
+    setAreaSelection: (areaSelection) => set((s) => (areaSelection ? { areaSelection, selection: [], selectedPlane: null, selectedFeatureId: null } : s.areaSelection ? { areaSelection: null } : {})),
     mergeParts: (ids) => {
       const s = get();
       if (s.editing) return;
@@ -1532,6 +1556,7 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => ({
         selectedPlane: plane,
         selection: plane ? [] : s.selection,
+        areaSelection: plane ? null : s.areaSelection,
         selectedFeatureId: plane ? null : s.selectedFeatureId,
       })),
     setListHoverPlane: (listHoverPlane) => set({ listHoverPlane }),

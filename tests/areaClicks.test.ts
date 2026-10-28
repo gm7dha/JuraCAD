@@ -98,7 +98,8 @@ describe("clicking sketch areas in the 3D view", () => {
 
   it("decides when area clicks come before faces", () => {
     expect(areaClickMode(null)).toBe("off");
-    expect(areaClickMode({ type: "extrude" })).toBe("off");
+    // No sketch chosen yet: clicking an area of any sketch chooses it.
+    expect(areaClickMode({ type: "extrude" })).toBe("first");
     expect(areaClickMode({ type: "extrude", sketchRef: "s1" })).toBe("first");
     expect(areaClickMode({ type: "revolve", sketchRef: "s1" })).toBe("first");
     expect(areaClickMode({ type: "sweep", sketchRef: "s1" })).toBe("first");

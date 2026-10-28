@@ -2010,13 +2010,124 @@ try {
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
+  step = "one sketch, two circles, each extruded on its own (Onshape style)";
+  let regionsReport = "";
+  {
+    await page.getByRole("button", { name: "Add a tab" }).click();
+    await page.getByRole("menuitem", { name: "Part Studio" }).click();
+    await page.waitForSelector(".tab.active >> text=Part Studio 3");
+    await page.evaluate(() => window.juracadStore.getState().setShowFlat(false));
+    await page.getByRole("button", { name: "Sketch", exact: true }).click();
+    await page.waitForSelector(".sketch-panel");
+    await page.locator(".feature-row.datum", { hasText: "Top" }).click();
+    await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane"));
+    await page.waitForTimeout(600);
+    const box = await page.locator(".viewport").boundingBox();
+    const mx = box.x + box.width / 2;
+    const my = box.y + box.height / 2;
+    // A small circle on the left and a big one on the right.
+    await page.keyboard.press("c");
+    await page.mouse.click(mx - 110, my);
+    await page.mouse.click(mx - 90, my);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("c");
+    await page.mouse.click(mx + 60, my);
+    await page.mouse.click(mx + 120, my);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector(".sketch-status")?.textContent?.includes("2 closed shapes"), null, { timeout: 10_000 });
+    await page.keyboard.press("Escape");
+    await page.locator('[aria-label="Sketch"] [aria-label="Accept"]').click();
+    await page.waitForSelector(".sketch-panel", { state: "detached" });
+    await page.waitForTimeout(300);
+    const spots = () => page.evaluate(() => window.juracadViewport.current.areaScreenPoints());
+    const smallest = (list) => list.reduce((a, b) => (b.box < a.box ? b : a));
+    const biggest = (list) => list.reduce((a, b) => (b.box > a.box ? b : a));
+    const clickSpot = async (spot) => {
+      const kind = await page.evaluate(([x, y]) => window.juracadViewport.current.pickKindAt(x, y), [spot.x, spot.y]);
+      if (kind !== "sketchArea") throw new Error(`a click on the circle would pick ${kind}, not the sketch area`);
+      await page.mouse.click(box.x + spot.x, box.y + spot.y);
+    };
+
+    step = "selecting the small circle first (no dialog open), then Extrude uses it";
+    const before = await spots();
+    if (before.length !== 2) throw new Error(`expected the sketch's 2 circles to be clickable with nothing open, got ${before.length}`);
+    await clickSpot(smallest(before));
+    await page.waitForFunction(() => window.juracadStore.getState().areaSelection?.areas.length === 1, null, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Extrude", exact: true }).click();
+    const first = await page.evaluate(() => {
+      const d = window.juracadStore.getState().editing.draft;
+      return { areas: d.areas?.length ?? 0, operation: d.operation, apart: d.apart };
+    });
+    if (first.areas !== 1 || first.operation !== "new" || !first.apart) throw new Error(`Extrude 1 should start with the selected circle as a New part, got ${JSON.stringify(first)}`);
+    await page.locator("#param-depth").fill("60");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
+
+    step = "Extrude 2 after the sketch hid itself: clicking the big circle in the 3D view";
+    const hidden = await page.evaluate(() => {
+      const f = window.juracadStore.getState();
+      const doc = f.history.present;
+      const studio = doc.partStudios.find((p) => p.name === "Part Studio 3");
+      const sketch = studio.features.find((x) => x.type === "sketch");
+      return { visible: sketch.visible, used: studio.features.some((x) => x.sketchRef === sketch.id) };
+    });
+    if (hidden.visible !== undefined || !hidden.used) throw new Error(`expected the used sketch to hide by itself, got ${JSON.stringify(hidden)}`);
+    // Nothing open and the sketch hidden: its areas can't be clicked.
+    if ((await spots()).length !== 0) throw new Error("the hidden sketch's areas can be clicked with nothing open");
+    await page.getByRole("button", { name: "Extrude", exact: true }).click();
+    // It starts on the circle that's left (the big one), adding to the part.
+    const second = await page.evaluate(() => {
+      const d = window.juracadStore.getState().editing.draft;
+      return { areas: d.areas?.length ?? 0, operation: d.operation };
+    });
+    if (second.areas !== 1 || second.operation !== "add") throw new Error(`Extrude 2 should start with the circle that's left, adding, got ${JSON.stringify(second)}`);
+    const during = await spots();
+    if (during.length !== 2) throw new Error(`the hidden sketch's 2 areas should be clickable while Extrude is open, got ${during.length}`);
+    // The small circle (used by Extrude 1) is shaded as used elsewhere, the big one as picked.
+    const shades = await page.evaluate(() => window.juracadViewport.current.pickAreas.sets[0].shades);
+    if (!shades.includes("taken") || !shades.includes("picked")) throw new Error(`expected one area used elsewhere and one picked, got ${JSON.stringify(shades)}`);
+    // Clicking the big circle leaves it out; clicking it again picks it.
+    await clickSpot(biggest(during));
+    await page.waitForFunction(() => !window.juracadStore.getState().editing.draft.areas);
+    await clickSpot(biggest(during));
+    await page.waitForFunction(() => window.juracadStore.getState().editing.draft.areas?.length === 1);
+    await page.locator("#param-depth").fill("10");
+    await page.getByRole("button", { name: "Accept" }).click();
+    // Not touching Part 1, so it's a part of its own (as Onshape does).
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 2, null, { timeout: 30_000 });
+    await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    const sizes = await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const doc = s.history.present;
+      const studio = doc.partStudios.find((p) => p.name === "Part Studio 3");
+      const ids = new Set(studio.features.map((f) => f.id));
+      return s.parts
+        .filter((p) => ids.has(p.id.split("~")[0]) && !p.configuration)
+        .map((p) => {
+          let lo = Infinity;
+          let hi = -Infinity;
+          for (let i = 2; i < p.vertices.length; i += 3) {
+            lo = Math.min(lo, p.vertices[i]);
+            hi = Math.max(hi, p.vertices[i]);
+          }
+          return { name: p.name, height: Math.round((hi - lo) * 1000) / 1000 };
+        });
+    });
+    const heights = sizes.map((p) => p.height).sort((a, b) => a - b);
+    if (sizes.length !== 2 || heights[0] !== 10 || heights[1] !== 60) throw new Error(`expected two parts 60 and 10 tall, got ${JSON.stringify(sizes)}`);
+    if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed in the two-circle Part Studio");
+    await shot("two-circles");
+    regionsReport = `one sketch with two circles extruded separately into ${sizes.map((p) => `${p.name} (${p.height} mm)`).join(" and ")}`;
+    await page.getByRole("button", { name: "Part Studio 1" }).click();
+  }
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e) && !liveProbeRefused(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${subReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${subReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

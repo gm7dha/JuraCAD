@@ -21,10 +21,18 @@
   [x, y, size, ...signature] — a point inside each clicked area, its mm², and the solid curve ids (+/− side) round its outline —
   matched again on rebuild by `matchArea` (most shared signature; a deleted bounding curve = gone); none = every closed shape); picked in the 2D map (`src/app/AreaPicker.tsx`) or by clicking the areas in the 3D view while an
   Extrude/Revolve/Sweep dialog is open (`src/sketch/areaClicks.ts`: `areaClickMode` — areas before faces, except while an extrude's
-  "Up to…" end is picked; `SceneManager.setPickAreas` draws all areas as one mesh + one LineSegments, coloured per vertex, rebuilt
-  only when the outlines array (`areaOutlines`, one per map) or plane values change; PickTarget "sketchArea"; both use `toggleArea`, so
+  "Up to…" end is picked; every earlier sketch's areas are clickable, hidden ones too, the feature's own first and the rest fainter
+  (`clickableAreaSketches`; not a sweep's path); clicking another sketch's area makes it the feature's sketch with just that area
+  (`areaClickChange`, one sketch per feature, a toast says so); areas other features use are shaded grey ("taken", `areasTaken`,
+  also in the 2D map), and a new Extrude/Revolve of a used sketch starts with the areas left (`freeAreas`, in `startCreate`).
+  With nothing open, areas of sketches on show can be clicked to select them (`store.areaSelection`, `selectArea`; mode "nearest":
+  nearer than the part's face wins, drawn only on hover/selected) and the next Extrude/Revolve/Sweep uses them.
+  `SceneManager.setPickAreas` takes one `PickAreaSet` per sketch, each drawn as one mesh + one LineSegments, coloured per vertex, rebuilt
+  only when that sketch's outlines array (`areaOutlines`, one per map) or plane values change; PickTarget "sketchArea" (sketch + index); both use `toggleArea`, so
   picks are identical; both use `followedSketch` — a face sketch as the engine moved it; "used by all" shading is skipped above
-  `MAX_SHADED_AREAS`); the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
+  `MAX_SHADED_AREAS`). Extrude/Revolve/Sweep made since then carry `apart: true`: with New each separate solid piece is its own part
+  (ids `<feature>`, `<feature>~2`…), with Add each piece joins the (latest first) part it touches, else becomes a new part (`addApart` in
+  engine.ts); without the flag (older files) every piece stays in one part, exactly as before; the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
   Snapping (points, line middles → Midpoint, circle centres, part edges, lining up, onto curves) is the pure `snapAt` in
   `src/sketch/snaps.ts`. Part edges: `src/sketch/links.ts` — a sketch on a part face keeps the face (`SketchPlane.face`,
   a TopoPick); lines/circles/arcs may carry `link` (the part edge they follow: "Use", or a face edge brought in as a

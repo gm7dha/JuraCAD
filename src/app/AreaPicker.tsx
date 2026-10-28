@@ -15,7 +15,8 @@ import type { SketchData } from "../sketch/types";
 
 const pathOf = (poly: Pt[]) => (poly.length ? `M${poly.map(([x, y]) => `${x} ${-y}`).join("L")}Z` : "");
 
-export function AreaPicker({ data, areas, verb, onChange }: { data: SketchData; areas: AreaPick[] | undefined; verb: string; onChange: (areas: AreaPick[] | undefined) => void }) {
+/** `taken`: areas other features already use (by index in `sketchAreas(data).areas`), shaded grey. */
+export function AreaPicker({ data, areas, verb, onChange, taken }: { data: SketchData; areas: AreaPick[] | undefined; verb: string; onChange: (areas: AreaPick[] | undefined) => void; taken?: ReadonlySet<number> }) {
   const [open, setOpen] = useState(false);
   const all = !areas?.length;
   if (all && !open) {
@@ -30,10 +31,10 @@ export function AreaPicker({ data, areas, verb, onChange }: { data: SketchData; 
       </div>
     );
   }
-  return <AreaMap data={data} areas={areas} verb={verb} onChange={onChange} />;
+  return <AreaMap data={data} areas={areas} verb={verb} onChange={onChange} taken={taken} />;
 }
 
-function AreaMap({ data, areas, verb, onChange }: { data: SketchData; areas: AreaPick[] | undefined; verb: string; onChange: (areas: AreaPick[] | undefined) => void }) {
+function AreaMap({ data, areas, verb, onChange, taken }: { data: SketchData; areas: AreaPick[] | undefined; verb: string; onChange: (areas: AreaPick[] | undefined) => void; taken?: ReadonlySet<number> }) {
   const map = useMemo(() => sketchAreas(data), [data]);
   const { picked, missing } = useMemo(() => pickedAreas(map, areas), [map, areas]);
   const all = !areas?.length;
@@ -64,18 +65,19 @@ function AreaMap({ data, areas, verb, onChange }: { data: SketchData; areas: Are
         {order.map((i) => {
           const a = map.areas[i];
           const on = picked.has(i);
+          const elsewhere = !on && !used?.has(i) && !!taken?.has(i);
           const toggle = () => onChange(toggleArea(map, areas, i));
           return (
             <path
               key={i}
-              className={`area-shape${on ? " picked" : used?.has(i) ? " all" : ""}`}
+              className={`area-shape${on ? " picked" : used?.has(i) ? " all" : elsewhere ? " taken" : ""}`}
               d={[pathOf(a.outer.polygon), ...a.holes.map((h) => pathOf(h.polygon))].join(" ")}
               fillRule="evenodd"
               vectorEffect="non-scaling-stroke"
               role="button"
               tabIndex={0}
               aria-pressed={on}
-              aria-label={`Area ${i + 1}${on ? " (picked)" : ""}`}
+              aria-label={`Area ${i + 1}${on ? " (picked)" : elsewhere ? " (used by another feature)" : ""}`}
               onClick={toggle}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -85,7 +87,7 @@ function AreaMap({ data, areas, verb, onChange }: { data: SketchData; areas: Are
                 }
               }}
             >
-              <title>{on ? "Click to leave this area out" : `Click to ${verb} this area`}</title>
+              <title>{on ? "Click to leave this area out" : elsewhere ? `Another feature already uses this area. Click to ${verb} it here too` : `Click to ${verb} this area`}</title>
             </path>
           );
         })}
@@ -95,6 +97,7 @@ function AreaMap({ data, areas, verb, onChange }: { data: SketchData; areas: Are
         {all
           ? `Using every closed shape (shaded). To ${verb} only some areas, click them here or in the 3D view — where lines cross, each piece is its own area.`
           : `${picked.size} area${picked.size === 1 ? "" : "s"} picked. Click an area again (here or in the 3D view) to leave it out.`}
+        {taken?.size ? " Grey areas are already used by other features." : ""}
         {!all && (
           <>
             {" "}

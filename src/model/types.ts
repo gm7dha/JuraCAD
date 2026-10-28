@@ -133,6 +133,14 @@ export interface Feature {
    * every closed shape.
    */
   areas?: AreaPick[];
+  /**
+   * Extrude, revolve and sweep (solids): pieces that don't touch the part they'd
+   * join become parts of their own, as in Onshape (with New, each separate piece
+   * is its own part; with Add, a piece that touches no part is a new part).
+   * Set on features made since this was added; missing (older files) keeps every piece
+   * in one part, so old designs rebuild exactly as before.
+   */
+  apart?: boolean;
   /** Sweep: the sketch whose lines and arcs make the path. */
   pathRef?: string;
   /**

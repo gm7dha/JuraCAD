@@ -4,7 +4,7 @@ import { evaluate } from "../model/expr";
 import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
 import { describeRef } from "../geometry/topoRef";
 import { AreaPicker } from "./AreaPicker";
-import { followedSketch } from "../sketch/areaClicks";
+import { areasTaken, followedSketch } from "../sketch/areaClicks";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
@@ -615,6 +615,9 @@ function SketchSolidOptions() {
   const opts = draft.extrude ?? { end: "blind" as const, flip: false };
   const rev = draft.revolve ?? { axis: "vertical", flip: false };
   const chosen = sketches.find((f) => f.id === draft.sketchRef)?.sketch?.data;
+  const chosenData = followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data;
+  // Areas other features already use (shaded grey).
+  const taken = draft.sketchRef && (chosenData ?? chosen) ? areasTaken(features, draft.sketchRef, (chosenData ?? chosen)!, draft.id) : undefined;
   const lines = chosen ? chosen.curves.filter((c) => c.type === "line") : [];
   const pickSketch = (id: string | undefined) => {
     const data = sketches.find((f) => f.id === id)?.sketch?.data;
@@ -643,8 +646,9 @@ function SketchSolidOptions() {
           ))}
         </select>
       )}
+      {sketches.length > 0 && !draft.sketchRef && !draft.surface && <p className="dialog-hint field-hint">Or click an area of any sketch in the 3D view.</p>}
       {chosen && !draft.surface && (
-        <AreaPicker data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? chosen} areas={draft.areas} verb={draft.type === "revolve" ? "revolve" : "extrude"} onChange={(areas) => setDraftField({ areas })} />
+        <AreaPicker data={chosenData ?? chosen} areas={draft.areas} verb={draft.type === "revolve" ? "revolve" : "extrude"} onChange={(areas) => setDraftField({ areas })} taken={taken} />
       )}
       {draft.type === "revolve" && (
         <>
@@ -830,7 +834,15 @@ function SweepLoftOptions() {
       <fieldset className="param-group">
         <legend>Sketches</legend>
         {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined }))}
-        {profile && !draft.surface && <AreaPicker data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile} areas={draft.areas} verb="sweep" onChange={(areas) => setDraftField({ areas })} />}
+        {profile && !draft.surface && (
+          <AreaPicker
+            data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile}
+            areas={draft.areas}
+            verb="sweep"
+            onChange={(areas) => setDraftField({ areas })}
+            taken={areasTaken(features, draft.sketchRef!, followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile, draft.id)}
+          />
+        )}
         {select("Path to follow", draft.pathRef, (v) => setDraftField({ pathRef: v }))}
         <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
         <label className="check-row" title="The shape doesn't tilt to follow the path's bends: it stays parallel to the plane it was drawn on all the way along">

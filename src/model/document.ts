@@ -64,12 +64,15 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     // Like Onshape: the first solid is a new part, later extrudes add to it.
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
+    // Pieces that don't touch become separate parts (as in Onshape).
+    feature.apart = true;
   }
   if (type === "sweep" || type === "loft") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     if (type === "sweep") {
+      feature.apart = true;
       feature.sketchRef = sketches[sketches.length - 1]?.id;
       feature.pathRef = sketches[sketches.length - 2]?.id;
     } else feature.sections = sketches.slice(-2).map((f) => f.id);
@@ -567,6 +570,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
             })
         : [];
       if (areas.length) feature.areas = areas;
+      if (f.apart === true) feature.apart = true;
     }
     if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];

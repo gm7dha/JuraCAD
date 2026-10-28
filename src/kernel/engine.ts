@@ -2310,6 +2310,32 @@ export class GeometryEngine {
         continue;
       }
 
+      // Onshape-style (features made since separate pieces became parts): each separate piece is a part.
+      if (feature.operation === "new" && feature.apart) {
+        const pieces = solidsOf(tool);
+        if (pieces.length > 1) {
+          this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
+          pieces.forEach((solid, i) => {
+            partCounter++;
+            this.parts.push({ id: i === 0 ? feature.id : `${feature.id}~${i + 1}`, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid });
+          });
+          tool.delete();
+          continue;
+        }
+        pieces.forEach((p) => p.delete());
+      }
+      if (feature.operation === "add" && feature.apart && target) {
+        try {
+          const made = this.addApart(feature, tool, target, partCounter);
+          partCounter += made;
+        } catch (e) {
+          featureErrors[feature.id] = describeError(e, "Couldn't merge this into the part.");
+        } finally {
+          tool.delete();
+        }
+        continue;
+      }
+
       if (feature.operation === "new") {
         partCounter++;
         this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
@@ -2381,6 +2407,59 @@ export class GeometryEngine {
     }
 
     return featureErrors;
+  }
+
+  /**
+   * Add, as in Onshape: each separate piece of the new solid joins the part it
+   * touches (the latest part first, then the others, newest first); a piece
+   * that touches no part becomes a part of its own. Returns how many new parts
+   * were made. A single piece touching the latest part is fused exactly as an
+   * older Add is.
+   */
+  private addApart(feature: Feature, tool: Shape3D, target: BuiltPart, partCounter: number): number {
+    const pieces = solidsOf(tool);
+    const count = (s: Shape3D) => {
+      const xs = solidsOf(s);
+      xs.forEach((x) => x.delete());
+      return xs.length;
+    };
+    const order = [target, ...[...this.parts].reverse().filter((p) => p !== target && !p.surface)];
+    let made = 0;
+    let home: string | undefined;
+    try {
+      for (const piece of pieces.length ? pieces : [tool]) {
+        const box = boundsOf(piece);
+        let joined: BuiltPart | undefined;
+        for (const part of order) {
+          if (!boxesOverlap(boundsOf(part.shape), box)) continue;
+          const before = count(part.shape);
+          const result = part.shape.fuse(pieces.length === 1 ? tool : piece);
+          // Touching: the piece merged in, so there are no more separate solids than before.
+          if (count(result) <= before) {
+            part.shape.delete();
+            part.shape = result;
+            if (!part.featureIds.includes(feature.id)) part.featureIds.push(feature.id);
+            joined = part;
+            break;
+          }
+          result.delete();
+        }
+        if (joined) {
+          home ??= joined.id;
+          continue;
+        }
+        made++;
+        const taken = new Set(this.parts.map((p) => p.id));
+        let id = feature.id;
+        for (let k = 2; taken.has(id); k++) id = `${feature.id}~${k}`;
+        this.parts.push({ id, name: `Part ${partCounter + made}`, featureIds: [feature.id], shape: piece.clone() });
+        home ??= id;
+      }
+    } finally {
+      pieces.forEach((p) => p.delete());
+    }
+    this.tools.set(feature.id, { shape: tool.clone(), operation: "add", partId: home ?? target.id });
+    return made;
   }
 
   /** Split a part in two along a plane: both halves as parts, or just one side kept. */
