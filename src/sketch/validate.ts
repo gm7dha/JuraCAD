@@ -1,7 +1,7 @@
 /** Checks sketch data loaded from storage, keeping only what's well-formed. */
 import { parsePick } from "../geometry/topoRef";
 import type { SketchPlane, Vec3 } from "./planes";
-import { DIMENSION_TYPES, type ConstraintType, type CurveLink, type SketchConstraint, type SketchCurve, type SketchData, type SketchImage, type SketchPoint, type SketchText } from "./types";
+import { DIMENSION_TYPES, type ConstraintType, type CurveLink, type PointLink, type SketchConstraint, type SketchCurve, type SketchData, type SketchImage, type SketchPoint, type SketchText } from "./types";
 
 const RELATIONS = new Set<string>([
   "coincident",
@@ -51,7 +51,7 @@ export function parseSketchData(raw: unknown): SketchData | null {
   const points: SketchPoint[] = [];
   for (const p of d.points as Record<string, unknown>[]) {
     if (!p || !str(p.id) || !num(p.x) || !num(p.y)) return null;
-    points.push({ id: p.id, x: p.x, y: p.y, ...(p.standalone === true ? { standalone: true } : {}) });
+    points.push({ id: p.id, x: p.x, y: p.y, ...(p.standalone === true ? { standalone: true } : {}), ...parsePointLink(p.link) });
   }
   const curves: SketchCurve[] = [];
   for (const c of d.curves as Record<string, unknown>[]) {
@@ -100,12 +100,30 @@ export function parseSketchData(raw: unknown): SketchData | null {
 
 /** A curve's link to a part edge (or, for Intersect, to where the sketch cuts the part). */
 function parseLink(raw: unknown): { link?: CurveLink } {
+  // Another sketch's curve.
+  if (raw && typeof raw === "object" && str((raw as Record<string, unknown>).sketch) && str((raw as Record<string, unknown>).item)) {
+    const r = raw as { sketch: string; item: string };
+    return { link: { sketch: r.sketch, item: r.item } };
+  }
   const linked = parsePick(raw);
   if (linked?.ref.kind !== "edge") return {};
+  if ((raw as Record<string, unknown>).project === true) return { link: { ...linked, project: true } };
   const cut = (raw as Record<string, unknown>).cut;
   if (!cut || typeof cut !== "object") return { link: linked };
   const face = parsePick({ partId: linked.partId, ref: (cut as Record<string, unknown>).face });
   return { link: { ...linked, cut: face?.ref.kind === "face" ? { face: face.ref } : {} } };
+}
+
+const POINT_ENDS = new Set(["a", "b", "centre", "mid"]);
+
+/** A reference point's link: another sketch's point (or line middle), or a part edge's end, middle or centre. Anything else is dropped. */
+function parsePointLink(raw: unknown): { link?: PointLink } {
+  if (!raw || typeof raw !== "object") return {};
+  const r = raw as Record<string, unknown>;
+  if (str(r.sketch) && str(r.item)) return { link: { sketch: r.sketch, item: r.item, ...(r.end === "mid" ? { end: "mid" as const } : {}) } };
+  const pick = parsePick(raw);
+  if (pick?.ref.kind === "edge" && typeof r.end === "string" && POINT_ENDS.has(r.end)) return { link: { partId: pick.partId, ref: pick.ref, end: r.end as "a" | "b" | "centre" | "mid" } };
+  return {};
 }
 
 function parseText(raw: unknown): SketchText | null {

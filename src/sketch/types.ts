@@ -1,4 +1,4 @@
-import type { FaceRef, TopoPick } from "../geometry/topoRef";
+import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 
 /**
  * Sketch data. Everything is stored in the sketch's own 2D coordinates (u, v)
@@ -16,14 +16,42 @@ export const ORIGIN_ID = "origin";
  * of the face the sketch is on used as a reference): the edge it came from, found
  * again on every rebuild so the copy moves when the part changes.
  */
-export type CurveLink = TopoPick & {
+export type PartLink = TopoPick & {
   /**
    * Intersect: the curve isn't one of the part's edges but where the sketch's
    * plane cuts through the part (or, with `face`, through just that face of
    * it). On rebuild it's found again among those cut lines.
    */
   cut?: { face?: FaceRef };
+  /**
+   * The edge needn't lie flat in the sketch's plane: it's seen square-on to
+   * the sketch (projected onto it), from wherever it is on the part.
+   */
+  project?: true;
 };
+
+/**
+ * Another sketch's line, circle or arc (or point), by that sketch's feature id
+ * and the item's id in it. It's seen square-on to this sketch (projected), and
+ * only sketches earlier in the feature list can be used.
+ */
+export interface SketchItemLink {
+  sketch: string;
+  item: string;
+}
+
+/** What a line, circle or arc brought in as a reference follows: a part's edge, or another sketch's curve. */
+export type CurveLink = PartLink | SketchItemLink;
+
+export const isPartLink = (l: CurveLink): l is PartLink => "partId" in l;
+
+/**
+ * What a point brought in as a reference follows (it's held where that is
+ * now, seen square-on to the sketch): another sketch's point (or, with `end:
+ * "mid"`, the middle of its line), or an end, the middle or the centre of a
+ * part's edge (a corner of the part is an end of its edges).
+ */
+export type PointLink = (SketchItemLink & { end?: "mid" }) | { partId: string; ref: EdgeRef; end: "a" | "b" | "centre" | "mid" };
 
 export interface SketchPoint {
   id: string;
@@ -31,6 +59,8 @@ export interface SketchPoint {
   y: number;
   /** A point the user placed on its own (not just a line or arc end). */
   standalone?: boolean;
+  /** A reference point following another sketch or a part (see PointLink). Missing in older files. */
+  link?: PointLink;
 }
 
 export interface SketchLine {

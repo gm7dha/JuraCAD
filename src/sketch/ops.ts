@@ -9,7 +9,7 @@ import { ellipseFrom, ellipsePolyline, type EllipseGeom } from "./ellipse";
 import { splinePolyline, splineTangents } from "./spline";
 import { startingLength } from "../model/units";
 import { analyzeSketch, solveSketch } from "./solver";
-import { linkEdge, type RefEdge } from "./links";
+import { isFaceEdge, linkEdge, linkPoint, type RefEdge } from "./links";
 import {
   isAngleDimension,
   isDimension,
@@ -391,6 +391,11 @@ export function placePoint(s: SketchData, p: Placed): { sketch: SketchData; id: 
   if (p.snap?.kind === "ref") {
     // Bring the part edge in (as a reference), then attach to it.
     const at = p.snap.at;
+    // Another sketch's point, or a part's corner or centre off the face: just that point, following it.
+    if (!isFaceEdge(p.snap.edge) && at !== "on") {
+      const lp = linkPoint(s, p.snap.edge, at);
+      return lp.error ? placePoint(s, { x: p.x, y: p.y, snap: null }) : { sketch: lp.sketch, id: lp.pointId };
+    }
     const used = linkEdge(s, p.snap.edge, true);
     if (used.error) return placePoint(s, { x: p.x, y: p.y, snap: null });
     const end = at === "a" ? used.points.a : at === "b" ? used.points.b : at === "centre" ? used.points.c : undefined;
