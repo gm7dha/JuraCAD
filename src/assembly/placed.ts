@@ -7,7 +7,7 @@
 import { solveWithParts, type SolveResult } from "./mates";
 import { boundsOfVertices, type Box3 } from "./assembly";
 import { addOffsets, explodedPlacements, explodeOffsets, stepOffsets } from "./explode";
-import { IDENTITY, type Placement } from "./math";
+import { IDENTITY, type Placement, type Vec3 } from "./math";
 import { findMesh, meshIdOf } from "./configured";
 import { kernelInstances, leavesOf, leavesOfTop, topBox, type Leaf } from "./subassembly";
 import type { Assembly } from "../model/types";
@@ -52,7 +52,9 @@ export function instancesForKernel(
   assemblies: readonly Assembly[] = [],
   solved: SolveResult = solveWithParts(assembly, parts, { assemblies }),
   shown?: Record<string, Placement>,
+  /** Parts inside sub-assemblies moved on their own (an exploded view's steps). */
+  shift?: Record<string, Vec3>,
 ): InstanceInput[] {
   const own = (id: string) => assembly.instances.find((i) => i.id === id)?.placement ?? IDENTITY;
-  return kernelInstances(leavesOf(assembly, parts, assemblies), parts, shown ?? solved.placements, (id) => solved.placements[id] ?? own(id));
+  return kernelInstances(leavesOf(assembly, parts, assemblies), parts, shown ?? solved.placements, (id) => solved.placements[id] ?? own(id), shift);
 }

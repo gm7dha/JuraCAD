@@ -61,13 +61,23 @@ export function partsOfFeature(parts: { id: string; featureIds: string[] }[], fe
  * does to which parts — "Adds to Part 1", "Makes Part 3", "Cuts Part 1 and
  * Part 2". Null line when it hasn't built anything yet.
  */
-export function draftEffect(parts: { id: string; name: string; featureIds: string[]; configuration?: string }[], draft: Pick<Feature, "id" | "operation">): { changed: string[]; text: string | null } {
+export function draftEffect(
+  parts: { id: string; name: string; featureIds: string[]; configuration?: string; joined?: { feature: string; names: string[] }[] }[],
+  draft: Pick<Feature, "id" | "operation">,
+): { changed: string[]; text: string | null } {
   const own = parts.filter((p) => !p.configuration && p.featureIds.includes(draft.id));
   const made = own.filter((p) => p.id.split("~")[0] === draft.id);
   const changed = own.filter((p) => p.id.split("~")[0] !== draft.id);
-  const names = (list: { name: string }[]) => (list.length <= 1 ? (list[0]?.name ?? "") : `${list.slice(0, -1).map((p) => p.name).join(", ")} and ${list[list.length - 1].name}`);
-  const parts2: string[] = [];
-  if (changed.length) parts2.push(draft.operation === "remove" ? `Cuts ${names(changed)}` : draft.operation === "intersect" ? `Keeps only the overlap with ${names(changed)}` : `Adds to ${names(changed)}`);
-  if (made.length) parts2.push(`${changed.length ? "makes" : "Makes"} ${made.length === 1 ? "a new part" : "new parts"}: ${names(made)}`);
-  return { changed: changed.map((p) => p.id), text: parts2.length ? `${parts2.join(", and ")}.` : null };
+  const names = (list: string[]) => (list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`);
+  // Parts an Add merged into this one ("joining Part 2 into it").
+  const joinedInto = (p: (typeof parts)[number]) => p.joined?.find((j) => j.feature === draft.id)?.names ?? [];
+  const sentence: string[] = [];
+  if (changed.length) {
+    if (draft.operation === "remove") sentence.push(`Cuts ${names(changed.map((p) => p.name))}`);
+    else if (draft.operation === "intersect") sentence.push(`Keeps only the overlap with ${names(changed.map((p) => p.name))}`);
+    else if (changed.length === 1 && joinedInto(changed[0]).length) sentence.push(`Adds to ${changed[0].name}, joining ${names(joinedInto(changed[0]))} into it`);
+    else sentence.push(`Adds to ${names(changed.map((p) => (joinedInto(p).length ? `${p.name} (joining ${names(joinedInto(p))} into it)` : p.name)))}`);
+  }
+  if (made.length) sentence.push(`${changed.length ? "makes" : "Makes"} ${made.length === 1 ? "a new part" : "new parts"}: ${names(made.map((p) => p.name))}`);
+  return { changed: changed.map((p) => p.id), text: sentence.length ? `${sentence.join(", and ")}.` : null };
 }

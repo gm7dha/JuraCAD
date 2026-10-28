@@ -152,6 +152,8 @@ describe("assemblies made by Claude", () => {
     const step = readFileSync(join(folder, "Box and lid Box.step"), "utf8");
     expect(step).toMatch(/Base <1>/);
     expect(step).toMatch(/Lid <1>/);
+    // Its structure kept, as the app's export does: each copy a placed use of its part.
+    expect(step.match(/NEXT_ASSEMBLY_USAGE_OCCURRENCE\(/g)).toHaveLength(2);
     await ok(s, "export_model", { assembly: "Box", format: "stl", filename: "box" });
     const stl = readFileSync(join(folder, "box.stl"));
     // Binary STL: 80-byte header, then the triangle count.

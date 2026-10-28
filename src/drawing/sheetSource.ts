@@ -9,6 +9,7 @@ import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
 import { solveWithParts } from "../assembly/mates";
 import { explodeAssembly, instancesForKernel } from "../assembly/placed";
+import { stepPartOffsets } from "../assembly/explode";
 import { drawingBom } from "../assembly/drawingBom";
 import type { InstanceInput, PartMesh, ViewProjection } from "../kernel/protocol";
 import type { Drawing, JuraCADDocument, ViewKind } from "../model/types";
@@ -45,7 +46,9 @@ export function drawingSubject(drawing: Drawing, doc: JuraCADDocument, parts: Pa
   const assemblies = doc.assemblies ?? [];
   const solved = solveWithParts(asm, parts, { assemblies });
   const tops = Object.fromEntries(asm.instances.map((i) => [i.id, solved.placements[i.id] ?? i.placement]));
-  const instances = instancesForKernel(asm, parts, assemblies, solved, drawing.exploded ? explodeAssembly(asm, parts, tops, asm.explode ?? 1, assemblies) : tops);
+  const instances = drawing.exploded
+    ? instancesForKernel(asm, parts, assemblies, solved, explodeAssembly(asm, parts, tops, asm.explode ?? 1, assemblies), stepPartOffsets(asm.explodeSteps ?? []))
+    : instancesForKernel(asm, parts, assemblies, solved, tops);
   return { name: asm.name, partIds: [], instances, key: [JSON.stringify(instances), ...instances.map((i) => findMesh(parts, i.partId))] };
 }
 

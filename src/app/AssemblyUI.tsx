@@ -15,11 +15,11 @@ import { activeAssembly, partsInStudio, useLengthUnit, useStore } from "../model
 import { fromUnit, lengthNumber, showLength, storeLength } from "../model/units";
 import { studiosOf } from "../model/studios";
 import type { Assembly, ConnectorSpot, ExplodeStep, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
-import { stepDistance } from "../assembly/explode";
+import { stepDistance, explodePartKey } from "../assembly/explode";
 import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
 import { bomInfo, partBox, useSolvedAssembly } from "./assemblySolve";
-import { insertProblem, instanceAt, leafKey, ownBox } from "../assembly/subassembly";
+import { insertProblem, instanceAt, leafKey, ownBox, PATH_SEP } from "../assembly/subassembly";
 import { mateInactive } from "../assembly/suppress";
 import { isOrigin, ORIGIN_ID, ORIGIN_PLANES, originConnector, originPlaneOf } from "../assembly/origin";
 import { spotOptions } from "../assembly/connectors";
@@ -608,6 +608,7 @@ export function PatternPanel() {
   const id = useStore((s) => s.editingPattern);
   const { solved } = useSolvedAssembly();
   const busy = useStore((s) => s.asmSelection.length > 0 || s.dialog === "insert" || s.mateDraft !== null);
+  const facePick = useStore((s) => s.mirrorFacePick);
   const p = asm?.patterns?.find((x) => x.id === id);
   if (!asm || !p || busy) return null;
   const st = useStore.getState();
@@ -616,6 +617,11 @@ export function PatternPanel() {
   const error = solved?.patternErrors?.[p.id];
   const names = p.seeds.map((s) => asm.instances.find((i) => i.id === s)?.name ?? "?").join(", ");
   const centre = p.centre ?? [0, 0, 0];
+  // The part a mirror's face is on ("Hinge <1> / Plate <2>" inside a sub-assembly).
+  const planeTop = p.plane ? asm.instances.find((i) => i.id === p.plane!.instanceId) : undefined;
+  const planeOwner = p.plane?.path?.length
+    ? `${planeTop?.name ?? "?"} / ${instanceAt(asm, st.history.present.assemblies ?? [], leafKey(p.plane.instanceId, p.plane.path))?.part.name ?? "?"}`
+    : planeTop?.name ?? "a part that's been removed";
   return (
     <div className="feature-dialog instance-panel" role="region" aria-label={`Pattern ${p.name}`}>
       <header className="feature-dialog-header">
@@ -649,23 +655,51 @@ export function PatternPanel() {
           <>
             <div className="param-field compact">
               <label htmlFor="asm-mirror-plane">Mirror across</label>
-              <select id="asm-mirror-plane" value={p.axis} onChange={(e) => update({ axis: e.target.value as "x" | "y" | "z" })}>
+              <select
+                id="asm-mirror-plane"
+                value={p.plane || facePick ? "face" : p.axis}
+                onChange={(e) => {
+                  if (e.target.value === "face") return st.setMirrorFacePick(true);
+                  st.setMirrorFacePick(false);
+                  update({ axis: e.target.value as "x" | "y" | "z", plane: undefined });
+                }}
+              >
                 <option value="x">Right plane (left ↔ right)</option>
                 <option value="y">Front plane (front ↔ back)</option>
                 <option value="z">Top plane (up ↔ down)</option>
+                <option value="face">A flat face…</option>
               </select>
             </div>
-            <NumberBox
-              label={`Plane at ${p.axis.toUpperCase()} =`}
-              value={centre[p.axis === "x" ? 0 : p.axis === "y" ? 1 : 2]}
-              unit="mm"
-              onCommit={(v) => {
-                const c: [number, number, number] = [0, 0, 0];
-                c[p.axis === "x" ? 0 : p.axis === "y" ? 1 : 2] = v;
-                update({ centre: c });
-              }}
-            />
-            <p className="dialog-hint">The copies are mirror images — the opposite hand — so the parts list shows them as separate parts.</p>
+            {p.plane || facePick ? (
+              <div className="param-field compact">
+                <span className="field-label">{facePick ? "Click a flat face in the view to mirror across." : `A face of ${planeOwner}`}</span>
+                {p.plane && (
+                  <button type="button" className="text-button" onClick={() => st.setMirrorFacePick(!facePick)}>
+                    {facePick ? "Keep this face" : "Pick another face"}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <NumberBox
+                label={`Plane at ${p.axis.toUpperCase()} =`}
+                value={centre[p.axis === "x" ? 0 : p.axis === "y" ? 1 : 2]}
+                unit="mm"
+                onCommit={(v) => {
+                  const c: [number, number, number] = [0, 0, 0];
+                  c[p.axis === "x" ? 0 : p.axis === "y" ? 1 : 2] = v;
+                  update({ centre: c });
+                }}
+              />
+            )}
+            <label className="check-row">
+              <input type="checkbox" checked={!!p.samePart} onChange={(e) => update({ samePart: e.target.checked ? true : undefined })} />
+              Same part for symmetric parts
+            </label>
+            <p className="dialog-hint">
+              {p.samePart
+                ? "A part that's the same both ways round (symmetric) is copied as itself, turned to fit, so the parts list counts it once. Other parts get mirror images."
+                : "The copies are mirror images — the opposite hand — so the parts list shows them as separate parts."}
+            </p>
           </>
         ) : (
           <>
@@ -1392,7 +1426,19 @@ export function ExplodePanel() {
   const st = useStore.getState();
   const amount = preview ?? asm.explode;
   const steps = asm.explodeSteps ?? [];
-  const names = Object.fromEntries(asm.instances.map((i) => [i.id, i.name]));
+  const names: Record<string, string> = Object.fromEntries(asm.instances.map((i) => [i.id, i.name]));
+  // Parts inside sub-assemblies, by their "top/inner/part" keys: "Hinge <1> / Pin <1>".
+  const allAsm = st.history.present.assemblies ?? [];
+  for (const step of steps)
+    for (const p of step.parts ?? []) {
+      const key = explodePartKey(p);
+      const found = instanceAt(asm, allAsm, key);
+      names[key] = found ? `${found.top.name} / ${found.part.name}` : "a part that's gone";
+    }
+  for (const key of selection) {
+    const found = key.includes(PATH_SEP) && !names[key] ? instanceAt(asm, allAsm, key) : null;
+    if (found) names[key] = `${found.top.name} / ${found.part.name}`;
+  }
   const commit = () => {
     const p = useStore.getState().explodePreview;
     if (p !== null) {
@@ -1432,6 +1478,9 @@ export function ExplodePanel() {
           mates, exports and clash checks use the real places. Drawings of this assembly can show it exploded too. To move or change a part itself, close the
           exploded view first.
         </p>
+        {asm.instances.some((i) => i.subAssembly) && (
+          <p className="dialog-hint">Here a click on a part inside a sub-assembly picks just that part, so a step can move it on its own (pick the whole sub-assembly in the list on the left).</p>
+        )}
         <fieldset className="param-group explode-steps">
           <legend>Steps</legend>
           {steps.length === 0 && <p className="dialog-hint">Move chosen parts a set distance — the screws straight up out of their holes, then the lid…</p>}
@@ -1466,7 +1515,7 @@ function ExplodeStepRow({ step, number, names }: { step: ExplodeStep; number: nu
     const stored = storeLength(text.trim() || "0", unitNow);
     if (stored !== step.distance && !("error" in bad)) st.updateExplodeStep(step.id, { distance: stored });
   };
-  const who = step.instances.map((id) => names[id] ?? "?");
+  const who = [...step.instances.map((id) => names[id] ?? "?"), ...(step.parts ?? []).map((p) => names[explodePartKey(p)] ?? "?")];
   return (
     <li className="explode-step">
       <div className="relation-head">
@@ -1660,8 +1709,9 @@ export function MateDialog() {
     if (isOrigin(c)) return "Origin";
     const top = asm.instances.find((i) => i.id === c.instanceId);
     if (!top || !c.path?.length) return top?.name ?? "?";
-    // A part inside a sub-assembly: "Hinge <1> / Pin <2>".
-    return `${top.name} / ${instanceAt(asm, st.history.present.assemblies ?? [], leafKey(c.instanceId, c.path))?.part.name ?? "?"}`;
+    // A part inside a sub-assembly: "Hinge <1> / Pin <2>" (a Width mate's slot may be two parts of it: "Slot <1> / Plate <1> and Plate <2>").
+    const inner = (path: string[]) => instanceAt(asm, st.history.present.assemblies ?? [], leafKey(c.instanceId, path))?.part.name ?? "?";
+    return `${top.name} / ${inner(c.path)}${c.path2 ? ` and ${inner(c.path2)}` : ""}`;
   };
   const slot = (c: MateConnector | undefined, n: 1 | 2) => (
     <div

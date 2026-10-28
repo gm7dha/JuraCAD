@@ -86,6 +86,8 @@ export interface PartMesh {
   configuration?: string;
   /** IDs of the features that built or changed this part. */
   featureIds: string[];
+  /** Parts a feature merged into this one (an Add touching several parts), by the feature's id: their names. */
+  joined?: { feature: string; names: string[] }[];
   vertices: Float32Array;
   normals: Float32Array;
   triangles: Uint32Array;
@@ -189,6 +191,31 @@ export interface ExportResult {
   triangleCount: number;
 }
 
+/**
+ * An assembly for a STEP file with its structure kept (as Onshape exports
+ * one): each part once, as a shared definition; each assembly (the one
+ * exported, and every sub-assembly it uses) as a product whose components
+ * point at parts or other assemblies, each with its own name and place.
+ */
+export interface StepTree {
+  /** The key of the assembly exported (in `assemblies`). */
+  root: string;
+  /** Assemblies by key (an assembly's id): their names and what's in them. */
+  assemblies: Record<string, { name: string; components: StepComponent[] }>;
+  /** Part definitions by key: the built part (its mesh id), its name, and whether it's the mirror image. */
+  parts: Record<string, { partId: string; name: string; mirrored?: boolean }>;
+}
+
+/** One instance in a STEP assembly: its name, where it sits in its assembly, and the part or sub-assembly it shows (a key). */
+export interface StepComponent {
+  name: string;
+  position: [number, number, number];
+  /** Quaternion x, y, z, w. */
+  rotation: [number, number, number, number];
+  part?: string;
+  assembly?: string;
+}
+
 export interface StepResult {
   /** STEP file contents (exact shapes, millimetres). */
   step: ArrayBuffer;
@@ -213,7 +240,7 @@ export type KernelRequest =
   | { type: "rebuild"; studios: StudioInput[]; variables: Record<string, number>; partNames?: Record<string, string> }
   | { type: "check"; quality: MeshQuality; partIds?: string[] }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
-  | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[] }
+  | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[]; tree?: StepTree }
   | { type: "clashes"; instances: InstanceInput[]; tolerance?: number; withGaps?: boolean }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
   | { type: "measure"; picks: TopoPick[] }

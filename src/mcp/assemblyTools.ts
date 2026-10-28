@@ -15,6 +15,8 @@ import { applyPlacement, compose, eulerDegFromQuat, IDENTITY, quatFromEulerDeg, 
 import { MATE_ORDER, MATE_TYPES, nextMateName, solveWithParts, type SolveResult } from "../assembly/mates";
 import { isOrigin, originConnector, ORIGIN_PLANES, type OriginPlane } from "../assembly/origin";
 import { explodeAssembly, instancesForKernel, partBox } from "../assembly/placed";
+import { stepPartOffsets } from "../assembly/explode";
+import { stepTree } from "../assembly/stepTree";
 import { insertProblem, insertSubAssembly, leavesOf, ownBox, type Leaf } from "../assembly/subassembly";
 import { mateInactive } from "../assembly/suppress";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
@@ -229,8 +231,10 @@ export function assemblyInstances(s: Session, asm: Assembly, solved = solve(s, a
   const parts = builtParts(s);
   const assemblies = assembliesOf(s.doc);
   const tops = Object.fromEntries(asm.instances.map((i) => [i.id, solved.placements[i.id] ?? i.placement]));
-  const shown = asm.explode !== undefined || asm.explodeSteps?.length ? explodeAssembly(asm, parts, tops, asm.explode ?? 0, assemblies) : tops;
-  return instancesForKernel(asm, parts, assemblies, solved, shown);
+  const exploded = asm.explode !== undefined || !!asm.explodeSteps?.length;
+  if (!exploded) return instancesForKernel(asm, parts, assemblies, solved, tops);
+  // As the app shows it: spread out, then the exploded view's steps (which can move parts inside sub-assemblies too).
+  return instancesForKernel(asm, parts, assemblies, solved, explodeAssembly(asm, parts, tops, asm.explode ?? 0, assemblies), stepPartOffsets(asm.explodeSteps ?? []));
 }
 
 const COLOURS: [number, number, number][] = [[176, 196, 222], [222, 190, 150], [170, 210, 170], [215, 170, 200], [230, 220, 140], [160, 200, 215]];
@@ -621,7 +625,9 @@ export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "st
   const bytes = await s.withWholeEngine(async (e) => {
     if (format === "stl") return new Uint8Array(e.exportStl([], "normal", instances).stl);
     if (format === "3mf") return new Uint8Array(e.export3mf([], "normal", `${s.doc.name} ${asm.name}`, s.doc.appearance ?? {}, instances).data);
-    return new Uint8Array((await e.exportStep([], s.doc.appearance ?? {}, instances)).step);
+    // STEP keeps the assembly's structure (sub-assemblies, each part once, every copy placed), as the app's export does.
+    const tree = stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc));
+    return new Uint8Array((await e.exportStep([], s.doc.appearance ?? {}, instances, tree ?? undefined)).step);
   });
   return { bytes, count: instances.length };
 }

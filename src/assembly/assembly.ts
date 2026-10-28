@@ -10,7 +10,7 @@ import { parseRelation } from "./relations";
 import { parsePattern, tidyPatterns } from "./patterns";
 import { parseReplicate, tidyReplicates } from "./replicate";
 import { parseGroup, tidyGroups } from "./groups";
-import { parseExplodeStep, tidyExplodeSteps } from "./explode";
+import { parseExplodeStep, tidyExplodeSteps, tidyStepPaths } from "./explode";
 import { applyPlacement, IDENTITY, parsePlacement, type Placement, type Vec3 } from "./math";
 import { MATE_TYPES } from "./mates";
 import { startingLength } from "../model/units";
@@ -25,11 +25,10 @@ function withAssemblies(doc: JuraCADDocument, assemblies: Assembly[]): JuraCADDo
 
 export function updateAssembly(doc: JuraCADDocument, id: string, fn: (a: Assembly) => Assembly): JuraCADDocument {
   if (!assembliesOf(doc).some((a) => a.id === id)) return doc;
-  return withAssemblies(
-    doc,
-    // Exploded view steps forget parts that any change removed (patterns, Replicate, delete…).
-    assembliesOf(doc).map((a) => (a.id === id ? tidyExplodeSteps(fn(a)) : a)),
-  );
+  // Exploded view steps forget parts that any change removed (patterns, Replicate, delete…) —
+  // also parts inside sub-assemblies, in every assembly that uses this one.
+  const changed = assembliesOf(doc).map((a) => (a.id === id ? tidyExplodeSteps(fn(a)) : a));
+  return withAssemblies(doc, changed.map((a) => tidyStepPaths(a, changed)));
 }
 
 /** Next free name: "Assembly 1", "Assembly 2"… */
@@ -49,7 +48,7 @@ export function removeAssembly(doc: JuraCADDocument, id: string): JuraCADDocumen
   const all = assembliesOf(doc);
   // Copies of it in other assemblies go; so do mates anywhere that reach a part through one of those copies.
   const gone = new Set(all.flatMap((a) => a.instances.filter((i) => i.subAssembly === id).map((i) => i.id)));
-  const through = (c: MateConnector) => (c.path ?? []).some((p) => gone.has(p));
+  const through = (c: MateConnector) => [...(c.path ?? []), ...(c.path2 ?? [])].some((p) => gone.has(p));
   return withAssemblies(
     doc,
     all
@@ -59,7 +58,9 @@ export function removeAssembly(doc: JuraCADDocument, id: string): JuraCADDocumen
         const left = uses.length ? tidyExplodeSteps(withoutInstances(a, uses)) : a;
         const mates = left.mates ?? [];
         return mates.some((m) => through(m.a) || through(m.b)) ? tidyReplicates(withMates(left, mates.filter((m) => !through(m.a) && !through(m.b)))) : left;
-      }),
+      })
+      // Exploded view steps forget parts inside copies of it, at any depth.
+      .map((a, _i, left) => tidyStepPaths(a, left)),
   );
 }
 
@@ -637,15 +638,18 @@ const MATE_TYPE_NAMES = new Set<string>(["fastened", "revolute", "slider", "cyli
 
 const SPOTS = new Set<string>(["start", "end", "middle", "clicked"]);
 
-function parseConnector(raw: unknown): MateConnector | null {
+export function parseConnector(raw: unknown): MateConnector | null {
   const c = (raw ?? {}) as Record<string, unknown>;
   const pick = parsePick(c.pick);
   if (typeof c.instanceId !== "string" || !pick) return null;
   const pick2 = c.pick2 ? parsePick(c.pick2) : null;
   const point = Array.isArray(c.point) && c.point.length === 3 && c.point.every((v) => typeof v === "number" && Number.isFinite(v)) ? (c.point as [number, number, number]) : null;
   const spot = typeof c.spot === "string" && SPOTS.has(c.spot) && (c.spot !== "clicked" || point) ? (c.spot as ConnectorSpot) : null;
-  const path = Array.isArray(c.path) && c.path.length && c.path.every((x) => typeof x === "string" && x) ? (c.path as string[]) : null;
-  return { instanceId: c.instanceId, ...(path ? { path } : {}), pick, ...(pick2 ? { pick2 } : {}), ...(spot ? { spot } : {}), ...(point ? { point } : {}) };
+  const pathOf = (v: unknown) => (Array.isArray(v) && v.length && v.every((x) => typeof x === "string" && x) ? (v as string[]) : null);
+  const path = pathOf(c.path);
+  // (A Width mate's second face on another part of the same sub-assembly copy.)
+  const path2 = pick2 && path ? pathOf(c.path2) : null;
+  return { instanceId: c.instanceId, ...(path ? { path } : {}), pick, ...(pick2 ? { pick2 } : {}), ...(path2 ? { path2 } : {}), ...(spot ? { spot } : {}), ...(point ? { point } : {}) };
 }
 
 function parseMate(raw: unknown, ids: Set<string>): Mate | null {

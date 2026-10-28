@@ -38,14 +38,15 @@ import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCorne
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import { measureContacts } from "./clash";
-import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
 import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
-import { writeStep } from "./stepExport";
+import { writeStep, writeStepAssembly } from "./stepExport";
+import { stepPartCount } from "./stepCount";
 import { importKey, importSolids, isImportedSurface } from "./importer";
 import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
@@ -54,6 +55,8 @@ import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredIt
 const MAIN_STUDIO_ID = "main";
 
 interface BuiltPart {
+  /** Parts a feature merged into this one, by the feature's id: their names (for the dialog's "joining Part 2 into it"). */
+  joined?: { feature: string; names: string[] }[];
   /** Built in another configuration, only for assemblies (left out when "all parts" are meant). */
   configured?: boolean;
   id: string;
@@ -1204,12 +1207,22 @@ function reach(plane: Parameters<typeof planeFrame>[0], parts: BuiltPart[]): num
   return far;
 }
 
-function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], threaded?: ThreadedHoleCache): Shape3D {
+/** `notes`: problems that don't stop it being built (shown on the feature). */
+function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], threaded?: ThreadedHoleCache, notes?: string[]): Shape3D {
   // An extrude using areas of other sketches too: each extruded from its own sketch with the same settings, then put together.
   if (feature.type === "extrude" && feature.moreAreas?.length && !feature.surface) {
     let shape = buildSolid({ ...feature, moreAreas: undefined }, v, sketches, all, parts, threaded);
+    const main = all.find((f) => f.id === feature.sketchRef)?.name ?? "its sketch";
     for (const more of feature.moreAreas) {
-      const name = all.find((f) => f.id === more.sketch)?.name ?? "One of its other sketches";
+      const source = all.find((f) => f.id === more.sketch);
+      const name = source?.name ?? "One of its other sketches";
+      // A sketch deleted or suppressed since: build from the others, and say so (the rest of the model carries on).
+      if (!source || source.suppressed) {
+        notes?.push(
+          `${name} ${source ? "is suppressed" : "has been deleted"}, so its areas are left out of this extrude. Edit it and click "use only ${main}" (or un-suppress ${source ? name : "the sketch"}).`,
+        );
+        continue;
+      }
       let extra: Shape3D;
       try {
         extra = buildSolid({ ...feature, sketchRef: more.sketch, areas: more.areas, moreAreas: undefined }, v, sketches, all, parts, threaded);
@@ -1686,6 +1699,8 @@ export class GeometryEngine {
   private threadedHoles: ThreadedHoleCache = new Map();
   /** The part just after a hole with modelled threads, by everything that went into it (see the rebuild loop). */
   /** Threaded holes already cut: each part's result (by id), the cutting shape, the part it's recorded on, and any problem. */
+  /** How many times a threaded hole was taken from `threadedResults` instead of being cut again (for tests). */
+  threadedReused = 0;
   private threadedResults = new Map<string, { shapes: [string, Shape3D][]; tool: Shape3D; partId: string; error?: string }>();
   /** Every part of every Part Studio (for exports, checks and measuring). */
   private parts: BuiltPart[] = [];
@@ -2321,6 +2336,7 @@ export class GeometryEngine {
       const done = threadKey ? this.threadedResults.get(threadKey) : undefined;
       // (The key is the whole list up to here, so the same parts are there and reached as when it was cut.)
       if (done && target && done.shapes.every(([id]) => this.parts.some((p) => p.id === id))) {
+        this.threadedReused++;
         for (const [id, shape] of done.shapes) {
           const part = this.parts.find((p) => p.id === id)!;
           part.shape.delete();
@@ -2333,12 +2349,15 @@ export class GeometryEngine {
       }
 
       let tool: Shape3D;
+      const notes: string[] = [];
       try {
-        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles);
+        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, notes);
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;
       }
+      // Built, but with something to tell (a lost extra sketch); a later problem with it replaces this.
+      if (notes.length) featureErrors[feature.id] = notes.join(" ");
 
       if (feature.operation === "new" && feature.type === "import") {
         // A STEP file may hold several parts: each solid becomes its own part, and any surfaces one surface part.
@@ -2671,7 +2690,12 @@ export class GeometryEngine {
       const part = this.parts.find((p) => p.id === gone);
       const keep = this.parts.find((p) => p.id === into);
       if (!part) continue;
-      if (keep) for (const f of part.featureIds) if (!keep.featureIds.includes(f)) keep.featureIds.push(f);
+      if (keep) {
+        for (const f of part.featureIds) if (!keep.featureIds.includes(f)) keep.featureIds.push(f);
+        const entry = keep.joined?.find((j) => j.feature === feature.id);
+        if (entry) entry.names.push(part.name);
+        else keep.joined = [...(keep.joined ?? []), { feature: feature.id, names: [part.name] }];
+      }
       // Earlier features on it now belong to the part it joined (patterns of them work on that).
       for (const t of this.tools.values()) if (t.partId === gone) t.partId = into;
       part.shape.delete();
@@ -5111,7 +5135,25 @@ export class GeometryEngine {
    * STEP keeps the exact shape — curves stay curves — which is what most
    * manufacturers (machining, sheet metal, injection moulding) ask for.
    */
-  async exportStep(partIds: string[], colours: Record<string, string> = {}, instances?: InstanceInput[]): Promise<StepResult> {
+  async exportStep(partIds: string[], colours: Record<string, string> = {}, instances?: InstanceInput[], tree?: StepTree): Promise<StepResult> {
+    // A whole assembly: its structure kept (sub-assemblies, each part once, every copy a placed reference to it).
+    if (tree) {
+      const made: Shape3D[] = [];
+      try {
+        const bytes = writeStepAssembly(tree, (key) => {
+          const def = tree.parts[key];
+          const part = def && (this.parts.find((p) => p.id === def.partId) ?? this.parts.find((p) => p.id === def.partId.split("@")[0]));
+          if (!part) return null;
+          // The mirror image is a part of its own: the part flipped across its own YZ plane (as the 3D view shows it).
+          const shape = def.mirrored ? part.shape.clone().mirror("YZ", [0, 0, 0]) : part.shape;
+          if (def.mirrored) made.push(shape);
+          return { shape, colour: colours[def.partId] ?? colours[def.partId.split("@")[0]] ?? DEFAULT_PART_COLOUR };
+        });
+        return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: stepPartCount(tree) };
+      } finally {
+        made.forEach((m) => m.delete());
+      }
+    }
     return this.withChosen(partIds, instances, (chosen) => {
       const bytes = writeStep(chosen.map((p) => ({ shape: p.shape, name: p.name, colour: colours[p.id] ?? DEFAULT_PART_COLOUR })));
       return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: chosen.length };
@@ -5208,6 +5250,7 @@ export class GeometryEngine {
         id: p.id,
         name: p.name,
         featureIds: [...p.featureIds],
+        ...(p.joined?.length ? { joined: p.joined.map((j) => ({ ...j, names: [...j.names] })) } : {}),
         vertices: cached.vertices.slice(),
         normals: cached.normals.slice(),
         triangles: cached.triangles.slice(),
@@ -5252,6 +5295,7 @@ export class GeometryEngine {
       id: p.id,
       name: p.name,
       featureIds: [...p.featureIds],
+      ...(p.joined?.length ? { joined: p.joined.map((j) => ({ ...j, names: [...j.names] })) } : {}),
       vertices: Float32Array.from(faces.vertices),
       normals: Float32Array.from(faces.normals),
       triangles: Uint32Array.from(faces.triangles),
