@@ -6,15 +6,18 @@ import { resolveParams, visibleParamKeys } from "../src/model/features";
 import type { Feature, JuraCADDocument } from "../src/model/types";
 import { emptySketch } from "../src/sketch/types";
 import {
+  anyPlaneShown,
   featureVisible,
   hiddenDatumsOf,
   keepVisibility,
   parseHiddenDatums,
   planeVisible,
+  setAllPlanesVisible,
   setAllSketchesVisible,
   setDatumHidden,
   setFeaturesVisible,
   sketchVisible,
+  toggleAllPlanes,
   usedSketches,
 } from "../src/model/visibility";
 
@@ -130,6 +133,71 @@ describe("plane and default-plane visibility", () => {
     expect(parseHiddenDatums(["Right", "Top", "Nonsense", "Top", 3])).toEqual(["Top", "Right"]);
     expect(parseHiddenDatums([])).toBeUndefined();
     expect(parseHiddenDatums("Top")).toBeUndefined();
+  });
+});
+
+describe("P: show or hide all planes (like Onshape)", () => {
+  const studioDoc = (): JuraCADDocument => {
+    const d = addStudio(emptyDocument(), "ps2");
+    return {
+      ...d,
+      features: [f("p1", "plane"), f("p2", "plane", { visible: false }), f("s1", "sketch"), f("p3", "plane", { suppressed: true })],
+      partStudios: d.partStudios!.map((s) => ({ ...s, features: [f("q1", "plane")] })),
+    };
+  };
+  const planesOf = (d: JuraCADDocument) => d.features.filter((x) => x.type === "plane").map((x) => x.visible);
+
+  it("hides Top, Front, Right and every Plane feature when any is shown, leaving the Origin, sketches and other studios alone", () => {
+    const d = setDatumHidden(studioDoc(), "main", "Origin", true);
+    expect(anyPlaneShown(d, "main")).toBe(true);
+    const { doc: hidden, visible } = toggleAllPlanes(d, "main");
+    expect(visible).toBe(false);
+    expect(hiddenDatumsOf(hidden, "main")).toEqual(["Origin", "Top", "Front", "Right"]);
+    expect(planesOf(hidden)).toEqual([false, false, false]);
+    expect(hidden.features.find((x) => x.id === "s1")!.visible).toBeUndefined();
+    expect(anyPlaneShown(hidden, "main")).toBe(false);
+    // The other Part Studio is untouched.
+    expect(hiddenDatumsOf(hidden, "ps2")).toEqual([]);
+    expect(hidden.partStudios![0]).toBe(d.partStudios![0]);
+  });
+
+  it("shows them all again when none is shown, and the Origin stays as it was", () => {
+    const d = setDatumHidden(studioDoc(), "main", "Origin", true);
+    const hidden = toggleAllPlanes(d, "main").doc;
+    const { doc: shown, visible } = toggleAllPlanes(hidden, "main");
+    expect(visible).toBe(true);
+    expect(hiddenDatumsOf(shown, "main")).toEqual(["Origin"]);
+    expect(planesOf(shown)).toEqual([true, true, true]);
+  });
+
+  it("counts one shown plane, of any kind, as 'some shown'", () => {
+    let d = setAllPlanesVisible(studioDoc(), "main", false);
+    expect(anyPlaneShown(d, "main")).toBe(false);
+    // Just one default plane back on → P hides it.
+    const oneDatum = setDatumHidden(d, "main", "Front", false);
+    expect(anyPlaneShown(oneDatum, "main")).toBe(true);
+    expect(toggleAllPlanes(oneDatum, "main").visible).toBe(false);
+    // Just one Plane feature back on → P hides it.
+    const oneFeature = setFeaturesVisible(d, ["p2"], true);
+    expect(toggleAllPlanes(oneFeature, "main").visible).toBe(false);
+    // A suppressed plane isn't drawn, so it doesn't count.
+    d = setFeaturesVisible(d, ["p3"], true);
+    expect(anyPlaneShown(d, "main")).toBe(false);
+  });
+
+  it("works on the Part Studio asked for", () => {
+    const d = studioDoc();
+    const { doc: out, visible } = toggleAllPlanes(d, "ps2");
+    expect(visible).toBe(false);
+    expect(hiddenDatumsOf(out, "ps2")).toEqual(["Top", "Front", "Right"]);
+    expect(out.partStudios![0].features[0].visible).toBe(false);
+    expect(out.features).toBe(d.features);
+    expect(hiddenDatumsOf(out, "main")).toEqual([]);
+  });
+
+  it("changes nothing when everything is already as asked (no empty undo step)", () => {
+    const d = setAllPlanesVisible(studioDoc(), "main", false);
+    expect(setAllPlanesVisible(d, "main", false)).toBe(d);
   });
 });
 

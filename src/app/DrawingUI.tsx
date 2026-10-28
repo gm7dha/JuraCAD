@@ -36,6 +36,7 @@ import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
+import { inPopup } from "./popupGuard";
 
 
 /** What a drawing shows, ready for the geometry engine (null when its part has gone). */
@@ -1525,6 +1526,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
+      // Keys pressed in a popup (Live with Claude, Settings…) or while a dialog box is open are the popup's own.
+      if (inPopup(e.target, document)) return;
       const s = useStore.getState();
       if ((e.key === "Delete" || e.key === "Backspace") && s.selectedDims.length) {
         e.preventDefault();

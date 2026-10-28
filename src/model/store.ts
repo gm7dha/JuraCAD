@@ -55,7 +55,7 @@ import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameD
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
-import { hiddenDatumsOf, keepVisibility, setAllSketchesVisible, setDatumHidden, setFeaturesVisible } from "./visibility";
+import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisible, setDatumHidden, setFeaturesVisible, toggleAllPlanes } from "./visibility";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
 
@@ -329,6 +329,10 @@ export interface AppState {
   setFeaturesVisible: (ids: string[], visible: boolean) => void;
   /** "Show all sketches" / "Hide all sketches" in the Part Studio on show. */
   setAllSketchesVisible: (visible: boolean) => void;
+  /** "Show all planes" / "Hide all planes" (Top, Front, Right and Plane features) in the Part Studio on show. One undo step. */
+  setAllPlanesVisible: (visible: boolean) => void;
+  /** The P key: hide every plane if any is shown, else show them all. One undo step; returns whether they're now shown. */
+  toggleAllPlanes: () => boolean;
   renameFeatureFolder: (from: string, to: string) => void;
   renameDocument: (name: string) => void;
   /** Name a part (blank goes back to "Part N"). One undo step. */
@@ -949,6 +953,20 @@ export const useStore = create<AppState>((set, get) => {
       if (!visible && get().selectedFeatureId && ids.includes(get().selectedFeatureId!) && activeFeatures(get()).find((f) => f.id === get().selectedFeatureId)?.type === "plane") set({ selectedFeatureId: null });
     },
     setAllSketchesVisible: (visible) => changeStudio((doc) => setAllSketchesVisible(doc, visible)),
+    setAllPlanesVisible: (visible) => {
+      const studio = activeStudioId(get()) ?? MAIN_STUDIO;
+      change((doc) => setAllPlanesVisible(doc, studio, visible));
+      // A hidden plane can't stay selected (Top/Front/Right, or a Plane feature, as with its eye).
+      if (!visible && get().selectedPlane) set({ selectedPlane: null });
+      const picked = get().selectedFeatureId;
+      if (!visible && picked && activeFeatures(get()).find((f) => f.id === picked)?.type === "plane") set({ selectedFeatureId: null });
+    },
+    toggleAllPlanes: () => {
+      const studio = activeStudioId(get()) ?? MAIN_STUDIO;
+      const { visible } = toggleAllPlanes(get().history.present, studio);
+      get().setAllPlanesVisible(visible);
+      return visible;
+    },
     renameFeatureFolder: (from, to) => changeStudio((doc) => renameFolder(doc, from, to)),
 
     setPartProperties: (partId, props) => change((doc) => setPartPropertiesIn(doc, partId, props)),
