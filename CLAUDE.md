@@ -133,12 +133,14 @@
   STEP export of a whole assembly keeps its structure (`src/assembly/stepTree.ts` → `StepTree` → `writeStepAssembly` in
   stepExport.ts: XCAF `AddComponent` with a `TopLoc_Location` per instance; each part — and its mirror image, key
   "~mirrored" — written once; each sub-assembly one product; NAUO names = instance names, PRODUCT names = part/assembly
-  names). Exploded view steps can move parts inside a sub-assembly (`ExplodeStep.parts`: instanceId + path;
+  names). Exploded view steps can move parts inside a sub-assembly (`ExplodeStep.parts`: instanceId + path, dropped when the path is gone at any depth, `tidyStepPaths`;
   `stepPartOffsets` by "top/inner/part" key, added after the leaf is placed — Viewport and `kernelInstances(…, shift)`);
   in the exploded view a click on such a part selects its key in `asmSelection`. Mirror (an `AssemblyPattern` of kind
-  "mirror") can be across a flat face (`plane`: a MateConnector; the solver first solves without those copies to find the
-  face, `mirrorFacePlanes`, then mirrors across it) and with `samePart` shows symmetric parts as themselves (`ownSymmetry`
-  in symmetry.ts, from the mesh's faces; `mirrorAcross(plane, q, own)` reflects through the part's own symmetry plane, so
+  "mirror") can be across a flat face (`plane`: a MateConnector; `solveWithFaceMirrors` solves without those copies to find the
+  face, `mirrorFacePlanes`, then mirrors across it, and repeats while any face still moves — chains of face mirrors; a face
+  that keeps moving depends on the mirror's own copies, so those copies are held where they are with a plain error) and with
+  `samePart` shows symmetric parts as themselves (`ownSymmetry` in symmetry.ts, from the exact `faceRefs`/`edgeRefs` within
+  0.01 mm plus face areas within 0.2%; `mirrorAcross(plane, q, own)` reflects through the part's own symmetry plane, so
   the copy is a plain move + turn). A copy with the same hand as its original uses `SolveOptions.symmetry`.
 - Drawings: `src/drawing/` — `drawing.ts` (document edits, parsing), `cameras.ts` (view directions; first-angle),
   `annotations.ts` (centre marks/lines, section hatching, balloons), `sections.ts` (section cuts drawn on a view:

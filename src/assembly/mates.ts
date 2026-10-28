@@ -10,7 +10,7 @@
  */
 import { applyRelations } from "./relations";
 import { evaluate, getCurrentScope, type Scope } from "../model/expr";
-import type { Assembly, Instance, Mate, MateConnector, MateType } from "../model/types";
+import type { Assembly, AssemblyPattern, Instance, Mate, MateConnector, MateType } from "../model/types";
 import { sameRef } from "../geometry/topoRef";
 import { applyPlacement, compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, rotate, sub, type Placement, type Vec3 } from "./math";
 import { connectorFrameOnParts, framePlacement, widthFrame, type Frame } from "./connectors";
@@ -285,18 +285,20 @@ export interface SolveOptions {
 /** A connector on its own, looked up like a mate's first side. */
 const asMate = (c: MateConnector): Mate => ({ id: "", name: "", type: "fastened", a: c, b: c, flip: false, values: {} });
 
+/** How many times face-mirrors are solved again while their faces still move (a mirror across a face of another mirror's copy needs one more each). */
+const FACE_PASSES = 8;
+/** A face counts as not moving when its plane moves less than this (mm; and turns less than about 0.06°). */
+const FACE_STILL = 1e-6;
+
 /**
- * Where each face-mirror's face is, from a first solve with those mirrors' copies
- * left to sit where they are (so a face on any part, placed by its own mates,
- * gives the plane), as a plane — or a plain-English reason it can't be used.
+ * Where each face-mirror's face is, given where the parts are, as a plane — or
+ * a plain-English reason it can't be used.
  */
-function mirrorFacePlanes(input: Assembly, frameOf: FrameLookup, options: SolveOptions): Record<string, MirrorPlane | string> {
-  const faced = (input.patterns ?? []).filter((p) => p.kind === "mirror" && p.plane);
-  const skip: Record<string, string> = Object.fromEntries(faced.map((p) => [p.id, "(first pass)"]));
-  const first = solveAssembly(input, frameOf, { ...options, facePlanes: skip });
+function mirrorFacePlanes(input: Assembly, frameOf: FrameLookup, placements: Record<string, Placement>): Record<string, MirrorPlane | string> {
   const out: Record<string, MirrorPlane | string> = {};
-  for (const p of faced) {
-    const c = p.plane!;
+  for (const p of input.patterns ?? []) {
+    if (p.kind !== "mirror" || !p.plane) continue;
+    const c = p.plane;
     const on = input.instances.find((i) => i.id === c.instanceId);
     if (!isOrigin(c) && !on) {
       out[p.id] = "The face it mirrors across was on a part that's been removed. Pick another face, or one of the assembly's planes.";
@@ -315,18 +317,60 @@ function mirrorFacePlanes(input: Assembly, frameOf: FrameLookup, options: SolveO
       out[p.id] = "The face it mirrors across can't be found any more (or isn't flat). Pick a flat face again, or one of the assembly's planes.";
       continue;
     }
-    const at = on ? first.placements[on.id] ?? on.placement : IDENTITY;
+    const at = on ? placements[on.id] ?? on.placement : IDENTITY;
     const w = placeFrame(at, f);
     out[p.id] = { point: w.origin, normal: w.z };
   }
   return out;
 }
 
+/** Whether a face-mirror's plane stayed put from one pass to the next. */
+function samePlane(a: MirrorPlane | string | undefined, b: MirrorPlane | string | undefined): boolean {
+  if (typeof a !== "object" || typeof b !== "object") return a === b;
+  const la = Math.hypot(...a.normal) || 1;
+  const lb = Math.hypot(...b.normal) || 1;
+  const na = a.normal.map((v) => v / la);
+  const nb = b.normal.map((v) => v / lb);
+  const turn = Math.hypot(na[0] - nb[0], na[1] - nb[1], na[2] - nb[2]);
+  const off = Math.abs((b.point[0] - a.point[0]) * na[0] + (b.point[1] - a.point[1]) * na[1] + (b.point[2] - a.point[2]) * na[2]);
+  return turn < 1e-6 && off < FACE_STILL;
+}
+
+/**
+ * Mirrors across faces. First the assembly is solved with those mirrors' copies
+ * left where they are, to see where each face is; then again, mirroring across
+ * those faces — and again while any face still moves (a face on another
+ * mirror's copy, which only gets to its place in the pass before). A face that
+ * keeps moving is on a part that depends on the mirror's own copies (fastened
+ * to one, say): mirroring would chase it for ever, so that mirror's copies are
+ * left where they are and it says why.
+ */
+function solveWithFaceMirrors(input: Assembly, frameOf: FrameLookup, options: SolveOptions): SolveResult {
+  const faced = (input.patterns ?? []).filter((p) => p.kind === "mirror" && p.plane);
+  const skip: Record<string, string> = Object.fromEntries(faced.map((p) => [p.id, "(first pass)"]));
+  let result = solveAssembly(input, frameOf, { ...options, facePlanes: skip });
+  let planes = mirrorFacePlanes(input, frameOf, result.placements);
+  let stuck: AssemblyPattern[] = [];
+  for (let pass = 0; pass < FACE_PASSES; pass++) {
+    result = solveAssembly(input, frameOf, { ...options, facePlanes: planes });
+    const again = mirrorFacePlanes(input, frameOf, result.placements);
+    stuck = faced.filter((p) => !samePlane(planes[p.id], again[p.id]));
+    if (!stuck.length) return result;
+    planes = again;
+  }
+  // Still moving: hold those mirrors' copies where they are, and say why.
+  const held = { ...planes };
+  for (const p of stuck) held[p.id] = "(held)";
+  result = solveAssembly(input, frameOf, { ...options, facePlanes: held });
+  const patternErrors = { ...result.patternErrors };
+  for (const p of stuck)
+    patternErrors[p.id] = "This mirror's face is on a part that depends on the mirror's own copies (it's mated to one of them, say), so the copies can't settle. Pick a face on another part, or one of the assembly's planes.";
+  return { ...result, patternErrors };
+}
+
 export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: SolveOptions = {}): SolveResult {
   // Mirrors across a face: find where the face is first (its part placed by its own mates), then mirror across it.
-  if (!options.facePlanes && (input.patterns ?? []).some((p) => p.kind === "mirror" && p.plane)) {
-    return solveAssembly(input, frameOf, { ...options, facePlanes: mirrorFacePlanes(input, frameOf, options) });
-  }
+  if (!options.facePlanes && (input.patterns ?? []).some((p) => p.kind === "mirror" && p.plane)) return solveWithFaceMirrors(input, frameOf, options);
   // Relations (gears, rack and pinion, screws) set the amounts of the mates they drive.
   // Suppressed parts (and the mates on them) are left out; they stay where they were.
   const related = applyRelations(withoutSuppressed(input));
@@ -434,7 +478,7 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
         // Across a face: the plane where the face is (or, in the first pass, the copy isn't held yet).
         const face = p.plane ? options.facePlanes?.[p.id] : undefined;
         if (p.plane && typeof face !== "object") {
-          if (face && face !== "(first pass)") patternErrors[p.id] = face;
+          if (face && face !== "(first pass)" && face !== "(held)") patternErrors[p.id] = face;
           continue;
         }
         const plane: MirrorPlane = typeof face === "object" ? face : axisPlane(p);

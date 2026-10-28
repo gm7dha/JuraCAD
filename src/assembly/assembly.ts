@@ -10,7 +10,7 @@ import { parseRelation } from "./relations";
 import { parsePattern, tidyPatterns } from "./patterns";
 import { parseReplicate, tidyReplicates } from "./replicate";
 import { parseGroup, tidyGroups } from "./groups";
-import { parseExplodeStep, tidyExplodeSteps } from "./explode";
+import { parseExplodeStep, tidyExplodeSteps, tidyStepPaths } from "./explode";
 import { applyPlacement, IDENTITY, parsePlacement, type Placement, type Vec3 } from "./math";
 import { MATE_TYPES } from "./mates";
 import { startingLength } from "../model/units";
@@ -25,11 +25,10 @@ function withAssemblies(doc: JuraCADDocument, assemblies: Assembly[]): JuraCADDo
 
 export function updateAssembly(doc: JuraCADDocument, id: string, fn: (a: Assembly) => Assembly): JuraCADDocument {
   if (!assembliesOf(doc).some((a) => a.id === id)) return doc;
-  return withAssemblies(
-    doc,
-    // Exploded view steps forget parts that any change removed (patterns, Replicate, delete…).
-    assembliesOf(doc).map((a) => (a.id === id ? tidyExplodeSteps(fn(a)) : a)),
-  );
+  // Exploded view steps forget parts that any change removed (patterns, Replicate, delete…) —
+  // also parts inside sub-assemblies, in every assembly that uses this one.
+  const changed = assembliesOf(doc).map((a) => (a.id === id ? tidyExplodeSteps(fn(a)) : a));
+  return withAssemblies(doc, changed.map((a) => tidyStepPaths(a, changed)));
 }
 
 /** Next free name: "Assembly 1", "Assembly 2"… */
@@ -59,7 +58,9 @@ export function removeAssembly(doc: JuraCADDocument, id: string): JuraCADDocumen
         const left = uses.length ? tidyExplodeSteps(withoutInstances(a, uses)) : a;
         const mates = left.mates ?? [];
         return mates.some((m) => through(m.a) || through(m.b)) ? tidyReplicates(withMates(left, mates.filter((m) => !through(m.a) && !through(m.b)))) : left;
-      }),
+      })
+      // Exploded view steps forget parts inside copies of it, at any depth.
+      .map((a, _i, left) => tidyStepPaths(a, left)),
   );
 }
 

@@ -11,6 +11,7 @@ import { placedBox, type Box3 } from "./assembly";
 import type { Placement, Vec3 } from "./math";
 import { evaluate } from "../model/expr";
 import type { Assembly, ExplodeStep } from "../model/types";
+import { pathProblem } from "./paths";
 
 export interface ExplodeItem {
   id: string;
@@ -89,7 +90,7 @@ export function stepOffsets(steps: readonly ExplodeStep[]): Record<string, Vec3>
 }
 
 /** The key of a part inside a sub-assembly that a step moves ("top/inner/part", as the 3D view names it). */
-export const stepPartKey = (p: { instanceId: string; path: readonly string[] }): string => [p.instanceId, ...p.path].join("/");
+export const explodePartKey = (p: { instanceId: string; path: readonly string[] }): string => [p.instanceId, ...p.path].join("/");
 
 /**
  * The steps' moves of parts inside sub-assemblies, added up for each (by its
@@ -105,7 +106,7 @@ export function stepPartOffsets(steps: readonly ExplodeStep[]): Record<string, V
     const dir = AXES[step.axis];
     const k = (step.flip ? -1 : 1) * d.value;
     for (const p of step.parts) {
-      const key = stepPartKey(p);
+      const key = explodePartKey(p);
       const o = out[key] ?? [0, 0, 0];
       out[key] = [o[0] + dir[0] * k, o[1] + dir[1] * k, o[2] + dir[2] * k];
     }
@@ -150,6 +151,27 @@ export function tidyExplodeSteps(a: Assembly): Assembly {
   return steps.length ? { ...rest, explodeSteps: steps } : rest;
 }
 
+/**
+ * After any change anywhere in the document: steps lose parts inside
+ * sub-assemblies that their path no longer leads to (the part, or a
+ * sub-assembly on the way, removed — at any depth); steps left with nothing go.
+ * A part that's only suppressed is kept. The same object when nothing changed.
+ */
+export function tidyStepPaths(a: Assembly, assemblies: readonly Assembly[]): Assembly {
+  if (!a.explodeSteps?.some((s) => s.parts?.length)) return a;
+  const goneOf = (p: { instanceId: string; path: string[] }) => !a.instances.some((i) => i.id === p.instanceId) || pathProblem(a, p, assemblies)?.kind === "gone";
+  if (!a.explodeSteps.some((s) => s.parts?.some(goneOf))) return a;
+  const { explodeSteps: _old, ...rest } = a;
+  const steps = a.explodeSteps
+    .map((s): ExplodeStep => {
+      const { parts: _p, ...plain } = s;
+      const parts = (s.parts ?? []).filter((p) => !goneOf(p));
+      return parts.length ? { ...plain, parts } : plain;
+    })
+    .filter((s) => s.instances.length || s.parts?.length);
+  return steps.length ? { ...rest, explodeSteps: steps } : rest;
+}
+
 /** A step read from a file (null if it's unusable). */
 export function parseExplodeStep(raw: unknown): ExplodeStep | null {
   const r = (raw ?? {}) as Record<string, unknown>;
@@ -161,7 +183,7 @@ export function parseExplodeStep(raw: unknown): ExplodeStep | null {
     const p = (raw ?? {}) as Record<string, unknown>;
     if (typeof p.instanceId !== "string" || !p.instanceId || !Array.isArray(p.path) || !p.path.length || !p.path.every((x) => typeof x === "string" && x)) return [];
     const part = { instanceId: p.instanceId, path: p.path as string[] };
-    const key = stepPartKey(part);
+    const key = explodePartKey(part);
     if (seen.has(key)) return [];
     seen.add(key);
     return [part];

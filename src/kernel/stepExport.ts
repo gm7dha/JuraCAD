@@ -34,7 +34,8 @@ function writeXcaf(fill: (x: Xcaf) => void): Uint8Array {
   try {
     const doc = keep(new oc.TDocStd_Document(text("XmlOcaf")));
     oc.XCAFDoc_ShapeTool.SetAutoNaming(false);
-    const main = doc.Main();
+    // (Labels are small value objects: each wrapper is freed at the end, like everything else made here.)
+    const main = keep(doc.Main());
     const shapes = oc.XCAFDoc_DocumentTool.ShapeTool(main);
     const colours = oc.XCAFDoc_DocumentTool.ColorTool(main);
     fill({ oc, shapes, keep, name: (label, s) => oc.TDataStd_Name.Set(label, text(s)), colour: (label, c) => {
@@ -83,9 +84,9 @@ interface Xcaf {
 
 /** Parts side by side, each a named, coloured solid (a Part Studio's parts, or an assembly's copies already placed). */
 export function writeStep(parts: StepPart[]): Uint8Array {
-  return writeXcaf(({ shapes, name, colour }) => {
+  return writeXcaf(({ shapes, keep, name, colour }) => {
     parts.forEach((p, i) => {
-      const label = shapes.NewShape();
+      const label = keep(shapes.NewShape());
       shapes.SetShape(label, p.shape.wrapped);
       name(label, p.name || `Part ${i + 1}`);
       colour(label, p.colour);
@@ -117,7 +118,7 @@ export function writeStepAssembly(tree: StepTree, shapeOf: (partKey: string) => 
       const shape = def ? shapeOf(key) : null;
       let label = null;
       if (def && shape) {
-        label = shapes.NewShape();
+        label = keep(shapes.NewShape());
         shapes.SetShape(label, shape.shape.wrapped);
         name(label, def.name);
         colour(label, shape.colour);
@@ -136,10 +137,10 @@ export function writeStepAssembly(tree: StepTree, shapeOf: (partKey: string) => 
         products.set(key, null);
         return null;
       }
-      const label = shapes.NewShape();
+      const label = keep(shapes.NewShape());
       name(label, def.name);
       for (const { c, label: child } of children) {
-        const component = shapes.AddComponent(label, child, keep(new oc.TopLoc_Location(locationOf(oc, keep, c))));
+        const component = keep(shapes.AddComponent(label, child, keep(new oc.TopLoc_Location(locationOf(oc, keep, c)))));
         name(component, c.name);
       }
       products.set(key, label);

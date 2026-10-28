@@ -5,7 +5,9 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { billOfMaterials, parseAssemblies } from "../src/assembly/assembly";
+import { billOfMaterials, parseAssemblies, removeAssembly, removeInstances, updateAssembly } from "../src/assembly/assembly";
+import { mateInactive } from "../src/assembly/suppress";
+import { emptyDocument } from "../src/model/document";
 import { parseExplodeStep, stepPartOffsets, tidyExplodeSteps } from "../src/assembly/explode";
 import { applyPlacement, quatFromAxisAngle, type Placement, type Vec3 } from "../src/assembly/math";
 import { solveAssembly, type FrameLookup } from "../src/assembly/mates";
@@ -44,7 +46,7 @@ const LOCALS: Vec3[] = [
 ];
 
 /** A box's six faces as a display mesh (two triangles each). */
-function boxFaces(min: Vec3, max: Vec3, into: { v: number[]; t: number[]; g: PartMesh["faceGroups"] }) {
+function boxFaces(min: Vec3, max: Vec3, into: { v: number[]; t: number[]; g: PartMesh["faceGroups"]; f: PartMesh["faceRefs"] }) {
   const c = (i: number, j: number, k: number): Vec3 => [i ? max[0] : min[0], j ? max[1] : min[1], k ? max[2] : min[2]];
   const quads: Vec3[][] = [
     [c(0, 0, 0), c(0, 1, 0), c(0, 1, 1), c(0, 0, 1)],
@@ -59,12 +61,20 @@ function boxFaces(min: Vec3, max: Vec3, into: { v: number[]; t: number[]; g: Par
     q.forEach((p) => into.v.push(...p));
     into.g.push({ start: into.t.length, count: 6, faceId: into.g.length });
     into.t.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    // The face's exact data, as the engine sends it: its middle and which way it faces (out of the box).
+    const centre = [0, 1, 2].map((k) => (q[0][k] + q[2][k]) / 2) as Vec3;
+    const u = [0, 1, 2].map((k) => q[1][k] - q[0][k]);
+    const w = [0, 1, 2].map((k) => q[3][k] - q[0][k]);
+    const n = unit([u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]);
+    const mid = [0, 1, 2].map((k) => (min[k] + max[k]) / 2);
+    const out = n.reduce((t, v, k) => t + v * (centre[k] - mid[k]), 0) >= 0 ? n : (n.map((v) => -v) as Vec3);
+    into.f.push({ kind: "face", surface: "PLANE", center: centre, normal: out.map((v) => v + 0) as Vec3 });
   }
 }
-function mesh(boxes: [Vec3, Vec3][]): Pick<PartMesh, "vertices" | "triangles" | "faceGroups"> {
-  const into = { v: [] as number[], t: [] as number[], g: [] as PartMesh["faceGroups"] };
+function mesh(boxes: [Vec3, Vec3][]): Pick<PartMesh, "vertices" | "triangles" | "faceGroups" | "faceRefs"> {
+  const into = { v: [] as number[], t: [] as number[], g: [] as PartMesh["faceGroups"], f: [] as PartMesh["faceRefs"] };
   for (const [a, b] of boxes) boxFaces(a, b, into);
-  return { vertices: new Float32Array(into.v), triangles: new Uint32Array(into.t), faceGroups: into.g };
+  return { vertices: new Float32Array(into.v), triangles: new Uint32Array(into.t), faceGroups: into.g, faceRefs: into.f };
 }
 
 describe("mirroring across any plane", () => {
@@ -101,6 +111,10 @@ describe("telling whether a part is symmetric", () => {
     expect(tab?.at).toBeCloseTo(5, 6);
     // The tab in a corner: not symmetric at all.
     expect(ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 0, 0], [12, 3, 3]]]))).toBeNull();
+    // Tabs on both sides, one 0.05 mm off (or 0.02 mm thicker): not symmetric left to right (only top to bottom).
+    expect(ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 3.5, 0], [12, 6.5, 10]], [[-2, 3.55, 0], [0, 6.55, 10]]]))?.axis).toBe("z");
+    expect(ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 3.5, 0], [12, 6.5, 10]], [[-2.02, 3.5, 0], [0, 6.5, 10]]]))?.axis).toBe("y");
+    expect(ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 3.5, 0], [12, 6.5, 10]], [[-2, 3.5, 0], [0, 6.5, 10]]]))).toEqual({ axis: "x", at: 5 });
   });
 });
 
@@ -132,6 +146,58 @@ describe("Mirror in an assembly: faces and symmetric parts", () => {
     const again = solveAssembly(moved, frames).placements[copy.id];
     const plane2 = { point: [0, 30, 0] as Vec3, normal: unit([-1, 1, 0]) };
     close(applyPlacement(again, [-1, 2, 3]), reflect(plane2, applyPlacement(at(5, 0, 0), [1, 2, 3])));
+  });
+
+  it("follows a mirror across a face of another mirror's copy in the same solve", () => {
+    const a: Assembly = {
+      id: "a",
+      name: "A",
+      instances: [inst("wall", "p_wall", at(10, 0, 0), { fixed: true }), inst("arm", "p_arm", at(5, 0, 0), { fixed: true }), inst("arm2", "p_arm", at(0, 7, 3), { fixed: true })],
+    };
+    let made = syncPattern(a, plate({ plane: wallFace }), ids);
+    const c1 = made.instances.find((i) => i.copyOf?.pattern === "mr")!;
+    // The second mirror's face is on the first mirror's copy (whose saved place is out of date: at the origin).
+    made = { ...made, instances: made.instances.map((i) => (i.id === c1.id ? { ...i, placement: at(0, 0, 0) } : i)) };
+    const onCopy: MateConnector = { ...wallFace, instanceId: c1.id };
+    made = syncPattern(made, plate({ id: "mr2", name: "Mirror 2", seeds: ["arm2"], plane: onCopy }), ids);
+    const c2 = made.instances.find((i) => i.copyOf?.pattern === "mr2")!;
+    const look: FrameLookup = (m) => (m.a.instanceId === "wall" || m.a.instanceId === c1.id ? { origin: [0, 0, 0], z: normal, x: unit([1, -1, 0]), surface: "plane" } : null);
+    const solved = solveAssembly(made, look);
+    expect(solved.patternErrors).toBeUndefined();
+    const first = mirrorAcross({ point: [10, 0, 0], normal }, at(5, 0, 0));
+    close(solved.placements[c1.id].position, first.position);
+    // The second plane: the face where the first copy really is (not where it was saved).
+    const plane2 = { point: first.position, normal: applyPlacement({ position: [0, 0, 0], rotation: first.rotation }, normal) };
+    close(solved.placements[c2.id].position, mirrorAcross(plane2, at(0, 7, 3)).position);
+  });
+
+  it("refuses a face on a part fastened to the mirror's own copy, without drifting", () => {
+    let made = syncPattern(base(at(10, 0, 0)), plate({ plane: wallFace }), ids);
+    const copy = made.instances.find((i) => i.copyOf)!;
+    // The wall isn't fixed: it's fastened to the copy, so moving the copy moves the face it's mirrored across.
+    made = {
+      ...made,
+      instances: made.instances.map((i) => (i.id === "wall" ? { ...i, fixed: false } : i)),
+      mates: [{ id: "fx", name: "Fasten 1", type: "fastened", a: { ...wallFace, instanceId: copy.id }, b: wallFace, flip: false, values: { gap: "5" } }],
+    };
+    // (The copy's face sits off to the side of the copy's own origin, as faces usually do.)
+    const frames = (zc: number, zw: number): FrameLookup => (m, side) =>
+      m[side].instanceId === "wall" ? { origin: [0, 0, 0], z: [zw, 0, 0], x: [0, 1, 0], surface: "plane" } : m[side].instanceId === copy.id ? { origin: [3, 1, 0], z: [zc, 0, 0], x: [0, 1, 0], surface: "plane" } : null;
+    // Some such arrangements do settle (the copy is the mirror image across the wall, and the wall is fastened to the copy): fine.
+    const settles = solveAssembly(made, (m, side) =>
+      m[side].instanceId === "wall" ? { origin: [0, 0, 0], z: normal, x: unit([1, -1, 0]), surface: "plane" } : m[side].instanceId === copy.id ? { origin: [3, 1, 0], z: [1, 0, 0], x: [0, 1, 0], surface: "plane" } : null,
+    );
+    expect(settles.patternErrors).toBeUndefined();
+    // The arm (at x 5) and its copy are mirror images across the wall's face, where the wall ended up.
+    close(settles.placements[copy.id].position, mirrorAcross({ point: settles.placements.wall.position, normal: applyPlacement({ position: [0, 0, 0], rotation: settles.placements.wall.rotation }, normal) }, at(5, 0, 0)).position);
+    // Others chase each other for ever: the copies are held where they are, with a plain reason.
+    const look = frames(-1, -1);
+    const once = solveAssembly(made, look);
+    expect(once.patternErrors?.mr).toMatch(/depends on the mirror's own copies/);
+    // Stored and solved again (as the app does after each change): nothing moves.
+    const settled = { ...made, instances: made.instances.map((i) => ({ ...i, placement: once.placements[i.id] ?? i.placement })) };
+    const twice = solveAssembly(settled, look);
+    for (const id of ["wall", copy.id]) close(twice.placements[id].position, once.placements[id].position);
   });
 
   it("says plainly when the face can't be used", () => {
@@ -216,6 +282,42 @@ describe("exploded view steps for parts inside sub-assemblies", () => {
     const without = tidyExplodeSteps({ ...withSteps, instances: withSteps.instances.filter((i) => i.id !== "h1") });
     expect(without.explodeSteps).toEqual([step({ id: "2", instances: ["base"] })]);
     expect(tidyExplodeSteps(withSteps).explodeSteps).toEqual(withSteps.explodeSteps);
+  });
+});
+
+describe("keeping inner explode steps and Width mates tidy", () => {
+  const face = { partId: "p", ref: { kind: "face" as const, surface: "PLANE", center: [0, 0, 0] as Vec3, normal: [1, 0, 0] as Vec3 } };
+  // Top ⊃ Mid (two copies) ⊃ Hinge ⊃ leaf, pin.
+  const H: Assembly = { id: "H", name: "Hinge", instances: [inst("leaf", "p_leaf", at(0, 0, 0), { fixed: true }), inst("pin", "p_pin", at(0, 0, 5))] };
+  const M: Assembly = { id: "M", name: "Mid", instances: [inst("h", "", at(0, 0, 0), { subAssembly: "H", fixed: true })] };
+  const T: Assembly = {
+    id: "T",
+    name: "Top",
+    instances: [inst("m1", "", at(0, 0, 0), { subAssembly: "M", fixed: true }), inst("m2", "", at(50, 0, 0), { subAssembly: "M", fixed: true })],
+    explodeSteps: [
+      { id: "1", instances: [], axis: "z", distance: "10", parts: [{ instanceId: "m1", path: ["h", "pin"] }] },
+      { id: "2", instances: ["m2"], axis: "x", distance: "10", parts: [{ instanceId: "m2", path: ["h", "leaf"] }] },
+    ],
+  };
+  const doc = (...assemblies: Assembly[]) => ({ ...emptyDocument(), assemblies });
+
+  it("drops steps' parts whose way down (two levels deep) no longer leads to a part", () => {
+    // The pin taken out of the hinge: the first step goes (it moved nothing else); the second keeps its leaf.
+    const noPin = removeInstances(doc(T, M, H), "H", ["pin"]);
+    expect(noPin.assemblies!.find((a) => a.id === "T")!.explodeSteps!.map((s) => [s.id, s.parts?.map((p) => p.path.join("/"))])).toEqual([["2", ["h/leaf"]]]);
+    // The hinge deleted altogether: only the step's own sub-assembly move is left.
+    const noHinge = removeAssembly(doc(T, M, H), "H");
+    expect(noHinge.assemblies!.find((a) => a.id === "T")!.explodeSteps).toEqual([{ id: "2", instances: ["m2"], axis: "x", distance: "10" }]);
+    // A suppressed part is kept (it comes back when unsuppressed); an unrelated change leaves the steps as they are.
+    const quiet = updateAssembly(doc(T, M, H), "H", (a) => ({ ...a, instances: a.instances.map((i) => (i.id === "pin" ? { ...i, suppressed: true } : i)) }));
+    expect(quiet.assemblies!.find((a) => a.id === "T")).toBe(T);
+  });
+
+  it("says a Width mate isn't used while the part with its slot's second face is suppressed", () => {
+    const S: Assembly = { id: "S", name: "Slot", instances: [inst("left", "p", at(0, 0, 0), { fixed: true, name: "Plate <1>" }), inst("right", "p", at(15, 0, 0), { fixed: true, name: "Plate <2>", suppressed: true })] };
+    const A: Assembly = { id: "A", name: "A", instances: [inst("s1", "", at(0, 0, 0), { subAssembly: "S", fixed: true, name: "Slot <1>" }), inst("k", "key", at(0, 0, 0))] };
+    const m = { id: "w", name: "Width 1", type: "width" as const, a: { instanceId: "s1", path: ["left"], pick: face, pick2: face, path2: ["right"] }, b: { instanceId: "k", pick: face, pick2: face }, flip: false, values: {} };
+    expect(mateInactive(A, m, [A, S])).toBe("Not used while Plate <2> inside Slot <1> is suppressed");
   });
 });
 

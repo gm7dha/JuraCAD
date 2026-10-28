@@ -15,7 +15,7 @@ import { activeAssembly, partsInStudio, useLengthUnit, useStore } from "../model
 import { fromUnit, lengthNumber, showLength, storeLength } from "../model/units";
 import { studiosOf } from "../model/studios";
 import type { Assembly, ConnectorSpot, ExplodeStep, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
-import { stepDistance, stepPartKey } from "../assembly/explode";
+import { stepDistance, explodePartKey } from "../assembly/explode";
 import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
 import { bomInfo, partBox, useSolvedAssembly } from "./assemblySolve";
@@ -1431,7 +1431,7 @@ export function ExplodePanel() {
   const allAsm = st.history.present.assemblies ?? [];
   for (const step of steps)
     for (const p of step.parts ?? []) {
-      const key = stepPartKey(p);
+      const key = explodePartKey(p);
       const found = instanceAt(asm, allAsm, key);
       names[key] = found ? `${found.top.name} / ${found.part.name}` : "a part that's gone";
     }
@@ -1515,7 +1515,7 @@ function ExplodeStepRow({ step, number, names }: { step: ExplodeStep; number: nu
     const stored = storeLength(text.trim() || "0", unitNow);
     if (stored !== step.distance && !("error" in bad)) st.updateExplodeStep(step.id, { distance: stored });
   };
-  const who = [...step.instances.map((id) => names[id] ?? "?"), ...(step.parts ?? []).map((p) => names[stepPartKey(p)] ?? "?")];
+  const who = [...step.instances.map((id) => names[id] ?? "?"), ...(step.parts ?? []).map((p) => names[explodePartKey(p)] ?? "?")];
   return (
     <li className="explode-step">
       <div className="relation-head">
@@ -1709,8 +1709,9 @@ export function MateDialog() {
     if (isOrigin(c)) return "Origin";
     const top = asm.instances.find((i) => i.id === c.instanceId);
     if (!top || !c.path?.length) return top?.name ?? "?";
-    // A part inside a sub-assembly: "Hinge <1> / Pin <2>".
-    return `${top.name} / ${instanceAt(asm, st.history.present.assemblies ?? [], leafKey(c.instanceId, c.path))?.part.name ?? "?"}`;
+    // A part inside a sub-assembly: "Hinge <1> / Pin <2>" (a Width mate's slot may be two parts of it: "Slot <1> / Plate <1> and Plate <2>").
+    const inner = (path: string[]) => instanceAt(asm, st.history.present.assemblies ?? [], leafKey(c.instanceId, path))?.part.name ?? "?";
+    return `${top.name} / ${inner(c.path)}${c.path2 ? ` and ${inner(c.path2)}` : ""}`;
   };
   const slot = (c: MateConnector | undefined, n: 1 | 2) => (
     <div

@@ -100,6 +100,19 @@ describe("more assembly tools on real parts", () => {
     const more = e2.rebuild([rod, holed, hole]).parts;
     expect(ownSymmetry(more.find((p) => p.featureIds.includes(rod.id))!)?.axis).toBe("x");
     expect(ownSymmetry(more.find((p) => p.featureIds.includes(holed.id))!)).toEqual({ axis: "z", at: 2.5 });
+    // Two holes in a plate: symmetric left to right only when they match — not with one 0.5 mm off, nor Ø6 against Ø6.05.
+    const plateWith = (x2: number, d2: number) => {
+      const e = new GeometryEngine();
+      const base = feature("box", { width: 40, depth: 20, height: 5 });
+      const h1 = feature("cylinder", { diameter: 6, height: 5, x: 10, y: 8 }, "remove");
+      const h2 = feature("cylinder", { diameter: d2, height: 5, x: x2, y: 8 }, "remove");
+      const sym = ownSymmetry(e.rebuild([base, h1, h2]).parts[0]);
+      e.dispose();
+      return sym;
+    };
+    expect(plateWith(30, 6)?.axis).toBe("x");
+    expect(plateWith(30.5, 6)?.axis).toBe("z");
+    expect(plateWith(30, 6.05)?.axis).toBe("z");
     e2.dispose();
     const a: Assembly = { id: "M", name: "M", instances: [inst("plate", P.id, at(0, 0, 0), true), inst("arm", L.id, at(-200, 30, 0), true)] };
     const symmetric = (i: Instance) => !!ownSymmetry(parts.find((p) => p.id === i.partId)!);
