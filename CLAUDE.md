@@ -89,7 +89,26 @@
   sketch outside updateSketch (followLinks, deleteItems…) must spread `...s`.
   Intersect: a link with `cut` ({} = whole part, `face` = one face) is re-found among where the sketch plane cuts the part
   (`GeometryEngine.intersect`/`cutRefs`, BRepAlgoAPI_Section with a big square on the plane); `pruneReferences` keeps them.
-  Insert DXF: `src/sketch/dxf.ts` (parse ENTITIES + $INSUNITS; lines, arcs, circles, (LW)polylines with bulges, splines, ellipses, points;
+  Use on curved edges: splines and ellipses may carry `link` too. The 3D click asks the worker (`useEdge` request →
+  `GeometryEngine.useEdge`, app side `src/app/sketchUseCurve.ts`) for the edge with `RefEdge.shape` (`CurveShape`: an ellipse
+  when it is one lying flat to the sketch, else a Hermite spline — points + per-piece tangents from `edgeShape` in engine.ts,
+  as few pieces as keep within 0.5 µm, ≤128; `seeShape` in projected.ts; side-on = refused). `linkEdge` makes a spline
+  (`splineThrough`) or ellipse with every point fixed; `followSketch` re-samples a linked spline with exactly as many pieces as
+  it has, so `followLinks` moves its points and resets its handles (a count mismatch is ignored). Face edges that are curves
+  carry `shape` (Use all edges; `joinTouchingEnds` joins spline/ellipse-arc ends too).
+  Pierce: `PointLink.end === "pierce"` (part edge or another sketch's curve) = where it passes through the plane, re-found
+  each rebuild as the place nearest the point's current position (`edgePierces` by sampling + halving on the real edge,
+  `sketchCurvePierces` exactly via `crossings` with the line where the planes meet; `nearestPlace`). The candidates list
+  includes those places as `RefEdge.pierce` points (`edgePierceRefs`, `sketchPierceRefs`), so snapping onto one brings in a
+  Pierce point; the Pierce relation (`piercePoint` in links.ts, called from `applySketchRelation` with the refs) takes a
+  point + a brought-in curve (or a point brought in from an edge seen end-on). Lost ones get their own message (`pierceNote`).
+  Extend (`extendAt`) also does splines/conics (the end piece carried on as its own polynomial — `cubicOn` blossoming /
+  `conicBetween` past 0…1 — while it turns < 90° and within 10× the sketch's size; `extendWavy`) and parts of ellipses
+  (round the ellipse); refused when the solve would pull the end back. Offsets: `src/sketch/offsetCheck.ts`
+  (`offsetNotes`, shown in the sketch panel) warns when a copy crosses itself or a line/arc copy turns over; offsets past a
+  spline's/ellipse's tightest bend are made (no longer refused) and warned about.
+  Insert DXF: `src/sketch/dxf.ts` (parse ENTITIES + $INSUNITS; lines, arcs, circles, (LW)polylines with bulges, splines, ellipses
+  (partial ones as ellipses with `start`/`end`, ends joined), points;
   angles wrapped into one turn, non-finite shapes dropped, ≤20 MB / 20,000 shapes / 50,000 points, `DxfError` = plain message).
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
@@ -208,7 +227,7 @@
   (`gh api repos/gm7dha/JuraCAD/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, double-click opens it → add a second Part Studio with a box → Help: download the Claude extension → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle), undo → add a section view, a detail view and an auxiliary view → draw the assembly exploded (parts list); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, double-click opens it → add a second Part Studio with a box → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle), undo → add a section view, a detail view and an auxiliary view → draw the assembly exploded (parts list); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.

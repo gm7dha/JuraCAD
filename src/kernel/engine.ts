@@ -4984,7 +4984,7 @@ export class GeometryEngine {
       if (seen.kind !== "curve") return { edge: seen };
       const sh = edgeShape(all[m]);
       const shape = sh ? seeShape(frame, sh) : null;
-      if (!shape) return { error: "That edge is seen end-on from this sketch, so there's no curve to copy in. Pick an edge that runs across the sketch." };
+      if (!shape) return { error: "That edge is seen side-on from this sketch (it looks like a straight line or a dot), so there's no curve to copy in. Pick an edge that runs across the sketch." };
       return { edge: { ...seen, shape } };
     } finally {
       all.forEach((e) => e.delete());

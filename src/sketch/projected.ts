@@ -228,8 +228,12 @@ export function seeShape(frame: PlaneFrame, shape: CurveShape3): CurveShape | nu
   if (shape.points.length < 2 || shape.points.length !== shape.tangents.length) return null;
   const points = shape.points.map((p) => toSketch(frame, p));
   const tangents = shape.tangents.map((t) => vecIn(frame, t));
-  // Seen end-on somewhere (no length on paper): can't be a spline.
-  if (points.every((p) => dist2(p, points[0]) < 1e-6)) return null;
+  // Seen end-on or edge-on (all of it on one straight line, or a single point, on paper): no curve to copy.
+  const far = points.reduce((best, p) => (dist2(p, points[0]) > dist2(best, points[0]) ? p : best), points[0]);
+  const span = dist2(far, points[0]);
+  if (span < 1e-6) return null;
+  const side = (p: P2) => Math.abs((far[0] - points[0][0]) * (p[1] - points[0][1]) - (far[1] - points[0][1]) * (p[0] - points[0][0])) / span;
+  if (points.every((p) => side(p) < 1e-6)) return null;
   return { kind: "spline", points, tangents };
 }
 
