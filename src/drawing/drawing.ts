@@ -389,6 +389,12 @@ function angleParts(r: Record<string, unknown>): Pick<Dimension, "c" | "d" | "ra
   return { ...(c ? { c } : {}), ...(d ? { d } : {}), ...(rays ? { rays } : {}) };
 }
 
+/** An angle in degrees brought into (−180, 180]. */
+function wrapDegrees(v: number): number {
+  const w = ((((v + 180) % 360) + 360) % 360) - 180;
+  return w === -180 ? 180 : w;
+}
+
 function parseDimension(raw: unknown): Dimension | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
@@ -414,7 +420,9 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(num(r.angle) ? { angle: r.angle as number } : {}),
     ...(num(r.textAlong) && r.textAlong !== 0 ? { textAlong: r.textAlong as number } : {}),
     ...(num(r.textAcross) && r.textAcross !== 0 ? { textAcross: r.textAcross as number } : {}),
-    ...((type === "diameter" || type === "radius") && Array.isArray(r.textAt) && r.textAt.length === 2 && num(r.textAt[0]) && num(r.textAt[1])
+    ...(r.fitText === true && (type === "horizontal" || type === "vertical" || type === "aligned") ? { fitText: true as const } : {}),
+    ...((type === "angle" || type === "arcLength") && num(r.textAngle) && wrapDegrees(r.textAngle as number) !== 0 ? { textAngle: wrapDegrees(r.textAngle as number) } : {}),
+    ...((type === "diameter" || type === "radius" || type === "chamfer") && Array.isArray(r.textAt) && r.textAt.length === 2 && num(r.textAt[0]) && num(r.textAt[1])
       ? { textAt: [clampAt(r.textAt[0] as number), clampAt(r.textAt[1] as number)] as [number, number] }
       : {}),
     ...(type === "ordinate" ? { axis: r.axis === "v" ? ("v" as const) : ("h" as const) } : {}),

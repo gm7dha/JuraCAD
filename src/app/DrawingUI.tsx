@@ -19,7 +19,7 @@ import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } fro
 import { applyPlacement } from "../assembly/math";
 import { findMesh } from "../assembly/configured";
 import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, resizedScale, scaleView, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type PlacedDim, type Prim, type SheetLayout } from "../drawing/sheet";
-import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dimensionScale, dragDimension, dragDimensionLabel, FITTABLE, fitOf, placeAngle, drawDimension, withDimPatch, type DimPatch, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
+import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dimensionPaperScale, dragDimension, dragDimensionLabel, FITTABLE, fitOf, placeAngle, drawDimension, withDimPatch, type DimPatch, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { getKernel } from "../kernel/connect";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
@@ -564,7 +564,7 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
       dimensions: d.dimensions?.map((x) => {
         if (x.id !== dim.id) return x;
         const next: Dimension = { ...x, ...patch };
-        for (const k of ["prefix", "suffix", "tolerance", "places", "frame", "limitsFit", "along", "arrows", "textAlong", "textAcross", "textAt"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
+        for (const k of ["prefix", "suffix", "tolerance", "places", "frame", "limitsFit", "along", "arrows", "textAlong", "textAcross", "textAt", "textAngle", "fitText"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
         return next;
       }),
     }));
@@ -706,9 +706,9 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
             </button>
           </div>
         )}
-        {(dim.textAlong || dim.textAcross || dim.textAt) && (
+        {(dim.textAlong || dim.textAcross || dim.textAt || dim.textAngle) && (
           <div className="drawing-field">
-            <button type="button" className="text-button" title="Put the number back where it goes by itself (the dimension line stays where it is)" onClick={() => edit({ textAlong: undefined, textAcross: undefined, textAt: undefined })}>
+            <button type="button" className="text-button" title="Put the number back where it goes by itself (the dimension line stays where it is)" onClick={() => edit({ textAlong: undefined, textAcross: undefined, textAt: undefined, textAngle: undefined, fitText: undefined })}>
               Put the number back
             </button>
           </div>
@@ -1992,9 +1992,9 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       const dim = drawing.dimensions?.find((x) => x.id === dimDrag.id);
       const placed = layout?.dims.find((x) => x.id === dimDrag.id);
       if (dim && placed) {
-        // Lengths, diameters and radii: the number stays under the pointer (Shift lifts a length's number off its line).
+        // The number stays under the pointer (Shift lifts a length's number off its line, or keeps an angle's angle).
         const to: P2 = [here[0] + dimDrag.grab[0], here[1] + dimDrag.grab[1]];
-        const free = dragDimensionLabel(dim, placed, to, e.shiftKey, dimensionScale(dim, placed.rad, projections?.[dim.view]));
+        const free = dragDimensionLabel(dim, placed, to, e.shiftKey, dimensionPaperScale(dim, placed, projections?.[dim.view]));
         setDimDrag({ ...dimDrag, patch: free ?? { ...dragDimension(dim, placed.a, placed.b, placed.rad, here, placed.cd), textAcross: 0 } });
       }
     }
@@ -2328,9 +2328,15 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
             const how =
               kind === "horizontal" || kind === "vertical" || kind === "aligned"
                 ? "Drag the number along the line, or out to move the line (Shift-drag lifts it off the line)"
-                : kind === "diameter" || kind === "radius"
+                : kind === "diameter" || kind === "radius" || kind === "chamfer"
                   ? "Drag the number anywhere (the leader follows)"
-                  : "Drag to move this dimension";
+                  : kind === "angle"
+                    ? "Drag the number round the arc, or in and out to move the arc; into another corner to measure that angle (Shift-drag keeps this angle and lets the number go past its lines)"
+                    : kind === "arcLength"
+                      ? "Drag the number round the arc, or in and out to move the arc"
+                      : kind === "ordinate"
+                        ? "Drag the number out along its leader, or sideways (the leader jogs across to it)"
+                        : "Drag to move this dimension";
             const tip = d.found
               ? `${how}; Delete removes it${d.arrows ? "; right-click to flip its arrows" : ""}`
               : "What this dimension measured has changed too much — delete it and add it again";
