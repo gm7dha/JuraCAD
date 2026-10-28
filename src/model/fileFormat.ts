@@ -48,7 +48,7 @@ export function serializeDocument(doc: JuraCADDocument, savedAt = new Date()): s
     ...(doc.configurations?.length ? { configurations: doc.configurations } : {}),
     ...(doc.configurations?.length && doc.activeConfiguration ? { activeConfiguration: doc.activeConfiguration } : {}),
   };
-  // Every part of the design goes in the file (tests/fileFormat.test.ts checks no field of JuraCADDocument is left out).
+  // Every part of the design goes in the file (tests/fileFields.test.ts checks no field of JuraCADDocument is left out).
   return JSON.stringify(file, null, 1) + "\n";
 }
 
