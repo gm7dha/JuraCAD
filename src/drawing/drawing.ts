@@ -191,9 +191,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
     if (!item || typeof item !== "object") continue;
     const r = item as Record<string, unknown>;
     if (typeof r.id !== "string" || out.some((d) => d.id === r.id)) continue;
-    const src = r.source as Record<string, unknown> | null | undefined;
-    const source: Drawing["source"] =
-      src && (src.kind === "part" || src.kind === "assembly") && typeof src.id === "string" ? { kind: src.kind as "part" | "assembly", id: src.id } : null;
+    const source: Drawing["source"] = parseSource(r.source) ?? null;
     const sections: SectionCut[] = [];
     for (const s of Array.isArray(r.sections) ? r.sections : []) {
       const rs = (s ?? {}) as Record<string, unknown>;
@@ -353,9 +351,25 @@ function parsePages(r: Record<string, unknown>): Pick<Drawing, "pages"> {
     if (!read) continue;
     const page: Record<string, unknown> = { id: p.id };
     for (const k of PAGE_FIELDS) if (read[k] !== undefined) page[k] = read[k];
+    // Its own part or assembly (null: none chosen yet), and its own title and part number.
+    const source = parseSource(p.source);
+    if (source !== undefined) page.source = source;
+    if (p.partTitle && typeof p.partTitle === "object") {
+      const t = p.partTitle as Record<string, unknown>;
+      const title = text(t.title);
+      const partNumber = text(t.partNumber);
+      page.partTitle = { ...(title ? { title } : {}), ...(partNumber ? { partNumber } : {}) };
+    }
     pages.push(page as DrawingPage);
   }
   return pages.length ? { pages } : {};
+}
+
+/** A saved part or assembly to draw: undefined when there's none saved (or it's not one), null when saved as none. */
+function parseSource(raw: unknown): Drawing["source"] | undefined {
+  if (raw === null) return null;
+  const src = raw as Record<string, unknown> | undefined;
+  return src && typeof src === "object" && (src.kind === "part" || src.kind === "assembly") && typeof src.id === "string" ? { kind: src.kind as "part" | "assembly", id: src.id } : undefined;
 }
 
 /** A saved Fit to sheet plan (see Drawing.fit). */
@@ -420,7 +434,9 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(num(r.angle) ? { angle: r.angle as number } : {}),
     ...(num(r.textAlong) && r.textAlong !== 0 ? { textAlong: r.textAlong as number } : {}),
     ...(num(r.textAcross) && r.textAcross !== 0 ? { textAcross: r.textAcross as number } : {}),
-    ...(r.fitText === true && (type === "horizontal" || type === "vertical" || type === "aligned") ? { fitText: true as const } : {}),
+    ...(r.fitText === true && (type === "horizontal" || type === "vertical" || type === "aligned" || type === "diameter" || type === "radius") ? { fitText: true as const } : {}),
+    ...(r.reflex === true && type === "angle" ? { reflex: true as const } : {}),
+    ...((type === "angle" || type === "arcLength") && num(r.textR) && (r.textR as number) >= 0 ? { textR: Math.min(1000, r.textR as number) } : {}),
     ...((type === "angle" || type === "arcLength") && num(r.textAngle) && wrapDegrees(r.textAngle as number) !== 0 ? { textAngle: wrapDegrees(r.textAngle as number) } : {}),
     ...((type === "diameter" || type === "radius" || type === "chamfer") && Array.isArray(r.textAt) && r.textAt.length === 2 && num(r.textAt[0]) && num(r.textAt[1])
       ? { textAt: [clampAt(r.textAt[0] as number), clampAt(r.textAt[1] as number)] as [number, number] }
