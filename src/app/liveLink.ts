@@ -7,7 +7,8 @@ import { useSyncExternalStore } from "react";
 import { activeStudioId, useStore } from "../model/store";
 import { readDocumentFile, serializeDocument } from "../model/fileFormat";
 import { MAIN_STUDIO } from "../model/studios";
-import { LiveClient, type LiveHost, type LiveState, type PermissionState, type SocketLike } from "../live/client";
+import { LiveClient, type LiveHost, type LiveState, type PermissionState, type SocketFactory, type SocketLike } from "../live/client";
+import { RelayTransport, type RelayEnv, type RelayWindow } from "../live/relayTransport";
 import { APP_VERSION } from "../version";
 import { browserKind } from "./install";
 
@@ -72,7 +73,46 @@ const host: LiveHost = {
   },
 };
 
-export const liveClient = new LiveClient(host, (url, protocol) => new WebSocket(url, protocol) as unknown as SocketLike);
+/**
+ * Safari won't let this https page open ws://127.0.0.1 (WebKit bug 171934),
+ * so there the link goes through the extension's small link window
+ * (src/live/relayTransport.ts). `?liveRelay` uses that way in any browser
+ * (for the smoke test, and to try it out in Chrome).
+ */
+export const liveRelayMode = host.browser === "safari" || (typeof location !== "undefined" && new URLSearchParams(location.search).has("liveRelay"));
+
+const relayEnv: RelayEnv = {
+  open: (url, name, features) => window.open(url, name, features) as unknown as RelayWindow | null,
+  navigate(win, url) {
+    (win as unknown as Window).location.href = url;
+  },
+  listen(fn) {
+    const handler = (ev: MessageEvent) => fn({ source: ev.source, origin: ev.origin, data: ev.data });
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  },
+  newSession() {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  },
+};
+
+export const liveRelay: RelayTransport | null = liveRelayMode && typeof window !== "undefined" ? new RelayTransport(relayEnv) : null;
+
+const directSocket: SocketFactory = (url, protocol) => new WebSocket(url, protocol) as unknown as SocketLike;
+
+if (liveRelay) {
+  host.prepare = () => liveRelay.start();
+  host.release = () => liveRelay.stop();
+}
+
+export const liveClient = new LiveClient(host, liveRelay ? liveRelay.makeSocket : directSocket);
+
+if (liveRelay) {
+  liveRelay.onLost = () =>
+    liveClient.disconnect("The small JuraCAD ↔ Claude window was closed, so JuraCAD disconnected from Claude. Click Connect to Claude to open it again (and keep it open while you work).");
+}
 
 /** The live link's state, for React. */
 export function useLiveState(): LiveState {
@@ -83,4 +123,9 @@ export function useLiveState(): LiveState {
 }
 
 // Close the link cleanly when the page goes away.
-if (typeof window !== "undefined") window.addEventListener("pagehide", () => liveClient.connected && liveClient.disconnect());
+if (typeof window !== "undefined")
+  window.addEventListener("pagehide", () => {
+    if (liveClient.connected) liveClient.disconnect();
+    // (Safari: the link window goes too, even if it was still looking for Claude.)
+    liveRelay?.stop();
+  });

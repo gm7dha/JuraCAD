@@ -32,6 +32,15 @@ export interface LiveHost {
    * `onChange(false)` when it's hidden. Returns how to stop. Optional (tests).
    */
   watchVisibility?: (onChange: (visible: boolean) => void) => () => void;
+  /**
+   * Get the way to the extensions ready before the ports are tried (Safari:
+   * open the link window). Called straight from the user's click, before
+   * anything is awaited, so a window may be opened. Resolves null when ready,
+   * or what to tell the user. Optional (Chrome, Firefox: nothing to prepare).
+   */
+  prepare?: () => Promise<{ title: string; help: string[] } | null>;
+  /** Undo `prepare` (close the link window) when the link stops or connecting fails. */
+  release?: () => void;
 }
 
 /** How often to look for Claude chats started since connecting. */
@@ -76,8 +85,8 @@ export function notFoundHelp(browser: BrowserKind): { title: string; help: strin
     return {
       title: "Safari can't connect to Claude",
       help: [
-        "Safari doesn't let websites talk to apps on your computer, so the live link only works in Chrome or Edge.",
-        "Open JuraCAD in Chrome or Edge and click Connect to Claude there — or, in Safari, ask Claude to save the design and open the .juracad file here with Open.",
+        "Safari doesn't let websites talk to apps on your computer directly, and the small link window JuraCAD uses instead couldn't be opened.",
+        "Click Connect to Claude again (allow the pop-up window if Safari asks), or open JuraCAD in Chrome or Edge — or ask Claude to save the design and open the .juracad file here with Open.",
       ],
     };
   }
@@ -189,6 +198,13 @@ export class LiveClient {
     if (this.state.kind === "connected" || this.state.kind === "connecting") return this.state;
     const attempt = ++this.attempt;
     this.setState({ kind: "connecting", message: "Looking for Claude on this computer…" });
+    // (Before any await: a window may only be opened straight from the click.)
+    const prepared = this.host.prepare?.();
+    if (prepared) {
+      const problem = await prepared.catch((e: unknown) => ({ title: "Claude isn't connected", help: [`JuraCAD couldn't get ready to connect (${e instanceof Error ? e.message : String(e)}). Click Connect to Claude again.`] }));
+      if (attempt !== this.attempt) return this.state;
+      if (problem) return this.fail(problem);
+    }
     const permission = (await this.host.permission?.().catch(() => "unknown" as const)) ?? "unknown";
     if (attempt !== this.attempt) return this.state;
     if (permission === "denied") return this.fail(blockedHelp(this.host.browser));
@@ -218,6 +234,7 @@ export class LiveClient {
   }
 
   private fail(f: { title: string; help: string[] }): LiveState {
+    this.host.release?.();
     this.setState({ kind: "failed", ...f });
     return this.state;
   }
@@ -427,6 +444,7 @@ export class LiveClient {
     for (const link of this.links.values()) this.closeSocket(link.socket);
     this.links.clear();
     this.skipUntil.clear();
+    this.host.release?.();
     this.last = null;
     this.setState(notice ? { kind: "off", notice } : { kind: "off" });
   }

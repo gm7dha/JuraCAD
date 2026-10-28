@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { liveClient, useLiveState } from "./liveLink";
+import { liveClient, liveRelayMode, useLiveState } from "./liveLink";
 import { Modal } from "./Modal";
 
 /**
@@ -76,6 +76,12 @@ export function LiveButton() {
                 is one step you can undo. You can keep working too; if you both change something at the same moment,
                 Claude's change is turned back and it tries again — nothing is lost.
               </p>
+              {liveRelayMode && (
+                <p className="small">
+                  In Safari the link goes through the small <b>JuraCAD ↔ Claude</b> window: keep it open (you can move it out
+                  of the way). Closing it disconnects.
+                </p>
+              )}
               {state.last && <p className="small muted">Last change from Claude: {state.last.replace(/^Claude: /, "")}</p>}
             </>
           )}

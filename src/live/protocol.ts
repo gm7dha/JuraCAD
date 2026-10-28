@@ -50,6 +50,87 @@ export function originAllowed(origin: string | undefined | null, allowLocal = fa
   return allowLocal && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/.test(origin);
 }
 
+// ---------------------------------------------------------------------------
+// Safari: the link window ("relay")
+//
+// Safari treats ws://127.0.0.1 from an https page as mixed content and blocks
+// it (WebKit bug 171934, still open). A page that is itself http://127.0.0.1
+// may open it, though. So in Safari, Connect to Claude opens a small window
+// served by the extension (RELAY_PATH on one of LIVE_PORTS) and the JuraCAD
+// tab talks to it with postMessage; the window opens the real WebSockets to
+// every port and passes messages both ways, unchanged. The window only obeys
+// the window that opened it, and only if that is the JuraCAD site.
+
+/** The link window's page and its script, served by the extension on 127.0.0.1. */
+export const RELAY_PATH = "/juracad-relay";
+export const RELAY_SCRIPT_PATH = "/juracad-relay.js";
+/** Tag on every message between the JuraCAD tab and the link window. */
+export const RELAY_TAG = "juracad-relay.1";
+/** The link window's name (one per tab: opening it again reuses and reloads it). */
+export const RELAY_WINDOW = "juracad-claude-link";
+/** The most WebSockets the link window keeps open at once. */
+export const RELAY_MAX_SOCKETS = 40;
+
+/** The address of the link window served on `port`. */
+export function relayUrl(port: number): string {
+  return `http://127.0.0.1:${port}${RELAY_PATH}`;
+}
+
+/** The origin of the link window served on `port`. */
+export function relayOrigin(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+/**
+ * Is this the origin of the extension's own link window (http://127.0.0.1 on
+ * one of LIVE_PORTS, exactly)? Only a page served on that address and port
+ * has it — on those ports, that's JuraCAD's link window. Websites can't take
+ * it on (DNS tricks give their own name as the origin, and the Host check
+ * turns those away).
+ */
+export function relayOriginAllowed(origin: string | undefined | null, ports: readonly number[] = LIVE_PORTS): boolean {
+  if (!origin) return false;
+  const m = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/.exec(origin);
+  return !!m && ports.includes(Number(m[1]));
+}
+
+/** Messages from the JuraCAD tab to the link window. */
+export type RelayRequest =
+  | { juracad: typeof RELAY_TAG; kind: "ping"; session: string }
+  | { juracad: typeof RELAY_TAG; kind: "open"; session: string; id: number; port: number }
+  | { juracad: typeof RELAY_TAG; kind: "send"; session: string; id: number; data: string }
+  | { juracad: typeof RELAY_TAG; kind: "close"; session: string; id: number }
+  | { juracad: typeof RELAY_TAG; kind: "bye"; session: string };
+
+/** Messages from the link window to the JuraCAD tab. */
+export type RelayEvent =
+  | { juracad: typeof RELAY_TAG; kind: "pong"; session: string }
+  | { juracad: typeof RELAY_TAG; kind: "opened"; session: string; id: number }
+  | { juracad: typeof RELAY_TAG; kind: "message"; session: string; id: number; data: string }
+  | { juracad: typeof RELAY_TAG; kind: "error"; session: string; id: number }
+  | { juracad: typeof RELAY_TAG; kind: "closed"; session: string; id: number; code: number; reason: string };
+
+/** Check a message from the link window (the tab's side). Null = not one of ours, or damaged. */
+export function parseRelayEvent(data: unknown, session: string): RelayEvent | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (d.juracad !== RELAY_TAG || d.session !== session) return null;
+  const base = { juracad: RELAY_TAG, session } as const;
+  switch (d.kind) {
+    case "pong":
+      return { ...base, kind: "pong" };
+    case "opened":
+    case "error":
+      return isInt(d.id) ? { ...base, kind: d.kind, id: d.id } : null;
+    case "message":
+      return isInt(d.id) && isText(d.data) ? { ...base, kind: "message", id: d.id, data: d.data } : null;
+    case "closed":
+      return isInt(d.id) && isInt(d.code) && isText(d.reason, 200) ? { ...base, kind: "closed", id: d.id, code: d.code, reason: d.reason } : null;
+    default:
+      return null;
+  }
+}
+
 /**
  * Is the Host header one this server answers to? Only its own loopback
  * address and port: a page on another site can't get here through a DNS name

@@ -9,7 +9,8 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { Duplex } from "node:stream";
-import { hostAllowed, LIVE_PATH, LIVE_SUBPROTOCOL, MAX_MESSAGE_BYTES, originAllowed } from "../live/protocol";
+import { hostAllowed, LIVE_PATH, LIVE_PORTS, LIVE_SUBPROTOCOL, MAX_MESSAGE_BYTES, originAllowed, RELAY_PATH, RELAY_SCRIPT_PATH, relayOriginAllowed } from "../live/protocol";
+import { relayHeaders, relayPageHtml, relayScript } from "../live/relayPage";
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -18,13 +19,23 @@ export function acceptKey(key: string): string {
   return createHash("sha1").update(key + GUID).digest("base64");
 }
 
-/** Why this upgrade request may not connect (null = it may), with the HTTP status to answer. */
-export function upgradeProblem(req: Pick<IncomingMessage, "method" | "url" | "headers">, port: number, allowLocalOrigins = false): { status: number; why: string } | null {
+/**
+ * Why this upgrade request may not connect (null = it may), with the HTTP
+ * status to answer. Origins let in: the JuraCAD site, Safari's link window
+ * (http://127.0.0.1 on one of `relayPorts`, served by an extension: see
+ * src/live/relayPage.ts), and pages on this computer in development mode.
+ */
+export function upgradeProblem(
+  req: Pick<IncomingMessage, "method" | "url" | "headers">,
+  port: number,
+  allowLocalOrigins = false,
+  relayPorts: readonly number[] = LIVE_PORTS,
+): { status: number; why: string } | null {
   const h = req.headers;
   if (req.method !== "GET") return { status: 405, why: "only GET can open the link" };
   if ((req.url ?? "").split("?")[0] !== LIVE_PATH) return { status: 404, why: `wrong path ${req.url}` };
   if (!hostAllowed(h.host, port)) return { status: 403, why: `wrong host ${h.host}` };
-  if (!originAllowed(h.origin, allowLocalOrigins)) return { status: 403, why: `a page from ${h.origin ?? "an unknown place"} isn't JuraCAD` };
+  if (!originAllowed(h.origin, allowLocalOrigins) && !relayOriginAllowed(h.origin, relayPorts)) return { status: 403, why: `a page from ${h.origin ?? "an unknown place"} isn't JuraCAD` };
   if (String(h.upgrade ?? "").toLowerCase() !== "websocket") return { status: 426, why: "not a WebSocket request" };
   if (h["sec-websocket-version"] !== "13") return { status: 426, why: "an unsupported WebSocket version" };
   const key = h["sec-websocket-key"];
@@ -235,12 +246,32 @@ export class WebSocketConnection {
   }
 }
 
+/**
+ * Safari's link window (page or script) for a plain GET, or null for anything
+ * else. Only at http://127.0.0.1:<this port> exactly (the origin the live
+ * link then accepts), and only on one of the relay ports.
+ */
+export function relayPageFor(
+  req: Pick<IncomingMessage, "method" | "url" | "headers">,
+  port: number,
+  relayPorts: readonly number[] = LIVE_PORTS,
+  allowLocal = false,
+): { headers: Record<string, string>; body: string } | null {
+  if (req.method !== "GET" || req.headers.host !== `127.0.0.1:${port}` || !relayPorts.includes(port)) return null;
+  const path = (req.url ?? "").split("?")[0];
+  if (path === RELAY_PATH) return { headers: relayHeaders("page", relayPorts), body: relayPageHtml() };
+  if (path === RELAY_SCRIPT_PATH) return { headers: relayHeaders("script", relayPorts), body: relayScript({ ports: relayPorts, allowLocal }) };
+  return null;
+}
+
 export interface LiveServerOptions {
   ports: readonly number[];
   /** Called for each accepted connection. Return a reason to turn it away (e.g. another tab is connected). */
   accept: (conn: WebSocketConnection, origin: string) => void;
   /** Also let in pages served on this computer (http(s)://localhost…): only for JuraCAD's own tests and development. */
   allowLocalOrigins?: boolean;
+  /** The ports Safari's link window may be served on and link to (default LIVE_PORTS; tests pass their own). */
+  relayPorts?: readonly number[];
   log?: (msg: string) => void;
 }
 
@@ -253,14 +284,21 @@ export async function startLiveServer(opts: LiveServerOptions): Promise<{ server
   for (const wanted of opts.ports) {
     // (0 = any free port, for tests; the real port is known once listening.)
     let port = wanted;
+    const relayPorts = opts.relayPorts ?? LIVE_PORTS;
     const server = createServer((req, res) => {
-      // Plain web requests (someone opening the address in a browser): say what this is, nothing more.
+      const page = relayPageFor(req, port, relayPorts, opts.allowLocalOrigins ?? false);
+      if (page) {
+        res.writeHead(200, page.headers);
+        res.end(page.body);
+        return;
+      }
+      // Other plain web requests (someone opening the address in a browser): say what this is, nothing more.
       res.writeHead(hostAllowed(req.headers.host, port) ? 426 : 403, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
       res.end("This is the JuraCAD extension's link for Claude. Open JuraCAD (https://gm7dha.github.io/JuraCAD/) and click Connect to Claude.\n");
     });
     server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
       socket.on("error", () => socket.destroy());
-      const problem = upgradeProblem(req, port, opts.allowLocalOrigins ?? false);
+      const problem = upgradeProblem(req, port, opts.allowLocalOrigins ?? false, relayPorts);
       if (problem) {
         log(`Live link: turned away a connection (${problem.why}).`);
         socket.end(`HTTP/1.1 ${problem.status} ${problem.status === 403 ? "Forbidden" : "Bad Request"}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);

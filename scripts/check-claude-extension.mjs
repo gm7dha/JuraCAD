@@ -170,7 +170,11 @@ for (const origin of ["http://localhost:5173", "http://127.0.0.1:1234", "https:/
   check(!(await openSocket(LIVE_PORTS[0], origin)), `A page from ${origin} could open the live link.`);
 }
 let ws = null;
-for (const port of LIVE_PORTS) if ((ws = await openSocket(port, "https://gm7dha.github.io"))) break;
+let livePort = 0;
+for (const port of LIVE_PORTS) if ((ws = await openSocket(port, "https://gm7dha.github.io"))) {
+  livePort = port;
+  break;
+}
 check(ws, `The live link isn't listening on 127.0.0.1 (ports ${LIVE_PORTS.join(", ")}).\n${stderr.slice(-2000)}`);
 const fromExtension = [];
 let answer = null;
@@ -200,6 +204,25 @@ const second = JSON.parse(changes[1]?.file ?? "{}");
 check(changes.length === 2 && changes[1].base === 3 && second.name === "Renamed in the app" && second.features?.length === 2, "Claude's second live change wasn't made on the user's latest design.");
 ws.close();
 
+// Safari's link window: served over plain http on 127.0.0.1 (only under that name), and its origin may open the live link.
+const relayPage = await fetch(`http://127.0.0.1:${livePort}/juracad-relay`);
+const relayHtml = await relayPage.text();
+check(relayPage.status === 200 && relayHtml.includes('<script src="/juracad-relay.js"></script>'), `The link window page isn't served: ${relayPage.status} ${relayHtml.slice(0, 200)}`);
+check(/frame-ancestors 'none'/.test(relayPage.headers.get("content-security-policy") ?? "") && relayPage.headers.get("x-frame-options") === "DENY", "The link window page may be framed.");
+const relayJs = await fetch(`http://127.0.0.1:${livePort}/juracad-relay.js`);
+const relaySource = await relayJs.text();
+check(relayJs.status === 200 && /javascript/.test(relayJs.headers.get("content-type") ?? ""), `The link window script isn't served: ${relayJs.status}`);
+try {
+  new Function(relaySource);
+} catch (e) {
+  check(false, `The link window script doesn't parse: ${e}`);
+}
+check(relaySource.includes('"site":"https://gm7dha.github.io"') && relaySource.includes('"allowLocal":false'), "The shipped link window script must obey only the JuraCAD site.");
+const relaySocket = await openSocket(livePort, `http://127.0.0.1:${livePort}`);
+check(relaySocket, "The link window's origin couldn't open the live link.");
+relaySocket?.close();
+check(!(await openSocket(livePort, `http://localhost:${livePort}`)), "A page on http://localhost could open the live link.");
+
 clearTimeout(timer);
 // When Claude closes the extension (its input), it must stop, freeing the live link's port.
 const stopped = new Promise((resolve) => child.once("exit", () => resolve(true)));
@@ -208,4 +231,4 @@ const exited = await Promise.race([stopped, new Promise((resolve) => setTimeout(
 if (!exited) child.kill();
 check(exited, "The extension kept running after Claude closed it (it would keep the live link's port busy).");
 rmSync(work, { recursive: true, force: true });
-console.log(`The Claude extension works: ${tools.length} tools; built the bracket (${volume} mm³), drew it and saved ${file.features.length} features; built live over the local link (${changes.length} changes, each applied once).`);
+console.log(`The Claude extension works: ${tools.length} tools; built the bracket (${volume} mm³), drew it and saved ${file.features.length} features; built live over the local link (${changes.length} changes, each applied once); served Safari's link window.`);
