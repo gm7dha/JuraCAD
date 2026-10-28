@@ -47,7 +47,8 @@
   `SketchLinkInfo.pointLinks`; `followLinks(s, links, pointLinks)`. Sketches later in the list are offered with
   `source.later` and refused with `laterMessage`. Faint dots near the pointer: `SketchTransient.nearby`.
   Tangent lines (`src/sketch/tangents.ts`): the line tool offers lines touching two circles/arcs (outer + crossing) or
-  from a point to one (`tangentLineAt`), made by `addTangentLine` (ends `pointOnCircle`, plus `tangent` to each). Circular sketch patterns round a point add `patternCopy` constraints (+ `equal` with extra [1] for
+  from a point to one (`tangentLineAt`), made by `addTangentLine` (ends `pointOnCircle`, plus `tangent` to each).
+  Circular sketch patterns round a point add `patternCopy` constraints (+ `equal` with extra [1] for
   sizes); copies nothing else holds are left out of the solve and placed afterwards (`splitDerived` in solver.ts).
   Text and pictures: `src/sketch/sketchText.ts` — `SketchData.texts` (hangs from an `anchor` point, so it's dimensioned and
   constrained as a point; letter outlines from `geometry/fonts.ts` are loops in regions.ts and line pieces with ids
