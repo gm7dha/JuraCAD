@@ -38,13 +38,17 @@ export function serializeDocument(doc: JuraCADDocument, savedAt = new Date()): s
     ...(doc.materials && Object.keys(doc.materials).length ? { materials: doc.materials } : {}),
     ...(doc.units === "in" ? { units: "in" } : {}),
     ...(doc.partNames && Object.keys(doc.partNames).length ? { partNames: doc.partNames } : {}),
+    ...(doc.partProperties && Object.keys(doc.partProperties).length ? { partProperties: doc.partProperties } : {}),
     ...(doc.studioName ? { studioName: doc.studioName } : {}),
     ...(doc.hiddenDatums?.length ? { hiddenDatums: doc.hiddenDatums } : {}),
     features: doc.features,
     ...(doc.partStudios?.length ? { partStudios: doc.partStudios } : {}),
     ...(doc.assemblies?.length ? { assemblies: doc.assemblies } : {}),
     ...(doc.drawings?.length ? { drawings: doc.drawings } : {}),
+    ...(doc.configurations?.length ? { configurations: doc.configurations } : {}),
+    ...(doc.configurations?.length && doc.activeConfiguration ? { activeConfiguration: doc.activeConfiguration } : {}),
   };
+  // Every part of the design goes in the file (tests/fileFormat.test.ts checks no field of JuraCADDocument is left out).
   return JSON.stringify(file, null, 1) + "\n";
 }
 

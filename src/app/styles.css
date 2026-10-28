@@ -1563,6 +1563,16 @@ kbd {
   fill: rgba(31, 111, 209, 0.12);
 }
 
+/* The whole of a dimension's number can be grabbed and dragged. */
+.drawing-dim-text {
+  fill: transparent;
+  cursor: move;
+}
+
+.drawing-dim-text:hover {
+  fill: rgba(31, 111, 209, 0.08);
+}
+
 .drawing-select-box {
   fill: rgba(31, 111, 209, 0.08);
   stroke: #1f6fd1;
