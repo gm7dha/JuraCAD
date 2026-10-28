@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { curveParam, nearestParam } from "../src/sketch/curves";
+import { curveParam } from "../src/sketch/curves";
 import { followLinks, linkAllEdges, linkEdge, linkedPoints, lostLinksMessage, linkProblem, piercePoint, pruneReferences, type RefEdge } from "../src/sketch/links";
 import { addCircle, addLine, curveById, pointPos, type Placed } from "../src/sketch/ops";
 import { planeFrame, type PlaneFrame } from "../src/sketch/planes";
@@ -13,7 +13,7 @@ import { edgePierces, nearestPlace, seeShape, sketchCurvePierces, sketchPierceRe
 import { findRegions } from "../src/sketch/regions";
 import { solveSketch } from "../src/sketch/solver";
 import { addEllipse, addSpline } from "../src/sketch/tools";
-import { emptySketch, type SketchData, type SketchEllipse, type SketchSpline } from "../src/sketch/types";
+import { emptySketch, type SketchEllipse, type SketchSpline } from "../src/sketch/types";
 import { parseSketchData } from "../src/sketch/validate";
 
 type P2 = [number, number];
