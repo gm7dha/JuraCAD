@@ -2152,7 +2152,9 @@ try {
           return { name: p.name, height: Math.round((hi - lo) * 1000) / 1000 };
         });
     });
-    const heights = sizes.map((p) => p.height).sort((a, b) => a - b);
+    // An earlier step switched the design to inches: the depths typed (60 and 10) are then inches.
+    const unit = await page.evaluate(() => (window.juracadStore.getState().history.present.units === "in" ? 25.4 : 1));
+    const heights = sizes.map((p) => Math.round((p.height / unit) * 1000) / 1000).sort((a, b) => a - b);
     if (sizes.length !== 2 || heights[0] !== 10 || heights[1] !== 60) throw new Error(`expected two parts 60 and 10 tall, got ${JSON.stringify(sizes)}`);
     if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed in the two-circle Part Studio");
     await shot("two-circles");
