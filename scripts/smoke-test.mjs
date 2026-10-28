@@ -1540,7 +1540,14 @@ try {
     await page.mouse.click(mx - 150, my - 80);
     await page.mouse.click(mx - 100, my - 50);
     let now = await curves();
-    if (now.filter((c) => c === "line").length !== 4 || !now.includes("line*")) throw new Error(`centre rectangle made ${now.join(",")}`);
+    if (now.filter((c) => c === "line").length !== 4 || !now.includes("line*")) {
+      const why = await page.evaluate(() => {
+        const st = window.juracadStore.getState();
+        const id = st.editing?.draft.id;
+        return JSON.stringify({ message: st.sketch?.message, tool: st.sketch?.tool, points: st.editing?.draft.sketch?.data.points, candidates: st.sketchLinks?.[id]?.candidates?.length });
+      });
+      throw new Error(`centre rectangle made ${now.join(",")} — ${why}`);
+    }
     // Type its width as soon as it's drawn (Enter), then skip the height (Esc).
     const sizeBox = page.locator(".dimension-editor input");
     await sizeBox.waitFor({ timeout: 5_000 });
