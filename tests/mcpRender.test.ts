@@ -2,6 +2,8 @@ import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { crc32, encodePng } from "../src/mcp/png";
 import { renderViews } from "../src/mcp/render";
+import { sheetPicture } from "../src/mcp/sheetPicture";
+import { glyph, UNKNOWN_GLYPH } from "../src/mcp/font5x7";
 
 /** A cube from (0,0,0) to (10,10,h) as triangles, and its 12 edges as line pairs. */
 function block(h: number) {
@@ -58,5 +60,46 @@ describe("pictures of parts", () => {
     expect(isWhite(p.at(300 + 17, 100 + 17))).toBe(false);
     expect(isWhite(p.at(300 + 25, 100))).toBe(true);
     expect(isWhite(p.at(300, 100 - 25))).toBe(true);
+  });
+});
+
+describe("pictures of drawing sheets", () => {
+  it("draws lines where they are on the paper (y up), dashed hidden lines, filled arrowheads and text", () => {
+    // A 100 × 50 mm sheet at 4 pixels per mm.
+    const img = sheetPicture(
+      [
+        { kind: "path", points: [10, 10, 90, 10], style: "visible" },
+        { kind: "path", points: [10, 40, 90, 40], style: "hidden" },
+        { kind: "path", points: [50, 20, 54, 22, 50, 24], closed: true, fill: true, style: "thin" },
+        { kind: "text", x: 20, y: 25, text: "40", size: 5, anchor: "start" },
+      ],
+      [100, 50],
+      400,
+    );
+    expect([img.width, img.height, img.pxPerMm]).toEqual([400, 200, 4]);
+    const p = pixels(img.png);
+    const dark = (x: number, y: number) => p.at(x, y).every((v) => v < 200);
+    // The visible line 10 mm up the sheet is 40 px from the bottom of the picture.
+    expect(dark(200, 160)).toBe(true);
+    expect(dark(200, 150)).toBe(false);
+    // The hidden line is dashed: some of it drawn, some gaps.
+    const along = Array.from({ length: 200 }, (_, i) => !p.at(100 + i, 40).every((v) => v === 255));
+    expect(along.some((x) => x)).toBe(true);
+    expect(along.some((x) => !x)).toBe(true);
+    // The arrowhead is filled.
+    expect(dark(201, 112)).toBe(true);
+    // The text sits on its baseline (25 mm up = 100 px down), starting at x = 20 mm.
+    let inked = 0;
+    for (let y = 85; y < 100; y++) for (let x = 80; x < 110; x++) if (dark(x, y)) inked++;
+    expect(inked).toBeGreaterThan(20);
+    expect(dark(75, 92)).toBe(false);
+  });
+
+  it("has every letter, digit and drawing sign a sheet uses", () => {
+    for (const ch of "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-+/()°Ø⌀×±") expect(glyph(ch).join("")).not.toBe(UNKNOWN_GLYPH.join(""));
+    for (const g of "AZ09".split("").map(glyph)) {
+      expect(g).toHaveLength(7);
+      for (const row of g) expect(row).toHaveLength(5);
+    }
   });
 });
