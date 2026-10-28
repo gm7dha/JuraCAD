@@ -37,7 +37,13 @@
   piece is its own part (ids `<feature>`, `<feature>~2`…); Add: each piece joins every part it touches, merged into the oldest (others
   removed, their tools re-pointed), else a new part (`addApart` → `joinApart` plan → `commitPlan`, all or nothing); Remove/Hole: cuts
   every solid part it reaches (`partsReached`, `cutParts`; the threaded-hole cache is skipped then); pattern/mirror copies of apart
-  features follow the same rules (`applyPattern`). Without the flag (older files) the old rules hold exactly (one part; the latest part); the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
+  features follow the same rules (`applyPattern`). Without the flag (older files) the old rules hold exactly (one part; the latest part).
+  Newer still: `intersectAll` (Extrude/Revolve/Sweep) makes Intersect keep the overlap in every part it reaches (`cutParts`, which also
+  checks a modelled thread part by part, falling back to the plain hole per part; the threaded-hole cache holds every part's result).
+  An apart hole measures material in the first part the drill meets (`materialAlong`). An Extrude may take areas of other sketches too
+  (`Feature.moreAreas`: each extruded from its own sketch with the same settings, fused; `areaClickChange` adds them when the feature's own
+  areas are picked). Dialogs list only sketches above the feature / rollback bar (`sketchesOffered`); `draftEffect` (partLinks.ts) names
+  and lights up the parts an open feature changes; the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
   Snapping (points, line middles → Midpoint, circle centres, part edges, lining up, onto curves) is the pure `snapAt` in
   `src/sketch/snaps.ts`. Part edges: `src/sketch/links.ts` — a sketch on a part face keeps the face (`SketchPlane.face`,
   a TopoPick); lines/circles/arcs may carry `link` (the part edge they follow: "Use", or a face edge brought in as a

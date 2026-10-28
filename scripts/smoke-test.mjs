@@ -2398,6 +2398,42 @@ try {
     if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed in the two-circle Part Studio");
     await shot("two-circles");
     regionsReport = `one sketch with two circles extruded separately into ${sizes.map((p) => `${p.name} (${p.height} mm)`).join(" and ")}`;
+
+    step = "one extrude using areas of two sketches (Sketch 2's circle and Sketch 1's big circle)";
+    await page.getByRole("button", { name: "Sketch", exact: true }).click();
+    await page.waitForSelector(".sketch-panel");
+    await page.locator(".feature-row.datum", { hasText: "Top" }).click();
+    await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane"));
+    await settled();
+    // A small circle well away from the first two (right of the view, below the view cube).
+    await page.keyboard.press("c");
+    await page.mouse.click(box.x + box.width * 0.85, box.y + box.height * 0.35);
+    await page.mouse.click(box.x + box.width * 0.85 + 12, box.y + box.height * 0.35);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector(".sketch-status")?.textContent?.includes("1 closed shape"), null, { timeout: 10_000 });
+    await page.keyboard.press("Escape");
+    await page.locator('[aria-label="Sketch"] [aria-label="Accept"]').click();
+    await page.waitForSelector(".sketch-panel", { state: "detached" });
+    await page.getByRole("button", { name: "Extrude", exact: true }).click();
+    const sketch2 = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketchRef);
+    const all3 = await spots();
+    if (all3.length !== 3) throw new Error(`expected 3 clickable areas (2 in Sketch 1, 1 in Sketch 2), got ${all3.length}`);
+    // Sketch 2's circle first (the extrude's own sketch), then Sketch 1's big circle: one extrude, two sketches.
+    await clickSpot(all3.find((p) => p.sketch === sketch2));
+    await page.waitForFunction(() => window.juracadStore.getState().editing.draft.areas?.length === 1).catch(() => why("picking Sketch 2's circle"));
+    await clickSpot(biggest((await spots()).filter((p) => p.sketch !== sketch2)));
+    await page.waitForFunction(() => window.juracadStore.getState().editing.draft.moreAreas?.length === 1).catch(() => why("adding Sketch 1's big circle"));
+    await page.locator("#param-depth").fill("5");
+    // The preview says what it does: the big circle joins Part 2, the new circle is a new part.
+    await page.waitForFunction(() => /Adds to Part 2.*new part/.test(document.querySelector(".part-effect")?.textContent ?? ""), null, { timeout: 30_000 }).catch(async () => {
+      throw new Error(`the dialog didn't say what the extrude does to the parts: "${await page.locator(".part-effect").textContent().catch(() => "(none)")}"`);
+    });
+    await shot("two-sketches");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 3, null, { timeout: 30_000 }).catch(() => why("extruding areas of two sketches"));
+    await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after extruding areas of two sketches");
+    regionsReport += "; one extrude used areas of two sketches (Part 2 grew under it, the new circle became Part 3)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
