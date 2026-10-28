@@ -16,7 +16,9 @@
  *   (the tab was reloaded) closes everything from the old one;
  * - it only opens ws://127.0.0.1:<one of the live ports>/juracad-live with the
  *   live sub-protocol, at most RELAY_MAX_SOCKETS at once, text messages only,
- *   none bigger than MAX_MESSAGE_BYTES;
+ *   none bigger than MAX_MESSAGE_BYTES (in UTF-8 bytes);
+ * - every reply carries an id for this page load, so the tab notices when the
+ *   window was reloaded (its links are then gone);
  * - it never puts anything it's sent into the page (status text is fixed);
  * - when the JuraCAD tab closes (or says "bye") it closes every link and itself.
  */
@@ -49,6 +51,8 @@ export function relayScript(config: RelayConfig = {}): string {
   var sockets = {};
   var count = 0;
   var watch = null;
+  // A fresh id for this page load, in every reply: the tab can tell when the window was reloaded.
+  var load = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
   function allowed(origin) {
     return origin === S.site || (S.allowLocal && LOCAL.test(origin));
   }
@@ -62,6 +66,21 @@ export function relayScript(config: RelayConfig = {}): string {
     msg.juracad = S.tag;
     msg.session = partner.session;
     try { to.postMessage(msg, partner.origin); } catch (e) { /* the tab has gone */ }
+  }
+  // Size in UTF-8 bytes (what the live link counts), worked out only when it could matter.
+  function fits(text) {
+    if (typeof text !== "string" || text.length > S.max) return false;
+    if (text.length * 3 <= S.max) return true;
+    var bytes = 0;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charCodeAt(i);
+      if (c < 0x80) bytes += 1;
+      else if (c < 0x800) bytes += 2;
+      else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) { bytes += 4; i++; }
+      else bytes += 3;
+      if (bytes > S.max) return false;
+    }
+    return true;
   }
   function isId(v) {
     return typeof v === "number" && v >= 0 && v === Math.floor(v) && v < 9007199254740992;
@@ -96,7 +115,7 @@ export function relayScript(config: RelayConfig = {}): string {
     count++;
     ws.onopen = function () { post({ kind: "opened", id: id }); };
     ws.onmessage = function (ev) {
-      if (typeof ev.data !== "string" || ev.data.length > S.max) return;
+      if (!fits(ev.data)) return;
       post({ kind: "message", id: id, data: ev.data });
     };
     ws.onerror = function () { post({ kind: "error", id: id }); };
@@ -123,7 +142,7 @@ export function relayScript(config: RelayConfig = {}): string {
     }
     switch (m.kind) {
       case "ping":
-        post({ kind: "pong" });
+        post({ kind: "pong", load: load });
         say("Linked to JuraCAD. Keep this window open while you work with Claude (you can move it out of the way). Closing it disconnects.");
         return;
       case "open":
@@ -131,7 +150,7 @@ export function relayScript(config: RelayConfig = {}): string {
         return;
       case "send": {
         var ws = sockets[m.id];
-        if (ws && ws.readyState === 1 && typeof m.data === "string" && m.data.length <= S.max) ws.send(m.data);
+        if (ws && ws.readyState === 1 && fits(m.data)) ws.send(m.data);
         return;
       }
       case "close": {
@@ -189,6 +208,8 @@ p { margin: 0 0 8px; }
  * script and WebSockets to the live ports on 127.0.0.1. No
  * `upgrade-insecure-requests` (Safari would then try https on 127.0.0.1) and
  * no Cross-Origin-Opener-Policy (the window must keep its opener).
+ * Cross-Origin-Resource-Policy: other sites can't load the page or script
+ * (say, as a <script>) to find out whether the extension is running.
  */
 export function relayHeaders(kind: "page" | "script", ports: readonly number[] = LIVE_PORTS): Record<string, string> {
   const connect = ports.map((p) => `ws://127.0.0.1:${p}`).join(" ");
@@ -198,6 +219,7 @@ export function relayHeaders(kind: "page" | "script", ports: readonly number[] =
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
+    "Cross-Origin-Resource-Policy": "same-origin",
     "Content-Security-Policy": `default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src ${connect}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
   };
 }

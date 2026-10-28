@@ -9,6 +9,7 @@ import { readDocumentFile, serializeDocument } from "../model/fileFormat";
 import { MAIN_STUDIO } from "../model/studios";
 import { LiveClient, type LiveHost, type LiveState, type PermissionState, type SocketFactory, type SocketLike } from "../live/client";
 import { RelayTransport, type RelayEnv, type RelayWindow } from "../live/relayTransport";
+import { RELAY_WINDOW } from "../live/protocol";
 import { APP_VERSION } from "../version";
 import { browserKind } from "./install";
 
@@ -81,6 +82,12 @@ const host: LiveHost = {
  */
 export const liveRelayMode = host.browser === "safari" || (typeof location !== "undefined" && new URLSearchParams(location.search).has("liveRelay"));
 
+function randomId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 const relayEnv: RelayEnv = {
   open: (url, name, features) => window.open(url, name, features) as unknown as RelayWindow | null,
   navigate(win, url) {
@@ -91,10 +98,19 @@ const relayEnv: RelayEnv = {
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   },
-  newSession() {
-    const bytes = new Uint8Array(16);
-    crypto.getRandomValues(bytes);
-    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  newSession: randomId,
+  // Per tab, kept across reloads of it (sessionStorage is per tab), so a reloaded tab takes over its own old window.
+  windowName() {
+    const key = "juracad.liveWindow";
+    try {
+      const had = sessionStorage.getItem(key);
+      if (had && /^juracad-claude-link-[0-9a-f]{32}$/.test(had)) return had;
+      const name = `${RELAY_WINDOW}-${randomId()}`;
+      sessionStorage.setItem(key, name);
+      return name;
+    } catch {
+      return "";
+    }
   },
 };
 
@@ -110,8 +126,12 @@ if (liveRelay) {
 export const liveClient = new LiveClient(host, liveRelay ? liveRelay.makeSocket : directSocket);
 
 if (liveRelay) {
-  liveRelay.onLost = () =>
-    liveClient.disconnect("The small JuraCAD ↔ Claude window was closed, so JuraCAD disconnected from Claude. Click Connect to Claude to open it again (and keep it open while you work).");
+  liveRelay.onLost = (why) =>
+    liveClient.disconnect(
+      why === "closed"
+        ? "The small JuraCAD ↔ Claude window was closed, so JuraCAD disconnected from Claude. Click Connect to Claude to open it again (and keep it open while you work)."
+        : "The small JuraCAD ↔ Claude window was reloaded or left its page, so the link to Claude stopped. Click Connect to Claude to link again (and leave that window as it is while you work).",
+    );
 }
 
 /** The live link's state, for React. */

@@ -556,11 +556,11 @@ describe("Safari: through the link window", () => {
   /** A Safari tab: JuraCAD on `tabOrigin`, linked like liveLink.ts does it (prepare/release/onLost). */
   const safariTab = (ports: number[], served: () => readonly number[], tabOrigin = "https://gm7dha.github.io") => {
     const sim = new RelaySim({ tabOrigin, served, relayPorts, makeSocket: pageSockets });
-    const relay = new RelayTransport(sim.env, ports, { portWait: 1_500, tick: 20 });
+    const relay = new RelayTransport(sim.env, ports, { portWait: 1_500, tick: 20, heartbeat: 100 });
     const app = new FakeApp(emptyDocument("Safari design"));
     Object.assign(app, { browser: "safari", prepare: () => relay.start(), release: () => relay.stop() });
     const client = new LiveClient(app, relay.makeSocket, ports, { open: 3_000, welcome: 10_000, recheck: { fast: 200 } });
-    relay.onLost = () => client.disconnect("The link window was closed.");
+    relay.onLost = (why) => client.disconnect(why === "closed" ? "The link window was closed." : "The link window was reloaded.");
     cleanups.push(() => {
       client.disconnect();
       relay.stop();
@@ -649,7 +649,7 @@ describe("Safari: through the link window", () => {
     await until(() => !b.bridge.connected && !c.bridge.connected, "everyone to be let go");
   });
 
-  it("closing the window disconnects, with a reason; Connect opens it again", async () => {
+  it("closing or reloading the window disconnects, with a reason; Connect opens it again", async () => {
     const a = await instance();
     const first = safariTab([a.port], () => [a.port]);
     expect((await first.client.connect()).kind).toBe("connected");
@@ -662,6 +662,14 @@ describe("Safari: through the link window", () => {
     expect((await first.client.connect()).kind).toBe("connected");
     await until(() => a.bridge.connected, "linked again");
     expect(first.sim.opened).toBe(2);
+    // The user reloads the window: its links are gone, so the tab stops showing a link that's dead.
+    first.sim.popup!.reload();
+    await until(() => first.client.state.kind === "off", "the reload to be noticed");
+    expect(first.client.state.kind === "off" && first.client.state.notice).toBe("The link window was reloaded.");
+    await until(() => !a.bridge.connected, "the extension to be let go after the reload");
+    // And Connect links again.
+    expect((await first.client.connect()).kind).toBe("connected");
+    await until(() => a.bridge.connected, "linked after the reload");
   });
 
   it("a page from another website can't use the window, even with Claude running", async () => {

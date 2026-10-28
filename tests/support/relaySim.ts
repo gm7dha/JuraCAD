@@ -54,8 +54,9 @@ class LoadedRelay {
     const self = this;
     const win = {
       location: { origin },
+      // (A page that has gone away runs nothing more: its late socket events can't reach the tab.)
       get opener() {
-        return opener;
+        return self.unloaded ? null : opener;
       },
       addEventListener(type: string, fn: Listener) {
         if (type === "message") self.listeners.push(fn);
@@ -113,12 +114,35 @@ export class SimPopup implements RelayWindow {
   relay: LoadedRelay | null = null;
   /** Every address it was sent to, in order. */
   visited: string[] = [];
-  constructor(private readonly sim: RelaySim) {}
+  /** The tab as this popup sees it (window.opener). */
+  readonly opener: { readonly closed: boolean; postMessage(m: unknown, target: string): void };
+  constructor(
+    private readonly sim: RelaySim,
+    readonly name: string,
+  ) {
+    const popup = this;
+    this.opener = {
+      get closed() {
+        return sim.tabClosed;
+      },
+      postMessage(m: unknown, target: string) {
+        if (sim.tabClosed || target !== sim.opts.tabOrigin || !popup.relay) return;
+        const data = copy(m);
+        const origin = popup.relay.origin;
+        later(() => sim.deliverToTab({ source: popup, origin, data }));
+      },
+    };
+  }
   postMessage(message: unknown, targetOrigin: string): void {
     const relay = this.relay;
     if (this.closed || !relay || targetOrigin !== relay.origin) return;
     const data = copy(message);
-    later(() => relay.deliver({ source: this.sim.tabProxy, origin: this.sim.opts.tabOrigin, data }));
+    later(() => relay.deliver({ source: this.opener, origin: this.sim.opts.tabOrigin, data }));
+  }
+  /** The user reloads the window (a new page load: its links are dropped). */
+  reload(): void {
+    const at = this.visited[this.visited.length - 1];
+    if (at) this.go(at);
   }
   close(): void {
     if (this.closed) return;
@@ -135,7 +159,7 @@ export class SimPopup implements RelayWindow {
     if (!this.sim.opts.served().includes(port)) return; // an error page
     later(() => {
       if (this.closed || this.visited[this.visited.length - 1] !== url) return;
-      this.relay = new LoadedRelay(`http://127.0.0.1:${port}`, this.sim.tabProxy, this, this.sim.opts, this.sim.script);
+      this.relay = new LoadedRelay(`http://127.0.0.1:${port}`, this.opener, this, this.sim.opts, this.sim.script);
     });
   }
 }
@@ -143,37 +167,46 @@ export class SimPopup implements RelayWindow {
 export class RelaySim {
   readonly script: string;
   private listeners = new Set<Listener>();
+  /** Windows by name (shared by every tab of the browser: pass the same `windows` to sims for two tabs). */
+  readonly windows: Map<string, SimPopup>;
+  /** The window this tab opened last. */
   popup: SimPopup | null = null;
   tabClosed = false;
   opened = 0;
-  /** The tab as the popup sees it (window.opener). */
-  readonly tabProxy: { readonly closed: boolean; postMessage(m: unknown, target: string): void };
+  /** The names this tab opened windows with. */
+  names: string[] = [];
 
-  constructor(readonly opts: SimOptions) {
+  constructor(
+    readonly opts: SimOptions,
+    windows?: Map<string, SimPopup>,
+  ) {
     this.script = relayScript({ ports: opts.relayPorts, allowLocal: opts.allowLocal });
-    const sim = this;
-    this.tabProxy = {
-      get closed() {
-        return sim.tabClosed;
-      },
-      postMessage(m: unknown, target: string) {
-        const popup = sim.popup;
-        if (sim.tabClosed || target !== sim.opts.tabOrigin || !popup?.relay) return;
-        const data = copy(m);
-        const origin = popup.relay.origin;
-        later(() => sim.listeners.forEach((f) => f({ source: popup, origin, data })));
-      },
-    };
+    this.windows = windows ?? new Map();
+  }
+
+  /** The tab as its (last) popup sees it. */
+  get tabProxy() {
+    return this.popup!.opener;
+  }
+
+  deliverToTab(ev: { source: unknown; origin: string; data: unknown }): void {
+    this.listeners.forEach((f) => f(ev));
   }
 
   readonly env: RelayEnv = {
-    open: (url) => {
+    open: (url, name) => {
       if (this.opts.blockPopups) return null;
       this.opened++;
-      // Like a named window: opening it again reuses (and reloads) it.
-      if (!this.popup || this.popup.closed) this.popup = new SimPopup(this);
-      this.popup.go(url);
-      return this.popup;
+      this.names.push(name);
+      // Like a named window: opening it again reuses (and reloads) it — whichever tab opened it.
+      let win = this.windows.get(name);
+      if (!win || win.closed) {
+        win = new SimPopup(this, name);
+        this.windows.set(name, win);
+      }
+      this.popup = win;
+      win.go(url);
+      return win;
     },
     navigate: (win, url) => (win as SimPopup).go(url),
     listen: (fn) => {

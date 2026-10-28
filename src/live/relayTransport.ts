@@ -34,7 +34,17 @@ export interface RelayEnv {
   listen(fn: (ev: { source: unknown; origin: string; data: unknown }) => void): () => void;
   /** A fresh, unguessable id for this page's link. */
   newSession(): string;
+  /**
+   * The link window's name for this tab: the same across reloads of this tab
+   * (so a reload takes over its old window), different in every other tab (so
+   * one tab's Connect never reloads another's window). Optional: without it,
+   * a fresh name is made once per page.
+   */
+  windowName?(): string;
 }
+
+/** Why the link stopped while linked: the window was closed, or it reloaded / left its page (or stopped answering). */
+export type RelayLoss = "closed" | "broken";
 
 export type RelayProblem = { title: string; help: string[] };
 
@@ -121,8 +131,18 @@ export interface RelayTiming {
   portWait: number;
   /** How often to ask the window whether it's there, while waiting, and to check it hasn't been closed. */
   tick: number;
+  /** While linked: how often to check the window is still the same page and answering. */
+  heartbeat: number;
+  /** While linked: the window counts as gone after this long without an answer (and `MISSED_PINGS` unanswered checks). */
+  deadAfter: number;
 }
-export const RELAY_TIMING: RelayTiming = { portWait: 3_000, tick: 250 };
+export const RELAY_TIMING: RelayTiming = { portWait: 3_000, tick: 250, heartbeat: 1_000, deadAfter: 8_000 };
+/**
+ * Unanswered checks needed (as well as `deadAfter`) before the window counts
+ * as gone — so a tab whose timers the browser slows right down while it's in
+ * the background (one check a minute, say) isn't mistaken for a dead link.
+ */
+export const MISSED_PINGS = 4;
 
 export const RELAY_FEATURES = "popup,width=440,height=280";
 
@@ -139,16 +159,39 @@ export class RelayTransport {
   private lastPort: number | null = null;
   /** Ends a start() still waiting (stopped before any window answered). */
   private cancel: (() => void) | null = null;
-  /** Called when the link window is closed (by the user) while linked. */
-  onLost: () => void = () => {};
+  /** The page load of the link window that answered (it puts a fresh id in every reply). */
+  private load = "";
+  /** When the window last answered, and how many checks have gone unanswered since. */
+  private lastPong = 0;
+  private missed = 0;
+  private sinceBeat = 0;
+  /** This tab's window name (see RelayEnv.windowName). */
+  private name: string | null = null;
+  /** Called when the link stops while linked: the window was closed, or it reloaded or left its page. */
+  onLost: (why: RelayLoss) => void = () => {};
   private readonly timing: RelayTiming;
 
   constructor(
     private readonly env: RelayEnv,
     private readonly ports: readonly number[] = LIVE_PORTS,
     timing: Partial<RelayTiming> = {},
+    private readonly now: () => number = () => Date.now(),
   ) {
     this.timing = { ...RELAY_TIMING, ...timing };
+  }
+
+  /** The name the link window is opened with (one per tab). */
+  get windowName(): string {
+    if (this.name === null) {
+      let given = "";
+      try {
+        given = this.env.windowName?.() ?? "";
+      } catch {
+        given = "";
+      }
+      this.name = given || `${RELAY_WINDOW}-${this.env.newSession()}`;
+    }
+    return this.name;
   }
 
   get linked(): boolean {
@@ -171,7 +214,7 @@ export class RelayTransport {
     this.port = order[0];
     let win: RelayWindow | null = null;
     try {
-      win = this.env.open(relayUrl(this.port), RELAY_WINDOW, RELAY_FEATURES);
+      win = this.env.open(relayUrl(this.port), this.windowName, RELAY_FEATURES);
     } catch {
       win = null;
     }
@@ -196,10 +239,13 @@ export class RelayTransport {
           const wasReady = this.ready;
           settle({ title: "The link window was closed", help: ["In Safari, JuraCAD connects to Claude through a small window that has to stay open. Click Connect to Claude to open it again."] });
           this.stop();
-          if (wasReady) this.onLost();
+          if (wasReady) this.onLost("closed");
           return;
         }
-        if (this.ready) return;
+        if (this.ready) {
+          this.heartbeat();
+          return;
+        }
         since += this.timing.tick;
         if (since >= this.timing.portWait) {
           since = 0;
@@ -222,6 +268,26 @@ export class RelayTransport {
       }, this.timing.tick);
       this.post({ kind: "ping" });
     });
+  }
+
+  /**
+   * While linked: ask the window now and then. If it stops answering (it was
+   * sent Back, or to another address), the link is gone — it can't tell us.
+   */
+  private heartbeat(): void {
+    this.sinceBeat += this.timing.tick;
+    if (this.sinceBeat < this.timing.heartbeat) return;
+    this.sinceBeat = 0;
+    if (this.missed >= MISSED_PINGS && this.now() - this.lastPong >= this.timing.deadAfter) return this.broken();
+    this.missed++;
+    this.post({ kind: "ping" });
+  }
+
+  /** The window reloaded or left its page: its links went with it. Tell LiveClient (every socket closes). */
+  private broken(): void {
+    if (!this.ready) return;
+    this.stop();
+    this.onLost("broken");
   }
 
   private post(msg: { kind: RelayRequest["kind"] } & Record<string, unknown>): void {
@@ -250,9 +316,18 @@ export class RelayTransport {
     if (msg.kind === "pong") {
       if (!this.ready) {
         this.ready = true;
+        this.load = msg.load;
+        this.lastPong = this.now();
+        this.missed = 0;
+        this.sinceBeat = 0;
         this.lastPort = this.port;
         linked();
+        return;
       }
+      // Another page load answering: the window was reloaded (or went Back and Forward), and its links are gone.
+      if (msg.load !== this.load) return this.broken();
+      this.lastPong = this.now();
+      this.missed = 0;
       return;
     }
     if (!this.ready) return;
@@ -283,6 +358,9 @@ export class RelayTransport {
     this.win = null;
     this.ready = false;
     this.session = "";
+    this.load = "";
+    this.missed = 0;
+    this.sinceBeat = 0;
     for (const s of [...this.sockets.values()]) s.lost();
     this.sockets.clear();
     if (win && !win.closed) {

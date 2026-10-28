@@ -153,6 +153,9 @@ describe("Safari's link window: who it's served to and who may use it", () => {
   it("is never framed, cached or upgraded, and may only reach the live ports", () => {
     const h = relayHeaders("page");
     expect(h["X-Frame-Options"]).toBe("DENY");
+    // Other sites can't load it (as a <script>, say) to find out whether the extension is running.
+    expect(h["Cross-Origin-Resource-Policy"]).toBe("same-origin");
+    expect(relayHeaders("script")["Cross-Origin-Resource-Policy"]).toBe("same-origin");
     expect(h["Cache-Control"]).toBe("no-store");
     const csp = h["Content-Security-Policy"];
     expect(csp).toMatch(/frame-ancestors 'none'/);
@@ -196,7 +199,12 @@ describe("Safari's link window: the script", () => {
     // The JuraCAD tab that opened it: answered.
     say({ kind: "ping" });
     await until(() => got.length === 1, "the pong");
-    expect(got[0]).toEqual({ juracad: RELAY_TAG, session: "s1", kind: "pong" });
+    expect(got[0]).toMatchObject({ juracad: RELAY_TAG, session: "s1", kind: "pong" });
+    // Every reply names this page load, the same each time.
+    expect(typeof got[0].load).toBe("string");
+    say({ kind: "ping" });
+    await until(() => got.length === 2, "the second pong");
+    expect(got[1].load).toBe(got[0].load);
     expect(r.status).toMatch(/Keep this window open/);
   });
 
@@ -257,9 +265,15 @@ describe("Safari's link window: the script", () => {
     const big = "x".repeat(MAX_MESSAGE_BYTES + 1);
     say({ kind: "send", id: 1, data: big });
     ws.receive(big);
+    // Counted in UTF-8 bytes, as the live link counts them: fewer characters than the limit, but too many bytes.
+    const wide = "é".repeat(MAX_MESSAGE_BYTES / 2 + 1);
+    say({ kind: "send", id: 1, data: wide });
+    ws.receive(wide);
+    const justFits = "é".repeat(MAX_MESSAGE_BYTES / 2 - 1);
+    say({ kind: "send", id: 1, data: justFits });
     say({ kind: "send", id: 1, data: "ok" });
-    await until(() => ws.sent.length === 1, "the small message");
-    expect(ws.sent).toEqual(["ok"]);
+    await until(() => ws.sent.length === 2, "the messages that fit");
+    expect(ws.sent.map((x) => x.length)).toEqual([justFits.length, 2]);
     await wait(20);
     expect(got.filter((m) => m.kind === "message")).toHaveLength(0);
   });
@@ -310,8 +324,9 @@ describe("Safari's link window: the script", () => {
 
 describe("Safari's link window: the tab's side", () => {
   it("parses only well-formed replies for this tab", () => {
-    expect(parseRelayEvent({ juracad: RELAY_TAG, session: "a", kind: "pong" }, "a")).toEqual({ juracad: RELAY_TAG, session: "a", kind: "pong" });
-    expect(parseRelayEvent({ juracad: RELAY_TAG, session: "b", kind: "pong" }, "a")).toBeNull();
+    expect(parseRelayEvent({ juracad: RELAY_TAG, session: "a", kind: "pong", load: "L1" }, "a")).toEqual({ juracad: RELAY_TAG, session: "a", kind: "pong", load: "L1" });
+    expect(parseRelayEvent({ juracad: RELAY_TAG, session: "a", kind: "pong" }, "a")).toBeNull();
+    expect(parseRelayEvent({ juracad: RELAY_TAG, session: "b", kind: "pong", load: "L1" }, "a")).toBeNull();
     expect(parseRelayEvent({ juracad: "x", session: "a", kind: "pong" }, "a")).toBeNull();
     expect(parseRelayEvent({ juracad: RELAY_TAG, session: "a", kind: "message", id: 1, data: 5 }, "a")).toBeNull();
     expect(parseRelayEvent({ juracad: RELAY_TAG, session: "a", kind: "closed", id: -1, code: 1000, reason: "" }, "a")).toBeNull();
@@ -388,5 +403,71 @@ describe("Safari's link window: the tab's side", () => {
     await until(() => lost === 1, "the window being closed to be noticed");
     expect(seen).toEqual(["open", "message welcome", "close 1006"]);
     expect(t.linked).toBe(false);
+  });
+
+  it("notices when the window is reloaded: every link closes and it says why", async () => {
+    FakeWS.all = [];
+    const ports = [LIVE_PORTS[0]];
+    const sim = track(new RelaySim({ tabOrigin: SITE, served: () => ports, relayPorts: ports, makeSocket: fakeSockets }));
+    const t = track(new RelayTransport(sim.env, ports, { portWait: 500, tick: 10, heartbeat: 30, deadAfter: 200 }));
+    expect(await t.start()).toBeNull();
+    const s = t.makeSocket(`ws://127.0.0.1:${ports[0]}${LIVE_PATH}`, LIVE_SUBPROTOCOL);
+    const seen: string[] = [];
+    s.onclose = (ev) => seen.push(`close ${ev.code}`);
+    await until(() => FakeWS.all.length === 1, "the real socket");
+    FakeWS.all[0].open();
+    await until(() => s.readyState === 1, "open");
+    // Several heartbeats go by without trouble.
+    await wait(200);
+    expect(t.linked).toBe(true);
+    const lost: string[] = [];
+    t.onLost = (why) => lost.push(why);
+    sim.popup!.reload();
+    await until(() => lost.length === 1, "the reload to be noticed");
+    expect(lost).toEqual(["broken"]);
+    expect(seen).toEqual(["close 1006"]);
+    expect(FakeWS.all[0].readyState).toBe(3);
+    expect(t.linked).toBe(false);
+  });
+
+  it("notices when the window leaves its page (Back, or another address) and stops answering", async () => {
+    const ports = [LIVE_PORTS[0]];
+    const sim = track(new RelaySim({ tabOrigin: SITE, served: () => ports, relayPorts: ports, makeSocket: fakeSockets }));
+    let clock = 0;
+    const t = track(new RelayTransport(sim.env, ports, { portWait: 500, tick: 10, heartbeat: 20, deadAfter: 1_000 }, () => clock));
+    expect(await t.start()).toBeNull();
+    const lost: string[] = [];
+    t.onLost = (why) => lost.push(why);
+    sim.popup!.go("https://example.com/");
+    // Unanswered checks alone aren't enough (a background tab's timers may be slowed right down)...
+    await wait(300);
+    expect(lost).toEqual([]);
+    // ...nor is time alone; both together are.
+    clock = 5_000;
+    await until(() => lost.length === 1, "the silence to be noticed");
+    expect(lost).toEqual(["broken"]);
+  });
+
+  it("each tab has its own window: a second tab's Connect never touches the first tab's", async () => {
+    const ports = [LIVE_PORTS[0]];
+    const windows = new Map();
+    const tabA = track(new RelaySim({ tabOrigin: SITE, served: () => ports, relayPorts: ports, makeSocket: fakeSockets }, windows));
+    const tabB = track(new RelaySim({ tabOrigin: SITE, served: () => ports, relayPorts: ports, makeSocket: fakeSockets }, windows));
+    const a = track(new RelayTransport(tabA.env, ports, { portWait: 500, tick: 10 }));
+    const b = track(new RelayTransport(tabB.env, ports, { portWait: 500, tick: 10 }));
+    expect(await a.start()).toBeNull();
+    const aWindow = tabA.popup!;
+    expect(await b.start()).toBeNull();
+    expect(tabB.popup).not.toBe(aWindow);
+    expect(tabA.names[0]).not.toBe(tabB.names[0]);
+    expect(aWindow.visited).toHaveLength(1);
+    expect(a.linked).toBe(true);
+    // The same tab connecting again uses its own window again (one per tab).
+    a.stop();
+    expect(await a.start()).toBeNull();
+    expect(tabA.names[1]).toBe(tabA.names[0]);
+    // The name the app gives (kept across reloads of the tab) is used when there is one.
+    const named = new RelayTransport({ ...tabA.env, windowName: () => "juracad-claude-link-abc" }, ports);
+    expect(named.windowName).toBe("juracad-claude-link-abc");
   });
 });

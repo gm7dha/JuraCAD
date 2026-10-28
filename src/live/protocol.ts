@@ -66,7 +66,11 @@ export const RELAY_PATH = "/juracad-relay";
 export const RELAY_SCRIPT_PATH = "/juracad-relay.js";
 /** Tag on every message between the JuraCAD tab and the link window. */
 export const RELAY_TAG = "juracad-relay.1";
-/** The link window's name (one per tab: opening it again reuses and reloads it). */
+/**
+ * The start of the link window's name. Each tab adds its own id (kept across
+ * reloads of that tab), so opening it again from the same tab reuses and
+ * reloads it, but never another tab's window.
+ */
 export const RELAY_WINDOW = "juracad-claude-link";
 /** The most WebSockets the link window keeps open at once. */
 export const RELAY_MAX_SOCKETS = 40;
@@ -104,7 +108,7 @@ export type RelayRequest =
 
 /** Messages from the link window to the JuraCAD tab. */
 export type RelayEvent =
-  | { juracad: typeof RELAY_TAG; kind: "pong"; session: string }
+  | { juracad: typeof RELAY_TAG; kind: "pong"; session: string; load: string }
   | { juracad: typeof RELAY_TAG; kind: "opened"; session: string; id: number }
   | { juracad: typeof RELAY_TAG; kind: "message"; session: string; id: number; data: string }
   | { juracad: typeof RELAY_TAG; kind: "error"; session: string; id: number }
@@ -118,7 +122,7 @@ export function parseRelayEvent(data: unknown, session: string): RelayEvent | nu
   const base = { juracad: RELAY_TAG, session } as const;
   switch (d.kind) {
     case "pong":
-      return { ...base, kind: "pong" };
+      return isText(d.load, 100) && d.load ? { ...base, kind: "pong", load: d.load } : null;
     case "opened":
     case "error":
       return isInt(d.id) ? { ...base, kind: d.kind, id: d.id } : null;

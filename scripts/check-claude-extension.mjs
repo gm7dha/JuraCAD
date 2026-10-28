@@ -212,6 +212,8 @@ check(/frame-ancestors 'none'/.test(relayPage.headers.get("content-security-poli
 const relayJs = await fetch(`http://127.0.0.1:${livePort}/juracad-relay.js`);
 const relaySource = await relayJs.text();
 check(relayJs.status === 200 && /javascript/.test(relayJs.headers.get("content-type") ?? ""), `The link window script isn't served: ${relayJs.status}`);
+// Other sites can't load them to find out whether the extension is running.
+for (const r of [relayPage, relayJs]) check(r.headers.get("cross-origin-resource-policy") === "same-origin", `The link window's ${r.url} may be loaded by other sites.`);
 try {
   new Function(relaySource);
 } catch (e) {
