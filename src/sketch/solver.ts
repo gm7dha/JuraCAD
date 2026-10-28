@@ -1326,6 +1326,11 @@ export interface SolveResult {
   failing: string[];
   skipped: Map<string, string>;
   maxResidual: number;
+  /**
+   * It stopped early because it looked hopeless (a `patient` solve may still get there): "stalled" when it had
+   * stopped improving altogether, "creeping" when it was still improving, too slowly.
+   */
+  gaveUp?: "stalled" | "creeping";
 }
 
 function writeBack(sketch: SketchData, sys: System, x: Float64Array): SketchData {
@@ -1740,9 +1745,16 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
   const history: number[] = [];
   // The step at which a solve that looks hopeless is given up (see below); null while it looks fine.
   let giveUpAt: number | null = null;
+  let gaveUp: SolveResult["gaveUp"];
   for (let iter = 0; iter < maxIterations && maxAbs(r) > SOLVE_TOLERANCE * 0.01; iter++) {
     // Blocks that search afresh once per step (a touching Tangent) may now answer differently here.
     if (iter > 0 && prepareAll(sys, x)) r = evalAll(sys, x);
+    if (sys.searching && options.patient) {
+      // Patient: never judged by its rate, but stopped once it hasn't changed at all for 16 steps.
+      history.push(maxAbs(r));
+      const n = history.length;
+      if (n > 16 && Math.abs(history[n - 1] - history[n - 17]) <= 1e-9 * history[n - 17]) break;
+    }
     if (sys.searching && !options.patient) {
       history.push(maxAbs(r));
       // At the rate it has improved over the last 8 steps, it couldn't be met in the steps left: give up now.
@@ -1755,9 +1767,15 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
         if (needed > 1.5 * (maxIterations - iter)) {
           // Not moving at all: give up now. Still creeping: some solves crawl for a while and then suddenly
           // succeed, so allow a set number of steps more first.
-          if (rate > 0.995) break;
+          if (rate > 0.995) {
+            gaveUp = "stalled";
+            break;
+          }
           if (giveUpAt === null) giveUpAt = iter + 30;
-          if (iter >= giveUpAt) break;
+          if (iter >= giveUpAt) {
+            gaveUp = "creeping";
+            break;
+          }
         }
       }
       // Already met (well within the tolerance) and only creeping closer: the searching blocks' own rounding
@@ -1833,6 +1851,7 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
     failing: [...failing],
     skipped: sys.skipped,
     maxResidual,
+    ...(gaveUp ? { gaveUp } : {}),
   };
 }
 

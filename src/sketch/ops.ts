@@ -367,9 +367,9 @@ function collapsed(s: SketchData): Set<string> {
  * met, nothing squashed to zero size and (optionally) the change actually
  * pins something down rather than repeating what's already set.
  */
-function checkedSolve(before: SketchData, changed: SketchData, what: string, mustReduceFreedom: boolean): EditResult {
-  const r = solveSketch(changed);
-  if (!r.ok) return { sketch: before, error: `${what} would conflict with the sketch's other constraints or dimensions.` };
+function checkedSolve(before: SketchData, changed: SketchData, what: string, mustReduceFreedom: boolean, patient = false): EditResult & { gaveUp?: "stalled" | "creeping" } {
+  const r = solveSketch(changed, patient ? { patient } : {});
+  if (!r.ok) return { sketch: before, error: `${what} would conflict with the sketch's other constraints or dimensions.`, ...(r.gaveUp ? { gaveUp: r.gaveUp } : {}) };
   const was = collapsed(before);
   if ([...collapsed(r.sketch)].some((id) => !was.has(id))) {
     return { sketch: before, error: `${what} would shrink a line or circle to nothing.` };
@@ -833,7 +833,8 @@ export function applyRelation(s: SketchData, tool: RelationTool, picked: string[
     // solver starts from a line that way round.
     start = turnedTowards(s, made, tool);
   }
-  const r = checkedSolve(start, { ...start, constraints: [...start.constraints, ...made] }, RELATION_LABELS[tool], true);
+  // Without giving up early (see solveOnce): a relation is applied once, and a refusal should be a real one.
+  const r = checkedSolve(start, { ...start, constraints: [...start.constraints, ...made] }, RELATION_LABELS[tool], true, true);
   // Also when it worked but only by stretching the line far out of shape or carrying it far away.
   const unkept = !r.error && tool === "tangent" && !lineKept(start, r.sketch, made);
   if ((r.error && tool === "tangent" && /conflict/.test(r.error)) || unkept) {
@@ -844,6 +845,8 @@ export function applyRelation(s: SketchData, tool: RelationTool, picked: string[
       // Only a sensible answer: the line not stretched or shrunk past double, nor carried off far away.
       if (!again.error && lineKept(start, again.sketch, made)) return again;
     }
+    // Rather than a line pulled far out of shape, say so.
+    if (unkept) return { sketch: s, error: `${RELATION_LABELS[tool]} would pull the line far out of shape or a long way off. Move it nearer the curve first, then try again.` };
   }
   return r.error ? { sketch: s, error: r.error } : r;
 }
@@ -867,12 +870,7 @@ function lineKept(before: SketchData, after: SketchData, made: SketchConstraint[
   return l1 <= 2 * l0 && l1 >= l0 / 2 && moved <= 4 * l0;
 }
 
-/** Is this point held where it is: fixed, joined to the origin or another point, held on a curve, or shared with another curve? */
-function heldPoint(s: SketchData, id: string, own: string): boolean {
-  if (id === ORIGIN_ID) return true;
-  if (s.curves.some((c) => c.id !== own && curvePoints(c).includes(id))) return true;
-  return s.constraints.some((k) => k.refs.includes(id) && (k.type === "fix" || k.type === "coincident" || k.type === "pointOnLine" || k.type === "pointOnCircle" || k.type === "pointOnCurve" || k.type === "midpoint"));
-}
+
 
 function lineLaidOn(s: SketchData, made: SketchConstraint[]): SketchData[] {
   const t = made.find((k) => k.type === "tangent");
@@ -887,7 +885,10 @@ function lineLaidOn(s: SketchData, made: SketchConstraint[]): SketchData[] {
   const d: [number, number] = [(Q[0] - P[0]) / len, (Q[1] - P[1]) / len];
   const mid: [number, number] = [(P[0] + Q[0]) / 2, (P[1] + Q[1]) / 2];
   const path = curveParam(s, wavy);
-  const held1 = heldPoint(s, line.p1, line.id), held2 = heldPoint(s, line.p2, line.id);
+  // An end is held only if it's really pinned down (fixed, at the origin, or joined to something that is);
+  // joined only to free lines it can still move.
+  const defined = analyzeSketch(s).definedPoints;
+  const held1 = defined.has(line.p1), held2 = defined.has(line.p2);
   if (held1 && held2) return [];
   if (held1 || held2) {
     // One end is held: turn the line about it to the lines from that point that touch the curve (where the curve
@@ -1223,6 +1224,7 @@ export function moveDimensionLabel(s: SketchData, id: string, labelOffset: { x: 
 // Dragging
 
 export function dragPoint(s: SketchData, pointId: string, x: number, y: number): SketchData {
+  // (Not retried patiently when it gives up: a drag is solved again on every pointer move, so it must stay quick.)
   const r = solveSketch(s, { drag: { pointId, x, y } });
   return r.ok ? r.sketch : s;
 }

@@ -450,3 +450,91 @@ describe("solves that crawl before they succeed", () => {
     expect(wrong).toBe(0);
   });
 });
+
+describe("Tangent with a line in a chain of free lines", () => {
+  const chain = (mid: [[number, number], [number, number]] | null) => {
+    const sp = addSpline(emptySketch(), [at(0, 0), at(10, 6), at(20, -2), at(30, 5), at(40, 0)], false);
+    let s = fixAll(sp.sketch, [sp.splineId]);
+    const a = addLine(s, at(-3, 26), at(5, 20));
+    const [m1, m2] = mid ?? [[5, 20], [12, 35]];
+    const b = addLine(a.sketch, { x: m1[0], y: m1[1], snap: { kind: "point", id: a.endId } }, at(m2[0], m2[1]));
+    const c = addLine(b.sketch, { x: m2[0], y: m2[1], snap: { kind: "point", id: b.endId } }, at(m2[0] + 8, m2[1] + 6));
+    s = c.sketch;
+    return { s, spline: sp.splineId, middle: b.lineId };
+  };
+  const len = (s: SketchData, id: string) => {
+    const l = line(s, id);
+    const [p, q] = [pointPos(s, l.p1), pointPos(s, l.p2)];
+    return Math.hypot(q[0] - p[0], q[1] - p[1]);
+  };
+
+  it("touches the middle line to the spline, without stretching it", () => {
+    for (const mid of [null, [[45, 10], [55, 30]] as [[number, number], [number, number]]]) {
+      const { s, spline: sid, middle } = chain(mid);
+      const before = len(s, middle);
+      const r = applyRelation(s, "tangent", [middle, sid]);
+      expect(r.error).toBeUndefined();
+      const after = len(r.sketch, middle);
+      expect(after).toBeLessThan(2 * before);
+      expect(after).toBeGreaterThan(before / 2);
+    }
+  });
+
+  it("random free chains: never refused, never stretched past double", () => {
+    let state = 3;
+    const r = () => ((state = (state * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const R = (a: number, b: number) => a + (b - a) * r();
+    let bad = 0;
+    for (let i = 0; i < 60; i++) {
+      const p = [R(-10, 50), R(-30, 40)] as [number, number];
+      const q = [p[0] + R(-20, 20), p[1] + R(-20, 20)] as [number, number];
+      const { s, spline: sid, middle } = chain([p, q]);
+      const before = len(s, middle);
+      const res = applyRelation(s, "tangent", [middle, sid]);
+      if (res.error) bad++;
+      else if (len(res.sketch, middle) > 2 * before || len(res.sketch, middle) < before / 2) bad++;
+    }
+    expect(bad).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("a relation the solver nearly gives up on", () => {
+  it("is still made when it can be", () => {
+    const s = {
+      points: [
+        { id: "p0", x: 11.606762669980526, y: -15.626301613636315 },
+        { id: "p1", x: 19.606762669980526, y: -7.254496341571212 },
+        { id: "p2", x: 27.606762669980526, y: -7.036160076968372 },
+        { id: "p3", x: 35.606762669980526, y: -10.76870022341609 },
+        { id: "p4", x: -25.13124020770192, y: -24.27121847309172 },
+        { id: "p5", x: -17.13124020770192, y: -26.45869557466358 },
+        { id: "p6", x: -9.131240207701921, y: -33.31462404131889 },
+        { id: "p7", x: -52.32626900431996, y: 17.646411794903283 },
+        { id: "p8", x: -37.328010913600394, y: 19.069170250579944 },
+        { id: "p9", x: -29.327045667916536, y: 24.282762691378593 },
+        { id: "p10", x: -21.327045667916536, y: 20.282762691378593 },
+        { id: "p11", x: 4.519552644342184, y: 0.9815920889377594 },
+        { id: "p12", x: 32.70754578988999, y: -22.519838055595756 },
+        { id: "p13", x: 18.309068787674875, y: 22.77900974838724 },
+        { id: "p14", x: 26.309030392569117, y: 30.58371779645439 },
+        { id: "p15", x: 34.30902476167914, y: 22.77948006023787 },
+      ],
+      curves: [
+        { id: "s0", type: "spline", points: ["p0", "p1", "p2", "p3"], closed: true, construction: false },
+        { id: "s1", type: "spline", points: ["p4", "p5", "p6"], closed: true, construction: false },
+        { id: "l0", type: "line", p1: "p7", p2: "p8", construction: false },
+        { id: "s2", type: "spline", points: ["p8", "p9", "p10"], closed: false, construction: false },
+        { id: "l1", type: "line", p1: "p11", p2: "p12", construction: false },
+        { id: "s3", type: "spline", points: ["p13", "p14", "p15"], closed: false, construction: false, conic: 0.2864900709828362 },
+      ],
+      constraints: [
+        { id: "k0", type: "fix", refs: ["p1"], extra: [19.606762669980526, -7.254496341571212] },
+        { id: "k1", type: "tangent", refs: ["s3", "l0"] },
+      ],
+    } as unknown as SketchData;
+    const t = performance.now();
+    const r = applyRelation(s, "normal", ["s1", "l0"]);
+    expect(r.error).toBeUndefined();
+    expect(performance.now() - t).toBeLessThan(10000); // generous for CI
+  });
+});
