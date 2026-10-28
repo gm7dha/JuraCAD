@@ -1293,7 +1293,7 @@ try {
     await page.mouse.move(grab.x + 12 * mm, grab.y + 3 * mm, { steps: 2 });
     await page.mouse.move(grab.x + 25 * mm, grab.y + 5 * mm, { steps: 4 });
     await page.mouse.up();
-    await page.waitForFunction(([id, along]) => window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).find((x) => x.id === id)?.textAlong !== along, [id, before.textAlong], { timeout: 5_000 });
+    await page.waitForFunction(([id, along]) => (window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).find((x) => x.id === id)?.textAlong ?? 0) !== along, [id, before.textAlong ?? 0], { timeout: 5_000 });
     const after = await dimNow();
     // 25 mm along (to the right), 5 mm further out (down the screen, below the part): the line moves with it.
     const along = (after.textAlong ?? 0) - (before.textAlong ?? 0);
