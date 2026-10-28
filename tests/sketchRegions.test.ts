@@ -20,8 +20,10 @@ import {
   freeAreas,
   selectArea,
   selectedAreaShades,
+  sketchesOffered,
 } from "../src/sketch/areaClicks";
-import { areasUsedByAll, pickedAreas, pickOf, sketchAreas } from "../src/sketch/areas";
+import { draftEffect } from "../src/model/partLinks";
+import { areasUsedByAll, pickedAreas, pickOf, sketchAreas, type AreaPick } from "../src/sketch/areas";
 import { addCircle, addRectangle } from "../src/sketch/ops";
 import { emptySketch, type SketchData } from "../src/sketch/types";
 
@@ -135,16 +137,42 @@ describe("clicking areas of any sketch while a feature is open", () => {
     expect(areaClickChange({ ...draft, areas: patch.areas }, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0)).patch.areas).toBeUndefined();
   });
 
-  it("a click in another sketch uses that sketch, with just that area, and says so", () => {
-    const draft = extrude("e2", "s2", [pickAt(other, 110, 5)]);
+  it("with every closed shape in use, a click in another sketch uses that sketch, with just that area, and says so", () => {
+    const draft = extrude("e2", "s2");
     const { patch, message } = areaClickChange(draft, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0));
     expect(patch).toEqual({ sketchRef: "s1", areas: [pickAt(data, 40, 0)] });
-    expect(message).toBe("Extrude e2 now uses Sketch 1. A feature takes its areas from one sketch.");
+    expect(message).toBe("Extrude e2 now uses Sketch 1. To use areas of several sketches, pick an area of the first sketch, then click areas in the others.");
     // With no sketch chosen yet: just chosen, nothing to say.
     expect(areaClickMode(extrude("e3", undefined))).toBe("first");
     const fresh = areaClickChange(extrude("e3", undefined), { id: "s1", name: "Sketch 1" }, data, indexAt(data, 0, 0));
     expect(fresh.patch.sketchRef).toBe("s1");
     expect(fresh.message).toBeUndefined();
+  });
+
+  it("with areas picked, an extrude takes areas of other sketches too (and lets them go again)", () => {
+    const draft = extrude("e2", "s2", [pickAt(other, 110, 5)]);
+    const add = areaClickChange(draft, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0));
+    expect(add.message).toBeUndefined();
+    expect(add.patch).toEqual({ sketchRef: "s2", areas: [pickAt(other, 110, 5)], moreAreas: [{ sketch: "s1", areas: [pickAt(data, 40, 0)] }] });
+    const withMore = { ...draft, ...add.patch };
+    // A second area of Sketch 1, then both clicked away again.
+    const two = areaClickChange(withMore, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 0, 0)).patch;
+    expect(two.moreAreas![0].areas).toHaveLength(2);
+    const one = areaClickChange({ ...withMore, ...two }, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 0, 0)).patch;
+    expect(areaClickChange({ ...withMore, ...one }, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0)).patch.moreAreas).toBeUndefined();
+    // Leaving the first sketch with nothing picked: the next sketch becomes the feature's own (nothing picked would mean all).
+    const swap = areaClickChange(withMore, { id: "s2", name: "Sketch 2" }, other, indexAt(other, 110, 5)).patch;
+    expect(swap).toEqual({ sketchRef: "s1", areas: [pickAt(data, 40, 0)], moreAreas: undefined });
+    // Revolves and surfaces still take one sketch.
+    const rev: Feature = { ...draft, type: "revolve", extrude: undefined, revolve: { axis: "vertical", flip: false } };
+    expect(areaClickChange(rev, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0)).patch.sketchRef).toBe("s1");
+    expect(areaClickChange({ ...draft, surface: true }, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0)).patch.sketchRef).toBe("s1");
+  });
+
+  it("areas another extrude takes as one of several sketches show as used", () => {
+    const features = [sketch("s1", data), sketch("s2", other), extrude("e1", "s2", [pickAt(other, 110, 5)], { moreAreas: [{ sketch: "s1", areas: [pickAt(data, 0, 0)] }] })];
+    expect([...areasTaken(features, "s1", data, "e2")]).toEqual([indexAt(data, 0, 0)]);
+    expect(sketchVisible(features[0], usedSketches(features))).toBe(false);
   });
 
   it("a revolve switching sketch takes that sketch's usual axis", () => {
@@ -177,9 +205,16 @@ describe("separate pieces become separate parts (saved in the file)", () => {
     const doc = emptyDocument("Test");
     for (const type of ["extrude", "revolve", "sweep"] as const) expect(createFeature(doc, type).apart).toBe(true);
     expect(createFeature(doc, "hole").apart).toBe(true);
+    expect(createFeature(doc, "extrude").intersectAll).toBe(true);
+    expect(createFeature(doc, "hole").intersectAll).toBeUndefined();
     expect(createFeature(doc, "box").apart).toBeUndefined();
-    const withMark = { ...doc, features: [sketch("s1", twoCircles()), extrude("e1", "s1", undefined, { apart: true }), extrude("e2", "s1")] };
+    const more = [{ sketch: "s9", areas: [[1, 2, 3] as AreaPick] }, { sketch: 5, areas: [[1, 2]] }, { sketch: "s8", areas: ["junk"] }];
+    const withMark = { ...doc, features: [sketch("s1", twoCircles()), extrude("e1", "s1", undefined, { apart: true, intersectAll: true, moreAreas: more as Feature["moreAreas"] }), extrude("e2", "s1")] };
     const back = parseDocument(JSON.parse(JSON.stringify(withMark)))!;
+    expect(back.features[1].intersectAll).toBe(true);
+    // Only well-formed extra sketches are kept.
+    expect(back.features[1].moreAreas).toEqual([{ sketch: "s9", areas: [[1, 2, 3]] }]);
+    expect("moreAreas" in back.features[2]).toBe(false);
     expect(back.features[1].apart).toBe(true);
     expect(back.features[2].apart).toBeUndefined();
     expect("apart" in back.features[2]).toBe(false);
@@ -210,5 +245,33 @@ describe("working out used areas once per design", () => {
     expect(areasTaken(features, "s1", data, "e2")).toBe(a);
     const changed = [...features.slice(0, 1), extrude("e1", "s1", [pickAt(data, 40, 0)])];
     expect([...areasTaken(changed, "s1", data, "e2")]).toEqual([indexAt(data, 40, 0)]);
+  });
+});
+
+describe("sketches the dialogs offer", () => {
+  const data = twoCircles();
+  const features = [sketch("s1", data), extrude("e1", "s1"), sketch("s2", data), extrude("e2", "s2")];
+  it("above the feature when editing; above the rollback bar for a new one", () => {
+    expect(sketchesOffered(features, "e2", true).map((f) => f.id)).toEqual(["s1", "s2"]);
+    expect(sketchesOffered(features, "e1", true).map((f) => f.id)).toEqual(["s1"]);
+    expect(sketchesOffered(features, "new", false).map((f) => f.id)).toEqual(["s1", "s2"]);
+    expect(sketchesOffered(features, "new", false, "e1").map((f) => f.id)).toEqual(["s1"]);
+  });
+});
+
+describe("what an open feature does to the parts", () => {
+  const parts = [
+    { id: "a", name: "Part 1", featureIds: ["a", "x"] },
+    { id: "b", name: "Part 2", featureIds: ["b", "x"] },
+    { id: "x", name: "Part 3", featureIds: ["x"] },
+    { id: "x~2", name: "Part 4", featureIds: ["x"] },
+    { id: "a", name: "Part 1", featureIds: ["a", "x"], configuration: "c2" },
+  ];
+  it("names the parts it changes and makes", () => {
+    expect(draftEffect(parts, { id: "x", operation: "add" })).toEqual({ changed: ["a", "b"], text: "Adds to Part 1 and Part 2, and makes new parts: Part 3 and Part 4." });
+    expect(draftEffect(parts.slice(0, 2), { id: "x", operation: "remove" }).text).toBe("Cuts Part 1 and Part 2.");
+    expect(draftEffect(parts.slice(0, 1), { id: "x", operation: "intersect" }).text).toBe("Keeps only the overlap with Part 1.");
+    expect(draftEffect(parts.slice(2, 3), { id: "x", operation: "new" }).text).toBe("Makes a new part: Part 3.");
+    expect(draftEffect(parts.slice(0, 2), { id: "y", operation: "add" })).toEqual({ changed: [], text: null });
   });
 });

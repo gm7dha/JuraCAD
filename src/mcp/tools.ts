@@ -91,7 +91,8 @@ export function summarize(f: Feature, doc: JuraCADDocument): string {
     case "extrude": {
       const e = f.extrude!;
       const how = e.end === "throughAll" ? "through all" : e.end === "upToFace" ? "up to a face" : e.end === "symmetric" ? `${mm(p.depth)} (half each way)` : `${mm(p.depth)}${e.second ? ` + ${mm(p.depth2)} the other way` : ""}`;
-      return `extrude ${nameOf(f.sketchRef)} ${how}${e.flip ? ", flipped" : ""}${p.draft && p.draft !== "0" ? `, draft ${p.draft}°` : ""}, ${op}`;
+      const more = (f.moreAreas ?? []).map((m) => nameOf(m.sketch));
+      return `extrude ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} ${how}${e.flip ? ", flipped" : ""}${p.draft && p.draft !== "0" ? `, draft ${p.draft}°` : ""}, ${op}`;
     }
     case "revolve":
       return `revolve ${nameOf(f.sketchRef)} ${p.angle ?? 360}° about ${f.revolve?.axis === "vertical" || f.revolve?.axis === "horizontal" ? `the sketch's ${f.revolve.axis} axis` : "a sketch line"}, ${op}`;
@@ -488,7 +489,7 @@ export const TOOLS: ToolDef[] = [
     run: async (s, a) => {
       noExtras(a, ["feature"], "delete_feature");
       const f = s.feature(a.feature, "feature");
-      const users = s.doc.features.filter((x) => x.sketchRef === f.id || x.hole?.sketchRef === f.id || x.pattern?.sources.includes(f.id) || x.mirror?.sources.includes(f.id));
+      const users = s.doc.features.filter((x) => x.sketchRef === f.id || x.moreAreas?.some((m) => m.sketch === f.id) || x.hole?.sketchRef === f.id || x.pattern?.sources.includes(f.id) || x.mirror?.sources.includes(f.id));
       if (users.length) throw new InputError(`${f.name} is used by ${users.map((u) => u.name).join(", ")}. Delete ${users.length > 1 ? "those" : "that"} first (or change ${users.length > 1 ? "them" : "it"} to use something else). Nothing was changed.`);
       const report = await tryChange(s, removeFeature(s.doc, f.id), null, `delete ${f.name}`);
       return say(`Deleted ${f.name}.`, ...report);

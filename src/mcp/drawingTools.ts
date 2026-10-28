@@ -232,10 +232,10 @@ function sheetLines(s: Session, d: Drawing, sh: Sheet): string[] {
     setLengthUnit("mm");
     return `- ${viewName(page, dim.view)}: ${label} (${dim.type}${dim.b ? ` from ${fmt2(r.a)} to ${fmt2(r.b ?? r.a)}` : ` at ${fmt2(r.a)}`})${r.found ? "" : " — LOST: what it measured isn't there any more"}`;
   });
-  const t = d.title;
+  const t = page.title;
   const title = [t.title && `title "${t.title}"`, t.partNumber && `part number "${t.partNumber}"`, t.material && `material "${t.material}"`, t.drawnBy && `drawn by "${t.drawnBy}"`, t.company && `company "${t.company}"`, t.notes && `notes "${t.notes.replace(/\n/g, " / ")}"`].filter(Boolean);
   return [
-    `${d.name}: ${d.source?.kind === "assembly" ? "assembly" : "part"} "${sh.subject.name}"${sh.count > 1 ? `, sheet ${sh.number} of ${sh.count}` : ""}. Paper ${page.sheet}, scale ${scaleText}, ${page.projection === "third" ? "third-angle (US)" : "first-angle (ISO)"} projection, hidden lines ${page.hiddenLines ? "shown dashed" : "not shown"}${d.exploded ? ", exploded" : ""}.`,
+    `${d.name}: ${page.source?.kind === "assembly" ? "assembly" : "part"} "${sh.subject.name}"${sh.count > 1 ? `, sheet ${sh.number} of ${sh.count}` : ""}. Paper ${page.sheet}, scale ${scaleText}, ${page.projection === "third" ? "third-angle (US)" : "first-angle (ISO)"} projection, hidden lines ${page.hiddenLines ? "shown dashed" : "not shown"}${d.exploded ? ", exploded" : ""}.`,
     views.length ? `Views (points in each view's own mm):\n${views.join("\n")}` : "No views yet: add some with edit_drawing \"views\".",
     dims.length ? `Dimensions:\n${dims.join("\n")}` : "No dimensions yet (auto_dimension adds the usual ones; add_dimension adds one).",
     sh.info.bom?.length ? `Parts list on the sheet: ${sh.info.bom.map((b) => `${b.item}. ${b.name} × ${b.quantity}`).join("; ")}.` : null,

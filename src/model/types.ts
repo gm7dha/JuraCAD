@@ -143,6 +143,18 @@ export interface Feature {
    * rebuild exactly as before.
    */
   apart?: boolean;
+  /**
+   * Extrude, revolve and sweep made since v0.29: Intersect keeps, in every
+   * solid part the feature reaches, only the overlap (as Remove cuts every part
+   * it reaches). Missing (older files): Intersect works on the latest part only.
+   */
+  intersectAll?: boolean;
+  /**
+   * Extrude: areas from other sketches as well as `sketchRef`'s (as Onshape
+   * lets one extrude use regions of several sketches). Each is extruded from
+   * its own sketch with the same settings. Missing: just `sketchRef`.
+   */
+  moreAreas?: { sketch: string; areas: AreaPick[] }[];
   /** Sweep: the sketch whose lines and arcs make the path. */
   pathRef?: string;
   /**
@@ -426,8 +438,9 @@ export interface Drawing {
   /**
    * Sheets 2, 3… of the drawing (sheet 1 is the drawing's own views,
    * dimensions and so on, so older files open unchanged). Each has its own
-   * paper size, scale, views and annotations; the source, title block and
-   * settings are shared.
+   * paper size, scale, views and annotations, and may draw a different part
+   * or assembly with its own title and part number; the rest of the title
+   * block and the settings are shared.
    */
   pages?: DrawingPage[];
 }
@@ -435,7 +448,22 @@ export interface Drawing {
 /** The parts of a drawing that belong to one sheet (see Drawing.pages and PAGE_FIELDS in drawing/pages.ts). */
 export type PageField = "sheet" | "scale" | "fit" | "views" | "dimensions" | "notes" | "sections" | "details" | "breakouts" | "shortened" | "holeTable" | "holeTableAt";
 /** Sheet 2, 3… of a drawing. */
-export type DrawingPage = { id: string } & Pick<Drawing, "sheet" | "views"> & Partial<Pick<Drawing, Exclude<PageField, "sheet" | "views">>>;
+export type DrawingPage = { id: string } & Pick<Drawing, "sheet" | "views"> &
+  Partial<Pick<Drawing, Exclude<PageField, "sheet" | "views">>> & {
+    /**
+     * What this sheet draws, when it isn't the drawing's own part or assembly
+     * (sheet 1's); missing = the same as sheet 1. Null = nothing chosen yet.
+     */
+    source?: Drawing["source"];
+    /**
+     * This sheet's own title and part number in its title block; missing =
+     * sheet 1's (or, on a sheet with its own `source`, none: the title then
+     * shows that part's name). The other title block entries are shared.
+     */
+    partTitle?: PartTitle;
+  };
+/** The title block entries each sheet has for itself. */
+export type PartTitle = Pick<Drawing["title"], "title" | "partNumber">;
 
 /**
  * A section: a cutting line drawn across one of the flat views (front, top…).
@@ -533,8 +561,22 @@ export interface Dimension {
    * Lengths: when the number has been slid past an extension line, the dimension line carries on
    * under the whole of it as measured (a stacked fit or limits too). Missing = the older rough
    * estimate of its width, so drawings dragged before still look exactly as they did.
+   * Diameters and radii: the shoulder under the number is as long as the number as measured
+   * (set when the number is dragged); missing = the older estimate.
    */
   fitText?: true;
+  /**
+   * Angles: measure the outside (reflex) angle — 360° less the angle the arms
+   * make — with its arc the long way round. Missing = the angle between the arms.
+   */
+  reflex?: true;
+  /**
+   * Angles and arc lengths: how far the number is from the corner (or the
+   * arc's centre), in paper mm, when it's been dragged nearer than the arc can
+   * go (the arc then stays at its smallest and a short leader joins the number
+   * to it). Missing = just outside the arc.
+   */
+  textR?: number;
   /**
    * Angles and arc lengths: where the number has been slid round the arc, in degrees from the arc's
    * middle (+ = anticlockwise on the sheet). Beyond the arc's ends the arc carries on out to it.

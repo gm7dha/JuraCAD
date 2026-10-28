@@ -14,7 +14,7 @@ import { parseDocument } from "../src/model/document";
 import type { Feature } from "../src/model/types";
 import { addLine } from "../src/sketch/ops";
 import { emptySketch } from "../src/sketch/types";
-import { readDocumentFile } from "../src/model/fileFormat";
+import { readDocumentFile, serializeDocument } from "../src/model/fileFormat";
 import { DesignFolder } from "../src/mcp/files";
 import { Session } from "../src/mcp/session";
 import { callTool, fileNameFor, TOOLS, type ToolResult } from "../src/mcp/tools";
@@ -416,5 +416,37 @@ describe("JuraCAD tools for Claude", () => {
     await ok(s, "set_variables", { variables: [{ name: "t", value: 2 }] });
     expect(exactVolume(s)[0]).toBeCloseTo(20 * 20 * 2, 3);
     expect(await fails(s, "set_variables", { variables: [{ name: "2bad", value: 1 }] })).toMatch(/Use letters/);
+  });
+
+  it("keeps extrudes using areas of several sketches (made in the app) when reading and changing them", async () => {
+    const { s, folder } = newSession();
+    await ok(s, "new_design", { name: "Two sketches" });
+    await ok(s, "add_sketch", { name: "Left", shapes: [{ type: "rectangle", corner: [0, 0], width: 10, height: 10 }] });
+    await ok(s, "add_sketch", { name: "Right", shapes: [{ type: "rectangle", corner: [20, 0], width: 10, height: 10 }] });
+    await ok(s, "add_feature", { type: "extrude", sketch: "Left", depth: 5 });
+    const made = s.doc.features[2];
+    expect(made.apart).toBe(true);
+    expect(made.intersectAll).toBe(true);
+    // As the app saves it: the Right sketch's area extruded too.
+    const right = s.doc.features[1].id;
+    const file = JSON.parse(serializeDocument(s.doc));
+    file.features[2].moreAreas = [{ sketch: right, areas: [[25, 5]] }];
+    file.features[2].areas = [[5, 5]];
+    writeFileSync(join(folder, "two.juracad"), JSON.stringify(file));
+    const opened = await ok(s, "open_design", { filename: "two" });
+    expect(opened).toMatch(/extrude Left \(with areas of Right too\) 5 mm/);
+    const ex = s.doc.features[2];
+    expect(ex.moreAreas).toEqual([{ sketch: right, areas: [[25, 5]] }]);
+    expect(ex.apart).toBe(true);
+    expect(ex.intersectAll).toBe(true);
+    // Right is in use, so it can't be deleted from under the extrude.
+    expect(await fails(s, "delete_feature", { feature: "Right" })).toMatch(/Right is used by Extrude 1/);
+    // Changing the depth keeps the extra areas; choosing another sketch drops the old sketch's picks.
+    await ok(s, "edit_feature", { feature: "Extrude 1", depth: 6 });
+    expect(s.doc.features[2].moreAreas).toHaveLength(1);
+    await ok(s, "edit_feature", { feature: "Extrude 1", sketch: "Right" });
+    expect(s.doc.features[2].moreAreas).toBeUndefined();
+    expect(s.doc.features[2].areas).toBeUndefined();
+    expect(s.doc.features[2].apart).toBe(true);
   });
 });

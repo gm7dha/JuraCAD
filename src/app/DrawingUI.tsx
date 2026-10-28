@@ -7,7 +7,7 @@ import { dimTextOutlines, itemsInBox, rightClickFlip, toggled } from "../drawing
 import { guardZoom, sheetWheelFactor, SHEET_MIN_WIDTH, zoomBox } from "../viewport/zoomGuard";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { create } from "zustand";
-import { addPage, changePage, FIRST_PAGE, knownPage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage } from "../drawing/pages";
+import { addPage, changePage, FIRST_PAGE, knownPage, missingPartMessage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage, addedSheetMessage } from "../drawing/pages";
 
 import { arrangeLinedUp, arrangeViews, withoutFit, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetsPdf, sheetSvg } from "../drawing/export";
@@ -34,6 +34,24 @@ import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
 import { inPopup } from "./popupGuard";
 
+
+/** What a drawing sheet can show: each Part Studio's parts, then the assemblies (sub-assemblies are assemblies too). */
+function sourceGroups(doc: JuraCADDocument, parts: PartMesh[]): { label: string; items: { value: string; name: string; source: NonNullable<Drawing["source"]> }[] }[] {
+  const out: ReturnType<typeof sourceGroups> = [];
+  for (const st of studiosOf(doc)) {
+    const mine = partsInStudio(parts, st.id);
+    if (mine.length) out.push({ label: st.name, items: mine.map((p) => ({ value: `part:${p.id}`, name: p.name, source: { kind: "part", id: p.id } })) });
+  }
+  const asms = doc.assemblies ?? [];
+  if (asms.length) out.push({ label: "Assemblies", items: asms.map((a) => ({ value: `assembly:${a.id}`, name: a.name, source: { kind: "assembly", id: a.id } })) });
+  return out;
+}
+
+/** The name of what a sheet shows (null when nothing's chosen or it's gone). */
+function sourceName(src: Drawing["source"], doc: JuraCADDocument, parts: PartMesh[]): string | null {
+  if (!src) return null;
+  return src.kind === "part" ? (parts.find((p) => p.id === src.id)?.name ?? null) : (doc.assemblies?.find((a) => a.id === src.id)?.name ?? null);
+}
 
 /** Projections already worked out, by drawing sheet (kept while switching tabs). */
 const projectionCache = new Map<string, { key: unknown[]; result: Projections }>();
@@ -243,13 +261,16 @@ async function allSheets(whole: Drawing): Promise<SheetLayout[]> {
     }
     const page = pageOf(whole, id);
     const req = projectionRequest(page, doc, s.parts);
-    if (!req) throw new Error("the part this drawing shows no longer exists");
+    if (!req) throw new MissingPart(missingPartMessage(whole, id, !!page.source));
     const base = await fetchProjections(cacheIdOf(whole, id), req);
     const projections = withShortenings(withDetails(base, page), page);
     out.push(layoutSheet(page, projections, sheetInfo(page, doc, s.parts, req.subject.name, req.subject.instances, i + 1, ids.length)));
   }
   return out;
 }
+
+/** A sheet whose part or assembly has gone (its message names the sheet). */
+class MissingPart extends Error {}
 
 /**
  * Save the drawing on show: PDF has every sheet (a page each); SVG and DXF
@@ -274,7 +295,8 @@ export async function exportDrawing(format: "pdf" | "svg" | "dxf") {
     try {
       layouts = await allSheets(d);
     } catch (e) {
-      s.showToast(`Couldn't save the PDF: ${e instanceof Error ? e.message : String(e)}. Check each sheet shows its views, then try again.`, "error");
+      if (e instanceof MissingPart) s.showToast(`Couldn't save the PDF. ${e.message}.`, "error");
+      else s.showToast(`Couldn't save the PDF: ${e instanceof Error ? e.message : String(e)}. Check each sheet shows its views, then try again.`, "error");
       return;
     }
     downloadFile(new Blob([sheetsPdf(layouts.map((l) => ({ prims: l.prims, size: l.size })), title) as BlobPart], { type: "application/pdf" }), `${base}.pdf`);
@@ -514,7 +536,7 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
       dimensions: d.dimensions?.map((x) => {
         if (x.id !== dim.id) return x;
         const next: Dimension = { ...x, ...patch };
-        for (const k of ["prefix", "suffix", "tolerance", "places", "frame", "limitsFit", "along", "arrows", "textAlong", "textAcross", "textAt", "textAngle", "fitText"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
+        for (const k of ["prefix", "suffix", "tolerance", "places", "frame", "limitsFit", "along", "arrows", "textAlong", "textAcross", "textAt", "textAngle", "fitText", "reflex", "textR"] as const) if (next[k] === undefined || next[k] === "") delete next[k];
         return next;
       }),
     }));
@@ -534,6 +556,17 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
       <div className="drawing-fields">
         <TitleField label="Text before" value={dim.prefix ?? ""} placeholder="e.g. 4×" onCommit={(v) => edit({ prefix: v ? `${v.trimEnd()} ` : undefined })} />
         <TitleField label="Text after" value={dim.suffix ?? ""} placeholder="e.g. TYP" onCommit={(v) => edit({ suffix: v ? ` ${v.trimStart()}` : undefined })} />
+        {dim.type === "angle" && (
+          <label className="check-row" title="Measure the angle round the outside of the corner (360° less the angle between the edges). Or hold Shift and drag the number round into the opposite angle.">
+            <input
+              type="checkbox"
+              checked={!!dim.reflex}
+              // (The number goes back to the middle of its new arc.)
+              onChange={(e) => edit({ reflex: e.target.checked ? true : undefined, textAngle: undefined, textR: undefined })}
+            />
+            Measure the outside angle
+          </label>
+        )}
         {dim.type === "chamfer" && (
           <div className="drawing-field">
             <span className="field-label">Distance measured</span>
@@ -698,6 +731,54 @@ function DimensionProperties({ drawing, change, projections }: { drawing: Drawin
   );
 }
 
+/**
+ * The "+ Sheet" menu: an empty sheet of the part this sheet shows, or a sheet
+ * of any part or assembly, starting with the usual views.
+ */
+function AddSheetMenu({ whole, pageId, subject, onClose }: { whole: Drawing; pageId: string; subject: string | null; onClose: () => void }) {
+  const doc = useStore((s) => s.history.present);
+  const parts = useStore((s) => s.parts);
+  useEffect(() => {
+    // Clicking anywhere else, or Esc, closes it.
+    const away = (e: PointerEvent) => !(e.target instanceof Element && e.target.closest(".drawing-add-sheet-menu, .drawing-add-sheet-button")) && onClose();
+    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointerdown", away, true);
+      window.removeEventListener("keydown", key);
+    };
+  }, [onClose]);
+  const add = (source?: Drawing["source"]) => {
+    onClose();
+    const st = useStore.getState();
+    const id = newId("pg");
+    const n = pageIds(whole).length + 1;
+    st.changeDrawing((d) => addPage(d, id, pageId, source));
+    useSheetPage.getState().show(whole.id, id);
+    st.selectDim(null);
+    st.showToast(addedSheetMessage(whole, n, source, source ? sourceName(source, doc, parts) : null), "success");
+  };
+  return (
+    <div className="drawing-add-sheet-menu" role="menu" aria-label="Add a sheet">
+      <button type="button" role="menuitem" className="menu-item" onClick={() => add()}>
+        Empty sheet{subject ? ` of ${subject}` : ""}
+      </button>
+      <div className="menu-heading">Or a sheet of…</div>
+      {sourceGroups(doc, parts).map((g) => (
+        <div key={g.label} role="group" aria-label={g.label}>
+          <div className="menu-group">{g.label}</div>
+          {g.items.map((it) => (
+            <button type="button" role="menuitem" key={it.value} className="menu-item" onClick={() => add(it.source)}>
+              {it.name}
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TitleField({ label, value, placeholder, multiline, onCommit }: { label: string; value: string; placeholder?: string; multiline?: boolean; onCommit: (v: string) => void }) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
@@ -734,7 +815,6 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
   // The scale "Fit to sheet" picks (with any room it keeps for dimensions).
   const info = useMemo<SheetInfo>(() => ({ designName: "", subject: "", date: "", bom: drawingBom(drawing, doc, parts), taps: tapSizes(doc, drawing) }), [drawing, doc, parts]);
   const auto = useMemo(() => (projections ? layoutSheet({ ...drawing, scale: undefined }, projections, info) : null), [drawing, projections, info]);
-  const studios = studiosOf(doc);
   const sourceValue = drawing.source ? `${drawing.source.kind}:${drawing.source.id}` : "";
 
   return (
@@ -747,11 +827,11 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
         <div className="drawing-fields">
           {pageIds(whole).length > 1 && (
             <p className="panel-hint">
-              Sheet {pageNumber(whole, pageId)} of {pageIds(whole).length}: its paper size, scale, views and dimensions are its own; the rest is shared by every sheet.
+              Sheet {pageNumber(whole, pageId)} of {pageIds(whole).length}: what it draws, its paper size, scale, views, dimensions, title and part number are its own; the rest is shared by every sheet.
             </p>
           )}
           <div className="drawing-field">
-            <label htmlFor="drawing-source">Drawing of</label>
+            <label htmlFor="drawing-source">{pageIds(whole).length > 1 ? "This sheet draws" : "Drawing of"}</label>
             <select
               id="drawing-source"
               value={sourceValue}
@@ -763,27 +843,15 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
             >
               {!drawing.source && <option value="">Choose a part…</option>}
               {drawing.source && !subject && <option value={sourceValue}>(missing — choose another)</option>}
-              {studios.map((st) => {
-                const mine = partsInStudio(parts, st.id);
-                return mine.length ? (
-                  <optgroup key={st.id} label={st.name}>
-                    {mine.map((p) => (
-                      <option key={p.id} value={`part:${p.id}`}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null;
-              })}
-              {(doc.assemblies ?? []).length > 0 && (
-                <optgroup label="Assemblies">
-                  {doc.assemblies!.map((a) => (
-                    <option key={a.id} value={`assembly:${a.id}`}>
-                      {a.name}
+              {sourceGroups(doc, parts).map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.items.map((it) => (
+                    <option key={it.value} value={it.value}>
+                      {it.name}
                     </option>
                   ))}
                 </optgroup>
-              )}
+              ))}
             </select>
           </div>
           <div className="drawing-field">
@@ -1389,6 +1457,9 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   const drawing = useMemo(() => pageOf(whole, pageId), [whole, pageId]);
   const sheetNo = pageNumber(whole, pageId);
   const sheetCount = pageIds(whole).length;
+  const [addSheetOpen, setAddSheetOpen] = useState(false);
+  // What each sheet draws (in its tab's tooltip).
+  const sheetNames = useMemo(() => pageIds(whole).map((id) => sourceName(pageOf(whole, id).source, doc, allParts)), [whole, doc, allParts]);
   const change = changeShownPage;
   const bom = useMemo(() => drawingBom(drawing, doc, allParts), [drawing, doc, allParts]);
   const tool = useStore((s) => s.drawingTool);
@@ -1876,7 +1947,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     const zoom = (factor: number, x: number, y: number) => setBox((b) => zoomBox(b, svg.getBoundingClientRect(), [x, y], factor, SHEET_MIN_WIDTH, maxW));
     return guardZoom(area, {
       // The sheet and the notes over it (not the sheet tabs or the selected view's bar, which are ordinary controls).
-      owns: (t) => t instanceof Element && area.contains(t) && !t.closest(".drawing-sheet-tabs, .drawing-view-bar"),
+      owns: (t) => t instanceof Element && area.contains(t) && !t.closest(".drawing-sheet-tabs, .drawing-view-bar, .drawing-add-sheet-menu"),
       wheel: (e, pinch) => zoom(sheetWheelFactor(e, pinch), e.clientX, e.clientY),
       pinch: zoom,
     });
@@ -2401,7 +2472,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
               useSheetPage.getState().show(whole.id, id);
               useStore.getState().selectDim(null);
             }}
-            title={`Show sheet ${i + 1}`}
+            title={`Show sheet ${i + 1}${sheetNames[i] ? ` (${sheetNames[i]})` : ""}`}
           >
             Sheet {i + 1}
           </button>
@@ -2428,20 +2499,16 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
         )}
         <button
           type="button"
-          className="add"
-          title="Add a sheet: its own paper size, scale and views of the same part"
-          onClick={() => {
-            const st = useStore.getState();
-            const id = newId("pg");
-            st.changeDrawing((d) => addPage(d, id, pageId));
-            useSheetPage.getState().show(whole.id, id);
-            st.selectDim(null);
-            st.showToast(`Added sheet ${sheetCount + 1}. Tick the views it shows in the panel on the left.`, "success");
-          }}
+          className="add drawing-add-sheet-button"
+          title="Add a sheet: its own paper size, scale and views — of this part or another part or assembly"
+          aria-haspopup="menu"
+          aria-expanded={addSheetOpen}
+          onClick={() => setAddSheetOpen((o) => !o)}
         >
           + Sheet
         </button>
       </div>
+      {addSheetOpen && <AddSheetMenu whole={whole} pageId={pageId} subject={subject} onClose={() => setAddSheetOpen(false)} />}
       {busy && layout && <div className="drawing-busy">Updating views…</div>}
     </div>
   );
