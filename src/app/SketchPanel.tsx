@@ -4,6 +4,7 @@ import { useLengthUnit, useStore } from "../model/store";
 import { showLength, storeLength } from "../model/units";
 import { planeLabel } from "../sketch/planes";
 import { findRegions } from "../sketch/regions";
+import { offsetWarnings } from "../sketch/solver";
 import { measureToOf } from "../sketch/ops";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -73,6 +74,7 @@ export function SketchPanel() {
   const plane = draft?.sketch?.plane ?? null;
   const status = useMemo(() => (data ? sketchStatus(data) : null), [data]);
   const regions = useMemo(() => (data ? findRegions(data) : null), [data]);
+  const offsetNotes = useMemo(() => (data ? offsetWarnings(data) : []), [data]);
   useEffect(() => setConfirmCancel(false), [data]);
 
   if (!draft || !data) return null;
@@ -221,7 +223,7 @@ export function SketchPanel() {
             )}
             <p className="dialog-hint">
               {patternKind === "linear"
-                ? "Direction 0° goes right, 90° goes up. The count includes the original."
+                ? "Direction 0° goes right, 90° goes up. The count includes the original. The copies follow the originals (and the line, if you took the direction from one)."
                 : `Going round ${patternCentre === "origin" ? "the origin" : "the chosen point"} — click any point (a circle's centre, a line's end, a corner of the face) to go round that instead. 360° spreads them all the way round.`}
             </p>
             <button type="button" className="primary-button" onClick={() => makeSketchPattern()} disabled={selectionCount === 0}>
@@ -375,6 +377,11 @@ export function SketchPanel() {
             )}
           </ul>
         )}
+        {offsetNotes.map((note, i) => (
+          <p key={i} className="dialog-error" role="status">
+            {note}
+          </p>
+        ))}
         {message && (
           <p className={message.tone === "error" ? "dialog-error" : "dialog-hint"} role={message.tone === "error" ? "alert" : "status"}>
             {message.text}
