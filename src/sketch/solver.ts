@@ -11,7 +11,7 @@
  * constraints, so fully defined geometry can be drawn black, as in Onshape.
  */
 import { evaluate } from "../model/expr";
-import { splineBeziers } from "./spline";
+import { bezierAt, bezierD1, bezierD2, splineBeziers } from "./spline";
 import { curvatureAt, curveParam, nearestParam, offsetAt, wrapParam, offsetError, offsetParams as fitParams, offsetPieces, OFFSET_TOLERANCE, splineThrough, tightestBend, type CurveParam } from "./curves";
 
 type Bez = [Vec, Vec, Vec, Vec];
@@ -29,6 +29,11 @@ interface System {
   blocks: { id: string | null; size: number; eval: (x: Float64Array, out: number[]) => void }[];
   /** Constraints that couldn't be used (e.g. a dimension with an invalid value), with the reason. */
   skipped: Map<string, string>;
+  /**
+   * Has blocks that search along splines or ellipses each time they're worked out (a touching Tangent, a
+   * Normal to one). These are costly, so a solve that has stopped getting anywhere is given up early.
+   */
+  searching: boolean;
 }
 
 const curveById = (s: SketchData) => new Map(s.curves.map((c) => [c.id, c]));
@@ -98,6 +103,8 @@ function buildSystem(sketch: SketchData): System {
     id === ORIGIN_ID || pointVar.has(id) ? "point" : curves.get(id)?.type ?? "point";
 
   const blocks: System["blocks"] = [];
+  let searching = false;
+  const pending: { size: number; eval: (x: Float64Array, out: number[]) => void }[] = [];
 
   /**
    * A spline's Bézier pieces for the current unknowns, worked out once and
@@ -132,14 +139,63 @@ function buildSystem(sketch: SketchData): System {
     const c = curves.get(id);
     if (!c) throw new Error(`missing curve ${id}`);
     const ids = curvePointIds(c);
-    const acc = ids.map((pid) => P(pid));
     const ri = c.type === "circle" ? radiusVar.get(c.id)! : -1;
+    // The same curve is asked for over and over while only other unknowns change (Jacobian columns): reuse it
+    // while its own points (and radius) are unchanged.
+    // Which unknowns hold its points (−1 for the origin) and radius, compared directly (no copying) to the last time.
+    const vars = ids.flatMap((pid) => (pid === ORIGIN_ID ? [-1, -1] : [pointVar.get(pid)!, pointVar.get(pid)! + 1]));
+    if (ri >= 0) vars.push(ri);
+    const lastKey = new Float64Array(vars.length);
+    let last: CurveParam | null = null;
     return (x) => {
-      const points = ids.map((pid, i) => {
-        const [px, py] = acc[i](x);
-        return { id: pid, x: px, y: py };
-      });
-      return curveParam({ points, curves: [], constraints: [] }, c.type === "circle" ? { ...c, radius: x[ri] } : c);
+      if (last) {
+        let same = true;
+        for (let i = 0; i < vars.length && same; i++) same = (vars[i] < 0 ? 0 : x[vars[i]]) === lastKey[i];
+        if (same) return last;
+      }
+      for (let i = 0; i < vars.length; i++) lastKey[i] = vars[i] < 0 ? 0 : x[vars[i]];
+      const points = ids.map((pid, i) => ({ id: pid, x: lastKey[2 * i], y: lastKey[2 * i + 1] }));
+      last = curveParam({ points, curves: [], constraints: [] }, c.type === "circle" ? { ...c, radius: x[ri] } : c);
+      return last;
+    };
+  };
+
+  /**
+   * The one Bézier piece of a spline that parameter u is on, as a path (lo = its index), worked out exactly as
+   * splineBeziers does but reading only the points it depends on (that piece's ends and their neighbours).
+   */
+  const splinePieceParam = (c: SketchSpline, u: number): ((x: Float64Array) => CurveParam) => {
+    const n = c.points.length;
+    const m = c.closed ? n : n - 1;
+    const k = Math.max(0, Math.min(m - 1, Math.floor(u)));
+    const at = (i: number) => P(c.points[c.closed ? ((i % n) + n) % n : i]);
+    const pointAt = (x: Float64Array, i: number): Vec => {
+      if (c.closed) return at(i)(x);
+      if (i < 0) {
+        const a = at(0)(x), b = at(1)(x);
+        return [2 * a[0] - b[0], 2 * a[1] - b[1]];
+      }
+      if (i >= n) {
+        const a = at(n - 1)(x), b = at(n - 2)(x);
+        return [2 * a[0] - b[0], 2 * a[1] - b[1]];
+      }
+      return at(i)(x);
+    };
+    const idOf = (i: number) => c.points[c.closed ? ((i % n) + n) % n : i];
+    const tangent = (x: Float64Array, i: number): Vec => {
+      const set = c.tangents?.[idOf(i)];
+      if (set) return set;
+      const a = pointAt(x, i + 1), b = pointAt(x, i - 1);
+      return [(a[0] - b[0]) / 2, (a[1] - b[1]) / 2];
+    };
+    return (x) => {
+      const j = c.closed ? (k + 1) % n : k + 1;
+      const p1 = at(k)(x), p2 = at(j)(x);
+      const t1 = tangent(x, k);
+      const t2 = c.tangentsIn?.[idOf(j)] ?? tangent(x, c.closed ? j : k + 1);
+      const b: Bez = [p1, [p1[0] + t1[0] / 3, p1[1] + t1[1] / 3], [p2[0] - t2[0] / 3, p2[1] - t2[1] / 3], p2];
+      const d1 = (v: number) => bezierD1(b, v - k), d2 = (v: number) => bezierD2(b, v - k);
+      return { lo: k, hi: k + 1, closed: false, at: (v) => bezierAt(b, v - k), d1, d2, before: (v) => ({ d1: d1(v), d2: d2(v) }), samples: [k, k + 1] };
     };
   };
 
@@ -295,8 +351,11 @@ function buildSystem(sketch: SketchData): System {
     }
     const [a, b] = con.refs;
     try {
+      pending.length = 0;
       const block = makeBlock(con, value, a, b);
       if (block) blocks.push({ id: con.id, ...block });
+      // Some constraints are many small blocks (an offset spline: one per point), so a Jacobian column only re-runs the ones it touches.
+      for (const extra of pending) blocks.push({ id: con.id, ...extra });
     } catch (e) {
       skipped.set(con.id, e instanceof Error ? e.message : String(e));
     }
@@ -484,12 +543,20 @@ function buildSystem(sketch: SketchData): System {
         }
         const end = con.extra?.[0] === 1 ? n : m;
         const param = paramFn(b);
+        searching = true;
+        // Remembers where along the curve the line's end was nearest last time and starts from there (a few Newton
+        // steps instead of searching the whole curve); searches again only if that fails.
+        let lastU: number | null = null;
         return {
           size: 1,
           eval: (x, out) => {
             const s0 = m(x), e = n(x);
             const pth = param(x);
-            const t = pth.d1(nearestParam(pth, end(x)));
+            const q = end(x);
+            let u = lastU === null ? null : nearestFrom(pth, q, lastU);
+            if (u === null) u = nearestParam(pth, q);
+            lastU = u;
+            const t = pth.d1(u);
             const dx = e[0] - s0[0], dy = e[1] - s0[1];
             out.push((dx * t[0] + dy * t[1]) / ((Math.hypot(dx, dy) || 1) * (Math.hypot(t[0], t[1]) || 1)));
           },
@@ -624,15 +691,21 @@ function buildSystem(sketch: SketchData): System {
             const pts = copyCurve.points.map((id) => P(id));
             const param = paramFn(orig);
             const dist = side ?? 1;
-            pairs.push((x, out) => {
-              const p = param(x);
-              us.forEach((u, k) => {
-                const want = offsetAt(p, u, dist * value).at;
-                const got = pts[k](x);
-                out.push(got[0] - want[0], got[1] - want[1]);
+            searching = true;
+            const origCurve = curves.get(orig)!;
+            us.forEach((u, k) => {
+              // Along a spline, only the piece the place is on (it reads just the points near it), so moving a far
+              // point of the original doesn't re-run this block.
+              const local = origCurve.type === "spline" && origCurve.conic === undefined ? splinePieceParam(origCurve, u) : null;
+              pending.push({
+                size: 2,
+                eval: (x, out) => {
+                  const want = offsetAt(local ? local(x) : param(x), u, dist * value).at;
+                  const got = pts[k](x);
+                  out.push(got[0] - want[0], got[1] - want[1]);
+                },
               });
             });
-            size += 2 * us.length;
           } else if (kind(copy) === "line" && kind(orig) === "line") {
             const [p] = lineEnds(copy);
             const [m, n] = lineEnds(orig);
@@ -649,8 +722,8 @@ function buildSystem(sketch: SketchData): System {
             size++;
           }
         }
-        if (!pairs.length) throw new Error("offset has nothing to measure");
-        return { size, eval: (x, out) => { for (const f of pairs) f(x, out); } };
+        if (!pairs.length && !pending.length) throw new Error("offset has nothing to measure");
+        return pairs.length ? { size, eval: (x, out) => { for (const f of pairs) f(x, out); } } : null;
       }
       case "arcLength":
       case "arcAngle": {
@@ -776,31 +849,47 @@ function buildSystem(sketch: SketchData): System {
     const otherParam = paramFn(otherId);
     const level = levelFn(otherId);
     const lineOther = curves.get(otherId)!.type === "line";
+    searching = true;
     // NOTE: this block remembers state. `last` is where they touched (u along the walked curve, v along the
     // other) the previous time it was evaluated; each evaluation starts its Newton steps from there, which is far
     // cheaper than searching the whole curve each time. The value it returns is still the exact gap at that
     // touching place (found to ~1e-14), so it doesn't depend on the history unless the curves touch in more than
     // one place and Newton lands on a different one; if Newton fails, it searches again and remembers anew.
     let last: [number, number] | null = null;
+    // The whole-curve search is slow, so it runs at most once per system (one solve); after that, a failed
+    // Newton start is handled cheaply by `nearestApproach` below.
+    let searched = false;
+    let seed: [number, number] | null = null;
+    // Where they came nearest last time, when they can't run side by side (a warm start for nearestApproach).
+    let approach: [number, number] | null = null;
     return {
-      size: 1,
+      // Two rows: the gap, and (only while they can meet just at an end) how far off running the same way they are.
+      size: 2,
       eval: (x, out) => {
         const p = param(x), q = otherParam(x);
         let found = last ? touchPoint(p, q, last[0], last[1], lineOther) : null;
-        if (!found) {
+        if (!found && !searched) {
+          searched = true;
           // Search: the low or high point of the other's "distance" along this one, then the nearest place on the other.
           const u = touchParam(p, (pt) => level(x, pt));
-          if (u !== null) found = touchPoint(p, q, u, nearestParam(q, p.at(u)), lineOther);
+          if (u !== null) {
+            seed = [u, nearestParam(q, p.at(u))];
+            found = touchPoint(p, q, seed[0], seed[1], lineOther);
+          }
         }
-        if (!found) {
-          last = null;
-          out.push(touchGap(p, (pt) => level(x, pt)));
+        if (found) {
+          last = found;
+          const [u, v] = found;
+          const a = p.at(u), b = q.at(v), d = q.d1(v);
+          out.push(((a[0] - b[0]) * -d[1] + (a[1] - b[1]) * d[0]) / (Math.hypot(d[0], d[1]) || 1), 0);
           return;
         }
-        last = found;
-        const [u, v] = found;
-        const a = p.at(u), b = q.at(v), d = q.d1(v);
-        out.push(((a[0] - b[0]) * -d[1] + (a[1] - b[1]) * d[0]) / (Math.hypot(d[0], d[1]) || 1));
+        // Nowhere they run the same way side by side: they can only touch at an end. How far apart they are at
+        // their nearest approach (keeping each place on its curve), and how far off running the same way there.
+        const start = approach ?? last ?? seed ?? [p.lo, nearestParam(q, p.at(p.lo))];
+        const near = nearestApproach(p, q, start[0], start[1], lineOther);
+        approach = [near.u, near.v];
+        out.push(near.gap, near.off);
       },
     };
   }
@@ -826,7 +915,7 @@ function buildSystem(sketch: SketchData): System {
     };
   }
 
-  return { n: init.length, pointVar, radiusVar, x0: Float64Array.from(init), blocks, skipped };
+  return { n: init.length, pointVar, radiusVar, x0: Float64Array.from(init), blocks, skipped, searching };
 }
 
 /**
@@ -850,6 +939,9 @@ function touchPoint(p: CurveParam, q: CurveParam, u: number, v: number, qUnbound
     v += dv;
     if (p.closed) u = wrapParam(p, u);
     if (q.closed) v = wrapParam(q, v);
+    // Wandered well off the end of an open curve: no touching place this way.
+    const off = (c: CurveParam, t: number) => !c.closed && (t < c.lo - 0.5 * (c.hi - c.lo) || t > c.hi + 0.5 * (c.hi - c.lo));
+    if (!Number.isFinite(u) || !Number.isFinite(v) || off(p, u) || (!qUnbounded && off(q, v))) return null;
     const span = Math.max(1, Math.abs(u), Math.abs(v));
     if (Math.abs(du) < 1e-14 * span && Math.abs(dv) < 1e-14 * span) {
       const inside = (c: CurveParam, t: number) => c.closed || (t >= c.lo - 1e-9 && t <= c.hi + 1e-9);
@@ -857,6 +949,67 @@ function touchPoint(p: CurveParam, q: CurveParam, u: number, v: number, qUnbound
     }
   }
   return null;
+}
+
+/** The place on a path nearest q by Newton steps from u (kept on the path); null if it doesn't settle. */
+function nearestFrom(p: CurveParam, q: Vec, u: number): number | null {
+  for (let k = 0; k < 12; k++) {
+    const a = p.at(u), d1 = p.d1(u), d2 = p.d2(u);
+    const r: Vec = [a[0] - q[0], a[1] - q[1]];
+    const f = r[0] * d1[0] + r[1] * d1[1];
+    const df = d1[0] * d1[0] + d1[1] * d1[1] + r[0] * d2[0] + r[1] * d2[1];
+    // Only towards a nearest place (df > 0), not a farthest one.
+    if (!(df > 0)) return null;
+    const step = f / df;
+    u = wrapParam(p, u - step);
+    if (Math.abs(step) < 1e-14 * Math.max(1, Math.abs(u))) return u;
+  }
+  return null;
+}
+
+/**
+ * Where two paths come nearest when they can't run side by side (Newton on
+ * both parameters from u, v, each kept within its path): the gap there, with
+ * how far off running the same way they are. Both zero only if they meet at an
+ * end running the same way. A few cheap steps, never a search of the whole curve.
+ */
+function nearestApproach(p: CurveParam, q: CurveParam, u: number, v: number, qUnbounded: boolean): { gap: number; off: number; u: number; v: number } {
+  const keep = (c: CurveParam, t: number, unbounded = false) => (c.closed ? wrapParam(c, t) : unbounded ? t : Math.max(c.lo, Math.min(c.hi, t)));
+  const sub2 = (a: Vec, b: Vec): Vec => [a[0] - b[0], a[1] - b[1]];
+  const dot2 = (a: Vec, b: Vec) => a[0] * b[0] + a[1] * b[1];
+  u = keep(p, u);
+  v = keep(q, v, qUnbounded);
+  for (let k = 0; k < 20; k++) {
+    const P1 = p.d1(u), P2 = p.d2(u), Q1 = q.d1(v), Q2 = q.d2(v);
+    const r = sub2(p.at(u), q.at(v));
+    // Nearest approach: the line between them square to both (where they can be).
+    const f1 = dot2(r, P1), f2 = dot2(r, Q1);
+    const a11 = dot2(P1, P1) + dot2(r, P2), a12 = -dot2(Q1, P1);
+    const a21 = dot2(P1, Q1), a22 = -dot2(Q1, Q1) + dot2(r, Q2);
+    const det = a11 * a22 - a12 * a21;
+    let nu = u, nv = v;
+    if (Number.isFinite(det) && Math.abs(det) > 1e-300) {
+      nu = u + (-f1 * a22 + f2 * a12) / det;
+      nv = v + (-f2 * a11 + f1 * a21) / det;
+    }
+    nu = keep(p, nu);
+    nv = keep(q, nv, qUnbounded);
+    // One held at its end: the other moves to the place nearest it.
+    if (nu !== u || nv !== v) {
+      const q1 = q.d1(nv), rr = sub2(p.at(nu), q.at(nv));
+      const dv = -dot2(rr, q1) / (-dot2(q1, q1) + dot2(rr, q.d2(nv)) || 1);
+      if (nu === p.lo || nu === p.hi) nv = keep(q, nv + dv, qUnbounded);
+    }
+    const moved = Math.abs(nu - u) + Math.abs(nv - v);
+    u = nu;
+    v = nv;
+    if (moved < 1e-13 * Math.max(1, Math.abs(u), Math.abs(v))) break;
+  }
+  const P1 = p.d1(u), Q1 = q.d1(v);
+  const r = sub2(p.at(u), q.at(v));
+  const gap = (r[0] * -Q1[1] + r[1] * Q1[0]) / (Math.hypot(Q1[0], Q1[1]) || 1);
+  const off = (P1[0] * Q1[1] - P1[1] * Q1[0]) / ((Math.hypot(P1[0], P1[1]) || 1) * (Math.hypot(Q1[0], Q1[1]) || 1));
+  return { gap, off, u, v };
 }
 
 /** Along a path, where a curve's "distance" (zero on it) has the low or high point nearest zero; null if none. */
@@ -941,8 +1094,7 @@ function signedDistanceToBeziers(p: Vec, pieces: Bez[]): number {
   let best = Infinity;
   let bestPiece = -1;
   let bestT = 0;
-  // Enough to find the right stretch of a spline that loops back near itself.
-  const STEPS = 24;
+  const STEPS = 12;
   pieces.forEach((bz, i) => {
     for (let k = 0; k <= STEPS; k++) {
       const q = at(bz, k / STEPS);
@@ -1017,22 +1169,28 @@ function jacobian(sys: System, x: Float64Array, m: number): Float64Array {
   const J = new Float64Array(m * sys.n);
   const { rows, columns } = dependencies(sys, x);
   const xp = Float64Array.from(x);
-  const rp: number[] = [];
-  const rm: number[] = [];
+  const rp: number[][] = [];
+  const rm: number[][] = [];
   for (let j = 0; j < sys.n; j++) {
     const h = 1e-6 * Math.max(1, Math.abs(x[j]));
-    for (const bi of columns[j]) {
-      const b = sys.blocks[bi];
-      rp.length = 0;
-      rm.length = 0;
-      xp[j] = x[j] + h;
-      b.eval(xp, rp);
-      xp[j] = x[j] - h;
-      b.eval(xp, rm);
-      xp[j] = x[j];
+    const deps = columns[j];
+    // All the blocks one way, then all the other way (so curves they share are worked out once each way).
+    xp[j] = x[j] + h;
+    deps.forEach((bi, k) => {
+      rp[k] = [];
+      sys.blocks[bi].eval(xp, rp[k]);
+    });
+    xp[j] = x[j] - h;
+    deps.forEach((bi, k) => {
+      rm[k] = [];
+      sys.blocks[bi].eval(xp, rm[k]);
+    });
+    xp[j] = x[j];
+    deps.forEach((bi, k) => {
       const r0 = rows[bi];
-      for (let i = 0; i < rp.length && r0 + i < m; i++) J[(r0 + i) * sys.n + j] = (rp[i] - rm[i]) / (2 * h);
-    }
+      const a = rp[k], b = rm[k];
+      for (let i = 0; i < a.length && r0 + i < m; i++) J[(r0 + i) * sys.n + j] = (a[i] - b[i]) / (2 * h);
+    });
   }
   return J;
 }
@@ -1290,6 +1448,12 @@ function pullsCopy(d: Derived, o: SolveOptions): boolean {
 /** Move the sketch so every constraint holds, changing it as little as possible. */
 export function solveSketch(sketch: SketchData, options: SolveOptions = {}): SolveResult {
   const d = splitDerived(sketch);
+  if (d && options.drag && d.offsets.has(options.drag.pointId)) {
+    // A point of an offset copy is placed by its original: dragging it moves nothing (drag the original instead).
+    const { drag: _drag, ...rest } = options;
+    void _drag;
+    return solveSketch(sketch, rest);
+  }
   if (d && !pullsCopy(d, options)) {
     const r = solveWhole(d.reduced, options);
     return withOffsets({ ...r, sketch: placeDerived(sketch, r.sketch, d) }, options);
@@ -1354,7 +1518,9 @@ export function refreshOffsets(s: SketchData): SketchData {
     // original bends tighter than the offset distance: no fit can follow that (offsetWarnings explains), so
     // the copy keeps the points it has.
     let fresh: number[] | null = null;
-    if (!offsetTooTight(param, o.dist)) {
+    // A copy that is itself offset again keeps its points: its own copies' places are measured along its pieces.
+    const parentOfCopies = list.some((other) => other.orig === copy.id);
+    if (!parentOfCopies && !offsetTooTight(param, o.dist)) {
       const knots = orig.type === "spline" && orig.conic === undefined ? Array.from({ length: Math.round(param.hi - param.lo) + 1 }, (_, i) => param.lo + i) : undefined;
       const fit = () => fitParams(param, o.dist, OFFSET_TOLERANCE / 2, knots);
       if (offsetError(param, o.dist, us, pieces) > OFFSET_TOLERANCE) fresh = fit();
@@ -1426,6 +1592,8 @@ function withOffsets(r: SolveResult, options: SolveOptions): SolveResult {
   const list = curveOffsets(r.sketch);
   if (!list.length) return r;
   const fresh = refreshOffsets(r.sketch);
+  // Solving again only helps a sketch that was met; one that can't be met wouldn't be now either.
+  if (!r.ok) return { ...r, sketch: fresh };
   const copies = new Set(list.map((o) => o.copy));
   const leaning = fresh.constraints.some((k) => k.type !== "offset" && k.refs.some((id) => copies.has(id)));
   if (!leaning) return { ...r, sketch: fresh };
@@ -1483,17 +1651,44 @@ function solveOnce(sketch: SketchData, options: SolveOptions, stiffness: number)
   let r = evalAll(sys, x);
   const m = r.length;
   const maxIterations = options.maxIterations ?? 60;
+  // Largest residual after each step (for giving up on hopeless searching solves; see System.searching).
+  const history: number[] = [];
   for (let iter = 0; iter < maxIterations && maxAbs(r) > SOLVE_TOLERANCE * 0.01; iter++) {
+    if (sys.searching) {
+      history.push(maxAbs(r));
+      // At the rate it has improved over the last 8 steps, it couldn't be met in the steps left: give up now.
+      // (Sketches without such blocks run exactly as before.)
+      if (history.length > 8) {
+        const now = history[history.length - 1];
+        const rate = Math.pow(now / history[history.length - 9], 1 / 8);
+        const needed = rate >= 1 ? Infinity : Math.log((SOLVE_TOLERANCE * 100) / now) / Math.log(rate);
+        if (needed > maxIterations - iter) break;
+      }
+      // Already met (well within the tolerance) and only creeping closer: the searching blocks' own rounding
+      // won't let it go much further, so stop polishing.
+      const n = history.length;
+      if (n >= 2 && history[n - 1] <= SOLVE_TOLERANCE * 10 && history[n - 1] > 0.5 * history[n - 2]) break;
+    }
     const J = jacobian(sys, x, m);
     // Weighted minimum-norm step: Δ = -W⁻² Jᵀ (J W⁻² Jᵀ + λI)⁻¹ r
+    // A = J W⁻² Jᵀ, skipping the (many) zeros of J: each entry gets the same terms added in the same order as
+    // the plain triple loop (adding zeros changes nothing), so the result is identical, just much faster for big sketches.
     const A = new Float64Array(m * m);
-    for (let i = 0; i < m; i++) {
-      for (let k = i; k < m; k++) {
-        let s = 0;
-        for (let j = 0; j < sys.n; j++) s += (J[i * sys.n + j] * J[k * sys.n + j]) / (weight[j] * weight[j]);
-        A[i * m + k] = A[k * m + i] = s;
+    const rowsIn: number[] = [];
+    for (let j = 0; j < sys.n; j++) {
+      rowsIn.length = 0;
+      for (let i = 0; i < m; i++) if (J[i * sys.n + j] !== 0) rowsIn.push(i);
+      const w2 = weight[j] * weight[j];
+      for (let a = 0; a < rowsIn.length; a++) {
+        const i = rowsIn[a];
+        const ji = J[i * sys.n + j];
+        for (let b = a; b < rowsIn.length; b++) {
+          const k = rowsIn[b];
+          A[i * m + k] += (ji * J[k * sys.n + j]) / w2;
+        }
       }
     }
+    for (let i = 0; i < m; i++) for (let k = i + 1; k < m; k++) A[k * m + i] = A[i * m + k];
     let trace = 0;
     for (let i = 0; i < m; i++) trace += A[i * m + i];
     const lambda = 1e-10 * (trace / Math.max(m, 1)) + 1e-14;

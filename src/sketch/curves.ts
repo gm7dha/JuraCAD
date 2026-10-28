@@ -41,6 +41,14 @@ const posOf = (s: SketchData) => {
   return (id: string): P2 => (id === ORIGIN_ID ? [0, 0] : m.get(id) ?? [0, 0]);
 };
 
+/** A path's sample parameters, worked out only when first asked for (most uses never need them). */
+const sampleCache = new WeakMap<object, number[]>();
+function lazySamples(owner: object, make: () => number[]): number[] {
+  let s = sampleCache.get(owner);
+  if (!s) sampleCache.set(owner, (s = make()));
+  return s;
+}
+
 const range = (lo: number, hi: number, n: number) => Array.from({ length: n + 1 }, (_, i) => lo + ((hi - lo) * i) / n);
 
 /** A spline's handles (leaving and arriving), one entry per point. */
@@ -108,7 +116,9 @@ export function curveParam(s: SketchData, c: SketchCurve): CurveParam {
       at: (u) => [o[0] + r * Math.cos(u), o[1] + r * Math.sin(u)],
       d1: (u) => [-r * Math.sin(u), r * Math.cos(u)],
       d2: (u) => [-r * Math.cos(u), -r * Math.sin(u)],
-      samples: range(a0, a0 + sweep, Math.max(8, Math.ceil((96 * sweep) / TAU))),
+      get samples() {
+        return lazySamples(this, () => range(a0, a0 + sweep, Math.max(8, Math.ceil((96 * sweep) / TAU))));
+      },
     };
   }
   if (c.type === "ellipse") {
@@ -120,20 +130,28 @@ export function curveParam(s: SketchData, c: SketchCurve): CurveParam {
       at: (u) => ellipseAt(g, u),
       d1: (u) => ellipseD(g, u, 1),
       d2: (u) => ellipseD(g, u, 2),
-      samples: range(t0, t1, Math.max(16, Math.ceil((128 * (t1 - t0)) / TAU))),
+      get samples() {
+        return lazySamples(this, () => range(t0, t1, Math.max(16, Math.ceil((128 * (t1 - t0)) / TAU))));
+      },
     };
   }
   if (c.conic !== undefined && c.points.length === 3) {
     const [a, apex, b] = c.points.map(P);
     const rho = c.conic;
+    // at, d1 and d2 are usually asked for at the same place in turn: work it out once.
+    let lastU = NaN;
+    let last = conicAt(a, apex, b, rho, 0);
+    const ev = (u: number) => (u === lastU ? last : ((lastU = u), (last = conicAt(a, apex, b, rho, u))));
     return {
       lo: 0,
       hi: 1,
       closed: false,
-      at: (u) => conicAt(a, apex, b, rho, u).p,
-      d1: (u) => conicAt(a, apex, b, rho, u).d1,
-      d2: (u) => conicAt(a, apex, b, rho, u).d2,
-      samples: range(0, 1, 64),
+      at: (u) => ev(u).p,
+      d1: (u) => ev(u).d1,
+      d2: (u) => ev(u).d2,
+      get samples() {
+        return lazySamples(this, () => range(0, 1, 64));
+      },
     };
   }
   const pieces = splinePieces(s, c);
@@ -150,7 +168,9 @@ export function curveParam(s: SketchData, c: SketchCurve): CurveParam {
     d1: (u) => bezierD1(...piece(u)),
     d2: (u) => bezierD2(...piece(u)),
     before: (u) => ({ d1: bezierD1(...piece(u, true)), d2: bezierD2(...piece(u, true)) }),
-    samples: range(0, m, Math.max(1, m) * 24),
+    get samples() {
+        return lazySamples(this, () => range(0, m, Math.max(1, m) * 24));
+      },
   };
 }
 

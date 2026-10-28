@@ -800,7 +800,9 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
 }
 
 /** Apply a relation (horizontal, tangent, …) to the selection. */
-export function applyRelation(s: SketchData, tool: RelationTool, selection: string[]): EditResult {
+export function applyRelation(s: SketchData, tool: RelationTool, picked: string[]): EditResult {
+  // The same thing picked twice counts once.
+  const selection = [...new Set(picked)];
   // An offset copy of a spline or ellipse is already held by its original: nothing else may tie the two together.
   for (const k of s.constraints) {
     if (k.type !== "offset") continue;
