@@ -769,7 +769,7 @@ export class SketchController {
     const tool = this.tool;
     if (tool === "select") {
       if (dragging && this.drag) return this.selectDrag(e);
-      const hover = this.pickAt(e) ?? this.extraAt(e);
+      const hover = this.selectHit(e);
       this.emit({ hover, preview: this.refOutline(hover), snap: null, inference: null, hints: this.hintsFor(hover), nearby: this.nearbyPoints(e) });
       return;
     }
@@ -1026,10 +1026,11 @@ export class SketchController {
       this.drag = { kind: "handle", id: handle.splineId, start: d, startX: e.x, startY: e.y, moved: false, additive: false, hit: null, handle };
       return;
     }
-    const hit = this.pickAt(e);
+    const picked = this.selectHit(e);
+    // Text (dragged by its point) or a picture under the pointer, when there's nothing else of the sketch there.
+    const extra = picked && textById(d, picked.id) ? picked : picked && imageById(d, picked.id) ? picked : null;
+    const hit = extra ? null : picked;
     let kind: DragState["kind"] = "none";
-    // Text (dragged by its point) or a picture under the pointer, when there's nothing else there.
-    const extra = hit ? null : this.extraAt(e);
     if (extra) {
       const text = textById(d, extra.id);
       const now = Date.now();
@@ -1055,6 +1056,23 @@ export class SketchController {
       kind = c.type === "circle" || c.type === "arc" ? "rim" : "curve";
     }
     this.drag = { kind, id: hit?.id ?? "", start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit, startScreenX: e.screenX };
+  }
+
+  /**
+   * What a click with the Select tool would pick: the sketch's own points and
+   * curves (and the face's corners), then its text and pictures, then things
+   * from other sketches and parts.
+   */
+  private selectHit(e: SketchPointer): Hit | null {
+    const hit = this.pickAt(e);
+    if (hit && !this.isOutsideRef(hit.id)) return hit;
+    return this.extraAt(e) ?? hit;
+  }
+
+  /** A stand-in for something from another sketch or a part off the face (not the face's own edges). */
+  private isOutsideRef(id: string): boolean {
+    const r = isRefId(id) ? parseRefId(id) : null;
+    return !!r && r.index >= this.faceEdgeCount;
   }
 
   /** When text was last clicked (for telling a double-click). */

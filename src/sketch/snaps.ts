@@ -188,8 +188,12 @@ export function pickAt(s: SketchData, x: number, y: number, pointTol: number, cu
   if (own?.kind === "point" || !refs.length) return own;
   const virt = refSketch(refs);
   const v = hitTest(virt, x, y, pointTol, curveTol, { origin: false });
-  if (v?.kind === "point" && !/:q\d+$/.test(v.id)) return v;
+  const point = v?.kind === "point" && !/:q\d+$/.test(v.id);
+  // The face's corners come before the sketch's own lines (as before); things from elsewhere only where the sketch has nothing.
+  const edge = v ? refs[parseRefId(v.id)?.index ?? -1] : undefined;
+  if (point && edge && isFaceEdge(edge)) return v;
   if (own) return own;
+  if (point) return v;
   if (v?.kind === "curve") return { kind: "curve", id: v.id.replace(/:s\d+$/, "") };
   return null;
 }

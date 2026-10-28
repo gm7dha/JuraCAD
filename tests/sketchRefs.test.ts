@@ -252,6 +252,18 @@ describe("bringing in and following", () => {
   });
 });
 
+describe("picking", () => {
+  it("the sketch's own lines come before points from elsewhere; the face's own corners still come first", () => {
+    const l = addLine(emptySketch(), { x: 0, y: 0 }, { x: 10, y: 0 });
+    const elsewhere: RefEdge = { kind: "point", a: [5, 0.2], b: [5, 0.2], mid: [5, 0.2], source: { sketch: "skA", item: "p", ends: { a: "p" } } };
+    expect(pickAt(l.sketch, 5, 0.1, 1, 0.5, [elsewhere])).toEqual({ kind: "curve", id: l.lineId });
+    // Where the sketch has nothing, the point from elsewhere is picked.
+    expect(pickAt(emptySketch(), 5, 0.1, 1, 0.5, [elsewhere])?.id).toBe("ref:0:a");
+    const faceCorner: RefEdge = { pick: { partId: "box", ref: { kind: "edge", curve: "LINE", a: [5, 0.2, 0], b: [5, 9, 0], mid: [5, 4.6, 0] } }, kind: "line", a: [5, 0.2], b: [5, 9], mid: [5, 4.6] };
+    expect(pickAt(l.sketch, 5, 0.1, 1, 0.5, [faceCorner])?.id).toBe("ref:0:a");
+  });
+});
+
 describe("saved files", () => {
   it("keep links to other sketches and parts' points, and old sketches read the same as before", () => {
     const { src, point, line } = topSketch();
