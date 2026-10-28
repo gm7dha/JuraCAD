@@ -227,6 +227,25 @@ describe("Use on curved edges", () => {
     expect(linkEdge(emptySketch(), { ...edge, shape: undefined }, false).error).toMatch(/Only straight and round edges/);
   });
 
+  it("a spline copy keeps running the same way when its edge now runs the other way", () => {
+    const half: CurveShape3 = { points: [], tangents: [] };
+    for (let i = 0; i <= 4; i++) {
+      half.points.push([10 * i, (i * (4 - i)) / 2, 0]);
+      half.tangents.push([10, (4 - 2 * i) / 2, 0]);
+    }
+    const shape = seeShape(TOP, half)!;
+    const edge: RefEdge = { pick: { partId: "p", ref: { kind: "edge", curve: "BSPLINE_CURVE", a: [0, 0, 0], b: [40, 0, 0], mid: [20, 2, 0] } }, kind: "curve", a: [0, 0], b: [40, 0], mid: [20, 2], shape };
+    const r = linkEdge(emptySketch(), edge, false);
+    const sp = curveById(r.sketch, r.curveId) as SketchSpline;
+    if (shape.kind !== "spline") return;
+    // The same curve, given back to front (and 1 higher).
+    const back = { kind: "spline" as const, points: [...shape.points].reverse().map(([x, y]): P2 => [x, y + 1]), tangents: [...shape.tangents].reverse().map(([x, y]): P2 => [-x, -y]) };
+    const moved = followLinks(r.sketch, { [sp.id]: { ...edge, shape: back } });
+    expect(r6(pointPos(moved, sp.points[0]))).toEqual([0, 1]);
+    expect(r6(pointPos(moved, sp.points[4]))).toEqual([40, 1]);
+    expect(r6(pointPos(moved, sp.points[2]))).toEqual([20, 3]);
+  });
+
   it("Use all edges joins a spline's ends to the lines meeting them, so the outline is closed", () => {
     // A D shape: a straight edge from (0, −10) to (0, 10), and a curved one back round through (10, 0).
     const line: RefEdge = { pick: { partId: "p", ref: { kind: "edge", curve: "LINE", a: [0, -10, 0], b: [0, 10, 0], mid: [0, 0, 0] } }, kind: "line", a: [0, -10], b: [0, 10], mid: [0, 0] };

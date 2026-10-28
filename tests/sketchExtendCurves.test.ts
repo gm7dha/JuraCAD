@@ -10,7 +10,7 @@ import { emptySketch, type SketchCurve, type SketchData, type SketchSpline } fro
 type P2 = [number, number];
 const at = (x: number, y: number): Placed => ({ x, y, snap: null });
 const curve = <T extends SketchCurve>(s: SketchData, id: string) => s.curves.find((c) => c.id === id) as T;
-const round = (p: P2, k = 1e6) => p.map((v) => Math.round(v * k) / k);
+const round = (p: P2, k = 1e6) => p.map((v) => Math.round(v * k) / k + 0);
 
 /** A sketch with part of an ellipse (centre 0,0; 20 along X, 10 along Y) from (20, 0) anticlockwise to (0, 10), and a line at x = −10. */
 function ellipseArcSketch(): SketchData {

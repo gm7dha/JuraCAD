@@ -18,7 +18,7 @@ const rect = [
   ["0", "LINE", 8, "0", 10, 40, 20, 20, 11, 0, 21, 20],
   ["0", "LINE", 8, "0", 10, 0, 20, 20, 11, 0, 21, 0],
 ];
-const pos = (s: SketchData, id: string) => pointPos(s, id).map((v) => Math.round(v * 1e6) / 1e6);
+const pos = (s: SketchData, id: string) => pointPos(s, id).map((v) => Math.round(v * 1e6) / 1e6 + 0);
 const areaOf = (s: SketchData) => findRegions(s).regions.reduce((t, r) => t + r.outer.area - r.holes.reduce((h, x) => h + x.area, 0), 0);
 
 describe("Insert DXF", () => {

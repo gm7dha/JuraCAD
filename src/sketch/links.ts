@@ -586,8 +586,15 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
         moves.set(c.end, sh.end);
       }
     } else if (c.type === "spline" && e.shape?.kind === "spline") {
-      const sh = e.shape;
+      let sh = e.shape;
       const closed = shapeClosed(sh);
+      // Keep it running the same way (the edge may now run the other way round).
+      if (!closed && sh.points.length === c.points.length) {
+        const first = pointPos(s, c.points[0]);
+        const last = pointPos(s, c.points[c.points.length - 1]);
+        const turned = dist(sh.points[0], last) + dist(sh.points[sh.points.length - 1], first) < dist(sh.points[0], first) + dist(sh.points[sh.points.length - 1], last);
+        if (turned) sh = { kind: "spline", points: [...sh.points].reverse(), tangents: [...sh.tangents].reverse().map(([x, y]): P2 => [-x, -y]) };
+      }
       // The engine finds the edge at as many points as the copy has, so each point keeps its place.
       if (closed !== c.closed || (closed ? sh.points.length - 1 : sh.points.length) !== c.points.length) continue;
       c.points.forEach((id, i) => moves.set(id, sh.points[i]));
