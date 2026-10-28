@@ -4,7 +4,7 @@ import { useLengthUnit, useStore } from "../model/store";
 import { showLength, storeLength } from "../model/units";
 import { planeLabel } from "../sketch/planes";
 import { findRegions } from "../sketch/regions";
-import { offsetWarnings } from "../sketch/solver";
+import { offsetNotes as offsetNotesOf } from "../sketch/offsetCheck";
 import { measureToOf } from "../sketch/ops";
 import { sketchStatus } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -74,7 +74,7 @@ export function SketchPanel() {
   const plane = draft?.sketch?.plane ?? null;
   const status = useMemo(() => (data ? sketchStatus(data) : null), [data]);
   const regions = useMemo(() => (data ? findRegions(data) : null), [data]);
-  const offsetNotes = useMemo(() => (data ? offsetWarnings(data) : []), [data]);
+  const offsetNotes = useMemo(() => (data ? offsetNotesOf(data) : []), [data]);
   useEffect(() => setConfirmCancel(false), [data]);
 
   if (!draft || !data) return null;

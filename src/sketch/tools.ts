@@ -11,7 +11,7 @@ import { ORIGIN_ID, type SketchEllipse, type SketchSpline, type SketchArc, type 
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
 import type { EdgeRef } from "../geometry/topoRef";
 import { crossings, curveParam } from "./curves";
-import { isWavy, offsetWavy, splitWavy, trimWavy } from "./curveEdits";
+import { extendWavy, isWavy, offsetWavy, splitWavy, trimWavy } from "./curveEdits";
 
 type P2 = [number, number];
 const TAU = Math.PI * 2;
@@ -1430,13 +1430,15 @@ export function addAlignedRectangle(s: SketchData, a: Placed, b: Placed, p: P2, 
 
 /**
  * Extend a line from the end nearest the click until it meets another line,
- * arc or circle (the nearest one ahead). Its length dimension, if any, goes,
+ * arc or circle (the nearest one ahead). Arcs, splines, conics and parts of
+ * ellipses are extended too (see extendArc and extendWavy). Its length dimension, if any, goes,
  * since the length changes; the end is held on what it now meets.
  */
 export function extendAt(s: SketchData, curveId: string, at: { x: number; y: number }): EditResult {
   const line = curveById(s, curveId);
   if (line?.type === "arc") return extendArc(s, line, at);
-  if (line?.type !== "line") return { sketch: s, error: "Click near the end of a line or arc to extend it." };
+  if (isWavy(line)) return extendWavy(s, line, at);
+  if (line?.type !== "line") return { sketch: s, error: "Click near the end of a line, arc, spline or part of an ellipse to extend it." };
   const A = pointPos(s, line.p1);
   const B = pointPos(s, line.p2);
   const click: P2 = [at.x, at.y];

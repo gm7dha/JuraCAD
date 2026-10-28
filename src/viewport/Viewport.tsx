@@ -18,6 +18,7 @@ import { getKernel } from "../kernel/connect";
 import type { Feature } from "../model/types";
 import { SketchController } from "../sketch/controller";
 import { intersectWith } from "../app/sketchIntersect";
+import { bringInCurvedEdge } from "../app/sketchUseCurve";
 import { planeFrame, planeOnFace, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/planeFeature";
 import { resolveParams } from "../model/features";
@@ -239,6 +240,11 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     // Straight and round edges are copied in linked to the part (they follow it when it changes).
     const data = s.editing.draft.sketch.data;
     const seen = ref.curve === "UNKNOWN" ? null : projectEdge(planeFrame(s.editing.draft.sketch.plane), { partId: target.item.partId, ref });
+    // Curved edges (splines, ellipses, circles at a slant) come in as splines or ellipses: the engine knows their exact shape.
+    if (ref.curve !== "UNKNOWN" && ref.curve !== "LINE" && (!seen || seen.kind === "curve")) {
+      void bringInCurvedEdge(target.item.partId, ref);
+      return;
+    }
     const r = seen && seen.kind !== "curve" ? (({ curveId, ...rest }) => ({ ...rest, curveIds: [curveId] }))(linkEdge(data, seen, false)) : copyEdge(data, planeFrame(s.editing.draft.sketch.plane), ref);
     if (r.error) s.setSketchMessage(r.error, "error");
     else {
