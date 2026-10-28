@@ -1676,7 +1676,14 @@ try {
   await page.locator("#param-distance").fill("30");
   await page.getByRole("button", { name: "Accept" }).click();
   await page.waitForSelector(".feature-row >> text=Plane 1");
-  if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after adding a plane");
+  if ((await page.locator(".feature-row.failed").count()) > 0) {
+    const why = await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const names = Object.fromEntries([...s.history.present.features, ...(s.history.present.partStudios ?? []).flatMap((p) => p.features)].map((f) => [f.id, `${f.name} (${f.type} ${f.operation}${f.apart ? ", apart" : ""})`]));
+      return Object.entries(s.featureErrors).map(([id, e]) => `${names[id] ?? id}: ${e}`).join(" | ");
+    });
+    throw new Error(`a feature failed after adding a plane: ${why}`);
+  }
   await page.locator(".feature-row >> text=Plane 1").click();
   await page.getByRole("button", { name: "Sketch", exact: true }).click();
   await page.waitForFunction(() => document.body.textContent?.includes("On Plane 1"), null, { timeout: 5_000 });
