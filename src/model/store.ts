@@ -45,9 +45,11 @@ import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
 import { duplicateInstances, placedBox, replaceInstancePart, type Box3 } from "../assembly/assembly";
 import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
 import { findMesh, meshIdOf } from "../assembly/configured";
+import { ownSymmetry } from "../assembly/symmetry";
+
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, pickConnector, samePieceClick, solveWithParts } from "../assembly/mates";
-import { insertProblem, insertSubAssembly, instanceAt, leafKey, ownBox, whereUsed } from "../assembly/subassembly";
+import { insertProblem, insertSubAssembly, instanceAt, leafKey, ownBox, PATH_SEP, whereUsed } from "../assembly/subassembly";
 import { setSuppressed as setInstancesOff } from "../assembly/suppress";
 import { setPartProperties as setPartPropertiesIn } from "../assembly/properties";
 import { moveFeature as moveFeatureIn } from "./reorder";
@@ -59,6 +61,11 @@ import { importName } from "./importFile";
 import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisible, setDatumHidden, setFeaturesVisible, toggleAllPlanes } from "./visibility";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
+/** Which instances show a symmetric part (for mirrors that show such parts as themselves). */
+const symmetricIn = (parts: readonly PartMesh[]) => (i: Instance) => {
+  const mesh = i.subAssembly ? undefined : findMesh(parts, meshIdOf(i));
+  return !!mesh && !!ownSymmetry(mesh);
+};
 
 /** Two sketch planes in the same place (to within a micron), whatever face they remember. */
 function samePlace(a: SketchPlane, b: SketchPlane): boolean {
@@ -420,6 +427,11 @@ export interface AppState {
   /** The assembly pattern whose settings are open (changes apply straight away). */
   editingPattern: string | null;
   setEditingPattern: (id: string | null) => void;
+  /** The open Mirror is waiting for a click on a flat face to mirror across. */
+  mirrorFacePick: boolean;
+  setMirrorFacePick: (on: boolean) => void;
+  /** Mirror the open Mirror's parts across this face (clicked in the 3D view). */
+  pickMirrorFace: (c: MateConnector) => void;
   /** Repeat the selected instances (a linear pattern to start with) and open its settings. */
   /** Pattern (or, with "mirror", Mirror) the selected instances. */
   createPattern: (kind?: "mirror") => void;
@@ -1325,12 +1337,27 @@ export const useStore = create<AppState>((set, get) => {
     setExplode: (amount) => {
       const asm = activeAssembly(get());
       if (asm) change((doc) => setExplode(doc, asm.id, amount));
-      set({ explodePreview: null });
+      // Parts inside sub-assemblies can only be selected on their own in the exploded view.
+      set((st) => ({ explodePreview: null, ...(amount === null && st.asmSelection.some((k) => k.includes(PATH_SEP)) ? { asmSelection: st.asmSelection.filter((k) => !k.includes(PATH_SEP)) } : {}) }));
     },
     explodePreview: null,
     setExplodePreview: (amount) => set({ explodePreview: amount }),
     editingPattern: null,
-    setEditingPattern: (editingPattern) => set({ editingPattern, ...(editingPattern ? { asmSelection: [], mateDraft: null, dialog: null } : {}) }),
+    setEditingPattern: (editingPattern) => set({ editingPattern, mirrorFacePick: false, ...(editingPattern ? { asmSelection: [], mateDraft: null, dialog: null } : {}) }),
+    mirrorFacePick: false,
+    setMirrorFacePick: (mirrorFacePick) => set({ mirrorFacePick }),
+    pickMirrorFace: (c) => {
+      const s = get();
+      const asm = activeAssembly(s);
+      const p = asm?.patterns?.find((x) => x.id === s.editingPattern);
+      if (!asm || !p) return;
+      if (c.pick.ref.kind !== "face" || c.pick.ref.surface !== "PLANE") return s.showToast("Click a flat face to mirror across.", "info");
+      if (asm.instances.find((i) => i.id === c.instanceId)?.copyOf?.pattern === p.id) return s.showToast("That's one of this mirror's own copies — click a face on another part.", "info");
+      // Only the face matters (not where on it it was clicked).
+      const plane: MateConnector = { instanceId: c.instanceId, ...(c.path ? { path: c.path } : {}), pick: c.pick };
+      set({ mirrorFacePick: false });
+      s.updatePattern(p.id, { plane });
+    },
     createPattern: (kind) => {
       const s = get();
       const asm = activeAssembly(s);
@@ -1353,15 +1380,24 @@ export const useStore = create<AppState>((set, get) => {
               amount: String(Math.ceil(width + 5)),
               axis: "x",
             };
-      change((doc) => updateAssembly(doc, asm.id, (a) => syncPattern(a, pattern, () => newId("i"))));
-      set({ editingPattern: pattern.id, asmSelection: [] });
+      change((doc) => updateAssembly(doc, asm.id, (a) => syncPattern(a, pattern, () => newId("i"), symmetricIn(s.parts))));
+      set({ editingPattern: pattern.id, asmSelection: [], mirrorFacePick: false });
     },
     updatePattern: (id, patch) => {
       const asm = activeAssembly(get());
       const p = asm?.patterns?.find((x) => x.id === id);
       if (!asm || !p) return;
       const next: AssemblyPattern = { ...p, ...patch, name: (patch.name ?? p.name).trim() || p.name };
-      change((doc) => updateAssembly(doc, asm.id, (a) => syncPattern(a, next, () => newId("i"))));
+      // (A setting patched to undefined is taken away: back to an assembly plane, or mirror images again.)
+      for (const k of Object.keys(next) as (keyof AssemblyPattern)[]) if (next[k] === undefined) delete next[k];
+      const parts = get().parts;
+      change((doc) => {
+        const synced = updateAssembly(doc, asm.id, (a) => syncPattern(a, next, () => newId("i"), symmetricIn(parts)));
+        // Across a face: the copies' places come from where the face is, so put them there now.
+        if (!next.plane && !p.plane) return synced;
+        const solvedAsm = synced.assemblies?.find((a) => a.id === asm.id);
+        return solvedAsm ? settlePlacements(synced, asm.id, solveWithParts(solvedAsm, parts, { assemblies: synced.assemblies }).placements) : synced;
+      });
     },
     createReplicate: () => {
       const s = get();
@@ -1435,8 +1471,17 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       if (!asm) return;
       const ids = asm.instances.filter((i) => s.asmSelection.includes(i.id)).map((i) => i.id);
-      if (!ids.length) return s.showToast("Select the parts to move first (click them, or Shift-click for more).", "info");
-      change((doc) => updateAssembly(doc, asm.id, (a) => putExplodeStep(a, { id: newId("xs"), instances: ids, axis: "z", distance: storeLength(lengthUnit() === "in" ? "1" : "30") })));
+      // Parts inside sub-assemblies ("top/inner/part", picked in the exploded view) move on their own.
+      const inner = s.asmSelection
+        .filter((k) => k.includes(PATH_SEP) && instanceAt(asm, s.history.present.assemblies ?? [], k))
+        .map((k) => {
+          const [instanceId, ...path] = k.split(PATH_SEP);
+          return { instanceId, path };
+        });
+      if (!ids.length && !inner.length) return s.showToast("Select the parts to move first (click them, or Shift-click for more).", "info");
+      change((doc) =>
+        updateAssembly(doc, asm.id, (a) => putExplodeStep(a, { id: newId("xs"), instances: ids, ...(inner.length ? { parts: inner } : {}), axis: "z", distance: storeLength(lengthUnit() === "in" ? "1" : "30") })),
+      );
       set({ asmSelection: [] });
     },
     updateExplodeStep: (id, patch) => {

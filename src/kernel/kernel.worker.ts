@@ -88,7 +88,7 @@ ctx.onmessage = (event) => {
           body = { type: "measure", result: engine.measure(request.picks) };
           break;
         case "exportStep": {
-          const result = await engine.exportStep(request.partIds, request.colours, request.instances);
+          const result = await engine.exportStep(request.partIds, request.colours, request.instances, request.tree);
           transfer.push(result.step);
           body = { type: "exportStep", result };
           break;

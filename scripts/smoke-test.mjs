@@ -1159,7 +1159,8 @@ try {
   await Promise.race([asmDownload, anyway.waitFor({ timeout: 60_000 }).then(() => anyway.click()).catch(() => {})]);
   const asmStep = await asmDownload;
   const asmStepText = readFileSync(await asmStep.path(), "utf8");
-  if (!/PRODUCT\('Bracket <2>'/.test(asmStepText)) throw new Error("the assembly STEP file doesn't name its parts");
+  // The assembly's structure is kept: each part once (named after the part), each copy a named, placed use of it.
+  if (!/PRODUCT\('Bracket'/.test(asmStepText) || !/NEXT_ASSEMBLY_USAGE_OCCURRENCE\('[^']*','Bracket <2>'/.test(asmStepText)) throw new Error("the assembly STEP file doesn't name its parts and copies");
   step = "exploding the assembly";
   await page.getByRole("button", { name: "Explode", exact: true }).click();
   await page.waitForSelector('[aria-label="Exploded view"]', { timeout: 5_000 });
@@ -1278,10 +1279,91 @@ try {
     if (!/Assembly 1\s+2\b/.test(structured) || !/1\.1\s+Bracket\s+2\b/.test(structured)) throw new Error(`the structured parts list reads "${structured.replace(/\n/g, " / ")}"`);
     await shot("subassembly-structured");
     await page.getByRole("button", { name: "Flattened", exact: true }).click();
+
+    // Its STEP file keeps the structure: Assembly 1 defined once and used twice, each part's shape written once.
+    step = "exporting an assembly with sub-assemblies as STEP";
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await page.waitForSelector('#export-parts option[value="all"]', { state: "attached" });
+    const subDownload = page.waitForEvent("download", { timeout: 60_000 });
+    await page.getByRole("button", { name: /Check & export/ }).click();
+    const subAnyway = page.getByRole("button", { name: "Export anyway" });
+    await Promise.race([subDownload, subAnyway.waitFor({ timeout: 60_000 }).then(() => subAnyway.click()).catch(() => {})]);
+    const subStep = readFileSync(await (await subDownload).path(), "utf8");
+    const uses = [...subStep.matchAll(/NEXT_ASSEMBLY_USAGE_OCCURRENCE\('[^']*','(Assembly 1 <[12]>)','',#\d+,(#\d+)/g)];
+    const shapes = (subStep.match(/MANIFOLD_SOLID_BREP\(/g) ?? []).length;
+    if (uses.length !== 2 || uses[0][2] !== uses[1][2]) throw new Error(`the STEP file doesn't use Assembly 1 twice as one sub-assembly (${uses.map((u) => u[1]).join(", ")})`);
+    if (!/PRODUCT\('Assembly 2'/.test(subStep) || !/PRODUCT\('Assembly 1'/.test(subStep)) throw new Error("the STEP file doesn't name its assemblies");
+    if (shapes < 1 || shapes > 2) throw new Error(`the STEP file holds ${shapes} part shapes; Bracket and Part 2 should each be written once`);
+
+    // Exploded: a part inside one copy moves on its own.
+    step = "exploding a part inside a sub-assembly";
+    await page.getByRole("button", { name: "Explode", exact: true }).click();
+    await page.waitForSelector('[aria-label="Exploded view"]', { timeout: 5_000 });
+    const innerSpot = await page.evaluate(({ second }) => {
+      const v = window.juracadViewport.current;
+      const p = v.shownParts().find((m) => m.id.startsWith(`${second}/`));
+      return p ? { key: p.id, at: v.screenPointOnFace(p.id, p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99)) } : null;
+    }, asm2);
+    if (!innerSpot?.at) throw new Error("couldn't find a part inside the sub-assembly to click");
+    await canvas.click({ position: innerSpot.at });
+    await page.getByRole("button", { name: /Move the selected part/ }).click();
+    await page.waitForSelector(".explode-step >> text=Assembly 1 <2> /", { timeout: 5_000 });
+    const explodedStep = await page.evaluate(({ id }) => window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).explodeSteps?.[0] ?? null, asm2);
+    if (!explodedStep?.parts?.length || explodedStep.instances.length) throw new Error(`the exploded view step doesn't move just the inner part: ${JSON.stringify(explodedStep)}`);
+    await shot("subassembly-exploded");
+    await page.getByRole("button", { name: "Explode", exact: true }).click();
+
+    // Mirror Part 2 <1> across a face of a part inside the sub-assembly, as the same part (it's a symmetric block).
+    step = "mirroring a part across a face";
+    const part2Before = Number(/Part 2\s+(\d+)\b/.exec(await page.locator(".bom-table").innerText())?.[1] ?? NaN);
+    await page.locator(".feature-row", { hasText: "Part 2 <1>" }).first().click();
+    await tool("Mirror");
+    await page.waitForSelector('[aria-label="Pattern Mirror 1"]', { timeout: 5_000 });
+    await page.locator("#asm-mirror-plane").selectOption("face");
+    await page.waitForSelector("text=Click a flat face in the view to mirror across.", { timeout: 5_000 });
+    // (A part of the first copy: the second copy's top face has Part 2 <1> fastened on it.)
+    const sideSpot = await page.evaluate(({ id }) => {
+      const v = window.juracadViewport.current;
+      const first = window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.name === "Assembly 1 <1>").id;
+      // A flat face whose spot isn't under the Mirror panel (or anything else drawn over the view).
+      const box = v.canvas.getBoundingClientRect();
+      for (const p of v.shownParts().filter((m) => m.id.startsWith(`${first}/`))) {
+        for (let k = 0; k < p.faceRefs.length; k++) {
+          if (p.faceRefs[k].surface !== "PLANE") continue;
+          const at = v.screenPointOnFace(p.id, k);
+          if (at && document.elementFromPoint(box.left + at.x, box.top + at.y) === v.canvas && v.pickKindAt(at.x, at.y) === "face:PLANE") return at;
+        }
+      }
+      return null;
+    }, asm2);
+    if (!sideSpot) throw new Error("couldn't find a face to mirror across");
+    await canvas.click({ position: sideSpot });
+    await page.waitForSelector("text=A face of", { timeout: 5_000 }).then(() => {}, async () => {
+      throw new Error(`clicking a flat face didn't set the mirror plane (panel: "${(await page.locator('[aria-label="Pattern Mirror 1"]').innerText()).replace(/\n/g, " / ")}")`);
+    });
+    await page.getByLabel("Same part for symmetric parts").check();
+    const mirrorState = await page.evaluate(({ id }) => {
+      const a = window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id);
+      const p = a.patterns.find((x) => x.kind === "mirror");
+      return { plane: !!p?.plane, inner: !!p?.plane?.path?.length, same: !!p?.samePart, copies: a.instances.filter((i) => i.copyOf?.pattern === p?.id).map((i) => !!i.mirrored) };
+    }, asm2);
+    if (!mirrorState.plane || !mirrorState.same || mirrorState.copies.length !== 1) throw new Error(`the mirror isn't across the face: ${JSON.stringify(mirrorState)}`);
+    if ((await page.locator('[aria-label="Pattern Mirror 1"] .param-message.error').count()) > 0) {
+      throw new Error(`the mirror has a problem: ${await page.locator('[aria-label="Pattern Mirror 1"] .param-message.error').innerText()}`);
+    }
+    const mirroredBom = await page.locator(".bom-table").innerText();
+    const sameHand = !mirrorState.copies[0];
+    if (sameHand ? !new RegExp(`Part 2\\s+${part2Before + 1}\\b`).test(mirroredBom) : !/Part 2 \(mirrored\)\s+1\b/.test(mirroredBom)) throw new Error(`after mirroring, the parts list reads "${mirroredBom.replace(/\n/g, " / ")}"`);
+    await page.keyboard.press("f");
+    await page.waitForTimeout(600);
+    await shot("subassembly-mirror");
+    await page.getByRole("button", { name: "Close pattern" }).click();
+    subReport += `; its STEP file kept the structure (Assembly 1 defined once, used twice; ${shapes} part shape(s)); an exploded view step moved one part inside a copy; Part 2 mirrored across a face${mirrorState.inner ? " of a part inside a copy" : ""} ${sameHand ? "as the same part (symmetric)" : "as a mirror image"}`;
+
     // Double-click a sub-assembly to open it.
     await page.locator(".feature-row >> text=Assembly 1 <1>").dblclick();
     await page.waitForSelector(".tab.active >> text=Assembly 1", { timeout: 5_000 });
-    subReport = `a sub-assembly: Assembly 1 inserted twice into Assembly 2 (Bracket ×4, Part 2 ×3), mated by a part inside it (the whole copy moved), structured parts list`;
+    subReport = `a sub-assembly: Assembly 1 inserted twice into Assembly 2 (Bracket ×4, Part 2 ×3), mated by a part inside it (the whole copy moved), structured parts list${subReport}`;
     // Take Assembly 2 away again, so the rest of the test sees the same document.
     await page.evaluate((id) => window.juracadStore.getState().removeAssembly(id), asm2.id);
     await page.waitForFunction(() => ![...document.querySelectorAll(".tab")].some((t) => t.textContent?.includes("Assembly 2")), null, { timeout: 5_000 });

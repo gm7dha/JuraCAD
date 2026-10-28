@@ -38,14 +38,15 @@ import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCorne
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import { measureContacts } from "./clash";
-import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
 import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
-import { writeStep } from "./stepExport";
+import { writeStep, writeStepAssembly } from "./stepExport";
+import { stepPartCount } from "./stepCount";
 import { importKey, importSolids, isImportedSurface } from "./importer";
 import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
@@ -5134,7 +5135,25 @@ export class GeometryEngine {
    * STEP keeps the exact shape — curves stay curves — which is what most
    * manufacturers (machining, sheet metal, injection moulding) ask for.
    */
-  async exportStep(partIds: string[], colours: Record<string, string> = {}, instances?: InstanceInput[]): Promise<StepResult> {
+  async exportStep(partIds: string[], colours: Record<string, string> = {}, instances?: InstanceInput[], tree?: StepTree): Promise<StepResult> {
+    // A whole assembly: its structure kept (sub-assemblies, each part once, every copy a placed reference to it).
+    if (tree) {
+      const made: Shape3D[] = [];
+      try {
+        const bytes = writeStepAssembly(tree, (key) => {
+          const def = tree.parts[key];
+          const part = def && (this.parts.find((p) => p.id === def.partId) ?? this.parts.find((p) => p.id === def.partId.split("@")[0]));
+          if (!part) return null;
+          // The mirror image is a part of its own: the part flipped across its own YZ plane (as the 3D view shows it).
+          const shape = def.mirrored ? part.shape.clone().mirror("YZ", [0, 0, 0]) : part.shape;
+          if (def.mirrored) made.push(shape);
+          return { shape, colour: colours[def.partId] ?? colours[def.partId.split("@")[0]] ?? DEFAULT_PART_COLOUR };
+        });
+        return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: stepPartCount(tree) };
+      } finally {
+        made.forEach((m) => m.delete());
+      }
+    }
     return this.withChosen(partIds, instances, (chosen) => {
       const bytes = writeStep(chosen.map((p) => ({ shape: p.shape, name: p.name, colour: colours[p.id] ?? DEFAULT_PART_COLOUR })));
       return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: chosen.length };
