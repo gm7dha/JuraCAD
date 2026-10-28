@@ -502,6 +502,15 @@ export interface Dimension {
   textAlong?: number;
   /** Lengths: how far the number has been lifted off the dimension line (paper mm, + = above as read; joined by a leader). */
   textAcross?: number;
+  /**
+   * Diameters and radii: where the number has been dragged to, from the
+   * circle's centre — in the view's own millimetres (model mm, like the points),
+   * so it stays the same distance out from the circle when the view's scale
+   * changes. It's the point under the middle of its text (DimDrawing.label).
+   * The leader then runs from the circle out (or in) to it. Missing = at the
+   * end of the leader set by `angle` and `offset`.
+   */
+  textAt?: [number, number];
   /** Tolerance: how much bigger (plus) or smaller (minus) it may be, mm. Equal → "±". */
   tolerance?: { plus: number; minus: number };
   /** Text before and after the number, e.g. "4× " or " TYP". */

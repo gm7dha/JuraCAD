@@ -645,6 +645,16 @@ export class SceneManager {
     g.add(plate, gridLines, volume);
   }
 
+  /** The canvas the view is drawn on (and that takes the mouse). */
+  get canvas(): HTMLCanvasElement {
+    return this.renderer.domElement;
+  }
+
+  /** How fast the mouse wheel zooms (OrbitControls' zoomSpeed). */
+  get wheelZoomSpeed(): number {
+    return this.controls.zoomSpeed;
+  }
+
   /** Zoom and centre so everything visible fits on screen. */
   fit(animate = true): void {
     this.animateTo(this.fitGoal(), animate);

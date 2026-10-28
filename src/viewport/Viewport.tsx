@@ -33,6 +33,7 @@ import { planDrag, type DragPlan } from "../assembly/drag";
 import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mates";
 import { sectionPlane } from "./section";
 import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, setPatternDirection, sketchLine3D, type DirectionChoice, type PickableLine } from "../model/patternRefs";
+import { guardViewportZoom } from "./zoomGuard";
 
 /** Shared empty colour list (a selector must not make a new object each time). */
 const NO_COLOURS: Record<string, string> = {};
@@ -576,6 +577,8 @@ export function Viewport() {
       return;
     }
     viewportApi.current = manager;
+    // Pinch or Ctrl + wheel over the view (or the sketch's labels on it) zooms the view, never the whole page.
+    const unguard = guardViewportZoom(container.parentElement ?? container, manager.canvas, () => manager.wheelZoomSpeed);
     // Show whatever is already built (e.g. after a hot reload).
     const s = useStore.getState();
     manager.setHidden(s.hiddenParts);
@@ -584,6 +587,7 @@ export function Viewport() {
     manager.setSelection(s.selection);
     manager.setDatums({ selected: s.selectedPlane, listHover: s.listHoverPlane, hidden: s.hiddenDatums });
     return () => {
+      unguard();
       viewportApi.current = null;
       manager.dispose();
     };
