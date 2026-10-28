@@ -2142,15 +2142,16 @@ try {
       const sp = d.curves.find((c) => c.type === "spline");
       if (!sp) return null;
       const at = (id) => d.points.find((p) => p.id === id);
-      return { id: sp.id, first: at(sp.points[0]), last: at(sp.points[sp.points.length - 1]), n: sp.points.length };
+      return { id: sp.id, first: at(sp.points[0]), mid: at(sp.points[1]), last: at(sp.points[sp.points.length - 1]), n: sp.points.length };
     });
     if (!ends || ends.n !== 3) throw new Error(`the spline tool made ${JSON.stringify(ends)}`);
     // A line across, a quarter of the spline's width past its end.
     const wide = Math.abs(ends.last.x - ends.first.x);
     const wallX = ends.last.x + (wide / 4) * Math.sign(ends.last.x - ends.first.x);
+    // Near the spline's end, on it: a little way back along the chord to its middle point (close enough to the curve to click).
     const [w1, w2, near] = await page.evaluate(
-      ([x, y, w, ex]) => [window.juracadViewport.current.projectSketchPoint(x, y - w), window.juracadViewport.current.projectSketchPoint(x, y + w), window.juracadViewport.current.projectSketchPoint(ex, y)],
-      [wallX, ends.last.y, wide / 2, ends.last.x - (wallX - ends.last.x) * 0.1],
+      ([x, y, w, ex, ey]) => [window.juracadViewport.current.projectSketchPoint(x, y - w), window.juracadViewport.current.projectSketchPoint(x, y + w), window.juracadViewport.current.projectSketchPoint(ex, ey)],
+      [wallX, ends.last.y, wide / 2, ends.last.x + 0.08 * (ends.mid.x - ends.last.x), ends.last.y + 0.08 * (ends.mid.y - ends.last.y)],
     );
     await tool("Line");
     await page.mouse.click(box.x + w1.x, box.y + w1.y);
