@@ -86,6 +86,23 @@ describe("cancelling a call", () => {
     expect(s.signal).toBeNull();
   });
 
+  it("runs calls sent together one after another, and drops one cancelled while it waits its turn", async () => {
+    const { s } = newSession();
+    await plate(s);
+    const ac = new AbortController();
+    const [a, b, c] = [
+      callTool(s, "add_feature", { type: "cylinder", diameter: 4, height: 10, x: 5, y: 5 }),
+      callTool(s, "add_feature", { type: "cylinder", diameter: 4, height: 10, x: 35, y: 5 }, ac.signal),
+      callTool(s, "add_feature", { type: "cylinder", diameter: 4, height: 10, x: 35, y: 25 }),
+    ];
+    ac.abort();
+    expect(textOf(await a)).toMatch(/Added Cylinder 1/);
+    expect(textOf(await b)).toMatch(/^Cancelled: /);
+    // Neither change is lost (they'd overwrite each other if they ran at once).
+    expect(textOf(await c)).toMatch(/Added Cylinder 2/);
+    expect(s.doc.features.map((f) => f.type)).toEqual(["box", "cylinder", "cylinder"]);
+  });
+
   it("stops an assembly change and a drawing, writing no file", async () => {
     const { s, folder } = newSession();
     await plate(s);

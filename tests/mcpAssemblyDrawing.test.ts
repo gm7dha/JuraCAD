@@ -124,6 +124,7 @@ describe("assemblies made by Claude", () => {
     expect(await fails(s, "add_mate", { type: "fasten", first: { instance: "Base <1>", face: "F99" }, second: { instance: "Lid <1>", face: "bottom" } })).toMatch(/faces F1 to F\d+/);
     expect(await fails(s, "add_mate", { type: "fasten", first: { instance: "Lid <1>", face: "top" }, second: { origin: "Top" } })).toMatch(/origin never moves/);
 
+    expect(await okText(s, "describe_design")).toMatch(/Assemblies: "Box" \(2 copies, 1 mates\)/);
     const described = await okText(s, "describe_assembly", {});
     expect(described).toMatch(/Lid <1>: placed by Fasten 1, at \(/);
     expect(described).toMatch(/Parts list:\n1\. Base × 1\n2\. Lid × 1/);

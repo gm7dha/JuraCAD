@@ -584,6 +584,8 @@ export const TOOLS: ToolDef[] = [
           return `- ${partLine(p)}; ${sound}${c?.thinnest ? `; thinnest wall about ${r2(c.thinnest.thickness)} mm` : ""}`;
         }),
         checks.overlaps?.length ? `Overlapping parts: ${checks.overlaps.map((o) => `${o.a} and ${o.b} (${r1(o.volume)} mm³)`).join("; ")}.` : null,
+        doc.assemblies?.length ? `Assemblies: ${doc.assemblies.map((x) => `"${x.name}" (${x.instances.length} copies, ${(x.mates ?? []).length} mates)`).join(", ")} — describe_assembly for more.` : null,
+        doc.drawings?.length ? `Drawings: ${doc.drawings.map((x) => `"${x.name}"`).join(", ")} — describe_drawing for more.` : null,
         Object.keys(b.errors).length ? `Problems:\n${problems(s, b.errors).join("\n")}` : "No problems.",
       ];
       return say(...lines);
@@ -810,8 +812,8 @@ export async function callTool(s: Session, name: string, args: unknown, signal?:
       s.signal = null;
     }
   };
-  // Live: on the design open in the user's JuraCAD tab, with any change sent back to it.
-  return s.live ? s.live.call(s, name, run, signal) : run();
+  // One call at a time. Live: on the design open in the user's JuraCAD tab, with any change sent back to it.
+  return s.serial(() => (s.live ? s.live.call(s, name, run, signal) : run()));
 }
 
 /** What a cancelled call says (Claude has stopped waiting, so it's mostly for logs and tests). */

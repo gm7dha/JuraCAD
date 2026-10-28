@@ -83,6 +83,8 @@ export class Session {
   outer: { doc: JuraCADDocument; studio: string } | null = null;
   /** The live link with a JuraCAD tab, when the extension has one (it may not be connected). */
   live: LiveLink | null = null;
+  /** Calls run one at a time (Claude may send several at once; tools wait at checkpoints, so they'd otherwise interleave). */
+  private queue: Promise<unknown> = Promise.resolve();
   /** Set while a call runs: aborted when Claude cancels it. */
   signal: AbortSignal | null = null;
   /** Set when the call running now has written a file (which can't be taken back if it's cancelled after). */
@@ -102,6 +104,13 @@ export class Session {
     private readonly makeEngine: () => GeometryEngine = () => new GeometryEngine(),
   ) {
     this.engine = makeEngine();
+  }
+
+  /** Run calls one after another, in the order they came. */
+  serial<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(fn);
+    this.queue = next.catch(() => {});
+    return next;
   }
 
   /** Has Claude cancelled the call running now? */
