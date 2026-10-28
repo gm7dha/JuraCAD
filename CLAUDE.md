@@ -45,7 +45,9 @@
   accident. `followSketch` re-finds them each rebuild (`seeSketchCurve`/`sketchPointAt` from the earlier sketches' built
   versions — a later or deleted sketch = lost; `seeEdge`/`edgePoint3` among all the part's edges) and returns
   `SketchLinkInfo.pointLinks`; `followLinks(s, links, pointLinks)`. Sketches later in the list are offered with
-  `source.later` and refused with `laterMessage`. Faint dots near the pointer: `SketchTransient.nearby`.
+  `source.later` and refused with `laterMessage`. The controller offers only sketches shown in the view (`sketchVisible`) and
+  parts not hidden; clicks prefer the sketch's own geometry, then text/pictures, then outside refs, and the face's own corners win
+  ties (`preferFace`). Faint dots near the pointer: `SketchTransient.nearby`.
   Tangent lines (`src/sketch/tangents.ts`): the line tool offers lines touching two circles/arcs (outer + crossing) or
   from a point to one (`tangentLineAt`), made by `addTangentLine` (ends `pointOnCircle`, plus `tangent` to each).
   Circular sketch patterns round a point add `patternCopy` constraints (+ `equal` with extra [1] for
