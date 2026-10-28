@@ -243,6 +243,8 @@ const FEATURE_DRAG = "application/x-juracad-feature";
 
 function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void; linked: boolean; draggable?: boolean }) {
   const kernelError = useStore((s) => s.featureErrors[feature.id]);
+  // Built, but with something to tell (shown in amber, not as a failure).
+  const warning = useStore((s) => s.featureWarnings[feature.id]);
   const selected = useStore((s) => s.selectedFeatureId === feature.id);
   const editing = useStore((s) => s.editing?.draft.id === feature.id);
   const selectFeature = useStore((s) => s.selectFeature);
@@ -308,6 +310,7 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
         !selected && linked && "linked",
         editing && "editing",
         error && !feature.suppressed && "failed",
+        !error && warning && !feature.suppressed && "warned",
         feature.suppressed && "suppressed",
         isSource && "source",
         rolledBack && "rolled-back",
@@ -359,7 +362,9 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
           ? "Suppressed — skipped when building"
           : error
             ? `Couldn't build: ${error}`
-            : `${FEATURE_DEFS[feature.type].label}${op}. Double-click to edit, right-click for more.`
+            : warning
+              ? `Built, but: ${warning}`
+              : `${FEATURE_DEFS[feature.type].label}${op}. Double-click to edit, right-click for more.`
       }
     >
       <span className="feature-icon">
@@ -371,6 +376,11 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
       </span>
       {error && !feature.suppressed && (
         <span className="feature-error-icon" aria-label="Error">
+          <Icons.Warning size={16} />
+        </span>
+      )}
+      {!error && warning && !feature.suppressed && (
+        <span className="feature-warning-icon" aria-label="Note">
           <Icons.Warning size={16} />
         </span>
       )}

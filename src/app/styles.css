@@ -562,6 +562,11 @@ button:disabled {
   display: inline-flex;
   color: var(--error);
 }
+/* Built, but with something to tell (e.g. an extra sketch it left out): amber, not a failure. */
+.feature-warning-icon {
+  display: inline-flex;
+  color: var(--warn);
+}
 
 .part-row.hidden .feature-name {
   color: var(--ink-3);
@@ -805,6 +810,20 @@ button:disabled {
   color: var(--error);
   background: var(--error-soft);
   border: 1px solid var(--error-line);
+  border-radius: 5px;
+  padding: 7px 9px;
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+/* Built, but with something to tell. */
+.dialog-warning {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
   border-radius: 5px;
   padding: 7px 9px;
   font-size: 13px;
