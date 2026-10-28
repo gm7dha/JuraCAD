@@ -1321,9 +1321,11 @@ try {
     await page.waitForSelector('[aria-label="Pattern Mirror 1"]', { timeout: 5_000 });
     await page.locator("#asm-mirror-plane").selectOption("face");
     await page.waitForSelector("text=Click a flat face in the view to mirror across.", { timeout: 5_000 });
-    const sideSpot = await page.evaluate(({ second }) => {
+    // (A part of the first copy: the second copy's top face has Part 2 <1> fastened on it.)
+    const sideSpot = await page.evaluate(({ id }) => {
       const v = window.juracadViewport.current;
-      for (const p of v.shownParts().filter((m) => m.id.startsWith(`${second}/`))) {
+      const first = window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.name === "Assembly 1 <1>").id;
+      for (const p of v.shownParts().filter((m) => m.id.startsWith(`${first}/`))) {
         const at = v.screenPointOnFace(p.id, p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99));
         if (at) return at;
       }
@@ -1331,7 +1333,9 @@ try {
     }, asm2);
     if (!sideSpot) throw new Error("couldn't find a face to mirror across");
     await canvas.click({ position: sideSpot });
-    await page.waitForSelector("text=A face of Assembly 1 <2> /", { timeout: 5_000 });
+    await page.waitForSelector("text=A face of Assembly 1 <1> /", { timeout: 5_000 }).catch(async () => {
+      throw new Error(`clicking a face inside Assembly 1 <1> didn't set the mirror plane (panel: "${(await page.locator('[aria-label="Pattern Mirror 1"]').innerText()).replace(/\n/g, " / ")}")`);
+    });
     await page.getByLabel("Same part for symmetric parts").check();
     const mirrorState = await page.evaluate(({ id }) => {
       const a = window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id);
