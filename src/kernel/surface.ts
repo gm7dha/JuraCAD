@@ -12,7 +12,7 @@ import { findChains, type Chain } from "../sketch/regions";
 import { axisInSketch, type RevolveAxis } from "../sketch/axis";
 import type { SketchData } from "../sketch/types";
 import { release, segmentsWire } from "./extrude";
-import { loopStart, pathWire, profileAt } from "./sweep";
+import { loopStart, pathWire, profileAt, twistGuide, type SweepControl } from "./sweep";
 import { edgesOf, facesOf, solidsOf } from "./topology";
 
 type Vec3 = [number, number, number];
@@ -102,9 +102,21 @@ export function revolveSurface(plane: SketchPlane, data: SketchData, opts: { axi
 }
 
 /** Each run of the profile's curves carried along the path: a skin. */
-export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData): Shape3D {
+export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData, control: SweepControl = {}): Shape3D {
   const { wires } = sketchWires(profilePlane, profile, "sweep");
   const spine = pathWire(pathPlane, path, profileAt(profilePlane, profile));
+  const twist = control.lockOrientation ? 0 : control.twist ?? 0;
+  let guide: Wire | null = null;
+  if (Math.abs(twist) >= 1e-9) {
+    try {
+      if (spine.isClosed) throw new Error("Twist needs a path with two ends — it can't go all the way round a closed loop. Set the twist to 0, or open the path.");
+      guide = twistGuide(spine, twist);
+    } catch (e) {
+      release(spine, ...wires);
+      throw e;
+    }
+  }
+  const frame = planeFrame(profilePlane);
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const why = (e: unknown): string => {
@@ -123,13 +135,27 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
         const pipe = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
         try {
           pipe.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RoundCorner);
+          // Twisted: the profile keeps facing a guide wound round the path. Locked: every section parallel to the first.
+          if (guide) pipe.SetMode(guide.wrapped, false, oc.BRepFill_TypeOfContact.BRepFill_NoContact);
+          else if (control.lockOrientation) {
+            const p = new oc.gp_Pnt(...frame.origin);
+            const n = new oc.gp_Dir(...frame.n);
+            const x = new oc.gp_Dir(...frame.u);
+            const ax = new oc.gp_Ax2(p, n, x);
+            pipe.SetMode(ax);
+            [p, n, x, ax].forEach((o) => o.delete());
+          }
           // No correction: a single line has no plane to turn square to the path.
           pipe.Add(w.wrapped, false, false);
           pipe.Build();
           if (!pipe.IsDone()) throw new Error("the path and outline don't go together");
           return cast(pipe.Shape()) as Shape3D;
         } catch (e) {
-          throw new Error(`Couldn't sweep the outline along that path (${why(e)}). Check it sits at the start of the path and is small enough for its bends.`);
+          throw new Error(
+            guide
+              ? `Couldn't twist the outline along that path (${why(e)}). Try a smaller twist or a smoother path.`
+              : `Couldn't sweep the outline along that path (${why(e)}). Check it sits at the start of the path and is small enough for its bends.`,
+          );
         } finally {
           pipe.delete();
         }
@@ -137,6 +163,7 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
     );
   } finally {
     release(spine, ...wires);
+    if (guide) release(guide);
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }

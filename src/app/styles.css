@@ -439,7 +439,9 @@ button:disabled {
 }
 
 .feature-row.datum.hidden .feature-name,
-.feature-row.datum.hidden .feature-icon {
+.feature-row.datum.hidden .feature-icon,
+.feature-row.geometry-hidden .feature-icon,
+.feature-row.geometry-hidden .feature-name {
   color: var(--ink-3);
   opacity: 0.6;
 }
@@ -1559,6 +1561,16 @@ kbd {
 
 .drawing-dim-handle:hover {
   fill: rgba(31, 111, 209, 0.12);
+}
+
+/* The whole of a dimension's number can be grabbed and dragged. */
+.drawing-dim-text {
+  fill: transparent;
+  cursor: move;
+}
+
+.drawing-dim-text:hover {
+  fill: rgba(31, 111, 209, 0.08);
 }
 
 .drawing-select-box {

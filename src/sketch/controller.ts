@@ -3,7 +3,9 @@
  * viewport) into sketch edits, and keeps the live preview (rubber-band line,
  * snap marker) for the viewport to draw.
  */
-import { useStore, type SketchTool } from "../model/store";
+import { activeFeatures, useStore, type SketchTool } from "../model/store";
+import { sketchVisible, usedSketches } from "../model/visibility";
+import type { Feature } from "../model/types";
 import { hitTest, inferOrientation, type Hit } from "./hit";
 import { dimensionLayout, offsetFor } from "./layout";
 import {
@@ -167,12 +169,13 @@ export class SketchController {
   }
 
   /** The part face's edges, and everything else the sketch can snap to (found on the latest rebuild), worked out once per rebuild. */
-  private refsCache: { edges: RefEdge[]; candidates: RefEdge[]; hidden: string[]; list: RefEdge[] } | null = null;
+  private refsCache: { edges: RefEdge[]; candidates: RefEdge[]; hidden: string[]; features: Feature[]; list: RefEdge[] } | null = null;
 
   /**
    * Edges of the part face the sketch is on (first, so their "ref:<n>" ids
-   * match what the view draws), then other sketches' geometry and the edges
-   * of every part that isn't hidden, seen square-on to the sketch.
+   * match what the view draws), then the geometry of the other sketches shown
+   * in the view and the edges of every part that isn't hidden, seen square-on
+   * to the sketch.
    */
   private get refs(): RefEdge[] {
     const id = this.state.editing?.draft.id;
@@ -180,10 +183,16 @@ export class SketchController {
     const edges = info?.edges ?? NO_REFS;
     const candidates = info?.candidates ?? NO_REFS;
     const hidden = this.state.hiddenParts;
+    const features = activeFeatures(this.state);
     const c = this.refsCache;
-    if (c && c.edges === edges && c.candidates === candidates && c.hidden === hidden) return c.list;
-    const list = candidates.length ? [...edges, ...candidates.filter((r) => !r.pick || !hidden.includes(r.pick.partId))] : edges;
-    this.refsCache = { edges, candidates, hidden, list };
+    if (c && c.edges === edges && c.candidates === candidates && c.hidden === hidden && c.features === features) return c.list;
+    let list = edges;
+    if (candidates.length) {
+      const used = usedSketches(features);
+      const shown = new Set(features.filter((f) => f.type === "sketch" && sketchVisible(f, used)).map((f) => f.id));
+      list = [...edges, ...candidates.filter((r) => (r.pick ? !hidden.includes(r.pick.partId) : !r.source || shown.has(r.source.sketch)))];
+    }
+    this.refsCache = { edges, candidates, hidden, features, list };
     return list;
   }
 

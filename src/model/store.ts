@@ -35,7 +35,7 @@ import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
-import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties } from "./types";
+import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties, PlaneName, DatumName } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
@@ -55,6 +55,7 @@ import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameD
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
+import { hiddenDatumsOf, keepVisibility, setAllSketchesVisible, setDatumHidden, setFeaturesVisible } from "./visibility";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
 
@@ -84,10 +85,7 @@ export function pickFor(parts: PartMesh[], item: SelectionItem): TopoPick | null
   return { partId: item.partId, ref };
 }
 
-/** The default planes, as in Onshape. Top = XY, Front = XZ, Right = YZ. */
-export type PlaneName = "Top" | "Front" | "Right";
-/** Default geometry listed at the top of the feature list. */
-export type DatumName = "Origin" | PlaneName;
+export type { PlaneName, DatumName } from "./types";
 
 export interface Editing {
   mode: "create" | "edit";
@@ -229,7 +227,6 @@ export interface AppState {
   selectedPlane: PlaneName | null;
   /** Plane whose row the pointer is over in the feature list (highlighted in the viewport). */
   listHoverPlane: PlaneName | null;
-  hiddenDatums: DatumName[];
 
   kernelStatus: "loading" | "ready" | "failed";
   kernelError: string | null;
@@ -273,7 +270,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -319,6 +316,10 @@ export interface AppState {
   renameFeature: (id: string, name: string) => void;
   /** Feature list folders: put features in one (null takes them out), or rename one. */
   setFeatureFolder: (ids: string[], folder: string | null) => void;
+  /** The eye on sketches and Plane features: show or hide them in the 3D view (saved in the file). */
+  setFeaturesVisible: (ids: string[], visible: boolean) => void;
+  /** "Show all sketches" / "Hide all sketches" in the Part Studio on show. */
+  setAllSketchesVisible: (visible: boolean) => void;
   renameFeatureFolder: (from: string, to: string) => void;
   renameDocument: (name: string) => void;
   /** Name a part (blank goes back to "Part N"). One undo step. */
@@ -576,7 +577,6 @@ export const useStore = create<AppState>((set, get) => {
     selectedParts: [],
     selectedPlane: null,
     listHoverPlane: null,
-    hiddenDatums: [],
 
     kernelStatus: "loading",
     kernelError: null,
@@ -878,7 +878,7 @@ export const useStore = create<AppState>((set, get) => {
       const draft = sk ? { ...named, sketch: { ...sk, data: withoutEmptyExtras(pruneReferences(sk.data)) } } : named;
       // Rolled back: a new feature goes in at the rollback point, and the bar moves down past it.
       const at = get().rollbackTo;
-      changeStudio((doc) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, draft)));
+      changeStudio((doc) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, keepVisibility(doc, draft))));
       set({ editing: null, sketch: null, selectedFeatureId: draft.id, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
       return true;
     },
@@ -932,6 +932,12 @@ export const useStore = create<AppState>((set, get) => {
 
     renameFeature: (id, name) => changeStudio((doc) => renameFeature(doc, id, name)),
     setFeatureFolder: (ids, folder) => changeStudio((doc) => setFolder(doc, ids, folder)),
+    setFeaturesVisible: (ids, visible) => {
+      changeStudio((doc) => setFeaturesVisible(doc, ids, visible));
+      // A hidden plane can't stay picked.
+      if (!visible && get().selectedFeatureId && ids.includes(get().selectedFeatureId!) && activeFeatures(get()).find((f) => f.id === get().selectedFeatureId)?.type === "plane") set({ selectedFeatureId: null });
+    },
+    setAllSketchesVisible: (visible) => changeStudio((doc) => setAllSketchesVisible(doc, visible)),
     renameFeatureFolder: (from, to) => changeStudio((doc) => renameFolder(doc, from, to)),
 
     setPartProperties: (partId, props) => change((doc) => setPartPropertiesIn(doc, partId, props)),
@@ -1520,15 +1526,13 @@ export const useStore = create<AppState>((set, get) => {
         selectedFeatureId: plane ? null : s.selectedFeatureId,
       })),
     setListHoverPlane: (listHoverPlane) => set({ listHoverPlane }),
-    toggleDatum: (datum) =>
-      set((s) => {
-        const hidden = s.hiddenDatums.includes(datum);
-        return {
-          hiddenDatums: hidden ? s.hiddenDatums.filter((d) => d !== datum) : [...s.hiddenDatums, datum],
-          // A hidden plane can't stay selected.
-          selectedPlane: !hidden && s.selectedPlane === datum ? null : s.selectedPlane,
-        };
-      }),
+    toggleDatum: (datum) => {
+      const studio = activeStudioId(get()) ?? MAIN_STUDIO;
+      const hidden = hiddenDatumsOf(get().history.present, studio).includes(datum);
+      change((doc) => setDatumHidden(doc, studio, datum, !hidden));
+      // A hidden plane can't stay selected.
+      if (!hidden && get().selectedPlane === datum) set({ selectedPlane: null });
+    },
 
     openDialog: (dialog) => set({ dialog }),
     setSection: (section) => set({ section }),
@@ -1592,6 +1596,11 @@ export function activeStudioId(s: Pick<AppState, "activeTab" | "history">): stri
   if (s.activeTab && doc.assemblies?.some((a) => a.id === s.activeTab)) return null;
   if (s.activeTab && doc.drawings?.some((d) => d.id === s.activeTab)) return null;
   return s.activeTab && studioExists(doc, s.activeTab) ? s.activeTab : MAIN_STUDIO;
+}
+
+/** The Origin and default planes hidden in the Part Studio on show. Same array each time. */
+export function activeHiddenDatums(s: Pick<AppState, "activeTab" | "history">): DatumName[] {
+  return hiddenDatumsOf(s.history.present, activeStudioId(s) ?? MAIN_STUDIO);
 }
 
 /** Features of the Part Studio on show (the first one while an assembly is on show). Same array each time. */
