@@ -816,7 +816,15 @@ try {
   await page.getByRole("button", { name: "Cancel" }).click();
 
   step = "moving a copy of a part";
-  const partsBeforeMove = await page.locator(".part-row").count();
+  // Parts of features really in the design: a cancelled dialog's preview (the circular pattern above makes parts of
+  // its own) may still be in the list until the next rebuild lands, so it isn't counted.
+  const realParts = () =>
+    page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const ids = new Set(s.history.present.features.map((f) => f.id));
+      return s.parts.filter((p) => !p.configuration && ids.has(p.id.split("~")[0])).length;
+    });
+  const partsBeforeMove = await realParts();
   await page.getByRole("button", { name: "Move", exact: true }).click();
   await page.waitForSelector(".feature-dialog >> text=Make a copy");
   await page.getByLabel("Make a copy (keep the original where it is)").check();
@@ -824,7 +832,23 @@ try {
   await page.getByRole("button", { name: "Accept" }).click();
   await page.waitForSelector(".feature-row:not(.datum) >> text=Transform 1", { timeout: 10_000 });
   // The copy is one more part (the pattern of the revolve already made its own part, as in Onshape); wait for that rebuild.
-  await page.waitForFunction((n) => document.querySelectorAll(".part-row").length === n + 1, partsBeforeMove, { timeout: 30_000 });
+  await page
+    .waitForFunction(
+      (n) => {
+        const s = window.juracadStore.getState();
+        const ids = new Set(s.history.present.features.map((f) => f.id));
+        return !s.rebuildBusy && s.parts.filter((p) => !p.configuration && ids.has(p.id.split("~")[0])).length === n + 1;
+      },
+      partsBeforeMove,
+      { timeout: 30_000 },
+    )
+    .catch(async () => {
+      const s = await page.evaluate(() => {
+        const st = window.juracadStore.getState();
+        return `busy ${st.rebuildBusy}; parts ${st.parts.map((p) => `${p.name}=${p.id}${p.studioId ? "@" + p.studioId : ""}`).join(", ")}; errors ${JSON.stringify(st.featureErrors)}`;
+      });
+      throw new Error(`the copy didn't appear as one more part (had ${partsBeforeMove}): ${s}`);
+    });
   await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
   if ((await page.locator(".feature-row.failed").count()) > 0) {
     const info = await page.evaluate(() => {
