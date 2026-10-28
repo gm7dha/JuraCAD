@@ -130,6 +130,41 @@ describe("Insert DXF", () => {
     expect(areaOf(r.sketch)).toBeCloseTo(Math.PI * 10 * 5, 0);
   });
 
+  it("part of an ellipse comes in as part of an ellipse, its ends joined to what meets them", () => {
+    // Half an ellipse (long axis 10 along X turned 90°: along Y), from the top round the left to the bottom, closed by a line.
+    const d = parseDxf(
+      dxf([
+        ["0", "ELLIPSE", 10, 0, 20, 0, 11, 0, 21, 10, 40, 0.5, 41, 0, 42, Math.PI],
+        ["0", "LINE", 10, 0, 20, -10, 11, 0, 21, 10],
+      ]),
+    );
+    const r = insertDxf(emptySketch(), d, 2);
+    expect(r.count).toBe(2);
+    const [el, ln] = r.sketch.curves;
+    expect(el.type).toBe("ellipse");
+    if (el.type !== "ellipse" || ln.type !== "line") return;
+    expect(pos(r.sketch, el.center)).toEqual([0, 0]);
+    expect(pos(r.sketch, el.major)).toEqual([0, 20]);
+    expect(pos(r.sketch, el.minor)).toEqual([-10, 0]);
+    expect(pos(r.sketch, el.start!)).toEqual([0, 20]);
+    expect(pos(r.sketch, el.end!)).toEqual([0, -20]);
+    // The line's ends are the arc's ends (one point each), so the half ellipse is a closed shape.
+    expect([ln.p1, ln.p2].sort()).toEqual([el.start!, el.end!].sort());
+    expect(r.sketch.points).toHaveLength(5);
+    // (Areas are measured on the outline drawn as short straight pieces.)
+    expect(areaOf(r.sketch)).toBeCloseTo((Math.PI * 20 * 10) / 2, 0);
+  });
+
+  it("part of an ellipse running past a whole turn's start still goes anticlockwise", () => {
+    // From 3/2·π round through 0 to ½π: the right-hand half.
+    const d = parseDxf(dxf([["0", "ELLIPSE", 10, 0, 20, 0, 11, 10, 21, 0, 40, 0.5, 41, 1.5 * Math.PI, 42, 0.5 * Math.PI]]));
+    const r = insertDxf(emptySketch(), d, 1);
+    const el = r.sketch.curves[0];
+    if (el.type !== "ellipse") throw new Error("not an ellipse");
+    expect(pos(r.sketch, el.start!)).toEqual([0, -5]);
+    expect(pos(r.sketch, el.end!)).toEqual([0, 5]);
+  });
+
   it("says what it left out, and explains a file it can't use", () => {
     const d = parseDxf(dxf([...rect, ["0", "TEXT", 1, "hello"], ["0", "HATCH"], ["0", "HATCH"]]));
     expect(d.skipped).toEqual({ TEXT: 1, HATCH: 2 });
@@ -161,10 +196,15 @@ describe("Insert DXF with broken or huge files", () => {
     const big = parseDxf(dxf([["0", "ELLIPSE", 10, 0, 20, 0, 11, 10, 21, 0, 40, 0.5, 41, 0, 42, 1e9]]));
     const r = insertDxf(emptySketch(), big, 1);
     expect(r.sketch.curves.map((c) => c.type)).toEqual(["ellipse"]);
-    // Part of an ellipse with huge but close parameters: a spline with a handful of points.
+    // Part of an ellipse with huge but close parameters: part of an ellipse, its ends within one turn.
     const part = parseDxf(dxf([["0", "ELLIPSE", 10, 0, 20, 0, 11, 10, 21, 0, 40, 0.5, 41, 1e6, 42, 1e6 + 1]]));
-    const sp = insertDxf(emptySketch(), part, 1).sketch.curves[0];
-    expect(sp.type === "spline" && sp.points.length).toBeLessThanOrEqual(65);
+    const pr = insertDxf(emptySketch(), part, 1).sketch;
+    const el = pr.curves[0];
+    expect(el.type === "ellipse" && !!el.start && !!el.end).toBe(true);
+    if (el.type !== "ellipse") return;
+    const t0 = 1e6 % (2 * Math.PI);
+    expect(pointPos(pr, el.start!)[0]).toBeCloseTo(10 * Math.cos(t0), 6);
+    expect(pointPos(pr, el.start!)[1]).toBeCloseTo(5 * Math.sin(t0), 6);
   });
 
   it("shapes with numbers that aren't numbers are left out, and said so", () => {

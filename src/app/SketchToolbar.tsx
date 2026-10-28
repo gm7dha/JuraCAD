@@ -27,7 +27,7 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "point", label: "Point", key: "P", icon: <Icons.Point />, hint: "Click to place a point" },
   { tool: "dimension", label: "Dimension", key: "D", icon: <Icons.Dimension />, hint: "Click a line or circle (or two things), then where the value goes — where you put it picks across, up or straight" },
   { tool: "sketchFillet", label: "Round", key: "", icon: <Icons.CornerRound />, hint: "Click a corner where two lines or arcs meet to round it (set the radius in the sketch panel)" },
-  { tool: "extend", label: "Extend", key: "", icon: <Icons.Extend />, hint: "Click near the end of a line or arc to lengthen it up to the next line, arc or circle" },
+  { tool: "extend", label: "Extend", key: "", icon: <Icons.Extend />, hint: "Click near the end of a line, arc, spline or part of an ellipse to lengthen it up to the next curve it meets" },
   { tool: "split", label: "Split", key: "", icon: <Icons.SplitLine />, hint: "Click a line, arc, spline or part of an ellipse where you want to break it into two (the pieces keep exactly the same shape)" },
   { tool: "trim", label: "Trim", key: "T", icon: <Icons.Trim />, hint: "Click a piece of a line, arc, circle, spline or ellipse to cut it away up to where other curves cross it" },
   { tool: "offset", label: "Offset", key: "O", icon: <Icons.Offset />, hint: "Click a shape's edge on the side to offset towards — a copy that far away that follows the original (set the distance in the sketch panel). Splines and ellipses too" },

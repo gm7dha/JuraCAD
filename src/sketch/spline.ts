@@ -127,6 +127,21 @@ export function bezierBetween(b: [P2, P2, P2, P2], t0: number, t1: number): [P2,
   return piece;
 }
 
+/**
+ * A cubic Bézier piece's own curve between any two parameters, beyond 0…1 too
+ * (blossoming): with t1 > 1 or t0 < 0 it's the piece carried on naturally past
+ * its end, curving on just as it was. Follows the original exactly where they overlap.
+ */
+export function cubicOn(b: [P2, P2, P2, P2], t0: number, t1: number): [P2, P2, P2, P2] {
+  const lerp = (p: P2, q: P2, t: number): P2 => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+  const blossom = (u1: number, u2: number, u3: number): P2 => {
+    const l1 = [lerp(b[0], b[1], u1), lerp(b[1], b[2], u1), lerp(b[2], b[3], u1)];
+    const l2 = [lerp(l1[0], l1[1], u2), lerp(l1[1], l1[2], u2)];
+    return lerp(l2[0], l2[1], u3);
+  };
+  return [blossom(t0, t0, t0), blossom(t0, t0, t1), blossom(t0, t1, t1), blossom(t1, t1, t1)];
+}
+
 /** Direction and speed (first derivative) of a Bézier piece at t. */
 export function bezierD1([a, b, c, d]: [P2, P2, P2, P2], t: number): P2 {
   const u = 1 - t;
