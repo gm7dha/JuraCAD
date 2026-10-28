@@ -2013,14 +2013,22 @@ try {
   step = "one sketch, two circles, each extruded on its own (Onshape style)";
   let regionsReport = "";
   {
-    await page.getByRole("button", { name: "Add a tab" }).click();
+    const why = async (what) => {
+      const info = await page.evaluate(() => {
+        const s = window.juracadStore.getState();
+        const d = s.editing?.draft;
+        return JSON.stringify({ draft: d ? { type: d.type, sketchRef: d.sketchRef, areas: d.areas?.length, op: d.operation } : null, errors: s.featureErrors, parts: s.parts.map((p) => p.name + ":" + p.id), rows: document.querySelectorAll(".part-row").length, busy: s.rebuildBusy, toast: s.toast?.text });
+      });
+      throw new Error(`${what}: ${info}`);
+    };
+        await page.getByRole("button", { name: "Add a tab" }).click();
     await page.getByRole("menuitem", { name: "Part Studio" }).click();
     await page.waitForSelector(".tab.active >> text=Part Studio 3");
     await page.evaluate(() => window.juracadStore.getState().setShowFlat(false));
     await page.getByRole("button", { name: "Sketch", exact: true }).click();
     await page.waitForSelector(".sketch-panel");
     await page.locator(".feature-row.datum", { hasText: "Top" }).click();
-    await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane"));
+    await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane")).catch(() => why('() => document.querySelector(".sketch-plane-row")?.textConte'));
     await page.waitForTimeout(600);
     const box = await page.locator(".viewport").boundingBox();
     const mx = box.x + box.width / 2;
@@ -2052,7 +2060,7 @@ try {
     const before = await spots();
     if (before.length !== 2) throw new Error(`expected the sketch's 2 circles to be clickable with nothing open, got ${before.length}`);
     await clickSpot(smallest(before));
-    await page.waitForFunction(() => window.juracadStore.getState().areaSelection?.areas.length === 1, null, { timeout: 5_000 });
+    await page.waitForFunction(() => window.juracadStore.getState().areaSelection?.areas.length === 1, null, { timeout: 5_000 }).catch(() => why('() => window.juracadStore.getState().areaSelection?.areas.le'));
     await page.getByRole("button", { name: "Extrude", exact: true }).click();
     const first = await page.evaluate(() => {
       const d = window.juracadStore.getState().editing.draft;
@@ -2061,7 +2069,7 @@ try {
     if (first.areas !== 1 || first.operation !== "new" || !first.apart) throw new Error(`Extrude 1 should start with the selected circle as a New part, got ${JSON.stringify(first)}`);
     await page.locator("#param-depth").fill("60");
     await page.getByRole("button", { name: "Accept" }).click();
-    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 }).catch(() => why('() => document.querySelectorAll(".part-row").length === 1, n'));
 
     step = "Extrude 2 after the sketch hid itself: clicking the big circle in the 3D view";
     const hidden = await page.evaluate(() => {
@@ -2088,14 +2096,14 @@ try {
     if (!shades.includes("taken") || !shades.includes("picked")) throw new Error(`expected one area used elsewhere and one picked, got ${JSON.stringify(shades)}`);
     // Clicking the big circle leaves it out; clicking it again picks it.
     await clickSpot(biggest(during));
-    await page.waitForFunction(() => !window.juracadStore.getState().editing.draft.areas);
+    await page.waitForFunction(() => !window.juracadStore.getState().editing.draft.areas).catch(() => why('() => !window.juracadStore.getState().editing.draft.areas);'));
     await clickSpot(biggest(during));
-    await page.waitForFunction(() => window.juracadStore.getState().editing.draft.areas?.length === 1);
+    await page.waitForFunction(() => window.juracadStore.getState().editing.draft.areas?.length === 1).catch(() => why('() => window.juracadStore.getState().editing.draft.areas?.le'));
     await page.locator("#param-depth").fill("10");
     await page.getByRole("button", { name: "Accept" }).click();
     // Not touching Part 1, so it's a part of its own (as Onshape does).
-    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 2, null, { timeout: 30_000 });
-    await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 2, null, { timeout: 30_000 }).catch(() => why('() => document.querySelectorAll(".part-row").length === 2, n'));
+    await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 }).catch(() => why('() => !window.juracadStore.getState().rebuildBusy, null, { t'));
     const sizes = await page.evaluate(() => {
       const s = window.juracadStore.getState();
       const doc = s.history.present;
