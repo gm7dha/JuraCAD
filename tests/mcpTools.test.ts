@@ -439,8 +439,10 @@ describe("JuraCAD tools for Claude", () => {
     expect(ex.moreAreas).toEqual([{ sketch: right, areas: [[25, 5]] }]);
     expect(ex.apart).toBe(true);
     expect(ex.intersectAll).toBe(true);
-    // Right is in use, so it can't be deleted from under the extrude.
-    expect(await fails(s, "delete_feature", { feature: "Right" })).toMatch(/Right is used by Extrude 1/);
+    // Deleting Right goes ahead: the extrude carries on with Left's area, and Claude is told (then undone).
+    expect(await ok(s, "delete_feature", { feature: "Right" })).toMatch(/Note: Extrude 1: .* has been deleted, so its areas are left out of this extrude/);
+    await ok(s, "undo");
+    expect(s.doc.features[1].name).toBe("Right");
     // Changing the depth keeps the extra areas; choosing another sketch drops the old sketch's picks.
     await ok(s, "edit_feature", { feature: "Extrude 1", depth: 6 });
     expect(s.doc.features[2].moreAreas).toHaveLength(1);
