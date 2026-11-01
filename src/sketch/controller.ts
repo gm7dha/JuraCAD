@@ -62,9 +62,9 @@ import {
 import { ORIGIN_ID, type SketchData } from "./types";
 import { placedByOffset } from "./solver";
 import { addText, imageAt, imageById, readTextSettings, textAt, textById } from "./sketchText";
-import { isRefId, laterMessage, parseRefId, refSketch, type RefEdge } from "./links";
+import { isRefId, laterMessage, linkEdge, parseRefId, refSketch, type RefEdge } from "./links";
 import { addTangentLine, tangentLineAt, type TangentLine } from "./tangents";
-import { attachPoint, bringIn, hintFor, nearRefs, pickAt, snapAt, type SnapResult } from "./snaps";
+import { attachPoint, bringIn, hintFor, nearRefs, pickAt, sketchCurveAt, snapAt, type SnapResult } from "./snaps";
 import type { Snap } from "./ops";
 import { splinePolyline } from "./spline";
 import { ellipseFrom, ellipsePolyline, minorPointFor } from "./ellipse";
@@ -282,6 +282,26 @@ export class SketchController {
     return r.id;
   }
 
+  /**
+   * The Use tool, clicked in the sketch: another sketch's line, circle, arc,
+   * spline or ellipse under the pointer is copied in as real geometry that
+   * follows it. False when there's none there (the click then goes to the
+   * parts' edges).
+   */
+  useAt(e: SketchPointer): boolean {
+    const d = this.data;
+    if (!d || this.tool !== "useEdge") return false;
+    const edge = sketchCurveAt(this.refs, e.x, e.y, CURVE_PX * e.mmPerPx, this.skipRef);
+    if (!edge) return false;
+    if (edge.source?.later) {
+      this.state.setSketchMessage(laterMessage(edge), "info");
+      return true;
+    }
+    const r = linkEdge(d, edge, false);
+    this.commit(r, r.curveId ? [r.curveId] : []);
+    return true;
+  }
+
   private get tool(): SketchTool {
     const tool = this.state.sketch?.tool ?? "select";
     if (tool !== this.lastTool) {
@@ -462,9 +482,13 @@ export class SketchController {
     return hitTest(d, e.x, e.y, POINT_PX * e.mmPerPx, CURVE_PX * e.mmPerPx, { ignore });
   }
 
-  /** Where the pointer snaps to while drawing (points, middles of lines, part edges, lining up, onto curves). */
-  private snapAt(e: SketchPointer): SnapResult {
-    return snapAt(this.data!, e.x, e.y, { pointTol: POINT_PX * e.mmPerPx, curveTol: CURVE_PX * e.mmPerPx, acquired: this.acquired, refs: this.refs, skip: this.skipRef });
+  /**
+   * Where the pointer snaps to while drawing (points, middles of lines, part edges, lining up, onto curves).
+   * Holding Shift places it exactly where the pointer is, with nothing snapped or inferred (as in Onshape);
+   * `needsPoint`: this click must land on a point (a tangent arc's start), so Shift is ignored.
+   */
+  private snapAt(e: SketchPointer, needsPoint = false): SnapResult {
+    return snapAt(this.data!, e.x, e.y, { pointTol: POINT_PX * e.mmPerPx, curveTol: CURVE_PX * e.mmPerPx, acquired: this.acquired, refs: this.refs, skip: this.skipRef, free: e.shift && !needsPoint });
   }
 
   /** The spline handle end under the pointer, if any (handles show on selected splines). */
@@ -486,7 +510,7 @@ export class SketchController {
 
   /** Where a click lands, snapped to points, the origin, middles of lines, part edges or curves. */
   private placeAt(e: SketchPointer): Placed {
-    return this.snapAt(e).placed;
+    return this.snapAt(e, this.tool === "tangentArc" && this.placed.length === 0).placed;
   }
 
   private snapMarker(p: Placed): [number, number] | null {
@@ -580,7 +604,7 @@ export class SketchController {
           return;
         }
         const start = this.placed[0];
-        const tangent = this.tangentFor(start, p, e);
+        const tangent = e.shift ? null : this.tangentFor(start, p, e);
         if (tangent) {
           const t = addTangentLine(d, start, tangent, construction);
           if (!this.commit(t)) return;
@@ -591,7 +615,7 @@ export class SketchController {
         }
         let end = p;
         let orientation: "horizontal" | "vertical" | null = null;
-        if (!p.snap) {
+        if (!p.snap && !e.shift) {
           const inf = inferOrientation(start.x, start.y, p.x, p.y);
           end = { x: inf.x, y: inf.y, snap: null };
           orientation = inf.orientation;
@@ -656,7 +680,7 @@ export class SketchController {
       case "spline": {
         // Each click adds a point; clicking the first point again closes it, Esc finishes an open one.
         const first = this.placed[0];
-        const closing = this.placed.length >= 3 && !!first && Math.hypot(p.x - first.x, p.y - first.y) < POINT_PX * e.mmPerPx;
+        const closing = !e.shift && this.placed.length >= 3 && !!first && Math.hypot(p.x - first.x, p.y - first.y) < POINT_PX * e.mmPerPx;
         if (!closing) {
           this.placed = [...this.placed, p];
           if (this.placed.length === 1) this.state.setSketchMessage("Click more points for the curve to pass through. Click the first point to close it, or Esc to finish.", "info");
@@ -824,8 +848,8 @@ export class SketchController {
     const over = this.hitAt(e);
     const overCurve = over?.kind === "curve" ? curveById(d, over.id) : undefined;
     const pickedUp = over?.kind === "point" ? over.id : overCurve && (overCurve.type === "circle" || overCurve.type === "arc" || overCurve.type === "ellipse") ? overCurve.center : null;
-    if (pickedUp && this.acquired[0] !== pickedUp) this.acquired = [pickedUp, ...this.acquired.filter((x) => x !== pickedUp)].slice(0, 4);
-    const snapped = this.snapAt(e);
+    if (pickedUp && !e.shift && this.acquired[0] !== pickedUp) this.acquired = [pickedUp, ...this.acquired.filter((x) => x !== pickedUp)].slice(0, 4);
+    const snapped = this.snapAt(e, tool === "tangentArc" && this.placed.length === 0);
     const p = snapped.placed;
     const preview: PreviewShape[] = [];
     if (p.snap?.kind === "align") {
@@ -834,14 +858,14 @@ export class SketchController {
     let inference: SketchTransient["inference"] = null;
     let snap = this.snapMarker(p);
     const first = this.placed[0];
-    const tangent = tool === "line" && first ? this.tangentFor(first, p, e) : null;
+    const tangent = tool === "line" && first && !e.shift ? this.tangentFor(first, p, e) : null;
     if (tangent) {
       preview.push({ kind: "line", a: tangent.start, b: tangent.end });
       snap = tangent.end;
       inference = { at: tangent.end, text: "Tangent" };
     } else if (tool === "line" && first) {
       let end: [number, number] = [p.x, p.y];
-      if (!p.snap) {
+      if (!p.snap && !e.shift) {
         const inf = inferOrientation(first.x, first.y, p.x, p.y);
         end = [inf.x, inf.y];
         if (inf.orientation) {
@@ -1150,7 +1174,8 @@ export class SketchController {
       // Hovering close to another point snaps onto it (and joins them when let go).
       // A wider reach than a click, so an end point dropped near another joins onto it.
       // Also onto the middle of a line, or a corner, centre or middle of the face's edges.
-      const found = this.data ? snapAt(drag.start, e.x, e.y, { pointTol: SNAP_PX * e.mmPerPx, curveTol: 0, refs: this.refs, skip: this.skipRef, ignore: pointsSharingCurve(drag.start, drag.id) }) : null;
+      // Holding Shift drags it freely: nothing is snapped onto or joined when let go.
+      const found = this.data ? snapAt(drag.start, e.x, e.y, { pointTol: SNAP_PX * e.mmPerPx, curveTol: 0, refs: this.refs, skip: this.skipRef, ignore: pointsSharingCurve(drag.start, drag.id), free: e.shift }) : null;
       const sn = found?.placed.snap;
       drag.snapTo = sn && (sn.kind === "point" || sn.kind === "origin" || sn.kind === "midpoint" || (sn.kind === "ref" && sn.at !== "on")) ? sn : null;
       const [x, y] = drag.snapTo ? [found!.placed.x, found!.placed.y] : [e.x, e.y];

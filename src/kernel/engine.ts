@@ -31,7 +31,7 @@ import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { crossingOutlineNote } from "../sketch/offsetCheck";
 import { followLinks, linkProblem, shapeIsClosed, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
-import { PIERCE_SAMPLES, edgePierceRefs, edgePierces, edgePoint3, nearestPlace, seeEdge, seeShape, seeSketchCurve, sketchCurvePierces, sketchPierceRefs, sketchPointAt, sketchRefs, type CurveShape3, type SourceSketch } from "../sketch/projected";
+import { edgePierceRefs, pierceSamples, remembered, edgePierces, edgePoint3, nearestPlace, seeEdge, seeShape, seeShapeAll, seeSketchCurve, type Conic3, sketchCurvePierces, sketchPierceRefs, sketchPointAt, sketchRefs, type CurveShape3, type SourceSketch } from "../sketch/projected";
 import { isPartLink, type CurveLink, type PartLink, type SketchCurve } from "../sketch/types";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
@@ -223,6 +223,21 @@ function straddles(frame: PlaneFrame, [lo, hi]: Bounds): boolean {
   return below <= 1e-6 && above >= -1e-6 && above - below > 1e-6;
 }
 
+/** How many spans a spline edge is made of (its knots less one); 1 for any other kind (for Pierce's sampling). */
+function edgeSpans(e: Edge): number {
+  const oc = getOC() as any;
+  let adaptor: any = null;
+  try {
+    adaptor = new oc.BRepAdaptor_Curve(e.wrapped);
+    if (adaptor.GetType() === oc.GeomAbs_CurveType.GeomAbs_BSplineCurve) return Math.max(1, adaptor.NbKnots() - 1);
+    return 1;
+  } catch {
+    return 1;
+  } finally {
+    adaptor?.delete();
+  }
+}
+
 /** Along an edge (0 at its start, 1 at its end, by its own parameter), as a point. */
 function edgeAt(e: Edge): (f: number) => Vec3 {
   return (f) => take(e.pointAt(Math.max(0, Math.min(1, f))));
@@ -234,7 +249,7 @@ function edgeAt(e: Edge): (f: number) => Vec3 {
  * `pieces`, as few as keep within 0.5 µm of it (halving until they do, at most
  * 128). An ellipse also gets its centre, axes and span.
  */
-export function edgeShape(e: Edge, pieces?: number): (CurveShape3 & { miss: number }) | null {
+export function edgeShape(e: Edge, pieces?: number, circles = false): (CurveShape3 & { miss: number; circle?: Conic3 }) | null {
   const oc = getOC() as any;
   const adaptor = new oc.BRepAdaptor_Curve(e.wrapped);
   // Freed however this ends (an OpenCascade error part way through too).
@@ -306,7 +321,25 @@ export function edgeShape(e: Edge, pieces?: number): (CurveShape3 & { miss: numb
         whole: Math.abs(last - first - 2 * Math.PI) < 1e-9,
       };
     }
-    return { ...shape, miss, ...(ellipse ? { ellipse } : {}) };
+    // With `circles`, a circle also gets its centre and two square radii (seen at a slant, it's an ellipse).
+    let circle: Conic3 | undefined;
+    if (circles && e.geomType === "CIRCLE") {
+      const keep = <T,>(o: T): T => (made.push(o), o);
+      const ci = keep(adaptor.Circle());
+      const c = keep(ci.Location());
+      const xd = keep(keep(ci.XAxis()).Direction());
+      const yd = keep(keep(ci.YAxis()).Direction());
+      const R = ci.Radius();
+      circle = {
+        centre: [c.X(), c.Y(), c.Z()],
+        major: [xd.X() * R, xd.Y() * R, xd.Z() * R],
+        minor: [yd.X() * R, yd.Y() * R, yd.Z() * R],
+        t0: first,
+        t1: last,
+        whole: Math.abs(last - first - 2 * Math.PI) < 1e-9,
+      };
+    }
+    return { ...shape, miss, ...(ellipse ? { ellipse } : {}), ...(circle ? { circle } : {}) };
   } catch {
     return null;
   } finally {
@@ -1838,6 +1871,9 @@ interface SketchSnap {
   shared: string;
 }
 
+/** What rebuildStudios hands back: the parts of the Part Studios it rebuilt, and which those were. */
+export type StudiosResult = RebuildResult & { rebuilt: string[]; studioOrder: string[] };
+
 export class GeometryEngine {
   /** Threaded holes already made (see hole.ts), kept between rebuilds. */
   private threadedHoles: ThreadedHoleCache = new Map();
@@ -1859,11 +1895,45 @@ export class GeometryEngine {
    * changed since last time; the others keep what they built. Returns the
    * meshes of the rebuilt studios only, and errors for all of them.
    */
-  rebuildStudios(
-    studios: StudioInput[],
-    variables: Record<string, number> = {},
-    partNames: Record<string, string> = {},
-  ): RebuildResult & { rebuilt: string[]; studioOrder: string[] } {
+  rebuildStudios(studios: StudioInput[], variables: Record<string, number> = {}, partNames: Record<string, string> = {}): StudiosResult {
+    const steps = this.rebuildSteps(studios, variables, partNames);
+    let r = steps.next();
+    while (!r.done) r = steps.next();
+    return r.value;
+  }
+
+  /**
+   * rebuildStudios with a pause before each feature (`pause` is awaited
+   * there): a slow build can be stopped in between — `pause` throws, and the
+   * engine forgets everything this build made (the Part Studios it rebuilt are
+   * built again next time), so the next build is exactly as if this one had
+   * never started.
+   */
+  async rebuildStudiosAsync(studios: StudioInput[], variables: Record<string, number>, partNames: Record<string, string>, pause: () => Promise<void>): Promise<StudiosResult> {
+    const steps = this.rebuildSteps(studios, variables, partNames);
+    let r = steps.next();
+    while (!r.done) {
+      try {
+        await pause();
+      } catch (e) {
+        // (Runs the build's clean-up: see the finally in rebuildSteps.)
+        steps.return(undefined as never);
+        throw e;
+      }
+      r = steps.next();
+    }
+    return r.value;
+  }
+
+  /** As rebuild, with a pause before each feature (see rebuildStudiosAsync). */
+  rebuildAsync(features: Feature[], variables: Record<string, number>, partNames: Record<string, string>, pause: () => Promise<void>): Promise<StudiosResult> {
+    const old = this.builds.get(MAIN_STUDIO_ID);
+    if (old) old.key = "";
+    return this.rebuildStudiosAsync([{ id: MAIN_STUDIO_ID, features }], variables, partNames, pause);
+  }
+
+  /** The rebuild, one feature at a time: it yields before each feature. */
+  private *rebuildSteps(studios: StudioInput[], variables: Record<string, number>, partNames: Record<string, string>): Generator<void, StudiosResult, void> {
     const started = performance.now();
     // Every size below is worked out with the document's variables.
     setCurrentScope(variables);
@@ -1890,52 +1960,62 @@ export class GeometryEngine {
       ordered.push(...pending.splice(i >= 0 ? i : 0, 1));
     }
     this.studiosBuilt = new Set();
-    for (const studio of ordered) {
-      const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"));
-      const key =
-        JSON.stringify(studio.features) +
-        shared +
-        (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") +
-        (studio.partNames ? JSON.stringify(studio.partNames) : "") +
-        (deps.length ? JSON.stringify(deps) : "");
-      let b = this.builds.get(studio.id);
-      if (!b || b.key !== key) {
-        if (b) this.disposeBuild(b);
-        this.parts = [];
-        this.tools = new Map();
-        this.links = {};
-        setCurrentScope(studio.variables ?? variables);
-        // What each sketch could snap to is kept (cheaply) for when one is opened — not for other configurations.
-        this.snaps = studio.partSuffix ? null : new Map();
-        // Parts brought in from other Part Studios (Derived) count too.
-        this.buildShared = shared + JSON.stringify([studio.variables ?? null, deps]);
-        let errors: Record<string, string>;
-        try {
-          errors = this.buildFeatures(studio.features);
-        } catch (e) {
-          this.disposeSnaps(this.snaps);
+    // The Part Studio being built now, and whether the whole rebuild got to the end (see the finally below).
+    let building: string | null = null;
+    let finished = false;
+    try {
+      for (const studio of ordered) {
+        const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"));
+        const key =
+          JSON.stringify(studio.features) +
+          shared +
+          (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") +
+          (studio.partNames ? JSON.stringify(studio.partNames) : "") +
+          (deps.length ? JSON.stringify(deps) : "");
+        let b = this.builds.get(studio.id);
+        if (!b || b.key !== key) {
+          if (b) this.disposeBuild(b);
+          building = studio.id;
+          this.parts = [];
+          this.tools = new Map();
+          this.links = {};
+          setCurrentScope(studio.variables ?? variables);
+          // What each sketch could snap to is kept (cheaply) for when one is opened — not for other configurations.
+          this.snaps = studio.partSuffix ? null : new Map();
+          // Parts brought in from other Part Studios (Derived) count too.
+          this.buildShared = shared + JSON.stringify([studio.variables ?? null, deps]);
+          let errors: Record<string, string>;
+          try {
+            errors = yield* this.featureSteps(studio.features);
+          } catch (e) {
+            this.disposeSnaps(this.snaps);
+            this.snaps = null;
+            throw e;
+          }
+          setCurrentScope(variables);
+          // Names the user gave parts (used in the lists and in exported files).
+          const names = studio.partNames ?? partNames;
+          for (const p of this.parts) if (names[p.id]) p.name = names[p.id];
+          // Another configuration's copies of the parts (for assemblies).
+          if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, links: this.links, snaps: this.snaps ?? new Map() };
           this.snaps = null;
-          throw e;
+          this.builds.set(studio.id, b);
+          building = null;
+          rebuilt.push(studio.id);
+          const configuration = studio.partSuffix?.replace(/^@/, "");
+          for (const p of b.parts) meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}) });
         }
-        setCurrentScope(variables);
-        // Names the user gave parts (used in the lists and in exported files).
-        const names = studio.partNames ?? partNames;
-        for (const p of this.parts) if (names[p.id]) p.name = names[p.id];
-        // Another configuration's copies of the parts (for assemblies).
-        if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-        b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, links: this.links, snaps: this.snaps ?? new Map() };
-        this.snaps = null;
-        this.builds.set(studio.id, b);
-        rebuilt.push(studio.id);
-        const configuration = studio.partSuffix?.replace(/^@/, "");
-        for (const p of b.parts) meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}) });
+        // Problems are shown for the configuration on show only.
+        if (!studio.partSuffix) {
+          Object.assign(featureErrors, b.errors);
+          Object.assign(featureWarnings, b.warnings ?? {});
+        }
+        this.studiosBuilt.add(studio.id);
       }
-      // Problems are shown for the configuration on show only.
-      if (!studio.partSuffix) {
-        Object.assign(featureErrors, b.errors);
-        Object.assign(featureWarnings, b.warnings ?? {});
-      }
-      this.studiosBuilt.add(studio.id);
+      finished = true;
+    } finally {
+      if (!finished) this.forgetUnfinished(building, rebuilt);
     }
     this.parts = studios.flatMap((s) => this.builds.get(s.id)?.parts ?? []);
     this.tools = new Map();
@@ -2110,9 +2190,10 @@ export class GeometryEngine {
       if (!e || (c.type !== "spline" && c.type !== "ellipse")) return e;
       // A spline is followed with as many pieces as it has (so its points keep their ids), unless that no longer keeps close
       // enough to the edge: then with as many as it takes (followLinks gives it new points in between).
-      let sh = edgeShape(edge, c.type === "spline" ? (c.closed ? c.points.length : c.points.length - 1) : undefined);
+      let sh = edgeShape(edge, c.type === "spline" ? (c.closed ? c.points.length : c.points.length - 1) : undefined, c.type === "ellipse");
       if (sh && c.type === "spline" && sh.miss > USE_TOLERANCE) sh = edgeShape(edge) ?? sh;
-      const seen = sh ? seeShape(frame, sh) : null;
+      // An ellipse may follow a circle or ellipse at a slant to the sketch (it's seen as an ellipse).
+      const seen = sh ? (c.type === "ellipse" ? seeShapeAll(frame, sh) : seeShape(frame, sh)) : null;
       // An open edge that's now closed (or the other way round) isn't the same curve any more: it's lost.
       if (seen?.kind === "spline" && c.type === "spline" && shapeIsClosed(seen) !== c.closed) return null;
       return seen ? { ...e, shape: seen } : null;
@@ -2174,7 +2255,10 @@ export class GeometryEngine {
             const m = strictMatch(link.ref, refs, sizeOf(bounds), 0.3);
             if (link.end === "pierce") {
               // Where the edge passes through the plane now: the place nearest where the point was, so it keeps to its own.
-              pointLinks[p.id] = m === null ? null : nearestPlace(edgePierces(frame, edgeAt(all[m]), refs[m].curve === "LINE" ? 1 : PIERCE_SAMPLES), [p.x, p.y]);
+              pointLinks[p.id] = m === null ? null : nearestPlace((() => {
+                    const walk = remembered(edgeAt(all[m]));
+                    return edgePierces(frame, walk, refs[m].curve === "LINE" ? 1 : pierceSamples(walk, edgeSpans(all[m])));
+                  })(), [p.x, p.y]);
               return;
             }
             const at = m === null ? null : edgePoint3(refs[m], link.end);
@@ -2304,7 +2388,7 @@ export class GeometryEngine {
           // Where it passes through the sketch's plane (to snap to, or Pierce). A straight edge's ends say exactly where.
           const lerp = (f: number): Vec3 => [ref.a[0] + (ref.b[0] - ref.a[0]) * f, ref.a[1] + (ref.b[1] - ref.a[1]) * f, ref.a[2] + (ref.b[2] - ref.a[2]) * f];
           // Only edges that reach both sides of the plane (or touch it) are walked along: most don't, and walking a curve is slow.
-          if (ref.curve === "LINE" || straddles(frame, boundsOf(e as unknown as Shape3D))) out.push(...edgePierceRefs(frame, { partId: part.id, ref }, ref.curve === "LINE" ? lerp : edgeAt(e)));
+          if (ref.curve === "LINE" || straddles(frame, boundsOf(e as unknown as Shape3D))) out.push(...(ref.curve === "LINE" ? edgePierceRefs(frame, { partId: part.id, ref }, lerp) : edgePierceRefs(frame, { partId: part.id, ref }, edgeAt(e), edgeSpans(e))));
         });
       } finally {
         all.forEach((e) => e.delete());
@@ -2328,7 +2412,37 @@ export class GeometryEngine {
   /** Warnings from the latest `buildFeatures` (features built, but with something to tell). */
   private warnings: Record<string, string> = {};
 
+  /**
+   * A rebuild stopped part-way (or failed): free what the Part Studio being
+   * built had made so far, and mark the ones rebuilt in it to be built again
+   * (their new parts were never handed back), so the next rebuild starts clean.
+   */
+  private forgetUnfinished(building: string | null, rebuilt: string[]): void {
+    if (building) {
+      this.disposeBuild({ key: "", parts: this.parts, tools: this.tools, errors: {}, links: {}, snaps: this.snaps ?? new Map() });
+      this.snaps = null;
+      // (Its old build was freed before it started.)
+      this.builds.delete(building);
+    }
+    for (const id of rebuilt) {
+      const b = this.builds.get(id);
+      if (b) b.key = "";
+    }
+    this.parts = [];
+    this.tools = new Map();
+    this.links = {};
+    this.studiosBuilt = new Set();
+  }
+
   private buildFeatures(features: Feature[]): Record<string, string> {
+    const steps = this.featureSteps(features);
+    let r = steps.next();
+    while (!r.done) r = steps.next();
+    return r.value;
+  }
+
+  /** Build a list of features (see buildFeatures), yielding before each one. */
+  private *featureSteps(features: Feature[]): Generator<void, Record<string, string>, void> {
     const featureErrors: Record<string, string> = {};
     const warnings: Record<string, string> = {};
     this.warnings = warnings;
@@ -2338,6 +2452,8 @@ export class GeometryEngine {
 
     for (const feature of features) {
       if (feature.suppressed) continue;
+      // A safe place to stop: between features.
+      yield;
       if (feature.type === "plane") {
         // Construction planes make no solid; just say if one can't be placed.
         const { values, errors } = resolveParams(feature);
@@ -5188,8 +5304,9 @@ export class GeometryEngine {
       const seen = projectEdge(frame, pick, edgeSamples(all[m], refs[m])) ?? seeEdge(frame, pick, edgeSamples(all[m], refs[m]));
       if (!seen) return { error: "That edge can't be seen in this sketch." };
       if (seen.kind !== "curve") return { edge: seen };
-      const sh = edgeShape(all[m]);
-      const shape = sh ? seeShape(frame, sh) : null;
+      // A circle or ellipse at a slant comes in as the ellipse it's seen as; other curves as splines.
+      const sh = edgeShape(all[m], undefined, true);
+      const shape = sh ? seeShapeAll(frame, sh) : null;
       if (!shape) return { error: "That edge is seen side-on from this sketch (it looks like a straight line or a dot), so there's no curve to copy in. Pick an edge that runs across the sketch." };
       return { edge: { ...seen, shape } };
     } finally {

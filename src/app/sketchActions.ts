@@ -1,6 +1,6 @@
 /** Actions used by both the sketch toolbar and keyboard shortcuts. */
 import { useStore, type SketchTool } from "../model/store";
-import { applyRelation, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
+import { applyRelation, relationMayTakeAWhile, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
 import { patternCurves, readPatternSettings, readTransformSettings, transformCurves } from "../sketch/tools";
 import { viewportApi } from "../viewport/Viewport";
 import { linkAllEdges, piercePoint, type RefEdge } from "../sketch/links";
@@ -84,8 +84,28 @@ export function applySketchRelation(tool: RelationTool) {
   const data = sketchData();
   if (!data || !s.sketch) return;
   const sel = s.sketch.selection.filter((id) => !data.constraints.some((c) => c.id === id));
+  if (tool !== "pierce" && relationMayTakeAWhile(data, tool, sel)) {
+    // On a busy sketch with curves this can take a second or two: say so first, and work it out once that's shown.
+    s.setSketchMessage("Working…", "info");
+    const go = () => {
+      const now = useStore.getState();
+      // The sketch was closed or changed meanwhile: nothing to do.
+      if (sketchData() !== data || !now.sketch) {
+        if (now.sketch?.message?.text === "Working…") now.setSketchMessage(`Nothing was changed: the sketch changed while ${RELATION_LABELS[tool].toLowerCase()} was being worked out. Try again.`, "info");
+        return;
+      }
+      finishRelation(tool, applyRelation(data, tool, sel));
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => setTimeout(go, 0));
+    else setTimeout(go, 0);
+    return;
+  }
   // Pierce needs to know where things from outside pass through the sketch (the engine lists those places).
-  const r = tool === "pierce" ? piercePoint(data, sel, sketchRefs()) : applyRelation(data, tool, sel);
+  finishRelation(tool, tool === "pierce" ? piercePoint(data, sel, sketchRefs()) : applyRelation(data, tool, sel));
+}
+
+function finishRelation(tool: RelationTool, r: { sketch: SketchData; error?: string }) {
+  const s = useStore.getState();
   if (r.error) {
     s.setSketchMessage(r.error, "error");
     return;

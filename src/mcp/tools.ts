@@ -24,6 +24,8 @@ import { Cancelled, type Session } from "./session";
 import { describeChange } from "./live";
 import { SHAPE_HELP } from "./sketchShapes";
 import { checkFree, fileNameFor, needFolder, r1, r2, say, writeOut, type ToolDef, type ToolResult } from "./toolKit";
+import { ASSEMBLY_EXTRA_TOOLS } from "./assemblyExtras";
+import { DRAWING_EXTRA_TOOLS } from "./drawingExtras";
 import { ASSEMBLY_TOOLS, assemblyViews, exportAssemblyBytes, findAssembly, instanceFaces } from "./assemblyTools";
 import { DRAWING_TOOLS } from "./drawingTools";
 
@@ -43,8 +45,8 @@ export const FORMAT_GUIDE = `JuraCAD conventions (the same as Onshape):
 - Picking faces and edges: ${PICK_HELP.faces} ${PICK_HELP.edges} Numbers (F3, E5) change when the part changes, so list them again after changes.
 - A sketch on a face stays where that face was when it was drawn. If an earlier change moves the face (say, a thicker plate), put the sketch back with edit_feature {"feature": "Sketch 2", "on_face": "top"}.
 - Check your work: describe_design (volumes, sizes, validity, problems) and get_views (a picture). If something went wrong, edit_feature or undo (undo also takes back assembly and drawing steps, one at a time).
-- Assemblies (parts put together, as in Onshape): create_assembly → insert_into_assembly (copies are named "Base <1>", "Base <2>"…; the first copy in is fixed; parts can come from any Part Studio) → add_mate between two copies: "first" stays put, "second" moves to meet it. On a flat face the connector is the face's centre with Z out of the face; on a round edge or face it's the centre and axis. By default the two Z directions point at each other (a lid's bottom face onto a box's top face); "flip": true points them the same way. Fasten holds solid; hinge turns; slider slides; cylindrical slides and turns; planar, pin_slot, parallel, width, tangent and ball as described in add_mate. Faces and edges of a copy are chosen as it sits in the assembly now ("top" is its face facing +Z there): list_faces / list_edges with "assembly" and "instance". A mate that can't be satisfied is refused with the reason. Then describe_assembly (where each copy is, the mates, the parts list), check_assembly (clashes), get_views {"assembly": …} (a picture), explode_assembly (a spread-out view; pictures and drawings only), export_model {"assembly": …} (STEP/STL/3MF with every copy in its place), and place_instance to move, fix or switch off a copy.
-- Drawings (2D engineering drawings, as in Onshape): create_drawing of a part or an assembly (paper, scale "fit" or "1:2", views front/top/right/left/back/bottom/iso, first- or third-angle projection, title block) → auto_dimension (the usual sizes) and/or add_dimension (between two model points [x, y, z] as the view sees them — each snaps to the nearest corner, end or circle centre — or a circle's size) → add_section_view (a cut along a line on a view) and add_detail_view (a circle shown bigger) → edit_drawing to change settings and the title block → view_drawing (a picture of the sheet) → export_drawing (PDF of every sheet, or SVG/DXF of one). describe_drawing gives each view's directions (front: across = X, up = Z; top: X, Y; right: Y, Z), extent and circles. Assembly drawings get a parts list and numbered balloons; "exploded": true draws the assembly spread apart.
+- Assemblies (parts put together, as in Onshape): create_assembly → insert_into_assembly (copies are named "Base <1>", "Base <2>"…; the first copy in is fixed; parts can come from any Part Studio) → add_mate between two copies: "first" stays put, "second" moves to meet it. On a flat face the connector is the face's centre with Z out of the face; on a round edge or face it's the centre and axis. By default the two Z directions point at each other (a lid's bottom face onto a box's top face); "flip": true points them the same way. Fasten holds solid; hinge turns; slider slides; cylindrical slides and turns; planar, pin_slot, parallel, width, tangent and ball as described in add_mate. Faces and edges of a copy are chosen as it sits in the assembly now ("top" is its face facing +Z there): list_faces / list_edges with "assembly" and "instance". A mate that can't be satisfied is refused with the reason. Then describe_assembly (where each copy is, the mates, the parts list), check_assembly (clashes), get_views {"assembly": …} (a picture), explode_assembly (a spread-out view; pictures and drawings only), export_model {"assembly": …} (STEP/STL/3MF with every copy in its place), and place_instance to move, fix or switch off a copy. More: edit_mate (amounts, limits on how far a movement goes, flip, switch off), add_mate_relation (gear, rack and pinion, screw, linear: one mate drives another), add_assembly_pattern (linear, circular, or mirror — across an assembly plane or a flat face, "same_part" for symmetric parts), group_parts (lock copies together), replicate_part (a part mated in one hole copied into every hole like it), add_explode_step (exploded view steps, also of parts inside sub-assemblies), and remove_assembly_item to take any of those away.
+- Drawings (2D engineering drawings, as in Onshape): create_drawing of a part or an assembly (paper, scale "fit" or "1:2", views front/top/right/left/back/bottom/iso, first- or third-angle projection, title block) → auto_dimension (the usual sizes) and/or add_dimension (between two model points [x, y, z] as the view sees them — each snaps to the nearest corner, end or circle centre — or a circle's size) → add_section_view (a cut along a line on a view) and add_detail_view (a circle shown bigger) → edit_drawing to change settings and the title block → view_drawing (a picture of the sheet) → export_drawing (PDF of every sheet, or SVG/DXF of one). describe_drawing gives each view's directions (front: across = X, up = Z; top: X, Y; right: Y, Z), extent and circles. Assembly drawings get a parts list and numbered balloons; "exploded": true draws the assembly spread apart. add_dimension also does angles, chamfer callouts, arc lengths and ordinate/baseline/chain runs; add_drawing_note adds notes, datum symbols, geometric tolerance frames and surface finish marks; add_sheet / remove_sheet (a sheet can draw another part or assembly: edit_drawing {"sheet": n, "part": …}); delete_drawing_item deletes dimensions and notes by the numbers describe_drawing gives (D1, N1…).
 - Cancelling: if Claude cancels a call while it's running, the call stops at its next step and nothing is changed (a file it had already finished writing stays). When live, a change already sent to the user's tab is kept as the tab decides.
 - Save with save_design; the owner opens the .juracad file in JuraCAD (https://gm7dha.github.io/JuraCAD/) with Open, where every feature and dimension can be changed.
 - Live with Claude: if the user clicks "Connect to Claude" in JuraCAD's top bar (in Safari it goes through a small "JuraCAD ↔ Claude" window that must stay open), the tools work on the design open in their JuraCAD tab instead — the Part Studio on show — and each change appears there straight away, as one step in its undo list. The user can keep editing and undoing; if they change something at the same moment, your change is refused with nothing lost, so look again (describe_design) and retry. Ask them to finish any dialog they have open if a change is refused as busy. live_status says whether you're connected. new_design and open_design then replace what's open in their tab (they can undo it), so only use them when asked. save_design still saves a .juracad file.`;
@@ -260,7 +262,8 @@ async function tryChange(s: Session, next: JuraCADDocument, featureId: string | 
   }
   // (Between builds, a cancelled call stops: nothing has been changed yet.)
   await s.checkpoint();
-  const after = s.build(next.features, next).errors;
+  // (Built a feature at a time, so a cancelled call stops between features rather than after the whole build.)
+  const after = (await s.buildAsync(next.features, next)).errors;
   const fresh = newErrors(before, after);
   const refuse = (why: string) => {
     s.build();
@@ -284,11 +287,11 @@ async function tryChange(s: Session, next: JuraCADDocument, featureId: string | 
     const at = next.features.indexOf(f);
     const isLast = at === next.features.length - 1 && next.features.slice(0, at).every((x, i) => x === s.doc.features[i]) && s.doc.features.length === at;
     if (!isLast) await s.checkpoint();
-    const pre = isLast ? beforeVolumes : volumes(s.build(next.features.slice(0, at), next).parts);
-    const post = isLast ? afterVolumes : volumes(s.build(next.features.slice(0, at + 1), next).parts);
+    const pre = isLast ? beforeVolumes : volumes((await s.buildAsync(next.features.slice(0, at), next)).parts);
+    const post = isLast ? afterVolumes : volumes((await s.buildAsync(next.features.slice(0, at + 1), next)).parts);
     // The solid it added or cut, from the build just made.
     const toolVolume = s.engineAsBuilt((e) => e.featureToolVolume(f.id));
-    if (!isLast) s.build(next.features, next);
+    if (!isLast) await s.buildAsync(next.features, next);
     const problem = effectProblem(s, f, next, pre, post, toolVolume, notes);
     if (problem) refuse(`: ${problem}`);
   }
@@ -792,7 +795,9 @@ export const TOOLS: ToolDef[] = [
     },
   },
   ...ASSEMBLY_TOOLS,
+  ...ASSEMBLY_EXTRA_TOOLS,
   ...DRAWING_TOOLS,
+  ...DRAWING_EXTRA_TOOLS,
 ];
 
 /** Run a tool by name: problems with the input come back as a plain-English error for Claude to fix. */

@@ -6,9 +6,9 @@ import { documentStudioInputs, featuresForEngine } from "../kernel/buildInput";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { emptyDocument } from "../model/document";
 import { resolveVariables } from "../model/variables";
-import { setCurrentScope } from "../model/expr";
-import { GeometryEngine } from "../kernel/engine";
-import type { PartMesh } from "../kernel/protocol";
+import { getCurrentScope, setCurrentScope } from "../model/expr";
+import { GeometryEngine, type StudiosResult } from "../kernel/engine";
+import type { PartMesh, RebuildResult } from "../kernel/protocol";
 import { InputError } from "./args";
 import type { DesignFolder } from "./files";
 import type { ToolResult } from "./tools";
@@ -67,6 +67,9 @@ export function yieldToEvents(): Promise<void> {
 
 const MAX_UNDO = 100;
 
+/** How long the second engine (assemblies and drawings) may sit unused before its shapes are freed (built again when next needed). */
+export const WHOLE_ENGINE_IDLE_MS = 10 * 60_000;
+
 export class Session {
   doc: JuraCADDocument = emptyDocument("Untitled part");
   /** Earlier versions, newest last (for undo). */
@@ -100,17 +103,31 @@ export class Session {
   private wholeBuilt: Build | null = null;
   /** The meshes of each Part Studio as last built by the whole-document engine (it only sends those it rebuilt). */
   private wholeMeshes = new Map<string, PartMesh[]>();
+  /** Calls running now (the second engine is only freed between calls). */
+  private running = 0;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** How many times the second engine has been freed for being idle (for tests and logs). */
+  wholeReleases = 0;
 
   constructor(
     readonly folder: DesignFolder | null,
     private readonly makeEngine: () => GeometryEngine = () => new GeometryEngine(),
+    /** Free the second engine after it's been unused this long (ms); 0 = never. */
+    readonly wholeIdleMs = WHOLE_ENGINE_IDLE_MS,
   ) {
     this.engine = makeEngine();
   }
 
   /** Run calls one after another, in the order they came. */
   serial<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(fn);
+    const next = this.queue.then(async () => {
+      this.running++;
+      try {
+        return await fn();
+      } finally {
+        this.running--;
+      }
+    });
     this.queue = next.catch(() => {});
     return next;
   }
@@ -148,10 +165,48 @@ export class Session {
     const key = JSON.stringify([featuresForEngine(features), scope, doc.partNames ?? {}]);
     if (this.built && key === this.builtKey) return this.built;
     setCurrentScope(scope);
-    const r = this.engine.rebuild(features, scope, doc.partNames ?? {});
+    return this.keepBuild(key, this.engine.rebuild(features, scope, doc.partNames ?? {}));
+  }
+
+  /**
+   * As build, but a call Claude cancels stops between features (rather than
+   * after the whole build): the build is then forgotten and Cancelled thrown.
+   */
+  async buildAsync(features: Feature[] = this.doc.features, doc = this.doc): Promise<Build> {
+    if (!this.signal) return this.build(features, doc);
+    const scope = this.scope(doc);
+    const key = JSON.stringify([featuresForEngine(features), scope, doc.partNames ?? {}]);
+    if (this.built && key === this.builtKey) return this.built;
+    setCurrentScope(scope);
+    let r: StudiosResult;
+    try {
+      r = await this.engine.rebuildAsync(features, scope, doc.partNames ?? {}, () => this.pause());
+    } catch (e) {
+      // The engine no longer holds what was built last.
+      this.built = null;
+      this.builtKey = "";
+      throw e;
+    } finally {
+      setCurrentScope(this.scope());
+    }
+    return this.keepBuild(key, r);
+  }
+
+  private keepBuild(key: string, r: RebuildResult): Build {
     this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {} };
     this.builtKey = key;
     return this.built;
+  }
+
+  /** Between two features of a build: let a cancellation arrive (with the design's own values in place meanwhile). */
+  private async pause(): Promise<void> {
+    const building = getCurrentScope();
+    setCurrentScope(this.scope());
+    try {
+      await this.checkpoint();
+    } finally {
+      setCurrentScope(building);
+    }
   }
 
   /** Use the engine on the design as it is now (building it first if needed). */
@@ -169,16 +224,45 @@ export class Session {
     const scope = this.scope(doc);
     const studios = documentStudioInputs(doc);
     const key = JSON.stringify([studios, scope, doc.partNames ?? {}]);
+    this.touchWhole();
     if (this.wholeBuilt && key === this.wholeKey) return this.wholeBuilt;
     setCurrentScope(scope);
     this.wholeEngine ??= this.makeEngine();
-    let r: ReturnType<GeometryEngine["rebuildStudios"]>;
+    let r: StudiosResult;
     try {
       r = this.wholeEngine.rebuildStudios(studios, scope, doc.partNames ?? {});
     } finally {
       // Back to the design's own values, even if the build failed.
       setCurrentScope(this.scope());
     }
+    return this.keepWhole(key, r);
+  }
+
+  /** As buildAll, but a call Claude cancels stops between features (see buildAsync). */
+  async buildAllAsync(doc = this.wholeDoc()): Promise<Build> {
+    if (!this.signal) return this.buildAll(doc);
+    const scope = this.scope(doc);
+    const studios = documentStudioInputs(doc);
+    const key = JSON.stringify([studios, scope, doc.partNames ?? {}]);
+    this.touchWhole();
+    if (this.wholeBuilt && key === this.wholeKey) return this.wholeBuilt;
+    setCurrentScope(scope);
+    this.wholeEngine ??= this.makeEngine();
+    let r: StudiosResult;
+    try {
+      r = await this.wholeEngine.rebuildStudiosAsync(studios, scope, doc.partNames ?? {}, () => this.pause());
+    } catch (e) {
+      // The Part Studios it rebuilt before stopping are built again next time; the others' meshes still hold.
+      this.wholeBuilt = null;
+      this.wholeKey = "";
+      throw e;
+    } finally {
+      setCurrentScope(this.scope());
+    }
+    return this.keepWhole(key, r);
+  }
+
+  private keepWhole(key: string, r: StudiosResult): Build {
     const rebuilt = new Map<string, PartMesh[]>(r.rebuilt.map((id) => [id, []]));
     for (const p of r.parts) rebuilt.get(p.studioId ?? "")?.push(p);
     for (const [id, list] of rebuilt) this.wholeMeshes.set(id, list);
@@ -192,6 +276,43 @@ export class Session {
   withWholeEngine<T>(fn: (engine: GeometryEngine, build: Build) => T): T {
     const b = this.buildAll();
     return fn(this.wholeEngine!, b);
+  }
+
+  /**
+   * Free the second engine's shapes (everything it built for assemblies and
+   * drawings); it's made again, and everything built again, when next needed.
+   * Its memory goes back to the geometry engine's own store, for the first
+   * engine to reuse (the process itself doesn't shrink: WebAssembly memory
+   * never does), so a session that's done with assemblies stops holding a
+   * second copy of every part.
+   */
+  releaseWholeEngine(): boolean {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    if (!this.wholeEngine) return false;
+    this.wholeEngine.dispose();
+    this.wholeEngine = null;
+    this.wholeBuilt = null;
+    this.wholeKey = "";
+    this.wholeMeshes.clear();
+    return true;
+  }
+
+  /** The second engine was just used: free it once it's been left alone for `wholeIdleMs` (never during a call). */
+  private touchWhole(): void {
+    if (!this.wholeIdleMs) return;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    const check = () => {
+      if (this.running > 0) {
+        this.idleTimer = setTimeout(check, Math.min(this.wholeIdleMs, 60_000));
+        (this.idleTimer as { unref?: () => void }).unref?.();
+        return;
+      }
+      if (this.releaseWholeEngine()) this.wholeReleases++;
+    };
+    this.idleTimer = setTimeout(check, this.wholeIdleMs);
+    // (A waiting timer doesn't keep the extension running.)
+    (this.idleTimer as { unref?: () => void }).unref?.();
   }
 
   /** Use the engine as it was last built (whatever was built last), without building anything. */
@@ -280,7 +401,10 @@ export class Session {
   }
 
   dispose(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
     this.engine.dispose();
     this.wholeEngine?.dispose();
+    this.wholeEngine = null;
   }
 }

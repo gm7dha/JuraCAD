@@ -392,7 +392,22 @@ export interface DrawingView {
   at?: [number, number];
   /** This view's own scale (2 = 2:1), noted under it; missing = the sheet's scale. */
   scale?: number;
+  /**
+   * A view of another part or assembly than the sheet's (as Onshape lets each
+   * view show its own): what it draws. Missing = the sheet's part. Its key is
+   * "<kind>@<its id>", and the views projected from it (`parent`) follow it.
+   */
+  source?: NonNullable<Drawing["source"]>;
+  /** A view projected from a view of another part (one with `source`): that view's id. It shows the same part. */
+  parent?: string;
 }
+
+/**
+ * The view a section, detail, broken-out cut or shortening is drawn on: a
+ * view of the sheet's part by its kind ("front"), or a view of another part by
+ * its key ("front@<id of the view with that part>").
+ */
+export type ViewHost = ViewKind | `${ViewKind}@${string}`;
 
 /** ISO paper sizes, and the US (ANSI) sizes: A = 11 × 8.5 in (Letter), B = 17 × 11 in, and so on. */
 export type SheetSize = "A4" | "A3" | "A2" | "A1" | "A0" | "ANSI A" | "ANSI B" | "ANSI C" | "ANSI D" | "ANSI E";
@@ -501,7 +516,7 @@ export type PartTitle = Pick<Drawing["title"], "title" | "partNumber">;
  */
 export interface Shortening {
   id: string;
-  host: ViewKind;
+  host: ViewHost;
   axis: "x" | "y";
   /** The band's two edges, as fractions of the host view's width (x) or height (y). */
   from: number;
@@ -514,7 +529,7 @@ export interface Shortening {
  */
 export interface BreakOut {
   id: string;
-  host: ViewKind;
+  host: ViewHost;
   /** Opposite corners as fractions of the host view's width and height. */
   a: [number, number];
   b: [number, number];
@@ -527,7 +542,7 @@ export interface DetailView {
   id: string;
   /** "B", "C"… (shared with section letters). */
   letter: string;
-  host: ViewKind;
+  host: ViewHost;
   /** The circle's centre as fractions of the host view's width and height, and its radius (model mm). */
   centre: [number, number];
   radius: number;
@@ -540,7 +555,7 @@ export interface SectionCut {
   /** "A", "B"… */
   letter: string;
   /** The view the cutting line is drawn on. */
-  host: ViewKind;
+  host: ViewHost;
   /** The line's ends, as fractions of the host view's width and height. */
   a: [number, number];
   b: [number, number];
@@ -560,7 +575,7 @@ export interface SectionCut {
  */
 export interface Dimension {
   id: string;
-  /** The view it's on: its kind, or "section:<id>" for a section view. */
+  /** The view it's on: its key (see viewKey) — its kind, "section:<id>", "detail:<id>", or "<kind>@<id>" for a view of another part. */
   view: string;
   /** "ordinate": just the distance from datum `a` to point `b`, along `axis`, at the end of a leader. */
   /** "chamfer": a callout like "1 × 45°" on a slanted edge a–b; "arcLength": the length round an arc (centre a, radius r, b a point on it). */

@@ -269,8 +269,11 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
     case "revolve": {
       const oldSketch = f.sketchRef;
       f.sketchRef = sketchRef(a, ctx, f.sketchRef);
-      // A different sketch: the extra sketches' areas were picked to go with the old one (and round its axis).
-      if (oldSketch && f.sketchRef !== oldSketch) delete f.moreAreas;
+      // A different sketch: the areas picked were the old one's (and the extra sketches' went round its axis).
+      if (oldSketch && f.sketchRef !== oldSketch) {
+        delete f.areas;
+        delete f.moreAreas;
+      }
       const rv = { ...(f.revolve ?? { axis: "vertical", flip: false }) };
       if (has(a, "axis")) {
         const sketch = ctx.doc.features.find((x) => x.id === f.sketchRef)?.sketch?.data;

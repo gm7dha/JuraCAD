@@ -8,17 +8,21 @@
  */
 import { DETAIL_HOSTS, addDetail } from "../drawing/details";
 import { addDrawing, renameDrawing, SHEET_SIZES, toggleView, updateDrawing, VIEW_KINDS, VIEW_LABELS, withoutFit } from "../drawing/drawing";
-import { autoDimensions, rowOffset, rowSide, type Side } from "../drawing/autoDimension";
+import { autoDimensionSheet, rowOffset, rowSide, type Side } from "../drawing/autoDimension";
 import { projectPoint, VIEW_CAMERAS, viewUp } from "../drawing/cameras";
-import { dimLabel, dimPoint, measureDim, resolveDim, snapPoints } from "../drawing/dimensions";
+import { angleGeometry, arcOf, chamferLabel, chamferSize, dimLabel, dimPoint, measureDim, resolveDim, snapPoints } from "../drawing/dimensions";
+import { advanceRun, nextLinear, startRun } from "../drawing/linearDims";
+import { describeSymbol } from "../drawing/symbols";
 import { sheetDxf, sheetsPdf, sheetSvg } from "../drawing/export";
 import { changePage, pageIds, pageOf, nextLetterOnAnySheet } from "../drawing/pages";
 import { addSection, fromRel, sectionGeometry, SECTION_HOSTS, toRel } from "../drawing/sections";
 import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, scaleLabel, STANDARD_SCALES, type PlacedView, type Projections, type SheetInfo, type SheetLayout } from "../drawing/sheet";
-import { drawingSubject, finishProjections, projectionPlan, sheetInfo, viewScales, type DrawingSubject } from "../drawing/sheetSource";
+import { drawingSubject, finishProjections, projectionPlan, sheetInfo, sheetParts, viewScales, withViewParts, type DrawingSubject } from "../drawing/sheetSource";
+import { hostKindOf } from "../drawing/sections";
+import { addViewOf, keyGroup, rekeyed, splitKey, toggleProjected, viewParts, removeViewOf } from "../drawing/viewParts";
 import type { ViewProjection } from "../kernel/protocol";
 import { newId } from "../model/document";
-import type { Dimension, Drawing, JuraCADDocument, ViewKind } from "../model/types";
+import type { Dimension, Drawing, JuraCADDocument, ViewHost, ViewKind } from "../model/types";
 import { setLengthUnit } from "../model/units";
 import { amount, bool, InputError, list, noExtras, object, oneOf, text, xyz, type Obj } from "./args";
 import { findAssembly } from "./assemblyTools";
@@ -29,8 +33,8 @@ import { byName, checkFree, fileNameFor, needFolder, r2, say, writeOut, type Too
 type P2 = [number, number];
 type V3 = [number, number, number];
 
-const drawingsOf = (doc: JuraCADDocument) => doc.drawings ?? [];
-const MAKE_ONE = "make one with create_drawing.";
+export const drawingsOf = (doc: JuraCADDocument) => doc.drawings ?? [];
+export const MAKE_ONE = "make one with create_drawing.";
 
 export function findDrawing(s: Session, ref: unknown, where = "drawing"): Drawing {
   const all = drawingsOf(s.doc);
@@ -40,7 +44,7 @@ export function findDrawing(s: Session, ref: unknown, where = "drawing"): Drawin
 }
 
 /** The id of sheet `n` (1, 2…) of a drawing. */
-function pageIdFor(d: Drawing, raw: unknown): string {
+export function pageIdFor(d: Drawing, raw: unknown): string {
   const ids = pageIds(d);
   if (raw === undefined || raw === null) return ids[0];
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1 || raw > ids.length) {
@@ -72,7 +76,7 @@ async function projectOne(s: Session, subject: DrawingSubject, request: { kind?:
   return view;
 }
 
-interface Sheet {
+export interface Sheet {
   /** The drawing as one sheet (its own views, dimensions…). */
   page: Drawing;
   pageId: string;
@@ -85,9 +89,9 @@ interface Sheet {
 }
 
 /** Lay one sheet of a drawing out, as the app does (views from the engine, then the sheet's shapes). */
-async function sheetOf(s: Session, d: Drawing, pageId: string, doc: JuraCADDocument = s.doc): Promise<Sheet> {
+export async function sheetOf(s: Session, d: Drawing, pageId: string, doc: JuraCADDocument = s.doc): Promise<Sheet> {
   const page = pageOf(d, pageId);
-  const parts = s.buildAll().parts;
+  const parts = (await s.buildAllAsync()).parts;
   const subject = drawingSubject(page, doc, parts);
   if (!subject) {
     throw new InputError(
@@ -96,16 +100,24 @@ async function sheetOf(s: Session, d: Drawing, pageId: string, doc: JuraCADDocum
         : `The part ${d.name} shows no longer exists (it may have been renamed away or deleted). Make a new drawing of a part that's there with create_drawing.`,
     );
   }
-  const plan = projectionPlan(page);
+  // The sheet's own part, then each view of another part (whose views come back under their keys on the sheet).
+  const drawn = sheetParts(page, doc, parts);
   const list: ViewProjection[] = [];
-  for (const kind of plan.kinds) list.push(await projectOne(s, subject, { kind }, plan));
-  for (const section of plan.sections) list.push(await projectOne(s, subject, { section }, plan));
+  for (const part of drawn) {
+    if (!part.subject) continue;
+    const plan = projectionPlan(part.drawing);
+    const mine: ViewProjection[] = [];
+    for (const kind of plan.kinds) mine.push(await projectOne(s, part.subject, { kind }, plan));
+    for (const section of plan.sections) mine.push(await projectOne(s, part.subject, { section }, plan));
+    list.push(...rekeyed(mine, part.group));
+  }
   const projections = finishProjections(list, page);
   const ids = pageIds(d);
   const number = ids.indexOf(pageId) + 1;
-  const info = sheetInfo(page, doc, parts, subject.name, subject.instances, number, ids.length);
+  const info = withViewParts(sheetInfo(page, doc, parts, subject.name, subject.instances, number, ids.length), doc, parts, drawn, page.bomWeights);
   // The numbers on the sheet in the design's own unit (as the app shows them).
   setLengthUnit(s.doc.units === "in" ? "in" : "mm");
+  otherPartNames.set(page, new Map(drawn.filter((p) => p.group).map((p) => [p.group!, p.subject?.name ?? "a part that no longer exists"])));
   try {
     return { page, pageId, number, count: ids.length, subject, projections, info, layout: layoutSheet(page, projections, info) };
   } finally {
@@ -113,8 +125,22 @@ async function sheetOf(s: Session, d: Drawing, pageId: string, doc: JuraCADDocum
   }
 }
 
-/** "Front", "Section A", "Detail B", "Auxiliary view C". */
-function viewName(page: Drawing, key: string): string {
+/** What a drawing (or sheet) shows, from "part" or "assembly" (null when neither is given). */
+export function sourceFrom(s: Session, a: Obj): Drawing["source"] | null {
+  if (a.part !== undefined && a.assembly !== undefined) throw new InputError('Give either "part" or "assembly", not both.');
+  if (a.assembly !== undefined) return { kind: "assembly", id: findAssembly(s, a.assembly).id };
+  if (a.part === undefined) return null;
+  const all = s.buildAll().parts.filter((p) => !p.configuration);
+  return { kind: "part", id: s.part(all, a.part, "part").id };
+}
+
+/** The names of the parts and assemblies a sheet's views of other parts show, by base view id (set by sheetOf). */
+const otherPartNames = new WeakMap<Drawing, Map<string, string>>();
+
+/** "Front", "Section A", "Detail B", "Auxiliary view C"; "Front of Bracket" for a view of another part than the sheet's. */
+export function viewName(page: Drawing, key: string): string {
+  const { kind, group } = splitKey(key);
+  if (group) return `${VIEW_LABELS[kind as ViewKind] ?? kind} of ${otherPartNames.get(page)?.get(group) ?? "another part"}`;
   if (key.startsWith("section:")) {
     const c = page.sections?.find((x) => `section:${x.id}` === key);
     return c?.aux ? `Auxiliary view ${c.letter}` : `Section ${c?.letter ?? "?"}`;
@@ -124,7 +150,7 @@ function viewName(page: Drawing, key: string): string {
 }
 
 /** A view on a sheet named as Claude would: "front", "section A", "detail B", "auxiliary C" (any capitals). */
-function viewKeyFor(page: Drawing, raw: unknown, where: string): string {
+export function viewKeyFor(page: Drawing, raw: unknown, where: string): string {
   const keys = drawingViewKeys(page);
   const names = keys.map((k) => `"${viewName(page, k).toLowerCase().replace("auxiliary view", "auxiliary")}"`).join(", ");
   if (typeof raw !== "string" || !raw.trim()) throw new InputError(`${where}: name a view on the sheet: ${names || "(there are none yet)"}.`);
@@ -137,6 +163,16 @@ function viewKeyFor(page: Drawing, raw: unknown, where: string): string {
   return hit;
 }
 
+/** The view a section or detail is drawn on: a standard view of the sheet's part, or a view of another part by name ("top of Bracket"). */
+function hostFor(page: Drawing, raw: unknown, where: string, allowed: readonly ViewKind[]): ViewHost {
+  const plain = typeof raw === "string" ? raw.trim().toLowerCase() : raw;
+  if (typeof plain === "string" && allowed.includes(plain as ViewKind)) return plain as ViewKind;
+  if (typeof plain !== "string" || !plain.includes(" of ")) return oneOf(plain, allowed, where);
+  const key = viewKeyFor(page, raw, where);
+  if (!allowed.includes(hostKindOf(key))) throw new InputError(`${where}: "${raw}" can't be drawn on — choose a ${allowed.join(", ")} view.`);
+  return key as ViewHost;
+}
+
 const AXIS_WORDS = (v: V3) => {
   const k = v.findIndex((x) => Math.abs(x) > 0.999);
   return k < 0 ? `(${v.map(r2).join(", ")})` : `${v[k] > 0 ? "" : "−"}${"XYZ"[k]}`;
@@ -144,7 +180,8 @@ const AXIS_WORDS = (v: V3) => {
 
 /** How a view's own flat coordinates relate to the model: "across = X, up = Z". */
 function viewAxes(page: Drawing, key: string, projections: Projections): string | null {
-  const kind = key.startsWith("detail:") ? page.details?.find((x) => `detail:${x.id}` === key)?.host : (key as ViewKind);
+  const host = key.startsWith("detail:") ? page.details?.find((x) => `detail:${x.id}` === key)?.host : key;
+  const kind = host === undefined ? undefined : hostKindOf(host);
   if (kind && kind !== "iso" && kind !== "flat" && VIEW_CAMERAS[kind] && !key.startsWith("section:")) {
     return `across = ${AXIS_WORDS(VIEW_CAMERAS[kind].right as V3)}, up = ${AXIS_WORDS(viewUp(kind) as V3)}`;
   }
@@ -157,7 +194,7 @@ function sectionFrame(page: Drawing, key: string, projections: Projections): { r
   const cut = page.sections?.find((x) => `section:${x.id}` === key);
   const host = cut ? projections[cut.host] : undefined;
   if (!cut || !host?.bounds) return null;
-  const geo = sectionGeometry(cut.host, fromRel(host.bounds, cut.a), fromRel(host.bounds, cut.b), cut.flip);
+  const geo = sectionGeometry(hostKindOf(cut.host), fromRel(host.bounds, cut.a), fromRel(host.bounds, cut.b), cut.flip);
   if (!geo) return null;
   const t = geo.toward as V3;
   const r = geo.right as V3;
@@ -165,12 +202,13 @@ function sectionFrame(page: Drawing, key: string, projections: Projections): { r
 }
 
 /** A described point on a view: [x, y, z] in the model (seen from the view), or [across, up] in the view's own mm. */
-function viewPoint(page: Drawing, key: string, projections: Projections, raw: unknown, s: Session, where: string): P2 {
+export function viewPoint(page: Drawing, key: string, projections: Projections, raw: unknown, s: Session, where: string): P2 {
   if (Array.isArray(raw) && raw.length === 2) return [amount(raw[0], `${where}[0]`, s.scope()).value, amount(raw[1], `${where}[1]`, s.scope()).value];
   if (!Array.isArray(raw) || raw.length !== 3) throw new InputError(`${where} should be a point of the model [x, y, z] (mm), or [across, up] in the view's own mm.`);
   const p = xyz(raw, where, s.scope()).map((v) => v.value) as V3;
-  const kind = key.startsWith("detail:") ? page.details?.find((x) => `detail:${x.id}` === key)?.host : (key as ViewKind);
-  if (key === "iso") throw new InputError(`${where}: the 3D view can't be dimensioned. Use the front, top or a side view.`);
+  const host = key.startsWith("detail:") ? page.details?.find((x) => `detail:${x.id}` === key)?.host : key;
+  const kind = host === undefined ? undefined : hostKindOf(host);
+  if (kind === "iso") throw new InputError(`${where}: the 3D view can't be dimensioned. Use the front, top or a side view.`);
   if (kind && !key.startsWith("section:")) return projectPoint(kind, p);
   const frame = sectionFrame(page, key, projections);
   if (!frame) throw new InputError(`${where}: give the point as [across, up] in this view's own mm.`);
@@ -180,7 +218,7 @@ function viewPoint(page: Drawing, key: string, projections: Projections, raw: un
 const fmt2 = (p: P2) => `(${r2(p[0])}, ${r2(p[1])})`;
 
 /** The corner, end or circle centre of a view nearest a point, or an explanation with the nearest ones. */
-function snapTo(p: ViewProjection, at: P2, name: string, where: string): P2 {
+export function snapTo(p: ViewProjection, at: P2, name: string, where: string): P2 {
   const pts = snapPoints(p);
   if (!pts.length) throw new InputError(`${where}: ${name} has no corners or ends to measure to.`);
   const d = (q: P2) => Math.hypot(q[0] - at[0], q[1] - at[1]);
@@ -191,6 +229,36 @@ function snapTo(p: ViewProjection, at: P2, name: string, where: string): P2 {
   throw new InputError(
     `${where}: there's no corner, end or circle centre at ${fmt2(at)} on ${name} (seen in the view's own mm). The nearest are: ${sorted.slice(0, 6).map(fmt2).join(", ")}. Use one of those, or describe_drawing for the view's size.`,
   );
+}
+
+/** True when a–b runs along one of the view's drawn straight edges (its middle on one, going the same way). */
+function onEdge(p: ViewProjection, [a, b]: [P2, P2]): boolean {
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const [x0, y0, x1, y1] = p.bounds ?? [0, 0, 1, 1];
+  const tol = Math.max(1e-3, 1e-3 * Math.hypot(x1 - x0, y1 - y0));
+  const mid: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const u: P2 = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+  for (const line of [...p.visible, ...(p.hidden ?? [])]) {
+    for (let i = 0; i + 3 < line.length; i += 2) {
+      const q: P2 = [line[i], line[i + 1]];
+      const r: P2 = [line[i + 2], line[i + 3]];
+      const l = Math.hypot(r[0] - q[0], r[1] - q[1]);
+      if (l < 1e-9) continue;
+      const v: P2 = [(r[0] - q[0]) / l, (r[1] - q[1]) / l];
+      if (Math.abs(u[0] * v[1] - u[1] * v[0]) > 1e-3) continue;
+      const t = (mid[0] - q[0]) * v[0] + (mid[1] - q[1]) * v[1];
+      const off = Math.abs((mid[0] - q[0]) * v[1] - (mid[1] - q[1]) * v[0]);
+      if (off < tol && t > -tol && t < l + tol) return true;
+    }
+  }
+  return false;
+}
+
+/** A leader angle pointing away from the middle of a view (degrees), as the app's chamfer tool sets it. */
+function awayFromMiddle(p: ViewProjection, at: P2): number {
+  const [x0, y0, x1, y1] = p.bounds ?? [0, 0, 0, 0];
+  const mid: P2 = [(x0 + x1) / 2, (y0 + y1) / 2];
+  return Math.hypot(at[0] - mid[0], at[1] - mid[1]) < 1e-6 ? 45 : Math.round((Math.atan2(at[1] - mid[1], at[0] - mid[0]) * 180) / Math.PI);
 }
 
 /** The circle or arc of a view nearest a point (its centre or a point on it). */
@@ -210,7 +278,7 @@ function circleAt(p: ViewProjection, at: P2, name: string, where: string): ViewP
 // ---------------------------------------------------------------------------
 // Descriptions
 
-function sheetLines(s: Session, d: Drawing, sh: Sheet): string[] {
+export function sheetLines(s: Session, d: Drawing, sh: Sheet): string[] {
   const page = sh.page;
   const style = dimStyle(page);
   const scaleText = `${scaleLabel(sh.layout.scale)}${page.scale === undefined ? " (chosen to fit)" : ""}`;
@@ -223,21 +291,24 @@ function sheetLines(s: Session, d: Drawing, sh: Sheet): string[] {
     const shown = circles.slice(0, 10).map((c) => `⌀${r2(2 * c.r)} at ${fmt2([c.cx, c.cy])}`);
     return `- ${viewName(page, v.key)}${v.scale !== sh.layout.scale ? ` (scale ${scaleLabel(v.scale)})` : ""}${axes ? ` — ${axes}` : ""}${b ? `; from ${fmt2([b[0], b[1]])} to ${fmt2([b[2], b[3]])} mm` : "; EMPTY (nothing to draw here)"}${shown.length ? `; circles: ${shown.join(", ")}${circles.length > shown.length ? ` and ${circles.length - shown.length} more` : ""}` : ""}`;
   });
-  const dims = (page.dimensions ?? []).map((dim) => {
+  const dims = (page.dimensions ?? []).map((dim, k) => {
     const p = sh.projections[dim.view];
-    if (!p) return `- ${viewName(page, dim.view)}: a ${dim.type} dimension (its view isn't shown)`;
+    if (!p) return `- D${k + 1} ${viewName(page, dim.view)}: a ${dim.type} dimension (its view isn't shown)`;
     const r = resolveDim(dim, p);
     setLengthUnit(s.doc.units === "in" ? "in" : "mm");
-    const label = dimLabel(dim, measureDim(dim, r), style);
+    const label = dim.type === "chamfer" ? chamferLabel(dim, r, style) : dimLabel(dim, measureDim(dim, r), style);
     setLengthUnit("mm");
-    return `- ${viewName(page, dim.view)}: ${label} (${dim.type}${dim.b ? ` from ${fmt2(r.a)} to ${fmt2(r.b ?? r.a)}` : ` at ${fmt2(r.a)}`})${r.found ? "" : " — LOST: what it measured isn't there any more"}`;
+    const where = dim.type === "angle" && r.c && r.d ? ` between ${fmt2(r.a)}–${fmt2(r.b ?? r.a)} and ${fmt2(r.c)}–${fmt2(r.d)}${dim.reflex ? ", outside" : ""}` : dim.b ? ` from ${fmt2(r.a)} to ${fmt2(r.b ?? r.a)}` : ` at ${fmt2(r.a)}`;
+    return `- D${k + 1} ${viewName(page, dim.view)}: ${label} (${dim.type === "arcLength" ? "arc length" : dim.type}${dim.type === "ordinate" ? (dim.axis === "v" ? " up" : " across") : ""}${where})${r.found ? "" : " — LOST: what it measured isn't there any more"}`;
   });
+  const notes = (page.notes ?? []).map((n, k) => `- N${k + 1}: ${n.symbol ? describeSymbol(n.symbol) : `note "${n.text.replace(/\n/g, " / ")}"`} at (${r2(n.at[0])}, ${r2(n.at[1])})${n.leader ? `, its leader pointing to (${r2(n.leader[0])}, ${r2(n.leader[1])})` : ""}`);
   const t = page.title;
   const title = [t.title && `title "${t.title}"`, t.partNumber && `part number "${t.partNumber}"`, t.material && `material "${t.material}"`, t.drawnBy && `drawn by "${t.drawnBy}"`, t.company && `company "${t.company}"`, t.notes && `notes "${t.notes.replace(/\n/g, " / ")}"`].filter(Boolean);
   return [
     `${d.name}: ${page.source?.kind === "assembly" ? "assembly" : "part"} "${sh.subject.name}"${sh.count > 1 ? `, sheet ${sh.number} of ${sh.count}` : ""}. Paper ${page.sheet}, scale ${scaleText}, ${page.projection === "third" ? "third-angle (US)" : "first-angle (ISO)"} projection, hidden lines ${page.hiddenLines ? "shown dashed" : "not shown"}${d.exploded ? ", exploded" : ""}.`,
     views.length ? `Views (points in each view's own mm):\n${views.join("\n")}` : "No views yet: add some with edit_drawing \"views\".",
-    dims.length ? `Dimensions:\n${dims.join("\n")}` : "No dimensions yet (auto_dimension adds the usual ones; add_dimension adds one).",
+    dims.length ? `Dimensions (delete_drawing_item takes these numbers):\n${dims.join("\n")}` : "No dimensions yet (auto_dimension adds the usual ones; add_dimension adds one).",
+    notes.length ? `Notes and symbols (sheet mm from the bottom-left corner):\n${notes.join("\n")}` : null,
     sh.info.bom?.length ? `Parts list on the sheet: ${sh.info.bom.map((b) => `${b.item}. ${b.name} × ${b.quantity}`).join("; ")}.` : null,
     `Title block: ${title.length ? title.join(", ") : "nothing filled in yet"} (date ${sh.info.date}).`,
     sh.layout.tooBig ? "PROBLEM: the views don't fit the paper even at the smallest scale. Choose bigger paper (edit_drawing \"paper\")." : null,
@@ -297,15 +368,18 @@ function applySettings(s: Session, d: Drawing, pageId: string, a: Obj): Drawing 
     onPage((p) => {
       let q = p;
       for (const kind of STANDARD_VIEWS) {
-        const has = q.views.some((v) => v.kind === kind);
+        const has = q.views.some((v) => v.kind === kind && !v.source && !v.parent);
         if (has !== want.includes(kind)) q = toggleView(q, kind);
       }
       // Sections and details drawn on a view that's gone go too.
-      const lost = (q.sections ?? []).filter((c) => !want.includes(c.host)).length + (q.details ?? []).filter((c) => !want.includes(c.host)).length;
-      if (lost) throw new InputError(`views: a section or detail is drawn on a view you'd take away. Keep ${[...new Set([...(q.sections ?? []), ...(q.details ?? [])].map((c) => c.host))].join(" and ")} in the list.`);
+      // (Those on views of other parts are checked with "other_parts".)
+      const own = [...(q.sections ?? []), ...(q.details ?? [])].filter((c) => !c.host.includes("@"));
+      const lost = own.filter((c) => !want.includes(c.host as ViewKind)).length;
+      if (lost) throw new InputError(`views: a section or detail is drawn on a view you'd take away. Keep ${[...new Set(own.map((c) => c.host))].join(" and ")} in the list.`);
       return q;
     });
   }
+  if (a.other_parts !== undefined) out = applyOtherParts(s, out, pageId, a.other_parts);
   if (a.projection !== undefined) {
     const proj = oneOf(a.projection, ["first", "third"] as const, "projection");
     const { projection: _p, ...rest } = withoutFit(out);
@@ -321,7 +395,8 @@ function applySettings(s: Session, d: Drawing, pageId: string, a: Obj): Drawing 
   if (a.title !== undefined) {
     const t = object(a.title, "title");
     noExtras(t, Object.keys(TITLE_KEYS), "title");
-    const title = { ...out.title };
+    // As this sheet shows it: a sheet of its own part has its own title and part number (the rest is shared).
+    const title = { ...pageOf(out, pageId).title };
     for (const [k, field] of Object.entries(TITLE_KEYS)) {
       if (t[k] === undefined) continue;
       if (t[k] === null || t[k] === "") delete title[field];
@@ -330,8 +405,61 @@ function applySettings(s: Session, d: Drawing, pageId: string, a: Obj): Drawing 
         title[field] = (t[k] as string).slice(0, k === "notes" ? 1000 : 200);
       }
     }
-    out = { ...out, title };
+    onPage((p) => ({ ...p, title }));
   }
+  return out;
+}
+
+/**
+ * "other_parts": views of other parts or assemblies on the sheet (as Onshape
+ * lets each view show its own): a list of {"part" or "assembly", "views"} —
+ * the first view is the one placed, the rest are projected from it. The list
+ * replaces the old one; a view set kept (same part, same first view) keeps its
+ * dimensions, sections and details.
+ */
+function applyOtherParts(s: Session, d: Drawing, pageId: string, raw: unknown): Drawing {
+  const entries = list(raw, "other_parts", { allowEmpty: true }).map((e, i) => {
+    const where = `other_parts[${i}]`;
+    const o = object(e, where);
+    noExtras(o, ["part", "assembly", "views"], where);
+    if ((o.part === undefined) === (o.assembly === undefined)) throw new InputError(`${where}: give either "part" or "assembly" (its name).`);
+    const source: NonNullable<Drawing["source"]> =
+      o.assembly !== undefined ? { kind: "assembly", id: findAssembly(s, o.assembly).id } : { kind: "part", id: s.part(s.buildAll().parts.filter((p) => !p.configuration), o.part, `${where}.part`).id };
+    const views = o.views === undefined ? (["front"] as ViewKind[]) : list(o.views, `${where}.views`).map((v, k) => oneOf(typeof v === "string" ? v.trim().toLowerCase().replace(/^3d$/, "iso") : v, STANDARD_VIEWS, `${where}.views[${k}]`));
+    if (new Set(views).size !== views.length) throw new InputError(`${where}.views: each view once, please.`);
+    if (views.includes("flat") && source.kind !== "part") throw new InputError(`${where}.views: "flat" (a flat pattern) is only for a sheet metal part.`);
+    return { source, views, where };
+  });
+  let out = d;
+  out = changePage(out, pageId, (p) => {
+    if (entries.some((e) => e.source.kind === p.source?.kind && e.source.id === p.source?.id)) {
+      throw new InputError('other_parts: that\'s the sheet\'s own part — choose its views with "views" instead.');
+    }
+    let q = p;
+    const kept = new Set<string>();
+    for (const e of entries) {
+      const same = viewParts(q).find((b) => !kept.has(b.id) && b.kind === e.views[0] && b.source.kind === e.source.kind && b.source.id === e.source.id);
+      let group: string;
+      if (same) group = same.id;
+      else {
+        group = newId("vw");
+        q = addViewOf(q, group, e.source, e.views[0]).drawing;
+      }
+      kept.add(group);
+      for (const kind of STANDARD_VIEWS) {
+        if (kind === e.views[0]) continue;
+        const has = q.views.some((v) => v.parent === group && v.kind === kind);
+        if (has !== e.views.includes(kind)) {
+          if (has && [...(q.sections ?? []), ...(q.details ?? [])].some((c) => c.host === `${kind}@${group}`)) {
+            throw new InputError(`${e.where}.views: a section or detail is drawn on its ${kind} view. Keep "${kind}" in the list.`);
+          }
+          q = toggleProjected(q, group, kind);
+        }
+      }
+    }
+    for (const b of viewParts(q)) if (!kept.has(b.id)) q = removeViewOf(q, b.id);
+    return q;
+  });
   return out;
 }
 
@@ -342,6 +470,12 @@ const SETTINGS_SCHEMA = {
   projection: { type: "string", enum: ["first", "third"], description: '"first" (ISO, UK/Europe: top view below the front) or "third" (US: top view above).' },
   hidden_lines: { type: "boolean", description: "Show hidden edges dashed (default true)." },
   exploded: { type: "boolean", description: "Assembly drawings: show it spread apart (its exploded view)." },
+  other_parts: {
+    type: "array",
+    items: { type: "object" },
+    description:
+      'Views of other parts or assemblies on the same sheet (each view can show its own part, as in Onshape): a list of {"part": name} or {"assembly": name} with "views" (default ["front"]; the first is placed, the rest are projected from it and line up with it). Name them in other tools as e.g. "front of Bracket". The list replaces the old one ([] removes them all); a set kept (same part and first view) keeps its dimensions.',
+  },
   title: { type: "object", description: 'Title block: {"title", "part_number", "material", "drawn_by", "company", "notes"} (text; "" clears one).' },
 };
 
@@ -349,7 +483,7 @@ const SETTINGS_SCHEMA = {
  * Lay the changed drawing out and keep the change only if it works: refused
  * (nothing changed) if its views can't be made, or `problem` finds fault.
  */
-async function commitDrawing(s: Session, next: JuraCADDocument, d: Drawing, pageId: string, verb: string, problem?: (sh: Sheet) => string | null): Promise<Sheet> {
+export async function commitDrawing(s: Session, next: JuraCADDocument, d: Drawing, pageId: string, verb: string, problem?: (sh: Sheet) => string | null): Promise<Sheet> {
   const after = drawingsOf(next).find((x) => x.id === d.id)!;
   let sh: Sheet;
   try {
@@ -366,8 +500,8 @@ async function commitDrawing(s: Session, next: JuraCADDocument, d: Drawing, page
   return sh;
 }
 
-const DRAWING_REF = { type: "string", description: 'The drawing\'s name, e.g. "Drawing 1" (optional when there is only one).' };
-const SHEET_REF = { type: "number", description: "Which sheet (1, 2…; default 1) — drawings made in the app can have several." };
+export const DRAWING_REF = { type: "string", description: 'The drawing\'s name, e.g. "Drawing 1" (optional when there is only one).' };
+export const SHEET_REF = { type: "number", description: "Which sheet (1, 2…; default 1) — drawings made in the app can have several." };
 
 export const DRAWING_TOOLS: ToolDef[] = [
   {
@@ -378,14 +512,7 @@ export const DRAWING_TOOLS: ToolDef[] = [
     inputSchema: { type: "object", properties: { part: { type: "string" }, assembly: { type: "string" }, name: { type: "string" }, ...SETTINGS_SCHEMA } },
     run: async (s, a) => {
       noExtras(a, ["part", "assembly", "name", ...Object.keys(SETTINGS_SCHEMA)], "create_drawing");
-      if (a.part !== undefined && a.assembly !== undefined) throw new InputError('Give either "part" or "assembly", not both.');
-      let source: Drawing["source"];
-      if (a.assembly !== undefined) source = { kind: "assembly", id: findAssembly(s, a.assembly).id };
-      else {
-        const all = s.buildAll().parts.filter((p) => !p.configuration);
-        const part = a.part === undefined ? s.part(s.build().parts, undefined, "part") : s.part(all, a.part, "part");
-        source = { kind: "part", id: part.id };
-      }
+      const source = sourceFrom(s, a) ?? { kind: "part" as const, id: s.part(s.build().parts, undefined, "part").id };
       const id = newId("d");
       let next = addDrawing(s.doc, id, source);
       if (a.name !== undefined) {
@@ -404,13 +531,17 @@ export const DRAWING_TOOLS: ToolDef[] = [
     name: "edit_drawing",
     title: "Change a drawing's settings",
     description:
-      'Change a drawing: "paper" (A4…A0, ANSI A…E), "scale" ("fit", "1:2", "2:1"…), "views" (the standard views to show — the list replaces the old one; a view taken away takes its dimensions with it), "projection" ("first" ISO / "third" US), "hidden_lines", "exploded" (assembly drawings), "title" (title block: title, part_number, material, drawn_by, company, notes), "name". Only what\'s given changes.',
-    inputSchema: { type: "object", properties: { drawing: DRAWING_REF, sheet: SHEET_REF, name: { type: "string" }, ...SETTINGS_SCHEMA }, required: [] },
+      'Change a drawing: "paper" (A4…A0, ANSI A…E), "scale" ("fit", "1:2", "2:1"…), "views" (the standard views to show — the list replaces the old one; a view taken away takes its dimensions with it), "projection" ("first" ISO / "third" US), "hidden_lines", "exploded" (assembly drawings), "title" (title block: title, part_number, material, drawn_by, company, notes), "name", and "part" or "assembly" (what this sheet draws: on sheet 2, 3… it has its own title and part number; the other sheets keep showing what they did). Only what\'s given changes.',
+    inputSchema: { type: "object", properties: { drawing: DRAWING_REF, sheet: SHEET_REF, name: { type: "string" }, part: { type: "string", description: "Draw this part on the sheet instead." }, assembly: { type: "string", description: "Draw this assembly on the sheet instead." }, ...SETTINGS_SCHEMA }, required: [] },
     run: async (s, a) => {
-      noExtras(a, ["drawing", "sheet", "name", ...Object.keys(SETTINGS_SCHEMA)], "edit_drawing");
+      noExtras(a, ["drawing", "sheet", "name", "part", "assembly", ...Object.keys(SETTINGS_SCHEMA)], "edit_drawing");
       const d = findDrawing(s, a.drawing);
       const pageId = pageIdFor(d, a.sheet);
-      let changed = applySettings(s, d, pageId, a);
+      // What this sheet draws (the other sheets keep showing what they did).
+      const source = sourceFrom(s, a);
+      const shown = source ? changePage(d, pageId, (p) => ({ ...withoutFit(p), source })) : d;
+      if (source && pageOf(shown, pageId).views.some((v) => v.kind === "flat") && source.kind !== "part") throw new InputError('This sheet has a flat pattern view ("flat"), which only a sheet metal part has. Take it out with "views" first.');
+      let changed = applySettings(s, shown, pageId, a);
       if (a.name !== undefined) {
         const name = text(a.name, "name").slice(0, 80);
         if (drawingsOf(s.doc).some((x) => x.id !== d.id && x.name.toLowerCase() === name.toLowerCase())) throw new InputError(`There's already a drawing called "${name}". Choose another name.`);
@@ -431,7 +562,7 @@ export const DRAWING_TOOLS: ToolDef[] = [
       properties: {
         drawing: DRAWING_REF,
         sheet: SHEET_REF,
-        on: { type: "string", enum: [...SECTION_HOSTS] },
+        on: { type: "string", description: '"front", "top", "right", "left", "back" or "bottom" — or a view of another part on the sheet, e.g. "top of Bracket".' },
         direction: { type: "string", enum: ["vertical", "horizontal"] },
         through: { type: "array", items: {} },
         from: { type: "array", items: {} },
@@ -445,13 +576,14 @@ export const DRAWING_TOOLS: ToolDef[] = [
       noExtras(a, ["drawing", "sheet", "on", "direction", "through", "from", "to", "flip", "auxiliary"], "add_section_view");
       const d = findDrawing(s, a.drawing);
       const pageId = pageIdFor(d, a.sheet);
-      const host = oneOf(a.on, SECTION_HOSTS, "on");
-      const page = pageOf(d, pageId);
-      if (!page.views.some((v) => v.kind === host)) throw new InputError(`The ${host} view isn't on the sheet, so the line can't be drawn on it. Add it first with edit_drawing "views", or choose another view.`);
       const sh = await sheetOf(s, d, pageId);
+      const page = sh.page;
+      const host = hostFor(page, a.on, "on", SECTION_HOSTS);
+      const hostName = viewName(page, host).toLowerCase();
+      if (!drawingViewKeys(page).includes(host)) throw new InputError(`The ${hostName} view isn't on the sheet, so the line can't be drawn on it. Add it first with edit_drawing "views", or choose another view.`);
       const hp = sh.projections[host];
-      if (!hp?.bounds) throw new InputError(`The ${host} view is empty, so there's nothing to cut.`);
-      const flat = (raw: unknown, where: string) => projectPoint(host, xyz(raw, where, s.scope()).map((v) => v.value) as V3);
+      if (!hp?.bounds) throw new InputError(`The ${hostName} view is empty, so there's nothing to cut.`);
+      const flat = (raw: unknown, where: string) => projectPoint(hostKindOf(host), xyz(raw, where, s.scope()).map((v) => v.value) as V3);
       let ra: P2;
       let rb: P2;
       if (a.from !== undefined || a.to !== undefined) {
@@ -477,15 +609,15 @@ export const DRAWING_TOOLS: ToolDef[] = [
         const signs = corners.map(side);
         if (!(Math.min(...signs) < -1e-9 && Math.max(...signs) > 1e-9)) {
           const b = hp.bounds;
-          throw new InputError(`The cutting line misses the part on the ${host} view (it spans ${fmt2([b[0], b[1]])} to ${fmt2([b[2], b[3]])} there, ${viewAxes(page, host, sh.projections)}). Nothing was changed. Put "through" inside the part.`);
+          throw new InputError(`The cutting line misses the part on the ${hostName} view (it spans ${fmt2([b[0], b[1]])} to ${fmt2([b[2], b[3]])} there, ${viewAxes(page, host, sh.projections)}). Nothing was changed. Put "through" inside the part.`);
         }
       }
       const changed = changePage(d, pageId, (p) => addSection(withoutFit(p), { id, host, a: ra, b: rb, ...(a.flip === true ? { flip: true } : {}), ...(aux ? { aux: true } : {}), letter: nextLetterOnAnySheet(d) }));
       const key = `section:${id}`;
       const after = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageId, "add the section", (x) =>
-        x.projections[key]?.bounds ? null : `the cutting line misses the part, so there's nothing to show. Put "through" inside the part (describe_drawing gives the ${host} view's extent).`,
+        x.projections[key]?.bounds ? null : `the cutting line misses the part, so there's nothing to show. Put "through" inside the part (describe_drawing gives the ${hostName} view's extent).`,
       );
-      return say(`Added ${viewName(after.page, key)} (cut along a line on the ${host} view).`, ...sheetLines(s, changed, after));
+      return say(`Added ${viewName(after.page, key)} (cut along a line on the ${hostName} view).`, ...sheetLines(s, changed, after));
     },
   },
   {
@@ -493,27 +625,28 @@ export const DRAWING_TOOLS: ToolDef[] = [
     title: "Add a detail view",
     description:
       'Add a detail view: a circle on a view ("on": front, top, right, left, back or bottom) around "around" [x, y, z] (a model point) with "radius" (mm, on the part), shown again "zoom" times bigger (default 2) as "DETAIL B".',
-    inputSchema: { type: "object", properties: { drawing: DRAWING_REF, sheet: SHEET_REF, on: { type: "string", enum: [...DETAIL_HOSTS] }, around: { type: "array", items: {} }, radius: {}, zoom: { type: "number" } }, required: ["on", "around", "radius"] },
+    inputSchema: { type: "object", properties: { drawing: DRAWING_REF, sheet: SHEET_REF, on: { type: "string", description: '"front", "top", "right", "left", "back" or "bottom" — or a view of another part on the sheet, e.g. "top of Bracket".' }, around: { type: "array", items: {} }, radius: {}, zoom: { type: "number" } }, required: ["on", "around", "radius"] },
     run: async (s, a) => {
       noExtras(a, ["drawing", "sheet", "on", "around", "radius", "zoom"], "add_detail_view");
       const d = findDrawing(s, a.drawing);
       const pageId = pageIdFor(d, a.sheet);
-      const host = oneOf(a.on, DETAIL_HOSTS, "on");
-      if (!pageOf(d, pageId).views.some((v) => v.kind === host)) throw new InputError(`The ${host} view isn't on the sheet. Add it first with edit_drawing "views", or choose another view.`);
       const radius = amount(a.radius, "radius", s.scope(), { positive: true }).value;
       const zoom = a.zoom === undefined ? 2 : amount(a.zoom, "zoom", s.scope(), { unit: "", min: 1.1 }).value;
       if (zoom > 20) throw new InputError("zoom can be at most 20.");
       const sh = await sheetOf(s, d, pageId);
+      const host = hostFor(sh.page, a.on, "on", DETAIL_HOSTS);
+      const hostName = viewName(sh.page, host).toLowerCase();
+      if (!drawingViewKeys(sh.page).includes(host)) throw new InputError(`The ${hostName} view isn't on the sheet. Add it first with edit_drawing "views", or choose another view.`);
       const hp = sh.projections[host];
-      if (!hp?.bounds) throw new InputError(`The ${host} view is empty, so there's nothing to show bigger.`);
-      const centre = toRel(hp.bounds, projectPoint(host, xyz(a.around, "around", s.scope()).map((v) => v.value) as V3));
+      if (!hp?.bounds) throw new InputError(`The ${hostName} view is empty, so there's nothing to show bigger.`);
+      const centre = toRel(hp.bounds, projectPoint(hostKindOf(host), xyz(a.around, "around", s.scope()).map((v) => v.value) as V3));
       const id = newId("dt");
       const changed = changePage(d, pageId, (p) => addDetail(withoutFit(p), { id, host, centre, radius, zoom, letter: nextLetterOnAnySheet(d) }));
       const key = `detail:${id}`;
       const after = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageId, "add the detail", (x) =>
-        x.projections[key]?.bounds ? null : `the circle doesn't take in any of the ${host} view's lines. Put "around" on the part, or make "radius" bigger.`,
+        x.projections[key]?.bounds ? null : `the circle doesn't take in any of the ${hostName} view's lines. Put "around" on the part, or make "radius" bigger.`,
       );
-      return say(`Added ${viewName(after.page, key)} (${zoom}× the ${host} view around ${fmt2(projectPoint(host, xyz(a.around, "around", s.scope()).map((v) => v.value) as V3))}).`, ...sheetLines(s, changed, after));
+      return say(`Added ${viewName(after.page, key)} (${zoom}× the ${hostName} view around ${fmt2(projectPoint(hostKindOf(host), xyz(a.around, "around", s.scope()).map((v) => v.value) as V3))}).`, ...sheetLines(s, changed, after));
     },
   },
   {
@@ -530,12 +663,12 @@ export const DRAWING_TOOLS: ToolDef[] = [
       const keys = drawingViewKeys(page);
       const third = page.projection === "third";
       const existing = page.dimensions ?? [];
-      const added = autoDimensions(sh.projections, keys, existing, viewScales(page, sh.layout.scale), () => newId("dm"), third);
+      const added = autoDimensionSheet(sh.projections, page, existing, viewScales(page, sh.layout.scale), () => newId("dm"), third);
       if (!added.length) {
         const hasViews = keys.some((k) => k !== "iso" && !k.startsWith("section:"));
         return say(hasViews ? `${d.name} is already dimensioned; nothing more to add.` : "Auto dimension needs a front, top or side view: add one with edit_drawing \"views\".");
       }
-      const next = fitDrawing(page, sh.projections, sh.info, (scale) => [...existing, ...autoDimensions(sh.projections, keys, existing, viewScales(page, scale), () => newId("dm"), third)]);
+      const next = fitDrawing(page, sh.projections, sh.info, (scale) => [...existing, ...autoDimensionSheet(sh.projections, page, existing, viewScales(page, scale), () => newId("dm"), third)]);
       const count = (next.dimensions?.length ?? 0) - existing.length;
       const changed = changePage(d, pageId, () => next);
       const after = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageId, "dimension it");
@@ -546,7 +679,7 @@ export const DRAWING_TOOLS: ToolDef[] = [
     name: "add_dimension",
     title: "Add a dimension to a drawing",
     description:
-      'Add one dimension to a view of a drawing ("view": "front", "top", "right"…, "section A", "detail B"). A length between two points: "from" and "to"; a circle or arc\'s size: "circle". Points are model points [x, y, z] (mm; seen from the view) or [across, up] in the view\'s own mm (describe_drawing gives each view\'s directions and extent); each snaps to the nearest corner, end or circle centre. "type": "horizontal", "vertical" or "aligned" for lengths (default: horizontal or vertical when the points line up that way, else aligned); "diameter" or "radius" for circles (default diameter for a full circle). "side": "above", "below", "left" or "right" of the view (default the usual side). "tolerance": ± amount (mm), or {"plus": …, "minus": …}.',
+      'Add a dimension to a view of a drawing ("view": "front", "top", "right"…, "section A", "detail B"). Points are model points [x, y, z] (mm; seen from the view) or [across, up] in the view\'s own mm (describe_drawing gives each view\'s directions and extent); each snaps to the nearest corner, end or circle centre. Kinds:\n- a length between two points: "from" and "to"; "type": "horizontal", "vertical" or "aligned" (default: horizontal or vertical when the points line up that way, else aligned); "side": "above", "below", "left" or "right" of the view.\n- a circle or arc\'s size: "circle" (its centre or a point on it); "type": "diameter" or "radius" (default diameter for a full circle); "type": "arc_length" for the length round an arc (give a point on the arc).\n- an angle between two edges: "type": "angle", "edge" and "edge2" (each [end, end]); the angle at the corner they make; "outside": true measures the outside angle (360° less).\n- a chamfer callout ("1 × 45°") on a slanted edge: "type": "chamfer", "edge" [end, end]; "along": "h" or "v" says which way its size is measured.\n- a run from a datum corner: "type": "ordinate" (each point\'s distance from the datum, 0 at the datum), "baseline" (each from the datum, stacked) or "chain" (end to end), with "datum" and "points" (a list); the run goes across or up, whichever the first point does.\n"tolerance": ± amount (mm), or {"plus": …, "minus": …} (lengths and circles).',
     inputSchema: {
       type: "object",
       properties: {
@@ -556,14 +689,20 @@ export const DRAWING_TOOLS: ToolDef[] = [
         from: { type: "array", items: {} },
         to: { type: "array", items: {} },
         circle: { type: "array", items: {} },
-        type: { type: "string", enum: ["horizontal", "vertical", "aligned", "diameter", "radius"] },
+        edge: { type: "array", items: {}, description: "Two points: the ends of an edge (angle, chamfer)." },
+        edge2: { type: "array", items: {}, description: "Angle: the second edge's two ends." },
+        datum: { type: "array", items: {}, description: "Ordinate, baseline, chain: the corner measured from." },
+        points: { type: "array", items: {}, description: "Ordinate, baseline, chain: the points measured to." },
+        type: { type: "string", enum: ["horizontal", "vertical", "aligned", "diameter", "radius", "arc_length", "angle", "chamfer", "ordinate", "baseline", "chain"] },
         side: { type: "string", enum: ["above", "below", "left", "right"] },
+        outside: { type: "boolean", description: "Angle: measure the outside angle." },
+        along: { type: "string", enum: ["h", "v"], description: "Chamfer: measure its size across (h) or up and down (v)." },
         tolerance: {},
       },
       required: ["view"],
     },
     run: async (s, a) => {
-      noExtras(a, ["drawing", "sheet", "view", "from", "to", "circle", "type", "side", "tolerance"], "add_dimension");
+      noExtras(a, ["drawing", "sheet", "view", "from", "to", "circle", "edge", "edge2", "datum", "points", "type", "side", "outside", "along", "tolerance"], "add_dimension");
       const d = findDrawing(s, a.drawing);
       const pageId = pageIdFor(d, a.sheet);
       const sh = await sheetOf(s, d, pageId);
@@ -572,46 +711,123 @@ export const DRAWING_TOOLS: ToolDef[] = [
       const p = sh.projections[key];
       const name = viewName(page, key);
       if (!p?.bounds) throw new InputError(`${name} is empty, so there's nothing to dimension there.`);
-      if (key === "iso") throw new InputError("The 3D view can't be dimensioned (its sizes aren't true lengths). Use the front, top or a side view.");
+      if (splitKey(key).kind === "iso") throw new InputError("The 3D view can't be dimensioned (its sizes aren't true lengths). Use the front, top or a side view.");
       const scale = viewScales(page, sh.layout.scale)(key) * (p.zoom ?? 1);
-      let dim: Dimension;
+      const type = a.type === undefined ? undefined : oneOf(a.type, ["horizontal", "vertical", "aligned", "diameter", "radius", "arc_length", "angle", "chamfer", "ordinate", "baseline", "chain"] as const, "type");
       const tolerance = parseTolerance(a.tolerance, s);
-      if (a.circle !== undefined) {
-        if (a.from !== undefined || a.to !== undefined) throw new InputError('Give either "circle" (a circle\'s size) or "from" and "to" (a length), not both.');
-        const c = circleAt(p, viewPoint(page, key, sh.projections, a.circle, s, "circle"), name, "circle");
-        const type = a.type === undefined ? (c.full ? "diameter" : "radius") : oneOf(a.type, ["diameter", "radius"] as const, "type (for a circle)");
-        dim = { id: newId("dm"), view: key, type, a: dimPoint([c.cx, c.cy], p), r: c.r, offset: 8, angle: 45, ...(tolerance ? { tolerance } : {}) };
+      const given = (keys: string[]) => keys.filter((k) => a[k] !== undefined);
+      const forbid = (keys: string[], what: string) => {
+        const extra = given(keys);
+        if (extra.length) throw new InputError(`${extra.map((k) => `"${k}"`).join(", ")} ${extra.length > 1 ? "don't" : "doesn't"} go with ${what}.`);
+      };
+      const at = (raw: unknown, where: string) => snapTo(p, viewPoint(page, key, sh.projections, raw, s, where), name, where);
+      const edgeOf = (raw: unknown, where: string): [P2, P2] => {
+        if (!Array.isArray(raw) || raw.length !== 2) throw new InputError(`${where} should be the edge's two ends, e.g. [[0, 0, 0], [10, 0, 5]] (model points, or [across, up] in the view's own mm).`);
+        const ends: [P2, P2] = [at(raw[0], `${where}[0]`), at(raw[1], `${where}[1]`)];
+        if (Math.hypot(ends[1][0] - ends[0][0], ends[1][1] - ends[0][1]) < 1e-6) throw new InputError(`${where}: both ends are the same point on ${name}.`);
+        if (!onEdge(p, ends)) throw new InputError(`${where}: there's no straight edge from ${fmt2(ends[0])} to ${fmt2(ends[1])} on ${name}. Give the two ends of one edge (seen from that view).`);
+        return ends;
+      };
+      let dims: Dimension[];
+      let skipped = 0;
+      if (type === "angle") {
+        forbid(["from", "to", "circle", "datum", "points", "along", "tolerance"], "an angle");
+        if (a.edge === undefined || a.edge2 === undefined) throw new InputError('An angle needs "edge" and "edge2": the two ends of each edge.');
+        const [e1, e2] = [edgeOf(a.edge, "edge"), edgeOf(a.edge2, "edge2")];
+        const g = angleGeometry(e1[0], e1[1], e2[0], e2[1]);
+        if (!g) throw new InputError(`Those edges are parallel on ${name}, so they make no angle. Use a length between them (from/to) instead.`);
+        // The arms run from where the edges meet out to their far ends: the angle at the corner.
+        const ray = (e: [P2, P2], u: P2): number => {
+          const far = Math.hypot(e[0][0] - g.vertex[0], e[0][1] - g.vertex[1]) > Math.hypot(e[1][0] - g.vertex[0], e[1][1] - g.vertex[1]) ? e[0] : e[1];
+          return (far[0] - g.vertex[0]) * u[0] + (far[1] - g.vertex[1]) * u[1] >= 0 ? 1 : -1;
+        };
+        const rays: [number, number] = [ray(e1, g.u1), ray(e2, g.u2)];
+        dims = [{ id: newId("dm"), view: key, type: "angle", a: dimPoint(e1[0], p), b: dimPoint(e1[1], p), c: dimPoint(e2[0], p), d: dimPoint(e2[1], p), rays, offset: 10, ...(bool(a.outside, "outside") ? { reflex: true } : {}) }];
+      } else if (type === "chamfer") {
+        forbid(["from", "to", "circle", "edge2", "datum", "points", "outside", "tolerance", "side"], "a chamfer callout");
+        if (a.edge === undefined) throw new InputError('A chamfer callout needs "edge": the two ends of the slanted edge.');
+        const e = edgeOf(a.edge, "edge");
+        const along = a.along === undefined ? undefined : oneOf(a.along, ["h", "v"] as const, "along");
+        const c = chamferSize(e[0], e[1], along);
+        if (Math.abs(e[1][0] - e[0][0]) < 1e-6 || Math.abs(e[1][1] - e[0][1]) < 1e-6) throw new InputError(`That edge is level or upright on ${name}. Give the slanted edge a chamfer makes, seen from the side.`);
+        const mid: P2 = [(e[0][0] + e[1][0]) / 2, (e[0][1] + e[1][1]) / 2];
+        dims = [{ id: newId("dm"), view: key, type: "chamfer", a: dimPoint(e[0], p), b: dimPoint(e[1], p), offset: 8, angle: awayFromMiddle(p, mid), ...(along ? { along: c.along } : {}) }];
+      } else if (type === "ordinate" || type === "baseline" || type === "chain") {
+        forbid(["from", "to", "circle", "edge", "edge2", "outside", "along", "tolerance", "side"], `a ${type} run`);
+        if (a.datum === undefined || a.points === undefined) throw new InputError(`A ${type} run needs "datum" (the corner it's measured from) and "points" (a list of points to measure to).`);
+        const datum = at(a.datum, "datum");
+        const targets = list(a.points, "points").map((raw, i) => at(raw, `points[${i}]`));
+        if (targets.length > 30) throw new InputError("points: at most 30 in one run.");
+        const viewScale = sh.layout.views.find((v) => v.key === key)?.scale ?? sh.layout.scale;
+        let run = startRun(key, type, datum, page.projection === "third", drawingViewKeys(page));
+        dims = [];
+        for (const t of targets) {
+          const made = nextLinear(run, p, t, viewScale, [...(page.dimensions ?? []), ...dims]);
+          if (!made.length) {
+            skipped++;
+            continue;
+          }
+          dims.push(...made.map((x) => ({ ...x, id: newId("dm") })));
+          run = advanceRun(run, t, made);
+        }
+        if (!dims.length) throw new InputError(`None of those points adds a dimension: each is level with the datum ${fmt2(datum)} the way the run goes, or is already measured. Nothing was changed.`);
+      } else if (a.circle !== undefined || type === "diameter" || type === "radius" || type === "arc_length") {
+        forbid(["from", "to", "edge", "edge2", "datum", "points", "outside", "along", "side"], "a circle's size");
+        if (a.circle === undefined) throw new InputError('Give "circle": the centre of the circle or arc, or a point on it.');
+        const near = viewPoint(page, key, sh.projections, a.circle, s, "circle");
+        const c = circleAt(p, near, name, "circle");
+        if (type === "arc_length") {
+          if (tolerance) throw new InputError('"tolerance" doesn\'t go with an arc length.');
+          const arc = c.full ? null : arcOf(p, [c.cx, c.cy], c.r, near);
+          if (!arc) throw new InputError(`That's a whole circle on ${name}: an arc length needs an arc (part of a circle). Use "diameter" for its size.`);
+          dims = [{ id: newId("dm"), view: key, type: "arcLength", a: dimPoint([c.cx, c.cy], p), r: c.r, b: dimPoint(arc.mid, p), offset: 6 }];
+        } else {
+          const kind = type ?? (c.full ? "diameter" : "radius");
+          dims = [{ id: newId("dm"), view: key, type: kind, a: dimPoint([c.cx, c.cy], p), r: c.r, offset: 8, angle: 45, ...(tolerance ? { tolerance } : {}) }];
+        }
       } else {
-        if (a.from === undefined || a.to === undefined) throw new InputError('Give "from" and "to" (two points, for a length) or "circle" (for a circle\'s size).');
-        const pa = snapTo(p, viewPoint(page, key, sh.projections, a.from, s, "from"), name, "from");
-        const pb = snapTo(p, viewPoint(page, key, sh.projections, a.to, s, "to"), name, "to");
+        forbid(["edge", "edge2", "datum", "points", "outside", "along"], "a length (from/to)");
+        if (a.from === undefined || a.to === undefined) throw new InputError('Give "from" and "to" (two points, for a length), "circle" (for a circle\'s size), or a "type" such as "angle", "chamfer" or "ordinate".');
+        const pa = at(a.from, "from");
+        const pb = at(a.to, "to");
         if (Math.hypot(pb[0] - pa[0], pb[1] - pa[1]) < 1e-6) throw new InputError(`"from" and "to" are the same point on ${name}. Give two different corners (seen from that view, points straight behind each other are the same).`);
         const flatX = Math.abs(pb[0] - pa[0]) < 1e-6;
         const flatY = Math.abs(pb[1] - pa[1]) < 1e-6;
-        const type = a.type === undefined ? (flatY ? "horizontal" : flatX ? "vertical" : "aligned") : oneOf(a.type, ["horizontal", "vertical", "aligned"] as const, "type (for a length)");
-        if ((type === "horizontal" && flatX) || (type === "vertical" && flatY)) throw new InputError(`A ${type} dimension between those points would be 0: they're straight ${type === "horizontal" ? "above each other" : "beside each other"} on ${name}. Use "${type === "horizontal" ? "vertical" : "horizontal"}" or "aligned".`);
-        const kind = key.startsWith("detail:") || key.startsWith("section:") ? null : key;
-        const usual: Side = kind ? rowSide(kind, type === "vertical" ? "v" : "h", page.projection === "third", drawingViewKeys(page)) : type === "vertical" ? "right" : "below";
+        const kind = type === undefined ? (flatY ? "horizontal" : flatX ? "vertical" : "aligned") : oneOf(type, ["horizontal", "vertical", "aligned"] as const, "type (for a length)");
+        if ((kind === "horizontal" && flatX) || (kind === "vertical" && flatY)) throw new InputError(`A ${kind} dimension between those points would be 0: they're straight ${kind === "horizontal" ? "above each other" : "beside each other"} on ${name}. Use "${kind === "horizontal" ? "vertical" : "horizontal"}" or "aligned".`);
+        const viewKind = key.startsWith("detail:") || key.startsWith("section:") ? null : splitKey(key).kind;
+        // (Views of another part are arranged round that part's front view.)
+        const group = keyGroup(page, key);
+        const neighbours = drawingViewKeys(page).filter((k) => keyGroup(page, k) === group).map((k) => splitKey(k).kind);
+        const usual: Side = viewKind ? rowSide(viewKind, kind === "vertical" ? "v" : "h", page.projection === "third", neighbours) : kind === "vertical" ? "right" : "below";
         const side = a.side === undefined ? usual : (oneOf(a.side, ["above", "below", "left", "right"] as const, "side") as Side);
-        if (type === "horizontal" && (side === "left" || side === "right")) throw new InputError('A horizontal dimension goes "above" or "below" the view.');
-        if (type === "vertical" && (side === "above" || side === "below")) throw new InputError('A vertical dimension goes "left" or "right" of the view.');
+        if (kind === "horizontal" && (side === "left" || side === "right")) throw new InputError('A horizontal dimension goes "above" or "below" the view.');
+        if (kind === "vertical" && (side === "above" || side === "below")) throw new InputError('A vertical dimension goes "left" or "right" of the view.');
         let offset: number;
-        if (type === "aligned") offset = side === "below" || side === "right" ? -8 : 8;
+        if (kind === "aligned") offset = side === "below" || side === "right" ? -8 : 8;
         else {
           // One row further out for each dimension already on that side.
-          const row = (page.dimensions ?? []).filter((x) => x.view === key && x.type === type && Math.sign(x.offset) === Math.sign(rowOffset(p, side, pa, pb, scale, 0))).length;
+          const row = (page.dimensions ?? []).filter((x) => x.view === key && x.type === kind && Math.sign(x.offset) === Math.sign(rowOffset(p, side, pa, pb, scale, 0))).length;
           offset = rowOffset(p, side, pa, pb, scale, row);
         }
-        dim = { id: newId("dm"), view: key, type, a: dimPoint(pa, p), b: dimPoint(pb, p), offset, ...(tolerance ? { tolerance } : {}) };
+        dims = [{ id: newId("dm"), view: key, type: kind, a: dimPoint(pa, p), b: dimPoint(pb, p), offset, ...(tolerance ? { tolerance } : {}) }];
       }
-      const changed = changePage(d, pageId, (q) => ({ ...q, dimensions: [...(q.dimensions ?? []), dim] }));
-      const after = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageId, "add the dimension");
-      const r = resolveDim(dim, p);
+      const changed = changePage(d, pageId, (q) => ({ ...q, dimensions: [...(q.dimensions ?? []), ...dims] }));
+      const after = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageId, dims.length > 1 ? "add the dimensions" : "add the dimension");
       setLengthUnit(s.doc.units === "in" ? "in" : "mm");
-      const label = dimLabel(dim, measureDim(dim, r), dimStyle(page));
+      const labels = dims.map((dim) => {
+        const r = resolveDim(dim, p);
+        return dim.type === "chamfer" ? chamferLabel(dim, r, dimStyle(page)) : dimLabel(dim, measureDim(dim, r), dimStyle(page));
+      });
       setLengthUnit("mm");
       const off = offSheetMessage(after.layout, (v: PlacedView) => viewName(page, v.key));
-      return say(`Added a ${dim.type} dimension on ${name}: ${label}.`, off ? `Note: ${off}` : null, "Look at the sheet with view_drawing.");
+      const kindName = (x: Dimension) => (x.type === "arcLength" ? "arc length" : x.type === "chamfer" ? "chamfer callout" : x.type);
+      return say(
+        dims.length === 1 ? `Added a${/^[aeiou]/.test(kindName(dims[0])) ? "n" : ""} ${kindName(dims[0])} dimension on ${name}: ${labels[0]}.` : `Added ${dims.length} ${type} dimensions on ${name}: ${labels.join(", ")}.`,
+        skipped ? `Note: ${skipped} point${skipped === 1 ? " was" : "s were"} skipped (level with where ${skipped === 1 ? "it" : "they"}'d be measured from, or already measured).` : null,
+        off ? `Note: ${off}` : null,
+        "Look at the sheet with view_drawing.",
+      );
     },
   },
   {

@@ -87,7 +87,10 @@
   `offsetParams` held by the `offset` dimension: its points are placed from the original after the solve when nothing else
   holds them, its handles are worked out by `refreshOffsets` (more points if it strays past `OFFSET_TOLERANCE`). Relations
   `normal` (line square to a curve) and `curvature` (G2 where a spline ends on a line/arc/spline); Tangent with a spline or
-  ellipse is either at a shared point (`frameAt`) or touching anywhere (`touchGap`).
+  ellipse is either at a shared point (`frameAt`) or touching anywhere (`touchGap`). Relations are solved patiently
+  (never given up early) so a refusal is real; `signedDistanceToBeziers` skips pieces whose control-point box is farther
+  than the nearest sample so far (same answers, bit for bit). The app shows "Working…" first for curve relations
+  (`relationMayTakeAWhile`, deferred a frame in sketchActions.ts).
   Text and pictures: `src/sketch/sketchText.ts` — `SketchData.texts` (hangs from an `anchor` point, so it's dimensioned and
   constrained as a point; letter outlines from `geometry/fonts.ts` are loops in regions.ts and line pieces with ids
   "<textId>.<wordsHash>.<k>" in areas.ts, so picks go "gone" when the words change) and `.images` (data: URLs, shrunk to
@@ -106,9 +109,21 @@
   re-read adaptively and `followLinks` respaces it (ends keep their ids, new points between, unless something else uses them);
   an open↔closed change is reported lost. Face edges that are curves
   carry `shape` (Use all edges; `joinTouchingEnds` joins spline/ellipse-arc ends too).
+  Seen at a slant, circles/arcs (a part's round edge: `circleOf` from its samples; another sketch's, or its ellipse) are
+  `RefEdge` kind "curve" with an ellipse `shape` (`seeConic`: axes from conjugate half-diameters, long axis' end canonical —
+  +x, else +y — so it's found in the same place each rebuild; side-on = null, as before only the centre is offered); another
+  sketch's spline/conic is a "curve" with its exact cubic pieces (`splineShapeOf`; `CurveShape.tangentsIn` where it arrives
+  differently, as Split leaves it). `seeSketchShape` makes these, `seeSketchCurve` returns them (so links follow); a closed
+  one's path ends aren't snappable (`refSketchOf`: q ids when `source.ends.a` is missing); a spline's inner points stay lone
+  points. The engine's `edgeShape(e, n, circles=true)` adds a circle's frame (`circle`), `seeShapeAll` = seeShape, then a
+  slanted conic as an ellipse — used by `useEdge` and by linked *ellipses* only (linked splines keep `seeShape`, unchanged).
+  The Use tool also takes other sketches' curves: SceneManager asks `SketchController.useAt` (pure `sketchCurveAt`) before
+  picking a part. Shift while drawing/dragging: `snapAt(…, { free })` — no snap, no H/V or tangent inference, no spline
+  closing, no join on drop (Onshape's "hold Shift to suppress inferencing"); a tangent arc's first click ignores it.
   Pierce: `PointLink.end === "pierce"` (part edge or another sketch's curve) = where it passes through the plane, re-found
-  each rebuild as the place nearest the point's current position (`edgePierces`: `PIERCE_SAMPLES` pieces for snapping and
-  rebuilding alike, halving at sign changes, refining near-zero minima between samples, skipping stretches lying in the plane;
+  each rebuild as the place nearest the point's current position (`edgePierces`: `pierceSamples(at, spans)` pieces for snapping and
+  rebuilding alike — `PIERCE_SAMPLES` (32), at least 4 per knot span of a spline edge (`edgeSpans` in engine.ts; a coil's
+  edge has hundreds), doubled while neighbouring chords turn > 30°, ≤ `PIERCE_MAX_SAMPLES`; `remembered` shares the samples, halving at sign changes, refining near-zero minima between samples, skipping stretches lying in the plane;
   the snap list only walks curved edges whose box straddles the plane, `straddles`,
   `sketchCurvePierces` exactly via `crossings` with the line where the planes meet; `nearestPlace`). The candidates list
   includes those places as `RefEdge.pierce` points (`edgePierceRefs`, `sketchPierceRefs`), so snapping onto one brings in a
@@ -183,7 +198,14 @@
   assembly, `DrawingPage.source` (null = none chosen), and have its own title and part number, `partTitle` — `pageOf` resolves them,
   `withPage`: a sheet of sheet 1's part shares sheet 1's title block (edits there change sheet 1's, as before); only a sheet of its own part
   keeps its own; choosing sheet 1's part on a sheet drops its `source` (it follows sheet 1 again); choosing another part on sheet 1 or
-  removing it leaves the other sheets showing theirs, `keepShowing`; `missingPartMessage` names the sheet in the PDF error; "+ Sheet" is a menu: an empty sheet of this sheet's part, or a sheet of any part/assembly with the usual views), `fits.ts` (ISO 286
+  removing it leaves the other sheets showing theirs, `keepShowing`; `missingPartMessage` names the sheet in the PDF error; "+ Sheet" is a menu: an empty sheet of this sheet's part, or a sheet of any part/assembly with the usual views), `viewParts.ts` (a view
+  may show another part/assembly than its sheet's, as in Onshape: the base view has `DrawingView.source`, views projected from it `parent`
+  (its id); their keys are "<kind>@<base id>", and sections/details/cuts/shortenings on them have that key as `host` (`ViewHost`);
+  `partDrawings` splits a sheet into one drawing per part with views/hosts/dims named by kind as before, so each is asked for exactly as a
+  drawing of that part and `rekeyed` back; a sheet without them is its own single part drawing — old drawings lay out byte-identically;
+  layoutSheet places each part's lined-up views as its own grid right of the sheet's (`gridSuffixes`), their 3D views in the side column;
+  taps per part (`SheetInfo.groupTaps`), parts list/balloons from the first assembly view when the sheet's part isn't one (`withViewParts`,
+  `balloonGroup`); `autoDimensionSheet`; Claude's create/edit_drawing take `other_parts`, views named "front of Lid"), `fits.ts` (ISO 286
   limits and fits: H7, g6, H7/g6). A view may have its own `scale` (noted under it; set from View scales, or by clicking the view on the sheet —
   a scale bar and a corner handle that snaps to standard scales via `resizedScale`; `scaleView` sends a hand-placed view back to its
   automatic place if at the new size it would cover another view or leave the border, `viewClear`). Dimension arrows: `Dimension.arrows`
@@ -262,7 +284,7 @@
   (`gh api repos/gm7dha/JuraCAD/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, double-click opens it → add a second Part Studio with a box → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → draw the assembly exploded (parts list); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → section view → check → export STL, STEP and 3MF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, double-click opens it → add a second Part Studio with a box → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → a view of another part with a projected top view (lined up), auto-dimensioned, then removed → draw the assembly exploded (parts list); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.
@@ -284,6 +306,18 @@
   drawingSubject, projectionPlan, finishProjections, sheetInfo, viewScales — shared with DrawingUI.tsx); `sheetPicture.ts`
   rasterises a sheet's prims (font `font5x7.ts`). Assemblies and drawings need every Part Studio's parts: `Session.buildAll()`
   builds the whole document (+ configured studios, `documentStudioInputs` in kernel/buildInput.ts) on a second engine.
+  More: `assemblyExtras.ts` (add_assembly_pattern — linear/circular/mirror, across a plane or a face, `same_part`; group_parts;
+  edit_mate — values, limits, flip, suppressed; add_mate_relation; replicate_part — holes from `assembly/replicateHoles.ts`, shared
+  with the store; add_explode_step — top copies or "Sub <1> / Part <1>"; remove_assembly_item), Width ends take `instance2` (→ `path2`);
+  `tryAssemblyChange` refuses any new problem of a mate, relation, pattern or group (`assemblyProblems`). `drawingExtras.ts` (add_sheet,
+  remove_sheet, add_drawing_note — text, datum, gdt (fcf), finish; delete_drawing_item by describe_drawing's D1/N1 numbers);
+  add_dimension also makes angle, chamfer, arc_length and ordinate/baseline/chain runs (`linearDims.ts`); edit_drawing takes
+  "part"/"assembly" for a sheet, and its title goes through `changePage` (a sheet of its own part keeps its own title).
+  Builds stop between features: the engine's rebuild is a generator (`rebuildSteps`/`featureSteps`, yielding before each feature;
+  `rebuildStudiosAsync(…, pause)`; stopped or failed part-way, `forgetUnfinished` frees the studio being built and marks the ones
+  rebuilt in that call to be built again); `Session.buildAsync`/`buildAllAsync` pause at `checkpoint` (only with a signal). The
+  second engine is freed after `WHOLE_ENGINE_IDLE_MS` unused, never during a call (`releaseWholeEngine`; WASM memory doesn't
+  shrink, but the space is reused). Tests: tests/mcpAssemblyMore, mcpDrawingMore, mcpBuildStop.
   Cancelling (MCP notifications/cancelled → server.ts passes `extra.signal` to `callTool`): tools call `await s.checkpoint()`
   between slow steps (builds, each drawing view, before writing); it yields to the event loop (two setImmediate hops, so
   the cancel notification is read) and throws `Cancelled`; callTool then restores the snapshot (also when cancelled after
