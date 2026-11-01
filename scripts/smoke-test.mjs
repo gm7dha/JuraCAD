@@ -2285,10 +2285,17 @@ try {
     // A line across, a quarter of the spline's width past its end.
     const wide = Math.abs(ends.last.x - ends.first.x);
     const wallX = ends.last.x + (wide / 4) * Math.sign(ends.last.x - ends.first.x);
-    // Near the spline's end, on it: a little way back along the chord to its middle point (close enough to the curve to click).
+    // On the spline, three quarters along its last piece (a quarter of a piece from its end, so the curve is clicked, not its end point).
+    // The piece is the Bézier the sketch draws: handles a third of the natural tangents, (p2 − p0)/2 at the middle and p2 − p1 at the end.
+    const [a0, a1, a2] = [ends.first, ends.mid, ends.last].map((p) => [p.x, p.y]);
+    const t1 = [(a2[0] - a0[0]) / 2, (a2[1] - a0[1]) / 2];
+    const t2 = [a2[0] - a1[0], a2[1] - a1[1]];
+    const bez = [a1, [a1[0] + t1[0] / 3, a1[1] + t1[1] / 3], [a2[0] - t2[0] / 3, a2[1] - t2[1] / 3], a2];
+    const t = 0.75, u = 1 - t;
+    const onIt = [0, 1].map((k) => u * u * u * bez[0][k] + 3 * u * u * t * bez[1][k] + 3 * u * t * t * bez[2][k] + t * t * t * bez[3][k]);
     const [w1, w2, near] = await page.evaluate(
       ([x, y, w, ex, ey]) => [window.juracadViewport.current.projectSketchPoint(x, y - w), window.juracadViewport.current.projectSketchPoint(x, y + w), window.juracadViewport.current.projectSketchPoint(ex, ey)],
-      [wallX, ends.last.y, wide / 2, ends.last.x + 0.08 * (ends.mid.x - ends.last.x), ends.last.y + 0.08 * (ends.mid.y - ends.last.y)],
+      [wallX, ends.last.y, wide / 2, onIt[0], onIt[1]],
     );
     await tool("Line");
     await page.mouse.click(box.x + w1.x, box.y + w1.y);
