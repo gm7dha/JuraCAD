@@ -1817,6 +1817,7 @@ export function FeatureDialog() {
   const commitDraft = useStore((s) => s.commitDraft);
   const cancelDraft = useStore((s) => s.cancelDraft);
   const buildError = useStore((s) => (s.editing ? s.featureErrors[s.editing.draft.id] : undefined));
+  const buildWarning = useStore((s) => (s.editing ? s.featureWarnings[s.editing.draft.id] : undefined));
   const busy = useStore((s) => s.rebuildBusy);
   const ref = useRef<HTMLFormElement>(null);
 
@@ -1967,6 +1968,11 @@ export function FeatureDialog() {
           </div>
         )}
         {buildError && draft.type === "deleteFace" && <DeleteFaceHelp error={buildError} />}
+        {!buildError && buildWarning && (
+          <div className="dialog-warning" role="status">
+            <Icons.Warning size={16} /> {buildWarning}
+          </div>
+        )}
         <p className="dialog-hint">
           {busy ? "Updating preview…" : def.params.length ? "Tip: you can type maths, units and variables, e.g. 10 + 2, 1 in or wall * 2." : null}
         </p>
