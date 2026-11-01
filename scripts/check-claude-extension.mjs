@@ -173,6 +173,12 @@ const clashes = text(await call("check_assembly", {}));
 check(/Everything fits: 2 parts, no clashes/.test(clashes), `The assembly check found problems:\n${clashes}`);
 check(isPng(await call("get_views", { assembly: "Bracket on plate" })), "get_views of the assembly didn't return a PNG.");
 await call("export_model", { assembly: "Bracket on plate", format: "step" });
+// Assembly patterns, mate limits and exploded view steps.
+const patterned = text(await call("add_assembly_pattern", { kind: "linear", instances: ["Base plate <1>"], count: 2, spacing: 100, direction: "x" }));
+check(/Added Pattern 1 to Bracket on plate: 1 copy of Base plate <1>/.test(patterned), `The assembly pattern wasn't made:\n${patterned}`);
+await call("add_explode_step", { parts: ["Part 1 <1>"], direction: "z", distance: 20 });
+const asmDescribed = text(await call("describe_assembly", {}));
+check(/Patterns:\n- Pattern 1: linear/.test(asmDescribed) && /- Step 1: Part 1 <1> moved 20 mm along \+Z/.test(asmDescribed), `The pattern or explode step isn't described:\n${asmDescribed}`);
 check(existsSync(join(designs, "CI bracket Bracket on plate.step")), "The assembly's STEP file wasn't saved.");
 
 // A drawing of the bracket, dimensioned, looked at and saved as a PDF.
@@ -181,6 +187,13 @@ check(/Made Drawing 1/.test(drawn) && /- Top — across = X, up = Y; from \(0, 0
 const dims = text(await call("auto_dimension", {}));
 check(/Added \d+ dimensions/.test(dims), `Auto dimension added nothing:\n${dims}`);
 check(/Added a horizontal dimension on Front: 60/.test(text(await call("add_dimension", { view: "front", from: [0, 0, 0], to: [60, 0, 0] }))), "add_dimension didn't measure the 60 mm width.");
+// Notes and sheets: a datum symbol, a note deleted again, and a second sheet of the plate.
+await call("add_drawing_note", { symbol: { kind: "datum" }, pointing_at: { view: "front", point: [30, 0, 0] } });
+await call("add_drawing_note", { text: "Deleted again" });
+await call("delete_drawing_item", { notes: ["N2"] });
+check(/Added sheet 2 of Base plate/.test(text(await call("add_sheet", { part: "Base plate" }))), "add_sheet didn't add a sheet of the plate.");
+const drawnNow = text(await call("describe_drawing", {}));
+check(/- N1: Datum A at/.test(drawnNow) && !/N2/.test(drawnNow), `The drawing's notes aren't as expected:\n${drawnNow}`);
 check(isPng(await call("view_drawing", {})), "view_drawing didn't return a PNG.");
 await call("export_drawing", { format: "pdf" });
 const pdfFile = join(designs, "CI bracket Drawing 1.pdf");
