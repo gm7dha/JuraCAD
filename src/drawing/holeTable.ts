@@ -7,6 +7,7 @@ import type { ViewProjection } from "../kernel/protocol";
 import type { Drawing } from "../model/types";
 import { outlinePoints } from "./autoDimension";
 import type { Projections } from "./sheet";
+import { viewKey } from "./sections";
 
 type P2 = [number, number];
 
@@ -21,10 +22,18 @@ export interface HoleRow {
 
 const ORDER = ["top", "front", "right", "left", "back", "bottom"];
 
-/** The view the table describes: the first standard view (top first) showing holes as circles. */
+/**
+ * The view the table describes: the first standard view (top first) showing
+ * holes as circles — of the sheet's part, else of the views of other parts in turn.
+ */
 export function holeTableView(drawing: Pick<Drawing, "views">, projections: Projections): string | null {
-  const shown = new Set(drawing.views.map((v) => v.kind as string));
-  return ORDER.find((k) => shown.has(k) && (projections[k]?.circles ?? []).some((c) => c.full && !c.hidden)) ?? null;
+  const shown = new Set(drawing.views.map(viewKey));
+  const groups = ["", ...drawing.views.filter((v) => v.source).map((v) => `@${v.id}`)];
+  for (const g of groups) {
+    const hit = ORDER.find((k) => shown.has(k + g) && (projections[k + g]?.circles ?? []).some((c) => c.full && !c.hidden));
+    if (hit) return hit + g;
+  }
+  return null;
 }
 
 /** The holes on a view, tagged and measured from its bottom-left corner. */
