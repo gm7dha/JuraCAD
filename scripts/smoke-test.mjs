@@ -230,6 +230,57 @@ try {
     throw new Error(`the 3MF file doesn't look right (${mfDownload.suggestedFilename()})`);
   }
 
+  step = "checking the block for 3D printing";
+  await page.getByRole("button", { name: "3D print", exact: true }).click();
+  await page.waitForSelector(".print-panel .check-headline >> text=Ready to print.", { timeout: 60_000 });
+  const printFindings = (await page.locator(".print-panel .check-part").innerText()).replace(/\s+/g, " ");
+  if (!/Fits on the bed/.test(printFindings) || !/rests flat on the bed/.test(printFindings)) throw new Error(`the print check said: ${printFindings}`);
+
+  step = "laying the block on its front face for printing";
+  await page.getByRole("button", { name: "Lay flat on a face…" }).click();
+  await page.waitForSelector(".print-panel >> text=Click a flat face of a part");
+  {
+    const at = await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => p.name === "Part 1");
+      const front = part.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[1] < -0.99);
+      return window.juracadViewport.current.screenPointOnFace(part.id, front);
+    });
+    if (!at) throw new Error("couldn't find the block's front face on screen");
+    const vp = await page.locator(".viewport canvas").first().boundingBox();
+    await page.mouse.click(vp.x + at.x, vp.y + at.y);
+  }
+  await page.waitForSelector(".print-panel >> text=Lying on the face you chose.", { timeout: 10_000 });
+  // On its side the hole runs sideways: the top of its inside hangs over.
+  await page.waitForSelector(".print-panel >> text=needs support", { timeout: 60_000 });
+  const printSelection = await page.evaluate(() => window.juracadStore.getState().selection.length);
+  if (printSelection !== 0) throw new Error("picking the bed face left the face selected");
+  await shot("print-check");
+
+  step = "saving a 3MF for the slicer";
+  await page.getByRole("combobox", { name: "Slicer" }).selectOption("prusa");
+  const slicerPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.getByRole("button", { name: "Save 3MF for PrusaSlicer" }).click();
+  const slicerDownload = await slicerPromise;
+  const slicerBytes = readFileSync(await slicerDownload.path());
+  const slicerText = slicerBytes.toString("latin1");
+  if (slicerBytes[0] !== 0x50 || slicerBytes[1] !== 0x4b || !slicerDownload.suggestedFilename().endsWith(".3mf")) {
+    throw new Error(`the slicer 3MF doesn't look right (${slicerDownload.suggestedFilename()})`);
+  }
+  if (!/<object id="\d+" type="model" name="Part 1"/.test(slicerText) || !/<item objectid="\d+" transform="1 0 0 0 1 0 0 0 1 /.test(slicerText)) {
+    throw new Error("the slicer 3MF is missing the named part or its place on the bed");
+  }
+  {
+    // Laid on its front face the 40 × 30 × 20 block stands 30 mm tall, from the bed up.
+    const zs = [...slicerText.matchAll(/<vertex x="[^"]+" y="[^"]+" z="([^"]+)"\/>/g)].map((m) => Number(m[1]));
+    const zMin = Math.min(...zs);
+    const zMax = Math.max(...zs);
+    if (Math.abs(zMin) > 1e-6 || Math.abs(zMax - 30) > 1e-3) throw new Error(`the slicer 3MF's part stands from ${zMin} to ${zMax} mm (expected 0 to 30)`);
+  }
+  await page.waitForSelector(".print-sent >> text=open it in PrusaSlicer yourself", { timeout: 5_000 });
+  await page.getByRole("button", { name: "Close 3D print" }).click();
+  await page.waitForSelector(".print-panel", { state: "detached" });
+
   step = "editing a feature three times, then undoing once";
   const boxRow = page.locator(".feature-row:not(.datum)").first();
   for (const x of ["10", "20", "30"]) {
@@ -854,7 +905,20 @@ try {
   if ((await page.locator("#param-depth").count()) !== 0) throw new Error("up to next shouldn't ask for a depth");
   if ((await page.locator("#param-threadDepth").count()) !== 1) throw new Error("a tapped hole should have a thread depth box");
   await page.getByLabel("Model the thread (for 3D printing)").check();
-  await page.getByRole("button", { name: "Cancel" }).click();
+  step = "giving the hole a printed sliding fit";
+  {
+    const varsBefore = await page.evaluate(() => (window.juracadStore.getState().history.present.variables ?? []).length);
+    await page.locator("#hole-printed-fit").selectOption("sliding");
+    const fitted = await page.locator("#param-diameter").inputValue();
+    if (!/^4 mm \+ fit_sliding$/.test(fitted)) throw new Error(`a sliding printed fit on M4 made the size "${fitted}"`);
+    const names = await page.evaluate(() => (window.juracadStore.getState().history.present.variables ?? []).map((v) => v.name).join(","));
+    if (!names.includes("fit_sliding")) throw new Error(`the printed fit didn't add its variables (${names})`);
+    await page.waitForSelector(".printed-fit >> text=Hole 4.3 mm across", { timeout: 5_000 });
+    await page.getByRole("button", { name: "Cancel" }).click();
+    // Take the fit variables out again, so later steps see the design as before.
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction((n) => (window.juracadStore.getState().history.present.variables ?? []).length === n, varsBefore, { timeout: 5_000 });
+  }
 
   step = "moving a copy of a part";
   // Parts of features really in the design: a cancelled dialog's preview (the circular pattern above makes parts of

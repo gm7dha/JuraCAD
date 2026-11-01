@@ -9,6 +9,7 @@ import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
 import { holePositionCount } from "../sketch/holePositions";
+import { PrintedFit } from "./PrintedFit";
 import { formatSkip, parseSkip, totalCopies } from "../model/patterns";
 import { planeLabel } from "../sketch/planes";
 import { mirrorReferenceText, patternReferenceText, setMirrorReference, setPatternDirection, type DirectionChoice } from "../model/patternRefs";
@@ -1096,6 +1097,7 @@ function HoleOptions() {
           )}
         </>
       )}
+      <PrintedFit />
       <p className="dialog-hint field-hint">{describeHole(h)}</p>
     </fieldset>
   );

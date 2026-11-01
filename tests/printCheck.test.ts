@@ -233,3 +233,16 @@ describe("printer settings and printed fits", () => {
     expect(r.ok && r.value).toBeCloseTo(5.3, 9);
   });
 });
+
+describe("sending to a slicer", () => {
+  it("says plainly to open the saved file, and how", async () => {
+    const { sentMessage, slicerById, SLICERS } = await import("../src/model/slicers");
+    expect(SLICERS.map((s) => s.name)).toEqual(["Bambu Studio", "PrusaSlicer", "OrcaSlicer", "Another slicer"]);
+    const lines = sentMessage(slicerById("prusa"), "Bracket.3mf", 2, 1);
+    expect(lines[0]).toContain("Saved Bracket.3mf to your Downloads folder");
+    expect(lines[0]).toContain("open it in PrusaSlicer yourself");
+    expect(lines.some((l) => /^1\. Open PrusaSlicer\./.test(l))).toBe(true);
+    expect(lines.join(" ")).toContain("One part doesn't fit on the plate");
+    expect(slicerById("nonsense").id).toBe("bambu");
+  });
+});
