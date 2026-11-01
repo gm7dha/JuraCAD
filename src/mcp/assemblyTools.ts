@@ -18,6 +18,7 @@ import { explodeAssembly, instancesForKernel, partBox } from "../assembly/placed
 import { stepPartOffsets } from "../assembly/explode";
 import { stepTree } from "../assembly/stepTree";
 import { insertProblem, insertSubAssembly, leavesOf, ownBox, type Leaf } from "../assembly/subassembly";
+import { RELATION_KINDS } from "../assembly/relations";
 import { mateInactive } from "../assembly/suppress";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
@@ -32,8 +33,8 @@ import { byName, r2, say, type ToolDef, type ToolResult } from "./toolKit";
 // ---------------------------------------------------------------------------
 // Finding things
 
-const assembliesOf = (doc: JuraCADDocument) => doc.assemblies ?? [];
-const MAKE_ONE = 'make one with create_assembly, then insert parts with insert_into_assembly.';
+export const assembliesOf = (doc: JuraCADDocument) => doc.assemblies ?? [];
+export const MAKE_ONE = 'make one with create_assembly, then insert parts with insert_into_assembly.';
 
 /** The assembly named (or the only one, when there's just one). */
 export function findAssembly(s: Session, ref: unknown, where = "assembly"): Assembly {
@@ -44,7 +45,7 @@ export function findAssembly(s: Session, ref: unknown, where = "assembly"): Asse
 }
 
 /** Every part of every Part Studio as built now (with parts made in other configurations, for assemblies that show them). */
-function builtParts(s: Session): PartMesh[] {
+export function builtParts(s: Session): PartMesh[] {
   return s.buildAll().parts;
 }
 
@@ -53,26 +54,26 @@ function insertableParts(s: Session): PartMesh[] {
   return builtParts(s).filter((p) => !p.configuration);
 }
 
-function solve(s: Session, asm: Assembly, hold: string[] = []): SolveResult {
+export function solve(s: Session, asm: Assembly, hold: string[] = []): SolveResult {
   return solveWithParts(asm, builtParts(s), { assemblies: assembliesOf(s.doc), hold });
 }
 
 const norm = (name: string) => name.toLowerCase().replace(/\s*\/\s*/g, " / ").replace(/\s+/g, " ").trim();
 
 /** One part shown by the assembly, at any depth: a copy, or a part inside a sub-assembly copy ("Hinge <1> / Pin <1>"). */
-interface Target {
+export interface Target {
   leaf: Leaf;
   /** Where the part sits in the assembly now (its top-level copy's solved place, and its place inside that). */
   placement: Placement;
   mesh: PartMesh;
 }
 
-function leafNames(leaves: Leaf[]): string {
+export function leafNames(leaves: Leaf[]): string {
   return leaves.map((l) => `"${l.name}"`).join(", ");
 }
 
 /** A part shown by the assembly, by its copy's name ("Bracket <1>"), or "Sub <1> / Part <1>" inside a sub-assembly. */
-function findTarget(s: Session, asm: Assembly, ref: unknown, where: string, solved = solve(s, asm)): Target {
+export function findTarget(s: Session, asm: Assembly, ref: unknown, where: string, solved = solve(s, asm)): Target {
   const parts = builtParts(s);
   const leaves = leavesOf(asm, parts, assembliesOf(s.doc));
   if (typeof ref !== "string" || !ref.trim()) throw new InputError(`${where}: give the name of a copy in ${asm.name}${leaves.length ? `, e.g. "${leaves[0].name}"` : ""}.`);
@@ -100,7 +101,7 @@ const flipX = (v: Vec3): Vec3 => [-v[0], v[1], v[2]];
  * A part's faces and edges as they sit in the assembly (moved, turned, and
  * flipped for a mirrored copy), numbered as on the part itself.
  */
-function placedFacesAndEdges(t: Target) {
+export function placedFacesAndEdges(t: Target) {
   const mirrored = !!t.leaf.instance.mirrored;
   const point = (p: Vec3) => applyPlacement(t.placement, mirrored ? flipX(p) : p);
   const dir = (v: Vec3) => rotate(t.placement.rotation, mirrored ? flipX(v) : v);
@@ -138,9 +139,9 @@ const MATE_WORDS: Record<string, MateType> = {
 const MATE_HELP = MATE_ORDER.map((t) => `${t === "fastened" ? "fasten" : t === "revolute" ? "hinge (revolute)" : t === "pinSlot" ? "pin_slot" : t}: ${MATE_TYPES[t].description} Amounts: ${MATE_TYPES[t].values.map((v) => `${v.key} (${v.label}, ${v.unit})`).join(", ")}.`);
 
 const CONNECTOR_HELP =
-  `Each end is {"instance": "<copy name>", "face": …} or {"instance": …, "edge": …} (a round edge puts the connector at its centre, on its axis — the usual choice for hinges and pins in holes), optionally "at": "start" | "end" | "middle" on an edge; Width mates take "face" and "face2" (the two sides) on each end; {"origin": "Top" | "Front" | "Right"} is one of the assembly's own planes (it never moves). Faces and edges are chosen as on a part, but as the copy sits in the assembly now: ${PICK_HELP.faces} Edges: "E5" (list_edges with "assembly" and "instance" numbers them) or {"near": [x, y, z]}. A copy inside a sub-assembly is named "Sub <1> / Part <1>".`;
+  `Each end is {"instance": "<copy name>", "face": …} or {"instance": …, "edge": …} (a round edge puts the connector at its centre, on its axis — the usual choice for hinges and pins in holes), optionally "at": "start" | "end" | "middle" on an edge; Width mates take "face" and "face2" (the two sides) on each end — on a sub-assembly copy, "instance2" may name another part of the same copy for "face2" (a slot made by two plates); {"origin": "Top" | "Front" | "Right"} is one of the assembly's own planes (it never moves). Faces and edges are chosen as on a part, but as the copy sits in the assembly now: ${PICK_HELP.faces} Edges: "E5" (list_edges with "assembly" and "instance" numbers them) or {"near": [x, y, z]}. A copy inside a sub-assembly is named "Sub <1> / Part <1>".`;
 
-function oneFaceOrEdge(placed: ReturnType<typeof placedFacesAndEdges>, original: PartMesh, o: Obj, key: "face" | "face2" | "edge", where: string): TopoPick {
+export function oneFaceOrEdge(placed: ReturnType<typeof placedFacesAndEdges>, original: PartMesh, o: Obj, key: "face" | "face2" | "edge", where: string): TopoPick {
   const sel = o[key];
   const picks = key === "edge" ? pickEdges(placed, [sel], `${where}.${key}`) : pickFaces(placed, [sel], `${where}.${key}`);
   if (picks.length !== 1) throw new InputError(`${where}.${key}: choose exactly one ${key === "edge" ? "edge" : "face"} (got ${picks.length}).`);
@@ -160,7 +161,7 @@ function connector(s: Session, asm: Assembly, raw: unknown, where: string, width
     const plane = oneOf(o.origin, ORIGIN_PLANES, `${where}.origin`) as OriginPlane;
     return { c: originConnector(plane), label: `the assembly's ${plane} plane` };
   }
-  noExtras(o, ["instance", "face", "face2", "edge", "at"], where);
+  noExtras(o, ["instance", "face", "face2", "instance2", "edge", "at"], where);
   if (o.instance === undefined) throw new InputError(`${where}: give "instance" (a copy's name, e.g. "Bracket <1>") and a "face" or "edge" — or {"origin": "Top"}. ${CONNECTOR_HELP}`);
   const t = findTarget(s, asm, o.instance, `${where}.instance`, solved);
   const placed = placedFacesAndEdges(t);
@@ -168,8 +169,18 @@ function connector(s: Session, asm: Assembly, raw: unknown, where: string, width
   if (o.face2 !== undefined && !width) throw new InputError(`${where}.face2 is only for Width mates (the second side).`);
   if (width && (o.face === undefined || o.face2 === undefined)) throw new InputError(`${where}: a Width mate needs "face" and "face2" — the two sides (of the slot on the first end, of the tab on the second).`);
   const pick = oneFaceOrEdge(placed, t.mesh, o, o.edge !== undefined ? "edge" : "face", where);
-  const pick2 = width ? oneFaceOrEdge(placed, t.mesh, o, "face2", where) : undefined;
-  if (pick2 && pick2.ref === pick.ref) throw new InputError(`${where}: "face" and "face2" are the same face; give the two different sides.`);
+  // A Width mate's second side may be on another part of the same sub-assembly copy (a slot made by two plates).
+  let t2 = t;
+  if (o.instance2 !== undefined) {
+    if (!width) throw new InputError(`${where}.instance2 is only for Width mates (the part the second side "face2" is on).`);
+    t2 = findTarget(s, asm, o.instance2, `${where}.instance2`, solved);
+    if (t2.leaf.top !== t.leaf.top || !t.leaf.path.length) {
+      throw new InputError(`${where}.instance2: the second side can be on another part only inside the same sub-assembly copy as the first ("${t.leaf.name}"${t.leaf.path.length ? "" : " isn't in a sub-assembly"}). Otherwise give both sides on one part.`);
+    }
+  }
+  const pick2 = width ? oneFaceOrEdge(t2 === t ? placed : placedFacesAndEdges(t2), t2.mesh, o, "face2", where) : undefined;
+  if (pick2 && t2 === t && pick2.ref === pick.ref) throw new InputError(`${where}: "face" and "face2" are the same face; give the two different sides.`);
+  const path2 = t2 !== t && t2.leaf.key !== t.leaf.key ? t2.leaf.path : undefined;
   let spot: ConnectorSpot | undefined;
   if (o.at !== undefined) {
     if (o.edge === undefined) throw new InputError(`${where}.at only goes with an edge.`);
@@ -180,13 +191,14 @@ function connector(s: Session, asm: Assembly, raw: unknown, where: string, width
     ...(t.leaf.path.length ? { path: t.leaf.path } : {}),
     pick,
     ...(pick2 ? { pick2 } : {}),
+    ...(path2 ? { path2 } : {}),
     ...(spot ? { spot } : {}),
   };
-  const what = o.edge !== undefined ? `edge ${typeof o.edge === "string" ? o.edge : "near the point given"}` : `face ${typeof o.face === "string" ? o.face : "near the point given"}${pick2 ? ` and ${typeof o.face2 === "string" ? o.face2 : "the face near the point given"}` : ""}`;
+  const what = o.edge !== undefined ? `edge ${typeof o.edge === "string" ? o.edge : "near the point given"}` : `face ${typeof o.face === "string" ? o.face : "near the point given"}${pick2 ? ` and ${path2 ? `${t2.leaf.name}'s ` : ""}${typeof o.face2 === "string" ? o.face2 : "the face near the point given"}` : ""}`;
   return { c, label: `${t.leaf.name} (${what})` };
 }
 
-function placementText(p: Placement): string {
+export function placementText(p: Placement): string {
   const turn = eulerDegFromQuat(p.rotation);
   return `at (${p.position.map(r2).join(", ")})${turn.some((v) => Math.abs(v) > 1e-6) ? `, turned ${turn.map(r2).join("°, ")}° about X, Y, Z` : ""}`;
 }
@@ -200,11 +212,48 @@ function mateText(asm: Assembly, m: Mate, solved: SolveResult, assemblies: reado
   const values = MATE_TYPES[m.type].values.map((v) => `${v.key} ${m.values[v.key] ?? "0"}${v.unit === "°" ? "°" : ""}`).join(", ");
   const off = mateInactive(asm, m, assemblies);
   const err = solved.mateErrors[m.id];
-  return `- ${m.name} [${MATE_TYPES[m.type].label}] between ${end(m.a)} and ${end(m.b)}${m.flip ? ", flipped" : ""}; ${values}${off ? ` — ${off}` : err ? ` — PROBLEM: ${err}` : ""}`;
+  const limits = Object.entries(m.limits ?? {})
+    .map(([k, l]) => `${k} ${l.min?.trim() ? l.min : "…"} to ${l.max?.trim() ? l.max : "…"}`)
+    .join(", ");
+  return `- ${m.name} [${MATE_TYPES[m.type].label}] between ${end(m.a)} and ${end(m.b)}${m.flip ? ", flipped" : ""}; ${values}${limits ? `; limits: ${limits}` : ""}${m.suppressed ? " — suppressed (switched off)" : ""}${off ? ` — ${off}` : err ? ` — PROBLEM: ${err}` : ""}`;
 }
 
 // ---------------------------------------------------------------------------
 // Reports and pictures
+
+const AXIS_WORD = (axis: "x" | "y" | "z", flip?: boolean) => `${flip ? "−" : "+"}${axis.toUpperCase()}`;
+
+/** Patterns, groups, relations, Replicates and exploded view steps, for describe_assembly. */
+export function assemblyExtrasText(asm: Assembly, solved: SolveResult, leaves: Leaf[]): (string | null)[] {
+  const name = (id: string) => asm.instances.find((i) => i.id === id)?.name ?? "(missing)";
+  const mate = (id: string) => asm.mates?.find((m) => m.id === id)?.name ?? "(deleted mate)";
+  const copies = (pred: (i: Instance) => boolean) => asm.instances.filter(pred).map((i) => i.name);
+  const patterns = (asm.patterns ?? []).map((p) => {
+    const what =
+      p.kind === "linear"
+        ? `linear, ${p.count} in a row along ${AXIS_WORD(p.axis, p.flip)}, ${p.amount} mm apart`
+        : p.kind === "circular"
+          ? `circular, ${p.count} round the ${p.axis.toUpperCase()} axis through (${(p.centre ?? [0, 0, 0]).map(r2).join(", ")}), spread over ${p.amount}°${p.flip ? " (the other way)" : ""}`
+          : `mirror across ${p.plane ? `a face of ${name(p.plane.instanceId)}${p.plane.path?.length ? " / …" : ""}` : `the plane square to ${p.axis.toUpperCase()} through (${(p.centre ?? [0, 0, 0]).map(r2).join(", ")})`}${p.samePart ? ", symmetric parts shown as themselves" : ""}`;
+    const err = solved.patternErrors?.[p.id];
+    return `- ${p.name}: ${what}; of ${p.seeds.map(name).join(", ")}; copies ${copies((i) => i.copyOf?.pattern === p.id).join(", ") || "none"}${err ? ` — PROBLEM: ${err}` : ""}`;
+  });
+  const groups = (asm.groups ?? []).map((g) => `- ${g.name}: ${g.members.map(name).join(", ")} locked together${solved.groupErrors?.[g.id] ? ` — PROBLEM: ${solved.groupErrors[g.id]}` : ""}`);
+  const relations = (asm.relations ?? []).map((r) => {
+    const k = RELATION_KINDS[r.kind];
+    return `- ${r.name} [${k.label}]: ${mate(r.driver)} drives ${mate(r.driven)}, ${k.ratioLabel.toLowerCase()} ${r.ratio}${k.ratioUnit === "×" ? "×" : ` ${k.ratioUnit}`}${r.reverse ? ", reversed" : ""}${solved.mateErrors[r.id] ? ` — PROBLEM: ${solved.mateErrors[r.id]}` : ""}`;
+  });
+  const reps = (asm.replicates ?? []).map((r) => `- ${r.name}: ${name(r.seed)} (held by ${mate(r.mate)}) copied into every matching hole: ${copies((i) => i.replicaOf?.replicate === r.id).join(", ") || "no copies"}`);
+  const leafName = (top: string, path: string[]) => leaves.find((l) => l.top === top && l.path.join("/") === path.join("/"))?.name ?? `${name(top)} / (missing)`;
+  const steps = (asm.explodeSteps ?? []).map((st, k) => `- Step ${k + 1}: ${[...st.instances.map(name), ...(st.parts ?? []).map((p) => leafName(p.instanceId, p.path))].join(", ")} moved ${st.distance} mm along ${AXIS_WORD(st.axis, st.flip)}`);
+  return [
+    patterns.length ? `Patterns:\n${patterns.join("\n")}` : null,
+    groups.length ? `Groups:\n${groups.join("\n")}` : null,
+    relations.length ? `Mate relations:\n${relations.join("\n")}` : null,
+    reps.length ? `Replicates:\n${reps.join("\n")}` : null,
+    steps.length ? `Exploded view steps (shown in get_views and exploded drawings):\n${steps.join("\n")}` : null,
+  ];
+}
 
 function instancesText(asm: Assembly, solved: SolveResult): string[] {
   return asm.instances.map((i) => {
@@ -283,16 +332,18 @@ export function assemblyViews(s: Session, asmRef: unknown, views: RenderView[], 
  * worked stop working; otherwise the parts are left where the mates put them
  * (as the app does) and it's committed.
  */
-async function tryAssemblyChange(s: Session, asmId: string, next: JuraCADDocument, verb: string, hold: string[] = []): Promise<{ asm: Assembly; solved: SolveResult }> {
+export async function tryAssemblyChange(s: Session, asmId: string, next: JuraCADDocument, verb: string, hold: string[] = []): Promise<{ asm: Assembly; solved: SolveResult }> {
   const before = assembliesOf(s.doc).find((a) => a.id === asmId);
-  const beforeErrors = before ? solve(s, before).mateErrors : {};
+  await s.buildAllAsync();
+  const beforeProblems = before ? assemblyProblems(before, solve(s, before), assembliesOf(s.doc)) : {};
   await s.checkpoint();
   const asm = assembliesOf(next).find((a) => a.id === asmId)!;
   const solved = solveWithParts(asm, builtParts(s), { assemblies: assembliesOf(next), hold });
-  const fresh = (asm.mates ?? []).filter((m) => solved.mateErrors[m.id] && solved.mateErrors[m.id] !== beforeErrors[m.id] && !mateInactive(asm, m, assembliesOf(next)));
+  // Anything that worked and doesn't now (a mate, a relation, a pattern, a group) — or something new that doesn't work.
+  const fresh = Object.entries(assemblyProblems(asm, solved, assembliesOf(next))).filter(([id, p]) => beforeProblems[id]?.text !== p.text);
   if (fresh.length) {
     throw new InputError(
-      `Couldn't ${verb} — ${fresh.map((m) => `${m.name}: ${solved.mateErrors[m.id]}`).join("; ")}\nNothing was changed. Check the faces or edges chosen (list_faces / list_edges with "assembly" and "instance"), try "flip": true, or un-fix a copy (place_instance "fixed": false) so the mate can move it.`,
+      `Couldn't ${verb} — ${fresh.map(([, p]) => `${p.name}: ${p.text}`).join("; ")}\nNothing was changed. Check the faces or edges chosen (list_faces / list_edges with "assembly" and "instance"), try "flip": true, or un-fix a copy (place_instance "fixed": false) so the mate can move it.`,
     );
   }
   s.throwIfCancelled();
@@ -302,14 +353,29 @@ async function tryAssemblyChange(s: Session, asmId: string, next: JuraCADDocumen
   return { asm: out, solved: solveWithParts(out, builtParts(s), { assemblies: assembliesOf(settled) }) };
 }
 
-function rotationOf(v: unknown, where: string, s: Session): [number, number, number] | null {
+/**
+ * What doesn't work in an assembly as solved, by id: mates (not those
+ * switched off with their parts), relations, patterns and groups — each with
+ * its name and the plain-English reason.
+ */
+export function assemblyProblems(asm: Assembly, solved: SolveResult, assemblies: readonly Assembly[]): Record<string, { name: string; text: string }> {
+  const out: Record<string, { name: string; text: string }> = {};
+  for (const m of asm.mates ?? []) if (solved.mateErrors[m.id] && !mateInactive(asm, m, assemblies)) out[m.id] = { name: m.name, text: solved.mateErrors[m.id] };
+  // (Relations' problems come back with the mates'.)
+  for (const r of asm.relations ?? []) if (solved.mateErrors[r.id]) out[r.id] = { name: r.name, text: solved.mateErrors[r.id] };
+  for (const p of asm.patterns ?? []) if (solved.patternErrors?.[p.id]) out[p.id] = { name: p.name, text: solved.patternErrors[p.id] };
+  for (const g of asm.groups ?? []) if (solved.groupErrors?.[g.id]) out[g.id] = { name: g.name, text: solved.groupErrors[g.id] };
+  return out;
+}
+
+export function rotationOf(v: unknown, where: string, s: Session): [number, number, number] | null {
   if (v === undefined || v === null) return null;
   if (!Array.isArray(v) || v.length !== 3) throw new InputError(`${where} should be three angles [about X, about Y, about Z] in degrees, e.g. [0, 0, 90].`);
   return v.map((x, k) => amount(x, `${where}[${k}]`, s.scope(), { unit: "°" }).value) as [number, number, number];
 }
 
-const INSTANCE_REF = { type: "string", description: 'A copy\'s name, e.g. "Bracket <1>" (describe_assembly lists them).' };
-const ASSEMBLY_REF = { type: "string", description: 'The assembly\'s name, e.g. "Assembly 1" (optional when there is only one).' };
+export const INSTANCE_REF = { type: "string", description: 'A copy\'s name, e.g. "Bracket <1>" (describe_assembly lists them).' };
+export const ASSEMBLY_REF = { type: "string", description: 'The assembly\'s name, e.g. "Assembly 1" (optional when there is only one).' };
 
 export const ASSEMBLY_TOOLS: ToolDef[] = [
   {
@@ -368,6 +434,7 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
       const ids: string[] = [];
       let what: string;
       await s.checkpoint();
+      await s.buildAllAsync();
       const parts = builtParts(s);
       for (let k = 0; k < count; k++) {
         const asm = assembliesOf(doc).find((x) => x.id === asm0.id)!;
@@ -553,6 +620,7 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
         asm.instances.length ? `Copies:\n${instancesText(asm, solved).join("\n")}` : "No copies yet: insert parts with insert_into_assembly.",
         inner.length ? `Parts inside sub-assemblies (name them like this in add_mate): ${leafNames(inner)}.` : null,
         (asm.mates ?? []).length ? `Mates:\n${(asm.mates ?? []).map((m) => mateText(asm, m, solved, assemblies)).join("\n")}` : "No mates yet.",
+        ...assemblyExtrasText(asm, solved, leaves),
         asm.explode !== undefined ? `Exploded view: on (spread ${asm.explode}).` : null,
         partsListText(s, asm, bool(a.structured, "structured")),
       );
@@ -572,6 +640,7 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
       if (tolerance > 10) throw new InputError("tolerance can be at most 10 mm.");
       const options: ClashOptions = { ...DEFAULT_CLASH_OPTIONS, tolerance, ignoreTouching: !bool(a.list_touching, "list_touching") };
       await s.checkpoint();
+      await s.buildAllAsync();
       const solved = solve(s, asm);
       const assemblies = assembliesOf(s.doc);
       const instances = instancesForKernel(asm, builtParts(s), assemblies, solved);
@@ -618,6 +687,7 @@ function boxesInWith(s: Session, asm: Assembly, solved: SolveResult, doc: JuraCA
 
 /** Export an assembly's parts in their places (export_model with "assembly"). */
 export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "stl" | "3mf" | "step"): Promise<{ bytes: Uint8Array; count: number }> {
+  await s.buildAllAsync();
   const solved = solve(s, asm);
   const instances = instancesForKernel(asm, builtParts(s), assembliesOf(s.doc), solved);
   if (!instances.length) throw new InputError(`${asm.name} has nothing in it to export yet. Insert parts with insert_into_assembly.`);
