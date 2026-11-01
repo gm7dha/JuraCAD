@@ -118,9 +118,10 @@ export function TopBar() {
       <button
         className="text-button"
         onClick={() => openDialog("versions")}
+        aria-label="Versions"
         title={`Versions: save a snapshot of the design to come back to, look at or compare old ones${versionCount ? ` (${versionCount} saved)` : ""}`}
       >
-        <Icons.Versions size={18} /> <span className="button-label">Versions</span>
+        <Icons.Versions size={18} /> <span className="button-label versions-label">Versions</span>
       </button>
       <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts || inDrawing} title={inAssembly ? "Check the assembly: do any parts clash, and are all the mates working?" : "Check the model is a sound, closed solid before you export it"}>
         <Icons.Check size={18} /> <span className="button-label">Check model</span>

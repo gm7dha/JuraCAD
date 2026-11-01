@@ -3369,3 +3369,9 @@ kbd {
   color: var(--warn-ink);
   font-weight: 600;
 }
+/* The top bar is full at laptop widths: Versions is just its icon there (the save state needs the room). */
+@media (max-width: 1400px) {
+  .topbar .versions-label {
+    display: none;
+  }
+}
