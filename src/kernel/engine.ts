@@ -1892,7 +1892,12 @@ export class GeometryEngine {
     this.studiosBuilt = new Set();
     for (const studio of ordered) {
       const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"));
-      const key = JSON.stringify(studio.features) + shared + (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") + (deps.length ? JSON.stringify(deps) : "");
+      const key =
+        JSON.stringify(studio.features) +
+        shared +
+        (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") +
+        (studio.partNames ? JSON.stringify(studio.partNames) : "") +
+        (deps.length ? JSON.stringify(deps) : "");
       let b = this.builds.get(studio.id);
       if (!b || b.key !== key) {
         if (b) this.disposeBuild(b);
@@ -1914,7 +1919,8 @@ export class GeometryEngine {
         }
         setCurrentScope(variables);
         // Names the user gave parts (used in the lists and in exported files).
-        for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
+        const names = studio.partNames ?? partNames;
+        for (const p of this.parts) if (names[p.id]) p.name = names[p.id];
         // Another configuration's copies of the parts (for assemblies).
         if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
         b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, links: this.links, snaps: this.snaps ?? new Map() };

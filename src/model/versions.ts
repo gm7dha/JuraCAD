@@ -11,14 +11,26 @@
 import { parseDocument } from "./document";
 import type { DesignVersion, JuraCADDocument } from "./types";
 
-/** Above this many characters of versions, the Versions panel suggests removing old ones (browsers keep about 5 MB per site). */
-export const VERSIONS_LARGE = 1_500_000;
+/**
+ * Above this many characters kept in the browser — the design and its
+ * versions together — the Versions panel suggests removing old versions
+ * (browsers keep about 5 MB per website, and count some characters twice).
+ */
+export const STORAGE_LARGE = 2_500_000;
 
 /** The design without its versions (what a version holds, and what Live with Claude is sent). */
 export function designOf(doc: JuraCADDocument): JuraCADDocument {
   if (doc.versions === undefined) return doc;
   const { versions: _v, ...rest } = doc;
   return rest;
+}
+
+/** `target` with `source`'s versions (none if it has none): the same object when they're already the same. */
+export function withVersionsOf(target: JuraCADDocument, source: JuraCADDocument): JuraCADDocument {
+  const v = source.versions;
+  if (target.versions === v) return target;
+  if (!v?.length) return designOf(target);
+  return { ...target, versions: v };
 }
 
 /** The design's versions, oldest first (the same empty list when there are none). */
@@ -147,7 +159,7 @@ export function designFromVersion(version: JuraCADDocument, versionName: string)
 
 /** How much the versions take, in characters (≈ bytes) of the saved design. */
 export function versionsSize(doc: JuraCADDocument): number {
-  return versionsOf(doc).reduce((n, v) => n + v.packed.length + v.name.length + (v.note?.length ?? 0) + 120, 0);
+  return versionsOf(doc).reduce((n, v) => n + versionCost(v), 0);
 }
 
 /** "340 KB", "2.1 MB". */
@@ -157,31 +169,39 @@ export function sizeText(chars: number): string {
   return `${(chars / 1_000_000).toFixed(1)} MB`;
 }
 
+/** How much the design itself takes when kept (characters), without its versions. */
+export function designSize(doc: JuraCADDocument): number {
+  return JSON.stringify(designOf(doc)).length;
+}
+
+/** What one version adds to the kept size. */
+const versionCost = (v: DesignVersion) => v.packed.length + v.name.length + (v.note?.length ?? 0) + 120;
+
 /**
- * Which versions to remove to bring the versions' size under `limit`:
- * automatic ones first, then the oldest; the newest `keep` the user saved
- * are never suggested.
+ * Which versions to remove to bring the design and its versions together
+ * under `limit`: automatic ones first, then the oldest; the newest `keep`
+ * the user saved are never suggested. (`design` = designSize, if known.)
  */
-export function versionsToTidy(doc: JuraCADDocument, limit = VERSIONS_LARGE * 0.6, keep = 3): string[] {
+export function versionsToTidy(doc: JuraCADDocument, limit = STORAGE_LARGE * 0.6, keep = 3, design = designSize(doc)): string[] {
   const list = versionsOf(doc);
   const own = list.filter((v) => !v.auto);
   const protectedIds = new Set(newestFirst(own).slice(0, keep).map((v) => v.id));
   const order = [...list.filter((v) => v.auto), ...own].filter((v) => !protectedIds.has(v.id));
   const out: string[] = [];
-  let size = versionsSize(doc);
+  let size = design + versionsSize(doc);
   for (const v of order) {
     if (size <= limit) break;
     out.push(v.id);
-    size -= v.packed.length + v.name.length + (v.note?.length ?? 0) + 120;
+    size -= versionCost(v);
   }
   return out;
 }
 
-/** A note for the panel when the versions are getting large, or null. */
-export function storageNote(doc: JuraCADDocument): string | null {
-  const size = versionsSize(doc);
-  if (size < VERSIONS_LARGE) return null;
-  return `Your versions take ${sizeText(size)}. Browsers keep only about 5 MB for each website, so the design may soon be too big to keep in this browser (saving to a file still works). Removing old versions frees space.`;
+/** A note for the panel when the design and its versions are getting too big for the browser, or null. */
+export function storageNote(doc: JuraCADDocument, design = designSize(doc)): string | null {
+  const versions = versionsSize(doc);
+  if (design + versions < STORAGE_LARGE) return null;
+  return `The design takes ${sizeText(design)} and its versions ${sizeText(versions)}. Browsers keep only about 5 MB for each website, so this may soon be too big to keep in this browser (saving to a file always works). Removing old versions frees space.`;
 }
 
 /** Versions read from a saved file or the browser; anything that doesn't make sense is dropped. */

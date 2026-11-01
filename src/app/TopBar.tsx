@@ -21,7 +21,9 @@ export function TopBar() {
   const [fresh, setFresh] = useState(versionIsNew);
   const openDialog = useStore((s) => s.openDialog);
   const newDocument = useStore((s) => s.newDocument);
-  const hasParts = useStore((s) => s.parts.length > 0);
+  // (An old version being compared is built too: its parts don't count.)
+  const hasParts = useStore((s) => s.parts.some((p) => !p.configuration?.startsWith("version:")));
+  const storageProblem = useStore((s) => s.storageProblem);
   const inAssembly = useStore((s) => activeAssembly(s) !== null);
   const inDrawing = useStore((s) => activeDrawing(s) !== null);
   const fileName = useStore((s) => s.fileName);
@@ -57,6 +59,11 @@ export function TopBar() {
           }
         }}
       />
+      {storageProblem && (
+        <button type="button" className="save-state storage-problem" title={storageProblem} onClick={() => useStore.getState().showToast(storageProblem, "error")}>
+          Not kept in this browser
+        </button>
+      )}
       {oldVersion ? (
         <span className="save-state old-version" title="An old version is open to look at. Your current design is safe — click Back to the current design to carry on.">
           Old version: {oldVersion} (read-only)

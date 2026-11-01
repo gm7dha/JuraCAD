@@ -521,6 +521,8 @@ function dragStart(target: PickTarget & { kind: "part" }, ray: ScreenRay, shift:
   const s = useStore.getState();
   const asm = activeAssembly(s);
   if (!asm || s.mateDraft || !target.point) return false;
+  // An old version open to look at can't be moved about (said at once, rather than snapping back afterwards).
+  if (s.refuseReadOnly()) return false;
   const assemblies = s.history.present.assemblies;
   const solved = solveWithParts(asm, s.parts, { assemblies });
   // Connectors on each part as its instance shows it (mirrored, or in another configuration, or inside a sub-assembly).

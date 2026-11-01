@@ -65,8 +65,7 @@ const host: LiveHost = {
   apply(file, studio, label, replace) {
     const r = readDocumentFile(file, "Claude's change");
     if (!r.ok) return r.error;
-    useStore.getState().applyClaudeChange(r.doc, studio, label, replace);
-    return null;
+    return useStore.getState().applyClaudeChange(r.doc, studio, label, replace);
   },
   subscribe: (listener) => useStore.subscribe(listener),
   permission: loopbackPermission,

@@ -1,9 +1,8 @@
 import { featuresToBuild, featuresWithDraft, previewFeatures, previewOf } from "../model/document";
 import { resolveVariables } from "../model/variables";
-import { STORAGE_KEY, useStore } from "../model/store";
+import { useStore } from "../model/store";
+import { keepInBrowser, keepProblem } from "../model/browserKeep";
 
-/** Whether the "too big to keep" message has been shown since the last successful keep. */
-let storageWarned = false;
 import { activeStudioId, type VersionCompare } from "../model/store";
 import { setCurrentScope } from "../model/expr";
 import { studiosOf } from "../model/studios";
@@ -125,6 +124,8 @@ export function connectKernel(): () => void {
   let lastStudios = useStore.getState().history.present.partStudios;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
+  /** The versions last kept in this browser (they were read from there at start). */
+  let keptVersions = lastDoc.versions;
   let lastRollback = useStore.getState().rollbackTo;
   let lastConfigured = configuredKey(useStore.getState().history.present);
   let lastCompared = useStore.getState().versionCompare?.docs;
@@ -155,22 +156,17 @@ export function connectKernel(): () => void {
     const keep = s.versionView?.stash.present ?? s.history.present;
     if (keep !== lastDoc) {
       lastDoc = keep;
-      try {
-        globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(lastDoc));
-        storageWarned = false;
-      } catch {
-        // Storage full (e.g. a big imported file) or blocked: the session still works, but say so once.
-        if (!storageWarned && globalThis.localStorage) {
-          storageWarned = true;
-          useStore
-            .getState()
-            .showToast(
-              lastDoc.versions?.length
-                ? "This design and its versions are too big for the browser to keep automatically. Use Save to keep it as a file, or remove old versions (Versions, at the top)."
-                : "This design is too big for the browser to keep automatically. Use Save to keep it as a file.",
-              "error",
-            );
-        }
+      const storage = globalThis.localStorage;
+      if (!storage) return;
+      const r = keepInBrowser(storage, keep, keptVersions);
+      if (r.design && r.versions) keptVersions = keep.versions;
+      const problem = keepProblem(r, !!keep.versions?.length);
+      const was = useStore.getState().storageProblem;
+      if (problem !== was) {
+        useStore.setState({ storageProblem: problem });
+        // Said when it starts (or changes); the top bar keeps saying it until it's fixed.
+        if (problem) useStore.getState().showToast(problem, "error");
+        else if (was) useStore.getState().showToast("Your design is kept in this browser again.", "success");
       }
     }
   });

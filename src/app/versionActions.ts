@@ -38,15 +38,27 @@ async function snapshot(name: string, note: string | undefined, auto: boolean): 
   return { id: newId("ver"), name: name.trim(), ...(note?.trim() ? { note: note.trim() } : {}), createdAt: new Date().toISOString(), ...(auto ? { auto: true } : {}), packed: await packDesign(doc) };
 }
 
+let saving = false;
 /** Save the design as a version. Returns a plain-English problem, or null when saved. */
 export async function saveVersion(name: string, note?: string): Promise<string | null> {
+  // A second click while the first is still packing the design is ignored (it would save it twice).
+  if (saving) return null;
+  saving = true;
+  try {
+    return await saveVersionNow(name, note);
+  } finally {
+    saving = false;
+  }
+}
+
+async function saveVersionNow(name: string, note?: string): Promise<string | null> {
   const s = useStore.getState();
   if (s.versionView) return "You're looking at an old version. Go back to the current design to save a version of it.";
   if (s.editing) return "Finish or cancel the open feature first, then save a version.";
   const problem = versionNameProblem(s.history.present, name);
   if (problem) return problem;
   const v = await snapshot(name, note, false);
-  useStore.getState().changeDocument((doc) => addVersion(doc, v));
+  useStore.getState().changeVersions((doc) => addVersion(doc, v));
   useStore.getState().showToast(`Saved version "${v.name}".`, "success");
   return null;
 }
@@ -106,12 +118,12 @@ export function renameVersion(id: string, name: string, note?: string): string |
   const s = useStore.getState();
   const problem = name !== undefined ? versionNameProblem(s.history.present, name, id) : null;
   if (problem) return problem;
-  s.changeDocument((doc) => editVersion(doc, id, { name, ...(note !== undefined ? { note } : {}) }));
+  s.changeVersions((doc) => editVersion(doc, id, { name, ...(note !== undefined ? { note } : {}) }));
   return null;
 }
 
 export function deleteVersions(ids: string[]): void {
-  useStore.getState().changeDocument((doc) => removeVersions(doc, ids));
+  useStore.getState().changeVersions((doc) => removeVersions(doc, ids));
 }
 
 /** Compare two versions, or a version with now (NOW). The older one first. */
@@ -138,14 +150,14 @@ export function stopCompare(): void {
 export function comparedParts(s: Pick<AppState, "parts" | "rebuildBusy" | "kernelStatus" | "versionCompare">, side: string): PartInfo[] | null {
   if (s.kernelStatus !== "ready" || s.rebuildBusy) return null;
   if (side === NOW) return s.parts.filter((p) => !p.configuration).map((p) => ({ id: p.id, name: p.name }));
-  const doc = s.versionCompare?.docs[side];
   const suffix = versionSuffix(side);
   const tag = suffix.slice(1);
   return s.parts
     .filter((p) => p.configuration === tag)
     .map((p) => {
       const id = p.id.endsWith(suffix) ? p.id.slice(0, -suffix.length) : p.id;
-      return { id, name: doc?.partNames?.[id] ?? p.name };
+      // (Named with the version's own part names: see compareStudioInputs.)
+      return { id, name: p.name };
     });
 }
 

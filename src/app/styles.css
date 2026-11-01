@@ -3375,3 +3375,27 @@ kbd {
     display: none;
   }
 }
+.save-state.storage-problem {
+  border: 1px solid var(--error-line);
+  border-radius: 10px;
+  padding: 1px 8px;
+  background: var(--error-soft);
+  color: var(--error-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+/* Shown at every width (the plain save state hides on narrow screens). */
+.topbar .save-state.storage-problem {
+  display: inline-block;
+  flex-shrink: 0;
+}
+.version-banner.in-drawing {
+  top: auto;
+  bottom: 40px;
+  left: auto;
+  right: 12px;
+  transform: none;
+  max-width: min(520px, calc(100% - 32px));
+}

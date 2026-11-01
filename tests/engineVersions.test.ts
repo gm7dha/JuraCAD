@@ -23,7 +23,7 @@ describe("building an old version beside the design", () => {
     const old: JuraCADDocument = { ...now, variables: [{ id: "v", name: "w", value: "20" }] };
     const first = engine.rebuildStudios([{ id: "main", features: now.features }], { w: 40 });
     expect(first.rebuilt).toEqual(["main"]);
-    const inputs = compareStudioInputs("ver1", old);
+    const inputs = compareStudioInputs("ver1", { ...old, partNames: { box1: "Old base" } });
     expect(inputs.map((s) => s.id)).toEqual(["main" + versionSuffix("ver1")]);
     const both = engine.rebuildStudios([{ id: "main", features: now.features }, ...inputs], { w: 40 });
     // Only the old version was built; the design's own parts are as they were.
@@ -33,6 +33,9 @@ describe("building an old version beside the design", () => {
     expect(ghost.id).toBe("box1@version:ver1");
     expect(ghost.configuration).toBe("version:ver1");
     expect(ghost.studioId).toBe("main@version:ver1");
+    // Named as the old version named it, not as the design does now.
+    expect(ghost.name).toBe("Old base");
+    expect(first.parts[0].name).toBe("Part 1");
     expect(ghost.volume!).toBeCloseTo(20 * 10 * 10, 3);
     expect(first.parts[0].volume!).toBeCloseTo(40 * 10 * 10, 3);
     // No feature problems are reported for the old version.

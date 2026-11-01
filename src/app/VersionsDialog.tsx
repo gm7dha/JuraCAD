@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { useStore } from "../model/store";
+import { activeDrawing, useStore } from "../model/store";
 import type { DesignVersion } from "../model/types";
 import type { DesignChanges } from "../model/versionCompare";
 import { newestFirst, nextVersionName, sizeText, storageNote, versionDate, versionNameProblem, versionsOf, versionsSize, versionsToTidy } from "../model/versions";
@@ -117,7 +117,7 @@ export function VersionsDialog() {
             <button
               className="text-button"
               onClick={() => {
-                if (window.confirm(`Remove ${tidy.length} old version${tidy.length === 1 ? "" : "s"} (automatic ones first, then the oldest)? Your newest versions are kept. Undo brings them back.`)) deleteVersions(tidy);
+                if (window.confirm(`Remove ${tidy.length} old version${tidy.length === 1 ? "" : "s"} (automatic ones first, then the oldest)? Your newest versions are kept. This can't be undone.`)) deleteVersions(tidy);
               }}
             >
               Remove {tidy.length} old version{tidy.length === 1 ? "" : "s"}
@@ -277,7 +277,7 @@ function VersionRow({ v, open, locked, onRestore }: { v: DesignVersion; open: bo
             disabled={locked}
             aria-label={`Delete ${v.name}`}
             title="Remove this version"
-            onClick={() => window.confirm(`Remove version "${v.name}"? Undo brings it back.`) && deleteVersions([v.id])}
+            onClick={() => window.confirm(`Remove version "${v.name}"? This can't be undone (unless it's in a .juracad file you saved).`) && deleteVersions([v.id])}
           >
             <Icons.Cross size={14} />
           </button>
@@ -432,9 +432,11 @@ export function ChangesList({ changes }: { changes: DesignChanges }) {
 /** Across the top of the 3D view while an old version is open: it's read-only, and the ways out. */
 export function VersionBanner() {
   const v = useStore((s) => s.versionView);
+  // On a drawing the top middle has the sheet's own messages and view bar, so the banner sits bottom right there.
+  const inDrawing = useStore((s) => activeDrawing(s) !== null);
   if (!v) return null;
   return (
-    <div className="version-banner" role="status" aria-label="Old version">
+    <div className={`version-banner${inDrawing ? " in-drawing" : ""}`} role="status" aria-label="Old version">
       <Icons.Versions size={18} />
       <span>
         <strong>Old version: {v.name}</strong> <span className="version-banner-date">saved {versionDate(v.createdAt)}</span> — you can look, but not change it.

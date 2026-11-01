@@ -1963,6 +1963,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       return;
     }
     if (e.button !== 0) return;
+    // An old version open to look at: nothing on the sheet can be added or moved.
+    if (tool !== "select" && useStore.getState().refuseReadOnly()) return;
     if (tool === "note") {
       const at = toSheet(e);
       const id = newId("nt");
@@ -2248,7 +2250,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
               width={v.box[2] - v.box[0] + 6}
               height={v.box[3] - v.box[1] + 6}
               onPointerDown={(e) => {
-                if (e.button !== 0) return;
+                if (e.button !== 0 || useStore.getState().refuseReadOnly()) return;
                 e.stopPropagation();
                 useStore.getState().selectDim(null);
                 setSelView(v.id);
@@ -2269,7 +2271,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
             height={3.6}
             data-testid="view-resize"
             onPointerDown={(e) => {
-              if (e.button !== 0) return;
+              if (e.button !== 0 || useStore.getState().refuseReadOnly()) return;
               e.stopPropagation();
               (e.target as Element).setPointerCapture(e.pointerId);
               setResize({ viewId: selPlaced.id, centre: selPlaced.centre, corner: [selPlaced.box[2], selPlaced.box[3]], from: selPlaced.scale, scale: selPlaced.scale });
@@ -2288,7 +2290,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
               width={n.box[2] - n.box[0] + 2}
               height={n.box[3] - n.box[1] + 2}
               onPointerDown={(e) => {
-                if (e.button !== 0) return;
+                if (e.button !== 0 || useStore.getState().refuseReadOnly()) return;
                 e.stopPropagation();
                 const st = useStore.getState();
                 setSelView(null);
@@ -2311,7 +2313,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
             height={layout.holeTable.box[3] - layout.holeTable.box[1] + 2}
             data-testid="hole-table"
             onPointerDown={(e) => {
-              if (e.button !== 0 || !layout.holeTable) return;
+              if (e.button !== 0 || !layout.holeTable || useStore.getState().refuseReadOnly()) return;
               e.stopPropagation();
               (e.target as Element).setPointerCapture(e.pointerId);
               const corner: P2 = [layout.holeTable.box[0], layout.holeTable.box[3]];
@@ -2335,8 +2337,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
           layout?.dims.map((d) => {
             const onPointerDown = (e: ReactPointerEvent<SVGElement>) => {
               // Right button: remember it (a click flips its arrows when the button comes up) and let the sheet pan.
-              if (e.button === 2) rightDown.current = d.arrows ? { dimId: d.id, x: e.clientX, y: e.clientY } : null;
-              if (e.button !== 0) return;
+              if (e.button === 2) rightDown.current = d.arrows && !useStore.getState().versionView ? { dimId: d.id, x: e.clientX, y: e.clientY } : null;
+              if (e.button !== 0 || useStore.getState().refuseReadOnly()) return;
               e.stopPropagation();
               const st = useStore.getState();
               setSelView(null);

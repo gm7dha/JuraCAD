@@ -984,7 +984,8 @@ try {
   // What there was is kept as an automatic version.
   if ((await versionCount()) !== 2) throw new Error(`restoring left ${await versionCount()} versions (expected 2: the one saved and an automatic one)`);
   await page.evaluate(() => window.juracadStore.getState().undo());
-  if ((await gapValue()) !== "3" || (await versionCount()) !== 1) throw new Error(`undo after restoring: gap "${await gapValue()}", ${await versionCount()} versions`);
+  // Undo brings the design back; versions aren't undone (as in Onshape), so the automatic one stays.
+  if ((await gapValue()) !== "3" || (await versionCount()) !== 2) throw new Error(`undo after restoring: gap "${await gapValue()}", ${await versionCount()} versions (expected 2)`);
 
   step = "saving the design to a file";
   const featureCount = await page.locator(".feature-row:not(.datum)").count();
@@ -1009,7 +1010,7 @@ try {
   await chooser.setFiles(savedPath);
   await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n, featureCount, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 3"), null, { timeout: 30_000 });
-  if ((await versionCount()) !== 1) throw new Error(`the opened file has ${await versionCount()} versions (expected 1)`);
+  if ((await versionCount()) !== 2) throw new Error(`the opened file has ${await versionCount()} versions (expected 2)`);
 
   step = "importing the STEP and STL files exported earlier";
   const importModel = async (file, label) => {

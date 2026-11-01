@@ -64,7 +64,19 @@ export const versionSuffix = (versionId: string) => `@version:${versionId}`;
 export function compareStudioInputs(versionId: string, doc: JuraCADDocument): StudioInput[] {
   const variables = resolveVariables(doc.variables).values;
   const suffix = versionSuffix(versionId);
-  return studiosOf(doc).map((st) => ({ id: st.id + suffix, features: featuresForEngine(st.features), variables, partSuffix: suffix }));
+  const studios = studiosOf(doc);
+  const ids = new Set(studios.map((st) => st.id));
+  // Parts brought in from another Part Studio (Derived) come from the version's own copy of it.
+  const own = (f: Feature): Feature =>
+    f.type === "derived" && f.derived && ids.has(f.derived.studioId) ? { ...f, derived: { studioId: f.derived.studioId + suffix, partId: f.derived.partId + suffix } } : f;
+  return studios.map((st) => ({
+    id: st.id + suffix,
+    features: featuresForEngine(st.features).map(own),
+    variables,
+    partSuffix: suffix,
+    // The parts are named as the version named them.
+    partNames: doc.partNames ?? {},
+  }));
 }
 
 /** Everything in a document to build: every Part Studio, and those shown in other configurations. */

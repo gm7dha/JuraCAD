@@ -19,9 +19,13 @@ import {
   versionNameProblem,
   versionsSize,
   versionsToTidy,
-  VERSIONS_LARGE,
+  STORAGE_LARGE,
+  designSize,
+  withVersionsOf,
 } from "../src/model/versions";
-import { compareDesigns, featureSettingChanges, MAX_SETTINGS } from "../src/model/versionCompare";
+import { compareDesigns, featureSettingChanges, MAX_SETTINGS, same } from "../src/model/versionCompare";
+import { keepInBrowser, keepProblem, STORAGE_KEY, VERSIONS_KEY, type KeepStorage } from "../src/model/browserKeep";
+import { compareStudioInputs } from "../src/kernel/buildInput";
 import { addStudio } from "../src/model/studios";
 import { addDrawing } from "../src/drawing/drawing";
 
@@ -167,13 +171,13 @@ describe("storage", () => {
   it("warns when versions are large and suggests automatic, then oldest ones to remove", () => {
     let doc = bracket();
     expect(storageNote(doc)).toBeNull();
-    const big = "gz:" + "A".repeat(Math.ceil(VERSIONS_LARGE / 4));
+    const big = "gz:" + "A".repeat(Math.ceil(STORAGE_LARGE / 4));
     doc = addVersion(doc, version("v1", big, { createdAt: "2026-01-01T00:00:00Z" }));
     doc = addVersion(doc, version("auto", big, { createdAt: "2026-01-02T00:00:00Z", auto: true }));
     doc = addVersion(doc, version("v2", big, { createdAt: "2026-01-03T00:00:00Z" }));
     doc = addVersion(doc, version("v3", big, { createdAt: "2026-01-04T00:00:00Z" }));
     doc = addVersion(doc, version("v4", big, { createdAt: "2026-01-05T00:00:00Z" }));
-    expect(versionsSize(doc)).toBeGreaterThan(VERSIONS_LARGE);
+    expect(versionsSize(doc)).toBeGreaterThan(STORAGE_LARGE);
     expect(storageNote(doc)).toMatch(/MB/);
     const tidy = versionsToTidy(doc);
     expect(tidy[0]).toBe("auto");
@@ -274,5 +278,135 @@ describe("comparing two designs", () => {
     const older = bracket();
     const newer = replaceFeature(older, { ...older.features[0], folder: "Base" });
     expect(compareDesigns(older, newer).features).toEqual([]);
+  });
+});
+
+describe("the design and its sizes, together", () => {
+  it("counts the design itself in the warning", () => {
+    const doc = bracket();
+    const huge = { ...doc, name: "x".repeat(STORAGE_LARGE) };
+    expect(storageNote(doc)).toBeNull();
+    // No versions at all, but the design alone is big: still worth saying.
+    expect(storageNote(huge)).toMatch(/The design takes/);
+    expect(designSize(huge)).toBeGreaterThan(STORAGE_LARGE);
+    // Versions are counted with the design: removing them brings the total down.
+    const half = "gz:" + "A".repeat(Math.ceil(STORAGE_LARGE / 2));
+    const both = addVersion(addVersion({ ...doc, name: "y".repeat(STORAGE_LARGE / 2) }, version("a", half, { auto: true })), version("b", "json:{}"));
+    expect(storageNote(both)).toMatch(/versions/);
+    expect(versionsToTidy(both)).toEqual(["a"]);
+  });
+});
+
+describe("versions stay with the design", () => {
+  it("withVersionsOf carries one design's versions onto another copy of it", () => {
+    const a = addVersion(bracket(), version("v1", "json:{}"));
+    const b = bracket();
+    expect(withVersionsOf(b, a).versions).toBe(a.versions);
+    expect(withVersionsOf(a, b).versions).toBeUndefined();
+    expect(withVersionsOf(a, a)).toBe(a);
+    expect(withVersionsOf(b, bracket())).toBe(b);
+  });
+});
+
+/** A browser storage that holds up to `limit` characters in all. */
+function storage(limit = Infinity) {
+  const items = new Map<string, string>();
+  const s: KeepStorage & { items: Map<string, string> } = {
+    items,
+    setItem(k, v) {
+      const used = [...items].reduce((n, [key, val]) => n + (key === k ? 0 : val.length), 0);
+      if (used + v.length > limit) throw new Error("QuotaExceededError");
+      items.set(k, v);
+    },
+    removeItem(k) {
+      items.delete(k);
+    },
+  };
+  return s;
+}
+
+describe("keeping the design in the browser", () => {
+  it("keeps the design and its versions under separate keys", () => {
+    const st = storage();
+    const doc = addVersion(bracket(), version("v1", "json:{}"));
+    expect(keepInBrowser(st, doc, undefined)).toEqual({ design: true, versions: true });
+    expect(JSON.parse(st.items.get(STORAGE_KEY)!).versions).toBeUndefined();
+    expect(JSON.parse(st.items.get(VERSIONS_KEY)!)).toEqual(doc.versions);
+    // No versions: the key goes.
+    expect(keepInBrowser(st, bracket(), doc.versions)).toEqual({ design: true, versions: true });
+    expect(st.items.has(VERSIONS_KEY)).toBe(false);
+  });
+
+  it("always keeps the design first, even when its versions don't fit", () => {
+    const st = storage(3000);
+    const doc = addVersion(bracket(), version("v1", "gz:" + "A".repeat(5000)));
+    const r = keepInBrowser(st, doc, undefined);
+    expect(r).toEqual({ design: true, versions: false });
+    expect(st.items.has(STORAGE_KEY)).toBe(true);
+    // Old versions aren't left behind to be put on the wrong design.
+    expect(st.items.has(VERSIONS_KEY)).toBe(false);
+    expect(keepProblem(r, true)).toMatch(/versions are too big/);
+    // Later changes to the design are still kept.
+    const changed = { ...doc, name: "Bracket 2" };
+    expect(keepInBrowser(st, changed, undefined).design).toBe(true);
+    expect(JSON.parse(st.items.get(STORAGE_KEY)!).name).toBe("Bracket 2");
+  });
+
+  it("says plainly when the design itself can't be kept, and again is fine once it fits", () => {
+    const st = storage(100);
+    const r = keepInBrowser(st, bracket(), undefined);
+    expect(r.design).toBe(false);
+    expect(keepProblem(r, false)).toMatch(/would be lost if the page is closed or reloaded/);
+    expect(keepProblem({ design: true, versions: true }, true)).toBeNull();
+  });
+
+  it("only writes the versions when they changed", () => {
+    const st = storage();
+    const doc = addVersion(bracket(), version("v1", "json:{}"));
+    keepInBrowser(st, doc, undefined);
+    st.items.set(VERSIONS_KEY, "untouched");
+    keepInBrowser(st, { ...doc, name: "Renamed" }, doc.versions);
+    expect(st.items.get(VERSIONS_KEY)).toBe("untouched");
+  });
+});
+
+describe("comparing ignores the order settings were written in", () => {
+  it("treats the same feature with reordered fields as unchanged", () => {
+    const older = bracket();
+    const f = older.features[0];
+    const reordered = JSON.parse(JSON.stringify({ params: f.params, type: f.type, suppressed: f.suppressed, operation: f.operation, name: f.name, id: f.id, extra: undefined }));
+    const newer = { ...older, features: [{ ...reordered, params: Object.fromEntries(Object.entries(f.params).reverse()) }] };
+    const c = compareDesigns(older, newer);
+    expect(c.features).toEqual([]);
+    expect(c.same).toBe(true);
+    expect(same({ a: 1, b: { c: [1, { d: 2, e: 3 }] } }, { b: { c: [1, { e: 3, d: 2 }] }, a: 1 })).toBe(true);
+    expect(same({ a: 1, b: undefined }, { a: 1 })).toBe(true);
+    expect(same([1, 2], [2, 1])).toBe(false);
+    expect(same({ a: { b: 1 } }, { a: { b: 2 } })).toBe(false);
+  });
+
+  it("finds a real change in a nested setting whatever the order", () => {
+    const older = bracket();
+    const f = { ...older.features[0], hole: { kind: "simple", diameter: "5" } } as never;
+    const g = { ...older.features[0], hole: { diameter: "6", kind: "simple" } } as never;
+    const out = featureSettingChanges(f, g);
+    expect(out).toHaveLength(1);
+    expect(out[0].from).toBe("5");
+    expect(out[0].to).toBe("6");
+  });
+});
+
+describe("an old version's Part Studios for comparing", () => {
+  it("brings Derived parts from the version's own copy, and names parts as the version did", () => {
+    let doc = addStudio(bracket(), "ps2");
+    const derived = { id: "d1", name: "Derived 1", type: "derived" as const, operation: "new" as const, suppressed: false, params: {}, derived: { studioId: "main", partId: "box1" } };
+    doc = { ...doc, partStudios: doc.partStudios!.map((s) => ({ ...s, features: [derived] })), partNames: { box1: "Old base" } };
+    const inputs = compareStudioInputs("v9", doc);
+    expect(inputs.map((s) => s.id)).toEqual(["main@version:v9", "ps2@version:v9"]);
+    expect(inputs[1].features[0].derived).toEqual({ studioId: "main@version:v9", partId: "box1@version:v9" });
+    expect(inputs[0].partNames).toEqual({ box1: "Old base" });
+    // A Derived from a Part Studio the version doesn't have is left as it is (the engine says it's missing).
+    const elsewhere = { ...doc, partStudios: doc.partStudios!.map((s) => ({ ...s, features: [{ ...derived, derived: { studioId: "gone", partId: "x" } }] })) };
+    expect(compareStudioInputs("v9", elsewhere)[1].features[0].derived).toEqual({ studioId: "gone", partId: "x" });
   });
 });

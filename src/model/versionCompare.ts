@@ -78,7 +78,26 @@ function shortValue(v: unknown): string {
   return "set";
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/**
+ * The same value, whatever order the fields were written in (a design read
+ * back from a file can list a feature's settings in another order), and with
+ * a field set to `undefined` the same as a missing one, as in a saved file.
+ */
+export function same(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a === "number" && typeof b === "number") return Number.isNaN(a) && Number.isNaN(b);
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const y = b as unknown[];
+    return a.length === y.length && a.every((x, i) => same(x, y[i]));
+  }
+  const x = a as Record<string, unknown>;
+  const y = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
+  for (const k of keys) if (!same(x[k], y[k])) return false;
+  return true;
+}
 
 /** What a sketch holds, in words ("4 lines, 1 circle, 3 dimensions"). */
 function sketchSummary(f: Feature | undefined): string {
