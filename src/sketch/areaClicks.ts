@@ -187,9 +187,9 @@ export function clickableAreaSketches(features: Feature[], draft: Pick<Feature, 
 /**
  * Clicking area `index` of sketch `sketchId` (its areas worked out from
  * `data`) while a feature is open: the same sketch toggles the area, as the 2D
- * map does. Another sketch: an Extrude with areas already picked takes areas
- * of several sketches (as in Onshape), so the area is added to (or taken out
- * of) `moreAreas`; otherwise that sketch becomes the feature's sketch, with
+ * map does. Another sketch: an Extrude, Revolve or Sweep (solid) with areas
+ * already picked takes areas of several sketches (as in Onshape), so the area
+ * is added to (or taken out of) `moreAreas`; otherwise that sketch becomes the feature's sketch, with
  * just that area picked, and `message` says so when a sketch was already chosen.
  * When the feature's own sketch is left with nothing picked while other
  * sketches still have areas, the next of those becomes its sketch (nothing
@@ -212,9 +212,9 @@ export function areaClickChange(
     const areas = toggleArea(map, draft.areas, index);
     return { patch: more.length ? tidy(draft.sketchRef, areas, more) : { areas } };
   }
-  // Several sketches: an extrude (solid) whose own areas are picked, or a sketch it already takes areas from.
+  // Several sketches: a solid extrude, revolve or sweep whose own areas are picked, or a sketch it already takes areas from.
   const inMore = more.find((m) => m.sketch === sketch.id);
-  if (draft.type === "extrude" && !draft.surface && (draft.areas?.length || inMore)) {
+  if (takesSeveral(draft) && (draft.areas?.length || inMore)) {
     const toggled = toggleArea(map, inMore?.areas, index) ?? [];
     const rest = inMore ? more.map((m) => (m.sketch === sketch.id ? { ...m, areas: toggled } : m)) : [...more, { sketch: sketch.id, areas: toggled }];
     return { patch: tidy(draft.sketchRef, draft.areas, rest) };
@@ -222,33 +222,81 @@ export function areaClickChange(
   const patch: Partial<Pick<Feature, "sketchRef" | "areas" | "revolve" | "moreAreas">> = { sketchRef: sketch.id, areas: toggleArea(map, undefined, index), ...(more.length ? { moreAreas: undefined } : {}) };
   if (draft.type === "revolve") patch.revolve = { ...(draft.revolve ?? { flip: false }), axis: defaultAxis(data) };
   const message = draft.sketchRef
-    ? `${draft.name} now uses ${sketch.name}. ${draft.type === "extrude" ? "To use areas of several sketches, pick an area of the first sketch, then click areas in the others." : "A revolve or sweep takes its areas from one sketch."}`
+    ? `${draft.name} now uses ${sketch.name}. ${takesSeveral(draft) ? "To use areas of several sketches, pick an area of the first sketch, then click areas in the others." : "A surface takes its shapes from one sketch."}`
     : undefined;
   return { patch, ...(message ? { message } : {}) };
 }
 
-/** Areas clicked in the 3D view with no dialog open, waiting for Extrude, Revolve or Sweep (as in Onshape). */
+/** Whether a feature can take areas of several sketches (`moreAreas`): a solid extrude, revolve or sweep. */
+export function takesSeveral(draft: Pick<Feature, "type" | "surface">): boolean {
+  return (draft.type === "extrude" || draft.type === "revolve" || draft.type === "sweep") && !draft.surface;
+}
+
+/**
+ * Areas clicked in the 3D view with no dialog open, waiting for Extrude,
+ * Revolve or Sweep (as in Onshape): those of the first sketch clicked, and
+ * (`more`, missing when none) those of any other sketches, in click order.
+ */
 export interface AreaSelection {
   sketch: string;
   areas: AreaPick[];
+  more?: { sketch: string; areas: AreaPick[] }[];
 }
 
 /**
  * Click an area with nothing open: select it, or unselect it if it was
- * selected. Areas are selected from one sketch at a time: an area of another
- * sketch starts the selection again. Null when nothing is left.
+ * selected. Areas of several sketches can be selected together (as in
+ * Onshape); when the first sketch has none left, the next one with areas
+ * selected takes its place. Null when nothing is left.
  */
 export function selectArea(selection: AreaSelection | null, sketchId: string, data: SketchData, index: number): AreaSelection | null {
   const map = sketchAreas(data);
-  const areas = toggleArea(map, selection?.sketch === sketchId ? selection.areas : undefined, index);
-  return areas ? { sketch: sketchId, areas } : null;
+  const all = selection ? [{ sketch: selection.sketch, areas: selection.areas }, ...(selection.more ?? [])] : [];
+  const at = all.findIndex((x) => x.sketch === sketchId);
+  const toggled = toggleArea(map, at >= 0 ? all[at].areas : undefined, index) ?? [];
+  const next = at >= 0 ? all.map((x, i) => (i === at ? { sketch: sketchId, areas: toggled } : x)) : [...all, { sketch: sketchId, areas: toggled }];
+  const kept = next.filter((x) => x.areas.length);
+  if (!kept.length) return null;
+  const [first, ...rest] = kept;
+  return rest.length ? { ...first, more: rest } : first;
+}
+
+/** The areas selected in one sketch (none: an empty list). */
+export function selectedIn(selection: AreaSelection | null, sketchId: string): AreaPick[] {
+  if (!selection) return [];
+  if (selection.sketch === sketchId) return selection.areas;
+  return selection.more?.find((m) => m.sketch === sketchId)?.areas ?? [];
+}
+
+/** How many areas are selected, in all the sketches. */
+export function selectedCount(selection: AreaSelection | null): number {
+  return selection ? selection.areas.length + (selection.more ?? []).reduce((n, m) => n + m.areas.length, 0) : 0;
 }
 
 /** The areas of a sketch that are selected (by index), for shading. */
 export function selectedAreaShades(selection: AreaSelection | null, sketchId: string, data: SketchData): AreaShade[] {
   const map = sketchAreas(data);
-  const picked = selection?.sketch === sketchId ? pickedAreas(map, selection.areas).picked : NO_AREAS;
+  const mine = selectedIn(selection, sketchId);
+  const picked = mine.length ? pickedAreas(map, mine).picked : NO_AREAS;
   return map.areas.map((_a, i) => (picked.has(i) ? "picked" : "none"));
+}
+
+/**
+ * What a new Extrude, Revolve or Sweep starts with from areas selected
+ * beforehand: the first usable sketch's areas as its own, the rest as
+ * `moreAreas`. `usable` says whether a sketch can be used (there, unsuppressed,
+ * with a plane); a sweep's path is left out by the caller. Null when no
+ * selected sketch is usable. A surface takes just the first.
+ */
+export function selectionStart(
+  selection: AreaSelection,
+  usable: (sketchId: string) => boolean,
+  several: boolean,
+): { sketchRef: string; areas: AreaPick[]; moreAreas?: { sketch: string; areas: AreaPick[] }[] } | null {
+  const list = [{ sketch: selection.sketch, areas: selection.areas }, ...(selection.more ?? [])].filter((x) => x.areas.length && usable(x.sketch));
+  if (!list.length) return null;
+  const [first, ...rest] = list;
+  return { sketchRef: first.sketch, areas: first.areas, ...(several && rest.length ? { moreAreas: rest } : {}) };
 }
 
 /**
@@ -280,4 +328,14 @@ export function sketchesOffered(features: Feature[], draftId: string, editing: b
   const bar = rollbackTo ? features.findIndex((f) => f.id === rollbackTo) : -1;
   const before = editing && at >= 0 ? features.slice(0, at) : bar >= 0 ? features.slice(0, bar + 1) : features;
   return before.filter((f) => f.type === "sketch");
+}
+
+/**
+ * A sweep's path set to `pathRef`: a sketch can't be both a profile and the
+ * path, so if it was one of the extra profiles (`moreAreas`) it's left out.
+ */
+export function pathChange(draft: Pick<Feature, "moreAreas">, pathRef: string | undefined): Partial<Pick<Feature, "pathRef" | "moreAreas">> {
+  if (!pathRef || !draft.moreAreas?.some((m) => m.sketch === pathRef)) return { pathRef };
+  const rest = draft.moreAreas.filter((m) => m.sketch !== pathRef);
+  return { pathRef, moreAreas: rest.length ? rest : undefined };
 }

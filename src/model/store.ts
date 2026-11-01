@@ -35,7 +35,7 @@ import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
-import { areaSelectionLapses, followedSketch, freeAreas, type AreaSelection } from "../sketch/areaClicks";
+import { areaSelectionLapses, followedSketch, freeAreas, selectionStart, type AreaSelection } from "../sketch/areaClicks";
 import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties, PlaneName, DatumName } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
@@ -672,16 +672,21 @@ export const useStore = create<AppState>((set, get) => {
       }
       if (isSketchSolid(type) || type === "sweep") {
         // Areas clicked in the 3D view beforehand (as in Onshape): use them.
+        // Areas of several sketches: the first is the feature's own sketch, the others its `moreAreas` (as in Onshape).
         const sel = s.areaSelection;
-        const chosen = sel ? features.find((f) => f.id === sel.sketch && f.type === "sketch" && !f.suppressed) : undefined;
+        const usable = (id: string) => !!features.find((f) => f.id === id && f.type === "sketch" && !f.suppressed && f.sketch?.plane);
+        const start = sel ? selectionStart(sel, usable, true) : null;
+        const chosen = start ? features.find((f) => f.id === start.sketchRef) : undefined;
         // A sketch highlighted in the list wins (the two aren't normally selected together).
         const listed = features.some((f) => f.id === s.selectedFeatureId && f.type === "sketch");
-        if (sel && chosen?.sketch && !listed) {
-          draft.sketchRef = chosen.id;
-          draft.areas = sel.areas;
+        if (start && chosen?.sketch && !listed) {
+          draft.sketchRef = start.sketchRef;
+          draft.areas = start.areas;
+          if (start.moreAreas) draft.moreAreas = start.moreAreas;
           if (type === "revolve") draft.revolve = { axis: defaultAxis(chosen.sketch.data), flip: false };
-          // A sweep's path is another sketch.
-          if (type === "sweep" && draft.pathRef === chosen.id) draft.pathRef = features.filter((f) => f.type === "sketch" && !f.suppressed && f.id !== chosen.id).at(-1)?.id;
+          // A sweep's path is another sketch (not one of the profiles).
+          const profiles = new Set([start.sketchRef, ...(start.moreAreas ?? []).map((m) => m.sketch)]);
+          if (type === "sweep" && draft.pathRef && profiles.has(draft.pathRef)) draft.pathRef = features.filter((f) => f.type === "sketch" && !f.suppressed && !profiles.has(f.id)).at(-1)?.id;
         } else if (draft.sketchRef && type !== "sweep") {
           // A sketch other features already use: start with the areas that are left (Extrude 2 of the other circle).
           const data = followedSketch(features.find((f) => f.id === draft.sketchRef), s.sketchLinks)?.data;

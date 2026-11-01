@@ -150,9 +150,12 @@ export interface Feature {
    */
   intersectAll?: boolean;
   /**
-   * Extrude: areas from other sketches as well as `sketchRef`'s (as Onshape
-   * lets one extrude use regions of several sketches). Each is extruded from
-   * its own sketch with the same settings. Missing: just `sketchRef`.
+   * Extrude, revolve and sweep (solids): areas from other sketches as well as
+   * `sketchRef`'s (as Onshape lets one feature use regions of several
+   * sketches). Each is made from its own sketch with the same settings: an
+   * extrude the same depth, a revolve round the axis chosen in `sketchRef`
+   * (which must lie in that sketch's plane), a sweep along the same path.
+   * Missing: just `sketchRef`.
    */
   moreAreas?: { sketch: string; areas: AreaPick[] }[];
   /** Sweep: the sketch whose lines and arcs make the path. */

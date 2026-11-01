@@ -26,9 +26,10 @@
   on hover (`PickAreaSet.hoverOnly`); clicking another sketch's area makes it the feature's sketch with just that area
   (`areaClickChange`, one sketch per feature, a toast says so); areas other features use are shaded grey ("taken", `areasTaken`, cached
   per features array; also in the 2D map), and a new Extrude/Revolve of a used sketch starts with the areas left (`freeAreas`, in `startCreate`).
-  With nothing open, areas of sketches on show can be clicked to select them (`store.areaSelection`, `selectArea`; mode "nearest":
+  With nothing open, areas of sketches on show can be clicked to select them, in several sketches at once (`store.areaSelection`:
+  `{sketch, areas, more?}`, `selectArea`; `selectionStart` turns it into `sketchRef` + `areas` + `moreAreas`; mode "nearest":
   nearer than the part's face wins, drawn only on hover/selected; an area lying on a face carries `under`, and clicking the only selected
-  area again selects that face). Extrude/Revolve/Sweep then use it (a sketch highlighted in the list wins), Sketch starts on its plane;
+  area again selects that face, `selectedCount`). Extrude/Revolve/Sweep then use it (a sketch highlighted in the list wins), Sketch starts on its plane;
   it's let go on any design change, tab change, dialog/sketch opening or list pick (`areaSelectionLapses`, a store subscription).
   `SceneManager.setPickAreas` takes one `PickAreaSet` per sketch, each drawn as one mesh + one LineSegments, coloured per vertex, rebuilt
   only when that sketch's outlines array (`areaOutlines`, one per map) or plane values change; PickTarget "sketchArea" (sketch + index); both use `toggleArea`, so
@@ -40,9 +41,10 @@
   features follow the same rules (`applyPattern`). Without the flag (older files) the old rules hold exactly (one part; the latest part).
   Newer still: `intersectAll` (Extrude/Revolve/Sweep) makes Intersect keep the overlap in every part it reaches (`cutParts`, which also
   checks a modelled thread part by part, falling back to the plain hole per part; the threaded-hole cache holds every part's result).
-  An apart hole measures material in the first part the drill meets (`materialAlong`). An Extrude may take areas of other sketches too
-  (`Feature.moreAreas`: each extruded from its own sketch with the same settings, fused; `areaClickChange` adds them when the feature's own
-  areas are picked; an extra sketch deleted or suppressed is left out with a warning via `buildSolid`'s `notes`). Warnings (built, with something to tell) are kept apart from failures: `RebuildResult.featureWarnings` → `store.featureWarnings` (amber note on the row and in the dialog; not counted by Check; the extension's `tryChange` passes new ones on as notes instead of refusing). Dialogs list only sketches above the feature / rollback bar (`sketchesOffered`); `draftEffect` (partLinks.ts) names
+  An apart hole measures material in the first part the drill meets (`materialAlong`). An Extrude, Revolve or Sweep (solids, `takesSeveral`) may take areas of other sketches too
+  (`Feature.moreAreas`: each made from its own sketch with the same settings, fused — a revolve round the axis of its first sketch, which
+  must lie in the extra sketch's plane (`revolveMore`, `axisInPlane`), a sweep along the same path (never the path itself, `pathChange`);
+  `areaClickChange` adds them when the feature's own areas are picked; the extension's `more_sketches`, and its `sweep` kind; an extra sketch deleted or suppressed is left out with a warning via `buildSolid`'s `notes`). Warnings (built, with something to tell) are kept apart from failures: `RebuildResult.featureWarnings` → `store.featureWarnings` (amber note on the row and in the dialog; not counted by Check; the extension's `tryChange` passes new ones on as notes instead of refusing). Dialogs list only sketches above the feature / rollback bar (`sketchesOffered`); `draftEffect` (partLinks.ts) names
   and lights up the parts an open feature changes (merges come from `PartMesh.joined`, set in `commitPlan`); `threadedReused` counts cache hits; the interactive tool state machine is `src/sketch/controller.ts`; extrusion is `src/kernel/extrude.ts`.
   Snapping (points, line middles → Midpoint, circle centres, part edges, lining up, onto curves) is the pure `snapAt` in
   `src/sketch/snaps.ts`. Part edges: `src/sketch/links.ts` — a sketch on a part face keeps the face (`SketchPlane.face`,
