@@ -2,8 +2,8 @@
  * Drawing tabs in the document: pure changes (each returns a new document)
  * and reading them safely from files.
  */
-import type { Shortening, BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingPage, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, JuraCADDocument, SectionCut, SheetSize, ViewKind } from "../model/types";
-import { SECTION_HOSTS, viewKey } from "./sections";
+import type { Shortening, BreakOut, DetailView, Dimension, DimPoint, Drawing, DrawingPage, DrawingNote, DrawingRevision, DrawingSymbol, DrawingView, GdtCharacteristic, JuraCADDocument, SectionCut, SheetSize, ViewHost, ViewKind } from "../model/types";
+import { hostKindOf, SECTION_HOSTS, viewKey } from "./sections";
 import { FIRST_PAGE, PAGE_FIELDS } from "./pages";
 import { ARROWABLE, FITTABLE } from "./dimensions";
 
@@ -93,9 +93,11 @@ export function renameDrawing(doc: JuraCADDocument, id: string, name: string): J
 export function toggleView(drawing: Drawing, kind: ViewKind): Drawing {
   // (The room kept for dimensions was worked out for the old views: dropped.)
   const d = withoutFit(drawing);
-  const has = d.views.some((v) => v.kind === kind);
+  // (Views of other parts — see viewParts.ts — aren't the sheet's own, so they stay.)
+  const own = (v: DrawingView) => v.kind === kind && !v.source && !v.parent;
+  const has = d.views.some(own);
   if (!has) return { ...d, views: [...d.views, { id: `${d.id}-${kind}`, kind }] };
-  const out: Drawing = { ...d, views: d.views.filter((v) => v.kind !== kind) };
+  const out: Drawing = { ...d, views: d.views.filter((v) => !own(v)) };
   const dims = (d.dimensions ?? []).filter((x) => x.view !== kind);
   if (dims.length) out.dimensions = dims;
   else delete out.dimensions;
@@ -112,7 +114,8 @@ export function projectionKinds(d: Pick<Drawing, "views" | "details">): ViewKind
   const out: ViewKind[] = [];
   const add = (k: ViewKind) => !out.includes(k) && out.push(k);
   for (const v of d.views) if (v.kind !== "section" && v.kind !== "detail") add(v.kind);
-  for (const x of d.details ?? []) if (d.views.some((v) => v.kind === "detail" && v.detail === x.id)) add(x.host);
+  // (A detail on a view of another part is asked for with that part: see viewParts.ts.)
+  for (const x of d.details ?? []) if (!x.host.includes("@") && d.views.some((v) => v.kind === "detail" && v.detail === x.id)) add(x.host as ViewKind);
   return out;
 }
 
@@ -192,16 +195,28 @@ export function parseDrawings(raw: unknown): Drawing[] {
     const r = item as Record<string, unknown>;
     if (typeof r.id !== "string" || out.some((d) => d.id === r.id)) continue;
     const source: Drawing["source"] = parseSource(r.source) ?? null;
+    // Views of other parts (see viewParts.ts): what's drawn on them names them in its host, "front@<id>".
+    const bases = new Set(
+      (Array.isArray(r.views) ? r.views : [])
+        .map((v) => (v ?? {}) as Record<string, unknown>)
+        .filter((v) => typeof v.id === "string" && VIEW_KINDS.includes(v.kind as ViewKind) && !!parseSource(v.source))
+        .map((v) => v.id as string),
+    );
+    const hostOk = (h: unknown): h is ViewHost => {
+      if (typeof h !== "string") return false;
+      const at = h.indexOf("@");
+      return SECTION_HOSTS.includes(hostKindOf(h)) && (at < 0 || bases.has(h.slice(at + 1)));
+    };
     const sections: SectionCut[] = [];
     for (const s of Array.isArray(r.sections) ? r.sections : []) {
       const rs = (s ?? {}) as Record<string, unknown>;
       const pair = (v: unknown) => (Array.isArray(v) && v.length === 2 && v.every(num) ? (v as [number, number]) : null);
       const a = pair(rs.a);
       const b = pair(rs.b);
-      if (typeof rs.id !== "string" || sections.some((x) => x.id === rs.id) || !SECTION_HOSTS.includes(rs.host as ViewKind) || !a || !b) continue;
+      if (typeof rs.id !== "string" || sections.some((x) => x.id === rs.id) || !hostOk(rs.host) || !a || !b) continue;
       if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9) continue;
       const letter = typeof rs.letter === "string" && rs.letter.trim() ? rs.letter.trim().slice(0, 3) : "A";
-      sections.push({ id: rs.id, letter, host: rs.host as ViewKind, a, b, ...(rs.flip === true ? { flip: true } : {}), ...(rs.aux === true ? { aux: true } : {}) });
+      sections.push({ id: rs.id, letter, host: rs.host as ViewHost, a, b, ...(rs.flip === true ? { flip: true } : {}), ...(rs.aux === true ? { aux: true } : {}) });
     }
     const breakouts: BreakOut[] = [];
     for (const x of Array.isArray(r.breakouts) ? r.breakouts : []) {
@@ -209,27 +224,27 @@ export function parseDrawings(raw: unknown): Drawing[] {
       const pair = (v: unknown) => (Array.isArray(v) && v.length === 2 && v.every(num) ? (v as [number, number]) : null);
       const a = pair(rx.a);
       const b = pair(rx.b);
-      if (typeof rx.id !== "string" || !SECTION_HOSTS.includes(rx.host as ViewKind) || !a || !b || !num(rx.depth) || (rx.depth as number) <= 0) continue;
-      breakouts.push({ id: rx.id, host: rx.host as ViewKind, a, b, depth: rx.depth as number });
+      if (typeof rx.id !== "string" || !hostOk(rx.host) || !a || !b || !num(rx.depth) || (rx.depth as number) <= 0) continue;
+      breakouts.push({ id: rx.id, host: rx.host as ViewHost, a, b, depth: rx.depth as number });
     }
     const shortened: Shortening[] = [];
     for (const x of Array.isArray(r.shortened) ? r.shortened : []) {
       const rx = (x ?? {}) as Record<string, unknown>;
-      if (typeof rx.id !== "string" || !SECTION_HOSTS.includes(rx.host as ViewKind) || (rx.axis !== "x" && rx.axis !== "y") || !num(rx.from) || !num(rx.to)) continue;
+      if (typeof rx.id !== "string" || !hostOk(rx.host) || (rx.axis !== "x" && rx.axis !== "y") || !num(rx.from) || !num(rx.to)) continue;
       const from = Math.max(0, Math.min(1, rx.from as number));
       const to = Math.max(0, Math.min(1, rx.to as number));
       if (Math.abs(to - from) < 1e-6) continue;
-      shortened.push({ id: rx.id, host: rx.host as ViewKind, axis: rx.axis, from: Math.min(from, to), to: Math.max(from, to) });
+      shortened.push({ id: rx.id, host: rx.host as ViewHost, axis: rx.axis, from: Math.min(from, to), to: Math.max(from, to) });
     }
     const details: DetailView[] = [];
     for (const x of Array.isArray(r.details) ? r.details : []) {
       const rx = (x ?? {}) as Record<string, unknown>;
       const centre = Array.isArray(rx.centre) && rx.centre.length === 2 && rx.centre.every(num) ? (rx.centre as [number, number]) : null;
-      if (typeof rx.id !== "string" || details.some((d) => d.id === rx.id) || !SECTION_HOSTS.includes(rx.host as ViewKind) || !centre) continue;
+      if (typeof rx.id !== "string" || details.some((d) => d.id === rx.id) || !hostOk(rx.host) || !centre) continue;
       if (!num(rx.radius) || (rx.radius as number) <= 0) continue;
       const zoom = num(rx.zoom) && (rx.zoom as number) > 0 ? Math.min(50, rx.zoom as number) : 2;
       const letter = typeof rx.letter === "string" && rx.letter.trim() ? rx.letter.trim().slice(0, 3) : "B";
-      details.push({ id: rx.id, letter, host: rx.host as ViewKind, centre, radius: rx.radius as number, zoom });
+      details.push({ id: rx.id, letter, host: rx.host as ViewHost, centre, radius: rx.radius as number, zoom });
     }
     const views: DrawingView[] = [];
     for (const v of Array.isArray(r.views) ? r.views : []) {
@@ -257,8 +272,17 @@ export function parseDrawings(raw: unknown): Drawing[] {
         continue;
       }
       if (!VIEW_KINDS.includes(rv.kind as ViewKind)) continue;
-      if (views.some((x) => x.kind === rv.kind)) continue;
-      views.push({ id: rv.id, kind: rv.kind as ViewKind, ...(at ? { at } : {}), ...own });
+      // A view of another part, or one projected from such a view (see viewParts.ts).
+      const of = parseSource(rv.source);
+      const part = of ? { source: of } : typeof rv.parent === "string" && bases.has(rv.parent) && rv.parent !== rv.id ? { parent: rv.parent } : {};
+      const view: DrawingView = { id: rv.id, kind: rv.kind as ViewKind, ...(at ? { at } : {}), ...own, ...part };
+      if (views.some((x) => viewKey(x) === viewKey(view) || (part.source && x.id === rv.id))) continue;
+      views.push(view);
+    }
+    // (A projected view whose base view didn't make it is dropped.)
+    for (let i = views.length - 1; i >= 0; i--) {
+      const parent = views[i].parent;
+      if (parent && !views.some((x) => x.id === parent && x.source)) views.splice(i, 1);
     }
     // Sections without a view are dropped.
     const shownSections = sections.filter((s) => views.some((v) => v.kind === "section" && v.section === s.id));
@@ -413,7 +437,7 @@ function parseDimension(raw: unknown): Dimension | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || typeof r.type !== "string" || !DIM_TYPES.has(r.type)) return null;
-  if (typeof r.view !== "string" || !(VIEW_KINDS.includes(r.view as ViewKind) || /^(section|detail):.+/.test(r.view))) return null;
+  if (typeof r.view !== "string" || !(VIEW_KINDS.includes(r.view as ViewKind) || /^(section|detail):.+/.test(r.view) || (/^[a-z]+@.+/.test(r.view) && VIEW_KINDS.includes(hostKindOf(r.view))))) return null;
   const a = parseDimPoint(r.a);
   if (!a) return null;
   const type = r.type as Dimension["type"];
