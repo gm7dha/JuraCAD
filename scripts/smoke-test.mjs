@@ -1159,7 +1159,8 @@ try {
   await Promise.race([asmDownload, anyway.waitFor({ timeout: 60_000 }).then(() => anyway.click()).catch(() => {})]);
   const asmStep = await asmDownload;
   const asmStepText = readFileSync(await asmStep.path(), "utf8");
-  if (!/PRODUCT\('Bracket <2>'/.test(asmStepText)) throw new Error("the assembly STEP file doesn't name its parts");
+  // The assembly's structure is kept: each part once (named after the part), each copy a named, placed use of it.
+  if (!/PRODUCT\('Bracket'/.test(asmStepText) || !/NEXT_ASSEMBLY_USAGE_OCCURRENCE\('[^']*','Bracket <2>'/.test(asmStepText)) throw new Error("the assembly STEP file doesn't name its parts and copies");
   step = "exploding the assembly";
   await page.getByRole("button", { name: "Explode", exact: true }).click();
   await page.waitForSelector('[aria-label="Exploded view"]', { timeout: 5_000 });
@@ -1278,10 +1279,91 @@ try {
     if (!/Assembly 1\s+2\b/.test(structured) || !/1\.1\s+Bracket\s+2\b/.test(structured)) throw new Error(`the structured parts list reads "${structured.replace(/\n/g, " / ")}"`);
     await shot("subassembly-structured");
     await page.getByRole("button", { name: "Flattened", exact: true }).click();
+
+    // Its STEP file keeps the structure: Assembly 1 defined once and used twice, each part's shape written once.
+    step = "exporting an assembly with sub-assemblies as STEP";
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await page.waitForSelector('#export-parts option[value="all"]', { state: "attached" });
+    const subDownload = page.waitForEvent("download", { timeout: 60_000 });
+    await page.getByRole("button", { name: /Check & export/ }).click();
+    const subAnyway = page.getByRole("button", { name: "Export anyway" });
+    await Promise.race([subDownload, subAnyway.waitFor({ timeout: 60_000 }).then(() => subAnyway.click()).catch(() => {})]);
+    const subStep = readFileSync(await (await subDownload).path(), "utf8");
+    const uses = [...subStep.matchAll(/NEXT_ASSEMBLY_USAGE_OCCURRENCE\('[^']*','(Assembly 1 <[12]>)','',#\d+,(#\d+)/g)];
+    const shapes = (subStep.match(/MANIFOLD_SOLID_BREP\(/g) ?? []).length;
+    if (uses.length !== 2 || uses[0][2] !== uses[1][2]) throw new Error(`the STEP file doesn't use Assembly 1 twice as one sub-assembly (${uses.map((u) => u[1]).join(", ")})`);
+    if (!/PRODUCT\('Assembly 2'/.test(subStep) || !/PRODUCT\('Assembly 1'/.test(subStep)) throw new Error("the STEP file doesn't name its assemblies");
+    if (shapes < 1 || shapes > 2) throw new Error(`the STEP file holds ${shapes} part shapes; Bracket and Part 2 should each be written once`);
+
+    // Exploded: a part inside one copy moves on its own.
+    step = "exploding a part inside a sub-assembly";
+    await page.getByRole("button", { name: "Explode", exact: true }).click();
+    await page.waitForSelector('[aria-label="Exploded view"]', { timeout: 5_000 });
+    const innerSpot = await page.evaluate(({ second }) => {
+      const v = window.juracadViewport.current;
+      const p = v.shownParts().find((m) => m.id.startsWith(`${second}/`));
+      return p ? { key: p.id, at: v.screenPointOnFace(p.id, p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99)) } : null;
+    }, asm2);
+    if (!innerSpot?.at) throw new Error("couldn't find a part inside the sub-assembly to click");
+    await canvas.click({ position: innerSpot.at });
+    await page.getByRole("button", { name: /Move the selected part/ }).click();
+    await page.waitForSelector(".explode-step >> text=Assembly 1 <2> /", { timeout: 5_000 });
+    const explodedStep = await page.evaluate(({ id }) => window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).explodeSteps?.[0] ?? null, asm2);
+    if (!explodedStep?.parts?.length || explodedStep.instances.length) throw new Error(`the exploded view step doesn't move just the inner part: ${JSON.stringify(explodedStep)}`);
+    await shot("subassembly-exploded");
+    await page.getByRole("button", { name: "Explode", exact: true }).click();
+
+    // Mirror Part 2 <1> across a face of a part inside the sub-assembly, as the same part (it's a symmetric block).
+    step = "mirroring a part across a face";
+    const part2Before = Number(/Part 2\s+(\d+)\b/.exec(await page.locator(".bom-table").innerText())?.[1] ?? NaN);
+    await page.locator(".feature-row", { hasText: "Part 2 <1>" }).first().click();
+    await tool("Mirror");
+    await page.waitForSelector('[aria-label="Pattern Mirror 1"]', { timeout: 5_000 });
+    await page.locator("#asm-mirror-plane").selectOption("face");
+    await page.waitForSelector("text=Click a flat face in the view to mirror across.", { timeout: 5_000 });
+    // (A part of the first copy: the second copy's top face has Part 2 <1> fastened on it.)
+    const sideSpot = await page.evaluate(({ id }) => {
+      const v = window.juracadViewport.current;
+      const first = window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.name === "Assembly 1 <1>").id;
+      // A flat face whose spot isn't under the Mirror panel (or anything else drawn over the view).
+      const box = v.canvas.getBoundingClientRect();
+      for (const p of v.shownParts().filter((m) => m.id.startsWith(`${first}/`))) {
+        for (let k = 0; k < p.faceRefs.length; k++) {
+          if (p.faceRefs[k].surface !== "PLANE") continue;
+          const at = v.screenPointOnFace(p.id, k);
+          if (at && document.elementFromPoint(box.left + at.x, box.top + at.y) === v.canvas && v.pickKindAt(at.x, at.y) === "face:PLANE") return at;
+        }
+      }
+      return null;
+    }, asm2);
+    if (!sideSpot) throw new Error("couldn't find a face to mirror across");
+    await canvas.click({ position: sideSpot });
+    await page.waitForSelector("text=A face of", { timeout: 5_000 }).then(() => {}, async () => {
+      throw new Error(`clicking a flat face didn't set the mirror plane (panel: "${(await page.locator('[aria-label="Pattern Mirror 1"]').innerText()).replace(/\n/g, " / ")}")`);
+    });
+    await page.getByLabel("Same part for symmetric parts").check();
+    const mirrorState = await page.evaluate(({ id }) => {
+      const a = window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id);
+      const p = a.patterns.find((x) => x.kind === "mirror");
+      return { plane: !!p?.plane, inner: !!p?.plane?.path?.length, same: !!p?.samePart, copies: a.instances.filter((i) => i.copyOf?.pattern === p?.id).map((i) => !!i.mirrored) };
+    }, asm2);
+    if (!mirrorState.plane || !mirrorState.same || mirrorState.copies.length !== 1) throw new Error(`the mirror isn't across the face: ${JSON.stringify(mirrorState)}`);
+    if ((await page.locator('[aria-label="Pattern Mirror 1"] .param-message.error').count()) > 0) {
+      throw new Error(`the mirror has a problem: ${await page.locator('[aria-label="Pattern Mirror 1"] .param-message.error').innerText()}`);
+    }
+    const mirroredBom = await page.locator(".bom-table").innerText();
+    const sameHand = !mirrorState.copies[0];
+    if (sameHand ? !new RegExp(`Part 2\\s+${part2Before + 1}\\b`).test(mirroredBom) : !/Part 2 \(mirrored\)\s+1\b/.test(mirroredBom)) throw new Error(`after mirroring, the parts list reads "${mirroredBom.replace(/\n/g, " / ")}"`);
+    await page.keyboard.press("f");
+    await page.waitForTimeout(600);
+    await shot("subassembly-mirror");
+    await page.getByRole("button", { name: "Close pattern" }).click();
+    subReport += `; its STEP file kept the structure (Assembly 1 defined once, used twice; ${shapes} part shape(s)); an exploded view step moved one part inside a copy; Part 2 mirrored across a face${mirrorState.inner ? " of a part inside a copy" : ""} ${sameHand ? "as the same part (symmetric)" : "as a mirror image"}`;
+
     // Double-click a sub-assembly to open it.
     await page.locator(".feature-row >> text=Assembly 1 <1>").dblclick();
     await page.waitForSelector(".tab.active >> text=Assembly 1", { timeout: 5_000 });
-    subReport = `a sub-assembly: Assembly 1 inserted twice into Assembly 2 (Bracket ×4, Part 2 ×3), mated by a part inside it (the whole copy moved), structured parts list`;
+    subReport = `a sub-assembly: Assembly 1 inserted twice into Assembly 2 (Bracket ×4, Part 2 ×3), mated by a part inside it (the whole copy moved), structured parts list${subReport}`;
     // Take Assembly 2 away again, so the rest of the test sees the same document.
     await page.evaluate((id) => window.juracadStore.getState().removeAssembly(id), asm2.id);
     await page.waitForFunction(() => ![...document.querySelectorAll(".tab")].some((t) => t.textContent?.includes("Assembly 2")), null, { timeout: 5_000 });
@@ -1608,6 +1690,30 @@ try {
       await shot("anglecross");
       await undoTo(made.offset);
     }
+    // 3. With Shift, round into the opposite angle: it measures the outside (reflex) angle, 360° less.
+    {
+      const start = await textBox();
+      const reach = Math.hypot(start.x - cx, start.y - cy);
+      const a1 = Math.atan2(pick.u1[1], pick.u1[0]);
+      const a2 = Math.atan2(pick.u2[1], pick.u2[0]);
+      let turn = a2 - a1;
+      while (turn > Math.PI) turn -= 2 * Math.PI;
+      while (turn < -Math.PI) turn += 2 * Math.PI;
+      // Two thirds of the way from the middle of the opposite angle to one side (so it's slid off the middle, too).
+      const t = a1 + turn / 2 + Math.PI + turn / 3;
+      const to = { x: cx + reach * Math.cos(t), y: cy - reach * Math.sin(t) };
+      await page.keyboard.down("Shift");
+      const after = await dragBy({ x: to.x - start.x, y: to.y - start.y }, "Shift-dragging into the opposite angle");
+      await page.keyboard.up("Shift");
+      if (after.reflex !== true || JSON.stringify(after.rays) !== "[1,1]") throw new Error(`Shift-dragged into the opposite angle, it isn't the outside angle (reflex ${after.reflex}, rays ${JSON.stringify(after.rays)})`);
+      const want = label(360 - pick.deg);
+      if ((await shownText()) !== want) throw new Error(`the outside angle reads ${await shownText()}, not ${want}`);
+      // The panel says so too.
+      if (!(await page.getByLabel("Measure the outside angle").isChecked())) throw new Error("the panel's Measure the outside angle isn't ticked");
+      await shot("anglereflex");
+      await undoTo(made.offset);
+      if ((await dimNow()).reflex) throw new Error("undo didn't take the outside angle away");
+    }
     // And take the angle away again (it was added as one undo step), so the steps after see the drawing as it was.
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     await page.waitForFunction((n) => window.juracadStore.getState().history.present.drawings.flatMap((d) => d.dimensions ?? []).length === n, before.length, { timeout: 5_000 });
@@ -1690,6 +1796,7 @@ try {
   step = "adding a second sheet";
   {
     await page.getByRole("button", { name: "+ Sheet", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^Empty sheet/ }).click();
     await page.waitForSelector('[role="tab"][aria-selected="true"]:has-text("Sheet 2")', { timeout: 5_000 });
     await page.locator(".drawing-panel").getByLabel("Top", { exact: true }).check();
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "2 OF 2"), null, { timeout: 60_000 });
@@ -1705,6 +1812,36 @@ try {
     if (!pdf2.includes("/Count 2") || !pdf2.includes("(1 OF 2) Tj") || !pdf2.includes("(2 OF 2) Tj")) throw new Error("the PDF doesn't have both sheets");
     await page.getByRole("tab", { name: "Sheet 1", exact: true }).click();
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "1 OF 2"), null, { timeout: 60_000 });
+  }
+  step = "a sheet of another part";
+  {
+    const sheetTexts = () => page.evaluate(() => [...document.querySelectorAll(".drawing-text")].map((t) => t.textContent));
+    const sourceOf = () => page.evaluate(() => {
+      const d = window.juracadStore.getState().history.present.drawings[0];
+      return { first: d.source, pages: (d.pages ?? []).map((p) => p.source ?? null) };
+    });
+    const before = await sourceOf();
+    await page.getByRole("button", { name: "+ Sheet", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Assembly 1", exact: true }).click();
+    await page.waitForSelector('[role="tab"][aria-selected="true"]:has-text("Sheet 3")', { timeout: 5_000 });
+    // It starts with the usual views of the assembly, its parts list and its own name in the title block.
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "3 OF 3"), null, { timeout: 60_000 });
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "QTY"), null, { timeout: 60_000 });
+    await page.waitForFunction(() => document.querySelectorAll(".drawing-view-handle").length === 4, null, { timeout: 60_000 });
+    if (!(await sheetTexts()).includes("Assembly 1")) throw new Error("sheet 3's title block doesn't name Assembly 1");
+    if ((await page.locator("#drawing-source").inputValue()).split(":")[0] !== "assembly") throw new Error("sheet 3's panel doesn't say it draws the assembly");
+    // Its own part number, which sheet 1 doesn't get.
+    const partNo = page.locator(".drawing-panel").getByLabel("Part number", { exact: true });
+    await partNo.fill("ASM-100");
+    await partNo.press("Enter");
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "ASM-100"), null, { timeout: 10_000 });
+    const after = await sourceOf();
+    if (JSON.stringify(after.first) !== JSON.stringify(before.first) || after.pages.length !== 2 || after.pages[1]?.kind !== "assembly") throw new Error(`adding a sheet of the assembly changed the others: ${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+    await shot("sheetpart");
+    await page.getByRole("tab", { name: "Sheet 1", exact: true }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "1 OF 3"), null, { timeout: 60_000 });
+    const first = await sheetTexts();
+    if (first.includes("ASM-100") || first.includes("QTY")) throw new Error("sheet 1 shows sheet 3's part number or parts list");
   }
   step = "drawing the assembly";
   await page.locator("#drawing-source").selectOption({ label: "Assembly 1" });
@@ -2370,11 +2507,17 @@ try {
     await page.keyboard.press("Escape");
     await page.locator('[aria-label="Sketch"] [aria-label="Accept"]').click();
     await page.waitForSelector(".sketch-panel", { state: "detached" });
-    await page.waitForTimeout(300);
-    const spots = () => page.evaluate(() => window.juracadViewport.current.areaScreenPoints());
+    // Closing the sketch turns the view back to where it was (animated): screen spots are only right once it stops.
+    const settled = () => page.waitForFunction(() => !window.juracadViewport.current.cameraMoving(), null, { timeout: 10_000 });
+    await settled();
+    const spots = async () => {
+      await settled();
+      return page.evaluate(() => window.juracadViewport.current.areaScreenPoints());
+    };
     const smallest = (list) => list.reduce((a, b) => (b.box < a.box ? b : a));
     const biggest = (list) => list.reduce((a, b) => (b.box > a.box ? b : a));
     const clickSpot = async (spot) => {
+      await settled();
       const kind = await page.evaluate(([x, y]) => window.juracadViewport.current.pickKindAt(x, y), [spot.x, spot.y]);
       if (kind !== "sketchArea") throw new Error(`a click on the circle would pick ${kind}, not the sketch area`);
       await page.mouse.click(box.x + spot.x, box.y + spot.y);
@@ -2456,6 +2599,42 @@ try {
     if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed in the two-circle Part Studio");
     await shot("two-circles");
     regionsReport = `one sketch with two circles extruded separately into ${sizes.map((p) => `${p.name} (${p.height} mm)`).join(" and ")}`;
+
+    step = "one extrude using areas of two sketches (Sketch 2's circle and Sketch 1's big circle)";
+    await page.getByRole("button", { name: "Sketch", exact: true }).click();
+    await page.waitForSelector(".sketch-panel");
+    await page.locator(".feature-row.datum", { hasText: "Top" }).click();
+    await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane"));
+    await settled();
+    // A small circle well away from the first two (right of the view, below the view cube).
+    await page.keyboard.press("c");
+    await page.mouse.click(box.x + box.width * 0.85, box.y + box.height * 0.35);
+    await page.mouse.click(box.x + box.width * 0.85 + 12, box.y + box.height * 0.35);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector(".sketch-status")?.textContent?.includes("1 closed shape"), null, { timeout: 10_000 });
+    await page.keyboard.press("Escape");
+    await page.locator('[aria-label="Sketch"] [aria-label="Accept"]').click();
+    await page.waitForSelector(".sketch-panel", { state: "detached" });
+    await page.getByRole("button", { name: "Extrude", exact: true }).click();
+    const sketch2 = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketchRef);
+    const all3 = await spots();
+    if (all3.length !== 3) throw new Error(`expected 3 clickable areas (2 in Sketch 1, 1 in Sketch 2), got ${all3.length}`);
+    // Sketch 2's circle first (the extrude's own sketch), then Sketch 1's big circle: one extrude, two sketches.
+    await clickSpot(all3.find((p) => p.sketch === sketch2));
+    await page.waitForFunction(() => window.juracadStore.getState().editing.draft.areas?.length === 1).catch(() => why("picking Sketch 2's circle"));
+    await clickSpot(biggest((await spots()).filter((p) => p.sketch !== sketch2)));
+    await page.waitForFunction(() => window.juracadStore.getState().editing.draft.moreAreas?.length === 1).catch(() => why("adding Sketch 1's big circle"));
+    await page.locator("#param-depth").fill("5");
+    // The preview says what it does: the big circle joins Part 2, the new circle is a new part.
+    await page.waitForFunction(() => /Adds to Part 2.*new part/.test(document.querySelector(".part-effect")?.textContent ?? ""), null, { timeout: 30_000 }).catch(async () => {
+      throw new Error(`the dialog didn't say what the extrude does to the parts: "${await page.locator(".part-effect").textContent().catch(() => "(none)")}"`);
+    });
+    await shot("two-sketches");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 3, null, { timeout: 30_000 }).catch(() => why("extruding areas of two sketches"));
+    await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after extruding areas of two sketches");
+    regionsReport += "; one extrude used areas of two sketches (Part 2 grew under it, the new circle became Part 3)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 

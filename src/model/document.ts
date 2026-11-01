@@ -44,6 +44,26 @@ export function nextFeatureName(doc: JuraCADDocument, type: FeatureType): string
   return `${prefix} ${n}`;
 }
 
+/** Saved sketch-area picks: a point inside each, and (newer files) its size. Anything else is dropped. */
+function parseAreaPicks(raw: unknown): AreaPick[] {
+  return Array.isArray(raw)
+    ? raw
+        .filter(
+          (p): p is (number | string)[] =>
+            Array.isArray(p) &&
+            p.length >= 2 &&
+            p.length <= 100_000 &&
+            [p[0], p[1], ...(p.length >= 3 ? [p[2]] : [])].every((x) => typeof x === "number" && Number.isFinite(x)) &&
+            p.slice(3).every((x) => typeof x === "string" && /^.{1,200}[+-]$/.test(x)),
+        )
+        .map((p): AreaPick => {
+          const [x, y, size] = p as number[];
+          // The size (and signature) only count with a real size; otherwise just the point, as older files had.
+          return p.length >= 3 && size > 0 ? [x, y, size, ...(p.slice(3) as string[])] : [x, y];
+        })
+    : [];
+}
+
 export function createFeature(doc: JuraCADDocument, type: FeatureType, operation?: Operation): Feature {
   const feature: Feature = {
     id: newId(),
@@ -64,8 +84,9 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     // Like Onshape: the first solid is a new part, later extrudes add to it.
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
-    // Pieces that don't touch become separate parts (as in Onshape).
+    // Pieces that don't touch become separate parts (as in Onshape); Intersect works on every part it reaches.
     feature.apart = true;
+    feature.intersectAll = true;
   }
   if (type === "sweep" || type === "loft") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
@@ -73,6 +94,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     if (type === "sweep") {
       feature.apart = true;
+      feature.intersectAll = true;
       feature.sketchRef = sketches[sketches.length - 1]?.id;
       feature.pathRef = sketches[sketches.length - 2]?.id;
     } else feature.sections = sketches.slice(-2).map((f) => f.id);
@@ -555,25 +577,20 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "loft") && f.surface === true) feature.surface = true;
     if (feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") {
       // Picked sketch areas: a point inside each, and (newer files) its size. Anything else is dropped, leaving every closed shape.
-      const areas = Array.isArray(f.areas)
-        ? f.areas
-            .filter(
-              (p): p is (number | string)[] =>
-                Array.isArray(p) &&
-                p.length >= 2 &&
-                p.length <= 100_000 &&
-                [p[0], p[1], ...(p.length >= 3 ? [p[2]] : [])].every((x) => typeof x === "number" && Number.isFinite(x)) &&
-                p.slice(3).every((x) => typeof x === "string" && /^.{1,200}[+-]$/.test(x)),
-            )
-            .map((p): AreaPick => {
-              const [x, y, size] = p as number[];
-              // The size (and signature) only count with a real size; otherwise just the point, as older files had.
-              return p.length >= 3 && size > 0 ? [x, y, size, ...(p.slice(3) as string[])] : [x, y];
-            })
-        : [];
+      const areas = parseAreaPicks(f.areas);
       if (areas.length) feature.areas = areas;
     }
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "hole") && f.apart === true) feature.apart = true;
+    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && f.intersectAll === true) feature.intersectAll = true;
+    if (feature.type === "extrude" && Array.isArray(f.moreAreas)) {
+      const more = f.moreAreas.flatMap((m: unknown) => {
+        if (!m || typeof m !== "object") return [];
+        const { sketch, areas } = m as { sketch?: unknown; areas?: unknown };
+        const picks = parseAreaPicks(areas);
+        return typeof sketch === "string" && picks.length ? [{ sketch, areas: picks }] : [];
+      });
+      if (more.length) feature.moreAreas = more;
+    }
     if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }

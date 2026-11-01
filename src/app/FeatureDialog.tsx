@@ -4,7 +4,7 @@ import { evaluate } from "../model/expr";
 import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
 import { describeRef } from "../geometry/topoRef";
 import { AreaPicker } from "./AreaPicker";
-import { areasTaken, followedSketch } from "../sketch/areaClicks";
+import { areasTaken, followedSketch, sketchesOffered } from "../sketch/areaClicks";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
@@ -16,6 +16,7 @@ import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import type { Axis, ExtrudeEnd, Feature } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { activeFeatures, activeStudioId, studioParts, useLengthUnit, useStore } from "../model/store";
+import { draftEffect } from "../model/partLinks";
 import { studiosOf } from "../model/studios";
 import type { Operation } from "../model/types";
 import { DeleteFaceHelp } from "./DeleteFaceHelp";
@@ -607,11 +608,10 @@ function SketchSolidOptions() {
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
   const sketchLinks = useStore((s) => s.sketchLinks);
+  const rollbackTo = useStore((s) => s.rollbackTo);
   if (!draft || !isSketchSolid(draft.type)) return null;
-  // Only sketches above this extrude in the list can be used.
-  const index = features.findIndex((f) => f.id === draft.id);
-  const before = mode === "edit" && index >= 0 ? features.slice(0, index) : features;
-  const sketches = before.filter((f) => f.type === "sketch");
+  // Only sketches above this extrude in the list (and above the rollback bar) can be used.
+  const sketches = sketchesOffered(features, draft.id, mode === "edit", rollbackTo);
   const opts = draft.extrude ?? { end: "blind" as const, flip: false };
   const rev = draft.revolve ?? { axis: "vertical", flip: false };
   const chosen = sketches.find((f) => f.id === draft.sketchRef)?.sketch?.data;
@@ -622,7 +622,7 @@ function SketchSolidOptions() {
   const pickSketch = (id: string | undefined) => {
     const data = sketches.find((f) => f.id === id)?.sketch?.data;
     setDraftField(
-      draft.type === "revolve" && data ? { sketchRef: id, areas: undefined, revolve: { ...rev, axis: defaultAxis(data) } } : { sketchRef: id, areas: undefined },
+      draft.type === "revolve" && data ? { sketchRef: id, areas: undefined, moreAreas: undefined, revolve: { ...rev, axis: defaultAxis(data) } } : { sketchRef: id, areas: undefined, moreAreas: undefined },
     );
   };
 
@@ -650,6 +650,19 @@ function SketchSolidOptions() {
       {chosen && !draft.surface && (
         <AreaPicker data={chosenData ?? chosen} areas={draft.areas} verb={draft.type === "revolve" ? "revolve" : "extrude"} onChange={(areas) => setDraftField({ areas })} taken={taken} />
       )}
+      {draft.type === "extrude" && !draft.surface && (draft.moreAreas?.length ? (
+        <p className="dialog-hint field-hint">
+          Also extrudes{" "}
+          {draft.moreAreas.map((m) => `${m.areas.length} area${m.areas.length === 1 ? "" : "s"} of ${features.find((f) => f.id === m.sketch)?.name ?? "a sketch that's gone"}`).join(", ")}
+          . Click them in the 3D view to leave them out, or{" "}
+          <button type="button" className="link-button" onClick={() => setDraftField({ moreAreas: undefined })}>
+            use only {sketches.find((f) => f.id === draft.sketchRef)?.name ?? "this sketch"}
+          </button>
+          .
+        </p>
+      ) : draft.areas?.length ? (
+        <p className="dialog-hint field-hint">To add areas of other sketches, click them in the 3D view.</p>
+      ) : null)}
       {draft.type === "revolve" && (
         <>
           <label className="field-label" htmlFor="revolve-axis">
@@ -812,9 +825,9 @@ function SweepLoftOptions() {
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
   const sketchLinks = useStore((s) => s.sketchLinks);
+  const rollbackTo = useStore((s) => s.rollbackTo);
   if (!draft || (draft.type !== "sweep" && draft.type !== "loft")) return null;
-  const index = features.findIndex((f) => f.id === draft.id);
-  const sketches = (mode === "edit" && index >= 0 ? features.slice(0, index) : features).filter((f) => f.type === "sketch");
+  const sketches = sketchesOffered(features, draft.id, mode === "edit", rollbackTo);
   const select = (label: string, value: string | undefined, onChange: (v: string | undefined) => void) => (
     <>
       <label className="field-label">{label}</label>
@@ -879,6 +892,19 @@ function SweepLoftOptions() {
       <p className="dialog-hint field-hint">Tick the sketches in the order the solid should pass through them. Each needs one closed shape.</p>
     </fieldset>
   );
+}
+
+/** What an Extrude, Revolve, Sweep or Hole does to which parts, from its preview (those parts are lit up in the view too). */
+function PartEffect() {
+  const draft = useStore((s) => s.editing?.draft);
+  const parts = useStore(studioParts);
+  if (!draft || !["extrude", "revolve", "sweep", "hole"].includes(draft.type) || draft.surface) return null;
+  const { text } = draftEffect(parts, draft);
+  return text ? (
+    <p className="dialog-hint field-hint part-effect" aria-live="polite">
+      {text}
+    </p>
+  ) : null;
 }
 
 /** Transform settings: which part, turned about which axis, moved or copied. */
@@ -973,10 +999,10 @@ function HoleOptions() {
   const setDraftField = useStore((s) => s.setDraftField);
   const setDraftParam = useStore((s) => s.setDraftParam);
   const features = useStore(activeFeatures);
+  const rollbackTo = useStore((s) => s.rollbackTo);
   if (!draft || draft.type !== "hole" || !draft.hole) return null;
   const h = draft.hole;
-  const index = features.findIndex((f) => f.id === draft.id);
-  const sketches = (mode === "edit" && index >= 0 ? features.slice(0, index) : features).filter((f) => f.type === "sketch");
+  const sketches = sketchesOffered(features, draft.id, mode === "edit", rollbackTo);
   const chosen = sketches.find((f) => f.id === h.sketchRef)?.sketch?.data;
   const count = chosen ? holePositionCount(chosen) : 0;
   const update = (patch: Partial<HoleSettings>) => {
@@ -1903,6 +1929,7 @@ export function FeatureDialog() {
         <SweepLoftOptions />
         <TextFeatureOptions />
         <HoleOptions />
+        <PartEffect />
         <TransformOptions />
         <ImportOptions />
         <ChamferOptions />

@@ -1645,6 +1645,39 @@ kbd {
   padding: 4px 6px;
 }
 
+.drawing-add-sheet-menu {
+  position: absolute;
+  left: 12px;
+  bottom: 44px;
+  min-width: 200px;
+  max-width: calc(100% - 24px);
+  max-height: 60%;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  z-index: 30;
+}
+
+.drawing-add-sheet-menu .menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+}
+
+.drawing-add-sheet-menu .menu-heading,
+.drawing-add-sheet-menu .menu-group {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.drawing-add-sheet-menu .menu-group {
+  font-weight: 600;
+}
+
 .panel-hint.warn-text {
   color: var(--warn-ink);
 }

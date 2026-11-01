@@ -126,8 +126,24 @@ describe("dragging a diameter's or radius's number", () => {
   const p = proj([], [{ cx: 10, cy: 10, r: 5 }]);
   const dia: Dimension = { id: "c", view: "front", type: "diameter", a: dimPoint([10, 10], p), r: 5, offset: 8 };
   const placed = { a: [10, 10] as P2, b: null, rad: 5 };
-  // "Ø10": 3 characters, so a shoulder 2 + 3 × 3.5 × 0.55 long.
-  const shoulder = 2 + 3 * 3.5 * 0.55;
+  // "Ø10" as measured (Ø 0.54 + two figures 0.66 each, × 3.5 mm): dragged numbers get a shoulder that long, plus 2 mm.
+  const shoulder = 2 + (0.54 + 0.66 + 0.66) * 3.5;
+
+  it("measures the number for the shoulder when it's dragged; ones dragged before keep the older estimate", () => {
+    const moved = dragTo(dia, placed, [30, 25]);
+    expect(moved.fitText).toBe(true);
+    const shoulderOf = (d: Dimension) => {
+      const leader = paths(draw(d, p, 10))[0].points;
+      return leader[4] - leader[2];
+    };
+    expect(shoulderOf(moved)).toBeCloseTo(2 + 6.51, 9);
+    // Saved before (no fitText): 3 characters × 3.5 × 0.55, exactly as it was drawn.
+    const { fitText: _f, ...before } = moved;
+    expect(shoulderOf(before)).toBeCloseTo(2 + 3 * 3.5 * 0.55, 9);
+    // Kept in saved files, and dragged again it stays measured.
+    expect(parseDrawings([{ id: "x", views: [{ id: "f", kind: "front" }], dimensions: [moved] }])[0].dimensions![0].fitText).toBe(true);
+    expect(withDimPatch(moved, { offset: 3 }).fitText).toBe(true);
+  });
 
   it("puts the number exactly where it's dropped, with the leader following", () => {
     const moved = dragTo(dia, placed, [30, 25]);

@@ -8,7 +8,7 @@
 import { evaluate } from "../model/expr";
 import type { Assembly, AssemblyPattern, Instance } from "../model/types";
 import { compose, quatFromAxisAngle, rotate, type Placement, type Vec3 } from "./math";
-import { nextInstanceName, withMates } from "./assembly";
+import { nextInstanceName, parseConnector, withMates } from "./assembly";
 import { quatFromBasis } from "./connectors";
 
 const AXES: Record<AssemblyPattern["axis"], Vec3> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
@@ -44,6 +44,27 @@ export function placeCopy(p: AssemblyPattern, step: number, original: Placement,
   return compose(back, compose(turn, compose(toOrigin, original)));
 }
 
+/** A plane to mirror across: a point on it and the direction square to it (any length). */
+export interface MirrorPlane {
+  point: Vec3;
+  normal: Vec3;
+}
+
+/**
+ * A plane of a part's own (in its own coordinates) that the part is
+ * symmetric across: square to its own `axis`, at `at` mm along it.
+ */
+export interface OwnPlane {
+  axis: "x" | "y" | "z";
+  at: number;
+}
+
+/** The part's own YZ plane: how a mirrored copy is shown (Instance.mirrored). */
+export const OWN_YZ: OwnPlane = { axis: "x", at: 0 };
+
+/** The plane square to the pattern's axis through its centre (the assembly's Right, Front or Top plane, moved along). */
+export const axisPlane = (p: Pick<AssemblyPattern, "axis" | "centre">): MirrorPlane => ({ point: p.centre ?? [0, 0, 0], normal: AXES[p.axis] });
+
 /**
  * Where a mirrored copy goes: the original's mirror image across the plane
  * square to the pattern's axis through its centre. The copy shows the part
@@ -52,23 +73,46 @@ export function placeCopy(p: AssemblyPattern, step: number, original: Placement,
  * twice gets back to the start.
  */
 export function mirrorPlacement(p: Pick<AssemblyPattern, "axis" | "centre">, q: Placement): Placement {
-  const n = AXES[p.axis];
-  const c = p.centre ?? [0, 0, 0];
+  return mirrorAcross(axisPlane(p), q);
+}
+
+/**
+ * The copy's place, mirrored across `plane`, when the copy shows the part
+ * reflected across its own plane `own` (for a mirror-image copy, its own YZ
+ * plane; for a symmetric part shown as itself, the plane it's symmetric
+ * across — so the same part fills the mirror image exactly). Either way, the
+ * result is a plain move and turn, and doing it twice gets back to the start.
+ */
+export function mirrorAcross(plane: MirrorPlane, q: Placement, own: OwnPlane = OWN_YZ): Placement {
+  const len = Math.hypot(...plane.normal) || 1;
+  const n: Vec3 = [plane.normal[0] / len, plane.normal[1] / len, plane.normal[2] / len];
+  const c = plane.point;
   const reflect = (v: Vec3): Vec3 => {
     const d = 2 * (v[0] * n[0] + v[1] * n[1] + v[2] * n[2]);
     return [v[0] - d * n[0], v[1] - d * n[1], v[2] - d * n[2]];
   };
-  // Columns of the copy's turn: the original's axes, X flipped (the part is mirrored in its own X), then reflected.
-  const x = reflect(rotate(q.rotation, [-1, 0, 0]));
-  const y = reflect(rotate(q.rotation, [0, 1, 0]));
-  const z = reflect(rotate(q.rotation, [0, 0, 1]));
-  const rel: Vec3 = [q.position[0] - c[0], q.position[1] - c[1], q.position[2] - c[2]];
+  // Columns of the copy's turn: the original's axes, its own `own` axis flipped (the part reflected in itself), then reflected.
+  const k = own.axis === "x" ? 0 : own.axis === "y" ? 1 : 2;
+  const col = (j: number): Vec3 => {
+    const e: Vec3 = [0, 0, 0];
+    e[j] = j === k ? -1 : 1;
+    return reflect(rotate(q.rotation, e));
+  };
+  // Where the copy's own origin goes: the original's point that the part's own reflection takes the origin to, mirrored.
+  const o: Vec3 = [0, 0, 0];
+  o[k] = 2 * own.at;
+  const w = rotate(q.rotation, o);
+  const rel: Vec3 = [q.position[0] + w[0] - c[0], q.position[1] + w[1] - c[1], q.position[2] + w[2] - c[2]];
   const r = reflect(rel);
-  return { position: [r[0] + c[0], r[1] + c[1], r[2] + c[2]], rotation: quatFromBasis(x, y, z) };
+  return { position: [r[0] + c[0], r[1] + c[1], r[2] + c[2]], rotation: quatFromBasis(col(0), col(1), col(2)) };
 }
 
-/** Make the copies match the pattern: add the missing ones, drop extras, and put each in place. */
-export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string): Assembly {
+/**
+ * Make the copies match the pattern: add the missing ones, drop extras, and put each in place.
+ * `symmetric` says which originals are symmetric parts: with the pattern's `samePart`, their
+ * mirrored copies show the same part (not its mirror image).
+ */
+export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string, symmetric: (seed: Instance) => boolean = () => false): Assembly {
   const step = patternStep(p);
   // (A sub-assembly can be repeated in a line or round, but not mirrored: its mirror image would be a different assembly.)
   const seeds = p.seeds.map((id) => a.instances.find((i) => i.id === id)).filter((i): i is Instance => !!i && !i.copyOf && !(p.kind === "mirror" && i.subAssembly));
@@ -83,9 +127,11 @@ export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string
       const made: Instance = was
         ? { ...was, placement }
         : { id: newId(), partId: seed.partId, ...(seed.subAssembly ? { subAssembly: seed.subAssembly } : {}), name: nextInstanceName({ ...a, instances: [...instances, ...keep] }, seed.name.replace(/ <\d+>$/, "")), placement, fixed: false, copyOf: { pattern: p.id, seed: seed.id, index: k } };
-      // A mirrored copy is the part's mirror image (and a mirror of a mirror is the part itself).
+      // A mirrored copy is the part's mirror image (and a mirror of a mirror is the part itself) — or, for a
+      // symmetric part when asked, the same part as the original, turned to fill the mirror image.
       const { mirrored: _m, ...unflipped } = made;
-      const copy: Instance = p.kind === "mirror" && !seed.mirrored ? { ...unflipped, mirrored: true } : p.kind !== "mirror" && seed.mirrored ? { ...unflipped, mirrored: true } : unflipped;
+      const sameHand = p.kind !== "mirror" || (!!p.samePart && symmetric(seed));
+      const copy: Instance = sameHand === !!seed.mirrored ? { ...unflipped, mirrored: true } : unflipped;
       // Copies show the part in the same configuration as their original.
       const { configuration: _old, ...plain } = copy;
       keep.push(seed.configuration ? { ...plain, configuration: seed.configuration } : plain);
@@ -162,6 +208,8 @@ export function parsePattern(raw: unknown, instanceIds: Set<string>): AssemblyPa
   if (!seeds.length) return null;
   const count = typeof r.count === "number" && Number.isInteger(r.count) ? Math.max(2, Math.min(100, r.count)) : 2;
   const centre = Array.isArray(r.centre) && r.centre.length === 3 && r.centre.every((v) => typeof v === "number" && Number.isFinite(v)) ? (r.centre as [number, number, number]) : undefined;
+  // Mirrors: across a flat face (instead of an assembly plane), and the same part for symmetric parts.
+  const plane = r.kind === "mirror" && r.plane ? parseConnector(r.plane) : null;
   return {
     id: r.id,
     name: typeof r.name === "string" && r.name.trim() ? r.name.slice(0, 80) : "Pattern",
@@ -172,6 +220,8 @@ export function parsePattern(raw: unknown, instanceIds: Set<string>): AssemblyPa
     axis: r.axis === "x" || r.axis === "y" ? r.axis : "z",
     ...(r.flip === true ? { flip: true } : {}),
     ...(centre ? { centre } : {}),
+    ...(plane ? { plane } : {}),
+    ...(r.kind === "mirror" && r.samePart === true ? { samePart: true } : {}),
   };
 }
 

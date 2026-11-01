@@ -7,7 +7,7 @@ import type { Feature } from "./types";
 
 /** The sketches a feature uses. */
 export function sketchesUsedBy(f: Feature): string[] {
-  return [f.sketchRef, f.hole?.sketchRef, f.pathRef, ...(f.sections ?? [])].filter((x): x is string => !!x);
+  return [f.sketchRef, f.hole?.sketchRef, f.pathRef, ...(f.sections ?? []), ...(f.moreAreas ?? []).map((m) => m.sketch)].filter((x): x is string => !!x);
 }
 
 /** Plane features a feature is placed on or based on. */
@@ -53,4 +53,31 @@ export function groupByPart(
 export function partsOfFeature(parts: { id: string; featureIds: string[] }[], featureId: string, features: Feature[]): string[] {
   const users = new Set([featureId, ...features.filter((f) => sketchesUsedBy(f).includes(featureId)).map((f) => f.id)]);
   return parts.filter((p) => p.featureIds.some((id) => users.has(id))).map((p) => p.id);
+}
+
+/**
+ * While a feature's dialog is open (its preview built): the parts it changes
+ * (not ones it makes), for lighting them up, and a plain line saying what it
+ * does to which parts — "Adds to Part 1", "Makes Part 3", "Cuts Part 1 and
+ * Part 2". Null line when it hasn't built anything yet.
+ */
+export function draftEffect(
+  parts: { id: string; name: string; featureIds: string[]; configuration?: string; joined?: { feature: string; names: string[] }[] }[],
+  draft: Pick<Feature, "id" | "operation">,
+): { changed: string[]; text: string | null } {
+  const own = parts.filter((p) => !p.configuration && p.featureIds.includes(draft.id));
+  const made = own.filter((p) => p.id.split("~")[0] === draft.id);
+  const changed = own.filter((p) => p.id.split("~")[0] !== draft.id);
+  const names = (list: string[]) => (list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`);
+  // Parts an Add merged into this one ("joining Part 2 into it").
+  const joinedInto = (p: (typeof parts)[number]) => p.joined?.find((j) => j.feature === draft.id)?.names ?? [];
+  const sentence: string[] = [];
+  if (changed.length) {
+    if (draft.operation === "remove") sentence.push(`Cuts ${names(changed.map((p) => p.name))}`);
+    else if (draft.operation === "intersect") sentence.push(`Keeps only the overlap with ${names(changed.map((p) => p.name))}`);
+    else if (changed.length === 1 && joinedInto(changed[0]).length) sentence.push(`Adds to ${changed[0].name}, joining ${names(joinedInto(changed[0]))} into it`);
+    else sentence.push(`Adds to ${names(changed.map((p) => (joinedInto(p).length ? `${p.name} (joining ${names(joinedInto(p))} into it)` : p.name)))}`);
+  }
+  if (made.length) sentence.push(`${changed.length ? "makes" : "Makes"} ${made.length === 1 ? "a new part" : "new parts"}: ${names(made.map((p) => p.name))}`);
+  return { changed: changed.map((p) => p.id), text: sentence.length ? `${sentence.join(", and ")}.` : null };
 }
