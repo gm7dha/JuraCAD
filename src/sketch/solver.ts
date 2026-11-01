@@ -1135,52 +1135,71 @@ function endGap(p: CurveParam, level: (q: Vec) => number, u: number): number {
  * side doesn't flicker near bends.
  */
 function signedDistanceToBeziers(p: Vec, pieces: Bez[]): number {
-  const at = ([a, b, c, d]: Bez, t: number): Vec => {
-    const u = 1 - t;
-    const k0 = u * u * u, k1 = 3 * u * u * t, k2 = 3 * u * t * t, k3 = t * t * t;
-    return [k0 * a[0] + k1 * b[0] + k2 * c[0] + k3 * d[0], k0 * a[1] + k1 * b[1] + k2 * c[1] + k3 * d[1]];
-  };
-  const tangent = ([a, b, c, d]: Bez, t: number): Vec => {
-    const u = 1 - t;
-    const k0 = 3 * u * u, k1 = 6 * u * t, k2 = 3 * t * t;
-    return [k0 * (b[0] - a[0]) + k1 * (c[0] - b[0]) + k2 * (d[0] - c[0]), k0 * (b[1] - a[1]) + k1 * (c[1] - b[1]) + k2 * (d[1] - c[1])];
-  };
-  const bend = ([a, b, c, d]: Bez, t: number): Vec => {
-    const u = 1 - t;
-    return [6 * u * (c[0] - 2 * b[0] + a[0]) + 6 * t * (d[0] - 2 * c[0] + b[0]), 6 * u * (c[1] - 2 * b[1] + a[1]) + 6 * t * (d[1] - 2 * c[1] + b[1])];
-  };
   let best = Infinity;
   let bestPiece = -1;
   let bestT = 0;
   const STEPS = 12;
-  pieces.forEach((bz, i) => {
+  const [px, py] = p;
+  for (let i = 0; i < pieces.length; i++) {
+    const [a, b, c, d] = pieces[i];
+    if (bestPiece >= 0) {
+      // A piece lies inside the box round its four control points, so one whose box (a hair larger, for rounding)
+      // is further away than the nearest sample so far can't hold a nearer one: skipped, with the same answer.
+      const mg = 1e-9 * (1 + Math.abs(px) + Math.abs(py) + Math.abs(a[0]) + Math.abs(a[1]) + Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(b[0]) + Math.abs(b[1]) + Math.abs(c[0]) + Math.abs(c[1]));
+      const x0 = Math.min(a[0], b[0], c[0], d[0]) - mg, x1 = Math.max(a[0], b[0], c[0], d[0]) + mg;
+      const y0 = Math.min(a[1], b[1], c[1], d[1]) - mg, y1 = Math.max(a[1], b[1], c[1], d[1]) + mg;
+      const gx = px < x0 ? x0 - px : px > x1 ? px - x1 : 0;
+      const gy = py < y0 ? y0 - py : py > y1 ? py - y1 : 0;
+      if (gx * gx + gy * gy > best) continue;
+    }
     for (let k = 0; k <= STEPS; k++) {
-      const q = at(bz, k / STEPS);
-      const d = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2;
-      if (d < best) {
-        best = d;
+      // The same sums as bezierPoint (written out here: this runs a great many times while solving).
+      const t = k / STEPS;
+      const u = 1 - t;
+      const k0 = u * u * u, k1 = 3 * u * u * t, k2 = 3 * u * t * t, k3 = t * t * t;
+      const qx = k0 * a[0] + k1 * b[0] + k2 * c[0] + k3 * d[0];
+      const qy = k0 * a[1] + k1 * b[1] + k2 * c[1] + k3 * d[1];
+      const dd = (qx - px) ** 2 + (qy - py) ** 2;
+      if (dd < best) {
+        best = dd;
         bestPiece = i;
-        bestT = k / STEPS;
+        bestT = t;
       }
     }
-  });
+  }
   if (bestPiece < 0) return 0;
   const bz = pieces[bestPiece];
   let t = bestT;
   for (let iter = 0; iter < 6; iter++) {
-    const q = at(bz, t), d1 = tangent(bz, t), d2 = bend(bz, t);
+    const q = bezierPoint(bz, t), d1 = bezierTangent(bz, t), d2 = bezierBend(bz, t);
     const r: Vec = [q[0] - p[0], q[1] - p[1]];
     const f = r[0] * d1[0] + r[1] * d1[1];
     const df = d1[0] * d1[0] + d1[1] * d1[1] + r[0] * d2[0] + r[1] * d2[1];
     if (Math.abs(df) < 1e-15) break;
     t = Math.max(0, Math.min(1, t - f / df));
   }
-  const q = at(bz, t);
-  let dir = tangent(bz, t);
+  const q = bezierPoint(bz, t);
+  let dir = bezierTangent(bz, t);
   if (Math.hypot(dir[0], dir[1]) < 1e-12) dir = [bz[3][0] - bz[0][0], bz[3][1] - bz[0][1]];
   const dist = Math.hypot(p[0] - q[0], p[1] - q[1]);
   const side = dir[0] * (p[1] - q[1]) - dir[1] * (p[0] - q[0]);
   return side >= 0 ? dist : -dist;
+}
+
+/** A point along a cubic Bézier piece, its direction and speed there, and how that changes (t from 0 to 1). */
+function bezierPoint([a, b, c, d]: Bez, t: number): Vec {
+  const u = 1 - t;
+  const k0 = u * u * u, k1 = 3 * u * u * t, k2 = 3 * u * t * t, k3 = t * t * t;
+  return [k0 * a[0] + k1 * b[0] + k2 * c[0] + k3 * d[0], k0 * a[1] + k1 * b[1] + k2 * c[1] + k3 * d[1]];
+}
+function bezierTangent([a, b, c, d]: Bez, t: number): Vec {
+  const u = 1 - t;
+  const k0 = 3 * u * u, k1 = 6 * u * t, k2 = 3 * t * t;
+  return [k0 * (b[0] - a[0]) + k1 * (c[0] - b[0]) + k2 * (d[0] - c[0]), k0 * (b[1] - a[1]) + k1 * (c[1] - b[1]) + k2 * (d[1] - c[1])];
+}
+function bezierBend([a, b, c, d]: Bez, t: number): Vec {
+  const u = 1 - t;
+  return [6 * u * (c[0] - 2 * b[0] + a[0]) + 6 * t * (d[0] - 2 * c[0] + b[0]), 6 * u * (c[1] - 2 * b[1] + a[1]) + 6 * t * (d[1] - 2 * c[1] + b[1])];
 }
 
 /** Let blocks that search once per solver step do so at x; true if any now answer differently. */

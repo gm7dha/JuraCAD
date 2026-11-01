@@ -27,6 +27,8 @@ export interface SnapOptions {
   skip?: (e: RefEdge) => boolean;
   /** Points and curves to leave out (e.g. what's being dragged). */
   ignore?: Set<string>;
+  /** Snap to nothing: the point goes exactly where the pointer is (Shift held while drawing or dragging, as in Onshape). */
+  free?: boolean;
 }
 
 export interface SnapResult {
@@ -94,6 +96,7 @@ function centreIds(s: SketchData): Set<string> {
 
 /** Where a click at (x, y) lands, and what to highlight. */
 export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): SnapResult {
+  if (o.free) return { placed: { x, y, snap: null }, hover: null, hints: [] };
   const ignore = o.ignore ?? new Set<string>();
   const refs = o.refs ?? [];
   // Only the references near the pointer are looked at (a busy design offers thousands); things in

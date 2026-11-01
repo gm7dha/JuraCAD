@@ -14,6 +14,9 @@ import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
 import { SketchExtrasPanel } from "./SketchExtrasPanel";
 
+/** Tools that place points by clicking (Shift places them without snapping). */
+const DRAWING_TOOLS = new Set<string>(["line", "rectangle", "centreRectangle", "alignedRectangle", "circle", "circle3", "arc", "centreArc", "tangentArc", "spline", "conic", "ellipse", "slot", "polygon", "point", "text"]);
+
 /** A conic's fullness: a slider from flat to full, and the number (0.5 = a parabola). */
 function ConicFullness({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const [text, setText] = useState(String(value));
@@ -259,6 +262,7 @@ export function SketchPanel() {
           </div>
         )}
         <SketchExtrasPanel data={data} />
+        {DRAWING_TOOLS.has(tool) && <p className="dialog-hint muted">Hold Shift while you click or drag to place it exactly there, without snapping.</p>}
         {tool === "useEdge" && <p className="dialog-hint">Click edges of a part to copy them into this sketch. They follow the part if it changes.</p>}
         {!!linkInfo?.edges.length && (
           <div className="tool-option">
