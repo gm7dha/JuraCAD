@@ -31,7 +31,7 @@ import { pathStations, walkPath } from "../sketch/pathSample";
 import { findRegions } from "../sketch/regions";
 import { crossingOutlineNote } from "../sketch/offsetCheck";
 import { followLinks, linkProblem, shapeIsClosed, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
-import { PIERCE_SAMPLES, edgePierceRefs, edgePierces, edgePoint3, nearestPlace, seeEdge, seeShape, seeSketchCurve, sketchCurvePierces, sketchPierceRefs, sketchPointAt, sketchRefs, type CurveShape3, type SourceSketch } from "../sketch/projected";
+import { edgePierceRefs, pierceSamples, remembered, edgePierces, edgePoint3, nearestPlace, seeEdge, seeShape, seeShapeAll, seeSketchCurve, type Conic3, sketchCurvePierces, sketchPierceRefs, sketchPointAt, sketchRefs, type CurveShape3, type SourceSketch } from "../sketch/projected";
 import { isPartLink, type CurveLink, type PartLink, type SketchCurve } from "../sketch/types";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
@@ -227,6 +227,21 @@ function straddles(frame: PlaneFrame, [lo, hi]: Bounds): boolean {
   return below <= 1e-6 && above >= -1e-6 && above - below > 1e-6;
 }
 
+/** How many spans a spline edge is made of (its knots less one); 1 for any other kind (for Pierce's sampling). */
+function edgeSpans(e: Edge): number {
+  const oc = getOC() as any;
+  let adaptor: any = null;
+  try {
+    adaptor = new oc.BRepAdaptor_Curve(e.wrapped);
+    if (adaptor.GetType() === oc.GeomAbs_CurveType.GeomAbs_BSplineCurve) return Math.max(1, adaptor.NbKnots() - 1);
+    return 1;
+  } catch {
+    return 1;
+  } finally {
+    adaptor?.delete();
+  }
+}
+
 /** Along an edge (0 at its start, 1 at its end, by its own parameter), as a point. */
 function edgeAt(e: Edge): (f: number) => Vec3 {
   return (f) => take(e.pointAt(Math.max(0, Math.min(1, f))));
@@ -238,7 +253,7 @@ function edgeAt(e: Edge): (f: number) => Vec3 {
  * `pieces`, as few as keep within 0.5 µm of it (halving until they do, at most
  * 128). An ellipse also gets its centre, axes and span.
  */
-export function edgeShape(e: Edge, pieces?: number): (CurveShape3 & { miss: number }) | null {
+export function edgeShape(e: Edge, pieces?: number, circles = false): (CurveShape3 & { miss: number; circle?: Conic3 }) | null {
   const oc = getOC() as any;
   const adaptor = new oc.BRepAdaptor_Curve(e.wrapped);
   // Freed however this ends (an OpenCascade error part way through too).
@@ -310,7 +325,25 @@ export function edgeShape(e: Edge, pieces?: number): (CurveShape3 & { miss: numb
         whole: Math.abs(last - first - 2 * Math.PI) < 1e-9,
       };
     }
-    return { ...shape, miss, ...(ellipse ? { ellipse } : {}) };
+    // With `circles`, a circle also gets its centre and two square radii (seen at a slant, it's an ellipse).
+    let circle: Conic3 | undefined;
+    if (circles && e.geomType === "CIRCLE") {
+      const keep = <T,>(o: T): T => (made.push(o), o);
+      const ci = keep(adaptor.Circle());
+      const c = keep(ci.Location());
+      const xd = keep(keep(ci.XAxis()).Direction());
+      const yd = keep(keep(ci.YAxis()).Direction());
+      const R = ci.Radius();
+      circle = {
+        centre: [c.X(), c.Y(), c.Z()],
+        major: [xd.X() * R, xd.Y() * R, xd.Z() * R],
+        minor: [yd.X() * R, yd.Y() * R, yd.Z() * R],
+        t0: first,
+        t1: last,
+        whole: Math.abs(last - first - 2 * Math.PI) < 1e-9,
+      };
+    }
+    return { ...shape, miss, ...(ellipse ? { ellipse } : {}), ...(circle ? { circle } : {}) };
   } catch {
     return null;
   } finally {
@@ -2155,9 +2188,10 @@ export class GeometryEngine {
       if (!e || (c.type !== "spline" && c.type !== "ellipse")) return e;
       // A spline is followed with as many pieces as it has (so its points keep their ids), unless that no longer keeps close
       // enough to the edge: then with as many as it takes (followLinks gives it new points in between).
-      let sh = edgeShape(edge, c.type === "spline" ? (c.closed ? c.points.length : c.points.length - 1) : undefined);
+      let sh = edgeShape(edge, c.type === "spline" ? (c.closed ? c.points.length : c.points.length - 1) : undefined, c.type === "ellipse");
       if (sh && c.type === "spline" && sh.miss > USE_TOLERANCE) sh = edgeShape(edge) ?? sh;
-      const seen = sh ? seeShape(frame, sh) : null;
+      // An ellipse may follow a circle or ellipse at a slant to the sketch (it's seen as an ellipse).
+      const seen = sh ? (c.type === "ellipse" ? seeShapeAll(frame, sh) : seeShape(frame, sh)) : null;
       // An open edge that's now closed (or the other way round) isn't the same curve any more: it's lost.
       if (seen?.kind === "spline" && c.type === "spline" && shapeIsClosed(seen) !== c.closed) return null;
       return seen ? { ...e, shape: seen } : null;
@@ -2219,7 +2253,10 @@ export class GeometryEngine {
             const m = strictMatch(link.ref, refs, sizeOf(bounds), 0.3);
             if (link.end === "pierce") {
               // Where the edge passes through the plane now: the place nearest where the point was, so it keeps to its own.
-              pointLinks[p.id] = m === null ? null : nearestPlace(edgePierces(frame, edgeAt(all[m]), refs[m].curve === "LINE" ? 1 : PIERCE_SAMPLES), [p.x, p.y]);
+              pointLinks[p.id] = m === null ? null : nearestPlace((() => {
+                    const walk = remembered(edgeAt(all[m]));
+                    return edgePierces(frame, walk, refs[m].curve === "LINE" ? 1 : pierceSamples(walk, edgeSpans(all[m])));
+                  })(), [p.x, p.y]);
               return;
             }
             const at = m === null ? null : edgePoint3(refs[m], link.end);
@@ -2349,7 +2386,7 @@ export class GeometryEngine {
           // Where it passes through the sketch's plane (to snap to, or Pierce). A straight edge's ends say exactly where.
           const lerp = (f: number): Vec3 => [ref.a[0] + (ref.b[0] - ref.a[0]) * f, ref.a[1] + (ref.b[1] - ref.a[1]) * f, ref.a[2] + (ref.b[2] - ref.a[2]) * f];
           // Only edges that reach both sides of the plane (or touch it) are walked along: most don't, and walking a curve is slow.
-          if (ref.curve === "LINE" || straddles(frame, boundsOf(e as unknown as Shape3D))) out.push(...edgePierceRefs(frame, { partId: part.id, ref }, ref.curve === "LINE" ? lerp : edgeAt(e)));
+          if (ref.curve === "LINE" || straddles(frame, boundsOf(e as unknown as Shape3D))) out.push(...(ref.curve === "LINE" ? edgePierceRefs(frame, { partId: part.id, ref }, lerp) : edgePierceRefs(frame, { partId: part.id, ref }, edgeAt(e), edgeSpans(e))));
         });
       } finally {
         all.forEach((e) => e.delete());
@@ -5265,8 +5302,9 @@ export class GeometryEngine {
       const seen = projectEdge(frame, pick, edgeSamples(all[m], refs[m])) ?? seeEdge(frame, pick, edgeSamples(all[m], refs[m]));
       if (!seen) return { error: "That edge can't be seen in this sketch." };
       if (seen.kind !== "curve") return { edge: seen };
-      const sh = edgeShape(all[m]);
-      const shape = sh ? seeShape(frame, sh) : null;
+      // A circle or ellipse at a slant comes in as the ellipse it's seen as; other curves as splines.
+      const sh = edgeShape(all[m], undefined, true);
+      const shape = sh ? seeShapeAll(frame, sh) : null;
       if (!shape) return { error: "That edge is seen side-on from this sketch (it looks like a straight line or a dot), so there's no curve to copy in. Pick an edge that runs across the sketch." };
       return { edge: { ...seen, shape } };
     } finally {

@@ -87,7 +87,10 @@
   `offsetParams` held by the `offset` dimension: its points are placed from the original after the solve when nothing else
   holds them, its handles are worked out by `refreshOffsets` (more points if it strays past `OFFSET_TOLERANCE`). Relations
   `normal` (line square to a curve) and `curvature` (G2 where a spline ends on a line/arc/spline); Tangent with a spline or
-  ellipse is either at a shared point (`frameAt`) or touching anywhere (`touchGap`).
+  ellipse is either at a shared point (`frameAt`) or touching anywhere (`touchGap`). Relations are solved patiently
+  (never given up early) so a refusal is real; `signedDistanceToBeziers` skips pieces whose control-point box is farther
+  than the nearest sample so far (same answers, bit for bit). The app shows "Working…" first for curve relations
+  (`relationMayTakeAWhile`, deferred a frame in sketchActions.ts).
   Text and pictures: `src/sketch/sketchText.ts` — `SketchData.texts` (hangs from an `anchor` point, so it's dimensioned and
   constrained as a point; letter outlines from `geometry/fonts.ts` are loops in regions.ts and line pieces with ids
   "<textId>.<wordsHash>.<k>" in areas.ts, so picks go "gone" when the words change) and `.images` (data: URLs, shrunk to
@@ -106,9 +109,21 @@
   re-read adaptively and `followLinks` respaces it (ends keep their ids, new points between, unless something else uses them);
   an open↔closed change is reported lost. Face edges that are curves
   carry `shape` (Use all edges; `joinTouchingEnds` joins spline/ellipse-arc ends too).
+  Seen at a slant, circles/arcs (a part's round edge: `circleOf` from its samples; another sketch's, or its ellipse) are
+  `RefEdge` kind "curve" with an ellipse `shape` (`seeConic`: axes from conjugate half-diameters, long axis' end canonical —
+  +x, else +y — so it's found in the same place each rebuild; side-on = null, as before only the centre is offered); another
+  sketch's spline/conic is a "curve" with its exact cubic pieces (`splineShapeOf`; `CurveShape.tangentsIn` where it arrives
+  differently, as Split leaves it). `seeSketchShape` makes these, `seeSketchCurve` returns them (so links follow); a closed
+  one's path ends aren't snappable (`refSketchOf`: q ids when `source.ends.a` is missing); a spline's inner points stay lone
+  points. The engine's `edgeShape(e, n, circles=true)` adds a circle's frame (`circle`), `seeShapeAll` = seeShape, then a
+  slanted conic as an ellipse — used by `useEdge` and by linked *ellipses* only (linked splines keep `seeShape`, unchanged).
+  The Use tool also takes other sketches' curves: SceneManager asks `SketchController.useAt` (pure `sketchCurveAt`) before
+  picking a part. Shift while drawing/dragging: `snapAt(…, { free })` — no snap, no H/V or tangent inference, no spline
+  closing, no join on drop (Onshape's "hold Shift to suppress inferencing"); a tangent arc's first click ignores it.
   Pierce: `PointLink.end === "pierce"` (part edge or another sketch's curve) = where it passes through the plane, re-found
-  each rebuild as the place nearest the point's current position (`edgePierces`: `PIERCE_SAMPLES` pieces for snapping and
-  rebuilding alike, halving at sign changes, refining near-zero minima between samples, skipping stretches lying in the plane;
+  each rebuild as the place nearest the point's current position (`edgePierces`: `pierceSamples(at, spans)` pieces for snapping and
+  rebuilding alike — `PIERCE_SAMPLES` (32), at least 4 per knot span of a spline edge (`edgeSpans` in engine.ts; a coil's
+  edge has hundreds), doubled while neighbouring chords turn > 30°, ≤ `PIERCE_MAX_SAMPLES`; `remembered` shares the samples, halving at sign changes, refining near-zero minima between samples, skipping stretches lying in the plane;
   the snap list only walks curved edges whose box straddles the plane, `straddles`,
   `sketchCurvePierces` exactly via `crossings` with the line where the planes meet; `nearestPlace`). The candidates list
   includes those places as `RefEdge.pierce` points (`edgePierceRefs`, `sketchPierceRefs`), so snapping onto one brings in a

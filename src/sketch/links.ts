@@ -51,7 +51,13 @@ export interface RefSource {
  */
 export type CurveShape =
   | { kind: "ellipse"; centre: P2; major: P2; minor: P2; start?: P2; end?: P2 }
-  | { kind: "spline"; points: P2[]; tangents: P2[] };
+  | {
+      kind: "spline";
+      points: P2[];
+      tangents: P2[];
+      /** Where it arrives at a point at another speed or direction than it leaves (null: as it leaves). Missing: nowhere. */
+      tangentsIn?: (P2 | null)[];
+    };
 
 /** A part edge, or another sketch's curve or point, as seen in the sketch's plane. */
 export interface RefEdge {
@@ -188,7 +194,9 @@ export function refSketchOf(edges: RefEdge[], indices: number[]): SketchData {
       curves.push({ id, type: "arc", center: pt("c", e.centre!), start: startIsA ? a : b, end: startIsA ? b : a, construction: false });
     } else {
       const path = e.path ?? [e.a, e.mid, e.b];
-      const ids = path.map((p, k) => (k === 0 ? pt("a", p) : k === path.length - 1 ? pt("b", p) : pt(`q${k}`, p)));
+      // Another sketch's closed curve (a circle or ellipse at a slant, a closed spline) has no ends to snap to.
+      const ended = !e.source || !!e.source.ends?.a;
+      const ids = path.map((p, k) => (ended && k === 0 ? pt("a", p) : ended && k === path.length - 1 ? pt("b", p) : pt(`q${k}`, p)));
       for (let k = 0; k + 1 < ids.length; k++) curves.push({ id: `${id}:s${k}`, type: "line", p1: ids[k], p2: ids[k + 1], construction: false });
       // A circle seen at a slant: its centre can be snapped to.
       if (e.centre) pt("c", e.centre);
@@ -242,6 +250,15 @@ function pointsOn(s: SketchData, c: SketchCurve, e: RefEdge): { a?: string; b?: 
     const st = pointPos(s, c.start);
     return dist(st, e.a) <= dist(st, e.b) ? { a: c.start, b: c.end, c: c.center } : { a: c.end, b: c.start, c: c.center };
   }
+  if (c.type === "ellipse") {
+    if (!c.start || !c.end) return { c: c.center };
+    const st = pointPos(s, c.start);
+    return dist(st, e.a) <= dist(st, e.b) ? { a: c.start, b: c.end, c: c.center } : { a: c.end, b: c.start, c: c.center };
+  }
+  if (c.type === "spline" && !c.closed) {
+    const [first, last] = [c.points[0], c.points[c.points.length - 1]];
+    return dist(pointPos(s, first), e.a) <= dist(pointPos(s, first), e.b) ? { a: first, b: last } : { a: last, b: first };
+  }
   return {};
 }
 
@@ -266,7 +283,7 @@ export function linkEdge(
     return { sketch, curveId: known.id, points: pointsOn(s, known, edge) };
   }
   if (edge.kind === "point") return { sketch: s, curveId: "", points: {}, error: "That's a single point: snap to it, or click it to dimension to it." };
-  if (edge.kind === "curve" && !edge.shape) return { sketch: s, curveId: "", points: {}, error: "Only straight and round edges can be used in a sketch for now. Snap to its ends instead." };
+  if (edge.kind === "curve" && !edge.shape) return { sketch: s, curveId: "", points: {}, error: "That curve can't be used in a sketch (it's seen side-on from here, or its shape isn't known). Snap to its ends instead." };
   const base = refLink(edge);
   if (!base) return { sketch: s, curveId: "", points: {}, error: "That can't be used here." };
   const link: CurveLink = cut && isPartLink(base) ? { ...base, cut } : base;
@@ -332,8 +349,10 @@ export const shapeIsClosed = (sh: Extract<CurveShape, { kind: "spline" }>) => sh
 function shapeBeziers(sh: Extract<CurveShape, { kind: "spline" }>): [P2, P2, P2, P2][] {
   const { points: p, tangents: t } = sh;
   const out: [P2, P2, P2, P2][] = [];
-  for (let i = 0; i + 1 < p.length; i++)
-    out.push([p[i], [p[i][0] + t[i][0] / 3, p[i][1] + t[i][1] / 3], [p[i + 1][0] - t[i + 1][0] / 3, p[i + 1][1] - t[i + 1][1] / 3], p[i + 1]]);
+  for (let i = 0; i + 1 < p.length; i++) {
+    const e = sh.tangentsIn?.[i + 1] ?? t[i + 1];
+    out.push([p[i], [p[i][0] + t[i][0] / 3, p[i][1] + t[i][1] / 3], [p[i + 1][0] - e[0] / 3, p[i + 1][1] - e[1] / 3], p[i + 1]]);
+  }
   return out;
 }
 
@@ -607,8 +626,14 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
     } else if (c.type === "ellipse" && e.shape?.kind === "ellipse") {
       const sh = e.shape;
       moves.set(c.center, sh.centre);
-      moves.set(c.major, sh.major);
-      moves.set(c.minor, sh.minor);
+      // Either end of an axis is the same ellipse: keep the ends nearest where the copy's are now, so points and
+      // dimensions on them don't jump across when the original's axis comes back the other way round (a long axis
+      // near upright can, after the smallest turn).
+      const across = (p: P2): P2 => [2 * sh.centre[0] - p[0], 2 * sh.centre[1] - p[1]];
+      const was = pointPos(s, c.major);
+      const flip = dist(across(sh.major), was) < dist(sh.major, was);
+      moves.set(c.major, flip ? across(sh.major) : sh.major);
+      moves.set(c.minor, flip ? across(sh.minor) : sh.minor);
       if (c.start && c.end && sh.start && sh.end) {
         moves.set(c.start, sh.start);
         moves.set(c.end, sh.end);
@@ -621,7 +646,14 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
         const first = pointPos(s, c.points[0]);
         const last = pointPos(s, c.points[c.points.length - 1]);
         const turned = dist(sh.points[0], last) + dist(sh.points[sh.points.length - 1], first) < dist(sh.points[0], first) + dist(sh.points[sh.points.length - 1], last);
-        if (turned) sh = { kind: "spline", points: [...sh.points].reverse(), tangents: [...sh.tangents].reverse().map(([x, y]): P2 => [-x, -y]) };
+        if (turned) {
+          // Walked the other way, it leaves each point as it arrived there before, and arrives as it left.
+          const tin = sh.tangentsIn;
+          const back = (v: P2): P2 => [-v[0], -v[1]];
+          sh = tin
+            ? { kind: "spline", points: [...sh.points].reverse(), tangents: sh.tangents.map((t, i) => back(tin[i] ?? t)).reverse(), tangentsIn: sh.tangents.map((t, i) => (tin[i] ? back(t) : null)).reverse() }
+            : { kind: "spline", points: [...sh.points].reverse(), tangents: [...sh.tangents].reverse().map(([x, y]): P2 => [-x, -y]) };
+        }
       }
       // Open to closed or the other way: not the same curve (the engine reports it lost).
       if (closed !== c.closed) continue;
