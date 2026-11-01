@@ -1,9 +1,9 @@
 import { featuresToBuild, featuresWithDraft, previewFeatures, previewOf } from "../model/document";
 import { resolveVariables } from "../model/variables";
 import { useStore } from "../model/store";
-import { keepInBrowser, keepProblem } from "../model/browserKeep";
+import { keepInBrowser, keepProblem, OTHER_TAB, STORAGE_KEY, VERSIONS_KEY, type Kept } from "../model/browserKeep";
 
-import { activeStudioId, type VersionCompare } from "../model/store";
+import { activeStudioId, keepIdOf, type VersionCompare } from "../model/store";
 import { setCurrentScope } from "../model/expr";
 import { studiosOf } from "../model/studios";
 import type { StudioInput } from "./protocol";
@@ -124,8 +124,16 @@ export function connectKernel(): () => void {
   let lastStudios = useStore.getState().history.present.partStudios;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
-  /** The versions last kept in this browser (they were read from there at start). */
-  let keptVersions = lastDoc.versions;
+  /** What this tab last wrote to browser storage (null: write the design and its versions again next time). */
+  let kept: Kept | null = null;
+  // Another tab wrote its design (or versions) over this one's: write both again on this design's next change
+  // (not at once, or two open tabs would keep overwriting each other), and say so meanwhile.
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== STORAGE_KEY && e.key !== VERSIONS_KEY && e.key !== null) return;
+    kept = null;
+    if (useStore.getState().storageProblem !== OTHER_TAB) useStore.setState({ storageProblem: OTHER_TAB });
+  };
+  globalThis.addEventListener?.("storage", onStorage);
   let lastRollback = useStore.getState().rollbackTo;
   let lastConfigured = configuredKey(useStore.getState().history.present);
   let lastCompared = useStore.getState().versionCompare?.docs;
@@ -158,8 +166,8 @@ export function connectKernel(): () => void {
       lastDoc = keep;
       const storage = globalThis.localStorage;
       if (!storage) return;
-      const r = keepInBrowser(storage, keep, keptVersions);
-      if (r.design && r.versions) keptVersions = keep.versions;
+      const r = keepInBrowser(storage, keep, keepIdOf(keep), kept);
+      kept = r.kept;
       const problem = keepProblem(r, !!keep.versions?.length);
       const was = useStore.getState().storageProblem;
       if (problem !== was) {
@@ -173,6 +181,7 @@ export function connectKernel(): () => void {
 
   return () => {
     unsubscribe();
+    globalThis.removeEventListener?.("storage", onStorage);
     kernel.terminate();
     client = null;
   };

@@ -12,7 +12,6 @@ import {
   createFeature,
   emptyDocument,
   historyOf,
-  parseDocument,
   redo as redoHistory,
   removeFeature,
   renameFeature,
@@ -60,8 +59,8 @@ import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
 import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisible, setDatumHidden, setFeaturesVisible, toggleAllPlanes } from "./visibility";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
-import { designOf, parseVersions, withVersionsOf } from "./versions";
-import { STORAGE_KEY, VERSIONS_KEY } from "./browserKeep";
+import { designOf, withVersionsOf } from "./versions";
+import { newKeepId, readKept } from "./browserKeep";
 
 /** Which instances show a symmetric part (for mirrors that show such parts as themselves). */
 const symmetricIn = (parts: readonly PartMesh[]) => (i: Instance) => {
@@ -561,16 +560,6 @@ export interface AppState {
 // The browser-storage keys are in browserKeep.ts (the design's keeps the app's old name, PartSmith, on purpose).
 export { STORAGE_KEY, VERSIONS_KEY } from "./browserKeep";
 
-/** The versions kept in this browser, put back on the design kept with them. */
-function withSavedVersions(doc: JuraCADDocument): JuraCADDocument {
-  try {
-    const raw = globalThis.localStorage?.getItem(VERSIONS_KEY);
-    const list = raw ? parseVersions(JSON.parse(raw)) : [];
-    return list.length ? { ...doc, versions: list } : doc;
-  } catch {
-    return doc;
-  }
-}
 /** Which file the design in browser storage was last saved to, so "Saved" survives a page refresh. */
 const FILE_KEY = "partsmith.file.v1";
 
@@ -607,10 +596,12 @@ function savedFileFor(doc: JuraCADDocument): { savedDoc: JuraCADDocument | null;
 
 function loadSavedDocument(): JuraCADDocument {
   try {
-    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
-    if (raw) {
-      const doc = parseDocument(JSON.parse(raw));
-      if (doc) return withSavedVersions(doc);
+    const storage = globalThis.localStorage;
+    const kept = storage ? readKept(storage) : null;
+    if (kept) {
+      // The same design carries on with the same keep id (so its versions stay tied to it).
+      if (kept.keep) keepIds.set(designKey(kept.doc), kept.keep);
+      return kept.doc;
     }
   } catch {
     // storage unavailable or corrupt: start fresh
@@ -660,6 +651,14 @@ export function designKey(doc: JuraCADDocument): number {
   let k = designKeys.get(doc);
   if (!k) designKeys.set(doc, (k = nextDesignKey++));
   return k;
+}
+/** Each design's keep id (by design key), tying it to its versions in browser storage (browserKeep.ts). */
+const keepIds = new Map<number, string>();
+export function keepIdOf(doc: JuraCADDocument): string {
+  const k = designKey(doc);
+  let id = keepIds.get(k);
+  if (!id) keepIds.set(k, (id = newKeepId()));
+  return id;
 }
 /** `next` is the same design as `from` (a change, or the same document with other versions). */
 function sameDesign(next: JuraCADDocument, from: JuraCADDocument) {

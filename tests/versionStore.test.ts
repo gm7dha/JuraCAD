@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { emptyDocument, historyOf } from "../src/model/document";
-import { useStore } from "../src/model/store";
+import { keepIdOf, useStore } from "../src/model/store";
 import type { DesignVersion, JuraCADDocument } from "../src/model/types";
 import { addVersion, removeVersions } from "../src/model/versions";
 
@@ -128,5 +128,22 @@ describe("an old version open to look at", () => {
     s().setVersionCompare({ older: "v1", newer: "now", docs: {}, ghost: false });
     s().openDocument(emptyDocument("F"), "F.juracad");
     expect(s().versionCompare).toBeNull();
+  });
+});
+
+describe("keep ids (tying the design to its versions in browser storage)", () => {
+  it("stay the same through changes, undo and saving versions, and differ for another design", () => {
+    const start = keepIdOf(s().history.present);
+    addBox();
+    expect(keepIdOf(s().history.present)).toBe(start);
+    s().changeVersions((d) => addVersion(d, version("v1")));
+    expect(keepIdOf(s().history.present)).toBe(start);
+    s().undo();
+    expect(keepIdOf(s().history.present)).toBe(start);
+    s().newDocument();
+    const other = keepIdOf(s().history.present);
+    expect(other).not.toBe(start);
+    s().undo();
+    expect(keepIdOf(s().history.present)).toBe(start);
   });
 });

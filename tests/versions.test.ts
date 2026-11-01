@@ -24,7 +24,7 @@ import {
   withVersionsOf,
 } from "../src/model/versions";
 import { compareDesigns, featureSettingChanges, MAX_SETTINGS, same } from "../src/model/versionCompare";
-import { keepInBrowser, keepProblem, STORAGE_KEY, VERSIONS_KEY, type KeepStorage } from "../src/model/browserKeep";
+import { keepInBrowser, keepProblem, newKeepId, readKept, STORAGE_KEY, VERSIONS_KEY, type KeepStorage } from "../src/model/browserKeep";
 import { compareStudioInputs } from "../src/kernel/buildInput";
 import { addStudio } from "../src/model/studios";
 import { addDrawing } from "../src/drawing/drawing";
@@ -308,11 +308,12 @@ describe("versions stay with the design", () => {
   });
 });
 
-/** A browser storage that holds up to `limit` characters in all. */
+/** A browser storage (shared by "tabs") that holds up to `limit` characters in all. */
 function storage(limit = Infinity) {
   const items = new Map<string, string>();
-  const s: KeepStorage & { items: Map<string, string> } = {
+  const s: KeepStorage & { items: Map<string, string>; getItem(k: string): string | null } = {
     items,
+    getItem: (k) => items.get(k) ?? null,
     setItem(k, v) {
       const used = [...items].reduce((n, [key, val]) => n + (key === k ? 0 : val.length), 0);
       if (used + v.length > limit) throw new Error("QuotaExceededError");
@@ -326,47 +327,130 @@ function storage(limit = Infinity) {
 }
 
 describe("keeping the design in the browser", () => {
-  it("keeps the design and its versions under separate keys", () => {
+  it("keeps the design and its versions under separate keys, tied by the keep id", () => {
     const st = storage();
     const doc = addVersion(bracket(), version("v1", "json:{}"));
-    expect(keepInBrowser(st, doc, undefined)).toEqual({ design: true, versions: true });
-    expect(JSON.parse(st.items.get(STORAGE_KEY)!).versions).toBeUndefined();
-    expect(JSON.parse(st.items.get(VERSIONS_KEY)!)).toEqual(doc.versions);
+    const r = keepInBrowser(st, doc, "A", null);
+    expect(r).toMatchObject({ design: true, versions: true });
+    const kept = JSON.parse(st.items.get(STORAGE_KEY)!);
+    expect(kept.versions).toBeUndefined();
+    expect(kept.keep).toBe("A");
+    expect(JSON.parse(st.items.get(VERSIONS_KEY)!)).toEqual({ keep: "A", list: doc.versions });
+    const back = readKept(st)!;
+    expect(back.keep).toBe("A");
+    expect(back.doc).toEqual(doc);
     // No versions: the key goes.
-    expect(keepInBrowser(st, bracket(), doc.versions)).toEqual({ design: true, versions: true });
+    expect(keepInBrowser(st, bracket(), "A", r.kept)).toMatchObject({ design: true, versions: true });
     expect(st.items.has(VERSIONS_KEY)).toBe(false);
   });
 
   it("always keeps the design first, even when its versions don't fit", () => {
     const st = storage(3000);
     const doc = addVersion(bracket(), version("v1", "gz:" + "A".repeat(5000)));
-    const r = keepInBrowser(st, doc, undefined);
-    expect(r).toEqual({ design: true, versions: false });
+    const r = keepInBrowser(st, doc, "A", null);
+    expect(r).toMatchObject({ design: true, versions: false, kept: null });
     expect(st.items.has(STORAGE_KEY)).toBe(true);
     // Old versions aren't left behind to be put on the wrong design.
     expect(st.items.has(VERSIONS_KEY)).toBe(false);
     expect(keepProblem(r, true)).toMatch(/versions are too big/);
     // Later changes to the design are still kept.
-    const changed = { ...doc, name: "Bracket 2" };
-    expect(keepInBrowser(st, changed, undefined).design).toBe(true);
+    expect(keepInBrowser(st, { ...doc, name: "Bracket 2" }, "A", r.kept).design).toBe(true);
     expect(JSON.parse(st.items.get(STORAGE_KEY)!).name).toBe("Bracket 2");
   });
 
-  it("says plainly when the design itself can't be kept, and again is fine once it fits", () => {
-    const st = storage(100);
-    const r = keepInBrowser(st, bracket(), undefined);
-    expect(r.design).toBe(false);
-    expect(keepProblem(r, false)).toMatch(/would be lost if the page is closed or reloaded/);
-    expect(keepProblem({ design: true, versions: true }, true)).toBeNull();
+  it("drops the saved versions to make room when the design grows and no longer fits beside them", () => {
+    const st = storage(20_000);
+    const small = addVersion(bracket(), version("v1", "gz:" + "A".repeat(15_000)));
+    const first = keepInBrowser(st, small, "A", null);
+    expect(first).toMatchObject({ design: true, versions: true });
+    // The design grows to 8,000 characters: with 15,000 of versions it no longer fits.
+    const grown = { ...small, name: "x".repeat(8_000) };
+    const r = keepInBrowser(st, grown, "A", first.kept);
+    expect(r).toMatchObject({ design: true, versions: false });
+    expect(JSON.parse(st.items.get(STORAGE_KEY)!).name).toBe(grown.name);
+    expect(st.items.has(VERSIONS_KEY)).toBe(false);
+    expect(keepProblem(r, true)).toMatch(/versions are too big/);
+    // After a reload: the latest design, without versions (they're still in the design on screen and in a saved file).
+    expect(readKept(st)!.doc.name).toBe(grown.name);
+    expect(readKept(st)!.doc.versions).toBeUndefined();
   });
 
-  it("only writes the versions when they changed", () => {
+  it("says plainly when the design itself can't be kept", () => {
+    const st = storage(100);
+    const r = keepInBrowser(st, bracket(), "A", null);
+    expect(r.design).toBe(false);
+    expect(keepProblem(r, false)).toMatch(/would be lost if the page is closed or reloaded/);
+    expect(keepProblem({ design: true, versions: true, kept: null }, true)).toBeNull();
+  });
+
+  it("only writes the versions when they (or the keep id) changed", () => {
     const st = storage();
     const doc = addVersion(bracket(), version("v1", "json:{}"));
-    keepInBrowser(st, doc, undefined);
+    const r = keepInBrowser(st, doc, "A", null);
     st.items.set(VERSIONS_KEY, "untouched");
-    keepInBrowser(st, { ...doc, name: "Renamed" }, doc.versions);
+    keepInBrowser(st, { ...doc, name: "Renamed" }, "A", r.kept);
     expect(st.items.get(VERSIONS_KEY)).toBe("untouched");
+    // Nothing relied on (after another tab wrote): written again.
+    keepInBrowser(st, { ...doc, name: "Renamed" }, "A", null);
+    expect(JSON.parse(st.items.get(VERSIONS_KEY)!).keep).toBe("A");
+  });
+
+  it("two tabs: versions written by one never land on the other's design", () => {
+    const st = storage();
+    const a = addVersion(bracket(), version("va", "json:{}"));
+    const b = addVersion({ ...bracket(), name: "Other" }, version("vb", "json:{}"));
+    // Tab X keeps A with its versions; then tab Y opens B and keeps it.
+    const x = keepInBrowser(st, a, "A", null);
+    keepInBrowser(st, b, "B", null);
+    // X edits A without having heard from Y: only the design is written (its versions list didn't change)…
+    keepInBrowser(st, { ...a, name: "A edited" }, "A", x.kept);
+    // …and on a reload B's versions are NOT put on A.
+    const back = readKept(st)!;
+    expect(back.doc.name).toBe("A edited");
+    expect(back.doc.versions).toBeUndefined();
+    // Once X has heard (kept reset), its next change writes A's versions again, matched.
+    keepInBrowser(st, { ...a, name: "A edited again" }, "A", null);
+    expect(readKept(st)!.doc.versions!.map((v) => v.id)).toEqual(["va"]);
+  });
+
+  it("two tabs: New in the other tab removes the versions; this tab writes its own again on its next change", () => {
+    const st = storage();
+    const a = addVersion(bracket(), version("va", "json:{}"));
+    keepInBrowser(st, a, "A", null);
+    // Tab Y: New (an empty design, no versions).
+    keepInBrowser(st, emptyDocument(), "N", null);
+    expect(st.items.has(VERSIONS_KEY)).toBe(false);
+    // Tab X heard about it (kept = null) and changes A: both are written again.
+    keepInBrowser(st, { ...a, name: "A edited" }, "A", null);
+    const back = readKept(st)!;
+    expect(back.doc.name).toBe("A edited");
+    expect(back.doc.versions!.map((v) => v.id)).toEqual(["va"]);
+  });
+
+  it("one tab: versions are never put on a design they weren't kept with", () => {
+    const st = storage();
+    keepInBrowser(st, addVersion(bracket(), version("va", "json:{}")), "A", null);
+    // The design key is lost or damaged: nothing comes back (a new design starts, with a new id).
+    st.items.delete(STORAGE_KEY);
+    expect(readKept(st)).toBeNull();
+    st.items.set(STORAGE_KEY, "{ not json");
+    expect(readKept(st)).toBeNull();
+    // A new design (another id) kept beside the old versions doesn't pick them up.
+    st.items.set(STORAGE_KEY, JSON.stringify({ ...emptyDocument("New one"), keep: "N" }));
+    expect(readKept(st)!.doc.versions).toBeUndefined();
+    // A design kept before keep ids existed doesn't either.
+    st.items.set(STORAGE_KEY, JSON.stringify(emptyDocument("Old browser copy")));
+    expect(readKept(st)!).toEqual({ doc: emptyDocument("Old browser copy"), keep: null });
+    // Damaged versions are ignored.
+    st.items.set(STORAGE_KEY, JSON.stringify({ ...bracket(), keep: "A" }));
+    st.items.set(VERSIONS_KEY, "{ nope");
+    expect(readKept(st)!.doc.versions).toBeUndefined();
+  });
+
+  it("makes different random keep ids", () => {
+    const ids = new Set(Array.from({ length: 50 }, newKeepId));
+    expect(ids.size).toBe(50);
+    expect([...ids][0]).toMatch(/^[0-9a-f]{18}$/);
   });
 });
 
