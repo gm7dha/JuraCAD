@@ -230,6 +230,13 @@ export const Icons = {
       <path d="M12 6v9" strokeDasharray="1.5 1.5" />
     </Svg>
   ),
+  PrintCheck: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M8 3h8v4l-2 3h-4L8 7z" />
+      <path d="M12 10v3" />
+      <path d="M4 20h16M7 20v-3h10v3" />
+    </Svg>
+  ),
   Surface: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 17c4-6 8 2 12-4s4-6 6-4" />

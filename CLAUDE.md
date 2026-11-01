@@ -406,6 +406,20 @@
   Tests: `tests/liveRelay.test.ts` (rules, script, transport; `tests/support/relaySim.ts` simulates the tab + popup with
   real postMessage origin rules) and "Safari: through the link window" in `tests/liveLink.test.ts` (real servers + OCCT).
   Only real Safari can confirm pop-up and opener behaviour (see the PR's manual steps).
+- 3D printing: `src/model/printCheck.ts` (pure: `bedRotation(down)` turns a part so `down` faces the bed, `findOverhangs`,
+  `arrangeOnBed`, `printPartReport`), `src/model/printSettings.ts` (nozzle, limits, printed fits + `withFitVariables`:
+  fit_press/snug/sliding/loose; a hole's size `fitExpression` "5 mm + fit_sliding"), `src/model/slicers.ts` (why there's no
+  open-in-slicer link: the slicers' URL schemes only download https URLs). Engine: `printCheck` (`src/kernel/printAnalysis.ts`:
+  walls measured from exact points/normals — planes, cylinders and spheres worked out directly, other surfaces via OCCT — at
+  about `samples` (2500) places spread by area, rays through a BVH of the view's own mesh (`displayMeshes`, kept by makePartMesh),
+  hits refined onto the exact surface; a reading that ends on a face adjacent to the sampled one near their shared edge is a
+  sharp edge, not a thin wall (`sharpEdges`); whole cylinders for holes/pins) and `exportPrint3mf` (turned, standing at z 0, laid out; build-item moves). UI `src/app/PrintPanel.tsx`
+  ("3D print" toolbar button; per-part bed face in `printState.ts`, session only, never in the file), marks via
+  `SceneManager.setPrintMarks`; the printer setting (`partsmith.printer`, `printerSetting.ts`) also holds the print settings;
+  the panel checks on opening and when the parts/face/limits change, not on every rebuild ("Check again"; stale results say so);
+  worker replies go through `uniqueTransfers` (a buffer listed twice is a DataCloneError). Hole dialog's "Printed fit" is
+  `PrintedFit.tsx` (not on tapped holes); without fit_* variables it uses the number and `HoleOptions.printedFit`, and
+  `commitDraft` adds the variables in the same undo step (`settlePrintedFit`).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);

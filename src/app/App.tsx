@@ -19,6 +19,7 @@ import { ComparePanel, VersionBanner, VersionsDialog } from "./VersionsDialog";
 import { MeasurePanel } from "./MeasurePanel";
 import { SectionPanel } from "./SectionPanel";
 import { PrintBedPanel } from "./PrintBedPanel";
+import { PrintPanel } from "./PrintPanel";
 import { openFile, openFromFile, saveToFile } from "./fileActions";
 import { inPopup } from "./popupGuard";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
@@ -298,6 +299,7 @@ export function App() {
               <SelectionInfo />
               <SectionPanel />
               <PrintBedPanel />
+              <PrintPanel />
             </>
           )}
         </main>

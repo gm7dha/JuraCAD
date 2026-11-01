@@ -1559,6 +1559,95 @@ kbd {
   font-weight: 600;
 }
 
+/* 3D print panel: top right under the view cube (as the section panel), scrolls when long. */
+.print-panel {
+  width: 300px;
+  max-height: calc(100% - 170px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.print-orient {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.print-picking {
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0;
+}
+
+.print-report .check-part ul {
+  margin: 4px 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.print-report li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 12px;
+  margin: 3px 0;
+}
+
+.print-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 4px;
+}
+
+.print-key i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 3px;
+  vertical-align: -1px;
+}
+
+.print-send {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.print-sent {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--panel, transparent);
+}
+
+.print-sent p {
+  margin: 2px 0;
+}
+
+.print-setting-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.print-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.print-setting input {
+  width: 100%;
+  min-width: 0;
+}
+
 .section-row {
   display: flex;
   align-items: center;

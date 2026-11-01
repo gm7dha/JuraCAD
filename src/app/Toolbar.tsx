@@ -8,6 +8,7 @@ import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
 import { startPrintBed } from "./PrintBedPanel";
+import { togglePrintPanel, usePrintPanel } from "./printState";
 import { chooseImportFile } from "./fileActions";
 
 function ToolButton({
@@ -96,6 +97,7 @@ export function Toolbar() {
   const otherStudioParts = useStore((s) => s.parts.some((p) => !p.configuration && p.studioId !== undefined && p.studioId !== activeStudioId(s)));
   const sectionOn = useStore((s) => s.section !== null);
   const printBedOn = useStore((s) => s.printBed !== null);
+  const printPanelOn = usePrintPanel((s) => s.open);
   const platform = detectPlatform();
 
   return (
@@ -645,6 +647,14 @@ export function Toolbar() {
           disabled={!hasPart}
           active={printBedOn}
           title="Print bed — show your 3D printer's bed and build volume under the parts, to check they fit"
+        />
+        <ToolButton
+          label="3D print"
+          icon={<Icons.PrintCheck />}
+          onClick={togglePrintPanel}
+          disabled={!hasPart}
+          active={printPanelOn}
+          title="3D print — check for overhangs, thin walls and small holes, choose the face to print on, and save a 3MF for your slicer"
         />
       </div>
       <div className="tool-group">
