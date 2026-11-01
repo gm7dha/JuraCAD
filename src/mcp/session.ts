@@ -183,7 +183,7 @@ export class Session {
     for (const p of r.parts) rebuilt.get(p.studioId ?? "")?.push(p);
     for (const [id, list] of rebuilt) this.wholeMeshes.set(id, list);
     for (const id of [...this.wholeMeshes.keys()]) if (!r.studioOrder.includes(id)) this.wholeMeshes.delete(id);
-    this.wholeBuilt = { parts: r.studioOrder.flatMap((id) => this.wholeMeshes.get(id) ?? []), errors: r.featureErrors };
+    this.wholeBuilt = { parts: r.studioOrder.flatMap((id) => this.wholeMeshes.get(id) ?? []), errors: r.featureErrors, warnings: r.featureWarnings ?? {} };
     this.wholeKey = key;
     return this.wholeBuilt;
   }
