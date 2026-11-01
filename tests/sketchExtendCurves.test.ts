@@ -153,6 +153,43 @@ describe("Extend splines, conics and parts of ellipses", () => {
     expect(extendAt(held, alone.splineId, { x: 19, y: 0 }).error).toMatch(/held where it is/);
   });
 
+  it("when curving on would turn it right round first, it carries on straight the way its end was heading", () => {
+    // Carried on, this spline's last piece turns through 90° by x = 30, so it never reaches the wall there: it goes straight on instead.
+    const sp = addSpline(emptySketch(), [at(0, 0), at(10, 5), at(20, 0)], false);
+    const wall = addLine(sp.sketch, at(30, -50), at(30, 50));
+    const before = curve<SketchSpline>(wall.sketch, sp.splineId);
+    const oldPath = curveParam(wall.sketch, before);
+    const r = extendAt(wall.sketch, sp.splineId, { x: 19, y: 0 });
+    expect(r.error).toBeUndefined();
+    const after = curve<SketchSpline>(r.sketch, sp.splineId);
+    // One more point, at the wall, on the line from (20, 0) heading (10, −5).
+    expect(after.points).toHaveLength(4);
+    expect(after.points.slice(0, 3)).toEqual(before.points);
+    expect(round(pointPos(r.sketch, after.points[3]))).toEqual([30, -5]);
+    expect(r.sketch.constraints.some((c) => c.type === "pointOnLine" && c.refs[0] === after.points[3] && c.refs[1] === wall.lineId)).toBe(true);
+    // The old curve is untouched, and the new piece is straight.
+    const newPath = curveParam(r.sketch, after);
+    for (let i = 0; i <= 40; i++) {
+      const q = oldPath.at((2 * i) / 40);
+      const on = newPath.at(nearestParam(newPath, q));
+      expect(Math.hypot(on[0] - q[0], on[1] - q[1])).toBeLessThan(1e-9);
+    }
+    for (const t of [2.25, 2.5, 2.75]) {
+      const q = newPath.at(t);
+      expect(q[1] + (q[0] - 20) / 2).toBeCloseTo(0, 9);
+    }
+    // From its start the same, mirrored (a little further out than the reach of its curve).
+    const left = addLine(sp.sketch, at(-12, -50), at(-12, 50));
+    const back = extendAt(left.sketch, sp.splineId, { x: 1, y: 0 });
+    expect(back.error).toBeUndefined();
+    const b = curve<SketchSpline>(back.sketch, sp.splineId);
+    expect(round(pointPos(back.sketch, b.points[0]))).toEqual([-12, -6]);
+    // A conic can't take a straight piece: it says why.
+    const cn = addConic(emptySketch(), at(0, 0), at(20, 0), at(10, 10), 0.5);
+    const above = addLine(cn.sketch, at(-100, 40), at(100, 40));
+    expect(extendAt(above.sketch, cn.conicId, { x: 19, y: 0 }).error).toMatch(/curves away from everything ahead/);
+  });
+
   it("doesn't wander off: a spline curling away never reaches a line far behind it", () => {
     const sp = addSpline(emptySketch(), [at(0, 0), at(10, 5), at(20, 0)], false);
     // Straight back past its start, far beyond: the end heads down and away, so it's out of reach.

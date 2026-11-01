@@ -140,3 +140,30 @@ export function offsetNotes(s: SketchData): string[] {
   // A copy offset past its original's tightest bend folds back there: saying it crosses itself covers that.
   return crossing ? [CROSSING_NOTE] : offsetWarnings(s);
 }
+
+/** The offset copies (curve ids) that cross themselves. */
+export function crossingCopies(s: SketchData): Set<string> {
+  const out = new Set<string>();
+  for (const k of s.constraints) {
+    if (k.type !== "offset" || !offsetCrossesItself(s, k)) continue;
+    for (let i = 0; i + 1 < k.refs.length; i += 2) out.add(k.refs[i]);
+  }
+  return out;
+}
+
+/** What an extrude or revolve says when the outline it uses is (partly) an offset copy that crosses itself; null when it isn't. */
+export function crossingOutlineNote(s: SketchData, areas?: (number | string)[][]): string | null {
+  if (!s.constraints.some((k) => k.type === "offset")) return null;
+  const copies = crossingCopies(s);
+  if (!copies.size) return null;
+  const solid = [...copies].filter((id) => s.curves.some((c) => c.id === id && !c.construction));
+  if (!solid.length) return null;
+  // Picked areas say which curves bound them ("<curve id>+" or "−"); older picks without that, and no picks (every shape), count as using them.
+  const uses =
+    !areas?.length ||
+    areas.some((a) => {
+      const sig = a.slice(3).filter((v): v is string => typeof v === "string");
+      return !sig.length || sig.some((v) => copies.has(v.slice(0, -1)));
+    });
+  return uses ? "Its outline is an offset copy that crosses over itself, so the shape may not come out as expected. Edit the sketch and use a smaller offset distance." : null;
+}
