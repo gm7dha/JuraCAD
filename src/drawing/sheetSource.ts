@@ -20,6 +20,7 @@ import { tapSizes } from "./holeCallouts";
 import { breakOutRequests, sectionRequests, viewKey, type BreakOutRequest, type SectionRequest } from "./sections";
 import type { BomLine, Projections, SheetInfo } from "./sheet";
 import { withShortenings } from "./shorten";
+import { partDrawings, type PartDrawing } from "./viewParts";
 
 export interface DrawingSubject {
   /** What's drawn: the part's or the assembly's name. */
@@ -111,4 +112,31 @@ export function sheetInfo(page: Drawing, doc: JuraCADDocument, parts: PartMesh[]
 export function viewScales(d: Pick<Drawing, "views">, sheetScale: number): (view: string) => number {
   const own = new Map(d.views.filter((v) => v.scale && v.kind !== "detail").map((v) => [viewKey(v), v.scale!]));
   return (view: string) => own.get(view) ?? sheetScale;
+}
+
+/** One part (or assembly) drawn on a sheet (see viewParts.ts), with what the engine draws of it (null when it has gone). */
+export interface SheetPart extends PartDrawing {
+  subject: DrawingSubject | null;
+}
+
+/** Everything a sheet draws: its own part first, then each view of another part. */
+export function sheetParts(page: Drawing, doc: JuraCADDocument, parts: PartMesh[]): SheetPart[] {
+  return partDrawings(page).map((p) => ({ ...p, subject: drawingSubject(p.drawing, doc, parts) }));
+}
+
+/**
+ * A sheet's details (from sheetInfo, for its own part) with what its views of
+ * other parts need: their tapped holes, and — when the sheet's own part isn't
+ * an assembly — the parts list and balloons of the first view of an assembly.
+ */
+export function withViewParts(info: SheetInfo, doc: JuraCADDocument, parts: PartMesh[], list: SheetPart[], bomWeights?: boolean): SheetInfo {
+  const others = list.filter((p) => p.group !== null);
+  if (!others.length) return info;
+  const out: SheetInfo = { ...info, groupTaps: Object.fromEntries(others.map((p) => [p.group!, tapSizes(doc, p.drawing)])) };
+  if (info.bom) return out;
+  const asm = others.find((p) => p.drawing.source?.kind === "assembly" && p.subject);
+  const bom = asm ? drawingBom({ source: asm.drawing.source, bomWeights }, doc, parts) : undefined;
+  if (!asm || !bom) return out;
+  const balloons = balloonsFor(bom, asm.subject!.instances, parts);
+  return { ...out, bom, ...(balloons ? { balloons } : {}), balloonGroup: asm.group! };
 }
