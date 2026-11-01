@@ -424,6 +424,12 @@ export class SceneManager {
     return `${hit.item.kind}:${ref ? (ref.kind === "face" ? ref.surface : ref.curve) : "?"}`;
   }
 
+  /** Which part (or assembly mesh key) a click at this screen point would land on, or null (for the browser smoke test). */
+  pickPartAt(x: number, y: number): string | null {
+    const hit = this.pickAt(x, y);
+    return hit?.kind === "part" ? hit.item.partId : null;
+  }
+
   /** Ids of the parts (or assembly instances) on show, and what their faces look like. */
   shownParts(): { id: string; faceRefs: PartMesh["faceRefs"] }[] {
     return [...this.parts.values()].map((p) => ({ id: p.data.id, faceRefs: p.data.faceRefs }));
@@ -709,6 +715,18 @@ export class SceneManager {
   /** Whether the view is still turning or zooming to where it was sent (for the browser smoke test). */
   cameraMoving(): boolean {
     return this.animation !== null;
+  }
+
+  /**
+   * Whether the view is at rest where "zoom to fit" puts it for what's shown now
+   * (for the browser smoke test: some buttons fit the view a moment after they're
+   * clicked, so "not moving" alone can be read before that move has even begun).
+   */
+  restingAtFit(): boolean {
+    if (this.animation) return false;
+    const goal = this.fitGoal();
+    const near = this.controls.target.distanceTo(goal.target) <= 1e-3 * Math.max(1, goal.target.length());
+    return near && Math.abs(this.camera.zoom - goal.zoom) <= 1e-3 * goal.zoom;
   }
 
   restoreView(v: { dir: THREE.Vector3; target: THREE.Vector3; zoom: number; up?: THREE.Vector3 }): void {
