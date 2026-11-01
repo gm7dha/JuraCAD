@@ -45,7 +45,8 @@ import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
 import { duplicateInstances, placedBox, replaceInstancePart, type Box3 } from "../assembly/assembly";
 import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
 import { findMesh, meshIdOf } from "../assembly/configured";
-import { ownSymmetry } from "../assembly/symmetry";
+import { ownSymmetry, subAssemblySymmetry } from "../assembly/symmetry";
+import { setFlexible } from "../assembly/flexible";
 
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, pickConnector, samePieceClick, solveWithParts } from "../assembly/mates";
@@ -61,9 +62,10 @@ import { importName } from "./importFile";
 import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisible, setDatumHidden, setFeaturesVisible, toggleAllPlanes } from "./visibility";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
-/** Which instances show a symmetric part (for mirrors that show such parts as themselves). */
-const symmetricIn = (parts: readonly PartMesh[]) => (i: Instance) => {
-  const mesh = i.subAssembly ? undefined : findMesh(parts, meshIdOf(i));
+/** Which instances show a symmetric part, or a symmetric sub-assembly (for mirrors that show such things as themselves). */
+const symmetricIn = (parts: readonly PartMesh[], assemblies: readonly Assembly[] = []) => (i: Instance) => {
+  if (i.subAssembly) return !!subAssemblySymmetry(i.subAssembly, parts, assemblies);
+  const mesh = findMesh(parts, meshIdOf(i));
   return !!mesh && !!ownSymmetry(mesh);
 };
 
@@ -400,6 +402,8 @@ export interface AppState {
   toggleInstanceHidden: (id: string) => void;
   /** Switch instances off (Onshape's Suppress) or back on; the others stay where they are. */
   setInstancesSuppressed: (ids: string[], suppressed: boolean) => void;
+  /** Make a sub-assembly copy flexible (its parts can move here, Onshape's "Make flexible") or rigid again. */
+  setInstanceFlexible: (id: string, flexible: boolean) => void;
   startMate: (type: MateType) => void;
   editMate: (id: string) => void;
   setMateDraft: (patch: Partial<MateDraft>) => void;
@@ -431,8 +435,9 @@ export interface AppState {
   editingPattern: string | null;
   setEditingPattern: (id: string | null) => void;
   /** The open Mirror is waiting for a click on a flat face to mirror across. */
-  mirrorFacePick: boolean;
-  setMirrorFacePick: (on: boolean) => void;
+  /** A Mirror waiting for a click: a flat face to mirror across (true), or a face or edge to place a mate connector on ("connector"). */
+  mirrorFacePick: boolean | "connector";
+  setMirrorFacePick: (on: boolean | "connector") => void;
   /** Mirror the open Mirror's parts across this face (clicked in the 3D view). */
   pickMirrorFace: (c: MateConnector) => void;
   /** Repeat the selected instances (a linear pattern to start with) and open its settings. */
@@ -1368,12 +1373,14 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       const p = asm?.patterns?.find((x) => x.id === s.editingPattern);
       if (!asm || !p) return;
-      if (c.pick.ref.kind !== "face" || c.pick.ref.surface !== "PLANE") return s.showToast("Click a flat face to mirror across.", "info");
+      // Placing a mate connector: any face or edge will do (it then sits at its centre, moved and tilted as typed).
+      const connector = s.mirrorFacePick === "connector";
+      if (!connector && (c.pick.ref.kind !== "face" || c.pick.ref.surface !== "PLANE")) return s.showToast("Click a flat face to mirror across.", "info");
       if (asm.instances.find((i) => i.id === c.instanceId)?.copyOf?.pattern === p.id) return s.showToast("That's one of this mirror's own copies — click a face on another part.", "info");
       // Only the face matters (not where on it it was clicked).
       const plane: MateConnector = { instanceId: c.instanceId, ...(c.path ? { path: c.path } : {}), pick: c.pick };
       set({ mirrorFacePick: false });
-      s.updatePattern(p.id, { plane });
+      s.updatePattern(p.id, connector ? { plane, placed: p.placed ?? {} } : { plane, placed: undefined });
     },
     createPattern: (kind) => {
       const s = get();
@@ -1397,7 +1404,7 @@ export const useStore = create<AppState>((set, get) => {
               amount: String(Math.ceil(width + 5)),
               axis: "x",
             };
-      change((doc) => updateAssembly(doc, asm.id, (a) => syncPattern(a, pattern, () => newId("i"), symmetricIn(s.parts))));
+      change((doc) => updateAssembly(doc, asm.id, (a) => syncPattern(a, pattern, () => newId("i"), symmetricIn(s.parts, doc.assemblies))));
       set({ editingPattern: pattern.id, asmSelection: [], mirrorFacePick: false });
     },
     updatePattern: (id, patch) => {
@@ -1409,7 +1416,7 @@ export const useStore = create<AppState>((set, get) => {
       for (const k of Object.keys(next) as (keyof AssemblyPattern)[]) if (next[k] === undefined) delete next[k];
       const parts = get().parts;
       change((doc) => {
-        const synced = updateAssembly(doc, asm.id, (a) => syncPattern(a, next, () => newId("i"), symmetricIn(parts)));
+        const synced = updateAssembly(doc, asm.id, (a) => syncPattern(a, next, () => newId("i"), symmetricIn(parts, doc.assemblies)));
         // Across a face: the copies' places come from where the face is, so put them there now.
         if (!next.plane && !p.plane) return synced;
         const solvedAsm = synced.assemblies?.find((a) => a.id === asm.id);
@@ -1564,6 +1571,18 @@ export const useStore = create<AppState>((set, get) => {
       const solved = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
       change((doc) => updateAssembly(settleSolved(doc, asm.id, solved), asm.id, (a) => setInstancesOff(a, ids, suppressed)));
       if (suppressed) set((st) => ({ asmSelection: st.asmSelection.filter((x) => !ids.includes(x)) }));
+    },
+
+    setInstanceFlexible: (id, flexible) => {
+      const s = get();
+      const asm = activeAssembly(s);
+      if (!asm) return;
+      // Then solved again with its parts free (or held) — and left where that puts everything.
+      change((doc) => {
+        const next = updateAssembly(doc, asm.id, (a) => setFlexible(a, id, flexible));
+        const changed = next.assemblies?.find((a) => a.id === asm.id);
+        return changed ? settleSolved(next, asm.id, solveWithParts(changed, s.parts, { assemblies: next.assemblies })) : next;
+      });
     },
     toggleInstanceHidden: (id) =>
       set((s) => ({ hiddenInstances: s.hiddenInstances.includes(id) ? s.hiddenInstances.filter((x) => x !== id) : [...s.hiddenInstances, id] })),

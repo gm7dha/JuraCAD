@@ -6,7 +6,7 @@
  * copy sits one step further along.
  */
 import { evaluate } from "../model/expr";
-import type { Assembly, AssemblyPattern, Instance } from "../model/types";
+import type { Assembly, AssemblyPattern, Instance, PlacedConnector } from "../model/types";
 import { compose, quatFromAxisAngle, rotate, type Placement, type Vec3 } from "./math";
 import { nextInstanceName, parseConnector, withMates } from "./assembly";
 import { quatFromBasis } from "./connectors";
@@ -44,6 +44,34 @@ export function placeCopy(p: AssemblyPattern, step: number, original: Placement,
   return compose(back, compose(turn, compose(toOrigin, original)));
 }
 
+/** The amounts a placed mate connector can be moved and tilted by (see PlacedConnector). */
+export const PLACED_KEYS = ["dx", "dy", "dz", "rx", "ry"] as const;
+
+/**
+ * Where a placed mate connector is: the frame it sits at on its face or edge
+ * (as a placement: origin and axes), moved along its own X, Y and Z, then
+ * tilted about its own X and then Y. An amount that can't be read is the
+ * error (plain words).
+ */
+export function placedConnector(frame: Placement, placed: PlacedConnector): Placement | { error: string } {
+  const read: Record<string, number> = {};
+  const labels: Record<(typeof PLACED_KEYS)[number], string> = { dx: "Move X", dy: "Move Y", dz: "Move Z", rx: "Tilt about X", ry: "Tilt about Y" };
+  for (const k of PLACED_KEYS) {
+    const src = placed[k]?.trim();
+    if (!src) {
+      read[k] = 0;
+      continue;
+    }
+    const v = evaluate(src);
+    if (!v.ok) return { error: `${labels[k]}: ${v.error}` };
+    read[k] = v.value;
+  }
+  const move: Placement = { position: [read.dx, read.dy, read.dz], rotation: [0, 0, 0, 1] };
+  const tiltX: Placement = { position: [0, 0, 0], rotation: quatFromAxisAngle([1, 0, 0], (read.rx * Math.PI) / 180) };
+  const tiltY: Placement = { position: [0, 0, 0], rotation: quatFromAxisAngle([0, 1, 0], (read.ry * Math.PI) / 180) };
+  return compose(compose(compose(frame, move), tiltX), tiltY);
+}
+
 /** A plane to mirror across: a point on it and the direction square to it (any length). */
 export interface MirrorPlane {
   point: Vec3;
@@ -52,11 +80,21 @@ export interface MirrorPlane {
 
 /**
  * A plane of a part's own (in its own coordinates) that the part is
- * symmetric across: square to its own `axis`, at `at` mm along it.
+ * symmetric across: square to its own `axis`, at `at` mm along it — or, when
+ * `normal` is given, square to that direction (any way round; `axis` is then
+ * just the nearest of X, Y and Z): every point p on it has p · normal = at.
  */
 export interface OwnPlane {
   axis: "x" | "y" | "z";
   at: number;
+  /** A slanted plane's direction (length 1, in the part's own coordinates). */
+  normal?: Vec3;
+}
+
+/** The same plane on the part's mirror image (the part flipped across its own YZ plane, as a mirrored instance shows it). */
+export function flipOwnPlane(own: OwnPlane): OwnPlane {
+  if (own.normal) return { ...own, normal: [-own.normal[0], own.normal[1], own.normal[2]] };
+  return own.axis === "x" ? { axis: "x", at: -own.at } : own;
 }
 
 /** The part's own YZ plane: how a mirrored copy is shown (Instance.mirrored). */
@@ -91,16 +129,27 @@ export function mirrorAcross(plane: MirrorPlane, q: Placement, own: OwnPlane = O
     const d = 2 * (v[0] * n[0] + v[1] * n[1] + v[2] * n[2]);
     return [v[0] - d * n[0], v[1] - d * n[1], v[2] - d * n[2]];
   };
-  // Columns of the copy's turn: the original's axes, its own `own` axis flipped (the part reflected in itself), then reflected.
+  // Columns of the copy's turn: the original's axes, reflected in the part's own plane `own` (the part reflected in
+  // itself), then reflected across the mirror plane.
   const k = own.axis === "x" ? 0 : own.axis === "y" ? 1 : 2;
+  const m = own.normal;
+  const ownReflect = (e: Vec3): Vec3 => {
+    if (!m) {
+      const out: Vec3 = [...e];
+      out[k] = -out[k];
+      return out;
+    }
+    const d = 2 * (e[0] * m[0] + e[1] * m[1] + e[2] * m[2]);
+    return [e[0] - d * m[0], e[1] - d * m[1], e[2] - d * m[2]];
+  };
   const col = (j: number): Vec3 => {
     const e: Vec3 = [0, 0, 0];
-    e[j] = j === k ? -1 : 1;
-    return reflect(rotate(q.rotation, e));
+    e[j] = 1;
+    return reflect(rotate(q.rotation, ownReflect(e)));
   };
   // Where the copy's own origin goes: the original's point that the part's own reflection takes the origin to, mirrored.
-  const o: Vec3 = [0, 0, 0];
-  o[k] = 2 * own.at;
+  const o: Vec3 = m ? [2 * own.at * m[0], 2 * own.at * m[1], 2 * own.at * m[2]] : [0, 0, 0];
+  if (!m) o[k] = 2 * own.at;
   const w = rotate(q.rotation, o);
   const rel: Vec3 = [q.position[0] + w[0] - c[0], q.position[1] + w[1] - c[1], q.position[2] + w[2] - c[2]];
   const r = reflect(rel);
@@ -114,8 +163,8 @@ export function mirrorAcross(plane: MirrorPlane, q: Placement, own: OwnPlane = O
  */
 export function syncPattern(a: Assembly, p: AssemblyPattern, newId: () => string, symmetric: (seed: Instance) => boolean = () => false): Assembly {
   const step = patternStep(p);
-  // (A sub-assembly can be repeated in a line or round, but not mirrored: its mirror image would be a different assembly.)
-  const seeds = p.seeds.map((id) => a.instances.find((i) => i.id === id)).filter((i): i is Instance => !!i && !i.copyOf && !(p.kind === "mirror" && i.subAssembly));
+  // (A mirrored sub-assembly copy is the whole sub-assembly's mirror image — or, for a symmetric one when asked, the same one turned.)
+  const seeds = p.seeds.map((id) => a.instances.find((i) => i.id === id)).filter((i): i is Instance => !!i && !i.copyOf);
   const keep: Instance[] = [];
   let instances = a.instances.filter((i) => i.copyOf?.pattern !== p.id);
   const old = a.instances.filter((i) => i.copyOf?.pattern === p.id);
@@ -210,6 +259,9 @@ export function parsePattern(raw: unknown, instanceIds: Set<string>): AssemblyPa
   const centre = Array.isArray(r.centre) && r.centre.length === 3 && r.centre.every((v) => typeof v === "number" && Number.isFinite(v)) ? (r.centre as [number, number, number]) : undefined;
   // Mirrors: across a flat face (instead of an assembly plane), and the same part for symmetric parts.
   const plane = r.kind === "mirror" && r.plane ? parseConnector(r.plane) : null;
+  // (Across a mate connector placed on that face or edge: its moves and tilts, as typed.)
+  const placedRaw = plane && r.placed && typeof r.placed === "object" ? (r.placed as Record<string, unknown>) : null;
+  const placed = placedRaw ? Object.fromEntries(PLACED_KEYS.filter((k) => typeof placedRaw[k] === "string" && (placedRaw[k] as string).trim()).map((k) => [k, (placedRaw[k] as string).slice(0, 200)])) : null;
   return {
     id: r.id,
     name: typeof r.name === "string" && r.name.trim() ? r.name.slice(0, 80) : "Pattern",
@@ -222,6 +274,7 @@ export function parsePattern(raw: unknown, instanceIds: Set<string>): AssemblyPa
     ...(centre ? { centre } : {}),
     ...(plane ? { plane } : {}),
     ...(r.kind === "mirror" && r.samePart === true ? { samePart: true } : {}),
+    ...(placed ? { placed } : {}),
   };
 }
 

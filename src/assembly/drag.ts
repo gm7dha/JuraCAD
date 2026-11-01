@@ -74,6 +74,9 @@ export function planDrag(
     return { refuse: `${instance.name} is in ${group.name}, which can't be dragged from here. Move the part it's mated to, or ungroup it.` };
   }
 
+  // A flexible sub-assembly placed through a part inside it that nothing here holds by a mate (an inner mate does).
+  if (mateId?.startsWith("flexible:")) return { refuse: `${instance.name} is placed through a part inside it, which can't be dragged from here. Move the part it's mated to.` };
+
   if (!mateId) {
     if (instance.fixed) return { refuse: `${instance.name} is fixed. Unfix it (toolbar) to move it.` };
     const start = solved.placements[instanceId] ?? instance.placement;

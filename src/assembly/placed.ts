@@ -56,5 +56,5 @@ export function instancesForKernel(
   shift?: Record<string, Vec3>,
 ): InstanceInput[] {
   const own = (id: string) => assembly.instances.find((i) => i.id === id)?.placement ?? IDENTITY;
-  return kernelInstances(leavesOf(assembly, parts, assemblies), parts, shown ?? solved.placements, (id) => solved.placements[id] ?? own(id), shift);
+  return kernelInstances(leavesOf(assembly, parts, assemblies, solved.inner), parts, shown ?? solved.placements, (id) => solved.placements[id] ?? own(id), shift);
 }

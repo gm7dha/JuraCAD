@@ -11,7 +11,7 @@ import { isOrigin } from "../assembly/origin";
 import { clickedSpot, findPick, framePlacement } from "../assembly/connectors";
 import { explodeAssembly, useAssemblyLeaves, useSolvedAssembly } from "../app/assemblySolve";
 import { stepPartOffsets } from "../assembly/explode";
-import { instanceAt, leafKey, topOfKey, type Leaf } from "../assembly/subassembly";
+import { instanceAt, leafKey, leavesOf, topOfKey, type Leaf } from "../assembly/subassembly";
 import type { MateConnector } from "../model/types";
 import type { Assembly } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
@@ -692,8 +692,10 @@ export function Viewport() {
     const shown = explodeAssembly(assembly, parts, solvedPlaces, explode, allAssemblies);
     // Exploded view steps can also move a part inside a sub-assembly on its own.
     const inner = explode === null ? NO_SHIFT : stepPartOffsets(assembly.explodeSteps ?? []);
+    // Parts inside flexible sub-assemblies: where this solve (with any mate being edited or dragged) puts them.
+    const shownLeaves = solved?.inner ? leavesOf(assembly, parts, allAssemblies ?? [], solved.inner) : leaves;
     return Object.fromEntries(
-      leaves.map((l) => {
+      shownLeaves.map((l) => {
         // Parts inside a sub-assembly ride along with it.
         const at = shown[l.top] ?? IDENTITY;
         const m = placementMatrix(l.path.length ? compose(at, l.relative) : at);
