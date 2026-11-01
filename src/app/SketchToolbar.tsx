@@ -34,7 +34,7 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "mirror", label: "Mirror", key: "M", icon: <Icons.Mirror />, hint: "Click the line to mirror about, then the shapes to copy across (or select the shapes first). The copies follow the originals" },
   { tool: "sketchTransform", label: "Move / copy", key: "", icon: <Icons.Move />, hint: "Click shapes, then move, turn or copy them by the amounts in the sketch panel" },
   { tool: "sketchPattern", label: "Pattern", key: "", icon: <Icons.SketchPattern />, hint: "Click shapes to repeat them in a row or round a centre (set how many and how far apart in the sketch panel). The copies follow the originals" },
-  { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part to copy them into the sketch (they follow the part if it changes)" },
+  { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part, or another sketch's lines and curves, to copy them into the sketch (they follow the original if it changes)" },
   { tool: "intersect", label: "Intersect", key: "", icon: <Icons.Intersect />, hint: "Click a face of a part the sketch passes through: where the sketch cuts it comes in as dashed lines that follow the part" },
   { tool: "text", label: "Text", key: "", icon: <Icons.Text />, hint: "Type the words in the sketch panel, then click where they go. Their letters are shapes you can extrude" },
 ];

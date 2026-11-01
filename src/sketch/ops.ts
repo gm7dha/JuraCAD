@@ -807,6 +807,16 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
   return RELATION_HINTS[tool] + ".";
 }
 
+/**
+ * Whether working out this relation can take a moment (a second or more on a
+ * busy sketch): one that touches a spline or an ellipse, where the solver has
+ * to search along the curve. The app shows "Working…" first for these.
+ */
+export function relationMayTakeAWhile(s: SketchData, tool: RelationTool, selection: string[]): boolean {
+  if (tool !== "tangent" && tool !== "normal" && tool !== "curvature" && tool !== "equal" && tool !== "concentric") return false;
+  return selection.some((id) => isWavy(curveById(s, id)));
+}
+
 /** Apply a relation (horizontal, tangent, …) to the selection. */
 export function applyRelation(s: SketchData, tool: RelationTool, picked: string[]): EditResult {
   // The same thing picked twice counts once.

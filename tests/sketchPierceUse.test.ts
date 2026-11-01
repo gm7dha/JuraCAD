@@ -229,7 +229,7 @@ describe("Use on curved edges", () => {
     // Saved and read back, the link is kept.
     expect((parseSketchData(JSON.parse(JSON.stringify(r.sketch)))!.curves[0] as SketchSpline).link).toEqual(sp.link);
     // Without a shape, a curved edge still can't be used (as before).
-    expect(linkEdge(emptySketch(), { ...edge, shape: undefined }, false).error).toMatch(/Only straight and round edges/);
+    expect(linkEdge(emptySketch(), { ...edge, shape: undefined }, false).error).toMatch(/can.t be used in a sketch/);
   });
 
   it("a spline copy keeps running the same way when its edge now runs the other way", () => {

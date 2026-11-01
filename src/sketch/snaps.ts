@@ -27,6 +27,8 @@ export interface SnapOptions {
   skip?: (e: RefEdge) => boolean;
   /** Points and curves to leave out (e.g. what's being dragged). */
   ignore?: Set<string>;
+  /** Snap to nothing: the point goes exactly where the pointer is (Shift held while drawing or dragging, as in Onshape). */
+  free?: boolean;
 }
 
 export interface SnapResult {
@@ -94,6 +96,7 @@ function centreIds(s: SketchData): Set<string> {
 
 /** Where a click at (x, y) lands, and what to highlight. */
 export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): SnapResult {
+  if (o.free) return { placed: { x, y, snap: null }, hover: null, hints: [] };
   const ignore = o.ignore ?? new Set<string>();
   const refs = o.refs ?? [];
   // Only the references near the pointer are looked at (a busy design offers thousands); things in
@@ -200,6 +203,19 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
 export function nearRefs(refs: RefEdge[], x: number, y: number, r: number, skip?: (e: RefEdge) => boolean): SketchData {
   const near = refIndex(refs).near(x, y, r);
   return refSketchOf(refs, skip ? near.filter((i) => !skip(refs[i])) : near);
+}
+
+/**
+ * Another sketch's line, circle, arc or curve under the pointer (within
+ * `tol`), for the Use tool, which copies it in as real geometry that follows
+ * it. Null when there's none there (points don't count).
+ */
+export function sketchCurveAt(refs: RefEdge[], x: number, y: number, tol: number, skip?: (e: RefEdge) => boolean): RefEdge | null {
+  if (!refs.length) return null;
+  const virt = nearRefs(refs, x, y, tol, (e) => !e.source || e.kind === "point" || e.pierce === true || !!skip?.(e));
+  const v = hitTest(virt, x, y, 0, tol, { origin: false });
+  if (v?.kind !== "curve") return null;
+  return refs[parseRefId(v.id)?.index ?? -1] ?? null;
 }
 
 /**
