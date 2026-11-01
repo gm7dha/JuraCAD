@@ -88,7 +88,7 @@ async function main() {
     { name: "juracad", version: VERSION },
     {
       capabilities: { tools: {} },
-      instructions: `JuraCAD builds 3D parts for the user, step by step, with a real CAD engine; the result is a .juracad file they open at https://gm7dha.github.io/JuraCAD/ where everything stays editable.\n${FORMAT_GUIDE}`,
+      instructions: `JuraCAD builds 3D parts for the user, step by step, with a real CAD engine — and assemblies of them, and 2D drawings (PDF, SVG, DXF); the result is a .juracad file they open at https://gm7dha.github.io/JuraCAD/ where everything stays editable.\n${FORMAT_GUIDE}`,
     },
   );
 
@@ -102,7 +102,9 @@ async function main() {
     })),
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  // A call Claude cancels (notifications/cancelled) aborts `extra.signal`: the tool stops at its next
+  // checkpoint and puts the design back, and the SDK sends no reply for it.
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     try {
       await engineReady;
     } catch (e) {
@@ -112,7 +114,7 @@ async function main() {
       session = new Session(folder);
       session.live = live;
     }
-    const result = await callTool(session, request.params.name, request.params.arguments ?? {});
+    const result = await callTool(session, request.params.name, request.params.arguments ?? {}, extra.signal);
     return { content: result.content, ...(result.isError ? { isError: true } : {}) };
   });
 

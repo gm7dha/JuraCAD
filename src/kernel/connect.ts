@@ -9,10 +9,8 @@ import { studiosOf } from "../model/studios";
 import type { StudioInput } from "./protocol";
 import type { JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
-import { switchConfiguration } from "../model/configurations";
-import { setCurrentScope } from "../model/expr";
 import { KernelClient } from "./client";
-import { featureForEngine, featuresForEngine } from "./buildInput";
+import { configuredStudioInputs, featureForEngine, featuresForEngine } from "./buildInput";
 
 let client: KernelClient | null = null;
 
@@ -41,15 +39,7 @@ function currentStudios(): StudioInput[] {
 let configuredCache: { doc: JuraCADDocument; list: StudioInput[] } | null = null;
 function configuredStudios(doc: JuraCADDocument): StudioInput[] {
   if (configuredCache?.doc === doc) return configuredCache.list;
-  const list: StudioInput[] = [];
-  for (const { studioId, configurationId } of configurationsInUse(doc)) {
-    const shown = switchConfiguration(doc, configurationId);
-    const studio = studiosOf(shown).find((x) => x.id === studioId);
-    if (!studio) continue;
-    list.push({ id: `${studioId}@${configurationId}`, features: featuresForEngine(studio.features), variables: resolveVariables(shown.variables).values, partSuffix: `@${configurationId}` });
-  }
-  // Working out another configuration changes the values boxes use: put the ones on show back.
-  if (list.length) setCurrentScope(resolveVariables(doc.variables).values);
+  const list = configuredStudioInputs(doc);
   configuredCache = { doc, list };
   return list;
 }

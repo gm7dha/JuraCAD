@@ -93,7 +93,9 @@ export function HelpDialog() {
       <p className="small">
         Describe a part in plain English — say, "a 60 × 40 mm mounting bracket, 3 mm thick, with four M4 holes 5 mm in
         from the corners" — and Claude builds it step by step with JuraCAD's own geometry engine, checks it, and saves a
-        .juracad file. Open that file here with Open: every feature and dimension can still be changed.
+        .juracad file. Open that file here with Open: every feature and dimension can still be changed. Claude can also
+        put parts together in an assembly (with mates, a clash check and an exploded view) and make 2D drawings with
+        dimensions and a title block, saved as PDF, SVG or DXF.
       </p>
       <ol className="small help-steps">
         <li>
@@ -120,7 +122,7 @@ export function HelpDialog() {
       </p>
       <ul className="small help-steps">
         <li>It works with every Claude chat that has JuraCAD — Claude runs the extension once per chat, and JuraCAD links them all, including chats you start after connecting (within a few seconds).</li>
-        <li>Ask Claude for changes in the Claude app, e.g. "add four M3 holes to the lid". Its sketches and features appear in the feature list and the 3D view as it works, on the Part Studio on show.</li>
+        <li>Ask Claude for changes in the Claude app, e.g. "add four M3 holes to the lid". Its sketches and features appear in the feature list and the 3D view as it works, on the Part Studio on show; assemblies and drawings it makes appear as new tabs.</li>
         <li>Each of Claude's changes is one step you can undo (Ctrl+Z / ⌘Z). You can keep editing too: if you both change something at the same moment, Claude's change is turned back and it tries again, so nothing is lost. Finish any open dialog (✓ or ✗) so Claude can carry on.</li>
         <li>Works in Chrome, Edge and Firefox. Safari doesn't let websites talk to apps on your computer directly, so there Connect to Claude opens a small <b>JuraCAD ↔ Claude</b> window from the extension that passes messages along: allow the pop-up if Safari asks, and keep that window open while you work (closing it disconnects). If connecting doesn't work, ask Claude to save the design and open the .juracad file with Open.</li>
         <li>The link stays on this computer: only the JuraCAD website can use it, and Claude still only saves files in your JuraCAD folder.</li>

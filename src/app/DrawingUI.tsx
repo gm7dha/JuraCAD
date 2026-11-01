@@ -11,14 +11,11 @@ import { addPage, changePage, FIRST_PAGE, knownPage, missingPartMessage, nextLet
 
 import { arrangeLinedUp, arrangeViews, withoutFit, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetsPdf, sheetSvg } from "../drawing/export";
-import { surfacePointNearCentre } from "../drawing/annotations";
 import { autoDimensions } from "../drawing/autoDimension";
 import { holeOfCircle, tapSizes } from "../drawing/holeCallouts";
 import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } from "../drawing/symbols";
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
-import { applyPlacement } from "../assembly/math";
-import { findMesh } from "../assembly/configured";
-import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, resizedScale, scaleView, type Projections, type BomLine, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type PlacedDim, type Prim, type SheetLayout } from "../drawing/sheet";
+import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, resizedScale, scaleView, type Projections, type SheetInfo, scaleLabel, STANDARD_SCALES, SHEETS, LINE_STYLES, toSheet as toSheetPoint, fromSheet as fromSheetPoint, type PlacedDim, type Prim, type SheetLayout } from "../drawing/sheet";
 import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dimensionPaperScale, dragDimension, dragDimensionLabel, FITTABLE, fitOf, placeAngle, drawDimension, withDimPatch, type DimPatch, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { getKernel } from "../kernel/connect";
@@ -27,11 +24,9 @@ import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
 import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut } from "../model/types";
-import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection, viewKey } from "../drawing/sections";
+import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
-import { explodeAssembly, instancesForKernel } from "./assemblySolve";
-import { stepPartOffsets } from "../assembly/explode";
-import { solveWithParts } from "../assembly/mates";
+import { balloonsFor, drawingDate, drawingSubject, sheetInfo, viewScales } from "../drawing/sheetSource";
 import { drawingBom } from "../assembly/drawingBom";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
@@ -39,30 +34,6 @@ import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
 import { inPopup } from "./popupGuard";
 
-
-/** What a drawing shows, ready for the geometry engine (null when its part has gone). */
-function drawingSubject(
-  drawing: Drawing,
-  doc: JuraCADDocument,
-  parts: PartMesh[],
-): { name: string; partIds: string[]; instances?: InstanceInput[]; key: unknown[] } | null {
-  const src = drawing.source;
-  if (!src) return null;
-  if (src.kind === "part") {
-    const part = parts.find((p) => p.id === src.id);
-    return part ? { name: part.name, partIds: [part.id], key: [part] } : null;
-  }
-  const asm = doc.assemblies?.find((a) => a.id === src.id);
-  if (!asm) return null;
-  // Parts inside sub-assemblies are drawn too, carried along with them (exploded, a sub-assembly moves out as one piece).
-  const assemblies = doc.assemblies ?? [];
-  const solved = solveWithParts(asm, parts, { assemblies });
-  const tops = Object.fromEntries(asm.instances.map((i) => [i.id, solved.placements[i.id] ?? i.placement]));
-  const instances = drawing.exploded
-    ? instancesForKernel(asm, parts, assemblies, solved, explodeAssembly(asm, parts, tops, asm.explode ?? 1, assemblies), stepPartOffsets(asm.explodeSteps ?? []))
-    : instancesForKernel(asm, parts, assemblies, solved, tops);
-  return { name: asm.name, partIds: [], instances, key: [JSON.stringify(instances), ...instances.map((i) => findMesh(parts, i.partId))] };
-}
 
 /** What a drawing sheet can show: each Part Studio's parts, then the assemblies (sub-assemblies are assemblies too). */
 function sourceGroups(doc: JuraCADDocument, parts: PartMesh[]): { label: string; items: { value: string; name: string; source: NonNullable<Drawing["source"]> }[] }[] {
@@ -80,23 +51,6 @@ function sourceGroups(doc: JuraCADDocument, parts: PartMesh[]): { label: string;
 function sourceName(src: Drawing["source"], doc: JuraCADDocument, parts: PartMesh[]): string | null {
   if (!src) return null;
   return src.kind === "part" ? (parts.find((p) => p.id === src.id)?.name ?? null) : (doc.assemblies?.find((a) => a.id === src.id)?.name ?? null);
-}
-
-/** A spot on one copy of each listed part, for the balloons to point at. */
-function balloonsFor(bom: BomLine[] | undefined, instances: InstanceInput[] | undefined, parts: PartMesh[]): SheetInfo["balloons"] {
-  if (!bom?.length || !instances?.length) return undefined;
-  const out: NonNullable<SheetInfo["balloons"]> = [];
-  for (const row of bom) {
-    // Mirrored copies are their own line ("…~mirrored").
-    const mirrored = !!row.partId?.endsWith("~mirrored");
-    const partId = mirrored ? row.partId!.slice(0, -"~mirrored".length) : row.partId;
-    const inst = instances.find((i) => i.partId === partId && !!i.mirrored === mirrored);
-    const mesh = partId ? findMesh(parts, partId) : undefined;
-    const local = mesh ? surfacePointNearCentre(mesh.vertices) : null;
-    const spot = local && mirrored ? ([-local[0], local[1], local[2]] as typeof local) : local;
-    if (inst && spot) out.push({ item: row.item, at: applyPlacement({ position: inst.position, rotation: inst.rotation }, spot) });
-  }
-  return out;
 }
 
 /** Projections already worked out, by drawing sheet (kept while switching tabs). */
@@ -248,12 +202,6 @@ function viewName(d: Pick<Drawing, "sections" | "details">, v: { kind: Drawing["
   return VIEW_LABELS[v.kind];
 }
 
-/** Each view's scale for a sheet scale: its own, or the sheet's. */
-const viewScales = (d: Pick<Drawing, "views">, sheetScale: number) => {
-  const own = new Map(d.views.filter((v) => v.scale && v.kind !== "detail").map((v) => [viewKey(v), v.scale!]));
-  return (view: string) => own.get(view) ?? sheetScale;
-};
-
 /**
  * A drawing with Fit to sheet's room for its dimensions worked out again (see
  * planFit): done when the user asks — Auto dimension, Arrange, or choosing Fit
@@ -269,9 +217,7 @@ export function arrangeDrawing() {
   changeShownPage((x) => withFit(arrangeViews(x), sheet?.projections, sheet?.info));
 }
 
-function today(): string {
-  return new Date().toLocaleDateString("en-GB");
-}
+const today = () => drawingDate();
 
 /** Auto dimension: add the sizes the drawing sheet needs (see autoDimension.ts). One undo step. */
 export function autoDimensionDrawing() {
@@ -296,13 +242,6 @@ export function autoDimensionDrawing() {
   const count = (next.dimensions?.length ?? 0) - existing.length;
   s.changeDrawing((x) => changePage(x, sheet.pageId, () => next));
   s.showToast(`Added ${count} dimension${count === 1 ? "" : "s"}. Drag a number to move it, or select one and press Delete.`, "success");
-}
-
-/** The title block and tables' details for one sheet of a drawing. */
-function sheetInfo(page: Drawing, doc: JuraCADDocument, parts: PartMesh[], subject: string, instances: InstanceInput[] | undefined, sheetNo: number, sheetCount: number): SheetInfo {
-  const bom = drawingBom(page, doc, parts);
-  const balloons = balloonsFor(bom, instances, parts);
-  return { designName: doc.name, subject, date: today(), bom, balloons, taps: tapSizes(doc, page), ...(sheetCount > 1 ? { sheetNo, sheetCount } : {}) };
 }
 
 /**
