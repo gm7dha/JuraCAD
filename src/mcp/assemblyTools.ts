@@ -8,7 +8,8 @@
  * "E5", {"near": [x, y, z]}) — but as the copy sits in the assembly: "top" is
  * the copy's face facing +Z now, and positions are assembly positions.
  */
-import { addAssembly, billOfMaterials, insertInstance, placedBox, putMate, removeInstances, removeMate, renameAssembly, setExplode, settleSolved, spotBeside, updateInstance, type Box3 } from "../assembly/assembly";
+import { addAssembly, billOfMaterials, insertInstance, placedBox, putMate, removeInstances, removeMate, renameAssembly, setExplode, settleSolved, spotBeside, updateAssembly, updateInstance, type Box3 } from "../assembly/assembly";
+import { setFlexible } from "../assembly/flexible";
 import { DEFAULT_CLASH_OPTIONS, assemblyReport, judgeContacts, type ClashOptions } from "../assembly/assemblyCheck";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { applyPlacement, compose, eulerDegFromQuat, IDENTITY, quatFromEulerDeg, rotate, type Placement, type Vec3 } from "../assembly/math";
@@ -476,14 +477,14 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
     name: "place_instance",
     title: "Move, fix or switch off a copy",
     description:
-      'Change a copy in an assembly: "at" [x, y, z] (mm) and "rotate" [about X, about Y, about Z] (degrees) set where it sits (a copy placed by a mate goes where the mate puts it, whatever this says), "fixed": true holds it where it is (mates then move the other part), "suppressed": true switches it off (left out of the parts list, exports and checks), "name" renames it.',
+      'Change a copy in an assembly: "at" [x, y, z] (mm) and "rotate" [about X, about Y, about Z] (degrees) set where it sits (a copy placed by a mate goes where the mate puts it, whatever this says), "fixed": true holds it where it is (mates then move the other part), "suppressed": true switches it off (left out of the parts list, exports and checks), "flexible": true lets the parts inside a sub-assembly copy move (its own mates still hold them; a mate in this assembly can then move a part inside it, as in Onshape\'s Make flexible) — false makes it one rigid piece again, "name" renames it.',
     inputSchema: {
       type: "object",
-      properties: { assembly: ASSEMBLY_REF, instance: INSTANCE_REF, at: { type: "array", items: {} }, rotate: { type: "array", items: {} }, fixed: { type: "boolean" }, suppressed: { type: "boolean" }, name: { type: "string" } },
+      properties: { assembly: ASSEMBLY_REF, instance: INSTANCE_REF, at: { type: "array", items: {} }, rotate: { type: "array", items: {} }, fixed: { type: "boolean" }, suppressed: { type: "boolean" }, flexible: { type: "boolean" }, name: { type: "string" } },
       required: ["instance"],
     },
     run: async (s, a) => {
-      noExtras(a, ["assembly", "instance", "at", "rotate", "fixed", "suppressed", "name"], "place_instance");
+      noExtras(a, ["assembly", "instance", "at", "rotate", "fixed", "suppressed", "flexible", "name"], "place_instance");
       const asm = findAssembly(s, a.assembly);
       const inst = byName(asm.instances, a.instance, "instance", "copy", "insert parts with insert_into_assembly.");
       const solved = solve(s, asm);
@@ -499,14 +500,20 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
         if (asm.instances.some((i) => i.id !== inst.id && i.name.toLowerCase() === name.toLowerCase())) throw new InputError(`There's already a copy called "${name}" in ${asm.name}. Choose another name.`);
         patch.name = name;
       }
-      if (!Object.keys(patch).length) throw new InputError('Say what to change: "at", "rotate", "fixed", "suppressed" or "name".');
+      const flexible = a.flexible === undefined ? undefined : bool(a.flexible, "flexible");
+      if (flexible !== undefined && (!inst.subAssembly || inst.mirrored))
+        throw new InputError(`"flexible" is for sub-assembly copies (not mirror images); ${inst.name} ${inst.subAssembly ? "is a mirror image" : "is a part"}.`);
+      if (!Object.keys(patch).length && flexible === undefined) throw new InputError('Say what to change: "at", "rotate", "fixed", "suppressed", "flexible" or "name".');
       // Fixing a copy keeps it where the mates have put it.
       if (patch.fixed && !patch.placement) patch.placement = now;
-      const r = await tryAssemblyChange(s, asm.id, updateInstance(s.doc, asm.id, inst.id, patch), `change ${inst.name}`);
+      let next = Object.keys(patch).length ? updateInstance(s.doc, asm.id, inst.id, patch) : s.doc;
+      if (flexible !== undefined) next = updateAssembly(next, asm.id, (x) => setFlexible(x, inst.id, flexible));
+      const r = await tryAssemblyChange(s, asm.id, next, `change ${inst.name}`);
       const after = r.asm.instances.find((i) => i.id === inst.id)!;
       const by = r.solved.drivenBy[inst.id] ? r.asm.mates?.find((m) => m.id === r.solved.drivenBy[inst.id])?.name : null;
       return say(
-        `${after.name}: ${after.suppressed ? "suppressed (switched off)" : after.fixed ? "fixed" : by ? `placed by ${by}` : "free"}, ${placementText(r.solved.placements[after.id] ?? after.placement)}.`,
+        `${after.name}: ${after.suppressed ? "suppressed (switched off)" : after.fixed ? "fixed" : by ? `placed by ${by}` : "free"}${after.flexible && !after.mirrored ? ", flexible" : ""}, ${placementText(r.solved.placements[after.id] ?? after.placement)}.`,
+        r.solved.flexErrors?.[after.id] ? `Inside it: ${r.solved.flexErrors[after.id]}` : null,
         patch.placement && by && !after.fixed ? `Note: ${by} decides where it sits, so the position given only matters if that mate is removed.` : null,
       );
     },
@@ -696,7 +703,7 @@ export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "st
     if (format === "stl") return new Uint8Array(e.exportStl([], "normal", instances).stl);
     if (format === "3mf") return new Uint8Array(e.export3mf([], "normal", `${s.doc.name} ${asm.name}`, s.doc.appearance ?? {}, instances).data);
     // STEP keeps the assembly's structure (sub-assemblies, each part once, every copy placed), as the app's export does.
-    const tree = stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc));
+    const tree = stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc), solved.inner);
     return new Uint8Array((await e.exportStep([], s.doc.appearance ?? {}, instances, tree ?? undefined)).step);
   });
   return { bytes, count: instances.length };

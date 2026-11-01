@@ -1445,6 +1445,41 @@ try {
     await page.getByRole("button", { name: "Close pattern" }).click();
     subReport += `; its STEP file kept the structure (Assembly 1 defined once, used twice; ${shapes} part shape(s)); an exploded view step moved one part inside a copy; Part 2 mirrored across a face${mirrorState.inner ? " of a part inside a copy" : ""} ${sameHand ? "as the same part (symmetric)" : "as a mirror image"}`;
 
+    // Make the mated copy flexible (Onshape's Make flexible): its parts join this assembly's solve. Nothing jumps —
+    // the mate on a part inside it still holds — and it says so in its row; Undo makes it rigid again.
+    step = "making a sub-assembly flexible";
+    const innerFace = () =>
+      page.evaluate(({ second }) => {
+        const v = window.juracadViewport.current;
+        return v
+          .shownParts()
+          .filter((p) => p.id.startsWith(`${second}/`))
+          .map((p) => ({ key: p.id, at: v.screenPointOnFace(p.id, p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99)) }));
+      }, asm2);
+    const rigidSpots = await innerFace();
+    const bomRigid = await page.locator(".bom-table").innerText();
+    const copyRow = page.locator(".feature-row", { hasText: "Assembly 1 <2>" }).first();
+    if (!/\bselected\b/.test((await copyRow.getAttribute("class")) ?? "")) await copyRow.click();
+    await page.getByLabel("Flexible (its parts can move here)").check();
+    await page.waitForSelector('.feature-row:has-text("Assembly 1 <2>") >> text=flexible', { timeout: 5_000 });
+    const flexState = await page.evaluate(({ id, second }) => window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.id === second).flexible ?? false, asm2);
+    if (flexState !== true) throw new Error("ticking Flexible didn't make the copy flexible");
+    if ((await page.locator(".panel-section.mates .feature-row.failed").count()) > 0) throw new Error(`a mate fails once the copy is flexible: ${await page.locator(".panel-section.mates .feature-row.failed").first().getAttribute("title")}`);
+    if ((await page.locator(".instance-panel .param-message.error").count()) > 0) throw new Error(`the flexible copy has a problem: ${await page.locator(".instance-panel .param-message.error").first().innerText()}`);
+    await page.waitForTimeout(300);
+    const flexSpots = await innerFace();
+    for (const r of rigidSpots) {
+      const f = flexSpots.find((x) => x.key === r.key);
+      if (!r.at || !f?.at || Math.hypot(r.at.x - f.at.x, r.at.y - f.at.y) > 2) throw new Error(`a part inside the copy jumped when it was made flexible (${r.key}: ${JSON.stringify(r.at)} → ${JSON.stringify(f?.at)})`);
+    }
+    if ((await page.locator(".bom-table").innerText()) !== bomRigid) throw new Error("the parts list changed when the copy was made flexible");
+    await shot("subassembly-flexible");
+    // (Undo from the top bar's button, as the checkbox still has the keyboard.)
+    await page.evaluate(() => document.activeElement?.blur());
+    await tool("Undo");
+    await page.waitForFunction(({ id, second }) => !window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.id === second).flexible, asm2, { timeout: 5_000 });
+    subReport += `; Assembly 1 <2> made flexible (its parts stayed put, the mate on a part inside it still held), then undone`;
+
     // Double-click a sub-assembly to open it.
     await page.locator(".feature-row >> text=Assembly 1 <1>").dblclick();
     await page.waitForSelector(".tab.active >> text=Assembly 1", { timeout: 5_000 });

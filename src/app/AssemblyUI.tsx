@@ -14,7 +14,7 @@ import { evaluate } from "../model/expr";
 import { activeAssembly, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber, showLength, storeLength } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { Assembly, ConnectorSpot, ExplodeStep, Instance, Mate, MateConnector, MateRelation, MateType } from "../model/types";
+import type { Assembly, ConnectorSpot, ExplodeStep, Instance, Mate, MateConnector, MateRelation, MateType, PlacedConnector } from "../model/types";
 import { stepDistance, explodePartKey } from "../assembly/explode";
 import { newId } from "../model/document";
 import { MATE_ORDER, MATE_TYPES, mateLimits, mateValues } from "../assembly/mates";
@@ -258,7 +258,7 @@ export function AssemblyToolbar() {
   );
 }
 
-function InstanceRow({ instance, missing }: { instance: Instance; missing: boolean }) {
+function InstanceRow({ instance, missing, problem }: { instance: Instance; missing: boolean; problem?: string }) {
   const selected = useStore((s) => s.asmSelection.includes(instance.id));
   const hidden = useStore((s) => s.hiddenInstances.includes(instance.id));
   const colour = useStore((s) => s.history.present.appearance?.[instance.partId] ?? DEFAULT_PART_COLOUR);
@@ -267,7 +267,7 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
   return (
     <>
     <li
-      className={["feature-row", selected && "selected", hidden && "hidden", missing && "failed", instance.suppressed && "suppressed"].filter(Boolean).join(" ")}
+      className={["feature-row", selected && "selected", hidden && "hidden", (missing || problem) && "failed", instance.suppressed && "suppressed"].filter(Boolean).join(" ")}
       onClick={(e) => {
         const s = useStore.getState();
         const additive = e.shiftKey || e.ctrlKey || e.metaKey;
@@ -281,8 +281,10 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
           ? "Suppressed — switched off for now. Select it and click Unsuppress to bring it back."
           : missing
             ? "Its part no longer exists in the Part Studio"
-            : sub
-              ? `A copy of ${sub.name}, moving as one piece${instance.fixed ? " (fixed)" : ""}. Double-click to open ${sub.name} and change it — every copy follows.`
+            : problem
+              ? problem
+              : sub
+              ? `A ${instance.mirrored ? "mirror-image " : ""}copy of ${sub.name}, ${instance.flexible && !instance.mirrored ? "flexible (its parts can move here)" : "moving as one piece"}${instance.fixed ? " (fixed)" : ""}. Double-click to open ${sub.name} and change it — every copy follows.`
               : instance.fixed
                 ? "Fixed — it stays where it is"
                 : "Click to select; Shift-click to add"
@@ -310,9 +312,19 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
         </span>
       )}
       <span className="feature-name">{instance.name}</span>
+      {sub && instance.flexible && !instance.mirrored && (
+        <span className="instance-suppressed muted" title="Flexible: its parts can move here" aria-label="Flexible">
+          flexible
+        </span>
+      )}
       {instance.fixed && (
         <span className="instance-fixed" title="Fixed" aria-label="Fixed">
           <Icons.Pin size={15} />
+        </span>
+      )}
+      {problem && !missing && (
+        <span className="feature-error-icon" aria-label="Problem inside it" title={problem}>
+          <Icons.Warning size={16} />
         </span>
       )}
       {missing && (
@@ -471,6 +483,11 @@ function MatesSection({ assembly }: { assembly: Assembly }) {
           <MateRow key={m.id} mate={m} error={solved?.mateErrors[m.id]} instanceNames={instanceNames} inactive={mateInactive(assembly, m, allAssemblies)} />
         ))}
       </ul>
+      {Object.entries(solved?.flexErrors ?? {}).map(([id, text]) => (
+        <p key={id} className="param-message error flex-error">
+          {assembly.instances.find((i) => i.id === id)?.name ?? "A flexible copy"} (flexible): {text}
+        </p>
+      ))}
       {mates.length === 0 && assembly.instances.length >= 2 && (
         <p className="panel-hint">Join parts with a mate: choose Fasten, Hinge, Slider… in the toolbar, then click a face or edge on each part.</p>
       )}
@@ -602,6 +619,39 @@ function PatternsSection({ assembly }: { assembly: Assembly }) {
   );
 }
 
+/** A placed mate connector's moves and tilts (typed amounts: maths and variables work too). */
+function PlacedConnectorBoxes({ placed, onChange }: { placed: PlacedConnector; onChange: (p: PlacedConnector) => void }) {
+  const boxes: { key: keyof PlacedConnector; label: string; unit: string }[] = [
+    { key: "dx", label: "Move X", unit: "mm" },
+    { key: "dy", label: "Move Y", unit: "mm" },
+    { key: "dz", label: "Move Z", unit: "mm" },
+    { key: "rx", label: "Tilt about X", unit: "°" },
+    { key: "ry", label: "Tilt about Y", unit: "°" },
+  ];
+  return (
+    <>
+      {boxes.map((b) => {
+        const v = evaluate(placed[b.key] ?? "0");
+        return (
+          <div key={b.key}>
+            <NumberBox
+              label={b.label}
+              value={v.ok ? v.value : 0}
+              unit={b.unit}
+              onCommit={(n) => {
+                const next = { ...placed };
+                if (n === 0) delete next[b.key];
+                else next[b.key] = String(n);
+                onChange(next);
+              }}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 /** Settings of the pattern being edited; each change applies straight away (and can be undone). */
 export function PatternPanel() {
   const asm = useStore(activeAssembly);
@@ -657,26 +707,56 @@ export function PatternPanel() {
               <label htmlFor="asm-mirror-plane">Mirror across</label>
               <select
                 id="asm-mirror-plane"
-                value={p.plane || facePick ? "face" : p.axis}
+                value={facePick === "connector" || (p.plane && p.placed && !facePick) ? "connector" : p.plane || facePick ? "face" : p.axis}
                 onChange={(e) => {
                   if (e.target.value === "face") return st.setMirrorFacePick(true);
+                  if (e.target.value === "connector") return st.setMirrorFacePick("connector");
                   st.setMirrorFacePick(false);
-                  update({ axis: e.target.value as "x" | "y" | "z", plane: undefined });
+                  update({ axis: e.target.value as "x" | "y" | "z", plane: undefined, placed: undefined });
                 }}
               >
                 <option value="x">Right plane (left ↔ right)</option>
                 <option value="y">Front plane (front ↔ back)</option>
                 <option value="z">Top plane (up ↔ down)</option>
                 <option value="face">A flat face…</option>
+                <option value="connector">A mate connector you place…</option>
               </select>
             </div>
             {p.plane || facePick ? (
               <div className="param-field compact">
-                <span className="field-label">{facePick ? "Click a flat face in the view to mirror across." : `A face of ${planeOwner}`}</span>
+                <span className="field-label">
+                  {facePick === "connector"
+                    ? "Click a face or edge in the view to put the mate connector on. It mirrors across the connector's flat (XY) plane."
+                    : facePick
+                      ? "Click a flat face in the view to mirror across."
+                      : p.placed
+                        ? isOrigin(p.plane!)
+                          ? `A mate connector on the origin's ${originPlaneOf(p.plane!) ?? ""} plane`
+                          : `A mate connector on ${planeOwner}`
+                        : `A face of ${planeOwner}`}
+                </span>
                 {p.plane && (
-                  <button type="button" className="text-button" onClick={() => st.setMirrorFacePick(!facePick)}>
-                    {facePick ? "Keep this face" : "Pick another face"}
+                  <button type="button" className="text-button" onClick={() => st.setMirrorFacePick(facePick ? false : p.placed ? "connector" : true)}>
+                    {facePick ? (p.placed ? "Keep this connector" : "Keep this face") : p.placed ? "Put it somewhere else" : "Pick another face"}
                   </button>
+                )}
+                {(facePick === "connector" || (p.placed && !facePick)) && (
+                  <span className="origin-picks">
+                    {ORIGIN_PLANES.map((o) => (
+                      <button
+                        type="button"
+                        key={o}
+                        className="text-button"
+                        title={`Put the mate connector on the origin's ${o} plane instead`}
+                        onClick={() => {
+                          st.setMirrorFacePick(false);
+                          update({ plane: originConnector(o), placed: p.placed ?? {} });
+                        }}
+                      >
+                        {o} plane
+                      </button>
+                    ))}
+                  </span>
                 )}
               </div>
             ) : (
@@ -691,9 +771,10 @@ export function PatternPanel() {
                 }}
               />
             )}
+            {p.plane && p.placed && !facePick && <PlacedConnectorBoxes placed={p.placed} onChange={(placed) => update({ placed })} />}
             <label className="check-row">
               <input type="checkbox" checked={!!p.samePart} onChange={(e) => update({ samePart: e.target.checked ? true : undefined })} />
-              Same part for symmetric parts
+              Same part for symmetric parts (and sub-assemblies)
             </label>
             <p className="dialog-hint">
               {p.samePart
@@ -929,6 +1010,8 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
   const showNumbers = bom.some((r) => r.properties?.number);
   const total = bomTotalMass(bom);
   const kernelReady = useStore((s) => s.kernelStatus === "ready");
+  // Flexible copies with something inside them that can't be met: a warning on their row.
+  const flexProblems = useSolvedAssembly().solved?.flexErrors;
 
   return (
     <aside className="side-panel" aria-label="Assembly">
@@ -938,7 +1021,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
         </h3>
         <ul className="feature-list">
           {assembly.instances.map((i) => (
-            <InstanceRow key={i.id} instance={i} missing={kernelReady && !i.subAssembly && !partNames[i.partId]} />
+            <InstanceRow key={i.id} instance={i} missing={kernelReady && !i.subAssembly && !partNames[i.partId]} problem={flexProblems?.[i.id]} />
           ))}
         </ul>
         {assembly.instances.length === 0 && <p className="panel-hint">Click Insert to bring in parts from the Part Studio, or other assemblies.</p>}
@@ -1303,9 +1386,24 @@ export function InstancePanel() {
         </label>
         {instance.subAssembly && (
           <>
+            {!instance.mirrored && !instance.copyOf && (
+              <label className="check-row" title="Like Onshape's Make flexible: the parts inside this copy can move, following the mates here as well as its own">
+                <input type="checkbox" checked={!!instance.flexible} onChange={(e) => useStore.getState().setInstanceFlexible(instance.id, e.target.checked)} />
+                Flexible (its parts can move here)
+              </label>
+            )}
             <p className="dialog-hint">
-              A copy of <strong>{doc.assemblies?.find((a) => a.id === instance.subAssembly)?.name ?? "another assembly"}</strong>, moving as one piece. Mate it by clicking a face of any part inside it.
+              {instance.flexible && !instance.mirrored ? (
+                <>
+                  A flexible copy of <strong>{doc.assemblies?.find((a) => a.id === instance.subAssembly)?.name ?? "another assembly"}</strong>: its own mates still hold its parts together, but a mate here can move a part inside it (a hinge opens). Its fixed parts stay where they are in it.
+                </>
+              ) : (
+                <>
+                  A {instance.mirrored ? "mirror-image " : ""}copy of <strong>{doc.assemblies?.find((a) => a.id === instance.subAssembly)?.name ?? "another assembly"}</strong>, moving as one piece. Mate it by clicking a face of any part inside it.
+                </>
+              )}
             </p>
+            {solved?.flexErrors?.[instance.id] && <div className="param-message error">{solved.flexErrors[instance.id]}</div>}
             <button type="button" className="text-button" onClick={() => useStore.getState().setActiveTab(instance.subAssembly!)}>
               Open {doc.assemblies?.find((a) => a.id === instance.subAssembly)?.name ?? "it"} to change it
             </button>

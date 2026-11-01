@@ -269,10 +269,10 @@ describe("saved files", () => {
       { id: "C", name: "C", instances: [{ id: "k1", subAssembly: "C", name: "C <1>", placement: { position: [0, 0, 0], rotation: [0, 0, 0, 1] }, fixed: false }] },
     ];
     const [a, b, c] = parseAssemblies(raw);
-    // Mirroring and configurations are for parts: a sub-assembly doesn't take them.
+    // Configurations are for parts: a sub-assembly doesn't take one. (A sub-assembly can be a mirror image.)
     expect(a.instances.map((i) => [i.id, i.subAssembly, i.partId, i.mirrored, i.configuration])).toEqual([
       ["i1", undefined, "f1", undefined, undefined],
-      ["s1", "B", "", undefined, undefined],
+      ["s1", "B", "", true, undefined],
     ]);
     // The path is kept (bad steps make it unusable, so it's dropped); the mate on the missing one went with it.
     expect(a.mates!.map((m) => [m.id, m.b.path])).toEqual([["m1", undefined]]);
@@ -309,7 +309,7 @@ describe("mates and patterns with sub-assemblies", () => {
     expect(other.b).toEqual({ instanceId: "s2", path: ["p1"], pick: face });
   });
 
-  it("repeats a sub-assembly in a line (but doesn't mirror one)", () => {
+  it("repeats a sub-assembly in a line, and mirrors one (as its mirror image)", () => {
     const a: Assembly = { id: "A", name: "A", instances: [sub("s1", "S", at(0, 0, 0))] };
     let n = 0;
     const lin = syncPattern(a, { id: "p", name: "Linear pattern 1", kind: "linear", seeds: ["s1"], count: 3, amount: "20", axis: "x" }, () => `c${++n}`);
@@ -319,7 +319,10 @@ describe("mates and patterns with sub-assemblies", () => {
       ["c2", "S", "", 40],
     ]);
     const mir = syncPattern(a, { id: "q", name: "Mirror 1", kind: "mirror", seeds: ["s1"], count: 2, amount: "0", axis: "x" }, () => `m${++n}`);
-    expect(mir.instances.map((i) => i.id)).toEqual(["s1"]);
+    expect(mir.instances.map((i) => [i.id, i.subAssembly, i.mirrored, i.copyOf])).toEqual([
+      ["s1", "S", undefined, undefined],
+      ["m3", "S", true, { pattern: "q", seed: "s1", index: 1 }],
+    ]);
   });
 });
 

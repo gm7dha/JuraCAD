@@ -195,6 +195,8 @@ describe("assemblies made by Claude", () => {
     await ok(s, "place_instance", { instance: "Base <1>", suppressed: true });
     expect(await okText(s, "describe_assembly", {})).toMatch(/Base <1>: suppressed/);
     expect(await okText(s, "describe_assembly", {})).toMatch(/Parts list:\n1\. Lid × 1$/m);
+    // Only sub-assembly copies can be flexible.
+    expect(await fails(s, "place_instance", { instance: "Lid <1>", flexible: true })).toMatch(/"flexible" is for sub-assembly copies \(not mirror images\); Lid <1> is a part\./);
   });
 });
 

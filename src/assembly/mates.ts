@@ -14,12 +14,13 @@ import type { Assembly, AssemblyPattern, Instance, Mate, MateConnector, MateType
 import { sameRef } from "../geometry/topoRef";
 import { applyPlacement, compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, rotate, sub, type Placement, type Vec3 } from "./math";
 import { connectorFrameOnParts, framePlacement, widthFrame, type Frame } from "./connectors";
-import { axisPlane, mirrorAcross, OWN_YZ, patternStep, placeCopy, type MirrorPlane, type OwnPlane } from "./patterns";
+import { axisPlane, flipOwnPlane, mirrorAcross, OWN_YZ, patternStep, placeCopy, placedConnector, type MirrorPlane, type OwnPlane } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
 import { withoutSuppressed } from "./suppress";
 import { isOrigin, ORIGIN_ID, originFrame } from "./origin";
 import { pathProblem } from "./paths";
-import { ownSymmetry } from "./symmetry";
+import { ownSymmetry, subAssemblySymmetry } from "./symmetry";
+import { expandFlexible, hasFlexible, isCopyOrigin, isFlexible, relativeToTop, type FlexBody } from "./flexible";
 import type { PartMesh } from "../kernel/protocol";
 
 export interface MateValueDef {
@@ -247,6 +248,14 @@ export interface SolveResult {
   patternErrors?: Record<string, string>;
   /** Group id → plain-English reason its parts couldn't be kept together. */
   groupErrors?: Record<string, string>;
+  /**
+   * Flexible sub-assemblies: where each part inside one ended up, relative to
+   * its top-level copy (by key, "copy/part"; see flexible.ts). Missing when the
+   * assembly has no flexible copies.
+   */
+  inner?: Record<string, Placement>;
+  /** Flexible copy (top-level instance id) → plain-English reason something inside it couldn't be met. */
+  flexErrors?: Record<string, string>;
 }
 
 /** How much a turn counts against a gap when closing loops: 1 radian ≈ this many mm. */
@@ -280,6 +289,8 @@ export interface SolveOptions {
   symmetry?: (instance: Instance) => OwnPlane | null;
   /** (Inside the solver) mirrors across faces: each one's plane where the face ended up, worked out by a first pass. */
   facePlanes?: Record<string, MirrorPlane | string>;
+  /** (Inside the solver) a flattened assembly's flexible sub-assembly parts (see flexible.ts). */
+  flex?: { bodies: Record<string, FlexBody>; patternFrames: Record<string, string> };
 }
 
 /** A connector on its own, looked up like a mate's first side. */
@@ -313,11 +324,25 @@ function mirrorFacePlanes(input: Assembly, frameOf: FrameLookup, placements: Rec
       continue;
     }
     const f = frameOf(asMate(c), "a");
+    const at = on ? placements[on.id] ?? on.placement : IDENTITY;
+    if (p.placed) {
+      // A mate connector placed on the face or edge (any kind): moved and tilted, then mirrored across its XY plane.
+      if (!f) {
+        out[p.id] = "The face or edge its mate connector is on can't be found any more. Pick a face or edge again, or one of the assembly's planes.";
+        continue;
+      }
+      const placed = placedConnector(compose(at, framePlacement(f)), p.placed);
+      if ("error" in placed) {
+        out[p.id] = placed.error;
+        continue;
+      }
+      out[p.id] = { point: placed.position, normal: rotate(placed.rotation, [0, 0, 1]) };
+      continue;
+    }
     if (!f || f.surface !== "plane") {
       out[p.id] = "The face it mirrors across can't be found any more (or isn't flat). Pick a flat face again, or one of the assembly's planes.";
       continue;
     }
-    const at = on ? placements[on.id] ?? on.placement : IDENTITY;
     const w = placeFrame(at, f);
     out[p.id] = { point: w.origin, normal: w.z };
   }
@@ -399,6 +424,8 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
     u: Usable | null;
     patternId: string | null;
     groupId?: string;
+    /** Holds a fixed part of a flexible sub-assembly to its copy (that copy's id). */
+    flexTop?: string;
     a: string;
     b: string;
     fwd: (p: Placement) => Placement;
@@ -472,6 +499,9 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
       patternErrors[p.id] = step.error;
       continue;
     }
+    const frameId = options.flex?.patternFrames[p.id];
+    const frame = frameId ? instances.get(frameId)?.placement ?? null : null;
+    const inFrame = (m: MirrorPlane): MirrorPlane => (frame ? { point: applyPlacement(frame, m.point), normal: rotate(frame.rotation, m.normal) } : m);
     for (const i of assembly.instances) {
       if (i.copyOf?.pattern !== p.id || !instances.has(i.copyOf.seed)) continue;
       if (p.kind === "mirror") {
@@ -481,7 +511,7 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
           if (face && face !== "(first pass)" && face !== "(held)") patternErrors[p.id] = face;
           continue;
         }
-        const plane: MirrorPlane = typeof face === "object" ? face : axisPlane(p);
+        const plane: MirrorPlane = typeof face === "object" ? face : inFrame(axisPlane(p));
         // A mirror-image copy shows the part flipped across its own YZ plane. A copy showing the same hand as its
         // original (a symmetric part shown as itself) is turned instead, using the plane the part is symmetric across.
         const seed = instances.get(i.copyOf.seed)!;
@@ -491,14 +521,15 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
           if (!sym && !patternErrors[p.id])
             patternErrors[p.id] = `${seed.name} isn't symmetric (any more), so showing the same part can't make a true mirror image. Untick "Same part for symmetric parts" to make a mirror-image copy.`;
           // (On a mirrored original, the part's own plane is flipped across its YZ plane too.)
-          if (sym) own = seed.mirrored && sym.axis === "x" ? { axis: "x", at: -sym.at } : sym;
+          if (sym) own = seed.mirrored ? flipOwnPlane(sym) : sym;
         }
         // Mirroring is its own undoing: the copy is the original's mirror image, and the other way round.
         const flip = (q: Placement) => mirrorAcross(plane, q, own);
         copyLinks.push({ u: null, patternId: p.id, a: i.copyOf.seed, b: i.id, fwd: flip, back: flip });
         continue;
       }
-      const shift = placeCopy(p, step.step, IDENTITY, i.copyOf.index);
+      // (A pattern inside a flexible sub-assembly is in that sub-assembly's own directions.)
+      const shift = frame ? compose(compose(frame, placeCopy(p, step.step, IDENTITY, i.copyOf.index)), invert(frame)) : placeCopy(p, step.step, IDENTITY, i.copyOf.index);
       const back = invert(shift);
       copyLinks.push({ u: null, patternId: p.id, a: i.copyOf.seed, b: i.id, fwd: (q) => compose(shift, q), back: (q) => compose(back, q) });
     }
@@ -517,6 +548,20 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
   }
   /** Grouped parts other than each group's first: placed from their group rather than started from. */
   const followers = new Set((assembly.groups ?? []).flatMap((g) => g.members.slice(1)));
+
+  // Flexible sub-assemblies' parts: fixed ones held to their copy's frame; the others start there when nothing places them first.
+  const bodies = options.flex?.bodies ?? {};
+  for (const [id, b] of Object.entries(bodies)) {
+    if (!b.fixed || !instances.has(id) || !instances.has(b.frame)) continue;
+    const rel = b.rel;
+    const inv = invert(rel);
+    groupLinks.push({ u: null, patternId: null, flexTop: b.top, a: b.frame, b: id, fwd: (q) => compose(q, rel), back: (q) => compose(q, inv) });
+  }
+  const depth = (id: string) => id.split("/").length;
+  const anchored = everything.filter((i) => bodies[i.id] && !bodies[i.id].fixed).sort((x, y) => depth(x.id) - depth(y.id));
+  const isAnchored = new Set(anchored.map((i) => i.id));
+  /** Fixed: a fixed instance, or a fixed part of a flexible copy that's itself held fixed. */
+  const held = (id: string): boolean => !!instances.get(id)?.fixed || (!!bodies[id]?.fixed && held(bodies[id].frame));
 
   /** Where the second part sits relative to the first. */
   const mateRelation = (u: Usable, v: Record<string, number>): Placement => {
@@ -544,12 +589,15 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
     const closures: { link: Link; target: Placement; already: Placement; fixedPair: boolean }[] = [];
     const starts = [
       ...everything.filter((i) => i.fixed),
-      ...everything.filter((i) => !i.fixed && !followers.has(i.id)),
-      ...everything.filter((i) => !i.fixed && followers.has(i.id)),
+      ...everything.filter((i) => !i.fixed && !followers.has(i.id) && !isAnchored.has(i.id)),
+      ...everything.filter((i) => !i.fixed && followers.has(i.id) && !isAnchored.has(i.id)),
+      ...anchored,
     ];
     for (const st of starts) {
       if (placements[st.id]) continue;
-      placements[st.id] = st.placement;
+      // A part of a flexible sub-assembly that nothing has placed: where it sits inside its copy.
+      const b = isAnchored.has(st.id) ? bodies[st.id] : undefined;
+      placements[st.id] = b ? compose(placements[b.frame] ?? instances.get(b.frame)?.placement ?? IDENTITY, b.rel) : st.placement;
       const queue = [st.id];
       const used = new Set<Link>();
       while (queue.length) {
@@ -561,20 +609,21 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
           const target = link.a === id ? link.fwd(placements[id]) : link.back(placements[id]);
           const already = placements[other];
           if (already) {
-            closures.push({ link, target, already, fixedPair: !!instances.get(link.a)?.fixed && !!instances.get(link.b)?.fixed });
+            closures.push({ link, target, already, fixedPair: held(link.a) && held(link.b) });
             continue;
           }
           const o = instances.get(other)!;
           if (o.fixed) {
             // Reached a second fixed part: it stays put; the link closes the loop only if it fits.
             placements[other] = o.placement;
-            closures.push({ link, target, already: o.placement, fixedPair: !!instances.get(id)?.fixed });
+            closures.push({ link, target, already: o.placement, fixedPair: held(id) });
             queue.push(other);
             continue;
           }
           placements[other] = target;
           if (link.u) drivenBy[other] = link.u.mate.id;
           else if (link.groupId) drivenBy[other] = `group:${link.groupId}`;
+          else if (link.flexTop) drivenBy[other] = `flexible:${link.flexTop}`;
           else if (link.b === other) drivenBy[other] = `pattern:${link.patternId}`;
           queue.push(other);
         }
@@ -632,8 +681,14 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
   }
   // Report the closing mates that still don't fit.
   const groupErrors: Record<string, string> = {};
+  const flexErrors: Record<string, string> = {};
   result.closures.forEach((c, i) => {
     const bad = r.slice(6 * i, 6 * i + 6).some((v) => Math.abs(v) > 1e-3);
+    if (bad && c.link.flexTop && !flexErrors[c.link.flexTop]) {
+      flexErrors[c.link.flexTop] = c.fixedPair
+        ? "Its fixed parts are held where they sit inside it, but it's fixed here in a place that doesn't match. Unfix it, or unfix its parts inside it."
+        : "Its fixed parts stay where they sit inside it, but the mates here pull them somewhere else. Delete or change those mates, or unfix those parts inside it.";
+    }
     if (bad && c.link.groupId && !groupErrors[c.link.groupId]) {
       groupErrors[c.link.groupId] = c.fixedPair
         ? "Two of its parts are fixed in places that don't match how they were grouped. Unfix one."
@@ -670,6 +725,7 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
     adjusted,
     ...(Object.keys(patternErrors).length ? { patternErrors } : {}),
     ...(Object.keys(groupErrors).length ? { groupErrors } : {}),
+    ...(Object.keys(flexErrors).length ? { flexErrors } : {}),
   };
 }
 
@@ -742,14 +798,19 @@ function solveLinear(M: number[][], b: number[]): number[] | null {
 }
 
 /** Mirrored copies of symmetric parts shown as the part itself: the plane each part is symmetric across (from its shape). */
-const symmetryOn = (parts: readonly PartMesh[]) => (i: Instance) => {
-  const mesh = i.subAssembly ? undefined : findMesh(parts, meshIdOf(i));
+const symmetryOn = (parts: readonly PartMesh[], assemblies?: readonly Assembly[]) => (i: Instance) => {
+  if (i.subAssembly) return assemblies ? subAssemblySymmetry(i.subAssembly, parts, assemblies) : null;
+  const mesh = findMesh(parts, meshIdOf(i));
   return mesh ? ownSymmetry(mesh) : null;
 };
 
 /** Solve using the parts as built now (pass the document's assemblies when it may hold sub-assemblies). */
 export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: SolveOptions = {}): SolveResult {
-  const r = solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies), { symmetry: symmetryOn(parts), ...options });
+  // (Flexible sub-assemblies' parts are solved here too; without any, exactly as before.)
+  const r =
+    options.assemblies && hasFlexible(assembly)
+      ? solveFlexibly(assembly, parts, options.assemblies, options, [assembly.id]).result
+      : solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies), { symmetry: symmetryOn(parts, options.assemblies), ...options });
   // A connector on a part inside a sub-assembly: say plainly when the way to it is switched off or gone.
   for (const m of assembly.mates ?? []) {
     if (!r.mateErrors[m.id]) continue;
@@ -759,6 +820,146 @@ export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: S
   }
   return r;
 }
+
+/**
+ * Solve an assembly with flexible sub-assembly copies: flattened (flexible.ts),
+ * solved as one, then put back in its own terms — its instances' places, and
+ * each part inside a flexible copy relative to that copy (`inner`). What can't
+ * be met inside a copy is said on the copy (`flexErrors`), not on this
+ * assembly's own mates. `flat` has every place in this assembly's coordinates
+ * (for when it's itself used as a sub-assembly).
+ */
+function solveFlexibly(a: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[], options: SolveOptions, within: readonly string[]): { result: SolveResult; flat: Record<string, Placement> } {
+  const view = expandFlexible(a, assemblies, (sub, w) => solvedInside(sub, parts, assemblies, w), within);
+  const lookup: FrameLookup = (m, side) => {
+    const c = m[side];
+    // A flexible copy's own origin: its planes, where the copy is.
+    return isCopyOrigin(c.instanceId) ? originFrame({ ...c, instanceId: ORIGIN_ID }) : connectorFrameFor(view.assembly, parts as PartMesh[], c, assemblies, within);
+  };
+  const raw = solveAssembly(view.assembly, lookup, { symmetry: symmetryOn(parts, assemblies), ...options, flex: { bodies: view.bodies, patternFrames: view.patternFrames } });
+  const own = new Set(a.instances.map((i) => i.id));
+  const placements: Record<string, Placement> = {};
+  const flat: Record<string, Placement> = {};
+  const inner: Record<string, Placement> = {};
+  for (const [id, p] of Object.entries(raw.placements)) {
+    if (isCopyOrigin(id)) continue;
+    flat[id] = p;
+    if (own.has(id)) placements[id] = p;
+    const b = view.bodies[id];
+    const rel = b ? relativeToTop(raw.placements, id, b.top) : null;
+    if (rel) inner[id] = rel;
+  }
+  const flexErrors: Record<string, string> = { ...raw.flexErrors };
+  /** Errors on this assembly's own mates/patterns/groups are kept; those brought in from a copy are said on the copy. */
+  const keep = (errors: Record<string, string> | undefined): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const [id, text] of Object.entries(errors ?? {})) {
+      const f = view.from[id];
+      if (!f) out[id] = text;
+      else flexErrors[f.top] ??= `Inside it, ${f.name}: ${text}`;
+    }
+    return out;
+  };
+  const mateErrors = { ...keep(raw.mateErrors), ...view.errors };
+  const patternErrors = keep(raw.patternErrors);
+  const groupErrors = keep(raw.groupErrors);
+  const pick = (r: Record<string, string>, ok: (id: string) => boolean) => Object.fromEntries(Object.entries(r).filter(([id]) => ok(id)));
+  const adjusted = Object.fromEntries(Object.entries(raw.adjusted ?? {}).filter(([id]) => !view.from[id]));
+  // A copy placed through one of its fixed parts (held to its frame): say which of this assembly's mates holds that part,
+  // so the copy is dragged (and described) through that mate, as a rigid copy is.
+  const drivenBy = pick(raw.drivenBy, (id) => own.has(id));
+  for (const [id, by] of Object.entries(drivenBy)) {
+    if (by !== `flexible:${id}`) continue;
+    const through = (frame: string): string | undefined => {
+      for (const [b, body] of Object.entries(view.bodies)) {
+        if (body.frame !== frame || !body.fixed) continue;
+        const d = raw.drivenBy[b];
+        if (d && !view.from[d] && !d.includes(":")) return d;
+        // (A flexible copy fixed inside it, placed through one of its own fixed parts: look there.)
+        const deeper = d?.startsWith("flexible:") ? through(b) : undefined;
+        if (deeper) return deeper;
+      }
+      return undefined;
+    };
+    const mate = through(id);
+    if (mate) drivenBy[id] = mate;
+  }
+  const result: SolveResult = {
+    placements,
+    mateErrors,
+    drivenBy,
+    adjusted,
+    ...(Object.keys(patternErrors).length ? { patternErrors } : {}),
+    ...(Object.keys(groupErrors).length ? { groupErrors } : {}),
+    inner,
+    ...(Object.keys(flexErrors).length ? { flexErrors } : {}),
+  };
+  return { result, flat };
+}
+
+/** The parent's own solve of its flexible copies (no mate being edited), by the document's state: each part inside one relative to its copy. */
+const flexCache = new WeakMap<Assembly, WeakMap<readonly PartMesh[], WeakMap<readonly Assembly[], WeakMap<Scope, Record<string, Placement>>>>>();
+
+/**
+ * Where the parts inside an assembly's flexible copies sit (relative to each
+ * copy, by key), as the assembly's own solve puts them. Empty when it has none.
+ * Worked out once for each state of the document and parts.
+ */
+export function flexibleInner(a: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[]): Record<string, Placement> {
+  if (!hasFlexible(a)) return {};
+  let byParts = flexCache.get(a);
+  if (!byParts) flexCache.set(a, (byParts = new WeakMap()));
+  let byAll = byParts.get(parts);
+  if (!byAll) byParts.set(parts, (byAll = new WeakMap()));
+  let byScope = byAll.get(assemblies);
+  if (!byScope) byAll.set(assemblies, (byScope = new WeakMap()));
+  const scope = getCurrentScope();
+  let out = byScope.get(scope);
+  if (!out) byScope.set(scope, (out = solveFlexibly(a, parts, assemblies, {}, [a.id]).result.inner ?? {}));
+  return out;
+}
+
+/**
+ * Down a path through flexible sub-assemblies, from instance `start` (key
+ * `startKey`): the first part (or rigid copy) that isn't one, its key in the
+ * flattened solve, the assembly it's in and what's left of the path. Null when
+ * `start` isn't flexible (or the path is broken).
+ */
+function downFlexible(start: Instance, startKey: string, path: readonly string[], assemblies: readonly Assembly[], within: readonly string[]) {
+  let here = start;
+  let k = startKey;
+  let rest = [...path];
+  let container: Assembly | null = null;
+  let w = [...within];
+  while (isFlexible(here) && rest.length) {
+    const sub = assemblies.find((x) => x.id === here.subAssembly);
+    if (!sub || w.includes(sub.id)) return null;
+    const next = sub.instances.find((i) => i.id === rest[0]);
+    if (!next || next.suppressed) return null;
+    w = [...w, sub.id];
+    container = sub;
+    here = next;
+    k = `${k}/${rest[0]}`;
+    rest = rest.slice(1);
+  }
+  return container ? { key: k, container, body: here, rest, within: w } : null;
+}
+
+/** A connector through flexible copies: found on its part, then placed where `places` (by key) says that part is. */
+function frameThroughFlexible(start: Instance, startKey: string, places: Record<string, Placement>, parts: PartMesh[], c: MateConnector, path: readonly string[], assemblies: readonly Assembly[], within: readonly string[]): Frame | null | undefined {
+  const down = downFlexible(start, startKey, path, assemblies, within);
+  if (!down) return undefined;
+  const place = places[down.key];
+  if (!place) return undefined;
+  const { path: _p, ...plain } = c;
+  const f = connectorFrameFor(down.container, parts, { ...plain, instanceId: down.body.id, ...(down.rest.length ? { path: down.rest } : {}) }, assemblies, down.within);
+  return f ? placeFrame(place, f) : null;
+}
+
+const flipFrame = (f: Frame): Frame => {
+  const flipX = (v: Vec3): Vec3 => [-v[0], v[1], v[2]];
+  return { ...f, origin: flipX(f.origin), z: flipX(f.z), x: flipX(f.x) };
+};
 
 /**
  * Where each mate's connectors are on the parts as built now — on the part as
@@ -790,7 +991,13 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
     const f2 = connectorFrameFor(assembly, parts, { instanceId: c.instanceId, path: path2, pick: pick2 }, assemblies, within);
     return f1 && f2 ? widthFrame(f1, f2) : null;
   }
-  if (instance?.subAssembly) return frameInside(instance.subAssembly, parts, c, assemblies, within);
+  if (instance?.subAssembly) {
+    // In a flexible copy, its parts are where this assembly's own solve puts them.
+    const flexible = isFlexible(instance) && assemblies && c.path?.length && !within.length ? frameThroughFlexible(instance, instance.id, flexibleInner(assembly, parts, assemblies), parts, c, c.path, assemblies, [assembly.id]) : undefined;
+    const f = flexible !== undefined ? flexible : frameInside(instance.subAssembly, parts, c, assemblies, within);
+    // A mirrored copy shows the whole sub-assembly flipped across its own YZ plane: so are its connectors.
+    return f && instance.mirrored ? flipFrame(f) : f;
+  }
   // Always on the part the instance shows now (if it was replaced, the most similar face or edge of the new one).
   const mesh = instance ? findMesh(parts, meshIdOf(instance)) : undefined;
   if (instance && !mesh) return null;
@@ -798,11 +1005,7 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
     ? connectorFrameOnParts([mesh], { ...c, pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
     : connectorFrameOnParts(parts, c);
   // A mirrored instance shows its part flipped across its own YZ plane: so are its connectors.
-  if (f && instance?.mirrored) {
-    const flipX = (v: Vec3): Vec3 => [-v[0], v[1], v[2]];
-    return { ...f, origin: flipX(f.origin), z: flipX(f.z), x: flipX(f.x) };
-  }
-  return f;
+  return f && instance?.mirrored ? flipFrame(f) : f;
 }
 
 /** A frame moved by a placement. */
@@ -818,6 +1021,11 @@ function frameInside(subId: string, parts: PartMesh[], c: MateConnector, assembl
   const inner = sub.instances.find((i) => i.id === first);
   if (!inner || inner.suppressed) return null;
   const deeper = within.concat(subId);
+  // Through a flexible copy inside it: its parts are solved with the sub-assembly's own (keys "copy/part").
+  if (isFlexible(inner) && rest.length && assemblies) {
+    const f = frameThroughFlexible(inner, first, solvedInside(sub, parts, assemblies, deeper), parts, c, rest, assemblies, deeper);
+    if (f !== undefined) return f;
+  }
   const { path: _p, ...plain } = c;
   const f = connectorFrameFor(sub, parts, { ...plain, instanceId: first, ...(rest.length ? { path: rest } : {}) }, assemblies, deeper);
   if (!f) return null;
@@ -833,7 +1041,10 @@ const insideCache = new WeakMap<readonly Assembly[], WeakMap<readonly PartMesh[]
  * placed). Worked out once for each state of the document and parts.
  */
 export function solvedInside(sub: Assembly, parts: readonly PartMesh[], assemblies?: readonly Assembly[], within: readonly string[] = [sub.id]): Record<string, Placement> {
-  const solve = () => solveAssembly(sub, (m, side) => connectorFrameFor(sub, parts as PartMesh[], m[side], assemblies, within), { symmetry: symmetryOn(parts) }).placements;
+  const solve = () =>
+    assemblies && hasFlexible(sub)
+      ? solveFlexibly(sub, parts, assemblies, {}, within).flat
+      : solveAssembly(sub, (m, side) => connectorFrameFor(sub, parts as PartMesh[], m[side], assemblies, within), { symmetry: symmetryOn(parts, assemblies) }).placements;
   if (!assemblies) return solve();
   let byParts = insideCache.get(assemblies);
   if (!byParts) insideCache.set(assemblies, (byParts = new WeakMap()));
