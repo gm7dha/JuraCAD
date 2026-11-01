@@ -1864,6 +1864,12 @@ try {
     if (!other) throw new Error("there's no other part to add a view of");
     const handles = () => page.evaluate(() => [...document.querySelectorAll(".drawing-view-handle")].map((r) => ({ key: r.getAttribute("data-view-key"), x: Number(r.getAttribute("x")) + Number(r.getAttribute("width")) / 2 })));
     const before = await handles();
+    // The sheet shows sheet 1's own views — all of them, and only them — as soon as its title block does
+    // (it once showed the last sheet's views for a moment after switching back).
+    const own = await page.evaluate(() =>
+      window.juracadStore.getState().history.present.drawings[0].views.map((v) => (v.kind === "section" ? `section:${v.section}` : v.kind === "detail" ? `detail:${v.detail}` : v.kind)),
+    );
+    if (JSON.stringify(before.map((h) => h.key).sort()) !== JSON.stringify([...own].sort())) throw new Error(`sheet 1 shows the views ${before.map((h) => h.key).join(", ")} instead of its own ${own.join(", ")}`);
     await page.locator("#add-view-part").selectOption(other.value);
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-view-handle")].some((r) => /^front@/.test(r.getAttribute("data-view-key") ?? "")), null, { timeout: 60_000 });
     await page.locator(".drawing-panel").getByRole("group", { name: `Views projected from the view of ${other.name}` }).getByLabel("Top", { exact: true }).check();
