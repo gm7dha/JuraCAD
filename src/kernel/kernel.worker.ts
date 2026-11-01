@@ -8,6 +8,7 @@ import { setOC } from "replicad";
 
 import { describeError, GeometryEngine } from "./engine";
 import type { FromWorker, KernelResponseBody, ToWorker } from "./protocol";
+import { printCheckTransfers, uniqueTransfers } from "./transfers";
 
 const ctx = self as unknown as {
   postMessage(message: FromWorker, transfer?: Transferable[]): void;
@@ -15,6 +16,8 @@ const ctx = self as unknown as {
 };
 
 const engine = new GeometryEngine();
+// The 3D print panel's check reuses the meshes the view is shown with.
+engine.keepDisplayMeshes = true;
 
 const ready = (async () => {
   const OC = await opencascade({ locateFile: () => opencascadeWasm });
@@ -60,6 +63,18 @@ ctx.onmessage = (event) => {
           body = { type: "export3mf", result };
           break;
         }
+        case "printCheck": {
+          const result = engine.printCheck(request.parts, request.settings);
+          transfer.push(...printCheckTransfers(result));
+          body = { type: "printCheck", result };
+          break;
+        }
+        case "exportPrint3mf": {
+          const result = engine.exportPrint3mf(request.parts, request.bed, request.gap, request.quality, request.title, request.colours);
+          transfer.push(result.data);
+          body = { type: "exportPrint3mf", result };
+          break;
+        }
         case "project":
           body = { type: "project", result: engine.project(request.partIds, request.instances, request.views, request.hidden, request.sections, request.breakouts, request.tangent !== false) };
           break;
@@ -97,7 +112,7 @@ ctx.onmessage = (event) => {
           break;
         }
       }
-      ctx.postMessage({ kind: "response", id, ok: true, body }, transfer);
+      ctx.postMessage({ kind: "response", id, ok: true, body }, uniqueTransfers(transfer));
     } catch (e) {
       ctx.postMessage({ kind: "response", id, ok: false, error: describeError(e, "Something went wrong in the geometry engine.") });
     }

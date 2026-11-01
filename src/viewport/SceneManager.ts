@@ -703,6 +703,44 @@ export class SceneManager {
     g.add(plate, gridLines, volume);
   }
 
+  /**
+   * 3D-print check marks: triangles (9 numbers each, model mm) drawn over the
+   * parts in a colour — overhangs, thin walls, and so on. Null clears them.
+   */
+  setPrintMarks(marks: { triangles: Float32Array; colour: string; opacity?: number }[] | null): void {
+    const g = this.printMarksGroup;
+    for (const child of [...g.children]) {
+      g.remove(child);
+      const o = child as THREE.Mesh;
+      o.geometry?.dispose();
+      (o.material as THREE.Material | undefined)?.dispose();
+    }
+    if (!marks?.length) return;
+    if (!g.parent) this.scene.add(g);
+    for (const m of marks) {
+      if (!m.triangles.length) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(m.triangles, 3));
+      const mat = new THREE.MeshBasicMaterial({
+        color: m.colour,
+        transparent: true,
+        opacity: m.opacity ?? 0.75,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        // Drawn just in front of the part's own faces.
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -4,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.raycast = () => {};
+      mesh.renderOrder = 2;
+      g.add(mesh);
+    }
+  }
+
+  private readonly printMarksGroup = new THREE.Group();
+
   /** The canvas the view is drawn on (and that takes the mouse). */
   get canvas(): HTMLCanvasElement {
     return this.renderer.domElement;

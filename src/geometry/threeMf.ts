@@ -16,6 +16,8 @@ export interface MeshPart {
   triangles: ArrayLike<number>;
   /** Display colour "#rrggbb", if the part has one. */
   colour?: string;
+  /** Where the build puts it: a move (x, y, z mm) after the corners as given. */
+  move?: [number, number, number];
 }
 
 /** Merge repeated corners (same position to 0.01 µm) so triangles share them. */
@@ -76,7 +78,9 @@ export function modelXml(parts: MeshPart[], title: string): string {
     lines.push("    </triangles>", "   </mesh>", "  </object>");
   });
   lines.push(" </resources>", " <build>");
-  parts.forEach((_, i) => lines.push(`  <item objectid="${i + firstObject}"/>`));
+  parts.forEach((p, i) =>
+    lines.push(p.move ? `  <item objectid="${i + firstObject}" transform="1 0 0 0 1 0 0 0 1 ${p.move.map(num).join(" ")}"/>` : `  <item objectid="${i + firstObject}"/>`),
+  );
   lines.push(" </build>", "</model>", "");
   return lines.join("\n");
 }
