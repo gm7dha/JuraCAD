@@ -2,13 +2,13 @@
 import { describe, expect, it } from "vitest";
 
 import { followLinks, linkEdge, type RefEdge } from "../src/sketch/links";
-import { addRectangle, pointPos, type Placed } from "../src/sketch/ops";
+import { addArc, addLine, addRectangle, pointPos, type Placed } from "../src/sketch/ops";
 import { planeFrame } from "../src/sketch/planes";
 import { edgePierces, seeShape, type CurveShape3 } from "../src/sketch/projected";
-import { crossingOutlineNote } from "../src/sketch/offsetCheck";
+import { CROSSING_NOTE, crossingOutlineNote, offsetNotes } from "../src/sketch/offsetCheck";
 import { solveSketch } from "../src/sketch/solver";
-import { offsetCurves } from "../src/sketch/tools";
-import { emptySketch, type SketchSpline } from "../src/sketch/types";
+import { addPolygon, addSlot, offsetCurves } from "../src/sketch/tools";
+import { emptySketch, type SketchData, type SketchSpline } from "../src/sketch/types";
 
 type V3 = [number, number, number];
 type P2 = [number, number];
@@ -101,11 +101,25 @@ describe("a spline following a curved edge", () => {
     expect(solveSketch(bigger).ok).toBe(true);
   });
 
-  it("keeps the points it has when something else uses one between its ends", () => {
+  it("keeps the points it has, and still follows, when something else uses one between its ends", () => {
     const r = linkEdge(emptySketch(), edge(halfCircle(0, 10, 4)), false);
     const sp = r.sketch.curves[0] as SketchSpline;
-    const held = { ...r.sketch, constraints: [...r.sketch.constraints, { id: "h", type: "horizontal" as const, refs: [sp.points[2], "origin"] }] };
-    expect(followLinks(held, { [sp.id]: edge(halfCircle(0, 30, 8)) })).toBe(held);
+    // A line drawn from its middle point, and a text hanging from another of its points.
+    const ln = addLine(r.sketch, { x: 0, y: 10, snap: { kind: "point", id: sp.points[2] } }, at(0, -20));
+    const line = ln.sketch.curves.find((c) => c.id === ln.lineId) as { p1: string; p2: string };
+    expect(line.p1).toBe(sp.points[2]);
+    const held: SketchData = { ...ln.sketch, texts: [{ id: "t", anchor: sp.points[1], value: "A", size: 5, angle: 0, font: "regular", construction: false }] };
+    const moved = followLinks(held, { [sp.id]: edge(halfCircle(0, 30, 8)) });
+    const after = moved.curves.find((c) => c.id === sp.id) as SketchSpline;
+    expect(after.points).toEqual(sp.points);
+    // The edge's own pieces walked at the copy's four: its middle point is at the top of the new half circle, the line follows.
+    expect(r6(pointPos(moved, sp.points[2]))).toEqual([0, 30]);
+    expect(r6(pointPos(moved, sp.points[0]))).toEqual([30, 0]);
+    expect(moved.points.some((p) => p.id === sp.points[1])).toBe(true);
+    expect(moved.texts?.[0].anchor).toBe(sp.points[1]);
+    // A quarter of the way round (the second of eight pieces' end), exactly on the new circle.
+    expect(Math.hypot(...pointPos(moved, sp.points[1]))).toBeCloseTo(30, 9);
+    expect(solveSketch(moved).ok).toBe(true);
   });
 });
 
@@ -125,5 +139,43 @@ describe("an outline that is an offset crossing itself", () => {
     // A construction copy isn't extruded.
     const dashed = { ...bad.sketch, curves: bad.sketch.curves.map((c) => (bad.curveIds.includes(c.id) ? { ...c, construction: true } : c)) };
     expect(crossingOutlineNote(dashed)).toBeNull();
+  });
+});
+
+describe("offsets that don't cross themselves aren't warned about", () => {
+  it("slots, polygons and runs of lines and arcs, inwards and outwards", () => {
+    // A slot from (0, 0) to (20, 0), radius 5: its bottom copy runs the other way round to its original.
+    const slot = addSlot(emptySketch(), at(0, 0), at(20, 0), 5);
+    for (const [where, d] of [[{ x: 10, y: -7 }, "1"], [{ x: 10, y: -3 }, "1"], [{ x: 10, y: -3 }, "4.5"]] as const) {
+      const o = offsetCurves(slot.sketch, slot.curveIds[0], where, d);
+      expect(o.error).toBeUndefined();
+      expect(offsetNotes(o.sketch)).toEqual([]);
+      expect(crossingOutlineNote(o.sketch)).toBeNull();
+    }
+    // Past its radius inwards, it really does cross.
+    const deep = offsetCurves(slot.sketch, slot.curveIds[0], { x: 10, y: -3 }, "5.5");
+    if (!deep.error) expect(offsetNotes(deep.sketch)).toEqual([CROSSING_NOTE]);
+    // Hexagon and triangle.
+    for (const sides of [3, 6]) {
+      const poly = addPolygon(emptySketch(), at(0, 0), { x: 10, y: 0 }, sides);
+      expect(poly.error).toBeUndefined();
+      for (const [where, d] of [[{ x: 0, y: 0 }, "2"], [{ x: 30, y: 0 }, "3"]] as const) {
+        const o = offsetCurves(poly.sketch, poly.lineIds[0], where, d);
+        expect(o.error).toBeUndefined();
+        expect(offsetNotes(o.sketch)).toEqual([]);
+      }
+    }
+    // An open run: a line, an arc on from its end, and a line back (drawn in different directions).
+    const a = addLine(emptySketch(), at(0, 0), at(10, 0));
+    const end = (a.sketch.curves[0] as { p2: string }).p2;
+    const arc = addArc(a.sketch, { x: 10, y: 0, snap: { kind: "point", id: end } }, at(10, 10), { x: 15, y: 5 });
+    const arcEnd = (arc.sketch.curves.find((c) => c.id === arc.arcId) as { start: string; end: string });
+    const top = [arcEnd.start, arcEnd.end].find((id) => id !== end)!;
+    const back = addLine(arc.sketch, at(0, 10), { x: 10, y: 10, snap: { kind: "point", id: top } });
+    for (const [where, d] of [[{ x: 5, y: 5 }, "1"], [{ x: 5, y: -2 }, "1"]] as const) {
+      const o = offsetCurves(back.sketch, a.lineId, where, d);
+      expect(o.error).toBeUndefined();
+      expect(offsetNotes(o.sketch)).toEqual([]);
+    }
   });
 });

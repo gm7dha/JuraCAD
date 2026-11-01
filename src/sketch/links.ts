@@ -337,6 +337,32 @@ function shapeBeziers(sh: Extract<CurveShape, { kind: "spline" }>): [P2, P2, P2,
   return out;
 }
 
+/**
+ * A spline shape walked again at `n` evenly spaced places of its own measure
+ * (each piece counts the same), with its direction and speed there as `n`
+ * pieces need them. Follows the shape exactly (it's the same cubic pieces,
+ * just cut in other places).
+ */
+export function resampleShape(sh: Extract<CurveShape, { kind: "spline" }>, n: number): Extract<CurveShape, { kind: "spline" }> {
+  const pieces = shapeBeziers(sh);
+  const m = pieces.length;
+  if (n === m || !m) return sh;
+  const points: P2[] = [];
+  const tangents: P2[] = [];
+  for (let i = 0; i <= n; i++) {
+    const u = (m * i) / n;
+    const k = Math.min(m - 1, Math.floor(u));
+    const t = u - k;
+    const [a, b, c, d] = pieces[k];
+    const w = 1 - t;
+    points.push([0, 1].map((j) => w * w * w * a[j] + 3 * w * w * t * b[j] + 3 * w * t * t * c[j] + t * t * t * d[j]) as P2);
+    // Per new piece: the old piece's speed × (old pieces ÷ new ones).
+    const d1 = [0, 1].map((j) => 3 * w * w * (b[j] - a[j]) + 6 * w * t * (c[j] - b[j]) + 3 * t * t * (d[j] - c[j]));
+    tangents.push([(d1[0] * m) / n, (d1[1] * m) / n]);
+  }
+  return { kind: "spline", points, tangents };
+}
+
 /** A sketch spline that is a curved edge's shape exactly (its points new, at the shape's points). */
 function splineOfShape(sh: Extract<CurveShape, { kind: "spline" }>, construction: boolean, ids?: string[]): { closed: boolean; spline: SketchSpline; points: SketchPoint[] } {
   const closed = shapeIsClosed(sh);
@@ -607,7 +633,17 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
         const used = new Set<string>();
         for (const o of s.curves) if (o.id !== c.id) for (const id of curvePointsOf(o)) used.add(id);
         for (const k of s.constraints) if (!(k.type === "fix" && between.includes(k.refs[0]))) for (const r of k.refs) used.add(r);
-        if (between.some((id) => used.has(id)) || count < 2) continue;
+        for (const t of s.texts ?? []) used.add(t.anchor);
+        if (between.some((id) => used.has(id))) {
+          // Something rests on a point between its ends (a line from it, a text): keep every point, following the
+          // edge at as many points as the copy has (the engine's shape, walked at that many places instead).
+          const even = resampleShape(sh, closed ? c.points.length : c.points.length - 1);
+          c.points.forEach((id, i) => moves.set(id, even.points[i]));
+          const next = splineThrough(c.id, c.points, shapeBeziers(even), c.closed, c.construction);
+          if (JSON.stringify([next.tangents, next.tangentsIn]) !== JSON.stringify([c.tangents, c.tangentsIn])) reshaped.set(c.id, next);
+          continue;
+        }
+        if (count < 2) continue;
         const taken = new Set(s.points.map((p) => p.id));
         let n = 0;
         const fresh = () => {
