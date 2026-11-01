@@ -281,42 +281,74 @@ export function sketchCurvePierces(src: SourceSketch, item: string, frame: Plane
   }
 }
 
+/** How many pieces a curved edge is sampled in to find where it passes through a sketch's plane (the same for snapping and rebuilding). */
+export const PIERCE_SAMPLES = 32;
+
+/** An edge closer to the plane than this (mm) counts as on it. */
+const ON_PLANE = 1e-7;
+
 /**
  * Where a part edge passes through the sketch's plane, from points along it
- * (`at(f)`, f from 0 to 1 along the edge): the stretches where it changes
- * side, homed in on by halving. None when it never crosses, or lies in the
- * plane (all of it on it). `samples` points are tried first; a straight
- * edge needs just its two ends.
+ * (`at(f)`, f from 0 to 1 along the edge): each change of side is homed in on
+ * by halving, and so is each place where it comes close to the plane between
+ * samples (a dip through and back, or a touch, that the samples alone would
+ * miss). Stretches lying in the plane are left out (there's no single place
+ * there), as is an edge lying wholly in it. `samples` pieces are tried first;
+ * a straight edge needs just one.
  */
 export function edgePierces(frame: PlaneFrame, at: (f: number) => Vec3, samples: number): P2[] {
   const h = (f: number) => dot(sub(at(f), frame.origin), frame.n);
   const fs = Array.from({ length: samples + 1 }, (_, i) => i / samples);
   const hs = fs.map(h);
-  const tol = 1e-7;
-  // Lying in the plane: no single place where it passes through.
-  if (hs.every((x) => Math.abs(x) < tol)) return [];
-  const out: P2[] = [];
-  const push = (f: number) => {
-    const p = toSketch(frame, at(f));
-    if (!out.some((q) => dist2(p, q) < 1e-6)) out.push(p);
+  const on = hs.map((x) => Math.abs(x) < ON_PLANE);
+  if (on.every(Boolean)) return [];
+  const found: number[] = [];
+  /** Where between lo and hi (heights of opposite signs at the two) it passes through. */
+  const halve = (lo: number, hi: number) => {
+    let hl = h(lo);
+    for (let k = 0; k < 60 && hi - lo > 1e-15; k++) {
+      const m = (lo + hi) / 2;
+      const hm = h(m);
+      if (Math.abs(hm) < ON_PLANE / 10) return m;
+      if (Math.sign(hm) === Math.sign(hl)) {
+        lo = m;
+        hl = hm;
+      } else hi = m;
+    }
+    return (lo + hi) / 2;
   };
   for (let i = 0; i < fs.length; i++) {
-    if (Math.abs(hs[i]) < tol) {
-      push(fs[i]);
+    if (on[i]) {
+      // On the plane at a sample: a place it passes through or touches, unless a neighbour is on it too (a stretch lying in it).
+      if (!(i > 0 && on[i - 1]) && !(i + 1 < fs.length && on[i + 1])) found.push(fs[i]);
       continue;
     }
-    if (i + 1 < fs.length && Math.abs(hs[i + 1]) >= tol && Math.sign(hs[i]) !== Math.sign(hs[i + 1])) {
-      let lo = fs[i], hi = fs[i + 1], hl = hs[i];
-      for (let k = 0; k < 60 && hi - lo > 1e-15; k++) {
-        const m = (lo + hi) / 2;
-        const hm = h(m);
-        if (Math.sign(hm) === Math.sign(hl)) {
-          lo = m;
-          hl = hm;
-        } else hi = m;
-      }
-      push((lo + hi) / 2);
+    if (i + 1 < fs.length && !on[i + 1] && Math.sign(hs[i]) !== Math.sign(hs[i + 1])) found.push(halve(fs[i], fs[i + 1]));
+  }
+  // Coming close between samples without changing side there: look for the lowest point near each sample nearest the plane.
+  for (let i = 1; i + 1 < fs.length; i++) {
+    if (on[i] || on[i - 1] || on[i + 1]) continue;
+    const sg = Math.sign(hs[i]);
+    if (sg !== Math.sign(hs[i - 1]) || sg !== Math.sign(hs[i + 1])) continue;
+    const [a, b, c] = [hs[i - 1], hs[i], hs[i + 1]].map((x) => x * sg);
+    if (!(b <= a && b <= c)) continue;
+    // Could it reach the plane? Only if it's as near as it changes across a step.
+    if (b > Math.max(a - b, c - b)) continue;
+    let lo = fs[i - 1], hi = fs[i + 1];
+    for (let k = 0; k < 50; k++) {
+      const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+      if (h(m1) * sg < h(m2) * sg) hi = m2;
+      else lo = m1;
     }
+    const fm = (lo + hi) / 2;
+    const low = h(fm) * sg;
+    if (low < -ON_PLANE) found.push(halve(fs[i - 1], fm), halve(fm, fs[i + 1]));
+    else if (low < ON_PLANE) found.push(fm);
+  }
+  const out: P2[] = [];
+  for (const f of found.sort((x, y) => x - y)) {
+    const p = toSketch(frame, at(f));
+    if (!out.some((q) => dist2(p, q) < 1e-6)) out.push(p);
   }
   return out;
 }
@@ -343,5 +375,5 @@ export function edgePierceRefs(frame: PlaneFrame, pick: TopoPick, at: (f: number
   const h = (p: Vec3) => dot(sub(p, frame.origin), frame.n);
   // A straight edge lying flat to the plane never passes through it (and one in it doesn't count).
   if (ref.curve === "LINE" && Math.abs(h(ref.a) - h(ref.b)) < 1e-7) return [];
-  return edgePierces(frame, at, ref.curve === "LINE" ? 1 : 32).map((p): RefEdge => ({ pick, project: true, pierce: true, kind: "point", a: p, b: p, mid: p }));
+  return edgePierces(frame, at, ref.curve === "LINE" ? 1 : PIERCE_SAMPLES).map((p): RefEdge => ({ pick, project: true, pierce: true, kind: "point", a: p, b: p, mid: p }));
 }

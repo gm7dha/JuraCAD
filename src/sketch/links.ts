@@ -326,7 +326,7 @@ export function linkEdge(
 }
 
 /** Is a spline shape closed (its last point back on its first)? */
-const shapeClosed = (sh: Extract<CurveShape, { kind: "spline" }>) => sh.points.length > 3 && dist(sh.points[0], sh.points[sh.points.length - 1]) < 1e-9;
+export const shapeIsClosed = (sh: Extract<CurveShape, { kind: "spline" }>) => sh.points.length > 3 && dist(sh.points[0], sh.points[sh.points.length - 1]) < 1e-9;
 
 /** The pieces of a spline shape: each piece's ends, with handles a third of the way along its tangents. */
 function shapeBeziers(sh: Extract<CurveShape, { kind: "spline" }>): [P2, P2, P2, P2][] {
@@ -337,9 +337,35 @@ function shapeBeziers(sh: Extract<CurveShape, { kind: "spline" }>): [P2, P2, P2,
   return out;
 }
 
+/**
+ * A spline shape walked again at `n` evenly spaced places of its own measure
+ * (each piece counts the same), with its direction and speed there as `n`
+ * pieces need them. Follows the shape exactly (it's the same cubic pieces,
+ * just cut in other places).
+ */
+export function resampleShape(sh: Extract<CurveShape, { kind: "spline" }>, n: number): Extract<CurveShape, { kind: "spline" }> {
+  const pieces = shapeBeziers(sh);
+  const m = pieces.length;
+  if (n === m || !m) return sh;
+  const points: P2[] = [];
+  const tangents: P2[] = [];
+  for (let i = 0; i <= n; i++) {
+    const u = (m * i) / n;
+    const k = Math.min(m - 1, Math.floor(u));
+    const t = u - k;
+    const [a, b, c, d] = pieces[k];
+    const w = 1 - t;
+    points.push([0, 1].map((j) => w * w * w * a[j] + 3 * w * w * t * b[j] + 3 * w * t * t * c[j] + t * t * t * d[j]) as P2);
+    // Per new piece: the old piece's speed × (old pieces ÷ new ones).
+    const d1 = [0, 1].map((j) => 3 * w * w * (b[j] - a[j]) + 6 * w * t * (c[j] - b[j]) + 3 * t * t * (d[j] - c[j]));
+    tangents.push([(d1[0] * m) / n, (d1[1] * m) / n]);
+  }
+  return { kind: "spline", points, tangents };
+}
+
 /** A sketch spline that is a curved edge's shape exactly (its points new, at the shape's points). */
 function splineOfShape(sh: Extract<CurveShape, { kind: "spline" }>, construction: boolean, ids?: string[]): { closed: boolean; spline: SketchSpline; points: SketchPoint[] } {
-  const closed = shapeClosed(sh);
+  const closed = shapeIsClosed(sh);
   const at = closed ? sh.points.slice(0, -1) : sh.points;
   const points = at.map((p, i): SketchPoint => ({ id: ids?.[i] ?? sketchId("p"), x: p[0], y: p[1] }));
   const spline = splineThrough(sketchId("sp"), points.map((p) => p.id), shapeBeziers(sh), closed, construction);
@@ -547,6 +573,8 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
   const radii = new Map<string, number>();
   /** Splines following a curved edge whose handles change (its points move too). */
   const reshaped = new Map<string, SketchSpline>();
+  /** Splines following a curved edge that now need a different number of points: the new spline, its old points between its ends, and its points. */
+  const respaced = new Map<string, { curve: SketchSpline; gone: Set<string>; points: SketchPoint[] }>();
   for (const p of s.points) {
     const to = p.link ? points[p.id] : undefined;
     if (to) moves.set(p.id, to);
@@ -587,34 +615,84 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
       }
     } else if (c.type === "spline" && e.shape?.kind === "spline") {
       let sh = e.shape;
-      const closed = shapeClosed(sh);
+      const closed = shapeIsClosed(sh);
       // Keep it running the same way (the edge may now run the other way round).
-      if (!closed && sh.points.length === c.points.length) {
+      if (!closed) {
         const first = pointPos(s, c.points[0]);
         const last = pointPos(s, c.points[c.points.length - 1]);
         const turned = dist(sh.points[0], last) + dist(sh.points[sh.points.length - 1], first) < dist(sh.points[0], first) + dist(sh.points[sh.points.length - 1], last);
         if (turned) sh = { kind: "spline", points: [...sh.points].reverse(), tangents: [...sh.tangents].reverse().map(([x, y]): P2 => [-x, -y]) };
       }
-      // The engine finds the edge at as many points as the copy has, so each point keeps its place.
-      if (closed !== c.closed || (closed ? sh.points.length - 1 : sh.points.length) !== c.points.length) continue;
+      // Open to closed or the other way: not the same curve (the engine reports it lost).
+      if (closed !== c.closed) continue;
+      const count = closed ? sh.points.length - 1 : sh.points.length;
+      if (count !== c.points.length) {
+        // The engine needed more (or fewer) points to keep close to the edge: the ends stay, the points between are new
+        // (only when nothing else uses them; else the copy keeps the points it has, a little less close).
+        const between = closed ? c.points : c.points.slice(1, -1);
+        const used = new Set<string>();
+        for (const o of s.curves) if (o.id !== c.id) for (const id of curvePointsOf(o)) used.add(id);
+        for (const k of s.constraints) if (!(k.type === "fix" && between.includes(k.refs[0]))) for (const r of k.refs) used.add(r);
+        for (const t of s.texts ?? []) used.add(t.anchor);
+        if (between.some((id) => used.has(id))) {
+          // Something rests on a point between its ends (a line from it, a text): keep every point, following the
+          // edge at as many points as the copy has (the engine's shape, walked at that many places instead).
+          const even = resampleShape(sh, closed ? c.points.length : c.points.length - 1);
+          c.points.forEach((id, i) => moves.set(id, even.points[i]));
+          const next = splineThrough(c.id, c.points, shapeBeziers(even), c.closed, c.construction);
+          if (JSON.stringify([next.tangents, next.tangentsIn]) !== JSON.stringify([c.tangents, c.tangentsIn])) reshaped.set(c.id, next);
+          continue;
+        }
+        if (count < 2) continue;
+        const taken = new Set(s.points.map((p) => p.id));
+        let n = 0;
+        const fresh = () => {
+          let id: string;
+          do id = `${c.id}~${(n++).toString(36)}`;
+          while (taken.has(id));
+          taken.add(id);
+          return id;
+        };
+        const ids = sh.points.slice(0, count).map((_, i) => (!closed && i === 0 ? c.points[0] : !closed && i === count - 1 ? c.points[c.points.length - 1] : fresh()));
+        respaced.set(c.id, { curve: splineThrough(c.id, ids, shapeBeziers(sh), c.closed, c.construction), gone: new Set(between), points: ids.map((id, i): SketchPoint => ({ id, x: sh.points[i][0], y: sh.points[i][1] })) });
+        if (!closed) {
+          moves.set(c.points[0], sh.points[0]);
+          moves.set(c.points[c.points.length - 1], sh.points[count - 1]);
+        }
+        continue;
+      }
       c.points.forEach((id, i) => moves.set(id, sh.points[i]));
       const next = splineThrough(c.id, c.points, shapeBeziers(sh), c.closed, c.construction);
       if (JSON.stringify([next.tangents, next.tangentsIn]) !== JSON.stringify([c.tangents, c.tangentsIn])) reshaped.set(c.id, next);
     }
   }
-  let moved = reshaped.size > 0;
+  let moved = reshaped.size > 0 || respaced.size > 0;
   for (const [id, p] of moves) if (dist(pointPos(s, id), p) > 1e-9) moved = true;
   for (const c of s.curves) if (c.type === "circle" && radii.has(c.id) && Math.abs(radii.get(c.id)! - c.radius) > 1e-9) moved = true;
   if (!moved) return s;
+  const gone = new Set([...respaced.values()].flatMap((r) => [...r.gone]));
+  const known = new Set(s.points.map((p) => p.id));
+  const added = [...respaced.values()].flatMap((r) => r.points.filter((p) => !known.has(p.id)));
   const data: SketchData = {
     // Texts and pictures (and anything else the sketch holds) stay as they are.
     ...s,
-    points: s.points.map((p) => {
-      const to = moves.get(p.id);
-      return to ? { ...p, x: to[0], y: to[1] } : p;
-    }),
+    points: [
+      ...s.points.filter((p) => !gone.has(p.id)).map((p) => {
+        const to = moves.get(p.id);
+        return to ? { ...p, x: to[0], y: to[1] } : p;
+      }),
+      ...added,
+    ],
     curves: s.curves.map((c) => {
       if (c.type === "circle" && radii.has(c.id)) return { ...c, radius: radii.get(c.id)! };
+      const re = c.type === "spline" ? respaced.get(c.id) : undefined;
+      if (c.type === "spline" && re) {
+        const { tangents: _t, tangentsIn: _ti, points: _p, ...rest } = c;
+        void _t;
+        void _ti;
+        void _p;
+        return { ...rest, points: re.curve.points, ...(re.curve.tangents ? { tangents: re.curve.tangents } : {}), ...(re.curve.tangentsIn ? { tangentsIn: re.curve.tangentsIn } : {}) };
+      }
       const sp = c.type === "spline" ? reshaped.get(c.id) : undefined;
       if (c.type === "spline" && sp) {
         // New handles from the edge; everything else about the spline stays.
@@ -625,10 +703,16 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
       }
       return c;
     }),
-    constraints: s.constraints.map((k) => {
-      const to = k.type === "fix" ? moves.get(k.refs[0]) : undefined;
-      return to ? { ...k, extra: [to[0], to[1]] } : k;
-    }),
+    constraints: [
+      ...s.constraints
+        .filter((k) => !(k.type === "fix" && gone.has(k.refs[0])))
+        .map((k) => {
+          const to = k.type === "fix" ? moves.get(k.refs[0]) : undefined;
+          return to ? { ...k, extra: [to[0], to[1]] } : k;
+        }),
+      // The new points are fixed where the edge is, as the old ones were.
+      ...added.map((p) => fixAt(p.id, [p.x, p.y])),
+    ],
   };
   return settle(data).sketch;
 }

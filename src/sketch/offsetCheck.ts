@@ -78,10 +78,36 @@ function sweepOf(s: SketchData, c: Extract<SketchCurve, { type: "arc" }>): numbe
   return sw;
 }
 
-/** Has a copy turned the wrong way round (a line running backwards, or an arc going the long way round)? */
-function turnedOver(s: SketchData, copy: SketchCurve, orig: SketchCurve): boolean {
+/** A curve's two ends (lines and arcs), or none. */
+const endsOf = (c: SketchCurve): string[] => (c.type === "line" ? [c.p1, c.p2] : c.type === "arc" ? [c.start, c.end] : []);
+
+/**
+ * Which of the original's ends a copy line's first point came from. A copy
+ * may run either way round its original (a chain is walked whichever way it
+ * goes), so this is read from the corners it shares with neighbouring copies:
+ * the neighbour's original meets this original at the matching end. Null when
+ * it has no neighbour (a single line copied runs the same way as its original).
+ */
+function firstEndFrom(pairs: { copy: SketchCurve; orig: SketchCurve }[], copy: Extract<SketchCurve, { type: "line" }>, orig: Extract<SketchCurve, { type: "line" }>): string | null {
+  for (const mine of [copy.p1, copy.p2]) {
+    for (const q of pairs) {
+      if (q.copy === copy || !endsOf(q.copy).includes(mine)) continue;
+      const shared = endsOf(q.orig).filter((id) => id === orig.p1 || id === orig.p2);
+      if (shared.length !== 1) continue;
+      // That end of the original goes with `mine`; so the first point came from it, or from the other end.
+      const at = shared[0];
+      return mine === copy.p1 ? at : at === orig.p1 ? orig.p2 : orig.p1;
+    }
+  }
+  return null;
+}
+
+/** Has a copy turned the wrong way round (a line running backwards from where its ends came from, or an arc going the long way round)? */
+function turnedOver(s: SketchData, pairs: { copy: SketchCurve; orig: SketchCurve }[], copy: SketchCurve, orig: SketchCurve): boolean {
   if (copy.type === "line" && orig.type === "line") {
-    const a = pos(s, copy.p1), b = pos(s, copy.p2), c = pos(s, orig.p1), d = pos(s, orig.p2);
+    const from = firstEndFrom(pairs, copy, orig) ?? orig.p1;
+    const to = from === orig.p1 ? orig.p2 : orig.p1;
+    const a = pos(s, copy.p1), b = pos(s, copy.p2), c = pos(s, from), d = pos(s, to);
     return (b[0] - a[0]) * (d[0] - c[0]) + (b[1] - a[1]) * (d[1] - c[1]) < -1e-12;
   }
   if (copy.type === "arc" && orig.type === "arc") return Math.abs(sweepOf(s, copy) - sweepOf(s, orig)) > Math.PI;
@@ -91,7 +117,7 @@ function turnedOver(s: SketchData, copy: SketchCurve, orig: SketchCurve): boolea
 /** Does this offset's copy (all its pieces together) cross itself or fold back? */
 export function offsetCrossesItself(s: SketchData, k: SketchConstraint): boolean {
   const pairs = copiesOf(s, k);
-  if (pairs.some(({ copy, orig }) => turnedOver(s, copy, orig))) return true;
+  if (pairs.some(({ copy, orig }) => turnedOver(s, pairs, copy, orig))) return true;
   const pieces: Piece[] = [];
   for (let ci = 0; ci < pairs.length; ci++) {
     const c = pairs[ci].copy;
@@ -139,4 +165,31 @@ export function offsetNotes(s: SketchData): string[] {
   const crossing = s.constraints.some((k) => k.type === "offset" && offsetCrossesItself(s, k));
   // A copy offset past its original's tightest bend folds back there: saying it crosses itself covers that.
   return crossing ? [CROSSING_NOTE] : offsetWarnings(s);
+}
+
+/** The offset copies (curve ids) that cross themselves. */
+export function crossingCopies(s: SketchData): Set<string> {
+  const out = new Set<string>();
+  for (const k of s.constraints) {
+    if (k.type !== "offset" || !offsetCrossesItself(s, k)) continue;
+    for (let i = 0; i + 1 < k.refs.length; i += 2) out.add(k.refs[i]);
+  }
+  return out;
+}
+
+/** What an extrude or revolve says when the outline it uses is (partly) an offset copy that crosses itself; null when it isn't. */
+export function crossingOutlineNote(s: SketchData, areas?: (number | string)[][]): string | null {
+  if (!s.constraints.some((k) => k.type === "offset")) return null;
+  const copies = crossingCopies(s);
+  if (!copies.size) return null;
+  const solid = [...copies].filter((id) => s.curves.some((c) => c.id === id && !c.construction));
+  if (!solid.length) return null;
+  // Picked areas say which curves bound them ("<curve id>+" or "−"); older picks without that, and no picks (every shape), count as using them.
+  const uses =
+    !areas?.length ||
+    areas.some((a) => {
+      const sig = a.slice(3).filter((v): v is string => typeof v === "string");
+      return !sig.length || sig.some((v) => copies.has(v.slice(0, -1)));
+    });
+  return uses ? "Its outline is an offset copy that crosses over itself, so the shape may not come out as expected. Edit the sketch and use a smaller offset distance." : null;
 }
