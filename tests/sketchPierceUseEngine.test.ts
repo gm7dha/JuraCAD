@@ -259,3 +259,31 @@ describe("Use on curved edges", () => {
     expect(Math.max(...ids.map((id) => apart(data, id, now, id)))).toBeGreaterThan(1);
   });
 });
+
+describe("follow-ups", () => {
+  it("an extrude of an offset that crosses itself is built, with a note on it", async () => {
+    const { addRectangle } = await import("../src/sketch/ops");
+    const { offsetCurves } = await import("../src/sketch/tools");
+    const r = addRectangle(emptySketch(), at(0, 0), at(10, 4));
+    const bad = offsetCurves(r.sketch, r.lineIds[0], { x: 5, y: 2 }, "3").sketch;
+    const built = build([sketch("s", TOP, bad), extrude("e", "s", 5)]);
+    expect(built.featureWarnings?.e).toBe(
+      "Its outline is an offset copy that crosses over itself, so the shape may not come out as expected. Edit the sketch and use a smaller offset distance.",
+    );
+    // A fine one says nothing.
+    const fine = offsetCurves(r.sketch, r.lineIds[0], { x: 5, y: 2 }, "1").sketch;
+    expect(build([sketch("s", TOP, fine), extrude("e", "s", 5)]).featureWarnings?.e).toBeUndefined();
+  });
+
+  it("curved edges clear of the plane aren't walked along for Pierce places; those through it are", () => {
+    // A cylinder standing on z = 5 (clear of Top) and one through it (z = −5 to 5).
+    const clear = { ...feature("cylinder", { diameter: 10, height: 10, x: 0, y: 0, z: 5 }), id: "c1", name: "c1" };
+    const through = { ...feature("cylinder", { diameter: 10, height: 10, x: 30, y: 0, z: -5 }), id: "c2", name: "c2" };
+    build([clear, through, sketch("sk", TOP, emptySketch())]);
+    const dots = engine.sketchCandidates("main", "sk")!.filter((e) => e.pierce);
+    // Only the second cylinder's upright seam passes through Top (its round edges are above and below).
+    expect(dots.every((e) => e.pick?.partId === "c2")).toBe(true);
+    expect(dots.length).toBeGreaterThan(0);
+    for (const d of dots) expect(Math.hypot(d.a[0] - 30, d.a[1])).toBeCloseTo(5, 6);
+  });
+});

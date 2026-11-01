@@ -394,13 +394,16 @@ export function extendWavy(s: SketchData, target: Wavy, at: { x: number; y: numb
     const sp = Math.hypot(d[0], d[1]);
     if (sp < 1e-9 * speed0) break;
     const cos = (d[0] * d0[0] + d[1] * d0[1]) / (sp * speed0);
-    if (cos < Math.cos(EXTEND_TURN)) break;
+    // (A hair short of the full turn, so a curve turning exactly that far is treated the same from either end.)
+    if (cos < Math.cos(EXTEND_TURN) + 1e-9) break;
     length += dist(here.p, prev);
     prev = here.p;
     vs.push(v);
     if (length > reach) break;
   }
-  if (vs.length < 2) return { sketch: s, error: `There's nothing ahead of that end for the ${kind} to reach.` };
+  const endAt = P(endId);
+  const straightOn = () => extendStraight(s, target, atEnd, endId, [sigma * d0[0], sigma * d0[1]], reach, kind, pieces);
+  if (vs.length < 2) return straightOn();
   const ahead: CurveParam = {
     lo: 0,
     hi: vs[vs.length - 1],
@@ -413,9 +416,9 @@ export function extendWavy(s: SketchData, target: Wavy, at: { x: number; y: numb
     d2: (v) => f(e + sigma * v).d2,
     samples: vs,
   };
-  const endAt = P(endId);
   const hit = firstAhead(s, ahead, null, 1e-9, (c) => dist(c.p, endAt) > 1e-6);
-  if (!hit) return { sketch: s, error: `There's nothing ahead of that end for the ${kind} to reach.` };
+  // Curving on, it turns away before reaching anything: carry it on straight instead (as it was heading at its end).
+  if (!hit) return straightOn();
   const T = e + sigma * hit.ua;
   const moves = new Map<string, P2>([[endId, hit.p]]);
   let next: SketchCurve;
@@ -433,6 +436,39 @@ export function extendWavy(s: SketchData, target: Wavy, at: { x: number; y: numb
     next = { ...rest, ...splineThrough(target.id, target.points, all, false, target.construction) };
   }
   return finishExtend(s, moves, s.curves.map((c) => (c.id === target.id ? next : c)), target.id, endId, hit.by, kind);
+}
+
+/**
+ * Carry a spline on in a straight line from its end, the way it was heading
+ * there, to the first curve ahead: a new straight piece is added (the spline
+ * stays smooth where it joins). A conic can't take another piece, so it says why.
+ */
+function extendStraight(s: SketchData, target: SketchSpline, atEnd: boolean, endId: string, dir: P2, reach: number, kind: string, pieces: [P2, P2, P2, P2][]): EditResult {
+  const away = `That ${kind}'s end curves away from everything ahead of it, so carrying it on would turn it right round. Draw a line on from its end instead, or move what it should reach.`;
+  if (target.conic !== undefined) return { sketch: s, error: away };
+  const q = s.points.find((p) => p.id === endId)!;
+  const from: P2 = [q.x, q.y];
+  const sp = Math.hypot(dir[0], dir[1]);
+  const u: P2 = [dir[0] / sp, dir[1] / sp];
+  const ray: CurveParam = { lo: 0, hi: reach, closed: false, at: (t) => [from[0] + u[0] * t, from[1] + u[1] * t], d1: () => u, d2: () => [0, 0], samples: [0, reach] };
+  const hit = firstAhead(s, ray, null, 1e-6, (c) => c.by !== target.id || dist(c.p, from) > 1e-6);
+  if (!hit) return { sketch: s, error: `There's nothing ahead of that end for the ${kind} to reach, curving on or straight on.` };
+  const L = hit.ua;
+  const id = sketchId("p");
+  const end = hit.p;
+  // A straight piece: handles a third of the way along it.
+  const third: P2 = [(u[0] * L) / 3, (u[1] * L) / 3];
+  const all = atEnd
+    ? [...pieces, [from, [from[0] + third[0], from[1] + third[1]], [end[0] - third[0], end[1] - third[1]], end] as [P2, P2, P2, P2]]
+    : [[end, [end[0] - third[0], end[1] - third[1]], [from[0] + third[0], from[1] + third[1]], from] as [P2, P2, P2, P2], ...pieces];
+  const ids = atEnd ? [...target.points, id] : [id, ...target.points];
+  const { tangents: _t, tangentsIn: _ti, ...rest } = target;
+  void _t;
+  void _ti;
+  const next: SketchSpline = { ...rest, ...splineThrough(target.id, ids, all, false, target.construction) };
+  const withPoint: SketchData = { ...s, points: [...s.points, { id, x: end[0], y: end[1] }] };
+  const r = finishExtend(withPoint, new Map([[id, end]]), withPoint.curves.map((c) => (c.id === target.id ? next : c)), target.id, id, hit.by, kind);
+  return r.error ? { sketch: s, error: r.error } : r;
 }
 
 /** Extend part of an ellipse round its ellipse, from the end nearest the click, to the next curve it meets. */

@@ -218,9 +218,14 @@ describe("Use on curved edges", () => {
       const q = p2.at((16 * i) / 160);
       expect(Math.abs(Math.hypot(q[0] - 2, q[1]) - 12)).toBeLessThan(1.2e-3);
     }
-    // A shape with a different number of points is left alone (the engine always sends as many as the copy has).
-    const other = seeShape(TOP, circleShape([2, 0, 0], [1, 0, 0], [0, 1, 0], 12, 6))!;
-    expect(followLinks(r.sketch, { [sp.id]: { ...edge, shape: other } })).toBe(r.sketch);
+    // A shape with a different number of points (the engine needed another number to keep close): it's respaced to that many.
+    const other = seeShape(TOP, circleShape([2, 0, 0], [1, 0, 0], [0, 1, 0], 12, 24))!;
+    const respaced = followLinks(r.sketch, { [sp.id]: { ...edge, shape: other } });
+    expect((curveById(respaced, sp.id) as SketchSpline).points).toHaveLength(24);
+    expect(solveSketch(respaced).ok).toBe(true);
+    // An open shape for a closed copy isn't the same curve: left alone (the engine reports it lost).
+    const open = seeShape(TOP, { points: circleShape([2, 0, 0], [1, 0, 0], [0, 1, 0], 12, 16).points.slice(0, 9), tangents: circleShape([2, 0, 0], [1, 0, 0], [0, 1, 0], 12, 16).tangents.slice(0, 9) })!;
+    expect(followLinks(r.sketch, { [sp.id]: { ...edge, shape: open } })).toBe(r.sketch);
     // Saved and read back, the link is kept.
     expect((parseSketchData(JSON.parse(JSON.stringify(r.sketch)))!.curves[0] as SketchSpline).link).toEqual(sp.link);
     // Without a shape, a curved edge still can't be used (as before).
