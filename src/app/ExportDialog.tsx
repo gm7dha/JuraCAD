@@ -76,7 +76,8 @@ export function ExportDialog() {
     try {
       if (format === "step") {
         // A whole assembly keeps its structure (sub-assemblies, each part once, every copy placed), as Onshape's STEP files do.
-        const tree = asm && which === "all" ? stepTree(asm, allParts, solveWithParts(asm, allParts, { assemblies }).placements, assemblies ?? []) : null;
+        const solvedAll = asm && which === "all" ? solveWithParts(asm, allParts, { assemblies }) : null;
+        const tree = asm && solvedAll ? stepTree(asm, allParts, solvedAll.placements, assemblies ?? [], solvedAll.inner) : null;
         const { step, partCount } = await getKernel().exportStep(partIds, doc.appearance, chosenInstances, tree ?? undefined);
         const name = `${safeFileName(fileName, "juracad")}.step`;
         downloadFile(step, name, "model/step");

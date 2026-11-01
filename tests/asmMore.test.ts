@@ -109,8 +109,13 @@ describe("telling whether a part is symmetric", () => {
     const tab = ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 3.5, 0], [12, 6.5, 10]]]));
     expect(tab?.axis).toBe("y");
     expect(tab?.at).toBeCloseTo(5, 6);
-    // The tab in a corner: not symmetric at all.
-    expect(ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 0, 0], [12, 3, 3]]]))).toBeNull();
+    // A square tab in a corner: not across its own X, Y or Z — but across the slanted plane where Y and Z swap.
+    const corner = ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 0, 0], [12, 3, 3]]]))!;
+    expect(Math.abs(corner.normal![1])).toBeCloseTo(Math.SQRT1_2, 9);
+    expect(corner.normal![1] + corner.normal![2]).toBeCloseTo(0, 9);
+    expect(corner.at).toBeCloseTo(0, 9);
+    // An oblong tab in a corner: not symmetric at all.
+    expect(ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 0, 0], [12, 3, 4]]]))).toBeNull();
     // Tabs on both sides, one 0.05 mm off (or 0.02 mm thicker): not symmetric left to right (only top to bottom).
     expect(ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 3.5, 0], [12, 6.5, 10]], [[-2, 3.55, 0], [0, 6.55, 10]]]))?.axis).toBe("z");
     expect(ownSymmetry(mesh([[[0, 0, 0], [10, 10, 10]], [[10, 3.5, 0], [12, 6.5, 10]], [[-2.02, 3.5, 0], [0, 6.5, 10]]]))?.axis).toBe("y");
