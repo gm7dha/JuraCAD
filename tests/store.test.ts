@@ -259,3 +259,13 @@ describe("new plane from a standard plane", () => {
     expect(s().editing?.draft.planeDef?.ref).toEqual({ kind: "default", name: "Top" });
   });
 });
+
+describe("feature warnings (built, with something to tell)", () => {
+  it("are kept apart from failures, and cleared by the next rebuild without them", () => {
+    s().setRebuildResult([], {}, 1, undefined, undefined, undefined, { e1: "Sketch 2 is suppressed, so its areas are left out of this extrude." });
+    expect(s().featureErrors).toEqual({});
+    expect(s().featureWarnings).toEqual({ e1: "Sketch 2 is suppressed, so its areas are left out of this extrude." });
+    s().setRebuildResult([], {}, 1);
+    expect(s().featureWarnings).toEqual({});
+  });
+});
