@@ -232,7 +232,18 @@ try {
 
   step = "checking the block for 3D printing";
   await page.getByRole("button", { name: "3D print", exact: true }).click();
-  await page.waitForSelector(".print-panel .check-headline >> text=Ready to print.", { timeout: 60_000 });
+  // The print bed step above left a 10 mm wide custom printer chosen: the check uses the same printer setting.
+  await page.waitForSelector(".print-panel >> text=Too big for the printer", { timeout: 60_000 });
+  await page.getByRole("button", { name: /Printer settings/ }).click();
+  await page.locator("#print-printer").selectOption("prusa-mk4");
+  {
+    const panelText = () => page.locator(".print-panel").innerText().then((t) => t.replace(/\s+/g, " "));
+    try {
+      await page.waitForSelector(".print-panel .check-headline >> text=Ready to print.", { timeout: 60_000 });
+    } catch {
+      throw new Error(`the print check didn't say "Ready to print.": ${await panelText()}`);
+    }
+  }
   const printFindings = (await page.locator(".print-panel .check-part").innerText()).replace(/\s+/g, " ");
   if (!/Fits on the bed/.test(printFindings) || !/rests flat on the bed/.test(printFindings)) throw new Error(`the print check said: ${printFindings}`);
 
