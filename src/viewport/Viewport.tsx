@@ -31,7 +31,7 @@ import type { SketchData } from "../sketch/types";
 import { setSketchTheme } from "./SketchLayer";
 import { draftEffect, partsOfFeature } from "../model/partLinks";
 import { SceneManager, type PickAreas, type PickAreaSet, type PickTarget, type ScreenRay } from "./SceneManager";
-import { areaClickChange, areaClickMode, areaOutlines, areaShades, areasTaken, clickableAreaSketches, followedSketch, selectArea, selectedAreaShades } from "../sketch/areaClicks";
+import { areaClickChange, areaClickMode, areaOutlines, areaShades, areasTaken, clickableAreaSketches, followedSketch, selectArea, selectedAreaShades, selectedCount } from "../sketch/areaClicks";
 import { sketchAreas } from "../sketch/areas";
 import { planDrag, type DragPlan } from "../assembly/drag";
 import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mates";
@@ -197,7 +197,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       // An area lying on a part's face: clicking it once selects the area; clicking it again (while it's the only
       // thing selected) selects the face instead, so faces under a sketch on show can still be picked.
       const sel = s.areaSelection;
-      const only = sel?.sketch === sketch.id && sel.areas.length === 1 && selectedAreaShades(sel, sketch.id, data)[target.index] === "picked";
+      const only = selectedCount(sel) === 1 && selectedAreaShades(sel, sketch.id, data)[target.index] === "picked";
       if (target.under && only && !additive) {
         s.setSelection([target.under.item]);
         return;

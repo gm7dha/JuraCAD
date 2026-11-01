@@ -37,18 +37,42 @@ export function revolveAxis(plane: SketchPlane, data: SketchData, axisId: Revolv
  * A revolved shape turned back by half its angle about its axis, so it goes
  * equally both ways from the sketch (Onshape's "symmetric"). `shape` is used up.
  */
-export function centreRevolve(shape: Shape3D, plane: SketchPlane, data: SketchData, opts: RevolveOptions): Shape3D {
+export function centreRevolve(shape: Shape3D, plane: SketchPlane, data: SketchData, opts: RevolveOptions, around?: { origin: V3; direction: V3 }): Shape3D {
   if (opts.angle >= 360 - 1e-9) return shape;
-  const axis = revolveAxis(plane, data, opts.axis);
+  const axis = around ?? revolveAxis(plane, data, opts.axis);
   if (!axis) return shape;
   const sign = opts.flip ? -1 : 1;
   const d = axis.direction;
   return shape.rotate(-opts.angle / 2, axis.origin, [d[0] * sign, d[1] * sign, d[2] * sign]);
 }
 
-export function revolveSketch(plane: SketchPlane, data: SketchData, opts: RevolveOptions): Shape3D {
+/**
+ * Where a revolve's axis (a 3D line, from another sketch) lies in this
+ * sketch's plane, in sketch coordinates; null when the line isn't in the plane
+ * (then this sketch's shapes can't be spun around it without passing through
+ * themselves, so they're refused).
+ */
+export function axisInPlane(plane: SketchPlane, around: { origin: V3; direction: V3 }): { at: P2; dir: P2 } | null {
+  const f = planeFrame(plane);
+  const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const len = Math.hypot(...around.direction);
+  if (!(len > 1e-12)) return null;
+  const d: V3 = [around.direction[0] / len, around.direction[1] / len, around.direction[2] / len];
+  const rel: V3 = [around.origin[0] - f.origin[0], around.origin[1] - f.origin[1], around.origin[2] - f.origin[2]];
+  if (Math.abs(dot(d, f.n)) > 1e-7 || Math.abs(dot(rel, f.n)) > 1e-5) return null;
+  const dir: P2 = [dot(d, f.u), dot(d, f.v)];
+  const dl = Math.hypot(dir[0], dir[1]);
+  return { at: [dot(rel, f.u), dot(rel, f.v)], dir: [dir[0] / dl, dir[1] / dl] };
+}
+
+/**
+ * `around`: spin round this line (in the sketch's coordinates) instead of the
+ * axis `opts.axis` names — for a revolve taking areas of several sketches,
+ * whose axis is in its first sketch.
+ */
+export function revolveSketch(plane: SketchPlane, data: SketchData, opts: RevolveOptions, around?: { at: P2; dir: P2 }): Shape3D {
   if (!(opts.angle > 0) || opts.angle > 360) throw new Error("The angle must be more than 0° and at most 360°.");
-  const axis = axisInSketch(data, opts.axis);
+  const axis = around ?? axisInSketch(data, opts.axis);
   if (!axis) throw new Error("The line to spin around isn't in the sketch any more. Pick another axis.");
 
   // Everything that's revolved must lie on one side of the axis, or the solid would pass through itself.

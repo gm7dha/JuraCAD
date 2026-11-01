@@ -18,9 +18,14 @@ import {
   areasTaken,
   clickableAreaSketches,
   freeAreas,
+  pathChange,
   selectArea,
   selectedAreaShades,
+  selectedCount,
+  selectedIn,
+  selectionStart,
   sketchesOffered,
+  takesSeveral,
 } from "../src/sketch/areaClicks";
 import { draftEffect } from "../src/model/partLinks";
 import { areasUsedByAll, pickedAreas, pickOf, sketchAreas, type AreaPick } from "../src/sketch/areas";
@@ -163,10 +168,28 @@ describe("clicking areas of any sketch while a feature is open", () => {
     // Leaving the first sketch with nothing picked: the next sketch becomes the feature's own (nothing picked would mean all).
     const swap = areaClickChange(withMore, { id: "s2", name: "Sketch 2" }, other, indexAt(other, 110, 5)).patch;
     expect(swap).toEqual({ sketchRef: "s1", areas: [pickAt(data, 40, 0)], moreAreas: undefined });
-    // Revolves and surfaces still take one sketch.
+    // Revolves and sweeps take several sketches too (round one axis / along one path); surfaces take one.
     const rev: Feature = { ...draft, type: "revolve", extrude: undefined, revolve: { axis: "vertical", flip: false } };
-    expect(areaClickChange(rev, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0)).patch.sketchRef).toBe("s1");
-    expect(areaClickChange({ ...draft, surface: true }, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0)).patch.sketchRef).toBe("s1");
+    expect(areaClickChange(rev, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0)).patch).toEqual(add.patch);
+    const sweep: Feature = { ...draft, type: "sweep", extrude: undefined, pathRef: "p1" };
+    expect(areaClickChange(sweep, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0)).patch).toEqual(add.patch);
+    const surface = areaClickChange({ ...draft, surface: true }, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0));
+    expect(surface.patch.sketchRef).toBe("s1");
+    expect(surface.message).toBe("Extrude e2 now uses Sketch 1. A surface takes its shapes from one sketch.");
+    expect(areaClickChange({ ...rev, surface: true }, { id: "s1", name: "Sketch 1" }, data, indexAt(data, 40, 0)).patch.sketchRef).toBe("s1");
+  });
+
+  it("which features take areas of several sketches", () => {
+    expect(["extrude", "revolve", "sweep", "loft", "hole"].map((type) => takesSeveral({ type: type as Feature["type"] }))).toEqual([true, true, true, false, false]);
+    expect(takesSeveral({ type: "revolve", surface: true })).toBe(false);
+  });
+
+  it("a sweep's path can't also be one of its extra profiles", () => {
+    const more = [{ sketch: "s1", areas: [pickAt(data, 0, 0)] }, { sketch: "s3", areas: [[1, 2] as AreaPick] }];
+    expect(pathChange({ moreAreas: more }, "s1")).toEqual({ pathRef: "s1", moreAreas: [more[1]] });
+    expect(pathChange({ moreAreas: [more[0]] }, "s1")).toEqual({ pathRef: "s1", moreAreas: undefined });
+    expect(pathChange({ moreAreas: more }, "s9")).toEqual({ pathRef: "s9" });
+    expect(pathChange({}, undefined)).toEqual({ pathRef: undefined });
   });
 
   it("areas another extrude takes as one of several sketches show as used", () => {
@@ -186,7 +209,7 @@ describe("selecting areas before choosing Extrude", () => {
   const data = twoCircles();
   const other = addRectangle(emptySketch(), at(100, 0), at(120, 10)).sketch;
 
-  it("clicks add and remove areas of one sketch; another sketch starts again", () => {
+  it("clicks add and remove areas of one sketch", () => {
     let sel = selectArea(null, "s1", data, indexAt(data, 0, 0));
     expect(sel).toEqual({ sketch: "s1", areas: [pickAt(data, 0, 0)] });
     sel = selectArea(sel, "s1", data, indexAt(data, 40, 0));
@@ -195,8 +218,42 @@ describe("selecting areas before choosing Extrude", () => {
     expect(selectedAreaShades(sel, "s2", other)).toEqual(["none"]);
     sel = selectArea(sel, "s1", data, indexAt(data, 0, 0));
     expect(sel).toEqual({ sketch: "s1", areas: [pickAt(data, 40, 0)] });
-    expect(selectArea(sel, "s2", other, 0)).toEqual({ sketch: "s2", areas: [pickOf(sketchAreas(other).areas[0])] });
     expect(selectArea(sel, "s1", data, indexAt(data, 40, 0))).toBeNull();
+  });
+
+  it("clicks in several sketches select areas of all of them (as in Onshape)", () => {
+    const rectPick = pickOf(sketchAreas(other).areas[0]);
+    let sel = selectArea(null, "s1", data, indexAt(data, 40, 0));
+    sel = selectArea(sel, "s2", other, 0);
+    expect(sel).toEqual({ sketch: "s1", areas: [pickAt(data, 40, 0)], more: [{ sketch: "s2", areas: [rectPick] }] });
+    expect(selectedAreaShades(sel, "s1", data)).toEqual(["none", "picked"]);
+    expect(selectedAreaShades(sel, "s2", other)).toEqual(["picked"]);
+    expect(selectedIn(sel, "s2")).toEqual([rectPick]);
+    expect(selectedIn(sel, "s3")).toEqual([]);
+    expect(selectedCount(sel)).toBe(2);
+    // A second area of Sketch 1 stays with Sketch 1.
+    sel = selectArea(sel, "s1", data, indexAt(data, 0, 0));
+    expect(sel!.areas).toHaveLength(2);
+    expect(selectedCount(sel)).toBe(3);
+    // Sketch 1 emptied: Sketch 2 becomes the first.
+    sel = selectArea(selectArea(sel, "s1", data, indexAt(data, 0, 0)), "s1", data, indexAt(data, 40, 0));
+    expect(sel).toEqual({ sketch: "s2", areas: [rectPick] });
+    // An extra sketch emptied: dropped.
+    const two = selectArea(selectArea(null, "s1", data, 0), "s2", other, 0);
+    expect(selectArea(two, "s2", other, 0)).toEqual({ sketch: "s1", areas: [pickOf(sketchAreas(data).areas[0])] });
+    expect(selectedCount(null)).toBe(0);
+  });
+
+  it("a new feature starts from the selection: the first sketch its own, the rest as extra sketches", () => {
+    const sel = { sketch: "s1", areas: [pickAt(data, 40, 0)], more: [{ sketch: "gone", areas: [[1, 1] as AreaPick] }, { sketch: "s2", areas: [[110, 5] as AreaPick] }] };
+    const usable = (id: string) => id !== "gone";
+    expect(selectionStart(sel, usable, true)).toEqual({ sketchRef: "s1", areas: [pickAt(data, 40, 0)], moreAreas: [{ sketch: "s2", areas: [[110, 5]] }] });
+    expect(selectionStart(sel, usable, false)).toEqual({ sketchRef: "s1", areas: [pickAt(data, 40, 0)] });
+    // The first sketch can't be used (suppressed since): the next one leads.
+    expect(selectionStart(sel, (id) => id === "s2", true)).toEqual({ sketchRef: "s2", areas: [[110, 5]] });
+    expect(selectionStart(sel, () => false, true)).toBeNull();
+    // One sketch: exactly as before.
+    expect(selectionStart({ sketch: "s1", areas: [pickAt(data, 40, 0)] }, usable, true)).toEqual({ sketchRef: "s1", areas: [pickAt(data, 40, 0)] });
   });
 });
 
@@ -215,6 +272,10 @@ describe("separate pieces become separate parts (saved in the file)", () => {
     // Only well-formed extra sketches are kept.
     expect(back.features[1].moreAreas).toEqual([{ sketch: "s9", areas: [[1, 2, 3]] }]);
     expect("moreAreas" in back.features[2]).toBe(false);
+    // Revolves and sweeps keep theirs too; other features never get one.
+    const kinds = { ...doc, features: [sketch("s1", twoCircles()), ...(["revolve", "sweep", "loft"] as const).map((type, i) => ({ ...extrude(`x${i}`, "s1"), type, extrude: undefined, moreAreas: [{ sketch: "s9", areas: [[1, 2, 3] as AreaPick] }] }))] };
+    const kindsBack = parseDocument(JSON.parse(JSON.stringify(kinds)))!;
+    expect(kindsBack.features.slice(1).map((f) => f.moreAreas)).toEqual([[{ sketch: "s9", areas: [[1, 2, 3]] }], [{ sketch: "s9", areas: [[1, 2, 3]] }], undefined]);
     expect(back.features[1].apart).toBe(true);
     expect(back.features[2].apart).toBeUndefined();
     expect("apart" in back.features[2]).toBe(false);

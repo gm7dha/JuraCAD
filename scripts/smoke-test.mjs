@@ -2710,6 +2710,62 @@ try {
     await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
     if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after extruding areas of two sketches");
     regionsReport += "; one extrude used areas of two sketches (Part 2 grew under it, the new circle became Part 3)";
+
+    step = "selecting circles in two sketches with nothing open, then one Extrude uses both (Onshape style)";
+    // Two more sketches on Top, a small circle each, low in the view where nothing else is.
+    for (const fx of [0.2, 0.4]) {
+      await page.getByRole("button", { name: "Sketch", exact: true }).click();
+      await page.waitForSelector(".sketch-panel");
+      await page.locator(".feature-row.datum", { hasText: "Top" }).click();
+      await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane"));
+      await settled();
+      await page.keyboard.press("c");
+      await page.mouse.click(box.x + box.width * fx, box.y + box.height * 0.8);
+      await page.mouse.click(box.x + box.width * fx + 12, box.y + box.height * 0.8);
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => document.querySelector(".sketch-status")?.textContent?.includes("1 closed shape"), null, { timeout: 10_000 });
+      await page.keyboard.press("Escape");
+      await page.locator('[aria-label="Sketch"] [aria-label="Accept"]').click();
+      await page.waitForSelector(".sketch-panel", { state: "detached" });
+    }
+    // Only the two new sketches are on show (the used ones hid themselves), so only their circles can be clicked.
+    const pair = await spots();
+    if (pair.length !== 2 || pair[0].sketch === pair[1].sketch) throw new Error(`expected one clickable circle in each of the 2 new sketches, got ${JSON.stringify(pair)}`);
+    await clickSpot(pair[0]);
+    await page.waitForFunction(() => window.juracadStore.getState().areaSelection?.areas.length === 1, null, { timeout: 5_000 }).catch(() => why("selecting the first sketch's circle"));
+    await clickSpot((await spots()).find((p) => p.sketch === pair[1].sketch));
+    const both = await page
+      .waitForFunction(
+        ([a, b]) => {
+          const sel = window.juracadStore.getState().areaSelection;
+          return sel?.sketch === a && sel.areas.length === 1 && sel.more?.length === 1 && sel.more[0].sketch === b && sel.more[0].areas.length === 1;
+        },
+        [pair[0].sketch, pair[1].sketch],
+        { timeout: 5_000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    if (!both) throw new Error(`clicking circles in two sketches should select both, got ${JSON.stringify(await page.evaluate(() => window.juracadStore.getState().areaSelection))}`);
+    // Both stay shaded as selected.
+    const selShades = await page.evaluate(() => window.juracadViewport.current.pickAreas.sets.map((x) => x.shades.join(",")));
+    if (selShades.length !== 2 || selShades.some((x) => x !== "picked")) throw new Error(`both selected circles should be shaded, got ${JSON.stringify(selShades)}`);
+    await page.getByRole("button", { name: "Extrude", exact: true }).click();
+    const fromBoth = await page.evaluate(() => {
+      const d = window.juracadStore.getState().editing.draft;
+      return { sketchRef: d.sketchRef, areas: d.areas?.length ?? 0, more: (d.moreAreas ?? []).map((m) => `${m.sketch}:${m.areas.length}`) };
+    });
+    if (fromBoth.sketchRef !== pair[0].sketch || fromBoth.areas !== 1 || fromBoth.more.join() !== `${pair[1].sketch}:1`) {
+      throw new Error(`Extrude should start with the first sketch's circle and the second sketch's as an extra sketch, got ${JSON.stringify(fromBoth)}`);
+    }
+    await page.waitForFunction(() => /Also extrudes 1 area of /.test(document.querySelector(".feature-dialog")?.textContent ?? ""), null, { timeout: 5_000 }).catch(() => why("the dialog didn't name the extra sketch"));
+    await page.locator("#param-depth").fill("5");
+    await shot("preselected-two-sketches");
+    await page.getByRole("button", { name: "Accept" }).click();
+    // Neither circle touches a part: two new parts from one extrude.
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 5, null, { timeout: 30_000 }).catch(() => why("extruding circles preselected in two sketches"));
+    await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after extruding circles preselected in two sketches");
+    regionsReport += "; circles selected in two sketches beforehand made one extrude using both (two more parts)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 

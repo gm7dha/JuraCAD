@@ -583,7 +583,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     }
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "hole") && f.apart === true) feature.apart = true;
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && f.intersectAll === true) feature.intersectAll = true;
-    if (feature.type === "extrude" && Array.isArray(f.moreAreas)) {
+    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && Array.isArray(f.moreAreas)) {
       const more = f.moreAreas.flatMap((m: unknown) => {
         if (!m || typeof m !== "object") return [];
         const { sketch, areas } = m as { sketch?: unknown; areas?: unknown };
