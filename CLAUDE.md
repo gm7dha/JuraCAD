@@ -222,8 +222,17 @@
   cuts the same off neighbours made earlier. Off unless chosen, so old files rebuild the same.
 - Sweep: `src/kernel/sweep.ts`. Twist (the "twist" box, degrees; + = anticlockwise seen from the path's end looking back)
   winds a guide curve round the path on a rotation-minimising frame (`twistGuide`) and gives it to OCCT's pipe shell as an
-  auxiliary spine; smooth open paths only, at most `MAX_TWIST` (3600°) either way. `sweepControl.lockOrientation` ("Keep profile orientation") uses a fixed
-  trihedron and ignores the twist. Twist 0 and no lock take the original `genericSweep` path untouched.
+  auxiliary spine; at most `MAX_TWIST` (3600°) either way. `sweepControl.lockOrientation` ("Keep profile orientation") uses a fixed
+  trihedron and ignores the twist. Twist 0 and no lock take the original `genericSweep` path untouched; smooth open paths keep the
+  single-guide path. Sharp corners and closed loops are built stretch by stretch (`pathStretches` → `stretchedSweep`; the pure
+  planning is `src/kernel/sweepPath.ts`): a closed loop starts where the profile's plane crosses it (`profilePlace`/`loopFrom`), a
+  twist on one must be whole turns (`wholeTurns`); the twist is shared by length over the stretches between corners, and within
+  `cornerRoom` of each corner (1.1 × the profile's reach, more for corners sharper than 90°) the profile goes round untwisted on a
+  plain RoundCorner pipe (`twistStretches`). Each stretch starts from the drawn profile moved rigidly to its start frame
+  (`placedSection`, frames carried by `carryStep`/`carryThrough`) — not from the previous pipe's end, which OCCT returns as
+  BSplines that break round corners — and the pieces, which only touch end to end, are fused with `JOIN_FUZZ`. Kept facing one way,
+  a closed loop is its smooth runs moved along (a smooth loop is refused: it always goes edge-on somewhere). Surfaces still refuse
+  twist round corners and loops.
 - Surfaces: `src/kernel/surface.ts` (extrude/revolve/sweep/loft of a sketch's open or closed runs — `findChains` in
   `src/sketch/regions.ts` — as shells; Fill from edges; thicken, enclose and offset). A surface part has `surface: true`
   (BuiltPart and PartMesh); solid features add to / cut from the latest *solid* part, never a surface. replicad's

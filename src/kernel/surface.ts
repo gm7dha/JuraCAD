@@ -109,10 +109,13 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
   let guide: Wire | null = null;
   if (Math.abs(twist) >= 1e-9) {
     try {
-      if (spine.isClosed) throw new Error("Twist needs a path with two ends — it can't go all the way round a closed loop. Set the twist to 0, or open the path.");
+      if (spine.isClosed) throw new Error("A twisted surface sweep needs a path with two ends (solid sweeps can twist round a closed loop, surfaces can't yet). Set the twist to 0, or open the path.");
       guide = twistGuide(spine, twist);
     } catch (e) {
       release(spine, ...wires);
+      if (e instanceof Error && /sharp corners/.test(e.message)) {
+        throw new Error("A twisted surface sweep needs a smooth path with no sharp corners (solid sweeps can twist round corners, surfaces can't yet). Round the corners with a sketch fillet, or set the twist to 0.");
+      }
       throw e;
     }
   }

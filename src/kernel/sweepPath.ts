@@ -164,8 +164,8 @@ export function profilePlace(segments: Segment[], side: (p: Pt) => number, dista
       const f = side(p);
       if (k > 0 && (f === 0 || (prev < 0) !== (f < 0))) {
         // Halve down to the crossing.
-        let [lo, hi, flo] = [prevT, t, prev];
-        for (let i = 0; i < 60; i++) {
+        let [lo, hi, flo] = f === 0 ? [t, t, f] : [prevT, t, prev];
+        for (let i = 0; i < 60 && lo < hi; i++) {
           const m = (lo + hi) / 2;
           const fm = side(segmentAt(s, m));
           if (fm === 0) {
@@ -254,4 +254,107 @@ export function wholeTurnsMessage(twistDeg: number): string {
   const nearest = Math.round(twistDeg / 360) * 360 || (twistDeg < 0 ? -360 : 360);
   const shown = Number(twistDeg.toFixed(3));
   return `On a closed loop the twist has to be a whole number of turns (360°, 720°, …) so the profile meets itself again where it started. ${shown}° isn't — try ${nearest}°, or 0° for no twist.`;
+}
+
+/** A segment's length (measured along 64 straight pieces: plenty for setting aside room round a corner). */
+export function segmentLength(s: Segment, upTo = 1, samples = 64): number {
+  let total = 0;
+  let prev = segmentAt(s, 0);
+  for (let k = 1; k <= samples; k++) {
+    const p = segmentAt(s, (upTo * k) / samples);
+    total += Math.hypot(p[0] - prev[0], p[1] - prev[1]);
+    prev = p;
+  }
+  return total;
+}
+
+const runLength = (run: Segment[]) => run.reduce((acc, s) => acc + segmentLength(s), 0);
+
+/** A run cut in two `dist` mm along it. */
+function cutRunAt(run: Segment[], dist: number): [Segment[], Segment[]] {
+  let left = dist;
+  for (let i = 0; i < run.length; i++) {
+    const len = segmentLength(run[i]);
+    if (left < len - 1e-9) {
+      // Find the fraction along this segment that far in.
+      let [lo, hi] = [0, 1];
+      for (let k = 0; k < 50; k++) {
+        const m = (lo + hi) / 2;
+        if (segmentLength(run[i], m) < left) lo = m;
+        else hi = m;
+      }
+      const t = (lo + hi) / 2;
+      if (t <= 1e-9) return [run.slice(0, i), run.slice(i)];
+      const [a, b] = splitSegment(run[i], t);
+      return [
+        [...run.slice(0, i), a],
+        [b, ...run.slice(i + 1)],
+      ];
+    }
+    left -= len;
+  }
+  return [run, []];
+}
+
+/** One stretch of a twisted sweep: twisted along it, or (round a sharp corner) carried round untwisted, exactly as a plain sweep's rounded corner. */
+export interface SweepStretch {
+  segments: Segment[];
+  twisted: boolean;
+}
+
+/**
+ * How a twisted sweep is built round sharp corners: OpenCascade can't twist
+ * through a corner, but it rounds one well in a plain sweep. So the twist runs
+ * steadily along the path everywhere except a short way either side of a
+ * corner, where the profile is carried round the corner untwisted. `reach` is
+ * how far the profile reaches from the path; the room round each corner is
+ * worked out from it by `cornerRoom`.
+ * Throws a plain message when a stretch between corners is too short for that.
+ */
+export function twistStretches(runs: Segment[][], cornerAfter: boolean[], closed: boolean, reach: number): SweepStretch[] {
+  const roomAt = (i: number) => cornerRoom(reach, segmentDirection(runs[i][runs[i].length - 1], 1), segmentDirection(runs[(i + 1) % runs.length][0], 0));
+  const out: SweepStretch[] = [];
+  if (closed && cornerAfter[cornerAfter.length - 1]) {
+    throw new Error("The profile sits right on a corner of the loop, so there's no telling which way it should face. Move it along to a side of the path to twist round the loop.");
+  }
+  let lead: Segment[] = [];
+  runs.forEach((run, i) => {
+    const before = i > 0 && cornerAfter[i - 1];
+    const after = cornerAfter[i];
+    const roomBefore = before ? roomAt(i - 1) : 0;
+    const roomAfter = after ? roomAt(i) : 0;
+    const needed = roomBefore + roomAfter;
+    if (!Number.isFinite(needed)) {
+      throw new Error("The path turns straight back on itself at a corner, so a twisted profile can't be carried round it. Change the path so no corner doubles back, or set the twist to 0.");
+    }
+    if (runLength(run) <= needed + 1e-6) {
+      throw new Error(
+        `A part of the path between corners is too short to twist along with this profile: each needs to be longer than about ${Number((needed + 0.05).toFixed(1))} mm. Lengthen it, round the corners with a sketch fillet, or set the twist to 0.`,
+      );
+    }
+    let rest = run;
+    if (before) {
+      const [head, tail] = cutRunAt(rest, roomBefore);
+      out.push({ segments: [...lead, ...head], twisted: false });
+      rest = tail;
+    }
+    if (after) {
+      const [body, tail] = cutRunAt(rest, runLength(rest) - roomAfter);
+      out.push({ segments: body, twisted: true });
+      lead = tail;
+    } else out.push({ segments: rest, twisted: true });
+  });
+  return out;
+}
+
+/**
+ * Room either side of a corner turning from direction `a` to `b`: a little
+ * more than the profile's reach (the rounded corner swings the inside of the
+ * profile back that far), and for a corner sharper than a right angle, as far
+ * out as the two sides still overlap (reach / tan(half the angle between them)).
+ */
+export function cornerRoom(reach: number, a: Pt, b: Pt): number {
+  const between = Math.PI - Math.acos(Math.min(1, Math.max(-1, a[0] * b[0] + a[1] * b[1])));
+  const t = Math.tan(between / 2);
+  return reach * 1.1 * Math.max(1, t > 1e-9 ? 1 / t : Infinity) + 0.01;
 }

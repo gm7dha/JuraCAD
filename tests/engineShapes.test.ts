@@ -985,22 +985,121 @@ describe("sweep twist and keep orientation", () => {
     expect(turned[1]).toBeCloseTo(8, 2);
   });
 
-  it("explains when a twist can't be done: sharp corners and closed loops", () => {
-    const prof = sketchFeature({ kind: "default", name: "Right" }, rectSketch(-4, -2, 8, 4));
-    const corner = sketchFeature({ kind: "default", name: "Top" }, addLine(lineSketch(0, 0, 40, 0), { x: 40, y: 0 }, { x: 40, y: 40 }).sketch);
-    const r = build([corner, prof, { ...feature("sweep", { twist: 90 }), sketchRef: prof.id, pathRef: corner.id }]);
-    expect(Object.values(r.featureErrors)[0]).toMatch(/smooth path with no sharp corners/);
-    // The same corner without a twist still sweeps, as before.
-    expect(build([corner, prof, { ...feature("sweep", {}), sketchRef: prof.id, pathRef: corner.id }]).featureErrors).toEqual({});
+  it("explains when a twist can't be done: part turns round a closed loop, too many turns", () => {
     const ring = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 20, y: 0 }, 20).sketch);
     const small = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 0, y: 0 }, 2).sketch);
-    const loop = build([ring, small, { ...feature("sweep", { twist: 90 }), sketchRef: small.id, pathRef: ring.id }]);
-    expect(Object.values(loop.featureErrors)[0]).toMatch(/two ends/);
+    // Round a closed loop the ends must meet: a whole number of turns.
+    for (const [twist, suggest] of [[90, "360"], [540, "720"], [-200, "-360"]] as const) {
+      const loop = build([ring, small, { ...feature("sweep", { twist }), sketchRef: small.id, pathRef: ring.id }]);
+      expect(Object.values(loop.featureErrors)[0]).toMatch(new RegExp(`whole number of turns .* ${twist}° isn't — try ${suggest}°, or 0° for no twist`));
+    }
     // More than 10 full turns either way: too slow to build (and soon fails), so explained instead.
+    const prof = sketchFeature({ kind: "default", name: "Right" }, rectSketch(-4, -2, 8, 4));
     const line = sketchFeature({ kind: "default", name: "Top" }, lineSketch(0, 0, 100, 0));
     for (const twist of [3601, -7200]) {
       const many = build([line, prof, { ...feature("sweep", { twist }), sketchRef: prof.id, pathRef: line.id }]);
       expect(Object.values(many.featureErrors)[0]).toMatch(/at most 3600° \(10 full turns\)/);
+    }
+    // A corner too close to the next for this profile to be carried round it.
+    const zig = sketchFeature({ kind: "default", name: "Top" }, addLine(addLine(lineSketch(0, 0, 40, 0), { x: 40, y: 0 }, { x: 40, y: 6 }).sketch, { x: 40, y: 6 }, { x: 80, y: 6 }).sketch);
+    const short = build([zig, prof, { ...feature("sweep", { twist: 90 }), sketchRef: prof.id, pathRef: zig.id }]);
+    expect(Object.values(short.featureErrors)[0]).toMatch(/too short to twist along with this profile.*round the corners with a sketch fillet, or set the twist to 0/);
+  });
+
+  it("twists round sharp corners: the twist runs along the length, each corner rounded as in a plain sweep", () => {
+    const L = sketchFeature({ kind: "default", name: "Top" }, addLine(lineSketch(0, 0, 40, 0), { x: 40, y: 0 }, { x: 40, y: 40 }).sketch);
+    const sweep = (path: Feature, prof: Feature, twist: number): Feature => ({ ...feature("sweep", { twist }), sketchRef: prof.id, pathRef: path.id });
+    // A round bar (twisting it changes nothing): two 40 mm bars, less where they overlap inside the corner (a quarter of a
+    // Steinmetz solid, 16r³/3 ÷ 4), plus the quarter ball rounding the outside: exactly the plain sweep.
+    const disc = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 0, y: 0 }, 3).sketch);
+    const bar = 2 * Math.PI * 9 * 40 - (16 * 27) / 3 / 4 + (Math.PI * 4 * 27) / 3 / 4;
+    build([L, disc, sweep(L, disc, 0)]);
+    expect(relativeError(vol(), bar)).toBeLessThan(1e-5);
+    for (const twist of [90, 360, -180, 720]) {
+      const r = build([L, disc, sweep(L, disc, twist)]);
+      expect(r.featureErrors).toEqual({});
+      expect(valid()).toBe(true);
+      expect(relativeError(vol(), bar)).toBeLessThan(1e-5);
+    }
+    // An 8 × 4 bar. Twisted 360° in all, it's turned 180° at the corner (half way along), so the corner is the same as
+    // untwisted: 2 × 40 × 32, less the 4 × 4 × 4 overlap inside, plus a quarter cylinder (radius 4, 4 high) outside.
+    const prof = sketchFeature({ kind: "default", name: "Right" }, rectSketch(-4, -2, 8, 4));
+    const flat = 2 * 40 * 32 - 64 + Math.PI * 16 * 4 / 4;
+    for (const twist of [0, 360, -360, 720]) {
+      const r = build([L, prof, sweep(L, prof, twist)]);
+      expect(r.featureErrors).toEqual({});
+      expect(valid()).toBe(true);
+      expect(relativeError(vol(), flat)).toBeLessThan(1e-5);
+    }
+    // Twisted 90°, the far end (at y = 40, heading +Y) is stood on end: 4 across in X, 8 up.
+    const endAt40 = (r: { parts: { vertices: Float32Array }[] }) => {
+      const v = r.parts[0].vertices;
+      const x = [Infinity, -Infinity];
+      const z = [Infinity, -Infinity];
+      for (let i = 0; i < v.length; i += 3) {
+        if (v[i + 1] < 40 - 1e-3) continue;
+        x[0] = Math.min(x[0], v[i]);
+        x[1] = Math.max(x[1], v[i]);
+        z[0] = Math.min(z[0], v[i + 2]);
+        z[1] = Math.max(z[1], v[i + 2]);
+      }
+      return [x[1] - x[0], z[1] - z[0]];
+    };
+    const quarter = build([L, prof, sweep(L, prof, 90)]);
+    expect(quarter.featureErrors).toEqual({});
+    expect(valid()).toBe(true);
+    const [across, up] = endAt40(quarter);
+    expect(across).toBeCloseTo(4, 2);
+    expect(up).toBeCloseTo(8, 2);
+    // Its corner is turned 45° (a different corner from the plain one), but the volume is near it.
+    expect(relativeError(vol(), flat)).toBeLessThan(5e-3);
+    // Twist 0 still builds exactly what a sweep made before Twist existed builds.
+    const old = build([L, prof, { ...sweep(L, prof, 0), params: {} }]);
+    const zero = build([L, prof, sweep(L, prof, 0)]);
+    expect(Array.from(zero.parts[0].vertices)).toEqual(Array.from(old.parts[0].vertices));
+  });
+
+  it("twists round closed loops by whole turns: a square with corners, and a ring", () => {
+    let sq = lineSketch(0, 0, 40, 0);
+    sq = addLine(sq, { x: 40, y: 0 }, { x: 40, y: 40 }).sketch;
+    sq = addLine(sq, { x: 40, y: 40 }, { x: 0, y: 40 }).sketch;
+    sq = addLine(sq, { x: 0, y: 40 }, { x: 0, y: 0 }).sketch;
+    const square = sketchFeature({ kind: "default", name: "Top" }, sq);
+    const sweep = (path: Feature, prof: Feature, twist: number): Feature => ({ ...feature("sweep", { twist }), sketchRef: prof.id, pathRef: path.id });
+    // A round bar half way along the left side (x = 0, y = 20): four 40 mm sides, each corner as in the L.
+    const disc = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 20, y: 0 }, 3).sketch);
+    const ring4 = 4 * Math.PI * 9 * 40 + 4 * (-(16 * 27) / 3 / 4 + (Math.PI * 4 * 27) / 3 / 4);
+    for (const twist of [360, 720, -360]) {
+      const r = build([square, disc, sweep(square, disc, twist)]);
+      expect(r.featureErrors).toEqual({});
+      expect(r.parts).toHaveLength(1);
+      expect(valid()).toBe(true);
+      expect(relativeError(vol(), ring4)).toBeLessThan(1e-5);
+    }
+    // An 8 × 4 bar twisted 720°: each corner comes a quarter turn (or three) after the profile, so the bar is stood on end
+    // (4 across, 8 up) at every corner: 4 × 40 × 32, less 2 × 2 × 8 inside and plus a quarter cylinder (radius 2, 8 high) outside, at each.
+    const prof = sketchFeature({ kind: "default", name: "Right" }, rectSketch(16, -2, 8, 4));
+    const r720 = build([square, prof, sweep(square, prof, 720)]);
+    expect(r720.featureErrors).toEqual({});
+    expect(valid()).toBe(true);
+    expect(relativeError(vol(), 4 * 40 * 32 + 4 * (-32 + Math.PI * 4 * 8 / 4))).toBeLessThan(1e-5);
+    // 360°: corners at 45°, a sound closed solid close to the same.
+    const r360 = build([square, prof, sweep(square, prof, 360)]);
+    expect(r360.featureErrors).toEqual({});
+    expect(r360.parts).toHaveLength(1);
+    expect(valid()).toBe(true);
+    expect(relativeError(vol(), 4 * 40 * 32)).toBeLessThan(1e-2);
+    // A ring (radius 20) with a 4 × 2 bar: twisting round its middle keeps the volume, 8 × 2π × 20 (Pappus).
+    const ring = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 20, y: 0 }, 20).sketch);
+    const bar = sketchFeature({ kind: "default", name: "Front" }, rectSketch(-2, -1, 4, 2));
+    for (const twist of [360, 720]) {
+      const r = build([ring, bar, sweep(ring, bar, twist)]);
+      expect(r.featureErrors).toEqual({});
+      expect(r.parts).toHaveLength(1);
+      expect(valid()).toBe(true);
+      expect(relativeError(vol(), 8 * 2 * Math.PI * 20)).toBeLessThan(1e-5);
+      // Closed all the way round: no end faces, just the four twisted sides.
+      expect(r.parts[0].faceRefs.every((f) => f.surface !== "PLANE")).toBe(true);
     }
   });
 
@@ -1024,6 +1123,25 @@ describe("sweep twist and keep orientation", () => {
     const corner = sketchFeature({ kind: "default", name: "Top" }, addLine(lineSketch(0, 0, 40, 0), { x: 40, y: 0 }, { x: 40, y: 40 }).sketch);
     const bad = build([corner, prof, { ...locked, pathRef: corner.id }]);
     expect(Object.values(bad.featureErrors)[0]).toMatch(/facing the same way/);
+    // Round a closed loop with straight sides it can: a 4 × 4 square standing at 45° carried round a 40 mm square.
+    // Each side sweeps 16 × 40 × cos 45°; at the two corners where the motion turns back across the profile's plane the
+    // sides overlap by 16 mm³ each (worked out by hand).
+    let sq = lineSketch(0, 0, 40, 0);
+    sq = addLine(sq, { x: 40, y: 0 }, { x: 40, y: 40 }).sketch;
+    sq = addLine(sq, { x: 40, y: 40 }, { x: 0, y: 40 }).sketch;
+    sq = addLine(sq, { x: 0, y: 40 }, { x: 0, y: 0 }).sketch;
+    const square = sketchFeature({ kind: "default", name: "Top" }, sq);
+    const slanted = sketchFeature(planeOnFace([1, 1, 0], [20, 0, 0], "slant"), rectSketch(-20 * Math.SQRT1_2 - 2, -2, 4, 4));
+    const round = build([square, slanted, { ...locked, sketchRef: slanted.id, pathRef: square.id }]);
+    expect(round.featureErrors).toEqual({});
+    expect(round.parts).toHaveLength(1);
+    expect(valid()).toBe(true);
+    expect(relativeError(vol(), 4 * 16 * 40 * Math.SQRT1_2 - 2 * 16)).toBeLessThan(1e-6);
+    // A smooth closed loop can't be done kept facing one way (somewhere the path runs along the profile's plane): said plainly.
+    const ring = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 20, y: 0 }, 20).sketch);
+    const small = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 0, y: 0 }, 2).sketch);
+    const smooth = build([ring, small, { ...locked, sketchRef: small.id, pathRef: ring.id }]);
+    expect(Object.values(smooth.featureErrors)[0]).toMatch(/can't go round a smooth closed loop.*use a loop with straight sides/);
   });
 
   it("twists surface sweeps too", () => {
