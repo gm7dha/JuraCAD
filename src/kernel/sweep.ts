@@ -344,6 +344,7 @@ function spineStart(spine: Wire): { p: Vec3; t: Vec3 } {
 function pathStretches(segments: Segment[], closed: boolean, frame: ReturnType<typeof planeFrame>, twistDeg: number, reach: number): Stretch[] {
   const { runs, cornerAfter } = smoothRuns(segments, closed);
   const out: Stretch[] = [];
+  const spines: Wire[] = [];
   try {
     if (Math.abs(twistDeg) < 1e-9) {
       for (const run of runs) {
@@ -354,7 +355,7 @@ function pathStretches(segments: Segment[], closed: boolean, frame: ReturnType<t
       return out;
     }
     const plan = twistStretches(runs, cornerAfter, closed, reach);
-    const spines = plan.map((st) => segmentsWire(st.segments, frame, 0));
+    for (const st of plan) spines.push(segmentsWire(st.segments, frame, 0));
     const turns = Math.abs(twistDeg) / 360;
     const samples = plan.map((st, i) => (st.twisted ? smoothSamples(spines[i], Math.max(24, Math.ceil(96 * turns))) : null));
     const lengths = samples.map((pts) => (pts ? ((sv) => sv[sv.length - 1])(arcLengths(pts).s) : 0));
@@ -382,6 +383,9 @@ function pathStretches(segments: Segment[], closed: boolean, frame: ReturnType<t
     });
     return out;
   } catch (e) {
+    // Spines made but not yet handed to a stretch go too.
+    const kept = new Set(out.map((st) => st.spine));
+    release(...spines.filter((sp) => !kept.has(sp)));
     releaseStretches(out);
     throw e;
   }
@@ -427,7 +431,9 @@ function fuseInto(pieces: Shape3D[]): Shape3D {
     fuse.SetFuzzyValue(JOIN_FUZZ);
     fuse.Build();
     if (!fuse.IsDone()) throw new Error("not joined");
-    const unify = new oc.ShapeUpgrade_UnifySameDomain(fuse.Shape(), true, true, false);
+    const fused = fuse.Shape();
+    const unify = new oc.ShapeUpgrade_UnifySameDomain(fused, true, true, false);
+    fused.delete();
     try {
       unify.Build();
       const joined = cast(unify.Shape());
@@ -437,10 +443,12 @@ function fuseInto(pieces: Shape3D[]): Shape3D {
       for (; solids.More(); solids.Next()) found.push(solids.Current());
       solids.delete();
       if (found.length !== 1) {
+        found.forEach((f) => f.delete());
         joined.delete();
         throw new Error("not one solid");
       }
       const solid = cast(oc.TopoDS.Solid(found[0])) as Shape3D;
+      found[0].delete();
       joined.delete();
       if (!soundSolid(solid)) {
         solid.delete();
@@ -462,7 +470,14 @@ function fuseInto(pieces: Shape3D[]): Shape3D {
 function placedSection(wire: Wire, from: PathFrame, to: PathFrame): Wire {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
-  const ax = (f: PathFrame) => new oc.gp_Ax3(new oc.gp_Pnt(...f.p), new oc.gp_Dir(...f.t), new oc.gp_Dir(...f.d));
+  const made: any[] = [];
+  const ax = (f: PathFrame) => {
+    const p = new oc.gp_Pnt(...f.p);
+    const t = new oc.gp_Dir(...f.t);
+    const d = new oc.gp_Dir(...f.d);
+    made.push(p, t, d);
+    return new oc.gp_Ax3(p, t, d);
+  };
   const a = ax(from);
   const b = ax(to);
   const trsf = new oc.gp_Trsf();
@@ -478,6 +493,7 @@ function placedSection(wire: Wire, from: PathFrame, to: PathFrame): Wire {
     a.delete();
     b.delete();
     trsf.delete();
+    made.forEach((m) => m.delete());
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
@@ -584,6 +600,21 @@ export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, path
         throw new Error(
           "A profile kept facing one way can't go round a smooth closed loop: somewhere the path would run along the profile's own plane, flattening it. Turn off \"Keep profile orientation\", or use a loop with straight sides.",
         );
+      }
+      if (control.lockOrientation) {
+        // A straight side running along the profile's own plane would flatten it there.
+        const edgeOn = segments.some((sg) => {
+          if (sg.kind !== "line") return false;
+          const a = toWorld(pathFrame, ...sg.from);
+          const b = toWorld(pathFrame, ...sg.to);
+          const t = unit(sub(b, a));
+          return Math.abs(dot(t, frame.n as Vec3)) < 1e-6;
+        });
+        if (edgeOn) {
+          throw new Error(
+            "Couldn't keep the profile facing the same way round that loop: the profile is edge-on to some sides; tilt it so it isn't parallel to any side (or turn off \"Keep profile orientation\").",
+          );
+        }
       }
       segments = loopFrom(segments, startOnLoop(segments, pathFrame, frame, regions[0].outer.polygon));
     }

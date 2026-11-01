@@ -1137,6 +1137,10 @@ describe("sweep twist and keep orientation", () => {
     expect(round.parts).toHaveLength(1);
     expect(valid()).toBe(true);
     expect(relativeError(vol(), 4 * 16 * 40 * Math.SQRT1_2 - 2 * 16)).toBeLessThan(1e-6);
+    // Drawn on Right (x = 0), the profile lies along the square's left and right sides: edge-on there, so said so.
+    const upright = sketchFeature({ kind: "default", name: "Right" }, rectSketch(16, -2, 8, 4));
+    const edgeOn = build([square, upright, { ...locked, sketchRef: upright.id, pathRef: square.id }]);
+    expect(Object.values(edgeOn.featureErrors)[0]).toMatch(/the profile is edge-on to some sides; tilt it so it isn't parallel to any side/);
     // A smooth closed loop can't be done kept facing one way (somewhere the path runs along the profile's plane): said plainly.
     const ring = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 20, y: 0 }, 20).sketch);
     const small = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 0, y: 0 }, 2).sketch);
