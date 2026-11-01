@@ -52,6 +52,21 @@ export function configuredStudioInputs(doc: JuraCADDocument): StudioInput[] {
   return list;
 }
 
+/** What's added to an old version's Part Studio ids and part ids while it's compared ("<studio>@version:<id>"). */
+export const versionSuffix = (versionId: string) => `@version:${versionId}`;
+
+/**
+ * An old version's Part Studios, to build beside the design while comparing
+ * (the parts carry `configuration: "version:<id>"`, so no Part Studio,
+ * assembly or parts list shows them as the design's own). Each is built with
+ * the version's own variable values.
+ */
+export function compareStudioInputs(versionId: string, doc: JuraCADDocument): StudioInput[] {
+  const variables = resolveVariables(doc.variables).values;
+  const suffix = versionSuffix(versionId);
+  return studiosOf(doc).map((st) => ({ id: st.id + suffix, features: featuresForEngine(st.features), variables, partSuffix: suffix }));
+}
+
 /** Everything in a document to build: every Part Studio, and those shown in other configurations. */
 export function documentStudioInputs(doc: JuraCADDocument): StudioInput[] {
   return [...studiosOf(doc).map((st) => ({ id: st.id, features: featuresForEngine(st.features) })), ...configuredStudioInputs(doc)];

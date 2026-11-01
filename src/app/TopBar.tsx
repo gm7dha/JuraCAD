@@ -12,6 +12,7 @@ import { SHORT_VERSION } from "../version";
 import { versionIsNew } from "./WhatsNewDialog";
 import { detectPlatform, shortcut } from "./platform";
 import { LiveButton } from "./LiveButton";
+import { currentDesign } from "./versionActions";
 
 export function TopBar() {
   const doc = useDocument();
@@ -24,7 +25,9 @@ export function TopBar() {
   const inAssembly = useStore((s) => activeAssembly(s) !== null);
   const inDrawing = useStore((s) => activeDrawing(s) !== null);
   const fileName = useStore((s) => s.fileName);
-  const unsaved = useStore((s) => s.savedDoc !== s.history.present && allFeatures(s.history.present).length > 0);
+  const unsaved = useStore((s) => s.savedDoc !== currentDesign(s) && allFeatures(currentDesign(s)).length > 0);
+  const oldVersion = useStore((s) => s.versionView?.name ?? null);
+  const versionCount = useStore((s) => currentDesign(s).versions?.length ?? 0);
   const platform = detectPlatform();
   const canInstall = useCanInstall();
   const [installHelp, setInstallHelp] = useState(false);
@@ -54,6 +57,11 @@ export function TopBar() {
           }
         }}
       />
+      {oldVersion ? (
+        <span className="save-state old-version" title="An old version is open to look at. Your current design is safe — click Back to the current design to carry on.">
+          Old version: {oldVersion} (read-only)
+        </span>
+      ) : (
       <span
         className={`save-state${unsaved ? " unsaved" : ""}`}
         title={
@@ -64,6 +72,7 @@ export function TopBar() {
       >
         {unsaved ? (fileName ? "Unsaved changes" : "Not saved to a file") : fileName ? `Saved · ${fileName}` : ""}
       </span>
+      )}
       <button
         type="button"
         className={`phase-badge${fresh ? " fresh" : ""}`}
@@ -105,6 +114,13 @@ export function TopBar() {
         title={`Save to a .juracad file on your computer (${shortcut(platform, "S")}). ${shortcut(platform, "S", { shift: true })} saves a copy under a new name.`}
       >
         <Icons.Save size={18} /> <span className="button-label">Save</span>
+      </button>
+      <button
+        className="text-button"
+        onClick={() => openDialog("versions")}
+        title={`Versions: save a snapshot of the design to come back to, look at or compare old ones${versionCount ? ` (${versionCount} saved)` : ""}`}
+      >
+        <Icons.Versions size={18} /> <span className="button-label">Versions</span>
       </button>
       <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts || inDrawing} title={inAssembly ? "Check the assembly: do any parts clash, and are all the mates working?" : "Check the model is a sound, closed solid before you export it"}>
         <Icons.Check size={18} /> <span className="button-label">Check model</span>
