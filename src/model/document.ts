@@ -15,6 +15,7 @@ import { parseDrawings } from "../drawing/drawing";
 import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, PartStudio } from "./types";
 import { MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
+import { parseVersions } from "./versions";
 import type { AreaPick } from "../sketch/areas";
 
 /**
@@ -642,5 +643,6 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
     ...(parseDrawings(d.drawings).length ? { drawings: parseDrawings(d.drawings) } : {}),
     ...configurationsOf(d),
+    ...(parseVersions(d.versions).length ? { versions: parseVersions(d.versions) } : {}),
   };
 }

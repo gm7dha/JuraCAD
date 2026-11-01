@@ -5,28 +5,17 @@ import { useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
-
-// Browser-storage key from the app's old name (PartSmith); kept so the chosen printer is remembered.
-const PRINTER_KEY = "partsmith.printer";
+import { loadPrinter, savePrinter } from "./printerSetting";
 
 /** Turn the print bed preview on, with the printer chosen last time. */
 export function startPrintBed() {
-  let saved: { printer: string; custom?: [number, number, number] } | null = null;
-  try {
-    const raw = globalThis.localStorage?.getItem(PRINTER_KEY);
-    saved = raw ? JSON.parse(raw) : null;
-  } catch {
-    saved = null;
-  }
-  useStore.getState().setPrintBed(saved && typeof saved.printer === "string" ? saved : { printer: PRINTERS[0].id });
+  const { printer, custom } = loadPrinter();
+  useStore.getState().setPrintBed(custom ? { printer, custom } : { printer });
 }
 
+/** Remember the printer (its print settings are kept as they are). */
 function remember(bed: { printer: string; custom?: [number, number, number] }) {
-  try {
-    globalThis.localStorage?.setItem(PRINTER_KEY, JSON.stringify(bed));
-  } catch {
-    // Not remembered next time; fine.
-  }
+  savePrinter({ printer: bed.printer, custom: bed.custom });
 }
 
 const AXES = ["X (width)", "Y (depth)", "Z (height)"];
@@ -47,8 +36,9 @@ export function PrintBedPanel() {
   if (!bed) return null;
   const size = bedSize(bed.printer, bed.custom);
   const choose = (next: { printer: string; custom?: [number, number, number] }) => {
-    setPrintBed(next);
+    // Saved first, so anything watching the print bed (the 3D print panel) reads the new printer.
     remember(next);
+    setPrintBed(next);
   };
   const partSize = bounds ? ([0, 1, 2].map((i) => bounds.max[i] - bounds.min[i]) as [number, number, number]) : null;
   const fit = partSize ? bedFit(partSize, size) : null;

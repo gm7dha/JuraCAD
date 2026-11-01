@@ -198,6 +198,13 @@ export const Icons = {
       <circle cx="6" cy="14.5" r="1.2" fill="currentColor" />
     </Svg>
   ),
+  Versions: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 12a8 8 0 1 0 2.4-5.7" />
+      <path d="M4 4v3.5h3.5" />
+      <path d="M12 8v4l3 2" />
+    </Svg>
+  ),
   Variables: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 7c2 0 2 10 4 10M4 17c2 0 4-10 6-10" />
@@ -221,6 +228,13 @@ export const Icons = {
       <path d="M3 17l9 4 9-4-9-4z" />
       <path d="M8 13.5V8l4-2 4 2v5.5" />
       <path d="M12 6v9" strokeDasharray="1.5 1.5" />
+    </Svg>
+  ),
+  PrintCheck: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M8 3h8v4l-2 3h-4L8 7z" />
+      <path d="M12 10v3" />
+      <path d="M4 20h16M7 20v-3h10v3" />
     </Svg>
   ),
   Surface: (p: IconProps) => (

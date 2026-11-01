@@ -40,12 +40,14 @@ import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCorne
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import { measureContacts } from "./clash";
-import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
 import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
+import { analysePrint, type PrintMesh } from "./printAnalysis";
+import { arrangeOnBed, bedExtents, bedRotation, rotate, type PrintPartResult } from "../model/printCheck";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep, writeStepAssembly } from "./stepExport";
 import { stepPartCount } from "./stepCount";
@@ -154,6 +156,8 @@ function fastenerThreads(feature: Feature, v: Record<string, number>): ThreadMar
 }
 
 /** Display meshes of unchanged imported parts (they can take seconds to make). */
+/** Each part shape's display mesh, as made for the view (the print check reuses it). */
+const displayMeshes = new WeakMap<object, PrintMesh>();
 const importedMeshes = new Map<string, PartMesh>();
 const IMPORTED_MESH_CACHE = 8;
 
@@ -1876,6 +1880,11 @@ interface SketchSnap {
 export type StudiosResult = RebuildResult & { rebuilt: string[]; studioOrder: string[] };
 
 export class GeometryEngine {
+  /**
+   * Keep each part's display mesh for the 3D-print check (only the app's own engine does — see kernel.worker.ts;
+   * other engines, such as the Claude extension's, mesh again when they check).
+   */
+  keepDisplayMeshes = false;
   /** Threaded holes already made (see hole.ts), kept between rebuilds. */
   private threadedHoles: ThreadedHoleCache = new Map();
   /** The part just after a hole with modelled threads, by everything that went into it (see the rebuild loop). */
@@ -1967,7 +1976,12 @@ export class GeometryEngine {
     try {
       for (const studio of ordered) {
         const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"));
-        const key = JSON.stringify(studio.features) + shared + (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") + (deps.length ? JSON.stringify(deps) : "");
+        const key =
+          JSON.stringify(studio.features) +
+          shared +
+          (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") +
+          (studio.partNames ? JSON.stringify(studio.partNames) : "") +
+          (deps.length ? JSON.stringify(deps) : "");
         let b = this.builds.get(studio.id);
         if (!b || b.key !== key) {
           if (b) this.disposeBuild(b);
@@ -1990,7 +2004,8 @@ export class GeometryEngine {
           }
           setCurrentScope(variables);
           // Names the user gave parts (used in the lists and in exported files).
-          for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
+          const names = studio.partNames ?? partNames;
+          for (const p of this.parts) if (names[p.id]) p.name = names[p.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
           b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, links: this.links, snaps: this.snaps ?? new Map() };
@@ -5479,6 +5494,65 @@ export class GeometryEngine {
     });
   }
 
+  /** 3D-print check of each chosen part, sitting on the bed with its own "down" (see src/model/printCheck.ts). */
+  printCheck(parts: PrintCheckPart[], settings: PrintCheckSettings): PrintPartResult[] {
+    const out: PrintPartResult[] = [];
+    for (const req of parts) {
+      const p = this.parts.find((x) => x.id === req.partId);
+      if (!p) continue;
+      if (p.surface) {
+        // Each mark its own (empty) array: the worker hands every one over separately.
+        const marks = { overhang: new Float32Array(0), bed: new Float32Array(0), thin: new Float32Array(0), small: new Float32Array(0) };
+        out.push({ partId: p.id, name: p.name, surface: true, size: [0, 0, 0], overhangArea: 0, bedArea: 0, thinnest: null, thinnestAt: null, thinArea: 0, smallHoles: [], thinPins: [], marks });
+        continue;
+      }
+      out.push(analysePrint(p.id, p.name, p.shape, { ...settings, down: req.down }, displayMeshes.get(p.shape)));
+    }
+    return out;
+  }
+
+  /**
+   * A 3MF ready for slicing: each chosen part a separate, named, coloured
+   * object, turned so its "down" faces the bed, standing on it, and laid out
+   * on a bed of `bed` (X × Y mm) without overlapping. The model isn't changed.
+   */
+  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours: Record<string, string> = {}): PrintExportResult {
+    const tol = MESH_TOLERANCES[quality];
+    const chosen = parts.map((r) => ({ r, p: this.parts.find((x) => x.id === r.partId) })).filter((x): x is { r: PrintCheckPart; p: BuiltPart } => !!x.p && !x.p.surface);
+    if (!chosen.length) throw new Error("There's no solid part to export. Surfaces can't be printed — thicken them first.");
+    const turned = chosen.map(({ r, p }) => {
+      const m = p.shape.mesh(tol);
+      const R = bedRotation(r.down);
+      const v = new Float64Array(m.vertices.length);
+      for (let i = 0; i < m.vertices.length; i += 3) v.set(rotate(R, [m.vertices[i], m.vertices[i + 1], m.vertices[i + 2]]), i);
+      const ext = bedExtents(v, [0, 0, -1]);
+      return { p, v, triangles: withoutDegenerateTriangles(m.vertices, m.triangles), ext };
+    });
+    const layout = arrangeOnBed(turned.map((t) => ({ id: t.p.id, size: [t.ext.size[0], t.ext.size[1]] })), bed, gap);
+    const meshes = turned.map((t, i) => {
+      const place = layout.places[i];
+      const cx = (t.ext.min[0] + t.ext.max[0]) / 2;
+      const cy = (t.ext.min[1] + t.ext.max[1]) / 2;
+      const z0 = t.ext.min[2];
+      // Centred on its own middle, standing at height 0 (a quarter turn if that's how it fits).
+      const v = new Float64Array(t.v.length);
+      for (let k = 0; k < v.length; k += 3) {
+        const x = t.v[k] - cx;
+        const y = t.v[k + 1] - cy;
+        v[k] = place.turned ? -y : x;
+        v[k + 1] = place.turned ? x : y;
+        v[k + 2] = t.v[k + 2] - z0;
+      }
+      return { name: t.p.name, vertices: v, triangles: t.triangles, colour: colours[t.p.id], move: [place.x, place.y, 0] as [number, number, number] };
+    });
+    const bytes = write3mf(meshes, title);
+    return {
+      data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0),
+      layout,
+    };
+  }
+
   /**
    * One STEP file containing the chosen parts (all when the list is empty).
    * STEP keeps the exact shape — curves stay curves — which is what most
@@ -5625,6 +5699,8 @@ export class GeometryEngine {
     for (const e of edgesOf(p.shape)) edgeById.set(e.hashCode, [...(edgeById.get(e.hashCode) ?? []), e]);
     const unknownFace: FaceRef = { kind: "face", surface: "UNKNOWN", center: [0, 0, 0], normal: [0, 0, 0] };
     const unknownEdge: EdgeRef = { kind: "edge", curve: "UNKNOWN", a: [0, 0, 0], b: [0, 0, 0], mid: [0, 0, 0] };
+    // Kept for the 3D-print check (the view's own mesh, so its marks lie on the faces shown, without meshing again).
+    if (this.keepDisplayMeshes) displayMeshes.set(p.shape, { vertices: Float32Array.from(faces.vertices), triangles: Uint32Array.from(faces.triangles), faceGroups: faces.faceGroups });
     const faceRefs = faces.faceGroups.map((g) => {
       const f = faceById.get(g.faceId)?.shift();
       if (!f) return unknownFace;

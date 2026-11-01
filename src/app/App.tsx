@@ -15,9 +15,11 @@ import { FlatPatternDialog } from "./FlatPatternDialog";
 import { WhatsNewDialog } from "./WhatsNewDialog";
 import { VariablesDialog } from "./VariablesDialog";
 import { ConfigurationsDialog } from "./ConfigurationsDialog";
+import { ComparePanel, VersionBanner, VersionsDialog } from "./VersionsDialog";
 import { MeasurePanel } from "./MeasurePanel";
 import { SectionPanel } from "./SectionPanel";
 import { PrintBedPanel } from "./PrintBedPanel";
+import { PrintPanel } from "./PrintPanel";
 import { openFile, openFromFile, saveToFile } from "./fileActions";
 import { inPopup } from "./popupGuard";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
@@ -289,12 +291,15 @@ export function App() {
             </>
           )}
           <EngineStatus />
+          <VersionBanner />
+          {!drawing && !assembly && <ComparePanel />}
           {!drawing && (
             <>
               <EmptyHint />
               <SelectionInfo />
               <SectionPanel />
               <PrintBedPanel />
+              <PrintPanel />
             </>
           )}
         </main>
@@ -307,6 +312,7 @@ export function App() {
       {dialog === "whatsNew" && <WhatsNewDialog />}
       {dialog === "variables" && <VariablesDialog />}
       {dialog === "configurations" && <ConfigurationsDialog />}
+      {dialog === "versions" && <VersionsDialog />}
       <ToastView />
     </div>
   );

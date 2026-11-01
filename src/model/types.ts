@@ -4,6 +4,7 @@ import type { TopoPick } from "../geometry/topoRef";
 import type { Variable } from "./variables";
 import type { Configuration } from "./configurations";
 import type { HoleFit, HoleKind } from "./holes";
+import type { FitName, PrintFits } from "./printSettings";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
@@ -71,6 +72,11 @@ export interface HoleOptions {
   modelThread?: boolean;
   /** Through all: drill both ways from the sketch (for a sketch on a plane inside the part). Off: one way, as Onshape. */
   bothWays?: boolean;
+  /**
+   * Only while the Hole dialog is open: a printed fit chosen before the design has the fit_* variables.
+   * On Accept the variables are added and the size becomes "<nominal> + fit_<fit>" (one undo step); never saved.
+   */
+  printedFit?: { fit: FitName; nominal: string; fits: PrintFits };
 }
 
 /** A STEP or STL file brought in from another program, kept inside the design. */
@@ -354,6 +360,26 @@ export interface JuraCADDocument {
   configurations?: Configuration[];
   /** The configuration on show (its id). */
   activeConfiguration?: string;
+  /** Saved versions of the whole design (Versions panel; oldest first). Optional: older saves have none. */
+  versions?: DesignVersion[];
+}
+
+/**
+ * A saved version: a snapshot of the whole design (everything above except
+ * `versions`) taken when the user clicked "Save version", or automatically
+ * (before restoring another). The snapshot is kept packed — see versions.ts.
+ */
+export interface DesignVersion {
+  id: string;
+  name: string;
+  /** What the user wrote about it (optional). */
+  note?: string;
+  /** When it was saved (ISO date and time). */
+  createdAt: string;
+  /** Made by JuraCAD rather than by the user (e.g. "Before restoring V2"). */
+  auto?: boolean;
+  /** The design: "gz:" + gzip-compressed JSON in base64, or "json:" + the JSON itself (browsers without compression). */
+  packed: string;
 }
 
 /** Which way a drawing view looks at the part. */

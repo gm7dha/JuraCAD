@@ -5,6 +5,7 @@ import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
+import type { BedLayout, PrintPartResult } from "../model/printCheck";
 
 /** A copy of a part placed in an assembly, for exports and clash checks. */
 export interface InstanceInput {
@@ -74,6 +75,8 @@ export interface StudioInput {
   /** A Part Studio built again in another configuration: its variables, and what's added to its parts' ids ("@<configuration>"). */
   variables?: Record<string, number>;
   partSuffix?: string;
+  /** Names for its parts instead of the design's (an old version being compared: its own names). */
+  partNames?: Record<string, string>;
 }
 
 /** Display mesh for one part, ready to hand to three.js. */
@@ -232,6 +235,25 @@ export interface ThreeMfResult {
 
 export type { Measurement } from "../geometry/measureMath";
 
+/** A part to check or export for 3D printing, and which way is down onto the bed (model coordinates). */
+export interface PrintCheckPart {
+  partId: string;
+  down: [number, number, number];
+}
+
+/** The limits a 3D-print check uses (mm and degrees). */
+export interface PrintCheckSettings {
+  overhangAngle: number;
+  minWall: number;
+  minHole: number;
+  minPin: number;
+}
+
+export interface PrintExportResult extends ThreeMfResult {
+  /** Where each part went on the bed. */
+  layout: BedLayout;
+}
+
 /** Fillet / Chamfer features in the way of a Delete face (`blockers`), or that made the picked face (`makers`). */
 export interface DeleteFaceBlockers {
   blockers: string[];
@@ -252,7 +274,9 @@ export type KernelRequest =
   | { type: "useEdge"; partId: string; ref: EdgeRef; plane: SketchPlane }
   | { type: "deleteFaceBlockers"; features: Feature[]; featureId: string; variables: Record<string, number> }
   | { type: "sketchCandidates"; studioId: string; sketchId: string; known?: number }
-  | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] };
+  | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] }
+  | { type: "printCheck"; parts: PrintCheckPart[]; settings: PrintCheckSettings }
+  | { type: "exportPrint3mf"; parts: PrintCheckPart[]; bed: [number, number]; gap: number; quality: MeshQuality; title: string; colours?: Record<string, string> };
 
 export type KernelResponseBody =
   | { type: "rebuild"; result: RebuildResult }
@@ -266,6 +290,8 @@ export type KernelResponseBody =
   | { type: "deleteFaceBlockers"; result: DeleteFaceBlockers }
   | { type: "sketchCandidates"; result: { version: number; list?: RefEdge[] } | null }
   | { type: "export3mf"; result: ThreeMfResult }
+  | { type: "printCheck"; result: PrintPartResult[] }
+  | { type: "exportPrint3mf"; result: PrintExportResult }
   | { type: "clashes"; result: ContactMeasure[] }
   | { type: "project"; result: ViewProjection[] };
 

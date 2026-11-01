@@ -158,6 +158,9 @@ export class SceneManager {
   private readonly viewCube = new ViewCube();
   private readonly raycaster = new THREE.Raycaster();
   private readonly partsGroup = new THREE.Group();
+  /** An old version's parts, see-through, while comparing versions (never picked). */
+  private readonly ghostGroup = new THREE.Group();
+  private ghostMaterials: { faces: THREE.Material; edges: THREE.Material } | null = null;
   private readonly planesGroup = new THREE.Group();
   private readonly originGroup = new THREE.Group();
   /** Mate connector markers (small X/Y/Z arrows), kept a constant size on screen. */
@@ -276,7 +279,7 @@ export class SceneManager {
     };
     this.renderer.localClippingEnabled = true;
 
-    this.scene.add(this.partsGroup, this.planesGroup, this.customPlanesGroup, this.originGroup, this.markersGroup, this.sketchLayer.group);
+    this.scene.add(this.partsGroup, this.ghostGroup, this.planesGroup, this.customPlanesGroup, this.originGroup, this.markersGroup, this.sketchLayer.group);
     this.buildPlanes();
     this.buildOrigin();
 
@@ -362,6 +365,33 @@ export class SceneManager {
     this.updatePlaneSize();
     this.applyHighlights();
     if (firstParts) this.fit(true);
+  }
+
+  /** Draw these parts see-through in orange over the model (an old version, when comparing); [] clears them. */
+  setGhosts(parts: PartMesh[]): void {
+    for (const child of [...this.ghostGroup.children]) {
+      (child as THREE.Mesh).geometry?.dispose();
+      this.ghostGroup.remove(child);
+    }
+    if (!parts.length) return;
+    if (!this.ghostMaterials) {
+      this.ghostMaterials = {
+        faces: new THREE.MeshBasicMaterial({ color: 0xff8a1f, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }),
+        edges: new THREE.LineBasicMaterial({ color: 0xe06a00, transparent: true, opacity: 0.85 }),
+      };
+    }
+    for (const data of parts) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(data.vertices, 3));
+      geometry.setIndex(new THREE.BufferAttribute(data.triangles, 1));
+      const mesh = new THREE.Mesh(geometry, this.ghostMaterials.faces);
+      mesh.renderOrder = 2;
+      const lineGeometry = new THREE.BufferGeometry();
+      lineGeometry.setAttribute("position", new THREE.BufferAttribute(data.lines, 3));
+      const lines = new THREE.LineSegments(lineGeometry, this.ghostMaterials.edges);
+      lines.renderOrder = 2;
+      this.ghostGroup.add(mesh, lines);
+    }
   }
 
   /** Place parts (assembly instances): id → 4×4 matrix. Cheap — the meshes are kept. */
@@ -672,6 +702,44 @@ export class SceneManager {
     volume.raycast = () => {};
     g.add(plate, gridLines, volume);
   }
+
+  /**
+   * 3D-print check marks: triangles (9 numbers each, model mm) drawn over the
+   * parts in a colour — overhangs, thin walls, and so on. Null clears them.
+   */
+  setPrintMarks(marks: { triangles: Float32Array; colour: string; opacity?: number }[] | null): void {
+    const g = this.printMarksGroup;
+    for (const child of [...g.children]) {
+      g.remove(child);
+      const o = child as THREE.Mesh;
+      o.geometry?.dispose();
+      (o.material as THREE.Material | undefined)?.dispose();
+    }
+    if (!marks?.length) return;
+    if (!g.parent) this.scene.add(g);
+    for (const m of marks) {
+      if (!m.triangles.length) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(m.triangles, 3));
+      const mat = new THREE.MeshBasicMaterial({
+        color: m.colour,
+        transparent: true,
+        opacity: m.opacity ?? 0.75,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        // Drawn just in front of the part's own faces.
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -4,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.raycast = () => {};
+      mesh.renderOrder = 2;
+      g.add(mesh);
+    }
+  }
+
+  private readonly printMarksGroup = new THREE.Group();
 
   /** The canvas the view is drawn on (and that takes the mouse). */
   get canvas(): HTMLCanvasElement {

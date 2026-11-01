@@ -9,6 +9,7 @@ import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
 import { holePositionCount } from "../sketch/holePositions";
+import { PrintedFit } from "./PrintedFit";
 import { formatSkip, parseSkip, totalCopies } from "../model/patterns";
 import { planeLabel } from "../sketch/planes";
 import { mirrorReferenceText, patternReferenceText, setMirrorReference, setPatternDirection, type DirectionChoice } from "../model/patternRefs";
@@ -879,7 +880,7 @@ function SweepLoftOptions() {
           />
           Keep profile orientation (don&apos;t turn with the path)
         </label>
-        {!draft.sweepControl?.lockOrientation && <p className="dialog-hint field-hint">Twist turns the shape steadily round the path as it goes — e.g. 90° for a quarter turn by the end, up to 3600° (10 turns). Use a minus amount to turn the other way.</p>}
+        {!draft.sweepControl?.lockOrientation && <p className="dialog-hint field-hint">Twist turns the shape steadily round the path as it goes — e.g. 90° for a quarter turn by the end, up to 3600° (10 turns). Use a minus amount to turn the other way. Round a closed loop, use whole turns (360°, 720°…) so the ends meet.</p>}
       </fieldset>
     );
   }
@@ -1108,6 +1109,7 @@ function HoleOptions() {
           )}
         </>
       )}
+      <PrintedFit />
       <p className="dialog-hint field-hint">{describeHole(h)}</p>
     </fieldset>
   );

@@ -230,6 +230,68 @@ try {
     throw new Error(`the 3MF file doesn't look right (${mfDownload.suggestedFilename()})`);
   }
 
+  step = "checking the block for 3D printing";
+  await page.getByRole("button", { name: "3D print", exact: true }).click();
+  // The print bed step above left a 10 mm wide custom printer chosen: the check uses the same printer setting.
+  await page.waitForSelector(".print-panel >> text=Too big for the printer", { timeout: 60_000 });
+  await page.getByRole("button", { name: /Printer settings/ }).click();
+  await page.locator("#print-printer").selectOption("prusa-mk4");
+  {
+    const panelText = () => page.locator(".print-panel").innerText().then((t) => t.replace(/\s+/g, " "));
+    try {
+      await page.waitForSelector(".print-panel .check-headline >> text=Ready to print.", { timeout: 60_000 });
+    } catch {
+      throw new Error(`the print check didn't say "Ready to print.": ${await panelText()}`);
+    }
+  }
+  const printFindings = (await page.locator(".print-panel .check-part").innerText()).replace(/\s+/g, " ");
+  if (!/Fits on the bed/.test(printFindings) || !/rests flat on the bed/.test(printFindings)) throw new Error(`the print check said: ${printFindings}`);
+
+  step = "laying the block on its front face for printing";
+  await page.getByRole("button", { name: "Lay flat on a face…" }).click();
+  await page.waitForSelector(".print-panel >> text=Click a flat face of a part");
+  {
+    const at = await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => p.name === "Part 1");
+      const front = part.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[1] < -0.99);
+      return window.juracadViewport.current.screenPointOnFace(part.id, front);
+    });
+    if (!at) throw new Error("couldn't find the block's front face on screen");
+    const vp = await page.locator(".viewport canvas").first().boundingBox();
+    await page.mouse.click(vp.x + at.x, vp.y + at.y);
+  }
+  await page.waitForSelector(".print-panel >> text=Lying on the face you chose.", { timeout: 10_000 });
+  // On its side the hole runs sideways: the top of its inside hangs over.
+  await page.waitForSelector(".print-panel >> text=needs support", { timeout: 60_000 });
+  const printSelection = await page.evaluate(() => window.juracadStore.getState().selection.length);
+  if (printSelection !== 0) throw new Error("picking the bed face left the face selected");
+  await shot("print-check");
+
+  step = "saving a 3MF for the slicer";
+  await page.getByRole("combobox", { name: "Slicer" }).selectOption("prusa");
+  const slicerPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.getByRole("button", { name: "Save 3MF for PrusaSlicer" }).click();
+  const slicerDownload = await slicerPromise;
+  const slicerBytes = readFileSync(await slicerDownload.path());
+  const slicerText = slicerBytes.toString("latin1");
+  if (slicerBytes[0] !== 0x50 || slicerBytes[1] !== 0x4b || !slicerDownload.suggestedFilename().endsWith(".3mf")) {
+    throw new Error(`the slicer 3MF doesn't look right (${slicerDownload.suggestedFilename()})`);
+  }
+  if (!/<object id="\d+" type="model" name="Part 1"/.test(slicerText) || !/<item objectid="\d+" transform="1 0 0 0 1 0 0 0 1 /.test(slicerText)) {
+    throw new Error("the slicer 3MF is missing the named part or its place on the bed");
+  }
+  {
+    // Laid on its front face the 40 × 30 × 20 block stands 30 mm tall, from the bed up.
+    const zs = [...slicerText.matchAll(/<vertex x="[^"]+" y="[^"]+" z="([^"]+)"\/>/g)].map((m) => Number(m[1]));
+    const zMin = Math.min(...zs);
+    const zMax = Math.max(...zs);
+    if (Math.abs(zMin) > 1e-6 || Math.abs(zMax - 30) > 1e-3) throw new Error(`the slicer 3MF's part stands from ${zMin} to ${zMax} mm (expected 0 to 30)`);
+  }
+  await page.waitForSelector(".print-sent >> text=open it in PrusaSlicer yourself", { timeout: 5_000 });
+  await page.getByRole("button", { name: "Close 3D print" }).click();
+  await page.waitForSelector(".print-panel", { state: "detached" });
+
   step = "editing a feature three times, then undoing once";
   const boxRow = page.locator(".feature-row:not(.datum)").first();
   for (const x of ["10", "20", "30"]) {
@@ -854,7 +916,21 @@ try {
   if ((await page.locator("#param-depth").count()) !== 0) throw new Error("up to next shouldn't ask for a depth");
   if ((await page.locator("#param-threadDepth").count()) !== 1) throw new Error("a tapped hole should have a thread depth box");
   await page.getByLabel("Model the thread (for 3D printing)").check();
-  await page.getByRole("button", { name: "Cancel" }).click();
+  step = "giving the hole a printed sliding fit";
+  {
+    // A tapped hole isn't offered one (it says why); a clearance hole is.
+    await page.waitForSelector(".printed-fit:has-text(\"Printed fits are for plain holes\")", { timeout: 5_000 });
+    await page.getByRole("radio", { name: "Clearance" }).click();
+    const varsBefore = await page.evaluate(() => (window.juracadStore.getState().history.present.variables ?? []).length);
+    await page.locator("#hole-printed-fit").selectOption("sliding");
+    const fitted = await page.locator("#param-diameter").inputValue();
+    if (fitted !== "4 mm + 0.3 mm") throw new Error(`a sliding printed fit on M4 made the size "${fitted}"`);
+    await page.waitForSelector(".printed-fit >> text=Hole 4.3 mm across", { timeout: 5_000 });
+    // The fit variables only come in when the hole is accepted.
+    const varsNow = await page.evaluate(() => (window.juracadStore.getState().history.present.variables ?? []).length);
+    if (varsNow !== varsBefore) throw new Error("choosing a printed fit changed the design's variables before Accept");
+    await page.getByRole("button", { name: "Cancel" }).click();
+  }
 
   step = "moving a copy of a part";
   // Parts of features really in the design: a cancelled dialog's preview (the circular pattern above makes parts of
@@ -929,6 +1005,64 @@ try {
   await page.getByRole("button", { name: "Cancel" }).click();
   await page.waitForSelector(".variables-table", { state: "detached" });
 
+  step = "versions: saving a version";
+  const gapValue = () => page.evaluate(() => window.juracadStore.getState().history.present.variables?.find((v) => v.name === "gap")?.value);
+  const versionCount = () => page.evaluate(() => (window.juracadStore.getState().versionView?.stash.present ?? window.juracadStore.getState().history.present).versions?.length ?? 0);
+  await page.getByRole("button", { name: "Versions", exact: true }).click();
+  await page.getByRole("textbox", { name: "Version name" }).fill("Before the gap change");
+  await page.getByRole("textbox", { name: "Version note" }).fill("gap is a quarter inch");
+  await page.getByRole("button", { name: "Save version" }).click();
+  await page.waitForSelector('tr[data-version="Before the gap change"]', { timeout: 10_000 });
+  if ((await versionCount()) !== 1) throw new Error(`saving a version left ${await versionCount()} versions`);
+  await page.getByRole("button", { name: "Done" }).click();
+
+  step = "versions: changing something, then comparing with now";
+  await tool("Variables");
+  await page.getByRole("textbox", { name: "Value of gap" }).fill("3");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.waitForSelector(".variables-table", { state: "detached" });
+  if ((await gapValue()) !== "3") throw new Error(`gap is "${await gapValue()}" after changing it`);
+  await page.getByRole("button", { name: "Versions", exact: true }).click();
+  await page.locator('tr[data-version="Before the gap change"]').getByRole("button", { name: "Compare with now" }).click();
+  await page.waitForSelector(".version-changes", { timeout: 10_000 });
+  // The old version is built too, for its parts list; wait for it.
+  await page.waitForFunction(() => !document.querySelector(".version-changes")?.textContent?.includes("Building the old version"), null, { timeout: 120_000 });
+  const compared = await page.locator(".version-changes").innerText();
+  if (!/gap/.test(compared) || !/1\/4 in/.test(compared) || !/→\s*3/.test(compared)) throw new Error(`the comparison doesn't show gap 1/4 in → 3: ${compared.slice(0, 400)}`);
+  if (!/The same parts/.test(compared)) throw new Error(`changing a variable nothing uses shouldn't add or remove parts: ${compared.slice(0, 400)}`);
+  await shot("versions-compare");
+  await page.getByRole("button", { name: "Show the old one in 3D" }).click();
+  await page.waitForSelector(".compare-panel", { timeout: 10_000 });
+  const ghosts = await page.evaluate(() => window.juracadStore.getState().parts.filter((p) => p.configuration?.startsWith("version:")).length);
+  if (ghosts === 0) throw new Error("the old version's parts weren't built for the see-through view");
+  await shot("versions-ghost");
+  await page.getByRole("button", { name: "Stop comparing" }).first().click();
+  await page.waitForSelector(".compare-panel", { state: "detached" });
+  await page.waitForFunction(() => !window.juracadStore.getState().parts.some((p) => p.configuration?.startsWith("version:")), null, { timeout: 60_000 });
+
+  step = "versions: opening one to look at (read-only)";
+  await page.getByRole("button", { name: "Versions", exact: true }).click();
+  await page.locator('tr[data-version="Before the gap change"]').getByRole("button", { name: "Open", exact: true }).click();
+  await page.waitForSelector(".version-banner", { timeout: 10_000 });
+  if ((await gapValue()) !== "1/4 in") throw new Error(`the open version shows gap = "${await gapValue()}"`);
+  await page.evaluate(() => window.juracadStore.getState().deleteFeature(window.juracadStore.getState().history.present.features[0].id));
+  if ((await gapValue()) !== "1/4 in" || (await page.evaluate(() => window.juracadStore.getState().history.past.length)) !== 0) throw new Error("an old version open to look at was changed");
+  await shot("versions-open");
+  await page.getByRole("button", { name: "Back to the current design" }).click();
+  await page.waitForSelector(".version-banner", { state: "detached" });
+  if ((await gapValue()) !== "3") throw new Error(`back in the current design, gap is "${await gapValue()}"`);
+
+  step = "versions: restoring one, then undo";
+  await page.getByRole("button", { name: "Versions", exact: true }).click();
+  await page.locator('tr[data-version="Before the gap change"]').getByRole("button", { name: "Restore…" }).click();
+  await page.getByRole("group", { name: "Restore a version" }).getByRole("button", { name: "Restore", exact: true }).click();
+  await page.waitForFunction(() => window.juracadStore.getState().history.present.variables?.find((v) => v.name === "gap")?.value === "1/4 in", null, { timeout: 10_000 });
+  // What there was is kept as an automatic version.
+  if ((await versionCount()) !== 2) throw new Error(`restoring left ${await versionCount()} versions (expected 2: the one saved and an automatic one)`);
+  await page.evaluate(() => window.juracadStore.getState().undo());
+  // Undo brings the design back; versions aren't undone (as in Onshape), so the automatic one stays.
+  if ((await gapValue()) !== "3" || (await versionCount()) !== 2) throw new Error(`undo after restoring: gap "${await gapValue()}", ${await versionCount()} versions (expected 2)`);
+
   step = "saving the design to a file";
   const featureCount = await page.locator(".feature-row:not(.datum)").count();
   const savePromise = page.waitForEvent("download", { timeout: 30_000 });
@@ -939,6 +1073,7 @@ try {
   if (!saved.suggestedFilename().endsWith(".juracad")) throw new Error(`saved as ${saved.suggestedFilename()}`);
   // The format id inside the file keeps the app's old name, so files open in older versions too.
   if (!/"format": "partsmith"/.test(savedText) || !/"gap"/.test(savedText)) throw new Error("the saved file is missing the design or its variables");
+  if (!/"versions": \[/.test(savedText) || !/"Before the gap change"/.test(savedText)) throw new Error("the saved file is missing its version");
   await page.waitForSelector(".save-state:not(.unsaved)");
 
   step = "starting a new design, then opening the saved file";
@@ -951,6 +1086,7 @@ try {
   await chooser.setFiles(savedPath);
   await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n, featureCount, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 3"), null, { timeout: 30_000 });
+  if ((await versionCount()) !== 2) throw new Error(`the opened file has ${await versionCount()} versions (expected 2)`);
 
   step = "importing the STEP and STL files exported earlier";
   const importModel = async (file, label) => {
