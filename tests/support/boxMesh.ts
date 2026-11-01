@@ -88,3 +88,38 @@ export function boxFace(mesh: PartMesh, normal: V): TopoPick {
   if (!ref) throw new Error(`no face along ${normal.join(",")}`);
   return { partId: mesh.id, ref };
 }
+
+/** A part's mesh and exact data moved by a placement (to make a part drawn at a slant); the exact data rounded to 0.0001 mm, as the engine sends it. */
+export function movedMesh(mesh: PartMesh, p: { position: V; rotation: [number, number, number, number] }, id = mesh.id): PartMesh {
+  const r4 = (v: V): V => v.map((x) => Math.round(x * 1e4) / 1e4) as V;
+  const turn = (v: readonly number[]): V => {
+    const [x, y, z, w] = p.rotation;
+    const [vx, vy, vz] = v;
+    // v + 2w (q × v) + 2 q × (q × v)
+    const cx = y * vz - z * vy;
+    const cy = z * vx - x * vz;
+    const cz = x * vy - y * vx;
+    const dx = y * cz - z * cy;
+    const dy = z * cx - x * cz;
+    const dz = x * cy - y * cx;
+    return [vx + 2 * (w * cx + dx), vy + 2 * (w * cy + dy), vz + 2 * (w * cz + dz)];
+  };
+  const place = (v: readonly number[]): V => {
+    const r = turn(v);
+    return [r[0] + p.position[0], r[1] + p.position[1], r[2] + p.position[2]];
+  };
+  const each = (a: Float32Array, f: (v: readonly number[]) => V) => {
+    const out = new Float32Array(a.length);
+    for (let i = 0; i < a.length; i += 3) out.set(f([a[i], a[i + 1], a[i + 2]]), i);
+    return out;
+  };
+  return {
+    ...mesh,
+    id,
+    vertices: each(mesh.vertices, place),
+    normals: each(mesh.normals, turn),
+    lines: each(mesh.lines, place),
+    faceRefs: mesh.faceRefs.map((f) => ({ ...f, center: r4(place(f.center)), normal: r4(turn(f.normal)) })),
+    edgeRefs: mesh.edgeRefs.map((e) => ({ ...e, a: r4(place(e.a)), b: r4(place(e.b)), mid: r4(place(e.mid)) })),
+  };
+}
