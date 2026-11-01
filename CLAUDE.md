@@ -100,19 +100,25 @@
   when it is one lying flat to the sketch, else a Hermite spline — points + per-piece tangents from `edgeShape` in engine.ts,
   as few pieces as keep within 0.5 µm, ≤128; `seeShape` in projected.ts; side-on = refused). `linkEdge` makes a spline
   (`splineThrough`) or ellipse with every point fixed; `followSketch` re-samples a linked spline with exactly as many pieces as
-  it has, so `followLinks` moves its points and resets its handles (a count mismatch is ignored). Face edges that are curves
+  it has, so `followLinks` moves its points and resets its handles; if that strays past 0.5 µm (`USE_TOLERANCE`) it's
+  re-read adaptively and `followLinks` respaces it (ends keep their ids, new points between, unless something else uses them);
+  an open↔closed change is reported lost. Face edges that are curves
   carry `shape` (Use all edges; `joinTouchingEnds` joins spline/ellipse-arc ends too).
   Pierce: `PointLink.end === "pierce"` (part edge or another sketch's curve) = where it passes through the plane, re-found
-  each rebuild as the place nearest the point's current position (`edgePierces` by sampling + halving on the real edge,
+  each rebuild as the place nearest the point's current position (`edgePierces`: `PIERCE_SAMPLES` pieces for snapping and
+  rebuilding alike, halving at sign changes, refining near-zero minima between samples, skipping stretches lying in the plane;
+  the snap list only walks curved edges whose box straddles the plane, `straddles`,
   `sketchCurvePierces` exactly via `crossings` with the line where the planes meet; `nearestPlace`). The candidates list
   includes those places as `RefEdge.pierce` points (`edgePierceRefs`, `sketchPierceRefs`), so snapping onto one brings in a
   Pierce point; the Pierce relation (`piercePoint` in links.ts, called from `applySketchRelation` with the refs) takes a
   point + a brought-in curve (or a point brought in from an edge seen end-on). Lost ones get their own message (`pierceNote`).
   Extend (`extendAt`) also does splines/conics (the end piece carried on as its own polynomial — `cubicOn` blossoming /
-  `conicBetween` past 0…1 — while it turns < 90° and within 10× the sketch's size; `extendWavy`) and parts of ellipses
+  `conicBetween` past 0…1 — while it turns < 90° and within 10× the sketch's size; `extendWavy`; failing that a spline gets
+  a straight piece on along its end direction, `extendStraight`) and parts of ellipses
   (round the ellipse); refused when the solve would pull the end back. Offsets: `src/sketch/offsetCheck.ts`
   (`offsetNotes`, shown in the sketch panel) warns when a copy crosses itself or a line/arc copy turns over; offsets past a
-  spline's/ellipse's tightest bend are made (no longer refused) and warned about.
+  spline's/ellipse's tightest bend are made (no longer refused) and warned about; an extrude/revolve whose outline uses such a
+  copy gets a `featureWarnings` note (`crossingOutlineNote`).
   Insert DXF: `src/sketch/dxf.ts` (parse ENTITIES + $INSUNITS; lines, arcs, circles, (LW)polylines with bulges, splines, ellipses
   (partial ones as ellipses with `start`/`end`, ends joined), points;
   angles wrapped into one turn, non-finite shapes dropped, ≤20 MB / 20,000 shapes / 50,000 points, `DxfError` = plain message).
