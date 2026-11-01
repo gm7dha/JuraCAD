@@ -892,6 +892,33 @@ describe("surfaces", () => {
   });
 });
 
+describe("sweep: a profile lying along the path", () => {
+  it("is refused plainly instead of making an inside-out solid", () => {
+    // Round a 40 mm square: drawn on Right (x = 0), the profile lies in the plane of the left side.
+    let sq = lineSketch(0, 0, 40, 0);
+    sq = addLine(sq, { x: 40, y: 0 }, { x: 40, y: 40 }).sketch;
+    sq = addLine(sq, { x: 40, y: 40 }, { x: 0, y: 40 }).sketch;
+    sq = addLine(sq, { x: 0, y: 40 }, { x: 0, y: 0 }).sketch;
+    const square = sketchFeature({ kind: "default", name: "Top" }, sq);
+    const along = sketchFeature({ kind: "default", name: "Right" }, rectSketch(16, -2, 8, 4));
+    const r = build([square, along, { ...feature("sweep", {}), sketchRef: along.id, pathRef: square.id }]);
+    expect(Object.values(r.featureErrors)[0]).toMatch(/The profile lies along the path, not across it.*Draw the profile on a plane across the path/);
+    expect(r.parts).toHaveLength(0);
+    // An open path too: a line along Y with the profile on Right.
+    const line = sketchFeature({ kind: "default", name: "Top" }, lineSketch(0, 0, 0, 40));
+    const r2 = build([line, along, { ...feature("sweep", {}), sketchRef: along.id, pathRef: line.id }]);
+    expect(Object.values(r2.featureErrors)[0]).toMatch(/lies along the path/);
+    // Across the path it sweeps as before: a round bar on the plane x = 20, across the bottom side half way along. Four 40 mm
+    // bars, less the overlaps inside the corners (a quarter of a Steinmetz solid each), plus a quarter ball outside each.
+    const disc = sketchFeature(planeOnFace([1, 0, 0], [20, 0, 0], "x = 20"), addCircle(emptySketch(), { x: 0, y: 0 }, 3).sketch);
+    const ok = build([square, disc, { ...feature("sweep", {}), sketchRef: disc.id, pathRef: square.id }]);
+    expect(ok.featureErrors).toEqual({});
+    const c = engine.check("normal").parts[0];
+    expect(c.geometryValid).toBe(true);
+    expect(relativeError(c.exactVolume!, 4 * Math.PI * 9 * 40 + 4 * (-(16 * 27) / 3 / 4 + (Math.PI * 4 * 27) / 3 / 4))).toBeLessThan(1e-4);
+  });
+});
+
 describe("sweep twist and keep orientation", () => {
   const vol = () => engine.check("normal").parts[0].exactVolume!;
   const valid = () => engine.check("normal").parts[0].geometryValid;

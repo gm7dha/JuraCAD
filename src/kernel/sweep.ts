@@ -231,12 +231,43 @@ function controlledSweep(wire: Wire, spine: Wire, control: SweepControl, guide: 
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
+/** What to say when the profile is drawn lying along the path instead of across it. */
+export const PROFILE_ALONG_PATH =
+  "The profile lies along the path, not across it: where they meet, the path runs in the profile's own plane, so sweeping it would make a flat, broken shape. Draw the profile on a plane across the path (square to it is best).";
+
+/**
+ * Does the path, where it passes the profile, run (within 1°) in the
+ * profile's own plane? Then a sweep has nothing to carry: OpenCascade makes a
+ * flat or inside-out solid from it.
+ */
+function liesAlongPath(spine: Wire, frame: ReturnType<typeof planeFrame>, outline: [number, number][]): boolean {
+  if (outline.length === 0) return false;
+  const mid = outline.reduce((acc, p) => [acc[0] + p[0] / outline.length, acc[1] + p[1] / outline.length], [0, 0]);
+  const centre = toWorld(frame, mid[0], mid[1]);
+  let best: PathSample | null = null;
+  let bestD = Infinity;
+  for (const piece of samplePath(spine, 64)) {
+    for (const q of piece) {
+      const d = Math.hypot(...sub(q.p, centre));
+      if (d < bestD) {
+        bestD = d;
+        best = q;
+      }
+    }
+  }
+  return !!best && Math.abs(dot(best.t, frame.n as Vec3)) < Math.sin(Math.PI / 180);
+}
+
 /** Carry each closed shape of the profile sketch along the path (holes stay holes), optionally twisting or keeping its orientation. */
 export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData, areas?: AreaPick[], control: SweepControl = {}): Shape3D {
   const { regions, problems } = chosenRegions(profile, areas, "sweep");
   if (regions.length === 0) throw new Error(`The profile sketch has no closed shapes.${problems.length ? ` ${problems.join(" ")}` : ""}`);
   const spine = pathWire(pathPlane, path, profileAt(profilePlane, profile));
   const frame = planeFrame(profilePlane);
+  if (liesAlongPath(spine, frame, regions[0].outer.polygon)) {
+    release(spine);
+    throw new Error(PROFILE_ALONG_PATH);
+  }
   const twist = control.lockOrientation ? 0 : control.twist ?? 0;
   const plain = Math.abs(twist) < 1e-9 && !control.lockOrientation;
   let guide: Wire | null = null;

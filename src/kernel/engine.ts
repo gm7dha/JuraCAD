@@ -13,6 +13,7 @@ import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from
 import { planeFeatureFrame } from "../sketch/planeFeature";
 import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/patternRefs";
 import { getCurrentScope, setCurrentScope } from "../model/expr";
+import { geometrySound } from "../model/checkReport";
 import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
 import { axisInPlane, centreRevolve, revolveAxis, revolveSketch } from "./revolve";
@@ -4983,6 +4984,8 @@ export class GeometryEngine {
         }
         const m = p.shape.mesh(tol);
         const mesh = analyzeMesh(m.vertices, m.triangles);
+        // OpenCascade's check passes some inside-out or self-touching solids: those aren't sound either.
+        geometryValid = geometrySound(geometryValid, exactVolume, mesh.nonManifoldEdges, !!p.surface);
         // Measuring wall thickness only makes sense on a closed surface.
         const thinnest = mesh.watertight && !p.surface ? estimateThickness(m.vertices, m.triangles) : null;
         return { partId: p.id, name: p.name, geometryValid, exactVolume, mesh, thinnest, ...(p.surface ? { surface: true } : {}) };
