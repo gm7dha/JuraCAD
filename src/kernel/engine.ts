@@ -1879,6 +1879,11 @@ interface SketchSnap {
 export type StudiosResult = RebuildResult & { rebuilt: string[]; studioOrder: string[] };
 
 export class GeometryEngine {
+  /**
+   * Keep each part's display mesh for the 3D-print check (only the app's own engine does — see kernel.worker.ts;
+   * other engines, such as the Claude extension's, mesh again when they check).
+   */
+  keepDisplayMeshes = false;
   /** Threaded holes already made (see hole.ts), kept between rebuilds. */
   private threadedHoles: ThreadedHoleCache = new Map();
   /** The part just after a hole with modelled threads, by everything that went into it (see the rebuild loop). */
@@ -5686,7 +5691,7 @@ export class GeometryEngine {
     const unknownFace: FaceRef = { kind: "face", surface: "UNKNOWN", center: [0, 0, 0], normal: [0, 0, 0] };
     const unknownEdge: EdgeRef = { kind: "edge", curve: "UNKNOWN", a: [0, 0, 0], b: [0, 0, 0], mid: [0, 0, 0] };
     // Kept for the 3D-print check (the view's own mesh, so its marks lie on the faces shown, without meshing again).
-    displayMeshes.set(p.shape, { vertices: Float32Array.from(faces.vertices), triangles: Uint32Array.from(faces.triangles), faceGroups: faces.faceGroups });
+    if (this.keepDisplayMeshes) displayMeshes.set(p.shape, { vertices: Float32Array.from(faces.vertices), triangles: Uint32Array.from(faces.triangles), faceGroups: faces.faceGroups });
     const faceRefs = faces.faceGroups.map((g) => {
       const f = faceById.get(g.faceId)?.shift();
       if (!f) return unknownFace;

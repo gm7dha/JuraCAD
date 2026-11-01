@@ -123,6 +123,24 @@ function polygon(points: [number, number][]): SketchData {
   return s;
 }
 
+describe("reusing the view's mesh", () => {
+  it("gives the same answers as meshing again (as the app's engine does)", () => {
+    const parts = [feature("box", { width: 20, depth: 20, height: 10 }), feature("box", { width: 18, depth: 18, height: 10, x: 1, y: 1, z: 0.6 }, "remove"), feature("cylinder", { diameter: 1.5, height: 0.6, x: 10, y: 10 }, "remove")];
+    const fresh = build(parts);
+    const [a] = engine.printCheck([{ partId: fresh.parts[0].id, down: [1, 0, 0] }], LIMITS);
+    engine.dispose();
+    engine = new GeometryEngine();
+    engine.keepDisplayMeshes = true;
+    const kept = engine.rebuild(parts);
+    const [b] = engine.printCheck([{ partId: kept.parts[0].id, down: [1, 0, 0] }], LIMITS);
+    expect(b.overhangArea).toBeCloseTo(a.overhangArea, 6);
+    expect(b.thinnest!).toBeCloseTo(a.thinnest!, 6);
+    expect(b.smallHoles).toEqual(a.smallHoles);
+    // The marks are the view's own triangles: as many corners as the shown mesh has for those faces.
+    expect(b.marks.overhang.length).toBe(a.marks.overhang.length);
+  });
+});
+
 describe("sharp edges and surfaces", () => {
   const prism = (points: [number, number][]) => {
     const sk = sketchFeature({ kind: "default", name: "Top" }, polygon(points));

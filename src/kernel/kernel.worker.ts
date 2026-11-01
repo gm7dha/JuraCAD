@@ -16,6 +16,8 @@ const ctx = self as unknown as {
 };
 
 const engine = new GeometryEngine();
+// The 3D print panel's check reuses the meshes the view is shown with.
+engine.keepDisplayMeshes = true;
 
 const ready = (async () => {
   const OC = await opencascade({ locateFile: () => opencascadeWasm });
