@@ -237,7 +237,7 @@ describe("drawings made by Claude", () => {
     const look = await ok(s, "view_drawing", {});
     const png = look.content.find((c) => c.type === "image");
     expect(png && png.type === "image" && Buffer.from(png.data, "base64").subarray(1, 4).toString()).toBe("PNG");
-    expect(textOf(look)).toMatch(/Dimensions:\n- Front: 40 \(horizontal/);
+    expect(textOf(look)).toMatch(/Dimensions \(delete_drawing_item takes these numbers\):\n- D1 Front: 40 \(horizontal/);
 
     expect(await okText(s, "export_drawing", { format: "pdf" })).toMatch(/Saved Drawing 1 to .*Box and lid Drawing 1\.pdf \(PDF, 1 page/);
     const pdf = readFileSync(join(folder, "Box and lid Drawing 1.pdf"), "latin1");

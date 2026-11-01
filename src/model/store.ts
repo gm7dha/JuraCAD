@@ -40,7 +40,7 @@ import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Featur
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
-import { matchingConnectors } from "../assembly/connectors";
+import { replicateHoles } from "../assembly/replicateHoles";
 import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
 import { duplicateInstances, placedBox, replaceInstancePart, type Box3 } from "../assembly/assembly";
 import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
@@ -49,7 +49,7 @@ import { ownSymmetry } from "../assembly/symmetry";
 
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
 import { MATE_TYPES, nextMateName, pickConnector, samePieceClick, solveWithParts } from "../assembly/mates";
-import { insertProblem, insertSubAssembly, instanceAt, leafKey, ownBox, PATH_SEP, whereUsed } from "../assembly/subassembly";
+import { insertProblem, insertSubAssembly, instanceAt, ownBox, PATH_SEP, whereUsed } from "../assembly/subassembly";
 import { setSuppressed as setInstancesOff } from "../assembly/suppress";
 import { setPartProperties as setPartPropertiesIn } from "../assembly/properties";
 import { moveFeature as moveFeatureIn } from "./reorder";
@@ -1778,15 +1778,4 @@ function syncScope(variables: Variable[] | undefined) {
 syncScope(useStore.getState().history.present.variables);
 useStore.subscribe((s) => syncScope(s.history.present.variables));
 
-/** The holes a replicate's copies go in: every hole like the original's on the part it's mated to (as built now). */
-function replicateHoles(a: Assembly, rep: Replicate, parts: PartMesh[], assemblies: readonly Assembly[] = []) {
-  const mate = a.mates?.find((m) => m.id === rep.mate);
-  if (!mate) return [];
-  const target = mate.a.instanceId === rep.seed ? mate.b : mate.a;
-  // (The holes may be in a part inside a sub-assembly.)
-  const instance = instanceAt(a, assemblies, leafKey(target.instanceId, target.path))?.part;
-  const part = instance && findMesh(parts, meshIdOf(instance));
-  // Picks name the part itself, whichever configuration it's shown in.
-  return part && instance ? matchingConnectors(part, { ...target.pick, partId: part.id }).map((p) => ({ ...p, partId: instance.partId })) : [];
-}
 
