@@ -4,7 +4,7 @@ import { evaluate } from "../model/expr";
 import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
 import { describeRef } from "../geometry/topoRef";
 import { AreaPicker } from "./AreaPicker";
-import { areasTaken, followedSketch, sketchesOffered } from "../sketch/areaClicks";
+import { areasTaken, followedSketch, pathChange, sketchesOffered, takesSeveral } from "../sketch/areaClicks";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
@@ -601,6 +601,29 @@ function PlaneDefOptions() {
   );
 }
 
+/** Areas of other sketches an Extrude, Revolve or Sweep also uses (clicked in the 3D view), and how to leave them out. */
+function MoreAreasNote() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const features = useStore(activeFeatures);
+  if (!draft || !takesSeveral(draft)) return null;
+  const verb = draft.type === "revolve" ? "revolves" : draft.type === "sweep" ? "sweeps" : "extrudes";
+  if (draft.moreAreas?.length) {
+    return (
+      <p className="dialog-hint field-hint">
+        Also {verb}{" "}
+        {draft.moreAreas.map((m) => `${m.areas.length} area${m.areas.length === 1 ? "" : "s"} of ${features.find((f) => f.id === m.sketch)?.name ?? "a sketch that's gone"}`).join(", ")}
+        {draft.type === "revolve" ? " (round the same axis)" : draft.type === "sweep" ? " (along the same path)" : ""}. Click them in the 3D view to leave them out, or{" "}
+        <button type="button" className="link-button" onClick={() => setDraftField({ moreAreas: undefined })}>
+          use only {features.find((f) => f.id === draft.sketchRef)?.name ?? "this sketch"}
+        </button>
+        .
+      </p>
+    );
+  }
+  return draft.areas?.length ? <p className="dialog-hint field-hint">To add areas of other sketches, click them in the 3D view.</p> : null;
+}
+
 /** Extrude and revolve settings: which sketch, which way (and, for revolve, around what). */
 function SketchSolidOptions() {
   const draft = useStore((s) => s.editing?.draft);
@@ -650,19 +673,7 @@ function SketchSolidOptions() {
       {chosen && !draft.surface && (
         <AreaPicker data={chosenData ?? chosen} areas={draft.areas} verb={draft.type === "revolve" ? "revolve" : "extrude"} onChange={(areas) => setDraftField({ areas })} taken={taken} />
       )}
-      {draft.type === "extrude" && !draft.surface && (draft.moreAreas?.length ? (
-        <p className="dialog-hint field-hint">
-          Also extrudes{" "}
-          {draft.moreAreas.map((m) => `${m.areas.length} area${m.areas.length === 1 ? "" : "s"} of ${features.find((f) => f.id === m.sketch)?.name ?? "a sketch that's gone"}`).join(", ")}
-          . Click them in the 3D view to leave them out, or{" "}
-          <button type="button" className="link-button" onClick={() => setDraftField({ moreAreas: undefined })}>
-            use only {sketches.find((f) => f.id === draft.sketchRef)?.name ?? "this sketch"}
-          </button>
-          .
-        </p>
-      ) : draft.areas?.length ? (
-        <p className="dialog-hint field-hint">To add areas of other sketches, click them in the 3D view.</p>
-      ) : null)}
+      <MoreAreasNote />
       {draft.type === "revolve" && (
         <>
           <label className="field-label" htmlFor="revolve-axis">
@@ -846,7 +857,7 @@ function SweepLoftOptions() {
     return (
       <fieldset className="param-group">
         <legend>Sketches</legend>
-        {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined }))}
+        {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined, moreAreas: undefined }))}
         {profile && !draft.surface && (
           <AreaPicker
             data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile}
@@ -856,7 +867,8 @@ function SweepLoftOptions() {
             taken={areasTaken(features, draft.sketchRef!, followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile, draft.id)}
           />
         )}
-        {select("Path to follow", draft.pathRef, (v) => setDraftField({ pathRef: v }))}
+        {!draft.surface && <MoreAreasNote />}
+        {select("Path to follow", draft.pathRef, (v) => setDraftField(pathChange(draft, v)))}
         <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
         <label className="check-row" title="The shape doesn't tilt to follow the path's bends: it stays parallel to the plane it was drawn on all the way along">
           <input
