@@ -15,7 +15,8 @@ import type { Dimension, Drawing, SectionCut, SheetSize, ViewKind } from "../mod
 import { centreLines, centreMarks, hatchLines, placeBalloons } from "./annotations";
 import { holeRows, holeTableView, type HoleRow } from "./holeTable";
 import { projectPoint } from "./cameras";
-import { fromRel, sectionGeometry, sectionTitle, viewKey } from "./sections";
+import { fromRel, hostKindOf, sectionGeometry, sectionTitle, viewKey } from "./sections";
+import { keyGroup, splitKey } from "./viewParts";
 import { drawDimension, measureDim, resolveDim, type DimStyle } from "./dimensions";
 import { calloutText, threadSymbols, type TapSize } from "./holeCallouts";
 import { symbolPrims } from "./symbols";
@@ -156,6 +157,14 @@ export interface SheetInfo {
   /** Which sheet this is and how many the drawing has (the title block then says "1 OF 3"). */
   sheetNo?: number;
   sheetCount?: number;
+  /**
+   * Views of other parts (see viewParts.ts): the view of an assembly the
+   * balloons point at (its id), when the parts list is that assembly's rather
+   * than the sheet's; missing = the sheet's own views.
+   */
+  balloonGroup?: string;
+  /** Views of other parts: the tapped hole sizes for each (by the id of its base view); `taps` is the sheet's part's. */
+  groupTaps?: Record<string, TapSize[]>;
 }
 
 /** A view's size on paper at scale 1 (detail views are drawn `zoom` times bigger). */
@@ -283,7 +292,25 @@ export type Projections = Partial<Record<string, ViewProjection>>;
 const isSectionKey = (k: string) => k.startsWith("section:");
 const isDetailKey = (k: string) => k.startsWith("detail:");
 /** Views placed freely in the side column, with their names underneath. */
-const isLabelled = (k: string) => isSectionKey(k) || isDetailKey(k) || k === "flat";
+const isLabelled = (k: string) => isSectionKey(k) || isDetailKey(k) || k === "flat" || k.startsWith("flat@");
+/** The 3D view of another part (see viewParts.ts): placed in the side column with the 3D view. */
+const isOtherIso = (k: string) => k.startsWith("iso@");
+/** A key's view kind, without the part it's of ("top@vw1" → "top"). */
+const kindOfKey = (k: string) => splitKey(k).kind;
+
+/**
+ * The lined-up arrangements on a sheet, left to right: the sheet's own part's
+ * (suffix ""), then each view of another part's ("@<id>"), in the order their
+ * views come.
+ */
+function gridSuffixes(keys: string[]): string[] {
+  const out = [""];
+  for (const k of keys) {
+    const g = splitKey(k).group;
+    if (g && !out.includes(`@${g}`)) out.push(`@${g}`);
+  }
+  return out;
+}
 
 /**
  * A view's scale when the sheet's is `s`: its own (`own`), or — for a detail,
@@ -304,28 +331,36 @@ function needed(
   sideGap = 0,
   own: Record<string, number> = {},
   parent: Record<string, string> = {},
-): { w: number; h: number; cols: number[]; rows: number[]; side: { key: string; w: number; h: number; x: number; y: number }[] } {
+): { w: number; h: number; cols: number[]; rows: number[]; grids: { suffix: string; cols: number[]; rows: number[] }[]; side: { key: string; w: number; h: number; x: number; y: number }[] } {
   const shown = new Set(keys);
   // (Views with their own scale stay that size whatever the sheet's scale.)
   const size = (k: string) => (shown.has(k) ? paperSize(projections[k], scaleIn(k, s, own, parent)) : [0, 0]);
-  const [fw, fh] = size("front");
   // Columns left to right and rows top to bottom (see GRID).
   const g = third ? GRID.third : GRID.first;
-  // The front's column and row: as wide and tall as the front — or, once views have scales of their own
-  // (so the top may be wider than the front, say), as the widest view above or below it and the tallest beside it.
   const mixed = Object.keys(own).length > 0;
-  const frontW = mixed ? Math.max(fw, ...g.rows.map((k) => size(k)[0])) : fw;
-  const frontH = mixed ? Math.max(fh, ...g.cols.map((k) => size(k)[1])) : fh;
-  const cols = g.cols.map((k) => (k === "front" ? frontW : size(k)[0]));
-  const rows = g.rows.map((k) => (k === "front" ? frontH : size(k)[1]));
   const differs = (k: string) => !isDetailKey(k) && Math.abs(scaleIn(k, s, own, parent) - s) > 1e-9;
   const used = (list: number[]) => list.filter((v) => v > 0);
-  const gridW = used(cols).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(cols).length - 1);
-  // (Room under the lowest row for a "SCALE 2:1" note when a lined-up view has its own scale.)
-  const noted = [...g.rows, ...g.cols].some((k) => shown.has(k) && differs(k));
-  const gridH = used(rows).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(rows).length - 1) + (noted && used(rows).length ? LABEL_ROOM : 0);
+  // One arrangement for the sheet's part and one for each view of another part, side by side.
+  const grids = gridSuffixes(keys).map((suffix) => {
+    const sz = (k: string) => size(k + suffix);
+    const [fw, fh] = sz("front");
+    // The front's column and row: as wide and tall as the front — or, once views have scales of their own
+    // (so the top may be wider than the front, say), as the widest view above or below it and the tallest beside it.
+    const frontW = mixed ? Math.max(fw, ...g.rows.map((k) => sz(k)[0])) : fw;
+    const frontH = mixed ? Math.max(fh, ...g.cols.map((k) => sz(k)[1])) : fh;
+    const cols = g.cols.map((k) => (k === "front" ? frontW : sz(k)[0]));
+    const rows = g.rows.map((k) => (k === "front" ? frontH : sz(k)[1]));
+    // (Room under the lowest row for a "SCALE 2:1" note when a lined-up view has its own scale.)
+    const noted = [...g.rows, ...g.cols].some((k) => shown.has(k + suffix) && differs(k + suffix));
+    const h = used(rows).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(rows).length - 1) + (noted && used(rows).length ? LABEL_ROOM : 0);
+    return { suffix, cols, rows, h };
+  });
+  const allCols = grids.flatMap((x) => x.cols);
+  const { cols, rows } = grids[0];
+  const gridW = used(allCols).reduce((a, b) => a + b, 0) + GAP * Math.max(0, used(allCols).length - 1);
+  const gridH = Math.max(...grids.map((x) => x.h));
   // The 3D view and the section views share a column to the right, one above another (sections with room for their names).
-  const side = ["iso", ...keys.filter(isLabelled)]
+  const side = ["iso", ...keys.filter((k) => isLabelled(k) || isOtherIso(k))]
     .map((key) => {
       const [w, h] = size(key);
       return { key, w, h: h > 0 && (isLabelled(key) || differs(key)) ? h + labelRoom(key, projections[key]) : h };
@@ -356,7 +391,7 @@ function needed(
   // (`sideGap`: extra room between the lined-up views and the side column, for dimensions there.)
   const w = gridW + (sideW > 0 ? (gridW > 0 ? GAP + sideGap : 0) + sideW : 0);
   const h = Math.max(gridH, sideH);
-  return { w, h, cols, rows, side: placed };
+  return { w, h, cols, rows, grids, side: placed };
 }
 
 /**
@@ -372,7 +407,7 @@ const GRID = {
 /** Room under a section view for its name (mm). */
 const LABEL_ROOM = 8;
 /** Room under a labelled view: its name, and for a flat pattern a line per bend. */
-const labelRoom = (key: string, p: ViewProjection | undefined) => LABEL_ROOM + (key === "flat" ? BEND_LINE_H * (p?.bends?.length ?? 0) : 0);
+const labelRoom = (key: string, p: ViewProjection | undefined) => LABEL_ROOM + (kindOfKey(key) === "flat" ? BEND_LINE_H * (p?.bends?.length ?? 0) : 0);
 const BEND_LINE_H = 4;
 
 /** The biggest standard scale at which all the views fit on the sheet. */
@@ -548,13 +583,14 @@ function dimPoints(l: SheetLayout, from: number, to: number): [number, number][]
  * (3D, sections, details) placed automatically beside them; else 0.
  */
 function sideOverhang(l: SheetLayout, drawing: Pick<Drawing, "dimensions" | "views">): number {
-  const grid = l.views.filter((v) => LINED_UP.has(v.key));
-  const side = l.views.some((v) => !LINED_UP.has(v.key) && !drawing.views.find((x) => viewKey(x) === v.key)?.at);
+  const lined = (k: string) => LINED_UP.has(kindOfKey(k));
+  const grid = l.views.filter((v) => lined(v.key));
+  const side = l.views.some((v) => !lined(v.key) && !drawing.views.find((x) => viewKey(x) === v.key)?.at);
   if (!grid.length || !side || !drawing.dimensions?.length) return 0;
   const right = Math.max(...grid.map((v) => v.box[2]));
   const owner = new Map(drawing.dimensions.map((d) => [d.id, d.view]));
   let reach = right;
-  for (const dim of l.dims) if (LINED_UP.has(owner.get(dim.id) ?? "")) for (const [x] of dimPoints(l, dim.from, dim.to)) reach = Math.max(reach, x);
+  for (const dim of l.dims) if (lined(owner.get(dim.id) ?? "")) for (const [x] of dimPoints(l, dim.from, dim.to)) reach = Math.max(reach, x);
   return reach > right + 1e-6 ? Math.ceil(reach - right + 3) : 0;
 }
 
@@ -604,23 +640,26 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   // Automatic places: the grid of aligned views centred in the area, the 3D and section views to its right.
   const left = area.x0 + Math.max(0, (area.x1 - area.x0 - n.w) / 2);
   const top = area.y1 - Math.max(0, (area.y1 - area.y0 - n.h) / 2);
-  const colX: number[] = [];
-  let x = left;
-  n.cols.forEach((w, i) => {
-    colX[i] = x + w / 2;
-    if (w > 0) x += w + GAP;
-  });
-  const gridRight = x - (n.cols.some((w) => w > 0) ? GAP : 0);
-  const rowY: number[] = [];
-  let y = top;
-  n.rows.forEach((h, i) => {
-    rowY[i] = y - h / 2;
-    if (h > 0) y -= h + GAP;
-  });
   const autoCentre: Record<string, [number, number]> = {};
   const grid = third ? GRID.third : GRID.first;
-  grid.cols.forEach((k, i) => (autoCentre[k] = [colX[i], rowY[1]]));
-  grid.rows.forEach((k, i) => (autoCentre[k] = [colX[1], rowY[i]]));
+  // (Each part's arrangement starts where the one before ends.)
+  let x = left;
+  for (const g of n.grids) {
+    const colX: number[] = [];
+    g.cols.forEach((w, i) => {
+      colX[i] = x + w / 2;
+      if (w > 0) x += w + GAP;
+    });
+    const rowY: number[] = [];
+    let y = top;
+    g.rows.forEach((h, i) => {
+      rowY[i] = y - h / 2;
+      if (h > 0) y -= h + GAP;
+    });
+    grid.cols.forEach((k, i) => (autoCentre[k + g.suffix] = [colX[i], rowY[1]]));
+    grid.rows.forEach((k, i) => (autoCentre[k + g.suffix] = [colX[1], rowY[i]]));
+  }
+  const gridRight = x - (n.grids.some((g) => g.cols.some((w) => w > 0)) ? GAP : 0);
   const sideX = gridRight > left ? gridRight + GAP + sideGap : left;
   for (const item of n.side) {
     const viewH = isLabelled(item.key) || differs(item.key) ? item.h - labelRoom(item.key, projections[item.key]) : item.h;
@@ -628,16 +667,26 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   }
 
   // Views the user moved keep their place — but views lined up with the front view stay lined up with it.
+  // (Views of another part line up with that part's front view.)
   const placedAt = (k: string) => drawing.views.find((v) => viewKey(v) === k)?.at;
-  const front: [number, number] = placedAt("front") ?? autoCentre.front;
-  const dx = front[0] - autoCentre.front[0];
-  const dy = front[1] - autoCentre.front[1];
+  const fronts: Record<string, [number, number]> = {};
+  const frontOf = (suffix: string): [number, number] => (fronts[suffix] ??= placedAt("front" + suffix) ?? autoCentre["front" + suffix]);
   const centreFor = (k: string): [number, number] => {
     const at = placedAt(k);
-    if (k === "front") return front;
-    if (k === "iso" || isLabelled(k)) return at ?? [autoCentre[k][0], autoCentre[k][1]];
-    if (k === "top" || k === "bottom") return [front[0], at ? at[1] : autoCentre[k][1] + dy];
+    if (k === "iso" || isOtherIso(k) || isLabelled(k)) return at ?? [autoCentre[k][0], autoCentre[k][1]];
+    const { kind, group } = splitKey(k);
+    const suffix = group ? `@${group}` : "";
+    const front = frontOf(suffix);
+    if (kind === "front") return front;
+    const dx = front[0] - autoCentre["front" + suffix][0];
+    const dy = front[1] - autoCentre["front" + suffix][1];
+    if (kind === "top" || kind === "bottom") return [front[0], at ? at[1] : autoCentre[k][1] + dy];
     return [at ? at[0] : autoCentre[k][0] + dx, front[1]];
+  };
+  // Tapped holes are the part's own: each view uses those of the part it shows.
+  const tapsFor = (key: string) => {
+    const g = keyGroup(drawing, key);
+    return g ? info.groupTaps?.[g] : info.taps;
   };
 
   const prims: Prim[] = [];
@@ -675,8 +724,9 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
       for (const m of p.threadMarks ?? []) if (!m.hidden || drawing.hiddenLines) draw(m.line, m.hidden ? "hidden" : "thin");
     }
     // Tapped holes: the thread drawn the standard way.
-    if (drawing.threadSymbols !== false && info.taps?.length) {
-      const t = threadSymbols(p, info.taps);
+    const taps = tapsFor(key);
+    if (drawing.threadSymbols !== false && taps?.length) {
+      const t = threadSymbols(p, taps);
       for (const arc of t.endOn) draw(arc, "thin");
       // From the side they're inside the part, so shown with the hidden lines.
       if (drawing.hiddenLines) for (const seg of t.side) draw(seg, "hidden");
@@ -741,7 +791,9 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
 
   // Balloons: the parts list's item numbers, pointing at the parts.
   if (info.balloons?.length && drawing.balloons !== false) {
-    const host = views.find((v) => v.kind === "iso") ?? views.find((v) => v.kind === "front") ?? views.find((v) => v.kind !== "section");
+    // (On the views of the assembly the parts list is of.)
+    const of = views.filter((v) => keyGroup(drawing, v.key) === (info.balloonGroup ?? null));
+    const host = of.find((v) => v.kind === "iso") ?? of.find((v) => v.kind === "front") ?? of.find((v) => v.kind !== "section");
     if (host) prims.push(...balloonPrims(host, projections[host.key]!, host.scale, info.balloons));
   }
 
@@ -763,7 +815,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
     if (!view || !p) continue;
     const resolved = resolveDim(dim, p);
     const at = ([x, y]: [number, number]) => toSheet(view, p, view.scale, x, y);
-    const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved), dim.callout ? calloutText(p, resolved.a, info.taps ?? [], { ...dimStyle(drawing), ...(dim.places !== undefined ? { places: dim.places } : {}) }) : null, dimStyle(drawing));
+    const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved), dim.callout ? calloutText(p, resolved.a, tapsFor(dim.view) ?? [], { ...dimStyle(drawing), ...(dim.places !== undefined ? { places: dim.places } : {}) }) : null, dimStyle(drawing));
     const from = prims.length;
     prims.push(...drawn.prims);
     dims.push({
@@ -818,7 +870,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
 export function cuttingPlane(host: PlacedView, p: ViewProjection, scale: number, cut: SectionCut): Prim[] {
   const a0 = fromRel(p.bounds!, cut.a);
   const b0 = fromRel(p.bounds!, cut.b);
-  const geo = sectionGeometry(cut.host, a0, b0, cut.flip);
+  const geo = sectionGeometry(hostKindOf(cut.host), a0, b0, cut.flip);
   if (!geo) return [];
   const [x0, y0] = toSheet(host, p, scale, a0[0], a0[1]);
   const [x1, y1] = toSheet(host, p, scale, b0[0], b0[1]);
