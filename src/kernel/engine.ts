@@ -15,7 +15,7 @@ import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/pat
 import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
-import { centreRevolve, revolveSketch } from "./revolve";
+import { axisInPlane, centreRevolve, revolveAxis, revolveSketch } from "./revolve";
 import { holeTool, type ThreadedHoleCache } from "./hole";
 import { HOLE_LEAD_IN, SCREW_SIZES, straightStart, type HoleSize } from "../model/holes";
 import { copyNumber, isSkipped } from "../model/patterns";
@@ -1353,10 +1353,35 @@ function reach(plane: Parameters<typeof planeFrame>[0], parts: BuiltPart[]): num
   return far;
 }
 
+/**
+ * A revolve's areas from one of its other sketches, spun round the axis chosen
+ * in its first sketch (that line must lie in this sketch's plane, as the
+ * first sketch's own shapes do, or the shape would pass through itself).
+ */
+function revolveMore(feature: Feature, v: Record<string, number>, sketches: SketchMap, more: NonNullable<Feature["moreAreas"]>[number]): Shape3D {
+  const opts = feature.revolve ?? { axis: "vertical", flip: false };
+  const first = feature.sketchRef ? sketches.get(feature.sketchRef)?.sketch : undefined;
+  const own = sketches.get(more.sketch);
+  if (!first?.plane) throw new Error("the revolve's first sketch can't be used, so there's no axis to spin round.");
+  if (!own?.sketch?.plane) throw new Error("it comes after this revolve in the list. Move it above, or click its areas to leave them out.");
+  const world = revolveAxis(first.plane, first.data, opts.axis);
+  if (!world) throw new Error("the line to spin around isn't in the first sketch any more. Pick another axis.");
+  const local = axisInPlane(own.sketch.plane, world);
+  if (!local) {
+    throw new Error("the axis doesn't lie in its plane, so its shapes can't be spun round it. Use sketches drawn on a plane through the axis, or click its areas to leave them out.");
+  }
+  const ropts = { axis: opts.axis, angle: v.angle, flip: opts.flip, areas: more.areas };
+  const { plane, data } = own.sketch;
+  const shape = revolveSketch(plane, data, ropts, local);
+  return opts.symmetric ? centreRevolve(shape, plane, data, ropts, world) : shape;
+}
+
 /** `notes`: problems that don't stop it being built (shown on the feature). */
 function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], threaded?: ThreadedHoleCache, notes?: string[]): Shape3D {
-  // An extrude using areas of other sketches too: each extruded from its own sketch with the same settings, then put together.
-  if (feature.type === "extrude" && feature.moreAreas?.length && !feature.surface) {
+  // An extrude, revolve or sweep using areas of other sketches too: each made from its own sketch with the same settings
+  // (a revolve round the first sketch's axis, a sweep along the same path), then put together.
+  if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && feature.moreAreas?.length && !feature.surface) {
+    const verb = feature.type;
     let shape = buildSolid({ ...feature, moreAreas: undefined }, v, sketches, all, parts, threaded);
     const main = all.find((f) => f.id === feature.sketchRef)?.name ?? "its sketch";
     for (const more of feature.moreAreas) {
@@ -1365,16 +1390,20 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       // A sketch deleted or suppressed since: build from the others, and say so (the rest of the model carries on).
       if (!source || source.suppressed) {
         notes?.push(
-          `${name} ${source ? "is suppressed" : "has been deleted"}, so its areas are left out of this extrude. Edit it and click "use only ${main}" (or un-suppress ${source ? name : "the sketch"}).`,
+          `${name} ${source ? "is suppressed" : "has been deleted"}, so its areas are left out of this ${verb}. Edit it and click "use only ${main}" (or un-suppress ${source ? name : "the sketch"}).`,
         );
         continue;
       }
       let extra: Shape3D;
       try {
-        extra = buildSolid({ ...feature, sketchRef: more.sketch, areas: more.areas, moreAreas: undefined }, v, sketches, all, parts, threaded);
+        if (more.sketch === feature.pathRef && feature.type === "sweep") throw new Error("it's the path, so it can't be swept along itself. Click its areas to leave them out.");
+        extra =
+          feature.type === "revolve"
+            ? revolveMore(feature, v, sketches, more)
+            : buildSolid({ ...feature, sketchRef: more.sketch, areas: more.areas, moreAreas: undefined }, v, sketches, all, parts, threaded);
       } catch (e) {
         shape.delete();
-        throw new Error(`${name}: ${describeError(e, "its areas couldn't be extruded.")}`);
+        throw new Error(`${name}: ${describeError(e, `its areas couldn't be ${verb === "sweep" ? "swept" : `${verb}d`}.`)}`);
       }
       const next = shape.fuse(extra);
       shape.delete();
@@ -2556,7 +2585,7 @@ export class GeometryEngine {
       }
       // An outline that's an offset crossing itself: built, but probably not as meant.
       if ((feature.type === "extrude" || feature.type === "revolve") && feature.sketchRef) {
-        const uses = [{ sketch: feature.sketchRef, areas: feature.areas }, ...(feature.type === "extrude" ? feature.moreAreas ?? [] : [])];
+        const uses = [{ sketch: feature.sketchRef, areas: feature.areas }, ...(feature.moreAreas ?? [])];
         for (const u of uses) {
           const data = sketches.get(u.sketch)?.sketch?.data;
           const note = data ? crossingOutlineNote(data, u.areas as (number | string)[][] | undefined) : null;
