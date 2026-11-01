@@ -918,6 +918,14 @@ describe("sweep: a profile lying along the path", () => {
     const lc = engine.check("normal").parts[0];
     expect(lc.geometryValid).toBe(true);
     expect(relativeError(lc.exactVolume!, Math.PI * 4 * 40 - (16 * 8) / 3 / 4 + (Math.PI * 4 * 8) / 3 / 4)).toBeLessThan(1e-4);
+    // The same L with the profile 12 mm sideways (beside the path, so the second leg passes nearer the profile's middle than
+    // the path's start does): judged where the path starts, it still sweeps, with the same volume as before this check.
+    const side = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 12, y: 0 }, 2).sketch);
+    const sideways = build([bend, side, { ...feature("sweep", {}), sketchRef: side.id, pathRef: bend.id }]);
+    expect(sideways.featureErrors).toEqual({});
+    const sc = engine.check("normal").parts[0];
+    expect(sc.geometryValid).toBe(true);
+    expect(relativeError(sc.exactVolume!, 265.784)).toBeLessThan(1e-4);
     // Across the path it sweeps as before: a round bar on the plane x = 20, across the bottom side half way along. Four 40 mm
     // bars, less the overlaps inside the corners (a quarter of a Steinmetz solid each), plus a quarter ball outside each.
     const disc = sketchFeature(planeOnFace([1, 0, 0], [20, 0, 0], "x = 20"), addCircle(emptySketch(), { x: 0, y: 0 }, 3).sketch);
