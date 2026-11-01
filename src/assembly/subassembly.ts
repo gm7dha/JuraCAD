@@ -17,7 +17,8 @@ import { mirroredBox, nextInstanceName, placedBox, updateAssembly, usesAssembly,
 export { tidySubAssemblies, usesAssembly } from "./assembly";
 import { findMesh, meshIdOf } from "./configured";
 import { compose, IDENTITY, type Placement, type Vec3 } from "./math";
-import { solvedInside } from "./mates";
+import { flexibleInner, solvedInside } from "./mates";
+import { hasFlexible, isFlexible } from "./flexible";
 
 export const PATH_SEP = "/";
 
@@ -80,31 +81,81 @@ export interface Leaf {
   relative: Placement;
 }
 
+/** A placement as seen in a mirror image across the own YZ plane: what M ∘ p ∘ M is (M flips X), a plain move and turn. */
+export function mirroredPlacement(p: Placement): Placement {
+  const [x, y, z] = p.position;
+  const [qx, qy, qz, qw] = p.rotation;
+  return { position: [-x, y, z], rotation: [qx, -qy, -qz, qw] };
+}
+
+/** How the instances of one assembly level are placed while walking down (see leavesOf). */
+interface Level {
+  /** Where each instance is (by `prefix` + its id), in the coordinates of `base`. */
+  places: () => Record<string, Placement>;
+  prefix: string;
+  base: Placement;
+  /** Seen in a mirror (an odd number of mirrored copies above): each place is mirrored, and so is each part. */
+  flip: boolean;
+}
+
 /**
  * Every part an assembly shows, looking into sub-assemblies (each placed by
  * its own mates). Suppressed instances, at any level, are left out, and so are
  * sub-assemblies that are missing or would go round in a circle.
+ *
+ * Inside a flexible copy (flexible.ts), each part is where the assembly's own
+ * solve put it: `inner` (relative to the copy, by key; a solve's
+ * `SolveResult.inner`), or when not given, the assembly's own solve with no
+ * mate being edited. Inside a mirrored copy, every part is the opposite hand:
+ * its leaf's instance says `mirrored` the other way round, and `relative` is
+ * where that mirror image goes.
  */
-export function leavesOf(assembly: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[] = []): Leaf[] {
+export function leavesOf(assembly: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[] = [], inner?: Record<string, Placement>): Leaf[] {
   const out: Leaf[] = [];
-  const walk = (a: Assembly, top: Instance | null, path: string[], names: string[], at: Placement, within: string[]) => {
-    const inner = top ? solvedInside(a, parts, assemblies, within) : null;
+  let flex: Record<string, Placement> | undefined = inner;
+  const flexPlaces = () => (flex ??= flexibleInner(assembly, parts, assemblies));
+  const rigid = (sub: Assembly, within: string[]) => {
+    let solved: Record<string, Placement> | null = null;
+    return () => (solved ??= solvedInside(sub, parts, assemblies, within));
+  };
+  const walk = (a: Assembly, top: Instance | null, path: string[], names: string[], level: Level | null, within: string[]) => {
     for (const i of a.instances) {
       if (i.suppressed) continue;
-      const here = top ? compose(at, inner![i.id] ?? i.placement) : IDENTITY;
+      let here = IDENTITY;
+      if (level) {
+        const rel = level.places()[level.prefix + i.id] ?? i.placement;
+        here = compose(level.base, level.flip ? mirroredPlacement(rel) : rel);
+      }
       const t = top ?? i;
       const p = top ? [...path, i.id] : [];
       const n = [...names, i.name];
+      const flip = (level?.flip ?? false) !== !!i.mirrored;
       if (i.subAssembly) {
         const sub = assemblies.find((x) => x.id === i.subAssembly);
-        if (sub && !within.includes(sub.id) && sub.id !== assembly.id) walk(sub, t, p, n, here, [...within, sub.id]);
+        if (!sub || within.includes(sub.id) || sub.id === assembly.id) continue;
+        const deeper = [...within, sub.id];
+        // A flexible copy: its parts were solved with this level's (keys "copy/part"); otherwise by its own mates.
+        const next: Level =
+          isFlexible(i) && (level || hasFlexible(assembly))
+            ? level
+              ? { ...level, prefix: `${level.prefix}${i.id}/` }
+              : { places: flexPlaces, prefix: `${i.id}/`, base: IDENTITY, flip: false }
+            : { places: rigid(sub, deeper), prefix: "", base: here, flip };
+        walk(sub, t, p, n, next, deeper);
         continue;
       }
-      out.push({ key: leafKey(t.id, p), top: t.id, path: p, instance: i, name: n.join(" / "), relative: here });
+      // (Seen in a mirror, the part is the opposite hand.)
+      const instance = flip === !!i.mirrored ? i : flip ? { ...i, mirrored: true } : withoutMirror(i);
+      out.push({ key: leafKey(t.id, p), top: t.id, path: p, instance, name: n.join(" / "), relative: here });
     }
   };
-  walk(assembly, null, [], [], IDENTITY, [assembly.id]);
+  walk(assembly, null, [], [], null, [assembly.id]);
   return out;
+}
+
+function withoutMirror(i: Instance): Instance {
+  const { mirrored: _m, ...rest } = i;
+  return rest;
 }
 
 /** The parts of one top-level instance, from a list of leaves. */

@@ -439,7 +439,9 @@ export function billOfMaterials(
   options: BomOptions = {},
 ): BomRow[] {
   const all = options.assemblies ?? [];
-  const partRow = (rows: Map<string, BomRow>, i: Instance, count: number) => {
+  const partRow = (rows: Map<string, BomRow>, shown: Instance, count: number, flip = false) => {
+    // (Inside a mirrored sub-assembly copy, every part is the opposite hand.)
+    const i = flip ? { ...shown, mirrored: !shown.mirrored } : shown;
     // A part in another configuration is a different line ("Bracket (Large)").
     const cfgKey = i.configuration && configurationNames[i.configuration] ? `${i.partId}@${i.configuration}` : i.partId;
     // A mirrored copy is the opposite hand: a different part to make.
@@ -470,51 +472,54 @@ export function billOfMaterials(
     return sub && !within.includes(sub.id) ? sub : null;
   };
   // Flattened: every part, however deep, counted once for each copy of what it's in.
-  const flat = (a: Assembly, count: number, rows: Map<string, BomRow>, within: string[]) => {
+  const flat = (a: Assembly, count: number, rows: Map<string, BomRow>, within: string[], flip = false) => {
     // Suppressed parts aren't in the parts list (like Onshape).
     for (const i of a.instances) {
       if (i.suppressed) continue;
       if (i.subAssembly) {
         const sub = subOf(i, within);
-        if (sub) flat(sub, count, rows, [...within, sub.id]);
-      } else partRow(rows, i, count);
+        if (sub) flat(sub, count, rows, [...within, sub.id], flip !== !!i.mirrored);
+      } else partRow(rows, i, count, flip);
     }
     return rows;
   };
   if (!options.structured) return [...flat(assembly, 1, new Map(), [assembly.id]).values()];
 
   // Structured: this level's parts and sub-assemblies, each sub-assembly followed by what's in one of it.
-  const level = (a: Assembly, depth: number, prefix: string, within: string[]): BomRow[] => {
+  const level = (a: Assembly, depth: number, prefix: string, within: string[], flip = false): BomRow[] => {
     const rows = new Map<string, BomRow>();
-    const inside = new Map<string, Assembly>();
+    const inside = new Map<string, { sub: Assembly; flip: boolean }>();
     for (const i of a.instances) {
       if (i.suppressed) continue;
       if (!i.subAssembly) {
-        partRow(rows, i, 1);
+        partRow(rows, i, 1, flip);
         continue;
       }
       const sub = subOf(i, within);
       if (!sub) continue;
-      const key = `asm:${sub.id}`;
+      // A mirrored copy of a sub-assembly is its opposite hand: a line of its own.
+      const mirrored = flip !== !!i.mirrored;
+      const key = `asm:${sub.id}${mirrored ? "~mirrored" : ""}`;
       const row = rows.get(key);
       if (row) row.quantity++;
       else {
-        rows.set(key, { partId: key, name: sub.name, quantity: 1, missing: false, subAssembly: true });
-        inside.set(key, sub);
+        rows.set(key, { partId: key, name: sub.name + (mirrored ? " (mirrored)" : ""), quantity: 1, missing: false, subAssembly: true });
+        inside.set(key, { sub, flip: mirrored });
       }
     }
     const out: BomRow[] = [];
     [...rows.values()].forEach((r, n) => {
       const item = `${prefix}${n + 1}`;
-      const sub = inside.get(r.partId);
-      if (!sub) {
+      const found = inside.get(r.partId);
+      if (!found) {
         out.push({ ...r, level: depth, item });
         return;
       }
+      const sub = found.sub;
       // What one of it weighs: everything in it (unknown if any part's weight is).
-      const weight = bomTotalMass([...flat(sub, 1, new Map(), [...within, sub.id]).values()]);
+      const weight = bomTotalMass([...flat(sub, 1, new Map(), [...within, sub.id], found.flip).values()]);
       out.push({ ...r, level: depth, item, ...(!weight.partial && weight.grams > 0 ? { massEach: weight.grams } : {}) });
-      out.push(...level(sub, depth + 1, `${item}.`, [...within, sub.id]));
+      out.push(...level(sub, depth + 1, `${item}.`, [...within, sub.id], found.flip));
     });
     return out;
   };
@@ -615,17 +620,18 @@ export function tidySubAssemblies(assemblies: Assembly[]): Assembly[] {
  */
 export function partInstances(assembly: Assembly, assemblies: readonly Assembly[] = []): { instance: Instance; name: string }[] {
   const out: { instance: Instance; name: string }[] = [];
-  const walk = (a: Assembly, names: string[], within: string[]) => {
+  const walk = (a: Assembly, names: string[], within: string[], flip: boolean) => {
     for (const i of a.instances) {
       if (i.suppressed) continue;
-      if (!i.subAssembly) out.push({ instance: i, name: [...names, i.name].join(" / ") });
+      // (Inside a mirrored sub-assembly copy, every part is the opposite hand.)
+      if (!i.subAssembly) out.push({ instance: flip ? { ...i, mirrored: !i.mirrored } : i, name: [...names, i.name].join(" / ") });
       else {
         const sub = assemblies.find((x) => x.id === i.subAssembly);
-        if (sub && !within.includes(sub.id)) walk(sub, [...names, i.name], [...within, sub.id]);
+        if (sub && !within.includes(sub.id)) walk(sub, [...names, i.name], [...within, sub.id], flip !== !!i.mirrored);
       }
     }
   };
-  walk(assembly, [], [assembly.id]);
+  walk(assembly, [], [assembly.id], false);
   return out;
 }
 
@@ -721,7 +727,8 @@ export function parseAssemblies(raw: unknown): Assembly[] {
         placement: parsePlacement(ri.placement),
         fixed: ri.fixed === true,
         ...(typeof ri.configuration === "string" && ri.configuration && !sub ? { configuration: ri.configuration } : {}),
-        ...(ri.mirrored === true && !sub ? { mirrored: true } : {}),
+        ...(ri.mirrored === true ? { mirrored: true } : {}),
+        ...(ri.flexible === true && sub ? { flexible: true } : {}),
         ...(ri.suppressed === true ? { suppressed: true } : {}),
         ...(ri.replicaOf && typeof (ri.replicaOf as Record<string, unknown>).replicate === "string" && Number.isInteger((ri.replicaOf as Record<string, unknown>).index)
           ? { replicaOf: { replicate: (ri.replicaOf as { replicate: string }).replicate, index: (ri.replicaOf as { index: number }).index }, fixed: false }

@@ -626,7 +626,7 @@ export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "st
     if (format === "stl") return new Uint8Array(e.exportStl([], "normal", instances).stl);
     if (format === "3mf") return new Uint8Array(e.export3mf([], "normal", `${s.doc.name} ${asm.name}`, s.doc.appearance ?? {}, instances).data);
     // STEP keeps the assembly's structure (sub-assemblies, each part once, every copy placed), as the app's export does.
-    const tree = stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc));
+    const tree = stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc), solved.inner);
     return new Uint8Array((await e.exportStep([], s.doc.appearance ?? {}, instances, tree ?? undefined)).step);
   });
   return { bytes, count: instances.length };

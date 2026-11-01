@@ -715,8 +715,19 @@ export interface Instance {
   configuration?: string;
   /** A copy made by Replicate: which replicate, and which of its copies (1, 2…). */
   replicaOf?: { replicate: string; index: number };
-  /** Shown as the part's mirror image (a copy made by a Mirror): the part is flipped across its own YZ plane, then placed. */
+  /**
+   * Shown as the part's mirror image (a copy made by a Mirror): the part is flipped across its own YZ plane, then placed.
+   * On a sub-assembly, the whole sub-assembly is flipped (every part in it is then the opposite hand).
+   */
   mirrored?: boolean;
+  /**
+   * A sub-assembly whose parts can move (Onshape's "Make flexible"): its own parts
+   * and mates are solved together with this assembly's, so mating one of its parts
+   * here can move that part inside it (a hinge opens). Its fixed parts stay put
+   * relative to the sub-assembly. Missing = rigid, one solid piece. Ignored on
+   * mirrored copies.
+   */
+  flexible?: boolean;
   /**
    * Switched off for now (Onshape's Suppress): hidden, and left out of the parts
    * list, exports, clash checks and the mate solver; mates on it do nothing.
@@ -769,6 +780,22 @@ export interface AssemblyPattern {
    * so the parts list counts them as one part.
    */
   samePart?: boolean;
+  /**
+   * Mirror: the plane is a mate connector you place yourself — on `plane`'s face
+   * or edge (any kind, or one of the origin's planes), moved along and tilted about
+   * the connector's own axes (typed amounts: mm and degrees). The mirror is across
+   * the connector's XY plane. Missing = across `plane`'s flat face itself.
+   */
+  placed?: PlacedConnector;
+}
+
+/** A mate connector moved from where it sits on its face or edge: along its own X, Y and Z (mm), then tilted about its X and Y (degrees). Typed amounts. */
+export interface PlacedConnector {
+  dx?: string;
+  dy?: string;
+  dz?: string;
+  rx?: string;
+  ry?: string;
 }
 
 /** Kinds of mate (Onshape names in brackets where they differ): Fasten, Hinge (revolute), Slider, Cylindrical, Planar, Ball. */
