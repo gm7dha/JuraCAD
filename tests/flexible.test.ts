@@ -11,6 +11,7 @@ import { expandFlexible, isFlexible, setFlexible } from "../src/assembly/flexibl
 import { applyPlacement, compose, IDENTITY, quatFromAxisAngle, rotate, type Placement, type Vec3 } from "../src/assembly/math";
 import { connectorFrameFor, frameLookup, solveAssembly, solvedInside, solveWithParts } from "../src/assembly/mates";
 import { kernelInstances, leavesOf } from "../src/assembly/subassembly";
+import { planDrag } from "../src/assembly/drag";
 import { stepTree } from "../src/assembly/stepTree";
 import type { Assembly, Instance, Mate, MateConnector, MateType } from "../src/model/types";
 import { boxFace, boxMesh } from "./support/boxMesh";
@@ -253,6 +254,47 @@ describe("flexible sub-assemblies", () => {
     const Q: Assembly = { ...P, mates: [width] };
     const r = solveWithParts(Q, parts, { assemblies: [Q, hinge] });
     expect(r.mateErrors.w).toMatch(/can move apart \(it's flexible\)\. Pick both faces on one part, or untick Flexible/);
+  });
+
+  it("are dragged through the parent's mate on their fixed part, as a rigid copy is", () => {
+    // The hinge copy (not fixed) sits on a fixed block: its fixed leaf a held by a Hinge (turning about the block's top
+    // middle, (5, 5, 10)) or by a Fasten.
+    const held = (type: MateType, flexible: boolean): Assembly => ({
+      id: "P",
+      name: "Top",
+      instances: [part("base", "block", IDENTITY, { fixed: true }), copyOf("h", "H", at(0, 0, 10), { ...(flexible ? { flexible: true } : {}) })],
+      mates: [mate("rev", type, on("base", [0, 0, 1], undefined, block), on("h", [0, 0, -1], ["a"]))],
+    });
+    for (const flexible of [false, true]) {
+      const P = held("revolute", flexible);
+      const assemblies = [P, hinge];
+      const solved = solveWithParts(P, parts, { assemblies });
+      expect(solved.mateErrors).toEqual({});
+      expect(solved.drivenBy.h).toBe("rev");
+      // Grabbed at b's far corner, seen from above: dragged a quarter turn round the hinge's axis.
+      const grab: Vec3 = [20, 10, 11];
+      const start = planDrag(P, solved, frameLookup(P, parts, assemblies), "h", grab, [0, 0, -1]);
+      if (!("plan" in start)) throw new Error(`refused: ${start.refuse}`);
+      const c = start.plan.update({ origin: [0, 15, 1000], dir: [0, 0, -1] });
+      expect(c?.kind).toBe("mate");
+      expect(c && c.kind === "mate" ? c.id : "").toBe("rev");
+      expect(Math.abs(Number(c && c.kind === "mate" ? c.values.angle : 0))).toBeGreaterThan(1);
+      const F = held("fastened", flexible);
+      const fs = solveWithParts(F, parts, { assemblies: [F, hinge] });
+      const refused = planDrag(F, fs, frameLookup(F, parts, [F, hinge]), "h", grab, [0, 0, -1]);
+      expect("refuse" in refused ? refused.refuse : "").toBe("h is fastened by rev, so it can't move. Edit the mate to change where it sits.");
+    }
+    // Placed through a part inside that only an inner mate holds: refused, saying why.
+    const viaB: Assembly = {
+      id: "P",
+      name: "Top",
+      instances: [part("base", "block", IDENTITY, { fixed: true }), copyOf("h", "H", at(0, 0, 10), { flexible: true })],
+      mates: [mate("onB", "fastened", on("base", [0, 0, 1], undefined, block), on("h", [0, 0, -1], ["b"]))],
+    };
+    const vs = solveWithParts(viaB, parts, { assemblies: [viaB, hinge] });
+    expect(vs.drivenBy.h).toBe("flexible:h");
+    const r = planDrag(viaB, vs, frameLookup(viaB, parts, [viaB, hinge]), "h", [5, 5, 11], [0, 0, -1]);
+    expect("refuse" in r ? r.refuse : "").toBe("h is placed through a part inside it, which can't be dragged from here. Move the part it's mated to.");
   });
 
   it("flatten an assembly's flexible copies for the solver, with every id prefixed", () => {

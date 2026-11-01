@@ -865,10 +865,29 @@ function solveFlexibly(a: Assembly, parts: readonly PartMesh[], assemblies: read
   const groupErrors = keep(raw.groupErrors);
   const pick = (r: Record<string, string>, ok: (id: string) => boolean) => Object.fromEntries(Object.entries(r).filter(([id]) => ok(id)));
   const adjusted = Object.fromEntries(Object.entries(raw.adjusted ?? {}).filter(([id]) => !view.from[id]));
+  // A copy placed through one of its fixed parts (held to its frame): say which of this assembly's mates holds that part,
+  // so the copy is dragged (and described) through that mate, as a rigid copy is.
+  const drivenBy = pick(raw.drivenBy, (id) => own.has(id));
+  for (const [id, by] of Object.entries(drivenBy)) {
+    if (by !== `flexible:${id}`) continue;
+    const through = (frame: string): string | undefined => {
+      for (const [b, body] of Object.entries(view.bodies)) {
+        if (body.frame !== frame || !body.fixed) continue;
+        const d = raw.drivenBy[b];
+        if (d && !view.from[d] && !d.includes(":")) return d;
+        // (A flexible copy fixed inside it, placed through one of its own fixed parts: look there.)
+        const deeper = d?.startsWith("flexible:") ? through(b) : undefined;
+        if (deeper) return deeper;
+      }
+      return undefined;
+    };
+    const mate = through(id);
+    if (mate) drivenBy[id] = mate;
+  }
   const result: SolveResult = {
     placements,
     mateErrors,
-    drivenBy: pick(raw.drivenBy, (id) => own.has(id)),
+    drivenBy,
     adjusted,
     ...(Object.keys(patternErrors).length ? { patternErrors } : {}),
     ...(Object.keys(groupErrors).length ? { groupErrors } : {}),

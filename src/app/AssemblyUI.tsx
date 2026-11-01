@@ -258,7 +258,7 @@ export function AssemblyToolbar() {
   );
 }
 
-function InstanceRow({ instance, missing }: { instance: Instance; missing: boolean }) {
+function InstanceRow({ instance, missing, problem }: { instance: Instance; missing: boolean; problem?: string }) {
   const selected = useStore((s) => s.asmSelection.includes(instance.id));
   const hidden = useStore((s) => s.hiddenInstances.includes(instance.id));
   const colour = useStore((s) => s.history.present.appearance?.[instance.partId] ?? DEFAULT_PART_COLOUR);
@@ -267,7 +267,7 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
   return (
     <>
     <li
-      className={["feature-row", selected && "selected", hidden && "hidden", missing && "failed", instance.suppressed && "suppressed"].filter(Boolean).join(" ")}
+      className={["feature-row", selected && "selected", hidden && "hidden", (missing || problem) && "failed", instance.suppressed && "suppressed"].filter(Boolean).join(" ")}
       onClick={(e) => {
         const s = useStore.getState();
         const additive = e.shiftKey || e.ctrlKey || e.metaKey;
@@ -281,7 +281,9 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
           ? "Suppressed — switched off for now. Select it and click Unsuppress to bring it back."
           : missing
             ? "Its part no longer exists in the Part Studio"
-            : sub
+            : problem
+              ? problem
+              : sub
               ? `A ${instance.mirrored ? "mirror-image " : ""}copy of ${sub.name}, ${instance.flexible && !instance.mirrored ? "flexible (its parts can move here)" : "moving as one piece"}${instance.fixed ? " (fixed)" : ""}. Double-click to open ${sub.name} and change it — every copy follows.`
               : instance.fixed
                 ? "Fixed — it stays where it is"
@@ -318,6 +320,11 @@ function InstanceRow({ instance, missing }: { instance: Instance; missing: boole
       {instance.fixed && (
         <span className="instance-fixed" title="Fixed" aria-label="Fixed">
           <Icons.Pin size={15} />
+        </span>
+      )}
+      {problem && !missing && (
+        <span className="feature-error-icon" aria-label="Problem inside it" title={problem}>
+          <Icons.Warning size={16} />
         </span>
       )}
       {missing && (
@@ -476,6 +483,11 @@ function MatesSection({ assembly }: { assembly: Assembly }) {
           <MateRow key={m.id} mate={m} error={solved?.mateErrors[m.id]} instanceNames={instanceNames} inactive={mateInactive(assembly, m, allAssemblies)} />
         ))}
       </ul>
+      {Object.entries(solved?.flexErrors ?? {}).map(([id, text]) => (
+        <p key={id} className="param-message error flex-error">
+          {assembly.instances.find((i) => i.id === id)?.name ?? "A flexible copy"} (flexible): {text}
+        </p>
+      ))}
       {mates.length === 0 && assembly.instances.length >= 2 && (
         <p className="panel-hint">Join parts with a mate: choose Fasten, Hinge, Slider… in the toolbar, then click a face or edge on each part.</p>
       )}
@@ -998,6 +1010,8 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
   const showNumbers = bom.some((r) => r.properties?.number);
   const total = bomTotalMass(bom);
   const kernelReady = useStore((s) => s.kernelStatus === "ready");
+  // Flexible copies with something inside them that can't be met: a warning on their row.
+  const flexProblems = useSolvedAssembly().solved?.flexErrors;
 
   return (
     <aside className="side-panel" aria-label="Assembly">
@@ -1007,7 +1021,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
         </h3>
         <ul className="feature-list">
           {assembly.instances.map((i) => (
-            <InstanceRow key={i.id} instance={i} missing={kernelReady && !i.subAssembly && !partNames[i.partId]} />
+            <InstanceRow key={i.id} instance={i} missing={kernelReady && !i.subAssembly && !partNames[i.partId]} problem={flexProblems?.[i.id]} />
           ))}
         </ul>
         {assembly.instances.length === 0 && <p className="panel-hint">Click Insert to bring in parts from the Part Studio, or other assemblies.</p>}
