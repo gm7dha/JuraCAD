@@ -1297,8 +1297,11 @@ try {
 
     // Exploded: a part inside one copy moves on its own.
     step = "exploding a part inside a sub-assembly";
+    // The Explode button zooms the view to fit a moment after the click (animated): screen spots are only right once it's there.
+    const atFit = () => page.waitForFunction(() => window.juracadViewport.current.restingAtFit(), null, { timeout: 10_000 });
     await page.getByRole("button", { name: "Explode", exact: true }).click();
     await page.waitForSelector('[aria-label="Exploded view"]', { timeout: 5_000 });
+    await atFit();
     const innerSpot = await page.evaluate(({ second }) => {
       const v = window.juracadViewport.current;
       const p = v.shownParts().find((m) => m.id.startsWith(`${second}/`));
@@ -1312,6 +1315,9 @@ try {
     if (!explodedStep?.parts?.length || explodedStep.instances.length) throw new Error(`the exploded view step doesn't move just the inner part: ${JSON.stringify(explodedStep)}`);
     await shot("subassembly-exploded");
     await page.getByRole("button", { name: "Explode", exact: true }).click();
+    await page.waitForSelector('[aria-label="Exploded view"]', { state: "detached", timeout: 5_000 });
+    // (Put back together, the view zooms to fit again: wait until it's there before reading screen spots.)
+    await atFit();
 
     // Mirror Part 2 <1> across a face of a part inside the sub-assembly, as the same part (it's a symmetric block).
     step = "mirroring a part across a face";
@@ -1331,15 +1337,18 @@ try {
         for (let k = 0; k < p.faceRefs.length; k++) {
           if (p.faceRefs[k].surface !== "PLANE") continue;
           const at = v.screenPointOnFace(p.id, k);
-          if (at && document.elementFromPoint(box.left + at.x, box.top + at.y) === v.canvas && v.pickKindAt(at.x, at.y) === "face:PLANE") return at;
+          // (The click must land on this very part — not on the mirror's new copy or another part in front.)
+          if (at && document.elementFromPoint(box.left + at.x, box.top + at.y) === v.canvas && v.pickKindAt(at.x, at.y) === "face:PLANE" && v.pickPartAt(at.x, at.y) === p.id) return at;
         }
       }
       return null;
     }, asm2);
     if (!sideSpot) throw new Error("couldn't find a face to mirror across");
+    if (await page.evaluate(() => window.juracadViewport.current.cameraMoving())) throw new Error("the view moved while a face to mirror across was being found");
     await canvas.click({ position: sideSpot });
     await page.waitForSelector("text=A face of", { timeout: 5_000 }).then(() => {}, async () => {
-      throw new Error(`clicking a flat face didn't set the mirror plane (panel: "${(await page.locator('[aria-label="Pattern Mirror 1"]').innerText()).replace(/\n/g, " / ")}")`);
+      const toast = (await page.locator(".toast").allInnerTexts().catch(() => [])).join(" / ");
+      throw new Error(`clicking a flat face didn't set the mirror plane (panel: "${(await page.locator('[aria-label="Pattern Mirror 1"]').innerText()).replace(/\n/g, " / ")}"; message: "${toast}")`);
     });
     await page.getByLabel("Same part for symmetric parts").check();
     const mirrorState = await page.evaluate(({ id }) => {
