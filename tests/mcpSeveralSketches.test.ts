@@ -50,7 +50,7 @@ describe("features using areas of several sketches, from Claude", () => {
     const add = TOOLS.find((t) => t.name === "add_feature")!;
     expect(add.description).toMatch(/more_sketches \(\[\{"sketch": name, "areas": \[\[x,y\],…\]\}, …\]/);
     expect(add.description).toMatch(/sweep: sketch \(the closed shape/);
-    expect((add.inputSchema as { properties: { type: { enum: string[] } } }).properties.type.enum).toContain("sweep");
+    expect((add.inputSchema.properties.type as { enum: string[] }).enum).toContain("sweep");
   });
 
   it("extrudes areas of two sketches, describes it, and changes or clears the extra sketch", async () => {
