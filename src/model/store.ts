@@ -12,7 +12,6 @@ import {
   createFeature,
   emptyDocument,
   historyOf,
-  parseDocument,
   redo as redoHistory,
   removeFeature,
   renameFeature,
@@ -62,6 +61,8 @@ import { importName } from "./importFile";
 import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisible, setDatumHidden, setFeaturesVisible, toggleAllPlanes } from "./visibility";
 import { settlePrintedFit } from "./printSettings";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
+import { designOf, withVersionsOf } from "./versions";
+import { newKeepId, readKept } from "./browserKeep";
 
 /** Which instances show a symmetric part, or a symmetric sub-assembly (for mirrors that show such things as themselves). */
 const symmetricIn = (parts: readonly PartMesh[], assemblies: readonly Assembly[] = []) => (i: Instance) => {
@@ -209,7 +210,35 @@ export interface SectionView {
 /** A mate being made or changed; its two connectors may not be picked yet. */
 export type MateDraft = Omit<Mate, "a" | "b"> & { a?: MateConnector; b?: MateConnector };
 
-export type DialogName = "check" | "export" | "help" | "whatsNew" | "flatPattern" | "variables" | "configurations" | "insert" | null;
+export type DialogName = "check" | "export" | "help" | "whatsNew" | "flatPattern" | "variables" | "configurations" | "insert" | "versions" | null;
+
+/**
+ * Looking at an old version (read-only): the version's design is in `history`
+ * so every tab shows it, and the real design waits in `stash` (with what was
+ * on show) until "Back to the current design". See src/app/versionActions.ts.
+ */
+export interface VersionView {
+  id: string;
+  name: string;
+  createdAt: string;
+  stash: History;
+  /** What was on show before, put back on the way out. */
+  was: { activeTab: string | null; rollbackTo: string | null; hiddenParts: string[]; transparentParts: string[] };
+}
+
+/**
+ * Comparing two versions (or a version with now): the designs being compared
+ * ("now" = the current design). While set, the engine also builds each old
+ * version's Part Studios (ids "<studio>@version:<id>"), for the parts lists and
+ * the see-through overlay in 3D.
+ */
+export interface VersionCompare {
+  older: string;
+  newer: string;
+  docs: Record<string, JuraCADDocument>;
+  /** Draw the older version's parts see-through over the newer's in the 3D view. */
+  ghost: boolean;
+}
 
 export interface Toast {
   id: number;
@@ -219,6 +248,25 @@ export interface Toast {
 
 export interface AppState {
   history: History;
+  /** An old version open read-only (null = the current design). */
+  versionView: VersionView | null;
+  versionCompare: VersionCompare | null;
+  setVersionCompare: (c: VersionCompare | null) => void;
+  /** Open a version's design read-only (or switch to another version). */
+  enterVersionView: (v: { id: string; name: string; createdAt: string }, doc: JuraCADDocument) => void;
+  /** Back to the current design. */
+  leaveVersionView: () => void;
+  /** A change to the whole design (one undo step): restoring a version. */
+  changeDocument: (fn: (doc: JuraCADDocument) => JuraCADDocument) => void;
+  /**
+   * Save, rename or remove versions. Not an undo step: as in Onshape, versions
+   * stay put whatever is undone or redone (undo and redo carry them along).
+   */
+  changeVersions: (fn: (doc: JuraCADDocument) => JuraCADDocument) => void;
+  /** While an old version is open: say it can't be changed and return true (for drags and clicks that would change it). */
+  refuseReadOnly: () => boolean;
+  /** Why the design (or its versions) couldn't be kept in this browser just now, or null when it's kept. Set by connect.ts. */
+  storageProblem: string | null;
   editing: Editing | null;
   /** Present while the feature being edited is a sketch. */
   sketch: SketchSession | null;
@@ -366,7 +414,8 @@ export interface AppState {
   switchConfiguration: (id: string) => void;
   renameConfiguration: (id: string, name: string) => void;
   removeConfiguration: (id: string) => void;
-  newDocument: () => void;
+  /** Start a new design: empty, or this one (from a version). */
+  newDocument: (doc?: JuraCADDocument) => void;
   /** Replace the design with one opened from a file (undoable). */
   openDocument: (doc: JuraCADDocument, fileName: string) => void;
   /** Note that the current design has just been saved to this file. */
@@ -376,7 +425,8 @@ export interface AppState {
    * (`replace`: a whole new design, e.g. one Claude opened). The label
    * ("Claude: added Extrude 2") is shown as a note.
    */
-  applyClaudeChange: (doc: JuraCADDocument, studio: string, label: string, replace: boolean) => void;
+  /** Returns why it couldn't be applied, or null when it was. */
+  applyClaudeChange: (doc: JuraCADDocument, studio: string, label: string, replace: boolean) => string | null;
   /** Add an assembly tab and switch to it. */
   addAssembly: () => void;
   /** Add a Part Studio tab and switch to it. */
@@ -513,9 +563,9 @@ export interface AppState {
   ) => void;
 }
 
-// These browser-storage keys keep the app's old name (PartSmith) on purpose: changing them
-// would lose the design people have kept in this browser.
-export const STORAGE_KEY = "partsmith.document.v1";
+// The browser-storage keys are in browserKeep.ts (the design's keeps the app's old name, PartSmith, on purpose).
+export { STORAGE_KEY, VERSIONS_KEY } from "./browserKeep";
+
 /** Which file the design in browser storage was last saved to, so "Saved" survives a page refresh. */
 const FILE_KEY = "partsmith.file.v1";
 
@@ -552,10 +602,12 @@ function savedFileFor(doc: JuraCADDocument): { savedDoc: JuraCADDocument | null;
 
 function loadSavedDocument(): JuraCADDocument {
   try {
-    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
-    if (raw) {
-      const doc = parseDocument(JSON.parse(raw));
-      if (doc) return doc;
+    const storage = globalThis.localStorage;
+    const kept = storage ? readKept(storage) : null;
+    if (kept) {
+      // The same design carries on with the same keep id (so its versions stay tied to it).
+      if (kept.keep) keepIds.set(designKey(kept.doc), kept.keep);
+      return kept.doc;
     }
   } catch {
     // storage unavailable or corrupt: start fresh
@@ -592,18 +644,77 @@ const newSession = (): SketchSession => ({
 const existsIn = (d: SketchData, id: string) =>
   d.points.some((p) => p.id === id) || d.curves.some((c) => c.id === id) || d.constraints.some((c) => c.id === id) || id === "origin" || isExtraId(d, id);
 
+/**
+ * Which design each document in the undo list belongs to. A change keeps the
+ * design; New, Open, a new design from a version, or Claude opening another
+ * design starts another. Undo and redo carry the versions along only within
+ * one design, so stepping back past Open doesn't hand the opened file's
+ * versions to the design you had before.
+ */
+const designKeys = new WeakMap<JuraCADDocument, number>();
+let nextDesignKey = 1;
+export function designKey(doc: JuraCADDocument): number {
+  let k = designKeys.get(doc);
+  if (!k) designKeys.set(doc, (k = nextDesignKey++));
+  return k;
+}
+/** Each design's keep id (by design key), tying it to its versions in browser storage (browserKeep.ts). */
+const keepIds = new Map<number, string>();
+export function keepIdOf(doc: JuraCADDocument): string {
+  const k = designKey(doc);
+  let id = keepIds.get(k);
+  if (!id) keepIds.set(k, (id = newKeepId()));
+  return id;
+}
+/** `next` is the same design as `from` (a change, or the same document with other versions). */
+function sameDesign(next: JuraCADDocument, from: JuraCADDocument) {
+  if (next !== from) designKeys.set(next, designKey(from));
+}
+
 export const useStore = create<AppState>((set, get) => {
-  /** Apply a document change and record it for undo. */
-  const change = (fn: (doc: JuraCADDocument) => JuraCADDocument) =>
+  /**
+   * Apply a document change and record it for undo. Refused while an old
+   * version is open, except changes to what's shown (`display`: the eye, P),
+   * which only change the old version's copy on screen.
+   */
+  const change = (fn: (doc: JuraCADDocument) => JuraCADDocument, display = false) => {
+    if (!display && readOnly()) return;
     set((s) => {
       const next = fn(s.history.present);
       // Keep sketches (and anything else) on Plane features where their planes are now.
       const settled = next === s.history.present ? next : refreshDocumentPlanes(next, resolveVariables(next.variables).values);
-      return { history: commit(s.history, settled) };
+      const history = commit(s.history, settled);
+      sameDesign(history.present, s.history.present);
+      return { history };
     });
+  };
+  /** True (and says so, at most every few seconds) while an old version is open: it can't be changed. */
+  let readOnlySaid = 0;
+  const readOnly = () => {
+    const v = get().versionView;
+    if (!v) return false;
+    if (Date.now() - readOnlySaid > 3000) {
+      readOnlySaid = Date.now();
+      get().showToast(`You're looking at the old version "${v.name}", which can't be changed. Click "Back to the current design" (at the top) to carry on working, or "Restore this version".`, "error");
+    }
+    return true;
+  };
+  /** Leaving an old version: the current design and what was on show come back. */
+  const unview = (s: AppState): Partial<AppState> =>
+    s.versionView ? { history: s.versionView.stash, versionView: null, ...s.versionView.was, selection: [], selectedParts: [], selectedFeatureId: null, asmSelection: [] } : {};
   /** A change to the features of the Part Studio on show. */
-  const changeStudio = (fn: (doc: JuraCADDocument) => JuraCADDocument) =>
-    change((doc) => inStudio(doc, activeStudioId(get()) ?? MAIN_STUDIO, fn));
+  const changeStudio = (fn: (doc: JuraCADDocument) => JuraCADDocument, display = false) =>
+    change((doc) => inStudio(doc, activeStudioId(get()) ?? MAIN_STUDIO, fn), display);
+  /** Undo or redo, keeping the versions as they are now when the step stays within the same design. */
+  const step = (move: (h: History) => History) =>
+    set((s) => {
+      if (s.editing || s.mateDraft) return {};
+      const h = move(s.history);
+      if (h === s.history) return {};
+      const present = designKey(h.present) === designKey(s.history.present) ? withVersionsOf(h.present, s.history.present) : h.present;
+      sameDesign(present, h.present);
+      return { history: { ...h, present }, selection: [] };
+    });
   /** The document as the Part Studio on show sees it (its features in `features`). */
   const view = () => studioView(get().history.present, activeStudioId(get()) ?? MAIN_STUDIO);
 
@@ -611,6 +722,49 @@ export const useStore = create<AppState>((set, get) => {
   return {
     ...savedFileFor(initialDoc),
     history: historyOf(initialDoc),
+    versionView: null,
+    versionCompare: null,
+    setVersionCompare: (versionCompare) => set({ versionCompare }),
+    enterVersionView: (v, doc) =>
+      set((s) => {
+        const stash = s.versionView?.stash ?? s.history;
+        const was = s.versionView?.was ?? { activeTab: s.activeTab, rollbackTo: s.rollbackTo, hiddenParts: s.hiddenParts, transparentParts: s.transparentParts };
+        const tab = s.activeTab;
+        const tabThere = !!tab && (studioExists(doc, tab) || !!doc.assemblies?.some((a) => a.id === tab) || !!doc.drawings?.some((d) => d.id === tab));
+        return {
+          versionView: { ...v, stash, was },
+          // The old design, with the current list of versions (so the Versions panel still lists them all).
+          history: historyOf(stash.present.versions ? { ...doc, versions: stash.present.versions } : doc),
+          activeTab: tabThere ? tab : null,
+          rollbackTo: null,
+          editing: null,
+          sketch: null,
+          selection: [],
+          selectedParts: [],
+          selectedFeatureId: null,
+          selectedPlane: null,
+          hiddenParts: [],
+          transparentParts: [],
+          asmSelection: [],
+          mateDraft: null,
+          areaSelection: null,
+          showFlat: false,
+          versionCompare: null,
+        };
+      }),
+    leaveVersionView: () => set((s) => unview(s)),
+    changeDocument: (fn) => change(fn),
+    changeVersions: (fn) => {
+      if (readOnly()) return;
+      set((s) => {
+        const present = fn(s.history.present);
+        if (present === s.history.present) return {};
+        sameDesign(present, s.history.present);
+        return { history: { ...s.history, present } };
+      });
+    },
+    refuseReadOnly: () => readOnly(),
+    storageProblem: null,
     editing: null,
     sketch: null,
     selectedFeatureId: null,
@@ -651,6 +805,7 @@ export const useStore = create<AppState>((set, get) => {
     rollbackTo: null,
 
     startCreate: (type) => {
+      if (readOnly()) return;
       const s = get();
       if (type === "sketch") {
         // On the highlighted plane, or Plane feature, if any — or the plane of the sketch whose areas are selected.
@@ -769,6 +924,7 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     startImport: (file) => {
+      if (readOnly()) return;
       const s = get();
       const draft = createFeature(view(), "import");
       draft.import = file;
@@ -781,6 +937,7 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     startEdit: (id) => {
+      if (readOnly()) return;
       const f = activeFeatures(get()).find((x) => x.id === id);
       if (!f) return;
       set({
@@ -794,6 +951,8 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     startSketch: (plane) => {
+      if (readOnly()) return;
+
       const draft = createFeature(view(), "sketch");
       draft.sketch = { plane, data: draft.sketch!.data };
       set({
@@ -1017,14 +1176,14 @@ export const useStore = create<AppState>((set, get) => {
     renameFeature: (id, name) => changeStudio((doc) => renameFeature(doc, id, name)),
     setFeatureFolder: (ids, folder) => changeStudio((doc) => setFolder(doc, ids, folder)),
     setFeaturesVisible: (ids, visible) => {
-      changeStudio((doc) => setFeaturesVisible(doc, ids, visible));
+      changeStudio((doc) => setFeaturesVisible(doc, ids, visible), true);
       // A hidden plane can't stay picked.
       if (!visible && get().selectedFeatureId && ids.includes(get().selectedFeatureId!) && activeFeatures(get()).find((f) => f.id === get().selectedFeatureId)?.type === "plane") set({ selectedFeatureId: null });
     },
-    setAllSketchesVisible: (visible) => changeStudio((doc) => setAllSketchesVisible(doc, visible)),
+    setAllSketchesVisible: (visible) => changeStudio((doc) => setAllSketchesVisible(doc, visible), true),
     setAllPlanesVisible: (visible) => {
       const studio = activeStudioId(get()) ?? MAIN_STUDIO;
-      change((doc) => setAllPlanesVisible(doc, studio, visible));
+      change((doc) => setAllPlanesVisible(doc, studio, visible), true);
       // A hidden plane can't stay selected (Top/Front/Right, or a Plane feature, as with its eye).
       if (!visible && get().selectedPlane) set({ selectedPlane: null });
       const picked = get().selectedFeatureId;
@@ -1074,9 +1233,11 @@ export const useStore = create<AppState>((set, get) => {
       if (trimmed && trimmed !== get().history.present.name) change((doc) => ({ ...doc, name: trimmed }));
     },
 
-    newDocument: () => {
+    newDocument: (start) => {
+      set(unview);
       set((s) => ({
-        history: commit(s.history, emptyDocument()),
+        versionCompare: null,
+        history: commit(s.history, start ?? emptyDocument()),
         editing: null,
         sketch: null,
         selectedFeatureId: null,
@@ -1094,7 +1255,9 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     openDocument: (doc, fileName) => {
+      set(unview);
       set((s) => ({
+        versionCompare: null,
         history: commit(s.history, doc),
         editing: null,
         sketch: null,
@@ -1113,17 +1276,24 @@ export const useStore = create<AppState>((set, get) => {
       rememberFile(get().history.present, fileName);
     },
 
-    applyClaudeChange: (doc, studio, label, replace) => {
+    applyClaudeChange: (incoming, studio, label, replace) => {
+      const viewing = get().versionView;
+      if (viewing) return `The user is looking at an old version ("${viewing.name}") of the design; changes can be made once they go back to the current design.`;
+      // Claude isn't sent the versions (see liveLink.ts), so a change to this design keeps its own.
+      // A new or opened design (replace) is another design: it doesn't get this one's versions.
+      const doc = replace ? designOf(incoming) : withVersionsOf(designOf(incoming), get().history.present);
       set((s) => {
         const history = commit(s.history, refreshDocumentPlanes(doc, resolveVariables(doc.variables).values));
         if (replace) {
-          return { history, selectedFeatureId: null, selection: [], selectedPlane: null, hiddenParts: [], transparentParts: [], selectedParts: [], activeTab: null, asmSelection: [] };
+          return { history, versionCompare: null, selectedFeatureId: null, selection: [], selectedPlane: null, hiddenParts: [], transparentParts: [], selectedParts: [], activeTab: null, asmSelection: [] };
         }
+        sameDesign(history.present, s.history.present);
         // The user stays on their tab (Claude works on the Part Studio on show, so that's normally the one changed).
         const keep = (id: string | null) => (id && studioFeatures(history.present, studio).some((f) => f.id === id) ? id : null);
         return { history, selectedFeatureId: keep(s.selectedFeatureId), selection: [] };
       });
       get().showToast(label, "info");
+      return null;
     },
 
     markSaved: (fileName) => {
@@ -1595,9 +1765,14 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => ({ hiddenInstances: s.hiddenInstances.includes(id) ? s.hiddenInstances.filter((x) => x !== id) : [...s.hiddenInstances, id] })),
 
     // Undo/redo only when no feature dialog is open (see App shortcuts).
-    undo: () => set((s) => (s.editing || s.mateDraft ? {} : { history: undoHistory(s.history), selection: [] })),
+    // Versions aren't undone: they stay as they are (see `step`).
+    undo: () => {
+      if (!readOnly()) step(undoHistory);
+    },
     // (While sketching, Ctrl+Z goes to sketchUndo instead — see App shortcuts.)
-    redo: () => set((s) => (s.editing || s.mateDraft ? {} : { history: redoHistory(s.history), selection: [] })),
+    redo: () => {
+      if (!readOnly()) step(redoHistory);
+    },
 
     // Picking a feature or picking parts: one at a time (the other side is then shown as "linked").
     selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane, selectedParts: id ? [] : s.selectedParts })),
@@ -1677,7 +1852,7 @@ export const useStore = create<AppState>((set, get) => {
     toggleDatum: (datum) => {
       const studio = activeStudioId(get()) ?? MAIN_STUDIO;
       const hidden = hiddenDatumsOf(get().history.present, studio).includes(datum);
-      change((doc) => setDatumHidden(doc, studio, datum, !hidden));
+      change((doc) => setDatumHidden(doc, studio, datum, !hidden), true);
       // A hidden plane can't stay selected.
       if (!hidden && get().selectedPlane === datum) set({ selectedPlane: null });
     },

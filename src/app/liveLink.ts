@@ -6,7 +6,8 @@ import { useSyncExternalStore } from "react";
 
 import { activeStudioId, useStore } from "../model/store";
 import { readDocumentFile, serializeDocument } from "../model/fileFormat";
-import { MAIN_STUDIO } from "../model/studios";
+import { MAIN_STUDIO, studioExists } from "../model/studios";
+import { designOf } from "../model/versions";
 import { LiveClient, type LiveHost, type LiveState, type PermissionState, type SocketFactory, type SocketLike } from "../live/client";
 import { RelayTransport, type RelayEnv, type RelayWindow } from "../live/relayTransport";
 import { RELAY_WINDOW } from "../live/protocol";
@@ -42,21 +43,29 @@ const host: LiveHost = {
   browser: browserKind(),
   current() {
     const s = useStore.getState();
-    const studio = activeStudioId(s) ?? MAIN_STUDIO;
-    const doc = s.history.present;
-    return { key: `${idOf(doc)}|${studio}`, studio, file: () => serializeDocument(doc) };
+    // While an old version is open to look at, Claude keeps working with the current design.
+    const view = s.versionView;
+    const studio = view ? view.was.activeTab && studioExists(view.stash.present, view.was.activeTab) ? view.was.activeTab : MAIN_STUDIO : activeStudioId(s) ?? MAIN_STUDIO;
+    const doc = view?.stash.present ?? s.history.present;
+    // Saved versions stay in the browser: Claude doesn't need them, and they can be large.
+    // Keyed by the design's own parts, so saving or renaming a version doesn't send the design again.
+    const key = Object.entries(doc)
+      .filter(([k]) => k !== "versions")
+      .map(([k, v]) => `${k}:${v && typeof v === "object" ? idOf(v) : String(v)}`)
+      .join(",");
+    return { key: `${key}|${studio}`, studio, file: () => serializeDocument(designOf(doc)) };
   },
   busy() {
     const s = useStore.getState();
     if (s.editing) return `The user has ${s.editing.draft.name ? `"${s.editing.draft.name}"` : "a feature"} open for editing in JuraCAD.`;
     if (s.mateDraft) return "The user is adding a mate in JuraCAD.";
+    if (s.versionView) return `The user is looking at an old version ("${s.versionView.name}") of the design in JuraCAD; changes can be made once they go back to the current design.`;
     return null;
   },
   apply(file, studio, label, replace) {
     const r = readDocumentFile(file, "Claude's change");
     if (!r.ok) return r.error;
-    useStore.getState().applyClaudeChange(r.doc, studio, label, replace);
-    return null;
+    return useStore.getState().applyClaudeChange(r.doc, studio, label, replace);
   },
   subscribe: (listener) => useStore.subscribe(listener),
   permission: loopbackPermission,

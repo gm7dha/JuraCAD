@@ -75,6 +75,8 @@ export interface StudioInput {
   /** A Part Studio built again in another configuration: its variables, and what's added to its parts' ids ("@<configuration>"). */
   variables?: Record<string, number>;
   partSuffix?: string;
+  /** Names for its parts instead of the design's (an old version being compared: its own names). */
+  partNames?: Record<string, string>;
 }
 
 /** Display mesh for one part, ready to hand to three.js. */

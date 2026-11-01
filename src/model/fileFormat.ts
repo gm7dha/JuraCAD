@@ -47,6 +47,8 @@ export function serializeDocument(doc: JuraCADDocument, savedAt = new Date()): s
     ...(doc.drawings?.length ? { drawings: doc.drawings } : {}),
     ...(doc.configurations?.length ? { configurations: doc.configurations } : {}),
     ...(doc.configurations?.length && doc.activeConfiguration ? { activeConfiguration: doc.activeConfiguration } : {}),
+    // Saved versions go last (they're the bulk of a file that has them; each is packed, see versions.ts).
+    ...(doc.versions?.length ? { versions: doc.versions } : {}),
   };
   // Every part of the design goes in the file (tests/fileFields.test.ts checks no field of JuraCADDocument is left out).
   return JSON.stringify(file, null, 1) + "\n";
