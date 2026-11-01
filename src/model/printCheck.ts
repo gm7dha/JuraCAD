@@ -237,6 +237,8 @@ export interface PrintPartResult {
   thinnestAt: Vec3 | null;
   /** About how much surface lies on walls thinner than the minimum, mm². */
   thinArea: number;
+  /** Some edges come to a sharp point (thin only at the tip: not counted as thin walls). */
+  sharpEdges?: boolean;
   /** Round holes narrower than the smallest hole, by diameter (mm). */
   smallHoles: number[];
   /** Round pins/posts thinner than the smallest pin, by diameter (mm). */
@@ -306,7 +308,10 @@ export function printPartReport(
     findings.push({
       level: "warn",
       kind: "overhang",
-      text: `About ${area(r.overhangArea)} hangs over steeper than ${settings.overhangAngle}° and needs support (shown in orange). Turn on supports in the slicer, or try another face on the bed.`,
+      text:
+        `About ${area(r.overhangArea)} hangs over steeper than ${settings.overhangAngle}° (shown in orange). ` +
+        "Short flat spans between two walls (bridges) and the tops of small sideways holes usually print fine without support; " +
+        "for the rest, turn on supports in the slicer or try another face on the bed.",
     });
   } else {
     findings.push({ level: "ok", kind: "overhang", text: `No overhangs steeper than ${settings.overhangAngle}° — prints without support.` });
@@ -323,6 +328,9 @@ export function printPartReport(
     });
   } else if (r.thinnest !== null) {
     findings.push({ level: "ok", kind: "thin", text: `Walls are at least ${len(minWall)} thick (the thinnest is about ${len(r.thinnest)}).` });
+  }
+  if (r.sharpEdges) {
+    findings.push({ level: "ok", kind: "thin", text: "Some edges come to a sharp point. The very tip prints a little rounded, which is normal — not a weak wall." });
   }
   const list = (ds: number[]) => {
     const shown = [...new Set(ds.map((d) => len(d)))];

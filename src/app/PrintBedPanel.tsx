@@ -36,8 +36,9 @@ export function PrintBedPanel() {
   if (!bed) return null;
   const size = bedSize(bed.printer, bed.custom);
   const choose = (next: { printer: string; custom?: [number, number, number] }) => {
-    setPrintBed(next);
+    // Saved first, so anything watching the print bed (the 3D print panel) reads the new printer.
     remember(next);
+    setPrintBed(next);
   };
   const partSize = bounds ? ([0, 1, 2].map((i) => bounds.max[i] - bounds.min[i]) as [number, number, number]) : null;
   const fit = partSize ? bedFit(partSize, size) : null;

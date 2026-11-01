@@ -54,22 +54,62 @@ function PrintPanelBody() {
   const [slicer, setSlicer] = useState<SlicerId>(loadSlicer);
   const [sent, setSent] = useState<string[] | null>(null);
   const runId = useRef(0);
+  // Make room for the Print bed panel below (bottom right) when it's open.
+  const bedPanelOn = useStore((s) => s.printBed !== null);
+  const [bedPanelHeight, setBedPanelHeight] = useState(0);
+  useEffect(() => {
+    if (!bedPanelOn) {
+      setBedPanelHeight(0);
+      return;
+    }
+    let observer: ResizeObserver | null = null;
+    const frame = requestAnimationFrame(() => {
+      const el = document.querySelector(".print-bed-panel") as HTMLElement | null;
+      if (!el) return;
+      const measure = () => setBedPanelHeight(el.offsetHeight);
+      measure();
+      observer = new ResizeObserver(measure);
+      observer.observe(el);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [bedPanelOn]);
+  // The printer changed in the Print bed panel: use it here too.
+  useEffect(
+    () =>
+      useStore.subscribe((s, prev) => {
+        if (s.printBed !== prev.printBed && s.printBed) setSetting(loadPrinter());
+      }),
+    [],
+  );
 
   const chosen = useMemo(
     () => (which === "shown" ? parts.filter((p) => !hidden.includes(p.id)) : parts.filter((p) => p.id === which)),
     [parts, hidden, which],
   );
-  const requests: PrintCheckPart[] = useMemo(() => chosen.map((p) => ({ partId: p.id, down: downs[p.id] ?? MODEL_DOWN })), [chosen, downs]);
   const bed = printerBed(setting);
   const print = setting.print;
+  // The parts the last check looked at; when they're rebuilt the results are out of date until "Check again".
+  const [checkedParts, setCheckedParts] = useState<unknown>(null);
+  const [nonce, setNonce] = useState(0);
+  const stale = results !== null && checkedParts !== null && checkedParts !== parts && !working;
+  const chosenKey = chosen.map((p) => p.id).join("|");
 
-  // Check again whenever the parts, which way they lie or the limits change.
+  // Check when the panel opens, and again when the parts chosen, which way they lie or the limits change —
+  // not on every edit (the check can take a second or two, and the geometry engine does one thing at a time).
   useEffect(() => {
     const id = ++runId.current;
     setError(null);
     setSent(null);
+    const st = useStore.getState();
+    const now = studioParts(st);
+    const ids = chosenKey ? chosenKey.split("|") : [];
+    const requests: PrintCheckPart[] = ids.filter((i) => now.some((p) => p.id === i)).map((partId) => ({ partId, down: usePrintPanel.getState().downs[partId] ?? MODEL_DOWN }));
     if (!requests.length) {
       setResults([]);
+      setCheckedParts(now);
       return;
     }
     setWorking(true);
@@ -77,8 +117,12 @@ function PrintPanelBody() {
       try {
         const kernel = getKernel();
         await kernel.whenIdle();
+        const looked = studioParts(useStore.getState());
         const r = await kernel.printCheck(requests, { overhangAngle: print.overhangAngle, minWall: minWallOf(print), minHole: print.minHole, minPin: print.minPin });
-        if (id === runId.current) setResults(r);
+        if (id === runId.current) {
+          setResults(r);
+          setCheckedParts(looked);
+        }
       } catch (e) {
         if (id === runId.current) setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -86,21 +130,22 @@ function PrintPanelBody() {
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [requests, print]);
+  }, [chosenKey, downs, print, nonce]);
+  const requests: PrintCheckPart[] = useMemo(() => chosen.map((p) => ({ partId: p.id, down: downs[p.id] ?? MODEL_DOWN })), [chosen, downs]);
 
   // Light up what was found.
   useEffect(() => {
     const view = viewportApi.current;
     if (!view) return;
     view.setPrintMarks(
-      (results ?? []).flatMap((r) => [
+      (stale ? [] : (results ?? [])).flatMap((r) => [
         { triangles: r.marks.bed, colour: PRINT_COLOURS.bed, opacity: 0.55 },
         { triangles: r.marks.overhang, colour: PRINT_COLOURS.overhang },
         { triangles: r.marks.small, colour: PRINT_COLOURS.small },
         { triangles: r.marks.thin, colour: PRINT_COLOURS.thin, opacity: 0.85 },
       ]),
     );
-  }, [results]);
+  }, [results, stale]);
   useEffect(() => () => viewportApi.current?.setPrintMarks(null), []);
 
   // Picking the bed face: the next face clicked in the view.
@@ -200,7 +245,12 @@ function PrintPanelBody() {
   );
 
   return (
-    <div className="section-panel print-panel" role="region" aria-label="3D print">
+    <div
+      className="section-panel print-panel"
+      role="region"
+      aria-label="3D print"
+      style={bedPanelHeight ? { maxHeight: `max(140px, calc(100% - 170px - ${bedPanelHeight + 12}px))` } : undefined}
+    >
       <div className="section-header">
         <strong>3D print</strong>
         <button className="icon-button small" onClick={() => usePrintPanel.setState({ open: false, picking: false })} title="Close the 3D print panel" aria-label="Close 3D print">
@@ -248,13 +298,16 @@ function PrintPanelBody() {
           : `${chosen.filter((p) => downs[p.id]).length} of ${chosen.length} lying on a chosen face; the rest as modelled (Z up).`}
       </p>
 
+      <button className={stale ? "primary-button" : "text-button"} onClick={() => setNonce((n) => n + 1)} disabled={working} title="Check the parts again (after changing the design)">
+        {working ? "Checking…" : "Check again"}
+      </button>
       {error && <p className="dialog-error">{error}</p>}
       {working && !results && <p className="muted small">Checking…</p>}
       {results && (
         <div className="print-report" aria-busy={working}>
-          <div className={`check-headline ${headline.level}`}>
-            <LevelIcon level={headline.level} />
-            <span>{working ? "Checking…" : headline.text}</span>
+          <div className={`check-headline ${stale ? "warn" : headline.level}`}>
+            <LevelIcon level={stale ? "warn" : headline.level} />
+            <span>{working ? "Checking…" : stale ? "The design has changed since this check." : headline.text}</span>
           </div>
           {reports.map((r) => (
             <section key={r.partId} className="check-part">

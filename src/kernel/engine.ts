@@ -45,7 +45,7 @@ import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } f
 import { dropCoveredHidden } from "../drawing/hidden";
 import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
-import { analysePrint } from "./printAnalysis";
+import { analysePrint, type PrintMesh } from "./printAnalysis";
 import { arrangeOnBed, bedExtents, bedRotation, rotate, type PrintPartResult } from "../model/printCheck";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep, writeStepAssembly } from "./stepExport";
@@ -155,6 +155,8 @@ function fastenerThreads(feature: Feature, v: Record<string, number>): ThreadMar
 }
 
 /** Display meshes of unchanged imported parts (they can take seconds to make). */
+/** Each part shape's display mesh, as made for the view (the print check reuses it). */
+const displayMeshes = new WeakMap<object, PrintMesh>();
 const importedMeshes = new Map<string, PartMesh>();
 const IMPORTED_MESH_CACHE = 8;
 
@@ -5368,11 +5370,12 @@ export class GeometryEngine {
       const p = this.parts.find((x) => x.id === req.partId);
       if (!p) continue;
       if (p.surface) {
-        const empty = new Float32Array(0);
-        out.push({ partId: p.id, name: p.name, surface: true, size: [0, 0, 0], overhangArea: 0, bedArea: 0, thinnest: null, thinnestAt: null, thinArea: 0, smallHoles: [], thinPins: [], marks: { overhang: empty, bed: empty, thin: empty, small: empty } });
+        // Each mark its own (empty) array: the worker hands every one over separately.
+        const marks = { overhang: new Float32Array(0), bed: new Float32Array(0), thin: new Float32Array(0), small: new Float32Array(0) };
+        out.push({ partId: p.id, name: p.name, surface: true, size: [0, 0, 0], overhangArea: 0, bedArea: 0, thinnest: null, thinnestAt: null, thinArea: 0, smallHoles: [], thinPins: [], marks });
         continue;
       }
-      out.push(analysePrint(p.id, p.name, p.shape, { ...settings, down: req.down }));
+      out.push(analysePrint(p.id, p.name, p.shape, { ...settings, down: req.down }, displayMeshes.get(p.shape)));
     }
     return out;
   }
@@ -5565,6 +5568,8 @@ export class GeometryEngine {
     for (const e of edgesOf(p.shape)) edgeById.set(e.hashCode, [...(edgeById.get(e.hashCode) ?? []), e]);
     const unknownFace: FaceRef = { kind: "face", surface: "UNKNOWN", center: [0, 0, 0], normal: [0, 0, 0] };
     const unknownEdge: EdgeRef = { kind: "edge", curve: "UNKNOWN", a: [0, 0, 0], b: [0, 0, 0], mid: [0, 0, 0] };
+    // Kept for the 3D-print check (the view's own mesh, so its marks lie on the faces shown, without meshing again).
+    displayMeshes.set(p.shape, { vertices: Float32Array.from(faces.vertices), triangles: Uint32Array.from(faces.triangles), faceGroups: faces.faceGroups });
     const faceRefs = faces.faceGroups.map((g) => {
       const f = faceById.get(g.faceId)?.shift();
       if (!f) return unknownFace;

@@ -246,3 +246,21 @@ describe("sending to a slicer", () => {
     expect(slicerById("nonsense").id).toBe("bambu");
   });
 });
+
+describe("settling a printed fit on Accept", () => {
+  it("adds the variables once and writes the size with them", async () => {
+    const { settlePrintedFit } = await import("../src/model/printSettings");
+    let n = 0;
+    const draft = { params: { diameter: "5 mm + 0.3 mm", depth: "10" }, hole: { kind: "simple", printedFit: { fit: "sliding" as const, nominal: "5 mm", fits: DEFAULT_PRINT_SETTINGS.fits } } };
+    const r = settlePrintedFit([], draft, () => `v${++n}`);
+    expect(r.draft.params).toEqual({ diameter: "5 mm + fit_sliding", depth: "10" });
+    expect(r.draft.hole).toEqual({ kind: "simple" });
+    expect(r.variables!.map((v) => v.name)).toEqual(["fit_press", "fit_snug", "fit_sliding", "fit_loose"]);
+    // Already there: kept as they are (the design's values win).
+    const again = settlePrintedFit(r.variables, draft, () => "x");
+    expect(again.variables).toBe(r.variables);
+    // No printed fit: nothing changes.
+    const plain = { params: { diameter: "4" }, hole: { kind: "simple", printedFit: undefined } };
+    expect(settlePrintedFit([], plain, () => "x").draft).toBe(plain);
+  });
+});

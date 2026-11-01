@@ -16,13 +16,21 @@ export interface PrintCheckOptions {
   minWall: number;
   minHole: number;
   minPin: number;
-  /** At most this many places measured for wall thickness. */
+  /** About this many places measured for wall thickness, spread evenly by area. */
   samples?: number;
+}
+
+/** A part's mesh (as the 3D view has it): corners, triangles and which face each run of triangles is. */
+export interface PrintMesh {
+  vertices: ArrayLike<number>;
+  triangles: ArrayLike<number>;
+  faceGroups: { start: number; count: number; faceId: number }[];
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const MESH = { tolerance: 0.02, angularTolerance: 0.2 };
+/** The same mesh as the 3D view shows, so the marks lie exactly on its faces (and it's quick). */
+const MESH = { tolerance: 0.05, angularTolerance: 0.25 };
 
 type V = [number, number, number];
 const sub = (a: V, b: V): V => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -132,58 +140,119 @@ class TriangleTree {
   }
 }
 
-/** Exact place and outward direction on a face nearest a point. */
-function onFace(oc: any, face: Face, surface: any, near: V, planar: { normal: V } | null): { p: V; n: V } | null {
-  if (planar) return { p: near, n: planar.normal };
+/** A face's exact surface: the nearest place on it to a point, and the direction square to it there (either way out). */
+type Project = (near: V) => { p: V; n: V } | null;
+
+/** Planes, cylinders and spheres are worked out directly; other surfaces ask OpenCascade. */
+function projector(oc: any, face: Face): Project | null {
+  const kind = face.geomType;
+  if (kind === "PLANE") {
+    let n: V;
+    try {
+      const v = face.normalAt();
+      n = unit([v.x, v.y, v.z]);
+      v.delete();
+    } catch {
+      return null;
+    }
+    const at = (() => {
+      const c = face.center;
+      const out: V = [c.x, c.y, c.z];
+      c.delete();
+      return out;
+    })();
+    return (q) => {
+      const d = dotv(sub(q, at), n);
+      return { p: [q[0] - n[0] * d, q[1] - n[1] * d, q[2] - n[2] * d], n };
+    };
+  }
+  if (kind === "CYLINDRE" || kind === "SPHERE") {
+    const made: any[] = [];
+    try {
+      const adaptor = new oc.BRepAdaptor_Surface(face.wrapped, true);
+      made.push(adaptor);
+      if (kind === "CYLINDRE") {
+        const cyl = adaptor.Cylinder();
+        const ax = cyl.Axis();
+        const loc = ax.Location();
+        const dir = ax.Direction();
+        made.push(cyl, ax, loc, dir);
+        const o: V = [loc.X(), loc.Y(), loc.Z()];
+        const a: V = [dir.X(), dir.Y(), dir.Z()];
+        const r = cyl.Radius();
+        return (q) => {
+          const rel = sub(q, o);
+          const along = dotv(rel, a);
+          const radial = sub(rel, [a[0] * along, a[1] * along, a[2] * along]);
+          const len = Math.hypot(...radial);
+          if (len < 1e-9) return null;
+          const n: V = [radial[0] / len, radial[1] / len, radial[2] / len];
+          return { p: [o[0] + a[0] * along + n[0] * r, o[1] + a[1] * along + n[1] * r, o[2] + a[2] * along + n[2] * r], n };
+        };
+      }
+      const sph = adaptor.Sphere();
+      const loc = sph.Location();
+      made.push(sph, loc);
+      const c: V = [loc.X(), loc.Y(), loc.Z()];
+      const r = sph.Radius();
+      return (q) => {
+        const rel = sub(q, c);
+        const len = Math.hypot(...rel);
+        if (len < 1e-9) return null;
+        const n: V = [rel[0] / len, rel[1] / len, rel[2] / len];
+        return { p: [c[0] + n[0] * r, c[1] + n[1] * r, c[2] + n[2] * r], n };
+      };
+    } catch {
+      // fall back to OpenCascade below
+    } finally {
+      made.forEach((x) => x?.delete?.());
+    }
+  }
+  let surface: any;
   try {
-    const pnt = new oc.gp_Pnt(near[0], near[1], near[2]);
-    const proj = new oc.GeomAPI_ProjectPointOnSurf(pnt, surface, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad);
-    let out: { p: V; n: V } | null = null;
-    if (proj.NbPoints() > 0) {
+    surface = oc.BRep_Tool.Surface(face.wrapped);
+  } catch {
+    return null;
+  }
+  const project: Project = (near) => {
+    const made: any[] = [];
+    try {
+      const pnt = new oc.gp_Pnt(near[0], near[1], near[2]);
+      made.push(pnt);
+      const proj = new oc.GeomAPI_ProjectPointOnSurf(pnt, surface, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad);
+      made.push(proj);
+      if (proj.NbPoints() < 1) return null;
       const { U, V: Vv } = proj.LowerDistanceParameters(0, 0);
       const props = new oc.BRepGProp_Face(face.wrapped, false);
       const at = new oc.gp_Pnt();
       const nv = new oc.gp_Vec();
+      made.push(props, at, nv);
       props.Normal(U, Vv, at, nv);
-      const n = unit([nv.X(), nv.Y(), nv.Z()]);
-      if (nv.Magnitude() > 1e-12) out = { p: [at.X(), at.Y(), at.Z()], n };
-      props.delete();
-      at.delete();
-      nv.delete();
+      if (nv.Magnitude() < 1e-12) return null;
+      return { p: [at.X(), at.Y(), at.Z()], n: unit([nv.X(), nv.Y(), nv.Z()]) };
+    } catch {
+      return null;
+    } finally {
+      made.forEach((x) => x?.delete?.());
     }
-    proj.delete();
-    pnt.delete();
-    return out;
-  } catch {
-    return null;
-  }
+  };
+  (project as Project & { free?: () => void }).free = () => surface?.delete?.();
+  return project;
 }
 
-/** Where the ray from `o` along `d` really meets a face's surface, starting from a guess `t`. */
-function refineHit(oc: any, surface: any, o: V, d: V, t: number): number {
+/** Where the ray from `o` along `d` really meets a surface, starting from a guess `t`. */
+function refineHit(project: Project, o: V, d: V, t: number): { t: number; n: V | null } {
   let tt = t;
-  for (let i = 0; i < 4; i++) {
-    try {
-      const q = new oc.gp_Pnt(o[0] + d[0] * tt, o[1] + d[1] * tt, o[2] + d[2] * tt);
-      const proj = new oc.GeomAPI_ProjectPointOnSurf(q, surface, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad);
-      if (proj.NbPoints() > 0) {
-        const p = proj.NearestPoint();
-        const next = dotv(sub([p.X(), p.Y(), p.Z()], o), d);
-        p.delete();
-        proj.delete();
-        q.delete();
-        if (Math.abs(next - tt) < 1e-7) return next;
-        tt = next;
-      } else {
-        proj.delete();
-        q.delete();
-        return tt;
-      }
-    } catch {
-      return tt;
-    }
+  let n: V | null = null;
+  for (let i = 0; i < 6; i++) {
+    const hit = project([o[0] + d[0] * tt, o[1] + d[1] * tt, o[2] + d[2] * tt]);
+    if (!hit) break;
+    n = hit.n;
+    const next = dotv(sub(hit.p, o), d);
+    if (Math.abs(next - tt) < 1e-8) return { t: next, n };
+    tt = next;
   }
-  return tt;
+  return { t: tt, n };
 }
 
 interface RoundFace {
@@ -200,34 +269,35 @@ function roundFaces(oc: any, faces: Face[], groupOf: Map<Face, number>): RoundFa
   const out: RoundFace[] = [];
   for (const f of faces) {
     if (f.geomType !== "CYLINDRE") continue;
+    const made: any[] = [];
     try {
       const adaptor = new oc.BRepAdaptor_Surface(f.wrapped, true);
+      made.push(adaptor);
       const cyl = adaptor.Cylinder();
       const ax = cyl.Axis();
       const loc = ax.Location();
       const dir = ax.Direction();
+      made.push(cyl, ax, loc, dir);
       const radius = cyl.Radius();
       const axis: V = [dir.X(), dir.Y(), dir.Z()];
       const origin: V = [loc.X(), loc.Y(), loc.Z()];
       const b = f.UVBounds;
       const mid = new oc.gp_Pnt();
-      adaptor.D0((b.uMin + b.uMax) / 2, (b.vMin + b.vMax) / 2, mid);
-      const p: V = [mid.X(), mid.Y(), mid.Z()];
-      mid.delete();
       const props = new oc.BRepGProp_Face(f.wrapped, false);
       const at = new oc.gp_Pnt();
       const nv = new oc.gp_Vec();
+      made.push(mid, props, at, nv);
+      adaptor.D0((b.uMin + b.uMax) / 2, (b.vMin + b.vMax) / 2, mid);
       props.Normal((b.uMin + b.uMax) / 2, (b.vMin + b.vMax) / 2, at, nv);
+      const p: V = [mid.X(), mid.Y(), mid.Z()];
       const n: V = [nv.X(), nv.Y(), nv.Z()];
-      props.delete();
-      at.delete();
-      nv.delete();
       const rel = sub(p, origin);
       const radial = sub(rel, axis.map((a) => a * dotv(rel, axis)) as V);
       out.push({ radius, hole: dotv(n, radial) < 0, span: b.uMax - b.uMin, axis, at: origin, group: groupOf.get(f) ?? -1 });
-      [cyl, ax, loc, dir, adaptor].forEach((x) => x.delete?.());
     } catch {
       // not measurable; leave it out
+    } finally {
+      made.forEach((x) => x?.delete?.());
     }
   }
   return out;
@@ -253,11 +323,57 @@ function roundFeatures(list: RoundFace[]): { radius: number; hole: boolean; grou
   return out.filter((o) => o.span >= 1.8 * Math.PI - 1e-6).map((o) => ({ radius: o.radius, hole: o.hole, groups: o.groups }));
 }
 
+/** Distance from a point to the nearest of some line pieces (6 numbers each). */
+function distanceToSegments(p: V, segs: number[]): number {
+  let best = Infinity;
+  for (let i = 0; i < segs.length; i += 6) {
+    const a: V = [segs[i], segs[i + 1], segs[i + 2]];
+    const ab = sub([segs[i + 3], segs[i + 4], segs[i + 5]], a);
+    const l2 = dotv(ab, ab);
+    const t = l2 > 0 ? Math.max(0, Math.min(1, dotv(sub(p, a), ab) / l2)) : 0;
+    const d = Math.hypot(...sub(p, [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t]));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** Where two faces meet, as line pieces from the mesh, by face pair "a,b" (a < b). */
+function sharedEdges(vertices: ArrayLike<number>, triangles: ArrayLike<number>, faceOfTri: Int32Array): Map<string, number[]> {
+  // Faces don't share mesh corners, so corners are matched by position.
+  const key = (i: number) => `${Math.round(vertices[i * 3] * 1e4)},${Math.round(vertices[i * 3 + 1] * 1e4)},${Math.round(vertices[i * 3 + 2] * 1e4)}`;
+  const edges = new Map<string, { face: number; a: number; b: number }[]>();
+  for (let t = 0; t < triangles.length / 3; t++) {
+    for (let k = 0; k < 3; k++) {
+      const a = triangles[t * 3 + k];
+      const b = triangles[t * 3 + ((k + 1) % 3)];
+      const ka = key(a);
+      const kb = key(b);
+      const e = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+      const list = edges.get(e) ?? [];
+      list.push({ face: faceOfTri[t], a, b });
+      edges.set(e, list);
+    }
+  }
+  const out = new Map<string, number[]>();
+  for (const list of edges.values()) {
+    if (list.length < 2 || list[0].face === list[1].face || list[0].face < 0 || list[1].face < 0) continue;
+    const [f, g] = [list[0].face, list[1].face].sort((x, y) => x - y);
+    const segs = out.get(`${f},${g}`) ?? [];
+    const { a, b } = list[0];
+    segs.push(vertices[a * 3], vertices[a * 3 + 1], vertices[a * 3 + 2], vertices[b * 3], vertices[b * 3 + 1], vertices[b * 3 + 2]);
+    out.set(`${f},${g}`, segs);
+  }
+  return out;
+}
+
 /** Check one solid part for 3D printing, sitting on the bed with `down` pointing into it. */
-export function analysePrint(partId: string, name: string, shape: Shape3D, opts: PrintCheckOptions): PrintPartResult {
+export function analysePrint(partId: string, name: string, shape: Shape3D, opts: PrintCheckOptions, shown?: PrintMesh): PrintPartResult {
   const oc = getOC() as any;
   const down = unit(opts.down);
-  const mesh = shape.mesh(MESH);
+  const faces = facesOf(shape);
+  // The view's mesh when it's at hand and still matches the shape's faces; otherwise make one.
+  const known = new Set(faces.map((f) => f.hashCode));
+  const mesh: PrintMesh = shown && shown.faceGroups.length === faces.length && shown.faceGroups.every((g) => known.has(g.faceId)) ? shown : shape.mesh(MESH);
   const { vertices, triangles, faceGroups } = mesh;
   const triCount = triangles.length / 3;
 
@@ -265,7 +381,6 @@ export function analysePrint(partId: string, name: string, shape: Shape3D, opts:
   const over = findOverhangs(vertices, triangles, down, opts.overhangAngle);
 
   // Which B-rep face each triangle belongs to.
-  const faces = facesOf(shape);
   const byHash = new Map<number, Face[]>();
   for (const f of faces) byHash.set(f.hashCode, [...(byHash.get(f.hashCode) ?? []), f]);
   const faceOfTri = new Int32Array(triCount).fill(-1);
@@ -277,96 +392,117 @@ export function analysePrint(partId: string, name: string, shape: Shape3D, opts:
     if (f) groupOf.set(f, gi);
     for (let t = g.start / 3; t < (g.start + g.count) / 3; t++) faceOfTri[t] = gi;
   });
-  const surfaces = groupFace.map((f) => (f ? oc.BRep_Tool.Surface(f.wrapped) : null));
-  const planar = groupFace.map((f) => {
-    if (!f || f.geomType !== "PLANE") return null;
-    try {
-      const n = f.normalAt();
-      const out = { normal: unit([n.x, n.y, n.z]) };
-      n.delete();
-      return out;
-    } catch {
-      return null;
-    }
-  });
+  const projectors = groupFace.map((f) => (f ? projector(oc, f) : null));
 
-  // Wall thickness: from places spread evenly over the surface, measure straight in to the far side.
-  const tree = new TriangleTree(vertices, triangles);
-  const triArea = (t: number) => {
-    const P = (k: number): V => [vertices[triangles[t * 3 + k] * 3], vertices[triangles[t * 3 + k] * 3 + 1], vertices[triangles[t * 3 + k] * 3 + 2]];
-    const [a, b, c] = [P(0), P(1), P(2)];
-    return Math.hypot(...crossv(sub(b, a), sub(c, a))) / 2;
-  };
-  let totalArea = 0;
-  for (let t = 0; t < triCount; t++) totalArea += triArea(t);
-  const budget = opts.samples ?? 4000;
-  const spacing = Math.max(Math.sqrt(totalArea / budget), 1e-3);
   let thinnest: number | null = null;
   let thinnestAt: V | null = null;
   let thinArea = 0;
+  let sharpEdges = false;
   const thinSoup: number[] = [];
-  const sag = 4 * MESH.tolerance;
-  for (let t = 0; t < triCount; t++) {
-    const g = faceOfTri[t];
-    const face = g >= 0 ? groupFace[g] : null;
-    if (!face) continue;
-    const P = (k: number): V => [vertices[triangles[t * 3 + k] * 3], vertices[triangles[t * 3 + k] * 3 + 1], vertices[triangles[t * 3 + k] * 3 + 2]];
-    const [a, b, c] = [P(0), P(1), P(2)];
-    const A = triArea(t);
-    if (A < 1e-12) continue;
-    const triNormal = crossv(sub(b, a), sub(c, a));
-    // Split big triangles into L × L smaller ones and measure from the middle of each upright one.
-    const L = Math.max(1, Math.min(40, Math.ceil(Math.sqrt(A) / spacing)));
-    const at = (i: number, j: number): V => {
-      const u = i / L;
-      const v = j / L;
-      return [a[0] + (b[0] - a[0]) * u + (c[0] - a[0]) * v, a[1] + (b[1] - a[1]) * u + (c[1] - a[1]) * v, a[2] + (b[2] - a[2]) * u + (c[2] - a[2]) * v];
+  try {
+    // Wall thickness: from places spread evenly over the surface, measure straight in to the far side.
+    const tree = new TriangleTree(vertices, triangles);
+    const corner = (t: number, k: number): V => {
+      const v = triangles[t * 3 + k] * 3;
+      return [vertices[v], vertices[v + 1], vertices[v + 2]];
     };
-    // Every small triangle: the upright ones (i, j) and the upside-down ones between them.
-    const cells: [V, V, V][] = [];
-    for (let i = 0; i < L; i++) {
-      for (let j = 0; i + j < L; j++) {
-        cells.push([at(i, j), at(i + 1, j), at(i, j + 1)]);
-        if (i + j < L - 1) cells.push([at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)]);
+    const areas = new Float64Array(triCount);
+    let totalArea = 0;
+    for (let t = 0; t < triCount; t++) {
+      const [a, b, c] = [corner(t, 0), corner(t, 1), corner(t, 2)];
+      areas[t] = Math.hypot(...crossv(sub(b, a), sub(c, a))) / 2;
+      totalArea += areas[t];
+    }
+    const budget = opts.samples ?? 2500;
+    const perArea = totalArea > 0 ? budget / totalArea : 0;
+    const edgesBetween = sharedEdges(vertices, triangles, faceOfTri);
+    const sag = 4 * MESH.tolerance;
+    let carry = 0;
+    for (let t = 0; t < triCount; t++) {
+      const g = faceOfTri[t];
+      const project = g >= 0 ? projectors[g] : null;
+      const A = areas[t];
+      if (!project || A < 1e-12) continue;
+      // This triangle's share of the samples (fractions carried on, so small triangles take turns).
+      carry += A * perArea;
+      const count = Math.floor(carry);
+      if (count < 1) continue;
+      carry -= count;
+      const [a, b, c] = [corner(t, 0), corner(t, 1), corner(t, 2)];
+      const triNormal = crossv(sub(b, a), sub(c, a));
+      // L × L small triangles, about `count` of them.
+      const L = Math.max(1, Math.min(40, Math.round(Math.sqrt(count))));
+      const at = (i: number, j: number): V => {
+        const u = i / L;
+        const v = j / L;
+        return [a[0] + (b[0] - a[0]) * u + (c[0] - a[0]) * v, a[1] + (b[1] - a[1]) * u + (c[1] - a[1]) * v, a[2] + (b[2] - a[2]) * u + (c[2] - a[2]) * v];
+      };
+      const cells: [V, V, V][] = [];
+      for (let i = 0; i < L; i++) {
+        for (let j = 0; i + j < L; j++) {
+          cells.push([at(i, j), at(i + 1, j), at(i, j + 1)]);
+          if (i + j < L - 1) cells.push([at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+      }
+      for (const [c0, c1, c2] of cells) {
+        const mid: V = [(c0[0] + c1[0] + c2[0]) / 3, (c0[1] + c1[1] + c2[1]) / 3, (c0[2] + c1[2] + c2[2]) / 3];
+        const exact = project(mid);
+        if (!exact) continue;
+        // Outwards is the way the mesh's triangles face (a face's own direction may be flipped).
+        const nF: V = dotv(exact.n, triNormal) < 0 ? [-exact.n[0], -exact.n[1], -exact.n[2]] : exact.n;
+        const dir: V = [-nF[0], -nF[1], -nF[2]];
+        let tMin = 1e-5;
+        let thickness: number | null = null;
+        let hitFace = -1;
+        let hitNormal: V | null = null;
+        for (let tries = 0; tries < 4; tries++) {
+          const hit = tree.cast(exact.p, dir, tMin, (x) => x === t);
+          if (!hit) break;
+          const [dist, tri] = hit;
+          const hg = faceOfTri[tri];
+          // Its own face, a hair's breadth in (the mesh cuts corners on curves): look further.
+          if (hg === g && dist < sag) {
+            tMin = dist + 1e-6;
+            continue;
+          }
+          const [p0, p1, p2] = [corner(tri, 0), corner(tri, 1), corner(tri, 2)];
+          const hitTri = crossv(sub(p1, p0), sub(p2, p0));
+          const hp = hg >= 0 ? projectors[hg] : null;
+          const refined = hp ? refineHit(hp, exact.p, dir, dist) : { t: dist, n: unit(hitTri) };
+          if (refined.t < 1e-4) {
+            tMin = dist + 1e-6;
+            continue;
+          }
+          thickness = refined.t;
+          hitFace = hg;
+          hitNormal = refined.n ? (dotv(refined.n, hitTri) < 0 ? [-refined.n[0], -refined.n[1], -refined.n[2]] : refined.n) : unit(hitTri);
+          break;
+        }
+        if (thickness === null) continue;
+        // A sharp edge (two faces meeting at a narrow angle) is thin only right at its tip; that's the shape, not a weak wall.
+        if (thickness < opts.minWall && hitFace >= 0 && hitFace !== g && hitNormal) {
+          const segs = edgesBetween.get(g < hitFace ? `${g},${hitFace}` : `${hitFace},${g}`);
+          if (segs) {
+            const inside = Math.PI - Math.acos(Math.max(-1, Math.min(1, dotv(nF, hitNormal))));
+            const reach = Math.min(6 * opts.minWall, 1.25 * Math.max(opts.minWall, inside < Math.PI / 2 - 1e-6 ? opts.minWall / Math.tan(inside) : 0));
+            if (distanceToSegments(exact.p, segs) <= reach) {
+              sharpEdges = true;
+              continue;
+            }
+          }
+        }
+        if (thinnest === null || thickness < thinnest) {
+          thinnest = thickness;
+          thinnestAt = exact.p;
+        }
+        if (thickness < opts.minWall - 1e-6) {
+          thinArea += A / cells.length;
+          thinSoup.push(...c0, ...c1, ...c2);
+        }
       }
     }
-    for (const [c0, c1, c2] of cells) {
-      const mid: V = [(c0[0] + c1[0] + c2[0]) / 3, (c0[1] + c1[1] + c2[1]) / 3, (c0[2] + c1[2] + c2[2]) / 3];
-      const exact = onFace(oc, face, surfaces[g], mid, planar[g]);
-      if (!exact) continue;
-      // Inwards: against the outside direction, which the mesh's triangles always face (the face's own may be flipped).
-      const flip = dotv(exact.n, triNormal) < 0 ? -1 : 1;
-      const dir: V = [-flip * exact.n[0], -flip * exact.n[1], -flip * exact.n[2]];
-      let tMin = 1e-5;
-      let thickness: number | null = null;
-      for (let tries = 0; tries < 4; tries++) {
-        const hit = tree.cast(exact.p, dir, tMin, (x) => x === t);
-        if (!hit) break;
-        const [dist, tri] = hit;
-        const hg = faceOfTri[tri];
-        // Its own face, a hair's breadth in (the mesh cuts corners on curves): look further.
-        if (hg === g && dist < sag) {
-          tMin = dist + 1e-6;
-          continue;
-        }
-        const exactDist = hg >= 0 && surfaces[hg] && !planar[hg] ? refineHit(oc, surfaces[hg], exact.p, dir, dist) : dist;
-        if (exactDist < 1e-4) {
-          tMin = dist + 1e-6;
-          continue;
-        }
-        thickness = exactDist;
-        break;
-      }
-      if (thickness === null) continue;
-      if (thinnest === null || thickness < thinnest) {
-        thinnest = thickness;
-        thinnestAt = exact.p;
-      }
-      if (thickness < opts.minWall - 1e-6) {
-        thinArea += A / cells.length;
-        thinSoup.push(...c0, ...c1, ...c2);
-      }
-    }
+  } finally {
+    projectors.forEach((p) => (p as (Project & { free?: () => void }) | null)?.free?.());
   }
 
   // Holes and pins: whole round faces narrower than allowed.
@@ -384,8 +520,6 @@ export function analysePrint(partId: string, name: string, shape: Shape3D, opts:
       if (fg) for (let t = fg.start / 3; t < (fg.start + fg.count) / 3; t++) smallTris.push(t);
     }
   }
-
-  surfaces.forEach((s) => s?.delete?.());
   faces.forEach((f) => f.delete());
 
   return {
@@ -397,6 +531,7 @@ export function analysePrint(partId: string, name: string, shape: Shape3D, opts:
     thinnest,
     thinnestAt,
     thinArea,
+    ...(sharpEdges ? { sharpEdges } : {}),
     smallHoles: smallHoles.sort((x, y) => x - y),
     thinPins: thinPins.sort((x, y) => x - y),
     marks: {

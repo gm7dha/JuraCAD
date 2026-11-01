@@ -6,7 +6,12 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GeometryEngine } from "../src/kernel/engine";
 import type { Feature } from "../src/model/types";
-import { feature, loadOpenCascade } from "./support/engineHelpers";
+import { printCheckTransfers } from "../src/kernel/transfers";
+import { DEFAULT_PRINT_SETTINGS } from "../src/model/printSettings";
+import { printPartReport } from "../src/model/printCheck";
+import { addLine } from "../src/sketch/ops";
+import { emptySketch, type SketchData } from "../src/sketch/types";
+import { extrudeFeature, feature, loadOpenCascade, rectSketch, sketchFeature } from "./support/engineHelpers";
 
 beforeAll(loadOpenCascade);
 
@@ -44,9 +49,10 @@ describe("print check", () => {
     const rod = build([feature("cylinder", { diameter: 20, height: 40 })]);
     const [side] = engine.printCheck([{ partId: rod.parts[0].id, down: [1, 0, 0] }], LIMITS);
     // The lower half of the round side faces down; the part steeper than 45° from upright is a quarter of the
-    // circumference (from -45° to +45° round the bottom): ¼ × π × 20 × 40 ≈ 628 mm² (mesh: a little less).
-    expect(side.overhangArea).toBeGreaterThan(600);
-    expect(side.overhangArea).toBeLessThan(640);
+    // circumference (from -45° to +45° round the bottom): ¼ × π × 20 × 40 ≈ 628 mm². The view's mesh has a strip of
+    // triangles every ~14° round, so the edge of the area falls on a whole strip: within one strip (≈ 100 mm²) of that.
+    expect(side.overhangArea).toBeGreaterThan(528);
+    expect(side.overhangArea).toBeLessThan(728);
     // Nothing flat rests on the bed when it lies on its round side.
     expect(side.bedArea).toBeLessThan(1);
     const [lenient] = engine.printCheck([{ partId: rod.parts[0].id, down: [1, 0, 0] }], { ...LIMITS, overhangAngle: 80 });
@@ -99,6 +105,82 @@ describe("print check", () => {
     const [p] = engine.printCheck([{ partId: r.parts[0].id, down: [0, 0, -1] }], LIMITS);
     expect(p.smallHoles).toEqual([]);
     expect(p.thinPins).toEqual([]);
+  });
+});
+
+/** A closed outline through the points, on the Top plane. */
+function polygon(points: [number, number][]): SketchData {
+  let s = emptySketch();
+  let end = "";
+  let first = "";
+  points.forEach((p, i) => {
+    const q = points[(i + 1) % points.length];
+    const r = addLine(s, { x: p[0], y: p[1], ...(end ? { snap: { kind: "point" as const, id: end } } : {}) }, { x: q[0], y: q[1], ...(i === points.length - 1 ? { snap: { kind: "point" as const, id: first } } : {}) });
+    s = r.sketch;
+    if (!first) first = (s.curves[0] as { p1: string }).p1;
+    end = r.endId;
+  });
+  return s;
+}
+
+describe("sharp edges and surfaces", () => {
+  const prism = (points: [number, number][]) => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, polygon(points));
+    const r = build([sk, extrudeFeature(sk.id, 20)]);
+    expect(r.parts).toHaveLength(1);
+    return engine.printCheck([{ partId: r.parts[0].id, down: [0, 0, -1] }], LIMITS)[0];
+  };
+  const report = (p: ReturnType<typeof prism>) => printPartReport(p, DEFAULT_PRINT_SETTINGS, [256, 256, 256], (v) => `${v} mm`, (v) => `${v} mm²`);
+
+  it("doesn't call the sharp edge of a 45° prism a thin wall", () => {
+    const p = prism([[0, 0], [20, 0], [0, 20]]);
+    expect(p.thinArea).toBe(0);
+    expect(p.sharpEdges).toBe(true);
+    expect(p.thinnest!).toBeGreaterThan(0.8);
+    expect(report(p).level).toBe("ok");
+  });
+
+  it("doesn't call a 14° wedge (a doorstop) thin", () => {
+    const p = prism([[0, 0], [40, -5], [40, 5]]);
+    expect(p.thinArea).toBe(0);
+    expect(p.sharpEdges).toBe(true);
+    expect(report(p).level).toBe("ok");
+  });
+
+  it("doesn't call a 68° ramp's edge thin", () => {
+    const p = prism([[0, 0], [10, 0], [0, 24.75]]);
+    expect(p.thinArea).toBe(0);
+    expect(report(p).level).toBe("ok");
+  });
+
+  it("still finds a thin fin standing on a block", () => {
+    // A 0.5 mm fin: its sides are opposite faces, not a sharp edge.
+    const r = build([feature("box", { width: 20, depth: 20, height: 5 }), feature("box", { width: 0.5, depth: 20, height: 10, x: 10, z: 5 }, "add")]);
+    const [p] = engine.printCheck([{ partId: r.parts[0].id, down: [0, 0, -1] }], LIMITS);
+    expect(p.thinnest!).toBeCloseTo(0.5, 6);
+    expect(p.thinArea).toBeGreaterThan(300);
+  });
+
+  it("checks a surface part alongside a solid one, and its reply can be handed over by the worker", () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const sk = sketchFeature({ kind: "default", name: "Top" }, rectSketch(20, 0, 10, 10));
+    const r = build([box, sk, { ...extrudeFeature(sk.id, 5), surface: true }]);
+    const surface = r.parts.find((p) => p.surface)!;
+    const solid = r.parts.find((p) => !p.surface)!;
+    const out = engine.printCheck(
+      [
+        { partId: surface.id, down: [0, 0, -1] },
+        { partId: solid.id, down: [0, 0, -1] },
+      ],
+      LIMITS,
+    );
+    expect(out.map((o) => !!o.surface)).toEqual([true, false]);
+    const marks = Object.values(out[0].marks);
+    expect(new Set(marks.map((m) => m.buffer)).size).toBe(4);
+    // As postMessage does: each buffer handed over once (the same one twice is a DataCloneError).
+    const copy = structuredClone(out, { transfer: printCheckTransfers(out) as Transferable[] });
+    expect(copy[1].marks.bed.length).toBe(9 * (copy[1].marks.bed.length / 9));
+    expect(copy[1].bedArea).toBeCloseTo(100, 6);
   });
 });
 

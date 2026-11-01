@@ -59,6 +59,7 @@ import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
 import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisible, setDatumHidden, setFeaturesVisible, toggleAllPlanes } from "./visibility";
+import { settlePrintedFit } from "./printSettings";
 import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
 
 /** Which instances show a symmetric part (for mirrors that show such parts as themselves). */
@@ -944,13 +945,19 @@ export const useStore = create<AppState>((set, get) => {
       }
       const { errors } = resolveParams(editing.draft);
       if (Object.keys(errors).length > 0) return false;
-      const named = { ...editing.draft, name: editing.draft.name.trim() || "Unnamed feature" };
+      // A printed fit chosen in the Hole dialog brings its fit_* variables into the design, in the same undo step.
+      const fitted = settlePrintedFit(get().history.present.variables, editing.draft, () => newId("v"));
+      const named = { ...fitted.draft, name: fitted.draft.name.trim() || "Unnamed feature" };
       // Part edges brought in just to snap to, that nothing uses any more, are tidied away.
       const sk = named.sketch;
       const draft = sk ? { ...named, sketch: { ...sk, data: withoutEmptyExtras(pruneReferences(sk.data)) } } : named;
       // Rolled back: a new feature goes in at the rollback point, and the bar moves down past it.
       const at = get().rollbackTo;
-      changeStudio((doc) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, keepVisibility(doc, draft))));
+      const place = (doc: JuraCADDocument) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, keepVisibility(doc, draft)));
+      if (fitted.variables !== get().history.present.variables) {
+        const vars = fitted.variables;
+        change((doc) => inStudio({ ...doc, variables: vars }, activeStudioId(get()) ?? MAIN_STUDIO, place));
+      } else changeStudio(place);
       set({ editing: null, sketch: null, selectedFeatureId: draft.id, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
       return true;
     },

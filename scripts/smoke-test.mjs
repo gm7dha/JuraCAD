@@ -918,17 +918,18 @@ try {
   await page.getByLabel("Model the thread (for 3D printing)").check();
   step = "giving the hole a printed sliding fit";
   {
+    // A tapped hole isn't offered one (it says why); a clearance hole is.
+    await page.waitForSelector(".printed-fit:has-text(\"Printed fits are for plain holes\")", { timeout: 5_000 });
+    await page.getByRole("radio", { name: "Clearance" }).click();
     const varsBefore = await page.evaluate(() => (window.juracadStore.getState().history.present.variables ?? []).length);
     await page.locator("#hole-printed-fit").selectOption("sliding");
     const fitted = await page.locator("#param-diameter").inputValue();
-    if (!/^4 mm \+ fit_sliding$/.test(fitted)) throw new Error(`a sliding printed fit on M4 made the size "${fitted}"`);
-    const names = await page.evaluate(() => (window.juracadStore.getState().history.present.variables ?? []).map((v) => v.name).join(","));
-    if (!names.includes("fit_sliding")) throw new Error(`the printed fit didn't add its variables (${names})`);
+    if (fitted !== "4 mm + 0.3 mm") throw new Error(`a sliding printed fit on M4 made the size "${fitted}"`);
     await page.waitForSelector(".printed-fit >> text=Hole 4.3 mm across", { timeout: 5_000 });
+    // The fit variables only come in when the hole is accepted.
+    const varsNow = await page.evaluate(() => (window.juracadStore.getState().history.present.variables ?? []).length);
+    if (varsNow !== varsBefore) throw new Error("choosing a printed fit changed the design's variables before Accept");
     await page.getByRole("button", { name: "Cancel" }).click();
-    // Take the fit variables out again, so later steps see the design as before.
-    await page.keyboard.press("Control+z");
-    await page.waitForFunction((n) => (window.juracadStore.getState().history.present.variables ?? []).length === n, varsBefore, { timeout: 5_000 });
   }
 
   step = "moving a copy of a part";

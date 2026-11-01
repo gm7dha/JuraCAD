@@ -8,6 +8,7 @@ import { setOC } from "replicad";
 
 import { describeError, GeometryEngine } from "./engine";
 import type { FromWorker, KernelResponseBody, ToWorker } from "./protocol";
+import { printCheckTransfers, uniqueTransfers } from "./transfers";
 
 const ctx = self as unknown as {
   postMessage(message: FromWorker, transfer?: Transferable[]): void;
@@ -62,7 +63,7 @@ ctx.onmessage = (event) => {
         }
         case "printCheck": {
           const result = engine.printCheck(request.parts, request.settings);
-          for (const r of result) transfer.push(r.marks.overhang.buffer, r.marks.bed.buffer, r.marks.thin.buffer, r.marks.small.buffer);
+          transfer.push(...printCheckTransfers(result));
           body = { type: "printCheck", result };
           break;
         }
@@ -109,7 +110,7 @@ ctx.onmessage = (event) => {
           break;
         }
       }
-      ctx.postMessage({ kind: "response", id, ok: true, body }, transfer);
+      ctx.postMessage({ kind: "response", id, ok: true, body }, uniqueTransfers(transfer));
     } catch (e) {
       ctx.postMessage({ kind: "response", id, ok: false, error: describeError(e, "Something went wrong in the geometry engine.") });
     }

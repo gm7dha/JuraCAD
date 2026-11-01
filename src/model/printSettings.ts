@@ -124,3 +124,24 @@ export function parseFitExpression(expr: string): { nominal: string; fit: FitNam
   const m = /^\s*(.+?)\s*\+\s*fit_(press|snug|sliding|loose)\s*$/.exec(expr ?? "");
   return m ? { nominal: m[1], fit: m[2] as FitName } : null;
 }
+
+/**
+ * On Accept: a hole whose printed fit was chosen while the design had no fit
+ * variables gets them now (with the clearances chosen then), and its size
+ * becomes "<nominal> + fit_<fit>". Anything else is returned unchanged.
+ */
+export function settlePrintedFit<D extends { params: Record<string, string>; hole?: { printedFit?: { fit: FitName; nominal: string; fits: PrintFits } } }>(
+  variables: readonly Variable[] | undefined,
+  draft: D,
+  newId: () => string,
+): { variables: Variable[] | undefined; draft: D } {
+  const pf = draft.hole?.printedFit;
+  if (!draft.hole || !pf) return { variables: variables as Variable[] | undefined, draft };
+  const { printedFit: _, ...hole } = draft.hole;
+  void _;
+  const added = withFitVariables(variables, pf.fits, newId);
+  return {
+    variables: added.added.length ? added.variables : (variables as Variable[] | undefined),
+    draft: { ...draft, params: { ...draft.params, diameter: fitExpression(pf.nominal, pf.fit) }, hole },
+  };
+}
