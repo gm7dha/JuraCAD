@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { create } from "zustand";
 import { addPage, changePage, FIRST_PAGE, knownPage, missingPartMessage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage, addedSheetMessage } from "../drawing/pages";
 
+import { chooseProjections } from "./projectionChoice";
 import { arrangeLinedUp, arrangeViews, withoutFit, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetsPdf, sheetSvg } from "../drawing/export";
 import { autoDimensionSheet } from "../drawing/autoDimension";
@@ -148,23 +149,24 @@ function useProjections(drawing: Drawing, cacheId: string): { projections: Proje
   const key = keyRef.current;
   const cached = key ? projectionCache.get(cacheId) : undefined;
   const fresh = cached && key && sameKey(cached.key, key) ? cached.result : null;
-  const [state, setState] = useState<{ result: Projections | null; error: string | null; busy: boolean }>({ result: fresh, error: null, busy: false });
+  // (Tagged with the sheet it's for: see chooseProjections.)
+  const [state, setState] = useState<{ cacheId: string; result: Projections | null; error: string | null; busy: boolean }>({ cacheId, result: fresh, error: null, busy: false });
 
   useEffect(() => {
     if (!key || !req || !ready) return;
     const hit = projectionCache.get(cacheId);
     if (hit && sameKey(hit.key, key)) {
-      setState({ result: hit.result, error: null, busy: false });
+      setState({ cacheId, result: hit.result, error: null, busy: false });
       return;
     }
     let live = true;
-    setState((s) => ({ ...s, busy: true }));
+    setState((s) => (s.cacheId === cacheId ? { ...s, busy: true } : { cacheId, result: null, error: null, busy: true }));
     // Share one request between the panel and the sheet.
     fetchProjections(cacheId, { ...req, key }).then(
       (result) => {
-        if (live) setState({ result, error: null, busy: false });
+        if (live) setState({ cacheId, result, error: null, busy: false });
       },
-      (e: unknown) => live && setState({ result: null, error: e instanceof Error ? e.message : String(e), busy: false }),
+      (e: unknown) => live && setState({ cacheId, result: null, error: e instanceof Error ? e.message : String(e), busy: false }),
     );
     return () => {
       live = false;
@@ -172,15 +174,18 @@ function useProjections(drawing: Drawing, cacheId: string): { projections: Proje
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, ready, cacheId]);
 
-  const base = state.result ?? fresh;
+  // Never another sheet's views (the sheet stays mounted when switching sheets).
+  const shown = chooseProjections(state, cacheId, fresh);
+  const base = shown.base;
+  const own = state.cacheId === cacheId;
   const detailsKey = JSON.stringify(drawing.details ?? []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const shortKey = JSON.stringify(drawing.shortened ?? []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const projections = useMemo(() => (base ? withShortenings(withDetails(base, drawing), drawing) : null), [base, detailsKey, shortKey]);
   // True once the views shown are the ones for the drawing as it is now (not the last ones, kept while new ones are worked out).
-  const upToDate = !!fresh && (state.result === null || state.result === fresh);
-  return { projections, subject: subject?.name ?? null, instances: subject?.instances, drawn: req?.drawn ?? NO_PARTS, busy: state.busy, error: state.error, upToDate };
+  const upToDate = shown.upToDate;
+  return { projections, subject: subject?.name ?? null, instances: subject?.instances, drawn: req?.drawn ?? NO_PARTS, busy: own ? state.busy : !fresh, error: own ? state.error : null, upToDate };
 }
 
 const NO_PARTS: SheetPart[] = [];
