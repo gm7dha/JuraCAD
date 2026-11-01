@@ -1842,6 +1842,9 @@ interface SketchSnap {
   shared: string;
 }
 
+/** What rebuildStudios hands back: the parts of the Part Studios it rebuilt, and which those were. */
+export type StudiosResult = RebuildResult & { rebuilt: string[]; studioOrder: string[] };
+
 export class GeometryEngine {
   /** Threaded holes already made (see hole.ts), kept between rebuilds. */
   private threadedHoles: ThreadedHoleCache = new Map();
@@ -1863,11 +1866,45 @@ export class GeometryEngine {
    * changed since last time; the others keep what they built. Returns the
    * meshes of the rebuilt studios only, and errors for all of them.
    */
-  rebuildStudios(
-    studios: StudioInput[],
-    variables: Record<string, number> = {},
-    partNames: Record<string, string> = {},
-  ): RebuildResult & { rebuilt: string[]; studioOrder: string[] } {
+  rebuildStudios(studios: StudioInput[], variables: Record<string, number> = {}, partNames: Record<string, string> = {}): StudiosResult {
+    const steps = this.rebuildSteps(studios, variables, partNames);
+    let r = steps.next();
+    while (!r.done) r = steps.next();
+    return r.value;
+  }
+
+  /**
+   * rebuildStudios with a pause before each feature (`pause` is awaited
+   * there): a slow build can be stopped in between — `pause` throws, and the
+   * engine forgets everything this build made (the Part Studios it rebuilt are
+   * built again next time), so the next build is exactly as if this one had
+   * never started.
+   */
+  async rebuildStudiosAsync(studios: StudioInput[], variables: Record<string, number>, partNames: Record<string, string>, pause: () => Promise<void>): Promise<StudiosResult> {
+    const steps = this.rebuildSteps(studios, variables, partNames);
+    let r = steps.next();
+    while (!r.done) {
+      try {
+        await pause();
+      } catch (e) {
+        // (Runs the build's clean-up: see the finally in rebuildSteps.)
+        steps.return(undefined as never);
+        throw e;
+      }
+      r = steps.next();
+    }
+    return r.value;
+  }
+
+  /** As rebuild, with a pause before each feature (see rebuildStudiosAsync). */
+  rebuildAsync(features: Feature[], variables: Record<string, number>, partNames: Record<string, string>, pause: () => Promise<void>): Promise<StudiosResult> {
+    const old = this.builds.get(MAIN_STUDIO_ID);
+    if (old) old.key = "";
+    return this.rebuildStudiosAsync([{ id: MAIN_STUDIO_ID, features }], variables, partNames, pause);
+  }
+
+  /** The rebuild, one feature at a time: it yields before each feature. */
+  private *rebuildSteps(studios: StudioInput[], variables: Record<string, number>, partNames: Record<string, string>): Generator<void, StudiosResult, void> {
     const started = performance.now();
     // Every size below is worked out with the document's variables.
     setCurrentScope(variables);
@@ -1894,46 +1931,56 @@ export class GeometryEngine {
       ordered.push(...pending.splice(i >= 0 ? i : 0, 1));
     }
     this.studiosBuilt = new Set();
-    for (const studio of ordered) {
-      const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"));
-      const key = JSON.stringify(studio.features) + shared + (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") + (deps.length ? JSON.stringify(deps) : "");
-      let b = this.builds.get(studio.id);
-      if (!b || b.key !== key) {
-        if (b) this.disposeBuild(b);
-        this.parts = [];
-        this.tools = new Map();
-        this.links = {};
-        setCurrentScope(studio.variables ?? variables);
-        // What each sketch could snap to is kept (cheaply) for when one is opened — not for other configurations.
-        this.snaps = studio.partSuffix ? null : new Map();
-        // Parts brought in from other Part Studios (Derived) count too.
-        this.buildShared = shared + JSON.stringify([studio.variables ?? null, deps]);
-        let errors: Record<string, string>;
-        try {
-          errors = this.buildFeatures(studio.features);
-        } catch (e) {
-          this.disposeSnaps(this.snaps);
+    // The Part Studio being built now, and whether the whole rebuild got to the end (see the finally below).
+    let building: string | null = null;
+    let finished = false;
+    try {
+      for (const studio of ordered) {
+        const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"));
+        const key = JSON.stringify(studio.features) + shared + (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") + (deps.length ? JSON.stringify(deps) : "");
+        let b = this.builds.get(studio.id);
+        if (!b || b.key !== key) {
+          if (b) this.disposeBuild(b);
+          building = studio.id;
+          this.parts = [];
+          this.tools = new Map();
+          this.links = {};
+          setCurrentScope(studio.variables ?? variables);
+          // What each sketch could snap to is kept (cheaply) for when one is opened — not for other configurations.
+          this.snaps = studio.partSuffix ? null : new Map();
+          // Parts brought in from other Part Studios (Derived) count too.
+          this.buildShared = shared + JSON.stringify([studio.variables ?? null, deps]);
+          let errors: Record<string, string>;
+          try {
+            errors = yield* this.featureSteps(studio.features);
+          } catch (e) {
+            this.disposeSnaps(this.snaps);
+            this.snaps = null;
+            throw e;
+          }
+          setCurrentScope(variables);
+          // Names the user gave parts (used in the lists and in exported files).
+          for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
+          // Another configuration's copies of the parts (for assemblies).
+          if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, links: this.links, snaps: this.snaps ?? new Map() };
           this.snaps = null;
-          throw e;
+          this.builds.set(studio.id, b);
+          building = null;
+          rebuilt.push(studio.id);
+          const configuration = studio.partSuffix?.replace(/^@/, "");
+          for (const p of b.parts) meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}) });
         }
-        setCurrentScope(variables);
-        // Names the user gave parts (used in the lists and in exported files).
-        for (const p of this.parts) if (partNames[p.id]) p.name = partNames[p.id];
-        // Another configuration's copies of the parts (for assemblies).
-        if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-        b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, links: this.links, snaps: this.snaps ?? new Map() };
-        this.snaps = null;
-        this.builds.set(studio.id, b);
-        rebuilt.push(studio.id);
-        const configuration = studio.partSuffix?.replace(/^@/, "");
-        for (const p of b.parts) meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}) });
+        // Problems are shown for the configuration on show only.
+        if (!studio.partSuffix) {
+          Object.assign(featureErrors, b.errors);
+          Object.assign(featureWarnings, b.warnings ?? {});
+        }
+        this.studiosBuilt.add(studio.id);
       }
-      // Problems are shown for the configuration on show only.
-      if (!studio.partSuffix) {
-        Object.assign(featureErrors, b.errors);
-        Object.assign(featureWarnings, b.warnings ?? {});
-      }
-      this.studiosBuilt.add(studio.id);
+      finished = true;
+    } finally {
+      if (!finished) this.forgetUnfinished(building, rebuilt);
     }
     this.parts = studios.flatMap((s) => this.builds.get(s.id)?.parts ?? []);
     this.tools = new Map();
@@ -2326,7 +2373,37 @@ export class GeometryEngine {
   /** Warnings from the latest `buildFeatures` (features built, but with something to tell). */
   private warnings: Record<string, string> = {};
 
+  /**
+   * A rebuild stopped part-way (or failed): free what the Part Studio being
+   * built had made so far, and mark the ones rebuilt in it to be built again
+   * (their new parts were never handed back), so the next rebuild starts clean.
+   */
+  private forgetUnfinished(building: string | null, rebuilt: string[]): void {
+    if (building) {
+      this.disposeBuild({ key: "", parts: this.parts, tools: this.tools, errors: {}, links: {}, snaps: this.snaps ?? new Map() });
+      this.snaps = null;
+      // (Its old build was freed before it started.)
+      this.builds.delete(building);
+    }
+    for (const id of rebuilt) {
+      const b = this.builds.get(id);
+      if (b) b.key = "";
+    }
+    this.parts = [];
+    this.tools = new Map();
+    this.links = {};
+    this.studiosBuilt = new Set();
+  }
+
   private buildFeatures(features: Feature[]): Record<string, string> {
+    const steps = this.featureSteps(features);
+    let r = steps.next();
+    while (!r.done) r = steps.next();
+    return r.value;
+  }
+
+  /** Build a list of features (see buildFeatures), yielding before each one. */
+  private *featureSteps(features: Feature[]): Generator<void, Record<string, string>, void> {
     const featureErrors: Record<string, string> = {};
     const warnings: Record<string, string> = {};
     this.warnings = warnings;
@@ -2336,6 +2413,8 @@ export class GeometryEngine {
 
     for (const feature of features) {
       if (feature.suppressed) continue;
+      // A safe place to stop: between features.
+      yield;
       if (feature.type === "plane") {
         // Construction planes make no solid; just say if one can't be placed.
         const { values, errors } = resolveParams(feature);

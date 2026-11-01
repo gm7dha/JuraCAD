@@ -104,6 +104,13 @@ describe("features using areas of several sketches, from Claude", () => {
     // A sketch on Top doesn't contain the upright axis: refused with the reason, nothing changed.
     expect(await fails(s, "edit_feature", { feature: "Revolve 1", more_sketches: [{ sketch: "Flat", areas: [[52, 52]] }] })).toMatch(/Flat: the axis doesn't lie in its plane/);
     expect(s.doc.features.find((f) => f.name === "Revolve 1")!.moreAreas).toHaveLength(1);
+    // Choosing another sketch drops the areas picked in the old one, as for an extrude or a sweep.
+    await ok(s, "edit_feature", { feature: "Revolve 1", areas: [[15, 5]] });
+    expect(s.doc.features.find((f) => f.name === "Revolve 1")!.areas).toHaveLength(1);
+    await ok(s, "edit_feature", { feature: "Revolve 1", sketch: "Flat" });
+    const changed = s.doc.features.find((f) => f.name === "Revolve 1")!;
+    expect(changed.areas).toBeUndefined();
+    expect(changed.moreAreas).toBeUndefined();
   });
 
   it("sweeps two shapes along one path, and edits the sweep", async () => {
