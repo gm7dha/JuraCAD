@@ -628,16 +628,17 @@ describe("modelled threads, round 2 review", () => {
     const sk = sketchFeature(faceAt(10), points([10, 10]));
     const hole = holeFeature(sk.id, { diameter: 3.3 }, { standard: "M4", fit: "tapped", end: "throughAll", modelThread: true });
     engine = new GeometryEngine();
-    let t = Date.now();
+    const t = Date.now();
     expect(engine.rebuild([plate, sk, hole]).featureErrors).toEqual({});
     const cut = Date.now() - t;
     // Very generous: shared CI machines vary a lot in speed.
     expect(cut).toBeLessThan(60_000);
     const first = engine.check("normal").parts[0].exactVolume!;
-    // Something added after it: the threaded hole isn't cut again, so it's far quicker.
-    t = Date.now();
+    // Something added after it: the threaded hole isn't cut again — the cut one is reused. (Counted rather than
+    // timed: the rest of the rebuild still takes a few hundred ms, and busy CI machines make any tight limit flaky.)
+    const reusedBefore = engine.threadedReused;
     engine.rebuild([plate, sk, hole, feature("box", { width: 5, depth: 5, height: 5, x: 25, z: 10 }, "add")]);
-    expect(Date.now() - t).toBeLessThan(Math.max(cut / 3, 500));
+    expect(engine.threadedReused).toBe(reusedBefore + 1);
     expect(engine.check("normal").parts[0].exactVolume!).toBeCloseTo(first + 125, 3);
   });
 });
