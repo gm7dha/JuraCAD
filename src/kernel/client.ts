@@ -3,7 +3,8 @@ import type { SketchPlane } from "../sketch/planes";
 import type { RefEdge } from "../sketch/links";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
-import type { CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { PrintPartResult } from "../model/printCheck";
+import type { CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -109,6 +110,16 @@ export class KernelClient {
 
   export3mf(partIds: string[], quality: MeshQuality, title: string, colours?: Record<string, string>, instances?: InstanceInput[]): Promise<ThreeMfResult> {
     return this.send({ type: "export3mf", partIds, quality, title, colours, instances }).then((body) => body.result as ThreeMfResult);
+  }
+
+  /** 3D-print check of parts, each with its own "down" onto the bed. */
+  printCheck(parts: PrintCheckPart[], settings: PrintCheckSettings): Promise<PrintPartResult[]> {
+    return this.send({ type: "printCheck", parts, settings }).then((body) => (body.type === "printCheck" ? body.result : []));
+  }
+
+  /** A 3MF ready for the slicer: parts turned onto the bed and laid out on it. */
+  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours?: Record<string, string>): Promise<PrintExportResult> {
+    return this.send({ type: "exportPrint3mf", parts, bed, gap, quality, title, colours }).then((body) => body.result as PrintExportResult);
   }
 
   /** Whole parts: their sizes, and the gap and overlap between two of them. */

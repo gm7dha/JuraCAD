@@ -39,12 +39,14 @@ import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCorne
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import { measureContacts } from "./clash";
-import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
 import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
+import { analysePrint } from "./printAnalysis";
+import { arrangeOnBed, bedExtents, bedRotation, rotate, type PrintPartResult } from "../model/printCheck";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep, writeStepAssembly } from "./stepExport";
 import { stepPartCount } from "./stepCount";
@@ -5328,6 +5330,64 @@ export class GeometryEngine {
     const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     return { data, triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0) };
     });
+  }
+
+  /** 3D-print check of each chosen part, sitting on the bed with its own "down" (see src/model/printCheck.ts). */
+  printCheck(parts: PrintCheckPart[], settings: PrintCheckSettings): PrintPartResult[] {
+    const out: PrintPartResult[] = [];
+    for (const req of parts) {
+      const p = this.parts.find((x) => x.id === req.partId);
+      if (!p) continue;
+      if (p.surface) {
+        const empty = new Float32Array(0);
+        out.push({ partId: p.id, name: p.name, surface: true, size: [0, 0, 0], overhangArea: 0, bedArea: 0, thinnest: null, thinnestAt: null, thinArea: 0, smallHoles: [], thinPins: [], marks: { overhang: empty, bed: empty, thin: empty, small: empty } });
+        continue;
+      }
+      out.push(analysePrint(p.id, p.name, p.shape, { ...settings, down: req.down }));
+    }
+    return out;
+  }
+
+  /**
+   * A 3MF ready for slicing: each chosen part a separate, named, coloured
+   * object, turned so its "down" faces the bed, standing on it, and laid out
+   * on a bed of `bed` (X × Y mm) without overlapping. The model isn't changed.
+   */
+  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours: Record<string, string> = {}): PrintExportResult {
+    const tol = MESH_TOLERANCES[quality];
+    const chosen = parts.map((r) => ({ r, p: this.parts.find((x) => x.id === r.partId) })).filter((x): x is { r: PrintCheckPart; p: BuiltPart } => !!x.p && !x.p.surface);
+    if (!chosen.length) throw new Error("There's no solid part to export. Surfaces can't be printed — thicken them first.");
+    const turned = chosen.map(({ r, p }) => {
+      const m = p.shape.mesh(tol);
+      const R = bedRotation(r.down);
+      const v = new Float64Array(m.vertices.length);
+      for (let i = 0; i < m.vertices.length; i += 3) v.set(rotate(R, [m.vertices[i], m.vertices[i + 1], m.vertices[i + 2]]), i);
+      const ext = bedExtents(v, [0, 0, -1]);
+      return { p, v, triangles: withoutDegenerateTriangles(m.vertices, m.triangles), ext };
+    });
+    const layout = arrangeOnBed(turned.map((t) => ({ id: t.p.id, size: [t.ext.size[0], t.ext.size[1]] })), bed, gap);
+    const meshes = turned.map((t, i) => {
+      const place = layout.places[i];
+      const cx = (t.ext.min[0] + t.ext.max[0]) / 2;
+      const cy = (t.ext.min[1] + t.ext.max[1]) / 2;
+      const z0 = t.ext.min[2];
+      // Centred on its own middle, standing at height 0 (a quarter turn if that's how it fits).
+      const v = new Float64Array(t.v.length);
+      for (let k = 0; k < v.length; k += 3) {
+        const x = t.v[k] - cx;
+        const y = t.v[k + 1] - cy;
+        v[k] = place.turned ? -y : x;
+        v[k + 1] = place.turned ? x : y;
+        v[k + 2] = t.v[k + 2] - z0;
+      }
+      return { name: t.p.name, vertices: v, triangles: t.triangles, colour: colours[t.p.id], move: [place.x, place.y, 0] as [number, number, number] };
+    });
+    const bytes = write3mf(meshes, title);
+    return {
+      data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0),
+      layout,
+    };
   }
 
   /**

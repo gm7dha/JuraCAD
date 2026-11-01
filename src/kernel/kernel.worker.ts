@@ -60,6 +60,18 @@ ctx.onmessage = (event) => {
           body = { type: "export3mf", result };
           break;
         }
+        case "printCheck": {
+          const result = engine.printCheck(request.parts, request.settings);
+          for (const r of result) transfer.push(r.marks.overhang.buffer, r.marks.bed.buffer, r.marks.thin.buffer, r.marks.small.buffer);
+          body = { type: "printCheck", result };
+          break;
+        }
+        case "exportPrint3mf": {
+          const result = engine.exportPrint3mf(request.parts, request.bed, request.gap, request.quality, request.title, request.colours);
+          transfer.push(result.data);
+          body = { type: "exportPrint3mf", result };
+          break;
+        }
         case "project":
           body = { type: "project", result: engine.project(request.partIds, request.instances, request.views, request.hidden, request.sections, request.breakouts, request.tangent !== false) };
           break;
