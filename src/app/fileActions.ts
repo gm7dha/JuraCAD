@@ -63,7 +63,12 @@ export async function saveToFile(saveAs = false): Promise<void> {
     s.showToast("Finish or cancel the open feature first, then save.", "error");
     return;
   }
-  const doc = s.history.present;
+  // Looking at an old version: the current design (with every version) is what's saved, and comes back on screen.
+  if (s.versionView) {
+    s.leaveVersionView();
+    s.showToast("Back to the current design, which is what gets saved.", "info");
+  }
+  const doc = useStore.getState().history.present;
   const text = serializeDocument(doc);
   const suggested = `${safeFileName(doc.name, "JuraCAD design")}${FILE_EXTENSION}`;
   const w = window as PickerWindow;

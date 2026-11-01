@@ -354,6 +354,26 @@ export interface JuraCADDocument {
   configurations?: Configuration[];
   /** The configuration on show (its id). */
   activeConfiguration?: string;
+  /** Saved versions of the whole design (Versions panel; oldest first). Optional: older saves have none. */
+  versions?: DesignVersion[];
+}
+
+/**
+ * A saved version: a snapshot of the whole design (everything above except
+ * `versions`) taken when the user clicked "Save version", or automatically
+ * (before restoring another). The snapshot is kept packed — see versions.ts.
+ */
+export interface DesignVersion {
+  id: string;
+  name: string;
+  /** What the user wrote about it (optional). */
+  note?: string;
+  /** When it was saved (ISO date and time). */
+  createdAt: string;
+  /** Made by JuraCAD rather than by the user (e.g. "Before restoring V2"). */
+  auto?: boolean;
+  /** The design: "gz:" + gzip-compressed JSON in base64, or "json:" + the JSON itself (browsers without compression). */
+  packed: string;
 }
 
 /** Which way a drawing view looks at the part. */

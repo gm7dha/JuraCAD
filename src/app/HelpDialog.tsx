@@ -53,6 +53,7 @@ export function HelpDialog() {
         variables (set them up with Variables in the toolbar), e.g. <kbd>wall * 2</kbd> or <kbd>1/4 in</kbd>.
         Import brings in STEP or STL files from other programs (or drag one onto the window).
         Your latest work is kept in this browser automatically; use Save to keep a .juracad file on your computer.
+        Versions (top bar) saves a snapshot of the whole design to look back at, compare with or go back to.
         Install (top bar) makes JuraCAD a desktop app with its own window that works offline; in Safari on a Mac,
         use File › Add to Dock.
       </p>

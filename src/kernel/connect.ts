@@ -1,16 +1,16 @@
 import { featuresToBuild, featuresWithDraft, previewFeatures, previewOf } from "../model/document";
 import { resolveVariables } from "../model/variables";
-import { STORAGE_KEY, useStore } from "../model/store";
+import { useStore } from "../model/store";
+import { keepInBrowser, keepProblem, OTHER_TAB, STORAGE_KEY, VERSIONS_KEY, type Kept } from "../model/browserKeep";
 
-/** Whether the "too big to keep" message has been shown since the last successful keep. */
-let storageWarned = false;
-import { activeStudioId } from "../model/store";
+import { activeStudioId, keepIdOf, type VersionCompare } from "../model/store";
+import { setCurrentScope } from "../model/expr";
 import { studiosOf } from "../model/studios";
 import type { StudioInput } from "./protocol";
 import type { JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
 import { KernelClient } from "./client";
-import { configuredStudioInputs, featureForEngine, featuresForEngine } from "./buildInput";
+import { compareStudioInputs, configuredStudioInputs, featureForEngine, featuresForEngine } from "./buildInput";
 
 let client: KernelClient | null = null;
 
@@ -32,7 +32,18 @@ function currentStudios(): StudioInput[] {
         : st.id === editingIn
           ? featuresWithDraft(previewFeatures(st.features), featureForEngine(previewOf(s.editing?.draft ?? null)))
           : st.features,
-  })), ...configuredStudios(s.history.present)];
+  })), ...configuredStudios(s.history.present), ...versionStudios(s.versionCompare)];
+}
+
+/** Old versions being compared: their Part Studios, built alongside (see compareStudioInputs). */
+let versionCache: { docs: Record<string, JuraCADDocument>; list: StudioInput[] } | null = null;
+function versionStudios(c: VersionCompare | null): StudioInput[] {
+  if (!c) return [];
+  if (versionCache?.docs === c.docs) return versionCache.list;
+  const list = Object.entries(c.docs).flatMap(([id, doc]) => compareStudioInputs(id, doc));
+  setCurrentScope(resolveVariables(useStore.getState().history.present.variables).values);
+  versionCache = { docs: c.docs, list };
+  return list;
 }
 
 /** Part Studios that assemblies show in another configuration, built again in it ("<studio>@<configuration>"). */
@@ -113,8 +124,19 @@ export function connectKernel(): () => void {
   let lastStudios = useStore.getState().history.present.partStudios;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
+  /** What this tab last wrote to browser storage (null: write the design and its versions again next time). */
+  let kept: Kept | null = null;
+  // Another tab wrote its design (or versions) over this one's: write both again on this design's next change
+  // (not at once, or two open tabs would keep overwriting each other), and say so meanwhile.
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== STORAGE_KEY && e.key !== VERSIONS_KEY && e.key !== null) return;
+    kept = null;
+    if (useStore.getState().storageProblem !== OTHER_TAB) useStore.setState({ storageProblem: OTHER_TAB });
+  };
+  globalThis.addEventListener?.("storage", onStorage);
   let lastRollback = useStore.getState().rollbackTo;
   let lastConfigured = configuredKey(useStore.getState().history.present);
+  let lastCompared = useStore.getState().versionCompare?.docs;
 
   const unsubscribe = useStore.subscribe((s) => {
     const draft = s.editing?.draft ?? null;
@@ -125,8 +147,10 @@ export function connectKernel(): () => void {
       s.history.present.variables !== lastVariables ||
       s.history.present.partNames !== lastPartNames ||
       s.history.present.partStudios !== lastStudios ||
-      configuredKey(s.history.present) !== lastConfigured
+      configuredKey(s.history.present) !== lastConfigured ||
+      s.versionCompare?.docs !== lastCompared
     ) {
+      lastCompared = s.versionCompare?.docs;
       lastConfigured = configuredKey(s.history.present);
       lastStudios = s.history.present.partStudios;
       lastPartNames = s.history.present.partNames;
@@ -136,23 +160,28 @@ export function connectKernel(): () => void {
       lastRollback = s.rollbackTo;
       if (s.kernelStatus === "ready") rebuild();
     }
-    if (s.history.present !== lastDoc) {
-      lastDoc = s.history.present;
-      try {
-        globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(lastDoc));
-        storageWarned = false;
-      } catch {
-        // Storage full (e.g. a big imported file) or blocked: the session still works, but say so once.
-        if (!storageWarned && globalThis.localStorage) {
-          storageWarned = true;
-          useStore.getState().showToast("This design is too big for the browser to keep automatically. Use Save to keep it as a file.", "error");
-        }
+    // An old version open to look at is never kept as the design: the current one (waiting in the stash) is.
+    const keep = s.versionView?.stash.present ?? s.history.present;
+    if (keep !== lastDoc) {
+      lastDoc = keep;
+      const storage = globalThis.localStorage;
+      if (!storage) return;
+      const r = keepInBrowser(storage, keep, keepIdOf(keep), kept);
+      kept = r.kept;
+      const problem = keepProblem(r, !!keep.versions?.length);
+      const was = useStore.getState().storageProblem;
+      if (problem !== was) {
+        useStore.setState({ storageProblem: problem });
+        // Said when it starts (or changes); the top bar keeps saying it until it's fixed.
+        if (problem) useStore.getState().showToast(problem, "error");
+        else if (was) useStore.getState().showToast("Your design is kept in this browser again.", "success");
       }
     }
   });
 
   return () => {
     unsubscribe();
+    globalThis.removeEventListener?.("storage", onStorage);
     kernel.terminate();
     client = null;
   };

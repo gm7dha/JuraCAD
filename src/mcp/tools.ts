@@ -704,7 +704,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "save_design",
     title: "Save the design",
-    description: 'Save the design as a .juracad file in the JuraCAD folder (the owner opens it in JuraCAD with Open). "filename" defaults to the design\'s name. An existing file other than the one this design came from is only replaced with "overwrite": true.',
+    description: 'Save the design as a .juracad file in the JuraCAD folder (the owner opens it in JuraCAD with Open). "filename" defaults to the design\'s name. An existing file other than the one this design came from is only replaced with "overwrite": true. When connected live to the user\'s JuraCAD tab, the file has the design only, not the versions the user saved in JuraCAD (those stay there, and in the files they save themselves).',
     destructive: true,
     inputSchema: { type: "object", properties: { filename: { type: "string" }, overwrite: { type: "boolean" } } },
     run: (s, a) => {

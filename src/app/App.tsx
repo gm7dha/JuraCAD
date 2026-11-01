@@ -15,6 +15,7 @@ import { FlatPatternDialog } from "./FlatPatternDialog";
 import { WhatsNewDialog } from "./WhatsNewDialog";
 import { VariablesDialog } from "./VariablesDialog";
 import { ConfigurationsDialog } from "./ConfigurationsDialog";
+import { ComparePanel, VersionBanner, VersionsDialog } from "./VersionsDialog";
 import { MeasurePanel } from "./MeasurePanel";
 import { SectionPanel } from "./SectionPanel";
 import { PrintBedPanel } from "./PrintBedPanel";
@@ -289,6 +290,8 @@ export function App() {
             </>
           )}
           <EngineStatus />
+          <VersionBanner />
+          {!drawing && !assembly && <ComparePanel />}
           {!drawing && (
             <>
               <EmptyHint />
@@ -307,6 +310,7 @@ export function App() {
       {dialog === "whatsNew" && <WhatsNewDialog />}
       {dialog === "variables" && <VariablesDialog />}
       {dialog === "configurations" && <ConfigurationsDialog />}
+      {dialog === "versions" && <VersionsDialog />}
       <ToastView />
     </div>
   );
