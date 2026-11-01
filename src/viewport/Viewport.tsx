@@ -5,7 +5,8 @@ import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
-import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, activeStudioId, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
+import { ghostParts } from "../app/versionActions";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
 import { clickedSpot, findPick, framePlacement } from "../assembly/connectors";
@@ -520,6 +521,8 @@ function dragStart(target: PickTarget & { kind: "part" }, ray: ScreenRay, shift:
   const s = useStore.getState();
   const asm = activeAssembly(s);
   if (!asm || s.mateDraft || !target.point) return false;
+  // An old version open to look at can't be moved about (said at once, rather than snapping back afterwards).
+  if (s.refuseReadOnly()) return false;
   const assemblies = s.history.present.assemblies;
   const solved = solveWithParts(asm, s.parts, { assemblies });
   // Connectors on each part as its instance shows it (mirrored, or in another configuration, or inside a sub-assembly).
@@ -738,6 +741,11 @@ export function Viewport() {
   }, [assembly, mateDraft, parts, solved, allAssemblies]);
 
   useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenMeshes(hiddenInstances, leaves) : hiddenParts), [hiddenParts, hiddenInstances, assembly, leaves]);
+  // Comparing versions: the older one's parts, see-through over the design (Part Studios only).
+  const compare = useStore((s) => s.versionCompare);
+  const ghostStudio = useStore(activeStudioId);
+  const ghosts = useMemo(() => (assembly ? [] : ghostParts(parts, compare, ghostStudio)), [parts, compare, ghostStudio, assembly]);
+  useEffect(() => viewportApi.current?.setGhosts(ghosts), [ghosts]);
   const transparentParts = useStore((s) => s.transparentParts);
   useEffect(() => viewportApi.current?.setTransparent(assembly ? NO_IDS : transparentParts), [transparentParts, assembly]);
   // Plane features (and the one being made), drawn as squares you can click to sketch on.

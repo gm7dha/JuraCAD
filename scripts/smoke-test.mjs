@@ -929,6 +929,64 @@ try {
   await page.getByRole("button", { name: "Cancel" }).click();
   await page.waitForSelector(".variables-table", { state: "detached" });
 
+  step = "versions: saving a version";
+  const gapValue = () => page.evaluate(() => window.juracadStore.getState().history.present.variables?.find((v) => v.name === "gap")?.value);
+  const versionCount = () => page.evaluate(() => (window.juracadStore.getState().versionView?.stash.present ?? window.juracadStore.getState().history.present).versions?.length ?? 0);
+  await page.getByRole("button", { name: "Versions", exact: true }).click();
+  await page.getByRole("textbox", { name: "Version name" }).fill("Before the gap change");
+  await page.getByRole("textbox", { name: "Version note" }).fill("gap is a quarter inch");
+  await page.getByRole("button", { name: "Save version" }).click();
+  await page.waitForSelector('tr[data-version="Before the gap change"]', { timeout: 10_000 });
+  if ((await versionCount()) !== 1) throw new Error(`saving a version left ${await versionCount()} versions`);
+  await page.getByRole("button", { name: "Done" }).click();
+
+  step = "versions: changing something, then comparing with now";
+  await tool("Variables");
+  await page.getByRole("textbox", { name: "Value of gap" }).fill("3");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.waitForSelector(".variables-table", { state: "detached" });
+  if ((await gapValue()) !== "3") throw new Error(`gap is "${await gapValue()}" after changing it`);
+  await page.getByRole("button", { name: "Versions", exact: true }).click();
+  await page.locator('tr[data-version="Before the gap change"]').getByRole("button", { name: "Compare with now" }).click();
+  await page.waitForSelector(".version-changes", { timeout: 10_000 });
+  // The old version is built too, for its parts list; wait for it.
+  await page.waitForFunction(() => !document.querySelector(".version-changes")?.textContent?.includes("Building the old version"), null, { timeout: 120_000 });
+  const compared = await page.locator(".version-changes").innerText();
+  if (!/gap/.test(compared) || !/1\/4 in/.test(compared) || !/→\s*3/.test(compared)) throw new Error(`the comparison doesn't show gap 1/4 in → 3: ${compared.slice(0, 400)}`);
+  if (!/The same parts/.test(compared)) throw new Error(`changing a variable nothing uses shouldn't add or remove parts: ${compared.slice(0, 400)}`);
+  await shot("versions-compare");
+  await page.getByRole("button", { name: "Show the old one in 3D" }).click();
+  await page.waitForSelector(".compare-panel", { timeout: 10_000 });
+  const ghosts = await page.evaluate(() => window.juracadStore.getState().parts.filter((p) => p.configuration?.startsWith("version:")).length);
+  if (ghosts === 0) throw new Error("the old version's parts weren't built for the see-through view");
+  await shot("versions-ghost");
+  await page.getByRole("button", { name: "Stop comparing" }).first().click();
+  await page.waitForSelector(".compare-panel", { state: "detached" });
+  await page.waitForFunction(() => !window.juracadStore.getState().parts.some((p) => p.configuration?.startsWith("version:")), null, { timeout: 60_000 });
+
+  step = "versions: opening one to look at (read-only)";
+  await page.getByRole("button", { name: "Versions", exact: true }).click();
+  await page.locator('tr[data-version="Before the gap change"]').getByRole("button", { name: "Open", exact: true }).click();
+  await page.waitForSelector(".version-banner", { timeout: 10_000 });
+  if ((await gapValue()) !== "1/4 in") throw new Error(`the open version shows gap = "${await gapValue()}"`);
+  await page.evaluate(() => window.juracadStore.getState().deleteFeature(window.juracadStore.getState().history.present.features[0].id));
+  if ((await gapValue()) !== "1/4 in" || (await page.evaluate(() => window.juracadStore.getState().history.past.length)) !== 0) throw new Error("an old version open to look at was changed");
+  await shot("versions-open");
+  await page.getByRole("button", { name: "Back to the current design" }).click();
+  await page.waitForSelector(".version-banner", { state: "detached" });
+  if ((await gapValue()) !== "3") throw new Error(`back in the current design, gap is "${await gapValue()}"`);
+
+  step = "versions: restoring one, then undo";
+  await page.getByRole("button", { name: "Versions", exact: true }).click();
+  await page.locator('tr[data-version="Before the gap change"]').getByRole("button", { name: "Restore…" }).click();
+  await page.getByRole("group", { name: "Restore a version" }).getByRole("button", { name: "Restore", exact: true }).click();
+  await page.waitForFunction(() => window.juracadStore.getState().history.present.variables?.find((v) => v.name === "gap")?.value === "1/4 in", null, { timeout: 10_000 });
+  // What there was is kept as an automatic version.
+  if ((await versionCount()) !== 2) throw new Error(`restoring left ${await versionCount()} versions (expected 2: the one saved and an automatic one)`);
+  await page.evaluate(() => window.juracadStore.getState().undo());
+  // Undo brings the design back; versions aren't undone (as in Onshape), so the automatic one stays.
+  if ((await gapValue()) !== "3" || (await versionCount()) !== 2) throw new Error(`undo after restoring: gap "${await gapValue()}", ${await versionCount()} versions (expected 2)`);
+
   step = "saving the design to a file";
   const featureCount = await page.locator(".feature-row:not(.datum)").count();
   const savePromise = page.waitForEvent("download", { timeout: 30_000 });
@@ -939,6 +997,7 @@ try {
   if (!saved.suggestedFilename().endsWith(".juracad")) throw new Error(`saved as ${saved.suggestedFilename()}`);
   // The format id inside the file keeps the app's old name, so files open in older versions too.
   if (!/"format": "partsmith"/.test(savedText) || !/"gap"/.test(savedText)) throw new Error("the saved file is missing the design or its variables");
+  if (!/"versions": \[/.test(savedText) || !/"Before the gap change"/.test(savedText)) throw new Error("the saved file is missing its version");
   await page.waitForSelector(".save-state:not(.unsaved)");
 
   step = "starting a new design, then opening the saved file";
@@ -951,6 +1010,7 @@ try {
   await chooser.setFiles(savedPath);
   await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n, featureCount, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 3"), null, { timeout: 30_000 });
+  if ((await versionCount()) !== 2) throw new Error(`the opened file has ${await versionCount()} versions (expected 2)`);
 
   step = "importing the STEP and STL files exported earlier";
   const importModel = async (file, label) => {
