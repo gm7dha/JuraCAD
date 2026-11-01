@@ -274,7 +274,9 @@ export function parseDrawings(raw: unknown): Drawing[] {
       if (!VIEW_KINDS.includes(rv.kind as ViewKind)) continue;
       // A view of another part, or one projected from such a view (see viewParts.ts).
       const of = parseSource(rv.source);
-      const part = of ? { source: of } : typeof rv.parent === "string" && bases.has(rv.parent) && rv.parent !== rv.id ? { parent: rv.parent } : {};
+      // (One projected from a view that isn't there is dropped, not read as the sheet's own view.)
+      if (!of && rv.parent !== undefined && !(typeof rv.parent === "string" && bases.has(rv.parent) && rv.parent !== rv.id)) continue;
+      const part = of ? { source: of } : typeof rv.parent === "string" ? { parent: rv.parent } : {};
       const view: DrawingView = { id: rv.id, kind: rv.kind as ViewKind, ...(at ? { at } : {}), ...own, ...part };
       if (views.some((x) => viewKey(x) === viewKey(view) || (part.source && x.id === rv.id))) continue;
       views.push(view);

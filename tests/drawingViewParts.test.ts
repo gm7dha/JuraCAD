@@ -123,6 +123,16 @@ describe("views of other parts: saving", () => {
     expect(back.dimensions).toBeUndefined();
   });
 
+  it("drops a projected view whose view of another part is missing, even when the sheet hasn't that view of its own", () => {
+    const d = addDrawing(doc, "d1", { kind: "part", id: "p1" }).drawings![0];
+    const own = { ...d, views: d.views.filter((v) => v.kind === "front") };
+    const raw = JSON.parse(
+      JSON.stringify([{ ...own, views: [...own.views, { id: "vw1-iso", kind: "iso", parent: "vw1" }, { id: "x-right", kind: "right", parent: "nope" }, { id: "y-top", kind: "top", parent: 7 }, { id: "z", kind: "left", parent: "z" }] }]),
+    );
+    const back = parseDrawings(raw)[0];
+    expect(back.views).toEqual([{ id: "d1-front", kind: "front" }]);
+  });
+
   it("keeps them per sheet", () => {
     const d = addDrawing(doc, "d1", { kind: "part", id: "p1" }).drawings![0];
     const two = { ...d, pages: [{ id: "p2", sheet: "A4" as const, views: [] }] };
