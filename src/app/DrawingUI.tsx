@@ -9,9 +9,10 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { create } from "zustand";
 import { addPage, changePage, FIRST_PAGE, knownPage, missingPartMessage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage, addedSheetMessage } from "../drawing/pages";
 
+import { chooseProjections } from "./projectionChoice";
 import { arrangeLinedUp, arrangeViews, withoutFit, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetsPdf, sheetSvg } from "../drawing/export";
-import { autoDimensions } from "../drawing/autoDimension";
+import { autoDimensionSheet } from "../drawing/autoDimension";
 import { holeOfCircle, tapSizes } from "../drawing/holeCallouts";
 import { describeSymbol, GDT_CHARACTERISTICS, nextDatumLetter, symbolPrims } from "../drawing/symbols";
 import { advanceRun, nextLinear, startRun, type LinearKind, type LinearRun } from "../drawing/linearDims";
@@ -19,14 +20,15 @@ import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, re
 import { angleGeometry, arcOf, ARROWABLE, chamferSize, flipArrows, dimPoint, dimensionPaperScale, dragDimension, dragDimensionLabel, FITTABLE, fitOf, placeAngle, drawDimension, withDimPatch, type DimPatch, measureDim, pairFor, placeLength, resolveDim, sameTarget, snapPoints, type DimTarget } from "../drawing/dimensions";
 import { newId } from "../model/document";
 import { getKernel } from "../kernel/connect";
-import type { InstanceInput, PartMesh } from "../kernel/protocol";
+import type { InstanceInput, PartMesh, ViewProjection } from "../kernel/protocol";
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
-import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut } from "../model/types";
-import { addSection, breakOutRequests, missedSections, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
+import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut, ViewHost } from "../model/types";
+import { addSection, breakOutRequests, hostKindOf, missedSections, viewKey, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
-import { balloonsFor, drawingDate, drawingSubject, sheetInfo, viewScales } from "../drawing/sheetSource";
+import { balloonsFor, drawingDate, sheetInfo, sheetParts, viewScales, withViewParts, type DrawingSubject, type SheetPart } from "../drawing/sheetSource";
+import { addViewOf, PROJECTED_KINDS, rekeyed, removeViewOf, setViewSource, toggleProjected, viewPartName, viewParts } from "../drawing/viewParts";
 import { drawingBom } from "../assembly/drawingBom";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
@@ -76,28 +78,42 @@ function changeShownPage(fn: (d: Drawing) => Drawing) {
   if (d) s.changeDrawing((x) => changePage(x, pageIdOf(d), fn));
 }
 
-/** What to ask the geometry engine for a drawing sheet's views (null when its part has gone). */
-function projectionRequest(drawing: Drawing, doc: JuraCADDocument, parts: PartMesh[]): { key: unknown[]; subject: NonNullable<ReturnType<typeof drawingSubject>>; run: () => Promise<Projections> } | null {
-  const subject = drawingSubject(drawing, doc, parts);
-  if (!subject) return null;
+/** What to ask the geometry engine for one part (or assembly) drawn on a sheet. */
+function partRequest(drawing: Drawing, subject: DrawingSubject): { key: unknown[]; run: (kernel: ReturnType<typeof getKernel>) => Promise<ViewProjection[]> } {
   // (Sections are asked for separately; details are worked out here from their host views.)
   const kinds = projectionKinds(drawing);
   const sections = sectionRequests(drawing);
   const breakouts = breakOutRequests(drawing);
   const tangent = drawing.tangentEdges !== false;
   const key = [...subject.key, kinds.join(","), drawing.hiddenLines, tangent, JSON.stringify(sections), JSON.stringify(breakouts)];
+  return { key, run: (kernel) => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sections, breakouts, tangent) };
+}
+
+/**
+ * What to ask the geometry engine for a drawing sheet's views (null when its
+ * part has gone): its own part's, then each view of another part's (whose
+ * views come back under their keys on the sheet; one whose part has gone is
+ * left out, and the panel says so).
+ */
+function projectionRequest(
+  drawing: Drawing,
+  doc: JuraCADDocument,
+  parts: PartMesh[],
+): { key: unknown[]; subject: DrawingSubject; drawn: SheetPart[]; run: () => Promise<Projections> } | null {
+  const drawn = sheetParts(drawing, doc, parts);
+  const subject = drawn[0].subject;
+  if (!subject) return null;
+  const asks = drawn.filter((p) => p.subject).map((p) => ({ group: p.group, ...partRequest(p.drawing, p.subject!) }));
+  const key = asks.length === 1 ? asks[0].key : asks.flatMap((a) => [a.group, ...a.key]);
   const run = () => {
     const kernel = getKernel();
-    return kernel
-      .whenIdle()
-      .then(() => kernel.project(subject.partIds, subject.instances, kinds, drawing.hiddenLines, sections, breakouts, tangent))
-      .then((list) => {
-        const result: Projections = {};
-        for (const p of list) result[p.kind] = p;
-        return result;
-      });
+    return kernel.whenIdle().then(async () => {
+      const result: Projections = {};
+      for (const a of asks) for (const p of rekeyed(await a.run(kernel), a.group)) result[p.kind] = p;
+      return result;
+    });
   };
-  return { key, subject, run };
+  return { key, subject, drawn, run };
 }
 
 /** A sheet's views, from the cache or the geometry engine (shared with any request already running). */
@@ -119,7 +135,7 @@ function fetchProjections(cacheId: string, req: NonNullable<ReturnType<typeof pr
 }
 
 /** The drawing sheet's views from the geometry engine, refreshed when the part or the chosen views change. */
-function useProjections(drawing: Drawing, cacheId: string): { projections: Projections | null; subject: string | null; instances?: InstanceInput[]; busy: boolean; error: string | null; upToDate: boolean } {
+function useProjections(drawing: Drawing, cacheId: string): { projections: Projections | null; subject: string | null; instances?: InstanceInput[]; drawn: SheetPart[]; busy: boolean; error: string | null; upToDate: boolean } {
   const doc = useStore((s) => s.history.present);
   const parts = useStore((s) => s.parts);
   const ready = useStore((s) => s.kernelStatus === "ready");
@@ -133,23 +149,24 @@ function useProjections(drawing: Drawing, cacheId: string): { projections: Proje
   const key = keyRef.current;
   const cached = key ? projectionCache.get(cacheId) : undefined;
   const fresh = cached && key && sameKey(cached.key, key) ? cached.result : null;
-  const [state, setState] = useState<{ result: Projections | null; error: string | null; busy: boolean }>({ result: fresh, error: null, busy: false });
+  // (Tagged with the sheet it's for: see chooseProjections.)
+  const [state, setState] = useState<{ cacheId: string; result: Projections | null; error: string | null; busy: boolean }>({ cacheId, result: fresh, error: null, busy: false });
 
   useEffect(() => {
     if (!key || !req || !ready) return;
     const hit = projectionCache.get(cacheId);
     if (hit && sameKey(hit.key, key)) {
-      setState({ result: hit.result, error: null, busy: false });
+      setState({ cacheId, result: hit.result, error: null, busy: false });
       return;
     }
     let live = true;
-    setState((s) => ({ ...s, busy: true }));
+    setState((s) => (s.cacheId === cacheId ? { ...s, busy: true } : { cacheId, result: null, error: null, busy: true }));
     // Share one request between the panel and the sheet.
     fetchProjections(cacheId, { ...req, key }).then(
       (result) => {
-        if (live) setState({ result, error: null, busy: false });
+        if (live) setState({ cacheId, result, error: null, busy: false });
       },
-      (e: unknown) => live && setState({ result: null, error: e instanceof Error ? e.message : String(e), busy: false }),
+      (e: unknown) => live && setState({ cacheId, result: null, error: e instanceof Error ? e.message : String(e), busy: false }),
     );
     return () => {
       live = false;
@@ -157,15 +174,33 @@ function useProjections(drawing: Drawing, cacheId: string): { projections: Proje
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, ready, cacheId]);
 
-  const base = state.result ?? fresh;
+  // Never another sheet's views (the sheet stays mounted when switching sheets).
+  const shown = chooseProjections(state, cacheId, fresh);
+  const base = shown.base;
+  const own = state.cacheId === cacheId;
   const detailsKey = JSON.stringify(drawing.details ?? []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const shortKey = JSON.stringify(drawing.shortened ?? []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const projections = useMemo(() => (base ? withShortenings(withDetails(base, drawing), drawing) : null), [base, detailsKey, shortKey]);
   // True once the views shown are the ones for the drawing as it is now (not the last ones, kept while new ones are worked out).
-  const upToDate = !!fresh && (state.result === null || state.result === fresh);
-  return { projections, subject: subject?.name ?? null, instances: subject?.instances, busy: state.busy, error: state.error, upToDate };
+  const upToDate = shown.upToDate;
+  return { projections, subject: subject?.name ?? null, instances: subject?.instances, drawn: req?.drawn ?? NO_PARTS, busy: own ? state.busy : !fresh, error: own ? state.error : null, upToDate };
+}
+
+const NO_PARTS: SheetPart[] = [];
+
+/**
+ * A sheet's details with what its views of other parts need (see
+ * withViewParts), kept the same object while those don't change.
+ */
+function useViewPartsInfo(info: SheetInfo, drawn: SheetPart[], bomWeights: boolean | undefined): SheetInfo {
+  const doc = useStore((s) => s.history.present);
+  const parts = useStore((s) => s.parts);
+  const others = drawn.filter((p) => p.group !== null);
+  const key = others.length ? JSON.stringify(others.map((p) => [p.group, p.drawing.source, p.subject ? (p.subject.instances ?? p.subject.partIds) : null])) : "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => (key ? withViewParts(info, doc, parts, drawn, bomWeights) : info), [info, key, doc, parts, bomWeights]);
 }
 
 /** The sheet as last laid out on screen (for saving). */
@@ -193,13 +228,24 @@ function arrowsShown(dim: Dimension, d: Pick<Drawing, "dimArrows">): "inside" | 
 }
 
 /** A view's name as the user knows it: "Front", "3D (isometric)", "Section A", "Auxiliary B", "Detail C". */
-function viewName(d: Pick<Drawing, "sections" | "details">, v: { kind: Drawing["views"][number]["kind"]; key: string }): string {
+function viewName(d: Pick<Drawing, "sections" | "details" | "views">, v: { kind: Drawing["views"][number]["kind"]; key: string }): string {
   if (v.kind === "section") {
     const c = d.sections?.find((x) => `section:${x.id}` === v.key);
     return c?.aux ? `Auxiliary ${c.letter}` : `Section ${c?.letter ?? ""}`;
   }
   if (v.kind === "detail") return `Detail ${d.details?.find((c) => `detail:${c.id}` === v.key)?.letter ?? ""}`;
-  return VIEW_LABELS[v.kind];
+  return viewPartName(d, v.key, VIEW_LABELS[v.kind], partNameNow);
+}
+
+/** The name of a part or assembly in the design now (for naming views of other parts). */
+function partNameNow(src: Drawing["source"]): string | null {
+  const s = useStore.getState();
+  return sourceName(src, s.history.present, s.parts);
+}
+
+/** The view a section, cut or detail is drawn on, as the panel names it: "Front", or "Front (Bracket)". */
+function hostLabel(d: Pick<Drawing, "sections" | "details" | "views">, host: ViewHost): string {
+  return viewPartName(d, host, VIEW_LABELS[hostKindOf(host)], partNameNow);
 }
 
 /**
@@ -229,7 +275,7 @@ export function autoDimensionDrawing() {
     return;
   }
   const d = pageOf(whole, sheet.pageId);
-  const added = autoDimensions(sheet.projections, drawingViewKeys(d), d.dimensions ?? [], viewScales(d, sheet.layout.scale), () => newId("dm"), d.projection === "third");
+  const added = autoDimensionSheet(sheet.projections, d, d.dimensions ?? [], viewScales(d, sheet.layout.scale), () => newId("dm"), d.projection === "third");
   if (!added.length) {
     const hasViews = drawingViewKeys(d).some((k) => k !== "iso" && !k.startsWith("section:"));
     s.showToast(hasViews ? "Nothing more to add — it's already dimensioned." : "Auto dimension needs a front, top or side view.", "info");
@@ -238,7 +284,7 @@ export function autoDimensionDrawing() {
   // Room for the new dimensions round the views: more space beside the 3D view, or one scale
   // smaller (the new rows are spaced for the scale they end up at).
   const existing = d.dimensions ?? [];
-  const next = fitDrawing(d, sheet.projections, sheet.info, (scale) => [...existing, ...autoDimensions(sheet.projections, drawingViewKeys(d), existing, viewScales(d, scale), () => newId("dm"), d.projection === "third")]);
+  const next = fitDrawing(d, sheet.projections, sheet.info, (scale) => [...existing, ...autoDimensionSheet(sheet.projections, d, existing, viewScales(d, scale), () => newId("dm"), d.projection === "third")]);
   const count = (next.dimensions?.length ?? 0) - existing.length;
   s.changeDrawing((x) => changePage(x, sheet.pageId, () => next));
   s.showToast(`Added ${count} dimension${count === 1 ? "" : "s"}. Drag a number to move it, or select one and press Delete.`, "success");
@@ -264,7 +310,7 @@ async function allSheets(whole: Drawing): Promise<SheetLayout[]> {
     if (!req) throw new MissingPart(missingPartMessage(whole, id, !!page.source));
     const base = await fetchProjections(cacheIdOf(whole, id), req);
     const projections = withShortenings(withDetails(base, page), page);
-    out.push(layoutSheet(page, projections, sheetInfo(page, doc, s.parts, req.subject.name, req.subject.instances, i + 1, ids.length)));
+    out.push(layoutSheet(page, projections, withViewParts(sheetInfo(page, doc, s.parts, req.subject.name, req.subject.instances, i + 1, ids.length), doc, s.parts, req.drawn, page.bomWeights)));
   }
   return out;
 }
@@ -811,9 +857,10 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
   const pageId = usePageId(whole);
   const drawing = useMemo(() => pageOf(whole, pageId), [whole, pageId]);
   const change = changeShownPage;
-  const { projections, subject, upToDate } = useProjections(drawing, cacheIdOf(whole, pageId));
+  const { projections, subject, upToDate, drawn } = useProjections(drawing, cacheIdOf(whole, pageId));
   // The scale "Fit to sheet" picks (with any room it keeps for dimensions).
-  const info = useMemo<SheetInfo>(() => ({ designName: "", subject: "", date: "", bom: drawingBom(drawing, doc, parts), taps: tapSizes(doc, drawing) }), [drawing, doc, parts]);
+  const ownInfo = useMemo<SheetInfo>(() => ({ designName: "", subject: "", date: "", bom: drawingBom(drawing, doc, parts), taps: tapSizes(doc, drawing) }), [drawing, doc, parts]);
+  const info = useViewPartsInfo(ownInfo, drawn, drawing.bomWeights);
   const auto = useMemo(() => (projections ? layoutSheet({ ...drawing, scale: undefined }, projections, info) : null), [drawing, projections, info]);
   const sourceValue = drawing.source ? `${drawing.source.kind}:${drawing.source.id}` : "";
 
@@ -970,7 +1017,7 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
         <div className="drawing-views">
           {VIEW_KINDS.map((k) => (
             <label key={k} className="check-row">
-              <input type="checkbox" checked={drawing.views.some((v) => v.kind === k)} onChange={() => change((d) => toggleView(d, k))} />
+              <input type="checkbox" checked={drawing.views.some((v) => v.kind === k && !v.source && !v.parent)} onChange={() => change((d) => toggleView(d, k))} />
               {VIEW_LABELS[k]}
             </label>
           ))}
@@ -1091,6 +1138,7 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
           )}
         </div>
       </section>
+      <OtherPartViews drawing={drawing} change={change} drawn={drawn} />
       <ViewScales drawing={drawing} change={change} sheetScale={auto && !drawing.scale ? auto.scale : (drawing.scale ?? null)} projections={projections} info={info} />
       <SectionsList drawing={drawing} change={change} missed={missedSections(drawing, projections, upToDate)} />
       <DetailsList drawing={drawing} change={change} />
@@ -1130,12 +1178,110 @@ function withViewScale(d: Drawing, viewId: string, scale: number | undefined, pr
   };
 }
 
+/**
+ * Views of other parts (as in Onshape, each view can show its own part or
+ * assembly): add one, choose what it shows, tick the views projected from it,
+ * or remove it with everything drawn on it.
+ */
+function OtherPartViews({ drawing, change, drawn }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void; drawn: SheetPart[] }) {
+  const doc = useStore((s) => s.history.present);
+  const parts = useStore((s) => s.parts);
+  const groups = sourceGroups(doc, parts);
+  const bases = viewParts(drawing);
+  const add = (value: string) => {
+    const item = groups.flatMap((g) => g.items).find((it) => it.value === value);
+    if (!item) return;
+    const id = newId("vw");
+    const made = addViewOf(drawing, id, item.source);
+    change((d) => addViewOf(d, id, item.source).drawing);
+    useStore
+      .getState()
+      .showToast(
+        made.key === "front"
+          ? `${item.name} is this sheet's own part: its front view is now ticked under Views.`
+          : `Added a front view of ${item.name}. Tick the views projected from it below; drag it to move them all.`,
+        "success",
+      );
+  };
+  return (
+    <section className="panel-section">
+      <h3>Views of other parts</h3>
+      {!bases.length && <p className="panel-hint">Any view can show another part or assembly than the sheet&apos;s, with its own views lined up with it.</p>}
+      {bases.map((b, i) => {
+        const value = `${b.source.kind}:${b.source.id}`;
+        const missing = !drawn.find((p) => p.group === b.id)?.subject;
+        const name = sourceName(b.source, doc, parts) ?? "a part that no longer exists";
+        return (
+          <div className="drawing-fields" key={b.id} data-view-part={b.id}>
+            <div className="drawing-field">
+              <label htmlFor={`view-part-${b.id}`}>
+                {VIEW_LABELS[b.kind]} view {i + 1} shows
+              </label>
+              <select
+                id={`view-part-${b.id}`}
+                value={value}
+                onChange={(e) => {
+                  const item = groups.flatMap((g) => g.items).find((it) => it.value === e.target.value);
+                  if (item) change((d) => setViewSource(d, b.id, item.source));
+                }}
+              >
+                {missing && <option value={value}>(missing — choose another)</option>}
+                {groups.map((g) => (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.items.map((it) => (
+                      <option key={it.value} value={it.value}>
+                        {it.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            {missing && <p className="panel-hint warn">This view&apos;s part no longer exists, so it isn&apos;t drawn. Choose another above, or remove the view.</p>}
+            <div className="drawing-views" role="group" aria-label={`Views projected from the view of ${name}`}>
+              {PROJECTED_KINDS.filter((k) => k !== b.kind && (k !== "flat" || b.source.kind === "part")).map((k) => (
+                <label key={k} className="check-row">
+                  <input type="checkbox" checked={drawing.views.some((v) => v.parent === b.id && v.kind === k)} onChange={() => change((d) => toggleProjected(d, b.id, k))} />
+                  {VIEW_LABELS[k]}
+                </label>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="text-button small-text danger-text"
+              title="Remove this view, the views projected from it, and everything drawn on them"
+              onClick={() => change((d) => removeViewOf(d, b.id))}
+            >
+              Remove the views of {name}
+            </button>
+          </div>
+        );
+      })}
+      <div className="drawing-field">
+        <label htmlFor="add-view-part">Add a view of</label>
+        <select id="add-view-part" value="" onChange={(e) => add(e.target.value)}>
+          <option value="">Choose a part or assembly…</option>
+          {groups.map((g) => (
+            <optgroup key={g.label} label={g.label}>
+              {g.items.map((it) => (
+                <option key={it.value} value={it.value}>
+                  {it.name}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
+    </section>
+  );
+}
+
 /** Each view's scale: the sheet's (the usual), or its own, noted under the view. */
 function ViewScales({ drawing, change, sheetScale, projections, info }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void; sheetScale: number | null; projections: Projections | null; info: SheetInfo }) {
   const views = drawing.views.filter((v) => v.kind !== "detail");
   if (!views.length) return null;
   const name = (v: Drawing["views"][number]) => {
-    if (v.kind !== "section") return VIEW_LABELS[v.kind];
+    if (v.kind !== "section") return viewName(drawing, { kind: v.kind, key: viewKey(v) });
     const c = drawing.sections?.find((x) => x.id === v.section);
     return c?.aux ? `View ${c.letter}` : `Section ${c?.letter ?? ""}`;
   };
@@ -1219,7 +1365,7 @@ function BreakOutsList({ drawing, change }: { drawing: Drawing; change: (fn: (d:
         {list.map((b, i) => (
           <div className="section-row" key={b.id}>
             <span>
-              Cut {i + 1} <span className="muted small">(on {VIEW_LABELS[b.host]})</span>
+              Cut {i + 1} <span className="muted small">(on {hostLabel(drawing, b.host)})</span>
               <br />
               <DepthBox value={b.depth} label={`Broken-out cut ${i + 1} depth`} onCommit={(depth) => change((d) => putBreakOut(d, { ...b, depth }))} />
             </span>
@@ -1252,7 +1398,7 @@ function ShortenedList({ drawing, change }: { drawing: Drawing; change: (fn: (d:
         {list.map((s, i) => (
           <div className="section-row" key={s.id}>
             <span>
-              Break {i + 1} <span className="muted small">(on {VIEW_LABELS[s.host]}, {s.axis === "x" ? "across" : "up and down"})</span>
+              Break {i + 1} <span className="muted small">(on {hostLabel(drawing, s.host)}, {s.axis === "x" ? "across" : "up and down"})</span>
             </span>
             <span className="row-actions-inline">
               <button
@@ -1305,7 +1451,7 @@ function DetailsList({ drawing, change }: { drawing: Drawing; change: (fn: (d: D
         {details.map((x) => (
           <div className="section-row" key={x.id}>
             <span>
-              Detail {x.letter} <span className="muted small">(on {VIEW_LABELS[x.host]})</span>
+              Detail {x.letter} <span className="muted small">(on {hostLabel(drawing, x.host)})</span>
             </span>
             <span className="row-actions-inline">
               <select
@@ -1352,7 +1498,7 @@ function SectionsList({ drawing, change, missed }: { drawing: Drawing; change: (
         {sections.map((s: SectionCut) => (
           <div className="section-row" key={s.id}>
             <span>
-              {s.aux ? `View ${s.letter} (auxiliary)` : `Section ${s.letter}-${s.letter}`} <span className="muted small">(on {VIEW_LABELS[s.host]})</span>
+              {s.aux ? `View ${s.letter} (auxiliary)` : `Section ${s.letter}-${s.letter}`} <span className="muted small">(on {hostLabel(drawing, s.host)})</span>
               {missed.has(s.id) && (
                 <span className="muted small" role="note">
                   {" "}
@@ -1467,7 +1613,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   const isSelected = (id: string) => selectedDims.includes(id);
   /** A selection box being dragged out over empty paper (sheet mm). */
   const [selBox, setSelBox] = useState<{ from: P2; to: P2; additive: boolean } | null>(null);
-  const { projections, subject, instances, busy, error } = useProjections(drawing, cacheIdOf(whole, pageId));
+  const { projections, subject, instances, drawn, busy, error } = useProjections(drawing, cacheIdOf(whole, pageId));
   const instancesKey = instances ? JSON.stringify(instances) : "";
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const balloons = useMemo(() => balloonsFor(bom, instances, allParts), [bom, instancesKey, allParts]);
@@ -1527,10 +1673,11 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   }, [drawing, drag, resize, dimDrag, noteDrag]);
   const unit = useLengthUnit();
   const taps = useMemo(() => tapSizes(doc, drawing), [doc, drawing]);
-  const info = useMemo<SheetInfo>(
+  const ownInfo = useMemo<SheetInfo>(
     () => ({ designName: docName, subject: subject ?? "", date: today(), bom, balloons, taps, ...(sheetCount > 1 ? { sheetNo, sheetCount } : {}) }),
     [docName, subject, bom, balloons, taps, sheetNo, sheetCount],
   );
+  const info = useViewPartsInfo(ownInfo, drawn, drawing.bomWeights);
   const layout = useMemo(
     () => (projections ? layoutSheet(shown, projections, info) : null),
     // The units change the dimension numbers and the title block.
@@ -1817,7 +1964,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   const cutPoint = (here: P2, onView?: string): { view: string; at: P2; sheet: P2 } | null => {
     if (!layout || !projections) return null;
     const snap = findSnap(snaps, here, tolerance());
-    if (snap && snap.kind !== "line" && (!onView || snap.view === onView) && SECTION_HOSTS.includes(snap.view as SectionCut["host"])) {
+    if (snap && snap.kind !== "line" && (!onView || snap.view === onView) && SECTION_HOSTS.includes(hostKindOf(snap.view))) {
       return snap.kind === "point" ? { view: snap.view, at: snap.at, sheet: snap.sheet } : { view: snap.view, at: snap.centre, sheet: snap.sheet };
     }
     const v = layout.views.find(
@@ -2242,6 +2389,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
           layout?.views.map((v) => (
             <rect
               key={v.id}
+              data-view-key={v.key}
               className={`drawing-view-handle${drag?.viewId === v.id ? " dragging" : ""}${selView === v.id ? " selected" : ""}`}
               x={v.box[0] - 3}
               y={H - v.box[3] - 3}

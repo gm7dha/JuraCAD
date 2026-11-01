@@ -20,10 +20,22 @@ const norm = (a: V3): V3 => {
 /** Views a cutting line can be drawn on. */
 export const SECTION_HOSTS: ViewKind[] = ["front", "top", "right", "left", "back", "bottom"];
 
-/** The key a view's lines are kept under: its kind, or "section:<id>" for a section. */
-export function viewKey(v: Pick<DrawingView, "kind" | "section" | "detail">): string {
+/**
+ * The key a view's lines are kept under: its kind, "section:<id>" for a
+ * section, "detail:<id>" for a detail, or "<kind>@<base view id>" for a view of
+ * another part than the sheet's (see viewParts.ts).
+ */
+export function viewKey(v: Pick<DrawingView, "kind" | "section" | "detail"> & Partial<Pick<DrawingView, "id" | "source" | "parent">>): string {
   if (v.kind === "detail" && v.detail) return `detail:${v.detail}`;
-  return v.kind === "section" && v.section ? `section:${v.section}` : v.kind;
+  if (v.kind === "section" && v.section) return `section:${v.section}`;
+  const group = v.source && v.id ? v.id : v.parent;
+  return group ? `${v.kind}@${group}` : v.kind;
+}
+
+/** The kind of view a host is: "front" for "front" or "front@<id>" (a view of another part). */
+export function hostKindOf(host: string): ViewKind {
+  const i = host.indexOf("@");
+  return (i < 0 ? host : host.slice(0, i)) as ViewKind;
 }
 
 /** A point on a view from its fractions across the view's box. */
@@ -136,7 +148,7 @@ export interface SectionRequest {
 export function sectionRequests(d: Drawing): SectionRequest[] {
   return (d.sections ?? [])
     .filter((s) => d.views.some((v) => v.kind === "section" && v.section === s.id))
-    .map((s) => ({ key: `section:${s.id}`, host: s.host, a: s.a, b: s.b, flip: !!s.flip, aux: !!s.aux }));
+    .map((s) => ({ key: `section:${s.id}`, host: hostKindOf(s.host), a: s.a, b: s.b, flip: !!s.flip, aux: !!s.aux }));
 }
 
 /** What the geometry engine needs for each broken-out cut. */
@@ -148,8 +160,8 @@ export interface BreakOutRequest {
 }
 
 export function breakOutRequests(d: Drawing): BreakOutRequest[] {
-  const shown = new Set(d.views.map((v) => v.kind));
-  return (d.breakouts ?? []).filter((b) => shown.has(b.host)).map((b) => ({ host: b.host, a: b.a, b: b.b, depth: b.depth }));
+  const shown = new Set<string>(d.views.map(viewKey));
+  return (d.breakouts ?? []).filter((b) => shown.has(b.host)).map((b) => ({ host: hostKindOf(b.host), a: b.a, b: b.b, depth: b.depth }));
 }
 
 /** Add, change or remove a broken-out cut. */

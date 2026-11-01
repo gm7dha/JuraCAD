@@ -12,7 +12,9 @@
  */
 import type { ViewHole, ViewProjection } from "../kernel/protocol";
 import { holeAt, holeOfCircle, matchingHoles } from "./holeCallouts";
-import type { Dimension, ViewKind } from "../model/types";
+import type { Dimension, Drawing, ViewKind } from "../model/types";
+import { viewKey } from "./sections";
+import { keyIn, onSheet, partProjections, splitKey, viewParts } from "./viewParts";
 import { dimPoint } from "./dimensions";
 import type { Projections } from "./sheet";
 
@@ -193,6 +195,23 @@ export function autoDimensions(projections: Projections, views: string[], existi
   return out;
 }
 
+/**
+ * Auto dimension for a whole sheet: the sheet's own part's views as
+ * autoDimensions does, then each view of another part with the views projected
+ * from it, each dimensioned on its own (see viewParts.ts).
+ */
+export function autoDimensionSheet(projections: Projections, d: Pick<Drawing, "views">, existing: Dimension[], scale: number | ((view: string) => number), newId: () => string, third = false): Dimension[] {
+  const keys = d.views.map(viewKey);
+  const out = autoDimensions(projections, keys, existing, scale, newId, third);
+  for (const { id: group } of viewParts(d)) {
+    const mine = keys.filter((k) => splitKey(k).group === group).map((k) => splitKey(k).kind);
+    const before = existing.filter((x) => splitKey(x.view).group === group).map((x) => ({ ...x, view: splitKey(x.view).kind }));
+    const at = typeof scale === "function" ? (v: string) => scale(keyIn(v, group)) : scale;
+    out.push(...onSheet(autoDimensions(partProjections(projections, group), mine, before, at, newId, third), group));
+  }
+  return out;
+}
+
 export type Side = "above" | "below" | "left" | "right";
 
 /** Which side of a view a row of across ("h") or up-and-down ("v") dimensions goes. */
@@ -213,6 +232,9 @@ function boxedIn(view: string, dir: Dir, third: boolean, shown: readonly string[
 }
 
 export function rowSide(view: string, dir: "h" | "v", third = false, shown?: readonly string[]): Side {
+  // A view of another part: placed among that part's own views (see viewParts.ts).
+  const { kind, group } = splitKey(view);
+  if (group) return rowSide(kind, dir, third, shown?.filter((k) => splitKey(k).group === group).map((k) => splitKey(k).kind));
   const side = (third ? SIDES_THIRD : SIDES)[view as ViewKind] ?? { h: "below", v: "right" };
   const want = dir === "h" ? side.h : side.v;
   // When the usual side has a view next to it and the other side is free, use that.

@@ -1369,6 +1369,41 @@ try {
     await page.getByRole("button", { name: "Close pattern" }).click();
     subReport += `; its STEP file kept the structure (Assembly 1 defined once, used twice; ${shapes} part shape(s)); an exploded view step moved one part inside a copy; Part 2 mirrored across a face${mirrorState.inner ? " of a part inside a copy" : ""} ${sameHand ? "as the same part (symmetric)" : "as a mirror image"}`;
 
+    // Make the mated copy flexible (Onshape's Make flexible): its parts join this assembly's solve. Nothing jumps —
+    // the mate on a part inside it still holds — and it says so in its row; Undo makes it rigid again.
+    step = "making a sub-assembly flexible";
+    const innerFace = () =>
+      page.evaluate(({ second }) => {
+        const v = window.juracadViewport.current;
+        return v
+          .shownParts()
+          .filter((p) => p.id.startsWith(`${second}/`))
+          .map((p) => ({ key: p.id, at: v.screenPointOnFace(p.id, p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99)) }));
+      }, asm2);
+    const rigidSpots = await innerFace();
+    const bomRigid = await page.locator(".bom-table").innerText();
+    const copyRow = page.locator(".feature-row", { hasText: "Assembly 1 <2>" }).first();
+    if (!/\bselected\b/.test((await copyRow.getAttribute("class")) ?? "")) await copyRow.click();
+    await page.getByLabel("Flexible (its parts can move here)").check();
+    await page.waitForSelector('.feature-row:has-text("Assembly 1 <2>") >> text=flexible', { timeout: 5_000 });
+    const flexState = await page.evaluate(({ id, second }) => window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.id === second).flexible ?? false, asm2);
+    if (flexState !== true) throw new Error("ticking Flexible didn't make the copy flexible");
+    if ((await page.locator(".panel-section.mates .feature-row.failed").count()) > 0) throw new Error(`a mate fails once the copy is flexible: ${await page.locator(".panel-section.mates .feature-row.failed").first().getAttribute("title")}`);
+    if ((await page.locator(".instance-panel .param-message.error").count()) > 0) throw new Error(`the flexible copy has a problem: ${await page.locator(".instance-panel .param-message.error").first().innerText()}`);
+    await page.waitForTimeout(300);
+    const flexSpots = await innerFace();
+    for (const r of rigidSpots) {
+      const f = flexSpots.find((x) => x.key === r.key);
+      if (!r.at || !f?.at || Math.hypot(r.at.x - f.at.x, r.at.y - f.at.y) > 2) throw new Error(`a part inside the copy jumped when it was made flexible (${r.key}: ${JSON.stringify(r.at)} → ${JSON.stringify(f?.at)})`);
+    }
+    if ((await page.locator(".bom-table").innerText()) !== bomRigid) throw new Error("the parts list changed when the copy was made flexible");
+    await shot("subassembly-flexible");
+    // (Undo from the top bar's button, as the checkbox still has the keyboard.)
+    await page.evaluate(() => document.activeElement?.blur());
+    await tool("Undo");
+    await page.waitForFunction(({ id, second }) => !window.juracadStore.getState().history.present.assemblies.find((x) => x.id === id).instances.find((i) => i.id === second).flexible, asm2, { timeout: 5_000 });
+    subReport += `; Assembly 1 <2> made flexible (its parts stayed put, the mate on a part inside it still held), then undone`;
+
     // Double-click a sub-assembly to open it.
     await page.locator(".feature-row >> text=Assembly 1 <1>").dblclick();
     await page.waitForSelector(".tab.active >> text=Assembly 1", { timeout: 5_000 });
@@ -1851,6 +1886,53 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll(".drawing-text")].some((t) => t.textContent === "1 OF 3"), null, { timeout: 60_000 });
     const first = await sheetTexts();
     if (first.includes("ASM-100") || first.includes("QTY")) throw new Error("sheet 1 shows sheet 3's part number or parts list");
+  }
+  step = "a view of another part";
+  {
+    // Sheet 1 draws the Bracket: add a front view of another part, then its top view projected from it.
+    const other = await page.evaluate(() => {
+      const sel = document.querySelector("#add-view-part");
+      const src = window.juracadStore.getState().history.present.drawings[0].source;
+      const opt = [...sel.querySelectorAll("option")].find((o) => o.value && o.value.startsWith("part:") && o.value !== `${src.kind}:${src.id}`);
+      return opt ? { value: opt.value, name: opt.textContent } : null;
+    });
+    if (!other) throw new Error("there's no other part to add a view of");
+    const handles = () => page.evaluate(() => [...document.querySelectorAll(".drawing-view-handle")].map((r) => ({ key: r.getAttribute("data-view-key"), x: Number(r.getAttribute("x")) + Number(r.getAttribute("width")) / 2 })));
+    const before = await handles();
+    // The sheet shows sheet 1's own views — all of them, and only them — as soon as its title block does
+    // (it once showed the last sheet's views for a moment after switching back).
+    const own = await page.evaluate(() =>
+      window.juracadStore.getState().history.present.drawings[0].views.map((v) => (v.kind === "section" ? `section:${v.section}` : v.kind === "detail" ? `detail:${v.detail}` : v.kind)),
+    );
+    if (JSON.stringify(before.map((h) => h.key).sort()) !== JSON.stringify([...own].sort())) throw new Error(`sheet 1 shows the views ${before.map((h) => h.key).join(", ")} instead of its own ${own.join(", ")}`);
+    await page.locator("#add-view-part").selectOption(other.value);
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-view-handle")].some((r) => /^front@/.test(r.getAttribute("data-view-key") ?? "")), null, { timeout: 60_000 });
+    await page.locator(".drawing-panel").getByRole("group", { name: `Views projected from the view of ${other.name}` }).getByLabel("Top", { exact: true }).check();
+    await page.waitForFunction(() => [...document.querySelectorAll(".drawing-view-handle")].some((r) => /^top@/.test(r.getAttribute("data-view-key") ?? "")), null, { timeout: 60_000 });
+    const after = await handles();
+    const front = after.find((h) => h.key.startsWith("front@"));
+    const top = after.find((h) => h.key.startsWith("top@"));
+    if (front.key.slice(6) !== top.key.slice(4)) throw new Error(`the top view isn't projected from the new view (${front.key}, ${top.key})`);
+    if (Math.abs(front.x - top.x) > 0.01) throw new Error(`the projected top view isn't lined up under its front view (${front.x} vs ${top.x})`);
+    if (after.length !== before.length + 2) throw new Error(`expected 2 more views, got ${before.length} → ${after.length}`);
+    // The sheet's own views are all still there.
+    for (const h of before) if (!after.some((x) => x.key === h.key)) throw new Error(`the sheet's ${h.key} view went`);
+    const pts = await page.evaluate((k) => window.juracadDrawing.viewPoints(k), front.key);
+    if (!pts?.bounds) throw new Error("the view of the other part came back empty");
+    // Auto dimension measures it on its own views.
+    await page.getByRole("button", { name: "Auto dimension", exact: true }).click();
+    await page.waitForFunction((g) => (window.juracadStore.getState().history.present.drawings[0].dimensions ?? []).some((d) => d.view === `front@${g}` || d.view === `top@${g}`), front.key.slice(6), { timeout: 10_000 });
+    await shot("viewpart");
+    // Saved as part of the PDF (every sheet).
+    const pdfPromise3 = page.waitForEvent("download", { timeout: 60_000 });
+    await page.getByRole("button", { name: "PDF", exact: true }).click();
+    const pdf3 = readFileSync(await (await pdfPromise3).path(), "latin1");
+    if (!pdf3.includes("/Count 3")) throw new Error("the PDF with a view of another part doesn't have all 3 sheets");
+    // Removing it takes its views and their dimensions away.
+    await page.getByRole("button", { name: `Remove the views of ${other.name}` }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".drawing-view-handle")].some((r) => (r.getAttribute("data-view-key") ?? "").includes("@")), null, { timeout: 60_000 });
+    const left = await page.evaluate(() => (window.juracadStore.getState().history.present.drawings[0].dimensions ?? []).filter((d) => d.view.includes("@")).length);
+    if (left) throw new Error(`${left} dimension(s) of the removed view stayed`);
   }
   step = "drawing the assembly";
   await page.locator("#drawing-source").selectOption({ label: "Assembly 1" });
