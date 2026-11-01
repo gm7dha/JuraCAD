@@ -3,7 +3,7 @@ import { useStore, type SketchTool } from "../model/store";
 import { applyRelation, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
 import { patternCurves, readPatternSettings, readTransformSettings, transformCurves } from "../sketch/tools";
 import { viewportApi } from "../viewport/Viewport";
-import { linkAllEdges } from "../sketch/links";
+import { linkAllEdges, piercePoint, type RefEdge } from "../sketch/links";
 import { addImage, changeText, deleteWithExtras, textById } from "../sketch/sketchText";
 import { DxfError, insertDxf, insertSummary, MAX_DXF_SIZE, parseDxf } from "../sketch/dxf";
 import { evaluate } from "../model/expr";
@@ -70,12 +70,22 @@ export function setPatternOption(patch: Parameters<ReturnType<typeof useStore.ge
   viewportApi.sketch?.refreshPreview();
 }
 
+/** The open sketch's references: its face's edges, then everything else it can use (as the sketch controller has them). */
+function sketchRefs(): RefEdge[] {
+  const st = useStore.getState();
+  const id = st.editing?.draft.id;
+  const edges = (id && st.sketchLinks?.[id]?.edges) || [];
+  const candidates = id && st.sketchCandidates?.id === id ? st.sketchCandidates.list : [];
+  return [...edges, ...candidates];
+}
+
 export function applySketchRelation(tool: RelationTool) {
   const s = useStore.getState();
   const data = sketchData();
   if (!data || !s.sketch) return;
   const sel = s.sketch.selection.filter((id) => !data.constraints.some((c) => c.id === id));
-  const r = applyRelation(data, tool, sel);
+  // Pierce needs to know where things from outside pass through the sketch (the engine lists those places).
+  const r = tool === "pierce" ? piercePoint(data, sel, sketchRefs()) : applyRelation(data, tool, sel);
   if (r.error) {
     s.setSketchMessage(r.error, "error");
     return;

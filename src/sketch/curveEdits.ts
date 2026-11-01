@@ -7,7 +7,8 @@
  * the original when it changes (see `offset` in solver.ts).
  */
 import { evaluate } from "../model/expr";
-import { crossings, curveParam, nearestParam, offsetParams, offsetPieces, OFFSET_TOLERANCE, pieceOf, splineThrough, tightestBend, type CurveParam, type P2 } from "./curves";
+import { crossings, curveParam, ellipseSpan, nearestParam, offsetParams, offsetPieces, OFFSET_TOLERANCE, pieceOf, splinePieces, splineThrough, type CurveParam, type P2 } from "./curves";
+import { bezierAt, bezierD1, bezierD2, conicAt, conicBetween, cubicOn } from "./spline";
 import { curveEnds, curvePoints, deleteItems, onCurveType, settle, sketchId, type EditResult } from "./ops";
 import { offsetSpan, solveSketch } from "./solver";
 import type { SketchConstraint, SketchCurve, SketchData, SketchEllipse, SketchPoint, SketchSpline } from "./types";
@@ -272,8 +273,7 @@ export function offsetWavy(s: SketchData, target: Wavy, at: { x: number; y: numb
   // Which side: the curve's left (as it runs) or its right.
   const side = d[0] * (at.y - q[1]) - d[1] * (at.x - q[0]) >= 0 ? 1 : -1;
   const signed = side * r.value;
-  if (tightestBend(path, side) * r.value >= 0.999)
-    return fail(`That offset is more than the tightest bend of the ${named(target)} can take on that side — use a smaller distance, or offset the other way.`);
+  // Past the tightest bend on that side the copy folds back over itself there: it's still made (the sketch panel warns, see offsetCheck.ts).
   const knots = target.type === "spline" && target.conic === undefined ? Array.from({ length: Math.round(path.hi - path.lo) + 1 }, (_, i) => path.lo + i) : undefined;
   const us = offsetParams(path, signed, OFFSET_TOLERANCE / 2, knots);
   const params = path.closed ? us.slice(0, -1) : us;
@@ -287,4 +287,183 @@ export function offsetWavy(s: SketchData, target: Wavy, at: { x: number; y: numb
   const keepApart: SketchConstraint = { ...con("offset", [copyId, target.id], distanceText, [side]), labelOffset: { x: 0, y: 0 } };
   const result = settle({ points: [...s.points, ...points], curves: [...s.curves, copy], constraints: [...s.constraints, keepApart] });
   return { ...result, curveIds: [copyId] };
+}
+
+// ---------------------------------------------------------------------------
+// Extend
+
+/** How far round (radians) a path may turn while it's carried on past its end, looking for something to reach. */
+const EXTEND_TURN = Math.PI / 2;
+/** The longest an extension may be, as a multiple of the sketch's size. */
+const EXTEND_REACH = 10;
+
+/** The sketch's size (its points' spread, at least 1 mm), to judge how far is too far. */
+function sketchSize(s: SketchData): number {
+  let lo = [0, 0], hi = [0, 0];
+  for (const p of s.points) {
+    lo = [Math.min(lo[0], p.x), Math.min(lo[1], p.y)];
+    hi = [Math.max(hi[0], p.x), Math.max(hi[1], p.y)];
+  }
+  return Math.max(1, Math.hypot(hi[0] - lo[0], hi[1] - lo[1]));
+}
+
+/** The nearest crossing along a path ahead (past `minU`), with the other curves (and the curve's own other parts). */
+function firstAhead(s: SketchData, ahead: CurveParam, skip: string | null, minU: number, ok: (c: { ua: number; p: P2; by: string }) => boolean = () => true) {
+  let best: { ua: number; p: P2; by: string } | null = null;
+  for (const other of s.curves) {
+    if (other.id === skip) continue;
+    for (const x of crossings(ahead, curveParam(s, other))) {
+      const hit = { ua: x.ua, p: x.p, by: other.id };
+      if (x.ua > minU && ok(hit) && (!best || x.ua < best.ua)) best = hit;
+    }
+  }
+  return best;
+}
+
+/** Move an extended curve's end (and anything else listed) to its new place, hold it on what it reached, and solve. */
+function finishExtend(s: SketchData, moves: Map<string, P2>, curves: SketchCurve[], curveId: string, endId: string, by: string, what: string): EditResult {
+  const target = s.curves.find((c) => c.id === by)!;
+  const points = s.points.map((p) => {
+    const to = moves.get(p.id);
+    return to ? { ...p, x: to[0], y: to[1] } : p;
+  });
+  // Reaching round to itself, the end needs no holding (it stays where the curve crosses itself).
+  const constraints = by === curveId ? s.constraints : [...s.constraints, con(onCurveType(target), [endId, by])];
+  const solved = solveSketch({ ...s, points, curves, constraints });
+  // Refused when the constraints can't be met, or would only be met by pulling the end back (moving what it reached instead).
+  const want = moves.get(endId)!;
+  const got = solved.sketch.points.find((p) => p.id === endId);
+  if (!solved.ok || !got || dist([got.x, got.y], want) > 1e-6)
+    return { sketch: s, error: `That ${what}'s end is held where it is by its constraints, so it can't be extended. Remove what holds it (a fix or dimension on that end) first.` };
+  return { sketch: solved.sketch };
+}
+
+/**
+ * Extend a spline, conic or part of an ellipse from the end nearest the click
+ * until it meets another curve (the nearest one ahead). A spline (or conic)
+ * carries on naturally: its last piece continues just as it was curving, so
+ * it stays smooth and keeps its shape up to the old end exactly. Part of an
+ * ellipse carries on round its ellipse.
+ */
+export function extendWavy(s: SketchData, target: Wavy, at: { x: number; y: number }): EditResult {
+  if (target.type === "ellipse") return extendEllipse(s, target, at);
+  if (target.closed) return { sketch: s, error: "A closed spline has no ends to extend." };
+  if (target.offsetParams)
+    return { sketch: s, error: "That spline is an offset copy, so it follows its original: extend the original instead (the copy follows it)." };
+  const kind = named(target);
+  const [first, last] = endIds(target);
+  const P = (id: string): P2 => {
+    const q = s.points.find((p) => p.id === id);
+    return q ? [q.x, q.y] : [0, 0];
+  };
+  const click: P2 = [at.x, at.y];
+  const atEnd = dist(click, P(last)) <= dist(click, P(first));
+  const endId = atEnd ? last : first;
+  // The piece at that end, as a path by its own parameter t (0…1), to be carried on past t = 1 (or before t = 0).
+  const conic = target.conic !== undefined && target.points.length === 3;
+  const pieces = conic ? [] : splinePieces(s, target);
+  const piece = atEnd ? pieces[pieces.length - 1] : pieces[0];
+  const [a, apex, b] = conic ? target.points.map(P) : [];
+  const f = conic
+    ? (t: number) => conicAt(a, apex, b, target.conic!, t)
+    : (t: number) => ({ p: bezierAt(piece, t), d1: bezierD1(piece, t), d2: bezierD2(piece, t) });
+  // A conic's weights must stay positive where it's carried on (beyond that it would jump through infinity).
+  const conicOk = (t: number) => {
+    if (!conic) return true;
+    const r = Math.min(0.99, Math.max(0.01, target.conic!));
+    const w = r / (1 - r);
+    return (1 - t) * (1 - t) + 2 * w * (1 - t) * t + t * t > 1e-6;
+  };
+  const e = atEnd ? 1 : 0;
+  const sigma = atEnd ? 1 : -1;
+  const d0 = f(e).d1;
+  const speed0 = Math.hypot(d0[0], d0[1]);
+  if (speed0 < 1e-12) return { sketch: s, error: `That ${kind} stops dead at its end, so there's no way to carry it on.` };
+  // Walk out along the carried-on piece while it keeps heading roughly the same way, not too far.
+  const reach = EXTEND_REACH * sketchSize(s);
+  const step = 1 / 32;
+  const vs = [0];
+  let length = 0;
+  let prev = f(e).p;
+  for (let k = 1; k <= 32 * 64; k++) {
+    const v = k * step;
+    const t = e + sigma * v;
+    if (!conicOk(t)) break;
+    const here = f(t);
+    const d = here.d1;
+    const sp = Math.hypot(d[0], d[1]);
+    if (sp < 1e-9 * speed0) break;
+    const cos = (d[0] * d0[0] + d[1] * d0[1]) / (sp * speed0);
+    if (cos < Math.cos(EXTEND_TURN)) break;
+    length += dist(here.p, prev);
+    prev = here.p;
+    vs.push(v);
+    if (length > reach) break;
+  }
+  if (vs.length < 2) return { sketch: s, error: `There's nothing ahead of that end for the ${kind} to reach.` };
+  const ahead: CurveParam = {
+    lo: 0,
+    hi: vs[vs.length - 1],
+    closed: false,
+    at: (v) => f(e + sigma * v).p,
+    d1: (v) => {
+      const d = f(e + sigma * v).d1;
+      return [sigma * d[0], sigma * d[1]];
+    },
+    d2: (v) => f(e + sigma * v).d2,
+    samples: vs,
+  };
+  const endAt = P(endId);
+  const hit = firstAhead(s, ahead, null, 1e-9, (c) => dist(c.p, endAt) > 1e-6);
+  if (!hit) return { sketch: s, error: `There's nothing ahead of that end for the ${kind} to reach.` };
+  const T = e + sigma * hit.ua;
+  const moves = new Map<string, P2>([[endId, hit.p]]);
+  let next: SketchCurve;
+  if (conic) {
+    const part = atEnd ? conicBetween(a, apex, b, target.conic!, 0, T) : conicBetween(a, apex, b, target.conic!, T, 1);
+    moves.set(target.points[1], part.apex);
+    next = { ...target, conic: part.rho };
+  } else {
+    const all = pieces.slice();
+    if (atEnd) all[all.length - 1] = cubicOn(piece, 0, T);
+    else all[0] = cubicOn(piece, T, 1);
+    const { tangents: _t, tangentsIn: _ti, ...rest } = target;
+    void _t;
+    void _ti;
+    next = { ...rest, ...splineThrough(target.id, target.points, all, false, target.construction) };
+  }
+  return finishExtend(s, moves, s.curves.map((c) => (c.id === target.id ? next : c)), target.id, endId, hit.by, kind);
+}
+
+/** Extend part of an ellipse round its ellipse, from the end nearest the click, to the next curve it meets. */
+function extendEllipse(s: SketchData, target: SketchEllipse, at: { x: number; y: number }): EditResult {
+  if (!target.start || !target.end) return { sketch: s, error: "A whole ellipse has no ends to extend." };
+  const { t0, t1 } = ellipseSpan(s, target);
+  const span = t1 - t0;
+  const P = (id: string): P2 => {
+    const q = s.points.find((p) => p.id === id);
+    return q ? [q.x, q.y] : [0, 0];
+  };
+  const click: P2 = [at.x, at.y];
+  const atEnd = dist(click, P(target.end)) <= dist(click, P(target.start));
+  const endId = atEnd ? target.end : target.start;
+  const { start: _s, end: _e, ...whole } = target;
+  void _s;
+  void _e;
+  const round = curveParam(s, whole);
+  const TAU = 2 * Math.PI;
+  const wrap = (a: number) => ((a % TAU) + TAU) % TAU;
+  // How far round past the end being extended: anticlockwise past its end, clockwise before its start.
+  const ahead = (u: number) => (atEnd ? wrap(u - t1) : wrap(t0 - u));
+  let best: { t: number; p: P2; by: string } | null = null;
+  for (const other of s.curves) {
+    if (other.id === target.id) continue;
+    for (const x of crossings(round, curveParam(s, other))) {
+      const t = ahead(x.ua);
+      // Not the end itself, and not so far round it would meet its own other end.
+      if (t > 1e-9 && t < TAU - span - 1e-9 && (!best || t < best.t)) best = { t, p: x.p, by: other.id };
+    }
+  }
+  if (!best) return { sketch: s, error: "There's nothing further round that ellipse for it to reach." };
+  return finishExtend(s, new Map([[endId, best.p]]), s.curves, target.id, endId, best.by, "part of an ellipse");
 }

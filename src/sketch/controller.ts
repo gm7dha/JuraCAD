@@ -505,7 +505,7 @@ export class SketchController {
     if (tool === "extend" || tool === "split") {
       const hit = this.hitAt(e);
       if (hit?.kind !== "curve") {
-        this.state.setSketchMessage(tool === "extend" ? "Click near the end of a line or arc you want to lengthen." : "Click a line, arc, spline or part of an ellipse where you want to split it.", "info");
+        this.state.setSketchMessage(tool === "extend" ? "Click near the end of a line, arc, spline or part of an ellipse you want to lengthen." : "Click a line, arc, spline or part of an ellipse where you want to split it.", "info");
         return;
       }
       this.commit(tool === "extend" ? extendAt(d, hit.id, { x: e.x, y: e.y }) : splitAt(d, hit.id, { x: e.x, y: e.y }), []);

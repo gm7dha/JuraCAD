@@ -8,6 +8,7 @@ import { findRegions } from "../src/sketch/regions";
 import { analyzeSketch, offsetWarnings, solveSketch } from "../src/sketch/solver";
 import { emptySketch, type SketchCircle, type SketchCurve, type SketchData, type SketchEllipse, type SketchSpline } from "../src/sketch/types";
 import { parseSketchData } from "../src/sketch/validate";
+import { CROSSING_NOTE, offsetNotes } from "../src/sketch/offsetCheck";
 
 type P2 = [number, number];
 const at = (x: number, y: number): Placed => ({ x, y, snap: null });
@@ -274,11 +275,15 @@ describe("Offset splines and ellipses", () => {
     expect(findRegions(bigger).regions.length).toBeGreaterThan(0);
   });
 
-  it("won't offset inwards past the tightest bend", () => {
+  it("offsets inwards past the tightest bend too, and warns that the copy crosses itself", () => {
     // The ends of a 40 × 20 ellipse bend with radius 10² / 20 = 5.
     const e = addEllipse(emptySketch(), at(0, 0), at(20, 0), [0, 10]);
-    expect(offsetCurves(e.sketch, e.ellipseId, { x: 0, y: 7 }, "6").error).toMatch(/tightest bend/);
-    expect(offsetCurves(e.sketch, e.ellipseId, { x: 0, y: 7 }, "4").error).toBeUndefined();
+    const far = offsetCurves(e.sketch, e.ellipseId, { x: 0, y: 7 }, "6");
+    expect(far.error).toBeUndefined();
+    expect(offsetNotes(far.sketch)).toEqual([CROSSING_NOTE]);
+    const near = offsetCurves(e.sketch, e.ellipseId, { x: 0, y: 7 }, "4");
+    expect(near.error).toBeUndefined();
+    expect(offsetNotes(near.sketch)).toEqual([]);
   });
 
   it("gets more points when the original changes so much the copy would stray, keeping its ends", () => {

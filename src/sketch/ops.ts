@@ -620,6 +620,7 @@ export type RelationTool =
   | "symmetric"
   | "normal"
   | "curvature"
+  | "pierce"
   | "fix";
 
 export const RELATION_LABELS: Record<RelationTool, string> = {
@@ -635,6 +636,7 @@ export const RELATION_LABELS: Record<RelationTool, string> = {
   symmetric: "Symmetric",
   normal: "Normal",
   curvature: "Curvature",
+  pierce: "Pierce",
   fix: "Fix",
 };
 
@@ -652,6 +654,7 @@ export const RELATION_HINTS: Record<RelationTool, string> = {
   symmetric: "Select two points (or two lines, circles or arcs) and then the line they mirror across",
   normal: "Select a line and a curve: the line meets the curve square on (through the centre of a circle or arc)",
   curvature: "Select a spline and the line, arc or spline its end joins: they meet smoothly and bend the same amount there",
+  pierce: "Select a point and an edge or curve from outside the sketch that passes through it: the point goes where it passes through, and follows it",
   fix: "Select the points or shapes to hold in place",
 };
 

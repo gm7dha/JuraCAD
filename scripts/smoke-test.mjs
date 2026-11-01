@@ -2259,6 +2259,77 @@ try {
     await page.waitForSelector(".sketch-panel", { state: "detached" });
   }
 
+  step = "Extend: a spline carried on naturally up to a line";
+  {
+    await page.getByRole("button", { name: "Sketch", exact: true }).click();
+    await page.waitForSelector(".sketch-panel");
+    await page.locator(".feature-row.datum", { hasText: "Top" }).click();
+    await page.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane"));
+    await page.waitForTimeout(600);
+    const box = await page.locator(".viewport").boundingBox();
+    const mx = box.x + box.width / 2;
+    const my = box.y + box.height / 2;
+    await tool("Spline");
+    await page.mouse.click(mx - 120, my);
+    await page.mouse.click(mx - 40, my - 40);
+    await page.mouse.click(mx + 40, my);
+    await page.keyboard.press("Escape");
+    const ends = await page.evaluate(() => {
+      const d = window.juracadStore.getState().editing.draft.sketch.data;
+      const sp = d.curves.find((c) => c.type === "spline");
+      if (!sp) return null;
+      const at = (id) => d.points.find((p) => p.id === id);
+      return { id: sp.id, first: at(sp.points[0]), mid: at(sp.points[1]), last: at(sp.points[sp.points.length - 1]), n: sp.points.length };
+    });
+    if (!ends || ends.n !== 3) throw new Error(`the spline tool made ${JSON.stringify(ends)}`);
+    // A line across, a quarter of the spline's width past its end.
+    const wide = Math.abs(ends.last.x - ends.first.x);
+    const wallX = ends.last.x + (wide / 4) * Math.sign(ends.last.x - ends.first.x);
+    // On the spline, three quarters along its last piece (a quarter of a piece from its end, so the curve is clicked, not its end point).
+    // The piece is the Bézier the sketch draws: handles a third of the natural tangents, (p2 − p0)/2 at the middle and p2 − p1 at the end.
+    const [a0, a1, a2] = [ends.first, ends.mid, ends.last].map((p) => [p.x, p.y]);
+    const t1 = [(a2[0] - a0[0]) / 2, (a2[1] - a0[1]) / 2];
+    const t2 = [a2[0] - a1[0], a2[1] - a1[1]];
+    const bez = [a1, [a1[0] + t1[0] / 3, a1[1] + t1[1] / 3], [a2[0] - t2[0] / 3, a2[1] - t2[1] / 3], a2];
+    const t = 0.75, u = 1 - t;
+    const onIt = [0, 1].map((k) => u * u * u * bez[0][k] + 3 * u * u * t * bez[1][k] + 3 * u * t * t * bez[2][k] + t * t * t * bez[3][k]);
+    const [w1, w2, near] = await page.evaluate(
+      ([x, y, w, ex, ey]) => [window.juracadViewport.current.projectSketchPoint(x, y - w), window.juracadViewport.current.projectSketchPoint(x, y + w), window.juracadViewport.current.projectSketchPoint(ex, ey)],
+      [wallX, ends.last.y, wide / 2, onIt[0], onIt[1]],
+    );
+    await tool("Line");
+    await page.mouse.click(box.x + w1.x, box.y + w1.y);
+    await page.mouse.click(box.x + w2.x, box.y + w2.y);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await tool("Extend");
+    await page.mouse.click(box.x + near.x, box.y + near.y);
+    const reached = await page
+      .waitForFunction(
+        ([id, x]) => {
+          const d = window.juracadStore.getState().editing.draft.sketch.data;
+          const sp = d.curves.find((c) => c.id === id);
+          const end = d.points.find((p) => p.id === sp.points[sp.points.length - 1]);
+          return Math.abs(end.x - x) < 1e-6 && d.constraints.some((c) => c.type === "pointOnLine" && c.refs[0] === end.id);
+        },
+        [ends.id, wallX],
+        { timeout: 5_000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    if (!reached) {
+      const why = await page.evaluate(() => {
+        const st = window.juracadStore.getState();
+        return JSON.stringify({ message: st.sketch?.message, data: st.editing?.draft.sketch?.data });
+      });
+      throw new Error(`Extend didn't carry the spline's end to the line at x = ${wallX}: ${why}`);
+    }
+    await shot("extend");
+    await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
+    if (await page.locator(".sketch-panel").count()) await page.locator('[aria-label="Sketch"] [aria-label="Cancel"]').click();
+    await page.waitForSelector(".sketch-panel", { state: "detached" });
+  }
+
   step = "sketching on a part's face: its edges show, a line snaps to a corner, Use all";
   {
     const face = await page.evaluate(() => {

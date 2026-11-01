@@ -23,9 +23,10 @@
  * All positions are sketch millimetres.
  */
 import { sameRef, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
-import { pointPos, settle, sketchId, type EditResult } from "./ops";
+import { joinPoints, pointPos, settle, sketchId, type EditResult } from "./ops";
 import { toSketch, type PlaneFrame, type SketchPlane } from "./planes";
-import { isPartLink, type CurveLink, type PointLink, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
+import { splineThrough } from "./curves";
+import { isPartLink, type CurveLink, type PointLink, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchEllipse, type SketchLine, type SketchPoint, type SketchSpline } from "./types";
 
 type P2 = [number, number];
 
@@ -41,6 +42,16 @@ export interface RefSource {
   /** That sketch's name (for messages). */
   name?: string;
 }
+
+/**
+ * A curved edge's exact shape in the sketch, for "Use": an ellipse (its centre
+ * and the ends of its two axes; with start and end, only that part of it,
+ * anticlockwise), or a spline through points with its direction and speed at
+ * each (per piece, as a sketch spline's handles are).
+ */
+export type CurveShape =
+  | { kind: "ellipse"; centre: P2; major: P2; minor: P2; start?: P2; end?: P2 }
+  | { kind: "spline"; points: P2[]; tangents: P2[] };
 
 /** A part edge, or another sketch's curve or point, as seen in the sketch's plane. */
 export interface RefEdge {
@@ -62,6 +73,10 @@ export interface RefEdge {
   end?: P2;
   /** Other curves: points along it. */
   path?: P2[];
+  /** Other curves: its exact shape, when the geometry engine was asked for it (to "Use" it). */
+  shape?: CurveShape;
+  /** A lone point where this part edge (or other sketch's curve) passes through the sketch's plane (Pierce). */
+  pierce?: true;
 }
 
 /** What the geometry engine found for a sketch's links on the latest rebuild. */
@@ -251,7 +266,7 @@ export function linkEdge(
     return { sketch, curveId: known.id, points: pointsOn(s, known, edge) };
   }
   if (edge.kind === "point") return { sketch: s, curveId: "", points: {}, error: "That's a single point: snap to it, or click it to dimension to it." };
-  if (edge.kind === "curve") return { sketch: s, curveId: "", points: {}, error: "Only straight and round edges can be used in a sketch for now. Snap to its ends instead." };
+  if (edge.kind === "curve" && !edge.shape) return { sketch: s, curveId: "", points: {}, error: "Only straight and round edges can be used in a sketch for now. Snap to its ends instead." };
   const base = refLink(edge);
   if (!base) return { sketch: s, curveId: "", points: {}, error: "That can't be used here." };
   const link: CurveLink = cut && isPartLink(base) ? { ...base, cut } : base;
@@ -275,6 +290,28 @@ export function linkEdge(
     constraints.push(fixAt(c.id, edge.centre!), fixAt(rim.id, [rim.x, rim.y]), { id: sketchId("c"), type: "pointOnCircle", refs: [rim.id, id] });
     curve = { id, type: "circle", center: c.id, radius: edge.radius!, construction, link } satisfies SketchCircle;
     ids = { c: c.id };
+  } else if (edge.shape?.kind === "ellipse") {
+    const sh = edge.shape;
+    const [c, ma, mi] = [pt(sh.centre), pt(sh.major), pt(sh.minor)];
+    points.push(c, ma, mi);
+    constraints.push(fixAt(c.id, sh.centre), fixAt(ma.id, sh.major), fixAt(mi.id, sh.minor));
+    const ends: Partial<Pick<SketchEllipse, "start" | "end">> = {};
+    if (sh.start && sh.end) {
+      const [ps, pe] = [pt(sh.start), pt(sh.end)];
+      points.push(ps, pe);
+      constraints.push(fixAt(ps.id, sh.start), fixAt(pe.id, sh.end));
+      ends.start = ps.id;
+      ends.end = pe.id;
+    }
+    curve = { id: sketchId("el"), type: "ellipse", center: c.id, major: ma.id, minor: mi.id, construction, ...ends, link } satisfies SketchEllipse;
+    const startIsA = sh.start ? dist(sh.start, edge.a) <= dist(sh.start, edge.b) : true;
+    ids = { c: c.id, ...(ends.start ? (startIsA ? { a: ends.start, b: ends.end } : { a: ends.end, b: ends.start }) : {}) };
+  } else if (edge.shape?.kind === "spline") {
+    const { closed, spline, points: made } = splineOfShape(edge.shape, construction);
+    points.push(...made);
+    for (const p of made) constraints.push(fixAt(p.id, [p.x, p.y]));
+    curve = { ...spline, link } satisfies SketchSpline;
+    ids = closed ? {} : { a: made[0].id, b: made[made.length - 1].id };
   } else {
     const c = pt(edge.centre!);
     const [pa, pb] = [pt(edge.a), pt(edge.b)];
@@ -288,6 +325,27 @@ export function linkEdge(
   return { ...r, curveId: curve.id, points: ids };
 }
 
+/** Is a spline shape closed (its last point back on its first)? */
+const shapeClosed = (sh: Extract<CurveShape, { kind: "spline" }>) => sh.points.length > 3 && dist(sh.points[0], sh.points[sh.points.length - 1]) < 1e-9;
+
+/** The pieces of a spline shape: each piece's ends, with handles a third of the way along its tangents. */
+function shapeBeziers(sh: Extract<CurveShape, { kind: "spline" }>): [P2, P2, P2, P2][] {
+  const { points: p, tangents: t } = sh;
+  const out: [P2, P2, P2, P2][] = [];
+  for (let i = 0; i + 1 < p.length; i++)
+    out.push([p[i], [p[i][0] + t[i][0] / 3, p[i][1] + t[i][1] / 3], [p[i + 1][0] - t[i + 1][0] / 3, p[i + 1][1] - t[i + 1][1] / 3], p[i + 1]]);
+  return out;
+}
+
+/** A sketch spline that is a curved edge's shape exactly (its points new, at the shape's points). */
+function splineOfShape(sh: Extract<CurveShape, { kind: "spline" }>, construction: boolean, ids?: string[]): { closed: boolean; spline: SketchSpline; points: SketchPoint[] } {
+  const closed = shapeClosed(sh);
+  const at = closed ? sh.points.slice(0, -1) : sh.points;
+  const points = at.map((p, i): SketchPoint => ({ id: ids?.[i] ?? sketchId("p"), x: p[0], y: p[1] }));
+  const spline = splineThrough(sketchId("sp"), points.map((p) => p.id), shapeBeziers(sh), closed, construction);
+  return { closed, spline, points };
+}
+
 /** Where a reference's end (a, b), middle or centre is in the sketch. */
 export function refPointAt(e: RefEdge, at: "a" | "b" | "centre" | "mid"): P2 | null {
   if (at === "a") return e.a;
@@ -298,6 +356,11 @@ export function refPointAt(e: RefEdge, at: "a" | "b" | "centre" | "mid"): P2 | n
 
 /** What a point brought in from this reference's end, middle or centre follows (null: there's nothing there to follow). */
 export function pointLinkOf(e: RefEdge, at: "a" | "b" | "centre" | "mid"): PointLink | null {
+  // Where it passes through the sketch: the point follows that, whichever end of it was snapped to.
+  if (e.pierce) {
+    if (e.source) return { sketch: e.source.sketch, item: e.source.item, end: "pierce" };
+    return e.pick?.ref.kind === "edge" ? { partId: e.pick.partId, ref: e.pick.ref, end: "pierce" } : null;
+  }
   if (e.source) {
     if (at === "mid") return e.kind === "line" ? { sketch: e.source.sketch, item: e.source.item, end: "mid" } : null;
     const id = e.source.ends?.[at === "centre" ? "c" : at];
@@ -325,11 +388,73 @@ export function linkPoint(s: SketchData, e: RefEdge, at: "a" | "b" | "centre" | 
   const link = pointLinkOf(e, at);
   const p = refPointAt(e, at);
   if (!link || !p) return { sketch: s, pointId: "", error: "That point can't be used here. Snap to an end or a centre instead." };
-  const known = s.points.find((q) => q.link && samePointLink(q.link, link));
+  // Pierce points of the same edge are told apart by where they are (it may pass through more than once).
+  const known = s.points.find((q) => q.link && samePointLink(q.link, link) && (link.end !== "pierce" || dist([q.x, q.y], p) < 1e-6));
   if (known) return { sketch: s, pointId: known.id };
   const id = sketchId("p");
   const r = settle({ ...s, points: [...s.points, { id, x: p[0], y: p[1], link }], constraints: [...s.constraints, fixAt(id, p)] });
   return { ...r, pointId: id };
+}
+
+/** The places a linked curve (a part edge or another sketch's curve) passes through the sketch, among the references. */
+export function piercesOf(link: CurveLink, refs: RefEdge[]): RefEdge[] {
+  return refs.filter((e) => {
+    if (!e.pierce) return false;
+    if (isPartLink(link)) return !!e.pick && e.pick.partId === link.partId && e.pick.ref.kind === "edge" && sameRef(e.pick.ref, link.ref);
+    return !!e.source && e.source.sketch === link.sketch && e.source.item === link.item;
+  });
+}
+
+/**
+ * Pierce (Onshape's): hold a point where a part edge, or another sketch's
+ * curve, passes through the sketch's plane. The point is joined to a fixed
+ * reference point that follows that place (`end: "pierce"`), found again on
+ * every rebuild. `refs` are the sketch's references, which include those
+ * places (`RefEdge.pierce`, from the geometry engine); the one nearest the
+ * point is used when there are several. Select a point and a curve brought in
+ * from elsewhere (one dashed line or curve following a part edge or another sketch).
+ */
+export function piercePoint(s: SketchData, selection: string[], refs: RefEdge[]): EditResult & { pointId?: string } {
+  const hint = "Select a point and an edge or curve from outside this sketch that passes through it (click it in the sketch to bring it in first).";
+  const ids = [...new Set(selection)];
+  const crv = ids.map((id) => s.curves.find((c) => c.id === id)).filter((c): c is SketchCurve => !!c);
+  const pts = ids.map((id) => s.points.find((p) => p.id === id)).filter((p): p is SketchPoint => !!p);
+  if (ids.length !== 2 || crv.length + pts.length !== 2 || !pts.length) return { sketch: s, error: hint };
+  // What passes through: a curve brought in from outside, or a point brought in from a part's edge (an edge seen end-on is a point).
+  let link: CurveLink | undefined;
+  let point: SketchPoint;
+  if (crv.length) {
+    const c = crv[0];
+    point = pts[0];
+    link = "link" in c ? c.link : undefined;
+    if (!link) return { sketch: s, error: `That ${c.type === "line" ? "line" : "curve"} is part of this sketch, so it can't pass through it. ${hint}` };
+    if (isPartLink(link) && link.cut)
+      return { sketch: s, error: "That line is where the sketch cuts the part, so it lies in the sketch's plane rather than passing through it. Pick an edge that goes through the sketch." };
+  } else {
+    const from = pts.find((p) => p.link && "partId" in p.link);
+    const other = pts.find((p) => p !== from);
+    if (!from || !other) return { sketch: s, error: hint };
+    point = other;
+    const pl = from.link as { partId: string; ref: EdgeRef; end: string };
+    // Already a pierce point: just join them.
+    if (pl.end === "pierce") {
+      const j = joinPoints(s, point.id, from.id);
+      return j.error ? { sketch: s, error: j.error } : { ...j, pointId: from.id };
+    }
+    link = { partId: pl.partId, ref: pl.ref };
+  }
+  const places = piercesOf(link, refs);
+  if (!places.length)
+    return {
+      sketch: s,
+      error: `That ${isPartLink(link) ? "edge" : "curve"} doesn't pass through this sketch's plane (it misses it, runs alongside it or lies in it), so there's nowhere to put the point. Pick one that goes through the sketch.`,
+    };
+  const at: P2 = [point.x, point.y];
+  const nearest = places.reduce((best, e) => (dist(e.a, at) < dist(best.a, at) ? e : best));
+  const r = linkPoint(s, nearest, "a");
+  if (r.error) return r;
+  const j = joinPoints(r.sketch, point.id, r.pointId);
+  return j.error ? { sketch: s, error: j.error } : { ...j, pointId: r.pointId };
 }
 
 /** Use every edge of the face (as real geometry). Edges that can't be used are skipped. */
@@ -342,7 +467,7 @@ export function linkAllEdges(s: SketchData, edges: RefEdge[]): EditResult & { cu
     sketch = r.sketch;
     curveIds.push(r.curveId);
   }
-  if (!curveIds.length) return { sketch: s, curveIds, error: "None of this face's edges can be used (only straight and round edges can)." };
+  if (!curveIds.length) return { sketch: s, curveIds, error: "None of this face's edges can be used (only straight edges, circles, arcs, splines and ellipses can)." };
   // Edges meeting at a corner share the corner point, so the outline is closed and can be extruded.
   return { sketch: joinTouchingEnds(sketch, curveIds), curveIds };
 }
@@ -355,6 +480,8 @@ function joinTouchingEnds(s: SketchData, curveIds: string[]): SketchData {
     if (!ids.has(c.id)) continue;
     if (c.type === "line") ends.push(c.p1, c.p2);
     else if (c.type === "arc") ends.push(c.start, c.end);
+    else if (c.type === "spline" && !c.closed) ends.push(c.points[0], c.points[c.points.length - 1]);
+    else if (c.type === "ellipse" && c.start && c.end) ends.push(c.start, c.end);
   }
   const keep = new Map<string, string>();
   const kept: string[] = [];
@@ -371,7 +498,19 @@ function joinTouchingEnds(s: SketchData, curveIds: string[]): SketchData {
   return {
     ...s,
     points: s.points.filter((p) => !gone.has(p.id)),
-    curves: s.curves.map((c) => (c.type === "line" ? { ...c, p1: to(c.p1), p2: to(c.p2) } : c.type === "arc" ? { ...c, start: to(c.start), end: to(c.end) } : c)),
+    curves: s.curves.map((c) => {
+      if (c.type === "line") return { ...c, p1: to(c.p1), p2: to(c.p2) };
+      if (c.type === "arc") return { ...c, start: to(c.start), end: to(c.end) };
+      if (c.type === "spline" && !c.closed && ids.has(c.id)) {
+        // Its handles are kept under its points' new ids.
+        const rename = (h?: Record<string, [number, number]>) => (h ? Object.fromEntries(Object.entries(h).map(([k, v]) => [to(k), v])) : undefined);
+        const tangents = rename(c.tangents);
+        const tangentsIn = rename(c.tangentsIn);
+        return { ...c, points: c.points.map(to), ...(tangents ? { tangents } : {}), ...(tangentsIn ? { tangentsIn } : {}) };
+      }
+      if (c.type === "ellipse" && c.start && c.end && ids.has(c.id)) return { ...c, start: to(c.start), end: to(c.end) };
+      return c;
+    }),
     // The merged points' own fixes go (the kept point is fixed in the same place).
     constraints: s.constraints.filter((k) => !(k.type === "fix" && gone.has(k.refs[0]))),
   };
@@ -391,6 +530,8 @@ export function linkedPoints(s: SketchData): Set<string> {
       out.add(c.center);
       for (const k of s.constraints) if (k.type === "pointOnCircle" && k.refs[1] === c.id) out.add(k.refs[0]);
     } else if (c.type === "arc") out.add(c.center).add(c.start).add(c.end);
+    else if (c.type === "spline") c.points.forEach((p) => out.add(p));
+    else if (c.type === "ellipse") [c.center, c.major, c.minor, c.start, c.end].forEach((p) => p && out.add(p));
   }
   return out;
 }
@@ -404,6 +545,8 @@ export function linkedPoints(s: SketchData): Set<string> {
 export function followLinks(s: SketchData, links: Record<string, RefEdge | null | undefined>, points: Record<string, P2 | null | undefined> = {}): SketchData {
   const moves = new Map<string, P2>();
   const radii = new Map<string, number>();
+  /** Splines following a curved edge whose handles change (its points move too). */
+  const reshaped = new Map<string, SketchSpline>();
   for (const p of s.points) {
     const to = p.link ? points[p.id] : undefined;
     if (to) moves.set(p.id, to);
@@ -433,9 +576,33 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
       moves.set(c.center, e.centre!);
       moves.set(c.start, e.start!);
       moves.set(c.end, e.end!);
+    } else if (c.type === "ellipse" && e.shape?.kind === "ellipse") {
+      const sh = e.shape;
+      moves.set(c.center, sh.centre);
+      moves.set(c.major, sh.major);
+      moves.set(c.minor, sh.minor);
+      if (c.start && c.end && sh.start && sh.end) {
+        moves.set(c.start, sh.start);
+        moves.set(c.end, sh.end);
+      }
+    } else if (c.type === "spline" && e.shape?.kind === "spline") {
+      let sh = e.shape;
+      const closed = shapeClosed(sh);
+      // Keep it running the same way (the edge may now run the other way round).
+      if (!closed && sh.points.length === c.points.length) {
+        const first = pointPos(s, c.points[0]);
+        const last = pointPos(s, c.points[c.points.length - 1]);
+        const turned = dist(sh.points[0], last) + dist(sh.points[sh.points.length - 1], first) < dist(sh.points[0], first) + dist(sh.points[sh.points.length - 1], last);
+        if (turned) sh = { kind: "spline", points: [...sh.points].reverse(), tangents: [...sh.tangents].reverse().map(([x, y]): P2 => [-x, -y]) };
+      }
+      // The engine finds the edge at as many points as the copy has, so each point keeps its place.
+      if (closed !== c.closed || (closed ? sh.points.length - 1 : sh.points.length) !== c.points.length) continue;
+      c.points.forEach((id, i) => moves.set(id, sh.points[i]));
+      const next = splineThrough(c.id, c.points, shapeBeziers(sh), c.closed, c.construction);
+      if (JSON.stringify([next.tangents, next.tangentsIn]) !== JSON.stringify([c.tangents, c.tangentsIn])) reshaped.set(c.id, next);
     }
   }
-  let moved = false;
+  let moved = reshaped.size > 0;
   for (const [id, p] of moves) if (dist(pointPos(s, id), p) > 1e-9) moved = true;
   for (const c of s.curves) if (c.type === "circle" && radii.has(c.id) && Math.abs(radii.get(c.id)! - c.radius) > 1e-9) moved = true;
   if (!moved) return s;
@@ -446,7 +613,18 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
       const to = moves.get(p.id);
       return to ? { ...p, x: to[0], y: to[1] } : p;
     }),
-    curves: s.curves.map((c) => (c.type === "circle" && radii.has(c.id) ? { ...c, radius: radii.get(c.id)! } : c)),
+    curves: s.curves.map((c) => {
+      if (c.type === "circle" && radii.has(c.id)) return { ...c, radius: radii.get(c.id)! };
+      const sp = c.type === "spline" ? reshaped.get(c.id) : undefined;
+      if (c.type === "spline" && sp) {
+        // New handles from the edge; everything else about the spline stays.
+        const { tangents: _t, tangentsIn: _ti, ...rest } = c;
+        void _t;
+        void _ti;
+        return { ...rest, ...(sp.tangents ? { tangents: sp.tangents } : {}), ...(sp.tangentsIn ? { tangentsIn: sp.tangentsIn } : {}) };
+      }
+      return c;
+    }),
     constraints: s.constraints.map((k) => {
       const to = k.type === "fix" ? moves.get(k.refs[0]) : undefined;
       return to ? { ...k, extra: [to[0], to[1]] } : k;
@@ -455,24 +633,31 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
   return settle(data).sketch;
 }
 
-/** How many references can't be found, by where they come from: parts (edges and their points) and other sketches. */
-function lostCounts(s: SketchData | undefined, info: SketchLinkInfo): { part: number; sketch: number } {
-  let part = 0, sketch = 0;
+/** How many references can't be found, by where they come from: parts (edges and their points), other sketches, and Pierce points (which say why their own way). */
+function lostCounts(s: SketchData | undefined, info: SketchLinkInfo): { part: number; sketch: number; pierce: number } {
+  let part = 0, sketch = 0, pierce = 0;
   const fromSketch = new Set<string>();
+  const piercing = new Set<string>();
   if (s) {
     for (const c of s.curves) if ("link" in c && c.link && !isPartLink(c.link)) fromSketch.add(c.id);
     for (const p of s.points) if (p.link && !("partId" in p.link)) fromSketch.add(p.id);
+    for (const p of s.points) if (p.link?.end === "pierce") piercing.add(p.id);
   }
   for (const [id, e] of [...Object.entries(info.links), ...Object.entries(info.pointLinks ?? {})]) {
     if (e !== null) continue;
-    if (fromSketch.has(id)) sketch++;
+    if (piercing.has(id)) pierce++;
+    else if (fromSketch.has(id)) sketch++;
     else part++;
   }
-  return { part, sketch };
+  return { part, sketch, pierce };
 }
 
 const fromSketchesNote = (n: number) =>
   `${n === 1 ? "1 thing" : `${n} things`} this sketch takes from other sketches can't be found any more (that sketch, or the shape in it, was deleted or turned off, or moved below this one in the feature list), so ${n === 1 ? "its copy stays" : "their copies stay"} where ${n === 1 ? "it was" : "they were"}.`;
+
+/** About Pierce points whose edge or curve no longer passes through the sketch's plane (or has gone). */
+const pierceNote = (n: number) =>
+  `${n === 1 ? "A point placed" : `${n} points placed`} where an edge or curve passes through this sketch can't be placed any more: it no longer passes through the sketch's plane (or it was deleted), so ${n === 1 ? "the point stays" : "they stay"} where ${n === 1 ? "it was" : "they were"}.`;
 
 /** A plain-English note about linked edges that can't be found, or null when all is well. */
 export function lostLinksMessage(s: SketchData, info: SketchLinkInfo | undefined): string | null {
@@ -485,6 +670,7 @@ export function lostLinksMessage(s: SketchData, info: SketchLinkInfo | undefined
       `${lost.part === 1 ? "1 edge" : `${lost.part} edges`} this sketch uses ${lost.part === 1 ? "has" : "have"} gone from the part, so ${lost.part === 1 ? "it stays" : "they stay"} where ${lost.part === 1 ? "it was" : "they were"}. Delete ${lost.part === 1 ? "it" : "them"}, or use another edge.`,
     );
   if (lost.sketch) parts.push(`${fromSketchesNote(lost.sketch)} Delete ${lost.sketch === 1 ? "it" : "them"}, or move that sketch back above this one.`);
+  if (lost.pierce) parts.push(`${pierceNote(lost.pierce)} Delete ${lost.pierce === 1 ? "it" : "them"}, or pierce with an edge or curve that goes through the sketch.`);
   return parts.length ? parts.join(" ") : null;
 }
 
@@ -506,6 +692,7 @@ export function linkProblem(info: SketchLinkInfo | undefined, s?: SketchData): s
   if (lost.part)
     return `${lost.part === 1 ? "A part edge" : `${lost.part} part edges`} this sketch uses can't be found any more, so ${lost.part === 1 ? "its copy stays" : "their copies stay"} where ${lost.part === 1 ? "it was" : "they were"}. Edit the sketch and delete ${lost.part === 1 ? "it" : "them"} (shown in the sketch panel), or use other edges.`;
   if (lost.sketch) return `${fromSketchesNote(lost.sketch)} Edit the sketch and delete ${lost.sketch === 1 ? "it" : "them"} (shown in the sketch panel), or move that sketch back above this one.`;
+  if (lost.pierce) return `${pierceNote(lost.pierce)} Edit the sketch and delete ${lost.pierce === 1 ? "it" : "them"} (shown in the sketch panel), or pierce with an edge or curve that goes through the sketch.`;
   return null;
 }
 
@@ -521,7 +708,7 @@ export function pruneReferences(s: SketchData): SketchData {
   for (const c of s.curves) {
     // Intersect's curves were asked for, so they stay.
     if (!("link" in c) || !c.link || !c.construction || (isPartLink(c.link) && c.link.cut)) continue;
-    const own = new Set<string>(c.type === "line" ? [c.p1, c.p2] : c.type === "circle" ? [c.center] : c.type === "arc" ? [c.center, c.start, c.end] : []);
+    const own = new Set<string>(curvePointsOf(c));
     // A circle's rim point holds its size: it's its own.
     for (const k of s.constraints) if (k.type === "pointOnCircle" && k.refs[1] === c.id && k.refs.length === 2) own.add(k.refs[0]);
     const holding = (k: SketchConstraint) => (k.type === "fix" && own.has(k.refs[0])) || (k.type === "pointOnCircle" && k.refs[1] === c.id && own.has(k.refs[0]));

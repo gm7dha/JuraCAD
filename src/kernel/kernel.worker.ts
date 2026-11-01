@@ -81,6 +81,9 @@ ctx.onmessage = (event) => {
         case "intersect":
           body = { type: "intersect", result: engine.intersect(request.partId, request.plane, request.face) };
           break;
+        case "useEdge":
+          body = { type: "useEdge", result: engine.useEdge(request.partId, request.ref, request.plane) };
+          break;
         case "measureParts":
           body = { type: "measure", result: engine.measureParts(request.partIds) };
           break;

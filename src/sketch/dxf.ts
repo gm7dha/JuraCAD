@@ -406,27 +406,27 @@ export function insertDxf(s: SketchData, drawing: DxfDrawing, scale: number, con
         if (len * k <= tol || !(e.ratio > 0)) break;
         const turn = e.t1 - e.t0;
         const whole = Math.abs(turn - TWO_PI) < 1e-6 || Math.abs(turn) < 1e-9 || Math.abs(turn) > TWO_PI;
+        const major: Pt = [e.c[0] + e.major[0], e.c[1] + e.major[1]];
+        const minor: Pt = [e.c[0] - e.major[1] * e.ratio, e.c[1] + e.major[0] * e.ratio];
         if (whole) {
-          const major: Pt = [e.c[0] + e.major[0], e.c[1] + e.major[1]];
-          const minor: Pt = [e.c[0] - e.major[1] * e.ratio, e.c[1] + e.major[0] * e.ratio];
           curves.push({ id: sketchId("el"), type: "ellipse", center: at(e.c, false), major: at(major, false), minor: at(minor, false), construction });
           count++;
           break;
         }
-        // Part of an ellipse: a spline through points along it.
-        // Parameters brought into one turn, so the steps stay few.
-        const t0 = wrapAngle(e.t0, TWO_PI);
-        let t1 = wrapAngle(e.t1, TWO_PI);
-        if (t1 <= t0) t1 += TWO_PI;
+        // Part of an ellipse: a real elliptical arc, anticlockwise from t0 to t1 (its ends join what meets them).
         const ang = Math.atan2(e.major[1], e.major[0]);
-        const steps = Math.min(64, Math.max(6, Math.ceil(((t1 - t0) / TWO_PI) * 32)));
-        const pts = Array.from({ length: steps + 1 }, (_, i): Pt => {
-          const t = t0 + ((t1 - t0) * i) / steps;
+        const onIt = (t: number): Pt => {
           const x = len * Math.cos(t);
           const y = len * e.ratio * Math.sin(t);
           return [e.c[0] + x * Math.cos(ang) - y * Math.sin(ang), e.c[1] + x * Math.sin(ang) + y * Math.cos(ang)];
-        });
-        if (spline(pts, false)) count++;
+        };
+        const t0 = wrapAngle(e.t0, TWO_PI);
+        const t1 = wrapAngle(e.t1, TWO_PI);
+        const start = onIt(t0);
+        const end = onIt(t1);
+        if (Math.hypot(end[0] - start[0], end[1] - start[1]) * k <= tol) break;
+        curves.push({ id: sketchId("el"), type: "ellipse", center: at(e.c, false), major: at(major, false), minor: at(minor, false), start: at(start), end: at(end), construction });
+        count++;
         break;
       }
     }

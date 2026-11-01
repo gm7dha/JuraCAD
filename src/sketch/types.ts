@@ -49,9 +49,12 @@ export const isPartLink = (l: CurveLink): l is PartLink => "partId" in l;
  * What a point brought in as a reference follows (it's held where that is
  * now, seen square-on to the sketch): another sketch's point (or, with `end:
  * "mid"`, the middle of its line), or an end, the middle or the centre of a
- * part's edge (a corner of the part is an end of its edges).
+ * part's edge (a corner of the part is an end of its edges). With `end:
+ * "pierce"` (Onshape's Pierce) it's where that edge, or the other sketch's
+ * curve, passes through this sketch's plane (the place nearest the point,
+ * when it passes through more than once).
  */
-export type PointLink = (SketchItemLink & { end?: "mid" }) | { partId: string; ref: EdgeRef; end: "a" | "b" | "centre" | "mid" };
+export type PointLink = (SketchItemLink & { end?: "mid" | "pierce" }) | { partId: string; ref: EdgeRef; end: "a" | "b" | "centre" | "mid" | "pierce" };
 
 export interface SketchPoint {
   id: string;
@@ -126,6 +129,8 @@ export interface SketchSpline {
    * handles are worked out again whenever the original changes.
    */
   offsetParams?: number[];
+  /** Follows this part edge ("Use" on a curved edge; see CurveLink). Its points are fixed, its handles set from the edge. */
+  link?: CurveLink;
 }
 
 /**
@@ -143,6 +148,8 @@ export interface SketchEllipse {
   construction: boolean;
   start?: string;
   end?: string;
+  /** Follows this part edge ("Use" on an elliptical edge; see CurveLink). */
+  link?: CurveLink;
 }
 
 export type SketchCurve = SketchLine | SketchCircle | SketchArc | SketchSpline | SketchEllipse;

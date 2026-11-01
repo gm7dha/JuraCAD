@@ -126,6 +126,11 @@ export class KernelClient {
     return this.send({ type: "intersect", partId, plane, face }).then((body) => (body.type === "intersect" ? body.result : { error: "Something went wrong working out where the sketch cuts the part." }));
   }
 
+  /** "Use" on a curved edge: the edge as seen in the sketch, with its exact shape (a spline or an ellipse) to copy in. */
+  useEdge(partId: string, ref: EdgeRef, plane: SketchPlane): Promise<{ edge: RefEdge } | { error: string }> {
+    return this.send({ type: "useEdge", partId, ref, plane }).then((body) => (body.type === "useEdge" ? body.result : { error: "Something went wrong reading that edge." }));
+  }
+
   measure(picks: TopoPick[]): Promise<Measurement> {
     return this.send({ type: "measure", picks }).then((body) => body.result as Measurement);
   }
