@@ -206,6 +206,19 @@ export function nearRefs(refs: RefEdge[], x: number, y: number, r: number, skip?
 }
 
 /**
+ * Another sketch's line, circle, arc or curve under the pointer (within
+ * `tol`), for the Use tool, which copies it in as real geometry that follows
+ * it. Null when there's none there (points don't count).
+ */
+export function sketchCurveAt(refs: RefEdge[], x: number, y: number, tol: number, skip?: (e: RefEdge) => boolean): RefEdge | null {
+  if (!refs.length) return null;
+  const virt = nearRefs(refs, x, y, tol, (e) => !e.source || e.kind === "point" || e.pierce === true || !!skip?.(e));
+  const v = hitTest(virt, x, y, 0, tol, { origin: false });
+  if (v?.kind !== "curve") return null;
+  return refs[parseRefId(v.id)?.index ?? -1] ?? null;
+}
+
+/**
  * A point of something from elsewhere (another sketch, a part off the face)
  * often sits exactly on a corner of the face's own edges (the same corner,
  * seen square-on): the face's own is used then, so it works as before.

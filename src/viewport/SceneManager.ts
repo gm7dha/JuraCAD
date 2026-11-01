@@ -1681,6 +1681,11 @@ export class SceneManager {
       if (view) this.setView(view);
       return;
     }
+    // The sketch's Use tool: another sketch's curve under the pointer is copied in (else a part's edge is picked).
+    if (this.sketchPicksParts && this.sketchControllerRaw) {
+      const ptr = this.sketchPointer(e);
+      if (ptr && this.sketchControllerRaw.useAt(ptr)) return;
+    }
     this.callbacks.onPick(this.pickAt(x, y), e.shiftKey || e.ctrlKey || e.metaKey);
   };
 

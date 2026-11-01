@@ -62,9 +62,9 @@ import {
 import { ORIGIN_ID, type SketchData } from "./types";
 import { placedByOffset } from "./solver";
 import { addText, imageAt, imageById, readTextSettings, textAt, textById } from "./sketchText";
-import { isRefId, laterMessage, parseRefId, refSketch, type RefEdge } from "./links";
+import { isRefId, laterMessage, linkEdge, parseRefId, refSketch, type RefEdge } from "./links";
 import { addTangentLine, tangentLineAt, type TangentLine } from "./tangents";
-import { attachPoint, bringIn, hintFor, nearRefs, pickAt, snapAt, type SnapResult } from "./snaps";
+import { attachPoint, bringIn, hintFor, nearRefs, pickAt, sketchCurveAt, snapAt, type SnapResult } from "./snaps";
 import type { Snap } from "./ops";
 import { splinePolyline } from "./spline";
 import { ellipseFrom, ellipsePolyline, minorPointFor } from "./ellipse";
@@ -280,6 +280,26 @@ export class SketchController {
     }
     this.state.updateSketch(r.sketch, { record: true });
     return r.id;
+  }
+
+  /**
+   * The Use tool, clicked in the sketch: another sketch's line, circle, arc,
+   * spline or ellipse under the pointer is copied in as real geometry that
+   * follows it. False when there's none there (the click then goes to the
+   * parts' edges).
+   */
+  useAt(e: SketchPointer): boolean {
+    const d = this.data;
+    if (!d || this.tool !== "useEdge") return false;
+    const edge = sketchCurveAt(this.refs, e.x, e.y, CURVE_PX * e.mmPerPx, this.skipRef);
+    if (!edge) return false;
+    if (edge.source?.later) {
+      this.state.setSketchMessage(laterMessage(edge), "info");
+      return true;
+    }
+    const r = linkEdge(d, edge, false);
+    this.commit(r, r.curveId ? [r.curveId] : []);
+    return true;
   }
 
   private get tool(): SketchTool {

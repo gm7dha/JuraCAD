@@ -8,9 +8,11 @@
  * Pure: positions in, sketch millimetres out.
  */
 import type { EdgeRef, TopoPick, Vec3 } from "../geometry/topoRef";
-import { crossings, curveParam, type CurveParam } from "./curves";
+import { crossings, curveParam, ellipseParam, ellipseSpan, type CurveParam } from "./curves";
+import { ellipseAt, ellipseFrom } from "./ellipse";
 import { projectEdge, type CurveShape, type RefEdge } from "./links";
-import { pointPos, radiusOf } from "./ops";
+import { pointPos, radiusOf, splineHandles, splineHandlesIn, splinePoints } from "./ops";
+import { splineBeziers } from "./spline";
 import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from "./planes";
 import type { SketchData, SketchItemLink } from "./types";
 
@@ -60,9 +62,158 @@ export function seeEdge(frame: PlaneFrame, pick: TopoPick, samples?: Vec3[]): Re
   const b = toSketch(frame, ref.b);
   const mid = toSketch(frame, ref.mid);
   if (ref.curve === "LINE") return dist2(a, b) < 1e-6 ? { pick, project: true, kind: "point", a, b: a, mid: a } : { pick, project: true, kind: "line", a, b, mid };
-  const path = samples?.length ? samples.map((p) => toSketch(frame, p)) : [a, mid, b];
   const c3 = circleCentre3(ref);
+  // A circle or arc at a slant is seen as an ellipse (or part of one): its exact shape, so it can be used and dimensioned to.
+  const round = ref.curve === "CIRCLE" ? circleOf(ref, samples) : null;
+  const shape = round ? seeConic(frame, round) : null;
+  if (shape) return { pick, project: true, kind: "curve", a, b, mid, path: shapePath(shape, a), centre: shape.centre, shape };
+  const path = samples?.length ? samples.map((p) => toSketch(frame, p)) : [a, mid, b];
   return { pick, project: true, kind: "curve", a, b, mid, path, ...(c3 ? { centre: toSketch(frame, c3) } : {}) };
+}
+
+// ---------------------------------------------------------------------------
+// Circles and ellipses seen at a slant
+
+/**
+ * A circle or ellipse in 3D: centre + major·cos t + minor·sin t, for t from
+ * t0 to t1 (radians, rising along it; `whole` when it goes all the way round).
+ * `major` and `minor` needn't be its axes: any two halves of diameters that
+ * meet square-on as seen along its own normal do (a circle's are any two
+ * square radii).
+ */
+export interface Conic3 {
+  centre: Vec3;
+  major: Vec3;
+  minor: Vec3;
+  t0: number;
+  t1: number;
+  whole: boolean;
+}
+
+/**
+ * A round part edge (a circle or an arc) as a Conic3, from its ends, middle
+ * and points along it (`samples`, by its own parameter from a): its own angle
+ * starts at its first end. Null when it can't be told.
+ */
+export function circleOf(ref: EdgeRef, samples?: Vec3[]): Conic3 | null {
+  if (ref.curve !== "CIRCLE" || !samples || samples.length < 3) return null;
+  const c = circleCentre3(ref);
+  if (!c) return null;
+  const x = sub(ref.a, c);
+  const r = Math.hypot(...x);
+  if (r < 1e-9) return null;
+  const xh = scale(x, 1 / r);
+  // Square to the start, towards the way the edge runs.
+  const w = sub(samples[1], c);
+  const yv = sub(w, scale(xh, dot(w, xh)));
+  const yl = Math.hypot(...yv);
+  if (yl < 1e-9 * r) return null;
+  const y = scale(yv, r / yl);
+  const whole = Math.hypot(...sub(ref.a, ref.b)) < 1e-6;
+  let t1 = 2 * Math.PI;
+  if (!whole) {
+    const q = sub(ref.b, c);
+    t1 = Math.atan2(dot(q, y), dot(q, x));
+    if (t1 <= 1e-12) t1 += 2 * Math.PI;
+  }
+  return { centre: c, major: x, minor: y, t0: 0, t1, whole };
+}
+
+/**
+ * A circle or ellipse from anywhere, seen square-on to the sketch: an ellipse
+ * (its centre and the ends of its long and short axes; with start and end,
+ * only that part of it, anticlockwise), or null when it's seen side-on (it
+ * looks like a straight line). The long axis' end is always the one to the
+ * right (or, upright, the top one), so it's found in the same place on every rebuild.
+ */
+export function seeConic(frame: PlaneFrame, el: Conic3): Extract<CurveShape, { kind: "ellipse" }> | null {
+  const c = toSketch(frame, el.centre);
+  const p = vecIn(frame, el.major);
+  const q = vecIn(frame, el.minor);
+  const size = Math.max(Math.hypot(...p), Math.hypot(...q));
+  const turn = p[0] * q[1] - p[1] * q[0];
+  if (!(size > 1e-9) || Math.abs(turn) < 1e-6 * size * size) return null;
+  // Its axes, from the two halves of diameters (where its distance from the centre is greatest and least).
+  const tm = 0.5 * Math.atan2(2 * (p[0] * q[0] + p[1] * q[1]), p[0] * p[0] + p[1] * p[1] - q[0] * q[0] - q[1] * q[1]);
+  let A: P2 = [p[0] * Math.cos(tm) + q[0] * Math.sin(tm), p[1] * Math.cos(tm) + q[1] * Math.sin(tm)];
+  const B: P2 = [-p[0] * Math.sin(tm) + q[0] * Math.cos(tm), -p[1] * Math.sin(tm) + q[1] * Math.cos(tm)];
+  let rx = Math.hypot(...A);
+  let ry = Math.hypot(...B);
+  if (ry > rx) {
+    // (Only by rounding, near a circle.)
+    A = B;
+    [rx, ry] = [ry, rx];
+  }
+  if (ry < 1e-6) return null;
+  if (A[0] < -1e-9 * rx || (Math.abs(A[0]) <= 1e-9 * rx && A[1] < 0)) A = [-A[0], -A[1]];
+  const major: P2 = [c[0] + A[0], c[1] + A[1]];
+  const minor: P2 = [c[0] - (A[1] * ry) / rx, c[1] + (A[0] * ry) / rx];
+  if (el.whole) return { kind: "ellipse", centre: c, major, minor };
+  const at = (t: number): P2 => [c[0] + p[0] * Math.cos(t) + q[0] * Math.sin(t), c[1] + p[1] * Math.cos(t) + q[1] * Math.sin(t)];
+  const a = at(el.t0), b = at(el.t1);
+  // Seen from the side its own angle runs clockwise, its start and end swap (sketch ellipses run anticlockwise).
+  return turn > 0 ? { kind: "ellipse", centre: c, major, minor, start: a, end: b } : { kind: "ellipse", centre: c, major, minor, start: b, end: a };
+}
+
+/**
+ * A curved edge's exact shape seen in the sketch, whatever way it lies: as
+ * seeShape, and a circle or ellipse at a slant (when its circle or ellipse is
+ * known) as the ellipse it's seen as.
+ */
+export function seeShapeAll(frame: PlaneFrame, shape: CurveShape3 & { circle?: Conic3 }): CurveShape | null {
+  const el = shape.ellipse ?? shape.circle;
+  if (el) {
+    const flat = shape.ellipse ? seeShape(frame, shape) : null;
+    if (flat?.kind === "ellipse") return flat;
+    const seen = seeConic(frame, el);
+    if (seen) return seen;
+  }
+  return seeShape(frame, shape);
+}
+
+/** Most points a reference's drawn path gets (a long spline is drawn with fewer per piece). */
+const MAX_PATH = 256;
+
+/**
+ * Points along a curve's exact shape, to draw it and find it under the pointer:
+ * an ellipse from its start round to its end (a whole one from `from`, so the
+ * path's ends are its first end), a spline along each piece. Begins at `from`
+ * when that's its other end.
+ */
+export function shapePath(sh: CurveShape, from?: P2): P2[] {
+  let out: P2[];
+  if (sh.kind === "ellipse") {
+    const g = ellipseFrom(sh.centre, sh.major, sh.minor);
+    let t0 = 0, t1 = 2 * Math.PI;
+    if (sh.start && sh.end) {
+      t0 = ellipseParam(g, sh.start);
+      t1 = ellipseParam(g, sh.end);
+      while (t1 <= t0 + 1e-12) t1 += 2 * Math.PI;
+    } else if (from) {
+      t0 = ellipseParam(g, from);
+      t1 = t0 + 2 * Math.PI;
+    }
+    const n = Math.max(8, Math.ceil((64 * (t1 - t0)) / (2 * Math.PI)));
+    out = Array.from({ length: n + 1 }, (_, i) => ellipseAt(g, t0 + ((t1 - t0) * i) / n));
+    if (sh.start && sh.end) {
+      out[0] = sh.start;
+      out[n] = sh.end;
+    } else if (from) out[0] = out[n] = from;
+  } else {
+    const m = sh.points.length - 1;
+    const per = Math.max(1, Math.min(8, Math.floor(MAX_PATH / Math.max(1, m))));
+    out = [sh.points[0]];
+    for (let i = 0; i < m; i++) {
+      const [p0, p1, t0, t1] = [sh.points[i], sh.points[i + 1], sh.tangents[i], sh.tangents[i + 1]];
+      for (let k = 1; k <= per; k++) {
+        const t = k / per;
+        const h00 = 2 * t ** 3 - 3 * t ** 2 + 1, h10 = t ** 3 - 2 * t ** 2 + t, h01 = -2 * t ** 3 + 3 * t ** 2, h11 = t ** 3 - t ** 2;
+        out.push(k === per ? p1 : [h00 * p0[0] + h10 * t0[0] + h01 * p1[0] + h11 * t1[0], h00 * p0[1] + h10 * t0[1] + h01 * p1[1] + h11 * t1[1]]);
+      }
+    }
+  }
+  if (from && !(sh.kind === "ellipse" && !sh.start) && dist2(out[out.length - 1], from) < dist2(out[0], from)) out.reverse();
+  return out;
 }
 
 /** Another sketch, as a source of references. */
@@ -103,7 +254,7 @@ export function seeSketchCurve(src: SourceSketch, item: string, frame: PlaneFram
       if (dist2(a, b) < 1e-6) return null;
       return { kind: "line", a, b, mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], source: { ...source, ends: { a: c.p1, b: c.p2 } } };
     }
-    if ((c.type !== "circle" && c.type !== "arc") || !parallel(from, frame)) return null;
+    if (c.type === "spline" || c.type === "ellipse" || !parallel(from, frame)) return seeSketchShape(src, item, frame);
     const centre2 = pointPos(s, c.center);
     const r = radiusOf(s, c);
     const centre = seePoint(from, frame, centre2);
@@ -125,6 +276,97 @@ export function seeSketchCurve(src: SourceSketch, item: string, frame: PlaneFram
   } catch {
     return null;
   }
+}
+
+/**
+ * Another sketch's circle or arc on a plane at a slant to this one, or its
+ * spline (or conic) or ellipse, seen square-on to this sketch with its exact
+ * shape (`RefEdge.shape`), so it can be snapped to at its ends and centre,
+ * dimensioned to, and used: circles and ellipses are seen as ellipses (or
+ * parts of them), splines as splines. Null when seen side-on.
+ */
+export function seeSketchShape(src: SourceSketch, item: string, frame: PlaneFrame): RefEdge | null {
+  const s = src.data;
+  const c = s.curves.find((k) => k.id === item);
+  if (!c || c.type === "line") return null;
+  const from = planeFrame(src.plane);
+  const world = (v: P2): Vec3 => add(scale(from.u, v[0]), scale(from.v, v[1]));
+  const source = { sketch: src.id, item, ...(src.name ? { name: src.name } : {}), ...(src.later ? { later: true } : {}) };
+  try {
+    if (c.type === "spline") {
+      const shape = splineShapeOf(s, c, (p) => seePoint(from, frame, p), (v) => vecIn(frame, world(v)));
+      if (!shape) return null;
+      const first = shape.points[0];
+      const path = shapePath(shape, first);
+      const ends = c.closed ? {} : { a: c.points[0], b: c.points[c.points.length - 1] };
+      return { kind: "curve", a: path[0], b: path[path.length - 1], mid: path[Math.floor(path.length / 2)], path, shape, source: { ...source, ends } };
+    }
+    let el: Conic3;
+    let start: string | undefined;
+    if (c.type === "ellipse") {
+      const { g, t0, t1, whole } = ellipseSpan(s, c);
+      const [ca, sa] = [Math.cos(g.angle), Math.sin(g.angle)];
+      el = { centre: toWorld(from, g.centre[0], g.centre[1]), major: world([g.rx * ca, g.rx * sa]), minor: world([-g.ry * sa, g.ry * ca]), t0, t1, whole };
+      start = whole ? undefined : c.start;
+    } else {
+      const centre2 = pointPos(s, c.center);
+      const r = radiusOf(s, c);
+      let t0 = 0, t1 = 2 * Math.PI;
+      if (c.type === "arc") {
+        const st = pointPos(s, c.start), en = pointPos(s, c.end);
+        t0 = Math.atan2(st[1] - centre2[1], st[0] - centre2[0]);
+        t1 = Math.atan2(en[1] - centre2[1], en[0] - centre2[0]);
+        while (t1 <= t0) t1 += 2 * Math.PI;
+        start = c.start;
+      }
+      el = { centre: toWorld(from, centre2[0], centre2[1]), major: world([r, 0]), minor: world([0, r]), t0, t1, whole: c.type === "circle" };
+    }
+    const shape = seeConic(frame, el);
+    if (!shape) return null;
+    const a = start ? seePoint(from, frame, pointPos(s, start)) : undefined;
+    const path = shapePath(shape, a);
+    const end = c.type === "arc" ? c.end : c.type === "ellipse" ? c.end : undefined;
+    const ends = start && end ? { a: start, b: end, c: c.center } : { c: c.center };
+    return { kind: "curve", a: path[0], b: path[path.length - 1], mid: path[Math.floor(path.length / 2)], path, centre: shape.centre, shape, source: { ...source, ends } };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A sketch spline's (or conic's) exact shape, its own cubic pieces, seen
+ * through `pt`/`vec` (where its points and directions are seen): its points,
+ * the direction and speed it leaves each at, and where it arrives at a point
+ * differently (as Split leaves it), that too. Null when seen side-on.
+ */
+export function splineShapeOf(s: SketchData, c: Extract<SketchData["curves"][number], { type: "spline" }>, pt: (p: P2) => P2, vec: (v: P2) => P2): Extract<CurveShape, { kind: "spline" }> | null {
+  const bz = splineBeziers(splinePoints(s, c), c.closed, c.conic, splineHandles(c), splineHandlesIn(c));
+  if (!bz.length) return null;
+  const tan = (a: P2, b: P2): P2 => [3 * (b[0] - a[0]), 3 * (b[1] - a[1])];
+  const m = bz.length;
+  const points: P2[] = [...bz.map((b) => b[0]), c.closed ? bz[0][0] : bz[m - 1][3]];
+  const leaving: P2[] = bz.map((b) => tan(b[0], b[1]));
+  const arriving: (P2 | null)[] = [c.closed ? tan(bz[m - 1][2], bz[m - 1][3]) : null, ...bz.map((b) => tan(b[2], b[3]))];
+  const tangents: P2[] = [...leaving, c.closed ? leaving[0] : arriving[m]!];
+  const size = 1 + Math.max(...points.map((p) => Math.abs(p[0]) + Math.abs(p[1])));
+  const differs = (a: P2, b: P2) => Math.hypot(a[0] - b[0], a[1] - b[1]) > 1e-12 * size;
+  let kinked = false;
+  const tangentsIn: (P2 | null)[] = points.map((_, i) => {
+    const a = i === m && c.closed ? arriving[0] : arriving[i];
+    if (!a || !differs(a, tangents[i])) return null;
+    kinked = true;
+    return vec(a);
+  });
+  const seen = points.map(pt);
+  if (c.closed) seen[m] = seen[0];
+  const shape: Extract<CurveShape, { kind: "spline" }> = { kind: "spline", points: seen, tangents: tangents.map(vec), ...(kinked ? { tangentsIn } : {}) };
+  // Side-on (all of it along one straight line, on paper): nothing to copy.
+  const far = seen.reduce((best, p) => (dist2(p, seen[0]) > dist2(best, seen[0]) ? p : best), seen[0]);
+  const reach = dist2(far, seen[0]);
+  if (reach < 1e-6) return null;
+  const across = (v: P2) => Math.abs((far[0] - seen[0][0]) * v[1] - (far[1] - seen[0][1]) * v[0]) / reach;
+  if (seen.every((p) => across([p[0] - seen[0][0], p[1] - seen[0][1]]) < 1e-6) && shape.tangents.every((t) => across(t) < 1e-6)) return null;
+  return shape;
 }
 
 /** Where a point another sketch's point link follows is, seen in this sketch (null when it's gone). */
@@ -167,10 +409,12 @@ export function sketchRefs(src: SourceSketch, frame: PlaneFrame): RefEdge[] {
     }
   };
   for (const c of s.curves) {
-    const seen = c.type === "line" || c.type === "circle" || c.type === "arc" ? seeSketchCurve(src, c.id, frame) : null;
+    const seen = seeSketchCurve(src, c.id, frame);
     if (seen) {
       out.push(seen);
       for (const id of Object.values(seen.source?.ends ?? {})) if (id) onCurves.add(id);
+      // A spline's points between its ends (and a conic's corner) can still be snapped to, as before.
+      if (c.type === "spline") c.points.forEach(lone);
       continue;
     }
     // Can't be seen as itself: offer its points instead.
@@ -281,8 +525,54 @@ export function sketchCurvePierces(src: SourceSketch, item: string, frame: Plane
   }
 }
 
-/** How many pieces a curved edge is sampled in to find where it passes through a sketch's plane (the same for snapping and rebuilding). */
+/** How many pieces a curved edge is sampled in at least to find where it passes through a sketch's plane (the same for snapping and rebuilding). */
 export const PIERCE_SAMPLES = 32;
+/** At most this many, for a very wiggly edge. */
+export const PIERCE_MAX_SAMPLES = 4096;
+/** Neighbouring pieces turning more than this between them (degrees) means the edge wiggles too much for that many. */
+const PIERCE_TURN = 30;
+
+/** The same walk along an edge, remembering the places already asked for (pierceSamples then edgePierces ask for the same ones). */
+export function remembered(at: (f: number) => Vec3): (f: number) => Vec3 {
+  const known = new Map<number, Vec3>();
+  return (f) => {
+    let p = known.get(f);
+    if (!p) known.set(f, (p = at(f)));
+    return p;
+  };
+}
+
+/**
+ * How many pieces a curved edge must be sampled in for Pierce to find every
+ * place it passes through the plane: PIERCE_SAMPLES for ordinary curves (so
+ * snap lists stay quick); at least 4 per span of its own (`spans`: a spline
+ * edge's knot spans, which a long wavy edge such as a coil's has many of),
+ * then doubled while neighbouring pieces turn sharply from one to the next
+ * (wiggles the spans don't show), up to PIERCE_MAX_SAMPLES. The same edge
+ * always gets the same count, so snapping and rebuilding agree.
+ */
+export function pierceSamples(at: (f: number) => Vec3, spans = 1): number {
+  const limit = Math.cos((PIERCE_TURN * Math.PI) / 180);
+  let start = PIERCE_SAMPLES;
+  while (start < 4 * spans && start < PIERCE_MAX_SAMPLES) start *= 2;
+  for (let n = start; ; n *= 2) {
+    if (n >= PIERCE_MAX_SAMPLES) return PIERCE_MAX_SAMPLES;
+    let prev: Vec3 | null = null;
+    let last = at(0);
+    let smooth = true;
+    for (let i = 1; i <= n && smooth; i++) {
+      const p = at(i / n);
+      const d = sub(p, last);
+      const l = Math.hypot(...d);
+      if (l < 1e-12) continue;
+      const u = scale(d, 1 / l);
+      if (prev && dot(prev, u) < limit) smooth = false;
+      prev = u;
+      last = p;
+    }
+    if (smooth) return n;
+  }
+}
 
 /** An edge closer to the plane than this (mm) counts as on it. */
 const ON_PLANE = 1e-7;
@@ -369,11 +659,12 @@ export function sketchPierceRefs(src: SourceSketch, frame: PlaneFrame): RefEdge[
 }
 
 /** The places a part edge passes through the sketch's plane, as lone points to snap to (Pierce). */
-export function edgePierceRefs(frame: PlaneFrame, pick: TopoPick, at: (f: number) => Vec3): RefEdge[] {
+export function edgePierceRefs(frame: PlaneFrame, pick: TopoPick, at: (f: number) => Vec3, spans = 1): RefEdge[] {
   const ref = pick.ref;
   if (ref.kind !== "edge") return [];
   const h = (p: Vec3) => dot(sub(p, frame.origin), frame.n);
   // A straight edge lying flat to the plane never passes through it (and one in it doesn't count).
   if (ref.curve === "LINE" && Math.abs(h(ref.a) - h(ref.b)) < 1e-7) return [];
-  return edgePierces(frame, at, ref.curve === "LINE" ? 1 : PIERCE_SAMPLES).map((p): RefEdge => ({ pick, project: true, pierce: true, kind: "point", a: p, b: p, mid: p }));
+  const walk = ref.curve === "LINE" ? at : remembered(at);
+  return edgePierces(frame, walk, ref.curve === "LINE" ? 1 : pierceSamples(walk, spans)).map((p): RefEdge => ({ pick, project: true, pierce: true, kind: "point", a: p, b: p, mid: p }));
 }
