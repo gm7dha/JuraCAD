@@ -4,7 +4,9 @@
  * Unpacks the .mcpb (a zip), checks its manifest, starts its server with Node
  * and talks MCP to it over stdin/stdout: lists the tools, builds the example
  * bracket (plate, four M4 holes, rounded corners), checks the volume, looks at
- * it and saves a .juracad file — then checks that file. Then it connects to
+ * it and saves a .juracad file — then checks that file. It fastens the bracket
+ * onto a plate in an assembly and checks it, makes a dimensioned drawing and
+ * saves its PDF, and cancels a call (nothing may change). Then it connects to
  * the live link (Live with Claude) as the JuraCAD tab would, builds over it,
  * and checks the extension stops when Claude closes it.
  * Fails (exit code 1, with GitHub annotations in CI) if anything is wrong.
@@ -155,6 +157,52 @@ check(existsSync(saved), `No design was saved at ${saved}.`);
 const file = JSON.parse(readFileSync(saved, "utf8"));
 check(file.format === "partsmith" && file.features.length === 5, "The saved design isn't a JuraCAD file with the 5 features.");
 
+// An assembly: the bracket fastened onto a base plate, checked for clashes and looked at.
+const isPng = (content) => {
+  const img = content.find((c) => c.type === "image");
+  return img?.mimeType === "image/png" && Buffer.from(img.data, "base64").subarray(1, 4).toString() === "PNG";
+};
+await call("add_feature", { type: "box", width: 80, depth: 60, height: 4, x: 0, y: 60, z: 0, operation: "new" });
+await call("rename_part", { part: "Part 2", name: "Base plate" });
+await call("create_assembly", { name: "Bracket on plate" });
+await call("insert_into_assembly", { part: "Base plate" });
+await call("insert_into_assembly", { part: "Part 1" });
+const mated = text(await call("add_mate", { type: "fasten", first: { instance: "Base plate <1>", face: "top" }, second: { instance: "Part 1 <1>", face: "bottom" } }));
+check(/Added Fasten 1/.test(mated) && /places Part 1 <1> at/.test(mated), `The mate wasn't made:\n${mated}`);
+const clashes = text(await call("check_assembly", {}));
+check(/Everything fits: 2 parts, no clashes/.test(clashes), `The assembly check found problems:\n${clashes}`);
+check(isPng(await call("get_views", { assembly: "Bracket on plate" })), "get_views of the assembly didn't return a PNG.");
+await call("export_model", { assembly: "Bracket on plate", format: "step" });
+check(existsSync(join(designs, "CI bracket Bracket on plate.step")), "The assembly's STEP file wasn't saved.");
+
+// A drawing of the bracket, dimensioned, looked at and saved as a PDF.
+const drawn = text(await call("create_drawing", { part: "Part 1", title: { title: "CI bracket", drawn_by: "CI" } }));
+check(/Made Drawing 1/.test(drawn) && /- Top — across = X, up = Y; from \(0, 0\) to \(60, 40\) mm/.test(drawn), `The drawing wasn't made as expected:\n${drawn}`);
+const dims = text(await call("auto_dimension", {}));
+check(/Added \d+ dimensions/.test(dims), `Auto dimension added nothing:\n${dims}`);
+check(/Added a horizontal dimension on Front: 60/.test(text(await call("add_dimension", { view: "front", from: [0, 0, 0], to: [60, 0, 0] }))), "add_dimension didn't measure the 60 mm width.");
+check(isPng(await call("view_drawing", {})), "view_drawing didn't return a PNG.");
+await call("export_drawing", { format: "pdf" });
+const pdfFile = join(designs, "CI bracket Drawing 1.pdf");
+check(existsSync(pdfFile) && readFileSync(pdfFile, "latin1").startsWith("%PDF-") && readFileSync(pdfFile, "latin1").includes("(CI bracket) Tj"), "The drawing's PDF wasn't saved with its title block.");
+
+// Cancelling a call (as Claude does when the user stops it): no reply, and nothing changed or written.
+const cancelId = nextId++;
+let cancelledReply = null;
+waiting.set(cancelId, (msg) => (cancelledReply = msg));
+child.stdin.write(
+  JSON.stringify({ jsonrpc: "2.0", id: cancelId, method: "tools/call", params: { name: "export_drawing", arguments: { format: "dxf", filename: "cancelled" } } }) +
+    "\n" +
+    JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: cancelId, reason: "The user stopped it." } }) +
+    "\n",
+);
+const afterCancel = text(await call("describe_drawing", {}));
+await new Promise((resolve) => setTimeout(resolve, 1000));
+check(cancelledReply === null, `A cancelled call was still answered: ${JSON.stringify(cancelledReply).slice(0, 300)}`);
+waiting.delete(cancelId);
+check(!existsSync(join(designs, "cancelled.dxf")), "A cancelled export still wrote its file.");
+check(/Drawing 1: part "Part 1"/.test(afterCancel), "The extension didn't carry on normally after a cancelled call.");
+
 // Live with Claude: the extension listens on 127.0.0.1 for the JuraCAD tab. Talk to it the way the app does
 // (src/live/protocol.ts), from the JuraCAD site's origin, using Node's own WebSocket.
 const LIVE_PORTS = Array.from({ length: 10 }, (_, i) => 47615 + i);
@@ -233,4 +281,4 @@ const exited = await Promise.race([stopped, new Promise((resolve) => setTimeout(
 if (!exited) child.kill();
 check(exited, "The extension kept running after Claude closed it (it would keep the live link's port busy).");
 rmSync(work, { recursive: true, force: true });
-console.log(`The Claude extension works: ${tools.length} tools; built the bracket (${volume} mm³), drew it and saved ${file.features.length} features; built live over the local link (${changes.length} changes, each applied once); served Safari's link window.`);
+console.log(`The Claude extension works: ${tools.length} tools; built the bracket (${volume} mm³), drew it and saved ${file.features.length} features; fastened it onto a plate in an assembly (no clashes), made and dimensioned a drawing and saved its PDF; a cancelled call changed nothing; built live over the local link (${changes.length} changes, each applied once); served Safari's link window.`);

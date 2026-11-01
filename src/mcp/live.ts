@@ -64,7 +64,18 @@ export function describeChange(tool: string, before: JuraCADDocument, after: Jur
   if (JSON.stringify(before.variables ?? []) !== JSON.stringify(after.variables ?? [])) parts.push("changed the variables");
   if (JSON.stringify(before.partNames ?? {}) !== JSON.stringify(after.partNames ?? {})) parts.push("renamed a part");
   if (before.name !== after.name) parts.push("renamed the design");
+  parts.push(...tabChanges(before.assemblies ?? [], after.assemblies ?? []), ...tabChanges(before.drawings ?? [], after.drawings ?? []));
   return say(parts.length ? parts.join("; ") : "changed the design");
+}
+
+/** "added Assembly 1", "changed Drawing 1" — assembly and drawing tabs added or changed. */
+function tabChanges(before: readonly { id: string; name: string }[], after: readonly { id: string; name: string }[]): string[] {
+  const old = new Map(before.map((x) => [x.id, x]));
+  const now = new Set(after.map((x) => x.id));
+  const added = after.filter((x) => !old.has(x.id)).map((x) => x.name);
+  const removed = before.filter((x) => !now.has(x.id)).map((x) => x.name);
+  const changed = after.filter((x) => old.has(x.id) && JSON.stringify(old.get(x.id)) !== JSON.stringify(x)).map((x) => x.name);
+  return [added.length && `added ${list(added)}`, removed.length && `deleted ${list(removed)}`, changed.length && `changed ${list(changed)}`].filter((x): x is string => !!x);
 }
 
 export class LiveBridge implements LiveLink {
@@ -234,13 +245,13 @@ export class LiveBridge implements LiveLink {
   }
 
   /** Run one tool: on the open JuraCAD design when connected, one at a time, sending any change back. */
-  call(s: Session, tool: string, run: () => Promise<ToolResult>): Promise<ToolResult> {
-    const next = this.queue.then(() => this.callNow(s, tool, run));
+  call(s: Session, tool: string, run: () => Promise<ToolResult>, signal?: AbortSignal): Promise<ToolResult> {
+    const next = this.queue.then(() => this.callNow(s, tool, run, signal));
     this.queue = next.catch(() => {});
     return next;
   }
 
-  private async callNow(s: Session, tool: string, run: () => Promise<ToolResult>): Promise<ToolResult> {
+  private async callNow(s: Session, tool: string, run: () => Promise<ToolResult>, signal?: AbortSignal): Promise<ToolResult> {
     if (!this.connected || !this.doc) return run();
     if (this.adopted !== this.current) {
       s.adopt(studioView(this.doc, this.studio), { doc: this.doc, studio: this.studio });
@@ -253,6 +264,15 @@ export class LiveBridge implements LiveLink {
     const result = await run();
     const replaced = s.generation !== snap.generation;
     if (result.isError || (s.doc === snap.doc && !replaced)) return result;
+    // Cancelled by Claude before the change went to the tab: it's simply not made.
+    if (signal?.aborted) {
+      s.restore(snap);
+      return this.notApplied(
+        s.wroteFile
+          ? "Cancelled: the call was stopped before its change was sent to JuraCAD, so the design wasn't changed — but the file it had already saved in the JuraCAD folder stays."
+          : "Cancelled: the call was stopped before its change was sent to JuraCAD, so nothing was changed.",
+      );
+    }
     const conn = this.conn;
     if (!conn || !this.ready || !this.doc) {
       s.restore(snap);
@@ -287,6 +307,7 @@ export class LiveBridge implements LiveLink {
           p.resolve = null;
           resolve(r);
         };
+        // Once sent, a cancellation from Claude can't take the change back: the tab's reply still decides it, so the session stays in step.
         this.send(conn, message);
       });
     } catch (e) {

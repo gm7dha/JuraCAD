@@ -185,7 +185,13 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       break;
 
     case "extrude": {
+      const oldSketch = f.sketchRef;
       f.sketchRef = sketchRef(a, ctx, f.sketchRef);
+      // A different sketch: the areas picked (in this sketch and any extra sketches) were the old one's.
+      if (oldSketch && f.sketchRef !== oldSketch) {
+        delete f.areas;
+        delete f.moreAreas;
+      }
       const ex = { ...(f.extrude ?? { end: "blind" as const, flip: false }) };
       if (has(a, "end")) ex.end = END_OF[oneOf(a.end, Object.keys(END_OF) as (keyof typeof END_OF)[], "end")];
       if (has(a, "flip")) ex.flip = bool(a.flip, "flip");
