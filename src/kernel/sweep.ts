@@ -236,26 +236,30 @@ export const PROFILE_ALONG_PATH =
   "The profile lies along the path, not across it: where they meet, the path runs in the profile's own plane, so sweeping it would make a flat, broken shape. Draw the profile on a plane across the path (square to it is best).";
 
 /**
- * Does the path, where it passes the profile, run (within 1°) in the
+ * Does the path, where the profile sits on it, run (within 1°) in the
  * profile's own plane? Then a sweep has nothing to carry: OpenCascade makes a
- * flat or inside-out solid from it.
+ * flat or inside-out solid from it. An open path already starts at the end
+ * nearest the profile, so that's where it's measured; a closed loop has no
+ * start, so it's measured at the place nearest the middle of the profile.
  */
 function liesAlongPath(spine: Wire, frame: ReturnType<typeof planeFrame>, outline: [number, number][]): boolean {
-  if (outline.length === 0) return false;
-  const mid = outline.reduce((acc, p) => [acc[0] + p[0] / outline.length, acc[1] + p[1] / outline.length], [0, 0]);
-  const centre = toWorld(frame, mid[0], mid[1]);
-  let best: PathSample | null = null;
-  let bestD = Infinity;
-  for (const piece of samplePath(spine, 64)) {
-    for (const q of piece) {
-      const d = Math.hypot(...sub(q.p, centre));
-      if (d < bestD) {
-        bestD = d;
-        best = q;
+  const pieces = samplePath(spine, 64);
+  let at: PathSample | null = pieces[0]?.[0] ?? null;
+  if (spine.isClosed && outline.length > 0) {
+    const mid = outline.reduce((acc, p) => [acc[0] + p[0] / outline.length, acc[1] + p[1] / outline.length], [0, 0]);
+    const centre = toWorld(frame, mid[0], mid[1]);
+    let bestD = Infinity;
+    for (const piece of pieces) {
+      for (const q of piece) {
+        const d = Math.hypot(...sub(q.p, centre));
+        if (d < bestD) {
+          bestD = d;
+          at = q;
+        }
       }
     }
   }
-  return !!best && Math.abs(dot(best.t, frame.n as Vec3)) < Math.sin(Math.PI / 180);
+  return !!at && Math.abs(dot(at.t, frame.n as Vec3)) < Math.sin(Math.PI / 180);
 }
 
 /** Carry each closed shape of the profile sketch along the path (holes stay holes), optionally twisting or keeping its orientation. */

@@ -908,6 +908,16 @@ describe("sweep: a profile lying along the path", () => {
     const line = sketchFeature({ kind: "default", name: "Top" }, lineSketch(0, 0, 0, 40));
     const r2 = build([line, along, { ...feature("sweep", {}), sketchRef: along.id, pathRef: line.id }]);
     expect(Object.values(r2.featureErrors)[0]).toMatch(/lies along the path/);
+    // An open path is judged where it starts (at the profile), not wherever is nearest the profile's middle: an L whose
+    // second leg runs in the profile's plane, with the profile across the first leg, sweeps as before: two bars (10 and
+    // 30 long, radius 2), less the quarter-Steinmetz overlap inside the corner, plus a quarter ball outside.
+    const bend = sketchFeature({ kind: "default", name: "Top" }, addLine(lineSketch(0, 0, 10, 0), { x: 10, y: 0 }, { x: 10, y: 30 }).sketch);
+    const ring = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 0, y: 12 }, 2).sketch);
+    const legs = build([bend, ring, { ...feature("sweep", {}), sketchRef: ring.id, pathRef: bend.id }]);
+    expect(legs.featureErrors).toEqual({});
+    const lc = engine.check("normal").parts[0];
+    expect(lc.geometryValid).toBe(true);
+    expect(relativeError(lc.exactVolume!, Math.PI * 4 * 40 - (16 * 8) / 3 / 4 + (Math.PI * 4 * 8) / 3 / 4)).toBeLessThan(1e-4);
     // Across the path it sweeps as before: a round bar on the plane x = 20, across the bottom side half way along. Four 40 mm
     // bars, less the overlaps inside the corners (a quarter of a Steinmetz solid each), plus a quarter ball outside each.
     const disc = sketchFeature(planeOnFace([1, 0, 0], [20, 0, 0], "x = 20"), addCircle(emptySketch(), { x: 0, y: 0 }, 3).sketch);
