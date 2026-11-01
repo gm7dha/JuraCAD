@@ -560,6 +560,8 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
   const depth = (id: string) => id.split("/").length;
   const anchored = everything.filter((i) => bodies[i.id] && !bodies[i.id].fixed).sort((x, y) => depth(x.id) - depth(y.id));
   const isAnchored = new Set(anchored.map((i) => i.id));
+  /** Fixed: a fixed instance, or a fixed part of a flexible copy that's itself held fixed. */
+  const held = (id: string): boolean => !!instances.get(id)?.fixed || (!!bodies[id]?.fixed && held(bodies[id].frame));
 
   /** Where the second part sits relative to the first. */
   const mateRelation = (u: Usable, v: Record<string, number>): Placement => {
@@ -607,14 +609,14 @@ export function solveAssembly(input: Assembly, frameOf: FrameLookup, options: So
           const target = link.a === id ? link.fwd(placements[id]) : link.back(placements[id]);
           const already = placements[other];
           if (already) {
-            closures.push({ link, target, already, fixedPair: !!instances.get(link.a)?.fixed && !!instances.get(link.b)?.fixed });
+            closures.push({ link, target, already, fixedPair: held(link.a) && held(link.b) });
             continue;
           }
           const o = instances.get(other)!;
           if (o.fixed) {
             // Reached a second fixed part: it stays put; the link closes the loop only if it fits.
             placements[other] = o.placement;
-            closures.push({ link, target, already: o.placement, fixedPair: !!instances.get(id)?.fixed });
+            closures.push({ link, target, already: o.placement, fixedPair: held(id) });
             queue.push(other);
             continue;
           }
