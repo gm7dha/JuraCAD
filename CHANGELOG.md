@@ -8,6 +8,23 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.30 — Versions & history, 3D-printing toolkit, sweep twist round corners, flexible sub-assemblies · commit `2e9bdcf`
+
+- **Versions & history:** save named snapshots of your design, look at an old one, compare two, and go back to one.
+- **3D printing:** a print check (overhangs, thin walls, pieces that won't sit on the bed); lay a part flat on a chosen face;
+  printed-fit presets (press, snug, sliding, loose) for holes and sizes; save a 3MF laid out ready for your slicer.
+- **Sweep:** twist now works round sharp corners and on closed loops (whole turns on a loop); a profile drawn lying along
+  the path, rather than across it, is refused with a plain message; Check now flags a solid that's inside out.
+- **Assemblies:** make a sub-assembly flexible (its own mates still move, as in Onshape); mirror whole sub-assemblies;
+  mirror across a mate connector you place; symmetric parts at a slant are recognised.
+- **Drawings:** each view can show its own part or assembly; a sheet never shows another sheet's views after switching.
+- **Sketch:** hold Shift to stop snapping; circles seen at a slant come in as ellipses; Use works on other sketches'
+  splines; Pierce on wavy edges; relations that can't work say so more quickly.
+- **Shapes from several sketches:** select shapes in several sketches before making a feature; Revolve and Sweep can take
+  them too.
+- **Claude extension:** assembly patterns, groups, limits, relations, Replicate and explode steps; drawing notes, more
+  dimension kinds and sheets; long builds can be stopped. Download it again from Help.
+
 ## v0.29 — Safari Live, drawing sheets per part, assembly STEP and mirror, Claude builds assemblies and drawings · commit `d886d49`
 
 - **Live with Claude in Safari** through a small link window from the extension (allow the pop-up; keep it open).
