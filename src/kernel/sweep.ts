@@ -577,6 +577,37 @@ function squareTo(wire: Wire, at: PathFrame): Wire {
   return wire.clone().rotate((Math.atan2(sinA, dot(m, at.t)) * 180) / Math.PI, at.p, unit(k));
 }
 
+/** What to say when the profile is drawn lying along the path instead of across it. */
+export const PROFILE_ALONG_PATH =
+  "The profile lies along the path, not across it: where they meet, the path runs in the profile's own plane, so sweeping it would make a flat, broken shape. Draw the profile on a plane across the path (square to it is best).";
+
+/**
+ * Does the path, where the profile sits on it, run (within 1°) in the
+ * profile's own plane? Then a sweep has nothing to carry: OpenCascade makes a
+ * flat or inside-out solid from it. An open path already starts at the end
+ * nearest the profile, so that's where it's measured; a closed loop has no
+ * start, so it's measured at the place nearest the middle of the profile.
+ */
+function liesAlongPath(spine: Wire, frame: ReturnType<typeof planeFrame>, outline: [number, number][]): boolean {
+  const pieces = samplePath(spine, 64);
+  let at: PathSample | null = pieces[0]?.[0] ?? null;
+  if (spine.isClosed && outline.length > 0) {
+    const mid = outline.reduce((acc, p) => [acc[0] + p[0] / outline.length, acc[1] + p[1] / outline.length], [0, 0]);
+    const centre = toWorld(frame, mid[0], mid[1]);
+    let bestD = Infinity;
+    for (const piece of pieces) {
+      for (const q of piece) {
+        const d = Math.hypot(...sub(q.p, centre));
+        if (d < bestD) {
+          bestD = d;
+          at = q;
+        }
+      }
+    }
+  }
+  return !!at && Math.abs(dot(at.t, frame.n as Vec3)) < Math.sin(Math.PI / 180);
+}
+
 /** Carry each closed shape of the profile sketch along the path (holes stay holes), optionally twisting or keeping its orientation. */
 export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData, areas?: AreaPick[], control: SweepControl = {}): Shape3D {
   const { regions, problems } = chosenRegions(profile, areas, "sweep");
@@ -584,6 +615,13 @@ export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, path
   const chain = pathChain(pathPlane, path, profileAt(profilePlane, profile));
   const pathFrame = planeFrame(pathPlane);
   const frame = planeFrame(profilePlane);
+  {
+    // A profile lying along the path (the path runs in its plane where they meet) can't be swept: say so first.
+    const spine = segmentsWire(chain.segments, pathFrame, 0);
+    const along = liesAlongPath(spine, frame, regions[0].outer.polygon);
+    release(spine);
+    if (along) throw new Error(PROFILE_ALONG_PATH);
+  }
   const twist = control.lockOrientation ? 0 : control.twist ?? 0;
   const plain = Math.abs(twist) < 1e-9 && !control.lockOrientation;
   // Twisted round sharp corners, or twisted / kept facing one way round a closed loop: built stretch by stretch.

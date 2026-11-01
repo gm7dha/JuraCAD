@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { MeshAnalysis } from "../src/geometry/meshCheck";
 import type { PartCheck } from "../src/kernel/protocol";
-import { buildCheckReport } from "../src/model/checkReport";
+import { buildCheckReport, geometrySound } from "../src/model/checkReport";
 
 const goodMesh: MeshAnalysis = {
   triangleCount: 12,
@@ -80,4 +80,29 @@ describe("check report", () => {
     expect(r.parts[0].findings.some((f) => /Overlaps Part 2 by about 1.5 cm³/.test(f.text))).toBe(true);
     expect(r.parts[1].findings.some((f) => /Overlaps Part 1/.test(f.text))).toBe(true);
   });
+
+  it("calls an inside-out solid broken even when OpenCascade's own check passes it", () => {
+    // OpenCascade's check passes, but the solid encloses a negative volume: not sound.
+    expect(geometrySound(true, -137, false)).toBe(false);
+    expect(geometrySound(true, 0, false)).toBe(false);
+    expect(geometrySound(true, 500, false)).toBe(true);
+    // A surface has no volume, and that's fine.
+    expect(geometrySound(true, 0, true)).toBe(true);
+    expect(geometrySound(false, 500, false)).toBe(false);
+    expect(geometrySound(null, 500, false)).toBeNull();
+    // In the report: an error, even with a mesh that looks closed.
+    const r = buildCheckReport({ parts: [part({ geometryValid: false, exactVolume: -137 })] }, 0);
+    expect(r.level).toBe("error");
+    expect(r.parts[0].findings.map((f) => f.text).join(" | ")).toMatch(/inside out \(its solid model encloses no volume\)/);
+    // The mesh's own inside-out note isn't repeated.
+    const both = buildCheckReport({ parts: [part({ exactVolume: -10 }, { watertight: false, volume: -10 })] }, 0);
+    expect(both.parts[0].findings.filter((f) => /inside out/.test(f.text))).toHaveLength(1);
+  });
+
+  it("reports places where more than two faces meet as an error (from the mesh)", () => {
+    const r = buildCheckReport({ parts: [part({}, { watertight: false, nonManifoldEdges: 4 })] }, 0);
+    expect(r.level).toBe("error");
+    expect(r.parts[0].findings.map((f) => f.text)).toContain("Has 4 places where surfaces meet badly");
+  });
 });
+

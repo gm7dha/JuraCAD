@@ -25,6 +25,21 @@ export interface CheckReport {
   parts: PartReport[];
 }
 
+/**
+ * Whether a part counts as sound geometry: OpenCascade's own check passes AND,
+ * for a solid, it encloses a positive volume. (OpenCascade's check alone
+ * passes some inside-out solids, e.g. a sweep of a profile lying along its
+ * path.) Places where more than two faces meet are reported from the mesh
+ * ("surfaces meet badly", an error) rather than here: a hem folded flat onto
+ * its sheet touches it along edges and is still a sound part.
+ */
+export function geometrySound(analyzerValid: boolean | null, exactVolume: number | null, surface: boolean): boolean | null {
+  if (analyzerValid === null) return null;
+  if (!analyzerValid) return false;
+  if (surface) return true;
+  return exactVolume === null || exactVolume > 0;
+}
+
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 const worst = (levels: Level[]): Level => (levels.includes("error") ? "error" : levels.includes("warn") ? "warn" : "ok");
@@ -66,6 +81,10 @@ export function reportPart(p: PartCheck): PartReport {
     if (m.triangleCount > 0 && m.openEdges + m.nonManifoldEdges + m.flippedEdges === 0 && m.volume <= 0)
       findings.push({ level: "error", text: "Is inside out (encloses no volume)" });
   }
+
+  // The exact volume comes from the solid model itself: negative or none means it's inside out, whatever the mesh shows.
+  if (p.exactVolume !== null && !(p.exactVolume > 0) && !findings.some((f) => /inside out/.test(f.text)))
+    findings.push({ level: "error", text: "Is inside out (its solid model encloses no volume) — it isn't a real solid; check the feature that made it" });
 
   if (p.geometryValid === true) findings.push({ level: "ok", text: "Geometry is valid" });
   else if (p.geometryValid === false)

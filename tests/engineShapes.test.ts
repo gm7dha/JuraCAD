@@ -892,6 +892,51 @@ describe("surfaces", () => {
   });
 });
 
+describe("sweep: a profile lying along the path", () => {
+  it("is refused plainly instead of making an inside-out solid", () => {
+    // Round a 40 mm square: drawn on Right (x = 0), the profile lies in the plane of the left side.
+    let sq = lineSketch(0, 0, 40, 0);
+    sq = addLine(sq, { x: 40, y: 0 }, { x: 40, y: 40 }).sketch;
+    sq = addLine(sq, { x: 40, y: 40 }, { x: 0, y: 40 }).sketch;
+    sq = addLine(sq, { x: 0, y: 40 }, { x: 0, y: 0 }).sketch;
+    const square = sketchFeature({ kind: "default", name: "Top" }, sq);
+    const along = sketchFeature({ kind: "default", name: "Right" }, rectSketch(16, -2, 8, 4));
+    const r = build([square, along, { ...feature("sweep", {}), sketchRef: along.id, pathRef: square.id }]);
+    expect(Object.values(r.featureErrors)[0]).toMatch(/The profile lies along the path, not across it.*Draw the profile on a plane across the path/);
+    expect(r.parts).toHaveLength(0);
+    // An open path too: a line along Y with the profile on Right.
+    const line = sketchFeature({ kind: "default", name: "Top" }, lineSketch(0, 0, 0, 40));
+    const r2 = build([line, along, { ...feature("sweep", {}), sketchRef: along.id, pathRef: line.id }]);
+    expect(Object.values(r2.featureErrors)[0]).toMatch(/lies along the path/);
+    // An open path is judged where it starts (at the profile), not wherever is nearest the profile's middle: an L whose
+    // second leg runs in the profile's plane, with the profile across the first leg, sweeps as before: two bars (10 and
+    // 30 long, radius 2), less the quarter-Steinmetz overlap inside the corner, plus a quarter ball outside.
+    const bend = sketchFeature({ kind: "default", name: "Top" }, addLine(lineSketch(0, 0, 10, 0), { x: 10, y: 0 }, { x: 10, y: 30 }).sketch);
+    const ring = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 0, y: 12 }, 2).sketch);
+    const legs = build([bend, ring, { ...feature("sweep", {}), sketchRef: ring.id, pathRef: bend.id }]);
+    expect(legs.featureErrors).toEqual({});
+    const lc = engine.check("normal").parts[0];
+    expect(lc.geometryValid).toBe(true);
+    expect(relativeError(lc.exactVolume!, Math.PI * 4 * 40 - (16 * 8) / 3 / 4 + (Math.PI * 4 * 8) / 3 / 4)).toBeLessThan(1e-4);
+    // The same L with the profile 12 mm sideways (beside the path, so the second leg passes nearer the profile's middle than
+    // the path's start does): judged where the path starts, it still sweeps, with the same volume as before this check.
+    const side = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 12, y: 0 }, 2).sketch);
+    const sideways = build([bend, side, { ...feature("sweep", {}), sketchRef: side.id, pathRef: bend.id }]);
+    expect(sideways.featureErrors).toEqual({});
+    const sc = engine.check("normal").parts[0];
+    expect(sc.geometryValid).toBe(true);
+    expect(relativeError(sc.exactVolume!, 265.784)).toBeLessThan(1e-4);
+    // Across the path it sweeps as before: a round bar on the plane x = 20, across the bottom side half way along. Four 40 mm
+    // bars, less the overlaps inside the corners (a quarter of a Steinmetz solid each), plus a quarter ball outside each.
+    const disc = sketchFeature(planeOnFace([1, 0, 0], [20, 0, 0], "x = 20"), addCircle(emptySketch(), { x: 0, y: 0 }, 3).sketch);
+    const ok = build([square, disc, { ...feature("sweep", {}), sketchRef: disc.id, pathRef: square.id }]);
+    expect(ok.featureErrors).toEqual({});
+    const c = engine.check("normal").parts[0];
+    expect(c.geometryValid).toBe(true);
+    expect(relativeError(c.exactVolume!, 4 * Math.PI * 9 * 40 + 4 * (-(16 * 27) / 3 / 4 + (Math.PI * 4 * 27) / 3 / 4))).toBeLessThan(1e-4);
+  });
+});
+
 describe("sweep twist and keep orientation", () => {
   const vol = () => engine.check("normal").parts[0].exactVolume!;
   const valid = () => engine.check("normal").parts[0].geometryValid;
@@ -1066,8 +1111,8 @@ describe("sweep twist and keep orientation", () => {
     sq = addLine(sq, { x: 0, y: 40 }, { x: 0, y: 0 }).sketch;
     const square = sketchFeature({ kind: "default", name: "Top" }, sq);
     const sweep = (path: Feature, prof: Feature, twist: number): Feature => ({ ...feature("sweep", { twist }), sketchRef: prof.id, pathRef: path.id });
-    // A round bar half way along the left side (x = 0, y = 20): four 40 mm sides, each corner as in the L.
-    const disc = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 20, y: 0 }, 3).sketch);
+    // A round bar across the bottom side, half way along (on the plane x = 20): four 40 mm sides, each corner as in the L.
+    const disc = sketchFeature(planeOnFace([1, 0, 0], [20, 0, 0], "x = 20"), addCircle(emptySketch(), { x: 0, y: 0 }, 3).sketch);
     const ring4 = 4 * Math.PI * 9 * 40 + 4 * (-(16 * 27) / 3 / 4 + (Math.PI * 4 * 27) / 3 / 4);
     for (const twist of [360, 720, -360]) {
       const r = build([square, disc, sweep(square, disc, twist)]);
@@ -1078,7 +1123,7 @@ describe("sweep twist and keep orientation", () => {
     }
     // An 8 × 4 bar twisted 720°: each corner comes a quarter turn (or three) after the profile, so the bar is stood on end
     // (4 across, 8 up) at every corner: 4 × 40 × 32, less 2 × 2 × 8 inside and plus a quarter cylinder (radius 2, 8 high) outside, at each.
-    const prof = sketchFeature({ kind: "default", name: "Right" }, rectSketch(16, -2, 8, 4));
+    const prof = sketchFeature(planeOnFace([1, 0, 0], [20, 0, 0], "x = 20"), rectSketch(-4, -2, 8, 4));
     const r720 = build([square, prof, sweep(square, prof, 720)]);
     expect(r720.featureErrors).toEqual({});
     expect(valid()).toBe(true);
@@ -1137,8 +1182,8 @@ describe("sweep twist and keep orientation", () => {
     expect(round.parts).toHaveLength(1);
     expect(valid()).toBe(true);
     expect(relativeError(vol(), 4 * 16 * 40 * Math.SQRT1_2 - 2 * 16)).toBeLessThan(1e-6);
-    // Drawn on Right (x = 0), the profile lies along the square's left and right sides: edge-on there, so said so.
-    const upright = sketchFeature({ kind: "default", name: "Right" }, rectSketch(16, -2, 8, 4));
+    // Across the bottom side on the plane x = 20, the profile lies parallel to the left and right sides: edge-on there, so said so.
+    const upright = sketchFeature(planeOnFace([1, 0, 0], [20, 0, 0], "x = 20"), rectSketch(-4, -2, 8, 4));
     const edgeOn = build([square, upright, { ...locked, sketchRef: upright.id, pathRef: square.id }]);
     expect(Object.values(edgeOn.featureErrors)[0]).toMatch(/the profile is edge-on to some sides; tilt it so it isn't parallel to any side/);
     // A smooth closed loop can't be done kept facing one way (somewhere the path runs along the profile's plane): said plainly.
