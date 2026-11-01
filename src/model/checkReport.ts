@@ -27,16 +27,17 @@ export interface CheckReport {
 
 /**
  * Whether a part counts as sound geometry: OpenCascade's own check passes AND,
- * for a solid, it encloses a positive volume and no edge is shared by more than
- * two faces. (OpenCascade's check alone passes some inside-out or
- * self-touching solids, e.g. a sweep of a profile lying along its path.)
+ * for a solid, it encloses a positive volume. (OpenCascade's check alone
+ * passes some inside-out solids, e.g. a sweep of a profile lying along its
+ * path.) Places where more than two faces meet are reported from the mesh
+ * ("surfaces meet badly", an error) rather than here: a hem folded flat onto
+ * its sheet touches it along edges and is still a sound part.
  */
-export function geometrySound(analyzerValid: boolean | null, exactVolume: number | null, nonManifoldEdges: number, surface: boolean): boolean | null {
+export function geometrySound(analyzerValid: boolean | null, exactVolume: number | null, surface: boolean): boolean | null {
   if (analyzerValid === null) return null;
   if (!analyzerValid) return false;
   if (surface) return true;
-  if (exactVolume !== null && !(exactVolume > 0)) return false;
-  return nonManifoldEdges === 0;
+  return exactVolume === null || exactVolume > 0;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

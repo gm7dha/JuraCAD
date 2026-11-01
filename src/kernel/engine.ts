@@ -4984,8 +4984,8 @@ export class GeometryEngine {
         }
         const m = p.shape.mesh(tol);
         const mesh = analyzeMesh(m.vertices, m.triangles);
-        // OpenCascade's check passes some inside-out or self-touching solids: those aren't sound either.
-        geometryValid = geometrySound(geometryValid, exactVolume, mesh.nonManifoldEdges, !!p.surface);
+        // OpenCascade's check passes some inside-out solids: those aren't sound either.
+        geometryValid = geometrySound(geometryValid, exactVolume, !!p.surface);
         // Measuring wall thickness only makes sense on a closed surface.
         const thinnest = mesh.watertight && !p.surface ? estimateThickness(m.vertices, m.triangles) : null;
         return { partId: p.id, name: p.name, geometryValid, exactVolume, mesh, thinnest, ...(p.surface ? { surface: true } : {}) };

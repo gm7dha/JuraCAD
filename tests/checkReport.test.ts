@@ -81,17 +81,15 @@ describe("check report", () => {
     expect(r.parts[1].findings.some((f) => /Overlaps Part 1/.test(f.text))).toBe(true);
   });
 
-  it("calls an inside-out or non-manifold solid broken even when OpenCascade's own check passes it", () => {
+  it("calls an inside-out solid broken even when OpenCascade's own check passes it", () => {
     // OpenCascade's check passes, but the solid encloses a negative volume: not sound.
-    expect(geometrySound(true, -137, 0, false)).toBe(false);
-    expect(geometrySound(true, 0, 0, false)).toBe(false);
-    // Edges where more than two faces meet: not sound either.
-    expect(geometrySound(true, 500, 4, false)).toBe(false);
-    expect(geometrySound(true, 500, 0, false)).toBe(true);
+    expect(geometrySound(true, -137, false)).toBe(false);
+    expect(geometrySound(true, 0, false)).toBe(false);
+    expect(geometrySound(true, 500, false)).toBe(true);
     // A surface has no volume, and that's fine.
-    expect(geometrySound(true, 0, 0, true)).toBe(true);
-    expect(geometrySound(false, 500, 0, false)).toBe(false);
-    expect(geometrySound(null, 500, 0, false)).toBeNull();
+    expect(geometrySound(true, 0, true)).toBe(true);
+    expect(geometrySound(false, 500, false)).toBe(false);
+    expect(geometrySound(null, 500, false)).toBeNull();
     // In the report: an error, even with a mesh that looks closed.
     const r = buildCheckReport({ parts: [part({ geometryValid: false, exactVolume: -137 })] }, 0);
     expect(r.level).toBe("error");
@@ -99,6 +97,12 @@ describe("check report", () => {
     // The mesh's own inside-out note isn't repeated.
     const both = buildCheckReport({ parts: [part({ exactVolume: -10 }, { watertight: false, volume: -10 })] }, 0);
     expect(both.parts[0].findings.filter((f) => /inside out/.test(f.text))).toHaveLength(1);
+  });
+
+  it("reports places where more than two faces meet as an error (from the mesh)", () => {
+    const r = buildCheckReport({ parts: [part({}, { watertight: false, nonManifoldEdges: 4 })] }, 0);
+    expect(r.level).toBe("error");
+    expect(r.parts[0].findings.map((f) => f.text)).toContain("Has 4 places where surfaces meet badly");
   });
 });
 
