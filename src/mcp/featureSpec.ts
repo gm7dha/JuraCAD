@@ -24,6 +24,7 @@ import type { SketchData, SketchLine } from "../sketch/types";
 export const FEATURE_KINDS = {
   extrude: "extrude",
   revolve: "revolve",
+  sweep: "sweep",
   hole: "hole",
   fillet: "fillet",
   chamfer: "chamfer",
@@ -43,8 +44,9 @@ const OPERATIONS = ["new", "add", "remove", "intersect"] as const;
 
 /** The settings each kind takes (besides type, name and operation). */
 export const KIND_KEYS: Record<FeatureKind, string[]> = {
-  extrude: ["sketch", "depth", "end", "up_to_face", "up_to_part", "flip", "second_depth", "draft", "areas"],
-  revolve: ["sketch", "axis", "angle", "symmetric", "flip", "areas"],
+  extrude: ["sketch", "depth", "end", "up_to_face", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches"],
+  revolve: ["sketch", "axis", "angle", "symmetric", "flip", "areas", "more_sketches"],
+  sweep: ["sketch", "path", "twist", "keep_orientation", "areas", "more_sketches"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
   fillet: ["part", "edges", "radius", "end_radius"],
   chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side"],
@@ -63,7 +65,7 @@ export const MAX_PATTERN = 100;
 export const MAX_PATTERN_TOTAL = 400;
 
 /** Which kinds have New / Add / Remove / Intersect. */
-const HAS_OPERATION: FeatureKind[] = ["extrude", "revolve", "box", "cylinder", "sphere"];
+const HAS_OPERATION: FeatureKind[] = ["extrude", "revolve", "sweep", "box", "cylinder", "sphere"];
 
 export interface SpecContext {
   session: Session;
@@ -106,6 +108,43 @@ function areas(f: Feature, a: Obj, ctx: SpecContext) {
   f.areas = list(a.areas, "areas").map((p, i) => {
     const [x, y] = xy(p, `areas[${i}]`, ctx.scope);
     return [x.value, y.value] as [number, number];
+  });
+}
+
+/**
+ * Areas of other sketches the feature uses too (`moreAreas`, as clicked in the
+ * app): [{ sketch, areas: [[x, y], …] }, …]; null or [] for none. Each sketch
+ * once, not the feature's own sketch (nor a sweep's path), and above the
+ * feature in the list.
+ */
+function moreSketches(f: Feature, a: Obj, ctx: SpecContext) {
+  if (!("more_sketches" in a)) return;
+  if (a.more_sketches === null || (Array.isArray(a.more_sketches) && a.more_sketches.length === 0)) {
+    delete f.moreAreas;
+    return;
+  }
+  if (f.surface) throw new InputError(`${f.name} makes a surface, which takes its shapes from one sketch; leave "more_sketches" out.`);
+  const seen = new Set<string>();
+  f.moreAreas = list(a.more_sketches, "more_sketches").map((m, i) => {
+    const where = `more_sketches[${i}]`;
+    if (!m || typeof m !== "object" || Array.isArray(m)) throw new InputError(`${where} must be {"sketch": "<name>", "areas": [[x, y], …]}.`);
+    const o = m as Obj;
+    noExtras(o, ["sketch", "areas"], where);
+    const sk = ctx.session.feature(o.sketch, `${where}.sketch`, ["sketch"], ctx.doc);
+    if (sk.id === f.sketchRef) throw new InputError(`${where}: ${sk.name} is already the feature's own sketch; choose its areas with "areas" instead.`);
+    if (f.type === "sweep" && sk.id === f.pathRef) throw new InputError(`${where}: ${sk.name} is the path, so it can't also be a shape swept along it.`);
+    if (seen.has(sk.id)) throw new InputError(`${where}: ${sk.name} is listed twice; put all its areas in one entry.`);
+    seen.add(sk.id);
+    if (sk.suppressed) throw new InputError(`${where}: ${sk.name} is suppressed. Switch it back on first (edit_feature with "suppressed": false).`);
+    if (ctx.editing && ctx.doc.features.indexOf(sk) > ctx.doc.features.findIndex((x) => x.id === f.id)) throw new InputError(`${where}: ${sk.name} comes after ${f.name} in the list, so it can't be used.`);
+    const picks = list(o.areas, `${where}.areas`);
+    return {
+      sketch: sk.id,
+      areas: picks.map((p, j) => {
+        const [x, y] = xy(p, `${where}.areas[${j}]`, ctx.scope);
+        return [x.value, y.value] as [number, number];
+      }),
+    };
   });
 }
 
@@ -223,11 +262,15 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       f.extrude = ex;
       param(f, a, "draft", "draft", ctx, { unit: "°" });
       areas(f, a, ctx);
+      moreSketches(f, a, ctx);
       break;
     }
 
     case "revolve": {
+      const oldSketch = f.sketchRef;
       f.sketchRef = sketchRef(a, ctx, f.sketchRef);
+      // A different sketch: the extra sketches' areas were picked to go with the old one (and round its axis).
+      if (oldSketch && f.sketchRef !== oldSketch) delete f.moreAreas;
       const rv = { ...(f.revolve ?? { axis: "vertical", flip: false }) };
       if (has(a, "axis")) {
         const sketch = ctx.doc.features.find((x) => x.id === f.sketchRef)?.sketch?.data;
@@ -250,6 +293,37 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       param(f, a, "angle", "angle", ctx, { positive: true, unit: "°" });
       if (f.params.angle && Number(f.params.angle) > 360) throw new InputError("angle can be at most 360 (all the way round).");
       areas(f, a, ctx);
+      moreSketches(f, a, ctx);
+      break;
+    }
+
+    case "sweep": {
+      const oldSketch = f.sketchRef;
+      if (!ctx.editing && (!has(a, "sketch") || !has(a, "path"))) {
+        throw new InputError('A sweep needs "sketch" (the one with the closed shape to carry) and "path" (another sketch with the lines and arcs to follow). Draw the shape on a plane across the start of the path.');
+      }
+      if (has(a, "sketch")) f.sketchRef = ctx.session.feature(a.sketch, "sketch", ["sketch"], ctx.doc).id;
+      if (has(a, "path")) f.pathRef = ctx.session.feature(a.path, "path", ["sketch"], ctx.doc).id;
+      if (f.sketchRef === f.pathRef) throw new InputError("The shape and the path must be different sketches.");
+      if (oldSketch && f.sketchRef !== oldSketch) {
+        delete f.areas;
+        delete f.moreAreas;
+      }
+      // The path chosen from one of the extra shapes: that sketch can't be both.
+      if (f.moreAreas?.some((m) => m.sketch === f.pathRef)) {
+        const rest = f.moreAreas.filter((m) => m.sketch !== f.pathRef);
+        if (rest.length) f.moreAreas = rest;
+        else delete f.moreAreas;
+      }
+      if (has(a, "keep_orientation")) {
+        if (bool(a.keep_orientation, "keep_orientation")) f.sweepControl = { lockOrientation: true };
+        else delete f.sweepControl;
+      }
+      if (has(a, "twist") && f.sweepControl?.lockOrientation) throw new InputError('"twist" isn\'t used with "keep_orientation": true (the shape keeps facing the same way); leave one out.');
+      param(f, a, "twist", "twist", ctx, { unit: "°" });
+      if (f.params.twist && Math.abs(Number(f.params.twist)) > 3600) throw new InputError("twist can be at most 3600° (10 turns) either way.");
+      areas(f, a, ctx);
+      moreSketches(f, a, ctx);
       break;
     }
 

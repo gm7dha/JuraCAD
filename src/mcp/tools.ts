@@ -33,7 +33,7 @@ export { fileNameFor } from "./toolKit";
 export const FORMAT_GUIDE = `JuraCAD conventions (the same as Onshape):
 - Units: millimetres for every length, degrees for angles. Any number may instead be maths or a variable as text: "w / 2", "1 in", "thickness * 2".
 - Axes: Z is up. The Top plane is XY (seen from above), Front is XZ (seen from −Y, so +X is right and +Z up), Right is YZ (seen from +X).
-- Building a part: add_sketch (2D shapes on a plane or on a flat face of a part) → add_feature "extrude" (or "revolve") to make a solid → then holes, fillets, chamfers, shells, patterns, mirrors. Features build in order; later ones change the result of earlier ones, and every size stays editable in the app.
+- Building a part: add_sketch (2D shapes on a plane or on a flat face of a part) → add_feature "extrude" (or "revolve", or "sweep" along a path sketch) to make a solid; "more_sketches" lets one extrude/revolve/sweep use areas of several sketches → then holes, fillets, chamfers, shells, patterns, mirrors. Features build in order; later ones change the result of earlier ones, and every size stays editable in the app.
 - Sketches: on the Top plane sketch x/y are world X/Y. On Front, sketch x = X and sketch y = Z. On Right, sketch x = Y and sketch y = Z. On a face, add_sketch says where its axes point. Shapes are fully dimensioned from the sketch origin automatically.
 - Sketching on a face ("on_face"): the sketch origin is where the world origin lands on that face, and its axes are — top face: x = +X, y = +Y; bottom: x = −X, y = +Y; front: x = +X, y = +Z; back: x = −X, y = +Z; right: x = +Y, y = +Z; left: x = −Y, y = +Z. add_sketch also says where they point. "top" (and "front"…) means the outermost flat face facing that way; for another face use its number from list_faces (F3) or {"near": [x, y, z]}.
 - Extrude goes along the sketch plane's normal: up (+Z) from Top, towards −Y from Front, towards +X from Right; "flip": true goes the other way. "operation": "new" makes a new part (each separate piece its own part), "add" joins every part it touches (a piece touching none becomes a new part, as in Onshape), "remove" cuts every part it reaches (holes too), "intersect" keeps the overlap with the latest part. The first solid is new; later ones default to add.
@@ -94,8 +94,16 @@ export function summarize(f: Feature, doc: JuraCADDocument): string {
       const more = (f.moreAreas ?? []).map((m) => nameOf(m.sketch));
       return `extrude ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} ${how}${e.flip ? ", flipped" : ""}${p.draft && p.draft !== "0" ? `, draft ${p.draft}°` : ""}, ${op}`;
     }
-    case "revolve":
-      return `revolve ${nameOf(f.sketchRef)} ${p.angle ?? 360}° about ${f.revolve?.axis === "vertical" || f.revolve?.axis === "horizontal" ? `the sketch's ${f.revolve.axis} axis` : "a sketch line"}, ${op}`;
+    case "revolve": {
+      const more = (f.moreAreas ?? []).map((m) => nameOf(m.sketch));
+      return `revolve ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too, round the same axis)` : ""} ${p.angle ?? 360}° about ${f.revolve?.axis === "vertical" || f.revolve?.axis === "horizontal" ? `the sketch's ${f.revolve.axis} axis` : "a sketch line"}${f.revolve?.symmetric ? " (half each way)" : ""}, ${op}`;
+    }
+    case "sweep": {
+      if (f.surface) return `surface sweep of ${nameOf(f.sketchRef)} along ${nameOf(f.pathRef)} (made in the app)`;
+      const more = (f.moreAreas ?? []).map((m) => nameOf(m.sketch));
+      const twist = f.sweepControl?.lockOrientation ? ", keeping its orientation" : p.twist && p.twist !== "0" ? `, twisting ${p.twist}°` : "";
+      return `sweep ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} along ${nameOf(f.pathRef)}${twist}, ${op}`;
+    }
     case "hole": {
       const h = f.hole!;
       return `${describeHole(h)}${h.standard === "Custom" ? ` ⌀${p.diameter}` : ""}, ${h.end === "throughAll" ? "through all" : `${mm(p.depth)} deep`}, at the points of ${nameOf(h.sketchRef)}`;
@@ -309,8 +317,9 @@ const SHAPES_SCHEMA = {
 };
 
 const KIND_HELP: Record<FeatureKind, string> = {
-  extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" (right through, both ways) | "up_to_face" with up_to_face, up_to_part), flip (a "remove" cut on a face sketch goes into the part unless flip is given), second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), operation',
-  revolve: 'revolve: sketch, axis ("vertical" | "horizontal" — the sketch\'s axes through its origin — or {"from":[x,y],"to":[x,y]} naming a line drawn in the sketch), angle (° default 360), symmetric, flip, areas, operation',
+  extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" (right through, both ways) | "up_to_face" with up_to_face, up_to_part), flip (a "remove" cut on a face sketch goes into the part unless flip is given), second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), more_sketches ([{"sketch": name, "areas": [[x,y],…]}, …]: areas of other sketches made with the same settings, as clicking them in the app does; null or [] for none), operation',
+  revolve: 'revolve: sketch, axis ("vertical" | "horizontal" — the sketch\'s axes through its origin — or {"from":[x,y],"to":[x,y]} naming a line drawn in the sketch), angle (° default 360), symmetric, flip, areas, more_sketches (spun round the same axis, which must lie in their planes), operation',
+  sweep: 'sweep: sketch (the closed shape, drawn on a plane across the start of the path), path (another sketch: the lines/arcs to follow), twist (° turned along the whole path, default 0), keep_orientation (true: the shape doesn\'t turn with the path; no twist then), areas, more_sketches (more shapes swept along the same path), operation',
   hole: 'hole: sketch (whose points and circle centres mark the holes — draw it on the face the holes start from, with add_sketch "on_face"), size ("M2"…"M12") with fit ("clearance" default | "tapped"), or diameter for a custom hole; style ("simple" | "counterbore" | "countersink"), end ("through_all" default | "blind" with depth), flip. Custom holes may set counterbore_diameter/counterbore_depth/countersink_diameter/countersink_angle',
   fillet: "fillet: edges (see edge choices), radius, end_radius (optional, a radius growing along the edge), part (default the latest)",
   chamfer: "chamfer: edges, distance, and optionally second_distance or angle (°), flip_side, part",
