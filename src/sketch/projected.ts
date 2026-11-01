@@ -555,6 +555,26 @@ export function pierceSamples(at: (f: number) => Vec3, spans = 1): number {
   const limit = Math.cos((PIERCE_TURN * Math.PI) / 180);
   let start = PIERCE_SAMPLES;
   while (start < 4 * spans && start < PIERCE_MAX_SAMPLES) start *= 2;
+  // Beware aliasing: even samples of a curve that winds round many times within ONE span (a single-span edge with many
+  // wiggles, which OpenCascade rarely makes — its long curves are splines of many spans) can land almost on a straight
+  // line and look smooth, so the turning test below can't see the wiggles. Such an edge can still hide crossings here.
+  // Also more for a single-span edge much longer than its box is wide (it must double back on itself to fit).
+  if (spans === 1) {
+    let length = 0;
+    const lo: Vec3 = [Infinity, Infinity, Infinity], hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+    let last = at(0);
+    for (let i = 0; i <= PIERCE_SAMPLES; i++) {
+      const p = at(i / PIERCE_SAMPLES);
+      length += Math.hypot(...sub(p, last));
+      last = p;
+      for (let k = 0; k < 3; k++) {
+        lo[k] = Math.min(lo[k], p[k]);
+        hi[k] = Math.max(hi[k], p[k]);
+      }
+    }
+    const box = Math.hypot(...sub(hi, lo));
+    if (box > 1e-9 && length > 8 * box) start *= 2;
+  }
   for (let n = start; ; n *= 2) {
     if (n >= PIERCE_MAX_SAMPLES) return PIERCE_MAX_SAMPLES;
     let prev: Vec3 | null = null;

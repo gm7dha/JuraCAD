@@ -91,7 +91,7 @@ export function applySketchRelation(tool: RelationTool) {
       const now = useStore.getState();
       // The sketch was closed or changed meanwhile: nothing to do.
       if (sketchData() !== data || !now.sketch) {
-        if (now.sketch?.message?.text === "Working…") now.setSketchMessage(null);
+        if (now.sketch?.message?.text === "Working…") now.setSketchMessage(`Nothing was changed: the sketch changed while ${RELATION_LABELS[tool].toLowerCase()} was being worked out. Try again.`, "info");
         return;
       }
       finishRelation(tool, applyRelation(data, tool, sel));

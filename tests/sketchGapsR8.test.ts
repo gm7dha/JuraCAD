@@ -13,7 +13,7 @@ import { ellipseFrom } from "../src/sketch/ellipse";
 import { followLinks, linkEdge, refSketch, type RefEdge } from "../src/sketch/links";
 import { addCircle, addLine, addPoint, curveById, pointPos, relationMayTakeAWhile, type Placed } from "../src/sketch/ops";
 import { planeFrame, planeOnFace, toSketch, toWorld, type SketchPlane } from "../src/sketch/planes";
-import { PIERCE_SAMPLES, circleOf, edgePierceRefs, edgePierces, pierceSamples, seeConic, seeEdge, seeSketchCurve, sketchRefs, type SourceSketch } from "../src/sketch/projected";
+import { PIERCE_SAMPLES, circleOf, edgePierceRefs, edgePierces, pierceSamples, seeConic, seeEdge, seeSketchCurve, shapePath, sketchRefs, type SourceSketch } from "../src/sketch/projected";
 import { sketchCurveAt, snapAt } from "../src/sketch/snaps";
 import { solveSketch } from "../src/sketch/solver";
 import { addCentreArc, addEllipse, addSpline } from "../src/sketch/tools";
@@ -112,6 +112,27 @@ describe("circles and arcs at a slant, seen as ellipses", () => {
     expect(close(ce, seen([5, 5, 0]))).toBeLessThan(1e-9);
     expect(close(ma, ce)).toBeCloseTo(6, 9);
     expect(close(mi, ce)).toBeCloseTo(3, 9);
+  });
+
+  it("a long axis near upright keeps its ends when a tiny turn makes the original's come back the other way round", () => {
+    const front = planeFrame(TOP);
+    const conic = (ang: number) => ({ centre: [3, 4, 0] as Vec3, major: [10 * Math.cos(ang), 10 * Math.sin(ang), 0] as Vec3, minor: [-4 * Math.sin(ang), 4 * Math.cos(ang), 0] as Vec3, t0: 0, t1: 2 * Math.PI, whole: true });
+    const before = seeConic(front, conic(Math.PI / 2 - 1e-7))!;
+    const after = seeConic(front, conic(Math.PI / 2 + 1e-7))!;
+    // Its own long-axis end is chosen right / up, so here the original's comes back at the other end, 20 mm away.
+    expect(close(before.major, after.major)).toBeGreaterThan(19.99);
+    const edge = (sh: typeof before): RefEdge => ({ kind: "curve", a: sh.major, b: sh.major, mid: sh.centre, centre: sh.centre, shape: sh, path: shapePath(sh), source: { sketch: "skA", item: "k", ends: { c: "c" } } });
+    const r = linkEdge(emptySketch(), edge(before), false);
+    const el = curveById(r.sketch, r.curveId) as SketchEllipse;
+    const was = [pointPos(r.sketch, el.major), pointPos(r.sketch, el.minor)];
+    const now = followLinks(r.sketch, { [r.curveId]: edge(after) });
+    const ma = pointPos(now, el.major), mi = pointPos(now, el.minor);
+    // The copy's ends hardly move (the ellipse turned 2 × 10⁻⁷ rad), and it's still the same ellipse.
+    expect(close(ma, was[0])).toBeLessThan(1e-5);
+    expect(close(mi, was[1])).toBeLessThan(1e-5);
+    expect(close(ma, [3, 4])).toBeCloseTo(10, 9);
+    expect(close(mi, [3, 4])).toBeCloseTo(4, 9);
+    expect(solveSketch(now).ok).toBe(true);
   });
 
   it("seen side-on it's no curve (its centre is offered instead, as before)", () => {

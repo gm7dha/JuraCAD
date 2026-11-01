@@ -626,8 +626,14 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
     } else if (c.type === "ellipse" && e.shape?.kind === "ellipse") {
       const sh = e.shape;
       moves.set(c.center, sh.centre);
-      moves.set(c.major, sh.major);
-      moves.set(c.minor, sh.minor);
+      // Either end of an axis is the same ellipse: keep the ends nearest where the copy's are now, so points and
+      // dimensions on them don't jump across when the original's axis comes back the other way round (a long axis
+      // near upright can, after the smallest turn).
+      const across = (p: P2): P2 => [2 * sh.centre[0] - p[0], 2 * sh.centre[1] - p[1]];
+      const was = pointPos(s, c.major);
+      const flip = dist(across(sh.major), was) < dist(sh.major, was);
+      moves.set(c.major, flip ? across(sh.major) : sh.major);
+      moves.set(c.minor, flip ? across(sh.minor) : sh.minor);
       if (c.start && c.end && sh.start && sh.end) {
         moves.set(c.start, sh.start);
         moves.set(c.end, sh.end);
