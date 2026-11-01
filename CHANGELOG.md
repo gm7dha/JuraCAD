@@ -8,6 +8,25 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.29 — Safari Live, drawing sheets per part, assembly STEP and mirror, Claude builds assemblies and drawings · commit `d886d49`
+
+- **Live with Claude in Safari** through a small link window from the extension (allow the pop-up; keep it open).
+- **Claude extension:** Claude can now build assemblies (insert, mates, clash check, explode, structured STEP) and
+  drawings (views, sections, details, dimensions, PDF/DXF/SVG), and a long request can be cancelled. Download it again
+  from Help.
+- **Drawings:** every dimension's number drags freely (angles switch to the other angle as you cross a line, as in
+  Onshape); each sheet can show its own part or assembly with its own title and part number; outside angles over 180°;
+  angle numbers can sit right by the corner.
+- **Assemblies:** STEP export keeps the assembly structure; explode parts inside sub-assemblies; mirror across a flat
+  face, or as the same part for symmetric parts; Width mate across two parts of one copy.
+- **Parts from shapes:** one Extrude can take shapes from several sketches; Intersect works on every part it reaches;
+  threaded holes thread every part they go through; the dialog says which parts it adds to, joins or makes.
+- **Sketch:** Pierce; Use on spline and ellipse edges; Extend for splines and ellipse arcs; a warning when an offset
+  crosses itself; DXF ellipse arcs come in as real ellipse arcs.
+- **Amber warnings:** a feature that builds but has something to tell you shows an amber note instead of looking failed.
+- **Note:** holes made since v0.28 in Part Studios with several parts now measure their depth in the part the drill
+  actually meets first.
+
 ## v0.28 — Curve constraints, snapping to everything, sub-assemblies, one sketch many shapes · commit `13556f8`
 
 - **One sketch, several shapes:** click any shape of a sketch (before or while making an Extrude, Revolve or Sweep)
