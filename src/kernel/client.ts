@@ -3,7 +3,7 @@ import type { SketchPlane } from "../sketch/planes";
 import type { RefEdge } from "../sketch/links";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
-import type { CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, StepResult, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -145,8 +145,9 @@ export class KernelClient {
     return this.send({ type: "deleteFaceBlockers", features, featureId, variables }).then((body) => body.result as DeleteFaceBlockers);
   }
 
-  exportStep(partIds: string[], colours?: Record<string, string>, instances?: InstanceInput[]): Promise<StepResult> {
-    return this.send({ type: "exportStep", partIds, colours, instances }).then((body) => body.result as StepResult);
+  /** `tree`: an assembly's structure (sub-assemblies, shared part definitions) to keep in the file. */
+  exportStep(partIds: string[], colours?: Record<string, string>, instances?: InstanceInput[], tree?: StepTree): Promise<StepResult> {
+    return this.send({ type: "exportStep", partIds, colours, instances, ...(tree ? { tree } : {}) }).then((body) => body.result as StepResult);
   }
 
   /** Drawing views of parts (or an assembly's placed copies). */

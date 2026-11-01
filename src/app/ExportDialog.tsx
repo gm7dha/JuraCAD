@@ -9,6 +9,8 @@ import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
 import { instancesForKernel } from "./assemblySolve";
+import { solveWithParts } from "../assembly/mates";
+import { stepTree } from "../assembly/stepTree";
 
 const QUALITY: { value: MeshQuality; label: string; hint: string }[] = [
   { value: "coarse", label: "Coarse", hint: "Small file, visible facets on curves" },
@@ -73,7 +75,9 @@ export function ExportDialog() {
     setStage({ kind: "working", text: `Creating ${format.toUpperCase()}…` });
     try {
       if (format === "step") {
-        const { step, partCount } = await getKernel().exportStep(partIds, doc.appearance, chosenInstances);
+        // A whole assembly keeps its structure (sub-assemblies, each part once, every copy placed), as Onshape's STEP files do.
+        const tree = asm && which === "all" ? stepTree(asm, allParts, solveWithParts(asm, allParts, { assemblies }).placements, assemblies ?? []) : null;
+        const { step, partCount } = await getKernel().exportStep(partIds, doc.appearance, chosenInstances, tree ?? undefined);
         const name = `${safeFileName(fileName, "juracad")}.step`;
         downloadFile(step, name, "model/step");
         showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})`, "success");

@@ -22,7 +22,9 @@ export function mateInactive(a: Assembly, mate: Mate, assemblies: readonly Assem
   const off = [mate.a.instanceId, mate.b.instanceId].map((id) => a.instances.find((i) => i.id === id)).find((i) => i?.suppressed);
   if (off) return `Not used while ${off.name} is suppressed`;
   // On a part inside a sub-assembly that's suppressed there.
-  const inner = [pathProblem(a, mate.a, assemblies), pathProblem(a, mate.b, assemblies)].find((p) => p?.kind === "suppressed");
+  // (A Width mate's second face may be on another part of the same copy: `path2`.)
+  const second = (c: Mate["a"]) => (c.path2 ? pathProblem(a, { instanceId: c.instanceId, path: c.path2 }, assemblies) : null);
+  const inner = [pathProblem(a, mate.a, assemblies), pathProblem(a, mate.b, assemblies), second(mate.a), second(mate.b)].find((p) => p?.kind === "suppressed");
   return inner ? `Not used while ${inner.text}` : null;
 }
 

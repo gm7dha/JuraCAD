@@ -16,7 +16,7 @@ import { mirroredBox, nextInstanceName, placedBox, updateAssembly, usesAssembly,
 
 export { tidySubAssemblies, usesAssembly } from "./assembly";
 import { findMesh, meshIdOf } from "./configured";
-import { compose, IDENTITY, type Placement } from "./math";
+import { compose, IDENTITY, type Placement, type Vec3 } from "./math";
 import { solvedInside } from "./mates";
 
 export const PATH_SEP = "/";
@@ -139,13 +139,22 @@ export function instanceAt(assembly: Assembly, assemblies: readonly Assembly[], 
  * places), parts inside sub-assemblies carried along. Copies of parts that no
  * longer exist are left out.
  */
-export function kernelInstances(leaves: readonly Leaf[], parts: readonly PartMesh[], tops: Record<string, Placement>, fallback: (top: string) => Placement): InstanceInput[] {
+export function kernelInstances(
+  leaves: readonly Leaf[],
+  parts: readonly PartMesh[],
+  tops: Record<string, Placement>,
+  fallback: (top: string) => Placement,
+  /** Parts inside sub-assemblies moved on their own (an exploded view's steps), by key: how far (mm). */
+  shift: Record<string, Vec3> = {},
+): InstanceInput[] {
   const out: InstanceInput[] = [];
   for (const l of leaves) {
     if (!findMesh(parts, meshIdOf(l.instance))) continue;
     // (A plain part takes its place as it is, so assemblies without sub-assemblies come out exactly as before.)
     const at = tops[l.top] ?? fallback(l.top);
-    const p = l.path.length ? compose(at, l.relative) : at;
+    const placed = l.path.length ? compose(at, l.relative) : at;
+    const d = l.path.length ? shift[l.key] : undefined;
+    const p = d ? { ...placed, position: [placed.position[0] + d[0], placed.position[1] + d[1], placed.position[2] + d[2]] as Vec3 } : placed;
     out.push({ id: l.key, partId: meshIdOf(l.instance), name: l.name, position: p.position, rotation: p.rotation, ...(l.instance.mirrored ? { mirrored: true } : {}) });
   }
   return out;
