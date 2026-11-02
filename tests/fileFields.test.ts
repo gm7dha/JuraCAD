@@ -31,6 +31,7 @@ function everyField(): Required<JuraCADDocument> {
     variables: doc.variables!,
     units: "in",
     appearance: { [box.id]: "#3366cc" },
+    finishes: { [box.id]: "brushed" },
     materials: { [box.id]: "petg" },
     studioName: "Brackets",
     hiddenDatums: ["Top"],

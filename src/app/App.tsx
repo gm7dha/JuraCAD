@@ -8,6 +8,7 @@ import { Viewport, viewNormalToPlaneFeature, viewportApi } from "../viewport/Vie
 import type { StandardView } from "../viewport/ViewCube";
 import { CheckDialog } from "./CheckDialog";
 import { ExportDialog } from "./ExportDialog";
+import { PictureDialog } from "./PictureDialog";
 import { FeatureDialog } from "./FeatureDialog";
 import { FeaturePanel } from "./FeaturePanel";
 import { HelpDialog } from "./HelpDialog";
@@ -307,6 +308,7 @@ export function App() {
       <BottomTabs />
       {dialog === "check" && <CheckDialog />}
       {dialog === "export" && <ExportDialog />}
+      {dialog === "picture" && <PictureDialog />}
       {dialog === "help" && <HelpDialog />}
       {dialog === "flatPattern" && <FlatPatternDialog />}
       {dialog === "whatsNew" && <WhatsNewDialog />}

@@ -204,6 +204,7 @@ function PrintPanelBody() {
       const kernel = getKernel();
       await kernel.whenIdle();
       const out = await kernel.exportPrint3mf(solidRequests, [bed[0], bed[1]], print.gap, "normal", doc.name, doc.appearance);
+      // (Plain colours only: slicers read #RRGGBB, and a print is never see-through.)
       const name = `${safeFileName(chosen.length === 1 ? `${doc.name} ${chosen[0].name}` : doc.name, "juracad")}.3mf`;
       downloadFile(out.data, name, "model/3mf");
       const off = out.layout.places.filter((p) => !p.onBed).length;

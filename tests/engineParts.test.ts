@@ -390,4 +390,18 @@ describe("part colours in exports", () => {
     const mf = new TextDecoder().decode(engine.export3mf([], "coarse", "T", { [box.id]: "#ff8000" }).data);
     expect(mf).toMatch(/displaycolor="#FF8000"/);
   });
+
+  it("keeps a see-through finish's colour (and still writes the file)", async () => {
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    build([box]);
+    const step = new TextDecoder().decode((await engine.exportStep([], { [box.id]: "#ff800059" })).step);
+    const flat = step.replace(/\s+/g, "");
+    expect(flat).toMatch(/MANIFOLD_SOLID_BREP/);
+    // 0x59 / 255 solid = 0.65 see-through.
+    expect(Number(/SURFACE_STYLE_TRANSPARENT\(([\d.]+)\)/.exec(flat)?.[1])).toBeCloseTo(1 - 0x59 / 255, 3);
+    const colours = [...flat.matchAll(/COLOUR_RGB\('[^']*',([-\d.Ee+]+),([-\d.Ee+]+),([-\d.Ee+]+)\)/g)].map((m) => m.slice(1, 4).map(Number));
+    expect(colours.some(([r, g, b]) => Math.abs(r - 1) < 0.01 && Math.abs(g - 128 / 255) < 0.01 && Math.abs(b) < 0.01)).toBe(true);
+    const mf = new TextDecoder().decode(engine.export3mf([], "coarse", "T", { [box.id]: "#ff800059" }).data);
+    expect(mf).toMatch(/displaycolor="#FF800059"/);
+  });
 });

@@ -56,6 +56,43 @@ async function tool(name) {
 }
 
 let shotNumber = 0;
+/** A PNG's pixels as RGBA bytes (8-bit RGBA only — what browsers save), undoing each row's filter. */
+async function pngPixels(png) {
+  const { inflateSync } = await import("node:zlib");
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  const chunks = [];
+  for (let at = 8; at < png.length; ) {
+    const len = png.readUInt32BE(at);
+    const type = png.subarray(at + 4, at + 8).toString("latin1");
+    if (type === "IDAT") chunks.push(png.subarray(at + 8, at + 8 + len));
+    at += 12 + len;
+  }
+  const raw = inflateSync(Buffer.concat(chunks));
+  const stride = width * 4;
+  const out = new Uint8Array(stride * height);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const row = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let i = 0; i < stride; i++) {
+      const left = i >= 4 ? out[y * stride + i - 4] : 0;
+      const up = y > 0 ? out[(y - 1) * stride + i] : 0;
+      const upLeft = y > 0 && i >= 4 ? out[(y - 1) * stride + i - 4] : 0;
+      let v = row[i];
+      if (filter === 1) v += left;
+      else if (filter === 2) v += up;
+      else if (filter === 3) v += (left + up) >> 1;
+      else if (filter === 4) {
+        const p = left + up - upLeft;
+        const pa = Math.abs(p - left), pb = Math.abs(p - up), pc = Math.abs(p - upLeft);
+        v += pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft;
+      }
+      out[y * stride + i] = v & 255;
+    }
+  }
+  return out;
+}
+
 async function shot(name) {
   shotNumber++;
   const base = `${shotDir}/${shotNumber}-${name}`;
@@ -150,6 +187,45 @@ try {
   await page.getByRole("button", { name: "Colour of Part 1" }).click();
   await page.getByRole("button", { name: "Blue", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".colour-swatch")?.getAttribute("style")?.includes("61, 127, 217"));
+
+  step = "giving the part a glossy finish";
+  await page.getByRole("button", { name: "Colour of Part 1" }).click();
+  await page.getByRole("radio", { name: "Glossy plastic" }).click();
+  await page.waitForFunction(() => Object.values(window.juracadStore.getState().history.present.finishes ?? {}).includes("glossy"));
+  await page.mouse.move(5, 5);
+  await page.waitForSelector(".colour-popover", { state: "detached" });
+  await shot("glossy");
+
+  step = "saving a picture of the view";
+  let pictureReport;
+  {
+    await page.getByRole("button", { name: "Picture", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Save a picture" });
+    await dialog.getByRole("radio", { name: /Twice as big/ }).check();
+    await dialog.getByRole("radio", { name: /See-through/ }).check();
+    const picturePromise = page.waitForEvent("download", { timeout: 60_000 });
+    await dialog.getByRole("button", { name: "Save picture" }).click();
+    const picture = await picturePromise;
+    const { readFileSync: readPng } = await import("node:fs");
+    const png = readPng(await picture.path());
+    if (png.subarray(1, 4).toString() !== "PNG" || !picture.suggestedFilename().endsWith(".png")) throw new Error(`the picture doesn't look like a PNG (${picture.suggestedFilename()})`);
+    const pw = png.readUInt32BE(16);
+    const ph = png.readUInt32BE(20);
+    const view = await page.locator(".viewport-canvas").boundingBox();
+    if (Math.abs(pw - 2 * Math.round(view.width)) > 2 || Math.abs(ph - 2 * Math.round(view.height)) > 2) throw new Error(`the 2× picture is ${pw} × ${ph}, the view ${view.width} × ${view.height}`);
+    if (png[25] !== 6 || png[24] !== 8) throw new Error(`the see-through picture is PNG colour type ${png[25]}, depth ${png[24]}`);
+    // Really see-through round the parts (a corner's alpha is 0), and the parts really drawn (solid pixels in the middle).
+    const pixels = await pngPixels(png);
+    const alphaAt = (x, y) => pixels[(y * pw + x) * 4 + 3];
+    const corners = [alphaAt(0, 0), alphaAt(pw - 1, 0), alphaAt(0, ph - 1), alphaAt(pw - 1, ph - 1)];
+    if (corners.some((a) => a !== 0)) throw new Error(`the see-through picture's corners aren't see-through (alpha ${corners.join(", ")})`);
+    let solid = 0;
+    for (let y = Math.floor(ph * 0.3); y < ph * 0.7; y += 4) for (let x = Math.floor(pw * 0.3); x < pw * 0.7; x += 4) if (alphaAt(x, y) === 255) solid++;
+    if (solid < 100) throw new Error(`the picture has hardly any solid pixels in the middle (${solid}): the parts weren't drawn`);
+    await dialog.waitFor({ state: "detached", timeout: 10_000 });
+    await shot("after-picture");
+    pictureReport = `a glossy finish and a ${pw} × ${ph} see-through picture (${png.length} bytes)`;
+  }
 
   step = "cutting the block open with a section view";
   await page.getByRole("button", { name: "Section", exact: true }).click();
@@ -2934,7 +3010,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${subReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${subReport}; ${pictureReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

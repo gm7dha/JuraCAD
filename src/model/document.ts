@@ -8,6 +8,7 @@ import { FEATURE_DEFS, defaultParams, isSolidFeature } from "./features";
 import { parseConfigurations } from "./configurations";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
+import { parseFinishes } from "./finishes";
 import { parseMaterials } from "./materials";
 import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
@@ -633,6 +634,7 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     features,
     ...(Array.isArray(d.variables) && d.variables.length ? { variables: parseVariables(d.variables) } : {}),
     ...(Object.keys(parseAppearance(d.appearance)).length ? { appearance: parseAppearance(d.appearance) } : {}),
+    ...(Object.keys(parseFinishes(d.finishes)).length ? { finishes: parseFinishes(d.finishes) } : {}),
     ...(Object.keys(parseMaterials(d.materials)).length ? { materials: parseMaterials(d.materials) } : {}),
     ...(d.units === "in" ? { units: "in" as const } : {}),
     ...(typeof d.studioName === "string" && d.studioName.trim() && d.studioName.trim() !== "Part Studio 1" ? { studioName: d.studioName.trim() } : {}),

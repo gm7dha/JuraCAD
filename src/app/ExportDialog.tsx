@@ -11,6 +11,7 @@ import { Modal } from "./Modal";
 import { instancesForKernel } from "./assemblySolve";
 import { solveWithParts } from "../assembly/mates";
 import { stepTree } from "../assembly/stepTree";
+import { exportColours } from "../model/finishes";
 
 const QUALITY: { value: MeshQuality; label: string; hint: string }[] = [
   { value: "coarse", label: "Coarse", hint: "Small file, visible facets on curves" },
@@ -78,12 +79,12 @@ export function ExportDialog() {
         // A whole assembly keeps its structure (sub-assemblies, each part once, every copy placed), as Onshape's STEP files do.
         const solvedAll = asm && which === "all" ? solveWithParts(asm, allParts, { assemblies }) : null;
         const tree = asm && solvedAll ? stepTree(asm, allParts, solvedAll.placements, assemblies ?? [], solvedAll.inner) : null;
-        const { step, partCount } = await getKernel().exportStep(partIds, doc.appearance, chosenInstances, tree ?? undefined);
+        const { step, partCount } = await getKernel().exportStep(partIds, exportColours(doc), chosenInstances, tree ?? undefined);
         const name = `${safeFileName(fileName, "juracad")}.step`;
         downloadFile(step, name, "model/step");
         showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})`, "success");
       } else if (format === "3mf") {
-        const { data, triangleCount } = await getKernel().export3mf(partIds, quality, doc.name, doc.appearance, chosenInstances);
+        const { data, triangleCount } = await getKernel().export3mf(partIds, quality, doc.name, exportColours(doc), chosenInstances);
         const name = `${safeFileName(fileName, "juracad")}.3mf`;
         downloadFile(data, name, "model/3mf");
         showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
