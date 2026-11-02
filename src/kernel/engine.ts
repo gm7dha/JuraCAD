@@ -3448,7 +3448,39 @@ export class GeometryEngine {
     };
     let solid: SolidFace[];
     let rips: [Vec3, Vec3][];
+    // Faces of the part that aren't walls and don't lie within a wall's thickness (a boss, a rib, a thicker wall…):
+    // left out of the sheet, which the flat pattern won't mention, so it's noted.
+    let leftOut = false;
     try {
+      const into = (f: Face): Vec3 => {
+        const n = take(f.normalAt());
+        return feature.flipSide ? n : [-n[0], -n[1], -n[2]];
+      };
+      const slabs = faces.map((f) => ({ n: into(f), at: take(f.center) }));
+      const eps = Math.max(1e-4, T * 1e-3);
+      const others = facesOf(part.shape);
+      try {
+        for (const f of others) {
+          if (faces.some((w) => w.isSame(f))) continue;
+          // Points round its edges (its centre may be in a hole, as a box's rim's is).
+          const pts: Vec3[] = [];
+          for (const e of edgesOf(f)) {
+            for (const t of [0, 0.25, 0.5, 0.75, 1]) pts.push(take(e.pointAt(t)));
+            e.delete();
+          }
+          // Every point within some wall's thickness (a rim round the top of a box spans several walls).
+          const inSlab = pts.every((p) => slabs.some(({ n, at }) => {
+            const h = (p[0] - at[0]) * n[0] + (p[1] - at[1]) * n[1] + (p[2] - at[2]) * n[2];
+            return h >= -eps && h <= T + eps;
+          }));
+          if (!inSlab) {
+            leftOut = true;
+            break;
+          }
+        }
+      } finally {
+        others.forEach((f) => f.delete());
+      }
       solid = faces.map((f): SolidFace => {
         const flat = f.geomType === "PLANE";
         const normal = take(f.normalAt());
@@ -3482,6 +3514,14 @@ export class GeometryEngine {
     if (!isValidSolid(shape)) {
       shape.delete();
       return "The walls run into each other once they have thickness. Try thinner metal or a smaller bend radius, or make more of the edges where walls meet into rips.";
+    }
+    if (leftOut)
+      this.warnings[feature.id] =
+        "Some of the part isn't in the sheet and is left out: shapes on faces that aren't walls (a boss or a rib, say), or walls thicker than the sheet. Make them with sheet metal features afterwards (Tab, Flange), or set the thickness to match the walls.";
+    // The dialog is still open: checked, but the part is left as it was so its faces can still be clicked.
+    if (feature.sheetConvertCheck) {
+      shape.delete();
+      return null;
     }
     part.shape.delete();
     part.shape = shape;

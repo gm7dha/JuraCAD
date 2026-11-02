@@ -426,16 +426,17 @@ export function convertToSheet(faces: SolidFace[], rips: [V3, V3][], opts: Conve
   if (problem) return problem;
   for (let w = 0; w < prepared.length; w++) {
     const wall = folded.walls.find((x) => x.id === wallId(w));
-    if (!wall) return "Couldn't lay the walls out as a sheet. Try picking the faces in another order.";
+    if (!wall) return NOT_FLAT;
     const want = outlinePoints(trimmed[w], 2).map((p) => to3(prepared[w], p));
     const map = edgeIn.get(w)!;
     const k = trimmed[w].length;
     const got = outlinePoints(Array.from({ length: k }, (_, i) => wall.outline[map(i)]), 2).map((p) => wallPoint(wall.frame, p));
-    if (want.some((p, i) => dist(p, got[i]) > Math.max(1e-5, size * 1e-7)))
-      return "Couldn't lay the walls out as a sheet (they don't fold back onto the faces). Try picking the faces in another order.";
+    if (want.some((p, i) => dist(p, got[i]) > Math.max(1e-3, tol * 100))) return NOT_FLAT;
   }
   return { spec, order };
 }
+
+const NOT_FLAT = "Couldn't make these faces into one sheet: once bent, the walls don't land back on the faces. Check the walls are really flat and meet along whole edges; if they do, try leaving one of them out.";
 
 function mapSegment(s: Segment, map: (p: P2) => P2): Segment {
   switch (s.kind) {

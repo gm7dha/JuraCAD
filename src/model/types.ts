@@ -253,6 +253,12 @@ export interface Feature {
    * the faces instead of inside the part.
    */
   sheetConvert?: boolean;
+  /**
+   * Never saved: set only on the copy of an open "From a part" dialog's
+   * feature that the engine builds, so the part is checked (errors and notes
+   * shown) but left as it was, to keep clicking its faces (see convertPreview).
+   */
+  sheetConvertCheck?: boolean;
   /** Bend and Jog: keep the other side of the line still (normally the smaller piece moves). */
   keepOtherSide?: boolean;
   /** Flange: the shape of the bend relief notches (missing = rectangle) and the relief cut where flanges meet at a corner. */

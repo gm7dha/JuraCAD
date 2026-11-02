@@ -2928,13 +2928,161 @@ try {
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
+  step = "sheet metal from a part: a hollowed box, its walls clicked one at a time, rips at the corners";
+  let convertReport = "";
+  {
+    const why = async (what) => {
+      const info = await page.evaluate(() => {
+        const s = window.juracadStore.getState();
+        const d = s.editing?.draft;
+        return JSON.stringify({ draft: d ? { type: d.type, convert: d.sheetConvert, picks: d.picks?.length } : null, errors: s.featureErrors, warnings: s.featureWarnings, parts: s.parts.map((p) => p.name + ":" + p.id), busy: s.rebuildBusy, toast: s.toast?.text });
+      });
+      throw new Error(`${what}: ${info}`);
+    };
+    const settle = async () => {
+      await page.waitForTimeout(300);
+      await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    };
+    await page.getByRole("button", { name: "Add a tab" }).click();
+    await page.getByRole("menuitem", { name: "Part Studio" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".feature-row:not(.datum)").length === 0, null, { timeout: 10_000 });
+    const studioName = (await page.locator(".tab.active").innerText()).trim();
+    const partsBefore = await page.evaluate(() => window.juracadStore.getState().parts.map((p) => p.id));
+    await tool("Box");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
+    await settle();
+    // The box's id, and the faces of the one part in this Part Studio (by direction).
+    const partId = await page.evaluate((before) => window.juracadStore.getState().parts.find((p) => !before.includes(p.id) && !p.configuration)?.id, partsBefore);
+    if (!partId) await why("the box in the new Part Studio wasn't found");
+    // Hollow it out, open at the top (picked through the store: Shell's own clicking is tested above).
+    await tool("Shell");
+    await page.evaluate((id) => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => p.id === id);
+      const top = part.faceRefs.findIndex((f) => f.normal[2] > 0.99);
+      s.toggleDraftPick({ partId: id, ref: part.faceRefs[top] });
+    }, partId);
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
+    await settle();
+    const faceIndex = (normal) =>
+      page.evaluate(
+        ([id, n]) => {
+          const part = window.juracadStore.getState().parts.find((p) => p.id === id);
+          // The outside face facing that way: furthest out along it.
+          let best = -1;
+          part.faceRefs.forEach((f, i) => {
+            if (f.surface !== "PLANE" || f.normal.some((x, j) => Math.abs(x - n[j]) > 1e-6)) return;
+            const out = f.center[0] * n[0] + f.center[1] * n[1] + f.center[2] * n[2];
+            if (best < 0) best = i;
+            const b = part.faceRefs[best].center;
+            if (out > b[0] * n[0] + b[1] * n[1] + b[2] * n[2]) best = i;
+          });
+          return best;
+        },
+        [partId, normal],
+      );
+    // The Top plane lies in the box's bottom face: hide the planes so clicks reach the part.
+    await page.evaluate(() => window.juracadStore.getState().setAllPlanesVisible(false));
+    const faceCount = await page.evaluate((id) => window.juracadStore.getState().parts.find((p) => p.id === id).faceRefs.length, partId);
+    const viewport = await page.locator(".viewport").boundingBox();
+    await tool("Sheet metal");
+    await page.getByRole("radio", { name: "From a part" }).click();
+    // Each wall from a view that sees it, clicked one at a time. The part must stay the hollow box while the dialog is
+    // open (not turn into the sheet), or the next wall couldn't be clicked.
+    const walls = [
+      ["bottom", [0, 0, -1]],
+      ["front", [0, -1, 0]],
+      ["right", [1, 0, 0]],
+      ["back", [0, 1, 0]],
+      ["left", [-1, 0, 0]],
+    ];
+    for (let k = 0; k < walls.length; k++) {
+      const [view, n] = walls[k];
+      await page.evaluate((v) => {
+        window.juracadViewport.current.setView(v, false);
+        window.juracadViewport.current.fit(false);
+      }, view);
+      await page.waitForTimeout(300);
+      const i = await faceIndex(n);
+      const at = await page.evaluate(([id, i]) => window.juracadViewport.current.screenPointOnFace(id, i), [partId, i]);
+      const kind = await page.evaluate(([x, y]) => window.juracadViewport.current.pickKindAt(x, y), [at.x, at.y]);
+      if (kind !== "face:PLANE") await why(`the ${view} wall can't be clicked (a click there picks ${kind})`);
+      await page.mouse.click(viewport.x + at.x, viewport.y + at.y);
+      await page.waitForFunction((n) => window.juracadStore.getState().editing?.draft.picks?.length === n, k + 1, { timeout: 5_000 }).catch(() => why(`clicking the ${view} wall`));
+      await settle();
+      const now = await page.evaluate((id) => window.juracadStore.getState().parts.find((p) => p.id === id)?.faceRefs.length ?? 0, partId);
+      if (now !== faceCount) await why(`after clicking the ${view} wall the part on show changed (${faceCount} faces → ${now})`);
+    }
+    // A rip clicked on the front-right corner (seen from the corner), the other three added in the list's way.
+    await page.evaluate(() => {
+      window.juracadViewport.current.setView("iso", false);
+      window.juracadViewport.current.fit(false);
+    });
+    await page.waitForTimeout(300);
+    const corner = await page.evaluate((id) => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => p.id === id);
+      const xs = part.faceRefs.flatMap((f) => [f.center[0]]);
+      const ys = part.faceRefs.flatMap((f) => [f.center[1]]);
+      const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+      const v = window.juracadViewport.current;
+      const ups = part.edgeRefs
+        .map((e, i) => ({ e, i }))
+        .filter(({ e }) => e.curve === "LINE" && Math.abs(e.a[0] - e.b[0]) < 1e-6 && Math.abs(e.a[1] - e.b[1]) < 1e-6 && [x0, x1].some((x) => Math.abs(e.a[0] - x) < 1e-6) && [y0, y1].some((y) => Math.abs(e.a[1] - y) < 1e-6));
+      // The front-right one is nearest the camera in the iso view (lowest on screen of the four).
+      const placed = ups.map(({ i }) => ({ i, at: v.screenPointOnEdge(id, i) })).filter((x) => x.at);
+      placed.sort((a, b) => b.at.y - a.at.y);
+      return { all: ups.map((x) => x.i), first: placed[0] };
+    }, partId);
+    if (corner.all.length !== 4) await why(`expected the box's 4 outside corner edges, found ${corner.all.length}`);
+    const ripKind = await page.evaluate(([x, y]) => window.juracadViewport.current.pickKindAt(x, y), [corner.first.at.x, corner.first.at.y]);
+    if (ripKind !== "edge:LINE") await why(`the corner edge can't be clicked (a click there picks ${ripKind})`);
+    await page.mouse.click(viewport.x + corner.first.at.x, viewport.y + corner.first.at.y);
+    await page.waitForFunction(() => window.juracadStore.getState().editing?.draft.picks?.filter((p) => p.ref.kind === "edge").length === 1, null, { timeout: 5_000 }).catch(() => why("clicking a corner edge as a rip"));
+    const sameRip = await page.evaluate(([id, i]) => {
+      const s = window.juracadStore.getState();
+      const want = s.parts.find((p) => p.id === id).edgeRefs[i];
+      const got = s.editing.draft.picks.find((p) => p.ref.kind === "edge").ref;
+      return JSON.stringify(got.a) === JSON.stringify(want.a) && JSON.stringify(got.b) === JSON.stringify(want.b);
+    }, [partId, corner.first.i]);
+    if (!sameRip) await why("clicking the corner picked a different edge");
+    await page.evaluate(([id, all, first]) => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => p.id === id);
+      for (const i of all) if (i !== first) s.toggleDraftPick({ partId: id, ref: part.edgeRefs[i] });
+    }, [partId, corner.all, corner.first.i]);
+    await settle();
+    await page.waitForFunction(() => /Rip 4/.test(document.querySelector(".feature-dialog")?.textContent ?? ""), null, { timeout: 5_000 }).catch(() => why("the dialog doesn't list 4 rips"));
+    const draftError = await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      return s.featureErrors[s.editing.draft.id] ?? "";
+    });
+    if (draftError) await why(`the open dialog reports a problem: ${draftError}`);
+    await shot("convert-picked");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
+    await settle();
+    const result = await page.evaluate((id) => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => p.id === id);
+      const f = s.history.present.partStudios.flatMap((x) => x.features).find((x) => x.type === "sheetMetal" && x.sheetConvert);
+      return { error: f ? s.featureErrors[f.id] ?? "" : "no feature", bends: part?.flat?.bends.length ?? 0 };
+    }, partId);
+    if (result.error || result.bends !== 4) await why(`the sheet wasn't made (${result.error || `${result.bends} bends in its flat pattern`})`);
+    await shot("converted");
+    convertReport = `turned a hollowed box in ${studioName} into sheet metal by clicking its 5 walls and a rip (flat pattern with ${result.bends} bends)`;
+    await page.getByRole("button", { name: "Part Studio 1" }).click();
+  }
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e) && !liveProbeRefused(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${subReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${subReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

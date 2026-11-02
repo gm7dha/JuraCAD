@@ -6,6 +6,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { analyzeMesh } from "../src/geometry/meshCheck";
 import type { EdgeRef, FaceRef, TopoPick } from "../src/geometry/topoRef";
 import { GeometryEngine } from "../src/kernel/engine";
+import { convertPreview } from "../src/model/document";
 import type { Feature } from "../src/model/types";
 import { feature, loadOpenCascade } from "./support/engineHelpers";
 
@@ -95,6 +96,38 @@ describe("sheet metal from a solid", () => {
     expect(engine.check("normal").parts[0].geometryValid).toBe(true);
     const before = area(r.parts[0].flat!.outline);
     expect(area(r2.parts[0].flat!.outline)).toBeCloseTo(before + W * (A + 10 - s), 3);
+  });
+
+  it("while its dialog is open, checks it but leaves the part as it was, so its faces and edges can still be clicked", () => {
+    setUp();
+    const before = build([box, shell]).parts[0];
+    // As the app builds an open dialog (convertPreview): the part's own faces and edges stay on show, one wall picked or all.
+    for (const picks of [[walls[0]], [...walls, ...rips]]) {
+      const c = convert(picks);
+      const r = build(convertPreview([box, shell, c], c));
+      expect(r.featureErrors).toEqual({});
+      expect(JSON.stringify(r.parts[0].faceRefs)).toBe(JSON.stringify(before.faceRefs));
+      expect(JSON.stringify(r.parts[0].edgeRefs)).toBe(JSON.stringify(before.edgeRefs));
+      expect(r.parts[0].flat).toBeUndefined();
+    }
+    // Editing a finished one: the flange after it waits, and the part is the box again.
+    const c = convert([...walls, ...rips]);
+    const fl: Feature = { ...feature("flange", { length: 10, angle: 90, inset: 0 }, "add"), picks: [] };
+    const r = build(convertPreview([box, shell, c, fl], c));
+    expect(JSON.stringify(r.parts[0].faceRefs)).toBe(JSON.stringify(before.faceRefs));
+    // Problems still show while it's open.
+    const ring = convert(walls);
+    expect(build(convertPreview([box, shell, ring], ring)).featureErrors[ring.id]).toMatch(/ring/);
+  });
+
+  it("notes when some of the part is left out of the sheet", () => {
+    setUp();
+    expect(build([box, shell, convert([...walls, ...rips])]).featureWarnings ?? {}).toEqual({});
+    // Walls 1 mm thick made into 0.5 mm sheet: their inside faces are left out.
+    const thin = convert([...walls, ...rips], { thickness: "0.5" });
+    const r = build([box, shell, thin]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.featureWarnings?.[thin.id]).toMatch(/left out/);
   });
 
   it("explains what it can't do", () => {

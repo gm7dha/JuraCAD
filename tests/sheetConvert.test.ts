@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addFeature, createFeature, emptyDocument, parseDocument } from "../src/model/document";
+import { addFeature, convertPreview, createFeature, emptyDocument, parseDocument } from "../src/model/document";
 import { visibleParamKeys } from "../src/model/features";
 import { convertToSheet, offsetEdges, type SolidEdge, type SolidFace } from "../src/sheetmetal/convert";
 import { flatPattern, foldSheet, type V3 } from "../src/sheetmetal/sheet";
@@ -177,5 +177,18 @@ describe("sheet metal from a solid", () => {
     expect([...visibleParamKeys(doc.features[0])]).toContain("ripGap");
     expect([...visibleParamKeys(doc.features[0])]).not.toContain("depth");
     expect([...visibleParamKeys(old.features[0])]).not.toContain("ripGap");
+  });
+
+  it("while its dialog is open, builds the features before it, then it only checked", () => {
+    const a = createFeature(emptyDocument(), "box");
+    const sm = { ...createFeature(emptyDocument(), "sheetMetal"), sheetConvert: true };
+    const after = createFeature(emptyDocument(), "flange");
+    const list = convertPreview([a, sm, after], sm);
+    expect(list.map((f) => f.id)).toEqual([a.id, sm.id]);
+    expect(list[1].sheetConvertCheck).toBe(true);
+    // From a sketch, or nothing open: built as it is.
+    const plain = createFeature(emptyDocument(), "sheetMetal");
+    expect(convertPreview([a, plain, after], plain)).toEqual([a, plain, after]);
+    expect(convertPreview([a, sm], null)).toEqual([a, sm]);
   });
 });

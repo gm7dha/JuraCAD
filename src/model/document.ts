@@ -272,6 +272,19 @@ export function previewFeatures(features: Feature[]): Feature[] {
   return features.some((f) => f.hole?.modelThread) ? features.map((f) => previewOf(f)!) : features;
 }
 
+/**
+ * While a "From a part" Sheet metal dialog is open (new or being edited), what
+ * the engine builds: the features before it, then it checked but not applied
+ * (`sheetConvertCheck`) — so the part on show, and clicked, is the part as it
+ * was before it became a sheet (the features after it wait until it's done).
+ */
+export function convertPreview(features: Feature[], draft: Feature | null): Feature[] {
+  if (draft?.type !== "sheetMetal" || !draft.sheetConvert) return features;
+  const at = features.findIndex((f) => f.id === draft.id);
+  if (at < 0) return features;
+  return [...features.slice(0, at), { ...features[at], sheetConvertCheck: true }];
+}
+
 export function featuresWithDraft(features: Feature[], draft: Feature | null): Feature[] {
   if (!draft) return features;
   return features.some((f) => f.id === draft.id)

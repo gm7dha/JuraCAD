@@ -885,7 +885,15 @@ export const useStore = create<AppState>((set, get) => {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) draft.sketchRef = picked.id;
         // Sheet metal with faces of a part selected (and no sketch highlighted): made from the part, those faces its walls.
-        if (type === "sheetMetal" && !picked && s.selection.some((item) => item.kind === "face")) {
+        // (Only flat faces of a solid part that isn't sheet metal already.)
+        const faces = s.selection.filter((item) => item.kind === "face");
+        const convertible =
+          faces.length > 0 &&
+          faces.every((item) => {
+            const part = s.parts.find((p) => p.id === item.partId);
+            return !!part && !part.surface && !part.flat && part.faceRefs?.[item.index]?.surface === "PLANE";
+          });
+        if (type === "sheetMetal" && !picked && convertible) {
           draft.sheetConvert = true;
           draft.sketchRef = undefined;
           draft.picks = s.selection.map((item) => pickFor(s.parts, item)).filter((p): p is TopoPick => p !== null);
