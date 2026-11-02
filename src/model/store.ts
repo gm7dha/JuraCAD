@@ -898,6 +898,11 @@ export const useStore = create<AppState>((set, get) => {
           draft.sketchRef = undefined;
           draft.picks = s.selection.map((item) => pickFor(s.parts, item)).filter((p): p is TopoPick => p !== null);
         }
+        // No sketch to make it from, but a part: made from the part.
+        if (type === "sheetMetal" && !draft.sketchRef && !draft.sheetConvert) {
+          draft.sheetConvert = true;
+          draft.picks = [];
+        }
       }
       // Delete part starts with the parts picked in the Parts list.
       if (type === "deletePart") draft.deleteParts = [...s.selectedParts];
