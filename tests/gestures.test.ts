@@ -49,7 +49,7 @@ describe("finger gestures", () => {
     expect(g.tick(1400)).toEqual([]);
     expect(g.tick(1500)).toEqual([{ type: "longPress", x: 10, y: 10 }]);
     expect(g.longPressDue).toBeNull();
-    expect(g.move(1, 40, 10, 1600)).toEqual([{ type: "holdDrag", x: 40, y: 10 }]);
+    expect(g.move(1, 40, 10, 1600)).toEqual([{ type: "holdDrag", x: 40, y: 10, dx: 30, dy: 0 }]);
     expect(g.up(1, 40, 10, 1700)).toEqual([{ type: "holdEnd", x: 40, y: 10 }]);
     // Moving first means no long press.
     g.down(2, 10, 10, 3000);
@@ -145,6 +145,16 @@ describe("finger gestures", () => {
     expect(g.cancel(2)).toEqual([{ type: "pinchEnd" }]);
     expect(g.up(3, 60, 10, 200)).toEqual([]);
     expect(g.active).toBe(false);
+  });
+
+  it("says which pointers it follows", () => {
+    const g = new GestureTracker(gestureOptions("touch"));
+    g.down(1, 0, 0, 0);
+    g.down(2, 50, 0, 0);
+    g.down(3, 90, 0, 0);
+    expect([1, 2, 3, 4].map((id) => g.has(id))).toEqual([true, true, true, false]);
+    g.cancel(3);
+    expect(g.has(3)).toBe(false);
   });
 
   it("fingers reach further than the pen, the pen than the mouse; the jitter allowance likewise", () => {

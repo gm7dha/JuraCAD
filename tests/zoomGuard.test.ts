@@ -139,7 +139,8 @@ describe("guarding a view against the page zooming", () => {
     expect(pinches).toEqual([]);
     // Fingers off (one lifted, one taken by the browser): a Mac trackpad's pinch is passed on again.
     el.dispatchEvent(event("pointerup", { pointerType: "touch", pointerId: 1 }));
-    el.dispatchEvent(event("pointercancel", { pointerType: "touch", pointerId: 2 }));
+    // (One whose capture was lost without an up counts as off too.)
+    el.dispatchEvent(event("lostpointercapture", { pointerType: "touch", pointerId: 2 }));
     el.dispatchEvent(event("gesturestart", { scale: 1 }));
     el.dispatchEvent(event("gesturechange", { scale: 2 }));
     expect(pinches).toEqual([0.5]);

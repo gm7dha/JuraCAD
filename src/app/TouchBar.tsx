@@ -16,7 +16,11 @@ import { setTouchKey, subscribeTouchKeys, touchKeys } from "../viewport/touchKey
 
 /** Send a key press to the app's keyboard shortcuts, as if typed (not into a text box). */
 export function pressKey(key: string, code = ""): void {
-  document.body.dispatchEvent(new KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true }));
+  // From where the keyboard focus is (so a panel's own Esc sees it), unless that's a text box or the touch bar itself.
+  const focus = document.activeElement;
+  const typing = focus instanceof HTMLElement && (focus.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(focus.tagName));
+  const at = focus instanceof HTMLElement && focus !== document.body && !typing && !focus.closest(".touch-bar") ? focus : document.body;
+  at.dispatchEvent(new KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true }));
 }
 
 /** Is this a touch screen? True for a finger-first device (iPad, Android tablet), or once a finger has touched the page. */
@@ -67,6 +71,15 @@ export function TouchBar() {
   const dialog = useStore((s) => s.dialog);
   // "No snapping" / "Shift" is let go when a sketch opens or closes or the drawing tab changes, so it doesn't surprise later.
   useEffect(() => () => setTouchKey("free", false), [sketching, drawing]);
+  // Both held keys are let go when another tab (Part Studio, assembly, drawing) is opened.
+  const tab = useStore((s) => s.activeTab);
+  useEffect(
+    () => () => {
+      setTouchKey("add", false);
+      setTouchKey("free", false);
+    },
+    [tab],
+  );
   if (!touch || (dialog && dialog !== "insert")) return null;
 
   return (

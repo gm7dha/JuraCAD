@@ -76,7 +76,7 @@ export function orbitWheelDelta(factor: number, zoomSpeed: number): number {
 /** How long (ms) after a pinch's wheel event a Safari gesture step is taken to be the same pinch (so it isn't zoomed twice). */
 const SAME_PINCH_MS = 250;
 
-const POINTER_TYPES = ["pointerdown", "pointerup", "pointercancel"];
+const POINTER_TYPES = ["pointerdown", "pointerup", "pointercancel", "lostpointercapture"];
 
 /** Safari's gesture events (not in the DOM types). */
 type GestureLike = Event & { scale?: number; clientX?: number; clientY?: number };

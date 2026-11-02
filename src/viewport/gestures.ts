@@ -36,7 +36,7 @@ export type Gesture =
   | { type: "dragEnd"; x: number; y: number }
   | { type: "tap"; x: number; y: number; count: number }
   | { type: "longPress"; x: number; y: number }
-  | { type: "holdDrag"; x: number; y: number }
+  | { type: "holdDrag"; x: number; y: number; dx: number; dy: number }
   | { type: "holdEnd"; x: number; y: number }
   | { type: "cancel"; started: boolean }
   | { type: "pinchStart"; x: number; y: number }
@@ -101,6 +101,11 @@ export class GestureTracker {
     return this.pointers.length + this.extra.size > 0;
   }
 
+  /** Is this pointer one of the ones being followed? */
+  has(id: number): boolean {
+    return this.pointers.some((p) => p.id === id) || this.extra.has(id);
+  }
+
   /** True while two fingers are pinching or panning (or a pinch is waiting for every finger to come off). */
   get pinching(): boolean {
     return this.phase === "pinch" || this.phase === "done";
@@ -153,7 +158,7 @@ export class GestureTracker {
       ];
     }
     if (this.phase === "drag") return [{ type: "drag", x, y, dx: x - px, dy: y - py }];
-    if (this.phase === "hold") return [{ type: "holdDrag", x, y }];
+    if (this.phase === "hold") return [{ type: "holdDrag", x, y, dx: x - px, dy: y - py }];
     if (this.phase === "pinch" && this.pinch && this.pointers.length === 2) {
       const now = this.measure();
       const before = this.pinch;

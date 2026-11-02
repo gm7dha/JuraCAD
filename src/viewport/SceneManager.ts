@@ -60,6 +60,21 @@ export interface PictureOptions {
 /** Which way to look at each default plane for "View normal to". */
 const PLANE_VIEWS: Record<PlaneName, StandardView> = { Top: "top", Front: "front", Right: "right" };
 
+/** The page was opened for the browser smoke test (?smoke). */
+const SMOKE = typeof location !== "undefined" && /[?&]smoke\b/.test(location.search);
+
+/** A finger-first screen (iPad, Android tablet): a pen there is used like a finger. */
+const COARSE = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+
+/**
+ * Does this press go to the finger gestures? Fingers always; a pen only on a touch tablet (a desktop pen
+ * tablet — Wacom, Surface — keeps working like a mouse), and only its tip: its side buttons go the old way.
+ */
+function usesGestures(e: PointerEvent): boolean {
+  if (e.pointerType === "touch") return true;
+  return e.pointerType === "pen" && COARSE && e.button === 0;
+}
+
 /** Base frustum height in mm at zoom 1. Zoom changes what is actually visible. */
 const FRUSTUM_HEIGHT = 200;
 /** How close (in screen pixels) the pointer must be to an edge to pick it. */
@@ -142,6 +157,8 @@ export interface SceneCallbacks {
   onDragStart?: (target: PickTarget & { kind: "part" }, ray: ScreenRay, shift: boolean) => boolean;
   onDragMove?: (ray: ScreenRay) => void;
   onDragEnd?: () => void;
+  /** A drag taken back (a second finger landed): put the parts back where they were. */
+  onDragCancel?: () => void;
   /** A selection box dragged on empty space: the parts it chose (`additive` with Shift/Ctrl/Cmd held). */
   onBoxSelect?: (partIds: string[], additive: boolean) => void;
 }
@@ -254,6 +271,7 @@ export class SceneManager {
   private readonly touchIds = new Set<number>();
   private touchKind = "touch";
   private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  private longPressFrame: number | null = null;
   /**
    * What one finger (or the pen) is doing: drawing in the sketch (`sent`: the sketch tools have had its press),
    * pressing on the view cube, or (`holdDrag`) dragging a part after a long press in an assembly.
@@ -323,6 +341,8 @@ export class SceneManager {
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointerleave", this.onPointerLeave);
     el.addEventListener("pointercancel", this.onPointerCancel);
+    // (A finger whose capture is lost without an up or cancel mustn't stay "down" for ever.)
+    el.addEventListener("lostpointercapture", this.onPointerCancel);
     el.addEventListener("contextmenu", (e) => e.preventDefault());
 
     // Onshape mouse: right-drag orbits, middle-drag pans, wheel zooms towards the cursor.
@@ -1158,6 +1178,9 @@ export class SceneManager {
   dispose(): void {
     cancelAnimationFrame(this.frame);
     if (this.longPressTimer) clearTimeout(this.longPressTimer);
+    if (this.longPressFrame !== null) cancelAnimationFrame(this.longPressFrame);
+    this.longPressTimer = null;
+    this.gestures.reset();
     this.sketchLayer.dispose();
     this.resizeObserver.disconnect();
     this.controls.dispose();
@@ -1166,6 +1189,7 @@ export class SceneManager {
     el.removeEventListener("pointermove", this.onPointerMove);
     el.removeEventListener("pointerup", this.onPointerUp);
     el.removeEventListener("pointercancel", this.onPointerCancel);
+    el.removeEventListener("lostpointercapture", this.onPointerCancel);
     el.removeEventListener("pointerleave", this.onPointerLeave);
     for (const p of this.parts.values()) {
       p.mesh.geometry.dispose();
@@ -1793,8 +1817,8 @@ export class SceneManager {
   }
 
   private onPointerDown = (e: PointerEvent) => {
-    if (e.pointerType === "touch" || e.pointerType === "pen") {
-      // Fingers and the pen: gestures (OrbitControls, added after this listener, never sees them).
+    if (usesGestures(e)) {
+      // Fingers and a tablet's pen: gestures (OrbitControls, added after this listener, never sees them).
       e.stopImmediatePropagation();
       this.touchDown(e);
       return;
@@ -1985,10 +2009,14 @@ export class SceneManager {
 
   private touchDown(e: PointerEvent): void {
     const { x, y } = this.localPoint(e);
+    // A hand resting on the screen while the pen draws is ignored (it mustn't cancel the stroke).
+    if (this.gestures.active && this.touchKind === "pen" && e.pointerType === "touch") return;
     if (!this.gestures.active) {
       this.touchKind = e.pointerType;
-      // No long press while sketching: a still press then a slow drag must still draw.
-      this.gestures.options = { ...gestureOptions(e.pointerType, !this.sketchController && this.touchTiming.longPressMs), doubleTapMs: this.touchTiming.doubleTapMs };
+      // A long press only where it does something: picking up a part in an assembly. (Elsewhere a still press
+      // then a drag just turns the view, and in a sketch it must still draw.)
+      const longPress = this.dragEnabled && !this.sketchController && this.touchTiming.longPressMs;
+      this.gestures.options = { ...gestureOptions(e.pointerType, longPress), doubleTapMs: this.touchTiming.doubleTapMs };
       this.animation = null;
     }
     this.touchIds.add(e.pointerId);
@@ -2022,7 +2050,13 @@ export class SceneManager {
       this.longPressTimer = null;
       // After the next frame: a finger already lifted (its event waiting to be handled) is then a tap, not a long press.
       const at = performance.now();
-      requestAnimationFrame(() => setTimeout(() => this.runGestures(this.gestures.tick(at), e), 0));
+      this.longPressFrame = requestAnimationFrame(() => {
+        this.longPressFrame = null;
+        this.longPressTimer = setTimeout(() => {
+          this.longPressTimer = null;
+          this.runGestures(this.gestures.tick(at), e);
+        }, 0);
+      });
     }, Math.max(0, due - performance.now()) + 5);
   }
 
@@ -2036,11 +2070,11 @@ export class SceneManager {
    */
   touchTiming = { longPressMs: 500, doubleTapMs: 350 };
 
-  /** The last few finger gestures seen (for the smoke test's error messages). */
+  /** The last few finger gestures seen (with ?smoke only: for the smoke test's error messages). */
   touchDebug: string[] = [];
 
   private onGesture(g: Gesture, e: PointerEvent): void {
-    this.touchDebug = [...this.touchDebug.slice(-11), g.type === "tap" ? `tap×${g.count}` : g.type];
+    if (SMOKE) this.touchDebug = [...this.touchDebug.slice(-11), g.type === "tap" ? `tap×${g.count}` : g.type];
     const st = this.touchStroke;
     const ctl = this.sketchController;
     switch (g.type) {
@@ -2096,7 +2130,9 @@ export class SceneManager {
         break;
       }
       case "holdDrag":
+        // Held on a part: it moves; held anywhere else, the drag turns the view as usual.
         if (st?.holdDrag) this.callbacks.onDragMove?.(this.rayAt(g.x, g.y));
+        else if (st && !st.cube && !st.sketch) this.orbitBy(g.dx, g.dy);
         break;
       case "holdEnd":
         if (st?.holdDrag) this.callbacks.onDragEnd?.();
@@ -2108,7 +2144,8 @@ export class SceneManager {
           if (st.sent) ctl.cancelStroke();
           ctl.pointerLeave();
         }
-        if (st?.holdDrag) this.callbacks.onDragEnd?.();
+        // A part being moved goes back where it was.
+        if (st?.holdDrag) (this.callbacks.onDragCancel ?? this.callbacks.onDragEnd)?.();
         this.touchStroke = null;
         break;
       case "pan":

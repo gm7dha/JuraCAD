@@ -2105,7 +2105,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   // Fingers (the mouse never comes here): two pan and pinch to zoom; a second finger landing takes back
   // whatever the first began; a long press on a dimension's number flips its arrows (like a right-click);
   // with a placing tool (Dimension, Note…) a finger's press only counts once it comes up as a tap.
-  const touch = useRef<{ tracker: GestureTracker; timer: ReturnType<typeof setTimeout> | null; dim: string | null; held: ReactPointerEvent<SVGSVGElement> | null; pinched: boolean }>({ tracker: new GestureTracker(gestureOptions("touch")), timer: null, dim: null, held: null, pinched: false });
+  const touch = useRef<{ tracker: GestureTracker; timer: ReturnType<typeof setTimeout> | null; frame: number | null; dim: string | null; held: ReactPointerEvent<SVGSVGElement> | null; pinched: boolean }>({ tracker: new GestureTracker(gestureOptions("touch")), timer: null, frame: null, dim: null, held: null, pinched: false });
   const flipByTouch = useRef<(id: string) => void>(() => {});
   flipByTouch.current = (id: string) => {
     const flipping = layout?.dims.find((x) => x.id === id);
@@ -2154,13 +2154,22 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       } else if (g.type === "dragStart") t.held = null;
     }
     if (t.timer) clearTimeout(t.timer);
+    if (t.frame !== null) cancelAnimationFrame(t.frame);
     t.timer = null;
+    t.frame = null;
     const due = t.tracker.longPressDue;
     // (The tick waits a frame, so a finger already lifted counts as a tap.)
     if (due !== null)
       t.timer = setTimeout(() => {
         const at = performance.now();
-        requestAnimationFrame(() => setTimeout(() => runTouch(t.tracker.tick(at)), 0));
+        t.timer = null;
+        t.frame = requestAnimationFrame(() => {
+          t.frame = null;
+          t.timer = setTimeout(() => {
+            t.timer = null;
+            runTouch(t.tracker.tick(at));
+          }, 0);
+        });
       }, Math.max(0, due - performance.now()) + 5);
   };
   const touchCapture = {
@@ -2195,16 +2204,26 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       runTouch(touch.current.tracker.up(e.pointerId, e.clientX, e.clientY, eventTime(e)));
       if (pinched) e.stopPropagation();
     },
-    onPointerCancelCapture: (e: ReactPointerEvent<SVGSVGElement>) => {
-      if (e.pointerType !== "touch") return;
-      runTouch(touch.current.tracker.cancel(e.pointerId));
-      dropSheetStroke();
-    },
+    onPointerCancelCapture: (e: ReactPointerEvent<SVGSVGElement>) => cancelTouch(e),
+    // (A finger whose capture is lost without an up or cancel mustn't stay "down" for ever.)
+    onLostPointerCaptureCapture: (e: ReactPointerEvent<SVGSVGElement>) => cancelTouch(e),
   };
-  useEffect(() => () => {
-    const t = touch.current;
-    if (t.timer) clearTimeout(t.timer);
-  }, []);
+  function cancelTouch(e: ReactPointerEvent<SVGSVGElement>) {
+    if (e.pointerType !== "touch" || !touch.current.tracker.has(e.pointerId)) return;
+    runTouch(touch.current.tracker.cancel(e.pointerId));
+    dropSheetStroke();
+  }
+  useEffect(
+    () => () => {
+      const t = touch.current;
+      if (t.timer) clearTimeout(t.timer);
+      if (t.frame !== null) cancelAnimationFrame(t.frame);
+      t.timer = null;
+      t.frame = null;
+      t.tracker.reset();
+    },
+    [],
+  );
 
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (e.button === 1 || e.button === 2) {
