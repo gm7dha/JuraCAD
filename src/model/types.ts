@@ -9,6 +9,7 @@ import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 import type { SketchLineRef } from "./patternRefs";
+import type { FinishId } from "./finishes";
 
 /** The kinds of feature JuraCAD can build. */
 export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog";
@@ -340,6 +341,8 @@ export interface JuraCADDocument {
   units?: "in";
   /** Colour of each part ("#rrggbb"), by the id of the feature that made it. Parts without one are grey. */
   appearance?: Record<string, string>;
+  /** Part id → finish (matte, glossy, metal, clear…; see finishes.ts); missing = the usual matte look. Only changes how parts look on screen and in pictures (and see-through colours in exports). */
+  finishes?: Record<string, FinishId>;
   /** Part id → material key (see materials.ts); missing = PLA. */
   materials?: Record<string, string>;
   /** Name of the first Part Studio (whose features are `features`); "Part Studio 1" when not set. */

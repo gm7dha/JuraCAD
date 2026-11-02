@@ -30,6 +30,7 @@ import { pickEdges, pickFaces, PICK_HELP } from "./picks";
 import { renderViews, type RenderPart, type RenderView } from "./render";
 import type { Session } from "./session";
 import { byName, r2, say, type ToolDef, type ToolResult } from "./toolKit";
+import { exportColours } from "../model/finishes";
 
 // ---------------------------------------------------------------------------
 // Finding things
@@ -701,10 +702,10 @@ export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "st
   await s.checkpoint();
   const bytes = await s.withWholeEngine(async (e) => {
     if (format === "stl") return new Uint8Array(e.exportStl([], "normal", instances).stl);
-    if (format === "3mf") return new Uint8Array(e.export3mf([], "normal", `${s.doc.name} ${asm.name}`, s.doc.appearance ?? {}, instances).data);
+    if (format === "3mf") return new Uint8Array(e.export3mf([], "normal", `${s.doc.name} ${asm.name}`, exportColours(s.doc), instances).data);
     // STEP keeps the assembly's structure (sub-assemblies, each part once, every copy placed), as the app's export does.
     const tree = stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc), solved.inner);
-    return new Uint8Array((await e.exportStep([], s.doc.appearance ?? {}, instances, tree ?? undefined)).step);
+    return new Uint8Array((await e.exportStep([], exportColours(s.doc), instances, tree ?? undefined)).step);
   });
   return { bytes, count: instances.length };
 }

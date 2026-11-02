@@ -38,9 +38,11 @@ import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mate
 import { sectionPlane } from "./section";
 import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, setPatternDirection, sketchLine3D, type DirectionChoice, type PickableLine } from "../model/patternRefs";
 import { guardViewportZoom } from "./zoomGuard";
+import { finishesByKey, type FinishId } from "../model/finishes";
 
 /** Shared empty colour list (a selector must not make a new object each time). */
 const NO_COLOURS: Record<string, string> = {};
+const NO_FINISHES: Record<string, FinishId> = {};
 const NO_PLACEMENTS: Record<string, number[]> = {};
 const NO_SHIFT: Record<string, [number, number, number]> = {};
 
@@ -634,6 +636,8 @@ export function Viewport() {
     manager.setHidden(s.hiddenParts);
     manager.setParts(studioParts(s));
     manager.setPartColours(s.history.present.appearance ?? {});
+    manager.setPartFinishes(s.history.present.finishes ?? {});
+    manager.setNiceLighting(s.niceLighting);
     manager.setSelection(s.selection);
     manager.setDatums({ selected: s.selectedPlane, listHover: s.listHoverPlane, hidden: activeHiddenDatums(s) });
     return () => {
@@ -808,6 +812,14 @@ export function Viewport() {
     return out;
   }, [appearance, assembly, leaves]);
   useEffect(() => viewportApi.current?.setPartColours(colours), [colours]);
+  const partFinishes = useStore((s) => s.history.present.finishes ?? NO_FINISHES);
+  const finishes = useMemo(() => {
+    // In an assembly, each copy looks like its part.
+    return assembly ? finishesByKey(partFinishes, leaves.map((l) => ({ key: l.key, partId: l.instance.partId }))) : partFinishes;
+  }, [partFinishes, assembly, leaves]);
+  useEffect(() => viewportApi.current?.setPartFinishes(finishes), [finishes]);
+  const niceLighting = useStore((s) => s.niceLighting);
+  useEffect(() => viewportApi.current?.setNiceLighting(niceLighting), [niceLighting]);
   useEffect(() => viewportApi.current?.setSection(section ? sectionPlane(section) : null), [section]);
   const printBed = useStore((s) => s.printBed);
   useEffect(() => viewportApi.current?.setPrintBed(printBed ? bedSize(printBed.printer, printBed.custom) : null), [printBed]);

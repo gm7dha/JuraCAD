@@ -151,6 +151,39 @@ try {
   await page.getByRole("button", { name: "Blue", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".colour-swatch")?.getAttribute("style")?.includes("61, 127, 217"));
 
+  step = "giving the part a glossy finish";
+  await page.getByRole("button", { name: "Colour of Part 1" }).click();
+  await page.getByRole("radio", { name: "Glossy plastic" }).click();
+  await page.waitForFunction(() => Object.values(window.juracadStore.getState().history.present.finishes ?? {}).includes("glossy"));
+  await page.mouse.move(5, 5);
+  await page.waitForSelector(".colour-popover", { state: "detached" });
+  await shot("glossy");
+
+  step = "saving a picture of the view";
+  let pictureReport;
+  {
+    await page.getByRole("button", { name: "Save picture" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Save a picture" });
+    await dialog.getByRole("radio", { name: /Twice as big/ }).check();
+    await dialog.getByRole("radio", { name: /See-through/ }).check();
+    const picturePromise = page.waitForEvent("download", { timeout: 60_000 });
+    await dialog.getByRole("button", { name: "Save picture" }).click();
+    const picture = await picturePromise;
+    const { readFileSync: readPng } = await import("node:fs");
+    const png = readPng(await picture.path());
+    if (png.subarray(1, 4).toString() !== "PNG" || !picture.suggestedFilename().endsWith(".png")) throw new Error(`the picture doesn't look like a PNG (${picture.suggestedFilename()})`);
+    const pw = png.readUInt32BE(16);
+    const ph = png.readUInt32BE(20);
+    const view = await page.locator(".viewport-canvas").boundingBox();
+    if (Math.abs(pw - 2 * Math.round(view.width)) > 2 || Math.abs(ph - 2 * Math.round(view.height)) > 2) throw new Error(`the 2× picture is ${pw} × ${ph}, the view ${view.width} × ${view.height}`);
+    // RGBA with see-through pixels (colour type 6), and not just an empty frame.
+    if (png[25] !== 6) throw new Error(`the see-through picture has PNG colour type ${png[25]}`);
+    if (png.length < 5_000) throw new Error(`the picture is suspiciously small (${png.length} bytes)`);
+    await dialog.waitFor({ state: "detached", timeout: 10_000 });
+    await shot("after-picture");
+    pictureReport = `a glossy finish and a ${pw} × ${ph} see-through picture (${png.length} bytes)`;
+  }
+
   step = "cutting the block open with a section view";
   await page.getByRole("button", { name: "Section", exact: true }).click();
   await page.waitForSelector(".section-panel");
@@ -2934,7 +2967,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${subReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${subReport}; ${pictureReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

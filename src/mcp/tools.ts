@@ -28,6 +28,8 @@ import { ASSEMBLY_EXTRA_TOOLS } from "./assemblyExtras";
 import { DRAWING_EXTRA_TOOLS } from "./drawingExtras";
 import { ASSEMBLY_TOOLS, assemblyViews, exportAssemblyBytes, findAssembly, instanceFaces } from "./assemblyTools";
 import { DRAWING_TOOLS } from "./drawingTools";
+import { chooseFinish, exportColours, finishFromWords, finishOf, FINISHES, setColourIn } from "../model/finishes";
+import { colourFromWords, PART_COLOURS } from "../model/colours";
 
 export type { Content, ToolDef, ToolResult } from "./toolKit";
 export { fileNameFor } from "./toolKit";
@@ -577,6 +579,36 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "set_appearance",
+    title: "Colour and finish of a part",
+    description: `Choose how a part looks in the app and in pictures: its colour (a hex colour like "#d64545", or one of ${PART_COLOURS.map((c) => c.name.replace(/ \(default\)$/, "")).join(", ")}; "default" = the usual grey) and/or its finish (${FINISHES.map((f) => `${f.id} = ${f.label}`).join(", ")}; "default" = matte). E.g. {"part":"Part 1","colour":"red","finish":"glossy"}. Colours (and see-through for "clear") go into STEP and 3MF exports; drawings stay line drawings. A grey part given wood or metal also gets a colour that suits it.`,
+    inputSchema: {
+      type: "object",
+      properties: { part: { type: "string" }, colour: { type: "string" }, finish: { type: "string", enum: [...FINISHES.map((f) => f.id), "default"] } },
+    },
+    run: (s, a) => {
+      noExtras(a, ["part", "colour", "finish"], "set_appearance");
+      if (a.colour === undefined && a.finish === undefined) throw new InputError('set_appearance: give a "colour", a "finish", or both.');
+      const p = s.part(s.build().parts, a.part, "part");
+      let doc = s.doc;
+      if (a.colour !== undefined) {
+        const c = colourFromWords(text(a.colour, "colour"));
+        if (c === undefined) throw new InputError(`colour: "${String(a.colour)}" isn't a colour I know. Use a hex colour like "#3d7fd9", or one of ${PART_COLOURS.map((x) => x.name.replace(/ \(default\)$/, "")).join(", ")}, or "default".`);
+        doc = setColourIn(doc, p.id, c);
+      }
+      if (a.finish !== undefined) {
+        const word = text(a.finish, "finish");
+        const f = word.trim().toLowerCase() === "default" ? null : finishFromWords(word);
+        if (f === undefined) throw new InputError(`finish: "${word}" isn't a finish. Use one of ${FINISHES.map((x) => x.id).join(", ")}, or "default".`);
+        doc = chooseFinish(doc, [p.id], f);
+      }
+      if (doc === s.doc) return say(`${p.name} already looks like that.`);
+      s.commit(doc);
+      const colour = doc.appearance?.[p.id] ?? "the usual grey";
+      return say(`${p.name}: ${colour}, ${finishOf(doc.finishes?.[p.id]).label.toLowerCase()}.`);
+    },
+  },
+  {
     name: "describe_design",
     title: "Describe the design",
     description: "The design as it is now (when live, the one open in the user's JuraCAD tab): every feature (with ids and any problems in plain English), the variables, and each part's volume, size, position, face and edge counts, and whether it's a sound, closed solid.",
@@ -787,8 +819,8 @@ export const TOOLS: ToolDef[] = [
       await s.checkpoint();
       const bytes = await s.withEngine(async (e) => {
         if (format === "stl") return new Uint8Array(e.exportStl(ids, "normal").stl);
-        if (format === "3mf") return new Uint8Array(e.export3mf(ids, "normal", s.doc.name, s.doc.appearance ?? {}).data);
-        return new Uint8Array((await e.exportStep(ids, s.doc.appearance ?? {})).step);
+        if (format === "3mf") return new Uint8Array(e.export3mf(ids, "normal", s.doc.name, exportColours(s.doc)).data);
+        return new Uint8Array((await e.exportStep(ids, exportColours(s.doc))).step);
       });
       writeOut(s, path, bytes);
       return say(`Exported ${ids.length ? "the part" : `${b.parts.length} part(s)`} to ${path} (${Math.max(1, Math.round(bytes.length / 1024))} KB).`);

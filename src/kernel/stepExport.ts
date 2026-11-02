@@ -8,13 +8,13 @@
  */
 import { getOC, type Shape3D } from "replicad";
 
-import { colourToRgb } from "../model/colours";
+import { colourOpacity, colourToRgb } from "../model/colours";
 import type { StepComponent, StepTree } from "./protocol";
 
 export interface StepPart {
   shape: Shape3D;
   name: string;
-  /** "#rrggbb" */
+  /** "#rrggbb", or "#rrggbbaa" for a see-through finish */
   colour: string;
 }
 
@@ -40,7 +40,8 @@ function writeXcaf(fill: (x: Xcaf) => void): Uint8Array {
     const colours = oc.XCAFDoc_DocumentTool.ColorTool(main);
     fill({ oc, shapes, keep, name: (label, s) => oc.TDataStd_Name.Set(label, text(s)), colour: (label, c) => {
       const [r, g, b] = colourToRgb(c).map(srgbToLinear);
-      colours.SetColor(label, keep(new oc.Quantity_ColorRGBA(r, g, b, 1)), oc.XCAFDoc_ColorType.XCAFDoc_ColorSurf);
+      // A see-through finish ("#rrggbbaa") keeps its opacity; everything else is solid, as before.
+      colours.SetColor(label, keep(new oc.Quantity_ColorRGBA(r, g, b, colourOpacity(c))), oc.XCAFDoc_ColorType.XCAFDoc_ColorSurf);
     } });
     shapes.UpdateAssemblies();
 
