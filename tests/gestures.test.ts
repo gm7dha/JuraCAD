@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { GestureTracker, gestureOptions, reachFor, slopFor, type Gesture } from "../src/viewport/gestures";
+import { eventTime, GestureTracker, gestureOptions, reachFor, slopFor, type Gesture } from "../src/viewport/gestures";
 
 const types = (gs: Gesture[]) => gs.map((g) => g.type);
 
@@ -153,5 +153,15 @@ describe("finger gestures", () => {
     expect(reachFor("mouse")).toBe(1);
     expect(slopFor("touch")).toBeGreaterThan(slopFor("pen"));
     expect(slopFor("pen")).toBeGreaterThan(slopFor("mouse"));
+  });
+});
+
+describe("event times", () => {
+  it("uses the event's own time stamp (a busy page handles events late), else now", () => {
+    expect(eventTime({ timeStamp: 1000 }, 1800)).toBe(1000);
+    expect(eventTime({ timeStamp: 0 }, 1800)).toBe(1800);
+    expect(eventTime({}, 1800)).toBe(1800);
+    // A stamp on some other clock (far from now) isn't trusted.
+    expect(eventTime({ timeStamp: 1.7e12 }, 1800)).toBe(1800);
   });
 });

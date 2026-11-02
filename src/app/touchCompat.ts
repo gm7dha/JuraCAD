@@ -16,7 +16,7 @@
  * selects text). The mouse never comes here.
  */
 
-import { GestureTracker, gestureOptions } from "../viewport/gestures";
+import { eventTime, GestureTracker, gestureOptions } from "../viewport/gestures";
 
 /** Things that handle fingers themselves (or must keep the browser's own touch behaviour). */
 const OWN_TOUCH = ".viewport-canvas, .drawing-svg, input, textarea, select, [contenteditable], [data-own-touch]";
@@ -48,14 +48,18 @@ export function installTouchCompat(doc: Document): () => void {
     const due = tracker.longPressDue;
     if (due === null) return;
     timer = setTimeout(() => {
+      // After the next frame, so a finger already lifted counts as a tap.
+      const at = performance.now();
+      win.requestAnimationFrame(() => win.setTimeout(() => {
       timer = null;
-      for (const g of tracker.tick(performance.now())) {
+      for (const g of tracker.tick(at)) {
         if (g.type !== "longPress" || !target || nativeMenuSeen || !target.isConnected) continue;
         const now = performance.now();
         dropLift = true;
         dropUntil.contextmenu = now + 1200;
         fire("contextmenu", target, g.x, g.y);
       }
+      }, 0));
     }, Math.max(0, due - performance.now()) + 5);
   };
 
@@ -69,19 +73,19 @@ export function installTouchCompat(doc: Document): () => void {
       target = el;
       nativeMenuSeen = false;
     }
-    tracker.down(e.pointerId, e.clientX, e.clientY, performance.now());
+    tracker.down(e.pointerId, e.clientX, e.clientY, eventTime(e));
     schedule();
   };
   const onMove = (ev: Event) => {
     const e = ev as PointerEvent;
     if (e.pointerType !== "touch" || !tracker.active) return;
-    tracker.move(e.pointerId, e.clientX, e.clientY, performance.now());
+    tracker.move(e.pointerId, e.clientX, e.clientY, eventTime(e));
     schedule();
   };
   const onUp = (ev: Event) => {
     const e = ev as PointerEvent;
     if (e.pointerType !== "touch" || !tracker.active) return;
-    const out = e.type === "pointercancel" ? tracker.cancel(e.pointerId) : tracker.up(e.pointerId, e.clientX, e.clientY, performance.now());
+    const out = e.type === "pointercancel" ? tracker.cancel(e.pointerId) : tracker.up(e.pointerId, e.clientX, e.clientY, eventTime(e));
     schedule();
     for (const g of out) {
       if (g.type !== "tap" || g.count !== 2 || !target?.isConnected) continue;

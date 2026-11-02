@@ -6,7 +6,7 @@ import { putShortening, removeShortening, withShortenings } from "../drawing/sho
 import { additive, addHeld, shiftHeld } from "../viewport/touchKeys";
 import { dimTextOutlines, itemsInBox, rightClickFlip, toggled } from "../drawing/select";
 import { guardZoom, sheetWheelFactor, SHEET_MIN_WIDTH, zoomBox } from "../viewport/zoomGuard";
-import { GestureTracker, gestureOptions, type Gesture } from "../viewport/gestures";
+import { eventTime, GestureTracker, gestureOptions, type Gesture } from "../viewport/gestures";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { create } from "zustand";
 import { addPage, changePage, FIRST_PAGE, knownPage, missingPartMessage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage, addedSheetMessage } from "../drawing/pages";
@@ -2156,7 +2156,12 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     if (t.timer) clearTimeout(t.timer);
     t.timer = null;
     const due = t.tracker.longPressDue;
-    if (due !== null) t.timer = setTimeout(() => runTouch(t.tracker.tick(performance.now())), Math.max(0, due - performance.now()) + 5);
+    // (The tick waits a frame, so a finger already lifted counts as a tap.)
+    if (due !== null)
+      t.timer = setTimeout(() => {
+        const at = performance.now();
+        requestAnimationFrame(() => setTimeout(() => runTouch(t.tracker.tick(at)), 0));
+      }, Math.max(0, due - performance.now()) + 5);
   };
   const touchCapture = {
     onPointerDownCapture: (e: ReactPointerEvent<SVGSVGElement>) => {
@@ -2168,7 +2173,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
         t.held = null;
         t.dim = (e.target as Element).closest?.("[data-dim]")?.getAttribute("data-dim") ?? null;
       }
-      runTouch(t.tracker.down(e.pointerId, e.clientX, e.clientY, performance.now()));
+      runTouch(t.tracker.down(e.pointerId, e.clientX, e.clientY, eventTime(e)));
       if (!first || t.pinched) {
         e.stopPropagation();
         return;
@@ -2181,13 +2186,13 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     },
     onPointerMoveCapture: (e: ReactPointerEvent<SVGSVGElement>) => {
       if (e.pointerType !== "touch" || !touch.current.tracker.active) return;
-      runTouch(touch.current.tracker.move(e.pointerId, e.clientX, e.clientY, performance.now()));
+      runTouch(touch.current.tracker.move(e.pointerId, e.clientX, e.clientY, eventTime(e)));
       if (touch.current.pinched) e.stopPropagation();
     },
     onPointerUpCapture: (e: ReactPointerEvent<SVGSVGElement>) => {
       if (e.pointerType !== "touch" || !touch.current.tracker.active) return;
       const pinched = touch.current.pinched;
-      runTouch(touch.current.tracker.up(e.pointerId, e.clientX, e.clientY, performance.now()));
+      runTouch(touch.current.tracker.up(e.pointerId, e.clientX, e.clientY, eventTime(e)));
       if (pinched) e.stopPropagation();
     },
     onPointerCancelCapture: (e: ReactPointerEvent<SVGSVGElement>) => {

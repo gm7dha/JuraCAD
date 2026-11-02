@@ -1,7 +1,7 @@
 import { rectOf, shapeInBox, type Rect } from "./boxSelect";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { GestureTracker, gestureOptions, reachFor, type Gesture } from "./gestures";
+import { eventTime, GestureTracker, gestureOptions, reachFor, type Gesture } from "./gestures";
 import { addHeld, additive, shiftHeld } from "./touchKeys";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -1835,7 +1835,7 @@ export class SceneManager {
   private onPointerMove = (e: PointerEvent) => {
     if (this.touchIds.has(e.pointerId)) {
       const { x, y } = this.localPoint(e);
-      this.runGestures(this.gestures.move(e.pointerId, x, y, performance.now()), e);
+      this.runGestures(this.gestures.move(e.pointerId, x, y, eventTime(e)), e);
       return;
     }
     const orbit = this.orbit;
@@ -1927,7 +1927,7 @@ export class SceneManager {
     if (this.touchIds.delete(e.pointerId)) {
       const { x, y } = this.localPoint(e);
       if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
-      this.runGestures(this.gestures.up(e.pointerId, x, y, performance.now()), e);
+      this.runGestures(this.gestures.up(e.pointerId, x, y, eventTime(e)), e);
       this.scheduleLongPress(e);
       return;
     }
@@ -2009,7 +2009,7 @@ export class SceneManager {
         if (ptr) this.sketchController!.pointerMove(ptr, false);
       }
     }
-    this.runGestures(this.gestures.down(e.pointerId, x, y, performance.now()), e);
+    this.runGestures(this.gestures.down(e.pointerId, x, y, eventTime(e)), e);
     this.scheduleLongPress(e);
   }
 
@@ -2020,7 +2020,9 @@ export class SceneManager {
     if (due === null) return;
     this.longPressTimer = setTimeout(() => {
       this.longPressTimer = null;
-      this.runGestures(this.gestures.tick(performance.now()), e);
+      // After the next frame: a finger already lifted (its event waiting to be handled) is then a tap, not a long press.
+      const at = performance.now();
+      requestAnimationFrame(() => setTimeout(() => this.runGestures(this.gestures.tick(at), e), 0));
     }, Math.max(0, due - performance.now()) + 5);
   }
 

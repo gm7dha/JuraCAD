@@ -44,6 +44,15 @@ export type Gesture =
   | { type: "zoom"; factor: number; x: number; y: number }
   | { type: "pinchEnd" };
 
+/**
+ * When a pointer event happened, on the clock `performance.now()` uses. Its own time stamp is used when it has
+ * one (a busy page may handle an event a while after the finger moved: a quick tap must stay a tap).
+ */
+export function eventTime(e: { timeStamp?: number }, now = performance.now()): number {
+  const t = e.timeStamp;
+  return typeof t === "number" && t > 0 && Math.abs(now - t) < 60_000 ? t : now;
+}
+
 /** Movement (px) that's still a tap: fingers wobble, a pen less, a mouse hardly. */
 export function slopFor(kind: string): number {
   return kind === "touch" ? 10 : kind === "pen" ? 6 : 4;
