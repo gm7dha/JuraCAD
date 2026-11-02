@@ -470,7 +470,7 @@
   `stopImmediatePropagation`, so OrbitControls never sees fingers: one finger orbits, two pan (`panBy`) and pinch about their
   middle (`zoomAt`), tap picks (`pickAt(x, y, reach)`), double-tap fits, view-cube taps turn the view; long press only where
   `dragEnabled` (assemblies): on a part it picks it up and the drag moves it, elsewhere the drag just orbits; a second finger then
-  takes the move back (`onDragCancel`). Fingers landing while the pen is down are ignored (a resting palm). `lostpointercapture`
+  takes the move back (`onDragCancel`). Fingers landing while the pen is down are ignored down to their lift (a resting palm; `TouchRouter` in gestures.ts keeps their ids, so their moves never take the mouse path). Wider reach only for fingers and a tablet pen, never a desktop pen. `lostpointercapture`
   counts as a cancel (here, on the sheet and in guardZoom), and timers/frames are cancelled on dispose/unmount. `touchTiming`
   (long press 500 ms, double-tap 350 ms) is lengthened by the smoke test (CI's software-drawn browser is slow); `touchDebug` only
   with ?smoke. In a sketch one finger/the pen is the tool: nothing reaches the controller until the finger moves or
@@ -481,7 +481,7 @@
   ("Add to selection" = Ctrl/⌘, "No snapping"/"Shift" = Shift) — read modifiers through `additive`/`addHeld`/`shiftHeld`, never
   `e.shiftKey` alone. The touch bar (`src/app/TouchBar.tsx`, only on `(pointer: coarse)` or after a finger touched the page) has those
   toggles plus Clear/Back (Esc), Delete, Planes (P), Look at (N), Fit — the plain keys are sent as real keydown events (`pressKey`,
-  sent from the focused element unless that's a text box or the bar), so each button does exactly what its key does; both held
+  sent from the focused element unless that's the bar itself — so while a text box has the focus the shortcuts leave it alone), so each button does exactly what its key does; both held
   keys are let go when the tab changes. `src/app/touchCompat.ts`: on ordinary controls (not the canvas, the sheet, text
   boxes or `[data-own-touch]`) a long press sends `contextmenu` (and drops the made-up mouse events/click of that finger only: for
   `LIFT_MS` after it lifts, only events from touch — `sourceCapabilities.firesTouchEvents`, else near the lift point — and never

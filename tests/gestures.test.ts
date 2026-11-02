@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { eventTime, GestureTracker, gestureOptions, reachFor, slopFor, type Gesture } from "../src/viewport/gestures";
+import { eventTime, GestureTracker, gestureOptions, reachFor, slopFor, TouchRouter, type Gesture } from "../src/viewport/gestures";
 
 const types = (gs: Gesture[]) => gs.map((g) => g.type);
 
@@ -173,5 +173,31 @@ describe("event times", () => {
     expect(eventTime({}, 1800)).toBe(1800);
     // A stamp on some other clock (far from now) isn't trusted.
     expect(eventTime({ timeStamp: 1.7e12 }, 1800)).toBe(1800);
+  });
+});
+
+describe("a hand resting on the screen while the pen draws", () => {
+  it("is ignored from going down to coming up, so it never reaches the mouse's way of doing things", () => {
+    const r = new TouchRouter();
+    expect(r.down(1, "pen")).toBe(true);
+    expect(r.down(7, "touch")).toBe(false);
+    expect(r.count).toBe(1);
+    // Its moves (a finger reports a button held, like a mouse dragging) and its lift are ignored too.
+    expect(r.route(7)).toBe("ignore");
+    expect(r.route(1)).toBe("gesture");
+    expect(r.end(7)).toBe("ignore");
+    expect(r.route(7)).toBe("other");
+    // Still ignored when it lands after the pen... until the pen is up: then fingers count again.
+    expect(r.down(8, "touch")).toBe(false);
+    expect(r.end(1)).toBe("gesture");
+    expect(r.route(8)).toBe("ignore");
+    expect(r.end(8)).toBe("ignore");
+    expect(r.down(9, "touch")).toBe(true);
+    expect(r.down(10, "touch")).toBe(true);
+    expect(r.count).toBe(2);
+    // A mouse's pointer was never followed.
+    expect(r.route(99)).toBe("other");
+    r.reset();
+    expect(r.count).toBe(0);
   });
 });

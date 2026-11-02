@@ -1,7 +1,7 @@
 import { rectOf, shapeInBox, type Rect } from "./boxSelect";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { eventTime, GestureTracker, gestureOptions, reachFor, type Gesture } from "./gestures";
+import { eventTime, GestureTracker, gestureOptions, reachFor, TouchRouter, type Gesture } from "./gestures";
 import { addHeld, additive, shiftHeld } from "./touchKeys";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -268,7 +268,8 @@ export class SceneManager {
   private orbit: { id: number; x: number; y: number } | null = null;
   /** Fingers (and the pen) on the screen: worked out into gestures (see gestures.ts). The mouse never goes there. */
   private readonly gestures = new GestureTracker();
-  private readonly touchIds = new Set<number>();
+  /** Which pointers the gestures follow, and fingers ignored while the pen draws (see TouchRouter). */
+  private readonly touchIds = new TouchRouter();
   private touchKind = "touch";
   private longPressTimer: ReturnType<typeof setTimeout> | null = null;
   private longPressFrame: number | null = null;
@@ -1171,7 +1172,8 @@ export class SceneManager {
   private sketchPointerAt(x: number, y: number, e: PointerEvent): SketchPointer | null {
     const p = this.unprojectToSketch(x, y);
     if (!p) return null;
-    const reach = reachFor(e.pointerType);
+    // (Wider only for fingers and a tablet's pen; a mouse or a desktop pen tablet keeps the mouse's distances.)
+    const reach = usesGestures(e) || (e.pointerType === "pen" && COARSE) ? reachFor(e.pointerType) : 1;
     return { x: p.x, y: p.y, mmPerPx: this.worldPerPixel(), ...(reach !== 1 ? { reach } : {}), shift: shiftHeld(e), ctrl: addHeld(e), screenX: x };
   }
 
@@ -1181,6 +1183,7 @@ export class SceneManager {
     if (this.longPressFrame !== null) cancelAnimationFrame(this.longPressFrame);
     this.longPressTimer = null;
     this.gestures.reset();
+    this.touchIds.reset();
     this.sketchLayer.dispose();
     this.resizeObserver.disconnect();
     this.controls.dispose();
@@ -1857,7 +1860,9 @@ export class SceneManager {
   };
 
   private onPointerMove = (e: PointerEvent) => {
-    if (this.touchIds.has(e.pointerId)) {
+    const route = this.touchIds.route(e.pointerId);
+    if (route === "ignore") return;
+    if (route === "gesture") {
       const { x, y } = this.localPoint(e);
       this.runGestures(this.gestures.move(e.pointerId, x, y, eventTime(e)), e);
       return;
@@ -1939,7 +1944,9 @@ export class SceneManager {
   };
 
   private onPointerCancel = (e: PointerEvent) => {
-    if (this.touchIds.delete(e.pointerId)) {
+    const route = this.touchIds.end(e.pointerId);
+    if (route === "ignore") return;
+    if (route === "gesture") {
       this.runGestures(this.gestures.cancel(e.pointerId), e);
       this.scheduleLongPress(e);
       return;
@@ -1948,7 +1955,9 @@ export class SceneManager {
   };
 
   private onPointerUp = (e: PointerEvent) => {
-    if (this.touchIds.delete(e.pointerId)) {
+    const route = this.touchIds.end(e.pointerId);
+    if (route === "ignore") return;
+    if (route === "gesture") {
       const { x, y } = this.localPoint(e);
       if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
       this.runGestures(this.gestures.up(e.pointerId, x, y, eventTime(e)), e);
@@ -2009,8 +2018,8 @@ export class SceneManager {
 
   private touchDown(e: PointerEvent): void {
     const { x, y } = this.localPoint(e);
-    // A hand resting on the screen while the pen draws is ignored (it mustn't cancel the stroke).
-    if (this.gestures.active && this.touchKind === "pen" && e.pointerType === "touch") return;
+    // A hand resting on the screen while the pen draws is ignored, down to its lift (it mustn't cancel or take over the stroke).
+    if (!this.touchIds.down(e.pointerId, e.pointerType)) return;
     if (!this.gestures.active) {
       this.touchKind = e.pointerType;
       // A long press only where it does something: picking up a part in an assembly. (Elsewhere a still press
@@ -2019,13 +2028,12 @@ export class SceneManager {
       this.gestures.options = { ...gestureOptions(e.pointerType, longPress), doubleTapMs: this.touchTiming.doubleTapMs };
       this.animation = null;
     }
-    this.touchIds.add(e.pointerId);
     try {
       this.renderer.domElement.setPointerCapture(e.pointerId);
     } catch {
       // (A pointer the browser has already let go of.)
     }
-    if (this.touchIds.size === 1) {
+    if (this.touchIds.count === 1) {
       const cube = this.viewCube.contains(x, y, this.width);
       const sketch = !!this.sketchController && !cube;
       this.touchStroke = { sketch, cube, sent: false, holdDrag: false };

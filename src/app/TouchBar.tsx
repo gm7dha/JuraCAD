@@ -16,10 +16,10 @@ import { setTouchKey, subscribeTouchKeys, touchKeys } from "../viewport/touchKey
 
 /** Send a key press to the app's keyboard shortcuts, as if typed (not into a text box). */
 export function pressKey(key: string, code = ""): void {
-  // From where the keyboard focus is (so a panel's own Esc sees it), unless that's a text box or the touch bar itself.
+  // From where the keyboard focus is, as a real key would be: a panel's own Esc sees it, and while a text box
+  // (a dimension's value…) has the focus the shortcuts leave the key alone — Delete never deletes the selection then.
   const focus = document.activeElement;
-  const typing = focus instanceof HTMLElement && (focus.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(focus.tagName));
-  const at = focus instanceof HTMLElement && focus !== document.body && !typing && !focus.closest(".touch-bar") ? focus : document.body;
+  const at = focus instanceof HTMLElement && focus !== document.body && !focus.closest(".touch-bar") ? focus : document.body;
   at.dispatchEvent(new KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true }));
 }
 

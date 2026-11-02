@@ -243,3 +243,47 @@ export class GestureTracker {
     return { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
   }
 }
+
+/**
+ * Which pointers the finger gestures follow, and which are ignored: while the pen is down, a finger (a hand
+ * resting on the screen) is ignored for as long as it stays down — its moves and lift too, so it can never
+ * reach the mouse's way of doing things and take over the pen's stroke.
+ */
+export class TouchRouter {
+  private readonly followed = new Map<number, string>();
+  private readonly ignored = new Set<number>();
+
+  /** A pointer went down that the gestures handle (`kind`: its pointerType): follow it (true) or ignore it (false). */
+  down(id: number, kind: string): boolean {
+    if (kind === "touch" && [...this.followed.values()].includes("pen")) {
+      this.ignored.add(id);
+      return false;
+    }
+    this.ignored.delete(id);
+    this.followed.set(id, kind);
+    return true;
+  }
+
+  /** What a later event of this pointer is: one the gestures follow, one being ignored, or neither (the mouse's way). */
+  route(id: number): "gesture" | "ignore" | "other" {
+    return this.followed.has(id) ? "gesture" : this.ignored.has(id) ? "ignore" : "other";
+  }
+
+  /** The pointer came up or was cancelled: what it was, and it's forgotten. */
+  end(id: number): "gesture" | "ignore" | "other" {
+    const r = this.route(id);
+    this.followed.delete(id);
+    this.ignored.delete(id);
+    return r;
+  }
+
+  /** How many pointers the gestures follow now. */
+  get count(): number {
+    return this.followed.size;
+  }
+
+  reset(): void {
+    this.followed.clear();
+    this.ignored.clear();
+  }
+}
