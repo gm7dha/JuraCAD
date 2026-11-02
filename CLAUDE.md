@@ -263,6 +263,18 @@
   `mitre` (gap) trims walls meeting at a corner along its diagonal as soon as both are bent (`mitreCorner`, `FoldedSheet.mitres`;
   not one up and one down, nor walls that already have flanges); the engine
   cuts the same off neighbours made earlier. Off unless chosen, so old files rebuild the same.
+  From a solid (Onshape's Convert): a sheetMetal feature with `sheetConvert` takes `picks` — flat faces of one part as walls
+  (the first is the base) and straight edges where two walls meet as rips; `ripGap` is the gap left there, `flipSide` puts
+  the metal outside the faces (else it goes into the part). `src/sheetmetal/convert.ts` (pure, `convertToSheet`) chains each
+  face's edges, finds shared straight edges (bends unless ripped), walks them from the base (a ring of bends without a rip,
+  a lone wall, a curved wall or bend edge, walls on both sides of the metal are refused in plain words), cuts each wall back
+  by its bends' setbacks ((R+T)·tan(θ/2) up, R·tan(θ/2) down — the picked faces stay the metal's face) and at rips (the wall
+  later in the walk stops `gap` clear of the other's metal; `offsetEdges`), and gives an ordinary SheetSpec: every other wall
+  is a FlangeSpec with `shape` (its own outline, edge 0 the bend, may reach past the bend's ends) — foldSheet uses it instead
+  of a rectangle (no straight/inset; closeCorners and mitres leave such walls alone). It checks that foldSheet puts every wall
+  back on its face. The engine (`applySheetConvert`) replaces the part's shape with the folded sheet and lists all its earlier
+  features in `sheetFeatures` (so the flat pattern doesn't call them missing). Not in the Claude extension (it has no sheet
+  metal tools yet).
 - Sweep: `src/kernel/sweep.ts`. Twist (the "twist" box, degrees; + = anticlockwise seen from the path's end looking back)
   winds a guide curve round the path on a rotation-minimising frame (`twistGuide`) and gives it to OCCT's pipe shell as an
   auxiliary spine; at most `MAX_TWIST` (3600°) either way. `sweepControl.lockOrientation` ("Keep profile orientation") uses a fixed

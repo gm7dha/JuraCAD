@@ -35,6 +35,7 @@ import { followLinks, linkProblem, shapeIsClosed, projectEdge, type RefEdge, typ
 import { edgePierceRefs, pierceSamples, remembered, edgePierces, edgePoint3, nearestPlace, seeEdge, seeShape, seeShapeAll, seeSketchCurve, type Conic3, sketchCurvePierces, sketchPierceRefs, sketchPointAt, sketchRefs, type CurveShape3, type SourceSketch } from "../sketch/projected";
 import { isPartLink, type CurveLink, type PartLink, type SketchCurve } from "../sketch/types";
 import { openChain, profileSheet } from "../sheetmetal/profile";
+import { convertToSheet, type SolidEdge, type SolidFace } from "../sheetmetal/convert";
 import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
 import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCornerReliefs, cutFlatLoops, flatBoundary, fusePieces, unfoldedSolid, wallCutLines, wallSolid } from "./sheetMetal";
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
@@ -3351,6 +3352,10 @@ export class GeometryEngine {
     const bad = FEATURE_DEFS.sheetMetal.params.find((p) => errors[p.key]);
     if (bad) return { error: `${bad.label}: ${errors[bad.key]}` };
     if (values.kFactor > 1) return { error: "K-factor: use a value from 0 to 1 (0.45 is usual)." };
+    if (feature.sheetConvert) {
+      const error = this.applySheetConvert(feature, values);
+      return error ? { error } : {};
+    }
     if (!feature.sketchRef) return { error: "Choose the sketch with the sheet's shape." };
     const sketch = sketches.get(feature.sketchRef);
     if (!sketch?.sketch?.plane) return { error: "The sketch it uses can't be found (deleted, suppressed, or after this in the list)." };
@@ -3399,6 +3404,93 @@ export class GeometryEngine {
     this.tools.set(feature.id, { shape: shape.clone(), operation: "new", partId: feature.id });
     this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, sheet: spec, sheetFeatures: [feature.id] });
     return { newPart: true };
+  }
+
+  /**
+   * Sheet metal from a part (Onshape's Convert): the picked flat faces become
+   * the walls of a sheet (see sheetmetal/convert.ts), bent where they meet and
+   * left open at the picked rip edges. The part becomes that sheet.
+   */
+  private applySheetConvert(feature: Feature, values: Record<string, number>): string | null {
+    const picks = feature.picks ?? [];
+    const facePicks = picks.filter((p) => p.ref.kind === "face");
+    const ripPicks = picks.filter((p) => p.ref.kind === "edge");
+    if (!facePicks.length) return "Click the flat faces of the part that become the sheet's walls (the first one stays flat in the flat pattern).";
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return "Sheet metal is made from one part at a time. Remove the faces or edges picked on the other part.";
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these faces were on no longer exists. Edit this and pick the faces again.";
+    if (part.surface) return `${part.name} is a surface. Pick faces of a solid part (or Thicken the surface first).`;
+    if (part.sheet) return `${part.name} is already sheet metal. Add flanges to it instead.`;
+    const T = values.thickness;
+    let faces: Face[] = [];
+    let ripEdges: Edge[] = [];
+    try {
+      faces = findPickedFaces(part.shape, facePicks);
+      ripEdges = ripPicks.length ? findPickedEdges(part.shape, ripPicks) : [];
+    } catch (e) {
+      faces.forEach((f) => f.delete());
+      return describeError(e, "Couldn't find the picked faces and edges.");
+    }
+    const solidEdge = (e: Edge): SolidEdge => {
+      const curve = e.geomType === "LINE" ? "LINE" : e.geomType === "CIRCLE" ? "CIRCLE" : "OTHER";
+      const n = curve === "LINE" ? 1 : curve === "CIRCLE" ? 24 : 32;
+      return { curve, pts: Array.from({ length: n + 1 }, (_, i) => (i === 0 ? take(e.startPoint) : i === n ? take(e.endPoint) : take(e.pointAt(i / n)))) };
+    };
+    const edgesOfWire = (w: { wrapped: unknown; delete(): void }): SolidEdge[] => {
+      const list = edgesOf(w);
+      try {
+        return list.map(solidEdge);
+      } finally {
+        list.forEach((e) => e.delete());
+        w.delete();
+      }
+    };
+    let solid: SolidFace[];
+    let rips: [Vec3, Vec3][];
+    try {
+      solid = faces.map((f): SolidFace => {
+        const flat = f.geomType === "PLANE";
+        const normal = take(f.normalAt());
+        const outer = edgesOfWire(f.clone().outerWire());
+        const holes = flat ? f.clone().innerWires().map(edgesOfWire) : [];
+        return { flat, normal, outer, holes };
+      });
+      rips = [];
+      for (const e of ripEdges) {
+        if (e.geomType !== "LINE") return "Rips go along straight edges where two walls meet. Remove the curved edge.";
+        rips.push([take(e.startPoint), take(e.endPoint)]);
+      }
+    } catch (e) {
+      return describeError(e, "Couldn't read the picked faces.");
+    } finally {
+      faces.forEach((f) => f.delete());
+      ripEdges.forEach((e) => e.delete());
+    }
+    const plan = convertToSheet(solid, rips, { thickness: T, radius: values.radius, k: values.kFactor, gap: values.ripGap, flip: !!feature.flipSide, idPrefix: feature.id });
+    if (typeof plan === "string") return plan;
+    const folded = foldSheet(plan.spec);
+    const problem = Object.values(folded.errors)[0];
+    if (problem) return problem;
+    let shape: Shape3D | null = null;
+    try {
+      shape = fusePieces([...folded.walls.map((w) => wallSolid(w, T)), ...folded.bends.map((b) => bendSolid(b))]);
+    } catch (e) {
+      return describeError(e, "Couldn't make the sheet.");
+    }
+    if (!shape) return "Click the flat faces of the part that become the sheet's walls.";
+    if (!isValidSolid(shape)) {
+      shape.delete();
+      return "The walls run into each other once they have thickness. Try thinner metal or a smaller bend radius, or make more of the edges where walls meet into rips.";
+    }
+    part.shape.delete();
+    part.shape = shape;
+    delete part.threads;
+    part.sheet = plan.spec;
+    // Everything that made the part is now in the sheet (so the flat pattern shows it all).
+    part.sheetFeatures = [feature.id, ...part.featureIds];
+    part.featureIds.push(feature.id);
+    return null;
   }
 
   /** A cut through a sheet metal part: where it goes through each wall, so the flat pattern shows it. */

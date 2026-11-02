@@ -245,6 +245,14 @@ export interface Feature {
   mitreCorners?: boolean;
   /** Extend surface: how far — up to a face (a flat face counts as its whole plane) or a solid part, instead of by a distance; `target` is a face picked on it. */
   extendTo?: { mode: "face" | "part"; target?: TopoPick };
+  /**
+   * Sheet metal: turn a part into sheet metal (Onshape's Convert) instead of
+   * making one from a sketch — `picks` are its flat faces (the walls; the
+   * first is the one that stays put in the flat pattern) and the edges where
+   * two of them meet to leave open (rips). `flipSide` puts the metal outside
+   * the faces instead of inside the part.
+   */
+  sheetConvert?: boolean;
   /** Bend and Jog: keep the other side of the line still (normally the smaller piece moves). */
   keepOtherSide?: boolean;
   /** Flange: the shape of the bend relief notches (missing = rectangle) and the relief cut where flanges meet at a corner. */
