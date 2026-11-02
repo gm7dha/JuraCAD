@@ -3211,8 +3211,9 @@ try {
         await touches("touchStart", [empty]);
         await touches("touchEnd", []);
       }
-      await tab.waitForFunction(() => window.juracadViewport.current.restingAtFit(), null, { timeout: 5_000 }).catch(() => {
-        throw new Error("double-tapping empty space didn't zoom to fit");
+      await tab.waitForFunction(() => window.juracadViewport.current.restingAtFit(), null, { timeout: 5_000 }).catch(async () => {
+        const seen = await tab.evaluate(() => `${window.juracadViewport.current.touchDebug.join(", ")}; zoom ${window.juracadViewport.current.saveView().zoom}`);
+        throw new Error(`double-tapping empty space didn't zoom to fit (gestures seen: ${seen}; before the pinch zoom ${before.zoom})`);
       });
       await tab.waitForTimeout(500);
 

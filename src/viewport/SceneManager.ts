@@ -2028,7 +2028,11 @@ export class SceneManager {
     for (const g of list) this.onGesture(g, e);
   }
 
+  /** The last few finger gestures seen (for the smoke test's error messages). */
+  touchDebug: string[] = [];
+
   private onGesture(g: Gesture, e: PointerEvent): void {
+    this.touchDebug = [...this.touchDebug.slice(-11), g.type === "tap" ? `tap×${g.count}` : g.type];
     const st = this.touchStroke;
     const ctl = this.sketchController;
     switch (g.type) {
