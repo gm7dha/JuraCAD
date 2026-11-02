@@ -344,7 +344,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -901,6 +901,25 @@ export const useStore = create<AppState>((set, get) => {
       if (type === "rib" || type === "sheetMetal" || type === "tab" || type === "bend" || type === "jog") {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
         if (picked) draft.sketchRef = picked.id;
+        // Sheet metal with faces of a part selected (and no sketch highlighted): made from the part, those faces its walls.
+        // (Only flat faces of a solid part that isn't sheet metal already.)
+        const faces = s.selection.filter((item) => item.kind === "face");
+        const convertible =
+          faces.length > 0 &&
+          faces.every((item) => {
+            const part = s.parts.find((p) => p.id === item.partId);
+            return !!part && !part.surface && !part.flat && part.faceRefs?.[item.index]?.surface === "PLANE";
+          });
+        if (type === "sheetMetal" && !picked && convertible) {
+          draft.sheetConvert = true;
+          draft.sketchRef = undefined;
+          draft.picks = s.selection.map((item) => pickFor(s.parts, item)).filter((p): p is TopoPick => p !== null);
+        }
+        // No sketch to make it from, but a part: made from the part.
+        if (type === "sheetMetal" && !draft.sketchRef && !draft.sheetConvert) {
+          draft.sheetConvert = true;
+          draft.picks = [];
+        }
       }
       // Delete part starts with the parts picked in the Parts list.
       if (type === "deletePart") draft.deleteParts = [...s.selectedParts];

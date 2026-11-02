@@ -273,6 +273,19 @@ export function previewFeatures(features: Feature[]): Feature[] {
   return features.some((f) => f.hole?.modelThread) ? features.map((f) => previewOf(f)!) : features;
 }
 
+/**
+ * While a "From a part" Sheet metal dialog is open (new or being edited), what
+ * the engine builds: the features before it, then it checked but not applied
+ * (`sheetConvertCheck`) — so the part on show, and clicked, is the part as it
+ * was before it became a sheet (the features after it wait until it's done).
+ */
+export function convertPreview(features: Feature[], draft: Feature | null): Feature[] {
+  if (draft?.type !== "sheetMetal" || !draft.sheetConvert) return features;
+  const at = features.findIndex((f) => f.id === draft.id);
+  if (at < 0) return features;
+  return [...features.slice(0, at), { ...features[at], sheetConvertCheck: true }];
+}
+
 export function featuresWithDraft(features: Feature[], draft: Feature | null): Feature[] {
   if (!draft) return features;
   return features.some((f) => f.id === draft.id)
@@ -517,6 +530,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if ((feature.type === "rib" || feature.type === "thicken") && f.flipSide === true) feature.flipSide = true;
     if (feature.type === "thicken" && f.bothSides === true) feature.bothSides = true;
     if (feature.type === "cornerBreak" && f.breakStyle === "chamfer") feature.breakStyle = "chamfer";
+    if (feature.type === "sheetMetal" && f.sheetConvert === true) feature.sheetConvert = true;
     if (feature.type === "deleteFace" && f.leaveOpen === true) feature.leaveOpen = true;
     if (feature.type === "fill" && f.continuity === "tangent") feature.continuity = "tangent";
     if (feature.type === "extendSurface" && f.extendTo && typeof f.extendTo === "object") {
@@ -593,7 +607,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       });
       if (more.length) feature.moreAreas = more;
     }
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type)) {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert)) {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

@@ -319,12 +319,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     label: "Sheet metal",
     namePrefix: "Sheet metal",
     description:
-      "A sheet metal part from a sketch: a closed shape makes a flat sheet; connected lines (the side view of an L, U or Z…) make a bent sheet, its corners becoming bends. Then bend flanges off its edges.",
+      "A sheet metal part from a sketch: a closed shape makes a flat sheet; connected lines (the side view of an L, U or Z…) make a bent sheet, its corners becoming bends. Or turn a part into sheet metal: click its flat faces as the walls. Then bend flanges off its edges.",
     params: [
       { key: "thickness", label: "Thickness", defaultValue: "1.5", positive: true, group: "size" },
       { key: "depth", label: "Depth (for an outline of lines)", defaultValue: "30", positive: true, group: "size" },
       { key: "radius", label: "Bend radius (inside)", defaultValue: "1.5", positive: true, group: "size" },
       { key: "kFactor", label: "K-factor (0.45 is usual)", defaultValue: "0.45", min: 0, group: "size", unit: "" },
+      { key: "ripGap", label: "Gap at rips", defaultValue: "0.2", positive: true, group: "size" },
     ],
   },
   flange: {
@@ -515,8 +516,10 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
+  // Sheet metal from a part's faces has rips but no depth; from a sketch, the other way round.
+  if (f.type === "sheetMetal") keys.delete(f.sheetConvert ? "depth" : "ripGap");
   // A profile kept facing one way can't also twist.
   if (f.type === "sweep" && f.sweepControl?.lockOrientation) keys.delete("twist");
   if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");

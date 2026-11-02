@@ -295,9 +295,12 @@ export function Toolbar() {
               label: "Sheet metal",
               icon: <Icons.SheetMetal />,
               onClick: () => startCreate("sheetMetal"),
-              disabled: !ready || !hasSketch,
+              disabled: !ready || (!hasSketch && !hasPart),
               active: editingType === "sheetMetal",
-              title: hasSketch ? "Sheet metal — a flat sheet of one thickness from a closed sketch, ready to bend flanges off" : "Sketch the sheet's shape first (a closed outline)",
+              title:
+                hasSketch || hasPart
+                  ? "Sheet metal — a sheet of one thickness from a sketch (or from a part's flat faces), ready to bend flanges off"
+                  : "Sketch the sheet's shape first (a closed outline), or make a part to turn into sheet metal",
             },
             {
               key: "flange",

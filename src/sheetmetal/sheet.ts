@@ -86,6 +86,13 @@ export interface FlangeSpec {
    * running into each other.
    */
   mitre?: number;
+  /**
+   * The new wall's own shape, instead of a rectangle (sheets converted from a
+   * part's faces, see convert.ts): in the wall's coordinates, anticlockwise,
+   * its edge 0 along the bend (y = 0, running +x; it may reach past the bend's
+   * ends), holes clockwise. `length`, `straight` and `inset` aren't used.
+   */
+  shape?: { outline: Segment[]; holes: Segment[][] };
 }
 
 /** Bend relief notches: square-ended, round-ended (obround), or a thin tear. */
@@ -396,7 +403,7 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     }
     const R = fl.radius ?? spec.radius;
     const theta = (fl.angle * Math.PI) / 180;
-    const straight = fl.straight ?? fl.length - (R + T) * Math.tan(theta / 2);
+    const straight = fl.shape ? Math.max(...outlinePoints(fl.shape.outline).map((p) => p[1])) : fl.straight ?? fl.length - (R + T) * Math.tan(theta / 2);
     if (straight < 0.01) {
       errors[fl.id] =
         fl.straight !== undefined
@@ -410,7 +417,7 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     const [bx, by] = seg.to;
     const full = Math.hypot(bx - ax, by - ay);
     const e2: P2 = [(bx - ax) / full, (by - ay) / full];
-    const inset = Math.max(0, fl.inset ?? 0);
+    const inset = fl.shape ? 0 : Math.max(0, fl.inset ?? 0);
     const len = full - 2 * inset;
     if (len < 0.01) {
       used.delete(key);
@@ -452,8 +459,8 @@ export function foldSheet(spec: SheetSpec): FoldedSheet {
     const child: Wall = {
       id: fl.id,
       frame: g.frame,
-      outline: rect(len, straight),
-      holes: [],
+      outline: fl.shape ? fl.shape.outline : rect(len, straight),
+      holes: fl.shape ? fl.shape.holes : [],
       flat: g.flat,
       bendEdge: 0,
     };
@@ -906,8 +913,9 @@ function closeCorners(spec: SheetSpec, walls: Wall[], bends: Bend[], mitred: Set
       more(b.child, 0, a.radius);
     }
   }
+  const shaped = new Set(spec.flanges.filter((f) => f.shape).map((f) => f.id));
   for (const [id, e] of ext) {
-    if (mitred.has(id)) continue; // already trimmed at its other end
+    if (mitred.has(id) || shaped.has(id)) continue; // already trimmed at its other end, or a wall with a shape of its own
     const wall = walls.find((x) => x.id === id);
     const bend = bends.find((x) => x.child === id);
     if (!wall || !bend) continue;
@@ -933,7 +941,7 @@ function mitreCorner(spec: SheetSpec, walls: Wall[], bends: Bend[], w: Wall, i: 
   if (!a || !b) return;
   const fa = spec.flanges.find((f) => f.id === a.flangeId);
   const fb = spec.flanges.find((f) => f.id === b.flangeId);
-  if (!fa || !fb || fa.line || fb.line || (fa.mitre === undefined && fb.mitre === undefined) || fa.closeCorners || fb.closeCorners) return;
+  if (!fa || !fb || fa.line || fb.line || fa.shape || fb.shape || (fa.mitre === undefined && fb.mitre === undefined) || fa.closeCorners || fb.closeCorners) return;
   // One up and one down never meet.
   if (a.down !== b.down) return;
   const sa = w.outline[i];

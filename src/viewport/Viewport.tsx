@@ -370,6 +370,21 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     if (pick) s.toggleDraftPick(pick);
     return;
   }
+  // Sheet metal from a part: faces are its walls, edges between them rips.
+  if (s.editing?.draft.type === "sheetMetal" && s.editing.draft.sheetConvert) {
+    if (target?.kind !== "part") return;
+    const pick = pickFor(s.parts, target.item);
+    if (pick?.ref.kind === "edge" && pick.ref.curve !== "LINE") {
+      s.showToast("Rips go along straight edges where two walls meet.");
+      return;
+    }
+    if (pick?.ref.kind === "face" && pick.ref.surface !== "PLANE") {
+      s.showToast("Walls must be flat faces.");
+      return;
+    }
+    if (pick) s.toggleDraftPick(pick);
+    return;
+  }
   // Corner break: the short edges through the sheet at its corners.
   if (s.editing?.draft.type === "cornerBreak") {
     if (target?.kind !== "part") return;

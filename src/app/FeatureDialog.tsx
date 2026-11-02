@@ -252,6 +252,7 @@ function RibThickenOptions() {
   const features = useStore(activeFeatures);
   if (draft?.type !== "rib" && draft?.type !== "thicken" && draft?.type !== "sheetMetal" && draft?.type !== "flange" && draft?.type !== "hem" && draft?.type !== "tab" && draft?.type !== "wrap" && draft?.type !== "bend" && draft?.type !== "jog") return null;
   const lineBend = draft.type === "bend" || draft.type === "jog";
+  const convert = draft.type === "sheetMetal" && !!draft.sheetConvert;
   const at = features.findIndex((f) => f.id === draft.id);
   const sketches = (at >= 0 ? features.slice(0, at) : features).filter((f) => f.type === "sketch" && !f.suppressed);
   return (
@@ -265,7 +266,22 @@ function RibThickenOptions() {
           ))}
         </div>
       )}
-      {(draft.type === "rib" || draft.type === "sheetMetal" || draft.type === "tab" || draft.type === "wrap" || lineBend) && (
+      {draft.type === "sheetMetal" && (
+        <div className="segmented two" role="radiogroup" aria-label="Make the sheet from">
+          {(
+            [
+              [false, "From a sketch", "Draw the sheet's shape (or its side view) in a sketch"],
+              [true, "From a part", "Turn a part into sheet metal: click its flat faces as the walls (Onshape's Convert)"],
+            ] as const
+          ).map(([c, label, hint]) => (
+            <button type="button" key={label} role="radio" aria-checked={convert === c} className={convert === c ? "selected" : ""} title={hint} onClick={() => setDraftField(c ? { sheetConvert: true, picks: draft.picks ?? [], sketchRef: undefined } : { sheetConvert: undefined, picks: undefined, sketchRef: sketches[sketches.length - 1]?.id })}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {convert && <ConvertPicks />}
+      {(draft.type === "rib" || (draft.type === "sheetMetal" && !convert) || draft.type === "tab" || draft.type === "wrap" || lineBend) && (
         <fieldset className="param-group">
           <legend>{draft.type === "rib" ? "Rib lines" : draft.type === "tab" ? "Shape of the tab" : draft.type === "wrap" ? "Shapes to wrap" : lineBend ? "Line to bend along" : "Shape of the sheet"}</legend>
           <select className="full-select" aria-label={draft.type === "rib" ? "Sketch with the rib lines" : draft.type === "tab" ? "Sketch with the tab's shape" : draft.type === "wrap" ? "Sketch with the shapes to wrap" : lineBend ? "Sketch with the bend line" : "Sketch with the sheet's shape"} value={draft.sketchRef ?? ""} onChange={(e) => setDraftField({ sketchRef: e.target.value || undefined })}>
@@ -362,6 +378,8 @@ function RibThickenOptions() {
         <input type="checkbox" checked={!!draft.flipSide} onChange={(e) => setDraftField({ flipSide: e.target.checked })} />
         {draft.type === "rib"
           ? "Flip (fill the other side of the line)"
+          : convert
+          ? "Metal outside the faces (they become its inside)"
           : draft.type === "sheetMetal"
           ? "Flip (the metal on the other side of the sketch)"
           : draft.type === "jog"
@@ -374,6 +392,53 @@ function RibThickenOptions() {
       </label>
       )}
     </>
+  );
+}
+
+/** Sheet metal from a part: the faces that become walls, and the edges between them left open (rips). */
+function ConvertPicks() {
+  const draft = useStore((s) => s.editing?.draft);
+  const toggleDraftPick = useStore((s) => s.toggleDraftPick);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const picks = draft?.picks ?? [];
+  const walls = picks.filter((p) => p.ref.kind === "face");
+  const rips = picks.filter((p) => p.ref.kind === "edge");
+  const list = (items: typeof picks, label: string) => (
+    <ul className="pick-list" aria-label={label}>
+      {items.map((p, i) => (
+        <li key={i}>
+          <span>
+            {label === "Walls" ? (i === 0 ? "Wall 1 (stays flat)" : `Wall ${i + 1}`) : `Rip ${i + 1}`}
+            <span className="muted"> · {describeRef(p.ref, true)}</span>
+          </span>
+          <button type="button" className="icon-button small" onClick={() => toggleDraftPick(p)} title="Remove from this feature" aria-label="Remove">
+            <Icons.Cross size={14} />
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <fieldset className="param-group">
+      <legend>Walls and rips</legend>
+      {picks.length === 0 ? (
+        <p className="dialog-hint pick-hint">
+          Click the part's flat faces that become the sheet's walls — for a hollowed box, its outside faces. Where two walls meet there's a bend. Then click
+          the edges between walls to leave open as rips (a box needs one at each corner), so the sheet can be unfolded flat.
+        </p>
+      ) : (
+        <>
+          {walls.length > 0 && list(walls, "Walls")}
+          {rips.length > 0 && list(rips, "Rips")}
+          <div className="pick-footer">
+            <span className="muted small">Click a face to add a wall, an edge between two walls to add a rip, or one again to remove it. The first wall stays flat in the flat pattern.</span>
+            <button type="button" className="link-button" onClick={() => setDraftField({ picks: [] })}>
+              Clear
+            </button>
+          </div>
+        </>
+      )}
+    </fieldset>
   );
 }
 
