@@ -119,7 +119,7 @@ const NEARBY_PX = 60;
 const NEARBY_MAX = 80;
 const NO_REFS: RefEdge[] = [];
 /** Millimetres per "pixel" of the snapping and picking distances below: wider for fingers and the pen. */
-const px = (e: SketchPointer) => e.mmPerPx * (e.reach ?? 1);
+const tol = (e: SketchPointer) => e.mmPerPx * (e.reach ?? 1);
 /** Tools whose first click only marks where the shape starts: on a touch screen a drag draws them (lift = the next click). */
 const DRAG_DRAWN = new Set<string>(["line", "rectangle", "centreRectangle", "alignedRectangle", "circle", "circle3", "centreArc", "arc", "tangentArc", "slot", "polygon", "ellipse", "conic"]);
 const CURVE_PX = 6;
@@ -245,7 +245,7 @@ export class SketchController {
     const refs = this.refs;
     const faceCount = this.faceEdgeCount;
     if (refs.length <= faceCount) return [];
-    const reach = NEARBY_PX * px(e);
+    const reach = NEARBY_PX * tol(e);
     const skip = this.skipRef;
     const virt = nearRefs(refs, e.x, e.y, reach, (r) => !!r.source?.later || skip(r));
     const found: { at: [number, number]; d: number }[] = [];
@@ -264,7 +264,7 @@ export class SketchController {
   private pickAt(e: SketchPointer): Hit | null {
     const d = this.data;
     if (!d) return null;
-    return pickAt(d, e.x, e.y, POINT_PX * px(e), CURVE_PX * px(e), this.refs, this.skipRef);
+    return pickAt(d, e.x, e.y, POINT_PX * tol(e), CURVE_PX * tol(e), this.refs, this.skipRef);
   }
 
   /** A line's middle or a circle's centre to mark for whatever's hovered. */
@@ -300,7 +300,7 @@ export class SketchController {
   useAt(e: SketchPointer): boolean {
     const d = this.data;
     if (!d || this.tool !== "useEdge") return false;
-    const edge = sketchCurveAt(this.refs, e.x, e.y, CURVE_PX * px(e), this.skipRef);
+    const edge = sketchCurveAt(this.refs, e.x, e.y, CURVE_PX * tol(e), this.skipRef);
     if (!edge) return false;
     if (edge.source?.later) {
       this.state.setSketchMessage(laterMessage(edge), "info");
@@ -488,7 +488,7 @@ export class SketchController {
   private hitAt(e: SketchPointer, ignore?: Set<string>): Hit | null {
     const d = this.data;
     if (!d) return null;
-    return hitTest(d, e.x, e.y, POINT_PX * px(e), CURVE_PX * px(e), { ignore });
+    return hitTest(d, e.x, e.y, POINT_PX * tol(e), CURVE_PX * tol(e), { ignore });
   }
 
   /**
@@ -497,14 +497,14 @@ export class SketchController {
    * `needsPoint`: this click must land on a point (a tangent arc's start), so Shift is ignored.
    */
   private snapAt(e: SketchPointer, needsPoint = false): SnapResult {
-    return snapAt(this.data!, e.x, e.y, { pointTol: POINT_PX * px(e), curveTol: CURVE_PX * px(e), acquired: this.acquired, refs: this.refs, skip: this.skipRef, free: e.shift && !needsPoint });
+    return snapAt(this.data!, e.x, e.y, { pointTol: POINT_PX * tol(e), curveTol: CURVE_PX * tol(e), acquired: this.acquired, refs: this.refs, skip: this.skipRef, free: e.shift && !needsPoint });
   }
 
   /** The spline handle end under the pointer, if any (handles show on selected splines). */
   private handleAt(e: SketchPointer): SplineHandleEnd | null {
     const d = this.data;
     if (!d) return null;
-    const tol = POINT_PX * px(e);
+    const tol = POINT_PX * tol(e);
     let best: SplineHandleEnd | null = null;
     let bestD = tol;
     for (const h of splineHandleEnds(d, this.state.sketch?.selection ?? [])) {
@@ -689,7 +689,7 @@ export class SketchController {
       case "spline": {
         // Each click adds a point; clicking the first point again closes it, Esc finishes an open one.
         const first = this.placed[0];
-        const closing = !e.shift && this.placed.length >= 3 && !!first && Math.hypot(p.x - first.x, p.y - first.y) < POINT_PX * px(e);
+        const closing = !e.shift && this.placed.length >= 3 && !!first && Math.hypot(p.x - first.x, p.y - first.y) < POINT_PX * tol(e);
         if (!closing) {
           this.placed = [...this.placed, p];
           if (this.placed.length === 1) this.state.setSketchMessage("Click more points for the curve to pass through. Click the first point to close it, or Esc to finish.", "info");
@@ -1011,7 +1011,7 @@ export class SketchController {
   private tangentFor(first: Placed, p: Placed, e: SketchPointer): TangentLine | null {
     const sn = p.snap?.kind;
     if (sn === "point" || sn === "origin" || sn === "midpoint" || (p.snap?.kind === "ref" && p.snap.at !== "on")) return null;
-    return tangentLineAt(this.data!, first, e.x, e.y, TANGENT_PX * px(e), this.refs, this.skipRef);
+    return tangentLineAt(this.data!, first, e.x, e.y, TANGENT_PX * tol(e), this.refs, this.skipRef);
   }
 
   pointerUp(): void {
@@ -1182,7 +1182,7 @@ export class SketchController {
   private extraAt(e: SketchPointer): Hit | null {
     const d = this.data;
     if (!d) return null;
-    const t = textAt(d, e.x, e.y, CURVE_PX * px(e));
+    const t = textAt(d, e.x, e.y, CURVE_PX * tol(e));
     if (t) return { kind: "curve", id: t };
     const m = imageAt(d, e.x, e.y);
     return m ? { kind: "curve", id: m } : null;
@@ -1190,7 +1190,7 @@ export class SketchController {
 
   private selectDrag(e: SketchPointer) {
     const drag = this.drag!;
-    if (!drag.moved && Math.hypot(e.x - drag.startX, e.y - drag.startY) < DRAG_PX * px(e)) return;
+    if (!drag.moved && Math.hypot(e.x - drag.startX, e.y - drag.startY) < DRAG_PX * tol(e)) return;
     drag.moved = true;
     if (drag.kind === "none") {
       // From empty space: a selection box. Leftwards takes anything it touches.
@@ -1212,7 +1212,7 @@ export class SketchController {
       const dx = e.x - px;
       const dy = e.y - py;
       // Dropped back onto the point: the handle is cleared and the curve runs naturally again.
-      const reset = Math.hypot(dx, dy) < POINT_PX * px(e);
+      const reset = Math.hypot(dx, dy) < POINT_PX * tol(e);
       next = setSplineHandle(drag.start, h.splineId, h.pointId, reset ? null : [3 * dx * h.side, 3 * dy * h.side]);
       this.state.updateSketch(next, { record: false });
       return;
@@ -1222,7 +1222,7 @@ export class SketchController {
       // A wider reach than a click, so an end point dropped near another joins onto it.
       // Also onto the middle of a line, or a corner, centre or middle of the face's edges.
       // Holding Shift drags it freely: nothing is snapped onto or joined when let go.
-      const found = this.data ? snapAt(drag.start, e.x, e.y, { pointTol: SNAP_PX * px(e), curveTol: 0, refs: this.refs, skip: this.skipRef, ignore: pointsSharingCurve(drag.start, drag.id), free: e.shift }) : null;
+      const found = this.data ? snapAt(drag.start, e.x, e.y, { pointTol: SNAP_PX * tol(e), curveTol: 0, refs: this.refs, skip: this.skipRef, ignore: pointsSharingCurve(drag.start, drag.id), free: e.shift }) : null;
       const sn = found?.placed.snap;
       drag.snapTo = sn && (sn.kind === "point" || sn.kind === "origin" || sn.kind === "midpoint" || (sn.kind === "ref" && sn.at !== "on")) ? sn : null;
       const [x, y] = drag.snapTo ? [found!.placed.x, found!.placed.y] : [e.x, e.y];
