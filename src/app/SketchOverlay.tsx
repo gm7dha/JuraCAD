@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { additive } from "../viewport/touchKeys";
 
 import { evaluate } from "../model/expr";
 import { lengthNumber, showLength, storeLength, type LengthUnit } from "../model/units";
@@ -128,7 +129,7 @@ export function SketchOverlay() {
           title={`${RELATION_NAMES[c.type] ?? c.type} — click to select, then Delete to remove`}
           aria-label={RELATION_NAMES[c.type] ?? c.type}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => toggleSelect(c.id, e.shiftKey || e.ctrlKey || e.metaKey)}
+          onClick={(e) => toggleSelect(c.id, additive(e))}
         >
           {RELATION_SYMBOLS[c.type]}
         </button>
@@ -281,7 +282,7 @@ function DimensionLabel({
     drag.current = null;
     if (!d) return;
     if (d.moved) useStore.getState().recordSketchStep(d.startData);
-    else toggleSelect(c.id, e.shiftKey || e.ctrlKey || e.metaKey);
+    else toggleSelect(c.id, additive(e));
   };
 
   return (

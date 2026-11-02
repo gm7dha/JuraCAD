@@ -565,6 +565,12 @@ function dragEnd() {
   useStore.getState().commitDrag();
 }
 
+/** A drag taken back (a second finger landed on the screen): nothing moves. */
+function dragCancel() {
+  activeDrag = null;
+  useStore.getState().setDragPreview(null);
+}
+
 /** A selection box in the Part Studio: select the parts it chose (Shift/Ctrl adds to the selection). */
 function boxSelect(partIds: string[], additive: boolean) {
   const s = useStore.getState();
@@ -634,7 +640,7 @@ export function Viewport() {
     if (!container) return;
     let manager: SceneManager;
     try {
-      manager = new SceneManager(container, { onPick: handlePick, onDragStart: dragStart, onDragMove: dragMove, onDragEnd: dragEnd, onBoxSelect: boxSelect });
+      manager = new SceneManager(container, { onPick: handlePick, onDragStart: dragStart, onDragMove: dragMove, onDragEnd: dragEnd, onDragCancel: dragCancel, onBoxSelect: boxSelect });
     } catch (e) {
       useStore.getState().showToast(
         "Your browser couldn't start 3D graphics (WebGL). Try Chrome or Edge, and check hardware acceleration is on.",

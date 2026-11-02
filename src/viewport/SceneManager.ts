@@ -1,6 +1,8 @@
 import { rectOf, shapeInBox, type Rect } from "./boxSelect";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { eventTime, GestureTracker, gestureOptions, reachFor, TouchRouter, type Gesture } from "./gestures";
+import { addHeld, additive, shiftHeld } from "./touchKeys";
 
 import type { PartMesh } from "../kernel/protocol";
 import type { DatumName, PlaneName, SelectionItem } from "../model/store";
@@ -57,6 +59,21 @@ export interface PictureOptions {
 
 /** Which way to look at each default plane for "View normal to". */
 const PLANE_VIEWS: Record<PlaneName, StandardView> = { Top: "top", Front: "front", Right: "right" };
+
+/** The page was opened for the browser smoke test (?smoke). */
+const SMOKE = typeof location !== "undefined" && /[?&]smoke\b/.test(location.search);
+
+/** A finger-first screen (iPad, Android tablet): a pen there is used like a finger. */
+const COARSE = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+
+/**
+ * Does this press go to the finger gestures? Fingers always; a pen only on a touch tablet (a desktop pen
+ * tablet — Wacom, Surface — keeps working like a mouse), and only its tip: its side buttons go the old way.
+ */
+function usesGestures(e: PointerEvent): boolean {
+  if (e.pointerType === "touch") return true;
+  return e.pointerType === "pen" && COARSE && e.button === 0;
+}
 
 /** Base frustum height in mm at zoom 1. Zoom changes what is actually visible. */
 const FRUSTUM_HEIGHT = 200;
@@ -140,6 +157,8 @@ export interface SceneCallbacks {
   onDragStart?: (target: PickTarget & { kind: "part" }, ray: ScreenRay, shift: boolean) => boolean;
   onDragMove?: (ray: ScreenRay) => void;
   onDragEnd?: () => void;
+  /** A drag taken back (a second finger landed): put the parts back where they were. */
+  onDragCancel?: () => void;
   /** A selection box dragged on empty space: the parts it chose (`additive` with Shift/Ctrl/Cmd held). */
   onBoxSelect?: (partIds: string[], additive: boolean) => void;
 }
@@ -247,8 +266,18 @@ export class SceneManager {
   } | null = null;
   /** A right-drag (or one-finger drag) turning the view, with the last pointer position. */
   private orbit: { id: number; x: number; y: number } | null = null;
-  /** Fingers on the screen (one turns the view; two pinch and pan). */
-  private readonly touches = new Set<number>();
+  /** Fingers (and the pen) on the screen: worked out into gestures (see gestures.ts). The mouse never goes there. */
+  private readonly gestures = new GestureTracker();
+  /** Which pointers the gestures follow, and fingers ignored while the pen draws (see TouchRouter). */
+  private readonly touchIds = new TouchRouter();
+  private touchKind = "touch";
+  private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  private longPressFrame: number | null = null;
+  /**
+   * What one finger (or the pen) is doing: drawing in the sketch (`sent`: the sketch tools have had its press),
+   * pressing on the view cube, or (`holdDrag`) dragging a part after a long press in an assembly.
+   */
+  private touchStroke: { sketch: boolean; cube: boolean; sent: boolean; holdDrag: boolean } | null = null;
 
   constructor(container: HTMLElement, callbacks: SceneCallbacks) {
     this.container = container;
@@ -313,6 +342,8 @@ export class SceneManager {
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointerleave", this.onPointerLeave);
     el.addEventListener("pointercancel", this.onPointerCancel);
+    // (A finger whose capture is lost without an up or cancel mustn't stay "down" for ever.)
+    el.addEventListener("lostpointercapture", this.onPointerCancel);
     el.addEventListener("contextmenu", (e) => e.preventDefault());
 
     // Onshape mouse: right-drag orbits, middle-drag pans, wheel zooms towards the cursor.
@@ -322,7 +353,7 @@ export class SceneManager {
       MIDDLE: THREE.MOUSE.PAN,
       RIGHT: THREE.MOUSE.ROTATE,
     };
-    this.controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    // Fingers and the pen never reach OrbitControls (onPointerDown stops them): gestures.ts handles them.
     // Turning the view is ours (see orbitBy): OrbitControls stops at straight up and down.
     this.controls.enableRotate = false;
     this.controls.enableDamping = false;
@@ -1134,13 +1165,25 @@ export class SceneManager {
 
   private sketchPointer(e: PointerEvent): SketchPointer | null {
     const { x, y } = this.localPoint(e);
+    return this.sketchPointerAt(x, y, e);
+  }
+
+  /** The sketch tools' view of the pointer at (x, y) in the view: fingers and the pen reach further (`reach`). */
+  private sketchPointerAt(x: number, y: number, e: PointerEvent): SketchPointer | null {
     const p = this.unprojectToSketch(x, y);
     if (!p) return null;
-    return { x: p.x, y: p.y, mmPerPx: this.worldPerPixel(), shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, screenX: x };
+    // (Wider only for fingers and a tablet's pen; a mouse or a desktop pen tablet keeps the mouse's distances.)
+    const reach = usesGestures(e) || (e.pointerType === "pen" && COARSE) ? reachFor(e.pointerType) : 1;
+    return { x: p.x, y: p.y, mmPerPx: this.worldPerPixel(), ...(reach !== 1 ? { reach } : {}), shift: shiftHeld(e), ctrl: addHeld(e), screenX: x };
   }
 
   dispose(): void {
     cancelAnimationFrame(this.frame);
+    if (this.longPressTimer) clearTimeout(this.longPressTimer);
+    if (this.longPressFrame !== null) cancelAnimationFrame(this.longPressFrame);
+    this.longPressTimer = null;
+    this.gestures.reset();
+    this.touchIds.reset();
     this.sketchLayer.dispose();
     this.resizeObserver.disconnect();
     this.controls.dispose();
@@ -1149,6 +1192,7 @@ export class SceneManager {
     el.removeEventListener("pointermove", this.onPointerMove);
     el.removeEventListener("pointerup", this.onPointerUp);
     el.removeEventListener("pointercancel", this.onPointerCancel);
+    el.removeEventListener("lostpointercapture", this.onPointerCancel);
     el.removeEventListener("pointerleave", this.onPointerLeave);
     for (const p of this.parts.values()) {
       p.mesh.geometry.dispose();
@@ -1420,10 +1464,11 @@ export class SceneManager {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  private pickAt(x: number, y: number): PickTarget | null {
+  /** What's at (x, y) in the view; `reach` (fingers: more than 1) widens how near an edge must be. */
+  private pickAt(x: number, y: number, reach = 1): PickTarget | null {
     const ndc = new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    const threshold = EDGE_PICK_PIXELS * this.worldPerPixel();
+    const threshold = EDGE_PICK_PIXELS * reach * this.worldPerPixel();
     this.raycaster.params.Line = { threshold };
 
     const meshes: THREE.Object3D[] = [];
@@ -1775,12 +1820,14 @@ export class SceneManager {
   }
 
   private onPointerDown = (e: PointerEvent) => {
+    if (usesGestures(e)) {
+      // Fingers and a tablet's pen: gestures (OrbitControls, added after this listener, never sees them).
+      e.stopImmediatePropagation();
+      this.touchDown(e);
+      return;
+    }
     const { x, y } = this.localPoint(e);
-    if (e.pointerType === "touch") {
-      this.touches.add(e.pointerId);
-      // A second finger pinches or pans instead.
-      this.orbit = this.touches.size === 1 && !this.sketchController && !this.viewCube.contains(x, y, this.width) ? { id: e.pointerId, x: e.clientX, y: e.clientY } : null;
-    } else if (e.button === 2 && !(e.ctrlKey || e.metaKey)) {
+    if (e.button === 2 && !(e.ctrlKey || e.metaKey)) {
       this.orbit = { id: e.pointerId, x: e.clientX, y: e.clientY };
       this.animation = null;
       this.renderer.domElement.setPointerCapture(e.pointerId);
@@ -1799,7 +1846,7 @@ export class SceneManager {
     if (this.boxEnabled && !this.sketchController && e.button === 0 && e.pointerType !== "touch" && !this.viewCube.contains(x, y, this.width)) {
       // On empty space (or a plane), a drag draws a selection box; a plain click still picks.
       const hit = this.pickAt(x, y);
-      if (hit?.kind !== "part") this.box = { x, y, cx: x, cy: y, shown: false, additive: e.shiftKey || e.ctrlKey || e.metaKey };
+      if (hit?.kind !== "part") this.box = { x, y, cx: x, cy: y, shown: false, additive: additive(e) };
     }
     if (this.dragEnabled && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const hit = this.pickAt(x, y);
@@ -1813,6 +1860,13 @@ export class SceneManager {
   };
 
   private onPointerMove = (e: PointerEvent) => {
+    const route = this.touchIds.route(e.pointerId);
+    if (route === "ignore") return;
+    if (route === "gesture") {
+      const { x, y } = this.localPoint(e);
+      this.runGestures(this.gestures.move(e.pointerId, x, y, eventTime(e)), e);
+      return;
+    }
     const orbit = this.orbit;
     if (orbit && orbit.id === e.pointerId) {
       const dx = e.clientX - orbit.x;
@@ -1823,7 +1877,7 @@ export class SceneManager {
         orbit.x = e.clientX;
         orbit.y = e.clientY;
       }
-      if (e.pointerType !== "touch") return;
+      return;
     }
     if (this.sketchController) {
       const ptr = this.sketchPointer(e);
@@ -1890,18 +1944,30 @@ export class SceneManager {
   };
 
   private onPointerCancel = (e: PointerEvent) => {
-    this.touches.delete(e.pointerId);
+    const route = this.touchIds.end(e.pointerId);
+    if (route === "ignore") return;
+    if (route === "gesture") {
+      this.runGestures(this.gestures.cancel(e.pointerId), e);
+      this.scheduleLongPress(e);
+      return;
+    }
     if (this.orbit?.id === e.pointerId) this.orbit = null;
   };
 
   private onPointerUp = (e: PointerEvent) => {
-    this.touches.delete(e.pointerId);
+    const route = this.touchIds.end(e.pointerId);
+    if (route === "ignore") return;
+    if (route === "gesture") {
+      const { x, y } = this.localPoint(e);
+      if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+      this.runGestures(this.gestures.up(e.pointerId, x, y, eventTime(e)), e);
+      this.scheduleLongPress(e);
+      return;
+    }
     if (this.orbit?.id === e.pointerId) {
       this.orbit = null;
-      if (e.pointerType !== "touch") {
-        if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
-        return;
-      }
+      if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+      return;
     }
     const down = this.pointerDown;
     this.pointerDown = null;
@@ -1942,8 +2008,210 @@ export class SceneManager {
       const ptr = this.sketchPointer(e);
       if (ptr && this.sketchControllerRaw.useAt(ptr)) return;
     }
-    this.callbacks.onPick(this.pickAt(x, y), e.shiftKey || e.ctrlKey || e.metaKey);
+    this.callbacks.onPick(this.pickAt(x, y), additive(e));
   };
+
+  // -------------------------------------------------------------------------
+  // Fingers and the pen (Onshape's tablet gestures): one finger turns the view, two pan and pinch to
+  // zoom, a tap picks, a double-tap fits the view; in a sketch one finger (or the pen) draws with the
+  // tool and two fingers still only pan and zoom. In an assembly, press and hold a part, then drag it.
+
+  private touchDown(e: PointerEvent): void {
+    const { x, y } = this.localPoint(e);
+    // A hand resting on the screen while the pen draws is ignored, down to its lift (it mustn't cancel or take over the stroke).
+    if (!this.touchIds.down(e.pointerId, e.pointerType)) return;
+    if (!this.gestures.active) {
+      this.touchKind = e.pointerType;
+      // A long press only where it does something: picking up a part in an assembly. (Elsewhere a still press
+      // then a drag just turns the view, and in a sketch it must still draw.)
+      const longPress = this.dragEnabled && !this.sketchController && this.touchTiming.longPressMs;
+      this.gestures.options = { ...gestureOptions(e.pointerType, longPress), doubleTapMs: this.touchTiming.doubleTapMs };
+      this.animation = null;
+    }
+    try {
+      this.renderer.domElement.setPointerCapture(e.pointerId);
+    } catch {
+      // (A pointer the browser has already let go of.)
+    }
+    if (this.touchIds.count === 1) {
+      const cube = this.viewCube.contains(x, y, this.width);
+      const sketch = !!this.sketchController && !cube;
+      this.touchStroke = { sketch, cube, sent: false, holdDrag: false };
+      if (sketch) {
+        // (As with the mouse: keep the keyboard focus where it is, e.g. in a dimension's value box.)
+        e.preventDefault();
+        // Show what the tool would do here (there's no hovering on a touch screen).
+        const ptr = this.sketchPointerAt(x, y, e);
+        if (ptr) this.sketchController!.pointerMove(ptr, false);
+      }
+    }
+    this.runGestures(this.gestures.down(e.pointerId, x, y, eventTime(e)), e);
+    this.scheduleLongPress(e);
+  }
+
+  private scheduleLongPress(e: PointerEvent): void {
+    if (this.longPressTimer) clearTimeout(this.longPressTimer);
+    this.longPressTimer = null;
+    const due = this.gestures.longPressDue;
+    if (due === null) return;
+    this.longPressTimer = setTimeout(() => {
+      this.longPressTimer = null;
+      // After the next frame: a finger already lifted (its event waiting to be handled) is then a tap, not a long press.
+      const at = performance.now();
+      this.longPressFrame = requestAnimationFrame(() => {
+        this.longPressFrame = null;
+        this.longPressTimer = setTimeout(() => {
+          this.longPressTimer = null;
+          this.runGestures(this.gestures.tick(at), e);
+        }, 0);
+      });
+    }, Math.max(0, due - performance.now()) + 5);
+  }
+
+  private runGestures(list: Gesture[], e: PointerEvent): void {
+    for (const g of list) this.onGesture(g, e);
+  }
+
+  /**
+   * How long (ms) a finger is held still for a long press, and the most time between a double-tap's taps.
+   * (The smoke test lengthens both: its slow software-drawn browser takes a while to get each tap through.)
+   */
+  touchTiming = { longPressMs: 500, doubleTapMs: 350 };
+
+  /** The last few finger gestures seen (with ?smoke only: for the smoke test's error messages). */
+  touchDebug: string[] = [];
+
+  private onGesture(g: Gesture, e: PointerEvent): void {
+    if (SMOKE) this.touchDebug = [...this.touchDebug.slice(-11), g.type === "tap" ? `tap×${g.count}` : g.type];
+    const st = this.touchStroke;
+    const ctl = this.sketchController;
+    switch (g.type) {
+      case "dragStart": {
+        // With Select, a drag moves what's under it (or draws a box); with a drawing tool it starts the
+        // shape where the finger went down, and lifting the finger finishes it.
+        if (!st?.sketch || !ctl) break;
+        const ptr = this.sketchPointerAt(g.x, g.y, e);
+        if (ptr && ctl.touchDragStarts()) {
+          ctl.beginStroke();
+          ctl.pointerDown(ptr);
+          st.sent = true;
+        }
+        break;
+      }
+      case "drag": {
+        if (!st || st.cube) break;
+        if (st.sketch) {
+          const ptr = this.sketchPointerAt(g.x, g.y, e);
+          if (ptr && ctl) ctl.pointerMove(ptr, st.sent);
+        } else this.orbitBy(g.dx, g.dy);
+        break;
+      }
+      case "dragEnd": {
+        if (st?.sketch && ctl) {
+          const ptr = this.sketchPointerAt(g.x, g.y, e);
+          // Lifting the finger is a click there (the shape's other end, or the next point) — except with Select.
+          if (ptr && ctl.touchLiftClicks()) ctl.pointerDown(ptr);
+          ctl.pointerUp();
+          ctl.endStroke();
+          ctl.pointerLeave();
+        }
+        this.touchStroke = null;
+        break;
+      }
+      case "tap": {
+        this.touchStroke = null;
+        if (st?.sketch && ctl) {
+          const ptr = this.sketchPointerAt(g.x, g.y, e);
+          if (ptr) {
+            ctl.pointerDown(ptr);
+            ctl.pointerUp();
+          }
+          break;
+        }
+        this.tapAt(g.x, g.y, g.count, e);
+        break;
+      }
+      case "longPress": {
+        if (!st || st.sketch || st.cube || !this.dragEnabled) break;
+        const hit = this.pickAt(g.x, g.y, reachFor(this.touchKind));
+        if (hit?.kind === "part") st.holdDrag = this.callbacks.onDragStart?.(hit, this.rayAt(g.x, g.y), false) ?? false;
+        break;
+      }
+      case "holdDrag":
+        // Held on a part: it moves; held anywhere else, the drag turns the view as usual.
+        if (st?.holdDrag) this.callbacks.onDragMove?.(this.rayAt(g.x, g.y));
+        else if (st && !st.cube && !st.sketch) this.orbitBy(g.dx, g.dy);
+        break;
+      case "holdEnd":
+        if (st?.holdDrag) this.callbacks.onDragEnd?.();
+        this.touchStroke = null;
+        break;
+      case "cancel":
+        // A second finger came down: take back what the first one began (no stray point), then pan and zoom.
+        if (st?.sketch && ctl) {
+          if (st.sent) ctl.cancelStroke();
+          ctl.pointerLeave();
+        }
+        // A part being moved goes back where it was.
+        if (st?.holdDrag) (this.callbacks.onDragCancel ?? this.callbacks.onDragEnd)?.();
+        this.touchStroke = null;
+        break;
+      case "pan":
+        this.panBy(g.dx, g.dy);
+        break;
+      case "zoom":
+        this.zoomAt(g.x, g.y, g.factor);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** A tap (not in a sketch): the view cube turns the view, a double-tap fits everything in, anything else picks. */
+  private tapAt(x: number, y: number, count: number, e: PointerEvent): void {
+    if (this.viewCube.contains(x, y, this.width)) {
+      const view = this.viewCube.pick(x, y, this.width);
+      if (view) this.setView(view);
+      return;
+    }
+    if (count >= 2 && !this.sketchControllerRaw) {
+      this.fit();
+      return;
+    }
+    if (this.sketchPicksParts && this.sketchControllerRaw) {
+      const ptr = this.sketchPointerAt(x, y, e);
+      if (ptr && this.sketchControllerRaw.useAt(ptr)) return;
+    }
+    this.callbacks.onPick(this.pickAt(x, y, reachFor(e.pointerType)), additive(e));
+  }
+
+  /** Slide the view by (dx, dy) screen pixels (the model follows the fingers). */
+  panBy(dx: number, dy: number): void {
+    const wpp = this.worldPerPixel();
+    this.camera.updateMatrixWorld();
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).normalize();
+    const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1).normalize();
+    const move = right.multiplyScalar(-dx * wpp).addScaledVector(up, dy * wpp);
+    this.animation = null;
+    this.camera.position.add(move);
+    this.controls.target.add(move);
+    this.camera.updateMatrixWorld();
+  }
+
+  /** Zoom by `factor` (above 1: closer), keeping the point at (x, y) in the view where it is. */
+  zoomAt(x: number, y: number, factor: number): void {
+    if (!(factor > 0) || !Number.isFinite(factor)) return;
+    const before = this.worldPerPixel();
+    const zoom = Math.min(this.controls.maxZoom, Math.max(this.controls.minZoom, this.camera.zoom * factor));
+    if (zoom === this.camera.zoom) return;
+    this.animation = null;
+    this.camera.zoom = zoom;
+    this.camera.updateProjectionMatrix();
+    const after = this.worldPerPixel();
+    // The point under the fingers stays put: slide by its offset from the middle times the change in scale.
+    const k = (before - after) / after;
+    this.panBy(-(x - this.width / 2) * k, -(y - this.height / 2) * k);
+  }
 
   private processHover(): void {
     const move = this.pendingMove;

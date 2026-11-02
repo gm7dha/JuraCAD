@@ -3,8 +3,10 @@
  * block, its settings panel and toolbar, and saving it as PDF or SVG.
  */
 import { putShortening, removeShortening, withShortenings } from "../drawing/shorten";
+import { additive, addHeld, shiftHeld } from "../viewport/touchKeys";
 import { dimTextOutlines, itemsInBox, rightClickFlip, toggled } from "../drawing/select";
 import { guardZoom, sheetWheelFactor, SHEET_MIN_WIDTH, zoomBox } from "../viewport/zoomGuard";
+import { eventTime, GestureTracker, gestureOptions, type Gesture } from "../viewport/gestures";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { create } from "zustand";
 import { addPage, changePage, FIRST_PAGE, knownPage, missingPartMessage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage, addedSheetMessage } from "../drawing/pages";
@@ -2100,6 +2102,129 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     });
   }, [W]);
 
+  // Fingers (the mouse never comes here): two pan and pinch to zoom; a second finger landing takes back
+  // whatever the first began; a long press on a dimension's number flips its arrows (like a right-click);
+  // with a placing tool (Dimension, Note…) a finger's press only counts once it comes up as a tap.
+  const touch = useRef<{ tracker: GestureTracker; timer: ReturnType<typeof setTimeout> | null; frame: number | null; dim: string | null; held: ReactPointerEvent<SVGSVGElement> | null; pinched: boolean }>({ tracker: new GestureTracker(gestureOptions("touch")), timer: null, frame: null, dim: null, held: null, pinched: false });
+  const flipByTouch = useRef<(id: string) => void>(() => {});
+  flipByTouch.current = (id: string) => {
+    const flipping = layout?.dims.find((x) => x.id === id);
+    if (!flipping?.arrows || useStore.getState().versionView || useStore.getState().refuseReadOnly()) return;
+    const to = flipArrows(flipping.arrows);
+    change((dr) => ({ ...dr, dimensions: dr.dimensions?.map((x) => (x.id === flipping.id ? { ...x, arrows: to } : x)) }));
+    useStore.getState().selectDim(flipping.id);
+  };
+  const dropSheetStroke = () => {
+    pan.current = null;
+    touch.current.held = null;
+    setDimDrag(null);
+    setDrag(null);
+    setSelBox(null);
+    setResize(null);
+    setNoteDrag(null);
+    setTableDrag(null);
+  };
+  const runTouch = (out: Gesture[]) => {
+    const t = touch.current;
+    const svg = svgRef.current;
+    for (const g of out) {
+      if (g.type === "cancel" || g.type === "pinchStart") {
+        dropSheetStroke();
+        t.pinched = true;
+      } else if (g.type === "pan" && svg) {
+        const r = svg.getBoundingClientRect();
+        setBox((b) => {
+          const perPx = Math.max(b[2] / r.width, b[3] / r.height);
+          return [b[0] - g.dx * perPx, b[1] - g.dy * perPx, b[2], b[3]];
+        });
+      } else if (g.type === "zoom" && svg) {
+        const maxW = (W + 2 * pad) * 4;
+        setBox((b) => zoomBox(b, svg.getBoundingClientRect(), [g.x, g.y], 1 / g.factor, SHEET_MIN_WIDTH, maxW));
+      } else if (g.type === "longPress") {
+        if (t.dim) {
+          setDimDrag(null);
+          flipByTouch.current(t.dim);
+        }
+        t.held = null;
+      } else if (g.type === "tap" && t.held) {
+        // A placing tool's press, now that it's a tap (not the start of a pan).
+        const held = t.held;
+        t.held = null;
+        onPointerDown(held);
+      } else if (g.type === "dragStart") t.held = null;
+    }
+    if (t.timer) clearTimeout(t.timer);
+    if (t.frame !== null) cancelAnimationFrame(t.frame);
+    t.timer = null;
+    t.frame = null;
+    const due = t.tracker.longPressDue;
+    // (The tick waits a frame, so a finger already lifted counts as a tap.)
+    if (due !== null)
+      t.timer = setTimeout(() => {
+        const at = performance.now();
+        t.timer = null;
+        t.frame = requestAnimationFrame(() => {
+          t.frame = null;
+          t.timer = setTimeout(() => {
+            t.timer = null;
+            runTouch(t.tracker.tick(at));
+          }, 0);
+        });
+      }, Math.max(0, due - performance.now()) + 5);
+  };
+  const touchCapture = {
+    onPointerDownCapture: (e: ReactPointerEvent<SVGSVGElement>) => {
+      if (e.pointerType !== "touch") return;
+      const t = touch.current;
+      const first = !t.tracker.active;
+      if (first) {
+        t.pinched = false;
+        t.held = null;
+        t.dim = (e.target as Element).closest?.("[data-dim]")?.getAttribute("data-dim") ?? null;
+      }
+      runTouch(t.tracker.down(e.pointerId, e.clientX, e.clientY, eventTime(e)));
+      if (!first || t.pinched) {
+        e.stopPropagation();
+        return;
+      }
+      // A placing tool: wait for the tap (a pan's first finger mustn't place anything).
+      if (tool !== "select") {
+        t.held = e;
+        e.stopPropagation();
+      }
+    },
+    onPointerMoveCapture: (e: ReactPointerEvent<SVGSVGElement>) => {
+      if (e.pointerType !== "touch" || !touch.current.tracker.active) return;
+      runTouch(touch.current.tracker.move(e.pointerId, e.clientX, e.clientY, eventTime(e)));
+      if (touch.current.pinched) e.stopPropagation();
+    },
+    onPointerUpCapture: (e: ReactPointerEvent<SVGSVGElement>) => {
+      if (e.pointerType !== "touch" || !touch.current.tracker.active) return;
+      const pinched = touch.current.pinched;
+      runTouch(touch.current.tracker.up(e.pointerId, e.clientX, e.clientY, eventTime(e)));
+      if (pinched) e.stopPropagation();
+    },
+    onPointerCancelCapture: (e: ReactPointerEvent<SVGSVGElement>) => cancelTouch(e),
+    // (A finger whose capture is lost without an up or cancel mustn't stay "down" for ever.)
+    onLostPointerCaptureCapture: (e: ReactPointerEvent<SVGSVGElement>) => cancelTouch(e),
+  };
+  function cancelTouch(e: ReactPointerEvent<SVGSVGElement>) {
+    if (e.pointerType !== "touch" || !touch.current.tracker.has(e.pointerId)) return;
+    runTouch(touch.current.tracker.cancel(e.pointerId));
+    dropSheetStroke();
+  }
+  useEffect(
+    () => () => {
+      const t = touch.current;
+      if (t.timer) clearTimeout(t.timer);
+      if (t.frame !== null) cancelAnimationFrame(t.frame);
+      t.timer = null;
+      t.frame = null;
+      t.tracker.reset();
+    },
+    [],
+  );
+
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (e.button === 1 || e.button === 2) {
       // (A dimension's number records itself before this; anywhere else, there's nothing to flip.)
@@ -2138,7 +2263,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       setSelView(null);
       const at = toSheet(e);
       (e.target as Element).setPointerCapture?.(e.pointerId);
-      setSelBox({ from: at, to: at, additive: e.shiftKey || e.ctrlKey || e.metaKey });
+      setSelBox({ from: at, to: at, additive: additive(e) });
     }
   };
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
@@ -2164,7 +2289,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
       if (dim && placed) {
         // The number stays under the pointer (Shift lifts a length's number off its line, or keeps an angle's angle).
         const to: P2 = [here[0] + dimDrag.grab[0], here[1] + dimDrag.grab[1]];
-        const free = dragDimensionLabel(dim, placed, to, e.shiftKey, dimensionPaperScale(dim, placed, projections?.[dim.view]));
+        const free = dragDimensionLabel(dim, placed, to, shiftHeld(e), dimensionPaperScale(dim, placed, projections?.[dim.view]));
         setDimDrag({ ...dimDrag, patch: free ?? { ...dragDimension(dim, placed.a, placed.b, placed.rad, here, placed.cd), textAcross: 0 } });
       }
     }
@@ -2377,6 +2502,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
         ref={svgRef}
         className="drawing-svg"
         viewBox={box.join(" ")}
+        {...touchCapture}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -2442,7 +2568,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
                 e.stopPropagation();
                 const st = useStore.getState();
                 setSelView(null);
-                if (e.ctrlKey || e.metaKey) return st.selectDims(toggled(st.selectedDims, n.id));
+                if (addHeld(e)) return st.selectDims(toggled(st.selectedDims, n.id));
                 st.selectDim(n.id);
                 (e.target as Element).setPointerCapture(e.pointerId);
                 const note = drawing.notes?.find((x) => x.id === n.id);
@@ -2490,7 +2616,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
               e.stopPropagation();
               const st = useStore.getState();
               setSelView(null);
-              if (e.ctrlKey || e.metaKey) return st.selectDims(toggled(st.selectedDims, d.id));
+              if (addHeld(e)) return st.selectDims(toggled(st.selectedDims, d.id));
               st.selectDim(d.id);
               (e.target as Element).setPointerCapture(e.pointerId);
               startDimDrag(d, toSheet(e));

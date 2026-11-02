@@ -3,6 +3,7 @@
  * panel and the panel for placing the selected instance.
  */
 import { canBeDriven, canDrive, nextRelationName, RELATION_KIND_NAMES, RELATION_KINDS } from "../assembly/relations";
+import { additive as isAdditive } from "../viewport/touchKeys";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { billOfMaterials, bomCsv, bomTotalMass, nextPositionName, placedBox, spotBeside, type BomRow, type Box3 } from "../assembly/assembly";
@@ -277,7 +278,7 @@ function InstanceRow({ instance, missing, problem }: { instance: Instance; missi
       className={["feature-row", selected && "selected", hidden && "hidden", (missing || problem) && "failed", instance.suppressed && "suppressed"].filter(Boolean).join(" ")}
       onClick={(e) => {
         const s = useStore.getState();
-        const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+        const additive = isAdditive(e);
         if (additive) s.setAsmSelection(selected ? s.asmSelection.filter((x) => x !== instance.id) : [...s.asmSelection, instance.id]);
         else s.setAsmSelection(selected && s.asmSelection.length === 1 ? [] : [instance.id]);
       }}

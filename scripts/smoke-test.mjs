@@ -3152,13 +3152,139 @@ try {
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
+  // Tablets: a page with a touch screen (an iPad's size, landscape). Fingers are sent as real touches through
+  // Chromium's DevTools (Input.dispatchTouchEvent), so the app sees pointer events of type "touch".
+  step = "touch screen: opening the app with fingers";
+  let touchReport = "";
+  {
+    const touchContext = await browser.newContext({ viewport: { width: 1024, height: 768 }, hasTouch: true });
+    try {
+      const tab = await touchContext.newPage();
+      tab.on("console", (m) => m.type() === "error" && consoleErrors.push(`(touch tab) ${m.text()}`));
+      tab.on("pageerror", (e) => consoleErrors.push(`(touch tab) ${e.message}`));
+      await tab.goto(`http://localhost:4173${basePath}?smoke`);
+      await tab.waitForSelector(".topbar", { timeout: 30_000 });
+      await tab.waitForSelector(".engine-status", { state: "detached", timeout: 120_000 });
+      const cdp = await touchContext.newCDPSession(tab);
+      const touches = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], i) => ({ x, y, id: i + 1, radiusX: 4, radiusY: 4, force: 1 })) });
+      const view = () => tab.evaluate(() => {
+        const v = window.juracadViewport.current.saveView();
+        return { zoom: v.zoom, target: [v.target.x, v.target.y, v.target.z], pageScale: window.visualViewport?.scale ?? 1 };
+      });
+      /** Two fingers: from a1/b1 to a2/b2 in `steps` moves. */
+      const twoFingers = async (a1, b1, a2, b2, steps = 8) => {
+        await touches("touchStart", [a1]);
+        await touches("touchStart", [a1, b1]);
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          const at = (p, q) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+          await touches("touchMove", [at(a1, a2), at(b1, b2)]);
+        }
+        await touches("touchEnd", []);
+      };
+
+      step = "touch screen: adding a box";
+      await tab.getByRole("button", { name: "Box", exact: true }).click();
+      await tab.locator("#param-width").fill("40");
+      await tab.getByRole("button", { name: "Accept" }).click();
+      await tab.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 1"), null, { timeout: 30_000 });
+      await tab.waitForTimeout(600);
+      const canvas = await tab.locator(".viewport-canvas").boundingBox();
+      const mid = [canvas.x + canvas.width / 2, canvas.y + canvas.height / 2];
+
+      step = "touch screen: pinching to zoom the 3D view";
+      const before = await view();
+      await twoFingers([mid[0] - 60, mid[1]], [mid[0] + 60, mid[1]], [mid[0] - 150, mid[1]], [mid[0] + 150, mid[1]]);
+      await tab.waitForTimeout(200);
+      const after = await view();
+      if (!(after.zoom > before.zoom * 1.8)) throw new Error(`spreading two fingers didn't zoom in (zoom ${before.zoom} → ${after.zoom})`);
+      if (after.pageScale !== 1) throw new Error(`the pinch zoomed the whole page (scale ${after.pageScale})`);
+      // The touch bar is there now that a finger has touched the screen.
+      await tab.locator(".touch-bar").waitFor({ timeout: 5_000 });
+      touchReport = `pinch zoomed the 3D view ${(after.zoom / before.zoom).toFixed(1)}× (page scale stayed 1)`;
+
+      step = "touch screen: double-tap fits the view again";
+      // (CI's software-drawn browser can take over half a second to get a tap through: not a long press here.)
+      await tab.evaluate(() => (window.juracadViewport.current.touchTiming = { longPressMs: 5000, doubleTapMs: 5000 }));
+      await tab.waitForTimeout(500);
+      // (Top left: clear of the view cube and of the touch bar along the bottom.)
+      const empty = [canvas.x + 40, canvas.y + 50];
+      for (let i = 0; i < 2; i++) {
+        await touches("touchStart", [empty]);
+        await touches("touchEnd", []);
+      }
+      await tab.waitForFunction(() => window.juracadViewport.current.restingAtFit(), null, { timeout: 5_000 }).catch(async () => {
+        const seen = await tab.evaluate(() => `${window.juracadViewport.current.touchDebug.join(", ")}; zoom ${window.juracadViewport.current.saveView().zoom}`);
+        throw new Error(`double-tapping empty space didn't zoom to fit (gestures seen: ${seen}; before the pinch zoom ${before.zoom})`);
+      });
+      await tab.waitForTimeout(500);
+
+      step = "touch screen: tapping a face selects it";
+      await tab.waitForTimeout(300);
+      // (Back to a usual double-tap time, so this tap isn't taken as a third one.)
+      await tab.evaluate(() => (window.juracadViewport.current.touchTiming = { longPressMs: 5000, doubleTapMs: 1 }));
+      const spot = await tab.evaluate(() => {
+        const v = window.juracadViewport.current;
+        const part = window.juracadStore.getState().parts[0];
+        for (let i = 0; i < part.faceGroups.length; i++) {
+          const at = v.screenPointOnFace(part.id, i);
+          // Well inside the face: a finger reaches further, so an edge mustn't be near.
+          const around = [[0, 0], [16, 0], [-16, 0], [0, 16], [0, -16]];
+          if (at && around.every(([dx, dy]) => v.pickKindAt(at.x + dx, at.y + dy)?.startsWith("face"))) return { ...at, i, id: part.id };
+        }
+        return null;
+      });
+      if (!spot) throw new Error("couldn't find a face of the box on screen to tap");
+      await tab.touchscreen.tap(canvas.x + spot.x, canvas.y + spot.y);
+      await tab.waitForFunction(() => window.juracadStore.getState().selection.some((x) => x.kind === "face"), null, { timeout: 5_000 }).catch(() => {
+        throw new Error("tapping a face didn't select it");
+      });
+      touchReport += "; a tap selected a face";
+
+      step = "touch screen: two fingers in a sketch pan the view and draw nothing";
+      await tab.waitForTimeout(500); // (not a double-tap)
+      await tab.locator(".touch-bar").getByRole("button", { name: "Clear", exact: true }).click();
+      await tab.getByRole("button", { name: "Sketch", exact: true }).click();
+      await tab.waitForSelector(".sketch-panel");
+      await tab.locator(".feature-row.datum", { hasText: "Top" }).click();
+      await tab.waitForFunction(() => document.querySelector(".sketch-plane-row")?.textContent?.includes("Top plane"));
+      await tab.waitForTimeout(600);
+      await tab.keyboard.press("l");
+      const drawn = () => tab.evaluate(() => {
+        const d = window.juracadStore.getState().editing?.draft.sketch?.data;
+        return d ? d.points.length + d.curves.length : -1;
+      });
+      const shapesBefore = await drawn();
+      const panBefore = await view();
+      await twoFingers([mid[0] - 50, mid[1]], [mid[0] + 50, mid[1]], [mid[0] + 50, mid[1] + 60], [mid[0] + 150, mid[1] + 60]);
+      await tab.waitForTimeout(200);
+      const panAfter = await view();
+      const shapesAfter = await drawn();
+      if (shapesAfter !== shapesBefore) throw new Error(`two fingers drew in the sketch (${shapesBefore} → ${shapesAfter} points and curves)`);
+      const moved = Math.hypot(...panAfter.target.map((v, i) => v - panBefore.target[i]));
+      if (!(moved > 1)) throw new Error(`two fingers didn't pan the sketch's view (moved ${moved} mm)`);
+      // One finger dragged draws a line with the Line tool.
+      await touches("touchStart", [[mid[0] - 80, mid[1] - 40]]);
+      for (let i = 1; i <= 6; i++) await touches("touchMove", [[mid[0] - 80 + i * 25, mid[1] - 40]]);
+      await touches("touchEnd", []);
+      await tab.waitForFunction(() => (window.juracadStore.getState().editing?.draft.sketch?.data.curves.length ?? 0) >= 1, null, { timeout: 5_000 }).catch(() => {
+        throw new Error("dragging one finger with the Line tool didn't draw a line");
+      });
+      await tab.locator(".touch-bar").getByRole("button", { name: "Back", exact: true }).click();
+      touchReport += `; in a sketch two fingers panned the view ${moved.toFixed(0)} mm and drew nothing, and a one-finger drag drew a line`;
+      await tab.screenshot({ path: `${shotDir}/touch-sketch.jpg`, type: "jpeg", quality: 60 });
+    } finally {
+      await touchContext.close();
+    }
+  }
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e) && !liveProbeRefused(e));
   if (real.length) throw new Error(`console errors:\n${real.join("\n")}`);
 
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${subReport}; ${pictureReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${subReport}; ${pictureReport}; touch screen: ${touchReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
