@@ -162,7 +162,7 @@ try {
   step = "saving a picture of the view";
   let pictureReport;
   {
-    await page.getByRole("button", { name: "Save picture" }).first().click();
+    await page.getByRole("button", { name: "Picture", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Save a picture" });
     await dialog.getByRole("radio", { name: /Twice as big/ }).check();
     await dialog.getByRole("radio", { name: /See-through/ }).check();

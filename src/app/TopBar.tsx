@@ -134,15 +134,6 @@ export function TopBar() {
         <Icons.Check size={18} /> <span className="button-label">Check model</span>
       </button>
       <button
-        className="text-button picture-button"
-        onClick={() => openDialog("picture")}
-        disabled={!hasParts || inDrawing}
-        aria-label="Save picture"
-        title="Save a picture (PNG) of the 3D view, with studio lighting and a soft shadow, to share or show off"
-      >
-        <Icons.Picture size={18} /> <span className="button-label">Picture</span>
-      </button>
-      <button
         className="primary-button"
         onClick={() => (inDrawing ? exportDrawing("pdf") : openDialog("export"))}
         disabled={!hasParts}

@@ -2361,16 +2361,6 @@ kbd {
   }
 }
 
-@media (max-width: 1400px) {
-  /* The Picture button keeps just its icon (its name is in the tooltip), leaving room for the save state. */
-  .topbar .picture-button .button-label {
-    display: none;
-  }
-  .topbar .picture-button {
-    padding: 0 8px;
-  }
-}
-
 @media (max-width: 1300px) {
   .phase-badge .badge-extra {
     display: none;

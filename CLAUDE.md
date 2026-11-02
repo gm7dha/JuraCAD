@@ -434,7 +434,7 @@
   turned Z-up, through PMREM — no downloaded assets; `studioRig`: four slightly spread shadow-casting key lights = a soft
   shadow on a ShadowMaterial ground, plus a fill; `paintBackground`). "Nicer lighting in the 3D view" (Settings, this computer,
   `store.niceLighting`, localStorage `juracad.niceLighting`) = physical materials + the room's reflections live.
-  Save picture (top bar "Picture" → `PictureDialog.tsx` → `SceneManager.savePicture`): a separate WebGLRenderer
+  Save picture (toolbar "Picture", next to Fit, in Part Studios and assemblies → `PictureDialog.tsx` → `SceneManager.savePicture`): a separate WebGLRenderer
   (preserveDrawingBuffer, shadows, Neutral tone mapping, its own environment) renders the same scene and camera at 1/2/4 ×
   (`src/viewport/pictureSize.ts`: ≤ 8192 a side, ≤ 40 MP; ground only when looking down, `showGround`), with every scene
   child but the parts hidden, highlights off, edges optional, then everything is put back synchronously (no frame in
