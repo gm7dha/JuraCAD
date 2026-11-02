@@ -134,7 +134,7 @@ export function TopBar() {
         <Icons.Check size={18} /> <span className="button-label">Check model</span>
       </button>
       <button
-        className="text-button"
+        className="text-button picture-button"
         onClick={() => openDialog("picture")}
         disabled={!hasParts || inDrawing}
         aria-label="Save picture"
