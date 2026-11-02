@@ -465,26 +465,34 @@
   behaviour is unchanged. Gestures are pure in `src/viewport/gestures.ts` (`GestureTracker`: pointers in with times, actions out —
   tap (count 2 = double-tap), dragStart/drag/dragEnd, longPress/holdDrag/holdEnd, pinchStart/pan/zoom/pinchEnd, and `cancel` when a
   second finger lands mid-gesture; after a pinch nothing happens until every finger is off; `slopFor`/`reachFor` per pointer type:
-  touch 10 px / 2.2×, pen 6 px / 1.5×, mouse 4 px / 1×). SceneManager sends every "touch" and "pen" pointerdown there (and
-  `stopImmediatePropagation`, so OrbitControls never sees fingers): one finger orbits, two pan (`panBy`) and pinch about their
-  middle (`zoomAt`), tap picks (`pickAt(x, y, reach)`), double-tap fits, view-cube taps turn the view; in an assembly, long press on a
-  part then drag moves it. In a sketch one finger/the pen is the tool: nothing reaches the controller until the finger moves or
+  touch 10 px / 2.2×, pen 6 px / 1.5×, mouse 4 px / 1×). SceneManager sends every "touch" pointerdown there, and a pen's tip only on a
+  `(pointer: coarse)` screen (`usesGestures`: a desktop Wacom/Surface pen and any side button keep the mouse path), with
+  `stopImmediatePropagation`, so OrbitControls never sees fingers: one finger orbits, two pan (`panBy`) and pinch about their
+  middle (`zoomAt`), tap picks (`pickAt(x, y, reach)`), double-tap fits, view-cube taps turn the view; long press only where
+  `dragEnabled` (assemblies): on a part it picks it up and the drag moves it, elsewhere the drag just orbits; a second finger then
+  takes the move back (`onDragCancel`). Fingers landing while the pen is down are ignored (a resting palm). `lostpointercapture`
+  counts as a cancel (here, on the sheet and in guardZoom), and timers/frames are cancelled on dispose/unmount. `touchTiming`
+  (long press 500 ms, double-tap 350 ms) is lengthened by the smoke test (CI's software-drawn browser is slow); `touchDebug` only
+  with ?smoke. In a sketch one finger/the pen is the tool: nothing reaches the controller until the finger moves or
   lifts (so a second finger landing leaves no stray point); a tap = press+release; a drag with Select = press, moves, release; a
   drag with a shape tool (`DRAG_DRAWN`, nothing placed yet) presses where it went down, and lifting is a click (`touchDragStarts`,
   `touchLiftClicks`); a second finger mid-drag calls `cancelStroke` (back to `beginStroke`'s placed points / the drag's start data).
   `SketchPointer.reach` widens every snap/pick distance (`pickMm(e)` in controller.ts). Held keys a tablet lacks: `src/viewport/touchKeys.ts`
   ("Add to selection" = Ctrl/⌘, "No snapping"/"Shift" = Shift) — read modifiers through `additive`/`addHeld`/`shiftHeld`, never
   `e.shiftKey` alone. The touch bar (`src/app/TouchBar.tsx`, only on `(pointer: coarse)` or after a finger touched the page) has those
-  toggles plus Clear/Back (Esc), Delete, Planes (P), Look at (N), Fit — the plain keys are sent as real keydown events (`pressKey`),
-  so each button does exactly what its key does. `src/app/touchCompat.ts`: on ordinary controls (not the canvas, the sheet, text
-  boxes or `[data-own-touch]`) a long press sends `contextmenu` (and drops the made-up mouse events/click when that finger lifts) and a
+  toggles plus Clear/Back (Esc), Delete, Planes (P), Look at (N), Fit — the plain keys are sent as real keydown events (`pressKey`,
+  sent from the focused element unless that's a text box or the bar), so each button does exactly what its key does; both held
+  keys are let go when the tab changes. `src/app/touchCompat.ts`: on ordinary controls (not the canvas, the sheet, text
+  boxes or `[data-own-touch]`) a long press sends `contextmenu` (and drops the made-up mouse events/click of that finger only: for
+  `LIFT_MS` after it lifts, only events from touch — `sourceCapabilities.firesTouchEvents`, else near the lift point — and never
+  after a mouse/pen pointerdown, so a touchscreen laptop's or an iPad's trackpad clicks always get through; tests/touchCompat.test.ts) and a
   double-tap sends `dblclick`; a browser's own one that follows is dropped. Drawing sheet: capture handlers on the SVG feed a
   GestureTracker — two fingers pan/zoom (`zoomBox`), a second finger drops the first one's drag/box (`dropSheetStroke`), a long press
   on a dimension's number flips its arrows, and a placing tool's press waits for the tap. `guardZoom` only stops (doesn't pass on)
   Safari's gesture events while a finger is down on the view, so an iPad pinch isn't zoomed twice. CSS: `@media (pointer: coarse)`
   at the end of styles.css (44 px targets, eye/row buttons always shown, 16 px inputs so Safari doesn't zoom into them, no
   callout/text selection); feature rows aren't HTML-draggable there (Move up/down in their menu instead). Tests: tests/gestures.test.ts,
-  tests/zoomGuard.test.ts; the smoke test's touch section. Only a real iPad can confirm Safari's own touch quirks.
+  tests/zoomGuard.test.ts, tests/touchCompat.test.ts, tests/sketchTouchStroke.test.ts (cancelStroke after a drag began); the smoke test's touch section. Only a real iPad can confirm Safari's own touch quirks.
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
