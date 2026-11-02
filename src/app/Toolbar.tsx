@@ -662,6 +662,13 @@ export function Toolbar() {
       </div>
       <div className="tool-group">
         <ToolButton label="Fit" icon={<Icons.Fit />} onClick={() => viewportApi.current?.fit()} title="Zoom to fit (F)" />
+        <ToolButton
+          label="Picture"
+          icon={<Icons.Picture />}
+          onClick={() => useStore.getState().openDialog("picture")}
+          disabled={!hasPart}
+          title="Save picture — a PNG of the view as it is now, with studio lighting and a soft shadow, to share or show off"
+        />
       </div>
     </div>
   );

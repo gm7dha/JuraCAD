@@ -14,7 +14,7 @@ export interface MeshPart {
   vertices: ArrayLike<number>;
   /** Three corner indices per triangle. */
   triangles: ArrayLike<number>;
-  /** Display colour "#rrggbb", if the part has one. */
+  /** Display colour "#rrggbb" (or "#rrggbbaa" when see-through), if the part has one. */
   colour?: string;
   /** Where the build puts it: a move (x, y, z mm) after the corners as given. */
   move?: [number, number, number];

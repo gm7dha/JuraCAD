@@ -35,6 +35,7 @@ export function serializeDocument(doc: JuraCADDocument, savedAt = new Date()): s
     savedAt: savedAt.toISOString(),
     ...(doc.variables?.length ? { variables: doc.variables } : {}),
     ...(doc.appearance && Object.keys(doc.appearance).length ? { appearance: doc.appearance } : {}),
+    ...(doc.finishes && Object.keys(doc.finishes).length ? { finishes: doc.finishes } : {}),
     ...(doc.materials && Object.keys(doc.materials).length ? { materials: doc.materials } : {}),
     ...(doc.units === "in" ? { units: "in" } : {}),
     ...(doc.partNames && Object.keys(doc.partNames).length ? { partNames: doc.partNames } : {}),

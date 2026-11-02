@@ -54,6 +54,7 @@ import { setSuppressed as setInstancesOff } from "../assembly/suppress";
 import { setPartProperties as setPartPropertiesIn } from "../assembly/properties";
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
+import { chooseFinish, setColourIn, type FinishId } from "./finishes";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
@@ -210,7 +211,7 @@ export interface SectionView {
 /** A mate being made or changed; its two connectors may not be picked yet. */
 export type MateDraft = Omit<Mate, "a" | "b"> & { a?: MateConnector; b?: MateConnector };
 
-export type DialogName = "check" | "export" | "help" | "whatsNew" | "flatPattern" | "variables" | "configurations" | "insert" | "versions" | null;
+export type DialogName = "check" | "export" | "picture" | "help" | "whatsNew" | "flatPattern" | "variables" | "configurations" | "insert" | "versions" | null;
 
 /**
  * Looking at an old version (read-only): the version's design is in `history`
@@ -407,6 +408,10 @@ export interface AppState {
   setPartProperties: (partId: string, props: PartProperties) => void;
   /** Colour a part (null = back to the default grey). One undo step. */
   setPartColour: (partId: string, colour: string | null) => void;
+  /** A part's finish (matte, glossy, metal, clear…); null = the usual matte look. Undoable, saved in the file. A grey part also gets a colour that suits the finish (`chooseFinish`). */
+  setPartFinish: (partId: string, finish: FinishId | null) => void;
+  /** Several parts at once, as one undo step. */
+  setPartsFinish: (partIds: string[], finish: FinishId | null) => void;
   /** Replace the variable list (one undo step); renames are followed everywhere. */
   setVariables: (variables: Variable[]) => void;
   /** Configurations: keep the current state as a new one (and show it), show another, rename or forget one. */
@@ -479,6 +484,9 @@ export interface AppState {
   /** Light or dark appearance (see app/theme.ts; not saved in designs). */
   theme: "light" | "dark";
   setTheme: (theme: "light" | "dark") => void;
+  /** "Nicer lighting" in the 3D view: finishes shown with studio reflections (this computer only, `juracad.niceLighting`). */
+  niceLighting: boolean;
+  setNiceLighting: (on: boolean) => void;
   /** The exploded view's spread while its slider is being dragged (not saved until let go). */
   explodePreview: number | null;
   setExplodePreview: (amount: number | null) => void;
@@ -568,6 +576,15 @@ export { STORAGE_KEY, VERSIONS_KEY } from "./browserKeep";
 
 /** Which file the design in browser storage was last saved to, so "Saved" survives a page refresh. */
 const FILE_KEY = "partsmith.file.v1";
+const NICE_LIGHTING_KEY = "juracad.niceLighting";
+
+function readNiceLighting(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(NICE_LIGHTING_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 /** A short fingerprint of a design, to tell whether it changed since it was saved. */
 export function fingerprint(doc: JuraCADDocument): string {
@@ -1226,14 +1243,10 @@ export const useStore = create<AppState>((set, get) => {
         return Object.keys(materials).length ? { ...rest, materials } : rest;
       }),
 
-    setPartColour: (partId, colour) =>
-      change((doc) => {
-        const appearance = { ...(doc.appearance ?? {}) };
-        if (colour) appearance[partId] = colour;
-        else delete appearance[partId];
-        const { appearance: _old, ...rest } = doc;
-        return Object.keys(appearance).length ? { ...rest, appearance } : rest;
-      }),
+    setPartColour: (partId, colour) => change((doc) => setColourIn(doc, partId, colour)),
+
+    setPartFinish: (partId, finish) => change((doc) => chooseFinish(doc, [partId], finish)),
+    setPartsFinish: (partIds, finish) => change((doc) => chooseFinish(doc, partIds, finish)),
 
     setVariables: (variables) => change((doc) => applyVariables(doc, variables)),
     addConfiguration: (name) => change((doc) => addConfiguration(doc, name)),
@@ -1526,6 +1539,15 @@ export const useStore = create<AppState>((set, get) => {
 
     theme: "light",
     setTheme: (theme) => set({ theme }),
+    niceLighting: readNiceLighting(),
+    setNiceLighting: (on) => {
+      try {
+        globalThis.localStorage?.setItem(NICE_LIGHTING_KEY, on ? "1" : "0");
+      } catch {
+        // Private windows may refuse: it just isn't remembered.
+      }
+      set({ niceLighting: on });
+    },
     setUnits: (unit) =>
       change((doc) => {
         const { units: _old, ...rest } = doc;

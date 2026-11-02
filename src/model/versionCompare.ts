@@ -250,6 +250,7 @@ export function compareDesigns(
   if (a.name !== b.name) other.push(`Design renamed from "${a.name}" to "${b.name}"`);
   if ((a.units ?? "mm") !== (b.units ?? "mm")) other.push(`Units changed to ${b.units === "in" ? "inches" : "millimetres"}`);
   if (!same(a.appearance ?? {}, b.appearance ?? {})) other.push("Part colours changed");
+  if (!same(a.finishes ?? {}, b.finishes ?? {})) other.push("Part finishes changed");
   if (!same(a.materials ?? {}, b.materials ?? {})) other.push("Materials changed");
   if (!same(a.partNames ?? {}, b.partNames ?? {})) other.push("Part names changed");
   if (!same(a.partProperties ?? {}, b.partProperties ?? {})) other.push("Part numbers or properties changed");

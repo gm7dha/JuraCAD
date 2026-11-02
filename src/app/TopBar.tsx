@@ -238,8 +238,23 @@ function SettingsMenu() {
               </button>
             ))}
           </div>
+          <NiceLightingToggle />
         </div>
       )}
     </div>
+  );
+}
+
+/** "Nicer lighting" for the 3D view (this computer): shiny and metal finishes show reflections. */
+function NiceLightingToggle() {
+  const on = useStore((s) => s.niceLighting);
+  return (
+    <>
+      <label className="check-row settings-gap">
+        <input type="checkbox" checked={on} onChange={(e) => useStore.getState().setNiceLighting(e.target.checked)} />
+        Nicer lighting in the 3D view
+      </label>
+      <p className="dialog-hint">Shows shiny, metal and clear finishes with soft studio reflections. Turn it off if the view feels slow on this computer.</p>
+    </>
   );
 }

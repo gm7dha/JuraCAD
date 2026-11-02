@@ -37,8 +37,29 @@ export function parseAppearance(raw: unknown): Record<string, string> {
   return out;
 }
 
-/** "#3d7fd9" → [r, g, b] each 0–1 (for 3MF/STEP). */
+/** "#3d7fd9" → [r, g, b] each 0–1 (for 3MF/STEP). An export colour "#rrggbbaa" (see finishes.ts) gives its colour part. */
 export function colourToRgb(hex: string): [number, number, number] {
-  const c = normaliseColour(hex) ?? DEFAULT_PART_COLOUR;
+  const c = normaliseColour(/^#?[0-9a-f]{8}$/i.test(hex) ? hex.replace(/^#?([0-9a-f]{6}).*$/i, "#$1") : hex) ?? DEFAULT_PART_COLOUR;
   return [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16) / 255) as [number, number, number];
+}
+
+/** How solid an export colour is, 0–1: "#rrggbbaa" → aa / 255, anything else 1. */
+export function colourOpacity(hex: string): number {
+  const m = /^#?[0-9a-f]{6}([0-9a-f]{2})$/i.exec(hex.trim());
+  return m ? parseInt(m[1], 16) / 255 : 1;
+}
+
+/**
+ * A colour typed in words or as hex: "#d64545", "red", "Grey" … → "#rrggbb";
+ * "default" / "grey (default)" / "none" → null (back to the usual grey);
+ * anything else → undefined (not understood).
+ */
+export function colourFromWords(value: string): string | null | undefined {
+  const v = value.trim().toLowerCase();
+  if (v === "default" || v === "none" || v === "grey (default)") return null;
+  const hex = normaliseColour(v);
+  if (hex) return hex === DEFAULT_PART_COLOUR ? null : hex;
+  const named = PART_COLOURS.find((c) => c.name.toLowerCase().replace(/\s*\(default\)$/, "") === v.replace(/^gray$/, "grey"));
+  if (!named) return undefined;
+  return named.hex === DEFAULT_PART_COLOUR ? null : named.hex;
 }

@@ -11,6 +11,7 @@ import { Icons } from "./icons";
 import { clickRow, dragRows } from "../model/listSelection";
 import { featuresOfParts, groupByPart, partsOfFeature } from "../model/partLinks";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
+import { DEFAULT_FINISH, FINISHES } from "../model/finishes";
 
 const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
@@ -191,10 +192,12 @@ function DatumRow({ name, onMenu }: { name: DatumName; onMenu: (e: ReactMouseEve
   );
 }
 
-/** A part's colour: click to choose another. */
+/** A part's colour and finish: click to choose others. */
 function ColourSwatch({ partId, name }: { partId: string; name: string }) {
   const colour = useStore((s) => s.history.present.appearance?.[partId] ?? DEFAULT_PART_COLOUR);
   const setPartColour = useStore((s) => s.setPartColour);
+  const finish = useStore((s) => s.history.present.finishes?.[partId] ?? DEFAULT_FINISH);
+  const setPartsFinish = useStore((s) => s.setPartsFinish);
   // With several parts picked, colouring one of them colours them all.
   const group = useStore((s) => (s.selectedParts.length > 1 && s.selectedParts.includes(partId) ? s.selectedParts : null));
   const colourAll = (c: string | null) => (group ?? [partId]).forEach((id) => setPartColour(id, c));
@@ -232,6 +235,23 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
             Other…
             <input type="color" value={colour} onChange={(e) => colourAll(e.target.value)} />
           </label>
+          <div className="finish-heading">Finish</div>
+          <div className="finish-list" role="radiogroup" aria-label={`Finish of ${name}`}>
+            {FINISHES.map((f) => (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={f.id === finish}
+                key={f.id}
+                className={`finish-choice${f.id === finish ? " selected" : ""}`}
+                title={f.hint}
+                onClick={() => setPartsFinish(group ?? [partId], f.id === DEFAULT_FINISH ? null : f.id)}
+              >
+                <span className={`finish-ball finish-${f.id}`} style={{ background: colour }} aria-hidden="true" />
+                {f.label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </span>
