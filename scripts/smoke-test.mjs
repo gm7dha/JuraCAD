@@ -3205,9 +3205,12 @@ try {
 
       step = "touch screen: double-tap fits the view again";
       await tab.waitForTimeout(500);
-      await tab.touchscreen.tap(canvas.x + 40, canvas.y + canvas.height - 40);
-      await tab.waitForTimeout(80);
-      await tab.touchscreen.tap(canvas.x + 40, canvas.y + canvas.height - 40);
+      // (Top left: clear of the view cube and of the touch bar along the bottom.)
+      const empty = [canvas.x + 40, canvas.y + 50];
+      for (let i = 0; i < 2; i++) {
+        await touches("touchStart", [empty]);
+        await touches("touchEnd", []);
+      }
       await tab.waitForFunction(() => window.juracadViewport.current.restingAtFit(), null, { timeout: 5_000 }).catch(() => {
         throw new Error("double-tapping empty space didn't zoom to fit");
       });
