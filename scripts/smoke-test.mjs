@@ -3204,6 +3204,8 @@ try {
       touchReport = `pinch zoomed the 3D view ${(after.zoom / before.zoom).toFixed(1)}× (page scale stayed 1)`;
 
       step = "touch screen: double-tap fits the view again";
+      // (CI's software-drawn browser can take over half a second to get a tap through: not a long press here.)
+      await tab.evaluate(() => (window.juracadViewport.current.longPressMs = 5000));
       await tab.waitForTimeout(500);
       // (Top left: clear of the view cube and of the touch bar along the bottom.)
       const empty = [canvas.x + 40, canvas.y + 50];

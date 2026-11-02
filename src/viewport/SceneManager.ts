@@ -1988,7 +1988,7 @@ export class SceneManager {
     if (!this.gestures.active) {
       this.touchKind = e.pointerType;
       // No long press while sketching: a still press then a slow drag must still draw.
-      this.gestures.options = gestureOptions(e.pointerType, !this.sketchController);
+      this.gestures.options = gestureOptions(e.pointerType, !this.sketchController && this.longPressMs);
       this.animation = null;
     }
     this.touchIds.add(e.pointerId);
@@ -2029,6 +2029,9 @@ export class SceneManager {
   private runGestures(list: Gesture[], e: PointerEvent): void {
     for (const g of list) this.onGesture(g, e);
   }
+
+  /** How long (ms) a finger is held still for a long press (the smoke test lengthens it: its slow machine takes a while over a tap). */
+  longPressMs = 500;
 
   /** The last few finger gestures seen (for the smoke test's error messages). */
   touchDebug: string[] = [];

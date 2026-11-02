@@ -66,8 +66,9 @@ export function reachFor(kind: string): number {
   return kind === "touch" ? 2.2 : kind === "pen" ? 1.5 : 1;
 }
 
-export function gestureOptions(kind: string, longPress = true): GestureOptions {
-  return { slop: slopFor(kind), longPressMs: longPress ? 500 : Infinity, doubleTapMs: 350, doubleTapGap: kind === "touch" ? 32 : 20 };
+/** The usual settings for this kind of pointer; `longPress`: false = none, a number = after that many ms (else 500). */
+export function gestureOptions(kind: string, longPress: boolean | number = true): GestureOptions {
+  return { slop: slopFor(kind), longPressMs: longPress === false ? Infinity : typeof longPress === "number" ? longPress : 500, doubleTapMs: 350, doubleTapGap: kind === "touch" ? 32 : 20 };
 }
 
 interface Down {
