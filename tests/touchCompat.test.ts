@@ -14,7 +14,7 @@ function fakePage() {
       Object.assign(this, init);
     }
   }
-  const win = { requestAnimationFrame: (f: () => void) => setTimeout(f, 1) as unknown as number, cancelAnimationFrame: (id: number) => clearTimeout(id as never), setTimeout, MouseEvent: FakeMouseEvent };
+  const win = { requestAnimationFrame: (f: () => void) => setTimeout(f, 1) as unknown as number, cancelAnimationFrame: (id: number) => clearTimeout(id as never), setTimeout, clearTimeout, MouseEvent: FakeMouseEvent };
   const doc = {
     defaultView: win,
     addEventListener: (t: string, f: (e: unknown) => void) => (listeners[t] ??= []).push(f),

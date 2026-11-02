@@ -50,7 +50,7 @@ export function installTouchCompat(doc: Document, options: TouchCompatOptions = 
   let target: Closest | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let frame: number | null = null;
-  let later: ReturnType<typeof setTimeout> | null = null;
+  let later: number | null = null;
   let disposed = false;
   /** Until when (now()) the browser's own events of these kinds are dropped. */
   const dropUntil = { contextmenu: 0, dblclick: 0 };
@@ -183,7 +183,7 @@ export function installTouchCompat(doc: Document, options: TouchCompatOptions = 
     disposed = true;
     clear();
     if (frame !== null) win.cancelAnimationFrame?.(frame);
-    if (later) clearTimeout(later);
+    if (later !== null) win.clearTimeout(later);
     doc.removeEventListener("pointerdown", onDown, passive);
     doc.removeEventListener("pointermove", onMove, passive);
     doc.removeEventListener("pointerup", onUp, passive);
