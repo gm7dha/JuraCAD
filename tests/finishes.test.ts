@@ -15,7 +15,7 @@ import {
   setFinishIn,
   withAlpha,
 } from "../src/model/finishes";
-import { pictureSize, showGround } from "../src/viewport/pictureSize";
+import { fitToBuffer, MAX_PICTURE_PIXELS, pictureSize, showGround, supersample } from "../src/viewport/pictureSize";
 
 describe("part finishes", () => {
   it("are a sensible set of three.js settings", () => {
@@ -88,7 +88,8 @@ describe("part finishes", () => {
     expect(finishFromWords("Brushed metal")).toBe("brushed");
     expect(finishFromWords("brushed")).toBe("brushed");
     expect(finishFromWords("Clear (see-through)")).toBe("clear");
-    expect(finishFromWords("PLA silk")).toBeUndefined();
+    expect(finishFromWords("PLA silk")).toBe("silk");
+    expect(finishFromWords("metal")).toBeUndefined();
     expect(finishFromWords("silk")).toBe("silk");
     expect(colourFromWords("Red")).toBe("#d64545");
     expect(colourFromWords("#fff")).toBe("#ffffff");
@@ -103,12 +104,25 @@ describe("picture size", () => {
   it("scales the view, keeping its shape and within what graphics cards draw", () => {
     expect(pictureSize(800, 600, 1)).toEqual({ width: 800, height: 600 });
     expect(pictureSize(800, 600, 2)).toEqual({ width: 1600, height: 1200 });
-    const big = pictureSize(3000, 1000, 4, 8192);
-    expect(big.width).toBe(8192);
-    expect(big.height).toBe(Math.round((8192 * 1000) / 3000));
+    const big = pictureSize(3000, 1000, 4, 4096);
+    expect(big.width).toBe(4096);
+    expect(big.height).toBe(Math.round((4096 * 1000) / 3000));
     const many = pictureSize(4000, 4000, 4, 16384);
-    expect(many.width * many.height).toBeLessThanOrEqual(40_000_000);
+    expect(many.width * many.height).toBeLessThanOrEqual(MAX_PICTURE_PIXELS);
+    expect(MAX_PICTURE_PIXELS).toBe(16_777_216);
+    const wide = pictureSize(1920, 1080, 4);
+    expect(wide.width * wide.height).toBeLessThanOrEqual(MAX_PICTURE_PIXELS);
+    expect(wide.width / wide.height).toBeCloseTo(1920 / 1080, 2);
     expect(pictureSize(0, 0, 2)).toEqual({ width: 2, height: 2 });
+  });
+
+  it("shrinks to the drawing area the browser really gave, keeping the shape", () => {
+    expect(fitToBuffer({ width: 800, height: 600 }, { width: 800, height: 600 })).toEqual({ width: 800, height: 600 });
+    expect(fitToBuffer({ width: 8000, height: 2000 }, { width: 4096, height: 4096 })).toEqual({ width: 4096, height: 1024 });
+    expect(fitToBuffer({ width: 4000, height: 3000 }, { width: 4000, height: 1500 })).toEqual({ width: 2000, height: 1500 });
+    expect(fitToBuffer({ width: 4000, height: 3000 }, { width: 1, height: 1 })).toBeNull();
+    expect(supersample({ width: 1200, height: 800 })).toBe(2);
+    expect(supersample({ width: 2400, height: 1600 })).toBe(1);
   });
 
   it("puts the shadow's ground under the parts only when looking down on them", () => {

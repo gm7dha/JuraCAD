@@ -14,7 +14,7 @@ import { labelSprite } from "./labels";
 import { SketchLayer, type ActiveSketch } from "./SketchLayer";
 import { VIEW_DIRECTIONS, ViewCube, type StandardView } from "./ViewCube";
 import { finishOf, type FinishId } from "../model/finishes";
-import { pictureSize, showGround } from "./pictureSize";
+import { fitToBuffer, pictureSize, showGround, supersample } from "./pictureSize";
 import { finishMaterial, paintBackground, studioEnvironment, studioRig, type PictureBackground } from "./studio";
 
 // JuraCAD is Z-up, like Onshape.
@@ -615,29 +615,36 @@ export class SceneManager {
   }
 
   /**
-   * A picture of the view as it is (same camera), drawn `scale` times bigger
-   * on a renderer of its own, with physical materials, studio lighting, a soft
-   * shadow on the ground, and without planes, sketches, the grid, the view cube
-   * or highlights. The live view is put back exactly as it was before the
-   * next frame, and its own renderer is never touched.
+   * A picture of the view as it is (same camera), `scale` times the view's
+   * size in screen pixels (so 1× is what the screen shows, sharp screens
+   * included), drawn on a renderer of its own with physical materials, studio
+   * lighting, a soft shadow on the ground, and without planes, sketches, the
+   * grid, the view cube or highlights. The live view is put back exactly as it
+   * was before the next frame, and its own renderer is never touched.
    */
   async savePicture(opts: PictureOptions): Promise<Blob> {
-    const gl = this.renderer.capabilities;
-    const size = pictureSize(this.width, this.height, opts.scale, Math.min(8192, gl.maxTextureSize || 4096));
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-    const out = document.createElement("canvas");
-    out.width = size.width;
-    out.height = size.height;
-    let env: { texture: THREE.Texture; dispose: () => void } | null = null;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const size = pictureSize(this.width * dpr, this.height * dpr, opts.scale, Math.min(8192, this.renderer.capabilities.maxTextureSize || 4096));
+    const pr = this.pictureRendererFor();
+    const renderer = pr.renderer;
     try {
-      renderer.setPixelRatio(1);
-      renderer.setSize(size.width, size.height, false);
-      renderer.setClearColor(0x000000, 0);
-      renderer.localClippingEnabled = true;
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      renderer.toneMapping = THREE.NeutralToneMapping;
-      env = studioEnvironment(renderer);
+      // Small pictures are drawn twice as big and shrunk, which smooths their edges (the renderer has no antialiasing of its own,
+      // so big pictures don't ask the graphics card for a huge multisampled buffer).
+      const ss = supersample(size);
+      let draw = { width: size.width * ss, height: size.height * ss };
+      renderer.setSize(draw.width, draw.height, false);
+      const gl = renderer.getContext();
+      const fitted = fitToBuffer(draw, { width: gl.drawingBufferWidth, height: gl.drawingBufferHeight });
+      if (!fitted) throw new Error("Your browser couldn't make a picture that big. Try a smaller size.");
+      // The browser may quietly give a smaller drawing area than asked: draw at what it gave, the same shape, so nothing is cut off.
+      if (fitted !== draw) {
+        draw = fitted;
+        renderer.setSize(draw.width, draw.height, false);
+      }
+      const final = ss > 1 ? { width: Math.max(1, Math.round(draw.width / ss)), height: Math.max(1, Math.round(draw.height / ss)) } : draw;
+      const out = document.createElement("canvas");
+      out.width = final.width;
+      out.height = final.height;
 
       const box = new THREE.Box3();
       for (const p of this.parts.values()) if (p.mesh.visible) box.expandByObject(p.mesh);
@@ -655,7 +662,7 @@ export class SceneManager {
         });
         this.headlight.visible = false;
         this.scene.add(rig.group);
-        this.scene.environment = env.texture;
+        this.scene.environment = pr.environment.texture;
         this.scene.background = null;
         this.rendering = true;
         for (const [id, p] of this.parts) {
@@ -667,9 +674,11 @@ export class SceneManager {
         }
         renderer.render(this.scene, this.camera);
         const ctx = out.getContext("2d");
-        if (!ctx) throw new Error("Your browser couldn't make the picture.");
-        paintBackground(ctx, size.width, size.height, opts.background);
-        ctx.drawImage(renderer.domElement, 0, 0);
+        if (!ctx) throw new Error("Your browser couldn't make the picture. Try a smaller size.");
+        paintBackground(ctx, final.width, final.height, opts.background);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(renderer.domElement, 0, 0, final.width, final.height);
       } finally {
         this.scene.remove(rig.group);
         rig.dispose();
@@ -685,13 +694,40 @@ export class SceneManager {
         for (const [id, p] of this.parts) p.mesh.material = this.faceMaterialsFor(id);
         this.applyHighlights();
       }
+      return await new Promise<Blob>((resolve, reject) =>
+        out.toBlob((b) => (b ? resolve(b) : reject(new Error("Your browser couldn't make the picture. Try a smaller size."))), "image/png"),
+      );
     } finally {
-      env?.dispose();
-      renderer.dispose();
-      renderer.forceContextLoss();
+      // Kept for the next picture, but shrunk so its big drawing area doesn't sit in graphics memory.
+      renderer.setSize(1, 1, false);
     }
-    return new Promise((resolve, reject) => out.toBlob((b) => (b ? resolve(b) : reject(new Error("Your browser couldn't make the picture."))), "image/png"));
   }
+
+  /** The picture renderer (made the first time a picture is saved, then kept), with its own studio reflections. */
+  private pictureRendererFor(): { renderer: THREE.WebGLRenderer; environment: { texture: THREE.Texture; dispose: () => void } } {
+    if (this.pictureRenderer && !this.pictureRenderer.renderer.getContext().isContextLost()) return this.pictureRenderer;
+    // (The browser may have taken a kept one back to save memory: make it again.)
+    if (this.pictureRenderer) {
+      this.pictureRenderer.environment.dispose();
+      this.pictureRenderer.renderer.dispose();
+      this.pictureRenderer = null;
+    }
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, preserveDrawingBuffer: true });
+    } catch {
+      throw new Error("Your browser couldn't start the 3D graphics for the picture. Close a few other tabs, or try a smaller size.");
+    }
+    renderer.setPixelRatio(1);
+    renderer.setClearColor(0x000000, 0);
+    renderer.localClippingEnabled = true;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.NeutralToneMapping;
+    this.pictureRenderer = { renderer, environment: studioEnvironment(renderer) };
+    return this.pictureRenderer;
+  }
+  private pictureRenderer: { renderer: THREE.WebGLRenderer; environment: { texture: THREE.Texture; dispose: () => void } } | null = null;
 
   /** Parts drawn see-through, so you can see inside or behind them. */
   setTransparent(ids: string[]): void {
@@ -722,7 +758,26 @@ export class SceneManager {
       m.side = this.section ? THREE.FrontSide : THREE.DoubleSide;
       this.colourMaterials.set(key, m);
     }
-    return see ? [m, m, this.materials.faces[2]] : [m, this.materials.faces[1], this.materials.faces[2]];
+    if (see) return [m, m, this.materials.faces[2]];
+    // A see-through finish stays see-through when hovered or selected (just tinted), so it never suddenly looks solid.
+    if (m.opacity < 1) return [m, this.seeThroughHighlight(1, m.opacity), this.seeThroughHighlight(2, m.opacity)];
+    return [m, this.materials.faces[1], this.materials.faces[2]];
+  }
+
+  /** The hover (1) or selected (2) colour, see-through, for parts with a see-through finish (kept with the colour materials, so a section view updates them too). */
+  private seeThroughHighlight(state: 1 | 2, opacity: number): THREE.Material {
+    const key = `highlight|${state}|${opacity}`;
+    let m = this.colourMaterials.get(key);
+    if (!m) {
+      m = this.makeFaceMaterial(state === 1 ? COLOURS.partHover : COLOURS.partSelected);
+      m.transparent = true;
+      m.opacity = Math.min(0.75, opacity + 0.25);
+      m.depthWrite = false;
+      m.clippingPlanes = this.section ? [this.section] : [];
+      m.side = this.section ? THREE.FrontSide : THREE.DoubleSide;
+      this.colourMaterials.set(key, m);
+    }
+    return m;
   }
 
   /** The model's extent along a direction (for the section slider). */
@@ -1102,6 +1157,12 @@ export class SceneManager {
     this.materials.faces.forEach((m) => m.dispose());
     this.colourMaterials.forEach((m) => m.dispose());
     this.liveEnvironment?.dispose();
+    if (this.pictureRenderer) {
+      this.pictureRenderer.environment.dispose();
+      this.pictureRenderer.renderer.dispose();
+      this.pictureRenderer.renderer.forceContextLoss();
+      this.pictureRenderer = null;
+    }
     this.materials.edges.forEach((m) => m.dispose());
     this.viewCube.dispose();
     this.renderer.dispose();

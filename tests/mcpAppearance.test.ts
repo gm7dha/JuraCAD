@@ -49,6 +49,8 @@ describe("set_appearance", () => {
     expect(await ok(s, "set_appearance", { part: part.name, colour: "red", finish: "glossy" })).toMatch(/glossy plastic/i);
     expect(s.doc.appearance?.[part.id]).toBe("#d64545");
     expect(s.doc.finishes?.[part.id]).toBe("glossy");
+    // The same again changes nothing and adds no undo step (undo below goes straight back past it).
+    expect(await ok(s, "set_appearance", { colour: "#d64545", finish: "Glossy plastic" })).toMatch(/already/);
 
     await ok(s, "set_appearance", { part: part.name, finish: "clear" });
     expect(s.doc.appearance?.[part.id]).toBe("#d64545");
@@ -59,6 +61,10 @@ describe("set_appearance", () => {
 
     await ok(s, "undo");
     expect(s.doc.finishes?.[part.id]).toBe("glossy");
+    await ok(s, "undo");
+    expect(s.doc.finishes).toBeUndefined();
+    await ok(s, "set_appearance", { finish: "Silk PLA" });
+    expect(s.doc.finishes?.[part.id]).toBe("silk");
     await ok(s, "set_appearance", { part: part.name, colour: "default", finish: "default" });
     expect(s.doc.appearance).toBeUndefined();
     expect(s.doc.finishes).toBeUndefined();

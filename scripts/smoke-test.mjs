@@ -56,6 +56,43 @@ async function tool(name) {
 }
 
 let shotNumber = 0;
+/** A PNG's pixels as RGBA bytes (8-bit RGBA only — what browsers save), undoing each row's filter. */
+async function pngPixels(png) {
+  const { inflateSync } = await import("node:zlib");
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  const chunks = [];
+  for (let at = 8; at < png.length; ) {
+    const len = png.readUInt32BE(at);
+    const type = png.subarray(at + 4, at + 8).toString("latin1");
+    if (type === "IDAT") chunks.push(png.subarray(at + 8, at + 8 + len));
+    at += 12 + len;
+  }
+  const raw = inflateSync(Buffer.concat(chunks));
+  const stride = width * 4;
+  const out = new Uint8Array(stride * height);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const row = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let i = 0; i < stride; i++) {
+      const left = i >= 4 ? out[y * stride + i - 4] : 0;
+      const up = y > 0 ? out[(y - 1) * stride + i] : 0;
+      const upLeft = y > 0 && i >= 4 ? out[(y - 1) * stride + i - 4] : 0;
+      let v = row[i];
+      if (filter === 1) v += left;
+      else if (filter === 2) v += up;
+      else if (filter === 3) v += (left + up) >> 1;
+      else if (filter === 4) {
+        const p = left + up - upLeft;
+        const pa = Math.abs(p - left), pb = Math.abs(p - up), pc = Math.abs(p - upLeft);
+        v += pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft;
+      }
+      out[y * stride + i] = v & 255;
+    }
+  }
+  return out;
+}
+
 async function shot(name) {
   shotNumber++;
   const base = `${shotDir}/${shotNumber}-${name}`;
@@ -176,9 +213,15 @@ try {
     const ph = png.readUInt32BE(20);
     const view = await page.locator(".viewport-canvas").boundingBox();
     if (Math.abs(pw - 2 * Math.round(view.width)) > 2 || Math.abs(ph - 2 * Math.round(view.height)) > 2) throw new Error(`the 2× picture is ${pw} × ${ph}, the view ${view.width} × ${view.height}`);
-    // RGBA with see-through pixels (colour type 6), and not just an empty frame.
-    if (png[25] !== 6) throw new Error(`the see-through picture has PNG colour type ${png[25]}`);
-    if (png.length < 5_000) throw new Error(`the picture is suspiciously small (${png.length} bytes)`);
+    if (png[25] !== 6 || png[24] !== 8) throw new Error(`the see-through picture is PNG colour type ${png[25]}, depth ${png[24]}`);
+    // Really see-through round the parts (a corner's alpha is 0), and the parts really drawn (solid pixels in the middle).
+    const pixels = await pngPixels(png);
+    const alphaAt = (x, y) => pixels[(y * pw + x) * 4 + 3];
+    const corners = [alphaAt(0, 0), alphaAt(pw - 1, 0), alphaAt(0, ph - 1), alphaAt(pw - 1, ph - 1)];
+    if (corners.some((a) => a !== 0)) throw new Error(`the see-through picture's corners aren't see-through (alpha ${corners.join(", ")})`);
+    let solid = 0;
+    for (let y = Math.floor(ph * 0.3); y < ph * 0.7; y += 4) for (let x = Math.floor(pw * 0.3); x < pw * 0.7; x += 4) if (alphaAt(x, y) === 255) solid++;
+    if (solid < 100) throw new Error(`the picture has hardly any solid pixels in the middle (${solid}): the parts weren't drawn`);
     await dialog.waitFor({ state: "detached", timeout: 10_000 });
     await shot("after-picture");
     pictureReport = `a glossy finish and a ${pw} × ${ph} see-through picture (${png.length} bytes)`;

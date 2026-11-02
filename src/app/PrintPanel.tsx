@@ -15,7 +15,6 @@ import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { loadPrinter, printerBed, savePrinter, type PrinterSetting } from "./printerSetting";
 import { setPartDown, usePrintPanel } from "./printState";
-import { exportColours } from "../model/finishes";
 
 /** Highlight colours in the 3D view (also shown as the key in the panel). */
 export const PRINT_COLOURS = { overhang: "#ff8c1a", thin: "#e53935", small: "#9b59b6", bed: "#2e9d4f" };
@@ -204,7 +203,8 @@ function PrintPanelBody() {
     try {
       const kernel = getKernel();
       await kernel.whenIdle();
-      const out = await kernel.exportPrint3mf(solidRequests, [bed[0], bed[1]], print.gap, "normal", doc.name, exportColours(doc));
+      const out = await kernel.exportPrint3mf(solidRequests, [bed[0], bed[1]], print.gap, "normal", doc.name, doc.appearance);
+      // (Plain colours only: slicers read #RRGGBB, and a print is never see-through.)
       const name = `${safeFileName(chosen.length === 1 ? `${doc.name} ${chosen[0].name}` : doc.name, "juracad")}.3mf`;
       downloadFile(out.data, name, "model/3mf");
       const off = out.layout.places.filter((p) => !p.onBed).length;

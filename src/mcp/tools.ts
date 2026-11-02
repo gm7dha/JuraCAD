@@ -581,10 +581,14 @@ export const TOOLS: ToolDef[] = [
   {
     name: "set_appearance",
     title: "Colour and finish of a part",
-    description: `Choose how a part looks in the app and in pictures: its colour (a hex colour like "#d64545", or one of ${PART_COLOURS.map((c) => c.name.replace(/ \(default\)$/, "")).join(", ")}; "default" = the usual grey) and/or its finish (${FINISHES.map((f) => `${f.id} = ${f.label}`).join(", ")}; "default" = matte). E.g. {"part":"Part 1","colour":"red","finish":"glossy"}. Colours (and see-through for "clear") go into STEP and 3MF exports; drawings stay line drawings. A grey part given wood or metal also gets a colour that suits it.`,
+    description: `Choose how a part looks in the app and in pictures: its colour (a hex colour like "#d64545", or one of ${PART_COLOURS.map((c) => c.name.replace(/ \(default\)$/, "")).join(", ")}; "default" = the usual grey) and/or its finish (${FINISHES.map((f) => `${f.id} = ${f.label}`).join(", ")}; "default" = matte). E.g. {"part":"Part 1","colour":"red","finish":"glossy"}; leave out "part" for the latest part. Colours (and see-through for "clear") go into STEP and 3MF exports; drawings stay line drawings. A grey part given wood or metal also gets a colour that suits it.`,
     inputSchema: {
       type: "object",
-      properties: { part: { type: "string" }, colour: { type: "string" }, finish: { type: "string", enum: [...FINISHES.map((f) => f.id), "default"] } },
+      properties: {
+        part: { type: "string", description: "The part's name; leave it out for the latest part." },
+        colour: { type: "string" },
+        finish: { type: "string", description: `A finish's id or name (${FINISHES.map((f) => `"${f.id}" or "${f.label}"`).join(", ")}), or "default".` },
+      },
     },
     run: (s, a) => {
       noExtras(a, ["part", "colour", "finish"], "set_appearance");
@@ -602,7 +606,9 @@ export const TOOLS: ToolDef[] = [
         if (f === undefined) throw new InputError(`finish: "${word}" isn't a finish. Use one of ${FINISHES.map((x) => x.id).join(", ")}, or "default".`);
         doc = chooseFinish(doc, [p.id], f);
       }
-      if (doc === s.doc) return say(`${p.name} already looks like that.`);
+      const same = (x: unknown, y: unknown) => JSON.stringify(x ?? null) === JSON.stringify(y ?? null);
+      // Nothing changes: no undo step.
+      if (same(doc.appearance?.[p.id], s.doc.appearance?.[p.id]) && same(doc.finishes?.[p.id], s.doc.finishes?.[p.id])) return say(`${p.name} already looks like that.`);
       s.commit(doc);
       const colour = doc.appearance?.[p.id] ?? "the usual grey";
       return say(`${p.name}: ${colour}, ${finishOf(doc.finishes?.[p.id]).label.toLowerCase()}.`);

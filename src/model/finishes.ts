@@ -107,11 +107,16 @@ export function finishesByKey(finishes: Record<string, FinishId>, keys: { key: s
   return out;
 }
 
-/** A finish typed in words: its id ("brushed") or its name ("Brushed metal"), any case; undefined if not understood. */
+/** A finish typed in words: its id ("brushed") or its name ("Brushed metal", "PLA silk"), any case or word order; undefined if not understood. */
 export function finishFromWords(value: string): FinishId | undefined {
-  const v = value.trim().toLowerCase().replace(/[()]/g, "");
+  const v = value.trim().toLowerCase().replace(/[()]/g, "").replace(/\s+/g, " ");
   if (isFinishId(v)) return v;
-  return FINISHES.find((f) => f.label.toLowerCase().replace(/[()]/g, "") === v || f.label.toLowerCase().startsWith(v + " "))?.id;
+  // The same words in any order ("PLA silk" = "Silk PLA"), or just the name's first word ("brushed").
+  const words = (t: string) => t.split(" ").filter(Boolean).sort().join(" ");
+  return FINISHES.find((f) => {
+    const label = f.label.toLowerCase().replace(/[()]/g, "");
+    return words(label) === words(v) || label.startsWith(v + " ");
+  })?.id;
 }
 
 /** The document with a part's own colour set (null = back to the usual grey), as the colour swatch does. */

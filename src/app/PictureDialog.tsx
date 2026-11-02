@@ -9,7 +9,7 @@ import { Icons } from "./icons";
 import { Modal } from "./Modal";
 
 const SIZES: { scale: number; label: string; hint: string }[] = [
-  { scale: 1, label: "Same as the screen", hint: "Quick, for a message or a forum post" },
+  { scale: 1, label: "Same as the screen", hint: "As sharp as your screen shows it — for a message or a forum post" },
   { scale: 2, label: "Twice as big", hint: "Crisp on any screen" },
   { scale: 4, label: "Four times as big", hint: "For printing or a poster" },
 ];
@@ -41,6 +41,8 @@ export function PictureDialog() {
     if (!v) return setError("The 3D view isn't ready yet. Try again in a moment.");
     setError(null);
     setWorking(true);
+    // Let "Making the picture…" show before the drawing (which holds up the page for a moment) starts.
+    await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
     try {
       const png = await v.savePicture({ scale, background, edges });
       const name = `${safeFileName(fileName, "juracad")}.png`;
@@ -72,7 +74,8 @@ export function PictureDialog() {
         <span className="form-label">Size</span>
         <div className="quality-options" role="radiogroup" aria-label="Size">
           {SIZES.map((o) => {
-            const px = screen ? pictureSize(screen.width, screen.height, o.scale) : null;
+            const dpr = Math.min(window.devicePixelRatio || 1, 3);
+            const px = screen ? pictureSize(screen.width * dpr, screen.height * dpr, o.scale) : null;
             return (
               <label key={o.scale} className={`quality-option${scale === o.scale ? " selected" : ""}`}>
                 <input type="radio" name="picture-size" checked={scale === o.scale} onChange={() => setScale(o.scale)} disabled={working} />

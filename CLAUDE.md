@@ -434,11 +434,17 @@
   turned Z-up, through PMREM — no downloaded assets; `studioRig`: four slightly spread shadow-casting key lights = a soft
   shadow on a ShadowMaterial ground, plus a fill; `paintBackground`). "Nicer lighting in the 3D view" (Settings, this computer,
   `store.niceLighting`, localStorage `juracad.niceLighting`) = physical materials + the room's reflections live.
-  Save picture (toolbar "Picture", next to Fit, in Part Studios and assemblies → `PictureDialog.tsx` → `SceneManager.savePicture`): a separate WebGLRenderer
-  (preserveDrawingBuffer, shadows, Neutral tone mapping, its own environment) renders the same scene and camera at 1/2/4 ×
-  (`src/viewport/pictureSize.ts`: ≤ 8192 a side, ≤ 40 MP; ground only when looking down, `showGround`), with every scene
-  child but the parts hidden, highlights off, edges optional, then everything is put back synchronously (no frame in
-  between) and the renderer is disposed; the background (light/dark gradient or see-through) is painted under it on a 2D canvas.
+  Save picture (toolbar "Picture", next to Fit, in Part Studios and assemblies → `PictureDialog.tsx` → `SceneManager.savePicture`): a
+  second WebGLRenderer, made once and kept (`pictureRendererFor`; remade if its context was lost; shrunk to 1 × 1 after each picture;
+  no MSAA — pictures up to 2048 a side are drawn 2× and shrunk, `supersample`; preserveDrawingBuffer, shadows, Neutral tone
+  mapping, its own environment) renders the same scene and camera at 1/2/4 × the view in device pixels (`src/viewport/pictureSize.ts`:
+  ≤ 8192 a side, ≤ `MAX_PICTURE_PIXELS` 16,777,216 = iOS Safari's canvas limit; the drawing buffer the browser really gave is
+  checked, `fitToBuffer`, so a big picture is made smaller, never cropped; ground only when looking down, `showGround`), with every
+  scene child but the parts hidden, highlights off, edges optional, then everything is put back synchronously (no frame in
+  between); the background (light/dark gradient or see-through) is painted under it on a 2D canvas. Errors are plain English (three's
+  "Error creating WebGL context." is replaced). A see-through finish stays see-through when hovered/selected (`seeThroughHighlight`).
+  The print layout 3MF (PrintPanel) gets plain #RRGGBB colours (slicers); only Export's 3MF/STEP carry see-through.
+  The smoke test decodes the saved PNG (`pngPixels`, zlib) and checks transparent corners and solid pixels in the middle.
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
