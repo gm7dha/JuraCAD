@@ -8,6 +8,18 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.32 — Tablets and touch · commit `dce43bc`
+
+- **Finger gestures:** one finger turns the view, two fingers pinch to zoom and drag to pan, tap selects, double-tap
+  fits the view; in assemblies a long press picks a part up to move it. Pinching never zooms the page.
+- **Apple Pencil and fingers in sketches:** one finger or the Pencil draws; two fingers only move the view and never
+  leave a stray point; a hand resting on the screen while the Pencil draws is ignored; snapping reaches further for fingers.
+- **Touch bar** (tablets only): Add to selection, No snapping, Shift (drawings), and buttons for Esc, Delete, Planes,
+  Look at and Fit.
+- **Lists and menus:** long press opens the right-click menu, double-tap acts as a double-click; feature rows get Move up /
+  Move down. Drawings: pinch and pan, drag dimension numbers, long press flips arrows.
+- **Bigger touch targets** on tablets; desktops look exactly as before, and mice, trackpads and desktop pen tablets work as before.
+
 ## v0.31 — Finishes and pictures, sheet metal from a part · commit `908808a`
 
 - **Finishes:** in a part's colour popup, choose matte, glossy, silk PLA, brushed or polished metal, rubber, clear or
