@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { addHeld } from "../viewport/touchKeys";
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
@@ -261,6 +262,9 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
 /** Drag-and-drop data type for moving features up and down the list. */
 const FEATURE_DRAG = "application/x-juracad-feature";
 
+/** A finger-first screen (iPad, Android tablet): a held row would start an iPad's drag and drop instead of its menu. */
+const TOUCH_SCREEN = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+
 function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void; linked: boolean; draggable?: boolean }) {
   const kernelError = useStore((s) => s.featureErrors[feature.id]);
   // Built, but with something to tell (shown in amber, not as a failure).
@@ -305,6 +309,27 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
     ...(eye && !editing ? [{ label: shown ? "Hide" : "Show", action: () => setVisible(!shown) }] : []),
     ...(feature.type === "sketch" || feature.type === "plane" ? VISIBILITY_MENU : []),
     { label: "Roll back to here", action: () => useStore.getState().setRollback(feature.id) },
+    // On a touch screen rows can't be dragged to reorder them, so the menu does it.
+    ...(TOUCH_SCREEN
+      ? [
+          {
+            label: "Move up",
+            action: () => {
+              const list = activeFeatures(useStore.getState());
+              const at = list.findIndex((f) => f.id === feature.id);
+              if (at > 0) useStore.getState().moveFeature(feature.id, list[at - 1].id);
+            },
+          },
+          {
+            label: "Move down",
+            action: () => {
+              const list = activeFeatures(useStore.getState());
+              const at = list.findIndex((f) => f.id === feature.id);
+              if (at >= 0 && at < list.length - 1) useStore.getState().moveFeature(feature.id, list[at + 2]?.id ?? null);
+            },
+          },
+        ]
+      : []),
     feature.folder
       ? { label: `Take out of "${feature.folder}"`, action: () => useStore.getState().setFeatureFolder([feature.id], null) }
       : {
@@ -361,7 +386,8 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
       onDoubleClick={() => startEdit(feature.id)}
       onContextMenu={(e) => onMenu(e, entries)}
       // Drag a feature up or down the list to move it (it's dropped above the row it's let go on).
-      draggable={draggable && !useStore.getState().editing}
+      // (Not on a touch screen: there a long press is the right-click menu, and Move up / Move down are in it.)
+      draggable={draggable && !TOUCH_SCREEN && !useStore.getState().editing}
       onDragStart={(e) => {
         e.dataTransfer.setData(FEATURE_DRAG, feature.id);
         e.dataTransfer.effectAllowed = "move";
@@ -588,7 +614,7 @@ function PartsList({
       return;
     }
     e.preventDefault(); // no text highlighting while dragging
-    const add = e.ctrlKey || e.metaKey;
+    const add = addHeld(e);
     const r = clickRow(order, st().selectedParts, anchor.current, id, { add, range: e.shiftKey });
     st().setSelectedParts(r.selected);
     anchor.current = r.anchor;

@@ -127,6 +127,29 @@ describe("guarding a view against the page zooming", () => {
     expect(seen).toHaveLength(4);
   });
 
+  it("an iPad pinch on the touch screen is only stopped: the view's own finger gestures zoom it", () => {
+    const el = new EventTarget() as unknown as Element;
+    const pinches: number[] = [];
+    guardZoom(el, { owns: () => true, wheel: () => {}, pinch: (f) => pinches.push(f) });
+    el.dispatchEvent(event("pointerdown", { pointerType: "touch", pointerId: 1 }));
+    el.dispatchEvent(event("pointerdown", { pointerType: "touch", pointerId: 2 }));
+    const steps = [event("gesturestart", { scale: 1 }), event("gesturechange", { scale: 2 })];
+    for (const s of steps) el.dispatchEvent(s);
+    expect(steps.map((s) => s.defaultPrevented)).toEqual([true, true]);
+    expect(pinches).toEqual([]);
+    // Fingers off (one lifted, one taken by the browser): a Mac trackpad's pinch is passed on again.
+    el.dispatchEvent(event("pointerup", { pointerType: "touch", pointerId: 1 }));
+    el.dispatchEvent(event("pointercancel", { pointerType: "touch", pointerId: 2 }));
+    el.dispatchEvent(event("gesturestart", { scale: 1 }));
+    el.dispatchEvent(event("gesturechange", { scale: 2 }));
+    expect(pinches).toEqual([0.5]);
+    // The mouse and the pen don't count as fingers.
+    el.dispatchEvent(event("pointerdown", { pointerType: "mouse", pointerId: 3 }));
+    el.dispatchEvent(event("gesturestart", { scale: 1 }));
+    el.dispatchEvent(event("gesturechange", { scale: 0.5 }));
+    expect(pinches).toEqual([0.5, 2]);
+  });
+
   it("leaves events elsewhere alone (the page can still be zoomed there)", () => {
     const el = new EventTarget() as unknown as Element;
     let called = 0;

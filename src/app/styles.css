@@ -3556,3 +3556,167 @@ kbd {
   transform: none;
   max-width: min(520px, calc(100% - 32px));
 }
+
+/* ------------------------------------------------------------------ touch screens */
+
+/* The touch bar: on-screen Esc, Delete, P, N and held keys (only rendered on touch screens). */
+.touch-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  padding: 5px;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.touch-key {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.touch-key:disabled {
+  opacity: 0.4;
+}
+
+.touch-key.toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.sketch-overlay > *,
+.drawing-area {
+  touch-action: none;
+}
+
+/*
+ * Finger-sized controls (about 44 px) on touch screens — iPads and Android tablets. With a mouse
+ * (a fine pointer) none of this applies, so the desktop look is unchanged.
+ */
+@media (pointer: coarse) {
+  .app {
+    /* No text-selection loupe or "Copy" bubble when a finger is held on a button or a row. */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .app input,
+  .app textarea,
+  .app [contenteditable] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  /* Double-tap to zoom the page is off on the app's controls (their double-tap is a double-click). */
+  .app button,
+  .feature-row,
+  .part-row,
+  .tab {
+    touch-action: manipulation;
+  }
+
+  .icon-button,
+  .icon-button.small {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .tool-button {
+    min-width: 52px;
+    height: 52px;
+  }
+  .relation-button {
+    min-width: 44px;
+    height: 52px;
+  }
+  .toolbar {
+    height: 62px;
+  }
+  .text-button,
+  .primary-button,
+  .menu-item {
+    min-height: 44px;
+  }
+  .dialog-ok,
+  .dialog-cancel {
+    width: 44px;
+    height: 44px;
+  }
+  .feature-row,
+  .part-row {
+    height: 44px;
+  }
+  .bottom-tabs {
+    height: 48px;
+  }
+  .tab {
+    padding: 0 16px;
+  }
+  .tab-rename {
+    min-height: 36px;
+  }
+  .app input[type="checkbox"],
+  .app input[type="radio"] {
+    width: 22px;
+    height: 22px;
+  }
+  .app input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  .app select {
+    min-height: 40px;
+    /* 16 px stops iPad Safari zooming the page into a box when it's tapped. */
+    font-size: 16px;
+  }
+  .dimension-label {
+    padding: 6px 10px;
+  }
+  .constraint-badge {
+    min-width: 28px;
+    min-height: 28px;
+  }
+
+  /* Nothing hides until hovered: the eye and the row buttons are always there. */
+  .icon-button.eye {
+    visibility: visible;
+  }
+  .row-actions {
+    display: inline-flex;
+  }
+
+  /* Room for the touch bar along the bottom of the view. */
+  .empty-hint {
+    bottom: 76px;
+  }
+  .toast {
+    bottom: 120px;
+  }
+  .measure-panel {
+    bottom: 76px;
+  }
+}
+
+/* A narrow touch screen (an iPad held upright): a slimmer feature list leaves the view more room. */
+@media (pointer: coarse) and (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 220px 1fr;
+  }
+  .feature-dialog {
+    width: min(300px, calc(100% - 24px));
+  }
+}

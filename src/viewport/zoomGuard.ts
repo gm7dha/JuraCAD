@@ -76,6 +76,8 @@ export function orbitWheelDelta(factor: number, zoomSpeed: number): number {
 /** How long (ms) after a pinch's wheel event a Safari gesture step is taken to be the same pinch (so it isn't zoomed twice). */
 const SAME_PINCH_MS = 250;
 
+const POINTER_TYPES = ["pointerdown", "pointerup", "pointercancel"];
+
 /** Safari's gesture events (not in the DOM types). */
 type GestureLike = Event & { scale?: number; clientX?: number; clientY?: number };
 
@@ -89,6 +91,12 @@ type GestureLike = Event & { scale?: number; clientX?: number; clientY?: number 
  * A pinch and Ctrl + mouse wheel both come as wheel events with `ctrlKey` set;
  * they're told apart, as three's OrbitControls does, by whether the Control key
  * itself went down on the keyboard (watched on `keys`, normally the document).
+ *
+ * On an iPad, Safari sends the same gesture events for a two-finger pinch on the
+ * touch screen; those fingers also arrive as pointer events, which the view's
+ * own gestures (gestures.ts) zoom with. So while a finger is down on `el` the
+ * gesture events are only stopped (the page doesn't zoom), not passed on, or
+ * the view would zoom twice.
  */
 export function guardZoom(
   el: Element,
@@ -102,6 +110,14 @@ export function guardZoom(
   let lastScale = 1;
   let lastPinchWheel = -Infinity;
   let controlHeld = false;
+  /** Fingers down on the view (pointer events of type "touch"). */
+  const fingers = new Set<number>();
+  const onPointer = (ev: Event) => {
+    const e = ev as PointerEvent;
+    if (e.pointerType !== "touch") return;
+    if (e.type === "pointerdown") fingers.add(e.pointerId);
+    else fingers.delete(e.pointerId);
+  };
   const onKeyDown = (ev: Event) => {
     if ((ev as KeyboardEvent).key === "Control") controlHeld = true;
   };
@@ -123,6 +139,7 @@ export function guardZoom(
     const e = ev as GestureLike;
     if (!opts.owns(e.target)) return;
     e.preventDefault();
+    if (fingers.size) return;
     const scale = typeof e.scale === "number" ? e.scale : 1;
     if (e.type === "gesturestart") lastScale = 1;
     else if (e.type === "gesturechange") {
@@ -136,6 +153,7 @@ export function guardZoom(
   const watch = { passive: true, capture: true } as AddEventListenerOptions;
   el.addEventListener("wheel", onWheel, active);
   for (const t of ["gesturestart", "gesturechange", "gestureend"]) el.addEventListener(t, onGesture, active);
+  for (const t of POINTER_TYPES) el.addEventListener(t, onPointer, watch);
   keys?.addEventListener("keydown", onKeyDown, watch);
   keys?.addEventListener("keyup", onKeyUp, watch);
   const win = (keys as Partial<Document> | null)?.defaultView ?? null;
@@ -143,6 +161,7 @@ export function guardZoom(
   return () => {
     el.removeEventListener("wheel", onWheel, active);
     for (const t of ["gesturestart", "gesturechange", "gestureend"]) el.removeEventListener(t, onGesture, active);
+    for (const t of POINTER_TYPES) el.removeEventListener(t, onPointer, watch);
     keys?.removeEventListener("keydown", onKeyDown, watch);
     keys?.removeEventListener("keyup", onKeyUp, watch);
     win?.removeEventListener("blur", onBlur);

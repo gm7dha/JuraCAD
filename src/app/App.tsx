@@ -31,6 +31,8 @@ import { ToolbarScroller } from "./ToolbarScroller";
 import { deleteSketchSelection, setSketchTool, sketchEscape, toggleSketchConstruction, applySketchRelation } from "./sketchActions";
 import { startSketchFromSelection, Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
+import { TouchBar } from "./TouchBar";
+import { installTouchCompat } from "./touchCompat";
 
 const SHIFT_VIEWS: Record<string, StandardView> = {
   Digit1: "front",
@@ -246,6 +248,8 @@ export function App() {
 
   useEffect(() => connectKernel(), []);
   useShortcuts();
+  // Long press = right-click, double-tap = double-click on a touch screen (the lists, tabs and panels).
+  useEffect(() => installTouchCompat(document), []);
 
   // Drop a .juracad (or older .partsmith) file anywhere on the window to open it.
   useEffect(() => {
@@ -292,6 +296,7 @@ export function App() {
             </>
           )}
           <EngineStatus />
+          <TouchBar />
           <VersionBanner />
           {!drawing && !assembly && <ComparePanel />}
           {!drawing && (
