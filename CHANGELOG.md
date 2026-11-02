@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.31 — Finishes and pictures, sheet metal from a part · commit `908808a`
+
+- **Finishes:** in a part's colour popup, choose matte, glossy, silk PLA, brushed or polished metal, rubber, clear or
+  wood-ish. Clear parts export see-through in 3MF and STEP. A "Nicer lighting" setting makes the 3D view shinier.
+- **Save picture:** the Picture button next to Fit saves a PNG of the view at screen size, 2× or 4×, on a light, dark or
+  see-through background, with soft studio lighting and a shadow.
+- **Sheet metal from a part:** Sheet metal › From a part turns a hollowed part's flat faces into sheet metal. Click the
+  walls, click the corner edges to rip, and you get bends and a flat pattern like any other sheet metal part.
+- **Claude extension:** a set_appearance tool for colours and finishes. Download it again from Help.
+
 ## v0.30 — Versions & history, 3D-printing toolkit, sweep twist round corners, flexible sub-assemblies · commit `2e9bdcf`
 
 - **Versions & history:** save named snapshots of your design, look at an old one, compare two, and go back to one.
