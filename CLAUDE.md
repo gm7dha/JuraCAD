@@ -453,7 +453,7 @@
   from outside; across = X for up/down faces, else level), circles/arcs/whole ellipses exact, other curves Hermite→Bézier within
   0.5 µm (straight pieces only as a last resort); "part" = `biggestFlatFace` (ties: the one facing up most); "flat" = the part
   laid flat (`laidFlat`) in its first wall's frame, `planeOutline` drops edges two flat faces share, bend lines from `flatOf`; curved
-  faces refused ("Pick a flat face"). UI: the top bar's "Laser" button → `src/app/LaserPanel.tsx` (side panel where the 3D print /
+  faces refused ("Pick a flat face"). UI: the toolbar's "Laser" button (next to 3D print; also a link in the Export dialog, `toggleLaser`) → `src/app/LaserPanel.tsx` (side panel where the 3D print /
   section panels sit, so faces can be clicked while it's open; state in `laserState.ts`, session only; closes on section / 3D print /
   tab change), sources "selection" (clicked faces + picked parts, a sheet metal part as its flat pattern), "all", "sketch:<id>"
   (`followedSketch`), "flat:<part>"; preview, size, colour key, Save SVG / DXF named after the part or sketch. Claude:

@@ -371,7 +371,9 @@ try {
   step = "exporting the block's top face for a laser cutter";
   let laserReport;
   {
-    await page.getByRole("button", { name: "Export for laser" }).click();
+    // Reached from the Export dialog's link (the toolbar's Laser button does the same).
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await page.getByRole("button", { name: "Export for laser", exact: true }).click();
     await page.waitForSelector(".laser-panel");
     const at = await page.evaluate(() => {
       const s = window.juracadStore.getState();

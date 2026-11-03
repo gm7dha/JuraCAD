@@ -6,7 +6,7 @@
 import { create } from "zustand";
 
 import { DEFAULT_GAP, DEFAULT_SHEET_WIDTH } from "../laser/laser";
-import { useStore } from "../model/store";
+import { activeFeatures, useStore } from "../model/store";
 import { usePrintPanel } from "./printState";
 
 /** "selection" (faces clicked / parts picked), "all" (every part shown), "sketch:<id>" or "flat:<part id>". */
@@ -62,3 +62,10 @@ useStore.subscribe((s, prev) => {
 usePrintPanel.subscribe((s, prev) => {
   if (s.open && !prev.open && useLaserPanel.getState().open) useLaserPanel.setState({ open: false });
 });
+
+/** Open the laser panel on a sketch highlighted in the list, else what's selected, else every part; or close it. */
+export function toggleLaser(): void {
+  if (useLaserPanel.getState().open) return openLaserPanel(false);
+  const s = useStore.getState();
+  openLaserPanel(true, startingSource(s, activeFeatures(s).filter((f) => f.type === "sketch").map((f) => f.id)));
+}
