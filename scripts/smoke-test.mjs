@@ -368,6 +368,45 @@ try {
   await page.getByRole("button", { name: "Close 3D print" }).click();
   await page.waitForSelector(".print-panel", { state: "detached" });
 
+  step = "exporting the block's top face for a laser cutter";
+  let laserReport;
+  {
+    await page.getByRole("button", { name: "Export for laser" }).click();
+    await page.waitForSelector(".laser-panel");
+    const at = await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => p.name === "Part 1");
+      const top = part.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99);
+      return window.juracadViewport.current.screenPointOnFace(part.id, top);
+    });
+    if (!at) throw new Error("couldn't find the block's top face on screen");
+    const vp = await page.locator(".viewport canvas").first().boundingBox();
+    await page.mouse.click(vp.x + at.x, vp.y + at.y);
+    try {
+      await page.waitForFunction(() => /Faces and parts you select \(1\)/.test(document.querySelector("#laser-source")?.selectedOptions?.[0]?.textContent ?? ""), null, { timeout: 10_000 });
+      await page.waitForFunction(() => /40 × 30 mm/.test(document.querySelector(".laser-size")?.textContent ?? ""), null, { timeout: 30_000 });
+    } catch {
+      throw new Error(`the laser panel didn't show the top face at 40 × 30 mm: ${(await page.locator(".laser-panel").innerText()).replace(/\s+/g, " ")}`);
+    }
+    await shot("laser");
+    const svgPromise = page.waitForEvent("download", { timeout: 30_000 });
+    await page.getByRole("button", { name: "Save SVG" }).click();
+    const svgDownload = await svgPromise;
+    const laserSvgText = readFileSync(await svgDownload.path(), "utf8");
+    if (!laserSvgText.includes('width="40mm" height="30mm" viewBox="0 0 40 30"')) throw new Error(`the laser SVG isn't 40 × 30 mm: ${laserSvgText.slice(0, 400)}`);
+    if (!/<circle [^>]*r="5" [^>]*stroke="#0000FF"/.test(laserSvgText)) throw new Error("the laser SVG has no blue 10 mm hole");
+    if (!/stroke="#FF0000"/.test(laserSvgText)) throw new Error("the laser SVG has no red outline");
+    if (svgDownload.suggestedFilename() !== "Part 1.svg") throw new Error(`the laser SVG was named ${svgDownload.suggestedFilename()}`);
+    const dxfPromise = page.waitForEvent("download", { timeout: 30_000 });
+    await page.getByRole("button", { name: "Save DXF" }).click();
+    const laserDxfText = readFileSync(await (await dxfPromise).path(), "utf8");
+    if (!/\nCUT_OUTER\n/.test(laserDxfText) || !/\nCIRCLE\n8\nCUT_INNER\n/.test(laserDxfText)) throw new Error("the laser DXF is missing its CUT_OUTER / CUT_INNER layers");
+    await page.getByRole("button", { name: "Close export for laser" }).click();
+    await page.waitForSelector(".laser-panel", { state: "detached" });
+    await page.keyboard.press("Escape");
+    laserReport = `the top face saved for a laser as a 40 × 30 mm SVG (${laserSvgText.length} characters) and a DXF`;
+  }
+
   step = "editing a feature three times, then undoing once";
   const boxRow = page.locator(".feature-row:not(.datum)").first();
   for (const x of ["10", "20", "30"]) {
@@ -3284,7 +3323,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${subReport}; ${pictureReport}; touch screen: ${touchReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

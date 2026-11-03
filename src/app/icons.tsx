@@ -416,6 +416,15 @@ export const Icons = {
       <path d="m17 12 2 2 2-2" />
     </Svg>
   ),
+  Laser: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M12 2v9" />
+      <path d="M9 2h6" />
+      <path d="M12 11l-1.5 3h3z" />
+      <path d="M4 20h16" />
+      <path d="M8 17l-2 3M16 17l2 3" strokeDasharray="1.5 1.5" />
+    </Svg>
+  ),
   FlatPattern: (p: IconProps) => (
     <Svg {...p}>
       <path d="M3 8h18v8H3z" />

@@ -93,6 +93,9 @@ ctx.onmessage = (event) => {
           body = { type: "unfold", result };
           break;
         }
+        case "laserOutlines":
+          body = { type: "laserOutlines", result: engine.laserOutlines(request.sources) };
+          break;
         case "intersect":
           body = { type: "intersect", result: engine.intersect(request.partId, request.plane, request.face) };
           break;

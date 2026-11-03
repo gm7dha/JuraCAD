@@ -332,12 +332,17 @@ export interface Chain {
  * walked in order — for surfaces, which can be made from open outlines too.
  * Runs with a junction of three or more curves are left out.
  */
-export function findChains(sketch: SketchData): { chains: Chain[]; problems: string[] } {
+export function findChains(sketch: SketchData, opts: { branching?: boolean } = {}): { chains: Chain[]; problems: string[] } {
   const g = sketchGraph(sketch);
   const chains: Chain[] = g.loops.map((l) => ({ segments: l.segments, closed: true }));
   let branching = 0;
   for (const group of g.groups) {
     if (group.kind === "branching") {
+      // With `branching` (laser cutting), each of its curves comes as an open run of its own.
+      if (opts.branching) {
+        for (const ei of group.edges) chains.push({ segments: g.walk([ei], ei, g.edges[ei].a).segments, closed: false });
+        continue;
+      }
       branching++;
       continue;
     }

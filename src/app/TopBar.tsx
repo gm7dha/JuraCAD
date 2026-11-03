@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-import { activeAssembly, activeDrawing, useDocument, useLengthUnit, useStore } from "../model/store";
+import { openLaserPanel, startingSource, useLaserPanel } from "./laserState";
+import { activeAssembly, activeDrawing, activeFeatures, useDocument, useLengthUnit, useStore } from "../model/store";
 import { exportDrawing } from "./DrawingUI";
 import { allFeatures } from "../model/studios";
 import { Icons } from "./icons";
@@ -141,6 +142,15 @@ export function TopBar() {
       >
         <Icons.Export size={18} /> <span className="button-label">Export</span>
       </button>
+      <button
+        className="text-button"
+        onClick={() => openLaserPanel(undefined, laserStart())}
+        disabled={inDrawing || inAssembly}
+        aria-label="Export for laser"
+        title="Export for laser: save true-size outlines to cut, score and engrave as SVG (for Bambu Studio's laser mode) or DXF"
+      >
+        <Icons.Laser size={18} /> <span className="button-label">Laser</span>
+      </button>
       <SettingsMenu />
       <button className="icon-button" onClick={() => openDialog("help")} aria-label="Help and shortcuts" title="Help and shortcuts (?)">
         <Icons.Help />
@@ -257,4 +267,11 @@ function NiceLightingToggle() {
       <p className="dialog-hint">Shows shiny, metal and clear finishes with soft studio reflections. Turn it off if the view feels slow on this computer.</p>
     </>
   );
+}
+
+/** What the laser panel starts with: a sketch highlighted in the list, else what's selected, else every part (unchanged when closing). */
+function laserStart(): string | undefined {
+  if (useLaserPanel.getState().open) return undefined;
+  const s = useStore.getState();
+  return startingSource(s, activeFeatures(s).filter((f) => f.type === "sketch").map((f) => f.id));
 }
