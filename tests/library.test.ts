@@ -9,6 +9,7 @@ import { lensArea } from "../src/library/designs/knob";
 import { roundedRectArea } from "../src/library/designs/common";
 import { completeValues, currentValues, defaultValues, editInsert, findDesign, freePrefix, insertDesign, inputProblem, LIBRARY, liveInserts, valueProblems } from "../src/library/insert";
 import { freedomOf } from "../src/library/sketchKit";
+import { previewPicture } from "../src/library/preview";
 import { analyzeSketch } from "../src/sketch/solver";
 import type { JuraCADDocument } from "../src/model/types";
 
@@ -125,6 +126,26 @@ describe("inserting a design", () => {
       }
     });
   }
+});
+
+describe("previews", () => {
+  it("fit each design's drawing into a picture, y up", () => {
+    for (const d of LIBRARY) {
+      const pic = previewPicture(d.preview(defaultValues(d)))!;
+      expect(pic.viewBox.split(" ").map(Number).every(Number.isFinite)).toBe(true);
+      expect(pic.stroke).toBeGreaterThan(0);
+    }
+    const pic = previewPicture([{ kind: "poly", closed: true, points: [[0, 0], [10, 0], [10, 20]] }])!;
+    expect(pic.shapes[0]).toEqual({ kind: "poly", closed: true, points: [[0, -0], [10, -0], [10, -20]] });
+    expect(previewPicture([])).toBeNull();
+  });
+  it("show the finger box's panels laid flat, ready to cut", () => {
+    const box = design("finger-box");
+    const shapes = box.preview(defaultValues(box));
+    expect(shapes.filter((s) => s.kind === "poly")).toHaveLength(6);
+    expect(box.preview({ ...defaultValues(box), lid: false }).filter((s) => s.kind === "poly")).toHaveLength(5);
+    expect(box.summary!(defaultValues(box))).toMatch(/6 panels; 13 fingers along the width/);
+  });
 });
 
 describe("design maths", () => {

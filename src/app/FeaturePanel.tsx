@@ -6,6 +6,7 @@ import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isS
 import { activeFeatures, activeHiddenDatums, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
 import { featureVisible, hasEye } from "../model/visibility";
 import { nextFolderName } from "../model/document";
+import { insertOfFeature } from "../library/insert";
 import type { Feature, FeatureType } from "../model/types";
 import { viewNormalToPlaneFeature, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -787,7 +788,9 @@ export function FeaturePanel() {
               const shut = collapsed.includes(key);
               const folder = run.folder;
               const ids = run.features.map((f) => f.id);
+              const placed = insertOfFeature(useStore.getState().history.present, ids[0]);
               const menu: MenuEntry[] = [
+                ...(placed ? [{ label: "Edit design sizes…", action: () => useStore.getState().openLibrary({ mode: "edit", insertId: placed.id }) }, "divider" as const] : []),
                 {
                   label: "Rename folder…",
                   action: () => {

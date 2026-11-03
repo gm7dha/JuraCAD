@@ -24,7 +24,7 @@ beforeAll(async () => {
   engine = new GeometryEngine();
 });
 
-function insert(id: string, values: Partial<DesignValues> = {}): JuraCADDocument {
+function insert(id: string, values: DesignValues = {}): JuraCADDocument {
   const d = findDesign(id)!;
   return insertDesign(emptyDocument(), d, { ...defaultValues(d), ...values }, { into: MAIN_STUDIO }).doc;
 }

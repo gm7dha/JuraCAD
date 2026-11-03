@@ -31,6 +31,8 @@ import { addConfiguration, removeConfiguration, renameConfiguration, switchConfi
 import { framesOf, planeAsSketchPlane, refreshDocumentPlanes } from "../sketch/planeFeature";
 import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit } from "./units";
 import { applyVariables, resolveVariables, type Variable } from "./variables";
+import { editInsert, findDesign, insertDesign } from "../library/insert";
+import type { DesignValues } from "../library/types";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
@@ -210,6 +212,9 @@ export interface SectionView {
 
 /** A mate being made or changed; its two connectors may not be picked yet. */
 export type MateDraft = Omit<Mate, "a" | "b"> & { a?: MateConnector; b?: MateConnector };
+
+/** The Design library window: the list of designs (optionally one already picked), or an inserted design's sizes. */
+export type LibraryView = { mode: "browse"; design?: string } | { mode: "edit"; insertId: string };
 
 export type DialogName = "check" | "export" | "picture" | "help" | "whatsNew" | "flatPattern" | "variables" | "configurations" | "insert" | "versions" | null;
 
@@ -414,6 +419,13 @@ export interface AppState {
   setPartsFinish: (partIds: string[], finish: FinishId | null) => void;
   /** Replace the variable list (one undo step); renames are followed everywhere. */
   setVariables: (variables: Variable[]) => void;
+  /** The Design library's window: browsing the designs, or changing an inserted one's sizes. */
+  library: LibraryView | null;
+  openLibrary: (view: LibraryView | null) => void;
+  /** Insert a library design (one undo step): into a new Part Studio named after it (shown), or the one on show. Returns a problem, or null. */
+  insertLibraryDesign: (designId: string, values: DesignValues, into: "new" | "current") => string | null;
+  /** Change an inserted design's sizes and choices (one undo step). Returns a problem, or null. */
+  editLibraryDesign: (insertId: string, values: DesignValues) => string | null;
   /** Configurations: keep the current state as a new one (and show it), show another, rename or forget one. */
   addConfiguration: (name: string) => void;
   switchConfiguration: (id: string) => void;
@@ -808,6 +820,7 @@ export const useStore = create<AppState>((set, get) => {
     lastRebuildMs: null,
 
     dialog: null,
+    library: null,
     toast: null,
     activeTab: null,
     asmSelection: [],
@@ -1249,6 +1262,40 @@ export const useStore = create<AppState>((set, get) => {
     setPartsFinish: (partIds, finish) => change((doc) => chooseFinish(doc, partIds, finish)),
 
     setVariables: (variables) => change((doc) => applyVariables(doc, variables)),
+    openLibrary: (library) => set({ library }),
+    insertLibraryDesign: (designId, values, into) => {
+      const s = get();
+      const design = findDesign(designId);
+      if (!design) return "That design isn't in the library.";
+      if (s.editing) return "Finish or cancel the open feature first.";
+      if (s.versionView) return "You're looking at an old version, which can't be changed.";
+      const studio = into === "new" ? "new" : activeStudioId(s) ?? MAIN_STUDIO;
+      let made: ReturnType<typeof insertDesign>;
+      try {
+        made = insertDesign(s.history.present, design, values, { into: studio });
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e);
+      }
+      change(() => made.doc);
+      if (into === "new") {
+        set({ activeTab: made.studioId, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, editingPattern: null });
+      }
+      get().showToast(`Inserted ${made.insert.name}. Change its sizes in Variables (${made.insert.prefix}_…), or right-click its folder › Edit design sizes.`, "success");
+      return null;
+    },
+    editLibraryDesign: (insertId, values) => {
+      const s = get();
+      if (s.editing) return "Finish or cancel the open feature first.";
+      if (s.versionView) return "You're looking at an old version, which can't be changed.";
+      let next: JuraCADDocument;
+      try {
+        next = editInsert(s.history.present, insertId, values);
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e);
+      }
+      change(() => next);
+      return null;
+    },
     addConfiguration: (name) => change((doc) => addConfiguration(doc, name)),
     switchConfiguration: (id) => change((doc) => switchConfiguration(doc, id)),
     renameConfiguration: (id, name) => change((doc) => renameConfiguration(doc, id, name)),

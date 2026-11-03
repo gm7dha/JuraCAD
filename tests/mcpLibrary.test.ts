@@ -1,0 +1,81 @@
+/** The Design library through Claude's tools: list_library_designs and insert_library_design (real OCCT). */
+import opencascade from "replicad-opencascadejs";
+import { setOC } from "replicad";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { DesignFolder } from "../src/mcp/files";
+import { Session } from "../src/mcp/session";
+import { callTool, TOOLS, type ToolResult } from "../src/mcp/tools";
+import { shellVolume } from "../src/library/fingers";
+import { fingerBoxSizes } from "../src/library/designs/fingerBox";
+import { defaultValues, findDesign } from "../src/library/insert";
+
+beforeAll(async () => {
+  setOC(await opencascade());
+});
+
+const dirs: string[] = [];
+const sessions: Session[] = [];
+afterEach(() => {
+  sessions.splice(0).forEach((s) => s.dispose());
+  dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true }));
+});
+
+function newSession() {
+  const dir = mkdtempSync(join(tmpdir(), "juracad-lib-"));
+  dirs.push(dir);
+  const s = new Session(new DesignFolder(join(dir, "JuraCAD")));
+  sessions.push(s);
+  return s;
+}
+
+const textOf = (r: ToolResult) => r.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+async function call(s: Session, name: string, args: unknown = {}) {
+  const r = await callTool(s, name, args);
+  return { text: textOf(r), error: !!r.isError };
+}
+const volume = (s: Session) => s.withEngine((e) => e.check("normal").parts.reduce((n, p) => n + p.exactVolume!, 0));
+
+describe("Design library tools", () => {
+  it("are listed, and describe every design and its sizes", async () => {
+    const names = TOOLS.map((t) => t.name);
+    expect(names).toContain("list_library_designs");
+    expect(names).toContain("insert_library_design");
+    const s = newSession();
+    const r = await call(s, "list_library_designs");
+    expect(r.error).toBe(false);
+    for (const id of ["finger-box", "tray", "bracket", "spacer", "knob"]) expect(r.text).toContain(id);
+    expect(r.text).toMatch(/thickness: Material thickness \(mm, default 3/);
+  });
+
+  it("insert a finger box whose variables then resize it", async () => {
+    const s = newSession();
+    const r = await call(s, "insert_library_design", { design: "finger-box", sizes: { width: 150, lid: false } });
+    expect(r.error).toBe(false);
+    expect(r.text).toMatch(/box_width = 150/);
+    expect(r.text).toMatch(/5 panels/);
+    expect(s.build().parts).toHaveLength(5);
+    const values = { ...defaultValues(findDesign("finger-box")!), width: 150, lid: false };
+    expect(volume(s)).toBeCloseTo(shellVolume(fingerBoxSizes(values)), 0);
+    const changed = await call(s, "set_variables", { variables: [{ name: "box_width", value: "180" }] });
+    expect(changed.error).toBe(false);
+    expect(volume(s)).toBeCloseTo(shellVolume(fingerBoxSizes({ ...values, width: 180 })), 0);
+    // A second one gets its own variables.
+    const two = await call(s, "insert_library_design", { design: "spacer" });
+    expect(two.text).toMatch(/spacer_outer = 12/);
+    expect(s.doc.libraryInserts).toHaveLength(2);
+  });
+
+  it("refuse sizes that don't work, changing nothing", async () => {
+    const s = newSession();
+    const bad = await call(s, "insert_library_design", { design: "tray", sizes: { floor: 40 } });
+    expect(bad.error).toBe(true);
+    expect(bad.text).toMatch(/floor/);
+    expect(bad.text).toMatch(/Nothing was changed/);
+    expect((await call(s, "insert_library_design", { design: "tray", sizes: { colour: 3 } })).text).toMatch(/has no "colour"/);
+    expect((await call(s, "insert_library_design", { design: "teapot" })).text).toMatch(/no library design/);
+    expect(s.doc.features).toHaveLength(0);
+  });
+});
