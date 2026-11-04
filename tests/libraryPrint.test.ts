@@ -10,8 +10,8 @@ import { FASTENER_SIZES } from "../src/model/fasteners";
 import { MAIN_STUDIO, studioFeatures } from "../src/model/studios";
 import { resolveVariables } from "../src/model/variables";
 import { evaluate, setCurrentScope } from "../src/model/expr";
-import { defaultValues, designsIn, editInsert, currentValues, findDesign, insertDesign, LIBRARY, valueProblems } from "../src/library/insert";
-import { groupDesigns, LIBRARY_GROUPS, OTHER_GROUP, searchDesigns } from "../src/library/browse";
+import { defaultValues, designGroups, designsIn, editInsert, currentValues, findDesign, GROUP_ORDER, groupDesigns, insertDesign, LIBRARY, valueProblems } from "../src/library/insert";
+import { searchDesigns } from "../src/library/browse";
 import { lit } from "../src/library/ex";
 import { freedomOf } from "../src/library/sketchKit";
 import { gridPatternFeature, grooveDepth, nutHoleDiameter, PRINTED_DEPTH, rodDiameter, threadGap, threadOverlap } from "../src/library/printKit";
@@ -240,25 +240,34 @@ describe("every new design", () => {
 });
 
 describe("browsing the library", () => {
-  it("puts the 3D printing designs in groups, in a set order", () => {
-    const groups = groupDesigns(designsIn("print"));
-    expect(groups.map((g) => g.group)).toEqual(LIBRARY_GROUPS.filter((g) => designsIn("print").some((d) => d.group === g)));
+  it("puts the 3D printing designs under headings, in a set order, with ungrouped ones first", () => {
+    const groups = designGroups("print");
+    // The printed stamp has no group: first, without a heading.
+    expect(groups[0]).toEqual({ group: null, designs: [design("printed-stamp")] });
+    expect(groups.slice(1).map((g) => g.group)).toEqual(GROUP_ORDER.print.filter((g) => designsIn("print").some((d) => d.group === g)));
     expect(groups.find((g) => g.group === "Fixings")!.designs.map((d) => d.id)).toEqual(["spacer", "bolt-set", "standoff"]);
     expect(groups.find((g) => g.group === "Hinges")!.designs.map((d) => d.id)).toEqual(["hinge", "piano-hinge"]);
+    expect(groups.find((g) => g.group === "Workshop")!.designs.map((d) => d.id)).toEqual(["bit-holder", "pegboard-hook"]);
     expect(groups.flatMap((g) => g.designs)).toHaveLength(designsIn("print").length);
-    // A section with no groups is shown as one list; ungrouped designs among grouped ones go under "More", last.
-    const plain = designsIn("laser").map((d) => ({ ...d, group: undefined }));
-    expect(groupDesigns(plain)).toEqual([{ group: null, designs: plain }]);
-    const mixed: LibraryDesign[] = [{ ...design("tray"), group: undefined }, design("hinge"), { ...design("knob"), group: "Toys" }];
-    expect(groupDesigns(mixed).map((g) => g.group)).toEqual(["Hinges", "Toys", OTHER_GROUP]);
+    // Laser cutting keeps its headings in the order they're first used.
+    const laser = designGroups("laser").map((g) => g.group);
+    const firstUse = [...new Set(designsIn("laser").filter((d) => d.group).map((d) => d.group!))];
+    expect(laser.filter((g) => g !== null)).toEqual(firstUse);
+    // Others follow the set ones; with no order, first use.
+    const mixed: LibraryDesign[] = [{ ...design("knob"), group: "Toys" }, design("hinge"), { ...design("tray"), group: undefined }];
+    expect(groupDesigns(mixed, GROUP_ORDER.print).map((g) => g.group)).toEqual([null, "Hinges", "Toys"]);
+    expect(groupDesigns(mixed).map((g) => g.group)).toEqual([null, "Toys", "Hinges"]);
     expect(groupDesigns([])).toEqual([]);
   });
 
   it("finds designs by any word of their name, group or description, names first", () => {
     expect(searchDesigns("bolt")[0].id).toBe("bolt-set");
-    expect(searchDesigns("HINGE").map((d) => d.id).slice(0, 2).sort()).toEqual(["hinge", "piano-hinge"]);
+    // Every hinge (the print-in-place and piano hinges, and the laser's living hinge), whatever the case typed.
+    const hinges = searchDesigns("HINGE").map((d) => d.id);
+    for (const id of ["hinge", "piano-hinge", "living-hinge"]) expect(hinges.slice(0, 3)).toContain(id);
     for (const id of ["bolt-set", "standoff", "spacer"]) expect(searchDesigns("fix").map((d) => d.id)).toContain(id);
     expect(searchDesigns("laser box").map((d) => d.id)).toContain("finger-box");
+    expect(searchDesigns("stencil")[0].id).toBe("stencil");
     expect(searchDesigns("jar lid").map((d) => d.id)).toEqual(["jar"]);
     expect(searchDesigns("  ")).toEqual([]);
     expect(searchDesigns("teapot")).toEqual([]);

@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 
 import { useDocument, useStore } from "../model/store";
-import { currentValues, defaultValues, designsIn, findDesign, findInsert, LIBRARY_CATEGORIES, liveInserts, valueProblems } from "../library/insert";
+import { currentValues, defaultValues, designGroups, findDesign, type DesignGroup, findInsert, LIBRARY_CATEGORIES, liveInserts, valueProblems } from "../library/insert";
 import { rememberedTab, rememberTab } from "../library/tabMemory";
-import { groupDesigns, searchDesigns } from "../library/browse";
+import { searchDesigns } from "../library/browse";
 import { previewPicture } from "../library/preview";
 import type { DesignCategory, DesignInput, DesignValues, LibraryDesign } from "../library/types";
 import { Modal } from "./Modal";
@@ -63,13 +63,13 @@ function DesignCard({ design, onPick }: { design: LibraryDesign; onPick: (id: st
   );
 }
 
-/** Designs in their groups, each group under a small heading (none when the section has no groups). */
-function GroupedCards({ designs, onPick }: { designs: LibraryDesign[]; onPick: (id: string) => void }) {
+/** Designs under their headings (none for designs without a group, which come first). */
+function GroupedCards({ groups, onPick }: { groups: DesignGroup[]; onPick: (id: string) => void }) {
   return (
     <>
-      {groupDesigns(designs).map((g) => (
-        <div key={g.group ?? "all"} className="library-group">
-          {g.group && <h4 className="library-group-heading">{g.group}</h4>}
+      {groups.map((g) => (
+        <div key={g.group ?? ""}>
+          {g.group && <h4 className="library-group">{g.group}</h4>}
           <div className="library-grid">
             {g.designs.map((d) => (
               <DesignCard key={d.id} design={d} onPick={onPick} />
@@ -92,7 +92,7 @@ function valuesFrom(design: LibraryDesign, typed: Typed): DesignValues {
     design.inputs.map((i) => {
       const t = typed[i.key];
       if (i.kind === "toggle") return [i.key, t === true];
-      if (i.kind === "choice") return [i.key, String(t)];
+      if (i.kind === "choice" || i.kind === "text") return [i.key, String(t)];
       const n = typeof t === "string" && t.trim() ? Number(t) : NaN;
       return [i.key, n];
     }),
@@ -111,7 +111,13 @@ function InputRow({ input, value, onChange }: { input: DesignInput; value: strin
       ) : (
         <>
           <label htmlFor={id}>{input.label}</label>
-          {input.kind === "choice" ? (
+          {input.kind === "text" ? (
+            input.multiline ? (
+              <textarea id={id} className="library-words" rows={Math.min(4, Math.max(2, String(value).split("\n").length))} value={String(value)} maxLength={input.maxLength ?? 60} onChange={(e) => onChange(e.target.value)} />
+            ) : (
+              <input id={id} className="library-words" value={String(value)} maxLength={input.maxLength ?? 60} onChange={(e) => onChange(e.target.value)} />
+            )
+          ) : input.kind === "choice" ? (
             <select id={id} value={String(value)} onChange={(e) => onChange(e.target.value)}>
               {input.choices?.map((c) => (
                 <option key={c.value} value={c.value}>
@@ -222,8 +228,8 @@ export function LibraryDialog() {
               <p className="muted small">Try another word, or clear the search to see every design.</p>
             ) : (
               LIBRARY_CATEGORIES.filter((c) => found.some((d) => d.category === c.id)).map((c) => (
-                <div key={c.id} className="library-group">
-                  <h4 className="library-group-heading">{c.label}</h4>
+                <div key={c.id}>
+                  <h4 className="library-group">{c.label}</h4>
                   <div className="library-grid">
                     {found
                       .filter((d) => d.category === c.id)
@@ -264,7 +270,7 @@ export function LibraryDialog() {
               <section key={c.id} id="library-section" role="tabpanel" aria-labelledby={`library-tab-${c.id}`}>
                 <h3 className="library-heading">{c.label}</h3>
                 <p className="muted small">{c.blurb}</p>
-                <GroupedCards designs={designsIn(c.id)} onPick={pick} />
+                <GroupedCards groups={designGroups(c.id)} onPick={pick} />
               </section>
             ))}
           </>

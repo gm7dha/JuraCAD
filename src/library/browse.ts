@@ -1,34 +1,15 @@
 /**
- * Browsing the Design library: designs in smaller groups within a section ("Fixings", "Hinges"…), and a search over
- * every design's name, description and group. Pure, so the library window and its tests share it.
+ * Searching the Design library: every design's name, description, group and section. Pure, so the library window and
+ * its tests share it. (Headings within a section are `designGroups` in insert.ts.)
  */
 import { categoryLabel, LIBRARY } from "./insert";
 import type { LibraryDesign } from "./types";
-
-/** The groups, in the order they're shown; any other group comes after them, and designs without one last. */
-export const LIBRARY_GROUPS: readonly string[] = ["Fixings", "Hinges", "Storage", "Household", "Workshop"];
-/** The heading for designs without a group, in a section where others have one. */
-export const OTHER_GROUP = "More";
-
-export interface DesignGroup {
-  /** The group's name, or null when no design in the list has a group (shown without headings). */
-  group: string | null;
-  designs: LibraryDesign[];
-}
-
-/** The designs in groups, in the groups' order (each group's designs in the library's order). */
-export function groupDesigns(designs: readonly LibraryDesign[]): DesignGroup[] {
-  if (!designs.some((d) => d.group)) return designs.length ? [{ group: null, designs: [...designs] }] : [];
-  const rank = (g: string) => (LIBRARY_GROUPS.includes(g) ? LIBRARY_GROUPS.indexOf(g) : g === OTHER_GROUP ? Infinity : LIBRARY_GROUPS.length);
-  const names = [...new Set(designs.map((d) => d.group ?? OTHER_GROUP))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
-  return names.map((group) => ({ group, designs: designs.filter((d) => (d.group ?? OTHER_GROUP) === group) }));
-}
 
 const words = (text: string) =>
   text
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .split(/[^a-z0-9.]+/)
     .filter(Boolean);
 

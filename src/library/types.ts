@@ -7,7 +7,7 @@
 import type { Feature } from "../model/types";
 import type { Ex } from "./ex";
 
-export type InputKind = "length" | "count" | "choice" | "toggle";
+export type InputKind = "length" | "count" | "choice" | "toggle" | "text";
 
 /** One of a design's plain-named sizes or choices. */
 export interface DesignInput {
@@ -22,6 +22,11 @@ export interface DesignInput {
   max?: number;
   /** Choices. */
   choices?: { value: string; label: string }[];
+  /** Text: the most letters it may have (default 60), and whether it may have several lines (one per line in the box). */
+  maxLength?: number;
+  multiline?: boolean;
+  /** Text: may be left empty. */
+  optional?: boolean;
   /**
    * Kept as a document variable (`<prefix>_<key>`), so it can be changed later
    * in Variables and the design follows. Inputs that change what's made (how
@@ -65,8 +70,13 @@ export interface LibraryDesign {
   description: string;
   /** Which section of the library it's in: "laser" (Laser cutting) or "print" (3D printing). */
   category: DesignCategory;
-  /** A smaller group within its section ("Fixings", "Hinges"…), for browsing; missing = shown without a group. */
+  /** A heading it's listed under within its section ("Signs and stamps", "Boxes"…). Missing = listed first, without one. */
   group?: string;
+  /**
+   * Export for laser's settings for a sketch this design makes, by the sketch's role (the `ctx.id(role)` it was made
+   * with): e.g. a stamp's sketch engraves the background. Set when that sketch is picked in the laser panel.
+   */
+  laser?: Record<string, { background?: boolean; text?: "cut" | "engrave"; shapes?: "cut" | "engrave"; open?: "cut" | "score" }>;
   /** Start of its variables' names: box → box_width. */
   prefix: string;
   /** A small drawing for its card: the inside of an <svg viewBox="0 0 48 48">, in currentColor. */

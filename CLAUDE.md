@@ -93,7 +93,7 @@
   (`relationMayTakeAWhile`, deferred a frame in sketchActions.ts).
   Text and pictures: `src/sketch/sketchText.ts` — `SketchData.texts` (hangs from an `anchor` point, so it's dimensioned and
   constrained as a point; letter outlines from `geometry/fonts.ts` are loops in regions.ts and line pieces with ids
-  "<textId>.<wordsHash>.<k>" in areas.ts, so picks go "gone" when the words change) and `.images` (data: URLs, shrunk to
+  "<textId>.<wordsHash>.<k>" in areas.ts, so picks go "gone" when the words change; `SketchText.mirror` flips it left to right about its point, each outline walked the other way — for stamps; "Mirrored (for a stamp)" in the sketch panel) and `.images` (data: URLs, shrunk to
   ≤1600 px on insert, to trace over; drawn by SketchLayer, never shapes, not sent to the worker). Many ops build a sketch from
   points/curves/constraints only, so `store.updateSketch` runs `keepSketchExtras`: a MISSING list = "untouched, carry it", a
   present (even empty) list = deliberate; empty lists are dropped on commit (`withoutEmptyExtras`). Code that builds a whole
@@ -330,7 +330,7 @@
   (`gh api repos/gm7dha/JuraCAD/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → glossy finish → save a 2× see-through picture → section view → check → export STL, STEP and 3MF → Laser: click the top face, save SVG (40 × 30 mm, blue hole, red outline) and DXF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, make a copy flexible (nothing jumps), undo, double-click opens it → add a second Part Studio with a box → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → a view of another part with a projected top view (lined up), auto-dimensioned, then removed → draw the assembly exploded (parts list) → sheet metal from a part (a shelled box in a new Part Studio: its walls clicked one at a time from views that see them, a rip clicked, three more added, Accept: 4 bends); Design library: a finger-joint box inserted (6 panels, 140 mm) and widened to 170 mm in Variables, then a box with lid from the 3D printing tab (2 parts), then a bolt, nut and washer set found by searching; a touch screen (an iPad-sized page with `hasTouch`, fingers sent through CDP `Input.dispatchTouchEvent`: pinch zooms the 3D view and not the page, double-tap fits, a tap selects a face, in a sketch two fingers pan and draw nothing, a one-finger drag draws a line); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → glossy finish → save a 2× see-through picture → section view → check → export STL, STEP and 3MF → Laser: click the top face, save SVG (40 × 30 mm, blue hole, red outline) and DXF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, make a copy flexible (nothing jumps), undo, double-click opens it → add a second Part Studio with a box → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → a view of another part with a projected top view (lined up), auto-dimensioned, then removed → draw the assembly exploded (parts list) → sheet metal from a part (a shelled box in a new Part Studio: its walls clicked one at a time from views that see them, a rip clicked, three more added, Accept: 4 bends); Design library: a finger-joint box inserted (6 panels, 140 mm) and widened to 170 mm in Variables, then a box with lid from the 3D printing tab (2 parts), then a bolt, nut and washer set found by searching, then a stencil of HELLO exported for laser (1 red outline, 5 blue holes); a touch screen (an iPad-sized page with `hasTouch`, fingers sent through CDP `Input.dispatchTouchEvent`: pinch zooms the 3D view and not the page, double-tap fits, a tap selects a face, in a sketch two fingers pan and draw nothing, a one-finger drag draws a line); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.
@@ -448,7 +448,7 @@
   `laserDxf` (closed POLYLINEs with bulges, so arcs stay exact; lone circles as CIRCLE; Béziers/ellipses as straight pieces within
   `FLAT_TOLERANCE` 0.005 mm). `sources.ts` — `sketchPiece` (`findChains(…, { branching: true })` gives each curve of a junction group as its own run; `junctionCurves`
   asks the areas made by its own junction group's curves only (`Chain.group`/`curve`; `sketchAreas().areaAt` just either side of its middle; the same line drawn twice is kept once, `uniqueRuns`): open space on one side = outline, chained into closed loops; area on both
-  sides or neither = a line (cut or scored) — so a house or a rectangle with a diagonal keeps its red outline; text from `textContours`, engraved by default; shapes cut or engraved; open lines cut or scored) and `outlinePiece`
+  sides or neither = a line (cut or scored) — so a house or a rectangle with a diagonal keeps its red outline; text from `textContours`, engraved by default; shapes cut or engraved; open lines cut or scored; `background` (rubber stamps, "Engrave the background" in the panel, `background` in export_for_laser): every closed loop, text too, into one even–odd engraving and the outermost loops also cut red; shapes that cross rather than nest are both outermost, so both outlines are cut and their overlap is left unengraved) and `outlinePiece`
   (engine outlines + bend lines as scores). Engine: `GeometryEngine.laserOutlines(sources)` (worker request `laserOutlines`) with
   `src/kernel/laserFaces.ts` — a face's wires read edge by edge through BRepAdaptor_Curve into the face's frame (`faceFrame`: seen
   from outside; across = X for up/down faces, else level), circles/arcs/whole ellipses exact, other curves Hermite→Bézier within
@@ -518,14 +518,52 @@
   callout/text selection); feature rows aren't HTML-draggable there (Move up/down in their menu instead). Tests: tests/gestures.test.ts,
   tests/zoomGuard.test.ts, tests/touchCompat.test.ts, tests/sketchTouchStroke.test.ts (cancelStroke after a drag began); the smoke test's touch section. Only a real iPad can confirm Safari's own touch quirks.
 - Design library (Onshape-style configurable library parts): `src/library/` (pure). `insert.ts` has `LIBRARY` (`designs/*.ts`) in two
-  sections, `LibraryDesign.category` "laser" (Laser cutting: finger-joint box, flat-pack phone stand — flat panels for Export for laser)
+  sections, `LibraryDesign.category` "laser" (Laser cutting: finger-joint box, flat-pack phone stand, and `designs/laserSet.ts`'s
+  stencil, rubber stamp, name/key tag, coasters, picture frame, living-hinge panel, gear, ruler — flat panels for Export for laser)
   and "print" (3D printing: tray, box with lid, shelf bracket, wall hook, cable clip, phone/tablet stand, print-in-place hinge,
-  spacer/washer, grip knob, and — in `printDesigns.ts`, appended to LIBRARY — bolt/nut/washer set, hex standoff, piano hinge,
-  screw-top jar, bit holder block, pegboard hook, drawer pull, desk cable grommet, corner protector — each sits flat on the bed
-  at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`. Optional `LibraryDesign.group` ("Fixings", "Hinges", "Storage",
-  "Household", "Workshop"; `browse.ts`: `groupDesigns` — headings in `LIBRARY_GROUPS` order, ungrouped under "More", none at all
-  when a section has no groups — and `searchDesigns`: every typed word must start a word of the name/group/section/description,
-  name matches first); the window has a search box (results across both sections; cleared on close) and group headings. Each is a `LibraryDesign` (id, name,
+  spacer/washer, grip knob, stamp with handle, and — in `printDesigns.ts`, appended to LIBRARY — bolt/nut/washer set, hex
+  standoff, piano hinge, screw-top jar, bit holder block, pegboard hook, drawer pull, desk cable grommet, corner protector — each
+  sits flat on the bed at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`;
+  optional `LibraryDesign.group` = a heading within the tab (`designGroups` = `groupDesigns(designsIn(c))`: ungrouped first, then
+  groups — that section's `GROUP_ORDER` first (print: Fixings, Hinges, Storage, Household, Workshop; laser: none), the rest in order of first use;
+  laser: Boxes and stands, Signs and stamps, Home, Workshop). The window also has a search box (`browse.ts` `searchDesigns`: every
+  typed word must start a word of the name/group/section/description, name matches first; results across both tabs, under
+  section headings; cleared on close).
+  Text inputs: `InputKind` "text" (`maxLength` default 60, `multiline` = lines split by "\n", ≤ `MAX_TEXT_LINES` 6, `optional`;
+  CRLF → LF in `completeValues`; parse.ts keeps strings ≤ 1000) — saved in the insert's `values`, changed by Edit design sizes,
+  never variables; the font is a plain "choice" (`textKit.fontInput`). `textKit.ts`: words go in as ordinary sketch Text (one
+  `SketchText` per line, anchor "centre" at a point dimensioned from the origin, `addTextBlock`), sized so capitals are the given
+  height (`sizeForCaps`/`capShare`: the H's height), measured with the very same outlines (`blockContours` → textContours);
+  `missingLetters` (a stand-in font with no glyphs can't be judged). `stableIds` (now `stableIds.ts`) also gives texts ids
+  `<feature>_t<i>` and re-points their anchors. Stencil (`designs/stencil.ts`): Sheet sketch (letters' box + margin, variables
+  margin/thickness) → Letters sketch (Text) Remove through all → Bridges sketch (rectangles) Add — so the part's face exports red
+  outline + blue holes. Bridges are pure in `bridges.ts` (`planBridges`): an outline inside an odd number of others is an island;
+  strips of the bridge width are tried up/down/left/right (outlines turned so the direction is +y) at `PLACES` spots across it,
+  each checked on `LINES` lines across its width — it must start in the island, cross exactly one stroke (2 crossings) and end in
+  sheet or another island (`stencilAt`), and no other outline may enter it (`segmentInBox`); upright before sideways, then the
+  shortest; `perIsland` 2 = one on the opposite side; `unheldIslands` follows island→island links to the sheet (the design refuses
+  unheld ones). `stencilPlan` caches plans (the preview asks each key). Rubber stamp (`designs/stamp.ts`): Plate sketch → Plate
+  extruded *down* (flip) from Top, then "Stamp sketch" (outline + border as two outlines + mirrored Text) Remove down by `relief` —
+  with no areas picked its even–odd shapes are exactly the background; `LibraryDesign.laser` = Export for laser settings for a
+  sketch by role ({"stamp-sketch": {background: true}}), looked up by `laserDefaultsFor(doc, sketchId)` (LaserPanel applies them when
+  that sketch is chosen, via `sketchSettingsFor` in sources.ts: a design's settings over `SKETCH_DEFAULTS`, and back to the defaults
+  when the next sketch has none — `laserState.fromDesign` — else the user's choices stay; export_for_laser uses them unless told
+  otherwise; the living hinge sets `open: "cut"`). The printed stamp: block + Words sketch (border ring +
+  mirrored text) Add from z 0 to base + relief, handle a New cylinder beside it. Engraved plates (`designs/engraved.ts`: coasters, tag,
+  ruler): one sketch (outline(s), holes, Text, lines); per plate (a coaster set: `pieceOf`, nearest coaster) a New extrude down with
+  `areas` = that plate's areas but the holes, then its letters a plain (not `apart`) Remove down `ENGRAVE_DEPTH` 0.4 with `areas` =
+  its letters — so it cuts only the latest part, the plate just made, never a user's part or other coasters (engineLibraryLaser
+  "engraving reaches only the design's own plates") (`laserKit.pickAreas`: stableIds first, so the picks' curve ids are the
+  feature's; areas classed by a point inside and how many letter outlines are round it, `onLetters`). `extrudeFeature` takes
+  `areas` and `apart`.
+  Loose lines (`laserKit.addLines`: free points, no relations — "fix" on hundreds of points makes analyzeSketch take seconds):
+  living hinge (`hingeCuts`: columns `spacing` apart over the zone, every other one offset half a step, clear of the edges by
+  `gap`; the panel extrude ignores them; Export for laser cuts them blue), gear (`gearOutline`: involute flanks
+  β(r) = π/2z + inv φ − inv(acos(rb/r)), radial below the base circle, root/tip as short lines, `gearFlankPoints` per flank — 6 + 2 per mm of module, ≤ 1400 / teeth — within ~0.01 mm; `gearSizes`;
+  the summary warns below `UNDERCUT_TEETH` 13 at 20°, 23 at 14.5°), ruler marks
+  (`rulerMarks`, `MARK_GAP` 0.5 mm off the edge so they don't split the outline; laser setting `open: "score"`). These sketches
+  aren't fully defined (library.test's `LOOSE_LINES`). Picture frame (`designs/workshop.ts`): back (hang hole), middle (a U open at
+  the top, photo + 0.5 mm), front (window = photo − overlap), stacked with Moves; sizes are variables. Each is a `LibraryDesign` (id, name,
   description, `icon` = fixed SVG markup, `inputs` with defaults/limits, `problems`, `make`, `preview` shapes, `summary`).
   The library window shows the sections as tabs (3D printing first time, then the last one in localStorage `juracad.libraryTab`, `tabMemory.ts`, try/catch; roving tabIndex);
   `libraryInserts` don't store the category. Newer designs: box with lid (`boxLid.ts`: lid = a tray upside down, inside = box
@@ -576,10 +614,12 @@
   that). No Plane features (they'd need `refreshDocumentPlanes` wherever variables change). UI `src/app/LibraryDialog.tsx`
   (`store.library`: browse / a design picked / edit; Toolbar "Library"); store `insertLibraryDesign`/`editLibraryDesign` (one
   undo step; a new Part Studio is shown). Claude: `src/mcp/libraryTools.ts` (list_library_designs, insert_library_design —
-  into the Part Studio on show). Tests: tests/libraryFingers, library (pure), engineLibrary and engineLibraryPrint (volumes, no overlaps, the hinge's and lid's
+  into the Part Studio on show). Tests: tests/libraryFingers, library, libraryLaser (pure: text inputs, mirrored text, bridges, background engraving, maths), engineLibrary, engineLibraryLaser (stencil holes with no island left floating, the stamp's engraved background = plate − border − letters, every laser design) and engineLibraryPrint (volumes, no overlaps, the hinge's and lid's
   gaps by nudging a part 90% of the clearance, variables, a user's overlapping part left alone), mcpLibrary (incl. the
   `category` filter of list_library_designs); the smoke test inserts a box and widens it in Variables, then a box with lid from
-  the 3D printing tab (2 parts), then a bolt set found with the search box (thread off, 3 parts). New designs' tests:
+  the 3D printing tab (2 parts), then a stencil of HELLO saved for laser (1 red, 5 blue); mcpLibraryLaser (words through
+  insert_library_design, a stencil and a stamp exported).
+  The smoke test also finds a bolt set with the search box (thread off, 3 parts). New print designs' tests:
   tests/libraryPrint (pure: sizes, thread maths, fully defined, groups/search), engineLibraryPrint2 (piano hinge turned round its
   pin with no clash, volumes), engineLibraryThreads (heavy: bolt and nut free at a 0.2 mm fit somewhere in each turn with room
   both ways, just touching at 0 — found by a golden-section search — overlapping at −0.1; the jar's lid screws on; groove depth).

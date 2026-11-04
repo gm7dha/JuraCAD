@@ -11,11 +11,11 @@
  */
 import { newId } from "../model/document";
 import { getCurrentScope, setCurrentScope } from "../model/expr";
-import { ORIGIN_ID, type SketchCurve, type SketchData } from "../sketch/types";
 import { addStudio, inStudio, renameStudio, studioOfFeature, studiosOf } from "../model/studios";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { applyVariables, resolveVariables, type Variable } from "../model/variables";
 import { named, tidy } from "./ex";
+import { stableIds } from "./stableIds";
 import { boxLid } from "./designs/boxLid";
 import { bracket } from "./designs/bracket";
 import { cableClip } from "./designs/cableClip";
@@ -28,10 +28,11 @@ import { knob } from "./designs/knob";
 import { spacer } from "./designs/spacer";
 import { tray } from "./designs/tray";
 import { PRINT_DESIGNS } from "./printDesigns";
+import { LASER_DESIGNS, printedStamp } from "./designs/laserSet";
 import type { DesignCategory, DesignInput, DesignValues, LibraryDesign, LibraryInsert } from "./types";
 
 /** Every design in the library, in the order they're shown (laser cutting first, then 3D printing). */
-export const LIBRARY: readonly LibraryDesign[] = [fingerBox, flatStand, tray, boxLid, bracket, hook, cableClip, phoneStand, hinge, spacer, knob, ...PRINT_DESIGNS];
+export const LIBRARY: readonly LibraryDesign[] = [fingerBox, flatStand, ...LASER_DESIGNS, tray, boxLid, bracket, hook, cableClip, phoneStand, hinge, spacer, knob, printedStamp, ...PRINT_DESIGNS];
 
 /** The library's sections, in the order they're shown. */
 export const LIBRARY_CATEGORIES: readonly { id: DesignCategory; label: string; blurb: string }[] = [
@@ -43,6 +44,35 @@ export const LIBRARY_CATEGORIES: readonly { id: DesignCategory; label: string; b
 export function designsIn(category: DesignCategory): LibraryDesign[] {
   return LIBRARY.filter((d) => d.category === category);
 }
+
+/** Designs under one heading (`group` null = those without a group, listed first without a heading). */
+export interface DesignGroup {
+  group: string | null;
+  designs: LibraryDesign[];
+}
+
+/** Per section, headings that come first, in this order; any others follow in the order they're first used. */
+export const GROUP_ORDER: Record<DesignCategory, readonly string[]> = {
+  laser: [],
+  print: ["Fixings", "Hinges", "Storage", "Household", "Workshop"],
+};
+
+/** Designs under their headings (`LibraryDesign.group`): ungrouped ones first, then the groups (`order`'s first), each in the library's order. */
+export function groupDesigns(designs: readonly LibraryDesign[], order: readonly string[] = []): DesignGroup[] {
+  const out: DesignGroup[] = [];
+  for (const d of [...designs.filter((x) => !x.group), ...designs.filter((x) => x.group)]) {
+    const g = d.group ?? null;
+    const at = out.find((x) => x.group === g);
+    if (at) at.designs.push(d);
+    else out.push({ group: g, designs: [d] });
+  }
+  const rank = (g: string | null) => (g === null ? -1 : order.includes(g) ? order.indexOf(g) : order.length);
+  // A stable sort: groups of equal rank keep the order they first come in.
+  return out.sort((a, b) => rank(a.group) - rank(b.group));
+}
+
+/** A section's designs under their headings. */
+export const designGroups = (category: DesignCategory): DesignGroup[] => groupDesigns(designsIn(category), GROUP_ORDER[category]);
 
 /** A section's id from text (a remembered tab, a tool's input), or null if it isn't one. */
 export function categoryFrom(raw: unknown): DesignCategory | null {
@@ -62,6 +92,9 @@ export function defaultValues(design: LibraryDesign): DesignValues {
   return Object.fromEntries(design.inputs.map((i) => [i.key, i.default]));
 }
 
+/** The most lines a text input may have. */
+export const MAX_TEXT_LINES = 6;
+
 const unitOf = (i: DesignInput) => (i.kind === "length" ? " mm" : "");
 
 /** What's wrong with one input's value (plain English), or null. */
@@ -71,6 +104,15 @@ export function inputProblem(i: DesignInput, v: unknown): string | null {
       return typeof v === "boolean" ? null : `${i.label}: choose on or off.`;
     case "choice":
       return i.choices?.some((c) => c.value === v) ? null : `${i.label}: choose one of ${i.choices?.map((c) => c.label).join(", ")}.`;
+    case "text": {
+      if (typeof v !== "string") return `${i.label}: type some words.`;
+      if (!v.trim() && !i.optional) return `${i.label}: type some words.`;
+      const most = i.maxLength ?? 60;
+      if (v.length > most) return `${i.label}: at most ${most} letters.`;
+      if (!i.multiline && /[\r\n]/.test(v)) return `${i.label}: one line only.`;
+      if (i.multiline && v.split("\n").length > MAX_TEXT_LINES) return `${i.label}: at most ${MAX_TEXT_LINES} lines.`;
+      return null;
+    }
     default: {
       if (typeof v !== "number" || !Number.isFinite(v)) return `${i.label}: type a number${i.kind === "length" ? " (millimetres)" : ""}.`;
       if (i.kind === "count" && !Number.isInteger(v)) return `${i.label}: must be a whole number.`;
@@ -95,6 +137,8 @@ export function completeValues(design: LibraryDesign, given: Record<string, unkn
     if (v === undefined || v === null) continue;
     if ((i.kind === "length" || i.kind === "count") && typeof v === "string" && v.trim() && Number.isFinite(Number(v))) out[i.key] = Number(v);
     else if (i.kind === "choice" && typeof v === "number") out[i.key] = String(v);
+    else if (i.kind === "text" && typeof v === "number") out[i.key] = String(v);
+    else if (i.kind === "text" && typeof v === "string") out[i.key] = v.replace(/\r\n?/g, "\n");
     else out[i.key] = v as number | string | boolean;
   }
   return out;
@@ -126,36 +170,6 @@ function variableName(doc: JuraCADDocument, insert: LibraryInsert, key: string):
   const id = insert.variables?.[key];
   const v = id ? doc.variables?.find((x) => x.id === id) : undefined;
   return v?.name ?? `${insert.prefix}_${key}`;
-}
-
-/**
- * Give a sketch's points, curves and dimensions ids made from where they come in it (`<feature id>_p3`…), so the
- * same design made again keeps the same ids — and other sketches' links to it keep working after a size change.
- */
-function stableIds(s: SketchData, prefix: string): SketchData {
-  const map = new Map<string, string>([[ORIGIN_ID, ORIGIN_ID]]);
-  s.points.forEach((p, i) => map.set(p.id, `${prefix}_p${i}`));
-  s.curves.forEach((c, i) => map.set(c.id, `${prefix}_c${i}`));
-  s.constraints.forEach((c, i) => map.set(c.id, `${prefix}_k${i}`));
-  const m = (id: string) => map.get(id) ?? id;
-  return {
-    ...s,
-    points: s.points.map((p) => ({ ...p, id: m(p.id) })),
-    curves: s.curves.map((c): SketchCurve => {
-      switch (c.type) {
-        case "line":
-          return { ...c, id: m(c.id), p1: m(c.p1), p2: m(c.p2) };
-        case "circle":
-          return { ...c, id: m(c.id), center: m(c.center) };
-        case "arc":
-          return { ...c, id: m(c.id), center: m(c.center), start: m(c.start), end: m(c.end) };
-        default:
-          // Designs only draw lines, circles and arcs; anything else keeps its ids.
-          return c;
-      }
-    }),
-    constraints: s.constraints.map((c) => ({ ...c, id: m(c.id), refs: c.refs.map(m) })),
-  };
 }
 
 /** Make the design's features (and part names) for an insert, with the variables as they are in `doc`. */
@@ -241,6 +255,18 @@ function insertNow(doc: JuraCADDocument, design: LibraryDesign, values: DesignVa
   next = withPartNames(next, made.partNames, true);
   next = { ...next, libraryInserts: [...(doc.libraryInserts ?? []), insert] };
   return { doc: next, insert, studioId };
+}
+
+/**
+ * Export for laser's settings for a sketch made by a library design (a stamp's sketch engraves its background), or
+ * null for any other sketch.
+ */
+export function laserDefaultsFor(doc: JuraCADDocument, sketchId: string): NonNullable<LibraryDesign["laser"]>[string] | null {
+  const insert = insertOfFeature(doc, sketchId);
+  const design = insert && findDesign(insert.design);
+  if (!insert || !design?.laser) return null;
+  const role = sketchId.startsWith(`${insert.id}_`) ? sketchId.slice(insert.id.length + 1) : null;
+  return (role && design.laser[role]) || null;
 }
 
 export function findInsert(doc: JuraCADDocument, id: string): LibraryInsert | undefined {

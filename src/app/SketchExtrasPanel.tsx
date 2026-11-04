@@ -184,6 +184,12 @@ function TextOptions({ data, text }: { data: SketchData; text: SketchText | unde
           ))}
         </div>
       </div>
+      {text && (
+        <label className="tool-option" title="Flip the letters left to right, as on a rubber stamp, so they read the right way once printed">
+          <input type="checkbox" checked={text.mirror === true} onChange={(e) => apply({ mirror: e.target.checked })} />
+          Mirrored (for a stamp)
+        </label>
+      )}
       <p className="dialog-hint">
         {text
           ? "Drag the text to move it, or dimension and constrain its point like any point. Its letters are shapes to extrude, cut or emboss."

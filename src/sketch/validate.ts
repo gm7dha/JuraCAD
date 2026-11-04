@@ -154,6 +154,7 @@ function parseText(raw: unknown): SketchText | null {
     angle: num(t.angle) ? t.angle : 0,
     font: t.font === "bold" ? "bold" : "regular",
     ...(t.anchorAt === "centre" ? { anchorAt: "centre" as const } : {}),
+    ...(t.mirror === true ? { mirror: true } : {}),
     construction: t.construction === true,
   };
 }

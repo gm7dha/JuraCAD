@@ -262,6 +262,11 @@ export interface SketchText {
   font: "regular" | "bold";
   /** Where the anchor is: the start of the first line's baseline (the default), or the middle of the text. */
   anchorAt?: "start" | "centre";
+  /**
+   * Drawn back to front (flipped left to right about its point), as on a rubber stamp, so it reads the right way
+   * once printed. Missing = as written.
+   */
+  mirror?: boolean;
   construction: boolean;
 }
 

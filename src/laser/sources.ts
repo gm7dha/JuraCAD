@@ -46,6 +46,29 @@ export interface SketchLaserOptions {
   text?: "cut" | "engrave";
   /** Lines that don't close: cut along them, or score them. */
   open?: "cut" | "score";
+  /**
+   * Engrave the background, as for a rubber stamp: everything inside the outermost outlines is engraved except the
+   * shapes and letters drawn inside them (worked out even–odd, so a border drawn as two outlines stays, and the middle
+   * of an "O" is engraved again), and the outermost outlines are cut. `shapes` and `text` are then not used.
+   * Shapes that cross each other (rather than one inside another) are both outermost: both outlines are cut, and
+   * where they overlap is left unengraved (even–odd) — draw a stamp's parts nested, not crossing.
+   */
+  background?: boolean;
+}
+
+/** What Export for laser does with a sketch unless told otherwise (the panel's first settings). */
+export const SKETCH_DEFAULTS: Required<SketchLaserOptions> = { text: "engrave", shapes: "cut", open: "cut", background: false };
+
+/**
+ * The laser panel's sketch settings when a sketch is picked. A sketch made by a library design brings its own
+ * (anything it doesn't set takes the plain default); moving on from such a sketch to one without them goes back to
+ * the defaults, so a ruler's scored lines don't turn a living hinge's cuts green. Between ordinary sketches the
+ * user's own choices are kept.
+ */
+export function sketchSettingsFor(now: Required<SketchLaserOptions> & { fromDesign: boolean }, design: SketchLaserOptions | null): Required<SketchLaserOptions> & { fromDesign: boolean } {
+  if (design) return { ...SKETCH_DEFAULTS, ...design, fromDesign: true };
+  if (now.fromDesign) return { ...SKETCH_DEFAULTS, fromDesign: false };
+  return now;
 }
 
 /**
@@ -145,6 +168,7 @@ export function sketchPiece(name: string, sketch: SketchData, opts: SketchLaserO
     .flatMap((t) => textContours(sketch, t))
     .filter((c) => c.length >= 3)
     .map((c): Segment[] => c.map((p, i) => ({ kind: "line", from: p, to: c[(i + 1) % c.length] })));
+  if (opts.background) return { name, paths: backgroundPaths([...shapeLoops, ...textLoops], openRuns, opts.open === "score" ? "score" : "inner") };
   const engraveShapes = opts.shapes === "engrave";
   const engraveText = opts.text === "engrave";
   // What's cut is sorted together (a letter cut through a plate is inside the plate's outline).
@@ -158,6 +182,23 @@ export function sketchPiece(name: string, sketch: SketchData, opts: SketchLaserO
     ...openRuns.map((segments): LaserPath => ({ layer: openLayer, segments, closed: false })),
   ];
   return { name, paths };
+}
+
+/**
+ * A stamp's layers: every closed outline goes into the engraving (one even–odd filled area: inside the outline, outside
+ * the border's outer edge, inside its inner edge, outside the letters, inside their holes…), and the outermost outlines
+ * are also cut, so the stamp comes out of the sheet. Lines that don't close are cut or scored as usual.
+ */
+function backgroundPaths(loops: Segment[][], openRuns: Segment[][], openLayer: LaserLayer): LaserPath[] {
+  const sorted = sortLoops(loops);
+  const closed = sorted.filter((p) => p.closed);
+  const lines = sorted.filter((p) => !p.closed).map((p) => ({ ...p, layer: openLayer }));
+  return [
+    ...closed.map((p): LaserPath => ({ layer: "engrave", segments: p.segments, closed: true })),
+    ...closed.filter((p) => p.layer === "outer"),
+    ...lines,
+    ...openRuns.map((segments): LaserPath => ({ layer: openLayer, segments, closed: false })),
+  ];
 }
 
 /**
