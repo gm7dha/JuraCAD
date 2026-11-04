@@ -14,7 +14,7 @@ import { mm, num } from "./common";
 const TOP = { kind: "default", name: "Top" } as const;
 
 export function puzzleSpec(v: DesignValues): PuzzleSpec {
-  return { width: num(v, "width"), height: num(v, "height"), rows: num(v, "rows"), columns: num(v, "columns"), tab: num(v, "tab") / 100, seed: num(v, "seed") };
+  return { width: num(v, "width"), height: num(v, "height"), rows: num(v, "rows"), columns: num(v, "columns"), tab: num(v, "tab") / 100, seed: num(v, "seed"), minNeck: num(v, "thickness") };
 }
 
 /**

@@ -139,6 +139,10 @@
   Insert DXF: `src/sketch/dxf.ts` (parse ENTITIES + $INSUNITS; lines, arcs, circles, (LW)polylines with bulges, splines, ellipses
   (partial ones as ellipses with `start`/`end`, ends joined), points;
   angles wrapped into one turn, non-finite shapes dropped, ≤20 MB / 20,000 shapes / 50,000 points, `DxfError` = plain message).
+  The sketch check (`analyzeSketch` → `analyzeWhole` in solver.ts) row-reduces the Jacobian block by block: unknowns joined
+  (union–find) through the equations that read them (`dependencies`), entries from `jacobianEntries` (the same numbers as the
+  dense `jacobian`), the whole matrix's tolerance; unknowns no equation reads are free. Same answers as one dense reduction
+  (`analyzeWholeDense`, kept for tests/solverBlocks), but thousands of loose points (a 400-piece jigsaw) take ~0.2 s, not minutes.
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /
@@ -648,9 +652,12 @@
   the pattern number; `narrowestGap` (box-filtered; `puzzleProblems` asks only up to MIN_GAP) checks no cuts come within 1.5 mm, so
   pieces never overlap; ≤ `MAX_PIECES` 400. The board is its own rectangle sketch (picking hundreds of areas is slow); the "Puzzle
   sketch" (border split at the piece corners + the cuts, points left free — LOOSE_LINES) is what Export for laser uses: border red,
-  every cut piece a blue open run. Ornament: star (outlineSketch), circle, heart (lines tangent to two arcs) and snowflake (hex middle,
-  six arms with 60° branches, an eye round the hole) — the curved ones as free arcs/lines; words must keep `WORDS_ROOM` from the edge and
-  hole. Tests: tests/libraryLaser3 (pure: tabs lock, pieces tile, same seed same puzzle, grooves/slots, fully defined) and
+  each cut between pieces one blue open run (sketchPiece's `joinThroughBends` joins a junction group's lines end to end where
+  just two of its curves meet), necks at least `MIN_NECK` 2 mm or the sheet thickness; a crowded pattern names another number
+  only if it works. Ornament: star (outlineSketch), circle, heart (lines tangent to two arcs) and snowflake (hex middle,
+  six arms with 60° branches, an eye round the hole; the top arm drops its branches when the eye would reach them) — the curved
+  ones as free arcs/lines; `outlineGap` refuses outlines that cross themselves or come within `EDGE_ROOM` 1.5 mm of themselves;
+  words must keep `WORDS_ROOM` from the edge and hole. Bookend "Base depth" is the base's whole length. Tests: tests/libraryLaser3 (pure: tabs lock, pieces tile, same seed same puzzle, grooves/slots, fully defined) and
   engineLibraryLaser3 (volumes add up, no overlaps at kerf 0, the lid slides out with clearance and clashes any other way, laser
   layers, a user's part left alone); mcpLibraryLaser inserts a jigsaw and exports it; the smoke test inserts a 12-piece jigsaw and saves
   its sketch for laser (1 red, 85 blue).

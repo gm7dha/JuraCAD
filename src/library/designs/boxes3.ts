@@ -116,7 +116,8 @@ export function slidingOutlines(s: SlidingBox) {
 export function lidHole(values: DesignValues, s: SlidingBox): { x: Ex; y: Ex; d: number } | null {
   if (values.hole === false) return null;
   const d = 16;
-  return { x: minus(s.b.W, lit(d / 2 + 6)), y: over(s.b.D, 2), d };
+  // Clear of the low end wall under the lid's end (whatever the sheet's thickness), so a finger reaches in.
+  return { x: minus(s.b.W, plus(s.b.t, lit(d / 2 + 4))), y: over(s.b.D, 2), d };
 }
 
 function slidingProblems(v: DesignValues): string[] {
@@ -131,7 +132,7 @@ function slidingProblems(v: DesignValues): string[] {
   if (lidWidth < 10) out.push("The box is too narrow for a sliding lid: make it deeper.");
   if (s.b.W.v - s.lidX0.v < 4 * t + 10) out.push("The box is too short for a sliding lid: make it wider.");
   const hole = lidHole(v, s);
-  if (!out.length && hole && (lidWidth < hole.d + 6 || s.b.W.v - s.lidX0.v < hole.d + 20)) out.push("The lid is too small for a finger hole: turn the finger hole off, or make the box bigger.");
+  if (!out.length && hole && (lidWidth < hole.d + 6 || hole.x.v - hole.d / 2 < s.lidX0.v + 4)) out.push("The lid is too small for a finger hole: turn the finger hole off, or make the box bigger.");
   return out;
 }
 
@@ -416,8 +417,11 @@ export interface Bookend {
 }
 
 export function bookend(values: DesignValues, vars: Record<string, Ex> = varsOf(values, BOOKEND_VARS)): Bookend {
-  const { width: W, height: H, depth: L, thickness: t, kerf } = vars;
-  return { W, H, L, t, kerf, ux: plus(t, lit(5)), G: over(H, 2) };
+  const { width: W, height: H, depth, thickness: t, kerf } = vars;
+  const ux = plus(t, lit(5));
+  const G = over(H, 2);
+  // The base runs from 5 mm behind the brace (x = ux − G − 5) to L, `depth` long in all.
+  return { W, H, L: minus(plus(depth, ux), plus(G, lit(5))), t, kerf, ux, G };
 }
 
 /**
@@ -488,7 +492,7 @@ function bookendProblems(v: DesignValues): string[] {
   if (k >= t / 2) out.push(`A kerf allowance of ${mm(k)} is a lot for ${mm(t)} sheet — lasers usually burn away 0.1–0.3 mm.`);
   if (0.2 * W < 2 * t + 2) out.push(`The bookend is too narrow for its slots: make it at least ${mm(Math.ceil(10 * t + 10))} wide.`);
   if (0.5 * 0.5 * H < t + 4) out.push("The bookend is too low: make it taller.");
-  if (L < b.ux.v + t + 30) out.push(`The base is too short for the books to stand on: make it at least ${mm(b.ux.v + t + 30)} deep.`);
+  if (L < b.ux.v + t + 30) out.push(`The base is too short for the books to stand on: make it at least ${mm(b.G.v + 5 + t + 30)} deep.`);
   return out;
 }
 
@@ -504,7 +508,7 @@ export const bookendDesign: LibraryDesign = {
   inputs: [
     { key: "width", label: "Width", kind: "length", default: 120, min: 40, max: 400, variable: true, help: "Across the shelf." },
     { key: "height", label: "Height", kind: "length", default: 150, min: 40, max: 290, variable: true },
-    { key: "depth", label: "Base depth", kind: "length", default: 120, min: 40, max: 400, variable: true, help: "How far the base reaches under the books, from the back." },
+    { key: "depth", label: "Base depth", kind: "length", default: 160, min: 60, max: 400, variable: true, help: "The base's whole length, front to back: half the height goes behind the upright, under the brace; the rest is under the books." },
     thicknessInput,
     kerfInput,
   ],
@@ -534,11 +538,11 @@ export const bookendDesign: LibraryDesign = {
     const flat = (p: Pt[], dx = 0, dy = 0) => p.map(([x, y]) => [x.v + dx, y.v + dy] as [number, number]);
     const H = num(v, "height");
     const gap = 15;
-    const bx = num(v, "depth") + gap + num(v, "width") / 2;
+    const bx = bookend(v).L.v + gap + num(v, "width") / 2;
     return [
       { kind: "poly", closed: true, points: flat(o.base) },
       ...o.baseSlots.map((s): PreviewShape => ({ kind: "poly", closed: true, points: flat(s) })),
-      { kind: "text", at: [num(v, "depth") / 2, -num(v, "width") / 2 - 8], text: "base" },
+      { kind: "text", at: [bookend(v).L.v - num(v, "depth") / 2, -num(v, "width") / 2 - 8], text: "base" },
       { kind: "poly", closed: true, points: flat(o.upright, bx, -num(v, "width") / 2) },
       { kind: "poly", closed: true, points: flat(o.uprightSlot, bx, -num(v, "width") / 2) },
       { kind: "text", at: [bx, -num(v, "width") / 2 - 8], text: "upright" },

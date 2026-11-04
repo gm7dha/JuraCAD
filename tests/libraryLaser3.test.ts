@@ -10,12 +10,13 @@ import { MAIN_STUDIO } from "../src/model/studios";
 import { resolveVariables } from "../src/model/variables";
 import { defaultValues, editInsert, findDesign, insertDesign, laserDefaultsFor, valueProblems, currentValues } from "../src/library/insert";
 import { freedomOf } from "../src/library/sketchKit";
-import { areaOf, type Pt } from "../src/library/fingers";
+import { areaOf, grow, type Pt } from "../src/library/fingers";
+import { lit } from "../src/library/ex";
 import { allEdges, arcPoints, edgePolyline, FOOT, HEAD_RISE, makePuzzle, narrowestGap, NECK, pieceOutline, puzzleProblems, seeded, SHOULDER, TAB_RISE, tabEdge, type P2 } from "../src/library/puzzle";
 import { puzzleSketch, puzzleSpec } from "../src/library/designs/jigsaw";
 import { bookend, bookendOutlines, dividerOutlines, dividerTray, slidingBox, slidingOutlines } from "../src/library/designs/boxes3";
 import { clockLayout, CLOCK_EDGE, winderShape } from "../src/library/designs/laserHome3";
-import { FLAKE, ornamentPolygon, ornamentShape } from "../src/library/designs/ornament";
+import { FLAKE, ornamentPolygon, ornamentShape, ornamentSketch } from "../src/library/designs/ornament";
 import { sketchAreas } from "../src/sketch/areas";
 import type { DesignValues } from "../src/library/types";
 
@@ -124,6 +125,32 @@ describe("jigsaw maths", () => {
     for (const tab of [15, 25, 32]) for (const seed of [0, 5, 77]) expect(narrowestGap(makePuzzle({ ...spec, tab: tab / 100, seed }))).toBeGreaterThan(1.5);
   });
 
+  it("refuses necks too thin to hold, and only suggests a pattern number that works", () => {
+    expect(valueProblems(design("jigsaw"), valuesOf("jigsaw", { width: 120, height: 100, rows: 10, columns: 12, tab: 15 }))[0]).toMatch(/necks would be only/);
+    // Thicker sheet than the neck: too thin too.
+    expect(valueProblems(design("jigsaw"), valuesOf("jigsaw", { width: 100, height: 100, rows: 6, columns: 6, tab: 15, thickness: 6 }))[0]).toMatch(/necks would be only/);
+    // Within the tab sizes the window allows, tabs never crowd each other (the gap check is a safety net); past them
+    // they do, and the message names a pattern number only when that one really works.
+    const crowded = (seed: number, tab: number) => puzzleProblems({ ...spec, tab, seed, minNeck: 3 });
+    let named = 0;
+    let none = 0;
+    for (const tab of [0.4, 0.5])
+      for (let seed = 0; seed < 30; seed++) {
+        const p = crowded(seed, tab);
+        if (!p.length) continue;
+        const m = /try (\d+)/.exec(p[0]);
+        if (m) {
+          named++;
+          expect(crowded(Number(m[1]), tab)).toEqual([]);
+        } else {
+          none++;
+          expect(p[0]).toMatch(/make the tabs smaller/);
+          expect(p[0]).not.toMatch(/pattern number/);
+        }
+      }
+    expect(named + none).toBeGreaterThan(0);
+  });
+
   it("the arc points run round the right way", () => {
     const e = tabEdge([0, 0], [40, 0], 1, 20, 4);
     const head = arcPoints(e.arcs[1], 8);
@@ -156,8 +183,8 @@ describe("sliding-lid box", () => {
 
   it("refuses sizes that don't leave room for the grooves", () => {
     expect(valueProblems(design("sliding-lid-box"), valuesOf("sliding-lid-box", { height: 22 }))[0]).toMatch(/too low/);
-    expect(valueProblems(design("sliding-lid-box"), valuesOf("sliding-lid-box", { width: 40, hole: true }))[0]).toMatch(/finger hole/);
-    expect(valueProblems(design("sliding-lid-box"), valuesOf("sliding-lid-box", { width: 40, hole: false }))).toEqual([]);
+    expect(valueProblems(design("sliding-lid-box"), valuesOf("sliding-lid-box", { width: 35, hole: true }))[0]).toMatch(/finger hole/);
+    expect(valueProblems(design("sliding-lid-box"), valuesOf("sliding-lid-box", { width: 35, hole: false }))).toEqual([]);
   });
 
   it("follows its variables (made again with a new height in Edit design sizes)", () => {
@@ -189,6 +216,15 @@ describe("tray with dividers", () => {
     expect(area(x)).toBeCloseTo((200 - 6.5) * 47 - 2 * 3 * 23.5, 6);
     const y = flat(o.alongY);
     expect(y.filter((p) => Math.abs(p[1] - 26.5) < 1e-9)).toHaveLength(2);
+    // As drawn for the laser (every edge kerf / 2 further out), each slot is the kerf narrower: 3 − 0.2 = 2.8 mm,
+    // and the cut slot comes out 3 mm, a snug fit on the sheet.
+    const drawn = flat(grow(o.alongX, lit(0.1)));
+    const drawnSlot = drawn.filter((p) => Math.abs(p[1] - (26.5 + 0.1)) < 1e-9).map((p) => p[0]).sort((a, b) => a - b);
+    expect(drawnSlot).toHaveLength(4);
+    expect(drawnSlot[1] - drawnSlot[0]).toBeCloseTo(2.8, 9);
+    const drawnY = flat(grow(o.alongY, lit(0.1)));
+    const ySlot = drawnY.filter((p) => Math.abs(p[1] - (26.5 - 0.1)) < 1e-9).map((p) => p[0]).sort((a, b) => a - b);
+    expect(ySlot[1] - ySlot[0]).toBeCloseTo(2.8, 9);
   });
 
   it("with one row or column there are dividers one way only, or none", () => {
@@ -224,6 +260,9 @@ describe("bookend", () => {
     const z = flat(o.uprightSlot).map((p) => p[1]);
     expect(brace.filter((p) => p[0] === b.ux.v + 3).map((p) => p[1]).sort((a, c) => a - c)).toEqual([Math.min(...z), Math.max(...z)]);
     expect(areaOf(o.brace)).toBeGreaterThan(0);
+    // The base is as long as the "Base depth" says, front to back.
+    const base = flat(o.base).map((p) => p[0]);
+    expect(Math.max(...base) - Math.min(...base)).toBeCloseTo(160, 9);
   });
 });
 
@@ -271,6 +310,35 @@ describe("ornaments", () => {
     expect(0.866 * FLAKE.branchAt - 2 * FLAKE.arm).toBeGreaterThan(0.3);
     expect(valueProblems(design("ornament"), valuesOf("ornament", { words: "CHRISTMAS 2026" }))[0]).toMatch(/don't fit on the star/);
     expect(valueProblems(design("ornament"), valuesOf("ornament", { shape: "star", size: 25, hole: 8 }))[0]).toMatch(/hole is too big/);
+  });
+});
+
+describe("ornament outlines never cross themselves", () => {
+  for (const shape of ["star", "heart", "circle", "snowflake"])
+    it(`${shape}: every size and hole it accepts makes one clean plate (and a hole)`, () => {
+      let accepted = 0;
+      for (const size of [25, 28, 30, 35, 40, 45, 50, 55, 60, 68, 75, 86, 100, 120, 150, 200, 280])
+        for (let hole = 0; hole <= 20; hole += 2) {
+          const v = valuesOf("ornament", { shape, size, hole, words: "" });
+          if (valueProblems(design("ornament"), v).length) continue;
+          accepted++;
+          const s = ornamentShape(v);
+          // Worked out by the sketch's own area finder, not the design's check: a crossing outline makes extra slivers.
+          const map = sketchAreas(ornamentSketch(s));
+          expect(map.areas.length, `${shape} ${size} ${hole}`).toBe(s.hole ? 2 : 1);
+          // Together the areas fill the outline (the plate and the hole in it), nothing more.
+          const whole = area(ornamentPolygon(s));
+          expect(Math.abs(map.areas.reduce((n, a) => n + a.area, 0) - whole) / whole, `${shape} ${size} ${hole}`).toBeLessThan(0.01);
+        }
+      expect(accepted).toBeGreaterThan(100);
+    });
+
+  it("a big hole on a small snowflake: the top arm goes without its branches, or it's refused in plain words", () => {
+    const s = ornamentShape(valuesOf("ornament", { shape: "snowflake", size: 55, hole: 4 }));
+    expect(valueProblems(design("ornament"), valuesOf("ornament", { shape: "snowflake", size: 55, hole: 4, words: "" }))).toEqual([]);
+    // The top arm (the first 13 steps of a full arm) has fewer steps than the others.
+    expect(s.steps.length).toBeLessThan(6 * 13);
+    expect(valueProblems(design("ornament"), valuesOf("ornament", { shape: "snowflake", size: 25, hole: 20 }))[0]).toMatch(/cross itself|too thin|hole is too big/);
   });
 });
 

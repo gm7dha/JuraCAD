@@ -3332,13 +3332,13 @@ try {
     const puzzleSvg = readFileSync(await (await puzzleSvgPromise).path(), "utf8");
     const puzzleReds = (puzzleSvg.match(/stroke="#FF0000"/g) ?? []).length;
     const puzzleBlues = (puzzleSvg.match(/stroke="#0000FF"/g) ?? []).length;
-    // The border; and 17 edges between the 12 pieces (2 × 4 across, 3 × 3 down), each a line, three arcs and a line.
-    if (puzzleReds !== 1 || puzzleBlues !== 17 * 5) throw new Error(`the puzzle's SVG has ${puzzleReds} red and ${puzzleBlues} blue cuts (expected 1 and 85)`);
+    // The border; and 17 edges between the 12 pieces (2 × 4 across, 3 × 3 down), each one smooth cut.
+    if (puzzleReds !== 1 || puzzleBlues !== 17) throw new Error(`the puzzle's SVG has ${puzzleReds} red and ${puzzleBlues} blue cuts (expected 1 and 17)`);
     if (!/width="200mm" height="150mm"/.test(puzzleSvg)) throw new Error("the puzzle's SVG isn't 200 × 150 mm");
     await page.getByRole("button", { name: "Close export for laser" }).click();
     await page.waitForSelector(".laser-panel", { state: "detached" });
     libraryReport =
-      "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts); then a bolt, nut and washer set found by searching (3 parts); then a stencil of HELLO, saved for laser (1 red outline, 5 blue letter holes, the O's middle bridged); then a 12-piece jigsaw, its puzzle sketch saved for laser (1 red border, 85 blue cuts)";
+      "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts); then a bolt, nut and washer set found by searching (3 parts); then a stencil of HELLO, saved for laser (1 red outline, 5 blue letter holes, the O's middle bridged); then a 12-piece jigsaw, its puzzle sketch saved for laser (1 red border, 17 blue cuts)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 

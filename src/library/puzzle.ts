@@ -77,7 +77,12 @@ export interface PuzzleSpec {
   /** A tab's height as a share of the smaller piece side (0.25 = a quarter). */
   tab: number;
   seed: number;
+  /** The narrowest a tab's neck may be (mm): thinner ones snap. Default `MIN_NECK`. */
+  minNeck?: number;
 }
+
+/** The narrowest a tab's neck may be, unless the sheet is thicker (mm). */
+export const MIN_NECK = 2;
 
 export interface Puzzle {
   spec: PuzzleSpec;
@@ -292,7 +297,19 @@ export function puzzleProblems(spec: PuzzleSpec): string[] {
   if (Math.max(pw, ph) / Math.min(pw, ph) > 2.5) out.push(`The pieces would be ${Math.round(pw)} × ${Math.round(ph)} mm — very long and thin. Change the rows or columns so they're closer to square.`);
   if (Math.min(pw, ph) < 10) out.push(`The pieces would be only ${Math.round(Math.min(pw, ph) * 10) / 10} mm across: use fewer rows or columns (at least 10 mm a piece).`);
   if (out.length) return out;
-  const gap = narrowestGap(makePuzzle(spec), MIN_GAP);
-  if (gap < MIN_GAP) out.push(`Some tabs come too close to each other (${Math.round(gap * 10) / 10} mm): make the tabs smaller or try another pattern number.`);
+  const puzzle = makePuzzle(spec);
+  const neck = Math.min(...allEdges(puzzle).map((e) => tabWidths(e).neck));
+  const minNeck = Math.max(MIN_NECK, spec.minNeck ?? 0);
+  if (neck < minNeck) return [`The tabs' necks would be only ${Math.round(neck * 10) / 10} mm wide, and would snap: make the tabs bigger or the pieces fewer (at least ${Math.round(minNeck * 10) / 10} mm).`];
+  const gap = narrowestGap(puzzle, MIN_GAP);
+  if (gap < MIN_GAP) {
+    // Another pattern number may well work; say which, or that the tabs are simply too big for these pieces.
+    const other = Array.from({ length: 20 }, (_, i) => (spec.seed + i + 1) % 1000000).find((seed) => narrowestGap(makePuzzle({ ...spec, seed }), MIN_GAP) >= MIN_GAP);
+    out.push(
+      other !== undefined
+        ? `Some tabs come too close to each other (${Math.round(gap * 10) / 10} mm) with this pattern number: try ${other}, or make the tabs smaller.`
+        : `The tabs are too big for these pieces — they come too close to each other (${Math.round(gap * 10) / 10} mm): make the tabs smaller.`,
+    );
+  }
   return out;
 }

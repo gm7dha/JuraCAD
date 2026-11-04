@@ -83,6 +83,17 @@ function heartShape(S: number, d: number): OrnamentShape {
   };
 }
 
+/** How far apart the cut edges of an ornament must stay (mm), and its snowflake's eye from the branches beside it. */
+export const EDGE_ROOM = 1.5;
+const FLAKE_ROOM = EDGE_ROOM;
+
+function distanceToSegment(p: P2, a: P2, b: P2): number {
+  const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+  const len = dx * dx + dy * dy;
+  const t = len > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len)) : 0;
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+
 /** The snowflake's sizes, as shares of its radius. */
 export const FLAKE = { hub: 0.4, arm: 0.07, branchAt: 0.62, branch: 0.22 };
 
@@ -97,26 +108,26 @@ function flakeShape(R: number, d: number): OrnamentShape {
   const nrm: P2 = [Math.sqrt(3) / 2, 0.5];
   const branchEnd = (side: 1 | -1): P2 => [p + l * dir[0] + side * h * nrm[0], l * dir[1] + side * h * nrm[1]];
   // One arm along +x, from the hub's corner below it to the corner above it (anticlockwise round the whole flake).
-  const lower: PathStep[] = [
-    { to: [F, -h] },
-    { to: [p - h / Math.sqrt(3), -h] },
-    { to: branchEnd(-1) },
-    { to: branchEnd(1) },
-    { to: [p + h * Math.sqrt(3), -h] },
-  ];
+  const branch: P2[] = [[p - h / Math.sqrt(3), -h], branchEnd(-1), branchEnd(1), [p + h * Math.sqrt(3), -h]];
+  const lower: PathStep[] = [{ to: [F, -h] }, ...branch.map((to) => ({ to }))];
+  // The top arm's eye must stay clear of its side branches (a big hole on a small flake would run into them): if it
+  // doesn't, that arm goes without them.
+  const eyeGap = Math.min(...branch.slice(0, -1).map((q, i) => distanceToSegment([eye, 0], q, branch[i + 1]))) - re;
+  const topLower: PathStep[] = eyeGap >= FLAKE_ROOM ? lower : [{ to: [F, -h] }];
   const flip = (q: P2): P2 => [q[0], -q[1]];
-  const upper: PathStep[] = [...lower].reverse().map((s) => ({ to: flip(s.to) }));
+  const upperOf = (l: PathStep[]): PathStep[] => [...l].reverse().map((s) => ({ to: flip(s.to) }));
   const corner: P2 = [F, F / Math.sqrt(3)];
   const steps: PathStep[] = [];
   for (let k = 0; k < 6; k++) {
     const deg = 90 + 60 * k;
-    const arm: PathStep[] = [...lower];
+    const own = k === 0 ? topLower : lower;
+    const arm: PathStep[] = [...own];
     if (k === 0) {
       // The top arm ends in the eye (a round end bigger than the arm, for the hole).
       const x = eye - Math.sqrt(re * re - h * h);
       arm.push({ to: [x, -h] }, { to: [x, h], centre: [eye, 0] });
     } else arm.push({ to: [R, -h] }, { to: [R, h] });
-    arm.push(...upper, { to: corner });
+    arm.push(...upperOf(own), { to: corner });
     steps.push(...arm.map((s) => ({ to: at(rot(s.to, deg)), ...(s.centre ? { centre: at(rot(s.centre, deg)) } : {}) })));
   }
   const start = at(rot(corner, 30));
@@ -180,18 +191,57 @@ function outlineOf(s: OrnamentShape, scope: Record<string, number>): SketchData 
   return { points, curves, constraints: [] };
 }
 
+/** The outline and hole as a sketch (no words). */
+export function ornamentSketch(s: OrnamentShape, scope: Record<string, number> = {}): SketchData {
+  const sk = outlineOf(s, scope);
+  if (!s.hole) return sk;
+  const h = shapesSketch([{ type: "circle", center: s.hole.c, diameter: s.hole.d }], scope);
+  return { ...sk, points: [...sk.points, ...h.points], curves: [...sk.curves, ...h.curves], constraints: [...sk.constraints, ...h.constraints] };
+}
+
 const wordsOf = (v: DesignValues, s: OrnamentShape): TextBlock => ({ font: fontOf(v), capHeight: num(v, "height"), lines: linesOf(v.words), centre: s.centre });
 
 function distanceToPolygon(p: P2, poly: P2[]): number {
   let best = Infinity;
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % poly.length];
-    const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
-    const len = dx * dx + dy * dy;
-    const t = len > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len)) : 0;
-    best = Math.min(best, Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy));
-  }
+  for (let i = 0; i < poly.length; i++) best = Math.min(best, distanceToSegment(p, poly[i], poly[(i + 1) % poly.length]));
+  return best;
+}
+
+function segmentsCross(a: P2, b: P2, c: P2, d: P2): boolean {
+  const side = (o: P2, p: P2, q: P2) => (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]);
+  const [d1, d2, d3, d4] = [side(c, d, a), side(c, d, b), side(a, b, c), side(a, b, d)];
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
+/** Each step of an outline as a polyline from where the last ended (arcs in short pieces). */
+export function stepPolylines(s: OrnamentShape): P2[][] {
+  let from = s.start;
+  return s.steps.map((step) => {
+    const pts = [from, ...(step.centre ? arcBetween(from, step.to, step.centre, 12) : [step.to])];
+    from = step.to;
+    return pts;
+  });
+}
+
+/**
+ * How close an outline comes to itself (mm): the least distance between any two of its pieces that don't meet end to
+ * end — 0 where it crosses itself. A circle can't.
+ */
+export function outlineGap(s: OrnamentShape): number {
+  if (s.circle) return Infinity;
+  const runs = stepPolylines(s);
+  const n = runs.length;
+  let best = Infinity;
+  for (let i = 0; i < n; i++)
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue;
+      const [a, b] = [runs[i], runs[j]];
+      for (let u = 0; u + 1 < a.length; u++)
+        for (let w = 0; w + 1 < b.length; w++) {
+          if (segmentsCross(a[u], a[u + 1], b[w], b[w + 1])) return 0;
+          best = Math.min(best, distanceToSegment(a[u], b[w], b[w + 1]), distanceToSegment(a[u + 1], b[w], b[w + 1]), distanceToSegment(b[w], a[u], a[u + 1]), distanceToSegment(b[w + 1], a[u], a[u + 1]));
+        }
+    }
   return best;
 }
 
@@ -203,6 +253,8 @@ function ornamentProblems(v: DesignValues): string[] {
   if (out.length) return out;
   const s = ornamentShape(v);
   const poly = ornamentPolygon(s);
+  const gap = outlineGap(s);
+  if (gap < EDGE_ROOM) return [gap === 0 ? `The ${String(v.shape)}'s outline would cross itself at this size: make it bigger or the hole smaller.` : `Parts of the ${String(v.shape)} would be only ${mm(gap)} wide — too thin to cut: make it bigger or the hole smaller.`];
   const contours = blockContours(wordsOf(v, s));
   const ok = (p: P2) => insidePolygon(p, poly) && distanceToPolygon(p, poly) >= WORDS_ROOM && (!s.hole || Math.hypot(p[0] - s.hole.c[0], p[1] - s.hole.c[1]) >= s.hole.d / 2 + WORDS_ROOM);
   if (s.hole && !(insidePolygon(s.hole.c, poly) && distanceToPolygon(s.hole.c, poly) >= s.hole.d / 2 + 1.5)) out.push(`The hole is too big for the ${String(v.shape)}: make it smaller or the shape bigger.`);
@@ -238,12 +290,7 @@ export const ornament: LibraryDesign = {
   summary: (v) => `A ${String(v.shape)} ${mm(num(v, "size"))} across${linesOf(v.words).length ? `, "${linesOf(v.words).join(" ")}" engraved` : ""}${num(v, "hole") > 0 ? ", with a hanging hole" : ""}.`,
   make: (ctx) => {
     const s = ornamentShape(ctx.values);
-    let sk = outlineOf(s, ctx.scope);
-    if (s.hole) {
-      const h = shapesSketch([{ type: "circle", center: s.hole.c, diameter: s.hole.d }], ctx.scope);
-      sk = { ...sk, points: [...sk.points, ...h.points], curves: [...sk.curves, ...h.curves], constraints: [...sk.constraints, ...h.constraints] };
-    }
-    sk = addTextBlock(sk, wordsOf(ctx.values, s));
+    const sk = addTextBlock(ornamentSketch(s, ctx.scope), wordsOf(ctx.values, s));
     return engravedPlate(ctx, sk, s.hole ? [s.hole] : [], "Ornament");
   },
   preview: (v) => {

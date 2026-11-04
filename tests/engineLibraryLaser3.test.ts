@@ -255,7 +255,9 @@ describe("jigsaw puzzle", () => {
     const cuts = piece.paths.filter((p) => p.layer === "inner");
     expect(cuts.every((p) => !p.closed)).toBe(true);
     const edges = allEdges(makePuzzle(puzzleSpec(valuesOf("jigsaw"))));
-    expect(cuts).toHaveLength(edges.length * 5);
+    // One path per edge between pieces: its line, three arcs and line joined, as they meet smoothly.
+    expect(cuts).toHaveLength(edges.length);
+    expect(cuts.every((p) => p.segments.length === 5)).toBe(true);
     // Cut first (inner), then the border, and nothing engraved; the board's own face is just the rectangle.
     expect(piece.paths.some((p) => p.layer === "engrave")).toBe(false);
     const sheet = layoutPieces([piece]);
