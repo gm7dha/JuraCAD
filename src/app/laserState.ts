@@ -26,6 +26,8 @@ export interface LaserPanelState {
   open_: "cut" | "score";
   /** Sketches: engrave the background (everything but the shapes and letters), as for a rubber stamp. */
   background: boolean;
+  /** The sketch settings came from a library design's sketch (see sketchSettingsFor). */
+  fromDesign: boolean;
 }
 
 export const useLaserPanel = create<LaserPanelState>(() => ({
@@ -39,6 +41,7 @@ export const useLaserPanel = create<LaserPanelState>(() => ({
   shapes: "cut",
   open_: "cut",
   background: false,
+  fromDesign: false,
 }));
 
 /** The first choice when the panel opens: a sketch highlighted in the list, else what's selected, else every part. */

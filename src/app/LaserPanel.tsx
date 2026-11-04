@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getKernel } from "../kernel/connect";
 import { LASER_LAYERS, LAYER_ORDER, layerCounts, layoutPieces, type LaserPiece } from "../laser/laser";
 import { laserDxf, laserSvg } from "../laser/laserFiles";
-import { outlinePiece, partFacing, sketchPiece, uniqueSources, type LaserOutline, type LaserSource } from "../laser/sources";
+import { outlinePiece, partFacing, sketchPiece, sketchSettingsFor, uniqueSources, type LaserOutline, type LaserSource } from "../laser/sources";
 import { followedSketch } from "../sketch/areaClicks";
 import { activeAssembly, activeDrawing, activeFeatures, pickFor, studioParts, useDocument, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
@@ -100,11 +100,13 @@ function LaserPanelBody() {
       .finally(() => n === asked.current && setBusy(false));
   }, [sources]);
 
-  // A sketch made by a library design (a rubber stamp…) comes with the settings it's meant for.
+  // A sketch made by a library design (a rubber stamp…) comes with the settings it's meant for; leaving it goes back to the defaults.
   useEffect(() => {
     if (!st.source.startsWith("sketch:")) return;
     const d = laserDefaultsFor(useStore.getState().history.present, st.source.slice(7));
-    set({ background: d?.background ?? false, ...(d?.text ? { text: d.text } : {}), ...(d?.shapes ? { shapes: d.shapes } : {}), ...(d?.open ? { open_: d.open } : {}) });
+    const now = useLaserPanel.getState();
+    const next = sketchSettingsFor({ text: now.text, shapes: now.shapes, open: now.open_, background: now.background, fromDesign: now.fromDesign }, d);
+    set({ text: next.text, shapes: next.shapes, open_: next.open, background: next.background, fromDesign: next.fromDesign });
   }, [st.source]);
 
   const sketchFeature = st.source.startsWith("sketch:") ? sketches.find((f) => f.id === st.source.slice(7)) : undefined;

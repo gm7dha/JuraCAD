@@ -448,7 +448,7 @@
   `laserDxf` (closed POLYLINEs with bulges, so arcs stay exact; lone circles as CIRCLE; Béziers/ellipses as straight pieces within
   `FLAT_TOLERANCE` 0.005 mm). `sources.ts` — `sketchPiece` (`findChains(…, { branching: true })` gives each curve of a junction group as its own run; `junctionCurves`
   asks the areas made by its own junction group's curves only (`Chain.group`/`curve`; `sketchAreas().areaAt` just either side of its middle; the same line drawn twice is kept once, `uniqueRuns`): open space on one side = outline, chained into closed loops; area on both
-  sides or neither = a line (cut or scored) — so a house or a rectangle with a diagonal keeps its red outline; text from `textContours`, engraved by default; shapes cut or engraved; open lines cut or scored; `background` (rubber stamps, "Engrave the background" in the panel, `background` in export_for_laser): every closed loop, text too, into one even–odd engraving and the outermost loops also cut red) and `outlinePiece`
+  sides or neither = a line (cut or scored) — so a house or a rectangle with a diagonal keeps its red outline; text from `textContours`, engraved by default; shapes cut or engraved; open lines cut or scored; `background` (rubber stamps, "Engrave the background" in the panel, `background` in export_for_laser): every closed loop, text too, into one even–odd engraving and the outermost loops also cut red; shapes that cross rather than nest are both outermost, so both outlines are cut and their overlap is left unengraved) and `outlinePiece`
   (engine outlines + bend lines as scores). Engine: `GeometryEngine.laserOutlines(sources)` (worker request `laserOutlines`) with
   `src/kernel/laserFaces.ts` — a face's wires read edge by edge through BRepAdaptor_Curve into the face's frame (`faceFrame`: seen
   from outside; across = X for up/down faces, else level), circles/arcs/whole ellipses exact, other curves Hermite→Bézier within
@@ -541,16 +541,21 @@
   extruded *down* (flip) from Top, then "Stamp sketch" (outline + border as two outlines + mirrored Text) Remove down by `relief` —
   with no areas picked its even–odd shapes are exactly the background; `LibraryDesign.laser` = Export for laser settings for a
   sketch by role ({"stamp-sketch": {background: true}}), looked up by `laserDefaultsFor(doc, sketchId)` (LaserPanel applies them when
-  that sketch is chosen; export_for_laser uses them unless told otherwise). The printed stamp: block + Words sketch (border ring +
+  that sketch is chosen, via `sketchSettingsFor` in sources.ts: a design's settings over `SKETCH_DEFAULTS`, and back to the defaults
+  when the next sketch has none — `laserState.fromDesign` — else the user's choices stay; export_for_laser uses them unless told
+  otherwise; the living hinge sets `open: "cut"`). The printed stamp: block + Words sketch (border ring +
   mirrored text) Add from z 0 to base + relief, handle a New cylinder beside it. Engraved plates (`designs/engraved.ts`: coasters, tag,
-  ruler): one sketch (outline(s), holes, Text, lines) — the plate a New extrude down with `areas` = every area but the holes, the
-  letters a Remove down `ENGRAVE_DEPTH` 0.4 with `areas` = the letters (`laserKit.pickAreas`: stableIds first, so the picks' curve
-  ids are the feature's; areas classed by a point inside and how many letter outlines are round it, `onLetters`). That Remove is
-  `apart` (a coaster set is several parts; it only reaches the design's own). `extrudeFeature` takes `areas` and `apart`.
+  ruler): one sketch (outline(s), holes, Text, lines); per plate (a coaster set: `pieceOf`, nearest coaster) a New extrude down with
+  `areas` = that plate's areas but the holes, then its letters a plain (not `apart`) Remove down `ENGRAVE_DEPTH` 0.4 with `areas` =
+  its letters — so it cuts only the latest part, the plate just made, never a user's part or other coasters (engineLibraryLaser
+  "engraving reaches only the design's own plates") (`laserKit.pickAreas`: stableIds first, so the picks' curve ids are the
+  feature's; areas classed by a point inside and how many letter outlines are round it, `onLetters`). `extrudeFeature` takes
+  `areas` and `apart`.
   Loose lines (`laserKit.addLines`: free points, no relations — "fix" on hundreds of points makes analyzeSketch take seconds):
   living hinge (`hingeCuts`: columns `spacing` apart over the zone, every other one offset half a step, clear of the edges by
   `gap`; the panel extrude ignores them; Export for laser cuts them blue), gear (`gearOutline`: involute flanks
-  β(r) = π/2z + inv φ − inv(acos(rb/r)), radial below the base circle, root/tip as short lines; `gearSizes`), ruler marks
+  β(r) = π/2z + inv φ − inv(acos(rb/r)), radial below the base circle, root/tip as short lines, `gearFlankPoints` per flank — 6 + 2 per mm of module, ≤ 1400 / teeth — within ~0.01 mm; `gearSizes`;
+  the summary warns below `UNDERCUT_TEETH` 13 at 20°, 23 at 14.5°), ruler marks
   (`rulerMarks`, `MARK_GAP` 0.5 mm off the edge so they don't split the outline; laser setting `open: "score"`). These sketches
   aren't fully defined (library.test's `LOOSE_LINES`). Picture frame (`designs/workshop.ts`): back (hang hole), middle (a U open at
   the top, photo + 0.5 mm), front (window = photo − overlap), stacked with Moves; sizes are variables. Each is a `LibraryDesign` (id, name,

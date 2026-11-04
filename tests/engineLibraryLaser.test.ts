@@ -9,7 +9,7 @@ import { GeometryEngine } from "../src/kernel/engine";
 import type { PartMesh } from "../src/kernel/protocol";
 import { pathsBox, segmentPoints, type LaserPath } from "../src/laser/laser";
 import { outlinePiece, sketchPiece, type LaserOutline } from "../src/laser/sources";
-import { emptyDocument } from "../src/model/document";
+import { createFeature, emptyDocument } from "../src/model/document";
 import { MAIN_STUDIO } from "../src/model/studios";
 import type { JuraCADDocument } from "../src/model/types";
 import { applyVariables, resolveVariables } from "../src/model/variables";
@@ -274,5 +274,43 @@ describe("other laser designs", () => {
     expect(vols.back).toBeCloseTo((W * H - Math.PI * 6.25) * 3, 0);
     expect(vols.front).toBeCloseTo((W * H - 94 * 144) * 3, 0);
     expect(vols.middle).toBeCloseTo((W * H - 103 * (76.5 + 96)) * 3, 0);
+  });
+});
+
+describe("engraving reaches only the design's own plates", () => {
+  const sumOf = (vols: number[]) => vols.reduce((a, b) => a + b, 0);
+
+  for (const id of ["coaster", "name-tag", "ruler", "rubber-stamp", "stencil"])
+    it(`${id}: a user's board right under it is left alone`, () => {
+      const alone = build(insert(id));
+      // The user's board, through the Top plane, covering the whole design.
+      let doc: JuraCADDocument = { ...emptyDocument(), features: [{ ...createFeature(emptyDocument(), "box"), id: "mine", params: { width: "600", depth: "200", height: "6", x: "-100", y: "-100", z: "-3" } }] };
+      const d = findDesign(id)!;
+      doc = insertDesign(doc, d, defaultValues(d), { into: MAIN_STUDIO }).doc;
+      const r = engine.rebuild(doc.features, resolveVariables(doc.variables).values);
+      expect(r.featureErrors).toEqual({});
+      const check = engine.check("normal");
+      expect(check.parts.find((p) => p.partId === "mine")!.exactVolume!).toBeCloseTo(600 * 200 * 6, 3);
+      expect(check.parts).toHaveLength(alone.parts.length + 1);
+      expect(sumOf(check.parts.filter((p) => p.partId !== "mine").map((p) => p.exactVolume ?? 0))).toBeCloseTo(sumOf(alone.volumes), 2);
+    });
+
+  it("coasters with words don't engrave plain coasters already there", () => {
+    const plain = insert("coaster", { count: 2, words: "" });
+    const full = Math.PI * 47.5 * 47.5 * 3;
+    const d = findDesign("coaster")!;
+    const doc = insertDesign(plain, d, { ...defaultValues(d), count: 2 }, { into: MAIN_STUDIO }).doc;
+    const r = engine.rebuild(doc.features, resolveVariables(doc.variables).values);
+    expect(r.featureErrors).toEqual({});
+    const check = engine.check("normal");
+    expect(check.parts).toHaveLength(4);
+    const v = { ...defaultValues(d) };
+    const ink = inkArea(blockContours({ font: fontOf(v), capHeight: 12, lines: linesOf(v.words) }));
+    const vols = check.parts.map((p) => p.exactVolume ?? 0).sort((a, b) => a - b);
+    // The two new ones engraved, the two plain ones untouched.
+    expect(vols[0]).toBeCloseTo(full - ink * 0.4, 0);
+    expect(vols[1]).toBeCloseTo(full - ink * 0.4, 0);
+    expect(vols[2]).toBeCloseTo(full, 3);
+    expect(vols[3]).toBeCloseTo(full, 3);
   });
 });

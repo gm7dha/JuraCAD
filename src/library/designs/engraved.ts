@@ -21,22 +21,28 @@ type P2 = [number, number];
 /** How deep the words are cut into the 3D plate (the laser's power and speed decide the real depth). */
 export const ENGRAVE_DEPTH = 0.4;
 
-/** A plate (or a set of them) from one sketch: the plate from all its areas but the holes, then the letters engraved. */
-function engravedPlate(ctx: MakeContext, sketch: SketchData, holes: { c: P2; d: number }[], label: string, count = 1): MadeDesign {
+/**
+ * A plate (or a set of them) from one sketch: each plate from its areas (all but the holes), then its letters
+ * engraved. Each plate is its own New extrude followed by its own engraving — a plain Remove, which cuts only the
+ * latest part, the plate just made — so the engraving never reaches the user's parts or anything else in the studio.
+ * `pieceOf` says which plate a point of the sketch belongs to (a set of coasters side by side).
+ */
+function engravedPlate(ctx: MakeContext, sketch: SketchData, holes: { c: P2; d: number }[], label: string, count = 1, pieceOf: (p: P2) => number = () => 0): MadeDesign {
   const sk = ctx.id("sketch");
-  const plate = ctx.id("plate");
   const inHole = (p: P2) => holes.some((h) => Math.hypot(p[0] - h.c[0], p[1] - h.c[1]) < h.d / 2);
-  const { sketch: data, picks } = pickAreas(sketch, sk, (p) => !inHole(p), onLetters);
-  const [body, letters] = picks;
-  const features: Feature[] = [
-    sketchFeature(sk, `${label} sketch`, TOP, data),
-    // (The engraving cuts every plate it reaches — a set of coasters is several parts — and only reaches the design's own.)
-  // Downwards, so the top face is on the Top plane, where the words are.
-    extrudeFeature(plate, label, sk, { depth: ctx.vars.thickness, operation: "new", flip: true, areas: body }),
-  ];
-  if (letters.length) features.push(extrudeFeature(ctx.id("words"), "Engraved words", sk, { depth: lit(ENGRAVE_DEPTH), operation: "remove", flip: true, areas: letters, apart: true }));
-  const partNames: Record<string, string> = { [plate]: count > 1 ? `${ctx.name} 1` : ctx.name };
-  for (let i = 2; i <= count; i++) partNames[`${plate}~${i}`] = `${ctx.name} ${i}`;
+  const keeps = Array.from({ length: count }, (_, i) => [(p: P2) => !inHole(p) && pieceOf(p) === i, (p: P2, letters: number) => onLetters(p, letters) && pieceOf(p) === i]).flat();
+  const { sketch: data, picks } = pickAreas(sketch, sk, ...keeps);
+  const features: Feature[] = [sketchFeature(sk, `${label} sketch`, TOP, data)];
+  const partNames: Record<string, string> = {};
+  for (let i = 0; i < count; i++) {
+    const [body, letters] = [picks[2 * i], picks[2 * i + 1]];
+    const plate = ctx.id(i ? `plate-${i + 1}` : "plate");
+    const name = count > 1 ? `${label} ${i + 1}` : label;
+    // Downwards, so the top face is on the Top plane, where the words are.
+    features.push(extrudeFeature(plate, name, sk, { depth: ctx.vars.thickness, operation: "new", flip: true, areas: body }));
+    if (letters.length) features.push(extrudeFeature(ctx.id(i ? `words-${i + 1}` : "words"), count > 1 ? `Engraved words ${i + 1}` : "Engraved words", sk, { depth: lit(ENGRAVE_DEPTH), operation: "remove", flip: true, areas: letters }));
+    partNames[plate] = count > 1 ? `${ctx.name} ${i + 1}` : ctx.name;
+  }
   return { features, partNames };
 }
 
@@ -72,7 +78,7 @@ export const coaster: LibraryDesign = {
   name: "Coasters",
   group: "Home",
   description:
-    "A set of round, square or six-sided coasters with words engraved in the middle. Export for laser: pick \"Coasters sketch\" for the cut outlines and the engraving together. 3 mm plywood, cork or acrylic.",
+    "A set of round, square or six-sided coasters with words engraved in the middle. Export for laser: pick \"Coaster sketch\" for the cut outlines and the engraving together. 3 mm plywood, cork or acrylic.",
   category: "laser",
   prefix: "coaster",
   laser: { sketch: { text: "engrave" } },
@@ -105,7 +111,7 @@ export const coaster: LibraryDesign = {
     let s = shapesSketch(Array.from({ length: n }, (_, i) => coasterOutline(v, i * coasterPitch(v))), ctx.scope);
     if (v.shape === "square" && num(v, "corner") > 0) s = roundCorners(s, lit(num(v, "corner")), ctx.scope);
     for (let i = 0; i < n; i++) s = addTextBlock(s, coasterText(v, i * coasterPitch(v)));
-    return engravedPlate(ctx, s, [], "Coasters", n);
+    return engravedPlate(ctx, s, [], "Coaster", n, ([x]) => Math.max(0, Math.min(n - 1, Math.round(x / coasterPitch(v)))));
   },
   preview: (v) => {
     const out: PreviewShape[] = [];

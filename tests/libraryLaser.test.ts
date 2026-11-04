@@ -15,7 +15,7 @@ import { stencilPlan } from "../src/library/designs/stencil";
 import { stampLayout } from "../src/library/designs/stamp";
 import { gearOutline, gearSizes, hingeCuts } from "../src/library/designs/workshop";
 import { MARK_GAP, rulerMarks } from "../src/library/designs/engraved";
-import { sketchPiece } from "../src/laser/sources";
+import { SKETCH_DEFAULTS, sketchPiece, sketchSettingsFor } from "../src/laser/sources";
 import { segmentPoints, type LaserPath } from "../src/laser/laser";
 import { addRectangle } from "../src/sketch/ops";
 import { changeText, textContours } from "../src/sketch/sketchText";
@@ -229,7 +229,16 @@ describe("stencil bridges", () => {
         expect(hit).toContain(b.island);
         expect(hit.length).toBeLessThanOrEqual(2);
         const other = hit.find((i) => i !== b.island)!;
-        expect(inside(contours[b.island][0], contours[other]) || d[other] % 2 === 1).toBe(true);
+        // The letter round the middle (the smallest outline round it).
+        const letterOf = (k: number) => contours.map((_c, i) => i).filter((i) => i !== k && d[i] % 2 === 0 && inside(contours[k][0], contours[i])).sort((a, c) => area(contours[a]) - area(contours[c]))[0];
+        if (d[other] % 2 === 1) {
+          // Through to another middle (the bar of a B): one in the same letter, and the bridge says so.
+          expect(b.to).toBe(other);
+          expect(letterOf(other)).toBe(letterOf(b.island));
+        } else {
+          expect(other).toBe(letterOf(b.island));
+          expect(b.to).toBe("sheet");
+        }
       }
     });
 
@@ -260,6 +269,23 @@ describe("engrave the background (rubber stamps)", () => {
     expect(piece.paths.filter((p) => p.layer === "inner")).toHaveLength(0);
     // Without it, the same sketch is all cuts, as before.
     expect(sketchPiece("Stamp", s).paths.filter((p) => p.layer === "engrave")).toHaveLength(0);
+  });
+
+  it("the laser panel takes a design sketch's settings, and goes back to the defaults after it", () => {
+    const start = { ...SKETCH_DEFAULTS, fromDesign: false };
+    // A ruler's sketch scores its lines…
+    const ruler = sketchSettingsFor(start, { open: "score", text: "engrave" });
+    expect(ruler).toEqual({ text: "engrave", shapes: "cut", open: "score", background: false, fromDesign: true });
+    // …a sketch of the user's afterwards cuts them again (a living hinge drawn by hand stays blue).
+    const plain = sketchSettingsFor(ruler, null);
+    expect(plain).toEqual({ ...SKETCH_DEFAULTS, fromDesign: false });
+    // The user's own choices are kept from one ordinary sketch to the next.
+    const chosen = { ...plain, open: "score" as const };
+    expect(sketchSettingsFor(chosen, null)).toBe(chosen);
+    // A stamp's sketch after a ruler's: only what the stamp sets, the rest plain.
+    expect(sketchSettingsFor(ruler, { background: true })).toEqual({ ...SKETCH_DEFAULTS, background: true, fromDesign: true });
+    const r = insertDesign(emptyDocument(), design("living-hinge"), valuesOf("living-hinge"), { into: MAIN_STUDIO });
+    expect(laserDefaultsFor(r.doc, r.doc.features.find((f) => f.type === "sketch")!.id)).toEqual({ open: "cut" });
   });
 
   it("the stamp's words must fit inside its border", () => {
@@ -293,6 +319,29 @@ describe("laser designs' maths", () => {
     expect(a).toBeGreaterThan(Math.PI * 17.5 ** 2);
     expect(a).toBeLessThan(Math.PI * 22 ** 2);
     expect(valueProblems(design("gear"), valuesOf("gear", { bore: 60 }))[0]).toMatch(/middle hole is too big/);
+    // Small gears are warned about (undercut), and big teeth get enough points to follow the involute closely.
+    expect(design("gear").summary!(valuesOf("gear", { teeth: 10 }))).toMatch(/fewer than 13 teeth/);
+    expect(design("gear").summary!(valuesOf("gear", { teeth: 20, pressure: "14.5" }))).toMatch(/fewer than 23 teeth/);
+    expect(design("gear").summary!(valuesOf("gear", { teeth: 24 }))).not.toMatch(/undercut/);
+    const [z, m] = [24, 10];
+    const big = gearSizes(z, m, 20);
+    const outline = gearOutline(z, m, 20);
+    const inv = (x: number) => Math.tan(x) - x;
+    let worst = 0;
+    for (let k = 0; k <= 200; k++) {
+      const r = big.base + ((big.outside - big.base) * k) / 200;
+      const half = Math.PI / (2 * z) + inv(Math.PI / 9) - inv(Math.acos(Math.min(1, big.base / r)));
+      const p: P2 = [r * Math.cos(-half), r * Math.sin(-half)];
+      let best = Infinity;
+      for (let i = 0; i < 60; i++) {
+        const [a, b] = [outline[i], outline[i + 1]];
+        const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+        const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+        best = Math.min(best, Math.hypot(a[0] + t * dx - p[0], a[1] + t * dy - p[1]));
+      }
+      worst = Math.max(worst, best);
+    }
+    expect(worst).toBeLessThan(0.01);
   });
 
   it("living hinge: rows of cuts across the zone, every other row offset, clear of the edges", () => {

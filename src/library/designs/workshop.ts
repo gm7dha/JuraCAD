@@ -47,6 +47,8 @@ export const livingHinge: LibraryDesign = {
     "A flat panel with rows of short cuts across its middle, so plywood or MDF bends there — for curved box corners, book covers and lamp shades. The cuts are blue (cut through). Export for laser: pick \"Panel sketch\". Thinner sheet and closer rows bend further.",
   category: "laser",
   prefix: "lhinge",
+  // Cut through (blue), whatever another sketch was last exported with.
+  laser: { sketch: { open: "cut" } },
   icon: '<rect x="4" y="12" width="40" height="24" rx="1"/><path d="M18 15v8M18 27v6M22 12v0M22 19v10M26 15v8M26 27v6M30 19v10" />',
   inputs: [
     { key: "width", label: "Panel width", kind: "length", default: 150, min: 20, max: 580 },
@@ -109,8 +111,19 @@ function halfAngle(teeth: number, pressure: number, s: GearSizes, r: number): nu
   return Math.PI / (2 * teeth) + inv((pressure * Math.PI) / 180) - inv(Math.acos(Math.min(1, s.base / r)));
 }
 
+/**
+ * Points along each flank: more for bigger teeth (the straight pieces then stay within about 0.01 mm of the true
+ * involute), but no more than keeps the whole outline to a few thousand lines.
+ */
+export function gearFlankPoints(teeth: number, module: number): number {
+  return Math.max(6, Math.min(6 + 2 * Math.ceil(module), Math.floor(1400 / teeth)));
+}
+
+/** Below this many teeth a gear's roots are undercut and its tips may clash with a big gear's (by pressure angle). */
+export const UNDERCUT_TEETH: Record<string, number> = { "20": 13, "14.5": 23 };
+
 /** The gear's outline: involute flanks, flat-ish tips and roots as short straight pieces, anticlockwise. */
-export function gearOutline(teeth: number, module: number, pressure: number, flankPoints = 6): P2[] {
+export function gearOutline(teeth: number, module: number, pressure: number, flankPoints = gearFlankPoints(teeth, module)): P2[] {
   const s = gearSizes(teeth, module, pressure);
   const from = Math.max(s.base, s.root);
   const at = (r: number, a: number): P2 => [Math.round(r * Math.cos(a) * 1e6) / 1e6, Math.round(r * Math.sin(a) * 1e6) / 1e6];
@@ -159,7 +172,9 @@ export const gear: LibraryDesign = {
   },
   summary: (v) => {
     const s = gearSizes(num(v, "teeth"), num(v, "module"), Number(v.pressure));
-    return `Pitch circle ${mm(2 * s.pitch)}, outside ${mm(2 * s.outside)}.`;
+    const few = UNDERCUT_TEETH[String(v.pressure)] ?? 13;
+    const warn = num(v, "teeth") < few ? ` With fewer than ${few} teeth the roots are undercut and it may jam against a big gear: use ${few} or more if you can.` : "";
+    return `Pitch circle ${mm(2 * s.pitch)}, outside ${mm(2 * s.outside)}.${warn}`;
   },
   make: (ctx) => {
     const v = ctx.values;

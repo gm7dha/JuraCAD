@@ -50,8 +50,25 @@ export interface SketchLaserOptions {
    * Engrave the background, as for a rubber stamp: everything inside the outermost outlines is engraved except the
    * shapes and letters drawn inside them (worked out even–odd, so a border drawn as two outlines stays, and the middle
    * of an "O" is engraved again), and the outermost outlines are cut. `shapes` and `text` are then not used.
+   * Shapes that cross each other (rather than one inside another) are both outermost: both outlines are cut, and
+   * where they overlap is left unengraved (even–odd) — draw a stamp's parts nested, not crossing.
    */
   background?: boolean;
+}
+
+/** What Export for laser does with a sketch unless told otherwise (the panel's first settings). */
+export const SKETCH_DEFAULTS: Required<SketchLaserOptions> = { text: "engrave", shapes: "cut", open: "cut", background: false };
+
+/**
+ * The laser panel's sketch settings when a sketch is picked. A sketch made by a library design brings its own
+ * (anything it doesn't set takes the plain default); moving on from such a sketch to one without them goes back to
+ * the defaults, so a ruler's scored lines don't turn a living hinge's cuts green. Between ordinary sketches the
+ * user's own choices are kept.
+ */
+export function sketchSettingsFor(now: Required<SketchLaserOptions> & { fromDesign: boolean }, design: SketchLaserOptions | null): Required<SketchLaserOptions> & { fromDesign: boolean } {
+  if (design) return { ...SKETCH_DEFAULTS, ...design, fromDesign: true };
+  if (now.fromDesign) return { ...SKETCH_DEFAULTS, fromDesign: false };
+  return now;
 }
 
 /**
