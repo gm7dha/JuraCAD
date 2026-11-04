@@ -10,7 +10,7 @@
  * only on the design with the same id — so versions written by another tab
  * (or left from a design that's gone) never land on the wrong design.
  */
-import { parseDocument } from "./document";
+import { fileVersionOf, parseDocument } from "./document";
 import type { DesignVersion, JuraCADDocument } from "./types";
 import { designOf, parseVersions } from "./versions";
 
@@ -64,7 +64,10 @@ function remove(storage: KeepStorage, key: string) {
  * be kept are removed rather than left to be put back on another design.
  */
 export function keepInBrowser(storage: KeepStorage, doc: JuraCADDocument, keep: string, kept: Kept | null): KeepResult {
-  const design = JSON.stringify({ ...designOf(doc), keep });
+  // A design with moved Part Studio tabs is kept as format version 2 (see fileVersionOf), so an older JuraCAD
+  // (e.g. an offline cached copy) refuses it rather than drop a studio; otherwise exactly as before.
+  const plain = designOf(doc);
+  const design = JSON.stringify(fileVersionOf(doc) === 2 ? { ...plain, version: 2, keep } : { ...plain, keep });
   const list = doc.versions?.length ? doc.versions : undefined;
   try {
     storage.setItem(STORAGE_KEY, design);

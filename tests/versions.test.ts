@@ -26,7 +26,7 @@ import {
 import { compareDesigns, featureSettingChanges, MAX_SETTINGS, same } from "../src/model/versionCompare";
 import { keepInBrowser, keepProblem, newKeepId, readKept, STORAGE_KEY, VERSIONS_KEY, type KeepStorage } from "../src/model/browserKeep";
 import { compareStudioInputs } from "../src/kernel/buildInput";
-import { addStudio } from "../src/model/studios";
+import { addStudio, moveStudio } from "../src/model/studios";
 import { addDrawing } from "../src/drawing/drawing";
 
 function bracket(): JuraCADDocument {
@@ -327,6 +327,22 @@ function storage(limit = Infinity) {
 }
 
 describe("keeping the design in the browser", () => {
+  it("keeps a design with moved Part Studio tabs as format version 2, others as version 1", () => {
+    const st = storage();
+    const plain = addStudio(bracket(), "s2");
+    keepInBrowser(st, plain, "A", null);
+    expect(JSON.parse(st.items.get(STORAGE_KEY)!).version).toBe(1);
+    const moved = moveStudio(plain, "s2", 0);
+    expect(moved.studioId).toBe("s2");
+    keepInBrowser(st, moved, "A", null);
+    const kept = JSON.parse(st.items.get(STORAGE_KEY)!);
+    expect(kept.version).toBe(2);
+    expect(kept.keep).toBe("A");
+    const back = readKept(st)!;
+    expect(back.doc.studioId).toBe("s2");
+    expect(back.doc.partStudios?.map((p) => p.id)).toEqual(["main"]);
+  });
+
   it("keeps the design and its versions under separate keys, tied by the keep id", () => {
     const st = storage();
     const doc = addVersion(bracket(), version("v1", "json:{}"));
