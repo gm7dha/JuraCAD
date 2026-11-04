@@ -4,6 +4,7 @@ import type { RefEdge } from "../sketch/links";
 import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
 import type { PrintPartResult } from "../model/printCheck";
+import type { LaserOutline, LaserSource } from "../laser/sources";
 import type { CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
@@ -130,6 +131,11 @@ export class KernelClient {
   /** A sheet metal part laid out flat, as a mesh to show in place of the folded one (null if it can't be). */
   unfold(partId: string): Promise<PartMesh | null> {
     return this.send({ type: "unfold", partId }).then((body) => (body.type === "unfold" ? body.result : null));
+  }
+
+  /** Export for laser: exact flat outlines of faces, parts or flat patterns (one answer per source, in order). */
+  laserOutlines(sources: LaserSource[]): Promise<LaserOutline[]> {
+    return this.send({ type: "laserOutlines", sources }).then((body) => (body.type === "laserOutlines" ? body.result : []));
   }
 
   /** Intersect: where a sketch's plane cuts a part (or one face of it), as edges to bring into the sketch. */

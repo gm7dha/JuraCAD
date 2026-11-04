@@ -41,6 +41,8 @@ import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCorne
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import { measureContacts } from "./clash";
+import { biggestFlatFace, faceFrame, faceWires, flatFaceNormal, planeOutline, type FlatFrame } from "./laserFaces";
+import type { LaserOutline, LaserSource } from "../laser/sources";
 import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
@@ -5571,6 +5573,56 @@ export class GeometryEngine {
     } finally {
       solid?.delete();
     }
+  }
+
+  /**
+   * Export for laser: exact flat outlines (see laserFaces.ts) of clicked flat
+   * faces, of whole parts (their biggest flat face) or of sheet metal parts laid
+   * out flat (with their bend lines), each in its own flat coordinates. A
+   * problem with one (a curved face) comes back as a plain-English error for it.
+   */
+  laserOutlines(sources: LaserSource[]): LaserOutline[] {
+    return sources.map((src): LaserOutline => {
+      const part = this.parts.find((p) => p.id === (src.kind === "face" ? src.pick.partId : src.partId));
+      if (!part) return { ok: false, error: "That part isn't there any more." };
+      try {
+        if (src.kind === "flat") {
+          if (!part.sheet) return { ok: false, partId: part.id, error: `${part.name} isn't a sheet metal part, so it has no flat pattern.` };
+          const folded = foldSheet(part.sheet);
+          const unfolded = this.laidFlat(part, folded);
+          if (!unfolded) return { ok: false, partId: part.id, error: `${part.name} couldn't be laid out flat.` };
+          try {
+            const base = folded.walls[0].frame;
+            const frame = { origin: base.origin, u: base.u, v: base.v, n: base.n } as FlatFrame;
+            const edges = planeOutline(unfolded, frame);
+            if (!edges.length) return { ok: false, partId: part.id, error: `${part.name}'s flat pattern has no outline to cut.` };
+            const flat = this.flatOf(part);
+            return { ok: true, name: `${part.name} flat pattern`, partId: part.id, wires: [edges], bends: flat?.bendLines ?? [] };
+          } finally {
+            unfolded.delete();
+          }
+        }
+        if (src.kind === "part") {
+          const found = biggestFlatFace(part.shape, src.toward);
+          if (!found) return { ok: false, partId: part.id, error: `${part.name} has no flat face to cut round. Pick a flat face.` };
+          try {
+            return { ok: true, name: part.name, partId: part.id, wires: faceWires(found.face, faceFrame(found.normal)) };
+          } finally {
+            found.face.delete();
+          }
+        }
+        const face = findPickedFace(part.shape, src.pick);
+        try {
+          const normal = flatFaceNormal(face);
+          if (!normal) return { ok: false, partId: part.id, error: `That face of ${part.name} is curved, so it can't be laid flat. Pick a flat face.` };
+          return { ok: true, name: part.name, partId: part.id, wires: faceWires(face, faceFrame(normal)) };
+        } finally {
+          face.delete();
+        }
+      } catch (e) {
+        return { ok: false, partId: part.id, error: describeError(e, `The outline of ${part.name} couldn't be read. Pick a flat face.`) };
+      }
+    });
   }
 
   /** Measure whole parts: each one's size, and between two of them the gap (0 if touching) and any overlap. */

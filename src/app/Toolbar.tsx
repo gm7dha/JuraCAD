@@ -9,6 +9,7 @@ import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
 import { startPrintBed } from "./PrintBedPanel";
 import { togglePrintPanel, usePrintPanel } from "./printState";
+import { toggleLaser, useLaserPanel } from "./laserState";
 import { chooseImportFile } from "./fileActions";
 
 function ToolButton({
@@ -98,6 +99,7 @@ export function Toolbar() {
   const sectionOn = useStore((s) => s.section !== null);
   const printBedOn = useStore((s) => s.printBed !== null);
   const printPanelOn = usePrintPanel((s) => s.open);
+  const laserPanelOn = useLaserPanel((s) => s.open);
   const platform = detectPlatform();
 
   return (
@@ -666,6 +668,13 @@ export function Toolbar() {
           active={printPanelOn}
           title="3D print — check for overhangs, thin walls and small holes, choose the face to print on, and save a 3MF for your slicer"
         />
+        <ToolButton
+          label="Laser"
+          icon={<Icons.Laser />}
+          onClick={toggleLaser}
+          active={laserPanelOn}
+          title="Export for laser — save true-size outlines of faces, parts, sketches or flat patterns to cut, score and engrave, as SVG (for Bambu Studio's laser mode) or DXF"
+        />
       </div>
       <div className="tool-group">
         <ToolButton label="Fit" icon={<Icons.Fit />} onClick={() => viewportApi.current?.fit()} title="Zoom to fit (F)" />
@@ -680,3 +689,4 @@ export function Toolbar() {
     </div>
   );
 }
+

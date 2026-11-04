@@ -8,6 +8,7 @@ import { runCheck, ReportView } from "./CheckDialog";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
+import { openLaser } from "./laserState";
 import { instancesForKernel } from "./assemblySolve";
 import { solveWithParts } from "../assembly/mates";
 import { stepTree } from "../assembly/stepTree";
@@ -218,6 +219,22 @@ export function ExportDialog() {
         Units are millimetres. JuraCAD checks the model before saving and warns you about any problems. Not sure which
         format? Send STEP — almost every manufacturer can use it.
       </p>
+      {!asm && (
+        <p className="muted small">
+          Cutting on a laser?{" "}
+          <button
+            type="button"
+            className="text-button inline-link"
+            onClick={() => {
+              close();
+              openLaser();
+            }}
+          >
+            Export for laser
+          </button>{" "}
+          saves flat outlines as SVG or DXF instead.
+        </p>
+      )}
       {error && <p className="dialog-error">{error}</p>}
     </Modal>
   );

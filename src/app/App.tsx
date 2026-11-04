@@ -22,6 +22,7 @@ import { MeasurePanel } from "./MeasurePanel";
 import { SectionPanel } from "./SectionPanel";
 import { PrintBedPanel } from "./PrintBedPanel";
 import { PrintPanel } from "./PrintPanel";
+import { LaserPanel } from "./LaserPanel";
 import { openFile, openFromFile, saveToFile } from "./fileActions";
 import { inPopup } from "./popupGuard";
 import { BottomTabs, EmptyHint, EngineStatus, SelectionInfo, ToastView } from "./Overlays";
@@ -308,6 +309,7 @@ export function App() {
               <SectionPanel />
               <PrintBedPanel />
               <PrintPanel />
+              <LaserPanel />
             </>
           )}
         </main>

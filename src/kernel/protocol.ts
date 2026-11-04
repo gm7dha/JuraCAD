@@ -234,6 +234,7 @@ export interface ThreeMfResult {
 }
 
 export type { Measurement } from "../geometry/measureMath";
+import type { LaserOutline, LaserSource } from "../laser/sources";
 
 /** A part to check or export for 3D printing, and which way is down onto the bed (model coordinates). */
 export interface PrintCheckPart {
@@ -270,6 +271,7 @@ export type KernelRequest =
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
   | { type: "unfold"; partId: string }
+  | { type: "laserOutlines"; sources: LaserSource[] }
   | { type: "intersect"; partId: string; plane: SketchPlane; face?: FaceRef }
   | { type: "useEdge"; partId: string; ref: EdgeRef; plane: SketchPlane }
   | { type: "deleteFaceBlockers"; features: Feature[]; featureId: string; variables: Record<string, number> }
@@ -285,6 +287,7 @@ export type KernelResponseBody =
   | { type: "exportStep"; result: StepResult }
   | { type: "measure"; result: Measurement }
   | { type: "unfold"; result: PartMesh | null }
+  | { type: "laserOutlines"; result: LaserOutline[] }
   | { type: "intersect"; result: { edges: EdgeRef[] } | { error: string } }
   | { type: "useEdge"; result: { edge: RefEdge } | { error: string } }
   | { type: "deleteFaceBlockers"; result: DeleteFaceBlockers }

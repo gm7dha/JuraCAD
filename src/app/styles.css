@@ -1569,6 +1569,76 @@ kbd {
   gap: 6px;
 }
 
+/* Export for laser panel (same place as the 3D print panel). */
+.laser-panel {
+  width: 320px;
+}
+
+.laser-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.laser-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.laser-option select {
+  min-width: 110px;
+}
+
+.laser-number input {
+  width: 64px;
+}
+
+.laser-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.laser-preview {
+  min-height: 80px;
+  max-height: 240px;
+  align-items: center;
+}
+
+.laser-preview img {
+  max-height: 224px;
+}
+
+.laser-panel p {
+  margin: 0;
+}
+
+.laser-key {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.laser-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  vertical-align: -1px;
+}
+
+.laser-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .print-orient {
   display: flex;
   flex-wrap: wrap;
