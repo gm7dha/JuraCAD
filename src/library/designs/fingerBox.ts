@@ -34,7 +34,7 @@ export const fingerBox: LibraryDesign = {
   id: "finger-box",
   name: "Finger-joint box",
   description: "A box of flat panels with interlocking fingers, to cut on a laser and slot together. Shown put together; every panel has a big flat face, ready to lay flat for cutting.",
-  madeBy: "laser",
+  category: "laser",
   prefix: "box",
   icon: '<path d="M8 18 24 10l16 8v18l-16 8-16-8z"/><path d="M8 18l16 8 16-8M24 26v18"/><path d="M12 20v3l3 1.5v-3M18 23v3l3 1.5v-3M27 25.5v3l3-1.5v-3M33 22.5v3l3-1.5v-3"/>',
   inputs: [

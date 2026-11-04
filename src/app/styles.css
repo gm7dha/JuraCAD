@@ -3825,14 +3825,34 @@ kbd {
   flex-direction: column;
   gap: 3px;
 }
-.library-tag {
-  align-self: flex-start;
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: 8px;
-  background: var(--subtle);
-  border: 1px solid var(--line);
+.library-card-text .muted {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.library-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.library-tabs button {
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: none;
   color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.library-tabs button.selected {
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--accent);
+  font-weight: 600;
 }
 .library-heading {
   font-size: 13px;

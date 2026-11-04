@@ -7,7 +7,7 @@ export const spacer: LibraryDesign = {
   id: "spacer",
   name: "Spacer / washer",
   description: "A round spacer or washer with a hole through the middle — to lift a board off a panel, or pack out a screw.",
-  madeBy: "3D printer",
+  category: "print",
   prefix: "spacer",
   icon: '<circle cx="24" cy="24" r="15"/><circle cx="24" cy="24" r="6"/>',
   inputs: [

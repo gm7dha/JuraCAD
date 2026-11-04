@@ -56,12 +56,15 @@ export type PreviewShape =
   | { kind: "circle"; c: [number, number]; r: number; faint?: boolean }
   | { kind: "text"; at: [number, number]; text: string };
 
+/** The library's two sections: designs cut from flat sheet on a laser, and designs made on a 3D printer. */
+export type DesignCategory = "laser" | "print";
+
 export interface LibraryDesign {
   id: string;
   name: string;
   description: string;
-  /** What it's mainly made with. */
-  madeBy: "laser" | "3D printer";
+  /** Which section of the library it's in: "laser" (Laser cutting) or "print" (3D printing). */
+  category: DesignCategory;
   /** Start of its variables' names: box → box_width. */
   prefix: string;
   /** A small drawing for its card: the inside of an <svg viewBox="0 0 48 48">, in currentColor. */

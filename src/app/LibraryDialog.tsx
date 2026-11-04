@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 
 import { useDocument, useStore } from "../model/store";
-import { currentValues, defaultValues, findDesign, findInsert, LIBRARY, liveInserts, valueProblems } from "../library/insert";
+import { currentValues, defaultValues, designsIn, findDesign, findInsert, LIBRARY_CATEGORIES, liveInserts, valueProblems } from "../library/insert";
+import { rememberedTab, rememberTab } from "../library/tabMemory";
 import { previewPicture } from "../library/preview";
-import type { DesignInput, DesignValues, LibraryDesign } from "../library/types";
+import type { DesignCategory, DesignInput, DesignValues, LibraryDesign } from "../library/types";
 import { Modal } from "./Modal";
 
 /** A design's small drawing (the icons are fixed drawings written in the code, never user data). */
@@ -138,6 +139,11 @@ export function LibraryDialog() {
   const [typed, setTyped] = useState<Typed | null>(null);
   const [into, setInto] = useState<"new" | "current">("new");
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<DesignCategory>(() => rememberedTab());
+  const chooseTab = (t: DesignCategory) => {
+    setTab(t);
+    rememberTab(t);
+  };
   const shown: Typed | null = design ? typed ?? typedFrom(design, insert ? currentValues(doc, insert) : defaultValues(design)) : null;
   const values = design && shown ? valuesFrom(design, shown) : null;
   const ok = !!design && !!values && valueProblems(design, values).length === 0;
@@ -163,18 +169,46 @@ export function LibraryDialog() {
           Ready-made designs you can size to suit. Each is added as ordinary features — sketches with dimensions and extrudes — driven by a few named sizes, so you can change it later in{" "}
           <b>Variables</b>, or edit any feature just as if you'd drawn it yourself.
         </p>
-        <div className="library-grid">
-          {LIBRARY.map((d) => (
-            <button key={d.id} className="library-card" onClick={() => pick(d.id)} aria-label={`${d.name}: ${d.description}`}>
-              <DesignIcon design={d} />
-              <span className="library-card-text">
-                <b>{d.name}</b>
-                <span className="library-tag">{d.madeBy === "laser" ? "Laser cut" : "3D print"}</span>
-                <span className="muted small">{d.description}</span>
-              </span>
+        <div className="library-tabs" role="tablist" aria-label="Kinds of design">
+          {LIBRARY_CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              id={`library-tab-${c.id}`}
+              role="tab"
+              aria-selected={tab === c.id}
+              tabIndex={tab === c.id ? 0 : -1}
+              aria-controls="library-section"
+              className={tab === c.id ? "selected" : ""}
+              onClick={() => chooseTab(c.id)}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                const i = LIBRARY_CATEGORIES.findIndex((x) => x.id === tab);
+                const next = LIBRARY_CATEGORIES[(i + (e.key === "ArrowRight" ? 1 : LIBRARY_CATEGORIES.length - 1)) % LIBRARY_CATEGORIES.length];
+                chooseTab(next.id);
+                document.getElementById(`library-tab-${next.id}`)?.focus();
+              }}
+            >
+              {c.label}
             </button>
           ))}
         </div>
+        {LIBRARY_CATEGORIES.filter((c) => c.id === tab).map((c) => (
+          <section key={c.id} id="library-section" role="tabpanel" aria-labelledby={`library-tab-${c.id}`}>
+            <h3 className="library-heading">{c.label}</h3>
+            <p className="muted small">{c.blurb}</p>
+            <div className="library-grid">
+              {designsIn(c.id).map((d) => (
+                <button key={d.id} className="library-card" onClick={() => pick(d.id)} aria-label={`${d.name}: ${d.description}`}>
+                  <DesignIcon design={d} />
+                  <span className="library-card-text">
+                    <b>{d.name}</b>
+                    <span className="muted small">{d.description}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
         {placed.length > 0 && (
           <>
             <h3 className="library-heading">In this design</h3>

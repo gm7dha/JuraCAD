@@ -109,3 +109,21 @@ export function linearPatternFeature(id: string, name: string, sources: string[]
 export function circularPatternFeature(id: string, name: string, sources: string[], count: Ex): Feature {
   return { ...base(id, name, "circularPattern", "add", { count: count.t, angle: "360" }), pattern: { sources, axis: "z", flip: false } };
 }
+
+/** Move (and turn) a part where it is — no copy. Turns are about the part's own middle, then it's moved. */
+export function moveFeature(id: string, name: string, partId: string, move: { rx?: Ex; dx?: Ex; dy?: Ex; dz?: Ex }): Feature {
+  const params: Record<string, string> = {};
+  for (const k of ["rx", "dx", "dy", "dz"] as const) if (move[k]) params[k] = move[k]!.t;
+  return { ...base(id, name, "transform", "add", params), transform: { partId, axis: "z", about: "centre", copy: false } };
+}
+
+/**
+ * Countersunk screw holes right through, at the circle centres of a sketch (as the Hole dialog makes them, with a
+ * custom size). Not `apart`: it drills only the latest part — the design's own — so a user's part is never touched.
+ */
+export function countersunkHoleFeature(id: string, name: string, sketchRef: string, diameter: Ex, countersink: Ex): Feature {
+  return {
+    ...base(id, name, "hole", "remove", { diameter: diameter.t, cskDiameter: countersink.t, cskAngle: "90" }),
+    hole: { sketchRef, kind: "countersink", standard: "Custom", fit: "clearance", end: "throughAll", flip: false },
+  };
+}

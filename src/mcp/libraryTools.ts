@@ -5,7 +5,7 @@
  */
 import { MAIN_STUDIO } from "../model/studios";
 import type { JuraCADDocument } from "../model/types";
-import { completeValues, findDesign, insertDesign, LIBRARY, valueProblems } from "../library/insert";
+import { categoryFrom, categoryLabel, completeValues, findDesign, insertDesign, LIBRARY, LIBRARY_CATEGORIES, valueProblems } from "../library/insert";
 import type { DesignInput } from "../library/types";
 import { InputError, noExtras, object, type Obj } from "./args";
 import type { Session } from "./session";
@@ -36,13 +36,23 @@ export function libraryTools(tryChange: TryChange): ToolDef[] {
     {
       name: "list_library_designs",
       title: "List the Design library",
-      description: "List JuraCAD's Design library: ready-made designs (a finger-joint box for laser cutting, a tray, a shelf bracket, a spacer, a knob) with the sizes and choices each takes. Insert one with insert_library_design.",
+      description:
+        'List JuraCAD\'s Design library: ready-made designs in two sections — "laser" (Laser cutting: a finger-joint box, a flat-pack phone stand) and "print" (3D printing: a tray, a box with lid, a shelf bracket, a wall hook, a cable clip, a phone stand, a print-in-place hinge, a spacer, a knob) — with the sizes and choices each takes. Give "category" to list one section only. Insert one with insert_library_design.',
       readOnly: true,
-      inputSchema: { type: "object", properties: {} },
+      inputSchema: {
+        type: "object",
+        properties: { category: { type: "string", enum: LIBRARY_CATEGORIES.map((c) => c.id), description: 'Only this section: "laser" (Laser cutting) or "print" (3D printing). Leave out for both.' } },
+      },
       run: (_s, a) => {
-        noExtras(a, [], "list_library_designs");
+        noExtras(a, ["category"], "list_library_designs");
+        const only = a.category === undefined || a.category === null ? null : categoryFrom(a.category);
+        if (a.category !== undefined && a.category !== null && !only) throw new InputError(`category: give "laser" (Laser cutting) or "print" (3D printing), or leave it out for both.`);
+        const sections = LIBRARY_CATEGORIES.filter((c) => !only || c.id === only);
         return say(
-          ...LIBRARY.flatMap((d) => [`${d.id} — ${d.name} (made by ${d.madeBy}): ${d.description}`, ...d.inputs.map(describeInput)]),
+          ...sections.flatMap((c) => [
+            `${c.label} (category "${c.id}"):`,
+            ...LIBRARY.filter((d) => d.category === c.id).flatMap((d) => [`${d.id} — ${d.name} [${categoryLabel(d.category)}]: ${d.description}`, ...d.inputs.map(describeInput)]),
+          ]),
           "Sizes marked [a variable afterwards] become variables named <prefix>_<key> (e.g. box_width), so set_variables changes them later and the design follows.",
         );
       },

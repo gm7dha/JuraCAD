@@ -50,6 +50,32 @@ describe("Design library tools", () => {
     expect(r.text).toMatch(/thickness: Material thickness \(mm, default 3/);
   });
 
+  it("list one section on its own: laser or 3D printing", async () => {
+    const s = newSession();
+    const laser = await call(s, "list_library_designs", { category: "laser" });
+    expect(laser.error).toBe(false);
+    expect(laser.text).toMatch(/Laser cutting \(category "laser"\)/);
+    for (const id of ["finger-box", "flat-stand"]) expect(laser.text).toContain(`${id} —`);
+    for (const id of ["tray", "box-lid", "hinge", "hook"]) expect(laser.text).not.toContain(`${id} —`);
+    const print = await call(s, "list_library_designs", { category: "print" });
+    for (const id of ["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob"]) expect(print.text).toContain(`${id} —`);
+    expect(print.text).not.toContain("finger-box —");
+    expect(print.text).toMatch(/\[3D printing\]/);
+    const both = await call(s, "list_library_designs");
+    expect(both.text).toMatch(/Laser cutting[\s\S]*3D printing/);
+    const bad = await call(s, "list_library_designs", { category: "wood" });
+    expect(bad.error).toBe(true);
+    expect(bad.text).toMatch(/"laser".*"print"/);
+  });
+
+  it("insert a box with lid: two parts", async () => {
+    const s = newSession();
+    const r = await call(s, "insert_library_design", { design: "box-lid", sizes: { width: 70 } });
+    expect(r.error).toBe(false);
+    expect(r.text).toMatch(/lidbox_clearance = 0.2/);
+    expect(s.build().parts).toHaveLength(2);
+  });
+
   it("insert a finger box whose variables then resize it", async () => {
     const s = newSession();
     const r = await call(s, "insert_library_design", { design: "finger-box", sizes: { width: 150, lid: false } });
