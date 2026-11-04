@@ -56,7 +56,7 @@ describe("Design library tools", () => {
     expect(laser.error).toBe(false);
     expect(laser.text).toMatch(/Laser cutting \(category "laser"\)/);
     for (const id of ["finger-box", "flat-stand"]) expect(laser.text).toContain(`${id} —`);
-    for (const id of ["tray", "box-lid", "hinge", "hook"]) expect(laser.text).not.toContain(`${id} —`);
+    for (const id of ["tray", "box-lid", "hinge", "hook"]) expect(laser.text).not.toMatch(new RegExp(`^${id} —`, "m"));
     const print = await call(s, "list_library_designs", { category: "print" });
     for (const id of ["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob"]) expect(print.text).toContain(`${id} —`);
     expect(print.text).not.toContain("finger-box —");

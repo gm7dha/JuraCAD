@@ -56,6 +56,7 @@ export const flatStand: LibraryDesign = {
   description:
     "A phone stand cut from flat sheet: a side profile and two feet that slot together, no glue needed. The phone stands on the front foot, right across its length, so it can't roll off sideways. Shown put together; each piece has a big flat face, ready for Export for laser. Measure your sheet for the slots, and set the kerf allowance for your laser.",
   category: "laser",
+  group: "Boxes and stands",
   prefix: "fstand",
   icon: '<path d="M6 34h30l-10-24h-5l10 24" /><path d="M10 30v8M30 30v8" opacity=".55"/><path d="M4 38h10M24 38h12" />',
   inputs: [

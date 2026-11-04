@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getKernel } from "../kernel/connect";
 import { LASER_LAYERS, LAYER_ORDER, layerCounts, layoutPieces, type LaserPiece } from "../laser/laser";
 import { laserDxf, laserSvg } from "../laser/laserFiles";
-import { outlinePiece, partFacing, sketchPiece, uniqueSources, type LaserOutline, type LaserSource } from "../laser/sources";
+import { outlinePiece, partFacing, sketchPiece, sketchSettingsFor, uniqueSources, type LaserOutline, type LaserSource } from "../laser/sources";
 import { followedSketch } from "../sketch/areaClicks";
 import { activeAssembly, activeDrawing, activeFeatures, pickFor, studioParts, useDocument, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
@@ -11,6 +11,7 @@ import type { PartMesh } from "../kernel/protocol";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { useLaserPanel, type LaserChoice } from "./laserState";
+import { laserDefaultsFor } from "../library/insert";
 
 /** What the engine is asked for, for a choice (none for a sketch, which is read here). */
 export function laserSources(
@@ -99,14 +100,23 @@ function LaserPanelBody() {
       .finally(() => n === asked.current && setBusy(false));
   }, [sources]);
 
+  // A sketch made by a library design (a rubber stamp…) comes with the settings it's meant for; leaving it goes back to the defaults.
+  useEffect(() => {
+    if (!st.source.startsWith("sketch:")) return;
+    const d = laserDefaultsFor(useStore.getState().history.present, st.source.slice(7));
+    const now = useLaserPanel.getState();
+    const next = sketchSettingsFor({ text: now.text, shapes: now.shapes, open: now.open_, background: now.background, fromDesign: now.fromDesign }, d);
+    set({ text: next.text, shapes: next.shapes, open_: next.open, background: next.background, fromDesign: next.fromDesign });
+  }, [st.source]);
+
   const sketchFeature = st.source.startsWith("sketch:") ? sketches.find((f) => f.id === st.source.slice(7)) : undefined;
   const pieces: LaserPiece[] = useMemo(() => {
     if (sketchFeature) {
       const data = followedSketch(sketchFeature, links)?.data ?? sketchFeature.sketch!.data;
-      return [sketchPiece(sketchFeature.name, data, { text: st.text, shapes: st.shapes, open: st.open_ })];
+      return [sketchPiece(sketchFeature.name, data, { text: st.text, shapes: st.shapes, open: st.open_, background: st.background })];
     }
     return outlines.flatMap((o) => (o.ok ? [outlinePiece(o, { bends: st.bends })] : []));
-  }, [sketchFeature, links, outlines, st.text, st.shapes, st.open_, st.bends]);
+  }, [sketchFeature, links, outlines, st.text, st.shapes, st.open_, st.background, st.bends]);
   const problems = sketchFeature ? [] : outlines.flatMap((o) => (o.ok ? [] : [o.error]));
   const sheet = useMemo(() => layoutPieces(pieces, { gap: st.gap, width: st.width, mirror: st.mirror }), [pieces, st.gap, st.width, st.mirror]);
   const counts = layerCounts(sheet);
@@ -155,6 +165,12 @@ function LaserPanelBody() {
 
       {sketchFeature && (
         <div className="laser-options">
+          <label className="laser-check" title="For rubber stamps: everything inside the outline is engraved away except the letters and shapes, which stay raised">
+            <input type="checkbox" checked={st.background} onChange={(e) => set({ background: e.target.checked })} />
+            Engrave the background (rubber stamps)
+          </label>
+          {!st.background && (
+          <>
           <label className="laser-option">
             Closed shapes
             <select value={st.shapes} onChange={(e) => set({ shapes: e.target.value as "cut" | "engrave" })}>
@@ -169,6 +185,8 @@ function LaserPanelBody() {
               <option value="cut">Cut out</option>
             </select>
           </label>
+          </>
+          )}
           <label className="laser-option">
             Lines that don't close
             <select value={st.open_} onChange={(e) => set({ open_: e.target.value as "cut" | "score" })}>

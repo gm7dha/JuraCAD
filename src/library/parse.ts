@@ -14,7 +14,7 @@ export function parseLibraryInserts(raw: unknown): LibraryInsert[] {
     const values: DesignValues = {};
     if (o.values && typeof o.values === "object") {
       for (const [k, v] of Object.entries(o.values as Record<string, unknown>).slice(0, 100)) {
-        if ((typeof v === "number" && Number.isFinite(v)) || typeof v === "boolean" || (typeof v === "string" && v.length <= 100)) values[k] = v;
+        if ((typeof v === "number" && Number.isFinite(v)) || typeof v === "boolean" || (typeof v === "string" && v.length <= 1000)) values[k] = v;
       }
     }
     const features = Array.isArray(o.features) ? o.features.filter((x): x is string => typeof x === "string").slice(0, 1000) : [];
