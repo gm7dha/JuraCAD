@@ -8,7 +8,7 @@ import type { TopoPick } from "../geometry/topoRef";
 import type { Feature } from "../model/types";
 import { sketchAreas } from "../sketch/areas";
 import { planeFrame, type SketchPlane } from "../sketch/planes";
-import { findChains, type Pt, type Segment } from "../sketch/regions";
+import { findChains, type Chain, type Pt, type Segment } from "../sketch/regions";
 import { textContours, textsOf } from "../sketch/sketchText";
 import type { SketchData } from "../sketch/types";
 import { chainEdges, segmentPoints, sortLoops, type LaserLayer, type LaserPath, type LaserPiece } from "./laser";
@@ -50,41 +50,85 @@ export interface SketchLaserOptions {
 
 /**
  * Where three or more curves meet (a house: a rectangle with a roof on its top
- * corners; a rectangle with a diagonal), say which curves are the outline: a
+ * corners; a rectangle with a diagonal), say which curves are the outline. Each
+ * group of curves joined at a junction is judged by itself — the areas its own
+ * curves make, so a house-shaped hole in a plate is still a closed shape: a
  * curve with open space (no area) on one side runs round the outside of the
  * shape, one with area on both sides is a line inside it, and one with open
  * space on both sides is a lone line. Outline curves are joined into closed
  * loops (cut), the others are kept as lines (cut or scored).
  */
-function junctionCurves(sketch: SketchData, curves: Segment[][]): { loops: Segment[][]; lines: Segment[][] } {
-  if (!curves.length) return { loops: [], lines: [] };
-  const map = sketchAreas({ ...sketch, texts: [] });
-  const all = curves.flat();
-  const box = all.length ? all.flatMap((c) => segmentPoints(c, 0.05)) : [];
-  const xs = box.map((p) => p[0]);
-  const ys = box.map((p) => p[1]);
-  const size = Math.max(1, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
-  const eps = Math.max(1e-4, size * 1e-5);
-  const outline: Segment[] = [];
+function junctionCurves(sketch: SketchData, runs: Chain[]): { loops: Segment[][]; lines: Segment[][] } {
+  const loops: Segment[][] = [];
   const lines: Segment[][] = [];
-  for (const run of curves) {
-    // Look either side of the curve's middle.
-    const pts = run.flatMap((c, i) => segmentPoints(c, 0.01).slice(i ? 1 : 0));
-    let at = Math.floor(pts.length / 2);
-    if (at >= pts.length - 1) at = pts.length - 2;
-    const a = pts[Math.max(0, at)];
-    const b = pts[at + 1] ?? pts[at];
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    const mid: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-    const nrm: Pt = [-(b[1] - a[1]) / len, (b[0] - a[0]) / len];
-    const left = map.areaAt([mid[0] + nrm[0] * eps, mid[1] + nrm[1] * eps]) >= 0;
-    const right = map.areaAt([mid[0] - nrm[0] * eps, mid[1] - nrm[1] * eps]) >= 0;
-    if (left !== right) outline.push(...run);
-    else lines.push(run);
+  const groups = new Map<number, Chain[]>();
+  for (const r of runs) groups.set(r.group ?? 0, [...(groups.get(r.group ?? 0) ?? []), r]);
+  for (const group of groups.values()) {
+    // The same curve drawn twice (two rectangles sharing a side) is judged and cut once.
+    const curves = uniqueRuns(group.map((g) => g.segments));
+    const ids = new Set(group.map((g) => g.curve));
+    const map = sketchAreas({ ...sketch, curves: sketch.curves.filter((c) => ids.has(c.id)), texts: [], images: [] });
+    const pts = curves.flat().flatMap((c) => segmentPoints(c, 0.05));
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    const size = Math.max(1, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    const eps = Math.max(1e-4, size * 1e-5);
+    const outline: Segment[] = [];
+    for (const run of curves) {
+      // Look either side of the curve's middle.
+      const along = run.flatMap((c, i) => segmentPoints(c, 0.01).slice(i ? 1 : 0));
+      const at = Math.max(0, Math.min(along.length - 2, Math.floor(along.length / 2)));
+      const p = along[at];
+      const q = along[at + 1] ?? along[at];
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+      const mid: Pt = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+      const nrm: Pt = [-(q[1] - p[1]) / len, (q[0] - p[0]) / len];
+      const left = map.areaAt([mid[0] + nrm[0] * eps, mid[1] + nrm[1] * eps]) >= 0;
+      const right = map.areaAt([mid[0] - nrm[0] * eps, mid[1] - nrm[1] * eps]) >= 0;
+      if (left !== right) outline.push(...run);
+      else lines.push(run);
+    }
+    const joined = chainEdges(outline);
+    loops.push(...joined.loops);
+    // An outline piece that didn't close (a gap in the drawing) is still cut along.
+    lines.push(...joined.open);
   }
-  const joined = chainEdges(outline);
-  // An outline piece that didn't close (a gap in the drawing) is still cut along.
-  return { loops: joined.loops, lines: [...lines, ...joined.open] };
+  return { loops, lines };
+}
+
+/** A curve run's ends and middle, either way round (to find the same line drawn twice). */
+function runKey(run: Segment[]): string {
+  const pts = run.flatMap((c, i) => segmentPoints(c, 0.01).slice(i ? 1 : 0));
+  const r = (p: Pt) => `${Math.round(p[0] * 1e4)},${Math.round(p[1] * 1e4)}`;
+  const a = r(pts[0]);
+  const b = r(pts[pts.length - 1]);
+  // The point halfway along (by length), the same whichever way the run is walked.
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  let walked = 0;
+  let mid = pts[0];
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (walked + d >= total / 2) {
+      const t = d ? (total / 2 - walked) / d : 0;
+      mid = [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t];
+      break;
+    }
+    walked += d;
+  }
+  return `${[a, b].sort().join("|")}|${Math.round(mid[0] * 1e3)},${Math.round(mid[1] * 1e3)}`;
+}
+
+/** Runs with the same ends and middle (either way round) kept once. */
+export function uniqueRuns(runs: Segment[][]): Segment[][] {
+  const seen = new Set<string>();
+  return runs.filter((r) => {
+    if (!r.length) return false;
+    const k = runKey(r);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 /** A sketch's solid curves and text as a piece to cut (construction lines are left out). */
@@ -92,10 +136,10 @@ export function sketchPiece(name: string, sketch: SketchData, opts: SketchLaserO
   const { chains } = findChains({ ...sketch, texts: [] }, { branching: true });
   const junction = junctionCurves(
     sketch,
-    chains.filter((c) => c.branching).map((c) => c.segments),
+    chains.filter((c) => c.branching),
   );
   const shapeLoops = [...chains.filter((c) => c.closed).map((c) => c.segments), ...junction.loops];
-  const openRuns = [...chains.filter((c) => !c.closed && !c.branching).map((c) => c.segments), ...junction.lines];
+  const openRuns = uniqueRuns([...chains.filter((c) => !c.closed && !c.branching).map((c) => c.segments), ...junction.lines]);
   const textLoops = textsOf(sketch)
     .filter((t) => !t.construction)
     .flatMap((t) => textContours(sketch, t))

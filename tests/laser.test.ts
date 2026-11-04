@@ -7,11 +7,11 @@ import { describe, expect, it } from "vitest";
 
 import { chainEdges, layoutPieces, pathsBox, sortLoops, type LaserPiece } from "../src/laser/laser";
 import { laserDxf, laserSvg, polylineOf } from "../src/laser/laserFiles";
-import { outlinePiece, sketchPiece } from "../src/laser/sources";
+import { outlinePiece, sketchPiece, uniqueRuns } from "../src/laser/sources";
 import { parseDxf } from "../src/sketch/dxf";
 import { addArc, addCircle, addLine, addRectangle } from "../src/sketch/ops";
 import type { Segment } from "../src/sketch/regions";
-import { emptySketch } from "../src/sketch/types";
+import { emptySketch, type SketchData } from "../src/sketch/types";
 
 type P = [number, number];
 const line = (from: P, to: P): Segment => ({ kind: "line", from, to });
@@ -244,6 +244,51 @@ describe("sketches with lines meeting at a corner", () => {
     expect(outer[0].segments).toHaveLength(4);
     expect(piece.paths.filter((p) => p.layer === "score")).toHaveLength(1);
     expect(layoutPieces([piece]).size).toEqual([40, 30]);
+  });
+});
+
+describe("more shapes meeting at points", () => {
+  const ptAt = (s: SketchData, x: number, y: number) => s.points.find((p) => Math.abs(p.x - x) < 1e-6 && Math.abs(p.y - y) < 1e-6)?.id;
+  /** A line between two places, each snapped to a point already there. */
+  const L = (s: SketchData, a: P, b: P) => {
+    const at = (p: P) => {
+      const id = ptAt(s, p[0], p[1]);
+      return (id ? { x: p[0], y: p[1], snap: { kind: "point", id } } : { x: p[0], y: p[1] }) as unknown as { x: number; y: number };
+    };
+    return addLine(s, at(a), at(b)).sketch;
+  };
+  const poly = (s: SketchData, pts: P[]) => pts.reduce((k, p, i) => L(k, p, pts[(i + 1) % pts.length]), s);
+  const kinds = (s: SketchData, open: "cut" | "score" = "cut") => sketchPiece("S", s, { open }).paths.map((p) => `${p.layer}/${p.closed ? "C" : "o"}${p.segments.length}`);
+
+  it("a house-shaped hole in a plate is cut through as one closed blue loop", () => {
+    let s = addRectangle(emptySketch(), { x: -20, y: -20 }, { x: 60, y: 70 }).sketch;
+    s = addRectangle(s, { x: 0, y: 0 }, { x: 40, y: 30 }).sketch;
+    s = L(L(s, [0, 30], [20, 50]), [20, 50], [40, 30]);
+    for (const open of ["cut", "score"] as const) {
+      const got = kinds(s, open);
+      expect(got.filter((k) => k === "outer/C4")).toHaveLength(1);
+      expect(got.filter((k) => k === "inner/C5")).toHaveLength(1);
+      // Only the line under the roof is left as a line.
+      expect(got.filter((k) => k.includes("/o"))).toEqual([open === "score" ? "score/o1" : "inner/o1"]);
+    }
+  });
+
+  it("a figure-8 (two triangles touching at one point) gives two closed triangles", () => {
+    const s = poly(poly(emptySketch(), [[0, 0], [20, 10], [0, 20]]), [[20, 10], [40, 0], [40, 20]]);
+    expect(kinds(s)).toEqual(["outer/C3", "outer/C3"]);
+    // And straight from the pieces: a chain through the shared point is split into its two loops, neither dropped.
+    const segs: Segment[] = [[[0, 0], [20, 10]], [[20, 10], [40, 0]], [[40, 0], [40, 20]], [[40, 20], [20, 10]], [[20, 10], [0, 20]], [[0, 20], [0, 0]]].map(([a, b]) => line(a as P, b as P));
+    const { loops } = chainEdges(segs);
+    expect(loops.map((l) => l.length).sort()).toEqual([3, 3]);
+    expect(sortLoops(loops)).toHaveLength(2);
+  });
+
+  it("two rectangles sharing a side cut that side once", () => {
+    let s = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 30 }).sketch;
+    s = poly(s, [[20, 0], [40, 0], [40, 30], [20, 30]]);
+    const got = kinds(s, "score");
+    expect(got).toEqual(["outer/C6", "score/o1"]);
+    expect(uniqueRuns([[line([20, 0], [20, 30])], [line([20, 30], [20, 0])], [line([0, 0], [1, 1])]])).toHaveLength(2);
   });
 });
 

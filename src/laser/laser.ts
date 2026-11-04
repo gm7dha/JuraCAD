@@ -383,9 +383,39 @@ export function chainEdges(edges: Segment[], tol = JOIN_TOLERANCE): { loops: Seg
         }
       }
     }
-    (closed ? loops : open).push(chain);
+    // A chain that passes through the same point twice (two shapes touching at a corner, a figure-8) is split there
+    // into loops of its own, so no loop touches itself.
+    const split = splitAtRevisits(chain, closed, tol);
+    loops.push(...split.loops);
+    if (split.rest.length) (closed ? loops : open).push(split.rest);
   }
   return { loops, open };
+}
+
+/** Take out every stretch of a chain that comes back to a point it already passed, as a loop of its own. */
+function splitAtRevisits(chain: Segment[], closed: boolean, tol: number): { loops: Segment[][]; rest: Segment[] } {
+  const loops: Segment[][] = [];
+  const rest: Segment[] = [];
+  // Points passed so far (the start of each piece in `rest`, then where it ends).
+  const passed: Pt[] = [];
+  chain.forEach((s, i) => {
+    const [a, b] = segmentEnds(s)!;
+    if (!rest.length) passed.push(a);
+    rest.push(s);
+    passed.push(b);
+    // Back at a point passed before (other than the very start of a closed chain, which closes it at the end).
+    const last = passed.length - 1;
+    for (let k = last - 2; k >= 0; k--) {
+      if (k === 0 && closed && i === chain.length - 1) break;
+      if (dist(passed[k], b) <= tol) {
+        const loop = rest.splice(k, rest.length - k);
+        passed.splice(k + 1);
+        if (loop.length) loops.push(loop);
+        break;
+      }
+    }
+  });
+  return { loops, rest };
 }
 
 /**
@@ -397,7 +427,8 @@ export function sortLoops(loops: Segment[][]): LaserPath[] {
   const polys = loops.map((l) => pathPoints(l, true, 0.01));
   const areas = polys.map((p) => Math.abs(signedArea(p)));
   const found = loops.flatMap((segments, i): { path: LaserPath; depth: number }[] => {
-    if (polys[i].length < 2 || (areas[i] < 1e-9 && segments.length > 1)) return [];
+    // Only nothing at all is left out (a loop with no length); any loop with pieces is cut.
+    if (polys[i].length < 2) return [];
     // A point just along the loop's first side (corners may touch other loops).
     const p0 = polys[i][0];
     const p1 = polys[i][1 % polys[i].length];
