@@ -167,7 +167,7 @@ export function hingeBoxProblems(v: DesignValues): string[] {
   if (b.wall < 4 * t + 2 * gap) return ["The box is too low: make it taller."];
   if (cut > b.wall - 2 * gap) return [`The hinge cuts are longer than the wall allows: at most ${mm(b.wall - 2 * gap)}.`];
   if (b.corner < 3 * spacing) return ["The rows of hinge cuts are too far apart for these corners: bring them closer, or round the corners more."];
-  if (!fitsBed(b.length + kerf, b.wall + kerf)) return [`The wall strip would be ${mm(b.length)} long: too long for the laser's 600 mm bed. Make the box smaller.`];
+  if (!fitsBed(b.length + kerf, b.wall + kerf)) return [`The wall strip would be ${mm(b.length)} long: too long to fit on the laser's 600 mm bed with room round it. Make the box smaller.`];
   if (!fitsBed(W, D)) return ["The bottom is too big for the laser's 600 × 300 mm bed."];
   if (hingeColumns(b, v).length > MAX_CUTS) return [`That's over ${MAX_CUTS} hinge cuts: space the rows further apart.`];
   return [];
