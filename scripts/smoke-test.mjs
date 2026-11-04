@@ -3279,7 +3279,8 @@ try {
     if ((await shown()).errors) throw new Error(`the stencil has ${(await shown()).errors} feature problem(s)`);
     await tool("Laser");
     await page.waitForSelector(".laser-panel");
-    await page.waitForFunction(() => /× .* mm/.test(document.querySelector(".laser-size")?.textContent ?? ""), null, { timeout: 30_000 }).catch(async () => {
+    // (The design is shown in inches by now: just wait for its size.)
+    await page.waitForFunction(() => /\d × \d.* overall/.test(document.querySelector(".laser-size")?.textContent ?? ""), null, { timeout: 30_000 }).catch(async () => {
       throw new Error(`the laser panel didn't show the stencil: ${(await page.locator(".laser-panel").innerText()).replace(/\s+/g, " ")}`);
     });
     await shot("stencil-laser");
