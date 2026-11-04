@@ -22,6 +22,20 @@ export function tidy(n: number): string {
   return String(Object.is(r, -0) ? 0 : r);
 }
 
+/** "x" when the text is "-(x)" as a whole — not "-(a) - (b)", whose brackets close in the middle — else null. */
+export function wholeNegation(t: string): string | null {
+  if (!t.startsWith("-(") || !t.endsWith(")")) return null;
+  let depth = 0;
+  for (let i = 1; i < t.length; i++) {
+    if (t[i] === "(") depth++;
+    else if (t[i] === ")") {
+      depth--;
+      if (depth === 0 && i < t.length - 1) return null;
+    }
+  }
+  return depth === 0 ? t.slice(2, -1) : null;
+}
+
 /** A plain number. */
 export const lit = (v: number): Ex => ({ t: tidy(v), v });
 export const ZERO = lit(0);
@@ -45,8 +59,8 @@ export function plus(...xs: Ex[]): Ex {
   let t = terms[0].t;
   let v = terms[0].v;
   for (const x of terms.slice(1)) {
-    const neg = /^-\((.*)\)$/.exec(x.t);
-    t = neg ? `${t} - (${neg[1]})` : x.t.startsWith("-") ? `${t} - ${x.t.slice(1)}` : `${t} + ${x.t}`;
+    const negated = wholeNegation(x.t);
+    t = negated !== null ? `${t} - (${negated})` : x.t.startsWith("-") ? `${t} - ${x.t.slice(1)}` : `${t} + ${x.t}`;
     v += x.v;
   }
   return { t, v };
@@ -55,8 +69,8 @@ export function plus(...xs: Ex[]): Ex {
 export function neg(a: Ex): Ex {
   if (isZero(a)) return ZERO;
   if (isLit(a)) return lit(-a.v);
-  const inner = /^-\((.*)\)$/.exec(a.t);
-  if (inner) return { t: inner[1], v: -a.v };
+  const inner = wholeNegation(a.t);
+  if (inner !== null) return { t: inner, v: -a.v };
   return { t: `-(${a.t})`, v: -a.v };
 }
 
@@ -106,8 +120,8 @@ export function agrees(e: Ex, scope: Scope, tolerance = 1e-6): boolean {
  * even while the kerf is 0.
  */
 export function signed(e: Ex): { sign: 1 | -1; text: string } {
-  const inner = /^-\((.*)\)$/.exec(e.t);
-  if (inner && !(e.v > 1e-12)) return { sign: -1, text: inner[1] };
+  const inner = wholeNegation(e.t);
+  if (inner !== null && !(e.v > 1e-12)) return { sign: -1, text: inner };
   if (e.v < -1e-12) return { sign: -1, text: neg(e).t };
   return { sign: 1, text: e.t };
 }

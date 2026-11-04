@@ -3242,7 +3242,21 @@ try {
     const after = await shown();
     if (after.errors) throw new Error(`the finger box has ${after.errors} feature problem(s)`);
     await shot("library-box");
-    libraryReport = "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable";
+    step = "Design library: a box with lid from the 3D printing tab";
+    await tool("Library");
+    await page.getByRole("tab", { name: "3D printing" }).click();
+    await page.getByRole("heading", { name: "3D printing" }).waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: /^Box with lid:/ }).click();
+    await page.locator(".library-preview polygon").first().waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Box with lid", { timeout: 10_000 });
+    // The box (80 mm) and its lid beside it (84.4 mm), 10 mm apart.
+    await waitShown(2, 174.4, "the box with lid didn't build its box and lid side by side");
+    const lidded = await shown();
+    if (lidded.errors) throw new Error(`the box with lid has ${lidded.errors} feature problem(s)`);
+    await shot("library-lid");
+    libraryReport =
+      "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 

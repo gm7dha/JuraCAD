@@ -7,17 +7,29 @@ import { evaluate, getCurrentScope, setCurrentScope } from "../src/model/expr";
 import { bracketHoleSpots } from "../src/library/designs/bracket";
 import { lensArea } from "../src/library/designs/knob";
 import { roundedRectArea } from "../src/library/designs/common";
-import { completeValues, currentValues, defaultValues, editInsert, findDesign, freePrefix, insertDesign, inputProblem, LIBRARY, liveInserts, valueProblems } from "../src/library/insert";
+import { categoryFrom, categoryLabel, completeValues, currentValues, defaultValues, designsIn, editInsert, findDesign, freePrefix, insertDesign, inputProblem, LIBRARY, LIBRARY_CATEGORIES, liveInserts, valueProblems } from "../src/library/insert";
+import { LIBRARY_TAB_KEY, rememberedTab, rememberTab } from "../src/library/tabMemory";
+import { agrees, lit, minus, neg, plus, signed, wholeNegation } from "../src/library/ex";
+import { boxLidSizes, boxLidVolumes } from "../src/library/designs/boxLid";
+import { clipSizes } from "../src/library/designs/cableClip";
+import { circleBand, circleSegment, countersunkHoleVolume, polygonArea, varsOf } from "../src/library/designs/common";
+import { flatStandAreas, flatStandShapes } from "../src/library/designs/flatStand";
+import { hingeSizes, hingeVolumes } from "../src/library/designs/hinge";
+import { hookHoleHeights, hookOutline } from "../src/library/designs/hook";
+import { standFootprint, standProfileArea } from "../src/library/designs/phoneStand";
+import { standProfile, trigOf } from "../src/library/designs/standProfile";
+import { DEFAULT_FITS } from "../src/model/printSettings";
 import { freedomOf } from "../src/library/sketchKit";
 import { previewPicture } from "../src/library/preview";
 import { analyzeSketch } from "../src/sketch/solver";
 import type { JuraCADDocument } from "../src/model/types";
+import type { DesignValues } from "../src/library/types";
 
 const design = (id: string) => findDesign(id)!;
 
 describe("the library", () => {
   it("has each design described, with an icon, inputs and working defaults", () => {
-    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "tray", "bracket", "spacer", "knob"]);
+    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob"]);
     for (const d of LIBRARY) {
       expect(d.name.length).toBeGreaterThan(3);
       expect(d.description.length).toBeGreaterThan(20);
@@ -167,9 +179,24 @@ describe("inserting a design", () => {
     expect(old.doc.libraryInserts).toBeUndefined();
   });
 
-  for (const d of LIBRARY) {
-    it(`${d.name}: every sketch is fully defined by the variables`, () => {
-      const r = insertDesign(emptyDocument(), d, defaultValues(d), { into: MAIN_STUDIO });
+  // Each design with its defaults, and with its other choices (the ones Edit design sizes changes).
+  const variants: [string, DesignValues][] = [
+    ...LIBRARY.map((d): [string, DesignValues] => [d.id, {}]),
+    ["box-lid", { placement: "on" }],
+    ["hook", { holes: "1" }],
+    ["cable-clip", { fixing: "tape" }],
+    ["phone-stand", { angle: 45 }],
+    ["phone-stand", { angle: 85 }],
+    ["flat-stand", { angle: 50 }],
+    ["hinge", { knuckles: 3 }],
+    ["hinge", { knuckles: 9 }],
+  ];
+  for (const [id, extra] of variants) {
+    const d = findDesign(id)!;
+    it(`${d.name}${Object.keys(extra).length ? ` (${JSON.stringify(extra)})` : ""}: every sketch is fully defined by the variables`, () => {
+      const values = { ...defaultValues(d), ...extra } as DesignValues;
+      expect(valueProblems(d, values)).toEqual([]);
+      const r = insertDesign(emptyDocument(), d, values, { into: MAIN_STUDIO });
       const scope = resolveVariables(r.doc.variables).values;
       setCurrentScope(scope);
       for (const f of r.doc.features) {
@@ -212,5 +239,175 @@ describe("design maths", () => {
     expect(lensArea(10, 2, 0)).toBeCloseTo(Math.PI * 4, 9);
     // Half a small circle sits inside when its centre is on a big one's edge (nearly, for a big radius).
     expect(lensArea(1000, 2, 1000)).toBeCloseTo(Math.PI * 2, 2);
+  });
+});
+
+describe("library sections", () => {
+  it("puts every design in Laser cutting or 3D printing, laser first", () => {
+    expect(LIBRARY_CATEGORIES.map((c) => [c.id, c.label])).toEqual([
+      ["laser", "Laser cutting"],
+      ["print", "3D printing"],
+    ]);
+    expect(designsIn("laser").map((d) => d.id)).toEqual(["finger-box", "flat-stand"]);
+    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob"]);
+    expect(designsIn("laser").length + designsIn("print").length).toBe(LIBRARY.length);
+    expect(categoryLabel("print")).toBe("3D printing");
+    expect(categoryFrom("Laser cutting")).toBe("laser");
+    expect(categoryFrom(" PRINT ")).toBe("print");
+    expect(categoryFrom("3d")).toBe("print");
+    expect(categoryFrom("wood")).toBeNull();
+    expect(categoryFrom(3)).toBeNull();
+  });
+
+  it("remembers the last tab per browser, and copes without storage", () => {
+    const kept = new Map<string, string>();
+    const store = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v) };
+    expect(rememberedTab(store)).toBe("laser");
+    rememberTab("print", store);
+    expect(kept.get(LIBRARY_TAB_KEY)).toBe("print");
+    expect(rememberedTab(store)).toBe("print");
+    kept.set(LIBRARY_TAB_KEY, "nonsense");
+    expect(rememberedTab(store)).toBe("laser");
+    const broken = {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+    };
+    expect(rememberedTab(broken)).toBe("laser");
+    rememberTab("print", broken);
+    expect(rememberedTab(null)).toBe("laser");
+  });
+
+  it("older files' inserts don't need a section", () => {
+    const tray = findDesign("tray")!;
+    const r = insertDesign(emptyDocument(), tray, defaultValues(tray), { into: MAIN_STUDIO });
+    expect(Object.keys(r.insert)).not.toContain("category");
+  });
+});
+
+describe("sizes as expressions", () => {
+  it("only takes off brackets that wrap the whole thing", () => {
+    expect(wholeNegation("-(a + b)")).toBe("a + b");
+    expect(wholeNegation("-(a) - (b)")).toBeNull();
+    expect(wholeNegation("-(a + (b - c))")).toBe("a + (b - c)");
+    expect(wholeNegation("a")).toBeNull();
+    const scope = { a: 2, b: 3 };
+    const e = minus(neg({ t: "a", v: 2 }), { t: "b", v: 3 });
+    expect(e.t).toBe("-(a) - b");
+    const both = minus(neg(plus({ t: "a", v: 2 }, lit(1))), plus({ t: "b", v: 3 }, lit(1)));
+    const s = signed(both);
+    expect(s.sign).toBe(-1);
+    expect(agrees({ t: s.text, v: -both.v }, scope)).toBe(true);
+  });
+});
+
+describe("new designs' maths", () => {
+  it("box with lid: the lid's inside is the box's outside + 2 × clearance (the snug printed fit)", () => {
+    const d = findDesign("box-lid")!;
+    expect(d.inputs.find((i) => i.key === "clearance")!.default).toBe(DEFAULT_FITS.snug);
+    const v = defaultValues(d);
+    const s = boxLidSizes(varsOf(v, ["width", "depth", "height", "wall", "lid", "clearance", "radius"]));
+    expect(s.lidInner.w.v).toBeCloseTo(80 + 2 * DEFAULT_FITS.snug, 9);
+    expect(s.lidInner.d.v).toBeCloseTo(60 + 2 * DEFAULT_FITS.snug, 9);
+    expect(s.lidInner.r.v).toBeCloseTo(5 + DEFAULT_FITS.snug, 9);
+    expect(s.lidOuter.w.v).toBeCloseTo(84.4, 9);
+    const r = insertDesign(emptyDocument(), d, v, { into: MAIN_STUDIO });
+    const lidSides = r.doc.features.find((f) => f.name === "Lid sides sketch")!;
+    expect(lidSides.sketch!.data.constraints.some((c) => c.value === "lidbox_width + 2 * lidbox_clearance")).toBe(true);
+    const vol = boxLidVolumes(v);
+    expect(vol.box).toBeGreaterThan(0);
+    expect(valueProblems(d, { ...v, lid: 45 })[0]).toMatch(/lid's sides/);
+    expect(valueProblems(d, { ...v, lid: 2 })[0]).toMatch(/taller than its top/);
+    expect(d.summary!(v)).toMatch(/2 parts/);
+  });
+
+  it("hook: a J outline and holes spread up the back plate", () => {
+    const v = varsOf(defaultValues(findDesign("hook")!), ["depth", "height", "width", "thickness", "tip", "hole"]);
+    const pts = hookOutline(v).map(([x, y]) => [x.v, y.v]);
+    expect(pts).toEqual([[-5, 0], [35, 0], [35, 15], [30, 15], [30, 5], [0, 5], [0, 60], [-5, 60]]);
+    expect(polygonArea(pts as [number, number][])).toBeCloseTo(40 * 5 + 5 * 10 + 5 * 55, 9);
+    expect(hookHoleHeights(v, 2).map((e) => e.v)).toEqual([5 + 55 / 3, 5 + 110 / 3]);
+    expect(hookHoleHeights(v, 1).map((e) => e.v)).toEqual([32.5]);
+    const hook = findDesign("hook")!;
+    expect(valueProblems(hook, { ...defaultValues(hook), width: 8 })[0]).toMatch(/countersinks/);
+    expect(valueProblems(hook, { ...defaultValues(hook), depth: 12 })[0]).toMatch(/three times/);
+  });
+
+  it("countersinks, circle bands and segments", () => {
+    // A 90° countersink twice the hole's size: the cone is as deep as the hole's radius.
+    expect(countersunkHoleVolume(4, 8, 5)).toBeCloseTo(Math.PI * 4 * 5 + (Math.PI * 2 * (16 + 8 + 4)) / 3 - Math.PI * 4 * 2, 9);
+    expect(circleBand(5, 5)).toBeCloseTo((Math.PI * 25) / 2, 9);
+    expect(circleSegment(5, 0)).toBeCloseTo((Math.PI * 25) / 2, 9);
+    expect(circleSegment(5, 5)).toBeCloseTo(0, 9);
+  });
+
+  it("cable clip: the ring grips the cable and sinks half its wall into the base", () => {
+    const d = findDesign("cable-clip")!;
+    const s = clipSizes(varsOf(defaultValues(d), ["cable", "opening", "ring", "width", "base", "hole"]));
+    expect(s.inner.v).toBe(3);
+    expect(s.outer.v).toBe(5);
+    expect(s.cx.v).toBe(4);
+    expect(s.baseHigh(true).v).toBe(5 + 11);
+    expect(s.baseHigh(false).v).toBe(5);
+    expect(valueProblems(d, { ...defaultValues(d), opening: 7 })[0]).toMatch(/smaller than the cable/);
+    expect(valueProblems(d, { ...defaultValues(d), fixing: "tape", width: 4 })).toEqual([]);
+    expect(valueProblems(d, { ...defaultValues(d), width: 4 })[0]).toMatch(/countersink/);
+  });
+
+  it("stands: the profile leans at the angle and the slot is the device's thickness square to it", () => {
+    const { sin, cos } = trigOf(65);
+    expect(sin).toBe(0.906308);
+    expect(cos).toBe(0.422618);
+    const p = standProfile({ angle: 65, slot: lit(12), lip: lit(12), back: lit(90), bar: lit(5) });
+    const [x, y] = p.outline.map(([a, b]) => [a.v, b.v]);
+    expect(x).toEqual([-(90 * cos + 5 * sin), 0]);
+    // The back rest's front face runs from the slot's back corner at the angle.
+    const top = p.outline[6].map((e) => e.v);
+    expect(Math.atan2(top[1] - 5, -top[0]) * (180 / Math.PI)).toBeCloseTo(65, 4);
+    // The slot is 12 mm square to the device: 12 / sin(65°) along the table.
+    expect(p.slotFront.v).toBeCloseTo(12 / sin, 5);
+    expect(y).toEqual([p.lipFront.v, 0]);
+    const v = defaultValues(findDesign("phone-stand")!);
+    expect(standFootprint(v)).toBeCloseTo(p.lipFront.v - p.rear.v, 9);
+    expect(standProfileArea(v)).toBeGreaterThan(0);
+    const stand = findDesign("phone-stand")!;
+    expect(valueProblems(stand, { ...v, angle: 85, back: 30 })[0]).toMatch(/too short/);
+    expect(inputProblem(stand.inputs[0], 40)).toMatch(/at least 45/);
+  });
+
+  it("flat-pack stand: the feet's notches and the side's line up, each half the bar deep", () => {
+    const v = defaultValues(findDesign("flat-stand")!);
+    const s = flatStandShapes(v);
+    const pts = s.profile.map(([a, b]) => [a.v, b.v]);
+    // The front notch is at the origin, the sheet's thickness wide and half the bar high.
+    expect(pts.slice(5, 9)).toEqual([[0, 0], [0, 7.5], [3, 7.5], [3, 0]]);
+    expect(pts[2][1]).toBe(7.5);
+    expect(pts[3][0] - pts[2][0]).toBeCloseTo(3, 9);
+    expect(s.backAt.v).toBeCloseTo(pts[1][0], 9);
+    const foot = s.foot.map(([a, b]) => [a.v, b.v]);
+    expect(foot).toEqual([[-38.5, 0], [41.5, 0], [41.5, 15], [3, 15], [3, 7.5], [0, 7.5], [0, 15], [-38.5, 15]]);
+    expect(flatStandAreas(v).foot).toBeCloseTo(80 * 15 - 3 * 7.5, 9);
+    const fs = findDesign("flat-stand")!;
+    expect(valueProblems(fs, { ...v, bar: 6 })[0]).toMatch(/at least 8 mm/);
+  });
+
+  it("hinge: equal knuckles with a clearance between, odd counts only", () => {
+    const d = findDesign("hinge")!;
+    const v = defaultValues(d);
+    const s = hingeSizes(varsOf(v, ["length", "leaf", "thickness", "pin", "clearance"]), 5);
+    expect(s.k.v).toBeCloseTo((50 - 4 * 0.4) / 5, 9);
+    expect(s.start(4).v + s.k.v).toBeCloseTo(50, 9);
+    expect(s.start(1).v - (s.start(0).v + s.k.v)).toBeCloseTo(0.4, 9);
+    expect(s.slotLength.v).toBeCloseTo(s.k.v + 0.8, 9);
+    expect(valueProblems(d, { ...v, knuckles: 4 })[0]).toMatch(/odd/);
+    expect(valueProblems(d, { ...v, pin: 6 })[0]).toMatch(/walls/);
+    expect(valueProblems(d, { ...v, knuckles: 15, length: 20 })[0]).toMatch(/only/);
+    expect(d.summary!(v)).toMatch(/leaf 1 has 3 knuckles and leaf 2 has 2/);
+    const vol = hingeVolumes(v);
+    expect(vol.pin).toBeCloseTo(Math.PI * 1.5 * 1.5 * 50, 9);
+    expect(vol.leaf1).toBeGreaterThan(vol.leaf2);
   });
 });

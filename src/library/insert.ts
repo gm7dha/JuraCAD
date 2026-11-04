@@ -16,15 +16,42 @@ import { addStudio, inStudio, renameStudio, studioOfFeature, studiosOf } from ".
 import type { Feature, JuraCADDocument } from "../model/types";
 import { applyVariables, resolveVariables, type Variable } from "../model/variables";
 import { named, tidy } from "./ex";
+import { boxLid } from "./designs/boxLid";
 import { bracket } from "./designs/bracket";
+import { cableClip } from "./designs/cableClip";
+import { flatStand } from "./designs/flatStand";
+import { hinge } from "./designs/hinge";
+import { hook } from "./designs/hook";
+import { phoneStand } from "./designs/phoneStand";
 import { fingerBox } from "./designs/fingerBox";
 import { knob } from "./designs/knob";
 import { spacer } from "./designs/spacer";
 import { tray } from "./designs/tray";
-import type { DesignInput, DesignValues, LibraryDesign, LibraryInsert } from "./types";
+import type { DesignCategory, DesignInput, DesignValues, LibraryDesign, LibraryInsert } from "./types";
 
-/** Every design in the library, in the order they're shown. */
-export const LIBRARY: readonly LibraryDesign[] = [fingerBox, tray, bracket, spacer, knob];
+/** Every design in the library, in the order they're shown (laser cutting first, then 3D printing). */
+export const LIBRARY: readonly LibraryDesign[] = [fingerBox, flatStand, tray, boxLid, bracket, hook, cableClip, phoneStand, hinge, spacer, knob];
+
+/** The library's sections, in the order they're shown. */
+export const LIBRARY_CATEGORIES: readonly { id: DesignCategory; label: string; blurb: string }[] = [
+  { id: "laser", label: "Laser cutting", blurb: "Flat panels cut from sheet (plywood, acrylic, card), ready for Export for laser." },
+  { id: "print", label: "3D printing", blurb: "Parts that sit flat on the print bed, ready for the 3D print check." },
+];
+
+/** The designs in one section, in the library's order. */
+export function designsIn(category: DesignCategory): LibraryDesign[] {
+  return LIBRARY.filter((d) => d.category === category);
+}
+
+/** A section's id from text (a remembered tab, a tool's input), or null if it isn't one. */
+export function categoryFrom(raw: unknown): DesignCategory | null {
+  if (typeof raw !== "string") return null;
+  const t = raw.trim().toLowerCase();
+  return LIBRARY_CATEGORIES.find((c) => c.id === t || c.label.toLowerCase() === t)?.id ?? (t === "3d" || t === "3d print" || t === "printing" ? "print" : t === "laser cut" ? "laser" : null);
+}
+
+/** What a section's called ("Laser cutting"). */
+export const categoryLabel = (c: DesignCategory) => LIBRARY_CATEGORIES.find((x) => x.id === c)!.label;
 
 export function findDesign(id: string): LibraryDesign | undefined {
   return LIBRARY.find((d) => d.id === id);
