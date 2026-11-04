@@ -309,7 +309,7 @@
 - Simplify (tidy triangles into real faces): an Import's `Feature.simplify` (`SimplifyLevel` fine/normal/coarse; missing = as
   before) or a "simplify" feature (`simplifyParts` + `simplify`; Toolbar next to Delete part, Parts list right-click, Claude's
   `simplify_part`). Levels/tolerances and the summary text (`simplifyReport`: "4,812 faces → 38 faces: 22 flat, 12 round
-  (holes Ø5, Ø8, fillets R2), 4 left as mesh.") are pure in `src/model/simplify.ts`; the summary reaches the app as
+  (holes Ø5, Ø8, rounded edges R2), 4 left as mesh.") are pure in `src/model/simplify.ts`; the summary reaches the app as
   `RebuildResult.featureNotes` → `store.featureNotes` (blue `.dialog-note` in the dialog, the row's tooltip; MCP `Build.notes`).
   Stage 1 always: `checkedUnify` (ShapeUpgrade_UnifySameDomain, faces + edges + B-splines) — mends STEP files with split
   faces. Exact (non-faceted) shapes use OpenCascade's own tight tolerances (never the level's: faces 0.86° apart are a real
@@ -324,8 +324,11 @@
   the face they lie on (`triRegion`); surfaces tidied to X/Y/Z and round sizes only within the fit's own scatter (≥ 2 µm, ≤ half
   the distance; `tidySurface`, `snapNice`: 2R 4.9998 → 5, but Ø5.06 stays); limits: over `MAX_TRIANGLES` (50k) or past
   `WORK_LIMIT` (points looked at by fits — a count, not a clock) planMesh returns `TOO_DETAILED`; `FRUITLESS_SEEDS` (150)
-  failed seeds with nothing found stop the search, and nothing round + hardly any flats joined returns `NOTHING_TO_TIDY` —
-  both brought in by the ordinary import with a plain note. Growing keeps its frontier up to date as members join and checks
+  failed seeds — and more than `FRUITLESS_RATIO` (20) misses per round face found — stop the search; nothing round + hardly
+  any flats joined, or a plan that would leave over half the triangles (or > `MAX_FACET_FACES`, 5,000) as facets (a figurine
+  on a round base), returns `NOTHING_TO_TIDY` before any edge or OpenCascade work — both brought in by the ordinary import
+  with a plain note (`PlanOptions.stats` gives the work count, for tests). Partial cylinders and tori are "rounded edges" in
+  the summary. Growing keeps its frontier up to date as members join and checks
   flatness every 25%; edges are chains of mesh edges between corners, each an exact line or arc (from the surfaces where possible —
   `meetCircle`: plane ⟂ axis, sphere/plane, coaxial cylinder/cone/torus; else fitted and snapped onto the axis), corners placed
   on all their surfaces (`meetPoint`) and exactly on their arcs; whole circles start at `canonicalX` (where round faces'

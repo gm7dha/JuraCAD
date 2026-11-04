@@ -83,7 +83,7 @@ function listSizes(prefix: string, values: number[], max = 4): string {
 
 /**
  * The short summary shown after simplifying, e.g.
- * "4,812 faces → 38 faces: 22 flat, 12 round (holes Ø5, Ø8, fillets R2), 4 left as mesh."
+ * "4,812 faces → 38 faces: 22 flat, 12 round (holes Ø5, Ø8, rounded edges R2), 4 left as mesh."
  */
 export function simplifyReport(s: SimplifySummary): string {
   const after = s.faces.length;
@@ -99,7 +99,7 @@ export function simplifyReport(s: SimplifySummary): string {
   const details: string[] = [];
   if (holes.length) details.push(`hole${holes.length > 1 ? "s" : ""} ${listSizes("Ø", holes)}`);
   if (bosses.length) details.push(`round${bosses.length > 1 ? "s" : ""} ${listSizes("Ø", bosses)}`);
-  if (fillets.length) details.push(`fillet${fillets.length > 1 ? "s" : ""} ${listSizes("R", fillets)}`);
+  if (fillets.length) details.push(`rounded edge${fillets.length > 1 ? "s" : ""} ${listSizes("R", fillets)}`);
   const cones = round.filter((f) => f.kind === "cone").length;
   const balls = round.filter((f) => f.kind === "sphere").map((f) => f.radius ?? 0);
   if (cones) details.push(`${cones} cone${cones > 1 ? "s" : ""}`);
@@ -111,12 +111,12 @@ export function simplifyReport(s: SimplifySummary): string {
   const faces = (n: number) => `${count(n)} face${n === 1 ? "" : "s"}`;
   if (s.tooDetailed) return `${faces(s.facesBefore)}: too detailed to tidy — brought in as it is.`;
   if (s.failed && !s.faces.length) return "This couldn't be tidied, so it's brought in as it is.";
-  if (s.nothingFound && after >= s.facesBefore && !s.recognised) return `${faces(s.facesBefore)}: no flat areas or round shapes to tidy (an organic shape?) — brought in as it is.`;
+  if (s.nothingFound && !s.recognised) return `${faces(s.facesBefore)}: mostly shapes that aren't flat or round (an organic shape?) — nothing worth tidying, so it's brought in as it is.`;
   if (s.unchanged && after >= s.facesBefore) return `${faces(s.facesBefore)}: joining faces wouldn't have left a sound part of the same size, so nothing was changed.`;
   let text = `${faces(s.facesBefore)} → ${faces(after)}: ${parts.join(", ")}.`;
   const n = s.gaveUp ?? 0;
-  if (s.nothingFound) text += " No round shapes were found (an organic shape?), so only flat areas were joined.";
-  else if (s.fellBack && n) text += ` ${n === 1 ? "One round shape" : `${count(n)} round shapes`} couldn't be rebuilt safely, so only flat areas were joined.`;
+  if (s.nothingFound) text += " It's mostly shapes that aren't flat or round (an organic shape?), so only flat areas were joined.";
+  else if (s.fellBack && n) text += ` ${n === 1 ? "One shape" : `${count(n)} shapes`} looked round but ${n === 1 ? "is" : "are"} drawn with flat sides (or couldn't be rebuilt safely), so ${n === 1 ? "it's" : "they're"} kept as flat faces.`;
   else if (s.fellBack) text += " Round shapes couldn't be rebuilt safely here, so only flat areas were joined.";
   if (n && !s.fellBack) text += ` ${n === 1 ? "One round shape" : `${count(n)} round shapes`} couldn't be rebuilt, so ${n === 1 ? "it's" : "they're"} left as mesh.`;
   if (s.unchanged) text += " Some faces were left as they were, as joining them wouldn't have left a sound part.";

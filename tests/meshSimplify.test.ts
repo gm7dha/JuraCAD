@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { MAX_TRIANGLES, NOTHING_TO_TIDY, planMesh, TOO_DETAILED, type MeshPlan } from "../src/geometry/meshSimplify";
 import { createFeature, emptyDocument, parseDocument } from "../src/model/document";
 import { SIMPLIFY_TOLERANCES, simplifyReport } from "../src/model/simplify";
-import { lumpyBall, washer } from "./support/meshShapes";
+import { bandedBall, lumpyBall, washer } from "./support/meshShapes";
 
 const kinds = (p: MeshPlan) => p.faces.map((f) => f.surface.kind).sort();
 
@@ -60,6 +60,16 @@ describe("recognising faces in a mesh", () => {
     expect(typeof planMesh(m.vertices, m.triangles, SIMPLIFY_TOLERANCES.normal, { workLimit: 200_000 })).toBe("object");
   });
 
+  it("gives up early on an organic shape with a round part (a figurine on a round base)", () => {
+    // About 48,000 triangles: a smooth band (round) between lumpy ends. Most of it would stay facets.
+    const ball = bandedBall(110, 220);
+    expect(ball.triangles.length / 3).toBeGreaterThan(45_000);
+    const stats = { work: 0 };
+    expect(planMesh(ball.vertices, ball.triangles, SIMPLIFY_TOLERANCES.normal, { stats })).toBe(NOTHING_TO_TIDY);
+    // It stopped looking soon after the round band (the work is a count, the same on every machine).
+    expect(stats.work).toBeLessThan(5_000_000);
+  });
+
   it("keeps sizes that aren't round numbers (Ø5.06 stays Ø5.06)", () => {
     const m = washer(96, 0, 2.53);
     const plan = planMesh(m.vertices, m.triangles, SIMPLIFY_TOLERANCES.normal) as MeshPlan;
@@ -89,7 +99,7 @@ describe("the summary", () => {
         ...Array.from({ length: 4 }, () => ({ kind: "plane" as const, mesh: true })),
       ],
     });
-    expect(text).toBe("4,812 faces → 39 faces: 22 flat, 13 round (holes Ø5, Ø8, fillets R1.5, R2), 4 left as mesh.");
+    expect(text).toBe("4,812 faces → 39 faces: 22 flat, 13 round (holes Ø5, Ø8, rounded edges R1.5, R2), 4 left as mesh.");
   });
 
   it("says when round shapes couldn't be rebuilt", () => {
@@ -101,7 +111,7 @@ describe("the summary", () => {
     expect(simplifyReport({ facesBefore: 52_000, faces: [], recognised: false, tooDetailed: true })).toBe("52,000 faces: too detailed to tidy — brought in as it is.");
     expect(simplifyReport({ facesBefore: 12, faces: Array.from({ length: 12 }, () => ({ kind: "plane" as const })), recognised: false, unchanged: true })).toMatch(/nothing was changed/);
     expect(simplifyReport({ facesBefore: 0, faces: [], recognised: false, failed: true })).toMatch(/brought in as it is/);
-    expect(simplifyReport({ facesBefore: 3, faces: Array.from({ length: 3 }, () => ({ kind: "plane" as const })), recognised: false, nothingFound: true })).toBe("3 faces: no flat areas or round shapes to tidy (an organic shape?) — brought in as it is.");
+    expect(simplifyReport({ facesBefore: 3, faces: Array.from({ length: 3 }, () => ({ kind: "plane" as const })), recognised: false, nothingFound: true })).toBe("3 faces: mostly shapes that aren't flat or round (an organic shape?) — nothing worth tidying, so it's brought in as it is.");
     // An open piece's faces are counted (not "→ 0 faces").
     expect(simplifyReport({ facesBefore: 385, faces: Array.from({ length: 385 }, () => ({ kind: "plane" as const, mesh: true })), recognised: false, openBodies: 1 })).toMatch(/^385 faces → 385 faces: 0 flat, 385 left as mesh\. One piece isn't closed/);
   });

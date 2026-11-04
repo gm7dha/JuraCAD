@@ -107,16 +107,23 @@ export const WORK_LIMIT = 60_000_000;
 /** After this many places where something round was looked for and nothing fitted (and nothing yet has), it stops looking. */
 export const FRUITLESS_SEEDS = 150;
 
+/** …or after this many misses for every round face found. */
+export const FRUITLESS_RATIO = 20;
+/** A plan leaving more than this many facet faces (or more than half the triangles as facets) isn't built: nothing to gain. */
+export const MAX_FACET_FACES = 5_000;
+
 /** planMesh's answer when a mesh is too detailed to tidy (or ran out of WORK_LIMIT). */
 export const TOO_DETAILED = "Too detailed to tidy — brought in as it is.";
 /** planMesh's answer when nothing could be joined or recognised (an organic shape): nothing to gain. */
-export const NOTHING_TO_TIDY = "No flat areas or round shapes to tidy — brought in as it is.";
+export const NOTHING_TO_TIDY = "Mostly shapes that aren't flat or round — nothing worth tidying, so it's brought in as it is.";
 
 export interface PlanOptions {
   /** Flat faces only (no round faces looked for). */
   flatOnly?: boolean;
   maxTriangles?: number;
   workLimit?: number;
+  /** Filled in with how much work was done (points looked at by fits), for tests. */
+  stats?: { work: number };
 }
 
 interface Region {
@@ -326,8 +333,9 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
   let fruitless = 0;
   for (const seed of options.flatOnly ? [] : order) {
     if (work > budget) return TOO_DETAILED;
-    // Looked in many places, found nothing round anywhere: an organic shape, not worth looking further.
-    if (!regions.length && fruitless >= FRUITLESS_SEEDS) break;
+    // Looked in many places, found nothing round anywhere — or far more misses than finds (a round base under an
+    // organic figure): not worth looking further.
+    if (fruitless >= FRUITLESS_SEEDS && fruitless > FRUITLESS_RATIO * regions.length) break;
     if (regionOf[seed] >= 0 || tried.has(seed)) continue;
     const members: number[] = [];
     const inside = new Set<number>();
@@ -409,9 +417,24 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
     regions.push({ groups: members, surface: final, curved: true });
     for (const m of members) regionOf[m] = r;
   }
+  if (options.stats) options.stats.work = work;
   if (work > budget) return TOO_DETAILED;
   // Nothing round, and hardly any flat areas joined: nothing to gain from rebuilding it.
   if (!options.flatOnly && !regions.length && groups.length > 0.3 * nt && nt > 200) return NOTHING_TO_TIDY;
+  // Most of it would stay facets (flat pieces meeting at gentle angles, in no round face): rebuilding them all
+  // gains nothing and takes OpenCascade minutes, so it's brought in as it is.
+  let facetTriangles = 0;
+  let facetGroups = 0;
+  groups.forEach((g, i) => {
+    if (regionOf[i] >= 0) return;
+    for (const h of near[i])
+      if (regionOf[h] < 0 && soft(i, h)) {
+        facetTriangles += g.tris.length;
+        facetGroups++;
+        return;
+      }
+  });
+  if (nt > 200 && (facetGroups > MAX_FACET_FACES || facetTriangles > 0.5 * nt)) return NOTHING_TO_TIDY;
 
   // Where two faces meet smoothly (a fillet into a flat or round face), the facets nearest the join
   // fit both within the distance, and growing gives them to whichever got there first, leaving a

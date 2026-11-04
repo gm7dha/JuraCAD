@@ -121,7 +121,7 @@ describe("Simplify on import", () => {
     expect(check.parts[0].geometryValid).toBe(true);
     expect(relativeError(check.parts[0].exactVolume!, volume)).toBeLessThan(0.005);
     // The summary.
-    expect(r.featureNotes?.[imp.id]).toMatch(/faces → 1[0-2] faces: .*flat, 3 round \(holes Ø5, Ø8, fillet R2\)/);
+    expect(r.featureNotes?.[imp.id]).toMatch(/faces → 1[0-2] faces: .*flat, 3 round \(holes Ø5, Ø8, rounded edge R2\)/);
   });
 
   it("gives faces that can be filleted", () => {
@@ -226,7 +226,7 @@ describe("round faces that curve inwards part of the way round", () => {
     expect(faces).toBe(10);
     expect(radii.map((x) => Math.round(x * 1000) / 1000)).toEqual([1, 3]);
     expect(check.geometryValid).toBe(true);
-    expect(note).toMatch(/fillets R1, R3/);
+    expect(note).toMatch(/rounded edges R1, R3/);
   });
 
   it("rebuilds a round notch in an edge", () => {

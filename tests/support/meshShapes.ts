@@ -73,3 +73,28 @@ export function lumpyBall(n: number, m: number): { vertices: number[]; triangles
     }
   return { vertices, triangles };
 }
+
+/**
+ * A figurine on a round base: a ball whose middle band is smooth (and so round) and the rest lumpy —
+ * about 2 × n × m triangles.
+ */
+export function bandedBall(n: number, m: number): { vertices: number[]; triangles: number[] } {
+  const vertices: number[] = [];
+  const triangles: number[] = [];
+  for (let i = 0; i <= n; i++)
+    for (let j = 0; j < m; j++) {
+      if ((i === 0 || i === n) && j > 0) continue;
+      const th = (Math.PI * i) / n;
+      const ph = (2 * Math.PI * j) / m;
+      const lumpy = i < n / 3 || i > (2 * n) / 3;
+      const r = lumpy ? 20 + 1.5 * Math.sin(5 * th) * Math.cos(4 * ph) + 0.3 * Math.sin(37 * th + 11 * ph) : 20;
+      vertices.push(r * Math.sin(th) * Math.cos(ph), r * Math.sin(th) * Math.sin(ph), r * Math.cos(th));
+    }
+  const at = (i: number, j: number) => (i === 0 ? 0 : i === n ? 1 + (n - 1) * m : 1 + (i - 1) * m + (j % m));
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < m; j++) {
+      if (i > 0) triangles.push(at(i, j), at(i + 1, j), at(i, j + 1));
+      if (i < n - 1) triangles.push(at(i, j + 1), at(i + 1, j), at(i + 1, j + 1));
+    }
+  return { vertices, triangles };
+}
