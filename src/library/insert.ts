@@ -27,11 +27,12 @@ import { fingerBox } from "./designs/fingerBox";
 import { knob } from "./designs/knob";
 import { spacer } from "./designs/spacer";
 import { tray } from "./designs/tray";
+import { PRINT_DESIGNS } from "./printDesigns";
 import { LASER_DESIGNS, printedStamp } from "./designs/laserSet";
 import type { DesignCategory, DesignInput, DesignValues, LibraryDesign, LibraryInsert } from "./types";
 
 /** Every design in the library, in the order they're shown (laser cutting first, then 3D printing). */
-export const LIBRARY: readonly LibraryDesign[] = [fingerBox, flatStand, ...LASER_DESIGNS, tray, boxLid, bracket, hook, cableClip, phoneStand, hinge, spacer, knob, printedStamp];
+export const LIBRARY: readonly LibraryDesign[] = [fingerBox, flatStand, ...LASER_DESIGNS, tray, boxLid, bracket, hook, cableClip, phoneStand, hinge, spacer, knob, printedStamp, ...PRINT_DESIGNS];
 
 /** The library's sections, in the order they're shown. */
 export const LIBRARY_CATEGORIES: readonly { id: DesignCategory; label: string; blurb: string }[] = [
@@ -44,18 +45,34 @@ export function designsIn(category: DesignCategory): LibraryDesign[] {
   return LIBRARY.filter((d) => d.category === category);
 }
 
-/** A section's designs under their headings (`LibraryDesign.group`), in the library's order; ungrouped ones first. */
-export function designGroups(category: DesignCategory): { group: string | null; designs: LibraryDesign[] }[] {
-  const out: { group: string | null; designs: LibraryDesign[] }[] = [];
-  const designs = designsIn(category);
+/** Designs under one heading (`group` null = those without a group, listed first without a heading). */
+export interface DesignGroup {
+  group: string | null;
+  designs: LibraryDesign[];
+}
+
+/** Per section, headings that come first, in this order; any others follow in the order they're first used. */
+export const GROUP_ORDER: Record<DesignCategory, readonly string[]> = {
+  laser: [],
+  print: ["Fixings", "Hinges", "Storage", "Household", "Workshop"],
+};
+
+/** Designs under their headings (`LibraryDesign.group`): ungrouped ones first, then the groups (`order`'s first), each in the library's order. */
+export function groupDesigns(designs: readonly LibraryDesign[], order: readonly string[] = []): DesignGroup[] {
+  const out: DesignGroup[] = [];
   for (const d of [...designs.filter((x) => !x.group), ...designs.filter((x) => x.group)]) {
     const g = d.group ?? null;
     const at = out.find((x) => x.group === g);
     if (at) at.designs.push(d);
     else out.push({ group: g, designs: [d] });
   }
-  return out;
+  const rank = (g: string | null) => (g === null ? -1 : order.includes(g) ? order.indexOf(g) : order.length);
+  // A stable sort: groups of equal rank keep the order they first come in.
+  return out.sort((a, b) => rank(a.group) - rank(b.group));
 }
+
+/** A section's designs under their headings. */
+export const designGroups = (category: DesignCategory): DesignGroup[] => groupDesigns(designsIn(category), GROUP_ORDER[category]);
 
 /** A section's id from text (a remembered tab, a tool's input), or null if it isn't one. */
 export function categoryFrom(raw: unknown): DesignCategory | null {

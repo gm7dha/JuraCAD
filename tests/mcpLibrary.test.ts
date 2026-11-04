@@ -60,12 +60,31 @@ describe("Design library tools", () => {
     const print = await call(s, "list_library_designs", { category: "print" });
     for (const id of ["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob"]) expect(print.text).toContain(`${id} —`);
     expect(print.text).not.toContain("finger-box —");
-    expect(print.text).toMatch(/\[3D printing\]/);
+    expect(print.text).toMatch(/\[3D printing( › \w+)?\]/);
     const both = await call(s, "list_library_designs");
     expect(both.text).toMatch(/Laser cutting[\s\S]*3D printing/);
     const bad = await call(s, "list_library_designs", { category: "wood" });
     expect(bad.error).toBe(true);
     expect(bad.text).toMatch(/"laser".*"print"/);
+  });
+
+  it("insert a piano hinge and a bolt set from the newer 3D printing designs", async () => {
+    const s = newSession();
+    const list = await call(s, "list_library_designs", { category: "print" });
+    for (const id of ["bolt-set", "piano-hinge", "jar", "pegboard-hook"]) expect(list.text).toContain(`${id} —`);
+    expect(list.text).toMatch(/bolt-set — Bolt, nut and washer set \[3D printing › Fixings\]/);
+    const r = await call(s, "insert_library_design", { design: "piano-hinge", sizes: { length: 60, holes: 2 } });
+    expect(r.error).toBe(false);
+    expect(r.text).toMatch(/piano_length = 60/);
+    expect(s.build().parts).toHaveLength(3);
+    const set = await call(s, "insert_library_design", { design: "bolt-set", sizes: { size: "M6", thread: false, nuts: 2 } });
+    expect(set.error).toBe(false);
+    expect(set.text).toMatch(/bolts_fit = 0.2/);
+    // The hinge's 3 parts, then a bolt, two nuts and a washer.
+    expect(s.build().parts).toHaveLength(7);
+    const bad = await call(s, "insert_library_design", { design: "bolt-set", sizes: { bolts: 0, nuts: 0, washers: 0 } });
+    expect(bad.error).toBe(true);
+    expect(bad.text).toMatch(/at least one bolt, nut or washer/);
   });
 
   it("insert a box with lid: two parts", async () => {

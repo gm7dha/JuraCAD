@@ -32,7 +32,7 @@ const LOOSE_LINES = new Set(["living-hinge", "gear", "ruler"]);
 
 describe("the library", () => {
   it("has each design described, with an icon, inputs and working defaults", () => {
-    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS, "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp"]);
+    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS, "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard"]);
     for (const d of LIBRARY) {
       expect(d.name.length).toBeGreaterThan(3);
       expect(d.description.length).toBeGreaterThan(20);
@@ -253,7 +253,7 @@ describe("library sections", () => {
       ["print", "3D printing"],
     ]);
     expect(designsIn("laser").map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS]);
-    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp"]);
+    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard"]);
     expect(designsIn("laser").length + designsIn("print").length).toBe(LIBRARY.length);
     expect(categoryLabel("print")).toBe("3D printing");
     expect(categoryFrom("Laser cutting")).toBe("laser");

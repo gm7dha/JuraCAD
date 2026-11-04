@@ -298,6 +298,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     params: [
       { key: "pitch", label: "Pitch", defaultValue: "1.25", positive: true, group: "size" },
       { key: "length", label: "Length (0 = whole face)", defaultValue: "0", group: "size" },
+      { key: "depth", label: "Groove depth (0 = standard)", defaultValue: "0", min: 0, group: "size" },
     ],
   },
   deleteFace: {

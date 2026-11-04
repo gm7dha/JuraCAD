@@ -5,7 +5,7 @@
  */
 import { MAIN_STUDIO } from "../model/studios";
 import type { JuraCADDocument } from "../model/types";
-import { categoryFrom, categoryLabel, completeValues, findDesign, insertDesign, LIBRARY, LIBRARY_CATEGORIES, valueProblems } from "../library/insert";
+import { categoryFrom, categoryLabel, completeValues, designsIn, findDesign, insertDesign, LIBRARY, LIBRARY_CATEGORIES, valueProblems } from "../library/insert";
 import type { DesignInput } from "../library/types";
 import { InputError, noExtras, object, type Obj } from "./args";
 import type { Session } from "./session";
@@ -39,7 +39,7 @@ export function libraryTools(tryChange: TryChange): ToolDef[] {
       name: "list_library_designs",
       title: "List the Design library",
       description:
-        'List JuraCAD\'s Design library: ready-made designs in two sections — "laser" (Laser cutting: a finger-joint box, a flat-pack phone stand, a stencil with bridged letters, a rubber stamp (mirrored words, background engraved), a name/key tag, coasters, a picture frame, a living-hinge panel, a gear, a ruler) and "print" (3D printing: a tray, a box with lid, a shelf bracket, a wall hook, a cable clip, a phone stand, a print-in-place hinge, a spacer, a knob, a stamp with handle) — with the sizes and choices each takes. Give "category" to list one section only. Insert one with insert_library_design.',
+        `List JuraCAD's Design library: ready-made designs in two sections — ${LIBRARY_CATEGORIES.map((c) => `"${c.id}" (${c.label}: ${designsIn(c.id).map((d) => d.name.toLowerCase()).join(", ")})`).join(" and ")} — with the sizes and choices each takes. Give "category" to list one section only. Insert one with insert_library_design.`,
       readOnly: true,
       inputSchema: {
         type: "object",
@@ -53,7 +53,7 @@ export function libraryTools(tryChange: TryChange): ToolDef[] {
         return say(
           ...sections.flatMap((c) => [
             `${c.label} (category "${c.id}"):`,
-            ...LIBRARY.filter((d) => d.category === c.id).flatMap((d) => [`${d.id} — ${d.name} [${categoryLabel(d.category)}]: ${d.description}`, ...d.inputs.map(describeInput)]),
+            ...LIBRARY.filter((d) => d.category === c.id).flatMap((d) => [`${d.id} — ${d.name} [${categoryLabel(d.category)}${d.group ? ` › ${d.group}` : ""}]: ${d.description}`, ...d.inputs.map(describeInput)]),
           ]),
           "Sizes marked [a variable afterwards] become variables named <prefix>_<key> (e.g. box_width), so set_variables changes them later and the design follows.",
         );

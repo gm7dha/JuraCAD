@@ -39,6 +39,7 @@ export const cableClip: LibraryDesign = {
   description:
     "A C-shaped clip that a cable snaps into, on a flat base that screws to a wall or desk (or sticks on with tape). It prints lying on its side, so the ring is round and springy; the screw hole prints sideways, which small holes do fine.",
   category: "print",
+  group: "Household",
   prefix: "clip",
   icon: '<path d="M10 10h5v28h-5z"/><path d="M33 17a9 9 0 1 0 0 14" /><path d="M15 24h3" opacity=".55"/><circle cx="12.5" cy="34" r="1.5"/>',
   inputs: [

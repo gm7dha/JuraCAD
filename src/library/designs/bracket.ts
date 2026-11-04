@@ -20,6 +20,7 @@ export const bracket: LibraryDesign = {
   name: "Shelf bracket",
   description: "An L-bracket for shelves and corners, with screw holes in both arms and optional triangular gussets for strength. Prints lying on its side.",
   category: "print",
+  group: "Household",
   prefix: "bracket",
   icon: '<path d="M10 8h6v24h22v6H10z"/><path d="M16 26l8-8v14" opacity=".55"/><circle cx="13" cy="16" r="1.5"/><circle cx="30" cy="35" r="1.5"/>',
   inputs: [

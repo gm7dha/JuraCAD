@@ -3870,6 +3870,17 @@ kbd {
   font: inherit;
   resize: vertical;
 }
+.library-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+}
 .library-placed {
   list-style: none;
   padding: 0;

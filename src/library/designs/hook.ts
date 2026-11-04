@@ -45,6 +45,7 @@ export const hook: LibraryDesign = {
   description:
     "A J-shaped hook that screws to a wall, with countersunk holes so the screw heads sit flush. It prints lying on its side, so the layers run along the hook and it's strong; the screw holes print sideways, which small holes do fine without supports.",
   category: "print",
+  group: "Household",
   prefix: "hook",
   icon: '<path d="M14 6h6v30h12v-8h6v14H14z"/><circle cx="17" cy="13" r="1.5"/><circle cx="17" cy="23" r="1.5"/>',
   inputs: [
