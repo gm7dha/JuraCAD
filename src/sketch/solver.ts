@@ -1263,6 +1263,15 @@ function jacobian(sys: System, x: Float64Array, m: number): Float64Array {
 
 function jacobianOf(sys: System, x: Float64Array, m: number): Float64Array {
   const J = new Float64Array(m * sys.n);
+  jacobianEntries(sys, x, m, (i, j, v) => (J[i * sys.n + j] = v));
+  return J;
+}
+
+/**
+ * The Jacobian's entries that can be non-zero (rows of the blocks that read each unknown), handed to `put` one by one —
+ * worked out exactly as the dense Jacobian is, so the numbers are the same.
+ */
+function jacobianEntries(sys: System, x: Float64Array, m: number, put: (row: number, column: number, value: number) => void): void {
   const { rows, columns } = dependencies(sys, x);
   const xp = Float64Array.from(x);
   const rp: number[][] = [];
@@ -1285,10 +1294,9 @@ function jacobianOf(sys: System, x: Float64Array, m: number): Float64Array {
     deps.forEach((bi, k) => {
       const r0 = rows[bi];
       const a = rp[k], b = rm[k];
-      for (let i = 0; i < a.length && r0 + i < m; i++) J[(r0 + i) * sys.n + j] = (a[i] - b[i]) / (2 * h);
+      for (let i = 0; i < a.length && r0 + i < m; i++) put(r0 + i, j, (a[i] - b[i]) / (2 * h));
     });
   }
-  return J;
 }
 
 /** Solve the square system A y = b (A is k × k, overwritten). Returns null if singular. */
@@ -1918,7 +1926,154 @@ export function analyzeSketch(sketch: SketchData): SketchAnalysis {
   return { freedom: r.freedom, definedPoints, definedCurves };
 }
 
+/**
+ * Rank and null space of the Jacobian, worked out block by block: unknowns joined by any equation that reads both are
+ * one block (union–find), and a block's equations never touch another block's unknowns, so the Jacobian is
+ * block-diagonal and each block is row-reduced on its own — with the same full pivoting, the same tolerance (from
+ * the whole Jacobian's largest entry) and the same tests as one reduction of the whole matrix (`analyzeWholeDense`),
+ * which eliminating in another block never changes (its entries there are exactly 0). Unknowns no equation reads are
+ * free. A sketch of thousands of loose points (a jigsaw's cuts) is then many tiny reductions instead of one huge one.
+ */
 function analyzeWhole(sketch: SketchData): SketchAnalysis {
+  const sys = buildSystem(sketch);
+  prepareAll(sys, sys.x0);
+  const m = evalAll(sys, sys.x0).length;
+  const n = sys.n;
+  const definedPoints = new Set<string>([ORIGIN_ID]);
+  const definedCurves = new Set<string>();
+  if (n === 0) return { freedom: 0, definedPoints, definedCurves };
+
+  // The Jacobian's entries, row by row (only where an equation reads the unknown).
+  const entries: Map<number, number>[] = Array.from({ length: m }, () => new Map());
+  let scale = 0;
+  if (m > 0) {
+    inJacobian = true;
+    try {
+      jacobianEntries(sys, sys.x0, m, (i, j, v) => {
+        entries[i].set(j, v);
+        scale = Math.max(scale, Math.abs(v));
+      });
+    } finally {
+      inJacobian = false;
+    }
+  }
+  const tol = 1e-7 * (scale || 1);
+
+  // Unknowns joined through the equations that read them.
+  const parent = Array.from({ length: n }, (_, i) => i);
+  const find = (i: number): number => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+    return i;
+  };
+  const { rows: blockRows, columns } = dependencies(sys, sys.x0);
+  const rowsOfBlock = (bi: number) => {
+    const end = bi + 1 < blockRows.length ? blockRows[bi + 1] : m;
+    return [blockRows[bi], Math.min(end, m)] as const;
+  };
+  const readBy: number[][] = sys.blocks.map(() => []);
+  columns.forEach((bs, j) => bs.forEach((bi) => readBy[bi].push(j)));
+  for (const vars of readBy) for (let k = 1; k < vars.length; k++) parent[find(vars[k])] = find(vars[0]);
+  const groupCols = new Map<number, number[]>();
+  const groupRows = new Map<number, number[]>();
+  for (let j = 0; j < n; j++) {
+    if (!columns[j].length) continue;
+    const g = find(j);
+    const list = groupCols.get(g);
+    if (list) list.push(j);
+    else groupCols.set(g, [j]);
+  }
+  readBy.forEach((vars, bi) => {
+    if (!vars.length) return;
+    const g = find(vars[0]);
+    const [r0, r1] = rowsOfBlock(bi);
+    const list = groupRows.get(g) ?? [];
+    for (let i = r0; i < r1; i++) list.push(i);
+    groupRows.set(g, list);
+  });
+
+  const determined = new Array<boolean>(n).fill(true);
+  let freedom = 0;
+  for (let j = 0; j < n; j++)
+    if (!columns[j].length) {
+      determined[j] = false;
+      freedom++;
+    }
+  for (const [g, cols] of groupCols) {
+    const rowIds = (groupRows.get(g) ?? []).sort((a, b) => a - b);
+    const k = cols.length;
+    const at = new Map(cols.map((c, i) => [c, i]));
+    const A = rowIds.map((i) => {
+      const r = new Array<number>(k).fill(0);
+      for (const [c, v] of entries[i]) r[at.get(c)!] = v;
+      return r;
+    });
+    const mm = A.length;
+    const pivotCols: number[] = [];
+    const used = new Array<boolean>(k).fill(false);
+    let row = 0;
+    while (row < mm) {
+      let best = 0;
+      let br = -1;
+      let bc = -1;
+      for (let i = row; i < mm; i++)
+        for (let j = 0; j < k; j++) {
+          if (used[j]) continue;
+          const v = Math.abs(A[i][j]);
+          if (v > best) {
+            best = v;
+            br = i;
+            bc = j;
+          }
+        }
+      if (best <= tol) break;
+      [A[row], A[br]] = [A[br], A[row]];
+      const pv = A[row][bc];
+      for (let j = 0; j < k; j++) A[row][j] /= pv;
+      for (let i = 0; i < mm; i++) {
+        if (i === row) continue;
+        const f = A[i][bc];
+        if (f === 0) continue;
+        for (let j = 0; j < k; j++) A[i][j] -= f * A[row][j];
+      }
+      used[bc] = true;
+      pivotCols.push(bc);
+      row++;
+    }
+    for (let f = 0; f < k; f++) {
+      if (used[f]) continue;
+      freedom++;
+      determined[cols[f]] = false;
+      pivotCols.forEach((pc, r) => {
+        if (Math.abs(A[r][f]) > 1e-6) determined[cols[pc]] = false;
+      });
+    }
+  }
+  return definedFrom(sketch, sys, determined, freedom);
+}
+
+/** Which points and curves are pinned down, given which unknowns are. */
+function definedFrom(sketch: SketchData, sys: System, determined: boolean[], freedom: number): SketchAnalysis {
+  const definedPoints = new Set<string>([ORIGIN_ID]);
+  const definedCurves = new Set<string>();
+  for (const [id, i] of sys.pointVar) if (determined[i] && determined[i + 1]) definedPoints.add(id);
+  for (const c of sketch.curves) {
+    const ok =
+      c.type === "line"
+        ? definedPoints.has(c.p1) && definedPoints.has(c.p2)
+        : c.type === "spline"
+          ? c.points.every((p) => definedPoints.has(p))
+          : c.type === "ellipse"
+          ? curvePointIds(c).every((p) => definedPoints.has(p))
+          : c.type === "circle"
+          ? definedPoints.has(c.center) && determined[sys.radiusVar.get(c.id)!]
+          : definedPoints.has(c.center) && definedPoints.has(c.start) && definedPoints.has(c.end);
+    if (ok) definedCurves.add(c.id);
+  }
+  return { freedom, definedPoints, definedCurves };
+}
+
+/** The original analysis: one dense row reduction of the whole Jacobian. Kept to check `analyzeWhole` against (tests). */
+export function analyzeWholeDense(sketch: SketchData): SketchAnalysis {
   const sys = buildSystem(sketch);
   prepareAll(sys, sys.x0);
   const r = evalAll(sys, sys.x0);

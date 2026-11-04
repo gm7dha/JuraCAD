@@ -11,7 +11,7 @@ import { planeFrame, type SketchPlane } from "../sketch/planes";
 import { findChains, type Chain, type Pt, type Segment } from "../sketch/regions";
 import { textContours, textsOf } from "../sketch/sketchText";
 import type { SketchData } from "../sketch/types";
-import { chainEdges, segmentPoints, sortLoops, type LaserLayer, type LaserPath, type LaserPiece } from "./laser";
+import { chainEdges, reverseSegment, segmentEnds, sortLoops, segmentPoints, type LaserLayer, type LaserPath, type LaserPiece } from "./laser";
 
 /** What to ask the engine for. */
 export type LaserSource =
@@ -97,6 +97,7 @@ function junctionCurves(sketch: SketchData, runs: Chain[]): { loops: Segment[][]
     const size = Math.max(1, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
     const eps = Math.max(1e-4, size * 1e-5);
     const outline: Segment[] = [];
+    const own: Segment[][] = [];
     for (const run of curves) {
       // Look either side of the curve's middle.
       const along = run.flatMap((c, i) => segmentPoints(c, 0.01).slice(i ? 1 : 0));
@@ -109,14 +110,63 @@ function junctionCurves(sketch: SketchData, runs: Chain[]): { loops: Segment[][]
       const left = map.areaAt([mid[0] + nrm[0] * eps, mid[1] + nrm[1] * eps]) >= 0;
       const right = map.areaAt([mid[0] - nrm[0] * eps, mid[1] - nrm[1] * eps]) >= 0;
       if (left !== right) outline.push(...run);
-      else lines.push(run);
+      else own.push(run);
     }
+    lines.push(...joinThroughBends(own, curves));
     const joined = chainEdges(outline);
     loops.push(...joined.loops);
     // An outline piece that didn't close (a gap in the drawing) is still cut along.
     lines.push(...joined.open);
   }
   return { loops, lines };
+}
+
+/**
+ * Lines (cut or scored) joined end to end wherever just two curves of the group meet — the pieces of one smooth cut,
+ * such as a jigsaw tab's arcs — so each is one path for the laser; where three or more meet they stay apart.
+ */
+function joinThroughBends(lines: Segment[][], all: Segment[][]): Segment[][] {
+  const key = (p: Pt) => `${Math.round(p[0] * 1e4)},${Math.round(p[1] * 1e4)}`;
+  const endsOf = (run: Segment[]): [Pt, Pt] | null => {
+    const a = segmentEnds(run[0]);
+    const b = segmentEnds(run[run.length - 1]);
+    return a && b ? [a[0], b[1]] : null;
+  };
+  const meet = new Map<string, number>();
+  for (const run of all) {
+    const e = endsOf(run);
+    if (!e) return lines;
+    // A closed run (a circle) has no ends to join.
+    if (key(e[0]) === key(e[1])) continue;
+    for (const p of e) meet.set(key(p), (meet.get(key(p)) ?? 0) + 1);
+  }
+  const left = lines.map((r) => [...r]);
+  const out: Segment[][] = [];
+  while (left.length) {
+    let run = left.shift()!;
+    for (let grew = true; grew; ) {
+      grew = false;
+      const e = endsOf(run);
+      if (!e || key(e[0]) === key(e[1])) break;
+      for (const [side, p] of [[1, e[1]], [0, e[0]]] as const) {
+        if (meet.get(key(p)) !== 2) continue;
+        const i = left.findIndex((r) => {
+          const f = endsOf(r);
+          return !!f && (key(f[0]) === key(p) || key(f[1]) === key(p));
+        });
+        if (i < 0) continue;
+        let next = left.splice(i, 1)[0];
+        const f = endsOf(next)!;
+        // Put the next piece the way round that carries on from this end.
+        if (side === 1 ? key(f[0]) !== key(p) : key(f[1]) !== key(p)) next = [...next].reverse().map(reverseSegment);
+        run = side === 1 ? [...run, ...next] : [...next, ...run];
+        grew = true;
+        break;
+      }
+    }
+    out.push(run);
+  }
+  return out;
 }
 
 /** A curve run's ends and middle, either way round (to find the same line drawn twice). */

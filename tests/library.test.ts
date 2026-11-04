@@ -26,9 +26,11 @@ import type { JuraCADDocument } from "../src/model/types";
 import type { DesignValues } from "../src/library/types";
 
 const design = (id: string) => findDesign(id)!;
+/** The third batch of laser designs (tests/libraryLaser3.test.ts). */
+const LASER_IDS_3 = ["sliding-lid-box", "divider-tray", "bookend", "clock-face", "cord-winder", "tealight", "jigsaw", "ornament"];
 /** The laser designs with words and more (tests/libraryLaser.test.ts), in the library's order. */
-const LASER_IDS = ["stencil", "rubber-stamp", "name-tag", "coaster", "picture-frame", "living-hinge", "gear", "ruler"];
-const LOOSE_LINES = new Set(["living-hinge", "gear", "ruler"]);
+const LASER_IDS = ["stencil", "rubber-stamp", "name-tag", "coaster", "picture-frame", "living-hinge", "gear", "ruler", ...LASER_IDS_3];
+const LOOSE_LINES = new Set(["living-hinge", "gear", "ruler", "jigsaw"]);
 
 /** The third batch of 3D printing designs (printDesigns.ts), in order. */
 const PRINT3_IDS = ["gridfinity-baseplate", "gridfinity-bin", "sign", "battery-holder", "spool-holder", "headphone-hook", "plant-pot", "bag-clip", "thumb-knob", "hose-adapter", "card-holder"];

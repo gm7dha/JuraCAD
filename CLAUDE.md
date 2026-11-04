@@ -139,6 +139,10 @@
   Insert DXF: `src/sketch/dxf.ts` (parse ENTITIES + $INSUNITS; lines, arcs, circles, (LW)polylines with bulges, splines, ellipses
   (partial ones as ellipses with `start`/`end`, ends joined), points;
   angles wrapped into one turn, non-finite shapes dropped, ≤20 MB / 20,000 shapes / 50,000 points, `DxfError` = plain message).
+  The sketch check (`analyzeSketch` → `analyzeWhole` in solver.ts) row-reduces the Jacobian block by block: unknowns joined
+  (union–find) through the equations that read them (`dependencies`), entries from `jacobianEntries` (the same numbers as the
+  dense `jacobian`), the whole matrix's tolerance; unknowns no equation reads are free. Same answers as one dense reduction
+  (`analyzeWholeDense`, kept for tests/solverBlocks), but thousands of loose points (a 400-piece jigsaw) take ~0.2 s, not minutes.
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /
@@ -548,7 +552,8 @@
   tests/zoomGuard.test.ts, tests/touchCompat.test.ts, tests/sketchTouchStroke.test.ts (cancelStroke after a drag began); the smoke test's touch section. Only a real iPad can confirm Safari's own touch quirks.
 - Design library (Onshape-style configurable library parts): `src/library/` (pure). `insert.ts` has `LIBRARY` (`designs/*.ts`) in two
   sections, `LibraryDesign.category` "laser" (Laser cutting: finger-joint box, flat-pack phone stand, and `designs/laserSet.ts`'s
-  stencil, rubber stamp, name/key tag, coasters, picture frame, living-hinge panel, gear, ruler — flat panels for Export for laser)
+  stencil, rubber stamp, name/key tag, coasters, picture frame, living-hinge panel, gear, ruler, then `designs/laserSet3.ts`'s
+  sliding-lid box, tray with dividers, bookend, clock face, cord winders, tealight holder, jigsaw, ornament — flat panels for Export for laser)
   and "print" (3D printing: tray, box with lid, shelf bracket, wall hook, cable clip, phone/tablet stand, print-in-place hinge,
   spacer/washer, grip knob, stamp with handle, and — in `printDesigns.ts`, appended to LIBRARY — bolt/nut/washer set, hex
   standoff, piano hinge, screw-top jar, bit holder block, pegboard hook, drawer pull, desk cable grommet, corner protector, then the third
@@ -557,7 +562,7 @@
   sits flat on the bed at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`;
   optional `LibraryDesign.group` = a heading within the tab (`designGroups` = `groupDesigns(designsIn(c))`: ungrouped first, then
   groups — that section's `GROUP_ORDER` first (print: Fixings, Hinges, Storage, Gridfinity, Household, Desk, Garden, Workshop; laser: none), the rest in order of first use;
-  laser: Boxes and stands, Signs and stamps, Home, Workshop). The window also has a search box (`browse.ts` `searchDesigns`: every
+  laser: Boxes and stands, Signs and stamps, Home, Workshop, Toys and gifts). The window also has a search box (`browse.ts` `searchDesigns`: every
   typed word must start a word of the name/group/section/description or a choice's label — "M8" finds the bolt set — name matches first; results across both tabs, under
   section headings; cleared on close).
   Text inputs: `InputKind` "text" (`maxLength` default 60, `multiline` = lines split by "\n", ≤ `MAX_TEXT_LINES` 6, `optional`;
@@ -679,6 +684,31 @@
   sized "into" (outside) or "over" (inside + fit). Tests: tests/libraryPrint3 (pure), engineLibraryPrint3 (bin in a baseplate cell at
   ±0.2 but not 0.3, a bigger bin refused, bins stack, pot in saucer, clip on rod held by its lips, nut in the knob's pocket),
   mcpLibraryPrint3; the smoke test searches "gridfinity" and inserts a bin (1 part, 83.5 mm).
+  Third laser batch (`designs/boxes3.ts`, `laserHome3.ts`, `jigsaw.ts` + pure `puzzle.ts`, `ornament.ts`; list in `laserSet3.ts`).
+  Sliding-lid box: a laser can't cut a groove part-way, so each groove is a *rail* — a second panel inside each long wall with a
+  through slot (a C open at the right-hand end, `slidingOutlines().rail`); grooves z = g0…g1 (g0 = H − 3t − 2c, g1 = g0 + t + 2c), a 2t
+  strip above, the slot stopping 2t short of the left wall (`bridge`); the right end wall is g0 tall and the front/back fingers on that
+  end stop there (`SideSpec` "full" `upTo`, fingers.ts); lid x = 3t + c…W, y = t + c…D − t − c, moved up to g0 + c. Tray with dividers:
+  the open finger box's panels + dividers along x (slots down from the top) and y (slots up from the bottom) to half height (H + t)/2,
+  each `DIVIDER_ROOM` (0.5) shorter than the inside, equal compartments (`dividerTray` centres); all outlines grown by kerf/2 (`grow`).
+  Bookend: base (Top, 3 slots), upright (Right, 2 tabs + a slot), brace (Front, 2 tabs); holes are drawn kerf/2 smaller (`shrink` =
+  grow on the reversed loop). Clock face: one engraved-plate sketch (`engravedPlate`, now exported from engraved.ts) — outline, centre
+  hole (default 8 mm), numbers as Text, marks as Text "I" turned radially (engraved; fully defined) or dimensioned lines (`open: "score"`).
+  Cord winders: H outlines side by side (`pieceOf` by y). Tealight: base + rings (hole = candle + 2 × `TEALIGHT_ROOM`) stacked by Moves.
+  Jigsaw (`puzzle.ts`): each edge between pieces = line, shoulder arc, head arc, shoulder arc, line (`tabEdge`: head R at HEAD_RISE·R,
+  shoulders SHOULDER·R touching it, neck 2·NECK·R = 0.618 of the head, so it locks); side/position/size from `seeded` (mulberry32) by
+  the pattern number; `narrowestGap` (box-filtered; `puzzleProblems` asks only up to MIN_GAP) checks no cuts come within 1.5 mm, so
+  pieces never overlap; ≤ `MAX_PIECES` 400. The board is its own rectangle sketch (picking hundreds of areas is slow); the "Puzzle
+  sketch" (border split at the piece corners + the cuts, points left free — LOOSE_LINES) is what Export for laser uses: border red,
+  each cut between pieces one blue open run (sketchPiece's `joinThroughBends` joins a junction group's lines end to end where
+  just two of its curves meet), necks at least `MIN_NECK` 2 mm or the sheet thickness; a crowded pattern names another number
+  only if it works. Ornament: star (outlineSketch), circle, heart (lines tangent to two arcs) and snowflake (hex middle,
+  six arms with 60° branches, an eye round the hole; the top arm drops its branches when the eye would reach them) — the curved
+  ones as free arcs/lines; `outlineGap` refuses outlines that cross themselves or come within `EDGE_ROOM` 1.5 mm of themselves;
+  words must keep `WORDS_ROOM` from the edge and hole. Bookend "Base depth" is the base's whole length. Tests: tests/libraryLaser3 (pure: tabs lock, pieces tile, same seed same puzzle, grooves/slots, fully defined) and
+  engineLibraryLaser3 (volumes add up, no overlaps at kerf 0, the lid slides out with clearance and clashes any other way, laser
+  layers, a user's part left alone); mcpLibraryLaser inserts a jigsaw and exports it; the smoke test inserts a 12-piece jigsaw and saves
+  its sketch for laser (1 red, 17 blue).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
