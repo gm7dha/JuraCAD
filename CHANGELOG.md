@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.34 — Library: 3D printing and laser cutting tabs, more designs · commit `b6c652f`
+
+- **Two tabs in the Library:** Laser cutting and 3D printing.
+- **New 3D printing designs:** box with a lid that fits, wall hook with countersunk screw holes, snap-in cable clip,
+  phone/tablet stand, and a print-in-place hinge that moves straight off the bed (print with supports off).
+- **New laser design:** a flat-pack phone stand (three pieces that slot together, with a kerf allowance).
+- **Claude extension:** the library list is grouped by tab and can be filtered. Download it again from Help.
+
 ## v0.33 — Design library and Export for laser · commit `a13127b`
 
 - **Design library** (Library button): ready-made designs you adapt by changing a few sizes — a laser-cut finger-joint
