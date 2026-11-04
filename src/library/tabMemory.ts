@@ -14,12 +14,12 @@ const storage = (): Store => {
   }
 };
 
-/** The section last open (Laser cutting the first time, or when the browser keeps nothing). */
+/** The section last open (3D printing the first time, or when the browser keeps nothing). */
 export function rememberedTab(store: Store = storage()): DesignCategory {
   try {
-    return categoryFrom(store?.getItem(LIBRARY_TAB_KEY)) ?? "laser";
+    return categoryFrom(store?.getItem(LIBRARY_TAB_KEY)) ?? "print";
   } catch {
-    return "laser";
+    return "print";
   }
 }
 

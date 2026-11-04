@@ -10,56 +10,51 @@ import { mm, num, polygonArea, varsOf } from "./common";
 import { angleInput, standProblems } from "./phoneStand";
 import { standProfile } from "./standProfile";
 
-const VARS = ["slot", "lip", "back", "bar", "thickness", "foot"];
+const VARS = ["slot", "lip", "back", "bar", "thickness", "foot", "kerf"];
 
 /**
  * The profile (seen from the front, x forwards, z up) with a notch up from its bottom edge for each foot, and the
- * feet (seen from the side, y across, z up) with a notch down from their top. The origin is at the front notch, so the
- * front foot is drawn on the Right plane and made `thickness` thick from there; the back foot is a copy moved back.
+ * feet (seen from the side, y across, z up) with a notch down from their top. The front foot goes right under the slot's
+ * back corner (x = 0…thickness, the profile's origin), where the side is just one bar tall: so the foot's top is flush with
+ * the slot's floor and the phone stands on it across the foot's whole length. It's drawn on the Right plane and made
+ * `thickness` thick from there; the back foot is a copy moved back, a bar's width in from the back. The notches are drawn
+ * `kerf` narrower than the sheet (half each side), so they're snug once the laser has burnt that away.
  */
 export function flatStandShapes(values: DesignValues, vars: Record<string, Ex> = varsOf(values, VARS)) {
-  const { bar, thickness: t, foot } = vars;
+  const { bar, thickness: t, foot, kerf } = vars;
   const p = standProfile({ angle: num(values, "angle"), slot: vars.slot, lip: vars.lip, back: vars.back, bar });
   const half = over(t, 2);
   const notch = over(bar, 2);
-  // The front foot sits under the middle of the lip, the back one a bar's width in from the back.
-  const front = minus(plus(p.slotFront, over(bar, 2)), half);
-  const shift = (x: Ex) => minus(x, front);
-  const backAt = shift(minus(plus(p.rear, bar), half));
-  const backEnd = plus(backAt, t);
-  const [first, ...rest] = p.outline.map(([x, y]): Pt => [shift(x), y]);
-  const profile: Pt[] = [
-    first,
-    [backAt, ZERO],
-    [backAt, notch],
-    [backEnd, notch],
-    [backEnd, ZERO],
-    [ZERO, ZERO],
-    [ZERO, notch],
-    [t, notch],
-    [t, ZERO],
-    ...rest,
+  const inset = over(kerf, 2);
+  const backAt = minus(plus(p.rear, bar), half);
+  const [first, ...rest] = p.outline;
+  const notchAt = (x0: Ex): Pt[] => [
+    [plus(x0, inset), ZERO],
+    [plus(x0, inset), notch],
+    [minus(plus(x0, t), inset), notch],
+    [minus(plus(x0, t), inset), ZERO],
   ];
+  const profile: Pt[] = [first, ...notchAt(backAt), ...notchAt(ZERO), ...rest];
   const left = minus(half, over(foot, 2));
   const right = plus(half, over(foot, 2));
   const footShape: Pt[] = [
     [left, ZERO],
     [right, ZERO],
     [right, bar],
-    [t, bar],
-    [t, notch],
-    [ZERO, notch],
-    [ZERO, bar],
+    [minus(t, inset), bar],
+    [minus(t, inset), notch],
+    [inset, notch],
+    [inset, bar],
     [left, bar],
   ];
-  return { profile, foot: footShape, backAt };
+  return { profile, foot: footShape, backAt, slotFront: p.slotFront };
 }
 
 export const flatStand: LibraryDesign = {
   id: "flat-stand",
   name: "Flat-pack phone stand",
   description:
-    "A phone stand cut from flat sheet: a side profile and two feet that slot together, no glue needed. Shown put together; each piece has a big flat face, ready for Export for laser. The slots are exactly the sheet's thickness, so measure your sheet.",
+    "A phone stand cut from flat sheet: a side profile and two feet that slot together, no glue needed. The phone stands on the front foot, right across its length, so it can't roll off sideways. Shown put together; each piece has a big flat face, ready for Export for laser. Measure your sheet for the slots, and set the kerf allowance for your laser.",
   category: "laser",
   prefix: "fstand",
   icon: '<path d="M6 34h30l-10-24h-5l10 24" /><path d="M10 30v8M30 30v8" opacity=".55"/><path d="M4 38h10M24 38h12" />',
@@ -71,10 +66,13 @@ export const flatStand: LibraryDesign = {
     { key: "bar", label: "Bar width", kind: "length", default: 15, min: 5, max: 100, variable: true, help: "How wide the profile's strips are (and how tall the feet)." },
     { key: "foot", label: "Foot length", kind: "length", default: 80, min: 20, max: 400, variable: true, help: "Left to right: how wide a base it stands on." },
     { key: "thickness", label: "Material thickness", kind: "length", default: 3, min: 1, max: 12, variable: true, help: "Measure your sheet: 3 mm plywood is often 2.8–3.2 mm." },
+    { key: "kerf", label: "Kerf allowance", kind: "length", default: 0, min: 0, max: 1, variable: true, help: "How much your laser burns away (often 0.1–0.2 mm). The slots are drawn this much narrower so the pieces fit snugly." },
   ],
   problems: (v) => {
-    const [, , , bar, t, foot] = VARS.map((k) => num(v, k));
+    const [slot, , , bar, t, foot] = VARS.map((k) => num(v, k));
     const out = standProblems(v, bar);
+    const along = slot / Math.sin((num(v, "angle") * Math.PI) / 180);
+    if (along < t + 1) out.push(`The slot is too narrow for the front foot under it: make it at least ${mm(Math.ceil((t + 1) * Math.sin((num(v, "angle") * Math.PI) / 180) * 10) / 10)} wide.`);
     if (bar < 2 * t + 2) out.push(`The bars must be at least ${mm(2 * t + 2)} wide for the slots in them.`);
     if (foot < 2 * bar) out.push(`The feet must be at least ${mm(2 * bar)} long, so it doesn't fall over sideways.`);
     if (!out.length) {

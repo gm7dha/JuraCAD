@@ -262,12 +262,14 @@ describe("library sections", () => {
   it("remembers the last tab per browser, and copes without storage", () => {
     const kept = new Map<string, string>();
     const store = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v) };
+    expect(rememberedTab(store)).toBe("print");
+    rememberTab("laser", store);
     expect(rememberedTab(store)).toBe("laser");
     rememberTab("print", store);
     expect(kept.get(LIBRARY_TAB_KEY)).toBe("print");
     expect(rememberedTab(store)).toBe("print");
     kept.set(LIBRARY_TAB_KEY, "nonsense");
-    expect(rememberedTab(store)).toBe("laser");
+    expect(rememberedTab(store)).toBe("print");
     const broken = {
       getItem: () => {
         throw new Error("blocked");
@@ -276,9 +278,9 @@ describe("library sections", () => {
         throw new Error("blocked");
       },
     };
-    expect(rememberedTab(broken)).toBe("laser");
-    rememberTab("print", broken);
-    expect(rememberedTab(null)).toBe("laser");
+    expect(rememberedTab(broken)).toBe("print");
+    rememberTab("laser", broken);
+    expect(rememberedTab(null)).toBe("print");
   });
 
   it("older files' inserts don't need a section", () => {
@@ -376,6 +378,32 @@ describe("new designs' maths", () => {
     const stand = findDesign("phone-stand")!;
     expect(valueProblems(stand, { ...v, angle: 85, back: 30 })[0]).toMatch(/too short/);
     expect(inputProblem(stand.inputs[0], 40)).toMatch(/at least 45/);
+  });
+
+  it("flat-pack stand: the front foot is right under the slot, so the phone stands on it", () => {
+    const v = defaultValues(findDesign("flat-stand")!);
+    const s = flatStandShapes(v);
+    const pts = s.profile.map(([a, b]) => [a.v, b.v]);
+    // The slot's floor runs from its back corner (the origin, x = 0) to slotFront, one bar (15 mm) up: the front notch
+    // (x 0…3) is under it, so the foot's top (15 mm) is level with the floor across its whole length.
+    expect(s.slotFront.v).toBeGreaterThan(3);
+    const has = (x: number, y: number) => pts.some(([a, b]) => Math.abs(a - x) < 1e-9 && Math.abs(b - y) < 1e-9);
+    expect(has(0, 15)).toBe(true);
+    expect(has(s.slotFront.v, 15)).toBe(true);
+    expect(s.foot.map(([, z]) => z.v).every((z) => z <= 15)).toBe(true);
+    const fs = findDesign("flat-stand")!;
+    expect(valueProblems(fs, { ...v, slot: 3, thickness: 6, bar: 16 })[0]).toMatch(/slot is too narrow/);
+  });
+
+  it("flat-pack stand: the slots are drawn the kerf narrower", () => {
+    const v = { ...defaultValues(findDesign("flat-stand")!), kerf: 0.2 };
+    const s = flatStandShapes(v);
+    const pts = s.profile.map(([a, b]) => [a.v, b.v]);
+    expect(pts.slice(5, 9).map(([a, b]) => [Math.round(a * 1000) / 1000, b])).toEqual([[0.1, 0], [0.1, 7.5], [2.9, 7.5], [2.9, 0]]);
+    const foot = s.foot.map(([a, b]) => [Math.round(a.v * 1000) / 1000, b.v]);
+    expect(foot.slice(3, 7)).toEqual([[2.9, 15], [2.9, 7.5], [0.1, 7.5], [0.1, 15]]);
+    const r = insertDesign(emptyDocument(), findDesign("flat-stand")!, v, { into: MAIN_STUDIO });
+    expect(r.doc.variables!.find((x) => x.name === "fstand_kerf")!.value).toBe("0.2");
   });
 
   it("flat-pack stand: the feet's notches and the side's line up, each half the bar deep", () => {

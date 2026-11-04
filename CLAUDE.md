@@ -522,14 +522,14 @@
   and "print" (3D printing: tray, box with lid, shelf bracket, wall hook, cable clip, phone/tablet stand, print-in-place hinge,
   spacer/washer, grip knob — each sits flat on the bed at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`. Each is a `LibraryDesign` (id, name,
   description, `icon` = fixed SVG markup, `inputs` with defaults/limits, `problems`, `make`, `preview` shapes, `summary`).
-  The library window shows the sections as tabs (last one in localStorage `juracad.libraryTab`, `tabMemory.ts`, try/catch);
+  The library window shows the sections as tabs (3D printing first time, then the last one in localStorage `juracad.libraryTab`, `tabMemory.ts`, try/catch; roving tabIndex);
   `libraryInserts` don't store the category. Newer designs: box with lid (`boxLid.ts`: lid = a tray upside down, inside = box
   outside + 2 × clearance, default `DEFAULT_FITS.snug`; "on the box" = a Move turned 180° about X and lowered), hook and cable clip
   (profile on Top made `width` upwards, so they print on their side; the screw-head face is on the Right plane, x = 0, so
   `countersunkHoleFeature` (a Hole, not apart, through all) drills it; `moveFeature` in sketchKit too), stands (`standProfile.ts`,
   shared by the printed `phoneStand.ts` and laser `flatStand.ts`: the lean angle is a whole-number input, not a variable — no trig
   in expressions — so its sine/cosine go in as 6-place numbers, `trigOf`; the flat-pack one is a side on Front + two feet on Right
-  with cross halving notches, the origin at the front notch), hinge (`hinge.ts`: per leaf a plate, a full-length knuckle cylinder,
+  with cross halving notches drawn `kerf` narrower; the front foot right under the slot's back corner (x = 0…t, the origin), its top flush with the slot floor, so the phone stands on it), hinge (`hinge.ts`: per leaf a plate, a full-length knuckle cylinder,
   then the other leaf's knuckles cut away ± clearance and a bore — exactly the pin for leaf 1 (it prints joined to the pin), pin +
   2 × clearance for leaf 2; the pin a New part). `ex.ts` `wholeNegation`: only strip "-( … )" that wraps the whole text.
   `insertDesign(doc, design, values, { into: "new" | studioId })` adds variables `<prefix>_<key>` for inputs marked

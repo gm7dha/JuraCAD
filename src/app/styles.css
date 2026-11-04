@@ -3854,15 +3854,6 @@ kbd {
   color: var(--accent);
   font-weight: 600;
 }
-.library-tag {
-  align-self: flex-start;
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: 8px;
-  background: var(--subtle);
-  border: 1px solid var(--line);
-  color: var(--ink-2);
-}
 .library-heading {
   font-size: 13px;
   margin: 14px 0 6px;

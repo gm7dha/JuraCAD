@@ -209,6 +209,9 @@ describe("print-in-place hinge", () => {
     expect(shared(leaf1, leaf2)).toBeLessThan(0.001);
     expect(shared(leaf2, pin)).toBeLessThan(0.001);
     expect(shared(leaf1, pin)).toBeLessThan(0.01);
+    // The pin touches the first leaf's knuckle holes (so it prints joined to that leaf): the smallest nudge overlaps.
+    expect(shared(leaf1, pin, [0, 0, 0.05])).toBeGreaterThan(0.01);
+    expect(shared(leaf1, pin, [0, 0.05, 0])).toBeGreaterThan(0.01);
     // Moving the second leaf (or the pin, in it) by 90% of the clearance any way still touches nothing …
     const nudges: [number, number, number][] = [[0.9 * c, 0, 0], [-0.9 * c, 0, 0], [0, -0.9 * c, 0], [0, 0, 0.9 * c], [0, 0, -0.9 * c]];
     for (const n of nudges) {
@@ -245,6 +248,17 @@ describe("flat-pack phone stand (laser)", () => {
     expect(shared(side, front)).toBeLessThan(0.001);
     expect(shared(side, back)).toBeLessThan(0.001);
     onTheBed(r.parts);
+    // The front foot is under the slot: its top is level with the slot's floor (one bar up), right across.
+    const f = box([front]);
+    expect(f.min[0]).toBeCloseTo(0, 4);
+    expect(f.max[0]).toBeCloseTo(3, 4);
+    expect(f.max[2]).toBeCloseTo(15, 4);
+    expect(f.max[1] - f.min[1]).toBeCloseTo(80, 4);
+  });
+  it("with a kerf allowance the slots are narrower, so the pieces grip (and overlap a little in 3D)", () => {
+    const r = build(insert("flat-stand", { kerf: 0.2 }));
+    const [side, front] = ["_side", "_front-foot"].map((e) => partEnding(r.parts, e));
+    expect(shared(side, front)).toBeGreaterThan(0.01);
   });
   it("follows the sheet thickness", () => {
     const r = build(setVar(insert("flat-stand"), "fstand_thickness", "4"));

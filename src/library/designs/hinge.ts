@@ -32,7 +32,7 @@ export const hinge: LibraryDesign = {
   id: "hinge",
   name: "Print-in-place hinge",
   description:
-    "A hinge that prints as one piece and moves straight off the printer: two leaves with knuckles that take turns along a pin, and a small gap between everything that moves. It prints lying open and flat. The pin is a part of its own so you can see it, but it's exactly the size of the first leaf's knuckle holes, so it prints joined to that leaf and turns in the other's. The knuckles and pin lie on their sides, so their undersides overhang a little — normal for these hinges, and fine without supports. Bend it gently a few times after printing to free it.",
+    "A hinge that prints as one piece and moves straight off the printer: two leaves with knuckles that take turns along a pin, and a small gap between everything that moves. It prints lying open and flat. The pin is a part of its own so you can see it, but it's exactly the size of the first leaf's knuckle holes, so it prints joined to that leaf and turns in the other's. The knuckles and pin lie on their sides, so their undersides overhang a little — normal for these hinges: print it with supports turned off, so none end up in the gaps. Bend it gently a few times after printing to free it.",
   category: "print",
   prefix: "hinge",
   icon: '<path d="M6 14h16v20H6zM26 14h16v20H26z"/><path d="M22 14h4v6h-4zM22 28h4v6h-4z" opacity=".55"/><path d="M24 12v24"/>',

@@ -3227,6 +3227,8 @@ try {
         });
     };
     await tool("Library");
+    // The library opens on 3D printing the first time; the finger box is a laser design.
+    await page.getByRole("tab", { name: "Laser cutting" }).click();
     await page.getByRole("button", { name: /^Finger-joint box:/ }).click();
     await page.getByLabel("Width", { exact: true }).fill("140");
     await page.locator(".library-preview polygon").first().waitFor({ timeout: 5_000 });

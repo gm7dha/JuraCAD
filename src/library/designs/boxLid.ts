@@ -52,7 +52,7 @@ export const boxLid: LibraryDesign = {
       label: "Fit clearance",
       kind: "length",
       default: DEFAULT_FITS.snug,
-      min: 0,
+      min: 0.1,
       max: 2,
       variable: true,
       help: `The gap between the box and the lid on each side. ${DEFAULT_FITS.snug} mm is a snug fit; try ${DEFAULT_FITS.sliding}–${DEFAULT_FITS.loose} mm if it's too tight.`,

@@ -176,6 +176,7 @@ export function LibraryDialog() {
               id={`library-tab-${c.id}`}
               role="tab"
               aria-selected={tab === c.id}
+              tabIndex={tab === c.id ? 0 : -1}
               aria-controls="library-section"
               className={tab === c.id ? "selected" : ""}
               onClick={() => chooseTab(c.id)}
