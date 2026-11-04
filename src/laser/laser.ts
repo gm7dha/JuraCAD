@@ -396,15 +396,17 @@ export function chainEdges(edges: Segment[], tol = JOIN_TOLERANCE): { loops: Seg
 export function sortLoops(loops: Segment[][]): LaserPath[] {
   const polys = loops.map((l) => pathPoints(l, true, 0.01));
   const areas = polys.map((p) => Math.abs(signedArea(p)));
-  return loops.flatMap((segments, i): LaserPath[] => {
+  const found = loops.flatMap((segments, i): { path: LaserPath; depth: number }[] => {
     if (polys[i].length < 2 || (areas[i] < 1e-9 && segments.length > 1)) return [];
     // A point just along the loop's first side (corners may touch other loops).
     const p0 = polys[i][0];
     const p1 = polys[i][1 % polys[i].length];
     const probe: Pt = [p0[0] + (p1[0] - p0[0]) * 0.37, p0[1] + (p1[1] - p0[1]) * 0.37];
-    const inside = polys.some((q, j) => j !== i && areas[j] > areas[i] && pointInPolygon(probe, q));
-    return [{ layer: inside ? "inner" : "outer", segments, closed: true }];
+    const depth = polys.filter((q, j) => j !== i && areas[j] > areas[i] && pointInPolygon(probe, q)).length;
+    return [{ path: { layer: depth ? "inner" : "outer", segments, closed: true }, depth }];
   });
+  // Deepest first: an island inside a hole is cut before the hole round it, so nothing has fallen out yet.
+  return found.sort((a, b) => b.depth - a.depth).map((f) => f.path);
 }
 
 /** Raw outline pieces (any order) as cut paths: outer and inner loops, and open runs on `openLayer`. */
@@ -478,9 +480,14 @@ export function layoutPieces(pieces: LaserPiece[], opts: LayoutOptions = {}): La
     const { p, box } = withBoxes[0];
     placed.push({ name: p.name, paths: movePaths(p.paths, [1, 0, 0, 1, -box[0], -box[1]]) });
   } else if (withBoxes.length > 1) {
+    const sizes = withBoxes.map(({ box }) => [box[2] - box[0], box[3] - box[1]] as [number, number]);
+    // Rows at least as wide as the biggest piece turned its narrow way, and room enough below for every piece in a
+    // column, so every piece always finds a place (nothing is left out beside the "bed").
+    const rowWidth = Math.max(width, ...sizes.map(([w, h]) => Math.min(w, h)));
+    const depth = sizes.reduce((sum, [w, h]) => sum + Math.max(w, h) + gap, 0);
     const layout = arrangeOnBed(
-      withBoxes.map(({ i, box }) => ({ id: String(i), size: [box[2] - box[0], box[3] - box[1]] as [number, number] })),
-      [width, 1e6],
+      withBoxes.map(({ i }, k) => ({ id: String(i), size: sizes[k] })),
+      [rowWidth, depth],
       gap,
     );
     withBoxes.forEach(({ p, i, box }) => {

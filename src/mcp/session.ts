@@ -2,6 +2,7 @@
  * The design Claude is working on: the document (exactly what a .juracad file
  * holds), its undo history, and the geometry engine that builds it.
  */
+import type { SketchLinkInfo } from "../sketch/links";
 import { documentStudioInputs, featuresForEngine } from "../kernel/buildInput";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { emptyDocument } from "../model/document";
@@ -46,6 +47,8 @@ export interface Build {
   errors: Record<string, string>;
   /** Features built, but with something to tell (not failures). */
   warnings: Record<string, string>;
+  /** Sketches on part faces or using part edges: where the engine moved them to (see RebuildResult.sketchLinks). */
+  links?: Record<string, SketchLinkInfo>;
 }
 
 /**
@@ -193,7 +196,7 @@ export class Session {
   }
 
   private keepBuild(key: string, r: RebuildResult): Build {
-    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {} };
+    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, links: r.sketchLinks ?? {} };
     this.builtKey = key;
     return this.built;
   }

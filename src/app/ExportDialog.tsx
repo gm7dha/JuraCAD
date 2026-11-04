@@ -8,7 +8,7 @@ import { runCheck, ReportView } from "./CheckDialog";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
-import { toggleLaser } from "./laserState";
+import { openLaser } from "./laserState";
 import { instancesForKernel } from "./assemblySolve";
 import { solveWithParts } from "../assembly/mates";
 import { stepTree } from "../assembly/stepTree";
@@ -227,7 +227,7 @@ export function ExportDialog() {
             className="text-button inline-link"
             onClick={() => {
               close();
-              toggleLaser();
+              openLaser();
             }}
           >
             Export for laser

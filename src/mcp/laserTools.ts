@@ -5,7 +5,9 @@
  */
 import { layerCounts, layoutPieces, LASER_LAYERS, LAYER_ORDER, type LaserPiece } from "../laser/laser";
 import { laserDxf, laserSvg } from "../laser/laserFiles";
-import { outlinePiece, sketchPiece, type LaserSource } from "../laser/sources";
+import { outlinePiece, partFacing, sketchPiece, uniqueSources, type LaserSource } from "../laser/sources";
+import type { PartMesh } from "../kernel/protocol";
+import { followedSketch } from "../sketch/areaClicks";
 import { bool, InputError, list, noExtras, object, oneOf, text, type Obj } from "./args";
 import { pickFace, PICK_HELP } from "./picks";
 import type { Session } from "./session";
@@ -64,6 +66,7 @@ export const LASER_TOOLS: ToolDef[] = [
         `Saved ${path}: ${r2(sheet.size[0])} × ${r2(sheet.size[1])} mm overall, ${pieces.pieces.length} piece${pieces.pieces.length === 1 ? "" : "s"}${bool(a.mirror, "mirror") ? ", mirrored" : ""}.`,
         `Lines: ${LAYER_ORDER.filter((l) => counts[l]).map((l) => `${counts[l]} ${COUNTED[l]}${counts[l] === 1 ? "" : "s"} (${LASER_LAYERS[l].colour}, ${LASER_LAYERS[l].dxf})`).join(", ")}.`,
         pieces.problems.length > 0 && `Left out: ${pieces.problems.join(" ")}`,
+        format === "dxf" && counts.engrave > 0 && "In the DXF the engraved areas are outlines only (layer ENGRAVE): the laser program must be told to fill them.",
         "In Bambu Studio's laser mode, import the file and give each colour its own setting: red and blue cut through (blue first), green scores, black engraves.",
       );
     },
@@ -79,9 +82,17 @@ async function laserPieces(s: Session, a: Obj): Promise<{ pieces: LaserPiece[]; 
       shapes: oneOf(a.shapes, ["cut", "engrave"] as const, "shapes", "cut"),
       open: oneOf(a.open_lines, ["cut", "score"] as const, "open_lines", "cut"),
     };
-    return { pieces: [sketchPiece(f.name, f.sketch!.data, opts)], problems: [] };
+    // A sketch on a part's face is where the engine moved it to (as the app shows it).
+    const data = followedSketch(f, s.build().links ?? {})?.data ?? f.sketch!.data;
+    return { pieces: [sketchPiece(f.name, data, opts)], problems: [] };
   }
   const b = s.build();
+  const facing = (p: PartMesh) => partFacing(p.featureIds, s.doc.features, (sk) => followedSketch(sk, b.links ?? {})?.plane ?? null);
+  const whole = (p: PartMesh): LaserSource => {
+    if (p.flat) return { kind: "flat", partId: p.id };
+    const toward = facing(p);
+    return toward ? { kind: "part", partId: p.id, toward } : { kind: "part", partId: p.id };
+  };
   if (!b.parts.length) throw new InputError("There are no parts yet. Give a \"sketch\" to cut, or make a part first.");
   const sources: LaserSource[] = [];
   if (a.faces !== undefined) {
@@ -95,10 +106,10 @@ async function laserPieces(s: Session, a: Obj): Promise<{ pieces: LaserPiece[]; 
     sources.push({ kind: "flat", partId: s.part(b.parts, a.flat_pattern, "flat_pattern").id });
   } else {
     const chosen = a.parts !== undefined ? list(a.parts, "parts").map((p, i) => s.part(b.parts, p, `parts[${i}]`)) : b.parts.filter((p) => !p.surface);
-    for (const p of chosen) sources.push(p.flat ? { kind: "flat", partId: p.id } : { kind: "part", partId: p.id });
+    for (const p of chosen) sources.push(whole(p));
   }
   await s.checkpoint();
-  const outlines = s.withEngine((e) => e.laserOutlines(sources));
+  const outlines = s.withEngine((e) => e.laserOutlines(uniqueSources(sources)));
   const bends = bool(a.bend_lines, "bend_lines", true);
   return {
     pieces: outlines.flatMap((o) => (o.ok ? [outlinePiece(o, { bends })] : [])),

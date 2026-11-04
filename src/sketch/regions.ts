@@ -325,6 +325,8 @@ function sketchGraph(sketch: SketchData) {
 export interface Chain {
   segments: Segment[];
   closed: boolean;
+  /** Only with findChains' `branching`: one curve of a group where three or more curves meet. */
+  branching?: boolean;
 }
 
 /**
@@ -340,7 +342,7 @@ export function findChains(sketch: SketchData, opts: { branching?: boolean } = {
     if (group.kind === "branching") {
       // With `branching` (laser cutting), each of its curves comes as an open run of its own.
       if (opts.branching) {
-        for (const ei of group.edges) chains.push({ segments: g.walk([ei], ei, g.edges[ei].a).segments, closed: false });
+        for (const ei of group.edges) chains.push({ segments: g.walk([ei], ei, g.edges[ei].a).segments, closed: false, branching: true });
         continue;
       }
       branching++;

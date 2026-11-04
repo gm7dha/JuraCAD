@@ -207,6 +207,72 @@ describe("flat patterns", () => {
   });
 });
 
+describe("sketches with lines meeting at a corner", () => {
+  /** A 40 × 30 rectangle and the ids of its corner points. */
+  const rectWithCorners = () => {
+    const s = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 40, y: 30 }).sketch;
+    const at = (x: number, y: number) => s.points.find((p) => Math.abs(p.x - x) < 1e-6 && Math.abs(p.y - y) < 1e-6)!.id;
+    return { s, at };
+  };
+  const snapTo = (x: number, y: number, id: string) => ({ x, y, snap: { kind: "point", id } }) as unknown as { x: number; y: number };
+
+  it("a house (a roof on the rectangle's top corners) keeps one red outline round it all, the line under the roof inside", () => {
+    const { s, at } = rectWithCorners();
+    const l1 = addLine(s, snapTo(0, 30, at(0, 30)), { x: 20, y: 50 });
+    const house = addLine(l1.sketch, snapTo(20, 50, l1.endId), snapTo(40, 30, at(40, 30))).sketch;
+    for (const open of ["cut", "score"] as const) {
+      const piece = sketchPiece("House", house, { open });
+      const outer = piece.paths.filter((p) => p.layer === "outer");
+      expect(outer).toHaveLength(1);
+      expect(outer[0].closed).toBe(true);
+      // The rectangle's three outside sides and the two roof lines.
+      expect(outer[0].segments).toHaveLength(5);
+      expect(pathsBox(outer)).toEqual([0, 0, 40, 50]);
+      // The line under the roof has the house on both sides: a line inside, cut or scored.
+      const inside = piece.paths.filter((p) => !p.closed);
+      expect(inside).toHaveLength(1);
+      expect(inside[0].layer).toBe(open === "score" ? "score" : "inner");
+    }
+  });
+
+  it("a rectangle with a corner-to-corner diagonal is still cut out round its outside", () => {
+    const { s, at } = rectWithCorners();
+    const diag = addLine(s, snapTo(0, 0, at(0, 0)), snapTo(40, 30, at(40, 30))).sketch;
+    const piece = sketchPiece("Diagonal", diag, { open: "score" });
+    const outer = piece.paths.filter((p) => p.layer === "outer");
+    expect(outer).toHaveLength(1);
+    expect(outer[0].segments).toHaveLength(4);
+    expect(piece.paths.filter((p) => p.layer === "score")).toHaveLength(1);
+    expect(layoutPieces([piece]).size).toEqual([40, 30]);
+  });
+});
+
+describe("cut order and odd sizes", () => {
+  it("cuts an island inside a hole before the hole, and the outsides last", () => {
+    const piece = outlinePiece({
+      ok: true,
+      name: "x",
+      partId: "x",
+      wires: [rectEdges(0, 0, 100, 100), [{ kind: "circle", center: [50, 50], radius: 30 }], [{ kind: "circle", center: [50, 50], radius: 10 }], rectEdges(200, 0, 20, 20)],
+    });
+    const order = piece.paths.map((p) => `${p.layer}:${p.segments[0].kind === "circle" ? (p.segments[0] as Extract<Segment, { kind: "circle" }>).radius : "rect"}`);
+    expect(order).toEqual(["inner:10", "inner:30", "outer:rect", "outer:rect"]);
+  });
+
+  it("a piece wider than the rows still makes a sheet just big enough", () => {
+    const big = outlinePiece({ ok: true, name: "big", partId: "a", wires: [rectEdges(0, 0, 700, 700)] });
+    const small = outlinePiece({ ok: true, name: "small", partId: "b", wires: [rectEdges(0, 0, 20, 20)] });
+    const sheet = layoutPieces([big, small], { gap: 5, width: 600 });
+    // Rows widen to the big piece (700): the small one goes beside or below it, never half a kilometre away.
+    expect(Math.min(...sheet.size)).toBeCloseTo(700, 6);
+    expect(Math.max(...sheet.size)).toBeLessThanOrEqual(725 + 1e-6);
+    // A long piece is turned to fit the rows rather than widening them.
+    const long = outlinePiece({ ok: true, name: "long", partId: "c", wires: [rectEdges(0, 0, 800, 100)] });
+    const s2 = layoutPieces([long, small], { gap: 5, width: 600 });
+    expect(Math.max(...s2.size)).toBeLessThan(900);
+  });
+});
+
 describe("sketch text", () => {
   it("engraves text as filled letters (holes in letters kept clear), or cuts the letters out", async () => {
     const { FONTS } = await import("../src/geometry/fonts");
@@ -235,5 +301,20 @@ describe("sketch text", () => {
     // Letters lie inside the sign's outline: inner cuts.
     expect(cut.paths.filter((p) => p.layer === "inner")).toHaveLength(3);
     expect(cut.paths.filter((p) => p.layer === "outer")).toHaveLength(1);
+  });
+});
+
+describe("choosing what to cut", () => {
+  it("drops a whole part when one of its faces is picked too, and the same face picked twice", async () => {
+    const { uniqueSources } = await import("../src/laser/sources");
+    const ref = { kind: "face" as const, surface: "PLANE", center: [0, 0, 1] as [number, number, number], normal: [0, 0, 1] as [number, number, number] };
+    const got = uniqueSources([
+      { kind: "face", pick: { partId: "a", ref } },
+      { kind: "part", partId: "a" },
+      { kind: "face", pick: { partId: "a", ref } },
+      { kind: "part", partId: "b" },
+      { kind: "part", partId: "b" },
+    ]);
+    expect(got.map((g) => `${g.kind}:${g.kind === "face" ? g.pick.partId : g.partId}`)).toEqual(["face:a", "part:b"]);
   });
 });

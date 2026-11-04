@@ -7,7 +7,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GeometryEngine } from "../src/kernel/engine";
 import { layoutPieces, pathsBox } from "../src/laser/laser";
 import { laserSvg } from "../src/laser/laserFiles";
-import { outlinePiece, type LaserOutline } from "../src/laser/sources";
+import { outlinePiece, partFacing, type LaserOutline } from "../src/laser/sources";
 import type { Feature } from "../src/model/types";
 import { addCircle, addRectangle } from "../src/sketch/ops";
 import type { Segment } from "../src/sketch/regions";
@@ -62,6 +62,31 @@ describe("export for laser (engine)", () => {
     expect(centres[1]).toBeCloseTo(60, 6);
     expect(laserSvg(sheet)).toContain('width="80mm" height="50mm"');
   });
+
+  for (const plane of ["Top", "Front", "Right"] as const)
+    for (const flip of [false, true])
+      it(`lays a plate sketched on ${plane}${flip ? " (extruded the other way)" : ""} out as drawn, never mirrored`, () => {
+        let s = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 80, y: 50 }).sketch;
+        s = addCircle(s, { x: 15, y: 10 }, 4).sketch;
+        const sk = sketchFeature({ kind: "default", name: plane }, s);
+        const features = [sk, extrudeFeature(sk.id, 3, { flip })];
+        const r = build(features);
+        expect(r.featureErrors).toEqual({});
+        const toward = partFacing(r.parts[0].featureIds, features);
+        const [out] = engine.laserOutlines([{ kind: "part", partId: r.parts[0].id, toward: toward ?? undefined }]);
+        const sheet = layoutPieces([outlinePiece(okOf(out))]);
+        expect(sheet.size[0]).toBeCloseTo(80, 6);
+        expect(sheet.size[1]).toBeCloseTo(50, 6);
+        const hole = sheet.paths.find((p) => p.layer === "inner")!.segments[0] as Extract<Segment, { kind: "circle" }>;
+        expect(hole.center[0]).toBeCloseTo(15, 6);
+        expect(hole.center[1]).toBeCloseTo(10, 6);
+        // Without knowing the sketch, Front and Right parts still come out as drawn when seen from the front / right.
+        if (!flip) {
+          const [plain] = engine.laserOutlines([{ kind: "part", partId: r.parts[0].id }]);
+          const h2 = layoutPieces([outlinePiece(okOf(plain))]).paths.find((p) => p.layer === "inner")!.segments[0] as Extract<Segment, { kind: "circle" }>;
+          expect(h2.center[0]).toBeCloseTo(15, 6);
+        }
+      });
 
   it("takes a clicked flat face, and refuses a curved one plainly", () => {
     const r = build(plate());

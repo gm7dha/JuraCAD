@@ -5603,7 +5603,7 @@ export class GeometryEngine {
           }
         }
         if (src.kind === "part") {
-          const found = biggestFlatFace(part.shape);
+          const found = biggestFlatFace(part.shape, src.toward);
           if (!found) return { ok: false, partId: part.id, error: `${part.name} has no flat face to cut round. Pick a flat face.` };
           try {
             return { ok: true, name: part.name, partId: part.id, wires: faceWires(found.face, faceFrame(found.normal)) };

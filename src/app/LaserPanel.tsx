@@ -3,18 +3,29 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getKernel } from "../kernel/connect";
 import { LASER_LAYERS, LAYER_ORDER, layerCounts, layoutPieces, type LaserPiece } from "../laser/laser";
 import { laserDxf, laserSvg } from "../laser/laserFiles";
-import { outlinePiece, sketchPiece, type LaserOutline, type LaserSource } from "../laser/sources";
+import { outlinePiece, partFacing, sketchPiece, uniqueSources, type LaserOutline, type LaserSource } from "../laser/sources";
 import { followedSketch } from "../sketch/areaClicks";
 import { activeAssembly, activeDrawing, activeFeatures, pickFor, studioParts, useDocument, useLengthUnit, useStore } from "../model/store";
-import { lengthNumber } from "../model/units";
+import { fromUnit, lengthNumber } from "../model/units";
 import type { PartMesh } from "../kernel/protocol";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { useLaserPanel, type LaserChoice } from "./laserState";
 
 /** What the engine is asked for, for a choice (none for a sketch, which is read here). */
-export function laserSources(choice: LaserChoice, parts: PartMesh[], selection: ReturnType<typeof useStore.getState>["selection"], selectedParts: string[], hidden: string[]): LaserSource[] {
-  const whole = (p: PartMesh): LaserSource => (p.flat ? { kind: "flat", partId: p.id } : { kind: "part", partId: p.id });
+export function laserSources(
+  choice: LaserChoice,
+  parts: PartMesh[],
+  selection: ReturnType<typeof useStore.getState>["selection"],
+  selectedParts: string[],
+  hidden: string[],
+  facing: (p: PartMesh) => [number, number, number] | null = () => null,
+): LaserSource[] {
+  const whole = (p: PartMesh): LaserSource => {
+    if (p.flat) return { kind: "flat", partId: p.id };
+    const toward = facing(p);
+    return toward ? { kind: "part", partId: p.id, toward } : { kind: "part", partId: p.id };
+  };
   if (choice === "all") return parts.filter((p) => !hidden.includes(p.id) && !p.surface).map(whole);
   if (choice.startsWith("flat:")) return [{ kind: "flat", partId: choice.slice(5) }];
   if (choice !== "selection") return [];
@@ -24,7 +35,7 @@ export function laserSources(choice: LaserChoice, parts: PartMesh[], selection: 
     .filter((p): p is NonNullable<typeof p> => !!p)
     .map((pick): LaserSource => ({ kind: "face", pick }));
   const wholeParts = selectedParts.map((id) => parts.find((p) => p.id === id)).filter((p): p is PartMesh => !!p).map(whole);
-  return [...faces, ...wholeParts];
+  return uniqueSources([...faces, ...wholeParts]);
 }
 
 /** Shared empty list (a selector must not return a new array each time). */
@@ -66,7 +77,10 @@ function LaserPanelBody() {
     lastPicked.current = picked;
   }, [picked, st.source]);
 
-  const sources = useMemo(() => laserSources(st.source, parts, selection, selectedParts, hidden), [st.source, parts, selection, selectedParts, hidden]);
+  const sources = useMemo(
+    () => laserSources(st.source, parts, selection, selectedParts, hidden, (p) => partFacing(p.featureIds, features, (sk) => followedSketch(sk, links)?.plane ?? null)),
+    [st.source, parts, selection, selectedParts, hidden, features, links],
+  );
   const [outlines, setOutlines] = useState<LaserOutline[]>(NONE);
   const [busy, setBusy] = useState(false);
   const asked = useRef(0);
@@ -177,13 +191,29 @@ function LaserPanelBody() {
           <label className="laser-option">
             Gap between pieces
             <span className="laser-number">
-              <input type="number" min={0} step={1} value={st.gap} onChange={(e) => Number.isFinite(e.target.valueAsNumber) && set({ gap: Math.max(0, e.target.valueAsNumber) })} aria-label="Gap between pieces (mm)" /> mm
+              <input
+                type="number"
+                min={0}
+                step={unit === "in" ? 0.05 : 1}
+                value={lengthNumber(st.gap, unit)}
+                onChange={(e) => Number.isFinite(e.target.valueAsNumber) && set({ gap: Math.max(0, fromUnit(e.target.valueAsNumber, unit)) })}
+                aria-label={`Gap between pieces (${unit})`}
+              />{" "}
+              {unit}
             </span>
           </label>
           <label className="laser-option">
             Rows up to
             <span className="laser-number">
-              <input type="number" min={10} step={10} value={st.width} onChange={(e) => Number.isFinite(e.target.valueAsNumber) && set({ width: Math.max(10, e.target.valueAsNumber) })} aria-label="Row width (mm)" /> mm wide
+              <input
+                type="number"
+                min={0}
+                step={unit === "in" ? 1 : 10}
+                value={lengthNumber(st.width, unit)}
+                onChange={(e) => Number.isFinite(e.target.valueAsNumber) && set({ width: Math.max(10, fromUnit(e.target.valueAsNumber, unit)) })}
+                aria-label={`Row width (${unit})`}
+              />{" "}
+              {unit} wide
             </span>
           </label>
         </div>
@@ -212,6 +242,7 @@ function LaserPanelBody() {
         ))}
       </ul>
       <p className="muted small">In Bambu Studio's laser mode, import the SVG and give each colour its own setting. Lines are hairlines, so the laser follows them exactly.</p>
+      {counts.engrave > 0 && <p className="muted small">In the DXF, engraved areas are only their outlines (layer ENGRAVE): tell your laser program to fill them.</p>}
       <div className="laser-buttons">
         <button className="text-button" onClick={() => save("dxf")} disabled={empty} title="DXF with layers CUT_OUTER, CUT_INNER, SCORE and ENGRAVE, in millimetres">
           Save DXF

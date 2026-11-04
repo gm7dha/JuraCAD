@@ -82,6 +82,17 @@ describe("export_for_laser", () => {
     expect(said).toMatch(/2 pieces, mirrored/);
     const svg = readFileSync(join(folder, "both.svg"), "utf8");
     expect(svg).toContain('width="114mm" height="40mm"');
+    // Each red outline's left edge across the sheet (they're straight lines: "M x y L x y … Z").
+    const lefts = (t: string) =>
+      [...t.matchAll(/<path d="([^"]*)" fill="none" stroke="#FF0000"/g)]
+        .map((m) => Math.min(...[...m[1].matchAll(/[ML](-?[\d.]+) /g)].map((x) => Number(x[1]))))
+        .sort((a, b) => a - b);
+    await ok(s, "export_for_laser", { gap: 4, filename: "plain" });
+    const plain = readFileSync(join(folder, "plain.svg"), "utf8");
+    // Not mirrored: the plate (biggest, laid first) at the left and the 20 mm box 4 mm right of it, at 94.
+    expect(lefts(plain)).toEqual([0, 94]);
+    // Mirrored: the box at the left edge and the plate starting 4 mm after it.
+    expect(lefts(svg)).toEqual([0, 24]);
   });
 
   it("cuts a sketch, and refuses curved faces and two sources at once", async () => {

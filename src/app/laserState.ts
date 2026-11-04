@@ -66,6 +66,12 @@ usePrintPanel.subscribe((s, prev) => {
 /** Open the laser panel on a sketch highlighted in the list, else what's selected, else every part; or close it. */
 export function toggleLaser(): void {
   if (useLaserPanel.getState().open) return openLaserPanel(false);
+  openLaser();
+}
+
+/** Open the laser panel (kept as it is when it's open already). */
+export function openLaser(): void {
+  if (useLaserPanel.getState().open) return;
   const s = useStore.getState();
   openLaserPanel(true, startingSource(s, activeFeatures(s).filter((f) => f.type === "sketch").map((f) => f.id)));
 }

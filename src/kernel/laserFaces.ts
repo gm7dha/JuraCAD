@@ -185,16 +185,31 @@ export function flatFaceNormal(face: Face): V3 | null {
   }
 }
 
-/** A part's biggest flat face (facing up the most when several are as big), or null if it has none. Caller frees it. */
-export function biggestFlatFace(shape: Shape3D): { face: Face; normal: V3 } | null {
-  let best: { face: Face; normal: V3; area: number } | null = null;
+/** When two flat faces are as big: the one facing `toward` (if given), else up (+Z), else the front (−Y), else the right (+X). */
+function facingRank(n: V3, toward?: V3 | null): number {
+  const order: V3[] = [...(toward ? [unit(toward)] : []), [0, 0, 1], [0, -1, 0], [1, 0, 0], [0, 0, -1], [0, 1, 0], [-1, 0, 0]];
+  const nn = unit(n);
+  const k = order.findIndex((d) => dot(nn, d) > 1 - 1e-6);
+  if (k >= 0) return k;
+  // A slanted face: by how much it faces the first choice.
+  return order.length + 1 - dot(nn, order[0]);
+}
+
+/**
+ * A part's biggest flat face, or null if it has none. Caller frees it. Of two
+ * as big (a plate's two sides), the one facing `toward` — the sketch it was made
+ * from, so it's laid out as drawn, never mirrored — see facingRank.
+ */
+export function biggestFlatFace(shape: Shape3D, toward?: V3 | null): { face: Face; normal: V3 } | null {
+  let best: { face: Face; normal: V3; area: number; rank: number } | null = null;
   for (const f of facesOf(shape)) {
     const n = flatFaceNormal(f);
     const area = n ? measureArea(f) : 0;
-    const better = n && (!best || area > best.area * (1 + 1e-3) || (area > best.area * (1 - 1e-3) && n[2] > best.normal[2] + 1e-6));
+    const rank = n ? facingRank(n, toward) : Infinity;
+    const better = n && (!best || area > best.area * (1 + 1e-3) || (area > best.area * (1 - 1e-3) && rank < best.rank));
     if (better) {
       best?.face.delete();
-      best = { face: f, normal: n, area };
+      best = { face: f, normal: n, area, rank };
     } else f.delete();
   }
   return best ? { face: best.face, normal: best.normal } : null;
