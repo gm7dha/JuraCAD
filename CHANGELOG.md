@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.33 — Design library and Export for laser · commit `a13127b`
+
+- **Design library** (Library button): ready-made designs you adapt by changing a few sizes — a laser-cut finger-joint
+  box (inside or outside sizes, thickness, finger width, lid, kerf), a tray, a shelf bracket, a spacer and a grip knob.
+  They're ordinary features driven by variables, so they stay editable; Edit design sizes changes the other choices.
+- **Export for laser** (Laser button, or from Export): true-size SVG or DXF for Bambu Studio from a flat face, a part,
+  every part laid out, a sketch or a sheet metal flat pattern. Outer cuts red, holes blue (cut first), scores green,
+  engraving black; Mirror for the back.
+- **Claude extension:** list and insert library designs, and export for laser. Download it again from Help.
+
 ## v0.32 — Tablets and touch · commit `dce43bc`
 
 - **Finger gestures:** one finger turns the view, two fingers pinch to zoom and drag to pan, tap selects, double-tap
