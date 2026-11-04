@@ -634,10 +634,12 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
   const seen = new Set<string>();
   const features = parseFeatures(d.features, seen);
   if (!features) return null;
+  // The first tab's id ("main" unless the tabs were moved); no other Part Studio may have it.
+  const firstId = typeof d.studioId === "string" && d.studioId.trim() ? d.studioId : MAIN_STUDIO;
   const partStudios: PartStudio[] = [];
   for (const raw of Array.isArray(d.partStudios) ? d.partStudios : []) {
     const r = (raw ?? {}) as Record<string, unknown>;
-    if (typeof r.id !== "string" || r.id === MAIN_STUDIO || partStudios.some((x) => x.id === r.id) || !Array.isArray(r.features)) continue;
+    if (typeof r.id !== "string" || r.id === firstId || partStudios.some((x) => x.id === r.id) || !Array.isArray(r.features)) continue;
     const list = parseFeatures(r.features, seen);
     if (!list) return null;
     const hidden = parseHiddenDatums(r.hiddenDatums);
@@ -653,6 +655,7 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...(Object.keys(parseFinishes(d.finishes)).length ? { finishes: parseFinishes(d.finishes) } : {}),
     ...(Object.keys(parseMaterials(d.materials)).length ? { materials: parseMaterials(d.materials) } : {}),
     ...(d.units === "in" ? { units: "in" as const } : {}),
+    ...(firstId !== MAIN_STUDIO ? { studioId: firstId } : {}),
     ...(typeof d.studioName === "string" && d.studioName.trim() && d.studioName.trim() !== "Part Studio 1" ? { studioName: d.studioName.trim() } : {}),
     ...(parseHiddenDatums(d.hiddenDatums) ? { hiddenDatums: parseHiddenDatums(d.hiddenDatums) } : {}),
     ...(partStudios.length ? { partStudios } : {}),

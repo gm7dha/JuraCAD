@@ -63,7 +63,8 @@ import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
 import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisible, setDatumHidden, setFeaturesVisible, toggleAllPlanes } from "./visibility";
 import { settlePrintedFit } from "./printSettings";
-import { addStudio, inStudio, MAIN_STUDIO, removeStudio, renameStudio, studioExists, studioFeatures, studioView } from "./studios";
+import { addStudio, firstStudioId, MAIN_STUDIO, inStudio, moveStudio, renameStudio, studioExists, studioFeatures, studioName, studioView } from "./studios";
+import { deleteStudio, studioInUse, studioUsers } from "./studioUse";
 import { designOf, withVersionsOf } from "./versions";
 import { newKeepId, readKept } from "./browserKeep";
 
@@ -455,7 +456,10 @@ export interface AppState {
   renameDrawing: (id: string, name: string) => void;
   removeDrawing: (id: string) => void;
   renamePartStudio: (id: string, name: string) => void;
+  /** Delete a Part Studio (any, while another is left), with the assembly copies of its parts. One undo step. */
   removePartStudio: (id: string) => void;
+  /** Move a Part Studio's tab to place `to` (0 = first). One undo step. */
+  movePartStudio: (id: string, to: number) => void;
   /** Show the Part Studio (null) or an assembly. */
   setActiveTab: (id: string | null) => void;
   removeAssembly: (id: string) => void;
@@ -733,7 +737,7 @@ export const useStore = create<AppState>((set, get) => {
     s.versionView ? { history: s.versionView.stash, versionView: null, ...s.versionView.was, selection: [], selectedParts: [], selectedFeatureId: null, asmSelection: [] } : {};
   /** A change to the features of the Part Studio on show. */
   const changeStudio = (fn: (doc: JuraCADDocument) => JuraCADDocument, display = false) =>
-    change((doc) => inStudio(doc, activeStudioId(get()) ?? MAIN_STUDIO, fn), display);
+    change((doc) => inStudio(doc, activeStudioId(get()) ?? firstStudioId(get().history.present), fn), display);
   /** Undo or redo, keeping the versions as they are now when the step stays within the same design. */
   const step = (move: (h: History) => History) =>
     set((s) => {
@@ -745,7 +749,7 @@ export const useStore = create<AppState>((set, get) => {
       return { history: { ...h, present }, selection: [] };
     });
   /** The document as the Part Studio on show sees it (its features in `features`). */
-  const view = () => studioView(get().history.present, activeStudioId(get()) ?? MAIN_STUDIO);
+  const view = () => studioView(get().history.present, activeStudioId(get()) ?? firstStudioId(get().history.present));
 
   const initialDoc = loadSavedDocument();
   return {
@@ -1169,7 +1173,7 @@ export const useStore = create<AppState>((set, get) => {
       const place = (doc: JuraCADDocument) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, keepVisibility(doc, draft)));
       if (fitted.variables !== get().history.present.variables) {
         const vars = fitted.variables;
-        change((doc) => inStudio({ ...doc, variables: vars }, activeStudioId(get()) ?? MAIN_STUDIO, place));
+        change((doc) => inStudio({ ...doc, variables: vars }, activeStudioId(get()) ?? firstStudioId(get().history.present), place));
       } else changeStudio(place);
       set({ editing: null, sketch: null, selectedFeatureId: draft.id, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
       return true;
@@ -1231,7 +1235,7 @@ export const useStore = create<AppState>((set, get) => {
     },
     setAllSketchesVisible: (visible) => changeStudio((doc) => setAllSketchesVisible(doc, visible), true),
     setAllPlanesVisible: (visible) => {
-      const studio = activeStudioId(get()) ?? MAIN_STUDIO;
+      const studio = activeStudioId(get()) ?? firstStudioId(get().history.present);
       change((doc) => setAllPlanesVisible(doc, studio, visible), true);
       // A hidden plane can't stay selected (Top/Front/Right, or a Plane feature, as with its eye).
       if (!visible && get().selectedPlane) set({ selectedPlane: null });
@@ -1239,7 +1243,7 @@ export const useStore = create<AppState>((set, get) => {
       if (!visible && picked && activeFeatures(get()).find((f) => f.id === picked)?.type === "plane") set({ selectedFeatureId: null });
     },
     toggleAllPlanes: () => {
-      const studio = activeStudioId(get()) ?? MAIN_STUDIO;
+      const studio = activeStudioId(get()) ?? firstStudioId(get().history.present);
       const { visible } = toggleAllPlanes(get().history.present, studio);
       get().setAllPlanesVisible(visible);
       return visible;
@@ -1269,7 +1273,7 @@ export const useStore = create<AppState>((set, get) => {
       if (!design) return "That design isn't in the library.";
       if (s.editing) return "Finish or cancel the open feature first.";
       if (s.versionView) return "You're looking at an old version, which can't be changed.";
-      const studio = into === "new" ? "new" : activeStudioId(s) ?? MAIN_STUDIO;
+      const studio = into === "new" ? "new" : activeStudioId(s) ?? firstStudioId(s.history.present);
       let made: ReturnType<typeof insertDesign>;
       try {
         made = insertDesign(s.history.present, design, values, { into: studio });
@@ -1440,9 +1444,26 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     removePartStudio: (id) => {
-      if (get().editing) return;
-      change((doc) => removeStudio(doc, id));
-      if (get().activeTab === id) set({ activeTab: null, selection: [], selectedFeatureId: null });
+      const s = get();
+      if (s.editing) return;
+      const before = s.history.present;
+      const shown = activeStudioId(s);
+      const used = studioInUse(studioUsers(before, id));
+      change((doc) => deleteStudio(doc, id));
+      if (get().history.present === before) return;
+      // The studio on show stays on show (by its id: the first tab may now be another studio).
+      if (shown === id) set({ activeTab: null, selection: [], selectedParts: [], selectedFeatureId: null, selectedPlane: null, section: null, rollbackTo: null });
+      else if (shown && get().activeTab === null) set({ activeTab: shown });
+      if (used) s.showToast(`${studioName(before, id)} was deleted, with the copies of its parts. Undo brings it all back.`, "info");
+    },
+
+    movePartStudio: (id, to) => {
+      const s = get();
+      if (s.editing) return;
+      const shown = activeStudioId(s);
+      change((doc) => moveStudio(doc, id, to));
+      // Keep the same Part Studio on show (a null tab means "the first one", which may have changed).
+      if (shown && get().activeTab === null) set({ activeTab: shown });
     },
 
     insertInstance: (part, placement) => {
@@ -1939,7 +1960,7 @@ export const useStore = create<AppState>((set, get) => {
       })),
     setListHoverPlane: (listHoverPlane) => set({ listHoverPlane }),
     toggleDatum: (datum) => {
-      const studio = activeStudioId(get()) ?? MAIN_STUDIO;
+      const studio = activeStudioId(get()) ?? firstStudioId(get().history.present);
       const hidden = hiddenDatumsOf(get().history.present, studio).includes(datum);
       change((doc) => setDatumHidden(doc, studio, datum, !hidden), true);
       // A hidden plane can't stay selected.
@@ -2014,17 +2035,17 @@ export function activeStudioId(s: Pick<AppState, "activeTab" | "history">): stri
   const doc = s.history.present;
   if (s.activeTab && doc.assemblies?.some((a) => a.id === s.activeTab)) return null;
   if (s.activeTab && doc.drawings?.some((d) => d.id === s.activeTab)) return null;
-  return s.activeTab && studioExists(doc, s.activeTab) ? s.activeTab : MAIN_STUDIO;
+  return s.activeTab && studioExists(doc, s.activeTab) ? s.activeTab : firstStudioId(doc);
 }
 
 /** The Origin and default planes hidden in the Part Studio on show. Same array each time. */
 export function activeHiddenDatums(s: Pick<AppState, "activeTab" | "history">): DatumName[] {
-  return hiddenDatumsOf(s.history.present, activeStudioId(s) ?? MAIN_STUDIO);
+  return hiddenDatumsOf(s.history.present, activeStudioId(s) ?? firstStudioId(s.history.present));
 }
 
 /** Features of the Part Studio on show (the first one while an assembly is on show). Same array each time. */
 export function activeFeatures(s: Pick<AppState, "activeTab" | "history">): Feature[] {
-  return studioFeatures(s.history.present, activeStudioId(s) ?? MAIN_STUDIO);
+  return studioFeatures(s.history.present, activeStudioId(s) ?? firstStudioId(s.history.present));
 }
 
 const studioPartsCache = new WeakMap<PartMesh[], Map<string, PartMesh[]>>();

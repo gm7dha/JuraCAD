@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import { activeAssembly, activeDrawing, activeFeatures, activeStudioId, useStore } from "../model/store";
 import { Icons } from "./icons";
-import { MAIN_STUDIO, MAIN_STUDIO_NAME } from "../model/studios";
+import { studioIndex, studiosOf } from "../model/studios";
+import { deleteStudioQuestion } from "../model/studioUse";
+import { PlacedPopup } from "./PlacedPopup";
+import { DRAG_START, dropIndex } from "./tabDrag";
 
 /** Shown over the viewport while the geometry engine loads, or if it fails. */
 export function EngineStatus() {
@@ -94,7 +97,23 @@ export function SelectionInfo() {
   );
 }
 
-/** One tab: click to show it, double-click to rename, right-click to delete. */
+/** A Part Studio tab being dragged along the bar: where it would go. */
+interface TabDrag {
+  id: string;
+  pointerId: number;
+  startX: number;
+  /** Middles of the other Part Studio tabs (in tab order) when the drag began. */
+  middles: number[];
+  /** Past the few pixels a click may wobble. */
+  moving: boolean;
+  /** Where it would end up (0 = first). */
+  to: number;
+}
+
+/** Until when a click on a tab is the end of a drag (performance.now() time). */
+let droppedUntil = 0;
+
+/** One tab: click to show it, double-click to rename, right-click for its menu (Part Studios can be dragged along the bar). */
 function DocTab({
   id,
   name,
@@ -102,13 +121,21 @@ function DocTab({
   active,
   disabled,
   canDelete,
+  studioMenu,
+  dragging,
+  onDragStart,
 }: {
-  id: string | null;
+  id: string;
   name: string;
   kind: "studio" | "assembly" | "drawing";
   active: boolean;
   disabled: boolean;
   canDelete: boolean;
+  /** Part Studios: open the tab's menu (Rename, Move left/right, Delete) at this point. */
+  studioMenu?: (at: { x: number; y: number }, rename: () => void) => void;
+  dragging?: boolean;
+  /** Part Studios: a press that may become a drag along the bar. */
+  onDragStart?: (e: ReactPointerEvent<HTMLButtonElement>) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [text, setText] = useState(name);
@@ -120,11 +147,16 @@ function DocTab({
   const finish = (keep: boolean) => {
     const st = useStore.getState();
     if (keep) {
-      if (kind === "assembly" && id) st.renameAssembly(id, text);
-      else if (kind === "drawing" && id) st.renameDrawing(id, text);
-      else st.renamePartStudio(id ?? MAIN_STUDIO, text);
+      if (kind === "assembly") st.renameAssembly(id, text);
+      else if (kind === "drawing") st.renameDrawing(id, text);
+      else st.renamePartStudio(id, text);
     }
     setRenaming(false);
+  };
+  const rename = () => {
+    if (disabled) return;
+    setText(name);
+    setRenaming(true);
   };
   if (renaming) {
     return (
@@ -148,27 +180,74 @@ function DocTab({
   }
   return (
     <button
-      className={`tab${active ? " active" : ""}`}
+      className={`tab${active ? " active" : ""}${dragging ? " dragging" : ""}`}
       aria-current={active ? "page" : undefined}
       disabled={disabled && !active}
-      onClick={() => useStore.getState().setActiveTab(id)}
-      onDoubleClick={() => {
-        if (disabled) return;
-        setText(name);
-        setRenaming(true);
+      data-studio-tab={kind === "studio" ? id : undefined}
+      onPointerDown={onDragStart}
+      onClick={() => {
+        // The click that ends a drag is the drop, not a click on the tab.
+        if (performance.now() < droppedUntil) return;
+        useStore.getState().setActiveTab(id);
       }}
+      onDoubleClick={rename}
       onContextMenu={(e) => {
         e.preventDefault();
+        if (studioMenu) {
+          studioMenu({ x: e.clientX, y: e.clientY }, rename);
+          return;
+        }
         if (!canDelete || disabled) return;
         if (!window.confirm(`Delete ${name}? (Undo brings it back.)`)) return;
-        if (kind === "assembly" && id) useStore.getState().removeAssembly(id);
-        else if (kind === "drawing" && id) useStore.getState().removeDrawing(id);
-        else if (id) useStore.getState().removePartStudio(id);
+        if (kind === "assembly") useStore.getState().removeAssembly(id);
+        else if (kind === "drawing") useStore.getState().removeDrawing(id);
       }}
-      title={`${name} — double-click to rename${canDelete ? ", right-click to delete" : ""}`}
+      title={
+        kind === "studio"
+          ? `${name} — double-click to rename, drag to move, right-click for more`
+          : `${name} — double-click to rename${canDelete ? ", right-click to delete" : ""}`
+      }
     >
       <Icon size={16} /> {name}
     </button>
+  );
+}
+
+/** A Part Studio tab's right-click menu: Rename, Move left, Move right (also for touch), Delete. */
+function StudioTabMenu({ menu, count, disabled, onClose }: { menu: { id: string; name: string; x: number; y: number; rename: () => void }; count: number; disabled: boolean; onClose: () => void }) {
+  const doc = useStore((s) => s.history.present);
+  const at = studioIndex(doc, menu.id);
+  if (at < 0) return null;
+  const item = (label: string, action: () => void, off: boolean, danger = false) => (
+    <button
+      role="menuitem"
+      className={`menu-item${danger ? " danger" : ""}`}
+      disabled={off}
+      onClick={() => {
+        onClose();
+        action();
+      }}
+    >
+      {label}
+    </button>
+  );
+  const st = useStore.getState();
+  return (
+    <PlacedPopup className="context-menu tab-menu" role="menu" label={`${menu.name} menu`} anchor={() => ({ left: menu.x, right: menu.x, top: menu.y, bottom: menu.y })} onClose={onClose}>
+      {item("Rename…", menu.rename, disabled)}
+      {item("Move left", () => st.movePartStudio(menu.id, at - 1), disabled || at === 0)}
+      {item("Move right", () => st.movePartStudio(menu.id, at + 1), disabled || at === count - 1)}
+      <div className="menu-divider" />
+      {item(
+        "Delete",
+        () => {
+          const now = useStore.getState().history.present;
+          if (window.confirm(deleteStudioQuestion(now, menu.id))) useStore.getState().removePartStudio(menu.id);
+        },
+        disabled || count < 2,
+        true,
+      )}
+    </PlacedPopup>
   );
 }
 
@@ -217,18 +296,85 @@ function AddTabMenu({ disabled }: { disabled: boolean }) {
   );
 }
 
-/** Onshape-style tabs along the bottom: Part Studios, then assemblies, then +. */
+/** Onshape-style tabs along the bottom: Part Studios, then assemblies, then +. Part Studio tabs can be dragged into another order. */
 export function BottomTabs() {
   const doc = useStore((s) => s.history.present);
   const studio = useStore(activeStudioId);
   const asm = useStore(activeAssembly);
   const drawingId = useStore((s) => activeDrawing(s)?.id ?? null);
   const editing = useStore((s) => s.editing !== null);
+  const nav = useRef<HTMLElement>(null);
+  const [drag, setDrag] = useState<TabDrag | null>(null);
+  const dragRef = useRef<TabDrag | null>(null);
+  const [menu, setMenu] = useState<{ id: string; name: string; x: number; y: number; rename: () => void } | null>(null);
+  const studios = studiosOf(doc);
+  const setBoth = (d: TabDrag | null) => {
+    dragRef.current = d;
+    setDrag(d);
+  };
+
+  /**
+   * A press on a Part Studio tab: mouse and pen drag it along the bar (fingers use its menu — a held finger opens it).
+   * Followed on the window, so tabs moving under the pointer while it's dragged don't lose it.
+   */
+  const dragStart = (id: string) => (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (editing || e.button !== 0 || e.pointerType === "touch" || studios.length < 2 || dragRef.current) return;
+    const middles = [...(nav.current?.querySelectorAll<HTMLElement>("[data-studio-tab]") ?? [])]
+      .filter((el) => el.dataset.studioTab !== id)
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return (r.left + r.right) / 2;
+      });
+    const pointerId = e.pointerId;
+    setBoth({ id, pointerId, startX: e.clientX, middles, moving: false, to: studioIndex(doc, id) });
+    const move = (ev: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d || ev.pointerId !== pointerId) return;
+      if (!d.moving && Math.abs(ev.clientX - d.startX) < DRAG_START) return;
+      ev.preventDefault();
+      const to = dropIndex(d.middles, ev.clientX);
+      if (!d.moving || to !== d.to) setBoth({ ...d, moving: true, to });
+    };
+    const end = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      const d = dragRef.current;
+      setBoth(null);
+      if (!d?.moving) return;
+      droppedUntil = performance.now() + 400;
+      if (ev.type === "pointerup") useStore.getState().movePartStudio(id, d.to);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  };
+
+  // While dragging, the tabs are shown in the order they'd have if dropped now.
+  let shown = studios;
+  if (drag?.moving) {
+    const moving = studios.find((s) => s.id === drag.id);
+    if (moving) {
+      shown = studios.filter((s) => s !== moving);
+      shown.splice(drag.to, 0, moving);
+    }
+  }
   return (
-    <nav className="bottom-tabs" aria-label="Document tabs">
-      <DocTab id={null} name={doc.studioName ?? MAIN_STUDIO_NAME} kind="studio" active={studio === MAIN_STUDIO} disabled={editing} canDelete={false} />
-      {(doc.partStudios ?? []).map((p) => (
-        <DocTab key={p.id} id={p.id} name={p.name} kind="studio" active={studio === p.id} disabled={editing} canDelete />
+    <nav className={`bottom-tabs${drag?.moving ? " reordering" : ""}`} aria-label="Document tabs" ref={nav}>
+      {shown.map((p) => (
+        <DocTab
+          key={p.id}
+          id={p.id}
+          name={p.name}
+          kind="studio"
+          active={studio === p.id}
+          disabled={editing}
+          canDelete={studios.length > 1}
+          dragging={drag?.moving && drag.id === p.id}
+          onDragStart={dragStart(p.id)}
+          studioMenu={(at, rename) => setMenu({ id: p.id, name: p.name, ...at, rename })}
+        />
       ))}
       {(doc.assemblies ?? []).map((a) => (
         <DocTab key={a.id} id={a.id} name={a.name} kind="assembly" active={asm?.id === a.id} disabled={editing} canDelete />
@@ -237,6 +383,7 @@ export function BottomTabs() {
         <DocTab key={d.id} id={d.id} name={d.name} kind="drawing" active={drawingId === d.id} disabled={editing} canDelete />
       ))}
       <AddTabMenu disabled={editing} />
+      {menu && <StudioTabMenu menu={menu} count={studios.length} disabled={editing} onClose={() => setMenu(null)} />}
     </nav>
   );
 }

@@ -10,7 +10,7 @@
  */
 import type { Feature, JuraCADDocument } from "../model/types";
 import { readDocumentFile, serializeDocument } from "../model/fileFormat";
-import { MAIN_STUDIO, studioExists, studioName, studioView } from "../model/studios";
+import { firstStudioId, MAIN_STUDIO, studioExists, studioName, studioView } from "../model/studios";
 import { resolveVariables } from "../model/variables";
 import { refreshDocumentPlanes } from "../sketch/planeFeature";
 import { isNewer, parseAppMessage, type AppMessage, type ExtensionMessage } from "../live/protocol";
@@ -206,7 +206,7 @@ export class LiveBridge implements LiveLink {
 
   private setDesign(doc: JuraCADDocument, studio: string, version: number): void {
     this.doc = doc;
-    this.studio = studioExists(doc, studio) ? studio : MAIN_STUDIO;
+    this.studio = studioExists(doc, studio) ? studio : firstStudioId(doc);
     this.version = version;
   }
 
@@ -278,7 +278,7 @@ export class LiveBridge implements LiveLink {
       s.restore(snap);
       return this.notApplied("The JuraCAD tab disconnected before this change could be sent, so it wasn't made. Nothing was changed. Ask the user to click Connect to Claude again (or work on your own copy and save_design).");
     }
-    const studio = replaced ? MAIN_STUDIO : studioAtStart;
+    const studio = replaced ? firstStudioId(s.doc) : studioAtStart;
     const id = this.nextId++;
     let full: JuraCADDocument;
     let label: string;

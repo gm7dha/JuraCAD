@@ -64,6 +64,29 @@ export function removeAssembly(doc: JuraCADDocument, id: string): JuraCADDocumen
   );
 }
 
+/**
+ * Take out of every assembly the copies of parts that `gone` says no longer
+ * exist (a deleted Part Studio's), with their mates, patterns and so on — and
+ * mates anywhere that reach such a part inside a sub-assembly copy.
+ */
+export function removePartCopies(doc: JuraCADDocument, gone: (partId: string) => boolean): JuraCADDocument {
+  const all = assembliesOf(doc);
+  const removed = new Set(all.flatMap((a) => a.instances.filter((i) => !i.subAssembly && gone(i.partId)).map((i) => i.id)));
+  if (!removed.size) return doc;
+  const through = (c: MateConnector) => [...(c.path ?? []), ...(c.path2 ?? [])].some((p) => removed.has(p));
+  return withAssemblies(
+    doc,
+    all
+      .map((a) => {
+        const uses = a.instances.filter((i) => removed.has(i.id)).map((i) => i.id);
+        const left = uses.length ? withoutInstances(a, uses) : a;
+        const mates = left.mates ?? [];
+        return mates.some((m) => through(m.a) || through(m.b)) ? tidyReplicates(withMates(left, mates.filter((m) => !through(m.a) && !through(m.b)))) : left;
+      })
+      .map((a, _i, left) => tidyStepPaths(a, left)),
+  );
+}
+
 /** Rename an assembly; its copies in other assemblies still carrying the old name ("Hinge <2>") follow. */
 export function renameAssembly(doc: JuraCADDocument, id: string, name: string): JuraCADDocument {
   const trimmed = name.trim();

@@ -31,7 +31,10 @@ describe("Part Studios", () => {
     ]);
     doc = removeStudio(doc, "s2");
     expect(nextStudioName(doc)).toBe("Part Studio 2");
-    expect(removeStudio(doc, MAIN_STUDIO)).toBe(doc);
+    // The last one left can't be deleted.
+    const one = removeStudio(doc, MAIN_STUDIO);
+    expect(studiosOf(one).map((s) => s.id)).toEqual(["s3"]);
+    expect(removeStudio(one, "s3")).toBe(one);
   });
 
   it("renames studios, including the first", () => {

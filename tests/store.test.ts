@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { emptyDocument, historyOf } from "../src/model/document";
-import { activeHiddenDatums, useStore } from "../src/model/store";
+import { activeHiddenDatums, activeStudioId, useStore } from "../src/model/store";
+import { studiosOf } from "../src/model/studios";
 
 const s = () => useStore.getState();
 
@@ -267,5 +268,37 @@ describe("feature warnings (built, with something to tell)", () => {
     expect(s().featureWarnings).toEqual({ e1: "Sketch 2 is suppressed, so its areas are left out of this extrude." });
     s().setRebuildResult([], {}, 1);
     expect(s().featureWarnings).toEqual({});
+  });
+});
+
+describe("moving and deleting Part Studio tabs", () => {
+  it("moves a tab and deletes the first studio, each one undo step, keeping the studio on show", () => {
+    useStore.setState({ activeTab: null });
+    const start = s().history.present;
+    s().addPartStudio();
+    const second = s().activeTab!;
+    s().addPartStudio();
+    const third = s().activeTab!;
+    s().setActiveTab(null);
+    const before = s().history.present;
+    // Move the first (on show) to the end: it stays on show.
+    s().movePartStudio("main", 2);
+    expect(studiosOf(s().history.present).map((x) => x.id)).toEqual([second, third, "main"]);
+    expect(activeStudioId(s())).toBe("main");
+    s().undo();
+    expect(s().history.present).toBe(before);
+    s().redo();
+    // Delete Part Studio 1 (now last); the first tab is shown instead.
+    s().removePartStudio("main");
+    expect(studiosOf(s().history.present).map((x) => x.id)).toEqual([second, third]);
+    expect(activeStudioId(s())).toBe(second);
+    s().undo();
+    expect(studiosOf(s().history.present).map((x) => x.id)).toEqual([second, third, "main"]);
+    // The very last studio can't be deleted.
+    s().removePartStudio(second);
+    s().removePartStudio(third);
+    s().removePartStudio("main");
+    expect(studiosOf(s().history.present).map((x) => x.id)).toEqual(["main"]);
+    expect(start.features).toEqual(s().history.present.features);
   });
 });

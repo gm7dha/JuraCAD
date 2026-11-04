@@ -40,6 +40,7 @@ export function serializeDocument(doc: JuraCADDocument, savedAt = new Date()): s
     ...(doc.units === "in" ? { units: "in" } : {}),
     ...(doc.partNames && Object.keys(doc.partNames).length ? { partNames: doc.partNames } : {}),
     ...(doc.partProperties && Object.keys(doc.partProperties).length ? { partProperties: doc.partProperties } : {}),
+    ...(doc.studioId ? { studioId: doc.studioId } : {}),
     ...(doc.studioName ? { studioName: doc.studioName } : {}),
     ...(doc.hiddenDatums?.length ? { hiddenDatums: doc.hiddenDatums } : {}),
     features: doc.features,
