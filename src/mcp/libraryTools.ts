@@ -15,7 +15,9 @@ type TryChange = (s: Session, next: JuraCADDocument, featureId: string | null, v
 
 function describeInput(i: DesignInput): string {
   const what =
-    i.kind === "toggle"
+    i.kind === "text"
+      ? `words${i.multiline ? ', several lines split by "\\n"' : ", one line"}, up to ${i.maxLength ?? 60} letters${i.optional ? ", may be empty" : ""}, default ${JSON.stringify(i.default)}`
+      : i.kind === "toggle"
       ? `true/false, default ${i.default}`
       : i.kind === "choice"
         ? `one of ${i.choices!.map((c) => `"${c.value}" (${c.label})`).join(", ")}, default "${i.default}"`
@@ -37,7 +39,7 @@ export function libraryTools(tryChange: TryChange): ToolDef[] {
       name: "list_library_designs",
       title: "List the Design library",
       description:
-        'List JuraCAD\'s Design library: ready-made designs in two sections — "laser" (Laser cutting: a finger-joint box, a flat-pack phone stand) and "print" (3D printing: a tray, a box with lid, a shelf bracket, a wall hook, a cable clip, a phone stand, a print-in-place hinge, a spacer, a knob) — with the sizes and choices each takes. Give "category" to list one section only. Insert one with insert_library_design.',
+        'List JuraCAD\'s Design library: ready-made designs in two sections — "laser" (Laser cutting: a finger-joint box, a flat-pack phone stand, a stencil with bridged letters, a rubber stamp (mirrored words, background engraved), a name/key tag, coasters, a picture frame, a living-hinge panel, a gear, a ruler) and "print" (3D printing: a tray, a box with lid, a shelf bracket, a wall hook, a cable clip, a phone stand, a print-in-place hinge, a spacer, a knob, a stamp with handle) — with the sizes and choices each takes. Give "category" to list one section only. Insert one with insert_library_design.',
       readOnly: true,
       inputSchema: {
         type: "object",
@@ -61,7 +63,7 @@ export function libraryTools(tryChange: TryChange): ToolDef[] {
       name: "insert_library_design",
       title: "Insert a library design",
       description:
-        'Insert a ready-made design from the Design library into the Part Studio on show, as ordinary editable features (sketches with dimensions, extrudes…) driven by new variables named <prefix>_<size>, e.g. {"design":"finger-box","sizes":{"width":150,"depth":100,"height":60,"thickness":3,"lid":false}}. Sizes left out take their defaults (see list_library_designs). A second copy gets its own variables (box2_…). If the sizes don\'t work, nothing is added and the reason is given.',
+        'Insert a ready-made design from the Design library into the Part Studio on show, as ordinary editable features (sketches with dimensions, extrudes…) driven by new variables named <prefix>_<size>, e.g. {"design":"finger-box","sizes":{"width":150,"depth":100,"height":60,"thickness":3,"lid":false}} or {"design":"stencil","sizes":{"words":"HELLO","height":40}} (words are text: "\\n" starts a new line where the design allows it). Sizes left out take their defaults (see list_library_designs). A second copy gets its own variables (box2_…). If the sizes don\'t work, nothing is added and the reason is given.',
       inputSchema: {
         type: "object",
         properties: {

@@ -5,6 +5,7 @@
  */
 import { layerCounts, layoutPieces, LASER_LAYERS, LAYER_ORDER, type LaserPiece } from "../laser/laser";
 import { laserDxf, laserSvg } from "../laser/laserFiles";
+import { laserDefaultsFor } from "../library/insert";
 import { outlinePiece, partFacing, sketchPiece, uniqueSources, type LaserSource } from "../laser/sources";
 import type { PartMesh } from "../kernel/protocol";
 import { followedSketch } from "../sketch/areaClicks";
@@ -26,7 +27,7 @@ export const LASER_TOOLS: ToolDef[] = [
     name: "export_for_laser",
     title: "Export outlines for a laser cutter",
     description:
-      'Save true-size 2D outlines (mm) for a laser cutter to the JuraCAD folder: "svg" (default; opens in Bambu Studio\'s laser mode at true size) or "dxf". Choose ONE source: "faces" (flat faces, [{"part": "Part 1", "face": "top"}] — curved faces are refused), "parts" (part names: each part\'s biggest flat face, so a flat panel gives its outline; a sheet metal part gives its flat pattern), "sketch" (a sketch\'s closed shapes, lines and text), or "flat_pattern" (a sheet metal part). With none, every part. Several pieces are laid out side by side ("gap", default 5 mm; rows up to "width", default 600 mm). Layers by colour: outer cuts red #FF0000 (CUT_OUTER), inner cuts/holes blue #0000FF (CUT_INNER), scores/bend lines green #00FF00 (SCORE), engraving black filled (ENGRAVE). Circles and arcs stay exact; splines are cubic curves in the SVG. Options: "mirror" (flip, for engraving the back), "bend_lines" (flat patterns, default true), for sketches "text" ("engrave" default, or "cut"), "shapes" ("cut" default, or "engrave") and "open_lines" ("cut" default, or "score").',
+      'Save true-size 2D outlines (mm) for a laser cutter to the JuraCAD folder: "svg" (default; opens in Bambu Studio\'s laser mode at true size) or "dxf". Choose ONE source: "faces" (flat faces, [{"part": "Part 1", "face": "top"}] — curved faces are refused), "parts" (part names: each part\'s biggest flat face, so a flat panel gives its outline; a sheet metal part gives its flat pattern), "sketch" (a sketch\'s closed shapes, lines and text), or "flat_pattern" (a sheet metal part). With none, every part. Several pieces are laid out side by side ("gap", default 5 mm; rows up to "width", default 600 mm). Layers by colour: outer cuts red #FF0000 (CUT_OUTER), inner cuts/holes blue #0000FF (CUT_INNER), scores/bend lines green #00FF00 (SCORE), engraving black filled (ENGRAVE). Circles and arcs stay exact; splines are cubic curves in the SVG. Options: "mirror" (flip, for engraving the back), "bend_lines" (flat patterns, default true), for sketches "text" ("engrave" default, or "cut"), "shapes" ("cut" default, or "engrave"), "open_lines" ("cut" default, or "score") and "background" (true: engrave everything inside the outline except the letters and shapes, for a rubber stamp; a library stamp\'s sketch does this by itself).',
     destructive: true,
     inputSchema: {
       type: "object",
@@ -43,12 +44,13 @@ export const LASER_TOOLS: ToolDef[] = [
         text: { type: "string", enum: ["engrave", "cut"] },
         shapes: { type: "string", enum: ["cut", "engrave"] },
         open_lines: { type: "string", enum: ["cut", "score"] },
+        background: { type: "boolean", description: "Sketches: engrave the background (everything inside the outline but the letters and shapes), as for a rubber stamp. A library stamp's sketch does this by itself." },
         filename: { type: "string" },
         overwrite: { type: "boolean" },
       },
     },
     run: async (s, a) => {
-      noExtras(a, ["format", "faces", "parts", "sketch", "flat_pattern", "mirror", "gap", "width", "bend_lines", "text", "shapes", "open_lines", "filename", "overwrite"], "export_for_laser");
+      noExtras(a, ["format", "faces", "parts", "sketch", "flat_pattern", "mirror", "gap", "width", "bend_lines", "text", "shapes", "open_lines", "background", "filename", "overwrite"], "export_for_laser");
       const folder = needFolder(s);
       const format = oneOf(a.format, ["svg", "dxf"] as const, "format", "svg");
       const given = ["faces", "parts", "sketch", "flat_pattern"].filter((k) => a[k] !== undefined);
@@ -77,10 +79,13 @@ export const LASER_TOOLS: ToolDef[] = [
 async function laserPieces(s: Session, a: Obj): Promise<{ pieces: LaserPiece[]; problems: string[] }> {
   if (a.sketch !== undefined) {
     const f = s.feature(a.sketch, "sketch", ["sketch"]);
+    // A sketch made by a library design (a rubber stamp…) comes with the settings it's meant for.
+    const d = laserDefaultsFor(s.doc, f.id);
     const opts = {
-      text: oneOf(a.text, ["engrave", "cut"] as const, "text", "engrave"),
-      shapes: oneOf(a.shapes, ["cut", "engrave"] as const, "shapes", "cut"),
-      open: oneOf(a.open_lines, ["cut", "score"] as const, "open_lines", "cut"),
+      text: oneOf(a.text, ["engrave", "cut"] as const, "text", d?.text ?? "engrave"),
+      shapes: oneOf(a.shapes, ["cut", "engrave"] as const, "shapes", d?.shapes ?? "cut"),
+      open: oneOf(a.open_lines, ["cut", "score"] as const, "open_lines", d?.open ?? "cut"),
+      background: a.background === undefined ? d?.background === true : bool(a.background, "background"),
     };
     // A sketch on a part's face is where the engine moved it to (as the app shows it).
     const data = followedSketch(f, s.build().links ?? {})?.data ?? f.sketch!.data;

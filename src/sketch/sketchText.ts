@@ -73,21 +73,25 @@ interface LocalText {
 const localCaches = new WeakMap<object, Map<string, LocalText>>();
 
 /** The text's outlines and box as if its anchor were at (0, 0) and it weren't turned. */
-function localText(t: Pick<SketchText, "value" | "size" | "font" | "anchorAt">): LocalText {
+function localText(t: Pick<SketchText, "value" | "size" | "font" | "anchorAt" | "mirror">): LocalText {
   const font = FONTS[t.font] ?? FONTS.regular;
   let localCache = localCaches.get(font);
   if (!localCache) localCaches.set(font, (localCache = new Map()));
-  const key = `${t.size}|${t.anchorAt ?? "start"}|${t.value}`;
+  const key = `${t.size}|${t.anchorAt ?? "start"}|${t.mirror ? "m" : ""}|${t.value}`;
   const known = localCache.get(key);
   if (known) return known;
-  const { contours, width } = t.size > 0 ? textOutlines(font, t.value, t.size, 6) : { contours: [] as Pt[][], width: 0 };
+  const written = t.size > 0 ? textOutlines(font, t.value, t.size, 6) : { contours: [] as Pt[][], width: 0 };
+  const { width } = written;
+  // Mirrored: flipped left to right about the anchor (each outline walked the other way, so it still goes round
+  // the same way as before).
+  const contours = t.mirror ? written.contours.map((c) => c.map(([x, y]): Pt => [-x, y]).reverse()) : written.contours;
   let box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
   for (const c of contours)
     for (const [x, y] of c) {
       box = [Math.min(box[0], x), Math.min(box[1], y), Math.max(box[2], x), Math.max(box[3], y)];
     }
   // Nothing to draw (spaces, or no letters the font has): a box the size of the text anyway, so it can still be clicked.
-  if (!Number.isFinite(box[0])) box = [0, 0, Math.max(width, t.size), Math.max(t.size, 0)];
+  if (!Number.isFinite(box[0])) box = t.mirror ? [-Math.max(width, t.size), 0, 0, Math.max(t.size, 0)] : [0, 0, Math.max(width, t.size), Math.max(t.size, 0)];
   let shift: Pt = [0, 0];
   if (t.anchorAt === "centre") shift = [-(box[0] + box[2]) / 2, -(box[1] + box[3]) / 2];
   const out: LocalText = {
@@ -191,14 +195,16 @@ export function addText(s: SketchData, at: Placed, settings: TextSettings, const
   return { sketch: { ...r.sketch, texts: [...textsOf(s), text] }, textId: id };
 }
 
-/** Change a text's words, size, turn, font, anchor or construction. */
-export function changeText(s: SketchData, id: string, patch: Partial<TextSettings> & { construction?: boolean }): EditResult {
+/** Change a text's words, size, turn, font, anchor, mirroring or construction. */
+export function changeText(s: SketchData, id: string, patch: Partial<TextSettings> & { construction?: boolean; mirror?: boolean }): EditResult {
   const t = textById(s, id);
   if (!t) return { sketch: s, error: "That text isn't in the sketch any more." };
   const problem = textProblem(patch);
   if (problem) return { sketch: s, error: problem };
-  const { anchorAt, ...rest } = patch;
+  const { anchorAt, mirror, ...rest } = patch;
   const next: SketchText = { ...t, ...rest };
+  if (mirror === true) next.mirror = true;
+  else if (mirror === false) delete next.mirror;
   if (anchorAt === "centre") next.anchorAt = "centre";
   else if (anchorAt === "start") delete next.anchorAt;
   // Switching where the anchor is keeps the letters where they are: the anchor point moves instead.

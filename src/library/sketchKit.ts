@@ -12,13 +12,14 @@ import { filletCorner } from "../sketch/tools";
 import { sketchId } from "../sketch/ops";
 import type { SketchPlane } from "../sketch/planes";
 import { ORIGIN_ID, type SketchConstraint, type SketchData, type SketchLine } from "../sketch/types";
+import type { AreaPick } from "../sketch/areas";
 import { signed, type Ex } from "./ex";
 import type { Pt } from "./fingers";
 
 const isZeroText = (t: string) => t.trim() === "0";
 
 /** Dimensions holding a point at (x, y) measured from the sketch origin. */
-function placeFromOrigin(pointId: string, x: Ex, y: Ex): SketchConstraint[] {
+export function placeFromOrigin(pointId: string, x: Ex, y: Ex): SketchConstraint[] {
   return ([x, y] as const).map((e, k): SketchConstraint => {
     if (isZeroText(e.t)) return { id: sketchId("c"), type: k === 0 ? "vertical" : "horizontal", refs: [pointId, ORIGIN_ID] };
     const { sign, text } = signed(e);
@@ -82,7 +83,7 @@ export function extrudeFeature(
   id: string,
   name: string,
   sketchRef: string,
-  opts: { depth?: Ex; operation: Operation; end?: ExtrudeEnd; flip?: boolean },
+  opts: { depth?: Ex; operation: Operation; end?: ExtrudeEnd; flip?: boolean; areas?: AreaPick[]; apart?: boolean },
 ): Feature {
   return {
     ...base(id, name, "extrude", opts.operation, opts.depth ? { depth: opts.depth.t } : {}),
@@ -91,7 +92,9 @@ export function extrudeFeature(
     // A New extrude's separate pieces are separate parts (as the Extrude dialog makes them). Add and Remove keep the
     // older rule — they work on the latest part, which is the design's own — so a design put into a Part Studio
     // that already has parts never cuts into or joins onto the user's parts.
-    ...(opts.operation === "new" ? { apart: true } : {}),
+    ...((opts.operation === "new" && opts.apart !== false) || opts.apart === true ? { apart: true } : {}),
+    // Only these areas of the sketch (as clicked in the Extrude dialog); missing = every closed shape.
+    ...(opts.areas ? { areas: opts.areas } : {}),
   };
 }
 

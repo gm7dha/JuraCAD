@@ -3858,6 +3858,18 @@ kbd {
   font-size: 13px;
   margin: 14px 0 6px;
 }
+.library-group {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin: 10px 0 4px;
+}
+.library-words {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  resize: vertical;
+}
 .library-placed {
   list-style: none;
   padding: 0;

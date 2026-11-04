@@ -46,6 +46,12 @@ export interface SketchLaserOptions {
   text?: "cut" | "engrave";
   /** Lines that don't close: cut along them, or score them. */
   open?: "cut" | "score";
+  /**
+   * Engrave the background, as for a rubber stamp: everything inside the outermost outlines is engraved except the
+   * shapes and letters drawn inside them (worked out even–odd, so a border drawn as two outlines stays, and the middle
+   * of an "O" is engraved again), and the outermost outlines are cut. `shapes` and `text` are then not used.
+   */
+  background?: boolean;
 }
 
 /**
@@ -145,6 +151,7 @@ export function sketchPiece(name: string, sketch: SketchData, opts: SketchLaserO
     .flatMap((t) => textContours(sketch, t))
     .filter((c) => c.length >= 3)
     .map((c): Segment[] => c.map((p, i) => ({ kind: "line", from: p, to: c[(i + 1) % c.length] })));
+  if (opts.background) return { name, paths: backgroundPaths([...shapeLoops, ...textLoops], openRuns, opts.open === "score" ? "score" : "inner") };
   const engraveShapes = opts.shapes === "engrave";
   const engraveText = opts.text === "engrave";
   // What's cut is sorted together (a letter cut through a plate is inside the plate's outline).
@@ -158,6 +165,23 @@ export function sketchPiece(name: string, sketch: SketchData, opts: SketchLaserO
     ...openRuns.map((segments): LaserPath => ({ layer: openLayer, segments, closed: false })),
   ];
   return { name, paths };
+}
+
+/**
+ * A stamp's layers: every closed outline goes into the engraving (one even–odd filled area: inside the outline, outside
+ * the border's outer edge, inside its inner edge, outside the letters, inside their holes…), and the outermost outlines
+ * are also cut, so the stamp comes out of the sheet. Lines that don't close are cut or scored as usual.
+ */
+function backgroundPaths(loops: Segment[][], openRuns: Segment[][], openLayer: LaserLayer): LaserPath[] {
+  const sorted = sortLoops(loops);
+  const closed = sorted.filter((p) => p.closed);
+  const lines = sorted.filter((p) => !p.closed).map((p) => ({ ...p, layer: openLayer }));
+  return [
+    ...closed.map((p): LaserPath => ({ layer: "engrave", segments: p.segments, closed: true })),
+    ...closed.filter((p) => p.layer === "outer"),
+    ...lines,
+    ...openRuns.map((segments): LaserPath => ({ layer: openLayer, segments, closed: false })),
+  ];
 }
 
 /**

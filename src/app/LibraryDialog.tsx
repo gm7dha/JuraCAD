@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { useDocument, useStore } from "../model/store";
-import { currentValues, defaultValues, designsIn, findDesign, findInsert, LIBRARY_CATEGORIES, liveInserts, valueProblems } from "../library/insert";
+import { currentValues, defaultValues, designGroups, findDesign, findInsert, LIBRARY_CATEGORIES, liveInserts, valueProblems } from "../library/insert";
 import { rememberedTab, rememberTab } from "../library/tabMemory";
 import { previewPicture } from "../library/preview";
 import type { DesignCategory, DesignInput, DesignValues, LibraryDesign } from "../library/types";
@@ -60,7 +60,7 @@ function valuesFrom(design: LibraryDesign, typed: Typed): DesignValues {
     design.inputs.map((i) => {
       const t = typed[i.key];
       if (i.kind === "toggle") return [i.key, t === true];
-      if (i.kind === "choice") return [i.key, String(t)];
+      if (i.kind === "choice" || i.kind === "text") return [i.key, String(t)];
       const n = typeof t === "string" && t.trim() ? Number(t) : NaN;
       return [i.key, n];
     }),
@@ -79,7 +79,13 @@ function InputRow({ input, value, onChange }: { input: DesignInput; value: strin
       ) : (
         <>
           <label htmlFor={id}>{input.label}</label>
-          {input.kind === "choice" ? (
+          {input.kind === "text" ? (
+            input.multiline ? (
+              <textarea id={id} className="library-words" rows={Math.min(4, Math.max(2, String(value).split("\n").length))} value={String(value)} maxLength={input.maxLength ?? 60} onChange={(e) => onChange(e.target.value)} />
+            ) : (
+              <input id={id} className="library-words" value={String(value)} maxLength={input.maxLength ?? 60} onChange={(e) => onChange(e.target.value)} />
+            )
+          ) : input.kind === "choice" ? (
             <select id={id} value={String(value)} onChange={(e) => onChange(e.target.value)}>
               {input.choices?.map((c) => (
                 <option key={c.value} value={c.value}>
@@ -196,17 +202,22 @@ export function LibraryDialog() {
           <section key={c.id} id="library-section" role="tabpanel" aria-labelledby={`library-tab-${c.id}`}>
             <h3 className="library-heading">{c.label}</h3>
             <p className="muted small">{c.blurb}</p>
-            <div className="library-grid">
-              {designsIn(c.id).map((d) => (
-                <button key={d.id} className="library-card" onClick={() => pick(d.id)} aria-label={`${d.name}: ${d.description}`}>
-                  <DesignIcon design={d} />
-                  <span className="library-card-text">
-                    <b>{d.name}</b>
-                    <span className="muted small">{d.description}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
+            {designGroups(c.id).map((g) => (
+              <div key={g.group ?? ""}>
+                {g.group && <h4 className="library-group">{g.group}</h4>}
+                <div className="library-grid">
+                  {g.designs.map((d) => (
+                    <button key={d.id} className="library-card" onClick={() => pick(d.id)} aria-label={`${d.name}: ${d.description}`}>
+                      <DesignIcon design={d} />
+                      <span className="library-card-text">
+                        <b>{d.name}</b>
+                        <span className="muted small">{d.description}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </section>
         ))}
         {placed.length > 0 && (

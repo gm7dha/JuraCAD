@@ -3257,8 +3257,43 @@ try {
     const lidded = await shown();
     if (lidded.errors) throw new Error(`the box with lid has ${lidded.errors} feature problem(s)`);
     await shot("library-lid");
+    step = "Design library: a stencil of HELLO, exported for laser";
+    await tool("Library");
+    await page.getByRole("tab", { name: "Laser cutting" }).click();
+    await page.getByRole("heading", { name: "Signs and stamps" }).waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: /^Stencil:/ }).click();
+    await page.getByLabel("Words", { exact: true }).fill("HELLO");
+    await page.locator(".library-preview polygon").nth(3).waitFor({ timeout: 10_000 });
+    const stencilSummary = (await page.locator(".library-side p.small").first().innerText()).trim();
+    if (!/1 letter middle held by 1 bridge/.test(stencilSummary)) throw new Error(`the stencil's summary says "${stencilSummary}"`);
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Stencil", { timeout: 10_000 });
+    await page
+      .waitForFunction(() => {
+        const s = window.juracadStore.getState();
+        return !s.rebuildBusy && s.parts.filter((p) => !p.configuration && p.studioId === s.activeTab).length === 1;
+      }, null, { timeout: 60_000 })
+      .catch(async () => {
+        throw new Error(`the stencil didn't build one sheet: ${JSON.stringify(await shown())}`);
+      });
+    if ((await shown()).errors) throw new Error(`the stencil has ${(await shown()).errors} feature problem(s)`);
+    await tool("Laser");
+    await page.waitForSelector(".laser-panel");
+    await page.waitForFunction(() => /× .* mm/.test(document.querySelector(".laser-size")?.textContent ?? ""), null, { timeout: 30_000 }).catch(async () => {
+      throw new Error(`the laser panel didn't show the stencil: ${(await page.locator(".laser-panel").innerText()).replace(/\s+/g, " ")}`);
+    });
+    await shot("stencil-laser");
+    const stencilSvgPromise = page.waitForEvent("download", { timeout: 30_000 });
+    await page.getByRole("button", { name: "Save SVG" }).click();
+    const stencilSvg = readFileSync(await (await stencilSvgPromise).path(), "utf8");
+    const reds = (stencilSvg.match(/stroke="#FF0000"/g) ?? []).length;
+    const blues = (stencilSvg.match(/stroke="#0000FF"/g) ?? []).length;
+    // One sheet outline; H, E, L, L and the O (its middle joined on by the bridge, so one hole round it).
+    if (reds !== 1 || blues !== 5) throw new Error(`the stencil's SVG has ${reds} red and ${blues} blue outlines (expected 1 and 5)`);
+    await page.getByRole("button", { name: "Close export for laser" }).click();
+    await page.waitForSelector(".laser-panel", { state: "detached" });
     libraryReport =
-      "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts)";
+      "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts); then a stencil of HELLO, saved for laser (1 red outline, 5 blue letter holes, the O's middle bridged)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 

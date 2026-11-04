@@ -26,10 +26,13 @@ import type { JuraCADDocument } from "../src/model/types";
 import type { DesignValues } from "../src/library/types";
 
 const design = (id: string) => findDesign(id)!;
+/** The laser designs with words and more (tests/libraryLaser.test.ts), in the library's order. */
+const LASER_IDS = ["stencil", "rubber-stamp", "name-tag", "coaster", "picture-frame", "living-hinge", "gear", "ruler"];
+const LOOSE_LINES = new Set(["living-hinge", "gear", "ruler"]);
 
 describe("the library", () => {
   it("has each design described, with an icon, inputs and working defaults", () => {
-    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob"]);
+    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS, "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp"]);
     for (const d of LIBRARY) {
       expect(d.name.length).toBeGreaterThan(3);
       expect(d.description.length).toBeGreaterThan(20);
@@ -200,7 +203,8 @@ describe("inserting a design", () => {
       const scope = resolveVariables(r.doc.variables).values;
       setCurrentScope(scope);
       for (const f of r.doc.features) {
-        if (f.sketch) expect(freedomOf(f.sketch.data)).toBe(0);
+        // (Hundreds of loose lines — a gear's teeth, a hinge's cuts, a ruler's marks — are left free: see laserKit.addLines.)
+        if (f.sketch && !LOOSE_LINES.has(id)) expect(freedomOf(f.sketch.data)).toBe(0);
         for (const v of Object.values(f.params)) expect(evaluate(v, scope).ok).toBe(true);
       }
     });
@@ -248,8 +252,8 @@ describe("library sections", () => {
       ["laser", "Laser cutting"],
       ["print", "3D printing"],
     ]);
-    expect(designsIn("laser").map((d) => d.id)).toEqual(["finger-box", "flat-stand"]);
-    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob"]);
+    expect(designsIn("laser").map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS]);
+    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp"]);
     expect(designsIn("laser").length + designsIn("print").length).toBe(LIBRARY.length);
     expect(categoryLabel("print")).toBe("3D printing");
     expect(categoryFrom("Laser cutting")).toBe("laser");
