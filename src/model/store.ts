@@ -306,6 +306,8 @@ export interface AppState {
   featureErrors: Record<string, string>;
   /** Features built, but with something to tell (an amber note, not a failure): feature ID → message. */
   featureWarnings: Record<string, string>;
+  /** Plain information about features built (what Simplify did): feature ID → message. */
+  featureNotes: Record<string, string>;
   /** Sketches on part faces or using part edges (by feature id), as found on the latest rebuild. */
   sketchLinks: Record<string, SketchLinkInfo>;
   /**
@@ -350,7 +352,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -584,6 +586,7 @@ export interface AppState {
     studioOrder?: string[],
     sketchLinks?: Record<string, SketchLinkInfo>,
     featureWarnings?: Record<string, string>,
+    featureNotes?: Record<string, string>,
   ) => void;
 }
 
@@ -818,6 +821,7 @@ export const useStore = create<AppState>((set, get) => {
     parts: [],
     featureErrors: {},
     featureWarnings: NO_WARNINGS,
+    featureNotes: NO_WARNINGS,
     sketchLinks: NO_LINKS,
     sketchCandidates: null,
     setSketchCandidates: (sketchCandidates) => set({ sketchCandidates }),
@@ -940,6 +944,8 @@ export const useStore = create<AppState>((set, get) => {
       }
       // Delete part starts with the parts picked in the Parts list.
       if (type === "deletePart") draft.deleteParts = [...s.selectedParts];
+      // Simplify part starts with the parts picked in the Parts list.
+      if (type === "simplify") draft.simplifyParts = [...s.selectedParts];
       // A Boolean starts with the parts picked in the Parts list.
       if (type === "boolean" && draft.booleanDef && s.selectedParts.length) draft.booleanDef = { ...draft.booleanDef, targets: [...s.selectedParts] };
       // A plane starts from the plane (or Plane feature) highlighted, if any.
@@ -1975,7 +1981,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setKernelStatus: (kernelStatus, error) => set({ kernelStatus, kernelError: error ?? null }),
     setRebuildBusy: (rebuildBusy) => set({ rebuildBusy }),
-    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings) =>
+    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings, featureNotes) =>
       set((s) => {
         // The sketch open for editing follows its part's face and edges, as the engine found them.
         const links = sketchLinks && Object.keys(sketchLinks).length ? sketchLinks : NO_LINKS;
@@ -2001,6 +2007,7 @@ export const useStore = create<AppState>((set, get) => {
           parts,
           featureErrors,
           featureWarnings: featureWarnings && Object.keys(featureWarnings).length ? featureWarnings : NO_WARNINGS,
+          featureNotes: featureNotes && Object.keys(featureNotes).length ? featureNotes : NO_WARNINGS,
           sketchLinks: links,
           ...(editing !== s.editing ? { editing } : {}),
           lastRebuildMs: ms,
