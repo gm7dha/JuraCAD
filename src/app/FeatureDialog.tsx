@@ -25,6 +25,7 @@ import { Icons } from "./icons";
 import { FASTENER_KINDS, FASTENER_LABELS, FASTENER_SIZES, type FastenerKind } from "../model/fasteners";
 import { ISO_COARSE } from "../kernel/thread";
 import { importedSize } from "../model/importFile";
+import { SIMPLIFY_LABELS, SIMPLIFY_LEVELS } from "../model/simplify";
 import { chooseImportFile } from "./fileActions";
 
 const OPERATIONS: Operation[] = ["new", "add", "remove", "intersect"];
@@ -1068,10 +1069,79 @@ function ImportOptions() {
           <p className="dialog-hint field-hint">STL files don't say what units they use. If the part looks 25 times too small, choose inches.</p>
         </>
       )}
+      <label className="check-row" title="Many downloaded files are really just triangles, so you can't pick a hole or fillet an edge. This finds the real flat and round faces in them">
+        <input
+          type="checkbox"
+          checked={!!draft.simplify}
+          onChange={(e) => setDraftField({ simplify: e.target.checked ? "normal" : undefined })}
+        />
+        Simplify: tidy into real faces (for editing)
+      </label>
+      {draft.simplify && <SimplifyLevelChoice />}
       <p className="dialog-hint field-hint">
         The file is kept inside your design. Use Move to put the part where you want it, and Remove to cut its shape out of
         another part.
       </p>
+    </fieldset>
+  );
+}
+
+/** How closely Simplify must match (Fine / Normal / Coarse), and what it does. */
+function SimplifyLevelChoice() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (!draft) return null;
+  const level = draft.simplify ?? "normal";
+  return (
+    <>
+      <div className="segmented three" role="radiogroup" aria-label="How closely to match">
+        {SIMPLIFY_LEVELS.map((v) => (
+          <button
+            type="button"
+            key={v}
+            role="radio"
+            aria-checked={level === v}
+            className={level === v ? "selected" : ""}
+            onClick={() => setDraftField({ simplify: v })}
+            title={SIMPLIFY_LABELS[v].hint}
+          >
+            {SIMPLIFY_LABELS[v].label}
+          </button>
+        ))}
+      </div>
+      <p className="dialog-hint field-hint">
+        {SIMPLIFY_LABELS[level].hint} Flat areas become single flat faces, and holes, fillets, cones and balls become real round
+        faces (so you can measure a hole's true size). Anything else stays as small flat pieces.
+      </p>
+    </>
+  );
+}
+
+/** Simplify part: the parts it tidies, and how closely. */
+function SimplifyPartOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const parts = useStore(studioParts);
+  if (draft?.type !== "simplify") return null;
+  const ids = draft.simplifyParts ?? [];
+  const nameOf = (id: string) => parts.find((p) => p.id === id)?.name ?? "(missing part)";
+  return (
+    <fieldset className="param-group">
+      <legend>Parts to simplify</legend>
+      {ids.length ? (
+        <ul className="pick-list" aria-label="Parts to simplify">
+          {ids.map((id) => (
+            <li key={id}>
+              <span>{nameOf(id)}</span>
+              <button type="button" className="icon-button small" onClick={() => setDraftField({ simplifyParts: ids.filter((x) => x !== id) })} title="Leave this part as it is" aria-label={`Leave ${nameOf(id)} out`}>
+                <Icons.Cross size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="dialog-hint pick-hint">Click the parts to simplify (click one again to leave it out).</p>
+      <SimplifyLevelChoice />
     </fieldset>
   );
 }
@@ -1903,6 +1973,7 @@ export function FeatureDialog() {
   const cancelDraft = useStore((s) => s.cancelDraft);
   const buildError = useStore((s) => (s.editing ? s.featureErrors[s.editing.draft.id] : undefined));
   const buildWarning = useStore((s) => (s.editing ? s.featureWarnings[s.editing.draft.id] : undefined));
+  const buildNote = useStore((s) => (s.editing ? s.featureNotes[s.editing.draft.id] : undefined));
   const busy = useStore((s) => s.rebuildBusy);
   const ref = useRef<HTMLFormElement>(null);
 
@@ -1968,7 +2039,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -1999,6 +2070,7 @@ export function FeatureDialog() {
         <PlaneDefOptions />
         <BooleanOptionsField />
         <DeletePartOptions />
+        <SimplifyPartOptions />
         <FastenerOptions />
         <DerivedOptions />
         {draft.type === "coil" && (
@@ -2058,8 +2130,13 @@ export function FeatureDialog() {
             <Icons.Warning size={16} /> {buildWarning}
           </div>
         )}
+        {!buildError && buildNote && (
+          <div className="dialog-note" role="status">
+            {buildNote}
+          </div>
+        )}
         <p className="dialog-hint">
-          {busy ? "Updating preview…" : def.params.length ? "Tip: you can type maths, units and variables, e.g. 10 + 2, 1 in or wall * 2." : null}
+          {busy ? (draft.simplify ? "Tidying into real faces… (a big file can take a minute)" : "Updating preview…") : def.params.length ? "Tip: you can type maths, units and variables, e.g. 10 + 2, 1 in or wall * 2." : null}
         </p>
       </div>
     </form>

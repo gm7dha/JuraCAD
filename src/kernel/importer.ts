@@ -11,9 +11,13 @@ import { solidsOf as listSolids } from "./topology";
 import { readBinaryStl } from "../geometry/stl";
 import { weld } from "../geometry/threeMf";
 import { fromBase64 } from "../model/importFile";
+import { SIMPLIFY_TOLERANCES, simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
 import type { ImportedFile } from "../model/types";
+import { describeFaces, simplifyShape, solidFromMesh, unifyShape } from "./simplify";
 
 const cache = new Map<string, Shape3D[]>();
+/** The summary of what simplifying an imported file did, by its cache key. */
+const reports = new Map<string, string>();
 /** The imported shapes that are surfaces (skins) rather than solids. */
 const surfaceShapes = new WeakSet<Shape3D>();
 /** Whether an imported shape (as `importSolids` returned it) is a surface rather than a solid. */
@@ -270,6 +274,111 @@ function readStl(bytes: Uint8Array, units: ImportedFile["units"]): Shape3D[] {
   }
 }
 
+/** The triangles of an STL, scaled to mm and welded, split into separate bodies (closed or not). */
+function stlBodies(bytes: Uint8Array, units: ImportedFile["units"]): { vertices: number[]; triangles: number[]; closed: boolean }[] {
+  const scale = units === "in" ? 25.4 : 1;
+  const raw = stlCorners(bytes);
+  const indices = Array.from({ length: raw.length / 3 }, (_, i) => i);
+  const { vertices, triangles } = weld(raw, indices);
+  if (triangles.length === 0) throw new Error("The STL file has no usable triangles in it.");
+  const parent = Array.from({ length: vertices.length / 3 }, (_, i) => i);
+  const find = (i: number): number => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+    return i;
+  };
+  for (let t = 0; t < triangles.length; t += 3) {
+    const r = find(triangles[t]);
+    parent[find(triangles[t + 1])] = r;
+    parent[find(triangles[t + 2])] = r;
+  }
+  const bodies = new Map<number, number[]>();
+  for (let t = 0; t < triangles.length; t += 3) {
+    const g = find(triangles[t]);
+    const list = bodies.get(g);
+    if (list) list.push(t);
+    else bodies.set(g, [t]);
+  }
+  return [...bodies.values()].map((tris) => {
+    const remap = new Map<number, number>();
+    const vs: number[] = [];
+    const ts: number[] = [];
+    const uses = new Map<string, number>();
+    for (const t of tris)
+      for (let k = 0; k < 3; k++) {
+        const v = triangles[t + k];
+        let j = remap.get(v);
+        if (j === undefined) {
+          j = vs.length / 3;
+          remap.set(v, j);
+          vs.push(vertices[3 * v] * scale, vertices[3 * v + 1] * scale, vertices[3 * v + 2] * scale);
+        }
+        ts.push(j);
+        const a = triangles[t + k];
+        const b = triangles[t + ((k + 1) % 3)];
+        const key = a < b ? `${a},${b}` : `${b},${a}`;
+        uses.set(key, (uses.get(key) ?? 0) + 1);
+      }
+    return { vertices: vs, triangles: ts, closed: [...uses.values()].every((n) => n === 2) };
+  });
+}
+
+/** All the summaries of several bodies as one. */
+function joinSummaries(list: SimplifySummary[]): SimplifySummary {
+  return {
+    facesBefore: list.reduce((n, x) => n + x.facesBefore, 0),
+    faces: list.flatMap((x) => x.faces),
+    recognised: list.some((x) => x.recognised),
+    ...(list.some((x) => x.fellBack) ? { fellBack: true } : {}),
+    ...(list.some((x) => x.openBodies) ? { openBodies: list.reduce((n, x) => n + (x.openBodies ?? 0), 0) } : {}),
+  };
+}
+
+/**
+ * An STL tidied into real faces: each closed body straight from its triangles
+ * to exact faces (without first making a face of every triangle, which is
+ * the slow part of an ordinary STL import). If a body can't be done that way,
+ * or isn't closed, the whole file is read as usual and only its flat areas joined.
+ */
+function readStlSimplified(bytes: Uint8Array, units: ImportedFile["units"], level: SimplifyLevel): { shapes: Shape3D[]; summary: SimplifySummary } {
+  const tol = SIMPLIFY_TOLERANCES[level];
+  const bodies = stlBodies(bytes, units);
+  const triangles = bodies.reduce((n, b) => n + b.triangles.length / 3, 0);
+  const open = bodies.filter((b) => !b.closed).length;
+  const made: Shape3D[] = [];
+  const summaries: SimplifySummary[] = [];
+  let failed = open > 0;
+  for (const b of bodies) {
+    if (failed) break;
+    const r = solidFromMesh(b.vertices, b.triangles, tol);
+    if (typeof r === "string") {
+      failed = true;
+      break;
+    }
+    const tidy = unifyShape(r.shape, tol);
+    r.shape.delete();
+    made.push(tidy);
+    summaries.push({ facesBefore: b.triangles.length / 3, faces: describeFaces(tidy, r.meshFaces, r.tori), recognised: !r.flatOnly });
+  }
+  if (!failed) return { shapes: made, summary: joinSummaries(summaries) };
+  made.forEach((m) => m.delete());
+  // As an ordinary import, then the flat areas joined (as an ordinary import does anyway, up to a size).
+  const shapes = readStl(bytes, units).map((shape) => {
+    if (surfaceShapes.has(shape)) return shape;
+    const joined = unifyShape(shape, tol);
+    shape.delete();
+    return joined;
+  });
+  return {
+    shapes,
+    summary: {
+      facesBefore: triangles,
+      faces: shapes.filter((x) => !surfaceShapes.has(x)).flatMap((x) => describeFaces(x)),
+      recognised: false,
+      ...(open ? { openBodies: open } : { fellBack: true }),
+    },
+  };
+}
+
 /** Above this many triangles, flat areas aren't joined back into single faces. */
 const SIMPLIFY_LIMIT = 20_000;
 
@@ -288,16 +397,46 @@ export function importKey(file: ImportedFile): string {
   return `${file.format}|${file.units}|${d.length}|${(h1 >>> 0).toString(36)}${(h2 >>> 0).toString(36)}`;
 }
 
-/** The solids in an imported file (fresh copies the caller owns). */
-export function importSolids(file: ImportedFile): Shape3D[] {
-  const key = importKey(file);
+/** The cache key of an imported file, tidied at a level (or not). */
+export const importCacheKey = (file: ImportedFile, simplify?: SimplifyLevel) => importKey(file) + (simplify ? `|simplify:${simplify}` : "");
+
+/** The file's solids, tidied into real faces (see simplify.ts), and what that did. */
+function readSimplified(file: ImportedFile, level: SimplifyLevel): { shapes: Shape3D[]; summary: SimplifySummary } {
+  if (file.format === "stl") return readStlSimplified(fromBase64(file.data), file.units, level);
+  const shapes = readStep(file.data);
+  const summaries: SimplifySummary[] = [];
+  const out = shapes.map((shape) => {
+    // Surfaces are brought in as they are.
+    if (surfaceShapes.has(shape)) return shape;
+    const r = simplifyShape(shape, level);
+    shape.delete();
+    summaries.push(r.summary);
+    return r.shape;
+  });
+  shapes.forEach((x, i) => surfaceShapes.has(x) && surfaceShapes.add(out[i]));
+  return { shapes: out, summary: joinSummaries(summaries) };
+}
+
+/** What simplifying an imported file did (after importSolids with the same level), as a short summary. */
+export function importReport(file: ImportedFile, simplify: SimplifyLevel): string | undefined {
+  return reports.get(importCacheKey(file, simplify));
+}
+
+/** The solids in an imported file (fresh copies the caller owns), tidied into real faces with `simplify`. */
+export function importSolids(file: ImportedFile, simplify?: SimplifyLevel): Shape3D[] {
+  const key = importCacheKey(file, simplify);
   let solids = cache.get(key);
   if (!solids) {
-    solids = file.format === "step" ? readStep(file.data) : readStl(fromBase64(file.data), file.units);
+    if (simplify) {
+      const r = readSimplified(file, simplify);
+      solids = r.shapes;
+      reports.set(key, simplifyReport(r.summary));
+    } else solids = file.format === "step" ? readStep(file.data) : readStl(fromBase64(file.data), file.units);
     cache.set(key, solids);
     while (cache.size > CACHE_SIZE) {
       const [oldest, old] = cache.entries().next().value as [string, Shape3D[]];
       cache.delete(oldest);
+      reports.delete(oldest);
       old.forEach((s) => s.delete());
     }
   } else {

@@ -135,6 +135,8 @@ export interface RebuildResult {
   featureErrors: Record<string, string>;
   /** Feature ID → something to tell about a feature that was built (e.g. an extra sketch it left out). Not a failure. */
   featureWarnings?: Record<string, string>;
+  /** Feature ID → plain information about a feature that was built (what Simplify did, say). */
+  featureNotes?: Record<string, string>;
   /** Milliseconds the rebuild took in the worker. */
   durationMs: number;
   /** Part Studios that were rebuilt (`parts` holds only theirs); the others are as before. */

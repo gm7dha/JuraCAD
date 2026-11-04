@@ -10,6 +10,7 @@ import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, 
 import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
 import { describeHole } from "../model/holes";
 import type { Feature, JuraCADDocument } from "../model/types";
+import { SIMPLIFY_LEVELS } from "../model/simplify";
 import { planeFrame, planeLabel } from "../sketch/planes";
 import { holePositionsIn } from "../sketch/holePositions";
 import { evaluate } from "../model/expr";
@@ -579,6 +580,28 @@ export const TOOLS: ToolDef[] = [
       const name = text(a.name, "name");
       s.commit(renamePart(s.doc, p.id, p.name, name));
       return say(`${p.name} is now called "${name}".`);
+    },
+  },
+  {
+    name: "simplify_part",
+    title: "Tidy a part into real faces",
+    description:
+      'For a part made of triangles (an imported STL, or a STEP file made from a mesh) or one whose faces are split into pieces: finds its real flat faces, holes, fillets, cones and balls, so they can be picked, filleted and measured (a hole then measures its true diameter). Adds a "Simplify part" feature and says what it found, e.g. "4,812 faces → 38 faces: 22 flat, 12 round (holes Ø5, Ø8, fillets R2), 4 left as mesh". {"part":"Part 1","level":"normal"}; leave out "part" for the latest part. "level": "fine" (matches within 0.01 mm), "normal" (0.05 mm, the default) or "coarse" (0.2 mm, for rough files). Shapes it can\'t fit stay as small flat pieces; the part stays a sound solid.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        part: { type: "string", description: "The part's name; leave it out for the latest part." },
+        level: { type: "string", enum: [...SIMPLIFY_LEVELS] },
+      },
+    },
+    run: async (s, a) => {
+      noExtras(a, ["part", "level"], "simplify_part");
+      const p = s.part(s.build().parts, a.part, "part");
+      const level = a.level === undefined ? "normal" : oneOf(a.level, SIMPLIFY_LEVELS, "level");
+      const f: Feature = { ...createFeature(s.doc, "simplify"), simplifyParts: [p.id], simplify: level };
+      const report = await tryChange(s, addFeature(s.doc, f), f.id, `simplify ${p.name}`);
+      const note = s.build().notes?.[f.id];
+      return say(`${f.name} (${p.name}): ${note ?? "done."}`, ...report);
     },
   },
   {

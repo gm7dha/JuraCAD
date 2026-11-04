@@ -1,3 +1,4 @@
+import { isSimplifyLevel } from "./simplify";
 import { parsePick } from "../geometry/topoRef";
 import { parseLineRef } from "./patternRefs";
 import { FASTENER_KINDS, FASTENER_SIZES, type FastenerKind } from "./fasteners";
@@ -150,6 +151,10 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.neutral = { kind: "default", name: "Top" };
   }
   if (type === "deletePart") feature.deleteParts = [];
+  if (type === "simplify") {
+    feature.simplifyParts = [];
+    feature.simplify = "normal";
+  }
   if (type === "fastener") feature.fastener = { kind: "bolt", size: "M6", threaded: false };
   if (type === "boolean") feature.booleanDef = { op: "union", targets: [], tools: [], keepTools: false, picking: "targets" };
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
@@ -551,6 +556,11 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         threaded: fa.threaded === true,
       };
     }
+    if (feature.type === "simplify") {
+      feature.simplifyParts = Array.isArray(f.simplifyParts) ? (f.simplifyParts as unknown[]).filter((x): x is string => typeof x === "string") : [];
+      feature.simplify = isSimplifyLevel(f.simplify) ? f.simplify : "normal";
+    }
+    if (feature.type === "import" && isSimplifyLevel(f.simplify)) feature.simplify = f.simplify;
     if (feature.type === "deletePart") {
       feature.deleteParts = Array.isArray(f.deleteParts) ? (f.deleteParts as unknown[]).filter((x): x is string => typeof x === "string") : [];
     }

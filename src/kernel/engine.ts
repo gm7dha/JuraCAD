@@ -54,7 +54,9 @@ import { arrangeOnBed, bedExtents, bedRotation, rotate, type PrintPartResult } f
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep, writeStepAssembly } from "./stepExport";
 import { stepPartCount } from "./stepCount";
-import { importKey, importSolids, isImportedSurface } from "./importer";
+import { importCacheKey, importReport, importSolids, isImportedSurface } from "./importer";
+import { simplifyShape } from "./simplify";
+import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
 import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
@@ -1335,8 +1337,8 @@ function grewWithin(before: Shape3D, after: Shape3D, by: number): boolean {
 
 /** True when the shape is at least one solid and passes OpenCascade's own check. */
 /** The surfaces (skins) in an imported file, as one shape, or null when it has none. */
-function importedSurface(file: ImportedFile): Shape3D | null {
-  const shapes = importSolids(file);
+function importedSurface(file: ImportedFile, simplify?: SimplifyLevel): Shape3D | null {
+  const shapes = importSolids(file, simplify);
   let skin: Shape3D | null = null;
   for (const s of shapes) {
     if (isImportedSurface(s) && !skin) skin = s;
@@ -1810,7 +1812,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       throw new Error("This feature doesn't make a solid of its own.");
     case "import": {
       if (!feature.import) throw new Error("This import has lost its file. Delete it and import the file again.");
-      const shapes = importSolids(feature.import);
+      const shapes = importSolids(feature.import, feature.simplify);
       const solids = shapes.filter((s) => !isImportedSurface(s));
       shapes.filter((s) => isImportedSurface(s)).forEach((s) => s.delete());
       if (solids.length === 0 && feature.operation !== "new") throw new Error("The file holds only surfaces, which can't be added to or cut from a part. Import it as New.");
@@ -1874,6 +1876,8 @@ interface StudioBuild {
   errors: Record<string, string>;
   /** Features built, but with something to tell (see RebuildResult.featureWarnings). */
   warnings?: Record<string, string>;
+  /** Plain information about features built (see RebuildResult.featureNotes). */
+  notes?: Record<string, string>;
   /** Sketches on part faces, or using part edges: what was found for them. */
   links: Record<string, SketchLinkInfo>;
   /** Each sketch: what it could snap to, as things were where it sits (see sketchCandidates). */
@@ -1975,6 +1979,7 @@ export class GeometryEngine {
     const meshes: PartMesh[] = [];
     const featureErrors: Record<string, string> = {};
     const featureWarnings: Record<string, string> = {};
+    const featureNotes: Record<string, string> = {};
     const shared = JSON.stringify([variables, partNames]);
     // Part Studios using parts from others (Derived) are built after them, and again whenever they change.
     const sourcesOf = (s: StudioInput) => [...new Set(s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId))].filter((id) => id !== s.id);
@@ -2024,7 +2029,7 @@ export class GeometryEngine {
           for (const p of this.parts) if (names[p.id]) p.name = names[p.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, links: this.links, snaps: this.snaps ?? new Map() };
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, links: this.links, snaps: this.snaps ?? new Map() };
           this.snaps = null;
           this.builds.set(studio.id, b);
           building = null;
@@ -2036,6 +2041,7 @@ export class GeometryEngine {
         if (!studio.partSuffix) {
           Object.assign(featureErrors, b.errors);
           Object.assign(featureWarnings, b.warnings ?? {});
+          Object.assign(featureNotes, b.notes ?? {});
         }
         this.studiosBuilt.add(studio.id);
       }
@@ -2052,6 +2058,7 @@ export class GeometryEngine {
       parts: meshes,
       featureErrors,
       ...(Object.keys(featureWarnings).length ? { featureWarnings } : {}),
+      ...(Object.keys(featureNotes).length ? { featureNotes } : {}),
       durationMs: Math.round(performance.now() - started),
       rebuilt,
       studioOrder: studios.map((s) => s.id),
@@ -2437,6 +2444,74 @@ export class GeometryEngine {
   /** Build one Part Studio's features into this.parts and this.tools; returns the features' problems. */
   /** Warnings from the latest `buildFeatures` (features built, but with something to tell). */
   private warnings: Record<string, string> = {};
+  /** Notes from the latest `buildFeatures` (plain information, such as what Simplify did). */
+  private notes: Record<string, string> = {};
+  /** Simplify part results, by everything that went into them (simplifying a big part takes a while). */
+  private simplified = new Map<string, { shapes: [string, Shape3D][]; note: string; error?: string }>();
+
+  /**
+   * Simplify part: each chosen part's shape tidied into real faces (see
+   * simplify.ts). Kept between rebuilds by everything that went into it, as a
+   * big part takes a few seconds.
+   */
+  private applySimplify(feature: Feature, features: Feature[]): { error?: string; note?: string } {
+    const ids = feature.simplifyParts ?? [];
+    if (!ids.length) return { error: "Click the parts to simplify." };
+    const level = feature.simplify ?? "normal";
+    const at = features.indexOf(feature);
+    const key = JSON.stringify([features.slice(0, at + 1).filter((f) => !f.suppressed), this.buildShared ?? ""]);
+    let done = this.simplified.get(key);
+    if (!done) {
+      const shapes: [string, Shape3D][] = [];
+      const summaries: SimplifySummary[] = [];
+      for (const p of this.parts.filter((x) => ids.includes(x.id))) {
+        try {
+          const r = simplifyShape(p.shape, level);
+          shapes.push([p.id, r.shape]);
+          summaries.push(r.summary);
+        } catch (e) {
+          shapes.forEach(([, x]) => x.delete());
+          return { error: describeError(e, "This part couldn't be simplified.") };
+        }
+      }
+      const note = summaries.length
+        ? simplifyReport({
+            facesBefore: summaries.reduce((n, x) => n + x.facesBefore, 0),
+            faces: summaries.flatMap((x) => x.faces),
+            recognised: summaries.some((x) => x.recognised),
+            ...(summaries.some((x) => x.fellBack) ? { fellBack: true } : {}),
+          })
+        : "";
+      const missing = ids.filter((id) => !this.parts.some((p) => p.id === id));
+      done = {
+        shapes,
+        note,
+        ...(missing.length ? { error: `${missing.length === 1 ? "One of its parts no longer exists" : "Some of its parts no longer exist"}. Edit this feature and pick again.` } : {}),
+      };
+      this.simplified.set(key, done);
+      while (this.simplified.size > 6) {
+        const [oldest, old] = this.simplified.entries().next().value as [string, { shapes: [string, Shape3D][] }];
+        this.simplified.delete(oldest);
+        old.shapes.forEach(([, x]) => x.delete());
+      }
+    } else {
+      this.simplified.delete(key);
+      this.simplified.set(key, done);
+    }
+    for (const [id, shape] of done.shapes) {
+      const p = this.parts.find((x) => x.id === id);
+      if (!p) continue;
+      try {
+        p.shape.delete();
+      } catch {
+        // already freed
+      }
+      p.shape = shape.clone();
+      p.featureIds = [...p.featureIds, feature.id];
+      delete p.meshKey;
+    }
+    return { ...(done.error ? { error: done.error } : {}), ...(done.note ? { note: done.note } : {}) };
+  }
 
   /**
    * A rebuild stopped part-way (or failed): free what the Part Studio being
@@ -2472,6 +2547,8 @@ export class GeometryEngine {
     const featureErrors: Record<string, string> = {};
     const warnings: Record<string, string> = {};
     this.warnings = warnings;
+    const infoNotes: Record<string, string> = {};
+    this.notes = infoNotes;
     let partCounter = 0;
     let surfaceCounter = 0;
     const sketches: SketchMap = new Map();
@@ -2572,6 +2649,12 @@ export class GeometryEngine {
       if (feature.type === "rib") {
         const err = this.applyRib(feature, sketches);
         if (err) featureErrors[feature.id] = err;
+        continue;
+      }
+      if (feature.type === "simplify") {
+        const r = this.applySimplify(feature, features);
+        if (r.error) featureErrors[feature.id] = r.error;
+        if (r.note) infoNotes[feature.id] = r.note;
         continue;
       }
       if (feature.type === "deletePart") {
@@ -2706,6 +2789,10 @@ export class GeometryEngine {
       // Built, but with something to tell (a lost extra sketch): a warning, not a failure.
       if (notes.length) warnings[feature.id] = notes.join(" ");
 
+      if (feature.type === "import" && feature.simplify && feature.import) {
+        const report = importReport(feature.import, feature.simplify);
+        if (report) infoNotes[feature.id] = report;
+      }
       if (feature.operation === "new" && feature.type === "import") {
         // A STEP file may hold several parts: each solid becomes its own part, and any surfaces one surface part.
         this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
@@ -2713,13 +2800,13 @@ export class GeometryEngine {
         solids.forEach((solid, i) => {
           partCounter++;
           const id = i === 0 ? feature.id : `${feature.id}~${i + 1}`;
-          this.parts.push({ id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid, meshKey: `${importKey(feature.import!)}#${i}` });
+          this.parts.push({ id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid, meshKey: `${importCacheKey(feature.import!, feature.simplify)}#${i}` });
         });
-        const skin = importedSurface(feature.import!);
+        const skin = importedSurface(feature.import!, feature.simplify);
         if (skin) {
           surfaceCounter++;
           const id = solids.length === 0 ? feature.id : `${feature.id}~${solids.length + 1}`;
-          this.parts.push({ id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true, meshKey: `${importKey(feature.import!)}#s` });
+          this.parts.push({ id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true, meshKey: `${importCacheKey(feature.import!, feature.simplify)}#s` });
         }
         tool.delete();
         continue;
@@ -5815,6 +5902,8 @@ export class GeometryEngine {
     this.threadedHoles.clear();
     this.threadedResults.forEach((r) => (r.shapes.forEach(([, x]) => x.delete()), r.tool.delete()));
     this.threadedResults.clear();
+    this.simplified.forEach((r) => r.shapes.forEach(([, x]) => x.delete()));
+    this.simplified.clear();
   }
 
   private meshPart(p: BuiltPart): PartMesh {

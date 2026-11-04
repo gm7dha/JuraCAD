@@ -830,6 +830,17 @@ button:disabled {
   margin: 8px 0 0;
 }
 
+/* Built: plain information (what Simplify did). */
+.dialog-note {
+  color: var(--ink-2);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 7px 9px;
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
 .dialog-hint {
   margin: 10px 0 0;
   font-size: 12px;

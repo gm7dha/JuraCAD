@@ -432,6 +432,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Removes whole parts from the Part Studio (from this point on in the feature list).",
     params: [],
   },
+  simplify: {
+    type: "simplify",
+    label: "Simplify part",
+    namePrefix: "Simplify",
+    description: "Tidies a part that's made of triangles (or has faces split into pieces) into real flat and round faces you can pick, fillet and measure.",
+    params: [],
+  },
   boolean: {
     type: "boolean",
     label: "Boolean",

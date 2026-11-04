@@ -47,6 +47,8 @@ export interface Build {
   errors: Record<string, string>;
   /** Features built, but with something to tell (not failures). */
   warnings: Record<string, string>;
+  /** Plain information about features built (what Simplify did). */
+  notes?: Record<string, string>;
   /** Sketches on part faces or using part edges: where the engine moved them to (see RebuildResult.sketchLinks). */
   links?: Record<string, SketchLinkInfo>;
 }
@@ -196,7 +198,7 @@ export class Session {
   }
 
   private keepBuild(key: string, r: RebuildResult): Build {
-    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, links: r.sketchLinks ?? {} };
+    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, notes: r.featureNotes ?? {}, links: r.sketchLinks ?? {} };
     this.builtKey = key;
     return this.built;
   }
