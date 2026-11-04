@@ -90,4 +90,6 @@ export interface LibraryInsert {
   values: DesignValues;
   /** The features it made. */
   features: string[];
+  /** The variables it made, by input key (their ids, so a renamed one is still found). Missing in early files. */
+  variables?: Record<string, string>;
 }

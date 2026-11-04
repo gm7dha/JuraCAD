@@ -88,9 +88,10 @@ export function extrudeFeature(
     ...base(id, name, "extrude", opts.operation, opts.depth ? { depth: opts.depth.t } : {}),
     sketchRef,
     extrude: { end: opts.end ?? "blind", flip: !!opts.flip },
-    // As the Extrude dialog makes them now: separate pieces are separate parts, cuts reach every part.
-    apart: true,
-    intersectAll: true,
+    // A New extrude's separate pieces are separate parts (as the Extrude dialog makes them). Add and Remove keep the
+    // older rule — they work on the latest part, which is the design's own — so a design put into a Part Studio
+    // that already has parts never cuts into or joins onto the user's parts.
+    ...(opts.operation === "new" ? { apart: true } : {}),
   };
 }
 

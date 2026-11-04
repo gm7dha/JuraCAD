@@ -225,7 +225,7 @@ export function LibraryDialog() {
       <p className="muted small">
         {insert
           ? `The sizes are also in Variables (${insert.prefix}_…), for a quick change. Updating here makes the design's features again, so changes you made to them by hand are replaced.`
-          : "Sizes marked in Variables can be changed any time afterwards; choices like the lid or the number of fingers are changed here, with Edit design sizes (right-click its folder in the feature list)."}
+          : "These sizes go into Variables, so you can change them any time. Choices like the lid or the finger width are changed with Edit design sizes (right-click the design's folder in the feature list)."}
       </p>
       {error && <p className="error-text small">{error}</p>}
     </Modal>

@@ -27,6 +27,9 @@ describe("finger counts", () => {
     // 30 mm with 3 mm fingers would be 9 (or 11), but each must be at least 8 mm.
     expect(fingerCount(30, 3, 8)).toBe(3);
     expect(fingerCount(10, 3, 8)).toBe(1);
+    // A short edge still gets three fingers when three fit (14 mm high, 3 mm sheet: each at least 4 mm).
+    expect(fingerCount(14, 10, 4)).toBe(3);
+    expect(fingerCount(11, 10, 4)).toBe(1);
     const n = fingerCounts(sizes());
     expect(n).toEqual({ width: 13, depth: 7, height: 7 });
     expect(n.width % 2 + n.depth % 2 + n.height % 2).toBe(3);

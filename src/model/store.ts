@@ -1287,13 +1287,14 @@ export const useStore = create<AppState>((set, get) => {
       const s = get();
       if (s.editing) return "Finish or cancel the open feature first.";
       if (s.versionView) return "You're looking at an old version, which can't be changed.";
-      let next: JuraCADDocument;
+      let made: ReturnType<typeof editInsert>;
       try {
-        next = editInsert(s.history.present, insertId, values);
+        made = editInsert(s.history.present, insertId, values);
       } catch (e) {
         return e instanceof Error ? e.message : String(e);
       }
-      change(() => next);
+      change(() => made.doc);
+      if (made.remade.length) get().showToast(`${made.remade.join(", ")} ${made.remade.length === 1 ? "was" : "were"} deleted before, and made again with the new sizes. Undo to take that back.`, "info");
       return null;
     },
     addConfiguration: (name) => change((doc) => addConfiguration(doc, name)),

@@ -6,7 +6,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { GeometryEngine } from "../src/kernel/engine";
 import type { PartMesh } from "../src/kernel/protocol";
-import { emptyDocument } from "../src/model/document";
+import { createFeature, emptyDocument } from "../src/model/document";
 import { MAIN_STUDIO } from "../src/model/studios";
 import type { JuraCADDocument } from "../src/model/types";
 import { applyVariables, resolveVariables } from "../src/model/variables";
@@ -109,7 +109,7 @@ describe("finger-joint box", () => {
     const all = box(r.parts);
     expect(all.min[0]).toBeCloseTo(-0.1, 3);
     expect(all.max[0]).toBeCloseTo(120.1, 3);
-    // Thickness isn't changed: the laser cuts straight through.
+    // The front and sides grow downwards too (their bottom edges are cut edges); each panel stays 3 mm thick.
     expect(all.min[2]).toBeCloseTo(-0.1, 3);
     // Neighbouring fingers now overlap a little in 3D (the laser burns that away), so the check above would see it.
     expect(overlap(r.parts)).toBeGreaterThan(1);
@@ -160,4 +160,23 @@ describe("3D-printed designs", () => {
     expect(build(doc).volume).toBeCloseTo(expected(12), 0);
     expect(build(setVar(doc, "knob_grips", "8")).volume).toBeCloseTo(expected(8), 0);
   });
+});
+
+describe("put into a Part Studio that already has a part", () => {
+  for (const id of ["finger-box", "tray", "bracket", "spacer", "knob"]) {
+    it(`${id}: leaves the user's part alone, even where they overlap`, () => {
+      const alone = build(insert(id));
+      // A block of the user's that every design overlaps (its holes, notches and gussets included).
+      let doc: JuraCADDocument = { ...emptyDocument(), features: [{ ...createFeature(emptyDocument(), "box"), id: "mine", params: { width: "200", depth: "200", height: "10", x: "-50", y: "-50", z: "-2" } }] };
+      const d = findDesign(id)!;
+      doc = insertDesign(doc, d, defaultValues(d), { into: MAIN_STUDIO }).doc;
+      const r = engine.rebuild(doc.features, resolveVariables(doc.variables).values);
+      expect(r.featureErrors).toEqual({});
+      const check = engine.check("normal");
+      expect(check.parts.find((p) => p.partId === "mine")!.exactVolume!).toBeCloseTo(200 * 200 * 10, 3);
+      expect(check.parts).toHaveLength(alone.parts.length + 1);
+      const theirs = check.parts.filter((p) => p.partId !== "mine").reduce((n, p) => n + (p.exactVolume ?? 0), 0);
+      expect(theirs).toBeCloseTo(alone.volume, 3);
+    });
+  }
 });

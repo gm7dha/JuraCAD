@@ -68,6 +68,16 @@ describe("Design library tools", () => {
     expect(s.doc.libraryInserts).toHaveLength(2);
   });
 
+  it("insert beside the user's own part without cutting into it", async () => {
+    const s = newSession();
+    expect((await call(s, "add_feature", { type: "box", width: 100, depth: 100, height: 10, x: -50, y: -50, z: -2 })).error).toBe(false);
+    const r = await call(s, "insert_library_design", { design: "knob" });
+    expect(r.error).toBe(false);
+    const parts = s.withEngine((e) => e.check("normal").parts);
+    expect(parts).toHaveLength(2);
+    expect(parts[0].exactVolume!).toBeCloseTo(100 * 100 * 10, 3);
+  });
+
   it("refuse sizes that don't work, changing nothing", async () => {
     const s = newSession();
     const bad = await call(s, "insert_library_design", { design: "tray", sizes: { floor: 40 } });

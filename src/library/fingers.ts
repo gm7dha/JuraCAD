@@ -39,6 +39,8 @@ export function nearestOdd(x: number): number {
 export function fingerCount(length: number, finger: number, smallest: number): number {
   let n = nearestOdd(length / finger);
   while (n > 1 && length / n < smallest) n -= 2;
+  // A short edge still interlocks (three fingers) whenever three fit.
+  if (n < 3 && length / 3 >= smallest) n = 3;
   return n;
 }
 

@@ -10,7 +10,8 @@
  * copies).
  */
 import { newId } from "../model/document";
-import { setCurrentScope } from "../model/expr";
+import { getCurrentScope, setCurrentScope } from "../model/expr";
+import { ORIGIN_ID, type SketchCurve, type SketchData } from "../sketch/types";
 import { addStudio, inStudio, renameStudio, studioOfFeature, studiosOf } from "../model/studios";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { applyVariables, resolveVariables, type Variable } from "../model/variables";
@@ -92,14 +93,64 @@ export function freeInsertName(doc: JuraCADDocument, design: LibraryDesign): str
   return `${design.name} ${n}`;
 }
 
+/** The name of an insert's variable for an input: the one it made (followed by id, so a rename is kept), else <prefix>_<key>. */
+function variableName(doc: JuraCADDocument, insert: LibraryInsert, key: string): string {
+  const id = insert.variables?.[key];
+  const v = id ? doc.variables?.find((x) => x.id === id) : undefined;
+  return v?.name ?? `${insert.prefix}_${key}`;
+}
+
+/**
+ * Give a sketch's points, curves and dimensions ids made from where they come in it (`<feature id>_p3`…), so the
+ * same design made again keeps the same ids — and other sketches' links to it keep working after a size change.
+ */
+function stableIds(s: SketchData, prefix: string): SketchData {
+  const map = new Map<string, string>([[ORIGIN_ID, ORIGIN_ID]]);
+  s.points.forEach((p, i) => map.set(p.id, `${prefix}_p${i}`));
+  s.curves.forEach((c, i) => map.set(c.id, `${prefix}_c${i}`));
+  s.constraints.forEach((c, i) => map.set(c.id, `${prefix}_k${i}`));
+  const m = (id: string) => map.get(id) ?? id;
+  return {
+    ...s,
+    points: s.points.map((p) => ({ ...p, id: m(p.id) })),
+    curves: s.curves.map((c): SketchCurve => {
+      switch (c.type) {
+        case "line":
+          return { ...c, id: m(c.id), p1: m(c.p1), p2: m(c.p2) };
+        case "circle":
+          return { ...c, id: m(c.id), center: m(c.center) };
+        case "arc":
+          return { ...c, id: m(c.id), center: m(c.center), start: m(c.start), end: m(c.end) };
+        default:
+          // Designs only draw lines, circles and arcs; anything else keeps its ids.
+          return c;
+      }
+    }),
+    constraints: s.constraints.map((c) => ({ ...c, id: m(c.id), refs: c.refs.map(m) })),
+  };
+}
+
 /** Make the design's features (and part names) for an insert, with the variables as they are in `doc`. */
 function makeFeatures(doc: JuraCADDocument, design: LibraryDesign, insert: LibraryInsert): { features: Feature[]; partNames: Record<string, string> } {
   const scope = resolveVariables(doc.variables).values;
   setCurrentScope(scope);
-  const vars = Object.fromEntries(variableInputs(design).map((i) => [i.key, named(`${insert.prefix}_${i.key}`, scope)]));
+  const vars = Object.fromEntries(variableInputs(design).map((i) => [i.key, named(variableName(doc, insert, i.key), scope)]));
   const made = design.make({ values: insert.values, vars, id: (role) => `${insert.id}_${role}`, name: insert.name, scope });
   const folder = insert.name.slice(0, 60);
-  return { features: made.features.map((f) => ({ ...f, folder })), partNames: made.partNames };
+  return {
+    features: made.features.map((f) => ({ ...f, folder, ...(f.sketch ? { sketch: { ...f.sketch, data: stableIds(f.sketch.data, f.id) } } : {}) })),
+    partNames: made.partNames,
+  };
+}
+
+/** Run `fn` and put the expression scope back afterwards, so a failed insert leaves no trace (the app and the extension set it themselves). */
+function keepingScope<T>(fn: () => T): T {
+  const before = getCurrentScope();
+  try {
+    return fn();
+  } finally {
+    setCurrentScope(before);
+  }
 }
 
 /** Feature names not already used in the Part Studio ("Bottom", else "Bottom 2"…). */
@@ -139,12 +190,17 @@ export interface InsertResult {
  * values don't work (check `valueProblems` first to show them).
  */
 export function insertDesign(doc: JuraCADDocument, design: LibraryDesign, values: DesignValues, opts: InsertOptions): InsertResult {
+  return keepingScope(() => insertNow(doc, design, values, opts));
+}
+
+function insertNow(doc: JuraCADDocument, design: LibraryDesign, values: DesignValues, opts: InsertOptions): InsertResult {
   const problems = valueProblems(design, values);
   if (problems.length) throw new Error(problems.join(" "));
   const prefix = freePrefix(doc, design.prefix);
   const name = freeInsertName(doc, design);
-  const variables: Variable[] = [...(doc.variables ?? []), ...variableInputs(design).map((i) => ({ id: newId("v"), name: `${prefix}_${i.key}`, value: tidy(Number(values[i.key])) }))];
-  const insert: LibraryInsert = { id: newId("lib"), design: design.id, name, prefix, values: { ...values }, features: [] };
+  const added = variableInputs(design).map((i) => ({ key: i.key, v: { id: newId("v"), name: `${prefix}_${i.key}`, value: tidy(Number(values[i.key])) } }));
+  const variables: Variable[] = [...(doc.variables ?? []), ...added.map((a) => a.v)];
+  const insert: LibraryInsert = { id: newId("lib"), design: design.id, name, prefix, values: { ...values }, features: [], variables: Object.fromEntries(added.map((a) => [a.key, a.v.id])) };
   let next: JuraCADDocument = { ...doc, variables };
   let studioId = opts.into;
   if (opts.into === "new") {
@@ -180,18 +236,30 @@ export function currentValues(doc: JuraCADDocument, insert: LibraryInsert): Desi
   const { values } = resolveVariables(doc.variables);
   const out = completeValues(design, insert.values);
   for (const i of variableInputs(design)) {
-    const v = values[`${insert.prefix}_${i.key}`];
+    const v = values[variableName(doc, insert, i.key)];
     if (v !== undefined) out[i.key] = Math.round(v * 1e6) / 1e6;
   }
   return out;
 }
 
+export interface EditResult {
+  doc: JuraCADDocument;
+  /** Names of the design's features the user had deleted, which were made again. */
+  remade: string[];
+}
+
 /**
  * Change an insert's sizes and choices ("Edit design sizes"): its variables
- * get the new values and its features are made again in place, with the same
- * ids. Changes made by hand to those features are replaced.
+ * get the new values and its features are made again with the same ids, each
+ * where it was in the list (the user's own features stay where they are), and
+ * keeping its name, folder, suppression and eye. Changes made by hand to the
+ * design's features are replaced; ones the user deleted come back (`remade`).
  */
-export function editInsert(doc: JuraCADDocument, insertId: string, values: DesignValues): JuraCADDocument {
+export function editInsert(doc: JuraCADDocument, insertId: string, values: DesignValues): EditResult {
+  return keepingScope(() => editNow(doc, insertId, values));
+}
+
+function editNow(doc: JuraCADDocument, insertId: string, values: DesignValues): EditResult {
   const insert = findInsert(doc, insertId);
   const design = insert && findDesign(insert.design);
   if (!insert || !design) throw new Error("That design isn't in this document any more.");
@@ -200,33 +268,54 @@ export function editInsert(doc: JuraCADDocument, insertId: string, values: Desig
   const studioId = insert.features.map((id) => studioOfFeature(doc, id)).find((s) => s !== null);
   if (!studioId) throw new Error(`${insert.name}'s features have all been deleted, so there's nothing to change. Insert it again from the Design library.`);
   const vars = [...(doc.variables ?? [])];
+  const varIds: Record<string, string> = { ...(insert.variables ?? {}) };
   for (const i of variableInputs(design)) {
-    const name = `${insert.prefix}_${i.key}`;
+    const name = variableName(doc, insert, i.key);
     const value = tidy(Number(values[i.key]));
     const at = vars.findIndex((v) => v.name === name);
-    if (at >= 0) vars[at] = { ...vars[at], value };
-    else vars.push({ id: newId("v"), name, value });
+    if (at >= 0) {
+      vars[at] = { ...vars[at], value };
+      varIds[i.key] = vars[at].id;
+    } else {
+      // Deleted since: made again (under a free name, if the old one is now someone else's).
+      let fresh = `${insert.prefix}_${i.key}`;
+      for (let n = 2; vars.some((v) => v.name === fresh); n++) fresh = `${insert.prefix}_${i.key}${n}`;
+      const v = { id: newId("v"), name: fresh, value };
+      vars.push(v);
+      varIds[i.key] = v.id;
+    }
   }
   // The variables first (so every sketch using them is solved again), then the design's own features.
   let next = applyVariables(doc, vars);
-  const updated: LibraryInsert = { ...insert, values: { ...values } };
+  const updated: LibraryInsert = { ...insert, values: { ...values }, variables: varIds };
   const made = makeFeatures(next, design, updated);
   const old = new Set(insert.features);
+  const remade: string[] = [];
   next = inStudio(next, studioId, (view) => {
-    const at = view.features.findIndex((f) => old.has(f.id));
-    const kept = view.features.filter((f) => !old.has(f.id));
-    const where = at < 0 ? kept.length : view.features.slice(0, at).filter((f) => !old.has(f.id)).length;
-    // Keep each feature's name (it may have been renamed) and folder.
-    const before = new Map(view.features.filter((f) => old.has(f.id)).map((f) => [f.id, f]));
-    const fresh = made.features.map((f) => {
-      const was = before.get(f.id);
-      return was ? { ...f, name: was.name, ...(was.folder ? { folder: was.folder } : {}) } : f;
+    const fresh = new Map(made.features.map((f) => [f.id, f]));
+    const there = new Set(view.features.map((f) => f.id));
+    // Each of the design's features that's still there, remade in its own place (dropped if the design no longer makes it).
+    const out: Feature[] = view.features.flatMap((f) => {
+      if (!old.has(f.id)) return [f];
+      const g = fresh.get(f.id);
+      if (!g) return [];
+      return [{ ...g, name: f.name, suppressed: f.suppressed, ...(f.folder ? { folder: f.folder } : {}), ...(f.visible !== undefined ? { visible: f.visible } : {}) }];
     });
-    const named = [...fresh.filter((f) => before.has(f.id)), ...uniqueNames(fresh.filter((f) => !before.has(f.id)), kept)];
-    const ordered = fresh.map((f) => named.find((g) => g.id === f.id)!);
-    return { ...view, features: [...kept.slice(0, where), ...ordered, ...kept.slice(where)] };
+    // The rest (new, or deleted by the user) go just before the design feature made after them (else after the one before).
+    const missing = made.features.filter((f) => !there.has(f.id));
+    const named = uniqueNames(missing, out);
+    made.features.forEach((f, i) => {
+      if (there.has(f.id)) return;
+      const g = named[missing.indexOf(f)];
+      if (old.has(f.id)) remade.push(g.name);
+      const before = made.features.slice(0, i).reverse().find((x) => out.some((y) => y.id === x.id));
+      const after = made.features.slice(i + 1).find((x) => out.some((y) => y.id === x.id));
+      const at = after ? out.findIndex((y) => y.id === after.id) : before ? out.findIndex((y) => y.id === before.id) + 1 : out.length;
+      out.splice(at, 0, g);
+    });
+    return { ...view, features: out };
   });
   updated.features = made.features.map((f) => f.id);
   next = withPartNames(next, made.partNames, false);
-  return { ...next, libraryInserts: (next.libraryInserts ?? []).map((x) => (x.id === insertId ? updated : x)) };
+  return { doc: { ...next, libraryInserts: (next.libraryInserts ?? []).map((x) => (x.id === insertId ? updated : x)) }, remade };
 }

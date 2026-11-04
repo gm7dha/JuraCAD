@@ -501,17 +501,23 @@
   insert, ids `<insert id>_<role>`), part names and a record in `doc.libraryInserts` (`LibraryInsert`, parsed by
   `library/parse.ts`; missing in older files). Inputs that change what's made (finger width, lid, holes, gussets) aren't
   variables: `editInsert` ("Edit design sizes", the folder's right-click menu or the library window) makes the features
-  again in place with the same ids (renamed features keep their names), after `applyVariables`. Sizes are `Ex` (`ex.ts`:
+  again with the same ids, each in its own place in the list (the user's features don't move; name, folder, `suppressed` and
+  `visible` kept; ones the user deleted come back before the next design feature and are named in `remade` → a toast), after
+  `applyVariables`. `LibraryInsert.variables` holds its variables' ids, so a renamed variable is still the one used. Sketch
+  items get ids from their place (`stableIds`: `<feature>_p3`…), so links from other sketches survive an edit. Only the
+  designs' New extrudes carry `apart`; their Add/Remove extrudes and patterns keep the old rules (the latest part = the design's
+  own), so a design put into a Part Studio with parts never cuts or joins the user's parts. Insert/edit put the expression
+  scope back afterwards (`keepingScope`; the store and the extension set it themselves). Sizes are `Ex` (`ex.ts`:
   value + expression text, `plus`/`minus`/`times`/`fraction`…; `signed` gives a dimension's side, so "-(box_kerf / 2)" works
   at kerf 0). `sketchKit.ts`: `outlineSketch` (every corner dimensioned from the origin with the expressions — fully
   defined), `shapesSketch` (mcp/sketchShapes' buildSketch with expression sizes), `roundCorners` (sketch fillets), Feature
-  builders. Finger box maths in `fingers.ts`: odd finger counts (`fingerCount`, wide enough for thickness + kerf), the 8
+  builders. Finger box maths in `fingers.ts`: odd finger counts (`fingerCount`, wide enough for thickness + kerf; at least 3 whenever 3 fit), the 8
   corner cubes belong to the front/back, bottom/lid ↔ sides run between them (D − 2t); `panelOutlines` (bottom, front,
   left; lid/back/right are Move/copy copies), kerf = every edge kerf/2 further out (`grow`; the 3D panels then overlap by
   that). No Plane features (they'd need `refreshDocumentPlanes` wherever variables change). UI `src/app/LibraryDialog.tsx`
   (`store.library`: browse / a design picked / edit; Toolbar "Library"); store `insertLibraryDesign`/`editLibraryDesign` (one
   undo step; a new Part Studio is shown). Claude: `src/mcp/libraryTools.ts` (list_library_designs, insert_library_design —
-  into the Part Studio on show). Tests: tests/libraryFingers, library (pure), engineLibrary (volumes, no overlaps, variables),
+  into the Part Studio on show). Tests: tests/libraryFingers, library (pure), engineLibrary (volumes, no overlaps, variables, a user's overlapping part left alone),
   mcpLibrary; the smoke test inserts a box and widens it in Variables.
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).

@@ -18,7 +18,19 @@ export function parseLibraryInserts(raw: unknown): LibraryInsert[] {
       }
     }
     const features = Array.isArray(o.features) ? o.features.filter((x): x is string => typeof x === "string").slice(0, 1000) : [];
-    out.push({ id: o.id, design: o.design, name: typeof o.name === "string" && o.name.trim() ? o.name.trim().slice(0, 60) : "Design", prefix: o.prefix, values, features });
+    const variables: Record<string, string> = {};
+    if (o.variables && typeof o.variables === "object" && !Array.isArray(o.variables)) {
+      for (const [k, v] of Object.entries(o.variables as Record<string, unknown>).slice(0, 100)) if (typeof v === "string" && v) variables[k] = v;
+    }
+    out.push({
+      id: o.id,
+      design: o.design,
+      name: typeof o.name === "string" && o.name.trim() ? o.name.trim().slice(0, 60) : "Design",
+      prefix: o.prefix,
+      values,
+      features,
+      ...(Object.keys(variables).length ? { variables } : {}),
+    });
   }
   return out;
 }
