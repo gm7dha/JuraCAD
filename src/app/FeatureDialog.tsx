@@ -1111,7 +1111,7 @@ function SimplifyLevelChoice() {
       </div>
       <p className="dialog-hint field-hint">
         {SIMPLIFY_LABELS[level].hint} Flat areas become single flat faces, and holes, fillets, cones and balls become real round
-        faces (so you can measure a hole's true size). Anything else stays as small flat pieces.
+        faces (so you can measure a hole's true size), fitted through the triangles' corners. Anything else stays as small flat pieces.
       </p>
     </>
   );

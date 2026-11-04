@@ -54,7 +54,7 @@ import { arrangeOnBed, bedExtents, bedRotation, rotate, type PrintPartResult } f
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep, writeStepAssembly } from "./stepExport";
 import { stepPartCount } from "./stepCount";
-import { importCacheKey, importReport, importSolids, isImportedSurface } from "./importer";
+import { importCacheKey, importKey, importReport, importSolids, isImportedSurface } from "./importer";
 import { simplifyShape } from "./simplify";
 import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
 import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
@@ -2459,11 +2459,20 @@ export class GeometryEngine {
     if (!ids.length) return { error: "Click the parts to simplify." };
     const level = feature.simplify ?? "normal";
     const at = features.indexOf(feature);
-    const key = JSON.stringify([features.slice(0, at + 1).filter((f) => !f.suppressed), this.buildShared ?? ""]);
+    // By what shapes the features make: an imported file by its short key (not its whole contents), and no feature names.
+    const key = JSON.stringify([
+      features
+        .slice(0, at + 1)
+        .filter((f) => !f.suppressed)
+        .map(({ name: _n, ...f }) => (f.import ? { ...f, import: importKey(f.import) } : f)),
+      this.buildShared ?? "",
+    ]);
     let done = this.simplified.get(key);
     if (!done) {
       const shapes: [string, Shape3D][] = [];
       const summaries: SimplifySummary[] = [];
+      // (A failure is kept too, so it isn't tried again on every rebuild.)
+      let failure: string | null = null;
       for (const p of this.parts.filter((x) => ids.includes(x.id))) {
         try {
           const r = simplifyShape(p.shape, level);
@@ -2471,23 +2480,18 @@ export class GeometryEngine {
           summaries.push(r.summary);
         } catch (e) {
           shapes.forEach(([, x]) => x.delete());
-          return { error: describeError(e, "This part couldn't be simplified.") };
+          shapes.length = 0;
+          summaries.length = 0;
+          failure = describeError(e, "This part couldn't be simplified.");
+          break;
         }
       }
       const note = summaries.length
-        ? simplifyReport({
-            facesBefore: summaries.reduce((n, x) => n + x.facesBefore, 0),
-            faces: summaries.flatMap((x) => x.faces),
-            recognised: summaries.some((x) => x.recognised),
-            ...(summaries.some((x) => x.fellBack) ? { fellBack: true } : {}),
-          })
+        ? summaries.map((x) => simplifyReport(x)).join(" ")
         : "";
       const missing = ids.filter((id) => !this.parts.some((p) => p.id === id));
-      done = {
-        shapes,
-        note,
-        ...(missing.length ? { error: `${missing.length === 1 ? "One of its parts no longer exists" : "Some of its parts no longer exist"}. Edit this feature and pick again.` } : {}),
-      };
+      const error = failure ?? (missing.length ? `${missing.length === 1 ? "One of its parts no longer exists" : "Some of its parts no longer exist"}. Edit this feature and pick again.` : null);
+      done = { shapes, note, ...(error ? { error } : {}) };
       this.simplified.set(key, done);
       while (this.simplified.size > 6) {
         const [oldest, old] = this.simplified.entries().next().value as [string, { shapes: [string, Shape3D][] }];

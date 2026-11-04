@@ -83,6 +83,8 @@ export interface MeshPlan {
   /** The mesh's own volume (mm³), to compare the result with. */
   volume: number;
   triangles: number;
+  /** Round faces found but given back as facets (their edges weren't lines or arcs). */
+  gaveUp: number;
 }
 
 const edgeKey = (a: number, b: number, n: number) => (a < b ? a * n + b : b * n + a);
@@ -93,6 +95,28 @@ interface Group {
   area: number;
   points: number[];
   centre: Vec3;
+}
+
+/** Above this many triangles a mesh isn't tidied (it'd take minutes, and such detailed files are rarely mechanical parts). */
+export const MAX_TRIANGLES = 50_000;
+/**
+ * The most points the fits may look at while finding round faces (a count, so it's the same on any
+ * machine). Mechanical parts need a small part of it; a big organic mesh, where nothing fits, runs out.
+ */
+export const WORK_LIMIT = 60_000_000;
+/** After this many places where something round was looked for and nothing fitted (and nothing yet has), it stops looking. */
+export const FRUITLESS_SEEDS = 150;
+
+/** planMesh's answer when a mesh is too detailed to tidy (or ran out of WORK_LIMIT). */
+export const TOO_DETAILED = "Too detailed to tidy — brought in as it is.";
+/** planMesh's answer when nothing could be joined or recognised (an organic shape): nothing to gain. */
+export const NOTHING_TO_TIDY = "No flat areas or round shapes to tidy — brought in as it is.";
+
+export interface PlanOptions {
+  /** Flat faces only (no round faces looked for). */
+  flatOnly?: boolean;
+  maxTriangles?: number;
+  workLimit?: number;
 }
 
 interface Region {
@@ -106,11 +130,15 @@ interface Region {
  * shared by index). Returns a plain-English reason instead when it can't be
  * done (an open or tangled mesh).
  */
-export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<number>, tol: SimplifyTolerances, options: { flatOnly?: boolean } = {}): MeshPlan | string {
+export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<number>, tol: SimplifyTolerances, options: PlanOptions = {}): MeshPlan | string {
   const nv = vertices.length / 3;
-  const V: Vec3[] = Array.from({ length: nv }, (_, i) => [vertices[3 * i], vertices[3 * i + 1], vertices[3 * i + 2]]);
   const nt = triangles.length / 3;
+  if (nt > (options.maxTriangles ?? MAX_TRIANGLES)) return TOO_DETAILED;
+  const V: Vec3[] = Array.from({ length: nv }, (_, i) => [vertices[3 * i], vertices[3 * i + 1], vertices[3 * i + 2]]);
   if (nt < 4) return "There are too few triangles to make a solid.";
+  const budget = options.workLimit ?? WORK_LIMIT;
+  /** Points looked at by fits so far (see WORK_LIMIT). */
+  let work = 0;
   const T: [number, number, number][] = Array.from({ length: nt }, (_, t) => [triangles[3 * t], triangles[3 * t + 1], triangles[3 * t + 2]]);
   const normals: Vec3[] = [];
   const areas: number[] = [];
@@ -221,6 +249,7 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
   const faces = (s: FitSurface, g: number) => Math.abs(dot(surfaceNormal(s, groups[g].centre), groups[g].normal)) >= facing;
   const fitRound = (gs: number[]): FitSurface | null => {
     const pts = pointsOf(gs);
+    work += pts.length;
     const ns = gs.map((g) => groups[g].normal);
     const ws = gs.map((g) => groups[g].area);
     const ok = (s: FitSurface) => gs.every((g) => faces(s, g));
@@ -286,44 +315,61 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
 
   // Within twice the distance of one plane: no evidence it's round (a huge cylinder would fit anything that flat).
   const flatEnough = (gs: number[]) => {
-    const f = fitPlane(pointsOf(gs));
+    const pts = pointsOf(gs);
+    work += pts.length;
+    const f = fitPlane(pts);
     return !f || f.maxError <= 2 * tol.distance;
   };
   // Biggest first: a real round face's facets are bigger than the bits of whatever's beside it.
   const order = groups.map((_, i) => i).sort((a, b) => groups[b].area - groups[a].area);
   const tried = new Set<number>();
+  let fruitless = 0;
   for (const seed of options.flatOnly ? [] : order) {
+    if (work > budget) return TOO_DETAILED;
+    // Looked in many places, found nothing round anywhere: an organic shape, not worth looking further.
+    if (!regions.length && fruitless >= FRUITLESS_SEEDS) break;
     if (regionOf[seed] >= 0 || tried.has(seed)) continue;
-    const members = [seed];
-    const inside = new Set(members);
-    // Neighbours not yet taken, the most firmly joined (longest shared edge) first.
-    const frontier = () => {
-      const join = new Map<number, number>();
-      for (const m of members)
-        for (const h of near[m]) {
-          if (inside.has(h) || regionOf[h] >= 0 || !soft(m, h)) continue;
-          join.set(h, (join.get(h) ?? 0) + (shared[m].get(h) ?? 0));
-        }
-      return [...join.keys()].sort((a, b) => join.get(b)! - join.get(a)!);
+    const members: number[] = [];
+    const inside = new Set<number>();
+    // Neighbours not yet taken and how firmly each is joined (shared edge length), kept up to date as members are added.
+    const join = new Map<number, number>();
+    const add = (g: number) => {
+      members.push(g);
+      inside.add(g);
+      join.delete(g);
+      for (const h of near[g]) {
+        if (inside.has(h) || regionOf[h] >= 0 || !soft(g, h)) continue;
+        join.set(h, (join.get(h) ?? 0) + (shared[g].get(h) ?? 0));
+      }
     };
-    // Enough groups first to show it really curves (at least three, and not flat within the distance).
+    // The most firmly joined first.
+    const frontier = () => [...join.keys()].sort((a, b) => join.get(b)! - join.get(a)!);
+    add(seed);
+    // Enough groups first to show it really curves (at least three, and not flat within the distance) — checked
+    // as it grows by a quarter, not at every step.
     let surface: FitSurface | null = null;
     // (Not a much bigger neighbour: that's a flat face or another round face beside this one.)
     let biggest = groups[seed].area;
-    while (members.length < 3 || (members.length < 400 && flatEnough(members))) {
-      const next = frontier().find((h) => groups[h].area <= 10 * biggest);
-      if (next !== undefined) biggest = Math.max(biggest, groups[next].area);
+    let checkAt = 3;
+    let flat = true;
+    while (members.length < 400) {
+      if (members.length >= checkAt) {
+        flat = flatEnough(members);
+        if (!flat) break;
+        checkAt = Math.max(checkAt + 1, Math.ceil(members.length * 1.25));
+      }
+      let next: number | undefined;
+      for (const [h] of join) if (groups[h].area <= 10 * biggest && (next === undefined || join.get(h)! > join.get(next)!)) next = h;
       if (next === undefined) break;
-      members.push(next);
-      inside.add(next);
+      biggest = Math.max(biggest, groups[next].area);
+      add(next);
     }
-    if (members.length < 3 || flatEnough(members)) {
-      continue;
-    }
+    if (members.length < 3 || (flat && flatEnough(members))) continue;
     surface = fitRound(members);
     if (!surface) {
       // Its neighbourhood fits nothing round: don't start again from right beside it.
       for (const m of members.slice(0, 3)) tried.add(m);
+      fruitless++;
       continue;
     }
     let fittedAt = members.length;
@@ -333,8 +379,7 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
       for (const h of frontier()) {
         if (inside.has(h)) continue;
         if (sits(surface, h)) {
-          members.push(h);
-          inside.add(h);
+          add(h);
           grew = true;
         } else if (misses < 6 && groups[h].points.every((p) => surfaceDistance(surface!, V[p]) <= 3 * tol.distance)) {
           // A near miss: maybe a better fit with it (the first fit came from only a few facets) — try all the shapes again.
@@ -342,8 +387,7 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
           const s = fitRound([...members, h]);
           if (s) {
             surface = s;
-            members.push(h);
-            inside.add(h);
+            add(h);
             fittedAt = members.length;
             grew = true;
           }
@@ -357,11 +401,17 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
       if (!grew) break;
     }
     const final = fitRound(members);
-    if (!final || thinBand(final, members) || flatEnough(members)) continue;
+    if (!final || thinBand(final, members) || flatEnough(members)) {
+      fruitless++;
+      continue;
+    }
     const r = regions.length;
     regions.push({ groups: members, surface: final, curved: true });
     for (const m of members) regionOf[m] = r;
   }
+  if (work > budget) return TOO_DETAILED;
+  // Nothing round, and hardly any flat areas joined: nothing to gain from rebuilding it.
+  if (!options.flatOnly && !regions.length && groups.length > 0.3 * nt && nt > 200) return NOTHING_TO_TIDY;
 
   // Where two faces meet smoothly (a fillet into a flat or round face), the facets nearest the join
   // fit both within the distance, and growing gives them to whichever got there first, leaving a
@@ -425,11 +475,15 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
       );
       all.push({ groups: [i], surface: plane?.shape ?? { kind: "plane", normal: g.normal, origin: g.centre }, curved: false });
     });
-    // Tidy each surface (round numbers, X/Y/Z), keeping it only if it still fits.
-    const sizeTol = Math.min(0.01, tol.distance / 2);
+    // Tidy each surface (round numbers, X/Y/Z), keeping it only if it still fits. Sizes move only as far
+    // as the fit itself is unsure (its own scatter, at least 2 µm: a mesh of a CAD part has its corners
+    // within a few µm of the true surface), so a Ø5.06 hole isn't rounded to 5.05.
     const snapAngle = Math.min(tol.angle, (0.5 * Math.PI) / 180) / 2;
     for (const r of all) {
       const pts = pointsOf(r.groups);
+      let scatter = 0;
+      for (const p of pts) scatter = Math.max(scatter, surfaceDistance(r.surface, p));
+      const sizeTol = Math.min(tol.distance / 2, Math.max(0.002, 1.5 * scatter));
       const tidy = tidySurface(r.surface, sizeTol, snapAngle);
       if (pts.every((p) => surfaceDistance(tidy, p) <= tol.distance)) r.surface = tidy;
     }
@@ -520,7 +574,7 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
         sample: projectOnSurface(r.surface, triCentre(biggest)),
       });
     });
-    return { faces, curves: result.curves, volume, triangles: nt };
+    return { faces, curves: result.curves, volume, triangles: nt, gaveUp: demoted.size };
   }
   return "Too many round faces had edges that couldn't be worked out.";
 }
@@ -764,7 +818,7 @@ function solveSmall(A: number[][], b: number[]): number[] | null {
 }
 
 /** The circle where two surfaces meet, when that's a circle we can work out exactly (round surface + plane square to its axis…). */
-export function meetCircle(a: FitSurface, b: FitSurface, near: Vec3, angle: number): Circle3 | null {
+export function meetCircle(a: FitSurface, b: FitSurface, near: Vec3, angle: number, slack = 0): Circle3 | null {
   const roundOf = (s: FitSurface) => (s.kind === "plane" ? null : s);
   for (const [r, o] of [
     [a, b],
@@ -788,7 +842,7 @@ export function meetCircle(a: FitSurface, b: FitSurface, near: Vec3, angle: numb
         if (Math.abs(dot(o.normal, rs.axis)) < Math.cos(angle)) continue;
         const h = dot(sub(o.origin, rs.origin), rs.axis);
         const k = rs.minor ** 2 - h * h;
-        if (k < -1e-6) return null;
+        if (k < -1e-6 - 2 * rs.minor * slack) return null;
         const options = [rs.major + Math.sqrt(Math.max(0, k)), rs.major - Math.sqrt(Math.max(0, k))];
         return placeNear(h, options.reduce((x, y) => (Math.abs(y - nrho) < Math.abs(x - nrho) ? y : x)));
       }
@@ -796,8 +850,9 @@ export function meetCircle(a: FitSurface, b: FitSurface, near: Vec3, angle: numb
         if (Math.abs(dot(o.axis, rs.axis)) < Math.cos(angle)) continue;
         const off = sub(o.origin, rs.origin);
         if (norm(sub(off, scale(rs.axis, dot(off, rs.axis)))) > 1e-3) continue;
+        // (Just touching, as a fillet does, k is 0; fitting leaves it a little either way.)
         const k = rs.minor ** 2 - (o.radius - rs.major) ** 2;
-        if (k < -1e-9) return null;
+        if (k < -1e-9 - 2 * rs.minor * slack) return null;
         const options = [Math.sqrt(Math.max(0, k)), -Math.sqrt(Math.max(0, k))];
         return placeNear(
           options.reduce((x, y) => (Math.abs(y - nh) < Math.abs(x - nh) ? y : x)),
@@ -840,7 +895,7 @@ function fitChain(c: Chain, pts: Vec3[], place: (v: number) => Vec3, sa: FitSurf
   const ring = c.closed ? pts.slice(0, -1) : pts;
   const mid = ring[Math.floor(ring.length / 2)];
   // An exact circle from the surfaces, else one fitted to the points.
-  let circle: Circle3 | null = meetCircle(sa, sb, mid, Math.max(tol.angle, (2 * Math.PI) / 180));
+  let circle: Circle3 | null = meetCircle(sa, sb, mid, Math.max(tol.angle, (2 * Math.PI) / 180), tol.distance);
   // Where the faces meet smoothly the mesh's edge between them can wander (every point near the join is
   // on both); the exact circle is right as long as every point is on both faces.
   if (circle && !ring.every(onBoth)) circle = null;

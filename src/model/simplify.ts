@@ -29,9 +29,9 @@ export const SIMPLIFY_TOLERANCES: Record<SimplifyLevel, SimplifyTolerances> = {
 };
 
 export const SIMPLIFY_LABELS: Record<SimplifyLevel, { label: string; hint: string }> = {
-  fine: { label: "Fine", hint: "Only joins what matches very closely (0.01 mm) — for accurate files." },
-  normal: { label: "Normal", hint: "Joins what matches within 0.05 mm — right for most files." },
-  coarse: { label: "Coarse", hint: "Joins what matches within 0.2 mm — for rough or low-detail files." },
+  fine: { label: "Fine", hint: "The triangles' corners must be within 0.01 mm of a flat or round face — for accurate files." },
+  normal: { label: "Normal", hint: "The triangles' corners must be within 0.05 mm of a flat or round face — right for most files." },
+  coarse: { label: "Coarse", hint: "The triangles' corners must be within 0.2 mm of a flat or round face — for rough or low-detail files." },
 };
 
 export const isSimplifyLevel = (v: unknown): v is SimplifyLevel => v === "fine" || v === "normal" || v === "coarse";
@@ -58,6 +58,16 @@ export interface SimplifySummary {
   fellBack?: boolean;
   /** Bodies that weren't closed, so only their flat areas were joined. */
   openBodies?: number;
+  /** Round faces that were found but couldn't be rebuilt, so they're left as facets. */
+  gaveUp?: number;
+  /** Joining faces didn't give a sound part of the same size, so nothing was changed. */
+  unchanged?: boolean;
+  /** Too detailed to tidy, so brought in as it is. */
+  tooDetailed?: boolean;
+  /** An organic shape: no flat areas or round shapes to tidy, so only what's exactly in line was joined. */
+  nothingFound?: boolean;
+  /** Something went wrong while tidying, so it was brought in as it is. */
+  failed?: boolean;
 }
 
 const count = (n: number) => n.toLocaleString("en-GB");
@@ -98,8 +108,18 @@ export function simplifyReport(s: SimplifySummary): string {
   if (round.length) parts.push(`${count(round.length)} round${details.length ? ` (${details.join(", ")})` : ""}`);
   if (other) parts.push(`${count(other)} curved`);
   if (mesh) parts.push(`${count(mesh)} left as mesh`);
-  let text = `${count(s.facesBefore)} face${s.facesBefore === 1 ? "" : "s"} → ${count(after)} face${after === 1 ? "" : "s"}: ${parts.join(", ")}.`;
-  if (s.fellBack) text += " Round shapes couldn't be rebuilt safely here, so only flat areas were joined.";
-  if (s.openBodies) text += ` ${s.openBodies === 1 ? "One piece isn't" : `${s.openBodies} pieces aren't`} closed, so only its flat areas were joined.`;
+  const faces = (n: number) => `${count(n)} face${n === 1 ? "" : "s"}`;
+  if (s.tooDetailed) return `${faces(s.facesBefore)}: too detailed to tidy — brought in as it is.`;
+  if (s.failed && !s.faces.length) return "This couldn't be tidied, so it's brought in as it is.";
+  if (s.nothingFound && after >= s.facesBefore && !s.recognised) return `${faces(s.facesBefore)}: no flat areas or round shapes to tidy (an organic shape?) — brought in as it is.`;
+  if (s.unchanged && after >= s.facesBefore) return `${faces(s.facesBefore)}: joining faces wouldn't have left a sound part of the same size, so nothing was changed.`;
+  let text = `${faces(s.facesBefore)} → ${faces(after)}: ${parts.join(", ")}.`;
+  const n = s.gaveUp ?? 0;
+  if (s.nothingFound) text += " No round shapes were found (an organic shape?), so only flat areas were joined.";
+  else if (s.fellBack && n) text += ` ${n === 1 ? "One round shape" : `${count(n)} round shapes`} couldn't be rebuilt safely, so only flat areas were joined.`;
+  else if (s.fellBack) text += " Round shapes couldn't be rebuilt safely here, so only flat areas were joined.";
+  if (n && !s.fellBack) text += ` ${n === 1 ? "One round shape" : `${count(n)} round shapes`} couldn't be rebuilt, so ${n === 1 ? "it's" : "they're"} left as mesh.`;
+  if (s.unchanged) text += " Some faces were left as they were, as joining them wouldn't have left a sound part.";
+  if (s.openBodies) text += ` ${s.openBodies === 1 ? "One piece isn't" : `${s.openBodies} pieces aren't`} closed (a surface), so ${s.openBodies === 1 ? "it's" : "they're"} brought in as ${s.openBodies === 1 ? "it is" : "they are"}.`;
   return text;
 }

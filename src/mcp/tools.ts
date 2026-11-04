@@ -586,7 +586,7 @@ export const TOOLS: ToolDef[] = [
     name: "simplify_part",
     title: "Tidy a part into real faces",
     description:
-      'For a part made of triangles (an imported STL, or a STEP file made from a mesh) or one whose faces are split into pieces: finds its real flat faces, holes, fillets, cones and balls, so they can be picked, filleted and measured (a hole then measures its true diameter). Adds a "Simplify part" feature and says what it found, e.g. "4,812 faces → 38 faces: 22 flat, 12 round (holes Ø5, Ø8, fillets R2), 4 left as mesh". {"part":"Part 1","level":"normal"}; leave out "part" for the latest part. "level": "fine" (matches within 0.01 mm), "normal" (0.05 mm, the default) or "coarse" (0.2 mm, for rough files). Shapes it can\'t fit stay as small flat pieces; the part stays a sound solid.',
+      'For a part made of triangles (an imported STL, or a STEP file made from a mesh) or one whose faces are split into pieces: finds its real flat faces, holes, fillets, cones and balls, so they can be picked, filleted and measured (a hole then measures its true diameter). Adds a "Simplify part" feature and says what it found, e.g. "4,812 faces → 38 faces: 22 flat, 12 round (holes Ø5, Ø8, fillets R2), 4 left as mesh". {"part":"Part 1","level":"normal"}; leave out "part" for the latest part. "level": "fine" (the triangles' corners within 0.01 mm of a face), "normal" (0.05 mm, the default) or "coarse" (0.2 mm, for rough files); very detailed meshes (over 50,000 triangles) and organic shapes are left as they are. Shapes it can\'t fit stay as small flat pieces; the part stays a sound solid.',
     inputSchema: {
       type: "object",
       properties: {

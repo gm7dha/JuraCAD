@@ -311,30 +311,42 @@
   `simplify_part`). Levels/tolerances and the summary text (`simplifyReport`: "4,812 faces → 38 faces: 22 flat, 12 round
   (holes Ø5, Ø8, fillets R2), 4 left as mesh.") are pure in `src/model/simplify.ts`; the summary reaches the app as
   `RebuildResult.featureNotes` → `store.featureNotes` (blue `.dialog-note` in the dialog, the row's tooltip; MCP `Build.notes`).
-  Stage 1 always: `unifyShape` (ShapeUpgrade_UnifySameDomain, faces + edges + B-splines, the level's tolerances) — mends STEP
-  files with split faces. Stage 2 for faceted input (an STL; a shape whose faces are ≥ 90% flat with straight edges,
+  Stage 1 always: `checkedUnify` (ShapeUpgrade_UnifySameDomain, faces + edges + B-splines) — mends STEP files with split
+  faces. Exact (non-faceted) shapes use OpenCascade's own tight tolerances (never the level's: faces 0.86° apart are a real
+  edge); only faceted ones get the level's. Every unify is checked (BRepCheck + volume to 1e-6); a failure falls back to the
+  tight tolerances, then to the untouched input (`unchanged` in the summary: "nothing was changed"). Stage 2 for faceted input (an STL; a shape whose faces are ≥ 90% flat with straight edges,
   `isFaceted`): `planMesh` (`src/geometry/meshSimplify.ts`, pure) — triangles grouped flat (angle + distance), round faces grown
   from the biggest group over gently-turning neighbours (most shared edge first, much bigger neighbours skipped, until not flat
   within 2 × distance), fitted by `src/geometry/shapeFit.ts` (cylinder: axis from facet normals then tilted; cone: linear in
   x²+y²; sphere; torus: tube radius searched so normals step onto one spine circle) and accepted only if every corner is within
   the distance and every facet faces like the surface (`faces`, max(2 × angle, 1.5°) — what tells a fillet from the flat beside
   it); one-facet-tall rings with gentle turns beyond both ends are refused (`thinBand`); then triangles along smooth joins go to
-  the face they lie on (`triRegion`); surfaces tidied to X/Y/Z and round sizes within ≤ 0.01 mm (`tidySurface`, `snapNice`:
-  2R 4.9998 → 5); edges are chains of mesh edges between corners, each an exact line or arc (from the surfaces where possible —
+  the face they lie on (`triRegion`); surfaces tidied to X/Y/Z and round sizes only within the fit's own scatter (≥ 2 µm, ≤ half
+  the distance; `tidySurface`, `snapNice`: 2R 4.9998 → 5, but Ø5.06 stays); limits: over `MAX_TRIANGLES` (50k) or past
+  `WORK_LIMIT` (points looked at by fits — a count, not a clock) planMesh returns `TOO_DETAILED`; `FRUITLESS_SEEDS` (150)
+  failed seeds with nothing found stop the search, and nothing round + hardly any flats joined returns `NOTHING_TO_TIDY` —
+  both brought in by the ordinary import with a plain note. Growing keeps its frontier up to date as members join and checks
+  flatness every 25%; edges are chains of mesh edges between corners, each an exact line or arc (from the surfaces where possible —
   `meetCircle`: plane ⟂ axis, sphere/plane, coaxial cylinder/cone/torus; else fitted and snapped onto the axis), corners placed
   on all their surfaces (`meetPoint`) and exactly on their arcs; whole circles start at `canonicalX` (where round faces'
   seams are). A round face with an edge that's neither is given back as flat facets ("left as mesh"), and that repeats. The
-  engine (`src/kernel/simplify.ts`) builds faces with ShapeFix_Face on each surface (round bands bounded by whole circles —
+  engine (`src/kernel/simplify.ts`) builds faces with ShapeFix_Face on each surface (always on the surface's own side: a
+  reversed face's loops are walked backwards, then the face is turned round — else partial concave faces, slot ends and
+  inside fillets, never close) (round bands bounded by whole circles —
   holes, bosses, torus rings, ball caps — from parameter ranges, `bandOf`, as ShapeFix can't add their seam), sews, makes the
   solid and keeps it only if BRepCheck passes and the volume is within 2% of the mesh's; else retries flat faces only, else
   stage 1's result with "only flat areas were joined". An STL with Simplify goes mesh → solid directly (`readStlSimplified`:
-  skips making a face per triangle, the slow part); open bodies fall back to the ordinary import. A STEP file whose triangles
+  skips making a face per triangle, the slow part); open bodies, and closed ones that couldn't be rebuilt, go through the
+  ordinary import on their own (rewritten as an STL), the rest are still tidied. A throw anywhere = the ordinary import
+  ("couldn't be tidied"). Mesh faces in the summary are found by the plan's facet samples (`describeFaces(…, meshPoints)`).
+  Simplify part's cache keys imports by `importKey` and leaves names out; failures are cached too. A STEP file whose triangles
   come as a skin (no solid; brought in as a surface without Simplify) becomes a solid when they close up (`solidFromFacets`). Results are cached
   (importer: by file + level, `importCacheKey`; Simplify part: `GeometryEngine.simplified`, by the features up to it).
   Not done: ellipses (a slanted hole's rim, so slanted holes stay mesh), cylinder–cylinder crossings, partial tori, free-form
   (B-spline) surfaces. Tests: tests/shapeFit, meshSimplify (pure; meshes from tests/support/meshShapes.ts), engineSimplify
   (heavy: a machined block's STL from the app's exporter → 10 faces, Ø5/Ø8/R2 within 0.01, volume within 0.5%, fillet on a
-  recovered edge; a STEP with split faces → 6 faces, same volume; a mesh-like STEP skin → a solid; a lumpy ball stays sound), mcpSimplify.
+  recovered edge; slot ends, inside fillets and a notch; a STEP with split faces → 6 faces, same volume; a roof at 0.86° left
+  alone; a mesh-like STEP skin → a solid; a lumpy ball stays sound), mcpSimplify.
 - Mirror planes and pattern axes: `src/model/patternRefs.ts` (pure). A mirror's plane is a default plane, a Plane
   feature, a clicked flat face (`mirror.planePick`, found again on rebuild; `plane` keeps where it was when clicked) or a
   sketch line (`mirror.line`: the plane through it, square to its sketch). Patterns use X/Y/Z, a clicked edge/face

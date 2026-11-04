@@ -4,13 +4,16 @@
  * importing meshes is heavy. The fitting maths is tested without
  * OpenCascade in shapeFit.test.ts / meshSimplify.test.ts.
  */
-import { cast, getOC, makeBox, makeCylinder, makePolygon, measureVolume, type Shape3D } from "replicad";
+import { cast, draw, getOC, makeBox, makeCylinder, makePolygon, measureVolume, type Shape3D } from "replicad";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { writeBinaryStl } from "../src/geometry/stl";
 import { GeometryEngine } from "../src/kernel/engine";
 import { writeStep } from "../src/kernel/stepExport";
+import { checkedUnify } from "../src/kernel/simplify";
+import { SIMPLIFY_TOLERANCES } from "../src/model/simplify";
 import { MESH_TOLERANCES, type Feature, type ImportedFile } from "../src/model/types";
 import { feature, importFeature, loadOpenCascade, relativeError } from "./support/engineHelpers";
+import { lumpyBall } from "./support/meshShapes";
 
 beforeAll(loadOpenCascade);
 
@@ -176,25 +179,7 @@ describe("Simplify on import", () => {
   });
 
   it("copes with an organic mesh: nothing fits, but it comes in whole and sound", () => {
-    // A lumpy ball.
-    const N = 12;
-    const M = 18;
-    const vertices: number[] = [];
-    const triangles: number[] = [];
-    for (let i = 0; i <= N; i++)
-      for (let j = 0; j < M; j++) {
-        if ((i === 0 || i === N) && j > 0) continue;
-        const th = (Math.PI * i) / N;
-        const ph = (2 * Math.PI * j) / M;
-        const r = 10 + 2 * Math.sin(3 * th) * Math.cos(2 * ph) + ((i * 7 + j * 13) % 5) * 0.1;
-        vertices.push(r * Math.sin(th) * Math.cos(ph), r * Math.sin(th) * Math.sin(ph), r * Math.cos(th));
-      }
-    const at = (i: number, j: number) => (i === 0 ? 0 : i === N ? 1 + (N - 1) * M : 1 + (i - 1) * M + (j % M));
-    for (let i = 0; i < N; i++)
-      for (let j = 0; j < M; j++) {
-        if (i > 0) triangles.push(at(i, j), at(i + 1, j), at(i, j + 1));
-        if (i < N - 1) triangles.push(at(i, j + 1), at(i + 1, j), at(i + 1, j + 1));
-      }
+    const { vertices, triangles } = lumpyBall(12, 18);
     const file: ImportedFile = { fileName: "blob.stl", format: "stl", data: base64(new Uint8Array(writeBinaryStl([{ vertices, triangles }]))), units: "mm" };
     const imp = { ...importFeature(file), simplify: "normal" as const };
     const r = build([imp]);
@@ -203,7 +188,83 @@ describe("Simplify on import", () => {
     const check = engine.check("normal");
     expect(check.parts[0].geometryValid).toBe(true);
     expect(check.parts[0].exactVolume!).toBeGreaterThan(3000);
-    expect(r.featureNotes?.[imp.id]).toMatch(/left as mesh/);
+    expect(r.featureNotes?.[imp.id]).toMatch(/left as mesh|organic shape/);
+  });
+});
+
+/** What a simplified import of a part's STL gives: round faces' radii, soundness, volume and the note. */
+function simplifiedStl(shape: Shape3D) {
+  const file = stlFromApp(shape);
+  const imp = { ...importFeature(file), simplify: "normal" as const };
+  const r = build([imp]);
+  const check = engine.check("normal").parts[0];
+  const radii = cylinderFaces(r)
+    .map((ref) => engine.measure([{ partId: r.parts[0].id, ref }]).items[0].radius ?? 0)
+    .sort((a, b) => a - b);
+  return { r, check, radii, faces: r.parts[0].faceGroups.length, note: r.featureNotes?.[imp.id] ?? "" };
+}
+
+describe("round faces that curve inwards part of the way round", () => {
+  it("rebuilds a slot's round ends", () => {
+    let s: Shape3D = makeBox([0, 0, 0], [40, 20, 6]);
+    s = s.cut(makeBox([12, 8, -1], [27, 12, 7])).cut(makeCylinder(2, 10, [12, 10, -2], [0, 0, 1])).cut(makeCylinder(2, 10, [27, 10, -2], [0, 0, 1]));
+    const { check, radii, faces } = simplifiedStl(s);
+    expect(faces).toBe(10);
+    expect(radii.map((x) => Math.round(x * 1000) / 1000)).toEqual([2, 2]);
+    expect(check.geometryValid).toBe(true);
+    expect(relativeError(check.exactVolume!, measureVolume(s))).toBeLessThan(0.005);
+  });
+
+  it("rebuilds an inside fillet (and an outside one)", () => {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    let s: Shape3D = makeBox([0, 0, 0], [40, 30, 4]).fuse(makeBox([0, 0, 0], [4, 30, 25]));
+    const on = (e: any, x: number, z: number) => [e.startPoint, e.endPoint].every((p: any) => Math.abs(p.x - x) < 1e-6 && Math.abs(p.z - z) < 1e-6);
+    s = s.fillet((e: any) => (on(e, 4, 4) ? 3 : null));
+    s = s.fillet((e: any) => (on(e, 40, 4) ? 1 : null));
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+    const { check, radii, faces, note } = simplifiedStl(s);
+    expect(faces).toBe(10);
+    expect(radii.map((x) => Math.round(x * 1000) / 1000)).toEqual([1, 3]);
+    expect(check.geometryValid).toBe(true);
+    expect(note).toMatch(/fillets R1, R3/);
+  });
+
+  it("rebuilds a round notch in an edge", () => {
+    const s = makeBox([0, 0, 0], [30, 20, 8]).cut(makeCylinder(3, 20, [15, 0, -5], [0, 0, 1]));
+    const { check, radii, faces } = simplifiedStl(s);
+    // (The front face is in two pieces, either side of the notch.)
+    expect(faces).toBe(8);
+    expect(radii.map((x) => Math.round(x * 1000) / 1000)).toEqual([3]);
+    expect(check.geometryValid).toBe(true);
+    expect(relativeError(check.exactVolume!, measureVolume(s))).toBeLessThan(0.005);
+  });
+});
+
+describe("joining faces is checked", () => {
+  it("never joins an exact STEP file's faces that are really at an angle", () => {
+    // A roof whose two halves meet at 0.86° (within Coarse's angle, but a real edge).
+    const roof = draw([0, 0]).lineTo([40, 0]).lineTo([40, 10]).lineTo([20, 10.15]).lineTo([0, 10]).close().sketchOnPlane("XZ").extrude(-20) as unknown as Shape3D;
+    const volume = measureVolume(roof);
+    for (const level of ["normal", "coarse"] as const) {
+      const imp = { ...importFeature(stepOf(roof)), simplify: level };
+      const r = build([imp]);
+      expect(r.parts[0].faceGroups).toHaveLength(7);
+      const check = engine.check("normal").parts[0];
+      expect(check.geometryValid).toBe(true);
+      expect(relativeError(check.exactVolume!, volume)).toBeLessThan(1e-9);
+    }
+  });
+
+  it("keeps the part as it was when joining would spoil it", () => {
+    // A slot's STL as an ordinary import (every facet a face), joined with tolerances far too loose: refused.
+    const r = build([importFeature(stlFromApp(makeBox([0, 0, 0], [40, 20, 6]).cut(makeCylinder(3, 10, [20, 10, -2], [0, 0, 1]))))]);
+    const shape = (engine as unknown as { parts: { shape: Shape3D }[] }).parts[0].shape;
+    const loose = { ...SIMPLIFY_TOLERANCES.coarse, distance: 3, angle: Math.PI / 4 };
+    const out = checkedUnify(shape, loose);
+    // Either OpenCascade's own tight tolerances joined only what's truly flat, or it's left as it was — but it's sound and the same size.
+    expect(relativeError(measureVolume(out.shape), measureVolume(shape))).toBeLessThan(1e-6);
+    expect(r.parts[0].faceGroups.length).toBeGreaterThan(20);
+    out.shape.delete();
   });
 });
 

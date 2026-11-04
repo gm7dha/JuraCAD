@@ -13,7 +13,7 @@
  */
 import { cast, getOC, measureVolume, type Shape3D } from "replicad";
 
-import { planMesh, type MeshPlan, type PlanCurve } from "../geometry/meshSimplify";
+import { NOTHING_TO_TIDY, planMesh, TOO_DETAILED, type MeshPlan, type PlanCurve, type PlanOptions } from "../geometry/meshSimplify";
 import { canonicalX, dot, frameOf, sub, surfaceDistance, unit, type TorusSurface, type Vec3 } from "../geometry/shapeFit";
 import { weld } from "../geometry/threeMf";
 import { SIMPLIFY_TOLERANCES, type SimplifiedFace, type SimplifyLevel, type SimplifySummary, type SimplifyTolerances } from "../model/simplify";
@@ -40,18 +40,77 @@ class Bin {
   }
 }
 
-/** Stage 1: faces on the same surface and edges on the same curve joined. A new shape (the input is left alone). */
-export function unifyShape(shape: Shape3D, tol: SimplifyTolerances): Shape3D {
+/**
+ * Faces on the same surface and edges on the same curve joined (OpenCascade's
+ * UnifySameDomain). `tol` loosens it to the level's tolerances — only for
+ * shapes made of facets, whose flat pieces are only nearly in line; exact
+ * shapes use OpenCascade's own tight tolerances, so faces that really are at
+ * an angle are never joined. A new shape (the input is left alone).
+ */
+export function unifyShape(shape: Shape3D, tol?: SimplifyTolerances): Shape3D {
   const oc = getOC() as any;
   const unify = new oc.ShapeUpgrade_UnifySameDomain(shape.wrapped, true, true, true);
   try {
-    unify.SetLinearTolerance(tol.distance);
-    unify.SetAngularTolerance(tol.angle);
+    if (tol) {
+      unify.SetLinearTolerance(tol.distance);
+      unify.SetAngularTolerance(tol.angle);
+    }
     unify.Build();
     return cast(unify.Shape()) as Shape3D;
   } finally {
     unify.delete();
   }
+}
+
+/** Whether a shape passes OpenCascade's check. */
+function soundShape(shape: Shape3D): boolean {
+  const oc = getOC() as any;
+  try {
+    const check = new oc.BRepCheck_Analyzer(shape.wrapped, true, false, false);
+    const ok = check.IsValid();
+    check.delete();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+const volumeOf = (shape: Shape3D): number | null => {
+  try {
+    const v = measureVolume(shape);
+    return Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * unifyShape, checked: the result is kept only if it's sound and holds the
+ * same volume (to 1 part in a million; a surface has none, so only soundness
+ * counts). Otherwise a copy of the input comes back, with `ok` false.
+ */
+export function checkedUnify(shape: Shape3D, tol?: SimplifyTolerances): { shape: Shape3D; ok: boolean } {
+  const solid = solidsOf(shape);
+  const isSolid = solid.length > 0;
+  solid.forEach((x) => x.delete());
+  const before = isSolid ? volumeOf(shape) : null;
+  let out: Shape3D | null = null;
+  try {
+    out = unifyShape(shape, tol);
+    const after = isSolid ? volumeOf(out) : null;
+    const same = !isSolid || (before !== null && after !== null && Math.abs(after - before) <= 1e-6 * Math.abs(before) + 1e-6);
+    if (same && soundShape(out)) return { shape: out, ok: true };
+  } catch {
+    /* fall through */
+  }
+  out?.delete();
+  // Loosened tolerances (facets) failing, OpenCascade's own may still join something safely.
+  if (tol) {
+    const strict = checkedUnify(shape);
+    if (strict.ok) return strict;
+    strict.shape.delete();
+  }
+  return { shape: shape.clone(), ok: false };
 }
 
 /**
@@ -204,8 +263,10 @@ export function solidFromPlan(plan: MeshPlan, tol: SimplifyTolerances): Shape3D 
       }
       const surface = surfaceOf(bin, face.surface);
       const fix = bin.keep(new oc.ShapeFix_Face());
-      fix.Init(surface, 1e-6, face.forward);
-      for (const loop of face.loops) {
+      // Built on the surface's own side (ShapeFix_Face can't close a reversed face's loops), then turned round.
+      fix.Init(surface, 1e-6, true);
+      for (const loop0 of face.loops) {
+        const loop = face.forward ? loop0 : [...loop0].reverse().map((u) => ({ ...u, reversed: !u.reversed }));
         const mk = bin.keep(new oc.BRepBuilderAPI_MakeWire());
         for (const use of loop) {
           const e = use.reversed ? bin.keep(oc.TopoDS.Edge(edges[use.curve].Reversed())) : edges[use.curve];
@@ -216,7 +277,7 @@ export function solidFromPlan(plan: MeshPlan, tol: SimplifyTolerances): Shape3D 
       }
       fix.Perform();
       const res = bin.keep(fix.Result());
-      sewing.Add(res);
+      sewing.Add(face.forward ? res : bin.keep(res.Reversed()));
     }
     sewing.Perform();
     const sewn = cast(sewing.SewedShape()) as Shape3D;
@@ -264,7 +325,7 @@ export function solidFromPlan(plan: MeshPlan, tol: SimplifyTolerances): Shape3D 
 }
 
 /** What each face of a shape is, for the summary. */
-export function describeFaces(shape: Shape3D, meshFaces = 0, tori: TorusSurface[] = []): SimplifiedFace[] {
+export function describeFaces(shape: Shape3D, meshPoints: Vec3[] = [], tori: TorusSurface[] = []): SimplifiedFace[] {
   const oc = getOC() as any;
   const T = oc.GeomAbs_SurfaceType;
   const out: SimplifiedFace[] = [];
@@ -274,7 +335,21 @@ export function describeFaces(shape: Shape3D, meshFaces = 0, tori: TorusSurface[
     try {
       const type = s.GetType();
       if (type === T.GeomAbs_Plane) {
-        out.push({ kind: "plane" });
+        // Left as facets when one of the plan's facet faces lies on it (its plane, inside its box).
+        let mesh = false;
+        if (meshPoints.length) {
+          const pl = s.Plane();
+          const loc = pl.Location();
+          const ax = pl.Axis();
+          const d = ax.Direction();
+          const o: Vec3 = [loc.X(), loc.Y(), loc.Z()];
+          const n: Vec3 = [d.X(), d.Y(), d.Z()];
+          [d, ax, loc, pl].forEach((x) => x.delete());
+          const box = f.boundingBox.bounds;
+          const e = 1e-3;
+          mesh = meshPoints.some((p) => Math.abs(dot(sub(p, o), n)) < e && [0, 1, 2].every((k) => p[k] >= box[0][k] - e && p[k] <= box[1][k] + e));
+        }
+        out.push(mesh ? { kind: "plane", mesh: true } : { kind: "plane" });
         continue;
       }
       const kind: SimplifiedFace["kind"] = type === T.GeomAbs_Cylinder ? "cylinder" : type === T.GeomAbs_Cone ? "cone" : type === T.GeomAbs_Sphere ? "sphere" : type === T.GeomAbs_Torus ? "torus" : "other";
@@ -341,15 +416,6 @@ export function describeFaces(shape: Shape3D, meshFaces = 0, tori: TorusSurface[
     }
   }
   faces.forEach((f) => f.delete());
-  // Faces left as triangles: flat ones, the last `meshFaces` of them counted as mesh.
-  let left = meshFaces;
-  for (const f of out) {
-    if (left <= 0) break;
-    if (f.kind === "plane" && !f.mesh) {
-      f.mesh = true;
-      left--;
-    }
-  }
   return out;
 }
 
@@ -365,15 +431,39 @@ export interface Simplified {
 }
 
 /** A closed welded triangle mesh as a solid of exact faces, or a reason it couldn't be. */
-export function solidFromMesh(vertices: ArrayLike<number>, triangles: ArrayLike<number>, tol: SimplifyTolerances): { shape: Shape3D; meshFaces: number; flatOnly: boolean; tori: TorusSurface[] } | string {
+export interface MeshSolid {
+  shape: Shape3D;
+  /** Where the faces left as facets are (a point on each). */
+  meshPoints: Vec3[];
+  /** Round faces were looked for but none could be kept (only flat faces were rebuilt). */
+  flatOnly: boolean;
+  /** Round faces found but given back as facets. */
+  gaveUp: number;
+  tori: TorusSurface[];
+}
+
+/** A closed welded triangle mesh as a solid of exact faces, or a reason it couldn't be (TOO_DETAILED, NOTHING_TO_TIDY…). */
+export function solidFromMesh(vertices: ArrayLike<number>, triangles: ArrayLike<number>, tol: SimplifyTolerances, options: PlanOptions = {}): MeshSolid | string {
   let reason = "";
+  let gaveUp = 0;
   // With round faces first; if that doesn't give a sound solid, flat faces only (always possible for a sound mesh).
   for (const flatOnly of [false, true]) {
-    const plan = planMesh(vertices, triangles, tol, { flatOnly });
+    const plan = planMesh(vertices, triangles, tol, { ...options, flatOnly });
     if (typeof plan === "string") return plan;
+    if (!flatOnly) gaveUp = plan.faces.filter((f) => f.surface.kind !== "plane").length;
     const solid = solidFromPlan(plan, tol);
-    if (typeof solid !== "string")
-      return { shape: solid, meshFaces: plan.faces.filter((f) => f.mesh).length, flatOnly, tori: plan.faces.flatMap((f) => (f.surface.kind === "torus" ? [f.surface] : [])) };
+    if (typeof solid !== "string") {
+      // The flat pieces nothing simpler fitted; tidied with OpenCascade's own tolerances (only what's truly in line), checked.
+      const tidy = checkedUnify(solid);
+      solid.delete();
+      return {
+        shape: tidy.shape,
+        meshPoints: plan.faces.filter((f) => f.mesh).map((f) => f.sample),
+        flatOnly,
+        gaveUp: flatOnly ? gaveUp : plan.gaveUp,
+        tori: plan.faces.flatMap((f) => (f.surface.kind === "torus" ? [f.surface] : [])),
+      };
+    }
     reason = solid;
   }
   return reason;
@@ -385,6 +475,17 @@ function trianglesOf(shape: Shape3D): { vertices: number[]; triangles: number[] 
   return weld(m.vertices, m.triangles);
 }
 
+/** The summary for a solid rebuilt from a mesh. */
+export function meshSummary(facesBefore: number, r: MeshSolid): SimplifySummary {
+  return {
+    facesBefore,
+    faces: describeFaces(r.shape, r.meshPoints, r.tori),
+    recognised: !r.flatOnly,
+    ...(r.flatOnly ? { fellBack: true } : {}),
+    ...(r.gaveUp ? { gaveUp: r.gaveUp } : {}),
+  };
+}
+
 /** A faceted skin (a STEP file's triangles not made into a solid) as a solid of real faces, if it closes up. */
 export function solidFromFacets(shape: Shape3D, level: SimplifyLevel): Simplified | null {
   if (!isFaceted(shape)) return null;
@@ -393,34 +494,38 @@ export function solidFromFacets(shape: Shape3D, level: SimplifyLevel): Simplifie
   const mesh = trianglesOf(shape);
   const rebuilt = solidFromMesh(mesh.vertices, mesh.triangles, tol);
   if (typeof rebuilt === "string") return null;
-  const tidy = unifyShape(rebuilt.shape, tol);
-  rebuilt.shape.delete();
-  return { shape: tidy, summary: { facesBefore: before, faces: describeFaces(tidy, rebuilt.meshFaces, rebuilt.tori), recognised: !rebuilt.flatOnly } };
+  return { shape: rebuilt.shape, summary: meshSummary(before, rebuilt) };
+}
+
+/** Stage 1 alone (faceted shapes with the level's tolerances, exact ones with OpenCascade's own), with its summary. */
+function joinedOnly(shape: Shape3D, before: number, tol: SimplifyTolerances | undefined, extra: Partial<SimplifySummary>): Simplified {
+  const joined = checkedUnify(shape, tol);
+  return {
+    shape: joined.shape,
+    summary: { facesBefore: before, faces: describeFaces(joined.shape), recognised: false, ...extra, ...(joined.ok ? {} : { unchanged: true }) },
+  };
 }
 
 /**
  * Simplify one solid (or surface): stage 1 always, and for one made of
  * triangles stage 2 as well. The input is left alone; the result is new.
+ * Every step is checked: what isn't sound (or changes the volume) isn't kept.
  */
-export function simplifyShape(shape: Shape3D, level: SimplifyLevel): Simplified {
+export function simplifyShape(shape: Shape3D, level: SimplifyLevel, options: PlanOptions = {}): Simplified {
   const tol = SIMPLIFY_TOLERANCES[level];
   const before = faceCount(shape);
   const solids = solidsOf(shape);
   const solid = solids.length === 1;
   solids.forEach((s) => s.delete());
-  if (solid && isFaceted(shape)) {
+  const faceted = isFaceted(shape);
+  if (solid && faceted) {
     const mesh = trianglesOf(shape);
-    const rebuilt = solidFromMesh(mesh.vertices, mesh.triangles, tol);
-    if (typeof rebuilt !== "string") {
-      const tidy = unifyShape(rebuilt.shape, tol);
-      rebuilt.shape.delete();
-      return { shape: tidy, summary: { facesBefore: before, faces: describeFaces(tidy, rebuilt.meshFaces, rebuilt.tori), recognised: !rebuilt.flatOnly } };
-    }
-    const joined = unifyShape(shape, tol);
-    return { shape: joined, summary: { facesBefore: before, faces: describeFaces(joined), recognised: false, fellBack: true } };
+    const rebuilt = solidFromMesh(mesh.vertices, mesh.triangles, tol, options);
+    if (typeof rebuilt !== "string") return { shape: rebuilt.shape, summary: meshSummary(before, rebuilt) };
+    if (rebuilt === TOO_DETAILED) return { shape: shape.clone(), summary: { facesBefore: before, faces: describeFaces(shape), recognised: false, tooDetailed: true } };
+    return joinedOnly(shape, before, tol, rebuilt === NOTHING_TO_TIDY ? { nothingFound: true } : { fellBack: true });
   }
-  const joined = unifyShape(shape, tol);
-  return { shape: joined, summary: { facesBefore: before, faces: describeFaces(joined), recognised: false } };
+  return joinedOnly(shape, before, faceted ? tol : undefined, {});
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

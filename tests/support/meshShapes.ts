@@ -24,15 +24,15 @@ export class MeshBuilder {
 }
 
 /** A washer: outside Ø20, hole Ø8, 3 thick, faceted with `n` sides (corners moved by up to `wobble`). */
-export function washer(n = 48, wobble = 0): MeshBuilder {
+export function washer(n = 48, wobble = 0, hole = 4): MeshBuilder {
   const m = new MeshBuilder();
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 2 * wobble;
   const ring = (r: number, z: number) => Array.from({ length: n }, (_, i) => m.point([r * Math.cos((2 * Math.PI * i) / n) + rnd(), r * Math.sin((2 * Math.PI * i) / n) + rnd(), z]));
   const ot = ring(10, 3);
   const ob = ring(10, 0);
-  const it = ring(4, 3);
-  const ib = ring(4, 0);
+  const it = ring(hole, 3);
+  const ib = ring(hole, 0);
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
     const a = (2 * Math.PI * (i + 0.5)) / n;
@@ -51,4 +51,25 @@ export function base64(bytes: Uint8Array): string {
   let s = "";
   for (const x of bytes) s += String.fromCharCode(x);
   return btoa(s);
+}
+
+/** A lumpy ball of about 2 × n × m triangles (nothing in it is flat or round). */
+export function lumpyBall(n: number, m: number): { vertices: number[]; triangles: number[] } {
+  const vertices: number[] = [];
+  const triangles: number[] = [];
+  for (let i = 0; i <= n; i++)
+    for (let j = 0; j < m; j++) {
+      if ((i === 0 || i === n) && j > 0) continue;
+      const th = (Math.PI * i) / n;
+      const ph = (2 * Math.PI * j) / m;
+      const r = 10 + 2 * Math.sin(3 * th) * Math.cos(2 * ph) + ((i * 7 + j * 13) % 5) * 0.1;
+      vertices.push(r * Math.sin(th) * Math.cos(ph), r * Math.sin(th) * Math.sin(ph), r * Math.cos(th));
+    }
+  const at = (i: number, j: number) => (i === 0 ? 0 : i === n ? 1 + (n - 1) * m : 1 + (i - 1) * m + (j % m));
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < m; j++) {
+      if (i > 0) triangles.push(at(i, j), at(i + 1, j), at(i, j + 1));
+      if (i < n - 1) triangles.push(at(i, j + 1), at(i + 1, j), at(i + 1, j + 1));
+    }
+  return { vertices, triangles };
 }
