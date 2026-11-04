@@ -90,8 +90,11 @@ export interface Side {
 
 export type SideSpec =
   | { kind: "plain" }
-  /** Fingers along the whole length; `ownsEnds`: this panel has the end fingers (and the even-numbered ones). */
-  | { kind: "full"; length: Ex; count: number; ownsEnds: boolean }
+  /**
+   * Fingers along the whole length; `ownsEnds`: this panel has the end fingers (and the even-numbered ones). With
+   * `upTo`, the fingers only go that far along it and the last piece carries on to the end (a wall meeting a lower one).
+   */
+  | { kind: "full"; length: Ex; count: number; ownsEnds: boolean; upTo?: Ex }
   /** Fingers between the corner panels, t in from each end. */
   | { kind: "inner"; length: Ex; t: Ex; count: number; ownsEnds: boolean };
 
@@ -101,7 +104,7 @@ export function sideOf(spec: SideSpec): Side {
   const inset = Array.from({ length: n }, (_, i) => (i % 2 === 0) !== spec.ownsEnds);
   const breaks: Ex[] = [];
   for (let i = 1; i < n; i++) {
-    breaks.push(spec.kind === "full" ? fraction(spec.length, i, n) : plus(spec.t, fraction(minus(spec.length, times(spec.t, 2)), i, n)));
+    breaks.push(spec.kind === "full" ? fraction(spec.upTo ?? spec.length, i, n) : plus(spec.t, fraction(minus(spec.length, times(spec.t, 2)), i, n)));
   }
   return { breaks, inset };
 }

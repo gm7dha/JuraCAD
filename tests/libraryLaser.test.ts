@@ -380,10 +380,11 @@ describe("laser designs' maths", () => {
 
   it("the laser tab is grouped under headings", () => {
     expect(designGroups("laser").map((g) => [g.group, g.designs.map((d) => d.id)])).toEqual([
-      ["Boxes and stands", ["finger-box", "flat-stand"]],
+      ["Boxes and stands", ["finger-box", "flat-stand", "sliding-lid-box", "divider-tray", "bookend"]],
       ["Signs and stamps", ["stencil", "rubber-stamp", "name-tag"]],
-      ["Home", ["coaster", "picture-frame"]],
+      ["Home", ["coaster", "picture-frame", "clock-face", "cord-winder", "tealight"]],
       ["Workshop", ["living-hinge", "gear", "ruler"]],
+      ["Toys and gifts", ["jigsaw", "ornament"]],
     ]);
     // Every 3D printing design has a heading too (the printed stamp is under Household).
     expect(designGroups("print").every((g) => g.group !== null)).toBe(true);

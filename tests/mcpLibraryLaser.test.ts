@@ -80,4 +80,23 @@ describe("laser library designs for Claude", () => {
     const plain = await call(s, "export_for_laser", { sketch: "Stamp sketch", background: false, filename: "plain" });
     expect(plain.text).toMatch(/inner cut/);
   });
+
+  it("insert a jigsaw puzzle with its own pattern number, and export its cuts: blue between the pieces, a red border", async () => {
+    const { s, folder } = newSession();
+    const r = await call(s, "insert_library_design", { design: "jigsaw", sizes: { width: 120, height: 90, rows: 3, columns: 4, seed: 12 } });
+    expect(r.error).toBe(false);
+    expect(r.text).toMatch(/12 pieces/);
+    const out = await call(s, "export_for_laser", { sketch: "Puzzle sketch", filename: "puzzle" });
+    expect(out.error).toBe(false);
+    expect(out.text).toMatch(/1 outer cut/);
+    const svg = readFileSync(join(folder, "puzzle.svg"), "utf8");
+    expect(svg).toContain('width="120mm" height="90mm"');
+    expect(svg).toContain("#0000FF");
+    expect(svg).toContain("#FF0000");
+    // The same number again gives the very same cuts.
+    const again = newSession();
+    await call(again.s, "insert_library_design", { design: "jigsaw", sizes: { width: 120, height: 90, rows: 3, columns: 4, seed: 12 } });
+    await call(again.s, "export_for_laser", { sketch: "Puzzle sketch", filename: "puzzle" });
+    expect(readFileSync(join(again.folder, "puzzle.svg"), "utf8")).toBe(svg);
+  });
 });
