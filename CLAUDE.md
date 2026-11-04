@@ -587,6 +587,11 @@
   at the end of styles.css (44 px targets, eye/row buttons always shown, 16 px inputs so Safari doesn't zoom into them, no
   callout/text selection); feature rows aren't HTML-draggable there (Move up/down in their menu instead). Tests: tests/gestures.test.ts,
   tests/zoomGuard.test.ts, tests/touchCompat.test.ts, tests/sketchTouchStroke.test.ts (cancelStroke after a drag began); the smoke test's touch section. Only a real iPad can confirm Safari's own touch quirks.
+- **Laser designs are shared with JuraCUT** (github.com/gm7dha/JuraCUT, the owner's laser design-and-cut app; the owner's
+  standing wish): every laser design here (`category: "laser"`) has a JuraCUT twin with the same id, name, heading, icon,
+  inputs and maths (JuraCUT's `src/library/`, numbers instead of `Ex`, flat Items instead of sketches). When a laser design is
+  added or changed here, port it to JuraCUT in the same session if it's attached (add_repo gm7dha/JuraCUT), else say that
+  JuraCUT needs it. JuraCUT's tests/library.test.ts lists the ids it must have.
 - Design library (Onshape-style configurable library parts): `src/library/` (pure). `insert.ts` has `LIBRARY` (`designs/*.ts`) in two
   sections, `LibraryDesign.category` "laser" (Laser cutting: finger-joint box, flat-pack phone stand, and `designs/laserSet.ts`'s
   stencil, rubber stamp, name/key tag, coasters, picture frame, living-hinge panel, gear, ruler, then `designs/laserSet3.ts`'s
