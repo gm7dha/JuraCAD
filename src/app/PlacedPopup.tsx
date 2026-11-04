@@ -16,6 +16,7 @@ export function PlacedPopup({
   role,
   label,
   children,
+  focusFirst,
 }: {
   /** Where it opens from (window pixels), worked out again when the window changes. */
   anchor: () => Box | null;
@@ -26,6 +27,8 @@ export function PlacedPopup({
   role: "dialog" | "menu";
   label: string;
   children: ReactNode;
+  /** Put the keyboard in it when it opens: on its chosen item (`.selected`, `[aria-checked="true"]`), else its first button. */
+  focusFirst?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState<PopupPlace | null>(null);
@@ -45,6 +48,16 @@ export function PlacedPopup({
   }, []);
 
   useLayoutEffect(replace, [replace]);
+
+  // Once it's in its place (so nothing scrolls to reach it).
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focusFirst || !place || focused.current) return;
+    focused.current = true;
+    const el = ref.current;
+    const target = el?.querySelector<HTMLElement>('.selected, [aria-checked="true"]') ?? el?.querySelector<HTMLElement>("button:not(:disabled)");
+    target?.focus({ preventScroll: true });
+  }, [focusFirst, place]);
 
   useEffect(() => {
     const away = (e: PointerEvent) => {

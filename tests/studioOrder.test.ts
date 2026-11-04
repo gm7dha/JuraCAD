@@ -4,6 +4,8 @@ import { addAssembly, insertInstance, putMate } from "../src/assembly/assembly";
 import { addDrawing } from "../src/drawing/drawing";
 import { addFeature, createFeature, emptyDocument, parseDocument } from "../src/model/document";
 import { readDocumentFile, serializeDocument } from "../src/model/fileFormat";
+import { packDesign, unpackDesign } from "../src/model/versions";
+import { compareDesigns } from "../src/model/versionCompare";
 import {
   addStudio,
   firstStudioId,
@@ -88,6 +90,14 @@ describe("moving Part Studio tabs", () => {
     expect(studiosOf(moveStudio(doc, MAIN_STUDIO, 99)).map((s) => s.id)).toEqual(["s2", "s3", MAIN_STUDIO]);
   });
 
+  it("says when the tabs were reordered, comparing versions", () => {
+    const { doc } = threeStudios();
+    expect(compareDesigns(doc, moveStudio(doc, "s3", 0)).other).toContain("Part Studio tabs reordered");
+    expect(compareDesigns(doc, doc).other).not.toContain("Part Studio tabs reordered");
+    // Deleting one isn't a reorder.
+    expect(compareDesigns(doc, removeStudio(doc, "s2")).other).toEqual(['Part Studio "Part Studio 2" removed']);
+  });
+
   it("leaves a document that was never reordered exactly as it was (and its file byte for byte)", () => {
     const { doc } = threeStudios();
     expect(withStudios(doc, studiosOf(doc))).toEqual(doc);
@@ -115,6 +125,39 @@ describe("moving Part Studio tabs", () => {
     const f = { ...createFeature(emptyDocument(), "box"), id: "x1" };
     const clash = parseDocument({ format: "partsmith", version: 1, name: "x", studioId: "s3", features: [], partStudios: [{ id: "s3", name: "B", features: [f] }, { id: MAIN_STUDIO, name: "A", features: [] }] });
     expect(clash?.partStudios?.map((s) => s.id)).toEqual([MAIN_STUDIO]);
+  });
+});
+
+describe("older JuraCADs and a reordered file", () => {
+  it("saves a reordered design as format version 2, which a version-1-only reader refuses (rather than losing a studio)", () => {
+    const { doc } = threeStudios();
+    expect(JSON.parse(serializeDocument(doc, AT)).version).toBe(1);
+    const moved = moveStudio(doc, "s3", 0);
+    const text = serializeDocument(moved, AT);
+    expect(JSON.parse(text).version).toBe(2);
+    // What JuraCAD and the extension did before this: refuse anything above version 1.
+    const oldReader = (t: string) => {
+      const d = JSON.parse(t);
+      if (typeof d.version === "number" && d.version > 1) return "newer version";
+      return parseDocument(d) ? "opened" : "damaged";
+    };
+    expect(oldReader(text)).toBe("newer version");
+    expect(oldReader(serializeDocument(doc, AT))).toBe("opened");
+    // Moved back: version 1 again, byte for byte.
+    expect(serializeDocument(moveStudio(moved, "s3", 2), AT)).toBe(serializeDocument(doc, AT));
+    // This version reads both, and refuses anything newer still.
+    expect(readDocumentFile(text).ok).toBe(true);
+    expect(readDocumentFile(text.replace('"version": 2', '"version": 3')).ok).toBe(false);
+  });
+
+  it("keeps a reordered design's saved version as format version 2 too", async () => {
+    const { doc } = threeStudios();
+    const moved = moveStudio(doc, "s3", 0);
+    const packed = await packDesign(moved, false);
+    expect(JSON.parse(packed.slice(5)).version).toBe(2);
+    expect(JSON.parse((await packDesign(doc, false)).slice(5)).version).toBe(1);
+    const back = await unpackDesign(packed);
+    expect(back.ok && studiosOf(back.doc).map((s) => s.id)).toEqual(["s3", MAIN_STUDIO, "s2"]);
   });
 });
 
@@ -169,19 +212,23 @@ describe("deleting Part Studios", () => {
     d = putMate(d, "a1", mate);
     // An assembly using a1 as a sub-assembly, mated to the deleted part inside it.
     d = addAssembly(d, "a2");
-    d = { ...d, assemblies: d.assemblies!.map((a) => (a.id === "a2" ? { ...a, instances: [{ id: "j1", partId: "", subAssembly: "a1", name: "Assembly 1 <1>", placement: d.assemblies![0].instances[0].placement, fixed: true }, { id: "j2", partId: boxes.s3.id, name: "Part 3 <1>", placement: d.assemblies![0].instances[0].placement, fixed: false }], mates: [{ ...mate, id: "m2", a: { instanceId: "j1", path: ["i1"], pick: {} }, b: { instanceId: "j2", pick: {} } } as unknown as Mate] } : a)) };
+    d = { ...d, assemblies: d.assemblies!.map((a) => (a.id === "a2" ? { ...a, instances: [{ id: "j1", partId: "", subAssembly: "a1", name: "Assembly 1 <1>", placement: d.assemblies![0].instances[0].placement, fixed: true }, { id: "j2", partId: boxes.s3.id, name: "Part 3 <1>", placement: d.assemblies![0].instances[0].placement, fixed: false }], mates: [{ ...mate, id: "m2", a: { instanceId: "j1", path: ["i1"], pick: {} }, b: { instanceId: "j2", pick: {} } } as unknown as Mate, { ...mate, id: "m3", a: { instanceId: "j1", path: ["i2"], pick: {} }, b: { instanceId: "j2", pick: {} } } as unknown as Mate] } : a)) };
     d = addDrawing(d, "d1", { kind: "part", id: boxes.s2.id });
     d = addDrawing(d, "d2", { kind: "part", id: boxes.s3.id });
     const derived: Feature = { ...createFeature(studioView(d, "s3"), "derived"), derived: { studioId: "s2", partId: boxes.s2.id } };
     d = inStudio(d, "s3", (v) => addFeature(v, derived));
 
     const users = studioUsers(d, "s2");
-    expect(users.assemblies).toEqual([{ id: "a1", name: d.assemblies![0].name, copies: 2 }]);
+    expect(users.assemblies).toEqual([
+      { id: "a1", name: d.assemblies![0].name, copies: 2, mates: 0 },
+      { id: "a2", name: d.assemblies![1].name, copies: 0, mates: 1 },
+    ]);
     expect(users.drawings.map((x) => x.id)).toEqual(["d1"]);
     expect(users.derived).toEqual([{ studioId: "s3", studioName: "Part Studio 3", featureId: derived.id, featureName: derived.name }]);
     const question = deleteStudioQuestion(d, "s2");
     expect(question).toContain("Delete Part Studio 2?");
     expect(question).toContain("its 2 copies");
+    expect(question).toContain(`${d.assemblies![1].name}: a mate to Part Studio 2's parts inside a sub-assembly`);
     expect(question).toContain(d.drawings![0].name);
     expect(question).toContain(`"${derived.name}" in Part Studio 3`);
     expect(question).toContain("Undo brings it all back");
@@ -193,7 +240,8 @@ describe("deleting Part Studios", () => {
     expect(a1.mates).toBeUndefined();
     const a2 = out.assemblies!.find((a) => a.id === "a2")!;
     expect(a2.instances.map((i) => i.id)).toEqual(["j1", "j2"]);
-    expect(a2.mates).toBeUndefined();
+    // Only the mate reaching the deleted part inside the copy of Assembly 1 goes.
+    expect(a2.mates?.map((m) => m.id)).toEqual(["m3"]);
     // Drawings and Derived features stay (they say their part is gone; Undo brings it back).
     expect(out.drawings).toEqual(d.drawings);
     expect(studioFeatures(out, "s3").map((f) => f.id)).toContain(derived.id);
@@ -230,6 +278,10 @@ describe("placing small popups inside the window", () => {
     // Taller than the window: it scrolls inside, from the top margin.
     const tiny = placePopup({ left: 20, top: 100, right: 36, bottom: 116 }, size, { width: 800, height: 200 });
     expect(tiny).toEqual({ left: 40, top: 8, maxHeight: 184, side: "right" });
+  });
+  it("stays inside when what opened it is partly off the window", () => {
+    expect(placePopup({ left: 20, top: -30, right: 36, bottom: -10 }, size, view).top).toBe(8);
+    expect(placePopup({ left: 20, top: 900, right: 36, bottom: 920 }, size, view).top).toBe(600 - 8 - 300);
   });
   it("stays inside a narrow window", () => {
     const p = placePopup({ left: 300, top: 400, right: 316, bottom: 416 }, { width: 300, height: 300 }, { width: 320, height: 640 });

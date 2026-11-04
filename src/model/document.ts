@@ -626,11 +626,20 @@ function configurationsOf(d: Record<string, unknown>): Pick<JuraCADDocument, "co
   return { configurations, activeConfiguration: active };
 }
 
+/**
+ * The file format version a document is saved as: 2 once its Part Studio tabs
+ * were moved or its first studio deleted (`studioId` set), else 1 — so files
+ * that never used that are exactly as before, and a JuraCAD (or Claude
+ * extension) from before it refuses a version 2 file with its "newer version"
+ * message instead of opening it without one of its Part Studios.
+ */
+export const fileVersionOf = (doc: Pick<JuraCADDocument, "studioId">): 1 | 2 => (doc.studioId ? 2 : 1);
+
 export function parseDocument(data: unknown): JuraCADDocument | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
   // The format id stays "partsmith" (the app's old name), so old and new files both open.
-  if (d.format !== "partsmith" || d.version !== 1 || !Array.isArray(d.features)) return null;
+  if (d.format !== "partsmith" || (d.version !== 1 && d.version !== 2) || !Array.isArray(d.features)) return null;
   const seen = new Set<string>();
   const features = parseFeatures(d.features, seen);
   if (!features) return null;

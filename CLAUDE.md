@@ -171,7 +171,12 @@
   `deleteStudioQuestion` give the plain warning asked first. Store `movePartStudio`/`removePartStudio` (one undo step each) keep
   the studio on show by id. Assembly instances, drawings, Derived (`derived.studioId`), configurations, versions, library inserts,
   live's "studio on show" and the extension (`firstStudioId(s.doc)` for its studio view) all work by ids, so nothing is remapped.
-  Files with `studioId` need this version or later (older ones would skip the "main" entry of `partStudios`).
+  A document with `studioId` is saved as file format `version: 2` (`fileVersionOf` in document.ts; serializeDocument and
+  versions' packDesign), which older JuraCADs and extensions refuse with their "newer version" / "couldn't be read" messages
+  instead of silently dropping the "main" entry of `partStudios`; parseDocument reads 1 or 2, readDocumentFile refuses > 2;
+  everything else stays version 1, byte for byte. `partCopiesPlan` (assembly.ts) decides per assembly which copies and which
+  mates (through a sub-assembly copy, its path walked level by level) go; the delete question names both. Comparing versions
+  says "Part Studio tabs reordered". Tab drags end on Esc, window blur or a move with no button held.
   The engine (`rebuildStudios`) rebuilds only studios whose features/variables/part names changed and returns
   just their meshes; the client carries skipped results forward and the store merges by `studioId`.
 - Assemblies: `src/assembly/` — `math.ts` (placements: move + quaternion), `assembly.ts` (pure document edits, parts

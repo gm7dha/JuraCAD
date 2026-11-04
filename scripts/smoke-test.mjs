@@ -3459,6 +3459,16 @@ try {
       await tab.mouse.up();
       await expectOrder(["Part Studio 3", "Part Studio 1", "Part Studio 2"], "after dragging Part Studio 3 to the front");
       if (!(await tab.locator(".tab.active >> text=Part Studio 3").count())) throw new Error("Part Studio 3 isn't on show after dragging it");
+      // Esc part-way through a drag puts the tab back.
+      {
+        const a = await tab.getByRole("button", { name: "Part Studio 2" }).boundingBox();
+        await tab.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+        await tab.mouse.down();
+        for (let i = 1; i <= 6; i++) await tab.mouse.move(a.x + a.width / 2 - i * 40, a.y + a.height / 2);
+        await tab.keyboard.press("Escape");
+        await tab.mouse.up();
+        await expectOrder(["Part Studio 3", "Part Studio 1", "Part Studio 2"], "after Esc during a drag");
+      }
 
       step = "Part Studio tabs: Move right from the tab's menu";
       await tab.getByRole("button", { name: "Part Studio 1" }).click({ button: "right" });

@@ -233,7 +233,7 @@ function StudioTabMenu({ menu, count, disabled, onClose }: { menu: { id: string;
   );
   const st = useStore.getState();
   return (
-    <PlacedPopup className="context-menu tab-menu" role="menu" label={`${menu.name} menu`} anchor={() => ({ left: menu.x, right: menu.x, top: menu.y, bottom: menu.y })} onClose={onClose}>
+    <PlacedPopup className="context-menu tab-menu" role="menu" label={`${menu.name} menu`} anchor={() => ({ left: menu.x, right: menu.x, top: menu.y, bottom: menu.y })} onClose={onClose} focusFirst>
       {item("Rename…", menu.rename, disabled)}
       {item("Move left", () => st.movePartStudio(menu.id, at - 1), disabled || at === 0)}
       {item("Move right", () => st.movePartStudio(menu.id, at + 1), disabled || at === count - 1)}
@@ -327,9 +327,29 @@ export function BottomTabs() {
       });
     const pointerId = e.pointerId;
     setBoth({ id, pointerId, startX: e.clientX, middles, moving: false, to: studioIndex(doc, id) });
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("keydown", key, true);
+      window.removeEventListener("blur", cancel);
+    };
+    // Esc, losing the window, or the button let go somewhere the page never heard about: put the tab back.
+    const cancel = () => {
+      stop();
+      if (dragRef.current?.moving) droppedUntil = performance.now() + 400;
+      setBoth(null);
+    };
+    const key = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape" || !dragRef.current?.moving) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      cancel();
+    };
     const move = (ev: PointerEvent) => {
       const d = dragRef.current;
       if (!d || ev.pointerId !== pointerId) return;
+      if (ev.buttons === 0) return cancel();
       if (!d.moving && Math.abs(ev.clientX - d.startX) < DRAG_START) return;
       ev.preventDefault();
       const to = dropIndex(d.middles, ev.clientX);
@@ -337,9 +357,7 @@ export function BottomTabs() {
     };
     const end = (ev: PointerEvent) => {
       if (ev.pointerId !== pointerId) return;
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
+      stop();
       const d = dragRef.current;
       setBoth(null);
       if (!d?.moving) return;
@@ -349,6 +367,8 @@ export function BottomTabs() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
+    window.addEventListener("keydown", key, true);
+    window.addEventListener("blur", cancel);
   };
 
   // While dragging, the tabs are shown in the order they'd have if dropped now.

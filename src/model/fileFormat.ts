@@ -7,7 +7,7 @@
  * the same format and still open; inside both, "format" stays "partsmith" so
  * files saved now also open in older versions.
  */
-import { parseDocument } from "./document";
+import { fileVersionOf, parseDocument } from "./document";
 import type { JuraCADDocument } from "./types";
 
 /** New saves use this extension. */
@@ -29,7 +29,8 @@ export function isDesignFileName(fileName: string): boolean {
 export function serializeDocument(doc: JuraCADDocument, savedAt = new Date()): string {
   const file = {
     format: doc.format,
-    version: doc.version,
+    // 2 only for a design whose Part Studio tabs were moved (see fileVersionOf); otherwise 1, as always.
+    version: fileVersionOf(doc),
     name: doc.name,
     savedWith: "JuraCAD (https://gm7dha.github.io/JuraCAD/)",
     savedAt: savedAt.toISOString(),
@@ -78,7 +79,7 @@ export function readDocumentFile(text: string, fileName = "That file"): ReadResu
   if (!d || typeof d !== "object" || d.format !== "partsmith") {
     return { ok: false, error: `${fileName} isn't a JuraCAD design file.` };
   }
-  if (typeof d.version === "number" && d.version > 1) {
+  if (typeof d.version === "number" && d.version > 2) {
     return { ok: false, error: `${fileName} was saved by a newer version of JuraCAD. Refresh the page to get the latest version, then try again.` };
   }
   const doc = parseDocument(data);

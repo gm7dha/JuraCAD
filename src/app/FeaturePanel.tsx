@@ -220,7 +220,7 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
       />
       {open && (
         // Drawn over everything and kept inside the window (above the swatch when the list is low down), so every colour and finish shows.
-        <PlacedPopup className="colour-popover" role="dialog" label={`Choose a colour for ${name}`} anchor={() => boxOf(button.current)} owner={button} onClose={() => setOpen(false)}>
+        <PlacedPopup className="colour-popover" role="dialog" label={`Choose a colour for ${name}`} anchor={() => boxOf(button.current)} owner={button} onClose={() => setOpen(false)} focusFirst>
           <div className="colour-grid">
             {PART_COLOURS.map((c) => (
               <button

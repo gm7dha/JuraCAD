@@ -7,13 +7,13 @@
  * longer exists, and Derived features using them say their Part Studio was
  * deleted; Undo brings it all back as one step.
  */
-import { removePartCopies } from "../assembly/assembly";
+import { partCopiesPlan, removePartCopies } from "../assembly/assembly";
 import { removeStudio, studiosOf } from "./studios";
 import type { Drawing, JuraCADDocument } from "./types";
 
 export interface StudioUse {
-  /** Assemblies holding copies of its parts, and how many. */
-  assemblies: { id: string; name: string; copies: number }[];
+  /** Assemblies holding copies of its parts, and how many; or (copies 0) losing mates to such a part inside a sub-assembly. */
+  assemblies: { id: string; name: string; copies: number; mates: number }[];
   /** Drawings (or one of their sheets or views) drawing one of its parts. */
   drawings: { id: string; name: string }[];
   /** Derived features in other Part Studios bringing in one of its parts. */
@@ -34,9 +34,10 @@ function drawsPart(d: Drawing, mine: (partId: string) => boolean): boolean {
 /** What else in the document uses a Part Studio's parts. */
 export function studioUsers(doc: JuraCADDocument, studioId: string): StudioUse {
   const mine = partOfStudio(doc, studioId);
+  const plan = partCopiesPlan(doc, mine);
   const assemblies = (doc.assemblies ?? [])
-    .map((a) => ({ id: a.id, name: a.name, copies: a.instances.filter((i) => !i.subAssembly && mine(i.partId)).length }))
-    .filter((a) => a.copies > 0);
+    .map((a) => ({ id: a.id, name: a.name, copies: plan.copies.get(a.id)?.length ?? 0, mates: plan.mates.get(a.id)?.length ?? 0 }))
+    .filter((a) => a.copies > 0 || a.mates > 0);
   const drawings = (doc.drawings ?? []).filter((d) => drawsPart(d, mine)).map((d) => ({ id: d.id, name: d.name }));
   const derived = studiosOf(doc)
     .filter((s) => s.id !== studioId)
@@ -52,7 +53,11 @@ export function deleteStudioQuestion(doc: JuraCADDocument, studioId: string): st
   const u = studioUsers(doc, studioId);
   if (!studioInUse(u)) return `Delete ${name}? (Undo brings it back.)`;
   const lines = [
-    ...u.assemblies.map((a) => `• ${a.name}: ${a.copies === 1 ? "its copy" : `its ${a.copies} copies`} of ${name}'s parts will be taken out (with their mates).`),
+    ...u.assemblies.map((a) =>
+      a.copies
+        ? `• ${a.name}: ${a.copies === 1 ? "its copy" : `its ${a.copies} copies`} of ${name}'s parts will be taken out (with their mates).`
+        : `• ${a.name}: ${a.mates === 1 ? "a mate" : `${a.mates} mates`} to ${name}'s parts inside a sub-assembly will be taken out.`,
+    ),
     ...u.drawings.map((d) => `• ${d.name} will have no part to draw where it shows one of ${name}'s parts.`),
     ...u.derived.map((f) => `• "${f.featureName}" in ${f.studioName} will lose the part it brings in.`),
   ];

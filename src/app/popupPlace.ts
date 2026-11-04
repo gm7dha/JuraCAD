@@ -34,8 +34,9 @@ export function placePopup(anchor: Box, size: { width: number; height: number },
   const maxLeft = Math.max(margin, view.width - margin - w);
   const maxTop = Math.max(margin, view.height - margin - h);
   const across = clamp(anchor.left, margin, maxLeft);
-  if (anchor.bottom + gap + h <= view.height - margin) return { left: across, top: anchor.bottom + gap, side: "below" };
-  if (anchor.top - gap - h >= margin) return { left: across, top: anchor.top - gap - h, side: "above" };
+  // (Kept inside even when what opened it is partly off the window.)
+  if (anchor.bottom + gap + h <= view.height - margin) return { left: across, top: clamp(anchor.bottom + gap, margin, maxTop), side: "below" };
+  if (anchor.top - gap - h >= margin) return { left: across, top: clamp(anchor.top - gap - h, margin, maxTop), side: "above" };
   // Not enough room above or below: beside it, as high as fits.
   const tall = h > view.height - 2 * margin;
   const down = tall ? margin : clamp(anchor.top, margin, maxTop);
