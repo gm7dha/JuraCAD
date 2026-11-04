@@ -27,7 +27,7 @@ export const ENGRAVE_DEPTH = 0.4;
  * latest part, the plate just made — so the engraving never reaches the user's parts or anything else in the studio.
  * `pieceOf` says which plate a point of the sketch belongs to (a set of coasters side by side).
  */
-function engravedPlate(ctx: MakeContext, sketch: SketchData, holes: { c: P2; d: number }[], label: string, count = 1, pieceOf: (p: P2) => number = () => 0): MadeDesign {
+export function engravedPlate(ctx: MakeContext, sketch: SketchData, holes: { c: P2; d: number }[], label: string, count = 1, pieceOf: (p: P2) => number = () => 0): MadeDesign {
   const sk = ctx.id("sketch");
   const inHole = (p: P2) => holes.some((h) => Math.hypot(p[0] - h.c[0], p[1] - h.c[1]) < h.d / 2);
   const keeps = Array.from({ length: count }, (_, i) => [(p: P2) => !inHole(p) && pieceOf(p) === i, (p: P2, letters: number) => onLetters(p, letters) && pieceOf(p) === i]).flat();

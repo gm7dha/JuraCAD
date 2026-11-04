@@ -519,14 +519,15 @@
   tests/zoomGuard.test.ts, tests/touchCompat.test.ts, tests/sketchTouchStroke.test.ts (cancelStroke after a drag began); the smoke test's touch section. Only a real iPad can confirm Safari's own touch quirks.
 - Design library (Onshape-style configurable library parts): `src/library/` (pure). `insert.ts` has `LIBRARY` (`designs/*.ts`) in two
   sections, `LibraryDesign.category` "laser" (Laser cutting: finger-joint box, flat-pack phone stand, and `designs/laserSet.ts`'s
-  stencil, rubber stamp, name/key tag, coasters, picture frame, living-hinge panel, gear, ruler — flat panels for Export for laser)
+  stencil, rubber stamp, name/key tag, coasters, picture frame, living-hinge panel, gear, ruler, then `designs/laserSet3.ts`'s
+  sliding-lid box, tray with dividers, bookend, clock face, cord winders, tealight holder, jigsaw, ornament — flat panels for Export for laser)
   and "print" (3D printing: tray, box with lid, shelf bracket, wall hook, cable clip, phone/tablet stand, print-in-place hinge,
   spacer/washer, grip knob, stamp with handle, and — in `printDesigns.ts`, appended to LIBRARY — bolt/nut/washer set, hex
   standoff, piano hinge, screw-top jar, bit holder block, pegboard hook, drawer pull, desk cable grommet, corner protector — each
   sits flat on the bed at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`;
   optional `LibraryDesign.group` = a heading within the tab (`designGroups` = `groupDesigns(designsIn(c))`: ungrouped first, then
   groups — that section's `GROUP_ORDER` first (print: Fixings, Hinges, Storage, Household, Workshop; laser: none), the rest in order of first use;
-  laser: Boxes and stands, Signs and stamps, Home, Workshop). The window also has a search box (`browse.ts` `searchDesigns`: every
+  laser: Boxes and stands, Signs and stamps, Home, Workshop, Toys and gifts). The window also has a search box (`browse.ts` `searchDesigns`: every
   typed word must start a word of the name/group/section/description or a choice's label — "M8" finds the bolt set — name matches first; results across both tabs, under
   section headings; cleared on close).
   Text inputs: `InputKind` "text" (`maxLength` default 60, `multiline` = lines split by "\n", ≤ `MAX_TEXT_LINES` 6, `optional`;
@@ -631,6 +632,28 @@
   both ways, just touching at 0 — found by a golden-section search — overlapping at −0.1; the jar's lid screws on; groove depth).
   `cutThread` retries a piece OpenCascade returns no shape for (as for a poor cut), and accepts up to half a turn's extra
   removed near an end (a deeper groove's sides spill past it).
+  Third laser batch (`designs/boxes3.ts`, `laserHome3.ts`, `jigsaw.ts` + pure `puzzle.ts`, `ornament.ts`; list in `laserSet3.ts`).
+  Sliding-lid box: a laser can't cut a groove part-way, so each groove is a *rail* — a second panel inside each long wall with a
+  through slot (a C open at the right-hand end, `slidingOutlines().rail`); grooves z = g0…g1 (g0 = H − 3t − 2c, g1 = g0 + t + 2c), a 2t
+  strip above, the slot stopping 2t short of the left wall (`bridge`); the right end wall is g0 tall and the front/back fingers on that
+  end stop there (`SideSpec` "full" `upTo`, fingers.ts); lid x = 3t + c…W, y = t + c…D − t − c, moved up to g0 + c. Tray with dividers:
+  the open finger box's panels + dividers along x (slots down from the top) and y (slots up from the bottom) to half height (H + t)/2,
+  each `DIVIDER_ROOM` (0.5) shorter than the inside, equal compartments (`dividerTray` centres); all outlines grown by kerf/2 (`grow`).
+  Bookend: base (Top, 3 slots), upright (Right, 2 tabs + a slot), brace (Front, 2 tabs); holes are drawn kerf/2 smaller (`shrink` =
+  grow on the reversed loop). Clock face: one engraved-plate sketch (`engravedPlate`, now exported from engraved.ts) — outline, centre
+  hole (default 8 mm), numbers as Text, marks as Text "I" turned radially (engraved; fully defined) or dimensioned lines (`open: "score"`).
+  Cord winders: H outlines side by side (`pieceOf` by y). Tealight: base + rings (hole = candle + 2 × `TEALIGHT_ROOM`) stacked by Moves.
+  Jigsaw (`puzzle.ts`): each edge between pieces = line, shoulder arc, head arc, shoulder arc, line (`tabEdge`: head R at HEAD_RISE·R,
+  shoulders SHOULDER·R touching it, neck 2·NECK·R = 0.618 of the head, so it locks); side/position/size from `seeded` (mulberry32) by
+  the pattern number; `narrowestGap` (box-filtered; `puzzleProblems` asks only up to MIN_GAP) checks no cuts come within 1.5 mm, so
+  pieces never overlap; ≤ `MAX_PIECES` 400. The board is its own rectangle sketch (picking hundreds of areas is slow); the "Puzzle
+  sketch" (border split at the piece corners + the cuts, points left free — LOOSE_LINES) is what Export for laser uses: border red,
+  every cut piece a blue open run. Ornament: star (outlineSketch), circle, heart (lines tangent to two arcs) and snowflake (hex middle,
+  six arms with 60° branches, an eye round the hole) — the curved ones as free arcs/lines; words must keep `WORDS_ROOM` from the edge and
+  hole. Tests: tests/libraryLaser3 (pure: tabs lock, pieces tile, same seed same puzzle, grooves/slots, fully defined) and
+  engineLibraryLaser3 (volumes add up, no overlaps at kerf 0, the lid slides out with clearance and clashes any other way, laser
+  layers, a user's part left alone); mcpLibraryLaser inserts a jigsaw and exports it; the smoke test inserts a 12-piece jigsaw and saves
+  its sketch for laser (1 red, 85 blue).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
