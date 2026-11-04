@@ -760,8 +760,8 @@ export function loopStart(segments: Segment[], frame: ReturnType<typeof planeFra
   return [u[0] * Math.cos(a) + v[0] * Math.sin(a), u[1] * Math.cos(a) + v[1] * Math.sin(a), u[2] * Math.cos(a) + v[2] * Math.sin(a)];
 }
 
-/** A smooth solid passing through one closed shape on each of the sketches, in order. */
-export function loftSketches(sections: { plane: SketchPlane; data: SketchData; name: string }[]): Shape3D {
+/** A solid passing through one closed shape on each of the sketches, in order: smooth, or `ruled` (straight from each to the next). */
+export function loftSketches(sections: { plane: SketchPlane; data: SketchData; name: string }[], opts: { ruled?: boolean } = {}): Shape3D {
   if (sections.length < 2) throw new Error("Pick at least two sketches to loft between.");
   const wires: Wire[] = [];
   try {
@@ -776,7 +776,7 @@ export function loftSketches(sections: { plane: SketchPlane; data: SketchData; n
       wires.push(loopWire(regions[0].outer, frame, 0, start));
     }
     try {
-      return loft(wires, { ruled: false });
+      return loft(wires, { ruled: !!opts.ruled });
     } catch {
       throw new Error("Couldn't loft between those shapes. Try sketches on parallel planes, or outlines with the same number of sides.");
     }

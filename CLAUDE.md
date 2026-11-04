@@ -522,10 +522,12 @@
   stencil, rubber stamp, name/key tag, coasters, picture frame, living-hinge panel, gear, ruler — flat panels for Export for laser)
   and "print" (3D printing: tray, box with lid, shelf bracket, wall hook, cable clip, phone/tablet stand, print-in-place hinge,
   spacer/washer, grip knob, stamp with handle, and — in `printDesigns.ts`, appended to LIBRARY — bolt/nut/washer set, hex
-  standoff, piano hinge, screw-top jar, bit holder block, pegboard hook, drawer pull, desk cable grommet, corner protector — each
+  standoff, piano hinge, screw-top jar, bit holder block, pegboard hook, drawer pull, desk cable grommet, corner protector, then the third
+  batch: Gridfinity baseplate and bin, name plate, battery organiser, spool holder, under-desk headphone hook, plant pot + saucer,
+  bag clip, knurled thumb knob, hose/vacuum adapter, SD card holder — each
   sits flat on the bed at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`;
   optional `LibraryDesign.group` = a heading within the tab (`designGroups` = `groupDesigns(designsIn(c))`: ungrouped first, then
-  groups — that section's `GROUP_ORDER` first (print: Fixings, Hinges, Storage, Household, Workshop; laser: none), the rest in order of first use;
+  groups — that section's `GROUP_ORDER` first (print: Fixings, Hinges, Storage, Gridfinity, Household, Desk, Garden, Workshop; laser: none), the rest in order of first use;
   laser: Boxes and stands, Signs and stamps, Home, Workshop). The window also has a search box (`browse.ts` `searchDesigns`: every
   typed word must start a word of the name/group/section/description or a choice's label — "M8" finds the bolt set — name matches first; results across both tabs, under
   section headings; cleared on close).
@@ -631,6 +633,23 @@
   both ways, just touching at 0 — found by a golden-section search — overlapping at −0.1; the jar's lid screws on; groove depth).
   `cutThread` retries a piece OpenCascade returns no shape for (as for a poor cut), and accepts up to half a turn's extra
   removed near an end (a deeper groove's sides spill past it).
+  Third batch (`printDesigns.ts` `PRINT_DESIGNS_3`): Gridfinity (`designs/gridfinity.ts`; sizes from gridfinity.xyz, the Printables
+  spec and gridfinity-rebuilt-openscad, cited there): 42 mm grid, 7 mm units, bins 42n − 2 × gap (0.25) with r = 4 − gap; foot
+  `FOOT_STEPS` 0.8/1.8/2.15 (35.6 → 41.5), pocket `POCKET_STEPS` 0.35 straight + 0.7/1.8/2.15 to 42 r4 (plate 5 high, cut on past the
+  top), lip = cavity steps 0.7/1.8/1.9 to 4.4 above 7 × units over a 1.2 straight + 45° support; magnets 6.5 × 2.4 at ±13. Stepped
+  outlines are ruled Lofts (`Feature.loftRuled`, "Straight between shapes" in the Loft dialog, `loftSketches(…, { ruled })`; parsed)
+  through rounded rectangles on fixed level planes (`printKit.levelPlane`: a face plane with no face/planeRef — only for heights no
+  variable drives; so the Gridfinity designs have no variables) — exact 45° (offsets of a rounded rectangle). One foot + grid
+  pattern; `binPlan`/`stepsVolume` (Simpson, exact). A bin rests with its bottom level with the plate's (`RESTS` 0: the slopes just touch); held at `CENTRED`
+  (0.35) it clears a cell by the gap on the straight parts and (gap + 0.1)/√2 on the slopes; stacked at 7 × units it clears the lip the same. Dividers/ledge stop below the support (generic
+  heights, so booleans never meet edges exactly); the ledge reaches 0.02 into the walls (wall ≥ 1.2 keeps it inside the corners).
+  Name plate (`sign.ts`): words + border ring on the plate's top face (`topFacePlane`), Added up or Removed down; holes or a foot
+  with a slot (New). Pot + saucer: revolves, saucer rim = pot radius there + gap (`potSizes`, a ratio of variables), ribs between
+  the drain holes (holes half a step round). Bag clip: rod + C channel on Right, made along X; both cut flat at 45° (`FLAT_AT`);
+  `clipSizes.strain` = spread × wall / (3π R²) (Roark split ring) ≤ 2%. Sign foot slot = plate + relief only for a raised border. Thumb knob: pocket = table flats + 2 × fit, as deep as nut/head. Hose adapter: 45° cone between ends
+  sized "into" (outside) or "over" (inside + fit). Tests: tests/libraryPrint3 (pure), engineLibraryPrint3 (bin in a baseplate cell at
+  ±0.2 but not 0.3, a bigger bin refused, bins stack, pot in saucer, clip on rod held by its lips, nut in the knob's pocket),
+  mcpLibraryPrint3; the smoke test searches "gridfinity" and inserts a bin (1 part, 83.5 mm).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);

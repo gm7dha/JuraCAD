@@ -1638,7 +1638,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         return { plane: sk.sketch.plane, data: sk.sketch.data, name: sk.name };
       });
       if (feature.surface) return loftSurface(sections);
-      return loftSketches(sections);
+      return loftSketches(sections, { ruled: !!feature.loftRuled });
     }
     case "fill": {
       const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");

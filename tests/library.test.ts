@@ -30,9 +30,12 @@ const design = (id: string) => findDesign(id)!;
 const LASER_IDS = ["stencil", "rubber-stamp", "name-tag", "coaster", "picture-frame", "living-hinge", "gear", "ruler"];
 const LOOSE_LINES = new Set(["living-hinge", "gear", "ruler"]);
 
+/** The third batch of 3D printing designs (printDesigns.ts), in order. */
+const PRINT3_IDS = ["gridfinity-baseplate", "gridfinity-bin", "sign", "battery-holder", "spool-holder", "headphone-hook", "plant-pot", "bag-clip", "thumb-knob", "hose-adapter", "card-holder"];
+
 describe("the library", () => {
   it("has each design described, with an icon, inputs and working defaults", () => {
-    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS, "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard"]);
+    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS, "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS]);
     for (const d of LIBRARY) {
       expect(d.name.length).toBeGreaterThan(3);
       expect(d.description.length).toBeGreaterThan(20);
@@ -253,7 +256,7 @@ describe("library sections", () => {
       ["print", "3D printing"],
     ]);
     expect(designsIn("laser").map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS]);
-    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard"]);
+    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS]);
     expect(designsIn("laser").length + designsIn("print").length).toBe(LIBRARY.length);
     expect(categoryLabel("print")).toBe("3D printing");
     expect(categoryFrom("Laser cutting")).toBe("laser");
