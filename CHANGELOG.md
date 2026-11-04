@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.36 — Library: Gridfinity, jigsaw puzzles and more · commit `5b61437`
+
+- **3D printing:** Gridfinity baseplates and bins (to the standard, with dividers, label ledge, magnets and stacking
+  lip), name plate/sign, battery organiser, spool holder, under-desk headphone hook, plant pot and saucer, bag clip,
+  thumb knob for a nut, hose adapter, SD card holder.
+- **Laser cutting:** sliding-lid box, tray with dividers, bookend, clock face, cord winders, tealight holder, jigsaw
+  puzzle generator (change the pattern number for a new layout) and ornaments/keyrings.
+- **Loft** can make straight sides between shapes; sketches with many shapes check much faster.
+
 ## v0.35 — Library: fixings, hinges, stencils and stamps · commit `6826b20`
 
 - **3D printing:** bolt, nut and washer sets (M3–M12, printable threads with a fit setting), hex standoffs, piano hinge,
