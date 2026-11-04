@@ -12,7 +12,7 @@ import { MAIN_STUDIO } from "../src/model/studios";
 import type { JuraCADDocument } from "../src/model/types";
 import { applyVariables, resolveVariables } from "../src/model/variables";
 import { pianoVolumes } from "../src/library/designs/pianoHinge";
-import { pegHookVolume } from "../src/library/designs/pegboardHook";
+import { pegHookVolumes, pegPlaces } from "../src/library/designs/pegboardHook";
 import { pullVolume } from "../src/library/designs/drawerPull";
 import { bitHolderVolume } from "../src/library/designs/bitHolder";
 import { grommetSizes, sleeveVolume } from "../src/library/designs/grommet";
@@ -21,7 +21,7 @@ import { standoffVolume } from "../src/library/designs/standoff";
 import { varsOf } from "../src/library/designs/common";
 import { defaultValues, findDesign, insertDesign } from "../src/library/insert";
 import type { DesignValues } from "../src/library/types";
-import { loadOpenCascade } from "./support/engineHelpers";
+import { feature, loadOpenCascade } from "./support/engineHelpers";
 
 let engine: GeometryEngine;
 beforeAll(async () => {
@@ -108,8 +108,6 @@ describe("piano hinge", () => {
 
 describe("the other 3D printing designs", () => {
   const cases: [string, DesignValues, (v: DesignValues) => number][] = [
-    ["pegboard-hook", {}, pegHookVolume],
-    ["pegboard-hook", { shape: "straight", length: 80 }, pegHookVolume],
     ["drawer-pull", {}, pullVolume],
     ["drawer-pull", { span: 128, round: 0 }, pullVolume],
     ["bit-holder", {}, bitHolderVolume],
@@ -127,12 +125,54 @@ describe("the other 3D printing designs", () => {
     });
   }
 
-  it("pegboard hook: the pegs are one hole spacing apart, and as wide as a peg", () => {
-    const r = build(insert("pegboard-hook"));
-    const b = box(r.parts[0]);
-    expect(b.max[2]).toBeCloseTo(5.5, 4);
-    expect(b.min[0]).toBeCloseTo(-(6 + 0.5 + 5.5), 4);
-    expect(b.max[1]).toBeCloseTo(25.4 + 2 * 5.5, 4);
+  describe("pegboard hook", () => {
+    const pegVars = (v: DesignValues) => varsOf(v, ["spacing", "board", "peg", "hole", "length", "tip", "thickness", "width"]);
+    /**
+     * The hook hung on a board: a plate `board` thick with round holes of `hole` across at the pegs, built in its own
+     * Part Studio as an upright plate with upright holes, then turned so its holes run along the pegs (−X) and its front
+     * is against the hook's plate (x = 0). The volume they share.
+     */
+    function onBoard(values: DesignValues, hole: number): number {
+      const v = valuesOf("pegboard-hook", values);
+      const at = pegPlaces(pegVars(v));
+      const B = v.board as number;
+      const plate = feature("box", { width: 80, depth: 90, height: B, x: -40, y: -30, z: 0 });
+      const holes = [at.low.v, at.high.v].map((y) => feature("cylinder", { diameter: hole, height: B + 2, x: 0, y, z: -1 }, "remove"));
+      const doc = insertDesign({ ...emptyDocument(), features: [plate, ...holes] }, findDesign("pegboard-hook")!, v, { into: MAIN_STUDIO }).doc;
+      const r = build(doc);
+      const hook = partEnding(r.parts, "_hook");
+      const board = r.parts.find((p) => p.id === plate.id)!;
+      // Turned −90° about Y: the board's z (0 … B) runs along −X (0 … −B), its x becomes Z; lifted to the pegs' middle.
+      const s45 = Math.SQRT1_2;
+      return shared({ part: hook }, { part: board, rotation: [0, -s45, 0, s45], position: [0, 0, (v.width as number) / 2] });
+    }
+
+    it("makes one sound part on the bed: the plate and arm, a round bottom peg and a round top peg bent up behind the board", () => {
+      const v = valuesOf("pegboard-hook");
+      const r = build(insert("pegboard-hook"));
+      expect(r.parts).toHaveLength(1);
+      onTheBed(r.parts);
+      const b = box(r.parts[0]);
+      // As wide as the arm, with the round pegs inside that width.
+      expect(b.max[2]).toBeCloseTo(8, 3);
+      const at = pegPlaces(pegVars(v));
+      // The top peg's upright reaches back behind the board, and up 1.5 pegs above its middle.
+      expect(b.min[0]).toBeCloseTo(at.back.v - 2.8, 1);
+      expect(b.max[1]).toBeCloseTo(at.up.v, 2);
+      // Body and bottom peg exactly, plus the top peg: a 5.6 mm rod a little over 15 mm long round its bend.
+      const want = pegHookVolumes(v);
+      const rod = Math.PI * 2.8 * 2.8;
+      expect(r.volume).toBeGreaterThan(want.body + want.lowPeg + rod * 12);
+      expect(r.volume).toBeLessThan(want.body + want.lowPeg + rod * 20);
+    });
+
+    it("its round pegs go through 6 mm and 6.35 mm holes 25.4 mm apart without touching the board", () => {
+      expect(onBoard({}, 6.35)).toBeLessThan(0.001);
+      expect(onBoard({}, 6)).toBeLessThan(0.001);
+      expect(onBoard({ shape: "straight", board: 3.5 }, 6)).toBeLessThan(0.001);
+      // … while holes smaller than the pegs would be run into (so the check sees the board).
+      expect(onBoard({}, 5)).toBeGreaterThan(1);
+    });
   });
 
   it("drawer pull: the screw holes go into the feet from the side against the door", () => {

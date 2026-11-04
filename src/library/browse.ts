@@ -1,6 +1,6 @@
 /**
- * Searching the Design library: every design's name, description, group and section. Pure, so the library window and
- * its tests share it. (Headings within a section are `designGroups` in insert.ts.)
+ * Searching the Design library: every design's name, description, group, section and the names of its choices.
+ * Pure, so the library window and its tests share it. (Headings within a section are `designGroups` in insert.ts.)
  */
 import { categoryLabel, LIBRARY } from "./insert";
 import type { LibraryDesign } from "./types";
@@ -14,15 +14,17 @@ const words = (text: string) =>
     .filter(Boolean);
 
 /**
- * The designs matching what was typed: every word typed must start a word of the design's name, group, section or
- * description ("bolt", "hing", "M8"…). Matches in the name come first. Nothing typed = nothing found.
+ * The designs matching what was typed: every word typed must start a word of the design's name, group, section,
+ * description or one of its choices ("bolt", "hing", "M8"…). Matches in the name come first. Nothing typed = nothing found.
  */
 export function searchDesigns(query: string, designs: readonly LibraryDesign[] = LIBRARY): LibraryDesign[] {
   const wanted = words(query);
   if (!wanted.length) return [];
   const scored = designs.flatMap((d) => {
     const name = words(d.name);
-    const all = [...name, ...words(d.group ?? ""), ...words(categoryLabel(d.category)), ...words(d.description)];
+    // Its choices' names too ("M8", "Socket head"), so a size finds the design that comes in it.
+    const choices = d.inputs.flatMap((i) => (i.choices ?? []).flatMap((c) => words(c.label)));
+    const all = [...name, ...words(d.group ?? ""), ...words(categoryLabel(d.category)), ...words(d.description), ...choices];
     if (!wanted.every((w) => all.some((x) => x.startsWith(w)))) return [];
     const inName = wanted.filter((w) => name.some((x) => x.startsWith(w))).length;
     return [{ d, inName }];

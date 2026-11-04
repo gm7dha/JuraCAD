@@ -4030,13 +4030,19 @@ export class GeometryEngine {
         // Runs out past the open end (and past the far end too when it's the full length), so the groove ends cleanly.
         const from = full ? lo - pitch : hi - values.length;
         // A groove depth given (more than 0) replaces the standard one, up to the deepest that leaves a flat on each tooth.
-        const depth = values.depth > 0 ? Math.min(values.depth, maxGrooveDepth(pitch)) : undefined;
+        const deepest = maxGrooveDepth(pitch);
+        const depth = values.depth > 0 ? Math.min(values.depth, deepest) : undefined;
+        if (values.depth > deepest + 1e-9) {
+          this.warnings[feature.id] = `The groove is ${Math.round(deepest * 1000) / 1000} mm deep, not ${values.depth} mm: that's the deepest a thread of this pitch can be and still leave a flat on each tooth.`;
+        }
         const next = cutThread(shape, cyl, from, hi + pitch, lo, hi, pitch, external, depth);
         if (shape !== part.shape) shape.delete();
         shape = next;
-        // For drawings: where it runs, and its outside and root sizes (60° metric: root = outside − 1.0825 × pitch).
-        const d = external ? 2 * cyl.radius : 2 * cyl.radius + 1.0825 * pitch;
-        marks.push({ origin: cyl.origin, axis: cyl.axis, from: Math.max(lo, from), to: hi, major: d, minor: d - 1.0825 * pitch, external });
+        // For drawings: where it runs, and its outside and root sizes (60° metric: root = outside − 1.0825 × pitch; with a
+        // groove depth given, the root is that far in from the rod, or out from the hole, each side).
+        const across = depth !== undefined ? 2 * depth : 1.0825 * pitch;
+        const d = external ? 2 * cyl.radius : 2 * cyl.radius + across;
+        marks.push({ origin: cyl.origin, axis: cyl.axis, from: Math.max(lo, from), to: hi, major: d, minor: d - across, external });
       }
       const solids = solidsOf(shape);
       solids.forEach((x) => x.delete());

@@ -527,7 +527,7 @@
   optional `LibraryDesign.group` = a heading within the tab (`designGroups` = `groupDesigns(designsIn(c))`: ungrouped first, then
   groups — that section's `GROUP_ORDER` first (print: Fixings, Hinges, Storage, Household, Workshop; laser: none), the rest in order of first use;
   laser: Boxes and stands, Signs and stamps, Home, Workshop). The window also has a search box (`browse.ts` `searchDesigns`: every
-  typed word must start a word of the name/group/section/description, name matches first; results across both tabs, under
+  typed word must start a word of the name/group/section/description or a choice's label — "M8" finds the bolt set — name matches first; results across both tabs, under
   section headings; cleared on close).
   Text inputs: `InputKind` "text" (`maxLength` default 60, `multiline` = lines split by "\n", ≤ `MAX_TEXT_LINES` 6, `optional`;
   CRLF → LF in `completeValues`; parse.ts keeps strings ≤ 1000) — saved in the insert's `values`, changed by Edit design sizes,
@@ -590,7 +590,12 @@
   0.2 mm on M8), hence the deeper groove. Sizes: `boltSizes.ts` (`printFastener`: M3–M12 from model/fasteners.ts, a custom
   size in ISO proportions; `ISO_COARSE_PITCH` = kernel ISO_COARSE, pure). Bolts stand on their heads (round threads, no
   supports). Other builders there: `revolveFeature` (Front-plane profiles round Z; New = apart), `gridPatternFeature` (count or
-  rows may be 1). A sketch can't start above a plane, so floors under cut-through holes are Added back (bit holder: holes cut
+  rows may be 1), `sweepFeature`. Pegboard hook: plate + arm drawn on Top and extruded `width` symmetric about z = 0, round pegs
+  from the Right plane (bottom: a cylinder out the back, flip; top: a circle swept along an L path on Top — out the back, then up
+  behind the board, `pegPlaces`), then the whole part Moved up width / 2 onto the bed; `problems` wants the peg ≥ `PEG_ROOM`
+  (0.3) smaller than the board's holes and no wider/thicker than the arm (engineLibraryPrint2 hangs it on a plate with 6 and
+  6.35 mm holes). The printed stamp is under Household. A Thread `depth` over `maxGrooveDepth` is held to it with a
+  `featureWarnings` note; drawings' thread marks use the given depth's root (`minor` = major − 2 × depth). A sketch can't start above a plane, so floors under cut-through holes are Added back (bit holder: holes cut
   right through by one patterned Remove, then a floor Added; corner protector: a C extruded, then an end plate Added).
   `ex.ts` `wholeNegation`: only strip "-( … )" that wraps the whole text.
   `insertDesign(doc, design, values, { into: "new" | studioId })` adds variables `<prefix>_<key>` for inputs marked

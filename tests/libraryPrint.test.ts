@@ -19,7 +19,7 @@ import { acrossCorners, coarsePitch, ISO_COARSE_PITCH, PRINT_SIZES, printFastene
 import { boltSetLayout, boltSetSizes, maxFit, SET_GAP } from "../src/library/designs/boltSet";
 import { MAX_KNUCKLES, pianoHoleSpots, pianoKnuckles } from "../src/library/designs/pianoHinge";
 import { jarProfile, jarSizes, revolvedVolume } from "../src/library/designs/jar";
-import { BEHIND, pegHookOutline } from "../src/library/designs/pegboardHook";
+import { BEHIND, pegHookOutline, pegPlaces } from "../src/library/designs/pegboardHook";
 import { pullOutline } from "../src/library/designs/drawerPull";
 import { grommetSizes } from "../src/library/designs/grommet";
 import { standoffHole } from "../src/library/designs/standoff";
@@ -166,15 +166,18 @@ describe("the other new designs' sizes", () => {
     expect(valueProblems(design("jar"), valuesOf("jar", { height: 25 }))[0]).toMatch(/taller/);
   });
 
-  it("pegboard hook: pegs one hole apart, room for the board behind", () => {
-    const vars = varsOf(valuesOf("pegboard-hook"), ["spacing", "board", "peg", "length", "tip", "thickness"]);
-    const pts = pegHookOutline(vars, true).map(([x, y]) => [x.v, y.v]);
-    // The bottom peg's underside at 0, the top peg's at one spacing up.
-    expect(pts.some(([x, y]) => x === 0 && y === 25.4)).toBe(true);
-    // The top peg's upturned end is the board + BEHIND behind the front.
-    expect(Math.min(...pts.map(([x]) => x))).toBeCloseTo(-(6 + BEHIND + 5.5), 6);
+  it("pegboard hook: round pegs one hole apart, smaller than the holes, room for the board behind", () => {
+    const vars = varsOf(valuesOf("pegboard-hook"), ["spacing", "board", "peg", "hole", "length", "tip", "thickness", "width"]);
+    const at = pegPlaces(vars);
+    expect(at.high.v - at.low.v).toBe(25.4);
+    // The top peg's upright is the board + BEHIND behind the front, to its near side.
+    expect(at.back.v + 5.6 / 2).toBeCloseTo(-(6 + BEHIND), 6);
     expect(pegHookOutline(vars, false)).toHaveLength(pegHookOutline(vars, true).length - 2);
-    expect(valueProblems(design("pegboard-hook"), valuesOf("pegboard-hook", { spacing: 10, peg: 8 }))[0]).toMatch(/apart/);
+    const d = design("pegboard-hook");
+    expect(valueProblems(d, valuesOf("pegboard-hook", { peg: 5.8 }))[0]).toMatch(/at least 0\.3 mm smaller than the holes.*at most 5\.7 mm/);
+    expect(valueProblems(d, valuesOf("pegboard-hook", { hole: 6.35, peg: 6 }))).toEqual([]);
+    expect(valueProblems(d, valuesOf("pegboard-hook", { width: 4 }))[0]).toMatch(/as thick and as wide as the pegs/);
+    expect(valueProblems(d, valuesOf("pegboard-hook", { spacing: 10, peg: 8, hole: 9, thickness: 8 }))[0]).toMatch(/apart/);
   });
 
   it("drawer pull: the feet centred on the screw holes", () => {
@@ -240,11 +243,11 @@ describe("every new design", () => {
 });
 
 describe("browsing the library", () => {
-  it("puts the 3D printing designs under headings, in a set order, with ungrouped ones first", () => {
+  it("puts the 3D printing designs under headings, in a set order (ungrouped designs would come first)", () => {
     const groups = designGroups("print");
-    // The printed stamp has no group: first, without a heading.
-    expect(groups[0]).toEqual({ group: null, designs: [design("printed-stamp")] });
-    expect(groups.slice(1).map((g) => g.group)).toEqual(GROUP_ORDER.print.filter((g) => designsIn("print").some((d) => d.group === g)));
+    // Every one has a heading, in the set order (the printed stamp with the household things).
+    expect(groups.map((g) => g.group)).toEqual(GROUP_ORDER.print.filter((g) => designsIn("print").some((d) => d.group === g)));
+    expect(groups.find((g) => g.group === "Household")!.designs.map((d) => d.id)).toContain("printed-stamp");
     expect(groups.find((g) => g.group === "Fixings")!.designs.map((d) => d.id)).toEqual(["spacer", "bolt-set", "standoff"]);
     expect(groups.find((g) => g.group === "Hinges")!.designs.map((d) => d.id)).toEqual(["hinge", "piano-hinge"]);
     expect(groups.find((g) => g.group === "Workshop")!.designs.map((d) => d.id)).toEqual(["bit-holder", "pegboard-hook"]);
@@ -271,7 +274,9 @@ describe("browsing the library", () => {
     expect(searchDesigns("jar lid").map((d) => d.id)).toEqual(["jar"]);
     expect(searchDesigns("  ")).toEqual([]);
     expect(searchDesigns("teapot")).toEqual([]);
-    expect(searchDesigns("M12").length).toBeGreaterThan(0);
+    // Size choices count: M8 finds the designs that come in M8.
+    expect(searchDesigns("M8").map((d) => d.id)).toEqual(["bolt-set", "standoff"]);
+    expect(searchDesigns("socket head")[0].id).toBe("bolt-set");
     expect(new Set(searchDesigns("a").map((d) => d.id)).size).toBe(searchDesigns("a").length);
     expect(LIBRARY.length).toBeGreaterThan(19);
   });

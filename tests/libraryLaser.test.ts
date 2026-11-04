@@ -385,6 +385,7 @@ describe("laser designs' maths", () => {
       ["Home", ["coaster", "picture-frame"]],
       ["Workshop", ["living-hinge", "gear", "ruler"]],
     ]);
-    expect(designGroups("print")[0].group).toBeNull();
+    // Every 3D printing design has a heading too (the printed stamp is under Household).
+    expect(designGroups("print").every((g) => g.group !== null)).toBe(true);
   });
 });

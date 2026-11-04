@@ -113,21 +113,35 @@ describe("the printed thread's sizes", () => {
     const first = engine.rebuild([rod]);
     const plain = engine.check("normal").parts[0].exactVolume!;
     const side = { partId: rod.id, ref: first.parts[0].faceRefs.find((f) => f.kind === "face" && f.surface === "CYLINDRE")! };
+    let last: { warning?: string; minor: number; major: number } = { minor: 0, major: 0 };
     const removed = (depth: string) => {
       const thread = { ...feature("thread", { pitch: 1.5, length: 0, depth }), picks: [side] };
       const r = engine.rebuild([rod, thread]);
       expect(r.featureErrors).toEqual({});
       const c = engine.check("normal").parts[0];
       expect(c.geometryValid).toBe(true);
+      // What drawings are told about the thread (its outside and root sizes).
+      const mark = (engine as unknown as { parts: { threads?: { minor: number; major: number }[] }[] }).parts[0].threads![0];
+      last = { warning: r.featureWarnings?.[thread.id], minor: mark.minor, major: mark.major };
       return plain - c.exactVolume!;
     };
     const standard = removed("0");
+    expect(last.warning).toBeUndefined();
+    expect(last.major).toBeCloseTo(10, 9);
+    expect(last.minor).toBeCloseTo(10 - 1.0825 * 1.5, 9);
     const deep = removed(String(grooveDepth(1.5)));
+    // Drawings get the deeper groove's root: 1.125 mm in from the rod, each side.
+    expect(last.major).toBeCloseTo(10, 9);
+    expect(last.minor).toBeCloseTo(10 - 2 * 1.125, 9);
+    expect(last.warning).toBeUndefined();
     // The V's area grows with the square of its depth.
     expect(deep / standard).toBeGreaterThan(((0.75 / 0.6134) ** 2) * 0.85);
     expect(deep / standard).toBeLessThan(((0.75 / 0.6134) ** 2) * 1.15);
     // Deeper than that is held to the deepest that leaves a flat on each tooth.
-    expect(removed("5")).toBeCloseTo(removed(String(maxGrooveDepth(1.5))), 3);
+    const capped = removed("5");
+    expect(last.warning).toMatch(/1\.137 mm deep, not 5 mm: that's the deepest/);
+    expect(last.minor).toBeCloseTo(10 - 2 * maxGrooveDepth(1.5), 9);
+    expect(capped).toBeCloseTo(removed(String(maxGrooveDepth(1.5))), 3);
   }, SLOW);
 });
 
@@ -231,7 +245,7 @@ describe("bolt, nut and washer set", () => {
 
 describe("screw-top jar", () => {
   it(
-    "makes the jar and its lid (upside down beside it) on the bed, and the lid screws on with room to turn",
+    "makes the jar and its lid (upside down beside it) on the bed, and the lid screws all the way down onto the shoulder",
     () => {
       const v = valuesOf("jar");
       const r = build(insert("jar"));
@@ -254,14 +268,24 @@ describe("screw-top jar", () => {
       expect(r.volumes[jarPart.id]).toBeGreaterThan(plain.jar * 0.9);
       expect(r.volumes[lid.id]).toBeLessThan(plain.lid - 100);
       expect(r.volumes[lid.id]).toBeGreaterThan(plain.lid * 0.85);
-      // Turned over onto the jar (rim height z), somewhere in each turn it touches nothing …
+      // Turned over and screwed all the way down — its rim just on the jar's shoulder — there's a way round where the lid
+      // touches nothing (the threads have the fit to spare): eight turns of 45° are each 3/8 mm along the thread, less
+      // than the 0.69 mm of play.
       const dx = (l.min[0] + l.max[0]) / 2;
-      const on = (z: number) => shared(jarPart, lid, [-dx, 0, z + s.lidHeight.v], [1, 0, 0, 0]);
-      const overlaps = throughOneTurn(on, s.shoulder.v + 2, 3, 8);
-      expect(Math.min(...overlaps)).toBeLessThan(0.001);
-      expect(Math.max(...overlaps)).toBeGreaterThan(1);
-      // … and pushed down past the shoulder it runs into the jar.
-      expect(on(s.shoulder.v - 1)).toBeGreaterThan(1);
+      const seated = (rim: number, deg: number) => {
+        const a = (deg * Math.PI) / 180;
+        // Turned over (180° about X), then round the jar's axis by `deg`; moved so the lid's axis is the jar's.
+        const turn: Quat = [Math.cos(a / 2), Math.sin(a / 2), 0, 0];
+        return shared(jarPart, lid, [-dx * Math.cos(a), -dx * Math.sin(a), rim + s.lidHeight.v], turn);
+      };
+      const rim = s.shoulder.v + 0.05;
+      const round = [0, 45, 90, 135, 180, 225, 270, 315].map((deg) => seated(rim, deg));
+      expect(Math.min(...round)).toBeLessThan(0.001);
+      // … but not every way round: the threads hold it there.
+      expect(Math.max(...round)).toBeGreaterThan(1);
+      // And pushed down past the shoulder it runs into the jar, however it's turned.
+      const best = [0, 45, 90, 135, 180, 225, 270, 315][round.indexOf(Math.min(...round))];
+      expect(seated(s.shoulder.v - 1, best)).toBeGreaterThan(1);
     },
     SLOW,
   );

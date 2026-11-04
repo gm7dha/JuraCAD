@@ -149,6 +149,7 @@ export const printedStamp: LibraryDesign = {
   description:
     "A stamp to 3D print: a block with mirrored words (and a border) standing up on its face, so it prints the right way round, and a round handle to glue on the back. Print the face with fine layers; TPU gives a softer, crisper print.",
   category: "print",
+  group: "Household",
   prefix: "pstamp",
   icon: '<rect x="6" y="26" width="36" height="8" rx="1"/><path d="M12 26v-3h6v3M22 26v-3h4v3M30 26v-3h6v3"/><path d="M18 18v-6a6 6 0 0 1 12 0v6z" opacity=".6"/>',
   inputs: [

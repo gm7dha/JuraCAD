@@ -113,7 +113,7 @@ export const jar: LibraryDesign = {
   prefix: "jar",
   icon: '<path d="M12 18h24v24H12z"/><path d="M10 8h28v8H10z"/><path d="M14 16l4-2M20 16l4-2M26 16l4-2" opacity=".6"/>',
   inputs: [
-    { key: "inside", label: "Inside diameter", kind: "length", default: 60, min: 15, max: 250, variable: true, help: "The opening; the jar is this wide inside all the way down." },
+    { key: "inside", label: "Inside diameter", kind: "length", default: 60, min: 15, max: 250, variable: true, help: "The opening, inside the threaded neck. Below the neck the jar is a little wider inside." },
     { key: "height", label: "Height", kind: "length", default: 70, min: 20, max: 250, variable: true, help: "The jar, without its lid." },
     { key: "wall", label: "Wall thickness", kind: "length", default: 2, min: 1, max: 10, variable: true, help: "The walls, floor and lid top." },
     { key: "neck", label: "Thread height", kind: "length", default: 12, min: 5, max: 60, variable: true, help: "How tall the threaded neck is (and so how deep the lid)." },
