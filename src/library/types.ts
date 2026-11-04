@@ -65,6 +65,8 @@ export interface LibraryDesign {
   description: string;
   /** Which section of the library it's in: "laser" (Laser cutting) or "print" (3D printing). */
   category: DesignCategory;
+  /** A smaller group within its section ("Fixings", "Hinges"…), for browsing; missing = shown without a group. */
+  group?: string;
   /** Start of its variables' names: box → box_width. */
   prefix: string;
   /** A small drawing for its card: the inside of an <svg viewBox="0 0 48 48">, in currentColor. */

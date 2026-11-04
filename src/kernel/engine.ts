@@ -25,7 +25,7 @@ import { loftSketches, sweepSketch } from "./sweep";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
 import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gapReport, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
-import { grooveVolume, threadPieces } from "./thread";
+import { grooveVolume, maxGrooveDepth, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
@@ -469,19 +469,32 @@ const fmt = (x: number) => String(Math.round(x * 100) / 100);
  * that cuts the wrong amount (or leaves the part broken) is tried again a
  * turn at a time. Returns the new shape (`start` is left as it is).
  */
-function cutThread(start: Shape3D, cyl: Cylinder, from: number, to: number, lo: number, hi: number, pitch: number, external: boolean): Shape3D {
+function cutThread(start: Shape3D, cyl: Cylinder, from: number, to: number, lo: number, hi: number, pitch: number, external: boolean, depth?: number): Shape3D {
   let shape = start;
+  const turn = grooveVolume(cyl, pitch, external, 0, pitch, 0, pitch, depth);
   const cutPiece = (pieces: { shape: Shape3D; from: number; to: number }[], retry: boolean) => {
     for (const piece of pieces) {
       try {
-        const before = measureVolume(shape);
-        const next: Shape3D = shape.cut(piece.shape);
-        const removed = before - measureVolume(next);
-        const expected = grooveVolume(cyl, pitch, external, piece.from, piece.to, lo, hi);
-        const ok = isValidSolid(next) && (expected < 1e-6 || (removed > 0.5 * expected && removed < 1.6 * expected));
-        if (!ok) {
-          next.delete();
-          if (retry) cutPiece(threadPieces(cyl, piece.from, piece.to, pitch, external, 1), false);
+        let next: Shape3D | null = null;
+        let ok = false;
+        try {
+          const before = measureVolume(shape);
+          next = shape.cut(piece.shape);
+          const removed = before - measureVolume(next);
+          const expected = grooveVolume(cyl, pitch, external, piece.from, piece.to, lo, hi, depth);
+          // Near an end the groove's sloping sides spill a little past it, beyond the estimate: up to half a turn's worth more is fine.
+          ok = isValidSolid(next) && (expected < 1e-6 || (removed > 0.5 * expected && removed < 1.6 * expected + 0.5 * turn));
+        } catch {
+          // OpenCascade sometimes gives back no shape at all for a piece: cut it again in smaller pieces, as for a poor cut.
+          ok = false;
+        }
+        if (!ok || !next) {
+          try {
+            next?.delete();
+          } catch {
+            // nothing to free
+          }
+          if (retry) cutPiece(threadPieces(cyl, piece.from, piece.to, pitch, external, 1, depth), false);
           else throw new Error("The thread couldn't be cut cleanly here — try a slightly different pitch or length.");
           continue;
         }
@@ -493,7 +506,7 @@ function cutThread(start: Shape3D, cyl: Cylinder, from: number, to: number, lo: 
     }
   };
   try {
-    cutPiece(threadPieces(cyl, from, to, pitch, external), true);
+    cutPiece(threadPieces(cyl, from, to, pitch, external, 2, depth), true);
   } catch (e) {
     if (shape !== start) shape.delete();
     throw e;
@@ -4016,7 +4029,9 @@ export class GeometryEngine {
         const full = !(values.length > 0) || values.length >= hi - lo - 1e-6;
         // Runs out past the open end (and past the far end too when it's the full length), so the groove ends cleanly.
         const from = full ? lo - pitch : hi - values.length;
-        const next = cutThread(shape, cyl, from, hi + pitch, lo, hi, pitch, external);
+        // A groove depth given (more than 0) replaces the standard one, up to the deepest that leaves a flat on each tooth.
+        const depth = values.depth > 0 ? Math.min(values.depth, maxGrooveDepth(pitch)) : undefined;
+        const next = cutThread(shape, cyl, from, hi + pitch, lo, hi, pitch, external, depth);
         if (shape !== part.shape) shape.delete();
         shape = next;
         // For drawings: where it runs, and its outside and root sizes (60° metric: root = outside − 1.0825 × pitch).

@@ -39,6 +39,7 @@ export const boxLid: LibraryDesign = {
   description:
     "A box with rounded corners and a separate lid that slips over the top. The lid is shown beside the box, upside down, ready to print — both print flat with no supports. The gap round the lid is the printed snug fit.",
   category: "print",
+  group: "Storage",
   prefix: "lidbox",
   icon: '<path d="M8 24c0-2 1-3 3-3h18c2 0 3 1 3 3v12c0 2-1 3-3 3H11c-2 0-3-1-3-3z"/><path d="M6 15c0-2 1-3 3-3h22c2 0 3 1 3 3v3H6z" opacity=".55"/><path d="M36 30h6v9h-6z" opacity=".55"/>',
   inputs: [

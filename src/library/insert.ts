@@ -27,10 +27,11 @@ import { fingerBox } from "./designs/fingerBox";
 import { knob } from "./designs/knob";
 import { spacer } from "./designs/spacer";
 import { tray } from "./designs/tray";
+import { PRINT_DESIGNS } from "./printDesigns";
 import type { DesignCategory, DesignInput, DesignValues, LibraryDesign, LibraryInsert } from "./types";
 
 /** Every design in the library, in the order they're shown (laser cutting first, then 3D printing). */
-export const LIBRARY: readonly LibraryDesign[] = [fingerBox, flatStand, tray, boxLid, bracket, hook, cableClip, phoneStand, hinge, spacer, knob];
+export const LIBRARY: readonly LibraryDesign[] = [fingerBox, flatStand, tray, boxLid, bracket, hook, cableClip, phoneStand, hinge, spacer, knob, ...PRINT_DESIGNS];
 
 /** The library's sections, in the order they're shown. */
 export const LIBRARY_CATEGORIES: readonly { id: DesignCategory; label: string; blurb: string }[] = [

@@ -38,6 +38,7 @@ export const phoneStand: LibraryDesign = {
   description:
     "A stand that holds a phone or tablet leaning back, in a slot with a lip in front. It prints lying on its side — no overhangs and no supports, and the layers run along it so it's strong. For a tall tablet make the back rest longer so it doesn't tip.",
   category: "print",
+  group: "Household",
   prefix: "stand",
   icon: '<path d="M6 38h34v-8h-5v4h-5l-9-24h-6l9 24H6z"/><path d="M22 10l10 26" opacity=".55"/>',
   inputs: [

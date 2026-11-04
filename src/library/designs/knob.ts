@@ -21,6 +21,7 @@ export const knob: LibraryDesign = {
   name: "Grip knob",
   description: "A round knob with finger notches round its edge and a hole for a shaft underneath — for a potentiometer, a clamp or a jig screw. Prints flat side down.",
   category: "print",
+  group: "Household",
   prefix: "knob",
   icon: '<circle cx="24" cy="24" r="15"/><circle cx="24" cy="9" r="2.5"/><circle cx="39" cy="24" r="2.5"/><circle cx="24" cy="39" r="2.5"/><circle cx="9" cy="24" r="2.5"/><circle cx="24" cy="24" r="4"/>',
   inputs: [

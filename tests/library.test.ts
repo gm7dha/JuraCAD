@@ -29,7 +29,7 @@ const design = (id: string) => findDesign(id)!;
 
 describe("the library", () => {
   it("has each design described, with an icon, inputs and working defaults", () => {
-    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob"]);
+    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard"]);
     for (const d of LIBRARY) {
       expect(d.name.length).toBeGreaterThan(3);
       expect(d.description.length).toBeGreaterThan(20);
@@ -249,7 +249,7 @@ describe("library sections", () => {
       ["print", "3D printing"],
     ]);
     expect(designsIn("laser").map((d) => d.id)).toEqual(["finger-box", "flat-stand"]);
-    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob"]);
+    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard"]);
     expect(designsIn("laser").length + designsIn("print").length).toBe(LIBRARY.length);
     expect(categoryLabel("print")).toBe("3D printing");
     expect(categoryFrom("Laser cutting")).toBe("laser");

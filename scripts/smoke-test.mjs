@@ -3257,8 +3257,20 @@ try {
     const lidded = await shown();
     if (lidded.errors) throw new Error(`the box with lid has ${lidded.errors} feature problem(s)`);
     await shot("library-lid");
+    step = "Design library: a bolt, nut and washer set, found by searching";
+    await tool("Library");
+    await page.getByLabel("Search the library").fill("bolt");
+    await page.getByRole("button", { name: /^Bolt, nut and washer set:/ }).click();
+    // Without its modelled thread, so it builds quickly here: an M8 bolt, nut and washer side by side (57.02 mm).
+    await page.getByLabel("Model the thread").uncheck();
+    await page.locator(".library-preview polygon").first().waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Bolt, nut and washer set", { timeout: 10_000 });
+    await waitShown(3, 57.0167, "the bolt set didn't build its bolt, nut and washer side by side");
+    const bolts = await shown();
+    if (bolts.errors) throw new Error(`the bolt set has ${bolts.errors} feature problem(s)`);
     libraryReport =
-      "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts)";
+      "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts); then a bolt, nut and washer set found by searching (3 parts)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 

@@ -330,7 +330,7 @@
   (`gh api repos/gm7dha/JuraCAD/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → glossy finish → save a 2× see-through picture → section view → check → export STL, STEP and 3MF → Laser: click the top face, save SVG (40 × 30 mm, blue hole, red outline) and DXF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, make a copy flexible (nothing jumps), undo, double-click opens it → add a second Part Studio with a box → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → a view of another part with a projected top view (lined up), auto-dimensioned, then removed → draw the assembly exploded (parts list) → sheet metal from a part (a shelled box in a new Part Studio: its walls clicked one at a time from views that see them, a rip clicked, three more added, Accept: 4 bends); Design library: a finger-joint box inserted (6 panels, 140 mm) and widened to 170 mm in Variables, then a box with lid from the 3D printing tab (2 parts); a touch screen (an iPad-sized page with `hasTouch`, fingers sent through CDP `Input.dispatchTouchEvent`: pinch zooms the 3D view and not the page, double-tap fits, a tap selects a face, in a sketch two fingers pan and draw nothing, a one-finger drag draws a line); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → glossy finish → save a 2× see-through picture → section view → check → export STL, STEP and 3MF → Laser: click the top face, save SVG (40 × 30 mm, blue hole, red outline) and DXF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, make a copy flexible (nothing jumps), undo, double-click opens it → add a second Part Studio with a box → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → a view of another part with a projected top view (lined up), auto-dimensioned, then removed → draw the assembly exploded (parts list) → sheet metal from a part (a shelled box in a new Part Studio: its walls clicked one at a time from views that see them, a rip clicked, three more added, Accept: 4 bends); Design library: a finger-joint box inserted (6 panels, 140 mm) and widened to 170 mm in Variables, then a box with lid from the 3D printing tab (2 parts), then a bolt, nut and washer set found by searching; a touch screen (an iPad-sized page with `hasTouch`, fingers sent through CDP `Input.dispatchTouchEvent`: pinch zooms the 3D view and not the page, double-tap fits, a tap selects a face, in a sketch two fingers pan and draw nothing, a one-finger drag draws a line); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.
@@ -520,7 +520,12 @@
 - Design library (Onshape-style configurable library parts): `src/library/` (pure). `insert.ts` has `LIBRARY` (`designs/*.ts`) in two
   sections, `LibraryDesign.category` "laser" (Laser cutting: finger-joint box, flat-pack phone stand — flat panels for Export for laser)
   and "print" (3D printing: tray, box with lid, shelf bracket, wall hook, cable clip, phone/tablet stand, print-in-place hinge,
-  spacer/washer, grip knob — each sits flat on the bed at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`. Each is a `LibraryDesign` (id, name,
+  spacer/washer, grip knob, and — in `printDesigns.ts`, appended to LIBRARY — bolt/nut/washer set, hex standoff, piano hinge,
+  screw-top jar, bit holder block, pegboard hook, drawer pull, desk cable grommet, corner protector — each sits flat on the bed
+  at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`. Optional `LibraryDesign.group` ("Fixings", "Hinges", "Storage",
+  "Household", "Workshop"; `browse.ts`: `groupDesigns` — headings in `LIBRARY_GROUPS` order, ungrouped under "More", none at all
+  when a section has no groups — and `searchDesigns`: every typed word must start a word of the name/group/section/description,
+  name matches first); the window has a search box (results across both sections; cleared on close) and group headings. Each is a `LibraryDesign` (id, name,
   description, `icon` = fixed SVG markup, `inputs` with defaults/limits, `problems`, `make`, `preview` shapes, `summary`).
   The library window shows the sections as tabs (3D printing first time, then the last one in localStorage `juracad.libraryTab`, `tabMemory.ts`, try/catch; roving tabIndex);
   `libraryInserts` don't store the category. Newer designs: box with lid (`boxLid.ts`: lid = a tray upside down, inside = box
@@ -531,7 +536,25 @@
   in expressions — so its sine/cosine go in as 6-place numbers, `trigOf`; the flat-pack one is a side on Front + two feet on Right
   with cross halving notches drawn `kerf` narrower; the front foot right under the slot's back corner (x = 0…t, the origin), its top flush with the slot floor, so the phone stands on it), hinge (`hinge.ts`: per leaf a plate, a full-length knuckle cylinder,
   then the other leaf's knuckles cut away ± clearance and a bore — exactly the pin for leaf 1 (it prints joined to the pin), pin +
-  2 × clearance for leaf 2; the pin a New part). `ex.ts` `wholeNegation`: only strip "-( … )" that wraps the whole text.
+  2 × clearance for leaf 2; the pin a New part; `hingeFeatures(ctx, n, { patterned, afterLeaf })` is shared with the piano hinge,
+  whose knuckle count comes from a knuckle length (`pianoKnuckles`, odd, ≤ 199), whose cut-outs are one gap + a Linear pattern, and
+  whose countersunk holes are drilled from each leaf's top face — a sketch on the face (`printKit.topFacePlane`: a face plane with
+  `face` TopoPick, so `followSketch` moves it when the thickness variable changes), as the faces that meet when folded must take the
+  heads). Printed threads (`printKit.ts`): the designs' Thread features are always the whole face (`length` 0, so which end is
+  the face's "far end" — `cylinderOfFace`'s axis follows the edge's parametrisation and can point either way, which also shifts
+  where the groove starts round the turn — never matters) and give somewhere clear to run out: a bolt's rod is turned down to
+  the thread's root for `RELIEF` (1.75) × pitch above the head (rod New from z = 0, an annulus removed, the head Added back), a
+  jar's neck and lid have a pitch-long run-out then a 45° slope. They use the Thread feature's optional `depth` param (mm; 0 =
+  standard; capped at `maxGrooveDepth` = 7/8 pitch wide at the surface): `PRINTED_DEPTH` 0.75 × pitch for both bolt and nut,
+  placed `THREAD_SHIFT` × pitch apart so a fit of 0 just touches along the flanks; printed fit c = rod −2c, nut hole +2c = a
+  gap of exactly c square to the flanks (`threadGap`), teeth overlapping 0.634 × pitch − 2c (`threadOverlap`; refused below
+  `minOverlap`, `maxFit` named). With the engine's standard pointed grooves the overlap is only 0.29 × pitch − 2c (gone at
+  0.2 mm on M8), hence the deeper groove. Sizes: `boltSizes.ts` (`printFastener`: M3–M12 from model/fasteners.ts, a custom
+  size in ISO proportions; `ISO_COARSE_PITCH` = kernel ISO_COARSE, pure). Bolts stand on their heads (round threads, no
+  supports). Other builders there: `revolveFeature` (Front-plane profiles round Z; New = apart), `gridPatternFeature` (count or
+  rows may be 1). A sketch can't start above a plane, so floors under cut-through holes are Added back (bit holder: holes cut
+  right through by one patterned Remove, then a floor Added; corner protector: a C extruded, then an end plate Added).
+  `ex.ts` `wholeNegation`: only strip "-( … )" that wraps the whole text.
   `insertDesign(doc, design, values, { into: "new" | studioId })` adds variables `<prefix>_<key>` for inputs marked
   `variable` (`freePrefix`: box, box2…), the features (ordinary sketches/extrudes/copies/patterns, in a folder named after the
   insert, ids `<insert id>_<role>`), part names and a record in `doc.libraryInserts` (`LibraryInsert`, parsed by
@@ -556,7 +579,12 @@
   into the Part Studio on show). Tests: tests/libraryFingers, library (pure), engineLibrary and engineLibraryPrint (volumes, no overlaps, the hinge's and lid's
   gaps by nudging a part 90% of the clearance, variables, a user's overlapping part left alone), mcpLibrary (incl. the
   `category` filter of list_library_designs); the smoke test inserts a box and widens it in Variables, then a box with lid from
-  the 3D printing tab (2 parts).
+  the 3D printing tab (2 parts), then a bolt set found with the search box (thread off, 3 parts). New designs' tests:
+  tests/libraryPrint (pure: sizes, thread maths, fully defined, groups/search), engineLibraryPrint2 (piano hinge turned round its
+  pin with no clash, volumes), engineLibraryThreads (heavy: bolt and nut free at a 0.2 mm fit somewhere in each turn with room
+  both ways, just touching at 0 — found by a golden-section search — overlapping at −0.1; the jar's lid screws on; groove depth).
+  `cutThread` retries a piece OpenCascade returns no shape for (as for a poor cut), and accepts up to half a turn's extra
+  removed near an end (a deeper groove's sides spill past it).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);

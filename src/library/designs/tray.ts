@@ -17,6 +17,7 @@ export const tray: LibraryDesign = {
   name: "Open box / tray",
   description: "An open-topped box with rounded corners, for 3D printing: storage trays, drawer organisers, pots.",
   category: "print",
+  group: "Storage",
   prefix: "tray",
   icon: '<path d="M8 20c0-2 1-3 3-3h26c2 0 3 1 3 3v14c0 2-1 3-3 3H11c-2 0-3-1-3-3z"/><path d="M12 20h24v12H12z" opacity=".55"/>',
   inputs: [
