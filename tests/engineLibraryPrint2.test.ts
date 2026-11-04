@@ -12,7 +12,7 @@ import { MAIN_STUDIO } from "../src/model/studios";
 import type { JuraCADDocument } from "../src/model/types";
 import { applyVariables, resolveVariables } from "../src/model/variables";
 import { pianoVolumes } from "../src/library/designs/pianoHinge";
-import { pegHookVolumes, pegPlaces } from "../src/library/designs/pegboardHook";
+import { pegHookVolume, pegPlaces } from "../src/library/designs/pegboardHook";
 import { pullVolume } from "../src/library/designs/drawerPull";
 import { bitHolderVolume } from "../src/library/designs/bitHolder";
 import { grommetSizes, sleeveVolume } from "../src/library/designs/grommet";
@@ -126,53 +126,65 @@ describe("the other 3D printing designs", () => {
   }
 
   describe("pegboard hook", () => {
-    const pegVars = (v: DesignValues) => varsOf(v, ["spacing", "board", "peg", "hole", "length", "tip", "thickness", "width"]);
+    const pegVars = (v: DesignValues) => varsOf(v, ["spacing", "board", "peg", "lip", "hole", "length", "tip", "thickness", "width"]);
     /**
-     * The hook hung on a board: a plate `board` thick with round holes of `hole` across at the pegs, built in its own
-     * Part Studio as an upright plate with upright holes, then turned so its holes run along the pegs (−X) and its front
-     * is against the hook's plate (x = 0). The volume they share.
+     * The hook and a board `board` thick with real round holes `hole` across, 25.4 mm apart: the board is made in the same
+     * Part Studio as an upright plate with upright holes, and turned so its holes run along the pegs (−X), its front
+     * against the hook's plate (x = 0) and the holes' middles level with the pegs'. The hook hangs on it — dropped, its
+     * pegs on the bottoms of the holes. `overlap(dx, dy)` is the volume shared with the hook moved by (dx, dy).
      */
-    function onBoard(values: DesignValues, hole: number): number {
+    function hung(values: DesignValues, hole: number) {
       const v = valuesOf("pegboard-hook", values);
       const at = pegPlaces(pegVars(v));
       const B = v.board as number;
+      const p = v.peg as number;
       const plate = feature("box", { width: 80, depth: 90, height: B, x: -40, y: -30, z: 0 });
-      const holes = [at.low.v, at.high.v].map((y) => feature("cylinder", { diameter: hole, height: B + 2, x: 0, y, z: -1 }, "remove"));
+      const drop = (hole - p) / 2;
+      const holes = [at.low.v, at.high.v].map((y) => feature("cylinder", { diameter: hole, height: B + 2, x: 0, y: y + drop, z: -1 }, "remove"));
       const doc = insertDesign({ ...emptyDocument(), features: [plate, ...holes] }, findDesign("pegboard-hook")!, v, { into: MAIN_STUDIO }).doc;
       const r = build(doc);
       const hook = partEnding(r.parts, "_hook");
-      const board = r.parts.find((p) => p.id === plate.id)!;
-      // Turned −90° about Y: the board's z (0 … B) runs along −X (0 … −B), its x becomes Z; lifted to the pegs' middle.
+      const board = r.parts.find((x) => x.id === plate.id)!;
+      // Turned −90° about Y: the board's z (0 … B) runs along −X (0 … −B), its x becomes Z; raised to the pegs' middles.
       const s45 = Math.SQRT1_2;
-      return shared({ part: hook }, { part: board, rotation: [0, -s45, 0, s45], position: [0, 0, (v.width as number) / 2] });
+      const overlap = (dx: number, dy: number) =>
+        shared({ part: hook, position: [dx, dy, 0] }, { part: board, rotation: [0, -s45, 0, s45], position: [0, 0, at.z.v] });
+      return { v, at, overlap, hook };
     }
 
-    it("makes one sound part on the bed: the plate and arm, a round bottom peg and a round top peg bent up behind the board", () => {
+    it("makes one sound part: the plate and arm, round pegs resting on the bed, and the lip", () => {
       const v = valuesOf("pegboard-hook");
       const r = build(insert("pegboard-hook"));
       expect(r.parts).toHaveLength(1);
+      expect(r.volume).toBeCloseTo(pegHookVolume(v), 1);
       onTheBed(r.parts);
-      const b = box(r.parts[0]);
-      // As wide as the arm, with the round pegs inside that width.
-      expect(b.max[2]).toBeCloseTo(8, 3);
+      const hook = r.parts[0];
+      expect(box(hook).max[2]).toBeCloseTo(8, 4);
+      // The pegs (everything behind the board's front, x < 0) lie on the bed: their undersides at z = 0, tops a peg up.
+      let [lo, hi] = [Infinity, -Infinity];
+      for (let i = 0; i < hook.vertices.length; i += 3) if (hook.vertices[i] < -0.01) (lo = Math.min(lo, hook.vertices[i + 2])), (hi = Math.max(hi, hook.vertices[i + 2]));
+      expect(lo).toBeCloseTo(0, 2);
+      expect(hi).toBeCloseTo(4.5, 2);
       const at = pegPlaces(pegVars(v));
-      // The top peg's upright reaches back behind the board, and up 1.5 pegs above its middle.
-      expect(b.min[0]).toBeCloseTo(at.back.v - 2.8, 1);
-      expect(b.max[1]).toBeCloseTo(at.up.v, 2);
-      // Body and bottom peg exactly, plus the top peg: a 5.6 mm rod a little over 15 mm long round its bend.
-      const want = pegHookVolumes(v);
-      const rod = Math.PI * 2.8 * 2.8;
-      expect(r.volume).toBeGreaterThan(want.body + want.lowPeg + rod * 12);
-      expect(r.volume).toBeLessThan(want.body + want.lowPeg + rod * 20);
+      expect(box(hook).min[0]).toBeCloseTo(-at.topLength.v, 4);
     });
 
-    it("its round pegs go through 6 mm and 6.35 mm holes 25.4 mm apart without touching the board", () => {
-      expect(onBoard({}, 6.35)).toBeLessThan(0.001);
-      expect(onBoard({}, 6)).toBeLessThan(0.001);
-      expect(onBoard({ shape: "straight", board: 3.5 }, 6)).toBeLessThan(0.001);
-      // … while holes smaller than the pegs would be run into (so the check sees the board).
-      expect(onBoard({}, 5)).toBeGreaterThan(1);
-    });
+    for (const [hole, values] of [[6, {}], [6.35, {}], [6, { shape: "straight", board: 3.5 }]] as [number, DesignValues][]) {
+      it(`hung on a board with ${hole} mm holes${values.board ? ` (${values.board} mm thick)` : ""}: it comes off by lifting, then pulling, touching nothing — and can't be pulled off without lifting`, () => {
+        const { v, at, overlap } = hung(values, hole);
+        const p = v.peg as number;
+        const lip = v.lip as number;
+        expect(overlap(0, 0)).toBeLessThan(0.001);
+        // Lifted until peg and lip are in the middle of the hole, a step at a time …
+        const lift = (hole - p + lip) / 2;
+        for (const k of [1, 2, 3, 4]) expect(overlap(0, (lift * k) / 4)).toBeLessThan(0.001);
+        // … then pulled straight out until it's clear of the board.
+        for (let dx = 1; dx < at.topLength.v + 1; dx += 1) expect(overlap(dx, lift)).toBeLessThan(0.001);
+        expect(overlap(at.topLength.v + 1, lift)).toBeLessThan(0.001);
+        // Pulled without lifting, the lip runs into the back of the board.
+        expect(overlap(1, 0)).toBeGreaterThan(0.01);
+      });
+    }
   });
 
   it("drawer pull: the screw holes go into the feet from the side against the door", () => {

@@ -129,8 +129,3 @@ export function topFacePlane(label: string, partId: string, height: Ex, center: 
 export function relIn(p: Vec3, min: Vec3, max: Vec3): Vec3 {
   return [0, 1, 2].map((i) => (max[i] - min[i] > 1e-6 ? Math.round(((p[i] - min[i]) / (max[i] - min[i])) * 1e4) / 1e4 : 0.5)) as Vec3;
 }
-
-/** Carry a sketch's closed shape along another sketch's path (as the Sweep dialog makes it), adding to the latest part. */
-export function sweepFeature(id: string, name: string, sketchRef: string, pathRef: string): Feature {
-  return { id, name, type: "sweep", operation: "add", suppressed: false, params: { ...defaultParams("sweep") }, sketchRef, pathRef };
-}

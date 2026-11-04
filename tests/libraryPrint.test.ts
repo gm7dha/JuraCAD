@@ -166,18 +166,21 @@ describe("the other new designs' sizes", () => {
     expect(valueProblems(design("jar"), valuesOf("jar", { height: 25 }))[0]).toMatch(/taller/);
   });
 
-  it("pegboard hook: round pegs one hole apart, smaller than the holes, room for the board behind", () => {
-    const vars = varsOf(valuesOf("pegboard-hook"), ["spacing", "board", "peg", "hole", "length", "tip", "thickness", "width"]);
+  it("pegboard hook: round pegs one hole apart, resting on the bed, and peg + lip small enough to go straight in", () => {
+    const vars = varsOf(valuesOf("pegboard-hook"), ["spacing", "board", "peg", "lip", "hole", "length", "tip", "thickness", "width"]);
     const at = pegPlaces(vars);
     expect(at.high.v - at.low.v).toBe(25.4);
-    // The top peg's upright is the board + BEHIND behind the front, to its near side.
-    expect(at.back.v + 5.6 / 2).toBeCloseTo(-(6 + BEHIND), 6);
+    expect(at.z.v).toBe(2.25);
+    expect(at.high.v - at.lipAt.v).toBeCloseTo(1.2, 9);
+    // The lip starts just behind the board and is as long as the peg is thick.
+    expect(at.behind.v).toBe(6 + BEHIND);
+    expect(at.topLength.v).toBe(6 + BEHIND + 4.5);
     expect(pegHookOutline(vars, false)).toHaveLength(pegHookOutline(vars, true).length - 2);
     const d = design("pegboard-hook");
-    expect(valueProblems(d, valuesOf("pegboard-hook", { peg: 5.8 }))[0]).toMatch(/at least 0\.3 mm smaller than the holes.*at most 5\.7 mm/);
-    expect(valueProblems(d, valuesOf("pegboard-hook", { hole: 6.35, peg: 6 }))).toEqual([]);
+    expect(valueProblems(d, valuesOf("pegboard-hook", { peg: 5 }))[0]).toMatch(/peg and its lip together.*at most 5\.7 mm together \(now 6\.2 mm\)/);
+    expect(valueProblems(d, valuesOf("pegboard-hook", { hole: 6.35, peg: 4.8 }))).toEqual([]);
     expect(valueProblems(d, valuesOf("pegboard-hook", { width: 4 }))[0]).toMatch(/as thick and as wide as the pegs/);
-    expect(valueProblems(d, valuesOf("pegboard-hook", { spacing: 10, peg: 8, hole: 9, thickness: 8 }))[0]).toMatch(/apart/);
+    expect(valueProblems(d, valuesOf("pegboard-hook", { spacing: 10, peg: 8, hole: 10, thickness: 8, lip: 1 }))[0]).toMatch(/apart/);
   });
 
   it("drawer pull: the feet centred on the screw holes", () => {
