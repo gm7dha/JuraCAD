@@ -24,6 +24,7 @@ export interface FeatureChange {
   name: string;
   /** "Box", "Extrude"… */
   kind: string;
+  /** The Part Studio it's in ("" when both designs have just one, so there's no need to say). */
   studio: string;
   change: "added" | "removed" | "changed";
   /** Changed only: the settings that differ (at most MAX_SETTINGS, then one "…and N more"). */
@@ -192,9 +193,10 @@ export function compareDesigns(
   const features: FeatureChange[] = [];
   const studiosA = studiosOf(a);
   const studiosB = studiosOf(b);
+  const oneStudio = studiosA.length === 1 && studiosB.length === 1;
   const where = (doc: typeof studiosA) => {
     const m = new Map<string, { f: Feature; studio: string }>();
-    for (const st of doc) for (const f of st.features) m.set(f.id, { f, studio: st.name });
+    for (const st of doc) for (const f of st.features) m.set(f.id, { f, studio: oneStudio ? "" : st.name });
     return m;
   };
   const fa = where(studiosA);
@@ -245,6 +247,9 @@ export function compareDesigns(
     for (const [id, x] of mx) if (!my.has(id)) other.push(`${label} "${x.name}" removed`);
   };
   tabs("Part Studio", studiosA.map((s) => ({ id: s.id, name: s.name })), studiosB.map((s) => ({ id: s.id, name: s.name })));
+  // The Part Studios both have, in another order.
+  const kept = (xs: { id: string }[], ys: { id: string }[]) => xs.filter((x) => ys.some((y) => y.id === x.id)).map((x) => x.id).join("|");
+  if (kept(studiosA, studiosB) !== kept(studiosB, studiosA)) other.push("Part Studio tabs reordered");
   tabs("Assembly", a.assemblies, b.assemblies);
   tabs("Drawing", a.drawings, b.drawings);
   if (a.name !== b.name) other.push(`Design renamed from "${a.name}" to "${b.name}"`);

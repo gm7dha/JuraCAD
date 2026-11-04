@@ -372,6 +372,12 @@ export interface JuraCADDocument {
   finishes?: Record<string, FinishId>;
   /** Part id → material key (see materials.ts); missing = PLA. */
   materials?: Record<string, string>;
+  /**
+   * Id of the Part Studio in the first tab (whose features are `features`);
+   * "main" when not set. Set only once the tabs have been moved or the first
+   * deleted, so every Part Studio keeps its id (see model/studios.ts).
+   */
+  studioId?: string;
   /** Name of the first Part Studio (whose features are `features`); "Part Studio 1" when not set. */
   studioName?: string;
   /** Of the Origin and the Top/Front/Right planes, the ones hidden in the first Part Studio (missing = all shown). */

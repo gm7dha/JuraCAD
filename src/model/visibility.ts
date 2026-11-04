@@ -8,7 +8,7 @@
  * a sweep's profile or path, a loft, a hole's points…); the eye in the feature
  * list shows or hides it for good. Planes are shown until hidden.
  */
-import { inStudio, MAIN_STUDIO, studioFeatures } from "./studios";
+import { firstStudioId, inStudio, studioFeatures } from "./studios";
 import type { DatumName, Feature, JuraCADDocument } from "./types";
 
 export const DATUM_NAMES: readonly DatumName[] = ["Origin", "Top", "Front", "Right"];
@@ -88,7 +88,7 @@ export function setAllSketchesVisible(doc: JuraCADDocument, visible: boolean): J
 
 /** Of the Origin and default planes, the ones hidden in a Part Studio (the same array each time: safe in selectors). */
 export function hiddenDatumsOf(doc: JuraCADDocument, studioId: string): DatumName[] {
-  if (studioId === MAIN_STUDIO) return doc.hiddenDatums ?? NO_DATUMS;
+  if (studioId === firstStudioId(doc)) return doc.hiddenDatums ?? NO_DATUMS;
   return doc.partStudios?.find((s) => s.id === studioId)?.hiddenDatums ?? NO_DATUMS;
 }
 
@@ -98,7 +98,7 @@ export function setDatumHidden(doc: JuraCADDocument, studioId: string, datum: Da
   if (now.includes(datum) === hidden) return doc;
   // Kept in the usual order, and left out of the file when nothing is hidden.
   const next = DATUM_NAMES.filter((d) => (d === datum ? hidden : now.includes(d)));
-  if (studioId === MAIN_STUDIO) {
+  if (studioId === firstStudioId(doc)) {
     const { hiddenDatums: _, ...rest } = doc;
     return next.length ? { ...rest, hiddenDatums: next } : rest;
   }

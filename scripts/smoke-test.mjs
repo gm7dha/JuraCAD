@@ -55,6 +55,36 @@ async function tool(name) {
   await page.getByRole("menuitem", { name, exact: true }).click();
 }
 
+/**
+ * The open colour chooser is wholly inside the window, and every colour, finish and the Other… box is
+ * wholly inside it and not covered (so none is cut off or hidden by a panel). Throws otherwise.
+ */
+async function popoverFits(pg, where) {
+  const problem = await pg.evaluate(() => {
+    const pop = document.querySelector(".colour-popover");
+    if (!pop) return "the colour chooser didn't open";
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const b = pop.getBoundingClientRect();
+    const r = (x) => Math.round(x);
+    if (b.left < 0 || b.top < 0 || b.right > W + 0.5 || b.bottom > H + 0.5) return `the colour chooser (${r(b.left)}, ${r(b.top)} to ${r(b.right)}, ${r(b.bottom)}) goes outside the window`;
+    const items = [...pop.querySelectorAll(".colour-choice, .finish-choice, .colour-custom input")];
+    const colours = pop.querySelectorAll(".colour-choice").length;
+    const finishes = pop.querySelectorAll(".finish-choice").length;
+    if (colours < 10 || finishes < 8) return `only ${colours} colours and ${finishes} finishes are in the chooser`;
+    for (const el of items) {
+      const e = el.getBoundingClientRect();
+      const name = el.getAttribute("aria-label") || el.textContent?.trim() || "Other…";
+      if (e.width < 12 || e.height < 12) return `${name} is only ${r(e.width)} × ${r(e.height)} px`;
+      if (e.left < b.left - 0.5 || e.right > b.right + 0.5 || e.top < b.top - 0.5 || e.bottom > b.bottom + 0.5) return `${name} is cut off (outside the chooser's visible area)`;
+      const hit = document.elementFromPoint((e.left + e.right) / 2, (e.top + e.bottom) / 2);
+      if (!hit || !(hit === el || el.contains(hit) || hit.contains(el))) return `${name} is covered by ${hit?.className || hit?.tagName}`;
+    }
+    return null;
+  });
+  if (problem) throw new Error(`colour chooser at ${where}: ${problem}`);
+}
+
 let shotNumber = 0;
 /** A PNG's pixels as RGBA bytes (8-bit RGBA only — what browsers save), undoing each row's filter. */
 async function pngPixels(png) {
@@ -192,9 +222,23 @@ try {
   await page.getByRole("button", { name: "Colour of Part 1" }).click();
   await page.getByRole("radio", { name: "Glossy plastic" }).click();
   await page.waitForFunction(() => Object.values(window.juracadStore.getState().history.present.finishes ?? {}).includes("glossy"));
-  await page.mouse.move(5, 5);
+  await popoverFits(page, "1180 × 760");
+  await page.keyboard.press("Escape");
   await page.waitForSelector(".colour-popover", { state: "detached" });
   await shot("glossy");
+
+  // The colour chooser shows every colour and finish, whatever the window: short (the Parts list low down), and narrow too.
+  step = "checking the colour chooser fits small windows";
+  for (const [width, height] of [[1180, 460], [620, 420], [1180, 380]]) {
+    await page.setViewportSize({ width, height });
+    await page.waitForTimeout(200);
+    await page.getByRole("button", { name: "Colour of Part 1" }).click();
+    await popoverFits(page, `${width} × ${height}`);
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".colour-popover", { state: "detached" });
+  }
+  await page.setViewportSize({ width: 1180, height: 760 });
+  await page.waitForTimeout(200);
 
   step = "saving a picture of the view";
   let pictureReport;
@@ -2321,6 +2365,14 @@ try {
   await page.waitForTimeout(1000);
   await shot("darkassembly");
   await page.getByRole("button", { name: "Part Studio 1" }).click();
+  // The colour chooser in dark mode: its own panel colour, and still all there.
+  await page.locator(".part-row .colour-swatch").first().click();
+  await popoverFits(page, "dark mode");
+  const popBg = await page.evaluate(() => [getComputedStyle(document.querySelector(".colour-popover")).backgroundColor, getComputedStyle(document.querySelector(".feature-panel, .panel, body")).getPropertyValue("--panel").trim()]);
+  if (/rgb\(255, 255, 255\)/.test(popBg[0])) throw new Error(`the colour chooser stays white in dark mode (${popBg.join(" / ")})`);
+  await shot("darkcolours");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector(".colour-popover", { state: "detached" });
 
   step = "rolling back the feature list";
   {
@@ -3382,6 +3434,98 @@ try {
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
+  // Part Studio tabs in any order: three studios, one dragged to the front, one moved with its menu, then Part Studio 1 deleted
+  // (it's used in an assembly, so the question says so), and Undo brings it back. A page of its own, so the rest of the test is unchanged.
+  step = "Part Studio tabs: making three studios";
+  let tabsReport = "";
+  {
+    const tabsContext = await browser.newContext({ viewport: { width: 1180, height: 760 } });
+    try {
+      const tab = await tabsContext.newPage();
+      tab.on("console", (m) => m.type() === "error" && consoleErrors.push(`(tabs page) ${m.text()}`));
+      tab.on("pageerror", (e) => consoleErrors.push(`(tabs page) ${e.message}`));
+      await tab.goto(`http://localhost:4173${basePath}?smoke`);
+      await tab.waitForSelector(".topbar", { timeout: 30_000 });
+      await tab.waitForSelector(".engine-status", { state: "detached", timeout: 120_000 });
+      const order = () => tab.evaluate(() => [...document.querySelectorAll(".bottom-tabs [data-studio-tab]")].map((t) => t.textContent.trim()));
+      const docOrder = () =>
+        tab.evaluate(() => {
+          const d = window.juracadStore.getState().history.present;
+          return [d.studioName ?? "Part Studio 1", ...(d.partStudios ?? []).map((p) => p.name)];
+        });
+      const expectOrder = async (want, what) => {
+        await tab.waitForFunction((w) => [...document.querySelectorAll(".bottom-tabs [data-studio-tab]")].map((t) => t.textContent.trim()).join("|") === w.join("|"), want, { timeout: 5_000 }).catch(() => {});
+        const [shown, saved] = [await order(), await docOrder()];
+        if (shown.join("|") !== want.join("|") || saved.join("|") !== want.join("|")) throw new Error(`${what}: the tabs are ${shown.join(", ")} (design: ${saved.join(", ")}), not ${want.join(", ")}`);
+      };
+      await tab.getByRole("button", { name: "Box", exact: true }).click();
+      await tab.getByRole("button", { name: "Accept" }).click();
+      await tab.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
+      for (const n of [2, 3]) {
+        await tab.getByRole("button", { name: "Add a tab" }).click();
+        await tab.getByRole("menuitem", { name: "Part Studio" }).click();
+        await tab.waitForSelector(`.tab.active >> text=Part Studio ${n}`);
+      }
+      await expectOrder(["Part Studio 1", "Part Studio 2", "Part Studio 3"], "after adding them");
+      // An assembly with a copy of Part Studio 1's part.
+      await tab.evaluate(() => {
+        const st = window.juracadStore.getState();
+        const part = st.parts.find((p) => p.studioId === "main");
+        st.addAssembly();
+        window.juracadStore.getState().insertInstance({ id: part.id, name: part.name });
+      });
+      await tab.waitForFunction(() => window.juracadStore.getState().history.present.assemblies?.[0]?.instances.length === 1);
+      await tab.getByRole("button", { name: "Part Studio 3" }).click();
+
+      step = "Part Studio tabs: dragging Part Studio 3 to the front";
+      const from = await tab.getByRole("button", { name: "Part Studio 3" }).boundingBox();
+      const to = await tab.getByRole("button", { name: "Part Studio 1" }).boundingBox();
+      await tab.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await tab.mouse.down();
+      for (let i = 1; i <= 10; i++) await tab.mouse.move(from.x + from.width / 2 + (to.x + 4 - from.x - from.width / 2) * (i / 10), from.y + from.height / 2);
+      await tab.mouse.up();
+      await expectOrder(["Part Studio 3", "Part Studio 1", "Part Studio 2"], "after dragging Part Studio 3 to the front");
+      if (!(await tab.locator(".tab.active >> text=Part Studio 3").count())) throw new Error("Part Studio 3 isn't on show after dragging it");
+      // Esc part-way through a drag puts the tab back.
+      {
+        const a = await tab.getByRole("button", { name: "Part Studio 2" }).boundingBox();
+        await tab.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+        await tab.mouse.down();
+        for (let i = 1; i <= 6; i++) await tab.mouse.move(a.x + a.width / 2 - i * 40, a.y + a.height / 2);
+        await tab.keyboard.press("Escape");
+        await tab.mouse.up();
+        await expectOrder(["Part Studio 3", "Part Studio 1", "Part Studio 2"], "after Esc during a drag");
+      }
+
+      step = "Part Studio tabs: Move right from the tab's menu";
+      await tab.getByRole("button", { name: "Part Studio 1" }).click({ button: "right" });
+      await tab.getByRole("menuitem", { name: "Move right" }).click();
+      await expectOrder(["Part Studio 3", "Part Studio 2", "Part Studio 1"], "after Move right");
+      await shot("studio-tabs");
+
+      step = "Part Studio tabs: deleting Part Studio 1";
+      let question = "";
+      tab.once("dialog", (d) => {
+        question = d.message();
+        d.accept();
+      });
+      await tab.getByRole("button", { name: "Part Studio 1" }).click({ button: "right" });
+      await tab.getByRole("menuitem", { name: "Delete" }).click();
+      await expectOrder(["Part Studio 3", "Part Studio 2"], "after deleting Part Studio 1");
+      if (!question.includes("Delete Part Studio 1?") || !question.includes("Assembly 1")) throw new Error(`deleting a used Part Studio asked "${question}"`);
+      const left = await tab.evaluate(() => window.juracadStore.getState().history.present.assemblies?.[0]?.instances.length);
+      if (left !== 0) throw new Error(`the assembly still has ${left} copies of the deleted studio's part`);
+      // Undo brings it all back as one step.
+      await tab.getByRole("button", { name: "Undo", exact: true }).click();
+      await expectOrder(["Part Studio 3", "Part Studio 2", "Part Studio 1"], "after Undo");
+      const back = await tab.evaluate(() => window.juracadStore.getState().history.present.assemblies?.[0]?.instances.length);
+      if (back !== 1) throw new Error("Undo didn't bring the assembly's copy back");
+      tabsReport = "Part Studio tabs: dragged Part Studio 3 to the front, moved Part Studio 1 right from its menu, deleted it (the question named Assembly 1; its copy was taken out) and undid it";
+    } finally {
+      await tabsContext.close();
+    }
+  }
+
   // Tablets: a page with a touch screen (an iPad's size, landscape). Fingers are sent as real touches through
   // Chromium's DevTools (Input.dispatchTouchEvent), so the app sees pointer events of type "touch".
   step = "touch screen: opening the app with fingers";
@@ -3514,7 +3658,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part), then the STL with Simplify (${simplifySmoke}); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${libraryReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part), then the STL with Simplify (${simplifySmoke}); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${libraryReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}; ${tabsReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});
