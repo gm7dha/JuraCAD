@@ -407,6 +407,17 @@ export function Toolbar() {
               title: hasPart ? "Split — cut a part in two along a plane or flat face" : "Make a part first",
             },
             {
+              key: "simplify",
+              label: "Simplify part",
+              icon: <Icons.Simplify />,
+              onClick: () => startCreate("simplify"),
+              disabled: !ready || partCount < 1,
+              active: editingType === "simplify",
+              title: partCount
+                ? "Simplify part — tidy a part made of triangles (an STL, say) into real flat and round faces you can pick, fillet and measure"
+                : "Make or import a part first",
+            },
+            {
               key: "deletePart",
               label: "Delete part",
               icon: <Icons.Trash />,

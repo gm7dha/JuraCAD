@@ -425,6 +425,15 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     else if (pick) s.toggleDraftPick(pick);
     return;
   }
+  // Picking parts to simplify (click again to leave one out).
+  if (s.editing?.draft.type === "simplify") {
+    if (target?.kind === "part") {
+      const list = s.editing.draft.simplifyParts ?? [];
+      const id = target.item.partId;
+      s.setDraftField({ simplifyParts: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] });
+    }
+    return;
+  }
   // Picking parts to delete (click again to keep one).
   if (s.editing?.draft.type === "deletePart") {
     if (target?.kind === "part") {
@@ -801,7 +810,7 @@ export function Viewport() {
   const studioFeatures = useStore(activeFeatures);
   // Picked parts, or the parts a picked feature made (or a Boolean being set up uses), light up.
   const booleanDef = useStore((s) => (s.editing?.draft.type === "boolean" ? s.editing.draft.booleanDef ?? null : null));
-  const deleting = useStore((s) => (s.editing?.draft.type === "deletePart" ? s.editing.draft.deleteParts ?? NO_IDS : null));
+  const deleting = useStore((s) => (s.editing?.draft.type === "deletePart" ? s.editing.draft.deleteParts ?? NO_IDS : s.editing?.draft.type === "simplify" ? s.editing.draft.simplifyParts ?? NO_IDS : null));
   // An Extrude, Revolve, Sweep or Hole open: the parts it joins or cuts (from its preview) light up.
   const effectDraft = useStore((s) => {
     const d = s.editing?.draft;

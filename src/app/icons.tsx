@@ -799,6 +799,14 @@ export const Icons = {
       <path d="M5 19 19 5" strokeDasharray="3 2.5" />
     </Svg>
   ),
+  /** Simplify: a faceted half turning into a smooth half. */
+  Simplify: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M12 4 7.4 5.4 4.6 9 4 13l1.6 3.9L9 19.4l3 .6" />
+      <path d="M12 4a8 8 0 0 1 0 16" />
+      <path d="M12 2v20" strokeDasharray="1.5 1.5" />
+    </Svg>
+  ),
   Trash: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />

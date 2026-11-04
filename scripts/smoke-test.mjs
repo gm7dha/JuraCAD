@@ -1268,6 +1268,33 @@ try {
   const stlParts = await importModel(path, "STL");
   await shot("imported");
 
+  step = "importing the STL again with Simplify on (tidied into real faces), then undo";
+  let simplifySmoke = "";
+  {
+    const facesOfLast = () => page.evaluate(() => { const ps = window.juracadStore.getState().parts; return ps[ps.length - 1].faceGroups.length; });
+    const plainFaces = await facesOfLast();
+    const before = await page.locator(".part-row").count();
+    const importChooser = page.waitForEvent("filechooser", { timeout: 10_000 });
+    await page.getByRole("button", { name: "Import", exact: true }).click();
+    await (await importChooser).setFiles(path);
+    await page.waitForSelector('form[aria-label="Import feature"]', { timeout: 10_000 });
+    await page.getByLabel("Simplify: tidy into real faces (for editing)").check();
+    const note = page.locator('form[aria-label="Import feature"] .dialog-note');
+    await note.waitFor({ timeout: 90_000 });
+    const report = (await note.textContent()).trim();
+    if (!/faces? → \d+ faces?:/.test(report) || !/round/.test(report)) throw new Error(`the Simplify summary says "${report}"`);
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForSelector('form[aria-label="Import feature"]', { state: "detached" });
+    await page.waitForFunction((n) => document.querySelectorAll(".part-row").length > n, before, { timeout: 60_000 });
+    const tidyFaces = await facesOfLast();
+    if (!(tidyFaces < plainFaces)) throw new Error(`Simplify left ${tidyFaces} faces (the plain STL import has ${plainFaces})`);
+    const saved = await page.evaluate(() => window.juracadStore.getState().history.present.features.at(-1)?.simplify);
+    if (saved !== "normal") throw new Error(`the import's Simplify setting is ${saved}`);
+    simplifySmoke = `${plainFaces} faces → ${tidyFaces} ("${report}")`;
+    await page.evaluate(() => window.juracadStore.getState().undo());
+    await page.waitForFunction((n) => document.querySelectorAll(".part-row").length === n, before, { timeout: 30_000 });
+  }
+
   step = "selecting several parts by dragging down the Parts list";
   {
     const rows = page.locator(".part-row .feature-name");
@@ -3631,7 +3658,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${libraryReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}; ${tabsReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part), then the STL with Simplify (${simplifySmoke}); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${libraryReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}; ${tabsReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

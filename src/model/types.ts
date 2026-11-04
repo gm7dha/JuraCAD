@@ -13,7 +13,7 @@ import type { FinishId } from "./finishes";
 import type { LibraryInsert } from "../library/types";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -225,6 +225,13 @@ export interface Feature {
   /** Boolean features: which parts, and what to do with them. */
   /** Delete part: the parts it removes from the Part Studio. */
   deleteParts?: string[];
+  /** Simplify part: the parts it tidies into real faces. */
+  simplifyParts?: string[];
+  /**
+   * Import and Simplify part: tidy triangles (and faces split into pieces) into real flat and round faces,
+   * matching within this tolerance. Missing on an Import = brought in as it is (as before).
+   */
+  simplify?: import("./simplify").SimplifyLevel;
   /** Fastener: which standard part, and whether its thread is modelled. */
   /** Extrude, Revolve, Sweep, Loft: make a thin surface (a skin with no inside) instead of a solid. */
   surface?: boolean;
