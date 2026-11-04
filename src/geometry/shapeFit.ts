@@ -678,7 +678,7 @@ const NICE_STEPS = [1, 0.5, 0.25, 0.1, 0.05, 0.01, 0.005, 0.001];
 export function snapNice(value: number, tol: number): number {
   for (const step of NICE_STEPS) {
     const r = Math.round(value / step) * step;
-    if (Math.abs(r - value) <= tol) return Number(r.toFixed(6));
+    if (Math.abs(r - value) <= tol) return Number(r.toFixed(6)) + 0;
   }
   return value;
 }
@@ -693,7 +693,7 @@ const AXES: Vec3[] = [
 export function snapDirection(d: Vec3, angle: number): Vec3 {
   for (const a of AXES) {
     const c = dot(d, a);
-    if (Math.abs(c) >= Math.cos(angle)) return c > 0 ? a : scale(a, -1);
+    if (Math.abs(c) >= Math.cos(angle)) return c > 0 ? a : (a.map((x) => (x ? -x : 0)) as Vec3);
   }
   return d;
 }
