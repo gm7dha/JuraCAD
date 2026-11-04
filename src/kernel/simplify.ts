@@ -385,6 +385,19 @@ function trianglesOf(shape: Shape3D): { vertices: number[]; triangles: number[] 
   return weld(m.vertices, m.triangles);
 }
 
+/** A faceted skin (a STEP file's triangles not made into a solid) as a solid of real faces, if it closes up. */
+export function solidFromFacets(shape: Shape3D, level: SimplifyLevel): Simplified | null {
+  if (!isFaceted(shape)) return null;
+  const tol = SIMPLIFY_TOLERANCES[level];
+  const before = faceCount(shape);
+  const mesh = trianglesOf(shape);
+  const rebuilt = solidFromMesh(mesh.vertices, mesh.triangles, tol);
+  if (typeof rebuilt === "string") return null;
+  const tidy = unifyShape(rebuilt.shape, tol);
+  rebuilt.shape.delete();
+  return { shape: tidy, summary: { facesBefore: before, faces: describeFaces(tidy, rebuilt.meshFaces, rebuilt.tori), recognised: !rebuilt.flatOnly } };
+}
+
 /**
  * Simplify one solid (or surface): stage 1 always, and for one made of
  * triangles stage 2 as well. The input is left alone; the result is new.

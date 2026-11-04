@@ -4,12 +4,12 @@
  * importing meshes is heavy. The fitting maths is tested without
  * OpenCascade in shapeFit.test.ts / meshSimplify.test.ts.
  */
-import { cast, getOC, makeBox, makeCylinder, measureVolume, type Shape3D } from "replicad";
+import { cast, getOC, makeBox, makeCylinder, makePolygon, measureVolume, type Shape3D } from "replicad";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { writeBinaryStl } from "../src/geometry/stl";
 import { GeometryEngine } from "../src/kernel/engine";
 import { writeStep } from "../src/kernel/stepExport";
-import type { Feature, ImportedFile } from "../src/model/types";
+import { MESH_TOLERANCES, type Feature, type ImportedFile } from "../src/model/types";
 import { feature, importFeature, loadOpenCascade, relativeError } from "./support/engineHelpers";
 
 beforeAll(loadOpenCascade);
@@ -56,6 +56,25 @@ function fusedAsIs(a: Shape3D, b: Shape3D): Shape3D {
   fuse.Build();
   const out = cast(fuse.Shape()) as Shape3D;
   [fuse, args, tools].forEach((x) => x.delete());
+  return out;
+}
+
+/** A part as a mesh-like STEP file holds it: every triangle its own flat face, sewn into a skin (not a solid). */
+function triangleSkin(shape: Shape3D): Shape3D {
+  const oc = getOC() as any;
+  const m = shape.mesh(MESH_TOLERANCES.normal);
+  const sewing = new oc.BRepBuilderAPI_Sewing(1e-6, true, true, true, false);
+  const v = (i: number): [number, number, number] => [m.vertices[3 * i], m.vertices[3 * i + 1], m.vertices[3 * i + 2]];
+  const faces: Shape3D[] = [];
+  for (let t = 0; t < m.triangles.length; t += 3) {
+    const f = makePolygon([v(m.triangles[t]), v(m.triangles[t + 1]), v(m.triangles[t + 2])]) as unknown as Shape3D;
+    faces.push(f);
+    sewing.Add(f.wrapped);
+  }
+  sewing.Perform();
+  const out = cast(sewing.SewedShape()) as Shape3D;
+  sewing.delete();
+  faces.forEach((f) => f.delete());
   return out;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -136,6 +155,24 @@ describe("Simplify on import", () => {
     expect(check.parts[0].geometryValid).toBe(true);
     expect(relativeError(check.parts[0].exactVolume!, volume)).toBeLessThan(1e-9);
     expect(r.featureNotes?.[imp.id]).toMatch(/→ 6 faces: 6 flat\./);
+  });
+
+  it("makes a solid of real faces from a mesh-like STEP file (triangles as a skin)", () => {
+    const block = machinedBlock();
+    const file = stepOf(triangleSkin(block));
+    const plain = build([importFeature(file)]);
+    expect(plain.parts).toHaveLength(1);
+    expect(plain.parts[0].surface).toBe(true);
+    const imp = { ...importFeature(file), simplify: "normal" as const };
+    const r = build([imp]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    expect(r.parts[0].surface).toBeFalsy();
+    expect(r.parts[0].faceGroups.length).toBeLessThanOrEqual(12);
+    expect(cylinderFaces(r)).toHaveLength(3);
+    const check = engine.check("normal");
+    expect(check.parts[0].geometryValid).toBe(true);
+    expect(relativeError(check.parts[0].exactVolume!, measureVolume(block))).toBeLessThan(0.005);
   });
 
   it("copes with an organic mesh: nothing fits, but it comes in whole and sound", () => {

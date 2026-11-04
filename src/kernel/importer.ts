@@ -13,7 +13,7 @@ import { weld } from "../geometry/threeMf";
 import { fromBase64 } from "../model/importFile";
 import { SIMPLIFY_TOLERANCES, simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
 import type { ImportedFile } from "../model/types";
-import { describeFaces, simplifyShape, solidFromMesh, unifyShape } from "./simplify";
+import { describeFaces, simplifyShape, solidFromFacets, solidFromMesh, unifyShape } from "./simplify";
 
 const cache = new Map<string, Shape3D[]>();
 /** The summary of what simplifying an imported file did, by its cache key. */
@@ -406,14 +406,19 @@ function readSimplified(file: ImportedFile, level: SimplifyLevel): { shapes: Sha
   const shapes = readStep(file.data);
   const summaries: SimplifySummary[] = [];
   const out = shapes.map((shape) => {
-    // Surfaces are brought in as they are.
-    if (surfaceShapes.has(shape)) return shape;
+    if (surfaceShapes.has(shape)) {
+      // Many mesh-like STEP files hold their triangles as a skin, not a solid: if they close up, a solid of real faces.
+      const r = solidFromFacets(shape, level);
+      if (!r) return shape;
+      shape.delete();
+      summaries.push(r.summary);
+      return r.shape;
+    }
     const r = simplifyShape(shape, level);
     shape.delete();
     summaries.push(r.summary);
     return r.shape;
   });
-  shapes.forEach((x, i) => surfaceShapes.has(x) && surfaceShapes.add(out[i]));
   return { shapes: out, summary: joinSummaries(summaries) };
 }
 

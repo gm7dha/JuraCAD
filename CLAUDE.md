@@ -324,12 +324,13 @@
   holes, bosses, torus rings, ball caps — from parameter ranges, `bandOf`, as ShapeFix can't add their seam), sews, makes the
   solid and keeps it only if BRepCheck passes and the volume is within 2% of the mesh's; else retries flat faces only, else
   stage 1's result with "only flat areas were joined". An STL with Simplify goes mesh → solid directly (`readStlSimplified`:
-  skips making a face per triangle, the slow part); open bodies fall back to the ordinary import. Results are cached
+  skips making a face per triangle, the slow part); open bodies fall back to the ordinary import. A STEP file whose triangles
+  come as a skin (no solid; brought in as a surface without Simplify) becomes a solid when they close up (`solidFromFacets`). Results are cached
   (importer: by file + level, `importCacheKey`; Simplify part: `GeometryEngine.simplified`, by the features up to it).
   Not done: ellipses (a slanted hole's rim, so slanted holes stay mesh), cylinder–cylinder crossings, partial tori, free-form
   (B-spline) surfaces. Tests: tests/shapeFit, meshSimplify (pure; meshes from tests/support/meshShapes.ts), engineSimplify
   (heavy: a machined block's STL from the app's exporter → 10 faces, Ø5/Ø8/R2 within 0.01, volume within 0.5%, fillet on a
-  recovered edge; a STEP with split faces → 6 faces, same volume; a lumpy ball stays sound), mcpSimplify.
+  recovered edge; a STEP with split faces → 6 faces, same volume; a mesh-like STEP skin → a solid; a lumpy ball stays sound), mcpSimplify.
 - Mirror planes and pattern axes: `src/model/patternRefs.ts` (pure). A mirror's plane is a default plane, a Plane
   feature, a clicked flat face (`mirror.planePick`, found again on rebuild; `plane` keeps where it was when clicked) or a
   sketch line (`mirror.line`: the plane through it, square to its sketch). Patterns use X/Y/Z, a clicked edge/face
