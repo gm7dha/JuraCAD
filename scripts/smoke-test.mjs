@@ -3269,6 +3269,18 @@ try {
     await waitShown(3, 57.0167, "the bolt set didn't build its bolt, nut and washer side by side");
     const bolts = await shown();
     if (bolts.errors) throw new Error(`the bolt set has ${bolts.errors} feature problem(s)`);
+    step = "Design library: a Gridfinity bin, found by searching";
+    await tool("Library");
+    await page.getByLabel("Search the library").fill("gridfinity");
+    await page.getByRole("button", { name: /^Gridfinity bin:/ }).click();
+    await page.locator(".library-preview polygon").first().waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Gridfinity bin", { timeout: 10_000 });
+    // 2 × 1 cells × 3 units: one part 42 × 2 − 0.5 = 83.5 mm across.
+    await waitShown(1, 83.5, "the Gridfinity bin didn't build as one part 83.5 mm across");
+    const gridBin = await shown();
+    if (gridBin.errors) throw new Error(`the Gridfinity bin has ${gridBin.errors} feature problem(s)`);
+    await shot("library-gridfinity");
     step = "Design library: a stencil of HELLO, exported for laser";
     await tool("Library");
     await page.getByRole("tab", { name: "Laser cutting" }).click();
@@ -3339,6 +3351,7 @@ try {
     await page.waitForSelector(".laser-panel", { state: "detached" });
     libraryReport =
       "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts); then a bolt, nut and washer set found by searching (3 parts); then a stencil of HELLO, saved for laser (1 red outline, 5 blue letter holes, the O's middle bridged); then a 12-piece jigsaw, its puzzle sketch saved for laser (1 red border, 17 blue cuts)";
+    libraryReport += "; and a Gridfinity bin found by searching (1 part, 83.5 mm across)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 

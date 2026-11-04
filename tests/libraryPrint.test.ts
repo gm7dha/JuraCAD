@@ -251,9 +251,9 @@ describe("browsing the library", () => {
     // Every one has a heading, in the set order (the printed stamp with the household things).
     expect(groups.map((g) => g.group)).toEqual(GROUP_ORDER.print.filter((g) => designsIn("print").some((d) => d.group === g)));
     expect(groups.find((g) => g.group === "Household")!.designs.map((d) => d.id)).toContain("printed-stamp");
-    expect(groups.find((g) => g.group === "Fixings")!.designs.map((d) => d.id)).toEqual(["spacer", "bolt-set", "standoff"]);
+    expect(groups.find((g) => g.group === "Fixings")!.designs.map((d) => d.id)).toEqual(["spacer", "bolt-set", "standoff", "thumb-knob"]);
     expect(groups.find((g) => g.group === "Hinges")!.designs.map((d) => d.id)).toEqual(["hinge", "piano-hinge"]);
-    expect(groups.find((g) => g.group === "Workshop")!.designs.map((d) => d.id)).toEqual(["bit-holder", "pegboard-hook"]);
+    expect(groups.find((g) => g.group === "Workshop")!.designs.map((d) => d.id)).toEqual(["bit-holder", "pegboard-hook", "spool-holder", "hose-adapter"]);
     expect(groups.flatMap((g) => g.designs)).toHaveLength(designsIn("print").length);
     // Laser cutting keeps its headings in the order they're first used.
     const laser = designGroups("laser").map((g) => g.group);
@@ -278,7 +278,7 @@ describe("browsing the library", () => {
     expect(searchDesigns("  ")).toEqual([]);
     expect(searchDesigns("teapot")).toEqual([]);
     // Size choices count: M8 finds the designs that come in M8.
-    expect(searchDesigns("M8").map((d) => d.id)).toEqual(["bolt-set", "standoff"]);
+    expect(searchDesigns("M8").map((d) => d.id)).toEqual(["bolt-set", "standoff", "thumb-knob"]);
     expect(searchDesigns("socket head")[0].id).toBe("bolt-set");
     expect(new Set(searchDesigns("a").map((d) => d.id)).size).toBe(searchDesigns("a").length);
     expect(LIBRARY.length).toBeGreaterThan(19);
