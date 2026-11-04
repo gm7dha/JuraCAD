@@ -64,6 +64,60 @@ export function removeAssembly(doc: JuraCADDocument, id: string): JuraCADDocumen
   );
 }
 
+/**
+ * What deleting some parts (`gone`: a deleted Part Studio's) takes out of the
+ * assemblies: per assembly, its own copies of those parts, and the mates
+ * reaching one of them inside a sub-assembly copy (its connector's path walked
+ * down through each sub-assembly, checked against that one's own copies).
+ */
+export function partCopiesPlan(doc: JuraCADDocument, gone: (partId: string) => boolean): { copies: Map<string, string[]>; mates: Map<string, string[]> } {
+  const all = assembliesOf(doc);
+  const byId = new Map(all.map((a) => [a.id, a]));
+  const copies = new Map<string, string[]>();
+  for (const a of all) {
+    const ids = a.instances.filter((i) => !i.subAssembly && gone(i.partId)).map((i) => i.id);
+    if (ids.length) copies.set(a.id, ids);
+  }
+  const reaches = (a: Assembly, c: MateConnector, path: string[] | undefined): boolean => {
+    let inside = byId.get(a.instances.find((i) => i.id === c.instanceId)?.subAssembly ?? "");
+    for (const step of path ?? []) {
+      if (!inside) return false;
+      if (copies.get(inside.id)?.includes(step)) return true;
+      inside = byId.get(inside.instances.find((i) => i.id === step)?.subAssembly ?? "");
+    }
+    return false;
+  };
+  const mates = new Map<string, string[]>();
+  for (const a of all) {
+    const own = new Set(copies.get(a.id) ?? []);
+    const through = (c: MateConnector) => !own.has(c.instanceId) && (reaches(a, c, c.path) || reaches(a, c, c.path2));
+    const ids = (a.mates ?? []).filter((m) => through(m.a) || through(m.b)).map((m) => m.id);
+    if (ids.length) mates.set(a.id, ids);
+  }
+  return { copies, mates };
+}
+
+/**
+ * Take out of every assembly the copies of parts that `gone` says no longer
+ * exist (a deleted Part Studio's), with their mates, patterns and so on — and
+ * mates anywhere that reach such a part inside a sub-assembly copy.
+ */
+export function removePartCopies(doc: JuraCADDocument, gone: (partId: string) => boolean): JuraCADDocument {
+  const { copies, mates } = partCopiesPlan(doc, gone);
+  if (!copies.size && !mates.size) return doc;
+  return withAssemblies(
+    doc,
+    assembliesOf(doc)
+      .map((a) => {
+        const uses = copies.get(a.id) ?? [];
+        const left = uses.length ? withoutInstances(a, uses) : a;
+        const cut = new Set(mates.get(a.id) ?? []);
+        return cut.size ? tidyReplicates(withMates(left, (left.mates ?? []).filter((m) => !cut.has(m.id)))) : left;
+      })
+      .map((a, _i, left) => tidyStepPaths(a, left)),
+  );
+}
+
 /** Rename an assembly; its copies in other assemblies still carrying the old name ("Hinge <2>") follow. */
 export function renameAssembly(doc: JuraCADDocument, id: string, name: string): JuraCADDocument {
   const trimmed = name.trim();

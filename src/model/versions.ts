@@ -8,7 +8,7 @@
  * version usually takes a tenth of the design's size or less. Browsers
  * without CompressionStream keep the JSON as it is ("json:").
  */
-import { parseDocument } from "./document";
+import { fileVersionOf, parseDocument } from "./document";
 import type { DesignVersion, JuraCADDocument } from "./types";
 
 /**
@@ -64,7 +64,9 @@ async function through(bytes: Uint8Array, stream: { readable: ReadableStream<Uin
 
 /** Pack a design for keeping as a version (its own versions are left out). */
 export async function packDesign(doc: JuraCADDocument, compress = typeof CompressionStream !== "undefined"): Promise<string> {
-  const json = JSON.stringify(designOf(doc));
+  // A design with moved Part Studio tabs is kept as format version 2 (see fileVersionOf), so older JuraCADs refuse it rather than drop a studio.
+  const design = designOf(doc);
+  const json = JSON.stringify(fileVersionOf(design) === 2 ? { ...design, version: 2 } : design);
   if (!compress) return `json:${json}`;
   const gz = await through(new TextEncoder().encode(json), new CompressionStream("gzip") as unknown as { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> });
   return `gz:${toBase64(gz)}`;

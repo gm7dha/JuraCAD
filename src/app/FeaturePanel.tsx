@@ -10,6 +10,7 @@ import { insertOfFeature } from "../library/insert";
 import type { Feature, FeatureType } from "../model/types";
 import { viewNormalToPlaneFeature, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
+import { boxOf, PlacedPopup } from "./PlacedPopup";
 import { clickRow, dragRows } from "../model/listSelection";
 import { featuresOfParts, groupByPart, partsOfFeature } from "../model/partLinks";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
@@ -204,9 +205,11 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
   const group = useStore((s) => (s.selectedParts.length > 1 && s.selectedParts.includes(partId) ? s.selectedParts : null));
   const colourAll = (c: string | null) => (group ?? [partId]).forEach((id) => setPartColour(id, c));
   const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
   return (
     <span className="swatch-wrap">
       <button
+        ref={button}
         type="button"
         className="colour-swatch"
         style={{ background: colour }}
@@ -216,7 +219,8 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
         aria-expanded={open}
       />
       {open && (
-        <div className="colour-popover" role="dialog" aria-label={`Choose a colour for ${name}`} onMouseLeave={() => setOpen(false)}>
+        // Drawn over everything and kept inside the window (above the swatch when the list is low down), so every colour and finish shows.
+        <PlacedPopup className="colour-popover" role="dialog" label={`Choose a colour for ${name}`} anchor={() => boxOf(button.current)} owner={button} onClose={() => setOpen(false)} focusFirst>
           <div className="colour-grid">
             {PART_COLOURS.map((c) => (
               <button
@@ -254,7 +258,7 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
               </button>
             ))}
           </div>
-        </div>
+        </PlacedPopup>
       )}
     </span>
   );

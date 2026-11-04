@@ -362,7 +362,7 @@ export function ChangesList({ changes }: { changes: DesignChanges }) {
         <ul>
           {changes.features.map((f) => (
             <li key={f.id} className={`change-${f.change}`} data-feature={f.name}>
-              <span className="change-word">{CHANGE_WORD[f.change]}</span> <strong>{f.name}</strong> <span className="muted">({f.kind}{f.studio !== "Part Studio 1" ? `, ${f.studio}` : ""})</span>
+              <span className="change-word">{CHANGE_WORD[f.change]}</span> <strong>{f.name}</strong> <span className="muted">({f.kind}{f.studio ? `, ${f.studio}` : ""})</span>
               {f.settings.length > 0 && (
                 <ul className="change-settings">
                   {f.settings.map((x, i) => (

@@ -3,7 +3,7 @@
  * into the Part Studio on show, as the app's Design library does (ordinary
  * features driven by prefixed variables).
  */
-import { MAIN_STUDIO } from "../model/studios";
+import { firstStudioId } from "../model/studios";
 import type { JuraCADDocument } from "../model/types";
 import { categoryFrom, categoryLabel, completeValues, designsIn, findDesign, insertDesign, LIBRARY, LIBRARY_CATEGORIES, valueProblems } from "../library/insert";
 import type { DesignInput } from "../library/types";
@@ -82,7 +82,7 @@ export function libraryTools(tryChange: TryChange): ToolDef[] {
         const problems = valueProblems(design, values);
         if (problems.length) throw new InputError(`Couldn't insert the ${design.name.toLowerCase()}: ${problems.join(" ")} Nothing was changed.`);
         // The session's design is the Part Studio on show (its features are `features`).
-        const made = insertDesign(s.doc, design, values, { into: MAIN_STUDIO });
+        const made = insertDesign(s.doc, design, values, { into: firstStudioId(s.doc) });
         const report = await tryChange(s, made.doc, null, `insert the ${design.name.toLowerCase()}`);
         const vars = (made.doc.variables ?? []).filter((v) => v.name.startsWith(`${made.insert.prefix}_`));
         return say(

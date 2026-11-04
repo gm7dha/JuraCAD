@@ -6,7 +6,7 @@ import { useSyncExternalStore } from "react";
 
 import { activeStudioId, useStore } from "../model/store";
 import { readDocumentFile, serializeDocument } from "../model/fileFormat";
-import { MAIN_STUDIO, studioExists } from "../model/studios";
+import { firstStudioId, studioExists } from "../model/studios";
 import { designOf } from "../model/versions";
 import { LiveClient, type LiveHost, type LiveState, type PermissionState, type SocketFactory, type SocketLike } from "../live/client";
 import { RelayTransport, type RelayEnv, type RelayWindow } from "../live/relayTransport";
@@ -45,7 +45,7 @@ const host: LiveHost = {
     const s = useStore.getState();
     // While an old version is open to look at, Claude keeps working with the current design.
     const view = s.versionView;
-    const studio = view ? view.was.activeTab && studioExists(view.stash.present, view.was.activeTab) ? view.was.activeTab : MAIN_STUDIO : activeStudioId(s) ?? MAIN_STUDIO;
+    const studio = view ? view.was.activeTab && studioExists(view.stash.present, view.was.activeTab) ? view.was.activeTab : firstStudioId(view.stash.present) : activeStudioId(s) ?? firstStudioId(s.history.present);
     const doc = view?.stash.present ?? s.history.present;
     // Saved versions stay in the browser: Claude doesn't need them, and they can be large.
     // Keyed by the design's own parts, so saving or renaming a version doesn't send the design again.

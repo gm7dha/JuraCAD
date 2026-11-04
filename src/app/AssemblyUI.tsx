@@ -998,7 +998,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
     const studios = studiosOf(doc);
     const label = (p: PartMesh) => {
       if (studios.length < 2) return p.name;
-      return `${p.name} (${studios.find((st) => st.id === (p.studioId ?? "main"))?.name ?? "Part Studio"})`;
+      return `${p.name} (${studios.find((st) => st.id === (p.studioId ?? studios[0].id))?.name ?? "Part Studio"})`;
     };
     return Object.fromEntries(parts.map((p) => [p.id, label(p)]));
   }, [parts, doc]);

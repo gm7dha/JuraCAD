@@ -8,6 +8,9 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { analyzeMesh } from "../src/geometry/meshCheck";
 import { readBinaryStl } from "../src/geometry/stl";
 import { GeometryEngine } from "../src/kernel/engine";
+import { documentStudioInputs } from "../src/kernel/buildInput";
+import { emptyDocument } from "../src/model/document";
+import { moveStudio, removeStudio } from "../src/model/studios";
 import type { Feature } from "../src/model/types";
 import { loadOpenCascade, feature, sketchFeature, extrudeFeature, relativeError, rectSketch, importFeature } from "./support/engineHelpers";
 
@@ -171,6 +174,25 @@ describe("several Part Studios", () => {
     // A removed Part Studio's parts go.
     engine.rebuildStudios([{ id: "main", features: [a] }]);
     expect(engine.partCount).toBe(1);
+  });
+
+  it("rebuilds nothing when the Part Studio tabs are moved (every studio keeps its id)", () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: 10, depth: 10, height: 10 });
+    const cyl = feature("cylinder", { diameter: 10, height: 5 });
+    const derived: Feature = { ...feature("derived", { x: 0, y: 0, z: 20 }), derived: { studioId: "main", partId: box.id } };
+    const doc = { ...emptyDocument(), features: [box], partStudios: [{ id: "s2", name: "Part Studio 2", features: [cyl] }, { id: "s3", name: "Part Studio 3", features: [derived] }] };
+    const first = engine.rebuildStudios(documentStudioInputs(doc));
+    expect(first.rebuilt.sort()).toEqual(["main", "s2", "s3"]);
+    expect(first.featureErrors).toEqual({});
+    const moved = moveStudio(moveStudio(doc, "s3", 0), "main", 2);
+    const again = engine.rebuildStudios(documentStudioInputs(moved));
+    expect(again.rebuilt).toEqual([]);
+    expect(again.studioOrder).toEqual(["s3", "s2", "main"]);
+    // Deleting the studio a Derived part comes from: it says so (only it is rebuilt).
+    const gone = engine.rebuildStudios(documentStudioInputs(removeStudio(moved, "main")));
+    expect(gone.rebuilt).toEqual(["s3"]);
+    expect(gone.featureErrors[derived.id]).toMatch(/deleted/);
   });
 
   it("brings a part in from another Part Studio (Derived), and follows changes to it", () => {
