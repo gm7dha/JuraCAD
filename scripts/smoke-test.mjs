@@ -3333,6 +3333,18 @@ try {
     const gridBin = await shown();
     if (gridBin.errors) throw new Error(`the Gridfinity bin has ${gridBin.errors} feature problem(s)`);
     await shot("library-gridfinity");
+    step = "Design library: an electronics enclosure for a Raspberry Pi, found by searching";
+    await tool("Library");
+    await page.getByLabel("Search the library").fill("raspberry");
+    await page.getByRole("button", { name: /^Electronics enclosure:/ }).click();
+    await page.locator(".library-preview polygon").first().waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Electronics enclosure", { timeout: 10_000 });
+    // The box and its lid in front of it, both 104 + 2 × 2 = 108 mm across.
+    await waitShown(2, 108, "the enclosure didn't build its box and lid, 108 mm across");
+    const enclosed = await shown();
+    if (enclosed.errors) throw new Error(`the enclosure has ${enclosed.errors} feature problem(s)`);
+    await shot("library-enclosure");
     step = "Design library: a stencil of HELLO, exported for laser";
     await tool("Library");
     await page.getByRole("tab", { name: "Laser cutting" }).click();
