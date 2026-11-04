@@ -4,7 +4,8 @@
  * round it — all along its length. Both are drawn on the Right plane (across = world Y, up = world Z) and made
  * `length` long along X, so they print lying down with their flat sides on the bed:
  *
- *  - the rod is a circle with its bottom cut flat where the curve reaches 45° (`FLAT_AT`), so nothing overhangs more;
+ *  - the rod is a circle with its bottom cut flat where the curve reaches 45° (`FLAT_AT`), so it overhangs about 45° — a
+ *    little more (up to ~52°) only right at the bottom edge, where the arc meets the flat, which prints fine;
  *  - the channel's inside is the rod's shape grown by `room` (space for the folded bag), on a floor `wall` thick, with a
  *    slot cut through the top; its outside is the same shape grown again by `wall`. The inside below the slot leans at
  *    most 45°, so the channel prints opening upwards with no supports.
@@ -37,7 +38,8 @@ export function clipSizes(v: DesignValues) {
   /** How far the rod's widest part must push each lip aside to pass, and roughly how much that stretches the plastic. */
   const spread = 2 * r - opening;
   const meanR = inner + wall / 2;
-  const strain = (spread * wall) / (6 * Math.PI * meanR * meanR);
+  // A split ring opened by `spread` at its gap (Roark): the bending strain at the back is spread × wall / (3π R²).
+  const strain = (spread * wall) / (3 * Math.PI * meanR * meanR);
   return { r, room, wall, opening, inner, outer, middle, spread, strain, length: num(v, "length") };
 }
 
@@ -55,7 +57,7 @@ export const bagClip: LibraryDesign = {
   id: "bag-clip",
   name: "Bag clip",
   description:
-    "Keeps crisps, coffee and frozen peas fresh: fold the top of the bag over the rod, then push the C-shaped clip on over it. The clip's opening is narrower than the rod, so it snaps on and grips the bag all the way along. Both parts print lying flat, no supports. PLA or PETG; if it's too stiff to push on, make the opening a little wider.",
+    "Keeps crisps, coffee and frozen peas fresh: fold the top of the bag over the rod, then slide the C-shaped clip on from one end (or snap it on over the rod). The clip's opening is narrower than the rod, so it snaps on and grips the bag all the way along. Both parts print lying flat, no supports. PLA or PETG; if it's too stiff to push on, make the opening a little wider.",
   category: "print",
   group: "Household",
   prefix: "clip",
@@ -72,7 +74,7 @@ export const bagClip: LibraryDesign = {
     const out: string[] = [];
     if (s.opening >= 2 * s.r - 1) out.push(`The opening must be at least 1 mm narrower than the rod (less than ${mm(2 * s.r - 1)}), or the clip won't hold.`);
     if (s.opening < s.r) out.push(`The opening must be at least half as wide as the rod (${mm(s.r)}), or the clip can't spring over it.`);
-    if (s.strain > MAX_STRAIN) out.push(`The clip would have to stretch too far to snap over the rod and might crack: make the opening wider (at least ${mm(2 * s.r - (MAX_STRAIN * 6 * Math.PI * (s.inner + s.wall / 2) ** 2) / s.wall)}) or the wall thinner.`);
+    if (s.strain > MAX_STRAIN) out.push(`The clip would have to stretch too far to snap over the rod and might crack: make the opening wider (at least ${mm(2 * s.r - (MAX_STRAIN * 3 * Math.PI * (s.inner + s.wall / 2) ** 2) / s.wall)}) or the wall thinner.`);
     return out;
   },
   summary: (v) => {

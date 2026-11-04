@@ -15,8 +15,8 @@ import { searchDesigns } from "../src/library/browse";
 import { freedomOf } from "../src/library/sketchKit";
 import { levelPlane, loftFeature } from "../src/library/printKit";
 import { varsOf } from "../src/library/designs/common";
-import { BIN_GAP, binPlan, FOOT_HEIGHT, FOOT_STEPS, GRID, LIP_HEIGHT, PLATE_HEIGHT, PLATE_RADIUS, POCKET_STEPS, SEATED, stepsVolume, UNIT } from "../src/library/designs/gridfinity";
-import { wordsRoom } from "../src/library/designs/sign";
+import { BIN_GAP, binPlan, FOOT_HEIGHT, FOOT_STEPS, GRID, LIP_HEIGHT, PLATE_HEIGHT, PLATE_RADIUS, POCKET_STEPS, CENTRED, RESTS, stepsVolume, UNIT } from "../src/library/designs/gridfinity";
+import { signVolumes, wordsRoom } from "../src/library/designs/sign";
 import { cellDiameter, CELLS } from "../src/library/designs/batteryHolder";
 import { armProfile } from "../src/library/designs/spoolHolder";
 import { potSizes } from "../src/library/designs/plantPot";
@@ -71,16 +71,20 @@ describe("Gridfinity's standard", () => {
     expect(PLATE_RADIUS - POCKET_STEPS[0].inset).toBeCloseTo(1.15, 9);
   });
 
-  it("seated in a cell, the foot clears the pocket by the gap on the straight part and the same square to the slopes", () => {
+  it("held half-way up the pocket's straight part, the foot clears the pocket by the gap on the straight part and the same square to the slopes", () => {
     for (const gap of [0, BIN_GAP, 0.4]) {
-      const foot = (z: number) => halfAt(FOOT_STEPS, GRID / 2 - gap, z - SEATED);
+      const foot = (z: number) => halfAt(FOOT_STEPS, GRID / 2 - gap, z - CENTRED);
       const pocket = (z: number) => halfAt(POCKET_STEPS, GRID / 2, z);
       // The straight parts: exactly the gap.
-      for (const z of [SEATED + 0.8, SEATED + 1.5, SEATED + 2.5]) expect(pocket(z) - foot(z)).toBeCloseTo(gap, 9);
+      for (const z of [CENTRED + 0.8, CENTRED + 1.5, CENTRED + 2.5]) expect(pocket(z) - foot(z)).toBeCloseTo(gap, 9);
       // The slopes: 0.1 mm more across, so (gap + 0.1)/√2 square to them — 0.247 mm at the standard gap.
-      for (const z of [SEATED + 0.3, SEATED + 3.5, SEATED + 4.4]) expect(pocket(z) - foot(z)).toBeCloseTo(gap + 0.1, 9);
+      for (const z of [CENTRED + 0.3, CENTRED + 3.5, CENTRED + 4.4]) expect(pocket(z) - foot(z)).toBeCloseTo(gap + 0.1, 9);
     }
     expect((BIN_GAP + 0.1) / Math.SQRT2).toBeCloseTo(0.247, 3);
+    // Let down to rest (its bottom level with the plate's), the slopes meet exactly; the straight parts keep the gap.
+    const rest = (z: number) => halfAt(POCKET_STEPS, GRID / 2, z) - halfAt(FOOT_STEPS, GRID / 2 - BIN_GAP, z - RESTS);
+    for (const z of [0.5, 0.7, 3.5, 4.4]) expect(rest(z)).toBeCloseTo(0, 9);
+    expect(rest(1.5)).toBeCloseTo(BIN_GAP, 9);
   });
 
   it("the stacking lip is the baseplate's steps (0.7 / 1.8 / 1.9 to 4.4 mm), so a bin above has the same 0.25 mm", () => {
@@ -115,7 +119,8 @@ describe("Gridfinity's standard", () => {
     expect(problems("gridfinity-bin", { across: 1, dividers: 6 })[0]).toMatch(/compartments only/);
     expect(problems("gridfinity-bin", { label: true, ledge: 20, units: 3 })[0]).toMatch(/label ledge/);
     expect(problems("gridfinity-bin", { units: 3, label: true })).toEqual([]);
-    expect(design("gridfinity-baseplate").summary!(valuesOf("gridfinity-baseplate", { across: 7 }))).toMatch(/bigger than a 256 mm print bed/);
+    expect(design("gridfinity-baseplate").summary!(valuesOf("gridfinity-baseplate", { across: 7 }))).toMatch(/Check it fits your printer's bed/);
+    expect(design("gridfinity-baseplate").summary!(valuesOf("gridfinity-baseplate", { across: 4 }))).not.toMatch(/bed/);
   });
 });
 
@@ -126,6 +131,10 @@ describe("the other new designs' maths", () => {
     expect(wordsRoom(valuesOf("sign", { mount: "stand" }))[2]).toBe(-20 + 9.5);
     expect(problems("sign", { words: "A VERY LONG SIGN INDEED" })[0]).toMatch(/don't fit/);
     expect(problems("sign", { style: "recessed", relief: 2.6 })[0]).toMatch(/shallower/);
+    // The foot's slot: the plate, plus a raised border (which reaches the bottom edge), plus 0.15 each side.
+    const foot = (extra: DesignValues) => signVolumes(valuesOf("sign", { mount: "stand", ...extra }), 0).foot;
+    expect(foot({ border: false }) - foot({ border: true })).toBeCloseTo(140 * 0.7 * 1.2 * 8, 6);
+    expect(foot({ border: false, style: "recessed" })).toBeCloseTo(foot({ border: false }), 9);
     expect(problems("sign", { corner: 4 })[0]).toMatch(/round the corners more than/);
   });
 
@@ -163,8 +172,12 @@ describe("the other new designs' maths", () => {
     expect(FLAT_AT).toBeCloseTo(Math.cos(Math.PI / 4), 12);
     expect(s.inner - s.r).toBe(0.25);
     expect(s.spread).toBe(3);
-    expect(s.strain).toBeGreaterThan(0.005);
+    // A split ring opened 3 mm (Roark): 3 × 1.6 / (3π × 6.05²) ≈ 1.4%.
+    expect(s.strain).toBeCloseTo((3 * 1.6) / (3 * Math.PI * 6.05 ** 2), 9);
     expect(s.strain).toBeLessThan(0.02);
+    // Rod 10, wall 3, mouth 5: about 3.5% — it would crack, so it's refused.
+    expect(clipSizes(valuesOf("bag-clip", { wall: 3, opening: 5 })).strain).toBeCloseTo(0.0349, 4);
+    expect(problems("bag-clip", { wall: 3, opening: 5 })[0]).toMatch(/stretch too far/);
     expect(problems("bag-clip", { opening: 9.5 })[0]).toMatch(/won't hold/);
     expect(problems("bag-clip", { rod: 8, opening: 4, wall: 4 })[0]).toMatch(/stretch too far/);
   });

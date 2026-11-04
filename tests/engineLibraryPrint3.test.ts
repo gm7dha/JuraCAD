@@ -18,7 +18,7 @@ import { lit } from "../src/library/ex";
 import { extrudeFeature, shapesSketch, sketchFeature } from "../src/library/sketchKit";
 import { levelPlane } from "../src/library/printKit";
 import { varsOf } from "../src/library/designs/common";
-import { baseplateVolume, binPlan, binVolume, GRID, SEATED, UNIT } from "../src/library/designs/gridfinity";
+import { baseplateVolume, binPlan, binVolume, CENTRED, GRID, RESTS, UNIT } from "../src/library/designs/gridfinity";
 import { signVolumes } from "../src/library/designs/sign";
 import { batteryVolume } from "../src/library/designs/batteryHolder";
 import { spoolHolderVolume } from "../src/library/designs/spoolHolder";
@@ -114,26 +114,29 @@ describe("Gridfinity", () => {
 
   it("a bin's feet drop into a baseplate's cells with the standard 0.25 mm to spare, and no more", () => {
     const { plate, bin } = plateAndBin({ across: 1, along: 1 }, { across: 1, along: 1 });
-    const inCell = (dx: number, dz = SEATED) => shared({ part: plate }, { part: bin, position: [dx, 0, dz] });
-    // Seated on the pocket's straight bottom part, it touches nothing — nor moved 0.2 mm sideways …
+    const inCell = (dx: number, dz = CENTRED) => shared({ part: plate }, { part: bin, position: [dx, 0, dz] });
+    // Resting in the cell (its bottom level with the plate's) its slopes just touch the pocket's: any lower and they overlap.
+    expect(inCell(0, RESTS)).toBeLessThan(0.001);
+    expect(inCell(0, RESTS - 0.02)).toBeGreaterThan(0.001);
+    // Held half-way up the pocket's straight part, it has the gap every way: it touches nothing — nor moved 0.2 mm sideways …
     expect(inCell(0)).toBeLessThan(0.001);
     expect(inCell(0.2)).toBeLessThan(0.001);
-    expect(shared({ part: plate }, { part: bin, position: [0, -0.2, SEATED] })).toBeLessThan(0.001);
+    expect(shared({ part: plate }, { part: bin, position: [0, -0.2, CENTRED] })).toBeLessThan(0.001);
     // … but 0.3 mm (past the gap) runs it into the cell's sides, and so does pushing it 0.5 mm lower.
     expect(inCell(0.3)).toBeGreaterThan(0.001);
-    expect(inCell(0, SEATED - 0.5)).toBeGreaterThan(0.01);
+    expect(inCell(0, CENTRED - 0.5)).toBeGreaterThan(0.01);
   });
 
   it("a 2 × 1 bin sits across two cells of a 3 × 3 baseplate, and a bin made 0.3 mm bigger doesn't fit", () => {
     const { plate, bin } = plateAndBin({}, { across: 2, along: 1 });
-    expect(shared({ part: plate }, { part: bin, position: [GRID / 2, GRID, SEATED] })).toBeLessThan(0.001);
+    expect(shared({ part: plate }, { part: bin, position: [GRID / 2, GRID, CENTRED] })).toBeLessThan(0.001);
     // Half a cell off, the feet land on the walls between cells.
-    expect(shared({ part: plate }, { part: bin, position: [0, GRID, SEATED] })).toBeGreaterThan(1);
+    expect(shared({ part: plate }, { part: bin, position: [0, GRID, CENTRED] })).toBeGreaterThan(1);
     // The gap each side made −0.15 instead of 0.25 (allowed here only for the test): it no longer drops in.
     const loose = findDesign("gridfinity-bin")!;
     const bigger: LibraryDesign = { ...loose, inputs: loose.inputs.map((i) => (i.key === "fit" ? { ...i, min: -1 } : i)) };
     const big = plateAndBin({}, { across: 2, along: 1, fit: -0.15 }, bigger);
-    expect(shared({ part: big.plate }, { part: big.bin, position: [GRID / 2, GRID, SEATED] })).toBeGreaterThan(0.01);
+    expect(shared({ part: big.plate }, { part: big.bin, position: [GRID / 2, GRID, CENTRED] })).toBeGreaterThan(0.01);
   });
 
   it("bins stack: one sits in the lip of another, held sideways and level", () => {

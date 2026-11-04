@@ -143,7 +143,8 @@ export const sign: LibraryDesign = {
     if (v.mount === "stand") {
       const foot = ctx.id("foot");
       const at = minus(lit(0), plus(times(plate, 0.5), lit(STAND.gap + STAND.depth / 2)));
-      const slot = plus(thickness, raisedOf(v) ? relief : lit(0), lit(2 * STAND.room));
+      // Only a raised border reaches the plate's bottom edge (the words stay above the slot).
+      const slot = plus(thickness, raisedOf(v) && v.border === true ? relief : lit(0), lit(2 * STAND.room));
       features.push(
         sketchFeature(ctx.id("foot-sketch"), "Foot sketch", TOP, rounded(times(width, STAND.share), lit(STAND.depth), lit(3), ctx.scope, at)),
         extrudeFeature(foot, "Foot", ctx.id("foot-sketch"), { depth: lit(STAND.height), operation: "new" }),
@@ -183,7 +184,7 @@ export function signVolumes(v: DesignValues, ink: number): { plate: number; foot
   let foot = 0;
   if (v.mount === "stand") {
     const L = w * STAND.share;
-    foot = roundedRectArea(L, STAND.depth, 3) * STAND.height - L * (t + (raisedOf(v) ? relief : 0) + 2 * STAND.room) * STAND.slot;
+    foot = roundedRectArea(L, STAND.depth, 3) * STAND.height - L * (t + (raisedOf(v) && v.border === true ? relief : 0) + 2 * STAND.room) * STAND.slot;
   }
   return { plate, foot };
 }

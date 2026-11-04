@@ -52,8 +52,12 @@ export const MAGNET = { d: 6.5, depth: 2.4, at: 13 };
 export const DIVIDER = 1.2;
 /** How far the label ledge reaches into the walls, so it joins them (mm). */
 const INTO_WALL = 0.02;
-/** How high above the bed a bin's bottom sits in a baseplate's cell: on the pocket's straight bottom part. */
-export const SEATED = PLATE_CLEAR;
+/**
+ * Where a bin rests in a baseplate's cell: its bottom level with the plate's (its slopes then just touch the pocket's).
+ * `CENTRED` is half-way up the pocket's straight bottom part, where it has the gap on every side — used to check the fit.
+ */
+export const RESTS = 0;
+export const CENTRED = PLATE_CLEAR;
 
 /** A height and how far in from a rounded rectangle an outline is there (its corner radius smaller by as much). */
 export interface Step {
@@ -134,7 +138,7 @@ export const gridfinityBaseplate: LibraryDesign = {
   id: "gridfinity-baseplate",
   name: "Gridfinity baseplate",
   description:
-    "The grid that Gridfinity bins sit in: square cells 42 mm apart with the standard stepped edges, so any Gridfinity bin (yours, or one downloaded) drops in and stays put, and you can rearrange them whenever you like. Glue or screw it into a drawer, or just lay it on a shelf. It's the light, open style: it prints quickly, flat on the bed, no supports.",
+    "The grid that Gridfinity bins sit in: square cells 42 mm apart with the standard stepped edges, so any Gridfinity bin (yours, or one downloaded) drops in and stays put, and you can rearrange them whenever you like. Glue or tape it into a drawer, or just lay it on a shelf. It's the light, open style: it prints quickly, flat on the bed, no supports.",
   category: "print",
   group: "Gridfinity",
   prefix: "gridplate",
@@ -146,7 +150,7 @@ export const gridfinityBaseplate: LibraryDesign = {
   problems: () => [],
   summary: (v) => {
     const [x, y] = [countOf(v, "across") * GRID, countOf(v, "along") * GRID];
-    const big = Math.max(x, y) > 256 ? " That's bigger than a 256 mm print bed: make two smaller ones and lay them side by side." : "";
+    const big = Math.max(x, y) > 180 ? " Check it fits your printer's bed (180 mm on an A1 mini, 256 mm on most others): if not, make two smaller ones and lay them side by side." : "";
     return `${countOf(v, "across") * countOf(v, "along")} cells, ${mm(x)} × ${mm(y)} and ${mm(PLATE_HEIGHT)} high.${big}`;
   },
   make: (ctx) => {
@@ -241,7 +245,7 @@ export const gridfinityBin: LibraryDesign = {
     { key: "dividers", label: "Dividers", kind: "count", default: 0, min: 0, max: 9, help: "Walls across, splitting it into equal compartments left to right." },
     { key: "label", label: "Label ledge", kind: "toggle", default: false, help: "A shelf along the back, just under the top, for a label (and to grab the bin by)." },
     { key: "ledge", label: "Label ledge depth", kind: "length", default: 10, min: 5, max: 20, help: "How far the ledge comes forward from the back wall." },
-    { key: "magnets", label: "Magnet holes", kind: "toggle", default: false, help: "Four holes under each cell for 6 × 2 mm round magnets." },
+    { key: "magnets", label: "Magnet holes", kind: "toggle", default: false, help: "Four holes under each cell for 6 × 2 mm round magnets. They only hold if the baseplate has magnets too, or sits on steel." },
     { key: "wall", label: "Wall thickness", kind: "length", default: 1.2, min: 1.2, max: 2.4, help: "1.2 mm is three lines with a 0.4 mm nozzle." },
     { key: "floor", label: "Floor thickness", kind: "length", default: 2.25, min: 0.8, max: 10, help: "Above the feet. 2.25 mm puts the floor 7 mm up, as most bins have it." },
     { key: "fit", label: "Gap each side", kind: "length", default: BIN_GAP, min: 0, max: 0.5, help: "Gridfinity's standard is 0.25 mm, so the bin fits anyone's baseplate. Only change it if your bins come out tight." },
@@ -257,7 +261,7 @@ export const gridfinityBin: LibraryDesign = {
   },
   summary: (v) => {
     const p = binPlan(v);
-    const big = Math.max(...p.outer) > 256 ? " That's bigger than a 256 mm print bed." : "";
+    const big = Math.max(...p.outer) > 180 ? " Check it fits your printer's bed (180 mm on an A1 mini, 256 mm on most others)." : "";
     return `${p.w} × ${p.d} cells, ${p.units} units: ${mm(p.outer[0])} × ${mm(p.outer[1])} and ${mm(p.top)} tall${p.lip ? " with its stacking lip" : ""}${p.dividers ? `, ${p.dividers + 1} compartments ${mm(p.compartment)} wide` : ""}.${big}`;
   },
   make: (ctx) => {

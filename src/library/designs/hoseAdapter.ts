@@ -3,7 +3,7 @@
  * prints standing on its first end with no supports whichever end is bigger. Each end either goes *into* a hose or
  * pipe (the size given is the adapter's outside there) or fits *over* one (the size given is its inside, plus a fit).
  * It's a revolved profile (Front plane: x = radius, y = height). The cone's wall is the wall thickness measured
- * across — square to the slope it's 0.7 × that, so the cone is never thinner than about 1 mm at the smallest wall.
+ * across — square to the slope it's 0.7 × that, so the cone is thinner than the wall setting (about 1 mm at the smallest, 1.5).
  */
 import { lit, plus } from "../ex";
 import { outlineSketch, sketchFeature } from "../sketchKit";
@@ -79,7 +79,7 @@ export const hoseAdapter: LibraryDesign = {
     { key: "b", label: "Second end size", kind: "length", default: 40, min: 4, max: 200 },
     fitChoice("bFits", "Second end", "over"),
     { key: "bLength", label: "Second end length", kind: "length", default: 30, min: 5, max: 200, variable: true },
-    { key: "wall", label: "Wall thickness", kind: "length", default: 2, min: 1.2, max: 10 },
+    { key: "wall", label: "Wall thickness", kind: "length", default: 2, min: 1.5, max: 10, help: "The ends' walls. The cone between is a little thinner (0.7 × this, measured square to its slope)." },
     { key: "fit", label: "Fit over a pipe", kind: "length", default: 0.2, min: 0, max: 2, help: "Added to the inside of an end that fits over something, each side." },
   ],
   problems: (v) => {
