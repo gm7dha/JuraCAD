@@ -131,6 +131,13 @@ export function Toolbar() {
           active={editingType === "import"}
           title={editing ? "Finish or cancel the open feature first" : "Import — bring in a STEP or STL file from another program as a part"}
         />
+        <ToolButton
+          label="Library"
+          icon={<Icons.Library />}
+          onClick={() => useStore.getState().openLibrary({ mode: "browse" })}
+          disabled={!ready || editing}
+          title={editing ? "Finish or cancel the open feature first" : "Design library — ready-made designs (a finger-joint box, a tray, a bracket…) to size and insert as editable features"}
+        />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">

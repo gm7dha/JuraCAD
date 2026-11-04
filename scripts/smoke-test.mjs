@@ -3193,6 +3193,59 @@ try {
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
+  step = "Design library: inserting a finger-joint box";
+  let libraryReport = "";
+  {
+    // The parts in the Part Studio on show: how many, and how wide all together (mm).
+    const shown = () =>
+      page.evaluate(() => {
+        const s = window.juracadStore.getState();
+        let lo = Infinity;
+        let hi = -Infinity;
+        const parts = s.parts.filter((p) => !p.configuration && p.studioId === s.activeTab);
+        for (const p of parts) for (let i = 0; i < p.vertices.length; i += 3) (lo = Math.min(lo, p.vertices[i])), (hi = Math.max(hi, p.vertices[i]));
+        const ids = (s.history.present.partStudios ?? []).find((x) => x.id === s.activeTab)?.features.map((f) => f.id) ?? [];
+        return { busy: s.rebuildBusy, count: parts.length, width: hi - lo, errors: ids.filter((id) => s.featureErrors[id]).length };
+      });
+    const waitShown = async (count, width, what) => {
+      await page
+        .waitForFunction(
+          ([n, w]) => {
+            const s = window.juracadStore.getState();
+            if (s.rebuildBusy) return false;
+            const parts = s.parts.filter((p) => !p.configuration && p.studioId === s.activeTab);
+            let lo = Infinity;
+            let hi = -Infinity;
+            for (const p of parts) for (let i = 0; i < p.vertices.length; i += 3) (lo = Math.min(lo, p.vertices[i])), (hi = Math.max(hi, p.vertices[i]));
+            return parts.length === n && Math.abs(hi - lo - w) < 0.01;
+          },
+          [count, width],
+          { timeout: 60_000 },
+        )
+        .catch(async () => {
+          throw new Error(`${what}: ${JSON.stringify(await shown())}`);
+        });
+    };
+    await tool("Library");
+    await page.getByRole("button", { name: /^Finger-joint box:/ }).click();
+    await page.getByLabel("Width", { exact: true }).fill("140");
+    await page.locator(".library-preview polygon").first().waitFor({ timeout: 5_000 });
+    await shot("library");
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Finger-joint box", { timeout: 10_000 });
+    await waitShown(6, 140, "the finger box didn't build its 6 panels 140 mm wide");
+    step = "Design library: changing the box's width in Variables";
+    await tool("Variables");
+    await page.getByLabel("Value of box_width").fill("170");
+    await page.getByRole("button", { name: "Done" }).click();
+    await waitShown(6, 170, "changing box_width to 170 didn't rebuild the box 170 mm wide");
+    const after = await shown();
+    if (after.errors) throw new Error(`the finger box has ${after.errors} feature problem(s)`);
+    await shot("library-box");
+    libraryReport = "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable";
+    await page.getByRole("button", { name: "Part Studio 1" }).click();
+  }
+
   // Tablets: a page with a touch screen (an iPad's size, landscape). Fingers are sent as real touches through
   // Chromium's DevTools (Input.dispatchTouchEvent), so the app sees pointer events of type "touch".
   step = "touch screen: opening the app with fingers";
@@ -3325,7 +3378,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${libraryReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

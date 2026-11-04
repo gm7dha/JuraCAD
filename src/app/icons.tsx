@@ -205,6 +205,13 @@ export const Icons = {
       <path d="M12 8v4l3 2" />
     </Svg>
   ),
+  Library: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 4h4v15H4zM9 4h4v15H9z" />
+      <path d="m14.2 5.2 3.8-1 3.6 13.6-3.8 1z" />
+      <path d="M3 20.5h18" />
+    </Svg>
+  ),
   Variables: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 7c2 0 2 10 4 10M4 17c2 0 4-10 6-10" />

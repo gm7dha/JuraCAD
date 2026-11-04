@@ -3790,3 +3790,146 @@ kbd {
     width: min(300px, calc(100% - 24px));
   }
 }
+
+/* Design library */
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.library-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+}
+.library-card:hover,
+.library-card:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.library-card svg {
+  flex: none;
+  color: var(--accent);
+}
+.library-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.library-tag {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.library-heading {
+  font-size: 13px;
+  margin: 14px 0 6px;
+}
+.library-placed {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.library-placed li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-top: 1px solid var(--line-2);
+}
+.library-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 16px;
+  margin: 10px 0;
+}
+@media (max-width: 640px) {
+  .library-form {
+    grid-template-columns: 1fr;
+  }
+}
+.library-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.library-input label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.library-input .library-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.library-input p {
+  margin: 2px 0 0;
+}
+.library-number {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.library-number input,
+.library-input select {
+  width: 120px;
+}
+.library-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.library-preview {
+  width: 100%;
+  height: 300px;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.library-preview.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.library-preview polygon,
+.library-preview polyline,
+.library-preview circle {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+.library-preview polygon:not(.faint) {
+  fill: var(--accent-soft);
+}
+.library-preview .faint {
+  stroke: var(--ink-3);
+  stroke-dasharray: 4 3;
+}
+.library-preview text {
+  fill: var(--ink-2);
+}
+.library-where {
+  display: flex;
+  gap: 12px;
+  margin-right: auto;
+  font-size: 13px;
+}

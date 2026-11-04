@@ -10,6 +10,7 @@ import type { SketchData } from "../sketch/types";
 import type { Placement } from "../assembly/math";
 import type { SketchLineRef } from "./patternRefs";
 import type { FinishId } from "./finishes";
+import type { LibraryInsert } from "../library/types";
 
 /** The kinds of feature JuraCAD can build. */
 export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog";
@@ -379,6 +380,8 @@ export interface JuraCADDocument {
   activeConfiguration?: string;
   /** Saved versions of the whole design (Versions panel; oldest first). Optional: older saves have none. */
   versions?: DesignVersion[];
+  /** Designs inserted from the Design library (so their sizes can be changed again). Optional: older saves have none. */
+  libraryInserts?: LibraryInsert[];
 }
 
 /**

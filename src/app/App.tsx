@@ -15,6 +15,7 @@ import { HelpDialog } from "./HelpDialog";
 import { FlatPatternDialog } from "./FlatPatternDialog";
 import { WhatsNewDialog } from "./WhatsNewDialog";
 import { VariablesDialog } from "./VariablesDialog";
+import { LibraryDialog } from "./LibraryDialog";
 import { ConfigurationsDialog } from "./ConfigurationsDialog";
 import { ComparePanel, VersionBanner, VersionsDialog } from "./VersionsDialog";
 import { MeasurePanel } from "./MeasurePanel";
@@ -243,6 +244,7 @@ function useShortcuts() {
 
 export function App() {
   const dialog = useStore((s) => s.dialog);
+  const libraryOpen = useStore((s) => s.library !== null);
   const sketching = useStore((s) => s.sketch !== null);
   const assembly = useStore(activeAssembly);
   const drawing = useStore(activeDrawing);
@@ -322,6 +324,7 @@ export function App() {
       {dialog === "variables" && <VariablesDialog />}
       {dialog === "configurations" && <ConfigurationsDialog />}
       {dialog === "versions" && <VersionsDialog />}
+      {libraryOpen && <LibraryDialog />}
       <ToastView />
     </div>
   );
