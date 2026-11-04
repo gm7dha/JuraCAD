@@ -30,7 +30,7 @@ describe(".juracad files", () => {
     expect(bad("solid part\nfacet normal 0 0 1")).toMatch(/STL/);
     expect(bad("hello")).toMatch(/isn't a JuraCAD design file/);
     expect(bad('{"format":"other"}')).toMatch(/isn't a JuraCAD design file/);
-    expect(bad('{"format":"partsmith","version":2,"features":[]}')).toMatch(/newer version/);
+    expect(bad('{"format":"partsmith","version":3,"features":[]}')).toMatch(/newer version/);
     expect(bad('{"format":"partsmith","version":1,"features":[{"id":5}]}')).toMatch(/damaged/);
   });
 
