@@ -129,3 +129,29 @@ export function topFacePlane(label: string, partId: string, height: Ex, center: 
 export function relIn(p: Vec3, min: Vec3, max: Vec3): Vec3 {
   return [0, 1, 2].map((i) => (max[i] - min[i] > 1e-6 ? Math.round(((p[i] - min[i]) / (max[i] - min[i])) * 1e4) / 1e4 : 0.5)) as Vec3;
 }
+
+/**
+ * A sketch plane level with the bed, `z` mm up (the sketch's x and y are the world's). Fixed where it is — not on a
+ * face or a Plane feature — so it's for heights that never change with a variable (a standard's steps, like
+ * Gridfinity's); designs whose heights follow variables sketch on the Top plane or on their own faces instead.
+ */
+export function levelPlane(label: string, z: number): SketchPlane {
+  return { kind: "face", origin: [0, 0, six(z)], u: [1, 0, 0], v: [0, 1, 0], label };
+}
+
+/**
+ * A Loft through one closed shape on each sketch, in order (as the Loft dialog makes it). `ruled` gives straight sides
+ * from each shape to the next — "Straight between shapes" — so stacked outlines make exact steps and slopes.
+ */
+export function loftFeature(id: string, name: string, sections: string[], operation: "new" | "add" | "remove", ruled = true): Feature {
+  return {
+    id,
+    name,
+    type: "loft",
+    operation,
+    suppressed: false,
+    params: { ...defaultParams("loft") },
+    sections,
+    ...(ruled ? { loftRuled: true } : {}),
+  };
+}

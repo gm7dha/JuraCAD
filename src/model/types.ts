@@ -177,6 +177,11 @@ export interface Feature {
   sweepControl?: { lockOrientation?: boolean };
   /** Loft: the sketches to pass through, in order. */
   sections?: string[];
+  /**
+   * Loft: straight sides from each shape to the next (OpenCascade's ruled loft), instead of one smooth surface through
+   * them all — so stacked outlines make sharp steps and exact 45° slopes (the Gridfinity profiles). Missing = smooth.
+   */
+  loftRuled?: boolean;
   /** Text: what it says, where it goes, and how. */
   text?: {
     value: string;

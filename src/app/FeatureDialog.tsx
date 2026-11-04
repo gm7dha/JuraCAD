@@ -968,6 +968,12 @@ function SweepLoftOptions() {
         );
       })}
       <p className="dialog-hint field-hint">Tick the sketches in the order the solid should pass through them. Each needs one closed shape.</p>
+      {!draft.surface && (
+        <label className="check-row" title="Straight sides from each shape to the next, so the steps stay sharp, instead of one smooth curve through them all">
+          <input type="checkbox" aria-label="Straight between shapes" checked={!!draft.loftRuled} onChange={(e) => setDraftField({ loftRuled: e.target.checked || undefined })} />
+          Straight between shapes (sharp steps)
+        </label>
+      )}
     </fieldset>
   );
 }

@@ -575,6 +575,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       };
     }
     if (feature.type === "loft") feature.sections = Array.isArray(f.sections) ? f.sections.filter((x): x is string => typeof x === "string") : [];
+    if (feature.type === "loft" && f.loftRuled === true) feature.loftRuled = true;
     if (feature.type === "revolve") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const rv = f.revolve as Record<string, unknown> | undefined;
