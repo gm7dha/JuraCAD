@@ -8,6 +8,17 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.35 — Library: fixings, hinges, stencils and stamps · commit `6826b20`
+
+- **3D printing:** bolt, nut and washer sets (M3–M12, printable threads with a fit setting), hex standoffs, piano hinge,
+  screw-top jar, bit holder, pegboard hook, drawer pull, desk cable grommet and corner protector.
+- **Laser cutting:** stencil (bridges added automatically so letter middles don't fall out), rubber stamp (mirrored, the
+  background engraved away), name/key tag, coasters, three-layer picture frame, living-hinge panel, gear and ruler.
+  Also a 3D-printed stamp with a handle.
+- **Library window:** a search box, and headings such as Fixings, Hinges, Storage, Household and Workshop.
+- **Sketch text** can be mirrored; **Export for laser** can engrave a sketch's background; Thread has a groove depth setting.
+- **Claude extension:** inserts the new designs, including words. Download it again from Help.
+
 ## v0.34 — Library: 3D printing and laser cutting tabs, more designs · commit `b6c652f`
 
 - **Two tabs in the Library:** Laser cutting and 3D printing.
