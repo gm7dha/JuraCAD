@@ -217,7 +217,7 @@ describe("living-hinge box", () => {
   it("says when the corners are too tight, the box too small or the strip too long for the bed", () => {
     expect(valueProblems(design("hinge-box"), valuesOf("hinge-box", { radius: 4 }))[0]).toMatch(/Round the corners/);
     expect(valueProblems(design("hinge-box"), valuesOf("hinge-box", { width: 50, radius: 20 }))[0]).toMatch(/too short/);
-    expect(valueProblems(design("hinge-box"), valuesOf("hinge-box", { width: 280, depth: 200 }))[0]).toMatch(/too long for the laser/);
+    expect(valueProblems(design("hinge-box"), valuesOf("hinge-box", { width: 280, depth: 200 }))[0]).toMatch(/too long to fit on the laser/);
     expect(laserDefaultsFor(insertDesign(emptyDocument(), design("hinge-box"), v, { into: MAIN_STUDIO }).doc, "x")).toBeNull();
   });
 });
