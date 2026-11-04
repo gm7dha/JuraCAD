@@ -3401,9 +3401,37 @@ try {
     if (!/width="200mm" height="150mm"/.test(puzzleSvg)) throw new Error("the puzzle's SVG isn't 200 × 150 mm");
     await page.getByRole("button", { name: "Close export for laser" }).click();
     await page.waitForSelector(".laser-panel", { state: "detached" });
+    step = "Design library: a dice tower (tabs through slots), exported for laser";
+    await tool("Library");
+    await page.getByLabel("Search the library").fill("dice tower");
+    await page.getByRole("button", { name: /^Dice tower:/ }).click();
+    await page.locator(".library-preview polygon").first().waitFor({ timeout: 10_000 });
+    const towerSummary = (await page.locator(".library-side p.small").first().innerText()).trim();
+    if (!/^7 pieces/.test(towerSummary)) throw new Error(`the dice tower's summary says "${towerSummary}"`);
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Dice tower", { timeout: 10_000 });
+    // 2 sides, back, front, ramp and 2 baffles, 90 mm front to back.
+    await waitShown(7, 90, "the dice tower didn't build its 7 pieces 90 mm deep");
+    if ((await shown()).errors) throw new Error(`the dice tower has ${(await shown()).errors} feature problem(s)`);
+    await tool("Laser");
+    await page.waitForSelector(".laser-panel");
+    await page.locator("#laser-source").selectOption({ value: "all" });
+    await page.waitForFunction(() => /\d × \d.* overall/.test(document.querySelector(".laser-size")?.textContent ?? ""), null, { timeout: 30_000 }).catch(async () => {
+      throw new Error(`the laser panel didn't show the dice tower: ${(await page.locator(".laser-panel").innerText()).replace(/\s+/g, " ")}`);
+    });
+    const towerSvgPromise = page.waitForEvent("download", { timeout: 30_000 });
+    await page.getByRole("button", { name: "Save SVG" }).click();
+    const towerSvg = readFileSync(await (await towerSvgPromise).path(), "utf8");
+    const towerReds = (towerSvg.match(/stroke="#FF0000"/g) ?? []).length;
+    const towerBlues = (towerSvg.match(/stroke="#0000FF"/g) ?? []).length;
+    // Each piece's outline; and the 10 slots in each side (4 for the back, 3 for the front, 1 each for the ramp and baffles).
+    if (towerReds !== 7 || towerBlues !== 20) throw new Error(`the dice tower's SVG has ${towerReds} red and ${towerBlues} blue outlines (expected 7 and 20)`);
+    await page.getByRole("button", { name: "Close export for laser" }).click();
+    await page.waitForSelector(".laser-panel", { state: "detached" });
     libraryReport =
       "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts); then a bolt, nut and washer set found by searching (3 parts); then a stencil of HELLO, saved for laser (1 red outline, 5 blue letter holes, the O's middle bridged); then a 12-piece jigsaw, its puzzle sketch saved for laser (1 red border, 17 blue cuts)";
     libraryReport += "; and a Gridfinity bin found by searching (1 part, 83.5 mm across)";
+    libraryReport += "; and a dice tower found by searching (7 tabbed pieces), saved for laser (7 red outlines, 20 blue slots)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
