@@ -427,8 +427,12 @@ export function sortLoops(loops: Segment[][]): LaserPath[] {
   const polys = loops.map((l) => pathPoints(l, true, 0.01));
   const areas = polys.map((p) => Math.abs(signedArea(p)));
   const found = loops.flatMap((segments, i): { path: LaserPath; depth: number }[] => {
-    // Only nothing at all is left out (a loop with no length); any loop with pieces is cut.
     if (polys[i].length < 2) return [];
+    // Pieces that close up but enclose no area (a line drawn there and back again): cut along it once, as a line.
+    if (segments.length > 1 && areas[i] <= 1e-7 * perimeter(polys[i]) ** 2) {
+      const { loops: l2, open } = chainEdges(withoutDoubles(segments));
+      return [...l2, ...open].map((run) => ({ path: { layer: "inner" as const, segments: run, closed: false }, depth: Infinity }));
+    }
     // A point just along the loop's first side (corners may touch other loops).
     const p0 = polys[i][0];
     const p1 = polys[i][1 % polys[i].length];
@@ -438,6 +442,25 @@ export function sortLoops(loops: Segment[][]): LaserPath[] {
   });
   // Deepest first: an island inside a hole is cut before the hole round it, so nothing has fallen out yet.
   return found.sort((a, b) => b.depth - a.depth).map((f) => f.path);
+}
+
+const perimeter = (poly: Pt[]) => poly.reduce((sum, p, i) => sum + dist(p, poly[(i + 1) % poly.length]), 0);
+
+/** Pieces with the same ends and middle (either way round) kept once. */
+export function withoutDoubles(segments: Segment[]): Segment[] {
+  const r = (p: Pt) => `${Math.round(p[0] * 1e4)},${Math.round(p[1] * 1e4)}`;
+  const seen = new Set<string>();
+  return segments.filter((s) => {
+    const pts = segmentPoints(s, 0.01);
+    const ends = segmentEnds(s);
+    const mid = pts[Math.floor(pts.length / 2)];
+    // A straight piece's middle is its ends' middle, the same either way round.
+    const m: Pt = s.kind === "line" ? [(s.from[0] + s.to[0]) / 2, (s.from[1] + s.to[1]) / 2] : mid;
+    const k = `${ends ? [r(ends[0]), r(ends[1])].sort().join("|") : s.kind}|${Math.round(m[0] * 1e3)},${Math.round(m[1] * 1e3)}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 /** Raw outline pieces (any order) as cut paths: outer and inner loops, and open runs on `openLayer`. */

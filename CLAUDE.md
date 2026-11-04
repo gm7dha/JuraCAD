@@ -439,7 +439,7 @@
 - Export for laser (the owner cuts on a Bambu Lab R1 CO2 laser from Bambu Studio's laser mode): true-size 2D outlines as SVG
   (width/height in mm + a mm viewBox, hairline 0.05 mm) and DXF (R12, $INSUNITS 4). Pure in `src/laser/`: `laser.ts` — pieces of
   regions.ts `Segment`s (lines, 3-point arcs, circles, Béziers, ellipses; ellipse arcs become Bézier pieces when moved), `chainEdges`
-  (joins pieces in any order/direction, grid lookup; a chain passing a point twice — a figure-8 — is split into its loops, `splitAtRevisits`), `sortLoops` (a loop inside another = "inner", else "outer"; deepest first, so an island is cut before its hole), `layoutPieces`
+  (joins pieces in any order/direction, grid lookup; a chain passing a point twice — a figure-8 — is split into its loops, `splitAtRevisits`), `sortLoops` (a loop inside another = "inner", else "outer"; deepest first, so an island is cut before its hole; pieces that close but enclose no area — a line drawn there and back — come back as one open run, doubles removed by `withoutDoubles`), `layoutPieces`
   (`arrangeOnBed` from printCheck.ts in rows up to `width`, default 600 = the R1's bed, `gap` 5; rows widen to the biggest piece's narrow side and the bed is as deep as all pieces stacked, so nothing is left beside it; then to (0, 0); `mirror` flips the
   whole sheet), exact `pathsBox`; layers `LASER_LAYERS` (outer #FF0000 CUT_OUTER, inner #0000FF CUT_INNER, score #00FF00 SCORE,
   engrave black filled ENGRAVE, written in `LAYER_ORDER` = engrave, score, inner, outer). `laserFiles.ts` — `laserSvg` (one closed

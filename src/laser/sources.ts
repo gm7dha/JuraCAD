@@ -152,7 +152,8 @@ export function sketchPiece(name: string, sketch: SketchData, opts: SketchLaserO
   const engraved = [...(engraveShapes ? shapeLoops : []), ...(engraveText ? textLoops : [])];
   const openLayer: LaserLayer = opts.open === "score" ? "score" : "inner";
   const paths: LaserPath[] = [
-    ...sortLoops(cut),
+    // (A "loop" that's only a line drawn there and back comes back open: it's a line like the others.)
+    ...sortLoops(cut).map((p) => (p.closed ? p : { ...p, layer: openLayer })),
     ...engraved.map((segments): LaserPath => ({ layer: "engrave", segments, closed: true })),
     ...openRuns.map((segments): LaserPath => ({ layer: openLayer, segments, closed: false })),
   ];

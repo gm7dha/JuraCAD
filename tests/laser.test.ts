@@ -283,6 +283,24 @@ describe("more shapes meeting at points", () => {
     expect(sortLoops(loops)).toHaveLength(2);
   });
 
+  it("a line drawn twice (there and back) is cut once, as a line, not as a closed outline", () => {
+    // Raw pieces, out and back.
+    const raw = sortLoops(chainEdges([line([0, 0], [30, 0]), line([30, 0], [0, 0])]).loops);
+    expect(raw.map((p) => `${p.layer}/${p.closed ? "C" : "o"}${p.segments.length}`)).toEqual(["inner/o1"]);
+    // In a sketch: alone, and next to a real rectangle.
+    const twice = L(L(emptySketch(), [0, 0], [30, 0]), [30, 0], [0, 0]);
+    expect(kinds(twice)).toEqual(["inner/o1"]);
+    expect(kinds(twice, "score")).toEqual(["score/o1"]);
+    const beside = L(L(addRectangle(emptySketch(), { x: 0, y: 10 }, { x: 40, y: 40 }).sketch, [0, 0], [30, 0]), [30, 0], [0, 0]);
+    expect(kinds(beside).sort()).toEqual(["inner/o1", "outer/C4"]);
+    // A rectangle with one side drawn twice is still one outline, and the doubled side isn't cut again as a loop.
+    const rect = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 40, y: 30 }).sketch;
+    const doubled = L(rect, [40, 0], [40, 30]);
+    const got = kinds(doubled);
+    expect(got.filter((k) => k.startsWith("outer/C"))).toHaveLength(1);
+    expect(got.filter((k) => k.endsWith("/C2"))).toHaveLength(0);
+  });
+
   it("two rectangles sharing a side cut that side once", () => {
     let s = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 30 }).sketch;
     s = poly(s, [[20, 0], [40, 0], [40, 30], [20, 30]]);
