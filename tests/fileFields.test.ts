@@ -44,6 +44,7 @@ function everyField(): Required<JuraCADDocument> {
     // The second configuration, so a reader that just picks the first would be caught.
     activeConfiguration: doc.configurations![1].id,
     versions: [{ id: "ver1", name: "V1", note: "Before the holes", createdAt: "2026-11-01T10:00:00.000Z", packed: `json:${JSON.stringify(emptyDocument("Old"))}` }],
+    libraryInserts: [{ id: "lib1", design: "finger-box", name: "Finger box", prefix: "box", values: { width: 120, lid: true, measure: "inside" }, features: [box.id], variables: { width: "v1" } }],
   };
   return full;
 }

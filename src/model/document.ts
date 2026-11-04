@@ -17,6 +17,7 @@ import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, Pa
 import { MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
 import { parseVersions } from "./versions";
+import { parseLibraryInserts } from "../library/parse";
 import type { AreaPick } from "../sketch/areas";
 
 /**
@@ -660,5 +661,6 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...(parseDrawings(d.drawings).length ? { drawings: parseDrawings(d.drawings) } : {}),
     ...configurationsOf(d),
     ...(parseVersions(d.versions).length ? { versions: parseVersions(d.versions) } : {}),
+    ...(parseLibraryInserts(d.libraryInserts).length ? { libraryInserts: parseLibraryInserts(d.libraryInserts) } : {}),
   };
 }

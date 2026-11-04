@@ -28,6 +28,7 @@ import { ASSEMBLY_EXTRA_TOOLS } from "./assemblyExtras";
 import { DRAWING_EXTRA_TOOLS } from "./drawingExtras";
 import { ASSEMBLY_TOOLS, assemblyViews, exportAssemblyBytes, findAssembly, instanceFaces } from "./assemblyTools";
 import { DRAWING_TOOLS } from "./drawingTools";
+import { libraryTools } from "./libraryTools";
 import { chooseFinish, exportColours, finishFromWords, finishOf, FINISHES, setColourIn } from "../model/finishes";
 import { colourFromWords, PART_COLOURS } from "../model/colours";
 
@@ -836,6 +837,7 @@ export const TOOLS: ToolDef[] = [
   ...ASSEMBLY_EXTRA_TOOLS,
   ...DRAWING_TOOLS,
   ...DRAWING_EXTRA_TOOLS,
+  ...libraryTools(tryChange),
 ];
 
 /** Run a tool by name: problems with the input come back as a plain-English error for Claude to fix. */
