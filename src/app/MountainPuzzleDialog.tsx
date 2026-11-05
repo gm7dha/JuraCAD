@@ -10,6 +10,7 @@ import { CUSTOM_PRINTER, PRINTERS } from "../model/printBed";
 import { areaProblem, heightAt, readHeights, type HeightGrid } from "../terrain/elevation";
 import {
   baseFor,
+  plateFor,
   layoutFor,
   makeMountainPuzzle,
   mountainChecks,
@@ -261,7 +262,7 @@ export function MountainPuzzleDialog() {
             <div className="mountain-row">
               <span>Area</span>
               <span>
-                {numberBox(km[0], (v) => setKm([v, km[1]]), 0.5, 0.2, 40, "km wide")} {numberBox(km[1], (v) => setKm([km[0], v]), 0.5, 0.2, 40, "km tall")}
+                {numberBox(km[0], (v) => setKm([v, km[1]]), 0.5, 0.2, 40, "km west to east")} {numberBox(km[1], (v) => setKm([km[0], v]), 0.5, 0.2, 40, "km south to north")}
               </span>
             </div>
           )}
@@ -326,6 +327,13 @@ export function MountainPuzzleDialog() {
                 {" "}
                 smallest {smallestCube(spec.fit)} mm, sturdy from {smallestCube(spec.fit, GOOD_NECK)} mm
               </span>
+            </span>
+          </div>
+          <div className="mountain-row">
+            <span>Side under the ground</span>
+            <span>
+              {numberBox(spec.base, (v) => set("base", v), 1, baseFor({ ...spec, base: 0 }), 60, "mm")}
+              <span className="muted small"> plain side below the lowest ground; the bottom layer is a thin jigsaw plate</span>
             </span>
           </div>
           <div className="mountain-row">
@@ -397,7 +405,7 @@ export function MountainPuzzleDialog() {
                     — finished {puzzle.layout.cols * spec.cube} × {puzzle.layout.rows * spec.cube} mm and{" "}
                     {Math.round(Math.max(...puzzle.pieces.map((p) => p.z0 + p.height)))} mm tall; 1 mm is {Math.round(1 / puzzle.layout.k)} m of ground
                     (1 : {Math.round(1000 / puzzle.layout.k).toLocaleString("en-GB")}). Ground from {Math.round(puzzle.layout.low)} m to{" "}
-                    {Math.round(puzzle.layout.high)} m, with {Math.round(baseFor(fullSpec))} mm of base under the lowest.
+                    {Math.round(puzzle.layout.high)} m, with {Math.round(baseFor(fullSpec))} mm of plain side under the lowest, on a {plateFor(fullSpec).toFixed(1)} mm jigsaw plate.
                   </p>
                   <p className="muted">
                     Tabs' necks {puzzle.neck.toFixed(1)} mm; each piece sits on a square key about{" "}

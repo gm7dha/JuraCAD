@@ -882,8 +882,10 @@
   holes joined earcut-style with a "cut leaves into the face" check on doubled corners — the second peg hole once joined
   through the wrong copy), `mountainPuzzle.ts`, `puzzle3mf.ts`. Puzzle: `layoutFor` — 100% scale = the finished puzzle fills the bed
   less 10 mm, whole cubes, area trimmed and centred; heights z = `baseFor` (≥ one cube + the thinnest top, so every column
-  stands on a jigsaw cube) + (h − low)·k·exaggeration. Per column, `full` = whole cubes under the top piece (top ≥ socket depth
-  + 2 mm thick everywhere). Each layer is `makePuzzle` (tab `TAB` 0.28, pattern tried until `narrowestGap` ≥ MIN_GAP + 2·fit)
+  stands on a jigsaw cube) + (h − low)·k·exaggeration. `base` (default 10) is the plain side under the lowest ground (the
+  owner wanted ≤ 10 mm of it): layer 0 is a thin jigsaw plate `plateFor` = base − thinnest top − 1.5 mm headroom (≥ `PLATE_MIN`
+  3), layers above are whole cubes (`bottomOf(L)`); `baseFor` raises base to fit them. Per column, `full` = the plate plus
+  the whole cubes under the top piece (always ≥ 1; top ≥ socket depth + 2 mm thick everywhere). Each layer is `makePuzzle` (tab `TAB` 0.28, pattern tried until `narrowestGap` ≥ MIN_GAP + 2·fit)
   with tabs only between two whole cubes (else straight; top pieces are squares), outlines shrunk by `fit`. One locating key
   per join (it replaced two thin pegs, which were fiddly and could snap): a rounded-square pad on each cube's top
   (`keySizes`: h 2–3.5 mm, sides sloping in 0.8·h, `keyLoop`), a matching pocket under the piece above (fit bigger all round,
@@ -901,12 +903,10 @@
   (rows on the bed, layer by layer), `plate3mf` = core 3MF, each piece an object of component parts (rock, snow) + Bambu's
   `Metadata/model_settings.config` with `extruder` 1/2 per part (untested in Bambu Studio itself; other slicers see parts to
   assign by hand). Tests: tests/mountainPuzzle (pure: grid refs vs known summits, a fake tile loader, triangulation, every
-  part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates). The laser
-  version (layered contour sheets cut into staggered jigsaw pieces) lives in JuraCUT (its Mountain tool,
-  `src/terrain/contourPuzzle.ts`), which shares osGrid.ts, elevation.ts, peaks.ts and app/mountainTiles.ts unchanged:
-  keep them identical in both apps.
+  part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates). A laser version (layered contour
+  sheets) was tried in JuraCUT and taken out at the owner's request (JuraCUT v0.12): the mountain puzzle is 3D printing only.
   OpenStreetMap files: source "An OpenStreetMap file" + "From the map" (`OsmDetail`: area / water — paths, tracks, rivers,
-  streams, lochs / all — roads, buildings, names too). `src/terrain/osm.ts` (pure, the SAME file in JuraCUT): a small
+  streams, lochs / all — roads, buildings, names too). `src/terrain/osm.ts` (pure): a small
   regex reader for .osm XML (`readOsm`: bounds, ways by tag — `lineKind`/`shapeKind`, multipolygon water joined from
   member ways, `joinRings`, islands; named peaks (with `ele`), huts, places; `OsmError` = plain message), `osmArea` (the
   grid-aligned box inside the export box; refuses outside GB), `featuresOnGrid` (via osGrid's `latLonToGrid`: Helmert
@@ -914,7 +914,7 @@
   (`GROOVES`, cosine profile), water capped at its lowest shore − `WATER_DROP`, buildings + `BUILDING_HEIGHT`
   (≥ `BUILDING_LEAST` across), on a ≥ 0.25 mm grid; `makeMountainPuzzle(…, features)` wraps the ground height with it
   (so `full`, snow and every mesh see it) and samples top pieces finer (≤ 64 a side). Names aren't printed. Tests:
-  tests/osm.test.ts (sample file in tests/support/osmSample.ts, the same in JuraCUT).
+  tests/osm.test.ts (sample file in tests/support/osmSample.ts).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);

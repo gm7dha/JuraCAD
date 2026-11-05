@@ -6,6 +6,9 @@
  * dropping pieces in from above, the way the tabs and keys both point; the slopes steer each piece into place and let
  * it lift straight out, and there's nothing thin to snap.
  *
+ * The bottom layer is a thin jigsaw plate rather than a full cube, so there's only a little plain side (`base`, 10 mm
+ * by default) under the lowest ground; the layers above it are full cubes.
+ *
  * Each column ends in a "top" piece: the ground's surface on top, flat sides (its neighbours' tops are different
  * heights, so tabs would stick out into the air), held by the key of the cube below. A top piece is never thinner
  * than its pocket needs. Pieces on the outside of the puzzle have flat outer faces.
@@ -33,8 +36,8 @@ export interface MountainSpec {
   /** Heights × this (mountains look flat at true scale). */
   exaggeration: number;
   /**
-   * Solid below the lowest ground, mm. Never less than `baseFor` gives: the lowest ground still stands on one whole
-   * layer of jigsaw cubes, so every column is locked to its neighbours.
+   * Plain side under the lowest ground, mm. The bottom layer is a jigsaw plate this less the thinnest top piece (and a
+   * little room) thick, so every column is still locked to its neighbours. Never less than `baseFor` gives.
    */
   base: number;
   /** Height above sea level (m) where the snow starts; null = no snow. */
@@ -45,7 +48,7 @@ export interface MountainSpec {
   seed: number;
 }
 
-export const MOUNTAIN_DEFAULTS: Omit<MountainSpec, "bed"> = { scale: 1, cube: 30, exaggeration: 1.5, base: 6, snowline: null, fit: 0.15, seed: 1 };
+export const MOUNTAIN_DEFAULTS: Omit<MountainSpec, "bed"> = { scale: 1, cube: 30, exaggeration: 1.5, base: 10, snowline: null, fit: 0.15, seed: 1 };
 
 /** A tab's height as a share of the cube (a little bigger than the laser jigsaw's, for strength). */
 export const TAB = 0.28;
@@ -144,9 +147,21 @@ export function smallestCube(fit: number, neck = MIN_NECK): number {
   return Math.ceil((neck + 2 * fit) / (2 * NECK * (TAB / TAB_RISE) * (1 - SIZE_SPREAD)));
 }
 
-/** The solid under the lowest ground (mm): as asked, but at least one jigsaw layer plus the thinnest top piece. */
+/** The bottom jigsaw plate is never thinner than this (mm). */
+export const PLATE_MIN = 3;
+/** Room between the plate's top and the thinnest top piece's underside (mm), for grooves and water from a map. */
+const HEADROOM = 1.5;
+/** The thinnest a top piece is (mm): its pocket and 2 mm over it. */
+const thinnestTop = (spec: Pick<MountainSpec, "cube" | "fit">) => keySizes(spec).depth + 2;
+
+/** The plain side under the lowest ground (mm): as asked, but room for the bottom plate and the thinnest top piece. */
 export function baseFor(spec: Pick<MountainSpec, "base" | "cube" | "fit">): number {
-  return Math.max(spec.base, spec.cube + keySizes(spec).depth + 3);
+  return Math.max(spec.base, PLATE_MIN + thinnestTop(spec) + HEADROOM);
+}
+
+/** How thick the bottom jigsaw plate is (mm). */
+export function plateFor(spec: Pick<MountainSpec, "base" | "cube" | "fit">): number {
+  return baseFor(spec) - thinnestTop(spec) - HEADROOM;
 }
 
 /** How the ground maps onto the puzzle. */
@@ -621,6 +636,9 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   // Samples along each side of a top piece: about one per height-data point (finer for map marks), 8 to 48 (64).
   const n = marks.empty ? Math.min(48, Math.max(8, Math.ceil(cube / Math.max(0.6, grid.spacing * k)))) : Math.min(64, Math.max(16, Math.ceil(cube / 0.45)));
   const thinnest = g.depth + 2;
+  // Layer 0 is the thin plate, the rest full cubes.
+  const plate = plateFor(spec);
+  const bottomOf = (L: number) => (L === 0 ? 0 : plate + (L - 1) * cube);
 
   // How many whole cubes each column has under its top piece.
   const full: number[] = [];
@@ -628,7 +646,9 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
     for (let c = 0; c < cols; c++) {
       let low = Infinity;
       for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) low = Math.min(low, Z(c * cube + (cube * i) / n, r * cube + (cube * j) / n));
-      full.push(Math.max(0, Math.floor((low - 0.5 - thinnest) / cube)));
+      // Always the plate, then as many whole cubes as leave the top piece its thickness.
+      const room = low - 0.5 - thinnest;
+      full.push(room < plate ? 1 : 1 + Math.floor((room - plate) / cube));
     }
   const fullAt = (c: number, r: number) => (c < 0 || r < 0 || c >= cols || r >= rows ? 0 : full[r * cols + c]);
   const layers = Math.max(...full) + 1;
@@ -683,14 +703,15 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
         const name = `${columnName(c)}${r + 1}-${L + 1}`;
         const pocket = L > 0 ? joins[L - 1] : null;
         if (L > 0 && !pocket) keyless.push(name);
-        const z0 = L * cube;
+        const z0 = bottomOf(L);
+        const z1 = bottomOf(L + 1);
         if (L < f) {
-          const shape: BlockShape = { outline: outlines[L], z0, z1: z0 + cube, pocket, key: joins[L], sizes: g };
+          const shape: BlockShape = { outline: outlines[L], z0, z1, pocket, key: joins[L], sizes: g };
           // The snow line, moved clear of the pocket and the very top.
           let cut = snowZ;
           if (cut <= z0 + (pocket ? g.depth + 1 : 1)) cut = -Infinity;
-          else if (cut >= z0 + cube - 1) cut = Infinity;
-          const top = z0 + cube + (joins[L] ? g.h : 0);
+          else if (cut >= z1 - 1) cut = Infinity;
+          const top = z1 + (joins[L] ? g.h : 0);
           const bodies =
             cut === -Infinity
               ? [blockBody(shape, z0, top, "snow")]

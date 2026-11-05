@@ -10,6 +10,8 @@ import { insideGap, outlineGap, type P2 as LP2 } from "../src/library/outlines";
 import { areaProblem, gridFrom, heightAt, readHeights, terrariumHeight, tilesFor, worldPixel, type TilePixels } from "../src/terrain/elevation";
 import {
   baseFor,
+  plateFor,
+  PLATE_MIN,
   layoutFor,
   makeMountainPuzzle,
   mountainChecks,
@@ -201,7 +203,16 @@ describe("Mountain puzzle", () => {
     expect(L.height).toBeLessThanOrEqual(H + 1e-6);
     // Twice the scale: twice as many cubes across.
     expect(layoutFor(hill, W, H, { ...SPEC, scale: 2 }).cols).toBe(16);
-    expect(baseFor(SPEC)).toBeGreaterThan(SPEC.cube);
+    // Only 10 mm of plain side under the lowest ground: the bottom layer is a thin jigsaw plate.
+    expect(baseFor(SPEC)).toBe(10);
+    expect(plateFor(SPEC)).toBeGreaterThanOrEqual(PLATE_MIN);
+    let lowest = Infinity;
+    for (const p of puzzle.pieces) {
+      if (p.layer === 0) expect(p.height - (p.key ? puzzle.keys.h : 0), p.name).toBeCloseTo(plateFor(SPEC), 6);
+      if (p.top) for (const b of p.bodies) for (let i = 2; i < b.vertices.length; i += 3) if (b.vertices[i] > p.z0 + puzzle.keys.depth + 0.01) lowest = Math.min(lowest, b.vertices[i]);
+    }
+    expect(lowest).toBeLessThanOrEqual(10 + 0.5);
+    expect(lowest).toBeGreaterThanOrEqual(10 - 0.1);
     // Every column has a whole jigsaw cube at the bottom.
     for (let r = 0; r < L.rows; r++)
       for (let c = 0; c < L.cols; c++) {
