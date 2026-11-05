@@ -313,7 +313,7 @@ export const hswHook: LibraryDesign = {
   id: "hsw-hook",
   name: "Honeycomb wall hook (HSW)",
   description:
-    "A hook that clicks into any hole of a Honeycomb Storage Wall: push it in until the lip meets the wall and its two snap fingers spring out inside; pull firmly to take it out again. For light things — headphones, keys, cables, tools up to about 1 kg. It prints standing on the end of its plug, no supports.",
+    "A hook that clicks into any hole of a Honeycomb Storage Wall: push it in until the lip meets the wall and its two snap fingers spring out inside; pull firmly to take it out again. For light things — headphones, keys, cables, small tools (print it in PETG for a stronger hook). It prints standing on the end of its plug, no supports.",
   category: "print",
   group: "Storage",
   prefix: "hswhook",

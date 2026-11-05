@@ -21,7 +21,7 @@ import { FACE_Z, flatHex, hookVolume, HSW, hswBinPlan, hswBinVolumes, LIP_TOP, t
 import { bitHolderVolume, FLOOR_TOP, liteBinVolume, magnetBaseplateVolume, magnetSpots } from "../src/library/designs/gridfinityMore";
 import { CENTRED, MAGNET } from "../src/library/designs/gridfinity";
 import { pipeClipPlan, pipeClipVolume } from "../src/library/designs/pipeClip";
-import { chargingStandVolume } from "../src/library/designs/chargingStand";
+import { chargingPlan, chargingStandVolume } from "../src/library/designs/chargingStand";
 import { BEARING, bearingSpoolVolumes, hubAt, SPOOL_BASE } from "../src/library/designs/bearingSpool";
 import { funnelVolume } from "../src/library/designs/funnel";
 import { tieAnchorVolume, wedgeVolume } from "../src/library/designs/doorWedge";
@@ -121,6 +121,8 @@ describe("every design of the fifth batch", () => {
     ["pipe-clip", { pipe: 15, grip: 15, wall: 2, width: 12, screws: false }, pipeClipVolume],
     ["charging-stand", {}, chargingStandVolume],
     ["charging-stand", { angle: 50, cable: false }, chargingStandVolume],
+    ["charging-stand", { plugLength: 40 }, chargingStandVolume],
+    ["charging-stand", { angle: 75 }, chargingStandVolume],
     ["bearing-spool-holder", {}, bearingSpoolVolumes],
     ["funnel", {}, funnelVolume],
     ["funnel", { top: 60, spout: 20, length: 10, wall: 1.2 }, funnelVolume],
@@ -309,6 +311,31 @@ describe("spool holder on a bearing", () => {
     expect(shared({ part: base }, { part: hub, position: [-hx, 0, z - SPOOL_BASE.lift + 0.1] })).toBeLessThan(1e-3);
     expect(box(hub).min[2]).toBeCloseTo(0, 4);
   });
+});
+
+describe("charging stand", () => {
+  for (const extra of [{}, { plugLength: 40 }, { angle: 75 }] as DesignValues[]) {
+    it(`a plug (6.5 × 12 × its length) tilted with the phone from its socket fits its slot${Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : ""}`, () => {
+      const p = chargingPlan(valuesOf("charging-stand", extra));
+      // The plug as a user would draw it: 12 across (x), 6.5 thick (y), its length up from its socket end at z = 0.
+      const plugBox: Feature[] = [
+        sketchFeature("plug-s", "plug", { kind: "default", name: "Top" }, shapesSketch([{ type: "rectangle", center: ["0", "0"], width: "12", height: "6.5" }], {})),
+        extrudeFeature("plug", "plug", "plug-s", { depth: lit(p.plugLength), operation: "new" }),
+      ];
+      const r = build(withFeatures(insert("charging-stand", extra), plugBox));
+      const stand = partEnding(r.parts, "_stand");
+      const plug = r.parts.find((x) => x.id === "plug")!;
+      // Turned about x so its length runs down the phone's line (world y = cos, z = −sin), its end on the socket.
+      const a = -((90 + p.angle) * Math.PI) / 180;
+      const q: Quat = [Math.sin(a / 2), 0, 0, Math.cos(a / 2)];
+      expect(turn(q, [0, 0, 1])[1]).toBeCloseTo(p.cos, 6);
+      expect(turn(q, [0, 0, 1])[2]).toBeCloseTo(-p.sin, 6);
+      const at: V3 = [0, p.socket[0], p.socket[1]];
+      expect(shared({ part: stand }, { part: plug, rotation: q, position: at })).toBeLessThan(1e-3);
+      // And it's a snug slot: moved 1 mm forward (into the front wall's side) it hits.
+      expect(shared({ part: stand }, { part: plug, rotation: q, position: add(at, [0, p.n[0], p.n[1]]) })).toBeGreaterThan(1e-3);
+    });
+  }
 });
 
 describe("box dividers", () => {

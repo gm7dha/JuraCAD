@@ -21,7 +21,7 @@ import { arcStrain, pipeClipPlan } from "../src/library/designs/pipeClip";
 import { funnelProfile } from "../src/library/designs/funnel";
 import { BEARING, SPOOL_BASE, SPOOL_HUB } from "../src/library/designs/bearingSpool";
 import { dividerPlaces, dividerPlan, SLOT_EXTRA } from "../src/library/designs/dividerSet";
-import { BEND_ROOM, chargingPlan } from "../src/library/designs/chargingStand";
+import { BEND_ROOM, chargingPlan, FRONT_WALL, PHONE_ROOM, PLUG_CLEAR, PLUG_END, PLUG_THICKNESS } from "../src/library/designs/chargingStand";
 import { tiePlan, wedgePlan } from "../src/library/designs/doorWedge";
 import { cantileverStrain, clipToBox, pointyHex, areaOf } from "../src/library/designs/printShapes";
 import type { DesignValues } from "../src/library/types";
@@ -161,16 +161,18 @@ describe("pipe clip", () => {
     const [R, h, s] = [12, 2, 3];
     expect(arcStrain(R, h, 0, Math.PI, s / 2)).toBeCloseTo((s * h) / (3 * Math.PI * R * R), 6);
     const p = pipeClipPlan(valuesOf("pipe-clip"));
-    expect(p.opening).toBeCloseTo(22 * 0.78, 9);
-    // Held where its outside meets the plate, 24° round from the back: about 1.6% at the defaults.
+    expect(p.opening).toBeCloseTo(22 * 0.82, 9);
+    // Held where its outside meets the plate, 24° round from the back: about 1.3% at the defaults (18% grip).
     expect(p.fixed).toBeCloseTo(Math.acos(p.centre / p.outer), 9);
     expect((p.fixed * 180) / Math.PI).toBeCloseTo(24.2, 1);
-    expect(p.strain).toBeCloseTo(0.0157, 3);
+    expect(p.strain).toBeCloseTo(0.0134, 3);
+    expect(pipeClipPlan(valuesOf("pipe-clip", { grip: 22 })).strain).toBeCloseTo(0.0157, 3);
     // A root further round is stiffer: the same spread strains more.
     expect(arcStrain(12, 2, 0.4, 2.5, 1)).toBeGreaterThan(arcStrain(12, 2, 0, 2.5, 1));
-    // 15 mm copper at the defaults would stretch 2.2%: refused; with less grip it's fine.
-    expect(problems("pipe-clip", { pipe: 15 })[0]).toMatch(/stretch 2\.2%/);
-    expect(problems("pipe-clip", { pipe: 15, grip: 15 })).toEqual([]);
+    // 15 mm copper works at the default grip (1.8%); at 22% it would stretch 2.2% and is refused.
+    expect(problems("pipe-clip", { pipe: 15 })).toEqual([]);
+    expect(pipeClipPlan(valuesOf("pipe-clip", { pipe: 15 })).strain).toBeCloseTo(0.0184, 3);
+    expect(problems("pipe-clip", { pipe: 15, grip: 22 })[0]).toMatch(/stretch 2\.2%/);
     // The pipe sits half a wall off the plate, and the ring's back sinks half a wall into it.
     expect(p.centre - p.inner).toBeCloseTo(p.wall / 2, 9);
     expect(problems("pipe-clip", { grip: 35, wall: 5 })[0]).toMatch(/would have to stretch .*% to snap over the pipe/);
@@ -215,21 +217,47 @@ describe("the rest", () => {
     expect(problems("divider-set", { across: 15, length: 60 })[0]).toMatch(/less than 5 mm wide/);
   });
 
-  it("charging stand: the phone stands on a plinth the plug's length + 8 mm up, the plug slot in the phone's slot, and it doesn't tip", () => {
+  it("charging stand: the phone stands on a plinth, its plug runs down a slanted slot along the phone's lean with a wall in front, and it doesn't tip", () => {
+    for (const extra of [{}, { plugLength: 40 }, { angle: 75 }, { angle: 45, back: 120 }, { slot: 8 }] as DesignValues[]) {
+      const p = chargingPlan(valuesOf("charging-stand", extra));
+      expect(valueProblems(design("charging-stand"), valuesOf("charging-stand", extra))).toEqual([]);
+      expect(p.floor).toBe(p.plugLength + BEND_ROOM);
+      // The socket: the middle of the phone's bottom face (the phone 1 mm thinner than its slot, on its back corner).
+      const T = p.slot - PHONE_ROOM;
+      expect(p.socket[0]).toBeCloseTo((T / 2) * p.sin, 9);
+      expect(p.socket[1]).toBeCloseTo(p.floor + (T / 2) * p.cos, 9);
+      // The band runs along the phone's lean, the plug's thickness + room wide, past the plug's end.
+      const [a, b, , d] = p.band;
+      expect((b[0] - a[0]) / (b[1] - a[1])).toBeCloseTo(-p.cos / p.sin, 4);
+      expect(Math.hypot(d[0] - a[0], d[1] - a[1])).toBeCloseTo(PLUG_THICKNESS + 2 * PLUG_CLEAR, 4);
+      expect(Math.hypot(b[0] - a[0], b[1] - a[1])).toBeCloseTo(p.plugLength + PLUG_END, 4);
+      // Above the floor it stays in the open slot (behind the lip, in front of the rest); below it, inside the stand.
+      for (const q of p.band) {
+        if (q[1] >= p.floor) expect(q[0]).toBeLessThan(p.slotFront);
+        if (q[1] >= p.floor) expect(q[0]).toBeGreaterThan(-(q[1] - p.floor) / Math.tan((p.angle * Math.PI) / 180));
+        expect(q[1]).toBeGreaterThan(0);
+      }
+      // A wall in front of it, and the pocket meets its lower end.
+      expect(p.lipFront - p.plugFront).toBeGreaterThanOrEqual(FRONT_WALL - 1e-9);
+      expect(p.pocket.height).toBeCloseTo(p.bandEnd[1], 9);
+      expect(p.pocket.to).toBeGreaterThan(p.bandEnd[0]);
+      expect(p.pocket.from).toBeGreaterThan(p.foot);
+      expect(p.channel.height).toBeLessThan(p.bar);
+      // A big phone's middle is over the base.
+      expect(p.phoneMiddle).toBeGreaterThan(p.rear + 5);
+    }
+    // At the defaults the plug's front, with room, is 18.6 mm forward: the lip's front (20.3) stays where the angle puts it.
     const p = chargingPlan(valuesOf("charging-stand"));
-    expect(p.floor).toBe(22 + BEND_ROOM);
-    expect(p.plug.from).toBeGreaterThan(0);
-    expect(p.plug.to).toBeLessThan(p.slotFront);
-    expect(p.channel.height).toBeLessThan(p.bar);
-    // The pocket where the cable turns stays inside the plinth (behind the back rest's foot there's only the base).
-    expect(p.pocket.from).toBeGreaterThan(p.foot);
-    expect(p.pocket.height).toBeLessThanOrEqual(p.floor - p.plugLength + 1e-9);
-    // A big phone's middle is over the base.
-    expect(p.phoneMiddle).toBeGreaterThan(p.rear + 5);
+    expect(p.plugFront).toBeCloseTo(18.56, 2);
+    expect(p.lipFront).toBeCloseTo(p.slotFront + p.bar, 9);
+    // A 40 mm plug brings the front forward to keep the wall.
+    const long = chargingPlan(valuesOf("charging-stand", { plugLength: 40 }));
+    expect(long.lipFront).toBeCloseTo(long.plugFront + FRONT_WALL, 9);
     expect(chargingPlan(valuesOf("charging-stand", { cable: false })).floor).toBe(p.bar);
     // Leaning 45° or more from the table, its underside is at most 45° from upright.
     expect(design("charging-stand").inputs.find((i) => i.key === "angle")!.min).toBeGreaterThanOrEqual(45);
     expect(problems("charging-stand", { channelHeight: 6 })[0]).toMatch(/at most 4\.8 mm, or a thicker base/);
+    expect(problems("charging-stand", { slot: 7 })[0]).toMatch(/at least 7\.5 mm wide for a charging plug/);
     expect(problems("charging-stand", { angle: 45, back: 40 })[0]).toMatch(/tip it over backwards: make the back rest at least 78 mm long/);
   });
 

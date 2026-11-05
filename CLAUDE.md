@@ -796,10 +796,13 @@
   Pipe clip (`pipeClip.ts`, Fixings, Edit design sizes): Top profile `width` up, base y = −base…0, ring centre half a wall
   above the plate, mouth = pipe × (1 − grip %), holes from the Front plane flipped; `arcStrain` (curved cantilever, Castigliano;
   = Roark's s·h/(3πR²) for a free ring) from `fixed` = acos(centre/outer) (where the ring's outside meets the plate) ≤ 2%:
-  1.6% at the defaults, 15 mm copper needs grip ≤ ~20%. Charging stand (`chargingStand.ts`, Desk; fixed angle, chosen over a
-  hinge): standProfile's shape with the phone's floor on a plinth `plugLength` + `BEND_ROOM` (8) high, a plug slot down
-  through it, a pocket at the bottom for the cable to turn (inside the plinth, `POCKET_WALL` behind the rest's foot) and a
-  channel out of the back; printed upright (angle ≥ 45°); `phoneMiddle` (a `BIG_PHONE` 165 mm phone) must stay 5 mm inside the
+  default grip 18% (1.3% at 22 mm, 1.8% at 15 mm; small pipes are refused with "use less grip"). Charging stand (`chargingStand.ts`, Desk; fixed angle, chosen over a
+  hinge): standProfile's shape with the phone's floor on a plinth `plugLength` + `BEND_ROOM` (8) high; the plug slot is a
+  slanted band along the phone's lean (`band`, Right plane: from the socket — middle of the phone's bottom face, the phone
+  `PHONE_ROOM` thinner than the slot, standing on its back corner (0, floor) — `plugLength` + `PLUG_END` down along
+  (cos, −sin), `PLUG_THICKNESS`/2 + `PLUG_CLEAR` each side), the lip/plinth front moved forward to keep `FRONT_WALL` in front
+  of it (`lipFront` = max(slot front + bar, plugFront + wall)); a pocket from inside the plinth (`POCKET_WALL` behind the
+  rest's foot) to the band's lower end for the cable to turn, and a channel out of the back; printed upright (angle ≥ 45°); `phoneMiddle` (a `BIG_PHONE` 165 mm phone) must stay 5 mm inside the
   base's back edge; width is the only variable. Spool holder on a 608 (`bearingSpool.ts`, Workshop): base + 11 shoulder +
   pin 8 − fit, hub with a 22 + fit pocket (0.5 mm 45° chamfer at its mouth, a ruled Loft of circles) under a 19.5 ledge;
   `fit` = the design's own variable starting at `DEFAULT_FITS.press`. Funnel (Household, brim advice): 45° revolve, inside
@@ -808,7 +811,8 @@
   in a grid ≤ `LAYOUT_WIDTH` 240, slots t + fit, each half + 0.25. Tests: tests/libraryPrint5 (pure), engineLibraryPrint5
   (volumes; inserts in a tile's hole free ±0.1 across / ±0.05 up, held pulled 0.3, stopped pushed 0.1; a stand-in with PStover's
   measured profile fits the same way (his real mesh — CC BY-NC, so not committed — was checked by hand: 0 overlap seated);
-  the bin on its rail slides up, stops fit·√2 down, held off the wall; magnet probes; bins in the magnet plate; pipe free ±0.18
+  the bin on its rail slides up, stops fit·√2 down, held off the wall; a 6.5 × 12 plug box tilted with the phone from its
+  socket clear of the stand at the defaults, plug 40 and angle 75; magnet probes; bins in the magnet plate; pipe free ±0.18
   and held; the bearing ± fit/2; dividers crossing; a user's part untouched), mcpLibraryPrint5; the smoke test searches
   "honeycomb" and inserts the tile (1 part, 122.63 mm).
   Third laser batch (`designs/boxes3.ts`, `laserHome3.ts`, `jigsaw.ts` + pure `puzzle.ts`, `ornament.ts`; list in `laserSet3.ts`).

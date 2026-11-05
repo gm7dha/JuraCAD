@@ -72,7 +72,7 @@ export const pipeClip: LibraryDesign = {
   icon: '<rect x="4" y="38" width="40" height="5" rx="1"/><path d="M15 38a12 12 0 1 1 18 0h-4a8.5 8.5 0 1 0-10 0z"/><circle cx="8" cy="40.5" r="1.3" opacity=".6"/><circle cx="40" cy="40.5" r="1.3" opacity=".6"/>',
   inputs: [
     { key: "pipe", label: "Pipe diameter", kind: "length", default: 22, min: 6, max: 60, help: "Measure across the pipe: copper water pipe is 15 or 22 mm, a garden hose about 19 mm outside." },
-    { key: "grip", label: "Grip (%)", kind: "count", default: 22, min: 8, max: 35, help: "How much narrower the mouth is than the pipe. More holds tighter but is harder to push on." },
+    { key: "grip", label: "Grip (%)", kind: "count", default: 18, min: 8, max: 35, help: "How much narrower the mouth is than the pipe. More holds tighter but is harder to push on; small pipes need less (18% suits 15 mm and up — the app tells you if it's too much)." },
     { key: "wall", label: "Ring thickness", kind: "length", default: 2.4, min: 1.6, max: 5 },
     { key: "width", label: "Clip width", kind: "length", default: 14, min: 10, max: 40, help: "Along the pipe." },
     { key: "base", label: "Base thickness", kind: "length", default: 4, min: 3.5, max: 8, help: "Thick enough for the screws' countersinks." },
