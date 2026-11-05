@@ -5,7 +5,7 @@
  */
 import { layerCounts, layoutPieces, LASER_LAYERS, LAYER_ORDER, type LaserPiece } from "../laser/laser";
 import { laserDxf, laserSvg } from "../laser/laserFiles";
-import { laserDefaultsFor } from "../library/insert";
+import { laserDefaultsFor, notCutParts } from "../library/insert";
 import { outlinePiece, partFacing, sketchPiece, uniqueSources, type LaserSource } from "../laser/sources";
 import type { PartMesh } from "../kernel/protocol";
 import { followedSketch } from "../sketch/areaClicks";
@@ -110,7 +110,7 @@ async function laserPieces(s: Session, a: Obj): Promise<{ pieces: LaserPiece[]; 
   } else if (a.flat_pattern !== undefined) {
     sources.push({ kind: "flat", partId: s.part(b.parts, a.flat_pattern, "flat_pattern").id });
   } else {
-    const chosen = a.parts !== undefined ? list(a.parts, "parts").map((p, i) => s.part(b.parts, p, `parts[${i}]`)) : b.parts.filter((p) => !p.surface);
+    const chosen = a.parts !== undefined ? list(a.parts, "parts").map((p, i) => s.part(b.parts, p, `parts[${i}]`)) : b.parts.filter((p) => !p.surface && !notCutParts(s.doc).includes(p.id));
     for (const p of chosen) sources.push(whole(p));
   }
   await s.checkpoint();

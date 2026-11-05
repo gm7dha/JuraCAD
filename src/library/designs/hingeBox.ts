@@ -34,6 +34,10 @@ const TOP = { kind: "default", name: "Top" } as const;
 export const LID_ROOM = 0.25;
 /** How far the wall strip is drawn in front of the box (mm). */
 export const STRIP_GAP = 15;
+/** The corners' inside radius must be at least this many times the sheet's thickness. */
+export const BEND_RATIO = 3;
+/** Rows of hinge cuts each corner needs, at least. */
+export const MIN_ROWS = 12;
 
 export interface HingeBox {
   W: number;
@@ -117,7 +121,7 @@ export function stripOutline(b: HingeBox): { outline: P2[]; notches: [number, nu
   side(Ly, b.ny);
   zones.push([r6(s), r6(s + a)]);
   s += a;
-  for (const p of pieces(Lx, b.nx)) if (p.bottom) add(s + Math.max(0, p.from - Lx / 2), s + Math.max(0, p.to - Lx / 2));
+  for (const p of pieces(Lx, b.nx)) if (p.bottom) add(s + Math.min(Lx / 2, p.from), s + Math.min(Lx / 2, p.to));
   const total = b.length;
   notches.sort((x, y) => x[0] - y[0]);
   const foot: P2[] = [];
@@ -160,13 +164,15 @@ export function hingeBoxProblems(v: DesignValues): string[] {
   const [cut, gap, spacing] = ["cut", "gap", "spacing"].map((k) => num(v, k));
   const { W, D, R, t, kerf } = b;
   if (kerf >= t / 2) return [`A kerf allowance of ${mm(kerf)} is a lot for ${mm(t)} sheet — lasers usually burn away 0.1–0.3 mm.`];
-  if (R < Math.max(2 * t, t + LID_ROOM + 3)) return [`Round the corners at least ${mm(Math.max(2 * t, t + LID_ROOM + 3))}, so the strip can bend.`];
+  // Plywood bends round a living hinge without cracking when the inside radius is at least 3 × its thickness.
+  const tightest = Math.max(BEND_RATIO * t + t, t + LID_ROOM + 3);
+  if (R < tightest) return [`Round the corners at least ${mm(Math.ceil(tightest * 10) / 10)} (outside) for ${mm(t)} sheet, so the strip can bend without cracking.`];
   const least = 2 * R + 3 * (t + Math.max(0, kerf) + FINGER_MARGIN);
   if (Math.min(W, D) < least) return [`The sides are too short between the round corners for the fingers: make the box at least ${mm(Math.ceil(least))} each way, or round the corners less.`];
   if (b.nx < 3 || b.ny < 3) return ["The straight parts are too short for fingers: make the finger width smaller."];
   if (b.wall < 4 * t + 2 * gap) return ["The box is too low: make it taller."];
   if (cut > b.wall - 2 * gap) return [`The hinge cuts are longer than the wall allows: at most ${mm(b.wall - 2 * gap)}.`];
-  if (b.corner < 3 * spacing) return ["The rows of hinge cuts are too far apart for these corners: bring them closer, or round the corners more."];
+  if (Math.floor(b.corner / spacing + 1e-9) < MIN_ROWS) return [`Each corner needs at least ${MIN_ROWS} rows of hinge cuts to bend smoothly: bring the rows closer together (at most ${mm(Math.floor((b.corner / MIN_ROWS) * 100) / 100)} apart), or round the corners more.`];
   if (!fitsBed(b.length + kerf, b.wall + kerf)) return [`The wall strip would be ${mm(b.length)} long: too long to fit on the laser's 600 mm bed with room round it. Make the box smaller.`];
   if (!fitsBed(W, D)) return ["The bottom is too big for the laser's 600 × 300 mm bed."];
   if (hingeColumns(b, v).length > MAX_CUTS) return [`That's over ${MAX_CUTS} hinge cuts: space the rows further apart.`];
@@ -203,7 +209,9 @@ export const hingeBoxDesign: LibraryDesign = {
   name: "Living-hinge box",
   group: "Boxes and stands",
   description:
-    "A box with round corners: its four walls are one long strip that bends round the corners on living hinges, finger-jointed into the bottom along the flat sides. The lid lifts off. Export for laser: the bottom and lid parts, and \"Sketch: Wall strip\" for the bending wall. 3 mm plywood or MDF bends best.",
+    "A box with round corners: its four walls are one long strip that bends round the corners on living hinges, finger-jointed into the bottom along the flat sides. Its two ends meet in the middle of the back: glue them, with a scrap strip glued behind the joint. The lid lifts off. Export for laser: \"Every part\" gives the bottom and lid (the bent wall is left out), and \"Sketch: Wall strip\" the bending wall. 3 mm plywood or MDF bends best.",
+  // The wall is drawn bent in 3D; it's cut from its flat strip (the "Wall strip" sketch), not as a part.
+  notCut: ["wall"],
   category: "laser",
   prefix: "hingebox",
   // The hinge's cuts are cut right through (blue), whatever another sketch was last exported with.
@@ -224,7 +232,7 @@ export const hingeBoxDesign: LibraryDesign = {
   problems: hingeBoxProblems,
   summary: (v) => {
     const b = hingeBox(v);
-    return `4 pieces: the bottom, a wall strip ${mm(b.length)} long with ${hingeColumns(b, v).length} hinge cuts, and the lid's two plates.`;
+    return `4 pieces: the bottom, a wall strip ${mm(b.length)} long with ${hingeColumns(b, v).length} hinge cuts (glue its ends together at the back), and the lid's two plates.`;
   },
   make: (ctx) => {
     const b = hingeBox(ctx.values);
@@ -265,7 +273,7 @@ export const hingeBoxDesign: LibraryDesign = {
     if (hingeBoxProblems(v).length) return [];
     const b = hingeBox(v);
     const strip = stripOutline(b);
-    const y0 = -b.D / 2 - 15 - b.wall;
+    const y0 = -b.D / 2 - STRIP_GAP - b.wall;
     const out: PreviewShape[] = [
       { kind: "poly", closed: true, points: bottomOutline(b) },
       { kind: "poly", closed: true, faint: true, points: roundedRect(b.W, b.D, b.R) },

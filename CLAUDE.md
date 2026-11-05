@@ -769,11 +769,14 @@
   ends); the wall in 3D is the ring (outside/inside rounded rectangles) H − t tall minus the bottom's own sketch (a plain Remove,
   depth t); the strip laid flat is the sketch "Wall strip" (not extruded; laser setting `open: "cut"`), length = straight parts +
   4 × π/2 (R − t/2), starting mid-back, notched where the bottom's fingers go, `hingeColumns` staggered in the 4 corner zones;
-  lift-off lid = top plate + under-plate `LID_ROOM` clear; Export for laser "all" also lists the curved wall's ring face — the
-  description says to use the strip sketch; LOOSE_LINES), card deck box (`deckBox.ts`: open finger box W/D/H from card + 2c + 2t,
+  lift-off lid = top plate + under-plate `LID_ROOM` clear; the back's second half's notches are `s + min(Lx/2, from…to)`
+  (libraryLaser4 walks the strip round the mid-sheet path against `bottomOutline`: no mismatch at several sizes); corners need
+  an inside radius ≥ `BEND_RATIO` (3) × t and ≥ `MIN_ROWS` (12) rows of cuts; the strip's ends meet mid-back (glue note);
+  the bent wall is `LibraryDesign.notCut` (roles; `notCutParts(doc)` in insert.ts), left out of Export for laser's "all"
+  (`laserSources`' last argument) and export_for_laser with no source; LOOSE_LINES), card deck box (`deckBox.ts`: open finger box W/D/H from card + 2c + 2t,
   thumb notch = a plain Remove circle on the front's top edge before the back is copied, lid as above), business card holder
   (`cardStand.ts`: base, lip, back leaning `LEAN` 15° with its lowest corner on the base; sides = hull of the sections moved out
-  m), spice rack (`spiceRack.ts`: width n·d + (n + 1)·`JAR_ROOM`, rails front and back of each shelf), dice tower (`diceTower.ts`:
+  m), spice rack (`spiceRack.ts`: width n·d + (n + 1)·`JAR_ROOM`, rails front and back of each shelf; shelf pitch = jar + max(`HEADROOM`, rail + `RAIL_LIFT`) + t, so a jar lifts over the front rail), dice tower (`diceTower.ts`:
   back/front `m` in, ramp at `RAMP_ANGLE` from the back to the front edge, baffles alternating front/back, each reaching all but
   `DIE_ROOM` × die, its upper end's lower corner on its wall; the drop room under each baffle's end is checked before the
   assembly's own problems), tealight lantern (`lantern.ts`: open finger box, the same pattern on all four walls inside a window
@@ -782,7 +785,8 @@
   offset `play` − kerf/2, piece + kerf/2, middles − kerf/2; every loop an `outlineSketch` (fully defined); one New extrude per
   letter (an i is two parts, `<id>~2`), board and backing (moved −t) New; holes ≥ `MIN_BRIDGE` apart), key rack (`keyRack.ts`:
   board on Top flipped with slots, screw holes and Text, `pickAreas` body/letters, words engraved by a plain Remove before the
-  hooks are made; L hooks drawn on Right (y, z) with a tab down into the slot, moved/copied along x). Tests: tests/libraryLaser4
+  hooks are made; L hooks drawn on Right (y, z) with a tab down into the slot, moved/copied along x; `edgeRoom` keeps screw
+  holes, slots and hooks ≥ `EDGE_ROOM` (3) inside the rounded board, `insideRounded`). Tests: tests/libraryLaser4
   (pure), engineLibraryLaser4 (tabs fill slots with no overlap at kerf 0 and hold when pushed; hinge box bottom + wall tile the
   outline, the strip with its cuts as 0.2 mm slots is one piece; lantern walls' Export for laser loops have no islands
   (`depths`) and each wall is one mesh piece; every puzzle letter free when nudged 0.8 × play and hitting the board past it;

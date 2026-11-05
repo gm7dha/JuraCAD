@@ -81,6 +81,28 @@ export function hookOutline(r: KeyRack, t: number): P2[] {
   ]);
 }
 
+/** Board kept between a screw hole or slot and the board's edge, at least (mm). */
+export const EDGE_ROOM = 3;
+
+/** How far a point is inside a w × h rectangle with corners rounded r, centred on the origin (negative = outside). */
+export function insideRounded(p: P2, w: number, h: number, r: number): number {
+  const [x, y] = [Math.abs(p[0]), Math.abs(p[1])];
+  const [cx, cy] = [w / 2 - r, h / 2 - r];
+  if (x > cx && y > cy) return r - Math.hypot(x - cx, y - cy);
+  return Math.min(w / 2 - x, h / 2 - y);
+}
+
+/** The board's edge round the screw holes and slots: the least board left between any of them and the edge (mm). */
+export function edgeRoom(r: KeyRack): number {
+  const holes = r.screws.map((c) => insideRounded(c, r.w, r.h, r.corner) - SCREW.d / 2);
+  // A slot is convex and the board too, so its corners are its nearest points to the edge.
+  const slots = r.slots.flatMap((q) => q.map((p) => insideRounded(p, r.w, r.h, r.corner)));
+  // And each hook stands wholly on the board (its arm and lip, seen from the front: t wide).
+  const t = r.slots.length ? r.slots[0][1][0] - r.slots[0][0][0] : 0;
+  const feet = r.hooks.flatMap((x) => [[x - t / 2, r.armY], [x + t / 2, r.armY], [x + t / 2, r.armY + HOOK.arm + HOOK.lip], [x - t / 2, r.armY + HOOK.arm + HOOK.lip]] as P2[]).map((p) => insideRounded(p, r.w, r.h, r.corner));
+  return Math.min(Infinity, ...holes, ...slots, ...feet);
+}
+
 const asEx = (p: P2[]): Pt[] => p.map(([x, y]) => [lit(x), lit(y)]);
 /** A hole's outline moved `half` in all round (the kerf then cuts it back out to its true size). */
 const shrink = (pts: Pt[], half: Ex): Pt[] => grow([...pts].reverse(), half).reverse();
@@ -93,6 +115,7 @@ export function rackProblems(v: DesignValues): string[] {
   if (kerf >= t / 2) return [`A kerf allowance of ${mm(kerf)} is a lot for ${mm(t)} sheet — lasers usually burn away 0.1–0.3 mm.`];
   if (r.reach < HOOK.lipThick + 10) return [`Make the hooks reach out at least ${mm(HOOK.lipThick + 10)}.`];
   if (r.hooks.length > 1 && r.w / r.hooks.length < 20) return [`That's too many hooks for the board: at most ${Math.floor(r.w / 20)}.`];
+  if (edgeRoom(r) < EDGE_ROOM) return [`The corners are rounded too much: the ${r.screws.length && Math.min(...r.screws.map((c) => insideRounded(c, r.w, r.h, r.corner) - SCREW.d / 2)) < EDGE_ROOM ? "screw holes" : "end hooks"} would come too near the edge. Round the corners less.`];
   if (r.room[3] - r.room[1] < 8) return ["The board isn't tall enough for words over the hooks: make it taller."];
   if (r.text) {
     const box = contoursBox(blockContours(r.text));

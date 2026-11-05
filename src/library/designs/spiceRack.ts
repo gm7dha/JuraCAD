@@ -14,8 +14,10 @@ import { mm, num } from "./common";
 
 /** Room between jars, and between a jar and the rails (mm). */
 export const JAR_ROOM = 2;
-/** Room above a jar, below the shelf over it (mm, besides the shelf's thickness). */
+/** Room above a jar, below the shelf over it, at least (mm, besides the shelf's thickness); more when the rails are tall, so a jar can be lifted over the front one. */
 export const HEADROOM = 12;
+/** A jar is lifted this much higher than the front rail to take it out (mm). */
+export const RAIL_LIFT = 5;
 
 export interface SpiceRack {
   a: SideAssembly;
@@ -30,7 +32,8 @@ export function spiceRack(v: DesignValues): SpiceRack {
   const m = Math.max(5, t);
   const width = r6(count * d + (count + 1) * JAR_ROOM);
   const depth = r6(2 * m + 2 * t + d + 2 * JAR_ROOM);
-  const pitch = tall + HEADROOM + t;
+  // Room over each jar to lift it over the front rail (and a little more), or the usual headroom if that's more.
+  const pitch = tall + Math.max(HEADROOM, rail + RAIL_LIFT) + t;
   const pieces: CrossPiece[] = [];
   const shelves: number[] = [];
   for (let i = 0; i < rows; i++) {

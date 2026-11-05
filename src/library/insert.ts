@@ -271,6 +271,11 @@ export function laserDefaultsFor(doc: JuraCADDocument, sketchId: string): NonNul
   return (role && design.laser[role]) || null;
 }
 
+/** Parts library designs make that aren't cut as shown (see `LibraryDesign.notCut`): left out of "every part" for laser. */
+export function notCutParts(doc: JuraCADDocument): string[] {
+  return (doc.libraryInserts ?? []).flatMap((x) => findDesign(x.design)?.notCut?.map((role) => `${x.id}_${role}`) ?? []);
+}
+
 export function findInsert(doc: JuraCADDocument, id: string): LibraryInsert | undefined {
   return doc.libraryInserts?.find((x) => x.id === id);
 }

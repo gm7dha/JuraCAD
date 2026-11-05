@@ -10,20 +10,20 @@ import { emptyDocument } from "../src/model/document";
 import { evaluate, setCurrentScope } from "../src/model/expr";
 import { MAIN_STUDIO } from "../src/model/studios";
 import { resolveVariables } from "../src/model/variables";
-import { defaultValues, designGroups, editInsert, findDesign, insertDesign, laserDefaultsFor, valueProblems } from "../src/library/insert";
+import { defaultValues, designGroups, editInsert, findDesign, insertDesign, laserDefaultsFor, notCutParts, valueProblems } from "../src/library/insert";
 import { searchDesigns } from "../src/library/browse";
 import { freedomOf } from "../src/library/sketchKit";
 import { convexHull, crossesItself, insidePolygon, offsetPolygon, outlineGap, pointSegment, signedArea, type P2 } from "../src/library/outlines";
 import { assemblyProblems, evenTabs, pieceFlat, sectionOf, sectionsOverlap, sideSlots, type SideAssembly } from "../src/library/sidePanels";
 import { patternGap, patternHoles, patternIslands, type PatternKind } from "../src/library/patterns";
 import { DIE_ROOM, diceTower, RAMP_ANGLE } from "../src/library/designs/diceTower";
-import { JAR_ROOM, spiceRack } from "../src/library/designs/spiceRack";
+import { JAR_ROOM, RAIL_LIFT, spiceRack } from "../src/library/designs/spiceRack";
 import { cardStand, LEAN } from "../src/library/designs/cardStand";
 import { deckBox, deckLid, LID_ROOM } from "../src/library/designs/deckBox";
-import { bottomOutline, hingeBox, hingeColumns, stripOutline } from "../src/library/designs/hingeBox";
+import { BEND_RATIO, bottomOutline, hingeBox, hingeColumns, MIN_ROWS, stripOutline } from "../src/library/designs/hingeBox";
 import { lanternHoles, patternWindow } from "../src/library/designs/lantern";
 import { drawnHoles, drawnLetter, holesOf, MIN_BRIDGE, namePuzzle } from "../src/library/designs/namePuzzle";
-import { HOOK, hookOutline, keyRack } from "../src/library/designs/keyRack";
+import { EDGE_ROOM, edgeRoom, HOOK, hookOutline, insideRounded, keyRack } from "../src/library/designs/keyRack";
 import type { DesignValues } from "../src/library/types";
 
 const design = (id: string) => findDesign(id)!;
@@ -138,6 +138,19 @@ describe("spice rack and card holder", () => {
     expect(r.shelves[1] - r.shelves[0]).toBeGreaterThan(100 + 3);
     expect(valueProblems(design("spice-rack"), valuesOf("spice-rack", { count: 12, diameter: 60 }))[0]).toMatch(/bed/);
   });
+  it("spice rack: short jars can still be lifted over the front rail", () => {
+    for (const [jarHeight, rail] of [[40, 20], [100, 20], [30, 60], [20, 10]]) {
+      const v = valuesOf("spice-rack", { jarHeight, rail, diameter: 45, shelves: 3 });
+      const r = spiceRack(v);
+      const rails = r.a.pieces.filter((p) => p.role.startsWith("rail-front"));
+      for (let i = 0; i + 1 < r.shelves.length; i++) {
+        const railTop = Math.max(...sectionOf(rails[i], 3).map((p) => p[1]));
+        const above = r.shelves[i + 1] - 3;
+        // Room under the shelf above for the jar raised clear of the rail.
+        expect(above - railTop).toBeGreaterThanOrEqual(jarHeight + RAIL_LIFT - 1e-6);
+      }
+    }
+  });
   it("card holder: the back leans 15°, resting on the base, the cards' room in front of it", () => {
     const s = cardStand(valuesOf("card-stand"));
     const back = s.a.pieces.find((p) => p.role === "back")!;
@@ -212,6 +225,66 @@ describe("living-hinge box", () => {
     expect(a0[1] - a0[0]).toBeCloseTo(cut + gap, 6);
     // The shifted column starts at the bottom edge's gap with a short cut, then carries on half a step over.
     expect(a1[1] - (a0[1] - (cut + gap) / 2)).toBeCloseTo(0, 6);
+  });
+
+  it("the strip, bent round the box along the middle of the sheet, has a notch exactly where the bottom has a finger", () => {
+    const sizes: DesignValues[] = [{}, { width: 200, depth: 110, radius: 30, finger: 12 }, { width: 100, depth: 100, radius: 15, finger: 5 }, { width: 150, depth: 90, finger: 7 }, { thickness: 4, radius: 20, spacing: 1.2 }, { width: 130, depth: 70, finger: 20 }];
+    for (const extra of sizes) {
+      const vv = valuesOf("hinge-box", extra);
+      expect(valueProblems(design("hinge-box"), vv), JSON.stringify(extra)).toEqual([]);
+      const bb = hingeBox(vv);
+      const { W, D, R, t } = bb;
+      const [Lx, Ly, rm] = [W - 2 * R, D - 2 * R, R - t / 2];
+      // The middle of the sheet, clockwise seen from above from the middle of the back (+y), as the strip runs.
+      const segs: { len: number; at: (u: number) => P2 }[] = [];
+      const line = (a: P2, c: P2) => {
+        const L = Math.hypot(c[0] - a[0], c[1] - a[1]);
+        segs.push({ len: L, at: (u) => [a[0] + ((c[0] - a[0]) * u) / L, a[1] + ((c[1] - a[1]) * u) / L] });
+      };
+      const arc = (cx: number, cy: number, a0: number, a1: number) => segs.push({ len: rm * Math.abs(a1 - a0), at: (u) => [cx + rm * Math.cos(a0 + (Math.sign(a1 - a0) * u) / rm), cy + rm * Math.sin(a0 + (Math.sign(a1 - a0) * u) / rm)] });
+      const [hx, hy] = [W / 2 - t / 2, D / 2 - t / 2];
+      line([0, hy], [Lx / 2, hy]);
+      arc(Lx / 2, Ly / 2, Math.PI / 2, 0);
+      line([hx, Ly / 2], [hx, -Ly / 2]);
+      arc(Lx / 2, -Ly / 2, 0, -Math.PI / 2);
+      line([Lx / 2, -hy], [-Lx / 2, -hy]);
+      arc(-Lx / 2, -Ly / 2, -Math.PI / 2, -Math.PI);
+      line([-hx, -Ly / 2], [-hx, Ly / 2]);
+      arc(-Lx / 2, Ly / 2, Math.PI, Math.PI / 2);
+      line([-Lx / 2, hy], [0, hy]);
+      const total = segs.reduce((n, q) => n + q.len, 0);
+      expect(total).toBeCloseTo(bb.length, 6);
+      const at = (u: number): P2 => {
+        for (const q of segs) {
+          if (u <= q.len) return q.at(u);
+          u -= q.len;
+        }
+        return segs[segs.length - 1].at(segs[segs.length - 1].len);
+      };
+      const strip = stripOutline(bb);
+      const bottom = bottomOutline(bb);
+      let wrong = 0;
+      for (let u = 0.05; u < total; u += 0.1) {
+        if (strip.zones.some(([a, c]) => u >= a && u <= c)) continue;
+        const notch = strip.notches.some(([a, c]) => u > a && u < c);
+        if (notch !== insidePolygon(at(u), bottom)) wrong++;
+      }
+      expect(wrong, JSON.stringify(extra)).toBe(0);
+    }
+  });
+
+  it("asks for corners round enough to bend, with enough rows of cuts", () => {
+    expect(BEND_RATIO).toBe(3);
+    // 3 mm sheet: an inside radius of 9 mm at least, so 12 outside.
+    expect(valueProblems(design("hinge-box"), valuesOf("hinge-box", { radius: 11 }))[0]).toMatch(/Round the corners at least 12 mm/);
+    expect(valueProblems(design("hinge-box"), valuesOf("hinge-box", { radius: 12, spacing: 1 }))).toEqual([]);
+    expect(valueProblems(design("hinge-box"), valuesOf("hinge-box", { spacing: 3 }))[0]).toMatch(new RegExp(`at least ${MIN_ROWS} rows`));
+  });
+
+  it("Export for laser's \"every part\" leaves out the bent wall (it's cut from the Wall strip sketch)", () => {
+    const r = insertDesign(emptyDocument(), design("hinge-box"), v, { into: MAIN_STUDIO });
+    expect(notCutParts(r.doc)).toEqual([`${r.insert.id}_wall`]);
+    expect(notCutParts(insertDesign(emptyDocument(), design("deck-box"), valuesOf("deck-box"), { into: MAIN_STUDIO }).doc)).toEqual([]);
   });
 
   it("says when the corners are too tight, the box too small or the strip too long for the bed", () => {
@@ -307,6 +380,22 @@ describe("key rack", () => {
     expect(area(k.slots[0])).toBeCloseTo(3 * (HOOK.arm - 2 * HOOK.tabRoom), 9);
     expect(valueProblems(design("key-rack"), valuesOf("key-rack", { words: "HELLO THERE FRIEND", letters: 40 }))[0]).toMatch(/don't fit above the hooks/);
     expect(valueProblems(design("key-rack"), valuesOf("key-rack", { hooks: 20, width: 200 }))[0]).toMatch(/too many hooks/);
+  });
+
+  it("keeps the screw holes, slots and hooks well inside the rounded corners", () => {
+    expect(insideRounded([0, 0], 100, 50, 10)).toBe(25);
+    expect(insideRounded([50, 25], 100, 50, 10)).toBeCloseTo(10 - Math.hypot(10, 10), 9);
+    for (const corner of [0, 8, 20, 30, 40, 60]) {
+      for (const screws of [true, false]) {
+        const vv = valuesOf("key-rack", { corner, screws });
+        const ok = valueProblems(design("key-rack"), vv).length === 0;
+        expect(ok).toBe(edgeRoom(keyRack(vv)) >= EDGE_ROOM);
+        if (!ok) expect(valueProblems(design("key-rack"), vv)[0]).toMatch(/rounded too much/);
+      }
+    }
+    // A 40 mm corner would break the screw hole out of the edge; the default is fine.
+    expect(valueProblems(design("key-rack"), valuesOf("key-rack", { corner: 40 }))[0]).toMatch(/screw holes/);
+    expect(edgeRoom(keyRack(valuesOf("key-rack")))).toBeGreaterThan(EDGE_ROOM);
   });
 });
 
