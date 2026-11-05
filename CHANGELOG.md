@@ -8,7 +8,7 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.38 — Mountain puzzles
+## v0.38 — Mountain puzzles · commit `3356de9`
 
 - **Mountain puzzle** (toolbar, next to Library): turn a real mountain into a 3D printed puzzle of interlocking cubes.
   Pick a famous peak, type an OS grid reference, or load your own OS map picture and type its corners' grid
