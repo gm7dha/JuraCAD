@@ -267,19 +267,6 @@ class Mesh {
   }
 }
 
-function distanceToOutline(p: P2, poly: P2[]): number {
-  let best = Infinity;
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % poly.length];
-    const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
-    const l2 = dx * dx + dy * dy;
-    const u = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
-    best = Math.min(best, Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy));
-  }
-  return best;
-}
-
 function inside(p: P2, poly: P2[]): boolean {
   let c = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
