@@ -268,12 +268,12 @@ describe("a straight (ruled) Loft", () => {
 
 describe("finding them in the library", () => {
   it("under their headings: Gridfinity, Desk and Garden among the set ones", () => {
-    expect(GROUP_ORDER.print).toEqual(["Fixings", "Hinges", "Storage", "Gridfinity", "Household", "Desk", "Garden", "Workshop"]);
+    expect(GROUP_ORDER.print).toEqual(["Fixings", "Hinges", "Storage", "Gridfinity", "Household", "Desk", "Garden", "Workshop", "Electronics", "Test prints"]);
     const groups = designGroups("print");
     expect(groups.map((g) => g.group)).toEqual(GROUP_ORDER.print);
     const of = (g: string) => groups.find((x) => x.group === g)!.designs.map((d) => d.id);
     expect(of("Gridfinity")).toEqual(["gridfinity-baseplate", "gridfinity-bin"]);
-    expect(of("Desk")).toEqual(["sign", "headphone-hook", "card-holder"]);
+    expect(of("Desk")).toEqual(["sign", "headphone-hook", "card-holder", "desk-organiser"]);
     expect(of("Garden")).toEqual(["plant-pot"]);
     expect(of("Storage")).toContain("battery-holder");
     expect(of("Household")).toContain("bag-clip");

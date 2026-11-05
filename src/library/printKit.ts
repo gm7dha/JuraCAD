@@ -155,3 +155,24 @@ export function loftFeature(id: string, name: string, sections: string[], operat
     ...(ruled ? { loftRuled: true } : {}),
   };
 }
+
+/**
+ * A sketch plane fixed in space: its origin and its two directions (unit, square to each other) given in world
+ * coordinates. Like `levelPlane`, it isn't on a face or a Plane feature, so it's only for designs whose sizes
+ * aren't variables (they're made again by Edit design sizes) — a cable chain's pins, for instance.
+ */
+export function fixedPlane(label: string, origin: Vec3, u: Vec3, v: Vec3): SketchPlane {
+  return { kind: "face", origin: origin.map(six) as Vec3, u, v, label };
+}
+
+/**
+ * A sketch plane on a flat face of a design's own part, facing any way: `origin` is a point of the face (where the
+ * sketch's origin goes), `u`/`v` its directions (u × v = the face's outward normal), `center` the face's middle and
+ * `rel` where that sits in the part's box. The face is found again on each rebuild, so the sketch follows the face
+ * when a variable moves it (a box's side wall when the box gets wider).
+ */
+export function facePlane(label: string, partId: string, origin: Vec3, u: Vec3, v: Vec3, center: Vec3, rel: Vec3): SketchPlane {
+  const n: Vec3 = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const face: TopoPick = { partId, ref: { kind: "face", surface: "PLANE", center: center.map(six) as Vec3, normal: n, rel } };
+  return { kind: "face", origin: origin.map(six) as Vec3, u, v, label, face };
+}

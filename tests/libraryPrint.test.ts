@@ -253,7 +253,7 @@ describe("browsing the library", () => {
     expect(groups.find((g) => g.group === "Household")!.designs.map((d) => d.id)).toContain("printed-stamp");
     expect(groups.find((g) => g.group === "Fixings")!.designs.map((d) => d.id)).toEqual(["spacer", "bolt-set", "standoff", "thumb-knob"]);
     expect(groups.find((g) => g.group === "Hinges")!.designs.map((d) => d.id)).toEqual(["hinge", "piano-hinge"]);
-    expect(groups.find((g) => g.group === "Workshop")!.designs.map((d) => d.id)).toEqual(["bit-holder", "pegboard-hook", "spool-holder", "hose-adapter"]);
+    expect(groups.find((g) => g.group === "Workshop")!.designs.map((d) => d.id)).toEqual(["bit-holder", "pegboard-hook", "spool-holder", "hose-adapter", "french-cleat", "cable-chain"]);
     expect(groups.flatMap((g) => g.designs)).toHaveLength(designsIn("print").length);
     // Laser cutting keeps its headings in the order they're first used.
     const laser = designGroups("laser").map((g) => g.group);
@@ -268,9 +268,9 @@ describe("browsing the library", () => {
 
   it("finds designs by any word of their name, group or description, names first", () => {
     expect(searchDesigns("bolt")[0].id).toBe("bolt-set");
-    // Every hinge (the print-in-place and piano hinges, and the laser's living hinge and living-hinge box), whatever the case typed.
+    // Every hinge (the print-in-place and piano hinges, the hinged box, and the laser's living hinge and living-hinge box), whatever the case typed.
     const hinges = searchDesigns("HINGE").map((d) => d.id);
-    for (const id of ["hinge", "piano-hinge", "living-hinge", "hinge-box"]) expect(hinges.slice(0, 4)).toContain(id);
+    for (const id of ["hinge", "piano-hinge", "hinged-box", "living-hinge", "hinge-box"]) expect(hinges.slice(0, 5)).toContain(id);
     for (const id of ["bolt-set", "standoff", "spacer"]) expect(searchDesigns("fix").map((d) => d.id)).toContain(id);
     expect(searchDesigns("laser box").map((d) => d.id)).toContain("finger-box");
     expect(searchDesigns("stencil")[0].id).toBe("stencil");

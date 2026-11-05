@@ -604,7 +604,7 @@
   bag clip, knurled thumb knob, hose/vacuum adapter, SD card holder — each
   sits flat on the bed at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`;
   optional `LibraryDesign.group` = a heading within the tab (`designGroups` = `groupDesigns(designsIn(c))`: ungrouped first, then
-  groups — that section's `GROUP_ORDER` first (print: Fixings, Hinges, Storage, Gridfinity, Household, Desk, Garden, Workshop; laser: none), the rest in order of first use;
+  groups — that section's `GROUP_ORDER` first (print: Fixings, Hinges, Storage, Gridfinity, Household, Desk, Garden, Workshop, Electronics, Test prints; laser: none), the rest in order of first use;
   laser: Boxes and stands, Signs and stamps, Home, Workshop, Toys and gifts). The window also has a search box (`browse.ts` `searchDesigns`: every
   typed word must start a word of the name/group/section/description or a choice's label — "M8" finds the bolt set — name matches first; results across both tabs, under
   section headings; cleared on close).
@@ -727,6 +727,41 @@
   sized "into" (outside) or "over" (inside + fit). Tests: tests/libraryPrint3 (pure), engineLibraryPrint3 (bin in a baseplate cell at
   ±0.2 but not 0.3, a bigger bin refused, bins stack, pot in saucer, clip on rod held by its lips, nut in the knob's pocket),
   mcpLibraryPrint3; the smoke test searches "gridfinity" and inserts a bin (1 part, 83.5 mm).
+  Fourth print batch (`printDesigns4.ts` `PRINT_DESIGNS_4`, appended after the third): electronics enclosure (`enclosure.ts`, Electronics:
+  box on the bed + lid upside down in front of it, `lidAt` −(outer depth + 10); boards `BOARDS` (Pi 4/5 holes 58 × 49, 3.5 in from the
+  corner, M2.5; Uno R3, M3; custom = 4 holes in a centred rectangle), standoffs rings from z 0 (the floor fills under the holes),
+  `SCREW_HOLES` self-tap 2.2/2.6, heat-set (Ruthex / CNC Kitchen, 4.6 mm across) a 4.0 mm hole for both, 5.7 long; screwed lid: square corner posts `post`
+  = max(7, hole + 4) reaching half into the walls, a 3 mm locating lip notched round them, four M3 countersunk holes drilled up
+  from the bed (`hole.flip`); snap lid: an 8 mm lip 1.2 thick with a 45° ridge (0.5) on the long sides, the box's grooves = the
+  ridge offset by c square to 45° (`groove` = 0.5 + (√2 − 1)c), both Right-plane triangles extruded symmetric; `snapStrain`;
+  vent slots + a pattern in the lid; two cut-outs on a side via `printKit.facePlane` (a face plane of any direction with a
+  `face` pick, so it follows the wall when a variable moves it), Remove flipped by wall + 0.5). French cleat (`frenchCleat.ts`,
+  Workshop): strip on Right printed front face down (`stripPrinted`; its slope faces up, nothing overhangs; `stripOutline` is
+  the hung shape) + countersunk holes drilled up from the bed (`hole.flip`); holder drawn on
+  Top (x out from the wall, y up, its top at −`CLEAT_GAP`) and made `width` up, so it prints on its side; its slope c square to
+  the strip's, back c off the wall, plate c in front; `hangLift` lifts it to hang (tests turn it −90° about y). Hinged box
+  (`hingedBox.ts`, Storage, uses `hingeSizes`): box y < −g, lid y > g, pin along x at a = (box + lid)/2 so a 180° turn lands rim
+  on rim; each side's block stays below the pin with a 45° underside tangent to its knuckle (`boxBlock`/`lidBlock`; the lid's
+  stays out of its wall's line above the lid's rim, which would land in the box's wall); box knuckles solid + the pin Added
+  after its gaps; lid bore pin + 2c; heights aren't variables. Desk organiser (Desk): a row of sizes typed as text (`cupSizes`) or
+  a patterned grid, cut through then floored. Cable chain (`cableChain.ts`, Workshop, no variables): middle full width with the
+  channel cut, outer layer behind (slanted back edge = the bend stop, `backTop` from (a − gt)cos θ + R sin θ = a; bottom
+  corner c behind → `sagAngle` a couple of degrees), inner layer in front (half circle round the joint), 45°-tipped pins
+  revolved on a `fixedPlane` through the joint, and a lead-in ramp cut into each outer layer's inside face (`ramp`: pin hole
+  wide, `reach` deep at the back edge, nothing at the hole, so pushed together the layers bend apart gradually); a = R + 4 so
+  nothing else meets while turning; `snapStrain` (both layers bend, half the reach each);
+  copies by Move/copy along −y. Wall pocket (Household): back plate behind the Front plane, holes drilled from it flipped.
+  Shelf pins (Household): block + pin standing up, copies. Test prints (`testPrints.ts`, Test prints): fit test (holes peg +
+  2c for `steps(from, to, step)`, raised numbers via `labelsSketch` on the plate's top before the holes — `fitLabels` shrinks
+  numbers whose widest would come within `LABEL_GAP` of a neighbour, `labelsProblem` refuses below `MIN_LABEL` 2.5 — a peg with a base),
+  overhang test (Front-plane fins, underside at the angle from upright, 1 mm into a Top base, numbers on the base's front
+  strip made before the fins so its face is whole), bridge test (one pillars-and-deck outline). Tests: tests/libraryPrint4
+  (pure), engineLibraryPrint4 (volumes; the lid ±0.9c free, past c not, a snap lid caught when lifted; screws line up; the
+  cleat's 45° faces 0.9c free square to them, catching when pulled; the hinged lid turned 0–180° untouched; links bent 0…bend
+  free, stopped past it and past the sag, held by their pins; half of link 2 slid onto link 1's pin: the bend needed grows
+  gradually from ~0 at the back edge to the reach at the hole's lip, 0 seated; fit-test holes, overhang face normals, bridge gaps by probe boxes;
+  a user's part untouched), mcpLibraryPrint4 (a cleat and shelf); the smoke test searches "raspberry" and inserts the
+  enclosure (2 parts, 108 mm).
   Third laser batch (`designs/boxes3.ts`, `laserHome3.ts`, `jigsaw.ts` + pure `puzzle.ts`, `ornament.ts`; list in `laserSet3.ts`).
   Sliding-lid box: a laser can't cut a groove part-way, so each groove is a *rail* — a second panel inside each long wall with a
   through slot (a C open at the right-hand end, `slidingOutlines().rail`); grooves z = g0…g1 (g0 = H − 3t − 2c, g1 = g0 + t + 2c), a 2t
