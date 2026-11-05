@@ -268,9 +268,9 @@ describe("browsing the library", () => {
 
   it("finds designs by any word of their name, group or description, names first", () => {
     expect(searchDesigns("bolt")[0].id).toBe("bolt-set");
-    // Every hinge (the print-in-place and piano hinges, and the laser's living hinge and living-hinge box), whatever the case typed.
+    // Every hinge (the print-in-place and piano hinges, the hinged box, and the laser's living hinge and living-hinge box), whatever the case typed.
     const hinges = searchDesigns("HINGE").map((d) => d.id);
-    for (const id of ["hinge", "piano-hinge", "living-hinge", "hinge-box"]) expect(hinges.slice(0, 4)).toContain(id);
+    for (const id of ["hinge", "piano-hinge", "hinged-box", "living-hinge", "hinge-box"]) expect(hinges.slice(0, 5)).toContain(id);
     for (const id of ["bolt-set", "standoff", "spacer"]) expect(searchDesigns("fix").map((d) => d.id)).toContain(id);
     expect(searchDesigns("laser box").map((d) => d.id)).toContain("finger-box");
     expect(searchDesigns("stencil")[0].id).toBe("stencil");
