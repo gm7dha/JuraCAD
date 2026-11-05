@@ -22,6 +22,10 @@ export interface OsmData {
   /** Closed shapes: the first ring is the outline, any more are islands in it. */
   shapes: { kind: OsmShapeKind; name?: string; rings: LatLon[][] }[];
   names: { kind: OsmNameKind; text: string; at: LatLon }[];
+  /** Council, county and parish boundaries (`admin_level`: 4 nations, 6 counties and council areas, 8 districts, 10 parishes). */
+  boundaries: { level: number; pts: LatLon[] }[];
+  /** Each boundary's name, where the map puts its label (or its main town). */
+  regionNames: { level: number; text: string; at: LatLon }[];
   /** Nodes in the file (for "nothing here" messages). */
   nodes: number;
 }
@@ -170,7 +174,25 @@ export function readOsm(text: string): OsmData {
   if (!nodes.size) throw new OsmError("That map file has nothing in it. Export an area with the mountain in it from openstreetmap.org.");
 
   const pointsOf = (refs: string[]) => refs.map((r) => nodes.get(r)).filter((p): p is LatLon => !!p);
-  const data: OsmData = { bounds, lines: [], shapes: [], names: [], nodes: nodes.size };
+  const data: OsmData = { bounds, lines: [], shapes: [], names: [], boundaries: [], regionNames: [], nodes: nodes.size };
+  // Boundaries: ways tagged as one, and the ways of boundary relations, once per level.
+  const levelOf = (t: Tags) => (t.boundary === "administrative" ? Number.parseInt(t.admin_level ?? "", 10) : NaN);
+  const boundaryWays = new Map<number, Set<string>>();
+  const addWay = (level: number, id: string) => boundaryWays.set(level, (boundaryWays.get(level) ?? new Set()).add(id));
+  for (const [id, { tags }] of ways) if (Number.isFinite(levelOf(tags))) addWay(levelOf(tags), id);
+  for (const { members, tags } of relations) {
+    const level = levelOf(tags);
+    if (!Number.isFinite(level)) continue;
+    for (const x of members) if (x.type === "way" && x.role !== "subarea") addWay(level, x.ref);
+    const label = members.find((x) => x.type === "node" && x.role === "label") ?? members.find((x) => x.type === "node" && x.role === "admin_centre");
+    const at = label && nodes.get(label.ref);
+    if (at && tags.name) data.regionNames.push({ level, text: tags.name, at });
+  }
+  for (const [level, ids] of boundaryWays)
+    for (const id of ids) {
+      const pts = pointsOf(ways.get(id)?.refs ?? []);
+      if (pts.length >= 2) data.boundaries.push({ level, pts });
+    }
   for (const { refs, tags } of ways.values()) {
     const kind = lineKind(tags);
     if (kind) {
@@ -300,6 +322,25 @@ export function featuresOnGrid(data: OsmData, detail: OsmDetail): MapFeatures {
     });
   }
   return { lines, shapes, names };
+}
+
+/** What boundaries a map has, coarsest first: [admin_level, how many lines]. */
+export function boundaryLevels(data: OsmData): [number, number][] {
+  const count = new Map<number, number>();
+  for (const b of data.boundaries) if (b.level >= 4 && b.level <= 10) count.set(b.level, (count.get(b.level) ?? 0) + 1);
+  return [...count.entries()].sort((a, b) => a[0] - b[0]);
+}
+
+/** A boundary level in words. */
+export const levelName = (level: number) =>
+  level <= 4 ? "Countries" : level <= 6 ? "Counties and council areas" : level <= 8 ? "Districts" : level <= 9 ? "Communities" : "Parishes";
+
+/** The boundaries of one level, and their names, on the OS grid. */
+export function boundariesOnGrid(data: OsmData, level: number): { lines: XY[][]; names: { text: string; at: XY }[] } {
+  return {
+    lines: data.boundaries.filter((b) => b.level === level).map((b) => b.pts.map(onGrid)),
+    names: data.regionNames.filter((n) => n.level === level).map((n) => ({ text: n.text, at: onGrid(n.at) })),
+  };
 }
 
 /** Counts for a short summary: "12 paths, 4 rivers or streams, 3 lochs". */

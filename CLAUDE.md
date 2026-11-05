@@ -914,6 +914,21 @@
   box/mirror/square coasters fit their holders with room, tabs hold), mcpLibraryLaser (a bird box inserted and exported);
   the smoke test inserts a bird box and saves it for laser (7 red, 7 blue). JuraCUT has twins of all eight (its v0.10,
   `src/library/laserSet5.ts`).
+- Island puzzle (`LIBRARY_TOOLS` "island" → `mountainState.kind` "island" → `src/app/IslandPuzzleDialog.tsx`, which reuses
+  `Mountain3D`): pure `src/terrain/islandPuzzle.ts` — land (> `sea` m) on a fine grid (`cell` 0.25–0.6 mm), kept by
+  `land` ("islands" drops land touching the area's edge, "biggest", "all"); cells owned by the areas between boundary lines
+  (`IslandCuts`: lines rasterised as walls, 4-connected fill, specks < 4 mm² spread from neighbours; used only if they
+  make more areas than there are bits of land, names from label points) or by seeded jittered Voronoi points `piece` mm
+  apart; pieces = 4-connected stretches, ones under `smallestPiece` join the neighbour they share most border with;
+  a dovetail painted across each border ≥ 1.6 × head long (checked to lie in the other piece with a margin, which must
+  stay one piece); each piece meshed from its signed distance (`distanceTransform`, inside less ½√2 cell so neighbours
+  stay ≥ 2 × fit apart) by marching squares on every `step`-th sample (~0.7 mm): ground on top (base + h × relief/high),
+  flat at 0, walls. Pieces are `PuzzlePiece`s (layer 0, bbox outline) so `platesFor`/`plate3mf` work. `src/terrain/islands.ts`:
+  `ISLANDS` (boxes by lat/lon middle; Great Britain = sw (0, 0), 665 × 1230 km — Ireland and France touch its edges),
+  `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),
+  `BOUNDARY_LEVELS`. osm.ts reads `boundaries`/`regionNames` (`boundaryLevels`, `boundariesOnGrid`, `levelName`).
+  elevation.ts: `zoomFor` (finest zoom with ≤ MAX_TILES), `areaProblem(…, most, z)`, `readHeights(…, spacing, z)`.
+  Tests: tests/islandPuzzle (pure).
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
   cards that open their own window instead of inserting features, found by the search via `searchTools`/`searchWords`;
   LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; `mountainState.kind` "photo" = the Photo relief

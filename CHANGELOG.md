@@ -8,6 +8,19 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.47 — Island puzzle
+
+- New in the Design library under **Puzzles**: the **Island puzzle**. Choose an island — Arran, Skye, Mull, Islay, the
+  Isle of Wight, the Isle of Man, Anglesey, Lewis and Harris, Orkney, Shetland — or **all of Great Britain**, or any area
+  round a grid reference. The coast is the puzzle's edge and the hills stand up from it (you choose how tall the highest
+  ground is, in mm).
+- Cut it into irregular pieces of about the size you choose, or **along real boundaries** — countries, counties and
+  council areas, districts or parishes — fetched from OpenStreetMap with one button (or from a map file). Pieces cut
+  along boundaries are named after their area.
+- Neighbouring pieces lock together with dovetails wherever the border is long enough; small specks of land are joined
+  to a neighbour or left out. Choose every island in the area, just the biggest, or all the land (the mainland too).
+- Downloads as print plates for Bambu Studio, like the Mountain puzzle.
+
 ## v0.46 — Six-piece burr
 
 - New in the Design library under **Puzzles**: the **Six-piece burr**, the classic interlocking puzzle of six notched
