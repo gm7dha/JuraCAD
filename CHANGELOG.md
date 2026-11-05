@@ -8,6 +8,21 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.38 — Mountain puzzles
+
+- **Mountain puzzle** (toolbar, next to Library): turn a real mountain into a 3D printed puzzle of interlocking cubes.
+  Pick a famous peak, type an OS grid reference, or load your own OS map picture and type its corners' grid
+  references; the heights come free from open height data. Inside the mountain every layer is a jigsaw with full-height
+  tabs, and every piece has two pegs on top that fit sockets in the piece above, so it all drops together from above;
+  the top of each column follows the ground. The whole puzzle stands on at least one layer of jigsaw cubes, so every
+  piece is held.
+- **Sized from your printer:** 100% fills the bed, and the scale goes up from there (bigger puzzles just print over more
+  plates). Cubes too small for strong tabs are refused, and fragile sizes are warned about; the fit gap, height stretch
+  and tab pattern can be changed.
+- **Snow caps:** above a height you choose, each piece's snow is its own part on filament 2, ready for the AMS.
+- See it from above (with each column's name) and in 3D, pulled apart if you like, then download each print plate as a
+  3MF for Bambu Studio, or all of them in one zip.
+
 ## v0.37 — Send designs to and from JuraCUT; more library designs
 
 - **Send to JuraCUT** (Export for laser panel): the outlines go straight onto JuraCUT's bed — into its open tab, or a

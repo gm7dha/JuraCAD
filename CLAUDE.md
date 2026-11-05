@@ -837,6 +837,29 @@
   (`depths`) and each wall is one mesh piece; every puzzle letter free when nudged 0.8 × play and hitting the board past it;
   key rack hooks in their slots; a user's block untouched), mcpLibraryLaser (a name puzzle inserted and exported); the smoke test
   inserts a dice tower and saves every part for laser (7 red, 20 blue).
+- Mountain puzzle (toolbar "Mountain", `src/app/MountainPuzzleDialog.tsx`; open state in `mountainState.ts`, session only,
+  never in the document): a real mountain as a 3D printed puzzle of interlocking cubes. Pure in `src/terrain/`: `osGrid.ts`
+  (OS grid refs ↔ E/N, `gridToLatLon` = OS transverse Mercator inverse on Airy 1830 + Helmert to WGS84, ~5 m), `elevation.ts`
+  (AWS open "Terrain Tiles", terrarium PNGs — `terrariumHeight`, Web Mercator `worldPixel`, zoom `TILE_ZOOM` 12 ≈ 20 m/px,
+  ≤ `MAX_TILES`; `readHeights(loader, sw, w, h)` → `HeightGrid` square to the OS grid, sea clamped to 0; the browser loader is
+  `src/app/mountainTiles.ts` — `createImageBitmap` with colorSpaceConversion/premultiplyAlpha "none", as the colours ARE the
+  heights), `peaks.ts` (well-known summits), `triangulate.ts` (outline + holes → triangles using exactly the given corners,
+  holes joined earcut-style with a "cut leaves into the face" check on doubled corners — the second peg hole once joined
+  through the wrong copy), `mountainPuzzle.ts`, `puzzle3mf.ts`. Puzzle: `layoutFor` — 100% scale = the finished puzzle fills the bed
+  less 10 mm, whole cubes, area trimmed and centred; heights z = `baseFor` (≥ one cube + the thinnest top, so every column
+  stands on a jigsaw cube) + (h − low)·k·exaggeration. Per column, `full` = whole cubes under the top piece (top ≥ socket depth
+  + 2 mm thick everywhere). Each layer is `makePuzzle` (tab `TAB` 0.28, pattern tried until `narrowestGap` ≥ MIN_GAP + 2·fit)
+  with tabs only between two whole cubes (else straight; top pieces are squares), outlines shrunk by `fit`. Pegs
+  (`pegSizes`, `pegPlaces`: two on a diagonal, clear of both outlines by `WALL`) on each cube's top, sockets (peg + fit, peg
+  + 0.4 deep) under the piece above. Snow: blocks are cut by the plane (moved to a whole piece near sockets/the top), top
+  pieces' ground triangles are clipped at the snow line with crossings shared by key (`topBodies`), so rock and snow are
+  each closed; snow is a zero-thickness edge along the contour. Limits: `mountainChecks` refuses necks < `MIN_NECK` 2 mm
+  (`smallestCube`), warns < `GOOD_NECK` 3 mm and pegs < 4 mm, ≤ `MAX_COLUMNS` per layer, ≤ 40 layers. Plates: `platesFor`
+  (rows on the bed, layer by layer), `plate3mf` = core 3MF, each piece an object of component parts (rock, snow) + Bambu's
+  `Metadata/model_settings.config` with `extruder` 1/2 per part (untested in Bambu Studio itself; other slicers see parts to
+  assign by hand). Tests: tests/mountainPuzzle (pure: grid refs vs known summits, a fake tile loader, triangulation, every
+  part watertight with positive volume, gaps, pegs ↔ sockets, snow above the line, limits, plates). Next: the laser
+  version (layered contour sheets cut into staggered jigsaw pieces, sent with Send to JuraCUT).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
