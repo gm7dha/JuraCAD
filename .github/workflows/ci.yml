@@ -50,7 +50,8 @@ jobs:
       # see tests/support/ciReporter.ts.
       - name: Run tests
         id: tests
-        timeout-minutes: 15
+        # All tests pass in ~9 min on a quiet runner but can take ~15 on a busy one: leave plenty of room.
+        timeout-minutes: 30
         run: npm test -- --reporter=default --reporter=./tests/support/ciReporter.ts
 
       - name: Report memory problems

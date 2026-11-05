@@ -8,6 +8,21 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.37 — Simplify imports, tidier Part Studio tabs, library batch 4 · commit `37dfe6b`
+
+- **Simplify on import:** tick "Simplify" when importing a STEP or STL (or use Simplify part afterwards) to turn a
+  mesh-like model back into real faces — flat faces joined, holes, slots and rounded edges as true round faces at their
+  exact sizes — with a note saying what was done. Organic shapes come in as they are.
+- **Part Studio tabs:** drag tabs to reorder them (or Move left/right in the tab menu); any studio can be deleted,
+  Part Studio 1 too, with a warning when something uses its parts. **Download the Claude extension again from Help** —
+  designs with moved tabs use a newer file format that older copies refuse rather than mis-read.
+- **Colour chooser** always opens full size.
+- **Library, 3D printing:** electronics enclosure (Raspberry Pi / Arduino standoffs, heat-set insert or self-tap holes,
+  screwed or snap lid, vents, port cut-outs), French cleat system, hinged box, desk organiser, cable drag chain, wall
+  pocket, shelf pins, and fit / overhang / bridge test prints.
+- **Library, laser:** living-hinge box, dice tower, spice rack, card deck box, tealight lantern, name puzzle, key rack,
+  business card holder.
+
 ## v0.36 — Library: Gridfinity, jigsaw puzzles and more · commit `5b61437`
 
 - **3D printing:** Gridfinity baseplates and bins (to the standard, with dividers, label ledge, magnets and stacking
