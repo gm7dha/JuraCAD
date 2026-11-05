@@ -115,4 +115,21 @@ describe("laser library designs for Claude", () => {
     expect(letter.text).toMatch(/1 inner cut/);
     expect(readFileSync(join(folder, "board.svg"), "utf8")).toContain("#FF0000");
   });
+
+  it("insert a bird box for house sparrows, and export its front (the 32 mm hole) and floor (drainage holes) for laser", async () => {
+    const { s, folder } = newSession();
+    const r = await call(s, "insert_library_design", { design: "bird-box", sizes: { bird: "house-sparrow" } });
+    expect(r.error).toBe(false);
+    expect(r.text).toMatch(/32 mm hole/);
+    expect(s.build().parts).toHaveLength(7);
+    const front = await call(s, "export_for_laser", { parts: ["Bird box front"], filename: "front" });
+    expect(front.error).toBe(false);
+    expect(front.text).toMatch(/1 outer cut/);
+    expect(front.text).toMatch(/1 inner cut/);
+    const floor = await call(s, "export_for_laser", { parts: ["Bird box floor"], filename: "floor" });
+    expect(floor.text).toMatch(/4 inner cuts/);
+    const svg = readFileSync(join(folder, "front.svg"), "utf8");
+    expect(svg).toContain("#FF0000");
+    expect(svg).toContain("#0000FF");
+  });
 });

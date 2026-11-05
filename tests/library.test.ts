@@ -30,8 +30,10 @@ const design = (id: string) => findDesign(id)!;
 const LASER_IDS_3 = ["sliding-lid-box", "divider-tray", "bookend", "clock-face", "cord-winder", "tealight", "jigsaw", "ornament"];
 /** The fourth batch of laser designs (tests/libraryLaser4.test.ts). */
 const LASER_IDS_4 = ["hinge-box", "deck-box", "card-stand", "spice-rack", "lantern", "key-rack", "dice-tower", "name-puzzle"];
+/** The fifth batch of laser designs (tests/libraryLaser5.test.ts). */
+const LASER_IDS_5 = ["bird-box", "earring-stand", "drawer-box", "pen-holder", "sunburst-mirror", "book-stand", "coaster-holder", "tissue-box"];
 /** The laser designs with words and more (tests/libraryLaser.test.ts), in the library's order. */
-const LASER_IDS = ["stencil", "rubber-stamp", "name-tag", "coaster", "picture-frame", "living-hinge", "gear", "ruler", ...LASER_IDS_3, ...LASER_IDS_4];
+const LASER_IDS = ["stencil", "rubber-stamp", "name-tag", "coaster", "picture-frame", "living-hinge", "gear", "ruler", ...LASER_IDS_3, ...LASER_IDS_4, ...LASER_IDS_5];
 const LOOSE_LINES = new Set(["living-hinge", "gear", "ruler", "jigsaw", "hinge-box"]);
 
 /** The third batch of 3D printing designs (printDesigns.ts), in order. */
