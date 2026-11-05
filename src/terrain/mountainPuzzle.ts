@@ -16,7 +16,7 @@
  *
  * Every mesh is watertight: faces meet the walls corner to corner (src/terrain/triangulate.ts).
  */
-import { offsetPolygon } from "../library/outlines";
+import { insideGap, offsetPolygon } from "../library/outlines";
 import { edgePolyline, makePuzzle, narrowestGap, MIN_GAP, NECK, SIZE_SPREAD, TAB_RISE, type Puzzle, type PuzzleEdge } from "../library/puzzle";
 import { heightAt, type HeightGrid } from "./elevation";
 import { triangulate, type P2 } from "./triangulate";
@@ -65,7 +65,7 @@ export const MAX_COLUMNS = 400;
 export interface KeySizes {
   /** Height of the pad. */
   h: number;
-  /** How far each side slopes in from its foot to its top (mm): about 39° from upright. */
+  /** How far each side slopes in from its foot to its top (mm): about 31° from upright. */
   slope: number;
   /** Gap all round the key in its pocket (the puzzle's fit). */
   fit: number;
@@ -77,21 +77,39 @@ export interface KeySizes {
 }
 
 export function keySizes(spec: Pick<MountainSpec, "cube" | "fit">): KeySizes {
-  const h = Math.min(3.5, Math.max(2, 0.09 * spec.cube));
-  return { h, slope: 0.8 * h, fit: spec.fit, depth: h + 0.4, most: Math.min(9, 0.22 * spec.cube), least: 0.8 * h + 0.5 };
+  const h = Math.min(3, Math.max(1.8, 0.07 * spec.cube));
+  return { h, slope: 0.6 * h, fit: spec.fit, depth: h + 0.4, most: Math.min(9, 0.22 * spec.cube), least: 0.6 * h + 1 };
 }
 
-/** A key's foot (or its pocket's mouth): a square of half-width `half` with rounded corners, anticlockwise. */
-export function keyLoop(c: P2, half: number, corner: number): P2[] {
+/** Which corner a key's cut-off corner is, for each of the four: [corner sign x, y, cut's start and end directions]. */
+const CORNERS: [number, number, number, P2, P2][] = [
+  [1, -1, -90, [-1, 0], [0, 1]],
+  [1, 1, 0, [0, -1], [-1, 0]],
+  [-1, 1, 90, [1, 0], [0, -1]],
+  [-1, -1, 180, [0, 1], [1, 0]],
+];
+/** How much of a side the cut-off corner takes off, as a share of the half-width. */
+export const CUT = 0.55;
+
+/**
+ * A key's foot (or its pocket's mouth): a square of half-width `half` with rounded corners, anticlockwise — and one
+ * corner (`cut`, 0–3; −1 for none) cut off square across, so it only goes in one way round. Always the same number of
+ * corners, so the sloping sides join level to level.
+ */
+export function keyLoop(c: P2, half: number, corner: number, cut = -1): P2[] {
   const r = Math.min(corner, half * 0.45);
   const k = half - r;
   const out: P2[] = [];
-  [
-    [1, -1, -90],
-    [1, 1, 0],
-    [-1, 1, 90],
-    [-1, -1, 180],
-  ].forEach(([sx, sy, a0]) => {
+  CORNERS.forEach(([sx, sy, a0, from, to], q) => {
+    if (q === cut) {
+      const ch = CUT * half;
+      const P: P2 = [c[0] + sx * half, c[1] + sy * half];
+      for (let i = 0; i <= 4; i++) {
+        const t = i / 4;
+        out.push([P[0] + ch * ((1 - t) * from[0] + t * to[0]), P[1] + ch * ((1 - t) * from[1] + t * to[1])]);
+      }
+      return;
+    }
     for (let i = 0; i <= 4; i++) {
       const a = ((a0 + (90 * i) / 4) * Math.PI) / 180;
       out.push([c[0] + sx * k + r * Math.cos(a), c[1] + sy * k + r * Math.sin(a)]);
@@ -100,11 +118,18 @@ export function keyLoop(c: P2, half: number, corner: number): P2[] {
   return out;
 }
 
-/** Where a key sits and how big its foot is (half-width, mm). */
+/** Where a key sits, how big its foot is (half-width, mm) and which corner is cut off (its code with the place). */
 export interface Key {
   c: P2;
   half: number;
+  cut: number;
 }
+
+/** How far a key may be moved off its spot to make its code (mm): far more than the fit, so a wrong one won't go in. */
+export const CODE_STEP = 1;
+/** The codes: a move of −1, 0 or +1 steps each way, and which corner is cut off — 36 in all. */
+export const KEY_CODES: { dx: number; dy: number; cut: number }[] = [];
+for (const cut of [0, 1, 2, 3]) for (const dy of [-1, 0, 1]) for (const dx of [-1, 0, 1]) KEY_CODES.push({ dx, dy, cut });
 
 /** The narrowest tab neck a cube size gives (mm), with the fit gap taken off both sides. */
 export function neckFor(cube: number, fit: number): number {
@@ -303,7 +328,7 @@ export function keyPlace(centre: P2, below: P2[], above: P2[], g: KeySizes, cube
   let best: Key | null = null;
   const consider = (c: P2) => {
     const half = Math.floor(biggest(c) * 10) / 10;
-    if (half >= g.least && (!best || half > best.half + 0.5)) best = { c, half };
+    if (half >= g.least && (!best || half > best.half + 0.5)) best = { c, half, cut: -1 };
   };
   consider(centre);
   for (const d of [0.04, 0.08, 0.12, 0.16])
@@ -359,13 +384,13 @@ interface BlockShape {
 /** The key's outline at height `up` above its foot (its sides slope in). */
 function keyAt(k: Key, g: KeySizes, up: number): P2[] {
   const inset = (g.slope * up) / g.h;
-  return keyLoop(k.c, k.half - inset, Math.max(0.5, 2 - inset));
+  return keyLoop(k.c, k.half - inset, Math.max(0.5, 2 - inset), k.cut);
 }
 
 /** The pocket's outline at height `up` above its mouth: the key's shape, the fit gap bigger all round. */
 function pocketAt(k: Key, g: KeySizes, up: number): P2[] {
   const inset = (g.slope * up) / g.h;
-  return keyLoop(k.c, k.half + g.fit - inset, Math.max(0.5, 2 + g.fit - inset));
+  return keyLoop(k.c, k.half + g.fit - inset, Math.max(0.5, 2 + g.fit - inset), k.cut);
 }
 
 /** The part of a layer piece between heights lo and hi (both within it), as one closed mesh. */
@@ -383,7 +408,8 @@ function blockBody(s: BlockShape, lo: number, hi: number, part: "rock" | "snow")
     if (pocketHere) {
       const top = Math.min(b, pd);
       m.wall(pocketAt(s.pocket!, g, a - z0), a, top, false, pocketAt(s.pocket!, g, top - z0));
-      if (pd < b) m.face(pocketAt(s.pocket!, g, g.depth), [], pd, false);
+      // The very same sum as the walls' tops (pd − z0, not g.depth), so they meet exactly.
+      if (pd < b) m.face(pocketAt(s.pocket!, g, pd - z0), [], pd, false);
     }
     const throughTop = pocketHere && b <= pd;
     const keyHere = b >= z1 - 1e-9 && hi > z1 + 1e-9 && !!s.key;
@@ -512,6 +538,66 @@ function topBodies(
   return out;
 }
 
+/** Would key `a` (at its place in its own cube) go into pocket `b` (at its place in its own cube)? */
+export function keyGoesIn(a: Key, aCell: P2, b: Key, bCell: P2, g: KeySizes): boolean {
+  const moved = keyLoop([a.c[0] - aCell[0] + bCell[0], a.c[1] - aCell[1] + bCell[1]], a.half, 2, a.cut);
+  return insideGap(moved, keyLoop(b.c, b.half + g.fit, 2 + g.fit, b.cut)) > 0;
+}
+
+/**
+ * Give every key its own code — moved a step off its spot one way or another, and one of its four corners cut off — so
+ * that no key goes into the pocket of any piece next to, above or below its own, nor theirs into its: a piece put in
+ * the wrong place sits up on the key there and rocks, and the cut corner stops it going on turned round. Keys keep
+ * within the room they had (a step smaller when they're moved). Returns how many neighbouring pairs it couldn't keep
+ * apart (none, in practice).
+ */
+export function codeKeys(columns: { joins: (Key | null)[] }[], cols: number, rows: number, cube: number, g: KeySizes, seed: number): number {
+  let a = (Math.floor(seed) * 2654435761) >>> 0 || 1;
+  const rand = () => ((a = (Math.imul(a ^ (a >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296);
+  // One size for every key, so a key can only go into a pocket of its own position and corner: the size nearly every
+  // join has room for once moved a step (the few with less keep what they have, and are checked like the rest).
+  const rooms = columns.flatMap((col) => col.joins.filter((k): k is Key => !!k).map((k) => k.half)).sort((x, y) => x - y);
+  const size = rooms.length ? Math.max(g.least, Math.floor((rooms[Math.floor(rooms.length * 0.05)] - CODE_STEP) * 10) / 10) : g.least;
+  const done = new Map<string, Key>();
+  let clashes = 0;
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      columns[r * cols + c].joins.forEach((k, L) => {
+        if (!k) return;
+        const cell: P2 = [c * cube, r * cube];
+        const near: { key: Key; cell: P2 }[] = [];
+        for (let dr = -1; dr <= 1; dr++)
+          for (let dc = -1; dc <= 1; dc++)
+            for (let dl = -1; dl <= 1; dl++) {
+              const other = done.get(`${c + dc},${r + dr},${L + dl}`);
+              if (other) near.push({ key: other, cell: [(c + dc) * cube, (r + dr) * cube] });
+            }
+        // Every code this key could take, in a shuffled order: all the same size (where there's room), moved only if the
+        // room allows.
+        const half = Math.min(size, k.half);
+        const options = KEY_CODES.filter(({ dx, dy }) => !(dx || dy) || k.half >= size + CODE_STEP - 1e-9)
+          .map(({ dx, dy, cut }) => ({ key: { c: [k.c[0] + dx * CODE_STEP, k.c[1] + dy * CODE_STEP], half, cut } as Key, order: rand() }))
+          .sort((x, y) => x.order - y.order);
+        let best: Key | null = null;
+        let fewest = Infinity;
+        for (const { key } of options) {
+          let fits = 0;
+          for (const n of near) {
+            if (keyGoesIn(key, cell, n.key, n.cell, g)) fits++;
+            if (keyGoesIn(n.key, n.cell, key, cell, g)) fits++;
+            if (fits >= fewest) break;
+          }
+          if (fits < fewest) [best, fewest] = [key, fits];
+          if (!fits) break;
+        }
+        clashes += fewest === Infinity ? 0 : fewest;
+        const chosen = best ?? { ...k, cut: 0 };
+        done.set(`${c},${r},${L}`, chosen);
+        columns[r * cols + c].joins[L] = chosen;
+      });
+  return clashes;
+}
+
 const columnName = (c: number): string => (c < 26 ? String.fromCharCode(65 + c) : columnName(Math.floor(c / 26) - 1) + String.fromCharCode(65 + (c % 26)));
 
 /** The whole puzzle from the heights of an area `areaWidth` × `areaHeight` m. Throws if `mountainChecks` has problems. */
@@ -571,15 +657,23 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
     return offsetPolygon(blockOutline(p, r, c, tabbed), -fit);
   };
 
-  const pieces: PuzzlePiece[] = [];
-  const keyless: string[] = [];
+  // Every column's outlines and the spot for each key between its pieces.
+  const columns: { outlines: P2[][]; joins: (Key | null)[] }[] = [];
   for (let r = 0; r < rows; r++)
     for (let c = 0; c < cols; c++) {
       const f = fullAt(c, r);
       const outlines = Array.from({ length: f + 1 }, (_, L) => outlineOf(L, c, r));
       const centre: P2 = [(c + 0.5) * cube, (r + 0.5) * cube];
-      // The key between each piece and the one above it.
-      const joins = Array.from({ length: f }, (_, L) => keyPlace(centre, outlines[L], outlines[L + 1], g, cube));
+      columns.push({ outlines, joins: Array.from({ length: f }, (_, L) => keyPlace(centre, outlines[L], outlines[L + 1], g, cube)) });
+    }
+  const clashes = codeKeys(columns, cols, rows, cube, g, spec.seed);
+
+  const pieces: PuzzlePiece[] = [];
+  const keyless: string[] = [];
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      const f = fullAt(c, r);
+      const { outlines, joins } = columns[r * cols + c];
       for (let L = 0; L <= f; L++) {
         const name = `${columnName(c)}${r + 1}-${L + 1}`;
         const pocket = L > 0 ? joins[L - 1] : null;
@@ -610,6 +704,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
       }
     }
   const warnings = [...checks.warnings];
+  if (clashes) warnings.push(`${clashes} ${clashes === 1 ? "pair" : "pairs"} of neighbouring keys could still go into each other's pockets: take care with those pieces.`);
   if (keyless.length) warnings.push(`No room for a key under ${keyless.length === 1 ? "piece" : "pieces"} ${keyless.slice(0, 6).join(", ")}${keyless.length > 6 ? "…" : ""}: ${keyless.length === 1 ? "it rests" : "they rest"} on the piece below with nothing to hold ${keyless.length === 1 ? "it" : "them"} in place.`);
   const tallest = Math.max(...pieces.map((p) => p.height));
   if (tallest > spec.bed[2]) warnings.push(`The tallest piece is ${Math.round(tallest)} mm — taller than the printer (${spec.bed[2]} mm). Lower the height stretch.`);

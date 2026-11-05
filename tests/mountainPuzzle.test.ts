@@ -1,7 +1,7 @@
 /**
  * Mountain puzzle (pure): OS grid references, reading terrarium height tiles, flat faces into triangles, and the
  * puzzle itself — every part watertight, pieces in a layer clear of each other by the fit gap, each key right under
- * its pocket, snow only above the snow line, sizes refused or warned about, and the pieces laid out on plates and written
+ * its pocket and fitting no neighbour's, snow only above the snow line, sizes refused or warned about, and the pieces laid out on plates and written
  * as 3MF files with the snow on filament 2.
  */
 import { describe, expect, it } from "vitest";
@@ -20,6 +20,7 @@ import {
   GOOD_NECK,
   keyLoop,
   WALL,
+  type Key,
   type MountainSpec,
   type Body,
 } from "../src/terrain/mountainPuzzle";
@@ -259,6 +260,32 @@ describe("Mountain puzzle", () => {
     expect(Math.min(...puzzle.pieces.filter((p) => p.key).map((p) => p.key!.half * 2))).toBeGreaterThan(2 * g.h);
     expect(g.slope / g.h).toBeGreaterThan(0.5);
     expect(puzzle.warnings).toEqual([]);
+  });
+
+  it("makes every piece fit only its own place: a neighbour's key won't go into its pocket, nor its own turned round", () => {
+    const g = puzzle.keys;
+    const foot = (k: Key) => keyLoop(k.c, k.half, 2, k.cut) as LP2[];
+    const mouth = (k: Key) => keyLoop(k.c, k.half + g.fit, 2 + g.fit, k.cut) as LP2[];
+    // Seen from the piece's own place: its pocket is at the same spot as the key under it, so compare shapes there.
+    const at = (k: Key, c: LP2): Key => ({ ...k, c: [c[0] + (k.c[0] - Math.floor(k.c[0] / SPEC.cube) * SPEC.cube), c[1] + (k.c[1] - Math.floor(k.c[1] / SPEC.cube) * SPEC.cube)] });
+    let checked = 0;
+    for (const p of puzzle.pieces) {
+      if (!p.pocket) continue;
+      // Its own key goes in, with the fit gap all round.
+      expect(insideGap(foot(p.pocket), mouth(p.pocket))).toBeGreaterThan(g.fit * 0.6);
+      // Turned a quarter turn, it doesn't (the cut corner is somewhere else).
+      const turned = { ...p.pocket, cut: (p.pocket.cut + 1) % 4 };
+      expect(insideGap(foot(turned), mouth(p.pocket))).toBe(0);
+      // The keys of the pieces round about (moved to this place) don't go into this pocket.
+      for (const q of puzzle.pieces) {
+        if (!q.pocket || q === p || Math.abs(q.col - p.col) > 1 || Math.abs(q.row - p.row) > 1 || Math.abs(q.layer - p.layer) > 1) continue;
+        const here: LP2 = [p.col * SPEC.cube, p.row * SPEC.cube];
+        const theirs = at(q.pocket, here);
+        expect(insideGap(foot(theirs), mouth(p.pocket)), `${q.name} on ${p.name}`).toBe(0);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
   });
 
   it("puts the snow only above the snow line, and only some pieces have it", () => {

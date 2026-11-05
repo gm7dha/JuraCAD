@@ -854,7 +854,12 @@
   (`keySizes`: h 2–3.5 mm, sides sloping in 0.8·h, `keyLoop`), a matching pocket under the piece above (fit bigger all round,
   h + 0.4 deep, the same slope); `keyPlace` sizes it straight from the "square" (L∞) room to both outlines less `WALL`
   (+ fit for the pocket), up to `most` (0.22·cube ≤ 9), in the middle or nudged towards a corner with more room; it's the same
-  `Key` object on the piece below (`key`) and above (`pocket`). Snow: blocks are cut by the plane (moved to a whole piece near sockets/the top), top
+  `Key` object on the piece below (`key`) and above (`pocket`). Then `codeKeys` gives every key a code (`KEY_CODES`: moved
+  −1/0/+1 × `CODE_STEP` (1 mm) each way × which corner is cut off, `CUT` of the half-width — 36) and ONE size for the
+  whole puzzle (the 5th-percentile room less a step; a smaller key would drop into a bigger pocket), checking with
+  `keyGoesIn` (the key moved into the other cube, `insideGap` > 0 with the other's pocket) both ways against every coded
+  key in the 3 × 3 × 3 round it, so a piece fits only its own place; unavoidable pairs are counted in a warning (only
+  below the sturdy cube size). Pocket ceilings use `pd − z0`, the walls' own sum, or float rounding split the weld. Snow: blocks are cut by the plane (moved to a whole piece near sockets/the top), top
   pieces' ground triangles are clipped at the snow line with crossings shared by key (`topBodies`), so rock and snow are
   each closed; snow is a zero-thickness edge along the contour. Limits: `mountainChecks` refuses necks < `MIN_NECK` 2 mm
   (`smallestCube`), warns < `GOOD_NECK` 3 mm, ≤ `MAX_COLUMNS` per layer, ≤ 40 layers. Plates: `platesFor`

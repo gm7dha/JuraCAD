@@ -8,12 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.39 — Mountain puzzle: square keys between layers
+## v0.39 — Mountain puzzle: square keys, and every piece fits only its own place
 
 - **Mountain puzzle:** the two thin pegs on top of each cube are replaced by one low, wide **square key** with sloping
   sides, and a matching sloped pocket underneath the piece above. Pieces drop into place and lift straight out again,
-  there's nothing thin to snap, and the square stops a piece turning. The key is as big as fits between the tabs (about
-  8–14 mm across on 30 mm cubes) and moves off the middle where the tabs leave more room elsewhere.
+  and there's nothing thin to snap.
+- **Every piece fits only its own place:** each key is coded — moved a millimetre one way or another, and one of its
+  corners cut off — so no piece's pocket fits the key of any piece next to, above or below its own place. A piece in the
+  wrong place sits up on the key there and rocks, so you can see straight away, and the cut corner means it only goes on
+  one way round. All the keys in a puzzle are the same size (about 7 mm across on 30 mm cubes), which is what makes the
+  codes work.
 
 ## v0.38 — Mountain puzzles · commit `3356de9`
 
