@@ -929,7 +929,18 @@
   invalid). Lid printed upside down beside the box; nubs chamfered 45° towards the bed, their footprint at the core
   centred on the groove (`groove` = nub + depth − 2·fit + 0.6). Tests: tests/libraryPuzzles (pure), engineLibraryPuzzles
   (the lid turned over: no overlap along the whole way out, blocked by walls — engine.clashes sometimes returns nothing at
-  an exact placement, so walls are probed at ±1.5° too). open state in `mountainState.ts`, session only,
+  an exact placement, so walls are probed at ±1.5° too).
+  Six-piece burr (`designs/sixPieceBurr.ts` over pure `src/library/burr.ts`, no variables): pieces are unit cubes of 2 × 2 × 8
+  sticks crossing in the middle 4³ (`AXIS`, `CROSS`, `fullStick`); the 32 `contested` cubes (8 covered by three sticks) each
+  go to one stick or none (`piecesFrom`). `disassembly` = BurrTools-style BFS: any group not holding piece 0 slides ±x/y/z
+  as far as it goes; a group free for good splits the set, each part must come apart too; returns the moves before the
+  first split (level) or null. `makeBurr(seed, difficulty)`: orders the pieces, mostly gives each cube to the first to leave
+  (always comes apart), some at random and some empty (`gap` 0.35 / `mixed` 0.3 beyond Easy), `repaired` (gives a split
+  piece back cubes that join it), then hill-climbs to the level range (Easy 1, Medium 2–3, Hard ≥ 4); cached. Laid flat
+  (`laidFlat`: the turn with fewest bridges); notches = `cellOutlines` of columns cut through / top only / bottom only,
+  `offsetPolygon` by fit, Removes from `levelPlane`s; the piece itself drawn fit smaller and f lower (`assembledToBed`
+  maps the puzzle to each laid piece). Tests: libraryPuzzles (pure), engineLibraryPuzzles (pieces put back by
+  `assembledToBed` don't overlap; nudged, they do). open state in `mountainState.ts`, session only,
   never in the document): a real mountain as a 3D printed puzzle of interlocking cubes. Pure in `src/terrain/`: `osGrid.ts`
   (OS grid refs ↔ E/N, `gridToLatLon` = OS transverse Mercator inverse on Airy 1830 + Helmert to WGS84, ~5 m), `elevation.ts`
   (AWS open "Terrain Tiles", terrarium PNGs — `terrariumHeight`, Web Mercator `worldPixel`, zoom `TILE_ZOOM` 12 ≈ 20 m/px,

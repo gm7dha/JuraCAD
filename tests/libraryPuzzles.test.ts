@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { makeMaze, mazeSizes, openNeighbours, GROOVE_DEPTH } from "../src/library/designs/mazeBox";
 import { defaultValues, designGroups, findDesign } from "../src/library/insert";
 import { searchDesigns } from "../src/library/browse";
+import { AXIS, connected, contested, disassembly, fullStick, laidFlat, makeBurr, piecesFrom } from "../src/library/burr";
+import { burrLayout, cellOutlines } from "../src/library/designs/sixPieceBurr";
 
 describe("Cylinder maze box", () => {
   it("makes a perfect maze: every cell reached, no loops, the same maze for the same pattern", () => {
@@ -42,5 +44,48 @@ describe("Cylinder maze box", () => {
   it("is listed first in the 3D printing tab under Puzzles, and found by searching", () => {
     expect(designGroups("print")[0]).toMatchObject({ group: "Puzzles" });
     expect(searchDesigns("maze")[0].id).toBe("maze-box");
+  });
+});
+
+describe("Six-piece burr", () => {
+  it("knows the sticks and where they cross", () => {
+    for (let i = 0; i < 6; i++) expect(fullStick(i).length).toBe(32);
+    expect(contested().length).toBe(32);
+    expect(contested().filter((c) => c.by.length === 3).length).toBe(8);
+    // With some cubes no stick has, the rest may still be split in two: such sets are mended before being tried.
+    expect(piecesFrom(contested().map((c) => c.by[0])).every(connected)).toBe(false);
+  });
+
+  it("makes burrs that come apart at the chosen difficulty, the same for the same pattern", () => {
+    for (const [d, lo, hi] of [["easy", 1, 1], ["medium", 2, 3], ["hard", 4, 99]] as const)
+      for (const seed of [1, 2, 3]) {
+        const b = makeBurr(seed, d);
+        expect(b.level, `${d} ${seed}`).toBeGreaterThanOrEqual(lo);
+        expect(b.level).toBeLessThanOrEqual(hi);
+        expect(b.pieces.every(connected)).toBe(true);
+        // Checked again from scratch.
+        expect(disassembly(b.pieces)).toBe(b.level);
+        // No cube is in two pieces.
+        const all = b.pieces.flat().map((v) => v.join(","));
+        expect(new Set(all).size).toBe(all.length);
+      }
+    expect(makeBurr(4, "medium")).toEqual(makeBurr(4, "medium"));
+  });
+
+  it("lays every piece flat with all its cubes, turned to need the fewest bridges", () => {
+    const b = makeBurr(2, "hard");
+    b.pieces.forEach((p, i) => {
+      const l = laidFlat(p, AXIS[i]);
+      expect(l.cells.length).toBe(p.length);
+      for (const [a, u, w] of l.cells) expect([a >= 0 && a < 8, u === 0 || u === 1, w === 0 || w === 1]).toEqual([true, true, true]);
+    });
+    expect(burrLayout({ size: 20, difficulty: "hard", pattern: 2, fit: 0.2 }).laid.length).toBe(6);
+  });
+
+  it("outlines squares as loops round them", () => {
+    expect(cellOutlines([[0, 0], [1, 0], [1, 1]])).toEqual([[[0, 0], [2, 0], [2, 2], [1, 2], [1, 1], [0, 1]]]);
+    expect(cellOutlines([[0, 0], [3, 0]]).length).toBe(2);
+    // Squares touching only at a corner stay two loops of four corners each.
+    expect(cellOutlines([[0, 0], [1, 1]]).map((l) => l.length)).toEqual([4, 4]);
   });
 });

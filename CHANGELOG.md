@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.46 — Six-piece burr
+
+- New in the Design library under **Puzzles**: the **Six-piece burr**, the classic interlocking puzzle of six notched
+  square sticks. Every pattern number gives a different burr, and each one is checked to come apart (and so go back
+  together) before you get it: **Easy** (one piece slides straight out), **Medium** (2–3 moves before the first piece is
+  free) or **Hard** (4 or more). The summary says exactly how many moves it takes.
+- The pieces lie flat on the bed, each turned so as few cubes as possible have to bridge a gap. Choose the stick
+  thickness and the fit gap.
+
 ## v0.45 — Cylinder maze gift box
 
 - New in the Design library under **Puzzles**: the **Cylinder maze gift box**. A round box with a maze cut round its

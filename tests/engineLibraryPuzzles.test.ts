@@ -12,6 +12,8 @@ import { resolveVariables } from "../src/model/variables";
 import { defaultValues, findDesign, insertDesign } from "../src/library/insert";
 import type { DesignValues } from "../src/library/types";
 import { FLANGE, makeMaze, mazeSizes } from "../src/library/designs/mazeBox";
+import { assembledToBed, burrLayout } from "../src/library/designs/sixPieceBurr";
+import { disassembly, makeBurr } from "../src/library/burr";
 import { loadOpenCascade } from "./support/engineHelpers";
 
 let engine: GeometryEngine;
@@ -104,4 +106,57 @@ describe("Cylinder maze gift box", () => {
     }
     expect(checked).toBe(16);
   });
+});
+
+describe("Six-piece burr", () => {
+  /** Each piece's place in the assembled puzzle as a move + turn for the clash check (bed → assembled). */
+  function assembled(L: ReturnType<typeof burrLayout>, i: number) {
+    const o = assembledToBed(L, i, [0, 0, 0]);
+    const cols = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((e) => assembledToBed(L, i, e as [number, number, number]).map((v, k) => v - o[k]));
+    // R maps assembled → bed (columns = images of the axes); its transpose maps bed → assembled.
+    const M = [0, 1, 2].map((r) => [0, 1, 2].map((c) => cols[r][c]));
+    const position = [0, 1, 2].map((r) => -(M[r][0] * o[0] + M[r][1] * o[1] + M[r][2] * o[2])) as [number, number, number];
+    const tr = M[0][0] + M[1][1] + M[2][2];
+    let q: [number, number, number, number];
+    if (tr > 0) {
+      const s4 = Math.sqrt(tr + 1) * 2;
+      q = [(M[2][1] - M[1][2]) / s4, (M[0][2] - M[2][0]) / s4, (M[1][0] - M[0][1]) / s4, s4 / 4];
+    } else if (M[0][0] > M[1][1] && M[0][0] > M[2][2]) {
+      const s4 = Math.sqrt(1 + M[0][0] - M[1][1] - M[2][2]) * 2;
+      q = [s4 / 4, (M[0][1] + M[1][0]) / s4, (M[0][2] + M[2][0]) / s4, (M[2][1] - M[1][2]) / s4];
+    } else if (M[1][1] > M[2][2]) {
+      const s4 = Math.sqrt(1 + M[1][1] - M[0][0] - M[2][2]) * 2;
+      q = [(M[0][1] + M[1][0]) / s4, s4 / 4, (M[1][2] + M[2][1]) / s4, (M[0][2] - M[2][0]) / s4];
+    } else {
+      const s4 = Math.sqrt(1 + M[2][2] - M[0][0] - M[1][1]) * 2;
+      q = [(M[0][2] + M[2][0]) / s4, (M[1][2] + M[2][1]) / s4, s4 / 4, (M[1][0] - M[0][1]) / s4];
+    }
+    return { position, rotation: q };
+  }
+
+  for (const [difficulty, fit] of [["medium", 0.2], ["hard", 0]] as const)
+    it(`makes six sound pieces that fit together without overlapping (${difficulty}, fit ${fit})`, () => {
+      const values = { size: 20, difficulty, pattern: 3, fit };
+      const L = burrLayout(values);
+      expect(disassembly(makeBurr(3, difficulty).pieces)).toBe(L.level);
+      const { parts, volumes } = build("six-piece-burr", values);
+      expect(parts.length).toBe(6);
+      const U = L.unit;
+      parts.forEach((p, k) => {
+        const i = Number(p.id.match(/piece-(\d)$/)?.[1] ?? k);
+        const cubes = L.laid[i].length;
+        // Its cubes, less a fit's skin all round (a little more where notches bite in).
+        expect(volumes[p.id], p.id).toBeLessThanOrEqual(cubes * U ** 3 + 1e-6);
+        expect(volumes[p.id], p.id).toBeGreaterThan(cubes * U ** 3 - cubes * 6 * U * U * fit - 1);
+      });
+      const placed = parts.map((p) => {
+        const i = Number(p.id.match(/piece-(\d)$/)?.[1]);
+        return { id: `i${i}`, partId: p.id, name: p.name, ...assembled(L, i) };
+      });
+      const found = engine.clashes(placed, 0.001, false);
+      expect(found.reduce((n, c) => n + (c.volume ?? 0), 0)).toBeLessThan(1e-3);
+      // And a check that the check works: the same pieces, one moved a quarter of a cube into another, do overlap.
+      const nudged = placed.map((p, k) => (k === 0 ? { ...p, position: [p.position[0], p.position[1], p.position[2] + U / 4] as [number, number, number] } : p));
+      expect(engine.clashes(nudged, 0.001, false).reduce((n, c) => n + (c.volume ?? 0), 0)).toBeGreaterThan(1);
+    });
 });
