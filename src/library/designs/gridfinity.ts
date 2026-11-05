@@ -86,10 +86,10 @@ export const POCKET_STEPS: Step[] = [
   { z: PLATE_HEIGHT + 1, inset: -1 },
 ];
 
-const countOf = (v: DesignValues, k: string, lo = 1) => Math.max(lo, Math.round(num(v, k)));
+export const countOf = (v: DesignValues, k: string, lo = 1) => Math.max(lo, Math.round(num(v, k)));
 
 /** Area of a rounded rectangle (mm²). */
-const area = (w: number, h: number, r: number) => w * h - (4 - Math.PI) * r * r;
+export const area = (w: number, h: number, r: number) => w * h - (4 - Math.PI) * r * r;
 
 /**
  * Volume (mm³) between a stack of outlines (a rounded rectangle w × h, radius r, each step inset from it), between
@@ -110,7 +110,7 @@ export function stepsVolume(w: number, h: number, r: number, steps: Step[], lo =
 }
 
 /** A rounded rectangle centred on (cx, cy), as a sketch. */
-function roundedSketch(w: number, h: number, r: number, cx: number, cy: number, scope: Record<string, number>): SketchData {
+export function roundedSketch(w: number, h: number, r: number, cx: number, cy: number, scope: Record<string, number>): SketchData {
   const s = shapesSketch([{ type: "rectangle", center: [String(round6(cx)), String(round6(cy))], width: String(round6(w)), height: String(round6(h)) }], scope);
   return roundCorners(s, lit(round6(r)), scope);
 }
@@ -120,7 +120,7 @@ const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
  * A stack of rounded rectangles one above another (each on a level plane) and the ruled Loft through them. Returns
  * the sketches and the loft (`role` names them: "<role>-0"… and "<role>").
  */
-function steppedLoft(ctx: MakeContext, role: string, label: string, w: number, h: number, r: number, centre: [number, number], steps: Step[], operation: "add" | "remove"): Feature[] {
+export function steppedLoft(ctx: MakeContext, role: string, label: string, w: number, h: number, r: number, centre: [number, number], steps: Step[], operation: "add" | "remove"): Feature[] {
   const sketches = steps.map((s, i) => {
     const plane: SketchPlane = levelPlane(`${mm(s.z)} up`, s.z);
     return sketchFeature(ctx.id(`${role}-${i}`), `${label} outline ${i + 1}`, plane, roundedSketch(w - 2 * s.inset, h - 2 * s.inset, r - s.inset, centre[0], centre[1], ctx.scope));
@@ -129,7 +129,7 @@ function steppedLoft(ctx: MakeContext, role: string, label: string, w: number, h
 }
 
 /** Where the middle of the first cell is (the bin or baseplate centred on the origin). */
-const firstCell = (across: number, along: number): [number, number] => [(-GRID * (across - 1)) / 2, (-GRID * (along - 1)) / 2];
+export const firstCell = (across: number, along: number): [number, number] => [(-GRID * (across - 1)) / 2, (-GRID * (along - 1)) / 2];
 
 // ---------------------------------------------------------------------------------------------------------------
 // Baseplate
@@ -169,7 +169,7 @@ export const gridfinityBaseplate: LibraryDesign = {
   preview: (v) => cellsPreview(countOf(v, "across"), countOf(v, "along"), GRID, PLATE_RADIUS, GRID - 2 * 2.85, PLATE_RADIUS - 2.85),
 };
 
-function cellsPreview(n: number, m: number, cell: number, r: number, inner: number, ri: number): PreviewShape[] {
+export function cellsPreview(n: number, m: number, cell: number, r: number, inner: number, ri: number): PreviewShape[] {
   const out: PreviewShape[] = [{ kind: "poly", closed: true, points: roundedRect(GRID * n - (GRID - cell), GRID * m - (GRID - cell), r) }];
   const [x0, y0] = firstCell(n, m);
   for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) out.push({ kind: "poly", closed: true, faint: true, points: roundedRect(inner, inner, Math.max(0, ri), x0 + GRID * i, y0 + GRID * j) });

@@ -8,7 +8,7 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.41 — Mountain puzzle: a low base and chunkier tabs
+## v0.42 — Mountain puzzle: a low base and chunkier tabs
 
 - **Much less plain side under the mountain.** The bottom layer is now a thin jigsaw plate (about 4 mm) instead of a full
   cube, so the lowest ground sits only 10 mm above the bed. The layers above are full cubes as before, still locked
@@ -22,6 +22,18 @@ The point in the history for each version is the commit shown (see https://githu
 - New setting, **Side under the ground**, for how many mm of plain side to leave (10 by default).
 - The area boxes now say **km west to east** and **km south to north**, instead of "wide" and "tall".
 - The mountain puzzle is 3D printing only now: the laser version has been taken out of JuraCUT.
+
+## v0.41 — More 3D printing designs · commit `ebb89f0`
+
+- Ten more designs in the **Library**'s 3D printing tab:
+  - **Honeycomb wall tile** and clip-in **hook** and **bin** (Storage): honeycomb storage wall tiles with the same hole
+    layout and click-in fit as the popular HSW system, so its parts and ours mix.
+  - **Gridfinity magnet baseplate**, **bit / screwdriver holder bin** and **lite bin** (Gridfinity).
+  - **Pipe clip** (Fixings): snaps over a pipe; tells you if the grip would strain the plastic too much.
+  - **Charging phone stand** (Desk): the phone stands on a raised floor with a slanted slot for the charging plug
+    (set your plug's length) and the cable runs out of the back.
+  - **Spool holder on a 608 bearing** (Workshop), **funnel** and **door wedge** (Household), **cable tie anchor** (Desk)
+    and **box divider set** (Storage).
 
 ## v0.40 — Mountain puzzle: OpenStreetMap files · commit `976a36d`
 
