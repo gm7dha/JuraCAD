@@ -9,20 +9,20 @@ import { emptyDocument } from "../src/model/document";
 import { evaluate, setCurrentScope } from "../src/model/expr";
 import { MAIN_STUDIO } from "../src/model/studios";
 import { resolveVariables } from "../src/model/variables";
-import { defaultValues, designGroups, editInsert, findDesign, insertDesign, valueProblems } from "../src/library/insert";
+import { defaultValues, designGroups, editInsert, findDesign, insertDesign, laserDefaultsFor, valueProblems } from "../src/library/insert";
 import { searchDesigns } from "../src/library/browse";
 import { freedomOf } from "../src/library/sketchKit";
 import { lit } from "../src/library/ex";
 import { boxOf, insidePolygon, signedArea, type P2 } from "../src/library/outlines";
 import { panelPlace, panelShapes, shapeOf } from "../src/library/boxPanels";
 import { sectionOf } from "../src/library/sidePanels";
-import { BIRD_HOLES, birdBox, DRAIN, MIN_FLOOR, MIN_HOLE_HEIGHT } from "../src/library/designs/birdBox";
+import { BIRD_HOLES, birdBox, CLIMB, DRAIN, MIN_FLOOR, MIN_HOLE_HEIGHT, MIN_SHEET } from "../src/library/designs/birdBox";
 import { earringStand, HOLE_WEB, standGaps } from "../src/library/designs/earringStand";
 import { drawerBox, shelfOutline, sideSlots } from "../src/library/designs/drawerBox";
 import { DIVIDER_ROOM, penDividers, penHoles } from "../src/library/designs/penHolder";
-import { MIRROR_ROOM, MIN_TIP, sunburst } from "../src/library/designs/sunburstMirror";
+import { HANG, keyholeOutline, MIRROR_ROOM, MIN_TIP, pocketSlot, sunburst } from "../src/library/designs/sunburstMirror";
 import { bookStand } from "../src/library/designs/bookStand";
-import { coasterHolder, coasterStanding } from "../src/library/designs/coasterHolder";
+import { coasterHolder, coasterStanding, HEX_WALL_SHARE, WALL_SHARE } from "../src/library/designs/coasterHolder";
 import { tissueCover } from "../src/library/designs/tissueBox";
 import type { DesignValues } from "../src/library/types";
 
@@ -81,8 +81,31 @@ describe("bird box", () => {
 
   it("refuses a hole too low or a floor too small, as the RSPB advises", () => {
     expect(valueProblems(design("bird-box"), valuesOf("bird-box", { holeHeight: 110 }))[0]).toMatch(/at least 125 mm/);
-    expect(valueProblems(design("bird-box"), valuesOf("bird-box", { floorWidth: 90 }))[0]).toMatch(/at least 100 mm square/);
+    expect(valueProblems(design("bird-box"), valuesOf("bird-box", { floorWidth: 90 }))[0]).toMatch(/at least 100 mm/);
+    // The RSPB and BTO advise 15 mm timber; thinner than 6 mm sheet is refused.
+    expect(valueProblems(design("bird-box"), valuesOf("bird-box", { thickness: 4 }))[0]).toMatch(/at least 6 mm/);
+    expect(MIN_SHEET).toBe(6);
+    expect(design("bird-box").description).toMatch(/15 mm/);
+    expect(design("bird-box").description).toMatch(/north to east/);
     expect(valueProblems(design("bird-box"), valuesOf("bird-box", { bird: "house-sparrow", holeHeight: 125 }))).toEqual([]);
+  });
+
+  it("score lines across the inside of the front, so the young can climb out: clear of the fingers, up to below the hole", () => {
+    const bb = birdBox(valuesOf("bird-box"));
+    const [t, W] = [bb.b.t.v, bb.b.W.v];
+    expect(bb.climb.length).toBeGreaterThan(10);
+    for (const l of bb.climb) {
+      expect(l.x0).toBeCloseTo(t + CLIMB.side, 9);
+      expect(l.x1).toBeCloseTo(W - t - CLIMB.side, 9);
+      expect(l.z).toBeGreaterThanOrEqual(t + CLIMB.from - 1e-9);
+      expect(l.z).toBeLessThanOrEqual(bb.holeAt[1] - bb.hole / 2 - CLIMB.below + 1e-9);
+    }
+    for (let i = 1; i < bb.climb.length; i++) expect(bb.climb[i].z - bb.climb[i - 1].z).toBeCloseTo(CLIMB.pitch, 9);
+    // In the Front sketch, scored when it's saved for laser.
+    const r = insertDesign(emptyDocument(), design("bird-box"), valuesOf("bird-box"), { into: MAIN_STUDIO });
+    const front = r.doc.features.find((f) => f.name === "Front sketch")!;
+    expect(laserDefaultsFor(r.doc, front.id)).toEqual({ open: "score" });
+    expect(front.sketch!.data.curves.filter((c) => c.type === "line").length).toBeGreaterThan(bb.climb.length);
   });
 
   it("drainage holes sit in the floor, clear of the walls; the roof overhangs the front and its under-plate drops inside", () => {
@@ -175,14 +198,24 @@ describe("sunburst mirror", () => {
     expect(s.tip).toBeGreaterThan(MIN_TIP);
     expect(sunburst(valuesOf("sunburst-mirror", { mirrorThickness: 4 })).rings).toBe(2);
     expect(sunburst(valuesOf("sunburst-mirror", { mirrorThickness: 3 })).rings).toBe(1);
-    // The hanging hole is hidden behind the sun, between the mirror and the rings' edge.
-    expect(s.hang[1]).toBeGreaterThan(s.ringHole / 2 + 4);
-    expect(s.hang[1]).toBeLessThan(s.disc / 2 - 4);
+    // The keyhole and its pocket are hidden behind the sun, between the mirror's hole and the rings' edge, with sheet round them.
+    const pocket = pocketSlot(s.hang);
+    if (pocket.kind !== "slot") throw new Error("slot");
+    expect(pocket.a[1] - pocket.w / 2).toBeGreaterThanOrEqual(s.ringHole / 2 + HANG.web - 1e-9);
+    expect(pocket.b[1] + pocket.w / 2).toBeLessThanOrEqual(s.disc / 2 - HANG.web + 1e-9);
+    // The keyhole: the head's round opening below, the narrow slot above, all inside the pocket.
+    const key = keyholeOutline(s.hang);
+    const [x0, y0, x1, y1] = boxOf(key);
+    expect(x1 - x0).toBeCloseTo(HANG.head, 6);
+    expect(y1 - (s.hang[1] - HANG.head / 2)).toBeCloseTo(HANG.head / 2 + HANG.travel + HANG.shank / 2, 6);
+    expect(y0).toBeGreaterThan(pocket.a[1] - pocket.w / 2);
+    expect(y1).toBeLessThan(pocket.b[1] + pocket.w / 2);
+    expect(key.filter((p) => p[1] > s.hang[1] + HANG.head / 2).every((p) => Math.abs(p[0] - s.hang[0]) <= HANG.shank / 2 + 1e-6)).toBe(true);
   });
 
   it("refuses odd rays when alternating, and rays too sharp to cut", () => {
     expect(valueProblems(design("sunburst-mirror"), valuesOf("sunburst-mirror", { rays: 15 }))[0]).toMatch(/even number/);
-    expect(valueProblems(design("sunburst-mirror"), valuesOf("sunburst-mirror", { rays: 60 }))[0]).toMatch(/too sharp/);
+    expect(valueProblems(design("sunburst-mirror"), valuesOf("sunburst-mirror", { rays: 60, size: 290 }))[0]).toMatch(/too sharp/);
     expect(valueProblems(design("sunburst-mirror"), valuesOf("sunburst-mirror", { rays: 15, alternate: false }))).toEqual([]);
   });
 });
@@ -211,6 +244,10 @@ describe("coaster holder", () => {
     expect(right.centre[0] - left.centre[0] - h.a.t).toBeCloseTo(95 + 3, 6);
     expect(base.length).toBeCloseTo(95 + 3 + 6, 6);
     expect(coasterStanding("hexagon", 95).w).toBeCloseTo((2 * 95) / Math.sqrt(3), 5);
+    // Six-sided coasters are widest halfway up: their walls reach that far.
+    expect(coasterHolder(valuesOf("coaster-holder", { shape: "hexagon" })).a.pieces[1].length).toBeCloseTo(95 * HEX_WALL_SHARE, 6);
+    expect(HEX_WALL_SHARE).toBe(0.5);
+    expect(left.length).toBeCloseTo(95 * WALL_SHARE, 6);
   });
 });
 

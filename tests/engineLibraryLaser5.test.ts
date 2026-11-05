@@ -8,13 +8,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GeometryEngine } from "../src/kernel/engine";
 import type { PartMesh } from "../src/kernel/protocol";
 import type { LaserPath } from "../src/laser/laser";
-import { outlinePiece, type LaserOutline } from "../src/laser/sources";
+import { outlinePiece, sketchPiece, type LaserOutline } from "../src/laser/sources";
 import { createFeature, emptyDocument } from "../src/model/document";
 import { MAIN_STUDIO } from "../src/model/studios";
 import type { Feature, JuraCADDocument } from "../src/model/types";
 import { resolveVariables } from "../src/model/variables";
-import { defaultValues, findDesign, insertDesign } from "../src/library/insert";
-import { panelAreas, type BoxPanel, type PlateHole } from "../src/library/boxPanels";
+import { defaultValues, findDesign, insertDesign, laserDefaultsFor } from "../src/library/insert";
+import { holeArea, panelAreas, type BoxPanel, type PlateHole } from "../src/library/boxPanels";
 import { assemblyAreas } from "../src/library/sidePanels";
 import { signedArea, type P2 } from "../src/library/outlines";
 import { birdBox, birdHoles } from "../src/library/designs/birdBox";
@@ -22,7 +22,7 @@ import { drawerBox, shelfOutline, sideSlots } from "../src/library/designs/drawe
 import { penBox, penDividers, penHoles } from "../src/library/designs/penHolder";
 import { tissueCover, tissueSlot } from "../src/library/designs/tissueBox";
 import { earringStand } from "../src/library/designs/earringStand";
-import { HANG, sunburst } from "../src/library/designs/sunburstMirror";
+import { keyholeOutline, pocketSlot, sunburst } from "../src/library/designs/sunburstMirror";
 import { bookStand } from "../src/library/designs/bookStand";
 import { coasterHolder } from "../src/library/designs/coasterHolder";
 import type { DesignValues } from "../src/library/types";
@@ -80,6 +80,17 @@ function overlap(parts: PartMesh[], moved: string[] = [], shift: [number, number
   return found.filter(keep).reduce((n, c) => n + (c.volume ?? 0), 0);
 }
 
+const key = (a: string, b: string) => [a, b].sort().join(" + ");
+/** Every pair of parts that overlaps, and by how much. */
+function clashPairs(parts: PartMesh[]): Map<string, number> {
+  const found = engine.clashes(
+    parts.map((p) => ({ id: p.id, partId: p.id, name: p.id, position: [0, 0, 0] as [number, number, number], rotation: ID })),
+    0.001,
+    false,
+  );
+  return new Map(found.map((c) => [key(c.a, c.b), c.volume ?? 0]));
+}
+
 const okOf = (o: LaserOutline) => {
   if (!o.ok) throw new Error(o.error);
   return o;
@@ -121,7 +132,7 @@ function expectedAreas(id: string, v: DesignValues): Record<string, number> {
     }
     case "sunburst-mirror": {
       const s = sunburst(v);
-      return { back: circle(s.disc) - circle(HANG.d), ring: circle(s.disc) - circle(s.ringHole) - circle(HANG.d), front: area(s.sun) - circle(s.window) };
+      return { back: circle(s.disc) - area(keyholeOutline(s.hang)), ring: circle(s.disc) - circle(s.ringHole) - holeArea(pocketSlot(s.hang)), front: area(s.sun) - circle(s.window) };
     }
     default: {
       const a = id === "book-stand" ? bookStand(v).a : coasterHolder(v).a;
@@ -143,10 +154,21 @@ describe("every design of the fifth batch", () => {
       expect(overlap(r.parts)).toBeLessThan(0.01);
     });
 
-  it("with a kerf allowance the pieces are drawn bigger, so the joints grip", () => {
-    for (const id of ["bird-box", "earring-stand", "book-stand"]) {
+  it("with a kerf allowance every joint is drawn tight, so it grips: each pair of pieces that meets overlaps a little", () => {
+    const joints: [string, [string, string][]][] = [
+      ["bird-box", [["front", "bottom"], ["front", "left"], ["front", "right"], ["back", "bottom"], ["back", "left"], ["back", "right"], ["left", "bottom"], ["right", "bottom"]]],
+      ["earring-stand", [["plate-front", "plate-side"]]],
+      ["book-stand", ["base", "lip", "back"].flatMap((k): [string, string][] => [[k, "side-left"], [k, "side-right"]])],
+    ];
+    for (const [id, pairs] of joints) {
+      const at0 = build(insert(id));
+      expect(overlap(at0.parts), id).toBeLessThan(0.01);
       const r = build(insert(id, { kerf: 0.15 }));
-      expect(overlap(r.parts), id).toBeGreaterThan(0.5);
+      const found = clashPairs(r.parts);
+      for (const [a, b] of pairs) {
+        const v = found.get(key(role(r.parts, a).id, role(r.parts, b).id)) ?? 0;
+        expect(v, `${id}: ${a} and ${b}`).toBeGreaterThan(0.01);
+      }
     }
   });
 });
@@ -180,7 +202,12 @@ describe("bird box", () => {
     });
 
   it("Export for laser: the front's hole, the back's screw holes and the floor's drainage holes are blue", () => {
-    const r = build(insert("bird-box"));
+    const doc = insert("bird-box");
+    const r = build(doc);
+    // The Front sketch: its outline red, the hole blue, the climbing lines scored green.
+    const f = doc.features.find((x) => x.name === "Front sketch")!;
+    const piece = sketchPiece(f.name, f.sketch!.data, laserDefaultsFor(doc, f.id) ?? {});
+    expect(layers(piece.paths)).toEqual({ outer: 1, inner: 1, "score lines": birdBox(valuesOf("bird-box")).climb.length });
     expect(layers(partPiece(role(r.parts, "front").id).paths)).toEqual({ outer: 1, inner: 1 });
     expect(layers(partPiece(role(r.parts, "back").id).paths)).toEqual({ outer: 1, inner: 2 });
     expect(layers(partPiece(role(r.parts, "bottom").id).paths)).toEqual({ outer: 1, inner: 4 });
@@ -195,6 +222,14 @@ describe("bird box", () => {
   it("the roof sits on the walls with its under-plate just inside them; lifted it comes off, slid it's held", () => {
     const r = build(insert("bird-box"));
     const roof = [role(r.parts, "roof").id, role(r.parts, "roof-under").id];
+    const t = birdBox(valuesOf("bird-box")).b.t.v;
+    // Lifted clear of the walls (the under-plate is t deep), it comes right off, any way.
+    expect(overlap(r.parts, roof, [0, 0, t + 0.3])).toBeLessThan(0.001);
+    expect(overlap(r.parts, roof, [20, 0, t + 0.3])).toBeLessThan(0.001);
+    expect(overlap(r.parts, roof, [0, -20, t + 0.3])).toBeLessThan(0.001);
+    // Lifted only part way, the under-plate still stops it sliding off.
+    expect(overlap(r.parts, roof, [0.5, 0, t / 2])).toBeGreaterThan(0.01);
+    expect(overlap(r.parts, roof, [0, 0.5, t / 2])).toBeGreaterThan(0.01);
     expect(overlap(r.parts, roof, [0, 0, 0.3])).toBeLessThan(0.001);
     expect(overlap(r.parts, roof, [0.2, 0, 0])).toBeLessThan(0.001);
     expect(overlap(r.parts, roof, [0.5, 0, 0])).toBeGreaterThan(0.01);

@@ -12,8 +12,13 @@ import { assemblyFeatures, assemblyProblems, evenTabs, sectionOf, sideSlots, typ
 import { r6, type P2 } from "../outlines";
 import { mm, num } from "./common";
 
-/** The walls are this share of a coaster's height; the end plates this share above the base. */
+/**
+ * The walls are this share of a coaster's height — half for six-sided ones, which stand on a flat and are widest (at their
+ * side corners) halfway up, so the walls reach those corners; the end plates this share above the base.
+ */
 export const WALL_SHARE = 0.4;
+export const HEX_WALL_SHARE = 0.5;
+export const wallShare = (shape: string) => (shape === "hexagon" ? HEX_WALL_SHARE : WALL_SHARE);
 export const END_SHARE = 0.6;
 /** The finger notch in the end plates: this share of the coaster's width, down to this share of its height. */
 export const NOTCH = { width: 0.5, down: 0.35 };
@@ -41,7 +46,7 @@ export function coasterHolder(v: DesignValues): CoasterHolder {
   const inside = c.w + 2 * room;
   const baseLen = r6(inside + 2 * t);
   const floor = r6(m + t);
-  const wallH = r6(c.h * WALL_SHARE);
+  const wallH = r6(c.h * wallShare(String(v.shape)));
   const pieces: CrossPiece[] = [
     { role: "base", label: "Base", centre: [r6(m + baseLen / 2), r6(m + t / 2)], angle: 0, length: baseLen, tabs: evenTabs(baseLen) },
     { role: "wall-left", label: "Left wall", centre: [r6(m + t / 2), r6(floor + wallH / 2)], angle: 90, length: wallH, tabs: evenTabs(wallH, 1) },
@@ -53,7 +58,7 @@ export function coasterHolder(v: DesignValues): CoasterHolder {
   const nz = r6(floor + c.h * NOTCH.down);
   const cx = X / 2;
   const ch = Math.min(nw / 2, (top - nz) / 2);
-  // The end plate: a rectangle with a notch down from the middle of the top, its top corners cut off at 45°.
+  // The end plate: a rectangle with a notch down from the middle of its top edge; the notch's two top corners are cut off at 45°.
   const side: P2[] = [
     [0, 0],
     [X, 0],
@@ -74,7 +79,8 @@ export function coasterHolderProblems(v: DesignValues): string[] {
   const [t, kerf] = ["thickness", "kerf"].map((k) => num(v, k));
   if (kerf >= t / 2) return [`A kerf allowance of ${mm(kerf)} is a lot for ${mm(t)} sheet — lasers usually burn away 0.1–0.3 mm.`];
   const h = coasterHolder(v);
-  if (h.coaster.h * WALL_SHARE < 3 * t + 3) return [`The coasters are too small for walls with tabs: at least ${mm(Math.ceil((3 * t + 3) / WALL_SHARE))} across.`];
+  const share = wallShare(String(v.shape));
+  if (h.coaster.h * share < 3 * t + 3) return [`The coasters are too small for walls with tabs: at least ${mm(Math.ceil((3 * t + 3) / share))} across.`];
   return assemblyProblems(h.a, { "wall-left": "left wall", "wall-right": "right wall" });
 }
 

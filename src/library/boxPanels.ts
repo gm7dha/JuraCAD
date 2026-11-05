@@ -108,15 +108,17 @@ export function mapHole(h: PlateHole, map: (p: P2) => P2): PlateHole {
 
 /** One sketch: a closed outline and holes (circles and polygons), every size dimensioned (fully defined). */
 export function plateSketch(outline: P2[], holes: PlateHole[], scope: Record<string, number>): SketchData {
-  const poly = (p: P2[]) => outlineSketch(tidyPolygon(anticlockwise(round6(p))).map(([x, y]) => [lit(x), lit(y)]), scope);
+  return joinSketches(polySketch(outline, scope), ...holes.map((h) => holeSketch(h, scope)));
+}
+
+const polySketch = (p: P2[], scope: Record<string, number>) => outlineSketch(tidyPolygon(anticlockwise(round6(p))).map(([x, y]) => [lit(x), lit(y)]), scope);
+
+/** One hole as a sketch of its own (fully defined): a circle, a slot, or an outline. */
+export function holeSketch(h: PlateHole, scope: Record<string, number>): SketchData {
   const at = (p: P2) => [r6(p[0]), r6(p[1])];
-  const one = (h: PlateHole): SketchData =>
-    h.kind === "circle"
-      ? shapesSketch([{ type: "circle", center: at(h.c), diameter: r6(h.d) }], scope)
-      : h.kind === "slot"
-        ? shapesSketch([{ type: "slot", from: at(h.a), to: at(h.b), width: r6(h.w) }], scope)
-        : poly(h.points);
-  return joinSketches(poly(outline), ...holes.map(one));
+  if (h.kind === "circle") return shapesSketch([{ type: "circle", center: at(h.c), diameter: r6(h.d) }], scope);
+  if (h.kind === "slot") return shapesSketch([{ type: "slot", from: at(h.a), to: at(h.b), width: r6(h.w) }], scope);
+  return polySketch(h.points, scope);
 }
 
 const PLANE = (name: PlaneName) => ({ kind: "default", name }) as const;
@@ -128,6 +130,8 @@ export interface BoxBuild {
   panels: Partial<Record<BoxPanel, string>>;
   /** Holes per panel (true size, panel coordinates). */
   holes?: Partial<Record<BoxPanel, PlateHole[]>>;
+  /** Open lines per panel (panel coordinates): scored, not cut — a bird box's climbing grooves. Each end dimensioned. */
+  lines?: Partial<Record<BoxPanel, [P2, P2][]>>;
   /** Holes per panel given in its sketch's own coordinates instead (true size). */
   sketchHoles?: Partial<Record<BoxPanel, PlateHole[]>>;
   /** Moved this much after (the whole box). */
@@ -151,7 +155,8 @@ export function boxFeatures(ctx: MakeContext, box: BoxBuild): { features: Featur
     const role = `${pre}${panel}`;
     const holes = [...(box.holes?.[panel] ?? []).map((h) => mapHole(drawnHole(h, kerf), at.map)), ...(box.sketchHoles?.[panel] ?? []).map((h) => drawnHole(h, kerf))];
     const sk = ctx.id(`${role}-sketch`);
-    features.push(sketchFeature(sk, `${label} sketch`, PLANE(at.plane), plateSketch(shapeOf(shapes, panel).outline.map(at.map), holes, ctx.scope)));
+    const lines = (box.lines?.[panel] ?? []).map(([a, b]) => shapesSketch([{ type: "line", from: at.map(a).map(r6), to: at.map(b).map(r6) }], ctx.scope));
+    features.push(sketchFeature(sk, `${label} sketch`, PLANE(at.plane), joinSketches(plateSketch(shapeOf(shapes, panel).outline.map(at.map), holes, ctx.scope), ...lines)));
     features.push(extrudeFeature(ctx.id(role), label, sk, { depth: lit(t), operation: "new", flip: at.flip }));
     const move = { dx: (at.move.dx ?? 0) + (box.shift?.dx ?? 0), dy: (at.move.dy ?? 0) + (box.shift?.dy ?? 0), dz: (at.move.dz ?? 0) + (box.shift?.dz ?? 0) };
     const used = Object.fromEntries(Object.entries(move).filter(([, v]) => Math.abs(v) > 1e-9).map(([k, v]) => [k, lit(r6(v))]));

@@ -3512,8 +3512,8 @@ try {
     if (!/^7 pieces; a 25 mm hole/.test(birdSummary)) throw new Error(`the bird box's summary says "${birdSummary}"`);
     await page.getByRole("button", { name: "Insert", exact: true }).click();
     await page.waitForSelector(".tab.active >> text=Bird box", { timeout: 10_000 });
-    // Floor, front, back, two sides, roof and its under-plate; the roof 10 mm past each side of the 142 mm box.
-    await waitShown(7, 162, "the bird box didn't build its 7 pieces, 162 mm across the roof");
+    // Floor, front, back, two sides, roof and its under-plate; the roof 10 mm past each side of the 162 mm box.
+    await waitShown(7, 182, "the bird box didn't build its 7 pieces, 182 mm across the roof");
     if ((await shown()).errors) throw new Error(`the bird box has ${(await shown()).errors} feature problem(s)`);
     await tool("Laser");
     await page.waitForSelector(".laser-panel");
