@@ -11,7 +11,7 @@ import type { PartMesh } from "../kernel/protocol";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { useLaserPanel, type LaserChoice } from "./laserState";
-import { laserDefaultsFor } from "../library/insert";
+import { laserDefaultsFor, notCutParts } from "../library/insert";
 
 /** What the engine is asked for, for a choice (none for a sketch, which is read here). */
 export function laserSources(
@@ -21,13 +21,15 @@ export function laserSources(
   selectedParts: string[],
   hidden: string[],
   facing: (p: PartMesh) => [number, number, number] | null = () => null,
+  /** Parts left out of "every part" (a library design's living-hinge wall, cut from its flat sketch instead). */
+  notCut: readonly string[] = [],
 ): LaserSource[] {
   const whole = (p: PartMesh): LaserSource => {
     if (p.flat) return { kind: "flat", partId: p.id };
     const toward = facing(p);
     return toward ? { kind: "part", partId: p.id, toward } : { kind: "part", partId: p.id };
   };
-  if (choice === "all") return parts.filter((p) => !hidden.includes(p.id) && !p.surface).map(whole);
+  if (choice === "all") return parts.filter((p) => !hidden.includes(p.id) && !p.surface && !notCut.includes(p.id)).map(whole);
   if (choice.startsWith("flat:")) return [{ kind: "flat", partId: choice.slice(5) }];
   if (choice !== "selection") return [];
   const faces = selection
@@ -79,8 +81,8 @@ function LaserPanelBody() {
   }, [picked, st.source]);
 
   const sources = useMemo(
-    () => laserSources(st.source, parts, selection, selectedParts, hidden, (p) => partFacing(p.featureIds, features, (sk) => followedSketch(sk, links)?.plane ?? null)),
-    [st.source, parts, selection, selectedParts, hidden, features, links],
+    () => laserSources(st.source, parts, selection, selectedParts, hidden, (p) => partFacing(p.featureIds, features, (sk) => followedSketch(sk, links)?.plane ?? null), notCutParts(doc)),
+    [st.source, parts, selection, selectedParts, hidden, features, links, doc],
   );
   const [outlines, setOutlines] = useState<LaserOutline[]>(NONE);
   const [busy, setBusy] = useState(false);

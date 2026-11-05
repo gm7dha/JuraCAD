@@ -99,4 +99,20 @@ describe("laser library designs for Claude", () => {
     await call(again.s, "export_for_laser", { sketch: "Puzzle sketch", filename: "puzzle" });
     expect(readFileSync(join(again.folder, "puzzle.svg"), "utf8")).toBe(svg);
   });
+
+  it("insert a name puzzle, and export the board (a hole per letter) and a letter for laser", async () => {
+    const { s, folder } = newSession();
+    const r = await call(s, "insert_library_design", { design: "name-puzzle", sizes: { words: "SAM", height: 40, backing: false } });
+    expect(r.error).toBe(false);
+    expect(r.text).toMatch(/3 letter pieces/);
+    const board = await call(s, "export_for_laser", { parts: ["Name puzzle board"], filename: "board" });
+    expect(board.error).toBe(false);
+    expect(board.text).toMatch(/1 outer cut/);
+    expect(board.text).toMatch(/3 inner cuts/);
+    const letter = await call(s, "export_for_laser", { parts: ["Name puzzle letter A"], filename: "a" });
+    expect(letter.error).toBe(false);
+    expect(letter.text).toMatch(/1 outer cut/);
+    expect(letter.text).toMatch(/1 inner cut/);
+    expect(readFileSync(join(folder, "board.svg"), "utf8")).toContain("#FF0000");
+  });
 });

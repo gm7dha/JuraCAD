@@ -114,9 +114,9 @@ export function circularPatternFeature(id: string, name: string, sources: string
 }
 
 /** Move (and turn) a part where it is — no copy. Turns are about the part's own middle, then it's moved. */
-export function moveFeature(id: string, name: string, partId: string, move: { rx?: Ex; dx?: Ex; dy?: Ex; dz?: Ex }): Feature {
+export function moveFeature(id: string, name: string, partId: string, move: { rx?: Ex; ry?: Ex; rz?: Ex; dx?: Ex; dy?: Ex; dz?: Ex }): Feature {
   const params: Record<string, string> = {};
-  for (const k of ["rx", "dx", "dy", "dz"] as const) if (move[k]) params[k] = move[k]!.t;
+  for (const k of ["rx", "ry", "rz", "dx", "dy", "dz"] as const) if (move[k]) params[k] = move[k]!.t;
   return { ...base(id, name, "transform", "add", params), transform: { partId, axis: "z", about: "centre", copy: false } };
 }
 
