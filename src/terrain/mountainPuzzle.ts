@@ -19,6 +19,8 @@
 import { insideGap, offsetPolygon } from "../library/outlines";
 import { edgePolyline, makePuzzle, narrowestGap, MIN_GAP, NECK, SIZE_SPREAD, TAB_RISE, type Puzzle, type PuzzleEdge } from "../library/puzzle";
 import { heightAt, type HeightGrid } from "./elevation";
+import { groundMarks } from "./groundMarks";
+import { NO_FEATURES, type MapFeatures } from "./osm";
 import { triangulate, type P2 } from "./triangulate";
 
 export interface MountainSpec {
@@ -601,7 +603,7 @@ export function codeKeys(columns: { joins: (Key | null)[] }[], cols: number, row
 const columnName = (c: number): string => (c < 26 ? String.fromCharCode(65 + c) : columnName(Math.floor(c / 26) - 1) + String.fromCharCode(65 + (c % 26)));
 
 /** The whole puzzle from the heights of an area `areaWidth` × `areaHeight` m. Throws if `mountainChecks` has problems. */
-export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeight: number, spec: MountainSpec): MountainPuzzle {
+export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeight: number, spec: MountainSpec, features: MapFeatures = NO_FEATURES): MountainPuzzle {
   const layout = layoutFor(grid, areaWidth, areaHeight, spec);
   const checks = mountainChecks(spec, layout);
   if (checks.problems.length) throw new Error(checks.problems[0]);
@@ -611,10 +613,13 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const g = keySizes(spec);
   const base = baseFor(spec);
   const zOf = (h: number) => base + (h - layout.low) * k * spec.exaggeration;
-  const Z = (x: number, y: number) => zOf(heightAt(grid, layout.e0 + x / k, layout.n0 + y / k));
+  const plain = (x: number, y: number) => zOf(heightAt(grid, layout.e0 + x / k, layout.n0 + y / k));
+  // Paths, rivers, lochs and buildings from a map, pressed into the ground.
+  const marks = groundMarks(features, layout.e0, layout.n0, k, cols * cube, rows * cube, plain);
+  const Z = marks.empty ? plain : (x: number, y: number) => marks.apply(x, y, plain(x, y));
   const snowZ = spec.snowline === null ? Infinity : zOf(spec.snowline);
-  // Samples along each side of a top piece: about one per height-data point, 8 to 48.
-  const n = Math.min(48, Math.max(8, Math.ceil(cube / Math.max(0.6, grid.spacing * k))));
+  // Samples along each side of a top piece: about one per height-data point (finer for map marks), 8 to 48 (64).
+  const n = marks.empty ? Math.min(48, Math.max(8, Math.ceil(cube / Math.max(0.6, grid.spacing * k)))) : Math.min(64, Math.max(16, Math.ceil(cube / 0.45)));
   const thinnest = g.depth + 2;
 
   // How many whole cubes each column has under its top piece.
