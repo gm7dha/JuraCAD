@@ -25,10 +25,11 @@ import {
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { PEAKS } from "../terrain/peaks";
+import { blurred, greyFromRgba, photoGrid, photoReadSize, type PhotoPixels } from "../terrain/photoRelief";
 import { allPlatesZip, plate3mf, platesFor } from "../terrain/puzzle3mf";
 import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
-import { openMountain } from "./mountainState";
+import { openMountain, useMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
 import { loadPrinter, printerBed, savePrinter } from "./printerSetting";
 
@@ -81,8 +82,39 @@ function areaFrom(source: Source, peakId: string, ref: string, km: [number, numb
 
 const sameArea = (a: Area | null, b: Area | null) => !!a && !!b && a.sw.e === b.sw.e && a.sw.n === b.sw.n && a.width === b.width && a.height === b.height;
 
+/** Read a picture file into brightness, at most PHOTO_MAX_SIDE pixels a side. */
+async function readPhoto(file: File): Promise<{ url: string; pixels: PhotoPixels }> {
+  const url = await new Promise<string>((ok, fail) => {
+    const r = new FileReader();
+    r.onload = () => (typeof r.result === "string" ? ok(r.result) : fail(new Error("unreadable")));
+    r.onerror = () => fail(new Error("unreadable"));
+    r.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((ok, fail) => {
+    const i = new Image();
+    i.onload = () => ok(i);
+    i.onerror = () => fail(new Error("That file isn't a picture the browser can open. Try a JPEG or PNG."));
+    i.src = url;
+  });
+  const [w, h] = photoReadSize(img.naturalWidth, img.naturalHeight);
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("This browser couldn't read the picture.");
+  ctx.drawImage(img, 0, 0, w, h);
+  return { url, pixels: greyFromRgba(ctx.getImageData(0, 0, w, h).data, w, h) };
+}
+
 export function MountainPuzzleDialog() {
   const close = () => openMountain(false);
+  const kind = useMountain((s) => s.kind);
+  const photoMode = kind === "photo";
+  const [photo, setPhoto] = useState<{ name: string; url: string; pixels: PhotoPixels } | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [relief, setRelief] = useState(20);
+  const [invert, setInvert] = useState(false);
+  const [smooth, setSmooth] = useState(1);
   const [source, setSource] = useState<Source>("peak");
   const [peakId, setPeakId] = useState(PEAKS[0].id);
   const [ref, setRef] = useState("NN 166 712");
@@ -99,7 +131,7 @@ export function MountainPuzzleDialog() {
   const [snowOn, setSnowOn] = useState(true);
   const [snowline, setSnowline] = useState<number | null>(null);
 
-  const [loaded, setLoaded] = useState<{ area: Area; grid: HeightGrid } | null>(null);
+  const [mapLoaded, setLoaded] = useState<{ area: Area; grid: HeightGrid } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [puzzle, setPuzzle] = useState<MountainPuzzle | null>(null);
@@ -107,6 +139,14 @@ export function MountainPuzzleDialog() {
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
 
+  // A photo's heights depend on the puzzle's size (its relief is set in mm), so they're worked out again as that changes.
+  const photoLoaded = useMemo(() => {
+    if (!photoMode || !photo) return null;
+    const { width: w, height: h } = photo.pixels;
+    const grid = photoGrid(blurred(photo.pixels, smooth), { ...spec, bed, snowline: null }, relief, invert);
+    return { area: { sw: { e: 0, n: 0 }, width: w - 1, height: h - 1, name: photo.name }, grid };
+  }, [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, bed[0], bed[1]]);
+  const loaded = photoMode ? photoLoaded : mapLoaded;
   const area = areaFrom(source, peakId, ref, km, corners, osm);
   const features: MapFeatures = useMemo(() => (source === "osm" && osm ? featuresOnGrid(osm.data, detail) : NO_FEATURES), [source, osm, detail]);
   const areaReady = typeof area !== "string";
@@ -130,7 +170,7 @@ export function MountainPuzzleDialog() {
     }
   };
 
-  const fullSpec: MountainSpec = { ...spec, bed, snowline: snowOn ? snowline : null };
+  const fullSpec: MountainSpec = photoMode ? { ...spec, bed, exaggeration: 1, snowline: null } : { ...spec, bed, snowline: snowOn ? snowline : null };
   const layout = useMemo(() => (loaded ? layoutFor(loaded.grid, loaded.area.width, loaded.area.height, { ...spec, bed, snowline: null }) : null), [loaded, spec, bed[0], bed[1], bed[2]]);
   const checks = mountainChecks(fullSpec, layout ?? undefined);
 
@@ -191,9 +231,54 @@ export function MountainPuzzleDialog() {
   const snowParts = puzzle?.pieces.filter((p) => p.bodies.some((b) => b.part === "snow")).length ?? 0;
 
   return (
-    <Modal title="Mountain puzzle" onClose={close} width={980}>
+    <Modal title={photoMode ? "Photo relief puzzle" : "Mountain puzzle"} onClose={close} width={980}>
       <div className="mountain-layout">
         <div className="mountain-side">
+          {photoMode ? (
+            <>
+          <h3 className="library-heading">1. The picture</h3>
+          <label className="mountain-row">
+            <span>Picture</span>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setPhotoError(null);
+                readPhoto(file)
+                  .then(({ url, pixels }) => setPhoto({ name: file.name.replace(/\.[^.]+$/, "") || "Photo", url, pixels }))
+                  .catch((err) => setPhotoError(err instanceof Error ? err.message : String(err)));
+              }}
+            />
+          </label>
+          <p className="muted small">
+            Light parts stand high and dark parts low, like a lithophane. Faces, pets and bold logos work well; crop the picture to
+            what you want first.
+          </p>
+          {photoError && <p className="error-text small">{photoError}</p>}
+          <div className="mountain-row">
+            <span>Relief</span>
+            <span>
+              {numberBox(relief, setRelief, 1, 2, 150, "mm")}
+              <span className="muted small"> from the darkest part to the lightest</span>
+            </span>
+          </div>
+          <div className="mountain-row">
+            <span>Smoothing</span>
+            <select value={smooth} onChange={(e) => setSmooth(Number(e.target.value))}>
+              <option value={0}>None (sharpest)</option>
+              <option value={1}>A little</option>
+              <option value={2}>More</option>
+              <option value={4}>Lots</option>
+            </select>
+          </div>
+          <label className="mountain-check">
+            <input type="checkbox" checked={invert} onChange={(e) => setInvert(e.target.checked)} /> Dark parts high instead
+          </label>
+            </>
+          ) : (
+            <>
           <h3 className="library-heading">1. The mountain</h3>
           <div className="mountain-choices" role="radiogroup" aria-label="Where the mountain comes from">
             {(
@@ -295,6 +380,8 @@ export function MountainPuzzleDialog() {
           )}
           {error && <p className="error-text small">{error}</p>}
           {loaded && !fresh && areaReady && <p className="muted small">The area has changed — get the heights again to use it.</p>}
+            </>
+          )}
 
           <h3 className="library-heading">2. Size</h3>
           <label className="mountain-row">
@@ -336,10 +423,12 @@ export function MountainPuzzleDialog() {
               <span className="muted small"> plain side below the lowest ground; the bottom layer is a thin jigsaw plate</span>
             </span>
           </div>
-          <div className="mountain-row">
-            <span>Height stretch</span>
-            {numberBox(spec.exaggeration, (v) => set("exaggeration", v), 0.25, 0.25, 5, "×")}
-          </div>
+          {!photoMode && (
+            <div className="mountain-row">
+              <span>Height stretch</span>
+              {numberBox(spec.exaggeration, (v) => set("exaggeration", v), 0.25, 0.25, 5, "×")}
+            </div>
+          )}
           <div className="mountain-row">
             <span>Fit gap</span>
             <span>
@@ -354,6 +443,8 @@ export function MountainPuzzleDialog() {
             </span>
           </div>
 
+          {!photoMode && (
+            <>
           <h3 className="library-heading">3. Snow</h3>
           <div className="mountain-row">
             <span>Snow caps</span>
@@ -370,20 +461,28 @@ export function MountainPuzzleDialog() {
               colour.
             </p>
           )}
+            </>
+          )}
         </div>
 
         <div className="mountain-main">
           {!loaded ? (
             <div className="mountain-empty muted">
-              <p>Choose a mountain and press <strong>Get the heights</strong>.</p>
-              <p className="small">
-                Heights come free from Amazon's open Terrain Tiles (built on OS Terrain 50 and NASA data), about 20–30 m apart.
-              </p>
+              {photoMode ? (
+                <p>Choose a picture to make into a puzzle.</p>
+              ) : (
+                <>
+                  <p>Choose a mountain and press <strong>Get the heights</strong>.</p>
+                  <p className="small">
+                    Heights come free from Amazon's open Terrain Tiles (built on OS Terrain 50 and NASA data), about 20–30 m apart.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <>
               <div className="mountain-previews">
-                <TopView grid={loaded.grid} area={loaded.area} puzzle={puzzle} picture={source === "picture" ? picture : null} features={features} />
+                <TopView grid={loaded.grid} area={loaded.area} puzzle={puzzle} picture={photoMode ? photo?.url ?? null : source === "picture" ? picture : null} features={photoMode ? NO_FEATURES : features} />
                 <Mountain3D puzzle={puzzle} explode={explode} />
               </div>
               <label className="mountain-explode small">
@@ -403,9 +502,11 @@ export function MountainPuzzleDialog() {
                       {puzzle.layout.cols} × {puzzle.layout.rows} cubes, {puzzle.layers} {puzzle.layers === 1 ? "layer" : "layers"}, {total} pieces
                     </strong>{" "}
                     — finished {puzzle.layout.cols * spec.cube} × {puzzle.layout.rows * spec.cube} mm and{" "}
-                    {Math.round(Math.max(...puzzle.pieces.map((p) => p.z0 + p.height)))} mm tall; 1 mm is {Math.round(1 / puzzle.layout.k)} m of ground
-                    (1 : {Math.round(1000 / puzzle.layout.k).toLocaleString("en-GB")}). Ground from {Math.round(puzzle.layout.low)} m to{" "}
-                    {Math.round(puzzle.layout.high)} m, with {Math.round(baseFor(fullSpec))} mm of plain side under the lowest, on a {plateFor(fullSpec).toFixed(1)} mm jigsaw plate.
+                    {Math.round(Math.max(...puzzle.pieces.map((p) => p.z0 + p.height)))} mm tall;{" "}
+                    {photoMode
+                      ? `${relief} mm of relief over the picture`
+                      : `1 mm is ${Math.round(1 / puzzle.layout.k)} m of ground (1 : ${Math.round(1000 / puzzle.layout.k).toLocaleString("en-GB")}). Ground from ${Math.round(puzzle.layout.low)} m to ${Math.round(puzzle.layout.high)} m`}
+                    , with {Math.round(baseFor(fullSpec))} mm of plain side under the lowest, on a {plateFor(fullSpec).toFixed(1)} mm jigsaw plate.
                   </p>
                   <p className="muted">
                     Tabs' necks {puzzle.neck.toFixed(1)} mm; each piece sits on a square key about{" "}

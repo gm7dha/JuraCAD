@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.44 — Photo relief puzzle
+
+- New in the Design library under **Puzzles**: the **Photo relief puzzle**. Choose any picture — a face, a pet, a bold
+  logo — and it becomes the same interlocking-cube puzzle as the Mountain puzzle, with light parts standing high and dark
+  parts low, like a lithophane. Set the relief in mm, how much to smooth the picture, or make dark parts high instead.
+  Everything else (printer, scale, cube size, the low base, dovetails and coded keys, print plates) works as for mountains.
+
 ## v0.43 — Mountain puzzle moves into the Library
 
 - The **Mountain puzzle** now lives in the **Design library**, on the 3D printing tab under its own heading, **Puzzles**,
