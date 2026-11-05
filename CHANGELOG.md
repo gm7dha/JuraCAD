@@ -8,7 +8,7 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.40 — More 3D printing designs
+## v0.41 — More 3D printing designs
 
 - Ten more designs in the **Library**'s 3D printing tab:
   - **Honeycomb wall tile** and clip-in **hook** and **bin** (Storage): honeycomb storage wall tiles with the same hole
@@ -20,7 +20,20 @@ The point in the history for each version is the commit shown (see https://githu
   - **Spool holder on a 608 bearing** (Workshop), **funnel** and **door wedge** (Household), **cable tie anchor** (Desk)
     and **box divider set** (Storage).
 
-## v0.39 — Mountain puzzle: square keys, and every piece fits only its own place
+## v0.40 — Mountain puzzle: OpenStreetMap files
+
+- **Mountain puzzle:** a new way to choose the mountain, **An OpenStreetMap file**. On openstreetmap.org, zoom to the
+  mountain, press Export and save the .osm file; the puzzle takes its area from the file. The heights still come from the
+  height data (OpenStreetMap has none).
+- **From the map** chooses how much of the map goes onto the puzzle:
+  - **Just the area**;
+  - **Paths, rivers and lochs:** footpaths, tracks, rivers and streams become shallow rounded grooves in the ground
+    (0.5–0.8 mm deep), and lochs are set flat, a little below their shore;
+  - **Everything:** roads (wider grooves) and buildings (small raised blocks) too. Names are too small to print on the
+    ground, so they're left off here (JuraCUT's laser version engraves them).
+- The map's paths, rivers and lochs are drawn over the shaded map at the top of the window.
+
+## v0.39 — Mountain puzzle: square keys, and every piece fits only its own place · commit `672776d`
 
 - **Mountain puzzle:** the two thin pegs on top of each cube are replaced by one low, wide **square key** with sloping
   sides, and a matching sloped pocket underneath the piece above. Pieces drop into place and lift straight out again,

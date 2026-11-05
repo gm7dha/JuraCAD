@@ -143,3 +143,69 @@ export function gridToLatLon(p: GridPoint): LatLon {
   }
   return { lat: phi / rad, lon: Math.atan2(y2, x2) / rad };
 }
+
+/**
+ * Latitude/longitude on WGS84 (degrees, as in OpenStreetMap) → an OS grid position: the Helmert shift the other way
+ * (the same seven parameters, negated — good to a few millimetres), then transverse Mercator forwards on Airy 1830.
+ */
+export function latLonToGrid(p: LatLon): GridPoint {
+  const lat0 = p.lat * rad;
+  const lon0 = p.lon * rad;
+  // To cartesian on WGS84…
+  const a2 = 6378137;
+  const b2 = 6356752.314245;
+  const e2w = 1 - (b2 * b2) / (a2 * a2);
+  const nu2 = a2 / Math.sqrt(1 - e2w * Math.sin(lat0) ** 2);
+  const x1 = nu2 * Math.cos(lat0) * Math.cos(lon0);
+  const y1 = nu2 * Math.cos(lat0) * Math.sin(lon0);
+  const z1 = (1 - e2w) * nu2 * Math.sin(lat0);
+  // …Helmert WGS84 → OSGB36…
+  const [tx, ty, tz] = [-446.448, 125.157, -542.06];
+  const s = 20.4894e-6;
+  const sec = rad / 3600;
+  const [rx, ry, rz] = [-0.1502 * sec, -0.247 * sec, -0.8421 * sec];
+  const x2 = tx + (1 + s) * x1 - rz * y1 + ry * z1;
+  const y2 = ty + rz * x1 + (1 + s) * y1 - rx * z1;
+  const z2 = tz - ry * x1 + rx * y1 + (1 + s) * z1;
+  // …latitude/longitude on Airy 1830…
+  const a = 6377563.396;
+  const b = 6356256.909;
+  const e2 = 1 - (b * b) / (a * a);
+  const pxy = Math.hypot(x2, y2);
+  let lat = Math.atan2(z2, pxy * (1 - e2));
+  for (let i = 0; i < 6; i++) {
+    const nu1 = a / Math.sqrt(1 - e2 * Math.sin(lat) ** 2);
+    lat = Math.atan2(z2 + e2 * nu1 * Math.sin(lat), pxy);
+  }
+  const lon = Math.atan2(y2, x2);
+  // …and transverse Mercator onto the grid.
+  const F0 = 0.9996012717;
+  const latO = 49 * rad;
+  const lonO = -2 * rad;
+  const n = (a - b) / (a + b);
+  const [n2, n3] = [n * n, n * n * n];
+  const sin = Math.sin(lat);
+  const cos = Math.cos(lat);
+  const tan = Math.tan(lat);
+  const nu = (a * F0) / Math.sqrt(1 - e2 * sin * sin);
+  const rho = (a * F0 * (1 - e2)) / Math.pow(1 - e2 * sin * sin, 1.5);
+  const eta2 = nu / rho - 1;
+  const Ma = (1 + n + (5 / 4) * n2 + (5 / 4) * n3) * (lat - latO);
+  const Mb = (3 * n + 3 * n2 + (21 / 8) * n3) * Math.sin(lat - latO) * Math.cos(lat + latO);
+  const Mc = ((15 / 8) * n2 + (15 / 8) * n3) * Math.sin(2 * (lat - latO)) * Math.cos(2 * (lat + latO));
+  const Md = (35 / 24) * n3 * Math.sin(3 * (lat - latO)) * Math.cos(3 * (lat + latO));
+  const M = b * F0 * (Ma - Mb + Mc - Md);
+  const t2 = tan * tan;
+  const I = M - 100000;
+  const II = (nu / 2) * sin * cos;
+  const III = (nu / 24) * sin * cos ** 3 * (5 - t2 + 9 * eta2);
+  const IIIA = (nu / 720) * sin * cos ** 5 * (61 - 58 * t2 + t2 * t2);
+  const IV = nu * cos;
+  const V = (nu / 6) * cos ** 3 * (nu / rho - t2);
+  const VI = (nu / 120) * cos ** 5 * (5 - 18 * t2 + t2 * t2 + 14 * eta2 - 58 * t2 * eta2);
+  const dL = lon - lonO;
+  return {
+    e: 400000 + IV * dL + V * dL ** 3 + VI * dL ** 5,
+    n: I + II * dL ** 2 + III * dL ** 4 + IIIA * dL ** 6,
+  };
+}

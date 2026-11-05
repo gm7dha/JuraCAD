@@ -22,6 +22,7 @@ import {
   type MountainSpec,
 } from "../terrain/mountainPuzzle";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
+import { featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { PEAKS } from "../terrain/peaks";
 import { allPlatesZip, plate3mf, platesFor } from "../terrain/puzzle3mf";
 import { downloadFile, safeFileName } from "./download";
@@ -30,7 +31,14 @@ import { openMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
 import { loadPrinter, printerBed, savePrinter } from "./printerSetting";
 
-type Source = "peak" | "ref" | "picture";
+type Source = "peak" | "ref" | "picture" | "osm";
+
+/** What the three map choices put on a printed puzzle. */
+const DETAILS: [OsmDetail, string][] = [
+  ["area", "Just the area"],
+  ["water", "Paths, rivers and lochs"],
+  ["all", "Everything: roads and buildings too"],
+];
 
 interface Area {
   sw: GridPoint;
@@ -45,7 +53,13 @@ const blobOf = (bytes: Uint8Array, type: string) => new Blob([new Uint8Array(byt
 const SNOW = "#f3f5f9";
 
 /** The area the choices describe, or a plain-English reason why not. */
-function areaFrom(source: Source, peakId: string, ref: string, km: [number, number], corners: [string, string]): Area | string {
+function areaFrom(source: Source, peakId: string, ref: string, km: [number, number], corners: [string, string], osm: { name: string; data: OsmData } | null): Area | string {
+  if (source === "osm") {
+    if (!osm) return "Choose an OpenStreetMap file (.osm): on openstreetmap.org, zoom to the mountain, press Export and save the file.";
+    const a = osmArea(osm.data);
+    if (typeof a === "string") return a;
+    return areaProblem(a.sw, a.width, a.height) ?? { ...a, name: osm.name };
+  }
   if (source === "picture") {
     const a = parseGridRef(corners[0]);
     const b = parseGridRef(corners[1]);
@@ -74,6 +88,9 @@ export function MountainPuzzleDialog() {
   const [km, setKm] = useState<[number, number]>([5, 4]);
   const [picture, setPicture] = useState<string | null>(null);
   const [corners, setCorners] = useState<[string, string]>(["", ""]);
+  const [osm, setOsm] = useState<{ name: string; data: OsmData } | null>(null);
+  const [osmError, setOsmError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<OsmDetail>("water");
 
   const [printer, setPrinter] = useState(() => loadPrinter());
   const bed = printerBed(printer);
@@ -89,7 +106,8 @@ export function MountainPuzzleDialog() {
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
 
-  const area = areaFrom(source, peakId, ref, km, corners);
+  const area = areaFrom(source, peakId, ref, km, corners, osm);
+  const features: MapFeatures = useMemo(() => (source === "osm" && osm ? featuresOnGrid(osm.data, detail) : NO_FEATURES), [source, osm, detail]);
   const areaReady = typeof area !== "string";
   const fresh = areaReady && sameArea(loaded?.area ?? null, area);
 
@@ -125,7 +143,7 @@ export function MountainPuzzleDialog() {
     setWorking(true);
     const timer = setTimeout(() => {
       try {
-        setPuzzle(makeMountainPuzzle(loaded.grid, loaded.area.width, loaded.area.height, fullSpec));
+        setPuzzle(makeMountainPuzzle(loaded.grid, loaded.area.width, loaded.area.height, fullSpec, features));
         setBuildError(null);
       } catch (e) {
         setPuzzle(null);
@@ -136,7 +154,7 @@ export function MountainPuzzleDialog() {
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, specKey]);
+  }, [loaded, specKey, features]);
 
   const plates = useMemo(() => (puzzle ? platesFor(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2]]);
   const fileName = safeFileName(`${loaded?.area.name ?? "Mountain"} puzzle`, "Mountain puzzle");
@@ -147,6 +165,18 @@ export function MountainPuzzleDialog() {
       <span className="muted">{unit}</span>
     </span>
   );
+
+  const chooseOsm = (file: File | undefined) => {
+    if (!file) return;
+    setOsmError(null);
+    file
+      .text()
+      .then((text) => setOsm({ name: file.name.replace(/\.osm$/i, "").replace(/^map$/i, "My map") || "My map", data: readOsm(text) }))
+      .catch((e) => {
+        setOsm(null);
+        setOsmError(e instanceof OsmError ? e.message : "That file couldn't be read as an OpenStreetMap file.");
+      });
+  };
 
   const choosePicture = (file: File | undefined) => {
     if (!file) return;
@@ -170,6 +200,7 @@ export function MountainPuzzleDialog() {
                 ["peak", "A famous mountain"],
                 ["ref", "A grid reference"],
                 ["picture", "My OS map picture"],
+                ["osm", "An OpenStreetMap file"],
               ] as [Source, string][]
             ).map(([id, label]) => (
               <label key={id}>
@@ -195,7 +226,38 @@ export function MountainPuzzleDialog() {
               <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="NN 166 712" />
             </label>
           )}
-          {source !== "picture" && (
+          {source === "osm" && (
+            <>
+              <label className="mountain-row">
+                <span>Map file</span>
+                <input type="file" accept=".osm,.xml,application/xml,text/xml" onChange={(e) => chooseOsm(e.target.files?.[0])} />
+              </label>
+              <p className="muted small">
+                On openstreetmap.org, zoom to the mountain, press <strong>Export</strong> and save the .osm file (up to about 5 km
+                across). The heights still come from the height data; the map adds what's on the ground.
+              </p>
+              {osmError && <p className="error-text small">{osmError}</p>}
+              <label className="mountain-row">
+                <span>From the map</span>
+                <select value={detail} onChange={(e) => setDetail(e.target.value as OsmDetail)}>
+                  {DETAILS.map(([id, label]) => (
+                    <option key={id} value={id}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {osm && (
+                <p className="muted small">
+                  {detail === "area"
+                    ? "Just the area the map covers."
+                    : `${featureSummary(features)[0].toUpperCase()}${featureSummary(features).slice(1)}: paths and rivers become shallow grooves in the ground, lochs flat water${detail === "all" ? ", buildings small blocks" : ""}.`}
+                  {detail === "all" && " Names are too small to print on the ground, so they're left off (the laser version in JuraCUT engraves them)."}
+                </p>
+              )}
+            </>
+          )}
+          {(source === "peak" || source === "ref") && (
             <div className="mountain-row">
               <span>Area</span>
               <span>
@@ -313,7 +375,7 @@ export function MountainPuzzleDialog() {
           ) : (
             <>
               <div className="mountain-previews">
-                <TopView grid={loaded.grid} area={loaded.area} puzzle={puzzle} picture={source === "picture" ? picture : null} />
+                <TopView grid={loaded.grid} area={loaded.area} puzzle={puzzle} picture={source === "picture" ? picture : null} features={features} />
                 <Mountain3D puzzle={puzzle} explode={explode} />
               </div>
               <label className="mountain-explode small">
@@ -385,7 +447,7 @@ export function MountainPuzzleDialog() {
 }
 
 /** Top-down: the heights shaded (or your map picture), the piece grid, column letters and row numbers. */
-function TopView({ grid, area, puzzle, picture }: { grid: HeightGrid; area: Area; puzzle: MountainPuzzle | null; picture: string | null }) {
+function TopView({ grid, area, puzzle, picture, features }: { grid: HeightGrid; area: Area; puzzle: MountainPuzzle | null; picture: string | null; features: MapFeatures }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   useEffect(() => {
@@ -429,6 +491,22 @@ function TopView({ grid, area, puzzle, picture }: { grid: HeightGrid; area: Area
         }
       ctx.putImageData(pix, 0, 0);
     }
+    // The map's lochs, buildings and lines on top.
+    for (const shape of features.shapes) {
+      ctx.beginPath();
+      for (const ring of shape.rings) ring.forEach(([e, n], i) => (i ? ctx.lineTo(...toPx(e, n)) : ctx.moveTo(...toPx(e, n))));
+      ctx.fillStyle = shape.kind === "water" ? "rgba(60,120,200,0.8)" : "rgba(60,50,40,0.9)";
+      ctx.fill("evenodd");
+    }
+    for (const line of features.lines) {
+      ctx.beginPath();
+      line.pts.forEach(([e, n], i) => (i ? ctx.lineTo(...toPx(e, n)) : ctx.moveTo(...toPx(e, n))));
+      ctx.strokeStyle = line.kind === "river" || line.kind === "stream" ? "rgba(40,100,200,0.9)" : line.kind === "road" ? "rgba(200,60,40,0.9)" : "rgba(120,60,20,0.9)";
+      ctx.lineWidth = line.kind === "river" || line.kind === "road" ? 1.6 : 1;
+      ctx.setLineDash(line.kind === "path" ? [3, 2] : []);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
     if (!puzzle) return;
     const L = puzzle.layout;
     // Dim what's trimmed off, draw the cubes.
@@ -465,7 +543,7 @@ function TopView({ grid, area, puzzle, picture }: { grid: HeightGrid; area: Area
           const name = puzzle.pieces.find((p) => p.col === c && p.row === r)?.name.split("-")[0] ?? "";
           ctx.fillText(`${name}×${layers.get(`${c},${r}`) ?? 0}`, ax + c * cw + 3, by - r * ch - 4);
         }
-  }, [grid, area, puzzle, img]);
+  }, [grid, area, puzzle, img, features]);
   return (
     <figure className="mountain-figure">
       <canvas ref={ref} className="mountain-top" />
