@@ -251,9 +251,9 @@ describe("browsing the library", () => {
     // Every one has a heading, in the set order (the printed stamp with the household things).
     expect(groups.map((g) => g.group)).toEqual(GROUP_ORDER.print.filter((g) => designsIn("print").some((d) => d.group === g)));
     expect(groups.find((g) => g.group === "Household")!.designs.map((d) => d.id)).toContain("printed-stamp");
-    expect(groups.find((g) => g.group === "Fixings")!.designs.map((d) => d.id)).toEqual(["spacer", "bolt-set", "standoff", "thumb-knob"]);
+    expect(groups.find((g) => g.group === "Fixings")!.designs.map((d) => d.id)).toEqual(["spacer", "bolt-set", "standoff", "thumb-knob", "pipe-clip"]);
     expect(groups.find((g) => g.group === "Hinges")!.designs.map((d) => d.id)).toEqual(["hinge", "piano-hinge"]);
-    expect(groups.find((g) => g.group === "Workshop")!.designs.map((d) => d.id)).toEqual(["bit-holder", "pegboard-hook", "spool-holder", "hose-adapter", "french-cleat", "cable-chain"]);
+    expect(groups.find((g) => g.group === "Workshop")!.designs.map((d) => d.id)).toEqual(["bit-holder", "pegboard-hook", "spool-holder", "hose-adapter", "french-cleat", "cable-chain", "bearing-spool-holder"]);
     expect(groups.flatMap((g) => g.designs)).toHaveLength(designsIn("print").length);
     // Laser cutting keeps its headings in the order they're first used.
     const laser = designGroups("laser").map((g) => g.group);

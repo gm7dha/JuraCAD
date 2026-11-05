@@ -38,10 +38,12 @@ const LOOSE_LINES = new Set(["living-hinge", "gear", "ruler", "jigsaw", "hinge-b
 const PRINT3_IDS = ["gridfinity-baseplate", "gridfinity-bin", "sign", "battery-holder", "spool-holder", "headphone-hook", "plant-pot", "bag-clip", "thumb-knob", "hose-adapter", "card-holder"];
 /** The fourth batch of 3D printing designs (printDesigns4.ts), in order. */
 const PRINT4_IDS = ["enclosure", "french-cleat", "hinged-box", "desk-organiser", "cable-chain", "wall-pocket", "shelf-pins", "fit-test", "overhang-test", "bridge-test"];
+/** The fifth batch of 3D printing designs (printDesigns5.ts), in order. */
+const PRINT5_IDS = ["hsw-tile", "hsw-hook", "hsw-bin", "gridfinity-magnet-baseplate", "gridfinity-bit-holder", "gridfinity-lite-bin", "pipe-clip", "charging-stand", "bearing-spool-holder", "funnel", "door-wedge", "tie-anchor", "divider-set"];
 
 describe("the library", () => {
   it("has each design described, with an icon, inputs and working defaults", () => {
-    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS, "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS, ...PRINT4_IDS]);
+    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS, "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS, ...PRINT4_IDS, ...PRINT5_IDS]);
     for (const d of LIBRARY) {
       expect(d.name.length).toBeGreaterThan(3);
       expect(d.description.length).toBeGreaterThan(20);
@@ -262,7 +264,7 @@ describe("library sections", () => {
       ["print", "3D printing"],
     ]);
     expect(designsIn("laser").map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS]);
-    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS, ...PRINT4_IDS]);
+    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS, ...PRINT4_IDS, ...PRINT5_IDS]);
     expect(designsIn("laser").length + designsIn("print").length).toBe(LIBRARY.length);
     expect(categoryLabel("print")).toBe("3D printing");
     expect(categoryFrom("Laser cutting")).toBe("laser");
