@@ -7,7 +7,7 @@ import { searchWords } from "./browse";
 import type { DesignCategory } from "./types";
 
 export interface LibraryTool {
-  id: "mountain";
+  id: "mountain" | "photo";
   name: string;
   description: string;
   category: DesignCategory;
@@ -28,6 +28,15 @@ export const LIBRARY_TOOLS: readonly LibraryTool[] = [
     group: "Puzzles",
     words: "munro hill peak map terrain landscape jigsaw ben nevis snow openstreetmap os grid",
     icon: '<path d="M4 40 18 14l8 13 5-7 13 20z"/><path d="m13.5 23.5 4.5-9.5 4.6 7.5-2.8-1.6-2 1.8-2-1.7z" opacity=".55"/><path d="M4 40h40"/>',
+  },
+  {
+    id: "photo",
+    name: "Photo relief puzzle",
+    description: "Any picture — a face, a pet, a logo — as a 3D printed puzzle of interlocking cubes, light parts standing high.",
+    category: "print",
+    group: "Puzzles",
+    words: "picture image lithophane portrait relief jigsaw custom gift",
+    icon: '<rect x="5" y="9" width="38" height="30" rx="2"/><circle cx="17" cy="20" r="4"/><path d="m5 35 12-9 8 6 7-8 11 11"/>',
   },
 ];
 

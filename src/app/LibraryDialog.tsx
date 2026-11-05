@@ -233,7 +233,7 @@ export function LibraryDialog() {
   const foundTools = useMemo(() => searchTools(search), [search]);
   const openTool = (t: LibraryTool) => {
     close();
-    if (t.id === "mountain") openMountain();
+    openMountain(true, t.id);
   };
   const chooseTab = (t: DesignCategory) => {
     setTab(t);
