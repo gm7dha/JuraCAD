@@ -7,6 +7,19 @@ import { useStore } from "../model/store";
 import { APP_LABEL, LINK_CHANNEL, LinkEnd, siblingUrl, type Parcel, type Received } from "../link/juraLink";
 
 let link: LinkEnd | null = null;
+let opened: string | null | undefined;
+
+/** The parcel this tab was opened for (`?link=`), read once and then taken out of the address (React may start twice). */
+function openedFor(): string | null {
+  if (opened !== undefined) return opened;
+  const url = new URL(window.location.href);
+  opened = url.searchParams.get("link");
+  if (opened) {
+    url.searchParams.delete("link");
+    window.history.replaceState(null, "", url.toString());
+  }
+  return opened;
+}
 
 function randomId(): string {
   const bytes = new Uint8Array(12);
@@ -22,12 +35,7 @@ export function receiveParcel(p: Parcel): Received {
 /** Open the link (once). Does nothing where the browser has no BroadcastChannel. */
 export function startLink(): () => void {
   if (link || typeof BroadcastChannel === "undefined") return () => undefined;
-  const url = new URL(window.location.href);
-  const waitingFor = url.searchParams.get("link");
-  if (waitingFor) {
-    url.searchParams.delete("link");
-    window.history.replaceState(null, "", url.toString());
-  }
+  const waitingFor = openedFor();
   link = new LinkEnd({
     app: "juracad",
     waitingFor,
