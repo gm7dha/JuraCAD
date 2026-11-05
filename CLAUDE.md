@@ -912,8 +912,8 @@
   once lifted past its under-plate; the Front sketch's score lines; laser layers; a user's part untouched) and
   engineLibraryLaser5b (its own file for OCCT memory: drawers slide out and hit past c every other way, shelves held, tissue
   box/mirror/square coasters fit their holders with room, tabs hold), mcpLibraryLaser (a bird box inserted and exported);
-  the smoke test inserts a bird box and saves it for laser (7 red, 7 blue). JuraCUT needs twins of all eight (not ported;
-  its status is uncertain — the PR's porting table is for whenever it is).
+  the smoke test inserts a bird box and saves it for laser (7 red, 7 blue). JuraCUT has twins of all eight (its v0.10,
+  `src/library/laserSet5.ts`).
 - Mountain puzzle (toolbar "Mountain", `src/app/MountainPuzzleDialog.tsx`; open state in `mountainState.ts`, session only,
   never in the document): a real mountain as a 3D printed puzzle of interlocking cubes. Pure in `src/terrain/`: `osGrid.ts`
   (OS grid refs ↔ E/N, `gridToLatLon` = OS transverse Mercator inverse on Airy 1830 + Helmert to WGS84, ~5 m), `elevation.ts`

@@ -134,6 +134,7 @@ export const chargingStand: LibraryDesign = {
       if (p.slot - PHONE_ROOM < PLUG_THICKNESS) out.push(`The phone slot must be at least ${mm(PLUG_THICKNESS + PHONE_ROOM)} wide for a charging plug's slot: make it wider, or turn the cable slot off.`);
       if (p.channel.height > p.bar - 1.2) out.push(`The cable channel must be at least 1.2 mm lower than the base is thick: at most ${mm(p.bar - 1.2)}, or a thicker base.`);
       if (p.channel.width > p.plug.width) out.push("The cable channel can't be wider than the plug slot.");
+      if (p.pocket.height > p.floor - 1.2) out.push(`The plug is too short for a phone slot this wide at this angle: make the plug length at least ${mm(Math.ceil(p.plugLength + (p.pocket.height - p.floor + 1.2) / p.sin))}, or the slot narrower.`);
       if (p.plug.width > num(v, "width") - 10) out.push(`Make the stand at least ${mm(p.plug.width + 10)} wide, for the plug slot.`);
     }
     return out;

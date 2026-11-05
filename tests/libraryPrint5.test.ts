@@ -258,6 +258,16 @@ describe("the rest", () => {
     expect(design("charging-stand").inputs.find((i) => i.key === "angle")!.min).toBeGreaterThanOrEqual(45);
     expect(problems("charging-stand", { channelHeight: 6 })[0]).toMatch(/at most 4\.8 mm, or a thicker base/);
     expect(problems("charging-stand", { slot: 7 })[0]).toMatch(/at least 7\.5 mm wide for a charging plug/);
+    // A short plug in a wide slot, leaning far back: the cable's pocket would reach up through the phone's floor.
+    for (const angle of [45, 55]) {
+      const short = problems("charging-stand", { slot: 30, plugLength: 10, angle }).find((m) => /plug is too short/.test(m));
+      expect(short).toBeDefined();
+      const need = Number(/at least ([\d.]+) mm/.exec(short!)![1]);
+      expect(problems("charging-stand", { slot: 30, plugLength: need, angle }).some((m) => /plug is too short/.test(m))).toBe(false);
+      const ok = chargingPlan(valuesOf("charging-stand", { slot: 30, plugLength: need, angle }));
+      expect(ok.pocket.height).toBeLessThanOrEqual(ok.floor - 1.2);
+    }
+    expect(problems("charging-stand", {}).some((m) => /plug is too short/.test(m))).toBe(false);
     expect(problems("charging-stand", { angle: 45, back: 40 })[0]).toMatch(/tip it over backwards: make the back rest at least 78 mm long/);
   });
 
