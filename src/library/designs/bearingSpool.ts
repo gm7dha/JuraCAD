@@ -4,8 +4,8 @@
  * centring ring in the spool's hole. The bearing is pressed into the hub from underneath and slides over the pin. The
  * spool lies flat and turns as the printer pulls — good on a shelf above the printer or for a dry box.
  *
- * The press fit is the Print settings' kind (DEFAULT_FITS.press; "how much bigger than the thing that goes in to make
- * a hole"): the hub's pocket is 22 + fit across (printed holes come out a little small, so that grips the bearing) and
+ * The press fit is the usual one for a 0.4 mm nozzle (DEFAULT_FITS.press, 0.1 mm — Print settings' starting value;
+ * "how much bigger than the thing that goes in to make a hole"), changed here as the design's own variable: the hub's pocket is 22 + fit across (printed holes come out a little small, so that grips the bearing) and
  * the pin is 8 − fit (printed pins come out a little big). The shoulder (11 mm) touches only the bearing's inner ring
  * and lifts the hub 2 mm clear of the base; a ledge over the pocket (a 19.5 mm hole above it) sits on the outer ring
  * and prints as a short overhang. Both parts print as they're used: the base pin up, the hub ring up.
@@ -13,6 +13,7 @@
 import { DEFAULT_FITS } from "../../model/printSettings";
 import { lit, minus, over, plus, type Ex } from "../ex";
 import { extrudeFeature, shapesSketch, sketchFeature } from "../sketchKit";
+import { levelPlane, loftFeature } from "../printKit";
 import type { Feature } from "../../model/types";
 import type { DesignValues, LibraryDesign, MakeContext, PreviewShape } from "../types";
 import { mm, num, varsOf } from "./common";
@@ -24,6 +25,8 @@ export const BEARING = { outside: 22, bore: 8, width: 7 };
 export const SPOOL_BASE = { thickness: 4, shoulder: 11, lift: 2 };
 /** The hub: its plate's thickness, the centring ring's height above it, and the hole above the bearing. */
 export const SPOOL_HUB = { plate: 3, ring: 15, opening: 19.5 };
+/** The chamfer round the pocket's mouth (on the bed face), so the bearing starts in square and the first layer's squash doesn't grip it. */
+export const POCKET_CHAMFER = 0.5;
 /** Space between the two parts on the bed. */
 export const SPOOL_GAP = 10;
 
@@ -55,6 +58,10 @@ function makeSpool(ctx: MakeContext) {
     extrudeFeature(ctx.id("opening"), "Middle hole", ctx.id("opening-sketch"), { operation: "remove", end: "throughAll" }),
     sk("pocket-sketch", "Bearing pocket sketch", circle(hx, plus(lit(BEARING.outside), fit))),
     extrudeFeature(ctx.id("pocket"), "Bearing pocket", ctx.id("pocket-sketch"), { depth: lit(BEARING.width), operation: "remove" }),
+    // A 45° chamfer at the mouth: a cone from 1 mm wider below the bed to the pocket's size 0.5 mm up (so 0.5 at the face).
+    sketchFeature(ctx.id("chamfer-low"), "Pocket chamfer outline 1", levelPlane("0.5 mm below the bed", -POCKET_CHAMFER), shapesSketch([circle(hx, plus(lit(BEARING.outside + 4 * POCKET_CHAMFER), fit))], ctx.scope)),
+    sketchFeature(ctx.id("chamfer-high"), "Pocket chamfer outline 2", levelPlane(`${mm(POCKET_CHAMFER)} up`, POCKET_CHAMFER), shapesSketch([circle(hx, plus(lit(BEARING.outside), fit))], ctx.scope)),
+    loftFeature(ctx.id("chamfer"), "Pocket chamfer", [ctx.id("chamfer-low"), ctx.id("chamfer-high")], "remove"),
   ];
   return { features, partNames: { [baseId]: `${ctx.name}: base`, [hubId]: `${ctx.name}: hub` } };
 }
@@ -63,7 +70,7 @@ export const bearingSpoolHolder: LibraryDesign = {
   id: "bearing-spool-holder",
   name: "Spool holder on a bearing",
   description:
-    "A turntable for a reel of filament that spins smoothly on one 608 skateboard bearing: a round base with a pin, and a hub the spool lies on with a ring that fits its hole. Press the bearing into the hub (a vice or a gentle tap), drop it over the pin and lay the spool on. The bearing's fit comes from the press fit in Print settings. Both parts print flat, no supports.",
+    "A turntable for a reel of filament that spins smoothly on one 608 skateboard bearing: a round base with a pin, and a hub the spool lies on with a ring that fits its hole. Press the bearing into the hub (a vice or a gentle tap), drop it over the pin and lay the spool on. The bearing's fit starts at the usual press fit (0.1 mm), and you can change it if your printer makes holes tighter or looser. Both parts print flat, no supports.",
   category: "print",
   group: "Workshop",
   prefix: "turntable",
@@ -72,7 +79,7 @@ export const bearingSpoolHolder: LibraryDesign = {
     { key: "hole", label: "Spool hole", kind: "length", default: 53, min: 30, max: 110, variable: true, help: "Across the hole in the middle of your spools: most are 52–56 mm. The ring is 1 mm smaller." },
     { key: "hub", label: "Hub diameter", kind: "length", default: 100, min: 40, max: 200, variable: true, help: "The plate the spool lies on." },
     { key: "base", label: "Base diameter", kind: "length", default: 90, min: 30, max: 200, variable: true, help: "Wider is steadier." },
-    { key: "fit", label: "Press fit", kind: "length", default: DEFAULT_FITS.press, min: -0.2, max: 0.5, variable: true, help: `The pocket is 22 mm + this, the pin 8 mm − this. ${DEFAULT_FITS.press} mm is Print settings' press fit; more if the bearing won't go in.` },
+    { key: "fit", label: "Press fit", kind: "length", default: DEFAULT_FITS.press, min: -0.2, max: 0.5, variable: true, help: `The pocket is 22 mm + this, the pin 8 mm − this. ${DEFAULT_FITS.press} mm is the usual press fit for a 0.4 mm nozzle; more if the bearing won't go in.` },
   ],
   problems: (v) => {
     const [hole, hub] = VARS.map((k) => num(v, k));
@@ -106,6 +113,12 @@ export function bearingSpoolVolumes(v: DesignValues): { base: number; hub: numbe
   const T = SPOOL_BASE.thickness;
   return {
     base: disc(base, T) + disc(SPOOL_BASE.shoulder, SPOOL_BASE.lift) + disc(BEARING.bore - fit, BEARING.width),
-    hub: disc(hub, SPOOL_HUB.plate) + disc(hole - 1, SPOOL_HUB.ring) - disc(BEARING.outside + fit, BEARING.width) - disc(SPOOL_HUB.opening, SPOOL_HUB.plate + SPOOL_HUB.ring - BEARING.width),
+    hub:
+      disc(hub, SPOOL_HUB.plate) +
+      disc(hole - 1, SPOOL_HUB.ring) -
+      disc(BEARING.outside + fit, BEARING.width) -
+      disc(SPOOL_HUB.opening, SPOOL_HUB.plate + SPOOL_HUB.ring - BEARING.width) -
+      // The chamfer: ∫ π((r + c − z)² − r²) dz over the bottom c.
+      Math.PI * (((BEARING.outside + fit) / 2) * POCKET_CHAMFER ** 2 + POCKET_CHAMFER ** 3 / 3),
   };
 }

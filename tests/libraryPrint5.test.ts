@@ -14,14 +14,14 @@ import { defaultValues, designGroups, editInsert, findDesign, insertDesign, valu
 import { searchDesigns } from "../src/library/browse";
 import { freedomOf } from "../src/library/sketchKit";
 import { varsOf } from "../src/library/designs/common";
-import { CATCH_AT, FINGER_TOP, HSW, HSW_ROW, PLUG, PLUG_MID, plugStrain, RIDGE, SCREW_FILL, tilePlan } from "../src/library/designs/honeycomb";
+import { BUMP, BUMP_WIDTH, FINGER, flatHex, GROOVE_BACK, grooveOutline, HOLE_PROFILE, holeAt, HSW, HSW_COLUMN, HSW_PITCH, hswBinPlan, PLUG_HALF, plugStrain, RAIL, SCREW_FILL, tilePlan } from "../src/library/designs/honeycomb";
 import { FOOT_STEPS, MAGNET, POCKET_STEPS } from "../src/library/designs/gridfinity";
 import { FLOOR_TOP, holderPlan, liteFootSteps, magnetSpots, MAGNET_POCKET_STEPS } from "../src/library/designs/gridfinityMore";
 import { arcStrain, pipeClipPlan } from "../src/library/designs/pipeClip";
 import { funnelProfile } from "../src/library/designs/funnel";
 import { BEARING, SPOOL_BASE, SPOOL_HUB } from "../src/library/designs/bearingSpool";
 import { dividerPlaces, dividerPlan, SLOT_EXTRA } from "../src/library/designs/dividerSet";
-import { chargingPlan } from "../src/library/designs/chargingStand";
+import { BEND_ROOM, chargingPlan } from "../src/library/designs/chargingStand";
 import { tiePlan, wedgePlan } from "../src/library/designs/doorWedge";
 import { cantileverStrain, clipToBox, pointyHex, areaOf } from "../src/library/designs/printShapes";
 import type { DesignValues } from "../src/library/types";
@@ -45,45 +45,75 @@ describe("flat shapes", () => {
 });
 
 describe("Honeycomb Storage Wall", () => {
-  it("uses the HSW grid: 20 mm holes 23.6 mm apart, 8 mm thick, the clip step from 6 mm, 19.7 mm bodies and 22.5 mm lips", () => {
-    expect(HSW.pitch).toBeCloseTo(HSW.hole + 2 * HSW.wall, 9);
-    expect(HSW_ROW).toBeCloseTo(20.4382, 4);
+  it("uses the HSW grid: 20 mm holes flat top and bottom, 23.6 mm apart up a column, columns 20.44 mm apart", () => {
+    expect(HSW_PITCH).toBeCloseTo(HSW.hole + 2 * HSW.wall, 9);
+    expect(HSW_COLUMN).toBeCloseTo(20.4382, 4);
+    // Flat at the top and bottom: the corners point sideways.
+    const h = flatHex(20);
+    expect(h[0]).toEqual([20 / Math.sqrt(3), 0]);
+    expect(Math.max(...h.map((p) => p[1]))).toBeCloseTo(10, 9);
     // Neighbours' lips clear each other; a lip covers its hole.
-    expect(HSW.lip).toBeLessThan(HSW.pitch);
+    expect(HSW.lip).toBeLessThan(HSW_PITCH);
     expect(HSW.lip).toBeGreaterThan(HSW.hole);
-    // The screw cells' filling joins the walls but stays clear of the neighbours' clip steps.
-    expect(SCREW_FILL).toBeGreaterThan(HSW.recess);
-    expect(SCREW_FILL / 2).toBeLessThan(HSW.pitch - HSW.recess / 2);
+    // The screw cells' filling joins the walls but stays clear of the neighbours' holes.
+    expect(SCREW_FILL).toBeGreaterThan(22);
+    expect(SCREW_FILL / 2).toBeLessThan(HSW_PITCH - 22 / 2);
     const p = tilePlan(valuesOf("hsw-tile"));
-    expect([p.W, p.H]).toEqual([6 * 23.6, 6 * HSW_ROW]);
-    // 3 even rows of 6, 3 odd rows of 7 (two of them half holes at the ends).
+    expect([p.W, p.H]).toEqual([6 * HSW_COLUMN, 6 * 23.6]);
+    // 3 even columns of 6, 3 odd columns of 7 (half holes at both ends), staggered half a hole.
     expect(p.cells).toHaveLength(39);
-    expect(p.screws.map((c) => [c.i, c.j])).toEqual([[0, 0], [5, 0], [1, 5], [5, 5]]);
+    const [a, b] = [p.cells.find((c) => c.i === 0 && c.j === 0)!, p.cells.find((c) => c.i === 1 && c.j === 1)!];
+    expect(b.x - a.x).toBeCloseTo(HSW_COLUMN, 9);
+    expect(b.y - a.y).toBeCloseTo(HSW_PITCH / 2, 9);
+    expect(p.screws.map((c) => [c.i, c.j])).toEqual([[0, 0], [5, 1], [0, 5], [5, 5]]);
     expect(tilePlan(valuesOf("hsw-tile", { screws: "2" })).screws).toHaveLength(2);
-    expect(design("hsw-tile").summary!(valuesOf("hsw-tile"))).toMatch(/141\.6 mm × 122\.63 mm and 8 mm thick: 29 holes for inserts, 4 screw cells/);
+    expect(design("hsw-tile").summary!(valuesOf("hsw-tile"))).toMatch(/122\.63 mm × 141\.6 mm and 8 mm thick: 29 holes for inserts, 4 screw cells/);
   });
 
-  it("the inserts' plug fits the hole and its fingers catch behind the 6 mm front part, bending under 2%", () => {
-    // 0.15 mm each side in the hole.
-    expect(HSW.hole / 2 - PLUG.half).toBeCloseTo(0.15, 9);
-    // The ridges reach 0.4 mm past the hole's flats, and stay 0.6 mm clear inside the clip step.
-    expect(PLUG.half + RIDGE).toBeCloseTo(HSW.hole / 2 + 0.4, 9);
-    expect(HSW.recess / 2 - (PLUG.half + RIDGE)).toBeCloseTo(0.6, 9);
-    // The catch sits in the clip step (6…8 mm deep), just behind its start; the plug ends inside the wall.
-    expect(-CATCH_AT).toBeGreaterThan(HSW.recessFrom);
-    expect(-CATCH_AT).toBeLessThan(PLUG.length);
-    expect(PLUG.length).toBeLessThan(HSW.depth);
-    // The slots are wider than the fingers must bend, and the fingers stay on the plug's upright flats.
-    expect(PLUG.slot).toBeGreaterThan(PLUG.catchBy);
-    expect(FINGER_TOP + PLUG.slot).toBeLessThan(2 * PLUG_MID);
-    expect(plugStrain()).toBeCloseTo(1.5 * 1 * 0.4 / 5.85 ** 2, 9);
+  it("the holes have the HSW profile from the front: a lead-in, 20 mm to 5.1 deep, a taper to 22 at 6", () => {
+    expect(HOLE_PROFILE).toEqual([[0, 20.8], [0.5, 20], [5.1, 20], [6, 22], [8, 22]]);
+    expect(holeAt(0.25)).toBeCloseTo(20.4, 9);
+    expect(holeAt(3)).toBe(20);
+    expect(holeAt(5.55)).toBeCloseTo(21, 9);
+    expect(holeAt(7)).toBe(22);
+    // Run out 0.5 mm in front, the lead-in carries on at its slope.
+    expect(holeAt(-0.5)).toBeCloseTo(21.6, 9);
+  });
+
+  it("the inserts: a 19.7 mm plug, snap bumps like PStover's on the top and bottom flats, bending under 2%", () => {
+    expect(HSW.hole / 2 - PLUG_HALF).toBeCloseTo(0.15, 9);
+    // The bump's peak: 0.37 over the hole's flat, 5.75 behind the face, inside the taper (5.1–6.0) and clear of it.
+    expect(BUMP[1][1]).toBeCloseTo(HSW.hole / 2 + 0.37, 9);
+    expect(BUMP[1][0]).toBe(5.75);
+    for (let d = BUMP[0][0]; d <= BUMP[2][0]; d += 0.05) {
+      const r = d <= BUMP[1][0] ? BUMP[0][1] + ((BUMP[1][1] - BUMP[0][1]) * (d - BUMP[0][0])) / (BUMP[1][0] - BUMP[0][0]) : BUMP[1][1] + ((BUMP[2][1] - BUMP[1][1]) * (d - BUMP[1][0])) / (BUMP[2][0] - BUMP[1][0]);
+      expect(r).toBeLessThan(holeAt(d) / 2 + 1e-9);
+    }
+    // Both slopes under 45° from the plug's length, so it prints standing up and pulls out again.
+    expect((BUMP[1][1] - BUMP[0][1]) / (BUMP[1][0] - BUMP[0][0])).toBeLessThan(1);
+    expect((BUMP[1][1] - BUMP[2][1]) / (BUMP[2][0] - BUMP[1][0])).toBeLessThan(1);
+    // The fingers sit on the top and bottom flats (19.7 / √3 = 11.4 mm long), with their slots inside.
+    expect(FINGER.width / 2 + FINGER.slot).toBeLessThan(HSW.body / Math.sqrt(3) / 2);
+    expect(FINGER.slot).toBeGreaterThan(BUMP[1][1] - HSW.hole / 2);
+    expect(FINGER.width).toBeGreaterThan(BUMP_WIDTH);
+    expect(plugStrain()).toBeCloseTo((1.5 * 1 * 0.37) / 5.45 ** 2, 9);
     expect(plugStrain()).toBeLessThan(0.02);
-    expect(design("hsw-hook").summary!(valuesOf("hsw-hook"))).toMatch(/each bends in 0\.4 mm, stretching 1\.8%/);
+    expect(design("hsw-hook").summary!(valuesOf("hsw-hook"))).toMatch(/each bends in 0\.37 mm, stretching 1\.9%/);
+  });
+
+  it("the bin's groove is the rail with the fit all round, square to its 45° sides", () => {
+    const b = hswBinPlan(valuesOf("hsw-bin"));
+    const g = grooveOutline(valuesOf("hsw-bin"));
+    // At the bin's back face the groove is the rail's root + fit × √2 each side (the rail's 45° side moved out by the fit).
+    expect(b.mouth).toBeCloseTo(RAIL.root / 2 + DEFAULT_FITS.sliding * Math.SQRT2, 9);
+    expect(b.deep).toBeCloseTo(RAIL.height + DEFAULT_FITS.sliding, 9);
+    expect(g[2][0] - g[3][0]).toBeCloseTo(2 * (b.mouth + b.deep), 9);
+    expect(b.back).toBeGreaterThanOrEqual(b.deep + GROOVE_BACK - 1e-9);
   });
 
   it("refuses what wouldn't work", () => {
     expect(problems("hsw-hook", { tip: 8, arm: 7 })[0]).toMatch(/tip must stand at least 2 mm above the arm/);
-    expect(problems("hsw-bin", { depth: 12, wall: 4 })[0]).toMatch(/at least 14 mm deep/);
+    expect(problems("hsw-bin", { depth: 12, wall: 2 })[0]).toMatch(/deep, for room inside/);
   });
 });
 
@@ -132,12 +162,19 @@ describe("pipe clip", () => {
     expect(arcStrain(R, h, 0, Math.PI, s / 2)).toBeCloseTo((s * h) / (3 * Math.PI * R * R), 6);
     const p = pipeClipPlan(valuesOf("pipe-clip"));
     expect(p.opening).toBeCloseTo(22 * 0.78, 9);
-    expect(p.strain).toBeLessThan(0.02);
-    expect(p.strain).toBeGreaterThan(0.008);
+    // Held where its outside meets the plate, 24° round from the back: about 1.6% at the defaults.
+    expect(p.fixed).toBeCloseTo(Math.acos(p.centre / p.outer), 9);
+    expect((p.fixed * 180) / Math.PI).toBeCloseTo(24.2, 1);
+    expect(p.strain).toBeCloseTo(0.0157, 3);
+    // A root further round is stiffer: the same spread strains more.
+    expect(arcStrain(12, 2, 0.4, 2.5, 1)).toBeGreaterThan(arcStrain(12, 2, 0, 2.5, 1));
+    // 15 mm copper at the defaults would stretch 2.2%: refused; with less grip it's fine.
+    expect(problems("pipe-clip", { pipe: 15 })[0]).toMatch(/stretch 2\.2%/);
+    expect(problems("pipe-clip", { pipe: 15, grip: 15 })).toEqual([]);
     // The pipe sits half a wall off the plate, and the ring's back sinks half a wall into it.
     expect(p.centre - p.inner).toBeCloseTo(p.wall / 2, 9);
     expect(problems("pipe-clip", { grip: 35, wall: 5 })[0]).toMatch(/would have to stretch .*% to snap over the pipe/);
-    expect(problems("pipe-clip", { pipe: 6, grip: 8 })[0]).toMatch(/too nearly as wide/);
+    expect(problems("pipe-clip", { pipe: 6, grip: 8 })).toContain("The mouth is too nearly as wide as the pipe to hold it: use more grip.");
   });
 });
 
@@ -154,7 +191,7 @@ describe("the rest", () => {
     expect(problems("funnel", { top: 40, spout: 35 })[0]).toMatch(/at least 45 mm across/);
   });
 
-  it("spool holder: the 608's pocket and pin take the Print settings' press fit", () => {
+  it("spool holder: the 608's pocket and pin take the usual press fit", () => {
     expect(BEARING).toEqual({ outside: 22, bore: 8, width: 7 });
     expect(design("bearing-spool-holder").inputs.find((i) => i.key === "fit")!.default).toBe(DEFAULT_FITS.press);
     expect(design("bearing-spool-holder").summary!(valuesOf("bearing-spool-holder"))).toMatch(/pocket is 22\.1 mm across, the pin 7\.9 mm/);
@@ -178,15 +215,22 @@ describe("the rest", () => {
     expect(problems("divider-set", { across: 15, length: 60 })[0]).toMatch(/less than 5 mm wide/);
   });
 
-  it("charging stand: the plug slot sits in the phone's slot, the channel under a roof, the back rest printable", () => {
+  it("charging stand: the phone stands on a plinth the plug's length + 8 mm up, the plug slot in the phone's slot, and it doesn't tip", () => {
     const p = chargingPlan(valuesOf("charging-stand"));
+    expect(p.floor).toBe(22 + BEND_ROOM);
     expect(p.plug.from).toBeGreaterThan(0);
     expect(p.plug.to).toBeLessThan(p.slotFront);
     expect(p.channel.height).toBeLessThan(p.bar);
+    // The pocket where the cable turns stays inside the plinth (behind the back rest's foot there's only the base).
+    expect(p.pocket.from).toBeGreaterThan(p.foot);
+    expect(p.pocket.height).toBeLessThanOrEqual(p.floor - p.plugLength + 1e-9);
+    // A big phone's middle is over the base.
+    expect(p.phoneMiddle).toBeGreaterThan(p.rear + 5);
+    expect(chargingPlan(valuesOf("charging-stand", { cable: false })).floor).toBe(p.bar);
     // Leaning 45° or more from the table, its underside is at most 45° from upright.
     expect(design("charging-stand").inputs.find((i) => i.key === "angle")!.min).toBeGreaterThanOrEqual(45);
     expect(problems("charging-stand", { channelHeight: 6 })[0]).toMatch(/at most 4\.8 mm, or a thicker base/);
-    expect(problems("charging-stand", { slot: 6, angle: 85 })[0]).toBeDefined();
+    expect(problems("charging-stand", { angle: 45, back: 40 })[0]).toMatch(/tip it over backwards: make the back rest at least 78 mm long/);
   });
 
   it("door wedge and tie anchor", () => {
@@ -198,7 +242,8 @@ describe("the rest", () => {
     expect(t.screw).toEqual({ d: 4.5, head: 8.4 });
     expect(t.access).toBeCloseTo(9, 9);
     expect(tiePlan(valuesOf("tie-anchor", { screw: "M3" })).screw).toEqual({ d: 3.4, head: 6.4 });
-    expect(problems("tie-anchor", { size: 12 })[0]).toMatch(/at least 13 mm across/);
+    expect(problems("tie-anchor", { size: 15 })[0]).toMatch(/at least 17 mm across, so the tie runs under 4 mm of roof each side/);
+    expect(problems("tie-anchor", { size: 15, screw: "none" })).toEqual([]);
   });
 });
 
@@ -209,7 +254,7 @@ describe("every design of the fifth batch", () => {
     ["hsw-tile", { screws: "0" }],
     ["gridfinity-bit-holder", { shape: "round", size: 8, fit: 0.5, spacing: 14 }],
     ["gridfinity-lite-bin", { across: 1, wall: 1.2 }],
-    ["pipe-clip", { pipe: 15, screws: false }],
+    ["pipe-clip", { pipe: 15, grip: 15, screws: false }],
     ["charging-stand", { cable: false, angle: 50 }],
     ["door-wedge", { grip: false, hang: false }],
     ["tie-anchor", { screw: "none" }],

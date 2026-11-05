@@ -2,7 +2,7 @@
  * A set of dividers that slot together crosswise ("egg-crate") to split a box, drawer or toolbox into compartments:
  * dividers running along the box have slots down from the top, those across it slots up from the bottom, each a
  * little more than halfway, so they push together flush. Every divider prints lying flat (drawn on Top, `thickness`
- * up), laid out in a column. The compartments come out equal. Sizes are Edit design sizes (the slots follow them).
+ * up), laid out in a grid. The compartments come out equal. Sizes are Edit design sizes (the slots follow them).
  */
 import { lit } from "../ex";
 import { copyFeature, extrudeFeature, outlineSketch, sketchFeature } from "../sketchKit";
@@ -18,6 +18,11 @@ export const DIVIDER_ROOM = 0.5;
 export const DIVIDER_GAP = 5;
 /** How much more than half the height each slot goes, so the two meet with this much to spare. */
 export const SLOT_EXTRA = 0.25;
+
+/** How wide the layout on the bed may be (mm): most beds are 256. */
+export const LAYOUT_WIDTH = 240;
+/** How many dividers `len` long go side by side on the bed. */
+export const layoutColumns = (len: number, count: number) => Math.max(1, Math.min(count, Math.floor((LAYOUT_WIDTH + DIVIDER_GAP) / (len + DIVIDER_GAP))));
 
 /** Middles of `n` dividers `t` thick splitting `inside` into n + 1 equal spaces (from −inside/2). */
 export function dividerPlaces(inside: number, n: number, t: number): number[] {
@@ -102,28 +107,30 @@ export const dividerSet: LibraryDesign = {
     const p = dividerPlan(ctx.values);
     const features: Feature[] = [];
     const partNames: Record<string, string> = {};
-    const step = p.height + DIVIDER_GAP;
-    let row = 0;
-    const kinds: [string, string, number, number[], boolean, number][] = [
-      ["long", "Divider along", p.longLength, p.across ? p.xs : [], true, p.along],
-      ["cross", "Divider across", p.crossLength, p.along ? p.ys : [], false, p.across],
+    const kinds: [string, string, string, number, number[], boolean, number][] = [
+      ["long", "Divider along", "along", p.longLength, p.across ? p.xs : [], true, p.along],
+      ["cross", "Divider across", "across", p.crossLength, p.along ? p.ys : [], false, p.across],
     ];
-    for (const [role, name, len, at, fromTop, count] of kinds) {
+    // Laid out in a grid on the bed: as many side by side as fit in `LAYOUT_WIDTH`, then the next row.
+    let row = 0;
+    for (const [role, name, word, len, at, fromTop, count] of kinds) {
       if (!count) continue;
+      const cols = layoutColumns(len, count);
       const first = ctx.id(`${role}1`);
-      const y0 = row * step;
+      const y0 = row * (p.height + DIVIDER_GAP);
       const outline = dividerOutline(len, p.height, at, p.slot, p.depth, fromTop, y0);
       features.push(
         sketchFeature(ctx.id(`${role}-sketch`), `${name} sketch`, TOP, outlineSketch(outline.map(([x, y]) => [lit(x), lit(y)]), ctx.scope)),
         extrudeFeature(first, `${name} 1`, ctx.id(`${role}-sketch`), { depth: lit(p.t), operation: "new" }),
       );
-      partNames[first] = `${ctx.name}: ${role === "long" ? "along" : "across"} 1`;
+      partNames[first] = `${ctx.name}: ${word} 1`;
       for (let i = 1; i < count; i++) {
         const id = ctx.id(`${role}${i + 1}`);
-        features.push(copyFeature(id, `${name} ${i + 1}`, first, { dy: lit(i * step) }));
-        partNames[id] = `${ctx.name}: ${role === "long" ? "along" : "across"} ${i + 1}`;
+        const [c, r] = [i % cols, Math.floor(i / cols)];
+        features.push(copyFeature(id, `${name} ${i + 1}`, first, { dx: lit(c * (len + DIVIDER_GAP)), dy: lit(r * (p.height + DIVIDER_GAP)) }));
+        partNames[id] = `${ctx.name}: ${word} ${i + 1}`;
       }
-      row += count;
+      row += Math.ceil(count / cols);
     }
     return { features, partNames };
   },

@@ -397,7 +397,7 @@
   (`gh api repos/gm7dha/JuraCAD/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → glossy finish (the colour popover wholly inside the window at 1180 × 760, short and narrow sizes) → save a 2× see-through picture → section view → check → export STL, STEP and 3MF → Laser: click the top face, save SVG (40 × 30 mm, blue hole, red outline) and DXF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → the STL again with Simplify on (the summary shows, fewer faces), undo → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, make a copy flexible (nothing jumps), undo, double-click opens it → add a second Part Studio with a box (and, on a page of its own, three studios: one dragged to the front, one moved with Move right, Part Studio 1 deleted — the question names the assembly using it — and undone) → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → a view of another part with a projected top view (lined up), auto-dimensioned, then removed → draw the assembly exploded (parts list) → sheet metal from a part (a shelled box in a new Part Studio: its walls clicked one at a time from views that see them, a rip clicked, three more added, Accept: 4 bends); Design library: a finger-joint box inserted (6 panels, 140 mm) and widened to 170 mm in Variables, then a box with lid from the 3D printing tab (2 parts), then a bolt, nut and washer set found by searching, then a stencil of HELLO exported for laser (1 red outline, 5 blue holes), a 12-piece jigsaw's sketch (1 red, 17 blue) and a dice tower found by searching, all its parts saved for laser (7 red outlines, 20 blue slots), and a Honeycomb wall tile found by searching (1 part, 141.6 mm); a touch screen (an iPad-sized page with `hasTouch`, fingers sent through CDP `Input.dispatchTouchEvent`: pinch zooms the 3D view and not the page, double-tap fits, a tap selects a face, in a sketch two fingers pan and draw nothing, a one-finger drag draws a line); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → glossy finish (the colour popover wholly inside the window at 1180 × 760, short and narrow sizes) → save a 2× see-through picture → section view → check → export STL, STEP and 3MF → Laser: click the top face, save SVG (40 × 30 mm, blue hole, red outline) and DXF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → the STL again with Simplify on (the summary shows, fewer faces), undo → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, make a copy flexible (nothing jumps), undo, double-click opens it → add a second Part Studio with a box (and, on a page of its own, three studios: one dragged to the front, one moved with Move right, Part Studio 1 deleted — the question names the assembly using it — and undone) → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → a view of another part with a projected top view (lined up), auto-dimensioned, then removed → draw the assembly exploded (parts list) → sheet metal from a part (a shelled box in a new Part Studio: its walls clicked one at a time from views that see them, a rip clicked, three more added, Accept: 4 bends); Design library: a finger-joint box inserted (6 panels, 140 mm) and widened to 170 mm in Variables, then a box with lid from the 3D printing tab (2 parts), then a bolt, nut and washer set found by searching, then a stencil of HELLO exported for laser (1 red outline, 5 blue holes), a 12-piece jigsaw's sketch (1 red, 17 blue) and a dice tower found by searching, all its parts saved for laser (7 red outlines, 20 blue slots), and a Honeycomb wall tile found by searching (1 part, 122.63 mm); a touch screen (an iPad-sized page with `hasTouch`, fingers sent through CDP `Input.dispatchTouchEvent`: pinch zooms the 3D view and not the page, double-tap fits, a tap selects a face, in a sketch two fingers pan and draw nothing, a one-finger drag draws a line); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.
@@ -773,35 +773,43 @@
   a user's part untouched), mcpLibraryPrint4 (a cleat and shelf); the smoke test searches "raspberry" and inserts the
   enclosure (2 parts, 108 mm).
   Fifth print batch (`printDesigns5.ts` `PRINT_DESIGNS_5`, appended after the fourth; existing headings only). Shared pure
-  helpers `designs/printShapes.ts` (`pointyHex`, `clipToBox` Sutherland–Hodgman, `areaOf`, outline/rect/circle shapes,
-  `cantileverStrain` = 1.5·t·δ/L², `SNAP_STRAIN` 2%). Honeycomb Storage Wall (`honeycomb.ts`, Storage, no variables; numbers
-  from the HSW-GENERATOR README's geometry table and DDD discussion #85, cited there): holes 20 across flats, 1.8 wall each
-  side → pitch 23.6, rows 23.6·√3/2, 8 thick, 22 from 6 deep (we put the wider part at the back as the clip step), inserts
-  19.7 body + 22.5 lip; hexagons pointy-top as hung (rows staggered), so an insert's side flats are upright. Tile N × M
-  (`tilePlan`: W = N·pitch, H = M·row; odd rows have half holes at the ends; front on the bed; one hole + one clip step per
-  row parity, grid-patterned; screw cells refilled with a 22.4 hex clipped to the tile and drilled up from the bed). Inserts
-  print standing as used (x across, y out of the wall, z up; plug y = −7.5…0 from the Front plane): plug = the 19.7 hex cut
-  flat at the bed (`plugOutline`, middle `PLUG_MID` up), two inverted-L slots (on a `fixedPlane` 0.3 behind the face) free
-  1 mm upright fingers, ridges (Top, 45° lead-in) reach 0.4 past the hole, catch 0.15 behind the 6 mm narrow part
-  (`plugStrain` 1.75%); hook = lip + Right-plane arm along the bed with an upturned tip; bin = an open box from y = 0 (its back
-  is the lip). Gridfinity (`gridfinityMore.ts`, reusing gridfinity.ts's now-exported `steppedLoft`/`roundedSketch`/`firstCell`/
-  `area`): magnet baseplate = the open pocket raised onto a floor (`FLOOR_TOP` = 2.4 + 1) with 4 × 6.5 × 2.4 pockets at ±13
-  cut down from it (bins rest at FLOOR_TOP); bit/screwdriver holder = bin body + feet, hex or round holes down from the top,
-  as many as fit at the spacing; lite bin = walls 0.8–1.2, feet hollowed by `liteFootSteps` (the foot steps offset square to
-  each face; top step + 0.05 so no faces coincide with the inside). Pipe clip (`pipeClip.ts`, Fixings, Edit design sizes):
-  Top profile `width` up, base y = −base…0, ring centre half a wall above the plate, mouth = pipe × (1 − grip %), holes from
-  the Front plane flipped; `arcStrain` (curved cantilever from the plate, Castigliano; equals Roark's s·h/(3πR²) for a free
-  ring) ≤ 2%. Charging stand (`chargingStand.ts`, Desk; the fixed-angle choice over a hinged one): standProfile on the Right
-  plane printed upright (angle ≥ 45°), plug slot through the floor + a cable channel under a roof out of the back; width is the
-  only variable. Spool holder on a 608 (`bearingSpool.ts`, Workshop): base + 11 mm shoulder + pin 8 − fit, hub beside it with
-  a 22 + fit pocket under a 19.5 ledge and a centring ring; `fit` defaults to `DEFAULT_FITS.press`. Funnel (Household): 45°
-  revolved profile, inside offset square to the cone (`RISE` = √2 − 1 to 6 places). Door wedge (Household, width a variable;
-  V grip grooves in its side outline, hang hole through all) and cable tie anchor (Desk: tunnel on Right, screw access + a
-  countersunk hole from a level plane at the tunnel floor; M3/M4 from the fastener table). Box divider set (Storage):
-  egg-crate dividers flat on the bed, slots t + fit, each half + 0.25. Tests: tests/libraryPrint5 (pure), engineLibraryPrint5
-  (volumes; inserts in a tile's hole free ±0.1, caught pulled 0.3, stopped pushed 0.1; magnet probes in the pockets; bins
-  in the magnet plate; pipe free ±0.18 and held; the bearing ± fit/2 on its pin and in its hub; dividers crossing; a
-  user's part untouched), mcpLibraryPrint5; the smoke test searches "honeycomb" and inserts the tile (1 part, 141.6 mm).
+  helpers `designs/printShapes.ts` (`clipToBox` Sutherland–Hodgman, `areaOf`, outline/rect/circle shapes, `cantileverStrain` =
+  1.5·t·δ/L², `SNAP_STRAIN` 2%). Honeycomb Storage Wall (`honeycomb.ts`, Storage, no variables; numbers from bigtaed-sys/
+  hsw-generator's constants.ts/lattice.ts and PStover's standard insert, measured from its mesh in that repo, cited there):
+  holes 20 across flats, FLAT TOP AND BOTTOM (`flatHex`, corners along x), 23.6 apart up a column, columns 23.6·√3/2 = 20.44
+  apart, odd columns half a hole up (half holes at their ends); `HOLE_PROFILE` from the front face: 20.8 at the face, 20 from
+  0.5 to 5.1, taper to 22 at 6.0, 22 to the back (8) — `holeAt`; the tile prints face down, each column parity's hole a ruled
+  Loft of `flatHex` sections + grid pattern; screw cells refilled with a clipped 22.4 hex, drilled up from the bed; `tileVolume`
+  integrates the clipped areas (Simpson). Inserts print standing on the plug's end (z up; wall face at `FACE_Z` 7.5, lip 22.5 ×
+  3 above, overhanging 1.4): plug = 19.7 flat hex, two Π slots (from a level plane below the bed up to 0.3 behind the face)
+  free 1 mm fingers on the top and bottom flats, `BUMP` (PStover's: 9.85 at 5.0 → 10.37 at 5.75 → 9.85 at 6.3 behind the face,
+  slopes < 45°, inside the taper when seated) on Right extruded `BUMP_WIDTH` 7; `plugStrain` 1.87%. Hook: Right-plane arm up
+  from the lip along the plug's bottom, 45° brace and a 45° tip. Bin: two parts — the insert + a dovetail `RAIL` (45° sides,
+  Front, symmetric 18 long) whose top end is cut at 45° (`railEndOutline`), and a bin printed upright whose back groove
+  (rail + fit square to every face, `grooveOutline`) is open at the bottom and closed by a 45° roof (a ruled Loft to 0 depth at
+  the back face, `roofFoot`…`roofTop`); hung, the roof sits fit × √2 above the rail's end (`hangsBelow`). Gridfinity
+  (`gridfinityMore.ts`, reusing gridfinity.ts's now-exported `steppedLoft`/`roundedSketch`/`firstCell`/`area`): magnet
+  baseplate = the open pocket raised onto a floor (`FLOOR_TOP` = 2.4 + 1) with 4 × 6.5 × 2.4 pockets at ±13 cut down from it
+  (bins rest at FLOOR_TOP; magnets glued, the pockets are loose); bit/screwdriver holder = bin body + feet, hex or round holes
+  down from the top; lite bin = walls 0.8–1.2, feet hollowed by `liteFootSteps` (offset square to each face, top step + 0.05).
+  Pipe clip (`pipeClip.ts`, Fixings, Edit design sizes): Top profile `width` up, base y = −base…0, ring centre half a wall
+  above the plate, mouth = pipe × (1 − grip %), holes from the Front plane flipped; `arcStrain` (curved cantilever, Castigliano;
+  = Roark's s·h/(3πR²) for a free ring) from `fixed` = acos(centre/outer) (where the ring's outside meets the plate) ≤ 2%:
+  1.6% at the defaults, 15 mm copper needs grip ≤ ~20%. Charging stand (`chargingStand.ts`, Desk; fixed angle, chosen over a
+  hinge): standProfile's shape with the phone's floor on a plinth `plugLength` + `BEND_ROOM` (8) high, a plug slot down
+  through it, a pocket at the bottom for the cable to turn (inside the plinth, `POCKET_WALL` behind the rest's foot) and a
+  channel out of the back; printed upright (angle ≥ 45°); `phoneMiddle` (a `BIG_PHONE` 165 mm phone) must stay 5 mm inside the
+  base's back edge; width is the only variable. Spool holder on a 608 (`bearingSpool.ts`, Workshop): base + 11 shoulder +
+  pin 8 − fit, hub with a 22 + fit pocket (0.5 mm 45° chamfer at its mouth, a ruled Loft of circles) under a 19.5 ledge;
+  `fit` = the design's own variable starting at `DEFAULT_FITS.press`. Funnel (Household, brim advice): 45° revolve, inside
+  offset square to the cone. Door wedge (Household, width a variable) and cable tie anchor (Desk; ≥ `TIE_ROOF` 4 of roof each
+  side of the screw's access hole; M3/M4 from the fastener table). Box divider set (Storage): egg-crate dividers flat on the bed
+  in a grid ≤ `LAYOUT_WIDTH` 240, slots t + fit, each half + 0.25. Tests: tests/libraryPrint5 (pure), engineLibraryPrint5
+  (volumes; inserts in a tile's hole free ±0.1 across / ±0.05 up, held pulled 0.3, stopped pushed 0.1; a stand-in with PStover's
+  measured profile fits the same way (his real mesh — CC BY-NC, so not committed — was checked by hand: 0 overlap seated);
+  the bin on its rail slides up, stops fit·√2 down, held off the wall; magnet probes; bins in the magnet plate; pipe free ±0.18
+  and held; the bearing ± fit/2; dividers crossing; a user's part untouched), mcpLibraryPrint5; the smoke test searches
+  "honeycomb" and inserts the tile (1 part, 122.63 mm).
   Third laser batch (`designs/boxes3.ts`, `laserHome3.ts`, `jigsaw.ts` + pure `puzzle.ts`, `ornament.ts`; list in `laserSet3.ts`).
   Sliding-lid box: a laser can't cut a groove part-way, so each groove is a *rail* — a second panel inside each long wall with a
   through slot (a C open at the right-hand end, `slidingOutlines().rail`); grooves z = g0…g1 (g0 = H − 3t − 2c, g1 = g0 + t + 2c), a 2t

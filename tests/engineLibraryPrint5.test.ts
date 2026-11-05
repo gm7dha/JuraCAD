@@ -16,8 +16,8 @@ import { defaultValues, findDesign, insertDesign } from "../src/library/insert";
 import type { DesignValues } from "../src/library/types";
 import { lit } from "../src/library/ex";
 import { extrudeFeature, shapesSketch, sketchFeature } from "../src/library/sketchKit";
-import { levelPlane } from "../src/library/printKit";
-import { hookVolume, hswBinVolume, PLUG_MID, tilePlan, tileVolume } from "../src/library/designs/honeycomb";
+import { levelPlane, loftFeature } from "../src/library/printKit";
+import { FACE_Z, flatHex, hookVolume, HSW, hswBinPlan, hswBinVolumes, LIP_TOP, tilePlan, tileVolume } from "../src/library/designs/honeycomb";
 import { bitHolderVolume, FLOOR_TOP, liteBinVolume, magnetBaseplateVolume, magnetSpots } from "../src/library/designs/gridfinityMore";
 import { CENTRED, MAGNET } from "../src/library/designs/gridfinity";
 import { pipeClipPlan, pipeClipVolume } from "../src/library/designs/pipeClip";
@@ -108,9 +108,9 @@ describe("every design of the fifth batch", () => {
     ["hsw-tile", { across: 3, rows: 3, screws: "2" }, tileVolume],
     ["hsw-tile", { across: 2, rows: 4, screws: "0" }, tileVolume],
     ["hsw-hook", {}, hookVolume],
-    ["hsw-hook", { reach: 60, tip: 20, width: 16, arm: 8 }, hookVolume],
-    ["hsw-bin", {}, hswBinVolume],
-    ["hsw-bin", { width: 60, depth: 20, height: 40 }, hswBinVolume],
+    ["hsw-hook", { reach: 60, tip: 20, width: 12, arm: 8 }, hookVolume],
+    ["hsw-bin", {}, hswBinVolumes],
+    ["hsw-bin", { width: 60, depth: 20, height: 30, fit: 0.4 }, hswBinVolumes],
     ["gridfinity-magnet-baseplate", {}, magnetBaseplateVolume],
     ["gridfinity-magnet-baseplate", { across: 1, along: 2 }, magnetBaseplateVolume],
     ["gridfinity-bit-holder", {}, bitHolderVolume],
@@ -161,29 +161,76 @@ describe("every design of the fifth batch", () => {
 });
 
 describe("Honeycomb wall inserts", () => {
-  // Inserts as they print (x across, y out of the wall, z up) turned into the tile (front face on the bed, y up the
-  // wall): −90° about x takes the insert's up to the tile's up and its "into the wall" to the tile's +z.
-  const INTO_TILE = about(0, -90);
-  for (const id of ["hsw-hook", "hsw-bin"]) {
-    it(`${id}: goes into a tile's hole with room all round, is caught by its clips when pulled, and stopped by its lip`, () => {
-      const doc = insertInto(insert("hsw-tile"), id);
-      const r = build(doc);
-      const tile = partEnding(r.parts, "_tile");
-      const insertPart = r.parts.find((p) => p !== tile)!;
-      // A whole hole in the middle of the tile (an even row, away from the screw cells).
-      const cell = tilePlan(valuesOf("hsw-tile")).cells.find((c) => c.i === 2 && c.j === 2)!;
-      const seated: V3 = [cell.x, cell.y - PLUG_MID, 0];
-      const at = (move: V3) => shared({ part: tile }, { part: insertPart, rotation: INTO_TILE, position: add(seated, move) });
-      expect(at([0, 0, 0])).toBeLessThan(1e-3);
-      for (const m of [[0.1, 0, 0], [-0.1, 0, 0], [0, 0.1, 0], [0, -0.1, 0]] as V3[]) expect(at(m)).toBeLessThan(1e-3);
-      // Pulled out 0.3 mm (towards the room, −z): the ridges meet the back of the hole's narrow part.
-      expect(at([0, 0, -0.3])).toBeGreaterThan(0.01);
-      // Pushed in 0.1 mm: the lip is against the tile's face.
-      expect(at([0, 0, 0.1])).toBeGreaterThan(0.01);
-      // Without its clip fingers bending, it can't come out: pulled the whole way, it hits all along.
-      expect(at([0, 0, -3])).toBeGreaterThan(at([0, 0, -0.3]));
+  // Inserts print standing on their plug's end (z up, the wall face at FACE_Z). Into the tile (front face on the bed,
+  // the wall at +z): turned 180° about y, so the plug points into the tile, then moved to a hole with its face on the tile's.
+  const INTO_TILE: Quat = [0, 1, 0, 0];
+  const holeIn = () => tilePlan(valuesOf("hsw-tile")).cells.find((c) => c.i === 2 && c.j === 2)!;
+  const checkSeat = (tile: PartMesh, part: PartMesh, nudge: number) => {
+    const cell = holeIn();
+    const seated: V3 = [cell.x, cell.y, FACE_Z];
+    const at = (move: V3) => shared({ part: tile }, { part, rotation: INTO_TILE, position: add(seated, move) });
+    expect(at([0, 0, 0])).toBeLessThan(1e-3);
+    for (const m of [[0.1, 0, 0], [-0.1, 0, 0], [0, nudge, 0], [0, -nudge, 0]] as V3[]) expect(at(m)).toBeLessThan(1e-3);
+    // Pulled out 0.3 mm (towards the room, −z): the bumps meet the hole's narrow part, so it needs a firm pull.
+    expect(at([0, 0, -0.3])).toBeGreaterThan(1e-3);
+    // Pushed in 0.1 mm: the lip is against the tile's face.
+    expect(at([0, 0, 0.1])).toBeGreaterThan(0.01);
+    // Without its snap fingers bending it can't come out: pulled further, it hits more.
+    expect(at([0, 0, -3])).toBeGreaterThan(at([0, 0, -0.3]));
+  };
+  for (const [id, end] of [["hsw-hook", "_hook"], ["hsw-bin", "_insert"]]) {
+    it(`${id}: goes into a tile's hole with room all round, is held by its snap bumps when pulled, and stopped by its lip`, () => {
+      const r = build(insertInto(insert("hsw-tile"), id));
+      checkSeat(partEnding(r.parts, "_tile"), partEnding(r.parts, end), 0.05);
     });
   }
+
+  it("a stand-in with PStover's measured insert profile (all round, so stricter than his six bumps) fits our tile the same way", () => {
+    // PStover's standard insert (PSTOV-HSW-CONNECTOR-STD, measured from its mesh): 19.7 body 7.5 long, 22.5 lip 3 thick,
+    // bumps from 5.0 behind the face, 20.0 across at 5.11, 20.75 at 5.88, 20.56 at 6.24, back to the body by 7.1.
+    const band: [number, number][] = [[7.1, 19.6], [6.24, 20.56], [5.88, 20.748], [5.11, 20.0], [5.0, 19.6]];
+    const hexAt = (id: string, z: number, w: number) => sketchFeature(id, id, levelPlane(`${z} up`, z), shapesSketch([{ type: "outline", closed: true, points: flatHex(w).map(([x, y]) => [String(x), String(y)]) }], {}));
+    const standIn: Feature[] = [
+      hexAt("ps-body-s", 0, HSW.body),
+      extrudeFeature("pstover", "PStover stand-in", "ps-body-s", { depth: lit(FACE_Z), operation: "new" }),
+      hexAt("ps-lip-s", FACE_Z, HSW.lip),
+      extrudeFeature("ps-lip", "lip", "ps-lip-s", { depth: lit(3), operation: "add" }),
+      ...band.map(([d, w], k) => hexAt(`ps-band-${k}`, FACE_Z - d, w)),
+      loftFeature("ps-band", "bumps", band.map((_, k) => `ps-band-${k}`), "add"),
+    ];
+    const r = build(withFeatures(insert("hsw-tile"), standIn));
+    const tile = partEnding(r.parts, "_tile");
+    const ps = r.parts.find((p) => p.id === "pstover")!;
+    const cell = holeIn();
+    const at = (move: V3) => shared({ part: tile }, { part: ps, rotation: INTO_TILE, position: add([cell.x, cell.y, FACE_Z], move) });
+    expect(at([0, 0, 0])).toBeLessThan(1e-3);
+    expect(at([0, 0, -0.3])).toBeGreaterThan(1e-3);
+    expect(at([0, 0, 0.1])).toBeGreaterThan(0.01);
+  });
+
+  it("the bin slides down onto its insert's rail, rests on its 45° end, and the dovetail holds it to the wall", () => {
+    const v = valuesOf("hsw-bin");
+    const b = hswBinPlan(v);
+    const r = build(insert("hsw-bin"));
+    const ins = partEnding(r.parts, "_insert");
+    const bin = partEnding(r.parts, "_bin");
+    // The bin as it prints (y out from the wall, z up) turned onto the insert (y up, z out): x → −x, y → z, z → y.
+    const q: Quat = [0, Math.SQRT1_2, Math.SQRT1_2, 0];
+    // Hung: its groove's roof the fit (square to it) above the rail's 45° end.
+    const seated: V3 = [b.x0, -b.hangsBelow, LIP_TOP - b.y0];
+    const at = (move: V3) => shared({ part: ins }, { part: bin, rotation: q, position: add(seated, move) });
+    expect(at([0, 0, 0])).toBeLessThan(1e-3);
+    // It slides up and off, with room either side.
+    expect(at([0, 1, 0])).toBeLessThan(1e-3);
+    expect(at([0, 10, 0])).toBeLessThan(1e-3);
+    expect(at([0.2, 1, 0])).toBeLessThan(1e-3);
+    expect(at([-0.2, 1, 0])).toBeLessThan(1e-3);
+    // It can't go further down than the rail's end, nor pull straight off the wall.
+    // (The roof is the fit clear of the rail's end square to 45°, so fit × √2 straight down.)
+    expect(at([0, -0.3, 0])).toBeLessThan(1e-3);
+    expect(at([0, -0.6, 0])).toBeGreaterThan(1e-3);
+    expect(at([0, 1, 0.5])).toBeGreaterThan(1e-3);
+  });
 });
 
 describe("Gridfinity magnet baseplate", () => {

@@ -67,7 +67,7 @@ export const gridfinityMagnetBaseplate: LibraryDesign = {
   id: "gridfinity-magnet-baseplate",
   name: "Gridfinity magnet baseplate",
   description:
-    "A Gridfinity baseplate with a pocket for a 6 × 2 mm round magnet under each corner of every cell, so bins with magnets in their feet click down and stay put (even upside down in a toolbox lid). Press the magnets in (check they all face the same way up), or add a drop of glue. It prints flat on the bed, no supports.",
+    "A Gridfinity baseplate with a pocket for a 6 × 2 mm round magnet under each corner of every cell, so bins with magnets in their feet click down and stay put (even upside down in a toolbox lid). The pockets are a little bigger than the magnets, so glue them in (a drop of superglue each) and check they all face the same way up. It prints flat on the bed, no supports.",
   category: "print",
   group: "Gridfinity",
   prefix: "gridmag",

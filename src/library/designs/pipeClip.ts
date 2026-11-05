@@ -7,7 +7,8 @@
  *
  * The snap: each lip must move out by (pipe − mouth) / 2 to let the pipe through. The ring's back is fixed to the
  * plate, so each side is a curved cantilever from the plate round to its lip; pushed sideways at the lip, its
- * bending moment at angle φ round the ring is P × (height of the lip − height at φ), so the lip moves
+ * bending moment at angle φ round the ring is P × (height of the lip − height at φ) — from where the ring leaves the
+ * plate (its outside meets the plate's face there, `fixed`) round to the lip — so the lip moves
  * δ = P/(EI) ∫ (z_lip − z)² ds and the most stretched fibre (at the plate) strains δ × (wall / 2) × (z_lip − z_plate)
  * / ∫ (z_lip − z)² ds — kept at most 2% (`SNAP_STRAIN`).
  */
@@ -51,12 +52,13 @@ export function pipeClipPlan(v: DesignValues) {
   const opening = Math.round(pipe * (1 - grip / 100) * 100) / 100;
   const mean = inner + wall / 2;
   const tip = Math.PI - Math.asin(Math.min(1, opening / 2 / mean));
-  const fixed = Math.acos(Math.min(1, centre / mean));
+  // The ring is held where it joins the plate: its outside meets the plate's face (y = 0) this far round from the back.
+  const fixed = Math.acos(Math.min(1, centre / outer));
   const spread = (pipe - opening) / 2;
   const strain = arcStrain(mean, wall, fixed, tip, spread);
   const holeX = outer + CLIP_SCREW.head / 2 + 1;
   const plate = 2 * (holeX + CLIP_SCREW.head / 2 + 2);
-  return { pipe, wall, room, grip, width, base, inner, outer, centre, opening, spread, strain, holeX, plate, screws: v.screws !== false };
+  return { pipe, wall, room, grip, width, base, inner, outer, centre, fixed, opening, spread, strain, holeX, plate, screws: v.screws !== false };
 }
 
 export const pipeClip: LibraryDesign = {

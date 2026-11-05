@@ -44,12 +44,12 @@ describe("the fifth batch through Claude's tools", () => {
     expect(list.text).toMatch(/pipe-clip — Pipe \/ hose clip \[3D printing › Fixings\]/);
     const hook = await call(s, "insert_library_design", { design: "hsw-hook", sizes: { reach: 50 } });
     expect(hook.error).toBe(false);
-    const clip = await call(s, "insert_library_design", { design: "pipe-clip", sizes: { pipe: 15 } });
+    const clip = await call(s, "insert_library_design", { design: "pipe-clip", sizes: { pipe: 15, grip: 15 } });
     expect(clip.error).toBe(false);
     const parts = s.withEngine((e) => e.check("normal").parts);
     expect(parts).toHaveLength(2);
     for (const p of parts) expect(p.geometryValid).toBe(true);
-    const want = [hookVolume({ ...defaultValues(findDesign("hsw-hook")!), reach: 50 }), pipeClipVolume({ ...defaultValues(findDesign("pipe-clip")!), pipe: 15 })].sort((a, b) => a - b);
+    const want = [hookVolume({ ...defaultValues(findDesign("hsw-hook")!), reach: 50 }), pipeClipVolume({ ...defaultValues(findDesign("pipe-clip")!), pipe: 15, grip: 15 })].sort((a, b) => a - b);
     const vols = parts.map((p) => p.exactVolume!).sort((a, b) => a - b);
     expect(vols[0]).toBeCloseTo(want[0], 1);
     expect(vols[1]).toBeCloseTo(want[1], 1);

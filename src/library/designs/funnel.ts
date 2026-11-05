@@ -39,7 +39,7 @@ export const funnel: LibraryDesign = {
   id: "funnel",
   name: "Funnel",
   description:
-    "A funnel for the kitchen, the garage or topping up the printer's resin and the car's screenwash. Choose how wide the top is and the spout's size and length; the cone slopes at 45° so it prints standing on its spout with no supports. Print it in PETG or PP for oils and hot liquids.",
+    "A funnel for the kitchen, the garage or topping up the printer's resin and the car's screenwash. Choose how wide the top is and the spout's size and length; the cone slopes at 45° so it prints standing on its spout with no supports. It stands on a small spout, so turn on a brim in your slicer to keep it from tipping while it prints. Print it in PETG or PP for oils and hot liquids.",
   category: "print",
   group: "Household",
   prefix: "funnel",

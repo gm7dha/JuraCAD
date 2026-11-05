@@ -3415,8 +3415,8 @@ try {
     await page.locator(".library-preview polygon").first().waitFor({ timeout: 5_000 });
     await page.getByRole("button", { name: "Insert", exact: true }).click();
     await page.waitForSelector(".tab.active >> text=Honeycomb wall tile", { timeout: 10_000 });
-    // 6 holes across, 23.6 mm apart: 141.6 mm.
-    await waitShown(1, 141.6, "the honeycomb tile didn't build one tile, 141.6 mm across");
+    // 6 columns across, 23.6 × √3/2 = 20.438 mm apart: 122.63 mm.
+    await waitShown(1, 6 * 23.6 * Math.sqrt(3) / 2, "the honeycomb tile didn't build one tile, 122.63 mm across");
     const honeycomb = await shown();
     if (honeycomb.errors) throw new Error(`the honeycomb tile has ${honeycomb.errors} feature problem(s)`);
     await shot("library-honeycomb");

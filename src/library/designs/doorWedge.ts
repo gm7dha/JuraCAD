@@ -113,6 +113,9 @@ export function wedgeVolume(v: DesignValues): number {
 // ---------------------------------------------------------------------------------------------------------------
 // Cable tie anchor
 
+/** How much roof the tie must have over it each side of the screw's access hole (mm). */
+export const TIE_ROOF = 4;
+
 /** Screws from the fastener table (ISO 10642 countersunk heads): clearance hole and countersink for each. */
 export function tieScrew(v: DesignValues): { d: number; head: number } | null {
   if (v.screw === "none") return null;
@@ -163,8 +166,8 @@ export const tieAnchor: LibraryDesign = {
   problems: (v) => {
     const p = tiePlan(v);
     const out: string[] = [];
-    if (p.screw && p.access > p.size - 4) out.push(`Make it at least ${mm(p.access + 4)} across, for the screw's head.`);
     if (p.screw && p.base < (p.screw.head - p.screw.d) / 2 + 0.6) out.push(`The base must be at least ${mm((p.screw.head - p.screw.d) / 2 + 0.6)} thick for the screw's countersink.`);
+    if (p.screw && (p.size - p.access) / 2 < TIE_ROOF) out.push(`Make it at least ${mm(p.access + 2 * TIE_ROOF)} across, so the tie runs under ${mm(TIE_ROOF)} of roof each side of the screw hole.`);
     if (p.tie > p.size - 4) out.push(`Make it at least ${mm(p.tie + 4)} across, wider than the tie.`);
     return out;
   },
