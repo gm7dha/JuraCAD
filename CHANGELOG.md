@@ -13,6 +13,13 @@ The point in the history for each version is the commit shown (see https://githu
 - **Send to JuraCUT** (Export for laser panel): the outlines go straight onto JuraCUT's bed — into its open tab, or a
   new one — ready to lay out and cut. Designs sent from JuraCUT arrive here as a new sketch on the Top plane, ready to
   extrude. Both apps are on the same website, so this all happens inside your browser.
+- **Simplify on import:** tick "Simplify" when importing a STEP or STL (or use Simplify part afterwards) to turn a
+  mesh-like model back into real faces — flat faces joined, holes, slots and rounded edges as true round faces at their
+  exact sizes — with a note saying what was done. Organic shapes come in as they are.
+- **Part Studio tabs:** drag tabs to reorder them (or Move left/right in the tab menu); any studio can be deleted,
+  Part Studio 1 too, with a warning when something uses its parts. Download the Claude extension again from Help —
+  designs with moved tabs use a newer file format that older copies refuse rather than mis-read.
+- **Colour chooser** always opens full size.
 - **Laser cutting:** living-hinge box, card deck box, business card holder, spice rack, tealight lantern, key rack,
   dice tower and name puzzle.
 - **3D printing:** electronics enclosure, French cleat, hinged box, desk organiser, cable chain, wall pocket, shelf
