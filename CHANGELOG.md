@@ -8,7 +8,37 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.44 — Photo relief puzzle
+## v0.47 — Island puzzle
+
+- New in the Design library under **Puzzles**: the **Island puzzle**. Choose an island — Arran, Skye, Mull, Islay, the
+  Isle of Wight, the Isle of Man, Anglesey, Lewis and Harris, Orkney, Shetland — or **all of Great Britain**, or any area
+  round a grid reference. The coast is the puzzle's edge and the hills stand up from it (you choose how tall the highest
+  ground is, in mm).
+- Cut it into irregular pieces of about the size you choose, or **along real boundaries** — countries, counties and
+  council areas, districts or parishes — fetched from OpenStreetMap with one button (or from a map file). Pieces cut
+  along boundaries are named after their area.
+- Neighbouring pieces lock together with dovetails wherever the border is long enough; small specks of land are joined
+  to a neighbour or left out. Choose every island in the area, just the biggest, or all the land (the mainland too).
+- Downloads as print plates for Bambu Studio, like the Mountain puzzle.
+
+## v0.46 — Six-piece burr
+
+- New in the Design library under **Puzzles**: the **Six-piece burr**, the classic interlocking puzzle of six notched
+  square sticks. Every pattern number gives a different burr, and each one is checked to come apart (and so go back
+  together) before you get it: **Easy** (one piece slides straight out), **Medium** (2–3 moves before the first piece is
+  free) or **Hard** (4 or more). The summary says exactly how many moves it takes.
+- The pieces lie flat on the bed, each turned so as few cubes as possible have to bridge a gap. Choose the stick
+  thickness and the fit gap.
+
+## v0.45 — Cylinder maze gift box
+
+- New in the Design library under **Puzzles**: the **Cylinder maze gift box**. A round box with a maze cut round its
+  outside, and a lid with two small nubs inside that follow the maze: you twist and slide the lid through the maze to get
+  it off. Every pattern number gives a different maze, and the lid's closed place is as far from the way out as the maze
+  allows. Choose the inside size, Easy / Medium / Hard (a finer track = more turns) and the fit.
+- Both parts print without supports: the box standing on its flange, the lid upside down beside it.
+
+## v0.44 — Photo relief puzzle · commit `439b03a`
 
 - New in the Design library under **Puzzles**: the **Photo relief puzzle**. Choose any picture — a face, a pet, a bold
   logo — and it becomes the same interlocking-cube puzzle as the Mountain puzzle, with light parts standing high and dark

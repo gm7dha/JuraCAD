@@ -914,12 +914,48 @@
   box/mirror/square coasters fit their holders with room, tabs hold), mcpLibraryLaser (a bird box inserted and exported);
   the smoke test inserts a bird box and saves it for laser (7 red, 7 blue). JuraCUT has twins of all eight (its v0.10,
   `src/library/laserSet5.ts`).
+- Island puzzle (`LIBRARY_TOOLS` "island" → `mountainState.kind` "island" → `src/app/IslandPuzzleDialog.tsx`, which reuses
+  `Mountain3D`): pure `src/terrain/islandPuzzle.ts` — land (> `sea` m) on a fine grid (`cell` 0.25–0.6 mm), kept by
+  `land` ("islands" drops land touching the area's edge, "biggest", "all"); cells owned by the areas between boundary lines
+  (`IslandCuts`: lines rasterised as walls, 4-connected fill, specks < 4 mm² spread from neighbours; used only if they
+  make more areas than there are bits of land, names from label points) or by seeded jittered Voronoi points `piece` mm
+  apart; pieces = 4-connected stretches, ones under `smallestPiece` join the neighbour they share most border with;
+  a dovetail painted across each border ≥ 1.6 × head long (checked to lie in the other piece with a margin, which must
+  stay one piece); each piece meshed from its signed distance (`distanceTransform`, inside less ½√2 cell so neighbours
+  stay ≥ 2 × fit apart) by marching squares on every `step`-th sample (~0.7 mm): ground on top (base + h × relief/high),
+  flat at 0, walls. Pieces are `PuzzlePiece`s (layer 0, bbox outline) so `platesFor`/`plate3mf` work. `src/terrain/islands.ts`:
+  `ISLANDS` (boxes by lat/lon middle; Great Britain = sw (0, 0), 665 × 1230 km — Ireland and France touch its edges),
+  `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),
+  `BOUNDARY_LEVELS`. osm.ts reads `boundaries`/`regionNames` (`boundaryLevels`, `boundariesOnGrid`, `levelName`).
+  elevation.ts: `zoomFor` (finest zoom with ≤ MAX_TILES), `areaProblem(…, most, z)`, `readHeights(…, spacing, z)`.
+  Tests: tests/islandPuzzle (pure).
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
   cards that open their own window instead of inserting features, found by the search via `searchTools`/`searchWords`;
   LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; `mountainState.kind` "photo" = the Photo relief
   puzzle, the same window and puzzle with a picture for heights: `src/terrain/photoRelief.ts` (pure: `greyFromRgba`,
   `blurred`, `photoGrid` — one unit per pixel, top row north, heights scaled so the relief is `reliefMm` at the spec's `k`
-  from `layoutFor`, stretch 1; ≤ `PHOTO_MAX_SIDE` 400 px; no snow; tests/photoRelief); open state in `mountainState.ts`, session only,
+  from `layoutFor`, stretch 1; ≤ `PHOTO_MAX_SIDE` 400 px; no snow; tests/photoRelief);
+  Puzzle designs (`src/library/puzzleDesigns.ts` `PUZZLE_DESIGNS`, group "Puzzles", first in the print tab's GROUP_ORDER;
+  LibraryDialog's `GroupedCards` shows the tools first under the same heading). Cylinder maze box (`designs/mazeBox.ts`,
+  no variables): `makeMaze` — a perfect maze (seeded backtracker) on `cols` × `rows` cells round HALF the box (repeated, two
+  nubs 180° apart), wrapping round; home on the bottom row, exit the furthest top-row cell (`path`); every groove is a
+  symmetric partial Revolve of a rectangle on a `fixedPlane` turned to its angle (`turnedPlane`; runs along a row merged,
+  a column's ways up merged), the ups `NUDGE` deeper and longer so no two cuts share a face (shared faces made the box
+  invalid). Lid printed upside down beside the box; nubs chamfered 45° towards the bed, their footprint at the core
+  centred on the groove (`groove` = nub + depth − 2·fit + 0.6). Tests: tests/libraryPuzzles (pure), engineLibraryPuzzles
+  (the lid turned over: no overlap along the whole way out, blocked by walls — engine.clashes sometimes returns nothing at
+  an exact placement, so walls are probed at ±1.5° too).
+  Six-piece burr (`designs/sixPieceBurr.ts` over pure `src/library/burr.ts`, no variables): pieces are unit cubes of 2 × 2 × 8
+  sticks crossing in the middle 4³ (`AXIS`, `CROSS`, `fullStick`); the 32 `contested` cubes (8 covered by three sticks) each
+  go to one stick or none (`piecesFrom`). `disassembly` = BurrTools-style BFS: any group not holding piece 0 slides ±x/y/z
+  as far as it goes; a group free for good splits the set, each part must come apart too; returns the moves before the
+  first split (level) or null. `makeBurr(seed, difficulty)`: orders the pieces, mostly gives each cube to the first to leave
+  (always comes apart), some at random and some empty (`gap` 0.35 / `mixed` 0.3 beyond Easy), `repaired` (gives a split
+  piece back cubes that join it), then hill-climbs to the level range (Easy 1, Medium 2–3, Hard ≥ 4); cached. Laid flat
+  (`laidFlat`: the turn with fewest bridges); notches = `cellOutlines` of columns cut through / top only / bottom only,
+  `offsetPolygon` by fit, Removes from `levelPlane`s; the piece itself drawn fit smaller and f lower (`assembledToBed`
+  maps the puzzle to each laid piece). Tests: libraryPuzzles (pure), engineLibraryPuzzles (pieces put back by
+  `assembledToBed` don't overlap; nudged, they do). open state in `mountainState.ts`, session only,
   never in the document): a real mountain as a 3D printed puzzle of interlocking cubes. Pure in `src/terrain/`: `osGrid.ts`
   (OS grid refs ↔ E/N, `gridToLatLon` = OS transverse Mercator inverse on Airy 1830 + Helmert to WGS84, ~5 m), `elevation.ts`
   (AWS open "Terrain Tiles", terrarium PNGs — `terrariumHeight`, Web Mercator `worldPixel`, zoom `TILE_ZOOM` 12 ≈ 20 m/px,

@@ -87,13 +87,22 @@ export function tilesFor(sw: GridPoint, width: number, height: number, z = TILE_
   return out;
 }
 
-/** What's wrong with an area (plain English), before anything is fetched. */
-export function areaProblem(sw: GridPoint | null, width: number, height: number): string | null {
+/** The most detailed zoom (≤ TILE_ZOOM) at which an area needs at most MAX_TILES tiles — for big areas (islands). */
+export function zoomFor(sw: GridPoint, width: number, height: number): number {
+  for (let z = TILE_ZOOM; z > 3; z--) if (tilesFor(sw, width, height, z).length <= MAX_TILES) return z;
+  return 3;
+}
+
+/**
+ * What's wrong with an area (plain English), before anything is fetched. `most` is the widest allowed (m); `z` the
+ * zoom its heights are read at.
+ */
+export function areaProblem(sw: GridPoint | null, width: number, height: number, most = 40000, z = TILE_ZOOM): string | null {
   if (!sw) return "That isn't a grid reference I can read — try one like NN 166 712.";
   if (!(width >= 200 && height >= 200)) return "The area must be at least 200 m across.";
-  if (width > 40000 || height > 40000) return "The area can be at most 40 km across.";
+  if (width > most || height > most) return `The area can be at most ${Math.round(most / 1000)} km across.`;
   if (sw.e < 0 || sw.n < 0 || sw.e + width > 700000 || sw.n + height > 1300000) return "That area runs off the OS grid.";
-  const n = tilesFor(sw, width, height).length;
+  const n = tilesFor(sw, width, height, z).length;
   if (n > MAX_TILES) return `That area needs ${n} map tiles of height data — make it smaller (at most ${MAX_TILES}).`;
   return null;
 }
@@ -102,8 +111,7 @@ export function areaProblem(sw: GridPoint | null, width: number, height: number)
  * Read the heights of an area (`sw` = its south-west corner, `width` east × `height` north, metres) into a grid
  * `spacing` metres apart (default: about the data's own spacing). Tiles come from `load`.
  */
-export async function readHeights(load: TileLoader, sw: GridPoint, width: number, height: number, spacing?: number): Promise<HeightGrid> {
-  const z = TILE_ZOOM;
+export async function readHeights(load: TileLoader, sw: GridPoint, width: number, height: number, spacing?: number, z = TILE_ZOOM): Promise<HeightGrid> {
   const step = spacing ?? Math.max(10, Math.min(width, height) / 400);
   const nx = Math.max(2, Math.ceil(width / step) + 1);
   const ny = Math.max(2, Math.ceil(height / step) + 1);

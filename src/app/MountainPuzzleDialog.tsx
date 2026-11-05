@@ -21,6 +21,7 @@ import {
   MIN_NECK,
   type MountainPuzzle,
   type MountainSpec,
+  type PuzzlePiece,
 } from "../terrain/mountainPuzzle";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
@@ -662,7 +663,7 @@ function TopView({ grid, area, puzzle, picture, features }: { grid: HeightGrid; 
 }
 
 /** The puzzle in 3D, to turn round; pulled apart by `explode` mm per step. */
-function Mountain3D({ puzzle, explode }: { puzzle: MountainPuzzle | null; explode: number }) {
+export function Mountain3D({ puzzle, explode }: { puzzle: { pieces: PuzzlePiece[] } | null; explode: number }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<{ renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; group: THREE.Group; framed: boolean } | null>(null);
 

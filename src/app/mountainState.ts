@@ -2,7 +2,7 @@
 import { create } from "zustand";
 
 /** "mountain": a real mountain's heights; "photo": a picture's brightness as heights. */
-export type PuzzleKind = "mountain" | "photo";
+export type PuzzleKind = "mountain" | "photo" | "island";
 
 export const useMountain = create<{ open: boolean; kind: PuzzleKind }>(() => ({ open: false, kind: "mountain" }));
 

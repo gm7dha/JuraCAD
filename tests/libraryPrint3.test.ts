@@ -268,7 +268,7 @@ describe("a straight (ruled) Loft", () => {
 
 describe("finding them in the library", () => {
   it("under their headings: Gridfinity, Desk and Garden among the set ones", () => {
-    expect(GROUP_ORDER.print).toEqual(["Fixings", "Hinges", "Storage", "Gridfinity", "Household", "Desk", "Garden", "Workshop", "Electronics", "Test prints"]);
+    expect(GROUP_ORDER.print).toEqual(["Puzzles", "Fixings", "Hinges", "Storage", "Gridfinity", "Household", "Desk", "Garden", "Workshop", "Electronics", "Test prints"]);
     const groups = designGroups("print");
     expect(groups.map((g) => g.group)).toEqual(GROUP_ORDER.print);
     const of = (g: string) => groups.find((x) => x.group === g)!.designs.map((d) => d.id);

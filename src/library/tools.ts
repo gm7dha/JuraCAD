@@ -1,13 +1,13 @@
 /**
- * Tools in the Design library (pure): cards that open their own window instead of inserting features — the Mountain
- * puzzle, which makes print plates of a real mountain rather than a design in the Part Studio. They sit in a section's
+ * Tools in the Design library (pure): cards that open their own window instead of inserting features — the Mountain,
+ * Photo relief and Island puzzles, which make print plates rather than a design in the Part Studio. They sit in a section's
  * tab under their own heading, and the library's search finds them like designs.
  */
 import { searchWords } from "./browse";
 import type { DesignCategory } from "./types";
 
 export interface LibraryTool {
-  id: "mountain" | "photo";
+  id: "mountain" | "photo" | "island";
   name: string;
   description: string;
   category: DesignCategory;
@@ -37,6 +37,15 @@ export const LIBRARY_TOOLS: readonly LibraryTool[] = [
     group: "Puzzles",
     words: "picture image lithophane portrait relief jigsaw custom gift",
     icon: '<rect x="5" y="9" width="38" height="30" rx="2"/><circle cx="17" cy="20" r="4"/><path d="m5 35 12-9 8 6 7-8 11 11"/>',
+  },
+  {
+    id: "island",
+    name: "Island puzzle",
+    description: "An island — or all of Great Britain — as a flat jigsaw: the coast is its edge, the hills stand up, and it can be cut along county or parish boundaries.",
+    category: "print",
+    group: "Puzzles",
+    words: "island country county counties map jigsaw coast great britain uk arran skye wight man orkney shetland boundaries parish relief",
+    icon: '<path d="M14 8c6-3 13 1 15 6 3-1 7 1 8 5 3 3 1 8-2 9 2 5-2 10-8 10-3 4-10 3-12-1-6 0-9-6-6-10-4-4-1-11 5-12z"/><path d="M24 12c-2 6 4 8 0 14s3 8 0 12M12 22c6 1 8-3 12 0s9 0 12 2" opacity=".55"/>',
   },
 ];
 
