@@ -5,7 +5,8 @@
 import { categoryLabel, LIBRARY } from "./insert";
 import type { LibraryDesign } from "./types";
 
-const words = (text: string) =>
+/** A text's words for searching: lower case, accents dropped. */
+export const searchWords = (text: string) =>
   text
     .toLowerCase()
     .normalize("NFKD")
@@ -18,13 +19,13 @@ const words = (text: string) =>
  * description or one of its choices ("bolt", "hing", "M8"…). Matches in the name come first. Nothing typed = nothing found.
  */
 export function searchDesigns(query: string, designs: readonly LibraryDesign[] = LIBRARY): LibraryDesign[] {
-  const wanted = words(query);
+  const wanted = searchWords(query);
   if (!wanted.length) return [];
   const scored = designs.flatMap((d) => {
-    const name = words(d.name);
+    const name = searchWords(d.name);
     // Its choices' names too ("M8", "Socket head"), so a size finds the design that comes in it.
-    const choices = d.inputs.flatMap((i) => (i.choices ?? []).flatMap((c) => words(c.label)));
-    const all = [...name, ...words(d.group ?? ""), ...words(categoryLabel(d.category)), ...words(d.description), ...choices];
+    const choices = d.inputs.flatMap((i) => (i.choices ?? []).flatMap((c) => searchWords(c.label)));
+    const all = [...name, ...searchWords(d.group ?? ""), ...searchWords(categoryLabel(d.category)), ...searchWords(d.description), ...choices];
     if (!wanted.every((w) => all.some((x) => x.startsWith(w)))) return [];
     const inName = wanted.filter((w) => name.some((x) => x.startsWith(w))).length;
     return [{ d, inName }];

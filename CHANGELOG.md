@@ -8,7 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.42 — Mountain puzzle: a low base and chunkier tabs
+## v0.43 — Mountain puzzle moves into the Library
+
+- The **Mountain puzzle** now lives in the **Design library**, on the 3D printing tab under its own heading, **Puzzles**,
+  instead of having its own toolbar button. Searching the library for "mountain", "munro" or "puzzle" finds it too.
+  It opens the same window as before.
+
+## v0.42 — Mountain puzzle: a low base and chunkier tabs · commit `4476c67`
 
 - **Much less plain side under the mountain.** The bottom layer is now a thin jigsaw plate (about 4 mm) instead of a full
   cube, so the lowest ground sits only 10 mm above the bed. The layers above are full cubes as before, still locked

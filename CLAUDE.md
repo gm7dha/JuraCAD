@@ -914,7 +914,9 @@
   box/mirror/square coasters fit their holders with room, tabs hold), mcpLibraryLaser (a bird box inserted and exported);
   the smoke test inserts a bird box and saves it for laser (7 red, 7 blue). JuraCUT has twins of all eight (its v0.10,
   `src/library/laserSet5.ts`).
-- Mountain puzzle (toolbar "Mountain", `src/app/MountainPuzzleDialog.tsx`; open state in `mountainState.ts`, session only,
+- Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
+  cards that open their own window instead of inserting features, found by the search via `searchTools`/`searchWords`;
+  LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; open state in `mountainState.ts`, session only,
   never in the document): a real mountain as a 3D printed puzzle of interlocking cubes. Pure in `src/terrain/`: `osGrid.ts`
   (OS grid refs ↔ E/N, `gridToLatLon` = OS transverse Mercator inverse on Airy 1830 + Helmert to WGS84, ~5 m), `elevation.ts`
   (AWS open "Terrain Tiles", terrarium PNGs — `terrariumHeight`, Web Mercator `worldPixel`, zoom `TILE_ZOOM` 12 ≈ 20 m/px,
