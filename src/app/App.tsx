@@ -1,3 +1,4 @@
+import { startLink } from "./juraLinkApp";
 import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
@@ -250,6 +251,8 @@ export function App() {
   const drawing = useStore(activeDrawing);
 
   useEffect(() => connectKernel(), []);
+  // The link with JuraCUT: designs sent either way between the two apps' tabs.
+  useEffect(() => startLink(), []);
   useShortcuts();
   // Long press = right-click, double-tap = double-click on a touch screen (the lists, tabs and panels).
   useEffect(() => installTouchCompat(document), []);

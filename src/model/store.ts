@@ -1,3 +1,4 @@
+import { sketchFromDxf, type LinkedSketch } from "../link/receive";
 import { deleteItems } from "../sketch/ops";
 import { followLinks, pruneReferences, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
@@ -427,6 +428,8 @@ export interface AppState {
   openLibrary: (view: LibraryView | null) => void;
   /** Insert a library design (one undo step): into a new Part Studio named after it (shown), or the one on show. Returns a problem, or null. */
   insertLibraryDesign: (designId: string, values: DesignValues, into: "new" | "current") => string | null;
+  /** A design sent from JuraCUT (DXF) as a new sketch in the Part Studio on show (a new one from an assembly or drawing). Returns what to tell JuraCUT. */
+  addLinkedSketch: (name: string, dxf: string) => { ok: boolean; message: string };
   /** Change an inserted design's sizes and choices (one undo step). Returns a problem, or null. */
   editLibraryDesign: (insertId: string, values: DesignValues) => string | null;
   /** Configurations: keep the current state as a new one (and show it), show another, rename or forget one. */
@@ -1292,6 +1295,22 @@ export const useStore = create<AppState>((set, get) => {
       }
       get().showToast(`Inserted ${made.insert.name}. Change its sizes in Variables (${made.insert.prefix}_…), or right-click its folder › Edit design sizes.`, "success");
       return null;
+    },
+    addLinkedSketch: (name, dxf) => {
+      const s = get();
+      if (s.versionView) return { ok: false, message: "JuraCAD is showing an old version of the design: go back to the current design there, then send again." };
+      if (s.editing || s.sketch) return { ok: false, message: "JuraCAD has a feature or sketch open: finish it there, then send again." };
+      const studio = activeStudioId(s);
+      let made: LinkedSketch;
+      try {
+        made = sketchFromDxf(s.history.present, studio ?? "new", name, dxf);
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
+      }
+      change(() => made.doc);
+      set({ activeTab: studio ? s.activeTab : made.studioId, selection: [], selectedParts: [], selectedPlane: null, selectedFeatureId: made.featureId, asmSelection: [], section: null, mateDraft: null, editingPattern: null });
+      get().showToast(`From JuraCUT: ${made.summary} It's a new sketch on the Top plane — pick it and Extrude to make a part.`, "success");
+      return { ok: true, message: "It's a new sketch in JuraCAD, ready to extrude." };
     },
     editLibraryDesign: (insertId, values) => {
       const s = get();

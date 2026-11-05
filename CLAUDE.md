@@ -587,6 +587,16 @@
   at the end of styles.css (44 px targets, eye/row buttons always shown, 16 px inputs so Safari doesn't zoom into them, no
   callout/text selection); feature rows aren't HTML-draggable there (Move up/down in their menu instead). Tests: tests/gestures.test.ts,
   tests/zoomGuard.test.ts, tests/touchCompat.test.ts, tests/sketchTouchStroke.test.ts (cancelStroke after a drag began); the smoke test's touch section. Only a real iPad can confirm Safari's own touch quirks.
+- The link with JuraCUT (send a flat design either way): `src/link/juraLink.ts` (pure, the SAME file in JuraCUT — keep them
+  identical): both apps are pages of gm7dha.github.io, so their tabs talk over a BroadcastChannel (`LINK_CHANNEL`
+  "jura-link.v1"); each tab's `LinkEnd` says here/who/bye, `send` posts a `Parcel` to the other app's newest tab or opens it
+  (`siblingUrl`, `?link=<id>` — within the click) and hands it over when that tab says "ready"; the receiver answers "got"
+  with what it did, which the sender shows as a toast; messages checked by `readMessage`. App side `src/app/juraLinkApp.ts`
+  (`startLink` in App; `sendToJuraCUT` — the Laser panel's "Send to JuraCUT", SVG of the sheet unmirrored; `receiveParcel` →
+  `store.addLinkedSketch` → pure `src/link/receive.ts` `sketchFromDxf`: the DXF through Insert DXF's own `parseDxf`/`insertDxf`
+  into a new sketch "From JuraCUT: <name>" on Top at the end of the Part Studio on show, or a new studio from an assembly or
+  drawing; refused while a feature/sketch is open or an old version shown). Tests: tests/juraLink, tests/linkReceive; the smoke
+  test's laser step plays a JuraCUT tab both ways.
 - **Laser designs are shared with JuraCUT** (github.com/gm7dha/JuraCUT, the owner's laser design-and-cut app; the owner's
   standing wish): every laser design here (`category: "laser"`) has a JuraCUT twin with the same id, name, heading, icon,
   inputs and maths (JuraCUT's `src/library/`, numbers instead of `Ex`, flat Items instead of sketches). When a laser design is

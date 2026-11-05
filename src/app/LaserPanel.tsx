@@ -9,6 +9,7 @@ import { activeAssembly, activeDrawing, activeFeatures, pickFor, studioParts, us
 import { fromUnit, lengthNumber } from "../model/units";
 import type { PartMesh } from "../kernel/protocol";
 import { downloadFile, safeFileName } from "./download";
+import { sendToJuraCUT } from "./juraLinkApp";
 import { Icons } from "./icons";
 import { useLaserPanel, type LaserChoice } from "./laserState";
 import { laserDefaultsFor, notCutParts } from "../library/insert";
@@ -264,6 +265,14 @@ function LaserPanelBody() {
       <p className="muted small">In Bambu Studio's laser mode, import the SVG and give each colour its own setting. Lines are hairlines, so the laser follows them exactly.</p>
       {counts.engrave > 0 && <p className="muted small">In the DXF, engraved areas are only their outlines (layer ENGRAVE): tell your laser program to fill them.</p>}
       <div className="laser-buttons">
+        <button
+          className="text-button send-to-juracut"
+          onClick={() => void sendToJuraCUT(names.length === 1 ? names[0] : doc.name, laserSvg(layoutPieces(pieces, { gap: st.gap, width: st.width, mirror: false }), { title: names.join(", ") || doc.name }))}
+          disabled={empty}
+          title="Put these outlines on JuraCUT's bed (in its open tab, or a new one), to lay out and cut — not mirrored"
+        >
+          Send to JuraCUT
+        </button>
         <button className="text-button" onClick={() => save("dxf")} disabled={empty} title="DXF with layers CUT_OUTER, CUT_INNER, SCORE and ENGRAVE, in millimetres">
           Save DXF
         </button>
