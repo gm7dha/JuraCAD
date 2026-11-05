@@ -3515,10 +3515,38 @@ try {
     if (towerReds !== 7 || towerBlues !== 20) throw new Error(`the dice tower's SVG has ${towerReds} red and ${towerBlues} blue outlines (expected 7 and 20)`);
     await page.getByRole("button", { name: "Close export for laser" }).click();
     await page.waitForSelector(".laser-panel", { state: "detached" });
+    step = "Design library: a bird box (finger joints, entrance and drainage holes), exported for laser";
+    await tool("Library");
+    await page.getByLabel("Search the library").fill("bird box");
+    await page.getByRole("button", { name: /^Bird box:/ }).click();
+    await page.locator(".library-preview polygon").first().waitFor({ timeout: 10_000 });
+    const birdSummary = (await page.locator(".library-side p.small").first().innerText()).trim();
+    if (!/^7 pieces; a 25 mm hole/.test(birdSummary)) throw new Error(`the bird box's summary says "${birdSummary}"`);
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Bird box", { timeout: 10_000 });
+    // Floor, front, back, two sides, roof and its under-plate; the roof 10 mm past each side of the 162 mm box.
+    await waitShown(7, 182, "the bird box didn't build its 7 pieces, 182 mm across the roof");
+    if ((await shown()).errors) throw new Error(`the bird box has ${(await shown()).errors} feature problem(s)`);
+    await tool("Laser");
+    await page.waitForSelector(".laser-panel");
+    await page.locator("#laser-source").selectOption({ value: "all" });
+    await page.waitForFunction(() => /\d × \d.* overall/.test(document.querySelector(".laser-size")?.textContent ?? ""), null, { timeout: 30_000 }).catch(async () => {
+      throw new Error(`the laser panel didn't show the bird box: ${(await page.locator(".laser-panel").innerText()).replace(/\s+/g, " ")}`);
+    });
+    const birdSvgPromise = page.waitForEvent("download", { timeout: 30_000 });
+    await page.getByRole("button", { name: "Save SVG" }).click();
+    const birdSvg = readFileSync(await (await birdSvgPromise).path(), "utf8");
+    const birdReds = (birdSvg.match(/stroke="#FF0000"/g) ?? []).length;
+    const birdBlues = (birdSvg.match(/stroke="#0000FF"/g) ?? []).length;
+    // Each piece's outline; the entrance hole, 2 screw holes in the back and 4 drainage holes in the floor.
+    if (birdReds !== 7 || birdBlues !== 7) throw new Error(`the bird box's SVG has ${birdReds} red and ${birdBlues} blue outlines (expected 7 and 7)`);
+    await page.getByRole("button", { name: "Close export for laser" }).click();
+    await page.waitForSelector(".laser-panel", { state: "detached" });
     libraryReport =
       "inserted a finger-joint box from the Design library (6 panels, 140 mm) and widened it to 170 mm with its box_width variable; then a box with lid from the 3D printing tab (2 parts); then a bolt, nut and washer set found by searching (3 parts); then a stencil of HELLO, saved for laser (1 red outline, 5 blue letter holes, the O's middle bridged); then a 12-piece jigsaw, its puzzle sketch saved for laser (1 red border, 17 blue cuts)";
     libraryReport += "; and a Gridfinity bin found by searching (1 part, 83.5 mm across)";
     libraryReport += "; and a dice tower found by searching (7 tabbed pieces), saved for laser (7 red outlines, 20 blue slots)";
+    libraryReport += "; and a bird box found by searching (7 pieces), saved for laser (7 red outlines, 7 blue holes)";
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 

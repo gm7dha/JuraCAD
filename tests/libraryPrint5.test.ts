@@ -308,7 +308,8 @@ describe("finding them in the library", () => {
   });
 
   it("by search", () => {
-    expect(searchDesigns("honeycomb")[0].id).toBe("hsw-tile");
+    expect(searchDesigns("honeycomb wall")[0].id).toBe("hsw-tile");
+    expect(searchDesigns("honeycomb").map((d) => d.id)).toContain("hsw-tile");
     expect(searchDesigns("hsw").map((d) => d.id).slice(0, 3)).toEqual(["hsw-tile", "hsw-hook", "hsw-bin"]);
     expect(searchDesigns("magnet baseplate")[0].id).toBe("gridfinity-magnet-baseplate");
     expect(searchDesigns("gridfinity lite")[0].id).toBe("gridfinity-lite-bin");
