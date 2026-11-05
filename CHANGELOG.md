@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.45 — Cylinder maze gift box
+
+- New in the Design library under **Puzzles**: the **Cylinder maze gift box**. A round box with a maze cut round its
+  outside, and a lid with two small nubs inside that follow the maze: you twist and slide the lid through the maze to get
+  it off. Every pattern number gives a different maze, and the lid's closed place is as far from the way out as the maze
+  allows. Choose the inside size, Easy / Medium / Hard (a finer track = more turns) and the fit.
+- Both parts print without supports: the box standing on its flange, the lid upside down beside it.
+
 ## v0.44 — Photo relief puzzle
 
 - New in the Design library under **Puzzles**: the **Photo relief puzzle**. Choose any picture — a face, a pet, a bold

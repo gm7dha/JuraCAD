@@ -919,7 +919,17 @@
   LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; `mountainState.kind` "photo" = the Photo relief
   puzzle, the same window and puzzle with a picture for heights: `src/terrain/photoRelief.ts` (pure: `greyFromRgba`,
   `blurred`, `photoGrid` — one unit per pixel, top row north, heights scaled so the relief is `reliefMm` at the spec's `k`
-  from `layoutFor`, stretch 1; ≤ `PHOTO_MAX_SIDE` 400 px; no snow; tests/photoRelief); open state in `mountainState.ts`, session only,
+  from `layoutFor`, stretch 1; ≤ `PHOTO_MAX_SIDE` 400 px; no snow; tests/photoRelief);
+  Puzzle designs (`src/library/puzzleDesigns.ts` `PUZZLE_DESIGNS`, group "Puzzles", first in the print tab's GROUP_ORDER;
+  LibraryDialog's `GroupedCards` shows the tools first under the same heading). Cylinder maze box (`designs/mazeBox.ts`,
+  no variables): `makeMaze` — a perfect maze (seeded backtracker) on `cols` × `rows` cells round HALF the box (repeated, two
+  nubs 180° apart), wrapping round; home on the bottom row, exit the furthest top-row cell (`path`); every groove is a
+  symmetric partial Revolve of a rectangle on a `fixedPlane` turned to its angle (`turnedPlane`; runs along a row merged,
+  a column's ways up merged), the ups `NUDGE` deeper and longer so no two cuts share a face (shared faces made the box
+  invalid). Lid printed upside down beside the box; nubs chamfered 45° towards the bed, their footprint at the core
+  centred on the groove (`groove` = nub + depth − 2·fit + 0.6). Tests: tests/libraryPuzzles (pure), engineLibraryPuzzles
+  (the lid turned over: no overlap along the whole way out, blocked by walls — engine.clashes sometimes returns nothing at
+  an exact placement, so walls are probed at ±1.5° too). open state in `mountainState.ts`, session only,
   never in the document): a real mountain as a 3D printed puzzle of interlocking cubes. Pure in `src/terrain/`: `osGrid.ts`
   (OS grid refs ↔ E/N, `gridToLatLon` = OS transverse Mercator inverse on Airy 1830 + Helmert to WGS84, ~5 m), `elevation.ts`
   (AWS open "Terrain Tiles", terrarium PNGs — `terrariumHeight`, Web Mercator `worldPixel`, zoom `TILE_ZOOM` 12 ≈ 20 m/px,

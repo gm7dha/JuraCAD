@@ -89,35 +89,24 @@ function ToolCard({ tool, onOpen }: { tool: LibraryTool; onOpen: (t: LibraryTool
   );
 }
 
-/** Tools under their headings. */
-function ToolCards({ tools, onOpen }: { tools: LibraryTool[]; onOpen: (t: LibraryTool) => void }) {
-  const groups = [...new Set(tools.map((t) => t.group))];
+/**
+ * Designs under their headings (none for designs without a group, which come first), with the section's tools first
+ * under theirs (a tool's heading with no designs gets a place of its own at the top).
+ */
+function GroupedCards({ groups, tools = [], onPick, onOpen }: { groups: DesignGroup[]; tools?: LibraryTool[]; onPick: (id: string) => void; onOpen?: (t: LibraryTool) => void }) {
+  const toolOnly = [...new Set(tools.map((t) => t.group))].filter((g) => !groups.some((d) => d.group === g)).map((g): DesignGroup => ({ group: g, designs: [] }));
   return (
     <>
-      {groups.map((g) => (
-        <div key={g}>
-          <h4 className="library-group">{g}</h4>
-          <div className="library-grid">
-            {tools
-              .filter((t) => t.group === g)
-              .map((t) => (
-                <ToolCard key={t.id} tool={t} onOpen={onOpen} />
-              ))}
-          </div>
-        </div>
-      ))}
-    </>
-  );
-}
-
-/** Designs under their headings (none for designs without a group, which come first). */
-function GroupedCards({ groups, onPick }: { groups: DesignGroup[]; onPick: (id: string) => void }) {
-  return (
-    <>
-      {groups.map((g) => (
+      {[...toolOnly, ...groups].map((g) => (
         <div key={g.group ?? ""}>
           {g.group && <h4 className="library-group">{g.group}</h4>}
           <div className="library-grid">
+            {onOpen &&
+              tools
+                .filter((t) => t.group === g.group)
+                .map((t) => (
+                  <ToolCard key={t.id} tool={t} onOpen={onOpen} />
+                ))}
             {g.designs.map((d) => (
               <DesignCard key={d.id} design={d} onPick={onPick} />
             ))}
@@ -329,8 +318,7 @@ export function LibraryDialog() {
               <section key={c.id} id="library-section" role="tabpanel" aria-labelledby={`library-tab-${c.id}`}>
                 <h3 className="library-heading">{c.label}</h3>
                 <p className="muted small">{c.blurb}</p>
-                <ToolCards tools={toolsIn(c.id)} onOpen={openTool} />
-                <GroupedCards groups={designGroups(c.id)} onPick={pick} />
+                <GroupedCards groups={designGroups(c.id)} tools={toolsIn(c.id)} onPick={pick} onOpen={openTool} />
               </section>
             ))}
           </>
