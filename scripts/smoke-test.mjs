@@ -447,10 +447,46 @@ try {
     await page.getByRole("button", { name: "Save DXF" }).click();
     const laserDxfText = readFileSync(await (await dxfPromise).path(), "utf8");
     if (!/\nCUT_OUTER\n/.test(laserDxfText) || !/\nCIRCLE\n8\nCUT_INNER\n/.test(laserDxfText)) throw new Error("the laser DXF is missing its CUT_OUTER / CUT_INNER layers");
+    // The link with JuraCUT: a pretend JuraCUT tab on the site's channel takes what "Send to JuraCUT" sends, then sends
+    // a design back, which becomes a new sketch (undone again, so the steps after see the design as it was).
+    await page.evaluate(() => {
+      const cut = { inbox: [], cadTab: null, channel: new BroadcastChannel("jura-link.v1") };
+      window.fakeJuraCUT = cut;
+      cut.channel.onmessage = (e) => {
+        const m = e.data;
+        cut.inbox.push(m);
+        if (m.type === "here" && m.app === "juracad") cut.cadTab = m.tab;
+        if (m.type === "who") cut.channel.postMessage({ type: "here", app: "juracut", tab: "cut-tab" });
+        if (m.type === "parcel" && m.tab === "cut-tab") cut.channel.postMessage({ type: "got", tab: "cut-tab", id: m.parcel.id, ok: true, message: "It's on JuraCUT's bed." });
+      };
+      cut.channel.postMessage({ type: "who", from: "juracut", tab: "cut-tab" });
+    });
+    await page.waitForFunction(() => window.fakeJuraCUT.cadTab, null, { timeout: 10_000 });
+    await page.getByRole("button", { name: "Send to JuraCUT" }).click();
+    await page.waitForFunction(() => window.fakeJuraCUT.inbox.some((m) => m.type === "parcel" && m.parcel.to === "juracut"), null, { timeout: 10_000 });
+    const sentToCut = await page.evaluate(() => window.fakeJuraCUT.inbox.find((m) => m.type === "parcel" && m.parcel.to === "juracut").parcel);
+    if (sentToCut.kind !== "svg" || !sentToCut.content.includes('width="40mm" height="30mm"') || sentToCut.name !== "Part 1") throw new Error(`Send to JuraCUT sent ${JSON.stringify({ ...sentToCut, content: sentToCut.content.slice(0, 200) })}`);
+    await page.waitForSelector(".toast:has-text('Sent to JuraCUT')", { timeout: 10_000 });
+    const featuresBefore = await page.evaluate(() => window.juracadStore.getState().history.present.features.length);
+    await page.evaluate((dxf) => {
+      const cut = window.fakeJuraCUT;
+      cut.channel.postMessage({ type: "parcel", tab: cut.cadTab, parcel: { id: "from-cut-1", from: "juracut", to: "juracad", name: "Tag", kind: "dxf", content: dxf } });
+    }, laserDxfText);
+    await page.waitForFunction(() => window.fakeJuraCUT.inbox.some((m) => m.type === "got" && m.id === "from-cut-1"), null, { timeout: 10_000 });
+    const cadGot = await page.evaluate(() => window.fakeJuraCUT.inbox.find((m) => m.type === "got" && m.id === "from-cut-1"));
+    const linkedSketch = await page.evaluate(() => window.juracadStore.getState().history.present.features.at(-1));
+    if (!cadGot.ok || linkedSketch.type !== "sketch" || linkedSketch.name !== "From JuraCUT: Tag" || !linkedSketch.sketch.data.curves.some((c) => c.type === "circle"))
+      throw new Error(`JuraCUT's design didn't become a sketch: ${JSON.stringify(cadGot)} ${linkedSketch?.name}`);
+    await page.evaluate(() => {
+      window.fakeJuraCUT.channel.close();
+      window.juracadStore.getState().undo();
+    });
+    const featuresAfter = await page.evaluate(() => window.juracadStore.getState().history.present.features.length);
+    if (featuresAfter !== featuresBefore) throw new Error(`undo didn't take JuraCUT's sketch back out (${featuresBefore} → ${featuresAfter})`);
     await page.getByRole("button", { name: "Close export for laser" }).click();
     await page.waitForSelector(".laser-panel", { state: "detached" });
     await page.keyboard.press("Escape");
-    laserReport = `the top face saved for a laser as a 40 × 30 mm SVG (${laserSvgText.length} characters) and a DXF`;
+    laserReport = `the top face saved for a laser as a 40 × 30 mm SVG (${laserSvgText.length} characters) and a DXF, sent to JuraCUT, and a design from JuraCUT made into a sketch`;
   }
 
   step = "editing a feature three times, then undoing once";

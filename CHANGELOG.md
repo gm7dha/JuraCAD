@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.37 — Send designs to and from JuraCUT; more library designs
+
+- **Send to JuraCUT** (Export for laser panel): the outlines go straight onto JuraCUT's bed — into its open tab, or a
+  new one — ready to lay out and cut. Designs sent from JuraCUT arrive here as a new sketch on the Top plane, ready to
+  extrude. Both apps are on the same website, so this all happens inside your browser.
+- **Laser cutting:** living-hinge box, card deck box, business card holder, spice rack, tealight lantern, key rack,
+  dice tower and name puzzle.
+- **3D printing:** electronics enclosure, French cleat, hinged box, desk organiser, cable chain, wall pocket, shelf
+  pins and test prints.
+
 ## v0.36 — Library: Gridfinity, jigsaw puzzles and more · commit `5b61437`
 
 - **3D printing:** Gridfinity baseplates and bins (to the standard, with dividers, label ledge, magnets and stacking
