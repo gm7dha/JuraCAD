@@ -40,6 +40,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   plane: Icons.Plane,
   boolean: Icons.Boolean,
   deletePart: Icons.Trash,
+  simplify: Icons.Simplify,
   fastener: Icons.Bolt,
   derived: Icons.Derived,
   split: Icons.Split,
@@ -274,6 +275,8 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
   const kernelError = useStore((s) => s.featureErrors[feature.id]);
   // Built, but with something to tell (shown in amber, not as a failure).
   const warning = useStore((s) => s.featureWarnings[feature.id]);
+  // Plain information (what Simplify did), shown when hovering.
+  const note = useStore((s) => s.featureNotes[feature.id]);
   const selected = useStore((s) => s.selectedFeatureId === feature.id);
   const editing = useStore((s) => s.editing?.draft.id === feature.id);
   const selectFeature = useStore((s) => s.selectFeature);
@@ -415,7 +418,9 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
             ? `Couldn't build: ${error}`
             : warning
               ? `Built, but: ${warning}`
-              : `${FEATURE_DEFS[feature.type].label}${op}. Double-click to edit, right-click for more.`
+              : note
+                ? `${FEATURE_DEFS[feature.type].label}${op}: ${note}`
+                : `${FEATURE_DEFS[feature.type].label}${op}. Double-click to edit, right-click for more.`
       }
     >
       <span className="feature-icon">
@@ -525,6 +530,13 @@ function PartRow({
             action: () => {
               useStore.getState().setSelectedParts([id]);
               useStore.getState().startCreate("deletePart");
+            },
+          },
+          {
+            label: "Simplify (tidy into real faces)…",
+            action: () => {
+              useStore.getState().setSelectedParts([id]);
+              useStore.getState().startCreate("simplify");
             },
           },
           { label: hidden ? "Show" : "Hide", action: onToggle },
@@ -647,6 +659,7 @@ function PartsList({
       { label: `Duplicate these ${n} parts`, action: () => st().duplicateParts(group) },
       { label: `Merge these ${n} parts into one`, action: () => st().mergeParts(group) },
       { label: `Delete these ${n} parts…`, action: () => st().startCreate("deletePart") },
+      { label: `Simplify these ${n} parts…`, action: () => st().startCreate("simplify") },
       { label: `Export these ${n} parts…`, action: () => st().openDialog("export") },
       { label: "Clear selection", action: () => st().setSelectedParts([]) },
     ];
