@@ -50,14 +50,35 @@ export interface MountainSpec {
 export const MOUNTAIN_DEFAULTS: Omit<MountainSpec, "bed"> = { scale: 1, cube: 30, exaggeration: 1.5, base: 10, snowline: null, fit: 0.15, seed: 1 };
 
 /**
- * The tabs are chunky dovetails with rounded corners, centred on each side: neck `DOVE_NECK` of the side wide, head
- * `DOVE_HEAD` wide, reaching `DOVE_DEPTH` into the neighbour — wide necks, so even the thin bottom plate's tabs don't
- * snap, and they keep clear of the tabs on the sides next to them (head ends at a quarter in, depth under a quarter).
+ * The tabs are chunky dovetails with rounded corners. Each join is one of `DOVE_SHAPES` (shares of the side): pointing
+ * either way, a narrow or wide head, shallow or deep, and a narrow one set left, centre or right — 16 in all, each
+ * differing from the others by well over the fit gap, so a piece only goes in properly where its own neighbours are
+ * (`uniqueBlocks` makes sure no two pieces match, however they're turned). The neck is the head less `DOVE_LOCK` each
+ * side (the lock). Every shape stays clear of the tabs on the sides next to it: a head starts at least `DOVE_CLEAR` in
+ * from the corner, and no tab reaches further in than that.
  */
-export const DOVE_NECK = 0.36;
-export const DOVE_HEAD = 0.5;
-export const DOVE_DEPTH = 0.2;
-const DOVE_ROUND = 0.035;
+export const DOVE_HEADS = [0.38, 0.46];
+export const DOVE_DEPTHS = [0.15, 0.21];
+export const DOVE_OFFSETS = [-0.04, 0, 0.04];
+export const DOVE_LOCK = 0.06;
+export const DOVE_CLEAR = 0.27;
+const DOVE_ROUND = 0.03;
+/** One join's shape: which way (+1/−1, as `dovetail`'s sign), head and depth (indices), offset along the side (index). */
+export interface DoveShape {
+  sign: number;
+  head: number;
+  depth: number;
+  offset: number;
+}
+/** Every allowed shape (a wide head only in the middle, so it keeps clear of the corners). */
+export const DOVE_SHAPES: DoveShape[] = [];
+for (const sign of [1, -1])
+  for (let head = 0; head < DOVE_HEADS.length; head++)
+    for (let depth = 0; depth < DOVE_DEPTHS.length; depth++)
+      for (let offset = 0; offset < DOVE_OFFSETS.length; offset++)
+        if (0.5 - Math.abs(DOVE_OFFSETS[offset]) - DOVE_HEADS[head] / 2 >= DOVE_CLEAR - 1e-9) DOVE_SHAPES.push({ sign, head, depth, offset });
+/** The narrowest neck as a share of the side. */
+const NARROWEST = Math.min(...DOVE_HEADS) - 2 * DOVE_LOCK;
 /** The thinnest a tab's neck may be (mm) after the fit gap is taken off both sides: thinner snaps. */
 export const MIN_NECK = 3;
 /** Necks thinner than this (mm) work but are fragile: warned about. */
@@ -144,12 +165,12 @@ for (const cut of [0, 1, 2, 3]) for (const dy of [-1, 0, 1]) for (const dx of [-
 
 /** The narrowest tab neck a cube size gives (mm), with the fit gap taken off both sides. */
 export function neckFor(cube: number, fit: number): number {
-  return DOVE_NECK * cube - 2 * fit;
+  return NARROWEST * cube - 2 * fit;
 }
 
 /** The smallest cube (mm, rounded up to a whole mm) whose necks are at least `neck` wide. */
 export function smallestCube(fit: number, neck = MIN_NECK): number {
-  return Math.ceil((neck + 2 * fit) / DOVE_NECK);
+  return Math.ceil((neck + 2 * fit) / NARROWEST);
 }
 
 /** The bottom jigsaw plate is never thinner than this (mm). */
@@ -368,41 +389,46 @@ export function keyPlace(centre: P2, below: P2[], above: P2[], g: KeySizes, cube
   return best;
 }
 
-/** Which way each join's tab points in a layer (+1 or −1): `across[r][c]` between rows r and r + 1, `down[c][r]` between columns c and c + 1. */
+/** Each join's shape in a layer: `across[r][c]` between rows r and r + 1, `down[c][r]` between columns c and c + 1. */
 interface LayerJoins {
-  across: number[][];
-  down: number[][];
+  across: DoveShape[][];
+  down: DoveShape[][];
 }
 
-function layerJoins(cols: number, rows: number, seed: number): LayerJoins {
+function seeded(seed: number): () => number {
   let a = seed >>> 0 || 1;
-  const rnd = () => {
+  return () => {
     a = (a + 0x6d2b79f5) >>> 0;
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  const sign = () => (rnd() < 0.5 ? -1 : 1);
+}
+
+function layerJoins(cols: number, rows: number, rnd: () => number): LayerJoins {
+  const pick = () => DOVE_SHAPES[Math.floor(rnd() * DOVE_SHAPES.length)];
   return {
-    across: Array.from({ length: Math.max(0, rows - 1) }, () => Array.from({ length: cols }, sign)),
-    down: Array.from({ length: Math.max(0, cols - 1) }, () => Array.from({ length: rows }, sign)),
+    across: Array.from({ length: Math.max(0, rows - 1) }, () => Array.from({ length: cols }, pick)),
+    down: Array.from({ length: Math.max(0, cols - 1) }, () => Array.from({ length: rows }, pick)),
   };
 }
 
-/** A dovetail from a to b, its head to the left of a→b (sign +1) or right (−1), corners rounded. */
-export function dovetail(a: P2, b: P2, sign: number): P2[] {
+/** A dovetail from a to b in `shape`: its head to the left of a→b (sign +1) or right (−1), corners rounded. */
+export function dovetail(a: P2, b: P2, shape: DoveShape): P2[] {
   const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
   const u: P2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
-  const n: P2 = [-u[1] * sign, u[0] * sign];
+  const n: P2 = [-u[1] * shape.sign, u[0] * shape.sign];
   const at = (t: number, d: number): P2 => [a[0] + u[0] * t * L + n[0] * d * L, a[1] + u[1] * t * L + n[1] * d * L];
-  const nh = DOVE_NECK / 2;
-  const hh = DOVE_HEAD / 2;
+  const hh = DOVE_HEADS[shape.head] / 2;
+  const nh = hh - DOVE_LOCK;
+  const depth = DOVE_DEPTHS[shape.depth];
+  const mid = 0.5 + DOVE_OFFSETS[shape.offset];
   const corners: [number, number][] = [
-    [0.5 - nh, 0],
-    [0.5 - hh, DOVE_DEPTH],
-    [0.5 + hh, DOVE_DEPTH],
-    [0.5 + nh, 0],
+    [mid - nh, 0],
+    [mid - hh, depth],
+    [mid + hh, depth],
+    [mid + nh, 0],
   ];
   const pts: P2[] = [a];
   const path: [number, number][] = [[0, 0], ...corners, [1, 0]];
@@ -424,6 +450,53 @@ export function dovetail(a: P2, b: P2, sign: number): P2[] {
   }
   pts.push(b);
   return pts;
+}
+
+/**
+ * A side as its own piece sees it, walking round anticlockwise: "flat", or out/in + head + depth + offset (offsets
+ * flipped on the top and left sides, which the piece walks the other way). Two pieces with the same four sides in the
+ * same turn could swap places.
+ */
+function sideCode(shape: DoveShape | null, side: number): string {
+  if (!shape) return "flat";
+  const reversed = side >= 2;
+  const out = reversed ? shape.sign > 0 : shape.sign < 0;
+  const offset = reversed ? DOVE_OFFSETS.length - 1 - shape.offset : shape.offset;
+  return `${out ? "tab" : "hole"}${shape.head}${shape.depth}${offset}`;
+}
+
+/**
+ * Change joins until no two pieces of the same height have the same four sides, however either is turned (so a piece
+ * only fits properly in its own place). `blocks` gives each piece's joins (null = a flat side); returns how many
+ * pieces still match another — only ones with fewer than two tabs (a cube with a single neighbour at its level has
+ * just one tab, and only 16 shapes to choose from); their keys still tell them apart.
+ */
+function uniqueBlocks(blocks: { height: number; sides: () => (DoveShape | null)[]; reroll: (rnd: () => number) => void }[], rnd: () => number): number {
+  const signature = (b: (typeof blocks)[number]) => b.sides().map(sideCode);
+  let left = 0;
+  for (let pass = 0; pass < 200; pass++) {
+    const seen = new Map<string, number>();
+    const clashing = new Set<number>();
+    blocks.forEach((b, i) => {
+      const sig = signature(b);
+      // Every turn of this piece: the same shape turned is the same piece.
+      const turns = [0, 1, 2, 3].map((k) => `${b.height.toFixed(3)}|${[...sig.slice(k), ...sig.slice(0, k)].join(",")}`);
+      const key = [...turns].sort()[0];
+      const other = seen.get(key);
+      if (other !== undefined) {
+        clashing.add(i);
+        clashing.add(other);
+      } else seen.set(key, i);
+      // A piece that looks the same turned can go in turned: that's fine (it's the same place), so nothing to do.
+    });
+    left = clashing.size;
+    if (!left) return 0;
+    // Pieces with two or more tabs can always be made different; change one of their joins at random.
+    const fixable = [...clashing].filter((i) => blocks[i].sides().filter(Boolean).length >= 2);
+    if (!fixable.length && pass > 40) break;
+    for (const i of clashing) if (rnd() < 0.5) blocks[i].reroll(rnd);
+  }
+  return left;
 }
 
 /** A layer piece's outline with tabs only on the sides `tabbed` allows (bottom, right, top, left), anticlockwise. */
@@ -702,8 +775,32 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const layers = Math.max(...full) + 1;
 
   // Each layer's jigsaw, and its pieces' outlines (tabs only between two whole cubes).
+  const rnd = seeded(spec.seed * 7919 + 1);
   const puzzles: LayerJoins[] = [];
-  for (let L = 0; L < layers - 1; L++) puzzles.push(layerJoins(cols, rows, spec.seed * 31 + L * 977));
+  for (let L = 0; L < layers - 1; L++) puzzles.push(layerJoins(cols, rows, rnd));
+  // Every piece with tabs, so no two can swap places.
+  const blocks: Parameters<typeof uniqueBlocks>[0] = [];
+  const pick = (r: () => number) => DOVE_SHAPES[Math.floor(r() * DOVE_SHAPES.length)];
+  for (let L = 0; L < layers - 1; L++) {
+    const j = puzzles[L];
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++) {
+        if (fullAt(c, r) <= L) continue;
+        const has = [r > 0 && fullAt(c, r - 1) > L, c < cols - 1 && fullAt(c + 1, r) > L, r < rows - 1 && fullAt(c, r + 1) > L, c > 0 && fullAt(c - 1, r) > L];
+        blocks.push({
+          height: bottomOf(L + 1) - bottomOf(L),
+          sides: () => [has[0] ? j.across[r - 1][c] : null, has[1] ? j.down[c][r] : null, has[2] ? j.across[r][c] : null, has[3] ? j.down[c - 1][r] : null],
+          reroll: (g) => {
+            const side = Math.floor(g() * 4);
+            if (side === 0 && has[0]) j.across[r - 1][c] = pick(g);
+            else if (side === 1 && has[1]) j.down[c][r] = pick(g);
+            else if (side === 2 && has[2]) j.across[r][c] = pick(g);
+            else if (side === 3 && has[3]) j.down[c - 1][r] = pick(g);
+          },
+        });
+      }
+  }
+  const lookAlikes = uniqueBlocks(blocks, rnd);
   let neck = Infinity;
   const outlineOf = (L: number, c: number, r: number): P2[] => {
     if (L >= fullAt(c, r)) {
@@ -774,6 +871,10 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
       }
     }
   const warnings = [...checks.warnings];
+  if (lookAlikes)
+    warnings.push(
+      `${lookAlikes} pieces stand where only one cube or none sits beside them, so their tabs alone can't make them all different: their coded keys tell them apart.`,
+    );
   if (clashes) warnings.push(`${clashes} ${clashes === 1 ? "pair" : "pairs"} of neighbouring keys could still go into each other's pockets: take care with those pieces.`);
   if (keyless.length) warnings.push(`No room for a key under ${keyless.length === 1 ? "piece" : "pieces"} ${keyless.slice(0, 6).join(", ")}${keyless.length > 6 ? "…" : ""}: ${keyless.length === 1 ? "it rests" : "they rest"} on the piece below with nothing to hold ${keyless.length === 1 ? "it" : "them"} in place.`);
   const tallest = Math.max(...pieces.map((p) => p.height));
