@@ -4,6 +4,8 @@ import { useDocument, useStore } from "../model/store";
 import { currentValues, defaultValues, designGroups, findDesign, type DesignGroup, findInsert, LIBRARY_CATEGORIES, liveInserts, valueProblems } from "../library/insert";
 import { rememberedTab, rememberTab } from "../library/tabMemory";
 import { searchDesigns } from "../library/browse";
+import { searchTools, toolsIn, type LibraryTool } from "../library/tools";
+import { openMountain } from "./mountainState";
 import { previewPicture } from "../library/preview";
 import type { DesignCategory, DesignInput, DesignValues, LibraryDesign } from "../library/types";
 import { Modal } from "./Modal";
@@ -60,6 +62,51 @@ function DesignCard({ design, onPick }: { design: LibraryDesign; onPick: (id: st
         <span className="muted small">{design.description}</span>
       </span>
     </button>
+  );
+}
+
+/** A tool's card: it opens its own window. */
+function ToolCard({ tool, onOpen }: { tool: LibraryTool; onOpen: (t: LibraryTool) => void }) {
+  return (
+    <button className="library-card" onClick={() => onOpen(tool)} aria-label={`${tool.name}: ${tool.description}`}>
+      <svg
+        width={44}
+        height={44}
+        viewBox="0 0 48 48"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.8}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        aria-hidden="true"
+        dangerouslySetInnerHTML={{ __html: tool.icon }}
+      />
+      <span className="library-card-text">
+        <b>{tool.name}</b>
+        <span className="muted small">{tool.description}</span>
+      </span>
+    </button>
+  );
+}
+
+/** Tools under their headings. */
+function ToolCards({ tools, onOpen }: { tools: LibraryTool[]; onOpen: (t: LibraryTool) => void }) {
+  const groups = [...new Set(tools.map((t) => t.group))];
+  return (
+    <>
+      {groups.map((g) => (
+        <div key={g}>
+          <h4 className="library-group">{g}</h4>
+          <div className="library-grid">
+            {tools
+              .filter((t) => t.group === g)
+              .map((t) => (
+                <ToolCard key={t.id} tool={t} onOpen={onOpen} />
+              ))}
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -183,6 +230,11 @@ export function LibraryDialog() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<DesignCategory>(() => rememberedTab());
   const found = useMemo(() => searchDesigns(search), [search]);
+  const foundTools = useMemo(() => searchTools(search), [search]);
+  const openTool = (t: LibraryTool) => {
+    close();
+    if (t.id === "mountain") openMountain();
+  };
   const chooseTab = (t: DesignCategory) => {
     setTab(t);
     rememberTab(t);
@@ -223,14 +275,21 @@ export function LibraryDialog() {
         />
         {search.trim() ? (
           <section aria-live="polite">
-            <h3 className="library-heading">{found.length === 0 ? "Nothing found" : `Found ${found.length} design${found.length > 1 ? "s" : ""}`}</h3>
-            {found.length === 0 ? (
+            <h3 className="library-heading">
+              {found.length + foundTools.length === 0 ? "Nothing found" : `Found ${found.length + foundTools.length} design${found.length + foundTools.length > 1 ? "s" : ""}`}
+            </h3>
+            {found.length + foundTools.length === 0 ? (
               <p className="muted small">Try another word, or clear the search to see every design.</p>
             ) : (
-              LIBRARY_CATEGORIES.filter((c) => found.some((d) => d.category === c.id)).map((c) => (
+              LIBRARY_CATEGORIES.filter((c) => found.some((d) => d.category === c.id) || foundTools.some((t) => t.category === c.id)).map((c) => (
                 <div key={c.id}>
                   <h4 className="library-group">{c.label}</h4>
                   <div className="library-grid">
+                    {foundTools
+                      .filter((t) => t.category === c.id)
+                      .map((t) => (
+                        <ToolCard key={t.id} tool={t} onOpen={openTool} />
+                      ))}
                     {found
                       .filter((d) => d.category === c.id)
                       .map((d) => (
@@ -270,6 +329,7 @@ export function LibraryDialog() {
               <section key={c.id} id="library-section" role="tabpanel" aria-labelledby={`library-tab-${c.id}`}>
                 <h3 className="library-heading">{c.label}</h3>
                 <p className="muted small">{c.blurb}</p>
+                <ToolCards tools={toolsIn(c.id)} onOpen={openTool} />
                 <GroupedCards groups={designGroups(c.id)} onPick={pick} />
               </section>
             ))}

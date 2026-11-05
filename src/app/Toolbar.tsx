@@ -4,7 +4,6 @@ import { activeFeatures, activeStudioId, studioParts, useStore } from "../model/
 import type { FeatureType } from "../model/types";
 import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
-import { openMountain } from "./mountainState";
 import { ToolGroupButton } from "./ToolGroupButton";
 import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
@@ -138,12 +137,6 @@ export function Toolbar() {
           onClick={() => useStore.getState().openLibrary({ mode: "browse" })}
           disabled={!ready || editing}
           title={editing ? "Finish or cancel the open feature first" : "Design library — ready-made designs (a finger-joint box, a tray, a bracket…) to size and insert as editable features"}
-        />
-        <ToolButton
-          label="Mountain"
-          icon={<Icons.Mountain />}
-          onClick={() => openMountain()}
-          title="Mountain puzzle — turn a real mountain into a 3D printed jigsaw of interlocking cubes, with snow caps"
         />
       </div>
       <div className="tool-divider" />
