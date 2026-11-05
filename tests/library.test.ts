@@ -45,7 +45,7 @@ const PRINT5_IDS = ["hsw-tile", "hsw-hook", "hsw-bin", "gridfinity-magnet-basepl
 
 describe("the library", () => {
   it("has each design described, with an icon, inputs and working defaults", () => {
-    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS, "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS, ...PRINT4_IDS, ...PRINT5_IDS]);
+    expect(LIBRARY.map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS, "tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS, ...PRINT4_IDS, ...PRINT5_IDS, "maze-box", "six-piece-burr"]);
     for (const d of LIBRARY) {
       expect(d.name.length).toBeGreaterThan(3);
       expect(d.description.length).toBeGreaterThan(20);
@@ -266,7 +266,7 @@ describe("library sections", () => {
       ["print", "3D printing"],
     ]);
     expect(designsIn("laser").map((d) => d.id)).toEqual(["finger-box", "flat-stand", ...LASER_IDS]);
-    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS, ...PRINT4_IDS, ...PRINT5_IDS]);
+    expect(designsIn("print").map((d) => d.id)).toEqual(["tray", "box-lid", "bracket", "hook", "cable-clip", "phone-stand", "hinge", "spacer", "knob", "printed-stamp", "bolt-set", "standoff", "piano-hinge", "jar", "bit-holder", "pegboard-hook", "drawer-pull", "grommet", "corner-guard", ...PRINT3_IDS, ...PRINT4_IDS, ...PRINT5_IDS, "maze-box", "six-piece-burr"]);
     expect(designsIn("laser").length + designsIn("print").length).toBe(LIBRARY.length);
     expect(categoryLabel("print")).toBe("3D printing");
     expect(categoryFrom("Laser cutting")).toBe("laser");

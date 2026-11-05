@@ -51,8 +51,8 @@ describe("Photo relief", () => {
   });
 
   it("has its own card in the library, under Puzzles", () => {
-    expect(toolsIn("print").map((t) => t.id)).toEqual(["mountain", "photo"]);
+    expect(toolsIn("print").map((t) => t.id)).toEqual(["mountain", "photo", "island"]);
     expect(searchTools("lithophane").map((t) => t.id)).toEqual(["photo"]);
-    expect(searchTools("puzzle").map((t) => t.id)).toEqual(["mountain", "photo"]);
+    expect(searchTools("puzzle").map((t) => t.id)).toEqual(["mountain", "photo", "island"]);
   });
 });
