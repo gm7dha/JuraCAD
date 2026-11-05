@@ -8,11 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.41 — Mountain puzzle: a low base
+## v0.41 — Mountain puzzle: a low base and chunkier tabs
 
 - **Much less plain side under the mountain.** The bottom layer is now a thin jigsaw plate (about 4 mm) instead of a full
   cube, so the lowest ground sits only 10 mm above the bed. The layers above are full cubes as before, still locked
   together by the plate's jigsaw and the keys.
+- **Chunkier tabs:** the round jigsaw tabs are now wide **dovetails** with rounded corners. Their necks are about 10 mm
+  wide on 30 mm cubes (they were 3.4 mm), so they don't snap, even on the thin bottom plate, and they print cleanly.
+  Smaller cubes work too: down to 10 mm (sturdy from 15 mm), though below about 27 mm some neighbouring keys can swap.
 - New setting, **Side under the ground**, for how many mm of plain side to leave (10 by default).
 - The area boxes now say **km west to east** and **km south to north**, instead of "wide" and "tall".
 - The mountain puzzle is 3D printing only now: the laser version has been taken out of JuraCUT.

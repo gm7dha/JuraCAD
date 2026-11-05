@@ -885,8 +885,10 @@
   stands on a jigsaw cube) + (h − low)·k·exaggeration. `base` (default 10) is the plain side under the lowest ground (the
   owner wanted ≤ 10 mm of it): layer 0 is a thin jigsaw plate `plateFor` = base − thinnest top − 1.5 mm headroom (≥ `PLATE_MIN`
   3), layers above are whole cubes (`bottomOf(L)`); `baseFor` raises base to fit them. Per column, `full` = the plate plus
-  the whole cubes under the top piece (always ≥ 1; top ≥ socket depth + 2 mm thick everywhere). Each layer is `makePuzzle` (tab `TAB` 0.28, pattern tried until `narrowestGap` ≥ MIN_GAP + 2·fit)
-  with tabs only between two whole cubes (else straight; top pieces are squares), outlines shrunk by `fit`. One locating key
+  the whole cubes under the top piece (always ≥ 1; top ≥ socket depth + 2 mm thick everywhere). Each layer's joins are chunky rounded dovetails (`dovetail`: neck `DOVE_NECK` 0.36, head `DOVE_HEAD` 0.5,
+  `DOVE_DEPTH` 0.2 of the side, centred, so they never meet the next side's tab; which way each points from `layerJoins`,
+  seeded; they replaced library/puzzle.ts's round tabs, whose necks were 3.4 mm on 30 mm cubes and snapped on the plate;
+  `MIN_NECK` 3, `GOOD_NECK` 5) with tabs only between two whole cubes (else straight; top pieces are squares), outlines shrunk by `fit`. One locating key
   per join (it replaced two thin pegs, which were fiddly and could snap): a rounded-square pad on each cube's top
   (`keySizes`: h 2–3.5 mm, sides sloping in 0.8·h, `keyLoop`), a matching pocket under the piece above (fit bigger all round,
   h + 0.4 deep, the same slope); `keyPlace` sizes it straight from the "square" (L∞) room to both outlines less `WALL`

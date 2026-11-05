@@ -1,6 +1,6 @@
 /**
  * A mountain as a 3D printed puzzle (pure, numbers in mm; z up, x east, y north): the ground is cut into columns of
- * cubes. Inside the mountain each layer is a jigsaw — classic round tabs (src/library/puzzle.ts) running the full
+ * cubes. Inside the mountain each layer is a jigsaw — chunky dovetail tabs (`dovetail`) running the full
  * height of the layer, so the pieces lock side to side — and every piece has a key on top (a low, wide square pad
  * with sloping sides) that fits a matching pocket in the underside of the piece above. Everything goes together by
  * dropping pieces in from above, the way the tabs and keys both point; the slopes steer each piece into place and let
@@ -20,7 +20,6 @@
  * Every mesh is watertight: faces meet the walls corner to corner (src/terrain/triangulate.ts).
  */
 import { insideGap, offsetPolygon } from "../library/outlines";
-import { edgePolyline, makePuzzle, narrowestGap, MIN_GAP, NECK, SIZE_SPREAD, TAB_RISE, type Puzzle, type PuzzleEdge } from "../library/puzzle";
 import { heightAt, type HeightGrid } from "./elevation";
 import { groundMarks } from "./groundMarks";
 import { NO_FEATURES, type MapFeatures } from "./osm";
@@ -50,16 +49,23 @@ export interface MountainSpec {
 
 export const MOUNTAIN_DEFAULTS: Omit<MountainSpec, "bed"> = { scale: 1, cube: 30, exaggeration: 1.5, base: 10, snowline: null, fit: 0.15, seed: 1 };
 
-/** A tab's height as a share of the cube (a little bigger than the laser jigsaw's, for strength). */
-export const TAB = 0.28;
+/**
+ * The tabs are chunky dovetails with rounded corners, centred on each side: neck `DOVE_NECK` of the side wide, head
+ * `DOVE_HEAD` wide, reaching `DOVE_DEPTH` into the neighbour — wide necks, so even the thin bottom plate's tabs don't
+ * snap, and they keep clear of the tabs on the sides next to them (head ends at a quarter in, depth under a quarter).
+ */
+export const DOVE_NECK = 0.36;
+export const DOVE_HEAD = 0.5;
+export const DOVE_DEPTH = 0.2;
+const DOVE_ROUND = 0.035;
 /** The thinnest a tab's neck may be (mm) after the fit gap is taken off both sides: thinner snaps. */
-export const MIN_NECK = 2;
+export const MIN_NECK = 3;
 /** Necks thinner than this (mm) work but are fragile: warned about. */
-export const GOOD_NECK = 3;
+export const GOOD_NECK = 5;
 /** Plastic left round a key or its pocket, mm. */
 export const WALL = 1.2;
-/** Points on each arc of a tab. */
-const ARC_STEPS = 6;
+/** Points on each rounded corner of a tab. */
+const ROUND_STEPS = 5;
 /** At most this many pieces in one layer (the jigsaw's own limit). */
 export const MAX_COLUMNS = 400;
 
@@ -138,13 +144,12 @@ for (const cut of [0, 1, 2, 3]) for (const dy of [-1, 0, 1]) for (const dx of [-
 
 /** The narrowest tab neck a cube size gives (mm), with the fit gap taken off both sides. */
 export function neckFor(cube: number, fit: number): number {
-  const R = ((TAB * cube) / TAB_RISE) * (1 - SIZE_SPREAD);
-  return 2 * NECK * R - 2 * fit;
+  return DOVE_NECK * cube - 2 * fit;
 }
 
 /** The smallest cube (mm, rounded up to a whole mm) whose necks are at least `neck` wide. */
 export function smallestCube(fit: number, neck = MIN_NECK): number {
-  return Math.ceil((neck + 2 * fit) / (2 * NECK * (TAB / TAB_RISE) * (1 - SIZE_SPREAD)));
+  return Math.ceil((neck + 2 * fit) / DOVE_NECK);
 }
 
 /** The bottom jigsaw plate is never thinner than this (mm). */
@@ -363,28 +368,71 @@ export function keyPlace(centre: P2, below: P2[], above: P2[], g: KeySizes, cube
   return best;
 }
 
-/** A layer's jigsaw, with a pattern number whose tabs keep clear of each other. */
-function layerPuzzle(cols: number, rows: number, cube: number, fit: number, seed: number): Puzzle {
-  const spec = { width: cols * cube, height: rows * cube, rows, columns: cols, tab: TAB, seed, minNeck: MIN_NECK };
-  const need = MIN_GAP + 2 * fit;
-  let first: Puzzle | null = null;
-  for (let s = 0; s < 20; s++) {
-    const p = makePuzzle({ ...spec, seed: (seed + s * 7919) % 1000003 });
-    first ??= p;
-    if (rows * cols < 2 || narrowestGap(p, need) >= need) return p;
+/** Which way each join's tab points in a layer (+1 or −1): `across[r][c]` between rows r and r + 1, `down[c][r]` between columns c and c + 1. */
+interface LayerJoins {
+  across: number[][];
+  down: number[][];
+}
+
+function layerJoins(cols: number, rows: number, seed: number): LayerJoins {
+  let a = seed >>> 0 || 1;
+  const rnd = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const sign = () => (rnd() < 0.5 ? -1 : 1);
+  return {
+    across: Array.from({ length: Math.max(0, rows - 1) }, () => Array.from({ length: cols }, sign)),
+    down: Array.from({ length: Math.max(0, cols - 1) }, () => Array.from({ length: rows }, sign)),
+  };
+}
+
+/** A dovetail from a to b, its head to the left of a→b (sign +1) or right (−1), corners rounded. */
+export function dovetail(a: P2, b: P2, sign: number): P2[] {
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const u: P2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+  const n: P2 = [-u[1] * sign, u[0] * sign];
+  const at = (t: number, d: number): P2 => [a[0] + u[0] * t * L + n[0] * d * L, a[1] + u[1] * t * L + n[1] * d * L];
+  const nh = DOVE_NECK / 2;
+  const hh = DOVE_HEAD / 2;
+  const corners: [number, number][] = [
+    [0.5 - nh, 0],
+    [0.5 - hh, DOVE_DEPTH],
+    [0.5 + hh, DOVE_DEPTH],
+    [0.5 + nh, 0],
+  ];
+  const pts: P2[] = [a];
+  const path: [number, number][] = [[0, 0], ...corners, [1, 0]];
+  for (let i = 1; i <= corners.length; i++) {
+    // Round each corner: a curve from a little before it to a little after, pulled towards the corner.
+    const [p, c, q] = [path[i - 1], path[i], path[i + 1]];
+    const lead = (from: [number, number]) => {
+      const d = Math.hypot(from[0] - c[0], from[1] - c[1]);
+      const k = Math.min(DOVE_ROUND, d / 2) / d;
+      return [c[0] + (from[0] - c[0]) * k, c[1] + (from[1] - c[1]) * k] as [number, number];
+    };
+    const [s0, s1] = [lead(p), lead(q)];
+    for (let j = 0; j <= ROUND_STEPS; j++) {
+      const t = j / ROUND_STEPS;
+      const x = (1 - t) ** 2 * s0[0] + 2 * (1 - t) * t * c[0] + t * t * s1[0];
+      const y = (1 - t) ** 2 * s0[1] + 2 * (1 - t) * t * c[1] + t * t * s1[1];
+      pts.push(at(x, y));
+    }
   }
-  return first!;
+  pts.push(b);
+  return pts;
 }
 
 /** A layer piece's outline with tabs only on the sides `tabbed` allows (bottom, right, top, left), anticlockwise. */
-function blockOutline(p: Puzzle, r: number, c: number, tabbed: (side: number) => boolean): P2[] {
-  const { rows, columns } = p.spec;
-  const line = (e: PuzzleEdge) => edgePolyline(e, ARC_STEPS) as P2[];
-  const [x0, y0, x1, y1] = [c * p.pw, r * p.ph, (c + 1) * p.pw, (r + 1) * p.ph];
-  const bottom = r > 0 && tabbed(0) ? line(p.across[r - 1][c]) : [[x0, y0], [x1, y0]] as P2[];
-  const right = c < columns - 1 && tabbed(1) ? line(p.down[c][r]) : [[x1, y0], [x1, y1]] as P2[];
-  const top = r < rows - 1 && tabbed(2) ? line(p.across[r][c]) : [[x0, y1], [x1, y1]] as P2[];
-  const left = c > 0 && tabbed(3) ? line(p.down[c - 1][r]) : [[x0, y0], [x0, y1]] as P2[];
+function blockOutline(j: LayerJoins, cols: number, rows: number, cube: number, r: number, c: number, tabbed: (side: number) => boolean): P2[] {
+  const [x0, y0, x1, y1] = [c * cube, r * cube, (c + 1) * cube, (r + 1) * cube];
+  const bottom = r > 0 && tabbed(0) ? dovetail([x0, y0], [x1, y0], j.across[r - 1][c]) : ([[x0, y0], [x1, y0]] as P2[]);
+  const right = c < cols - 1 && tabbed(1) ? dovetail([x1, y0], [x1, y1], j.down[c][r]) : ([[x1, y0], [x1, y1]] as P2[]);
+  const top = r < rows - 1 && tabbed(2) ? dovetail([x0, y1], [x1, y1], j.across[r][c]) : ([[x0, y1], [x1, y1]] as P2[]);
+  const left = c > 0 && tabbed(3) ? dovetail([x0, y0], [x0, y1], j.down[c - 1][r]) : ([[x0, y0], [x0, y1]] as P2[]);
   return [...bottom.slice(0, -1), ...right.slice(0, -1), ...[...top].reverse().slice(0, -1), ...[...left].reverse().slice(0, -1)];
 }
 
@@ -654,8 +702,8 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const layers = Math.max(...full) + 1;
 
   // Each layer's jigsaw, and its pieces' outlines (tabs only between two whole cubes).
-  const puzzles: Puzzle[] = [];
-  for (let L = 0; L < layers - 1; L++) puzzles.push(layerPuzzle(cols, rows, cube, fit, spec.seed * 31 + L * 977));
+  const puzzles: LayerJoins[] = [];
+  for (let L = 0; L < layers - 1; L++) puzzles.push(layerJoins(cols, rows, spec.seed * 31 + L * 977));
   let neck = Infinity;
   const outlineOf = (L: number, c: number, r: number): P2[] => {
     if (L >= fullAt(c, r)) {
@@ -673,13 +721,9 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
       [c, r + 1],
       [c - 1, r],
     ];
-    const p = puzzles[L];
     const tabbed = (side: number) => fullAt(neighbours[side][0], neighbours[side][1]) > L;
-    const sides: (PuzzleEdge | undefined)[] = [r > 0 ? p.across[r - 1]?.[c] : undefined, p.down[c]?.[r], p.across[r]?.[c], c > 0 ? p.down[c - 1]?.[r] : undefined];
-    sides.forEach((e, side) => {
-      if (e && tabbed(side)) neck = Math.min(neck, 2 * NECK * e.R - 2 * fit);
-    });
-    return offsetPolygon(blockOutline(p, r, c, tabbed), -fit);
+    if ([0, 1, 2, 3].some((side) => tabbed(side) && (side === 0 ? r > 0 : side === 1 ? c < cols - 1 : side === 2 ? r < rows - 1 : c > 0))) neck = Math.min(neck, neckFor(cube, fit));
+    return offsetPolygon(blockOutline(puzzles[L], cols, rows, cube, r, c, tabbed), -fit);
   };
 
   // Every column's outlines and the spot for each key between its pieces.

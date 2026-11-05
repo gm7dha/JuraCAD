@@ -205,6 +205,8 @@ describe("Mountain puzzle", () => {
     expect(layoutFor(hill, W, H, { ...SPEC, scale: 2 }).cols).toBe(16);
     // Only 10 mm of plain side under the lowest ground: the bottom layer is a thin jigsaw plate.
     expect(baseFor(SPEC)).toBe(10);
+    // Chunky dovetail tabs: necks about a third of the cube.
+    expect(puzzle.neck).toBeGreaterThan(10);
     expect(plateFor(SPEC)).toBeGreaterThanOrEqual(PLATE_MIN);
     let lowest = Infinity;
     for (const p of puzzle.pieces) {
