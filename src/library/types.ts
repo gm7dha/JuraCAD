@@ -77,6 +77,11 @@ export interface LibraryDesign {
    * with): e.g. a stamp's sketch engraves the background. Set when that sketch is picked in the laser panel.
    */
   laser?: Record<string, { background?: boolean; text?: "cut" | "engrave"; shapes?: "cut" | "engrave"; open?: "cut" | "score" }>;
+  /**
+   * Parts (by role) that aren't cut as they're shown — a living-hinge wall drawn bent, cut from its flat sketch — so
+   * Export for laser's "every part" leaves them out.
+   */
+  notCut?: string[];
   /** Start of its variables' names: box → box_width. */
   prefix: string;
   /** A small drawing for its card: the inside of an <svg viewBox="0 0 48 48">, in currentColor. */

@@ -30,10 +30,11 @@ import { tray } from "./designs/tray";
 import { PRINT_DESIGNS } from "./printDesigns";
 import { LASER_DESIGNS, printedStamp } from "./designs/laserSet";
 import { LASER_DESIGNS_3 } from "./designs/laserSet3";
+import { LASER_DESIGNS_4 } from "./designs/laserSet4";
 import type { DesignCategory, DesignInput, DesignValues, LibraryDesign, LibraryInsert } from "./types";
 
 /** Every design in the library, in the order they're shown (laser cutting first, then 3D printing). */
-export const LIBRARY: readonly LibraryDesign[] = [fingerBox, flatStand, ...LASER_DESIGNS, ...LASER_DESIGNS_3, tray, boxLid, bracket, hook, cableClip, phoneStand, hinge, spacer, knob, printedStamp, ...PRINT_DESIGNS];
+export const LIBRARY: readonly LibraryDesign[] = [fingerBox, flatStand, ...LASER_DESIGNS, ...LASER_DESIGNS_3, ...LASER_DESIGNS_4, tray, boxLid, bracket, hook, cableClip, phoneStand, hinge, spacer, knob, printedStamp, ...PRINT_DESIGNS];
 
 /** The library's sections, in the order they're shown. */
 export const LIBRARY_CATEGORIES: readonly { id: DesignCategory; label: string; blurb: string }[] = [
@@ -268,6 +269,11 @@ export function laserDefaultsFor(doc: JuraCADDocument, sketchId: string): NonNul
   if (!insert || !design?.laser) return null;
   const role = sketchId.startsWith(`${insert.id}_`) ? sketchId.slice(insert.id.length + 1) : null;
   return (role && design.laser[role]) || null;
+}
+
+/** Parts library designs make that aren't cut as shown (see `LibraryDesign.notCut`): left out of "every part" for laser. */
+export function notCutParts(doc: JuraCADDocument): string[] {
+  return (doc.libraryInserts ?? []).flatMap((x) => findDesign(x.design)?.notCut?.map((role) => `${x.id}_${role}`) ?? []);
 }
 
 export function findInsert(doc: JuraCADDocument, id: string): LibraryInsert | undefined {
