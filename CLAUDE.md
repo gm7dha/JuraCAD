@@ -729,13 +729,14 @@
   Fourth print batch (`printDesigns4.ts` `PRINT_DESIGNS_4`, appended after the third): electronics enclosure (`enclosure.ts`, Electronics:
   box on the bed + lid upside down in front of it, `lidAt` −(outer depth + 10); boards `BOARDS` (Pi 4/5 holes 58 × 49, 3.5 in from the
   corner, M2.5; Uno R3, M3; custom = 4 holes in a centred rectangle), standoffs rings from z 0 (the floor fills under the holes),
-  `SCREW_HOLES` self-tap 2.2/2.6, heat-set (Ruthex short inserts) 3.2 × 4 / 4.0 × 5.7; screwed lid: square corner posts `post`
+  `SCREW_HOLES` self-tap 2.2/2.6, heat-set (Ruthex / CNC Kitchen, 4.6 mm across) a 4.0 mm hole for both, 5.7 long; screwed lid: square corner posts `post`
   = max(7, hole + 4) reaching half into the walls, a 3 mm locating lip notched round them, four M3 countersunk holes drilled up
   from the bed (`hole.flip`); snap lid: an 8 mm lip 1.2 thick with a 45° ridge (0.5) on the long sides, the box's grooves = the
   ridge offset by c square to 45° (`groove` = 0.5 + (√2 − 1)c), both Right-plane triangles extruded symmetric; `snapStrain`;
   vent slots + a pattern in the lid; two cut-outs on a side via `printKit.facePlane` (a face plane of any direction with a
   `face` pick, so it follows the wall when a variable moves it), Remove flipped by wall + 0.5). French cleat (`frenchCleat.ts`,
-  Workshop): strip on Right (back on the bed, slope up to its front) + countersunk holes from its front face; holder drawn on
+  Workshop): strip on Right printed front face down (`stripPrinted`; its slope faces up, nothing overhangs; `stripOutline` is
+  the hung shape) + countersunk holes drilled up from the bed (`hole.flip`); holder drawn on
   Top (x out from the wall, y up, its top at −`CLEAT_GAP`) and made `width` up, so it prints on its side; its slope c square to
   the strip's, back c off the wall, plate c in front; `hangLift` lifts it to hang (tests turn it −90° about y). Hinged box
   (`hingedBox.ts`, Storage, uses `hingeSizes`): box y < −g, lid y > g, pin along x at a = (box + lid)/2 so a 180° turn lands rim
@@ -745,15 +746,19 @@
   a patterned grid, cut through then floored. Cable chain (`cableChain.ts`, Workshop, no variables): middle full width with the
   channel cut, outer layer behind (slanted back edge = the bend stop, `backTop` from (a − gt)cos θ + R sin θ = a; bottom
   corner c behind → `sagAngle` a couple of degrees), inner layer in front (half circle round the joint), 45°-tipped pins
-  revolved on a `fixedPlane` through the joint; a = R + 4 so nothing else meets while turning; `snapStrain` (both layers bend);
+  revolved on a `fixedPlane` through the joint, and a lead-in ramp cut into each outer layer's inside face (`ramp`: pin hole
+  wide, `reach` deep at the back edge, nothing at the hole, so pushed together the layers bend apart gradually); a = R + 4 so
+  nothing else meets while turning; `snapStrain` (both layers bend, half the reach each);
   copies by Move/copy along −y. Wall pocket (Household): back plate behind the Front plane, holes drilled from it flipped.
   Shelf pins (Household): block + pin standing up, copies. Test prints (`testPrints.ts`, Test prints): fit test (holes peg +
-  2c for `steps(from, to, step)`, raised numbers via `labelsSketch` on the plate's top before the holes, a peg with a base),
+  2c for `steps(from, to, step)`, raised numbers via `labelsSketch` on the plate's top before the holes — `fitLabels` shrinks
+  numbers whose widest would come within `LABEL_GAP` of a neighbour, `labelsProblem` refuses below `MIN_LABEL` 2.5 — a peg with a base),
   overhang test (Front-plane fins, underside at the angle from upright, 1 mm into a Top base, numbers on the base's front
   strip made before the fins so its face is whole), bridge test (one pillars-and-deck outline). Tests: tests/libraryPrint4
   (pure), engineLibraryPrint4 (volumes; the lid ±0.9c free, past c not, a snap lid caught when lifted; screws line up; the
   cleat's 45° faces 0.9c free square to them, catching when pulled; the hinged lid turned 0–180° untouched; links bent 0…bend
-  free, stopped past it and past the sag, held by their pins; fit-test holes, overhang face normals, bridge gaps by probe boxes;
+  free, stopped past it and past the sag, held by their pins; half of link 2 slid onto link 1's pin: the bend needed grows
+  gradually from ~0 at the back edge to the reach at the hole's lip, 0 seated; fit-test holes, overhang face normals, bridge gaps by probe boxes;
   a user's part untouched), mcpLibraryPrint4 (a cleat and shelf); the smoke test searches "raspberry" and inserts the
   enclosure (2 parts, 108 mm).
   Third laser batch (`designs/boxes3.ts`, `laserHome3.ts`, `jigsaw.ts` + pure `puzzle.ts`, `ornament.ts`; list in `laserSet3.ts`).

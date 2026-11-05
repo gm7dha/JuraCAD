@@ -19,7 +19,9 @@ import { enclosurePlan, enclosureVolumes, SNAP } from "../src/library/designs/en
 import { cleatVolumes, hangLift } from "../src/library/designs/frenchCleat";
 import { hingedPlan, hingedVolumes } from "../src/library/designs/hingedBox";
 import { organiserVolume } from "../src/library/designs/deskOrganiser";
-import { chainPlan, linkVolume, sagAngle } from "../src/library/designs/cableChain";
+import { chainPlan, linkVolume, sagAngle, snapStrain } from "../src/library/designs/cableChain";
+import { lit } from "../src/library/ex";
+import { extrudeFeature, shapesSketch, sketchFeature } from "../src/library/sketchKit";
 import { pocketVolume } from "../src/library/designs/wallPocket";
 import { pinVolume } from "../src/library/designs/shelfPins";
 import { bridgePlan, bridgeVolume, fitPlan, fitVolumes, overhangPlan, overhangVolume } from "../src/library/designs/testPrints";
@@ -181,11 +183,22 @@ describe("the enclosure's lid", () => {
 });
 
 describe("the French cleat", () => {
-  /** The holder hung on the strip: turned upright (its laid-out x out from the wall becomes z) and lifted into place. */
+  /**
+   * The holder hung on the strip, in the strip's frame as it's printed (front down: z = thickness − out from the wall):
+   * turned so its laid-out x (out from the wall) runs down z and its width along x, and lifted into place.
+   * `d` = [along, up, out from the wall].
+   */
   const s45 = Math.SQRT1_2;
   const hung = (v: DesignValues, d: V3 = [0, 0, 0]): { rotation: Quat; position: V3 } => ({
-    rotation: [0, -s45, 0, s45],
-    position: [(v.length as number) / 2 + (v.width as number) / 2 + d[0], hangLift(v) + d[1], d[2]],
+    rotation: [0, s45, 0, s45],
+    position: [(v.length as number) / 2 - (v.width as number) / 2 + d[0], hangLift(v) + d[1], (v.thickness as number) - d[2]],
+  });
+
+  it("the strip prints on its front: its 45° slope faces up, nothing faces down but the bed", () => {
+    const r = build(insert("french-cleat", { parts: "cleat" }));
+    const faces = r.parts[0].faceRefs.filter((f) => f.surface === "PLANE");
+    expect(faces.some((f) => Math.abs(f.normal[0]) < 1e-4 && Math.abs(f.normal[1] - Math.SQRT1_2) < 1e-4 && Math.abs(f.normal[2] - Math.SQRT1_2) < 1e-4)).toBe(true);
+    for (const f of faces) if (f.normal[2] < -1e-4) expect(f.center[2]).toBeCloseTo(0, 4);
   });
 
   for (const holder of ["hook", "shelf", "holes"]) {
@@ -256,6 +269,49 @@ describe("the cable chain", () => {
       for (const slide of [[0.6, 0, 0], [-0.6, 0, 0], [0, 0, 0.6]] as V3[]) expect(bent(10, slide)).toBeGreaterThan(0.001);
     });
   }
+});
+
+describe("cable chain links push together", () => {
+  it("each pin slides up its lead-in ramp: the side walls bend apart gradually, never more than the pin's reach in all (half each)", () => {
+    const v = valuesOf("cable-chain", { count: 2 });
+    const p = chainPlan(v);
+    const doc = insert("cable-chain", { count: 2 });
+    // Keep only the +y half of link 2 (the latest part), so moving it sideways measures how far its +y outer layer must bend.
+    const half = -(p.total + 4);
+    const cut = sketchFeature("half-sk", "Half", { kind: "default", name: "Top" }, shapesSketch([{ type: "rectangle", corner: ["-100", "-200"], width: "300", height: String(200 + half) }], {}));
+    const r = build({ ...doc, features: [...doc.features, cut, extrudeFeature("half", "Half", "half-sk", { depth: lit(100), operation: "remove" })] });
+    const [one, two] = [partEnding(r.parts, "_link"), partEnding(r.parts, "_link2")];
+    const free = (x: number, dy: number) => shared({ part: one }, { part: two, position: [p.pitch + x, -half + dy, 0] }) < 1e-4;
+    /** How far link 2's outer layer must move out to clear link 1's pin, with link 2 `x` short of sitting on it. */
+    const splay = (x: number) => {
+      if (free(x, 0)) return 0;
+      let [lo, hi] = [0, p.reach + 0.6];
+      expect(free(x, hi)).toBe(true);
+      for (let i = 0; i < 10; i++) {
+        const mid = (lo + hi) / 2;
+        if (free(x, mid)) hi = mid;
+        else lo = mid;
+      }
+      return hi;
+    };
+    const r_ = p.pin / 2;
+    const first = r_ + 1 - p.ramp.edge;
+    const needs: number[] = [];
+    for (let x = first; x > 0; x -= 0.5) needs.push(splay(x));
+    needs.push(splay(0));
+    // Where the pin first meets the back edge, the ramp is as deep as the pin reaches: it slides in with (almost) no bend.
+    expect(needs[0]).toBeLessThan(0.05);
+    expect(needs[1]).toBeLessThan(0.15);
+    // The bend grows gradually up the ramp (no step to push against) …
+    const slope = p.reach / (p.ramp.hole - p.ramp.edge);
+    for (let i = 1; i < needs.length; i++) expect(needs[i] - needs[i - 1]).toBeLessThan(0.5 * slope + 0.05);
+    // … to the pin's reach in all at the hole's lip (the outer layer out, the inner layer in: about half each, as snapStrain
+    // assumes) — and seated, the pin is in its hole with nothing bent.
+    expect(Math.max(...needs)).toBeLessThan(p.reach + 0.05);
+    expect(Math.max(...needs) / 2).toBeLessThan(p.reach / 2 + 0.03);
+    expect(needs[needs.length - 1]).toBe(0);
+    expect(snapStrain(p)).toBeCloseTo((3 * p.t * (Math.max(...needs) / 2)) / (2 * p.a * p.a), 3);
+  });
 });
 
 describe("the test prints are the sizes they say", () => {

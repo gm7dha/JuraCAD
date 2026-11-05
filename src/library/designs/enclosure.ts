@@ -9,8 +9,9 @@
  * supports: the groove and ridge have 45° faces, and the side cut-outs are small bridges.
  *
  * Holes in the standoffs and corner posts are either pilot holes for self-tapping screws, or holes for brass heat-set
- * inserts — sized from Ruthex's data sheet for its short inserts (M2.5: 3.6 mm across × 4 mm long, a 3.2 mm hole;
- * M3: 4.6 × 5.7 mm, a 4.0 mm hole), which most other makers' inserts match. The holes go right down to the floor.
+ * inserts — sized for Ruthex's and CNC Kitchen's standard inserts: M2.5 and M3 are both 4.6 mm across and want a
+ * 4.0 mm hole (Ruthex's are 5.7 mm long; CNC Kitchen's M2.5 is 4 mm, so the standoff check allows for the longer one).
+ * The holes go right down to the floor.
  */
 import { lit, minus, neg, plus, times, ZERO, type Ex } from "../ex";
 import { countersunkHoleFeature, extrudeFeature, moveFeature, outlineSketch, shapesSketch, sketchFeature } from "../sketchKit";
@@ -38,7 +39,7 @@ export type ScrewSize = "M2.5" | "M3";
 
 /** Holes for the screws: a pilot hole for a self-tapping screw, or a hole for a heat-set insert (and the insert's length). */
 export const SCREW_HOLES: Record<ScrewSize, { selfTap: number; insert: number; insertLength: number }> = {
-  "M2.5": { selfTap: 2.2, insert: 3.2, insertLength: 4 },
+  "M2.5": { selfTap: 2.2, insert: 4.0, insertLength: 5.7 },
   M3: { selfTap: 2.6, insert: 4.0, insertLength: 5.7 },
 };
 /** The lid's countersunk M3 screws: the hole and the countersink (ISO 10642's 6.72 mm head, a little over). */

@@ -32,26 +32,58 @@ export function steps(from: number, to: number, step: number): number[] {
 }
 const label = (n: number) => String(n).replace(/^0\./, "0.");
 const labelsOn = (v: DesignValues) => v.labels !== false;
-const labelBlock = (text: string, at: [number, number]): TextBlock => ({ font: "bold", capHeight: LABEL.height, lines: [text], centre: [sixPlaces(at[0]), sixPlaces(at[1])] });
+/** A number on the base: its words, where its middle goes and how tall its figures are. */
+export interface TestLabel {
+  text: string;
+  at: [number, number];
+  h: number;
+}
+/** The smallest the numbers may get when they're shrunk to stay apart (mm). */
+export const MIN_LABEL = 2.5;
+/** The space kept between neighbouring numbers (mm). */
+export const LABEL_GAP = 1;
+
+const labelBlock = (l: { text: string; at: [number, number]; h?: number }): TextBlock => ({ font: "bold", capHeight: l.h ?? LABEL.height, lines: [l.text], centre: [sixPlaces(l.at[0]), sixPlaces(l.at[1])] });
 
 /** The labels' sketch: each as ordinary Text, its middle where given. */
-function labelsSketch(labels: { text: string; at: [number, number] }[]): SketchData {
+function labelsSketch(labels: TestLabel[]): SketchData {
   let s: SketchData = { points: [], curves: [], constraints: [] };
-  for (const l of labels) s = addTextBlock(s, labelBlock(l.text, l.at));
+  for (const l of labels) s = addTextBlock(s, labelBlock(l));
   return s;
 }
 
-/** The labels' area (mm², for volumes) and the widest one (mm). */
-export function labelsInk(labels: { text: string; at: [number, number] }[]): { area: number; widest: number } {
+/** The labels' area (mm², for volumes) and the widest one (mm), at their own sizes (or the usual size if not given). */
+export function labelsInk(labels: { text: string; at: [number, number]; h?: number }[]): { area: number; widest: number } {
   let area = 0;
   let widest = 0;
   for (const l of labels) {
-    const c = blockContours(labelBlock(l.text, l.at));
+    const c = blockContours(labelBlock(l));
     area += inkArea(c);
     const b = contoursBox(c);
     if (b) widest = Math.max(widest, b[2] - b[0]);
   }
   return { area, widest };
+}
+
+/**
+ * Numbers in a row, sized so neighbours stay `LABEL_GAP` apart: the usual size, or smaller when the widest of them is
+ * wider than the space between their middles less the gap (text gets narrower in step with its height).
+ */
+export function fitLabels(raw: { text: string; at: [number, number] }[]): TestLabel[] {
+  if (!raw.length) return [];
+  const xs = raw.map((l) => l.at[0]).sort((a, b) => a - b);
+  let apart = Infinity;
+  for (let i = 1; i < xs.length; i++) apart = Math.min(apart, xs[i] - xs[i - 1]);
+  const { widest } = labelsInk(raw);
+  const room = apart - LABEL_GAP;
+  const h = widest > room ? Math.floor(((LABEL.height * room) / widest) * 100) / 100 : LABEL.height;
+  return raw.map((l) => ({ ...l, h }));
+}
+
+/** A plain-English problem when the numbers would have to be too small to stay apart, or null. */
+export function labelsProblem(labels: TestLabel[]): string | null {
+  if (!labels.length || labels[0].h >= MIN_LABEL) return null;
+  return "The numbers would run into each other: make the steps bigger (or fewer), make the test bigger, or turn the raised numbers off.";
 }
 
 const rangeInputs = (unit: string, from: number, to: number, step: number, min: number, max: number, stepMin: number): DesignInput[] => [
@@ -81,7 +113,7 @@ export function fitPlan(v: DesignValues) {
   const y = r3(3 + labelRoom + biggest / 2);
   const holes = gaps.map((c, i) => ({ c, d: r3(peg + 2 * c), x: r3(3 + pitch * (i + 0.5)), y }));
   const plate: [number, number] = [r3(gaps.length * pitch + 6), r3(y + biggest / 2 + 3)];
-  const labels = labelsOn(v) ? holes.map((h) => ({ text: label(h.c), at: [h.x, 2 + labelRoom / 2] as [number, number] })) : [];
+  const labels = labelsOn(v) ? fitLabels(holes.map((h) => ({ text: label(h.c), at: [h.x, 2 + labelRoom / 2] as [number, number] }))) : [];
   // The peg: a disc to hold it by, then the peg itself, standing beside the plate.
   const pegAt: [number, number] = [r3(plate[0] + 5 + (peg + 6) / 2), y];
   return { peg, t, gaps, holes, plate, labels, pegAt, base: 2, pegHeight: r3(t + 6) };
@@ -126,7 +158,11 @@ export const fitTest: LibraryDesign = {
     { key: "thickness", label: "Plate thickness", kind: "length", default: 4, min: 1.5, max: 20 },
     labelsInput,
   ],
-  problems: (v) => rangeProblems(v, 10, "gaps"),
+  problems: (v) => {
+    const out = rangeProblems(v, 10, "gaps");
+    const tight = out.length ? null : labelsProblem(fitPlan(v).labels);
+    return tight ? [...out, tight] : out;
+  },
   summary: (v) => {
     const p = fitPlan(v);
     return `2 parts: a plate ${mm(p.plate[0])} × ${mm(p.plate[1])} with ${p.holes.length} holes from ${mm(p.holes[0]?.d ?? 0)} to ${mm(p.holes[p.holes.length - 1]?.d ?? 0)}, and a ${mm(p.peg)} peg.`;
@@ -172,7 +208,7 @@ export function overhangPlan(v: DesignValues) {
     return fin;
   });
   const length = r3(x);
-  const labels = labelsOn(v) ? fins.map((f) => ({ text: String(f.angle), at: [f.x + (f.reach - f.T) / 2, -W - labelRoom / 2] as [number, number] })) : [];
+  const labels = labelsOn(v) ? fitLabels(fins.map((f) => ({ text: String(f.angle), at: [f.x + (f.reach - f.T) / 2, -W - labelRoom / 2] as [number, number] }))) : [];
   return { fins, length, height: H, width: W, labelRoom, labels };
 }
 
@@ -188,7 +224,7 @@ function finOutline(f: { tan: number; T: number; x: number; reach: number }, H: 
 }
 
 /** A test's base (Top plane, behind the Front plane, its front strip for the numbers) and its numbers. */
-function baseWithLabels(ctx: MakeContext, length: number, deep: number, labels: { text: string; at: [number, number] }[]): Feature[] {
+function baseWithLabels(ctx: MakeContext, length: number, deep: number, labels: TestLabel[]): Feature[] {
   const base = ctx.id("base");
   const out: Feature[] = [
     sketchFeature(ctx.id("base-sketch"), "Base sketch", TOP, shapesSketch([{ type: "rectangle", corner: ["0", String(-deep)], width: String(length), height: String(deep) }], ctx.scope)),
@@ -221,7 +257,8 @@ export const overhangTest: LibraryDesign = {
   problems: (v) => {
     const out = rangeProblems(v, 12, "angles");
     if (!out.length && num(v, "to") > 80) out.push("Keep the angles at 80° or less.");
-    return out;
+    const tight = out.length ? null : labelsProblem(overhangPlan(v).labels);
+    return tight ? [...out, tight] : out;
   },
   summary: (v) => {
     const p = overhangPlan(v);
@@ -265,7 +302,7 @@ export function bridgePlan(v: DesignValues) {
     return g;
   });
   const length = r3(x);
-  const labels = labelsOn(v) ? gaps.map((g) => ({ text: String(g.span), at: [(g.x0 + g.x1) / 2, -W - labelRoom / 2] as [number, number] })) : [];
+  const labels = labelsOn(v) ? fitLabels(gaps.map((g) => ({ text: String(g.span), at: [(g.x0 + g.x1) / 2, -W - labelRoom / 2] as [number, number] }))) : [];
   return { gaps, length, pillar: P, under: gap, deck, width: W, labelRoom, labels };
 }
 
@@ -295,7 +332,11 @@ export const bridgeTest: LibraryDesign = {
     { key: "width", label: "Width", kind: "length", default: 10, min: 4, max: 60, help: "Front to back." },
     labelsInput,
   ],
-  problems: (v) => rangeProblems(v, 10, "gaps"),
+  problems: (v) => {
+    const out = rangeProblems(v, 10, "gaps");
+    const tight = out.length ? null : labelsProblem(bridgePlan(v).labels);
+    return tight ? [...out, tight] : out;
+  },
   summary: (v) => {
     const p = bridgePlan(v);
     return `1 part, ${mm(p.length)} long: a deck over ${p.gaps.length} gaps from ${mm(p.gaps[0]?.span ?? 0)} to ${mm(p.gaps[p.gaps.length - 1]?.span ?? 0)}.${p.length > 250 ? " Check it fits your printer's bed." : ""}`;

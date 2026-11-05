@@ -19,7 +19,7 @@ import { clipAcross, hingedPlan } from "../src/library/designs/hingedBox";
 import { cornerLimit, cupSizes, organiserLayout } from "../src/library/designs/deskOrganiser";
 import { bendRadius, chainPlan, sagAngle, snapStrain as chainStrain } from "../src/library/designs/cableChain";
 import { pinDiameter } from "../src/library/designs/shelfPins";
-import { bridgePlan, fitPlan, overhangPlan, steps } from "../src/library/designs/testPrints";
+import { bridgePlan, fitLabels, fitPlan, LABEL, LABEL_GAP, labelsInk, labelsProblem, MIN_LABEL, overhangPlan, steps } from "../src/library/designs/testPrints";
 import type { DesignValues } from "../src/library/types";
 
 const design = (id: string) => findDesign(id)!;
@@ -38,13 +38,13 @@ describe("electronics enclosure", () => {
     expect(pi[0][1] + 56 / 2).toBe(3.5);
     expect(BOARDS.pi.screw).toBe("M2.5");
     expect(BOARDS.uno.screw).toBe("M3");
-    expect(SCREW_HOLES["M2.5"]).toEqual({ selfTap: 2.2, insert: 3.2, insertLength: 4 });
+    expect(SCREW_HOLES["M2.5"]).toEqual({ selfTap: 2.2, insert: 4.0, insertLength: 5.7 });
     expect(SCREW_HOLES.M3).toEqual({ selfTap: 2.6, insert: 4.0, insertLength: 5.7 });
     const p = enclosurePlan(valuesOf("enclosure"));
-    expect(p.standoff).toEqual({ height: 6.5, hole: 3.2, diameter: 6.4 });
+    expect(p.standoff).toEqual({ height: 6.5, hole: 4, diameter: 7.2 });
     expect(p.outer).toEqual([108, 78, 32]);
     expect(p.post).toBe(8);
-    expect(design("enclosure").summary!(valuesOf("enclosure"))).toMatch(/M2\.5 heat-set inserts \(3\.2 mm holes\)/);
+    expect(design("enclosure").summary!(valuesOf("enclosure"))).toMatch(/M2\.5 heat-set inserts \(4 mm holes\)/);
   });
 
   it("a custom board's four holes in a rectangle in its middle", () => {
@@ -179,6 +179,22 @@ describe("test prints", () => {
     expect(f.labels.map((l) => l.text)).toEqual(["0.1", "0.2", "0.3", "0.4", "0.5"]);
     expect(problems("fit-test", { from: 0, to: 1, step: 0.05 })[0]).toMatch(/at most 10/);
     expect(problems("fit-test", { from: 0.5, to: 0.1 })[0]).toMatch(/at least “From”/);
+  });
+
+  it("the numbers keep apart: full size when there's room, smaller when neighbours are close, refused when too small", () => {
+    const f = fitPlan(valuesOf("fit-test"));
+    expect(f.labels.every((l) => l.h === LABEL.height)).toBe(true);
+    const row = (apart: number, text = "0.25") => [0, 1, 2].map((i) => ({ text, at: [i * apart, 0] as [number, number] }));
+    const wide = labelsInk(row(100)).widest;
+    expect(wide).toBeGreaterThan(5);
+    // Squeezed so the widest just fits between neighbours' middles, less the gap.
+    const squeezed = fitLabels(row(wide * 0.8));
+    expect(squeezed[0].h).toBeLessThan(LABEL.height);
+    expect(labelsInk(squeezed).widest).toBeLessThanOrEqual(wide * 0.8 - LABEL_GAP + 0.01);
+    expect(labelsProblem(squeezed)).toBeNull();
+    const crowded = fitLabels(row(wide * 0.4));
+    expect(crowded[0].h).toBeLessThan(MIN_LABEL);
+    expect(labelsProblem(crowded)).toMatch(/run into each other/);
   });
 
   it("overhang fins lean the stated angle; bridges span the stated gaps", () => {

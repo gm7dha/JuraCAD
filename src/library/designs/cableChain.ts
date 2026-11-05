@@ -9,14 +9,17 @@
  *   - behind it (back to the slanted back edge) only the *outer* layer of each side wall carries on, with a hole for
  *     the next link's pin;
  *   - in front only the *inner* layer carries on, ending in a half circle round the front joint, with a pin standing
- *     out of each side that has a 45° tip, so the outer layer of the next link rides over it and clicks on.
+ *     out of each side that has a 45° tip; the next link's outer layer has a lead-in ramp cut into its inside face
+ *     (`reach` deep at its back edge, nothing at the hole), so pushing the links together slides the pins up the ramps,
+ *     bends both layers apart (about half the reach each) and lets each pin click into its hole.
  * The two layers are `t` thick with the clearance c between them. The next link's outer layer turns round the pin,
  * clear of everything, until the top of its slanted back edge meets the end of this link's middle (the bend stop, at
  * `bend` degrees); its bottom corner sits just c behind it when the chain is straight, so it won't bend the other way.
  * With a = R + 4 the turning parts never meet anything else (checked by turning two links in engineLibraryPrint4).
  *
  * The links stand on the bed as they're used (bottom bar down); the top bar bridges the channel, the pins print
- * sideways. Sizes aren't variables: change them with Edit design sizes (the pins sit on fixed sketch planes).
+ * sideways, and the round front ends' undersides curve down to the bed like a cylinder lying on its side — a slight
+ * overhang right at the bed that prints without supports. Sizes aren't variables: change them with Edit design sizes (the pins sit on fixed sketch planes).
  */
 import { lit, type Ex } from "../ex";
 import { copyFeature, extrudeFeature, outlineSketch, shapesSketch, sketchFeature } from "../sketchKit";
@@ -56,7 +59,27 @@ export function chainPlan(v: DesignValues) {
   const backTop = six((a - R * Math.sin(th)) / Math.cos(th));
   const backBottom = six(a - c);
   const total = W + 4 * t + 2 * c;
-  return { W, Hin, t, tb, c, bend, Ho, R, a, pitch, pin, reach, tip, backTop, backBottom, total, count: Math.max(1, Math.round(num(v, "count"))) };
+  const base = { W, Hin, t, tb, c, bend, Ho, R, a, pitch, pin, reach, tip, backTop, backBottom, total, count: Math.max(1, Math.round(num(v, "count"))) };
+  return { ...base, ramp: rampOf(base) };
+}
+
+/**
+ * The lead-in ramp cut into each outer layer's inside face (the usual drag-chain snap): as wide as the pin's hole
+ * (up and down, round the joint's height), `reach` deep where it meets the back edge and running out to nothing at the
+ * hole's edge — so as the links are pushed together each pin slides up it, the layers bend apart a little at a time,
+ * and the pin drops into its hole. `edge` is the back edge's x across the ramp's top (the slanted edge's furthest
+ * forward there), `start` 1 mm behind it (the triangle is drawn on past the edge so the cut runs out cleanly).
+ */
+function rampOf(p: { R: number; pin: number; c: number; reach: number; backTop: number; backBottom: number; Ho: number }) {
+  const half = p.pin / 2 + p.c;
+  const z0 = p.R - half;
+  const z1 = p.R + half;
+  const edge = -p.backBottom + ((p.backBottom - p.backTop) * z1) / p.Ho;
+  const hole = -half;
+  const start = edge - 1;
+  /** How deep the ramp is at x (from the joint, along the chain): `reach` at the edge, 0 at the hole. */
+  const depthAt = (x: number) => Math.max(0, (p.reach * (hole - x)) / (hole - edge));
+  return { z0: six(z0), height: six(2 * half), edge: six(edge), hole: six(hole), start: six(start), startDepth: six(depthAt(start)), depthAt };
 }
 
 /**
@@ -105,6 +128,16 @@ function makeLink(ctx: MakeContext): { features: Feature[]; first: string } {
   const innerRect = () => shapesSketch([{ type: "rectangle", corner: [String(six(p.pitch - p.a - 0.5)), "0"], width: String(six(p.a + 0.5)), height: String(six(p.Ho)) }], ctx.scope);
   const innerEnd = () => shapesSketch([{ type: "circle", center: [String(six(p.pitch)), String(six(p.R))], diameter: String(six(p.Ho)) }], ctx.scope);
   const t = lit(p.t);
+  // The ramps: triangles on a level plane at the ramp's bottom, cut up through the outer layer's inside face.
+  const rampPlane = fixedPlane("Lead-in ramps", [0, 0, p.ramp.z0], [1, 0, 0], [0, 1, 0]);
+  const face = half + p.t + p.c;
+  // Drawn from 0.2 inside the gap, so the cut starts cleanly at the face; its slope meets the face exactly at the hole.
+  const rampOutline = (s: 1 | -1): [number, number][] => [
+    [p.ramp.start, s * (face - 0.2)],
+    [p.ramp.hole, s * (face - 0.2)],
+    [p.ramp.hole, s * face],
+    [p.ramp.start, s * (face + p.ramp.startDepth)],
+  ];
   const features: Feature[] = [
     sk("middle-sketch", "Middle sketch", TOP, shapesSketch([{ type: "rectangle", corner: [String(six(p.a)), String(six(-p.total / 2))], width: String(six(middle)), height: String(six(p.total)) }], ctx.scope)),
     extrudeFeature(id, "Link middle", ctx.id("middle-sketch"), { depth: lit(six(p.Ho)), operation: "new" }),
@@ -118,6 +151,8 @@ function makeLink(ctx: MakeContext): { features: Feature[]; first: string } {
     features.push(
       sk(`outer-${name}-sketch`, `Back of ${name} side sketch`, side(`Link ${name} outer`, six(outerFace)), outer),
       extrudeFeature(ctx.id(`outer-${name}`), `Back of ${name} side`, ctx.id(`outer-${name}-sketch`), { depth: t, operation: "add" }),
+      sk(`ramp-${name}-sketch`, `Lead-in ramp, ${name} side sketch`, rampPlane, outlineSketch(pts(rampOutline(s)), ctx.scope)),
+      extrudeFeature(ctx.id(`ramp-${name}`), `Lead-in ramp, ${name} side`, ctx.id(`ramp-${name}-sketch`), { depth: lit(p.ramp.height), operation: "remove" }),
       sk(`inner-${name}-sketch`, `Front of ${name} side sketch`, side(`Link ${name} inner`, six(innerFace)), innerRect()),
       extrudeFeature(ctx.id(`inner-${name}`), `Front of ${name} side`, ctx.id(`inner-${name}-sketch`), { depth: t, operation: "add" }),
       sk(`end-${name}-sketch`, `Round front of ${name} side sketch`, side(`Link ${name} inner`, six(innerFace)), innerEnd()),
@@ -146,7 +181,7 @@ export const cableChain: LibraryDesign = {
   id: "cable-chain",
   name: "Cable chain (drag chain)",
   description:
-    "A set of snap-together links for a cable chain, to guide the cables of a 3D printer's moving parts, a CNC machine or a sliding desk drawer. Choose the space inside for your cables and how many links; push each link onto the next until its pins click in. The chain bends one way only, up to the angle you choose at each link, and stays straight the other way. The links print standing as they're used, no supports — PETG is a little springier than PLA for clicking them together.",
+    "A set of snap-together links for a cable chain, to guide the cables of a 3D printer's moving parts, a CNC machine or a sliding desk drawer. Choose the space inside for your cables and how many links; push each link onto the next: a ramp inside each side guides the pins until they click into their holes. The chain bends one way only, up to the angle you choose at each link, and stays straight the other way. The links print standing as they're used with no supports (the round front ends rest on the bed like a cylinder on its side) — PETG is a little springier than PLA for clicking them together.",
   category: "print",
   group: "Workshop",
   prefix: "chain",
@@ -201,6 +236,18 @@ export const cableChain: LibraryDesign = {
   },
 };
 
+/**
+ * What one ramp takes out of its outer layer (mm³): at each height z across the ramp, the triangle from the slanted
+ * back edge to the hole, depth reach × (hole − x) / (hole − edge) — quadratic in z, so Simpson's rule is exact.
+ */
+export function rampVolume(p: ReturnType<typeof chainPlan>): number {
+  const r = p.ramp;
+  const back = (z: number) => -p.backBottom + ((p.backBottom - p.backTop) * z) / p.Ho;
+  const slice = (z: number) => (p.reach * (r.hole - back(z)) ** 2) / (2 * (r.hole - r.edge));
+  const [z0, z1] = [r.z0, r.z0 + r.height];
+  return ((z1 - z0) / 6) * (slice(z0) + 4 * slice((z0 + z1) / 2) + slice(z1));
+}
+
 /** For tests: one link's volume (mm³). */
 export function linkVolume(v: DesignValues): number {
   const p = chainPlan(v);
@@ -210,5 +257,5 @@ export function linkVolume(v: DesignValues): number {
   const inner = p.a * p.Ho + (Math.PI * p.R * p.R) / 2;
   const cone = (Math.PI * p.tip * (r * r + r * (r - p.tip) + (r - p.tip) ** 2)) / 3;
   const pin = Math.PI * r * r * (p.c + p.reach - p.tip) + cone;
-  return middle * p.total * p.Ho - middle * p.W * p.Hin + 2 * p.t * (outer + inner) + 2 * pin;
+  return middle * p.total * p.Ho - middle * p.W * p.Hin + 2 * p.t * (outer + inner) + 2 * pin - 2 * rampVolume(p);
 }

@@ -8,13 +8,13 @@
  * on the wall, the slope rising from the wall to its front. The holder's cleat lies the clearance c off that slope
  * (square to it), c off the wall, and its plate c in front of the strip.
  *
- * Printing: the strip lies on its back (the slope is a 45° overhang, which prints), its screw holes upright and
- * countersunk in its front. The holder prints standing on its side: its end shape is drawn on the bed and made
- * `width` tall, so its cleat, hook or shelf need no supports at all.
+ * Printing: the strip lies on its front (the face away from the wall) with its back up, so its 45° slope faces up —
+ * a clean top surface, nothing overhanging — and its countersunk screw holes are drilled up from the bed (the
+ * countersinks are in the front face). The holder prints standing on its side: its end shape is drawn on the bed and
+ * made `width` tall, so its cleat, hook or shelf need no supports at all.
  */
 import { lit, minus, plus, times, ZERO, type Ex } from "../ex";
 import { countersunkHoleFeature, extrudeFeature, outlineSketch, shapesSketch, sketchFeature } from "../sketchKit";
-import { topFacePlane } from "../printKit";
 import type { Feature } from "../../model/types";
 import type { Pt } from "../fingers";
 import type { DesignValues, LibraryDesign, MakeContext, PreviewShape } from "../types";
@@ -95,6 +95,20 @@ export function stripOutline(vars: Record<string, Ex>): Pt[] {
   ];
 }
 
+/**
+ * The strip as it's printed (on the Right plane: across = up the wall, up = from its front, on the bed, to its back):
+ * the end shape turned over, so the slope faces up.
+ */
+export function stripPrinted(vars: Record<string, Ex>): Pt[] {
+  const { height: h, thickness: t } = vars;
+  return [
+    [ZERO, ZERO],
+    [h, ZERO],
+    [minus(h, t), t],
+    [ZERO, t],
+  ];
+}
+
 /** How high the holder's cleat top is above the strip's bottom when it hangs (so how far the laid-out holder is moved up to hang). */
 export const hangLift = (v: DesignValues) => num(v, "height") + num(v, "clearance") * (1 + ROOT2) + CLEAT_LIP + CLEAT_GAP;
 
@@ -107,12 +121,14 @@ function makeCleat(ctx: MakeContext) {
   if (parts !== "holder") {
     const strip = ctx.id("strip");
     const n = countOf(v, "screws");
+    // Drilled up from the bed (the strip's front), so the countersinks are where the screw heads go.
+    const drill = countersunkHoleFeature(ctx.id("screws"), "Screw holes", ctx.id("screws-sketch"), lit(CLEAT_SCREW.d), lit(CLEAT_SCREW.head));
     const holes = Array.from({ length: n }, (_, i) => ({ type: "circle", center: [times(L, (i + 0.5) / n).t, times(minus(h, t), 0.5).t], diameter: String(CLEAT_SCREW.d) }));
     features.push(
-      sketchFeature(ctx.id("strip-sketch"), "Wall strip sketch", RIGHT, outlineSketch(stripOutline(ctx.vars), ctx.scope)),
+      sketchFeature(ctx.id("strip-sketch"), "Wall strip sketch", RIGHT, outlineSketch(stripPrinted(ctx.vars), ctx.scope)),
       extrudeFeature(strip, "Wall strip", ctx.id("strip-sketch"), { depth: L, operation: "new" }),
-      sketchFeature(ctx.id("screws-sketch"), "Screw holes sketch", topFacePlane("Strip front", strip, t, [L.v / 2, h.v / 2], [0.5, 0.5, 1]), shapesSketch(holes, ctx.scope)),
-      countersunkHoleFeature(ctx.id("screws"), "Screw holes", ctx.id("screws-sketch"), lit(CLEAT_SCREW.d), lit(CLEAT_SCREW.head)),
+      sketchFeature(ctx.id("screws-sketch"), "Screw holes sketch", TOP, shapesSketch(holes, ctx.scope)),
+      { ...drill, hole: { ...drill.hole!, flip: true } },
     );
     partNames[strip] = `${ctx.name}: wall strip`;
   }
@@ -143,7 +159,7 @@ export const frenchCleat: LibraryDesign = {
   id: "french-cleat",
   name: "French cleat and tool holder",
   description:
-    "A French cleat system for a workshop wall: a strip you screw to the wall, cut at 45° along its top, and a holder with the matching 45° cleat that hooks over it — with a hook, a small shelf or a row of holes for screwdrivers. Hang holders anywhere along the strip and move them around whenever you like. The strip prints lying on its back; the holder prints standing on its side, so neither needs supports.",
+    "A French cleat system for a workshop wall: a strip you screw to the wall, cut at 45° along its top, and a holder with the matching 45° cleat that hooks over it — with a hook, a small shelf or a row of holes for screwdrivers. Hang holders anywhere along the strip and move them around whenever you like. The strip prints lying on its front with the 45° slope facing up; the holder prints standing on its side, so neither needs supports.",
   category: "print",
   group: "Workshop",
   prefix: "cleat",
