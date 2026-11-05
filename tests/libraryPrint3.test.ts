@@ -272,8 +272,8 @@ describe("finding them in the library", () => {
     const groups = designGroups("print");
     expect(groups.map((g) => g.group)).toEqual(GROUP_ORDER.print);
     const of = (g: string) => groups.find((x) => x.group === g)!.designs.map((d) => d.id);
-    expect(of("Gridfinity")).toEqual(["gridfinity-baseplate", "gridfinity-bin"]);
-    expect(of("Desk")).toEqual(["sign", "headphone-hook", "card-holder", "desk-organiser"]);
+    expect(of("Gridfinity")).toEqual(["gridfinity-baseplate", "gridfinity-bin", "gridfinity-magnet-baseplate", "gridfinity-bit-holder", "gridfinity-lite-bin"]);
+    expect(of("Desk")).toEqual(["sign", "headphone-hook", "card-holder", "desk-organiser", "charging-stand", "tie-anchor"]);
     expect(of("Garden")).toEqual(["plant-pot"]);
     expect(of("Storage")).toContain("battery-holder");
     expect(of("Household")).toContain("bag-clip");

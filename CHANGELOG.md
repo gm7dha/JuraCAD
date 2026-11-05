@@ -8,6 +8,18 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.41 — More 3D printing designs
+
+- Ten more designs in the **Library**'s 3D printing tab:
+  - **Honeycomb wall tile** and clip-in **hook** and **bin** (Storage): honeycomb storage wall tiles with the same hole
+    layout and click-in fit as the popular HSW system, so its parts and ours mix.
+  - **Gridfinity magnet baseplate**, **bit / screwdriver holder bin** and **lite bin** (Gridfinity).
+  - **Pipe clip** (Fixings): snaps over a pipe; tells you if the grip would strain the plastic too much.
+  - **Charging phone stand** (Desk): the phone stands on a raised floor with a slanted slot for the charging plug
+    (set your plug's length) and the cable runs out of the back.
+  - **Spool holder on a 608 bearing** (Workshop), **funnel** and **door wedge** (Household), **cable tie anchor** (Desk)
+    and **box divider set** (Storage).
+
 ## v0.40 — Mountain puzzle: OpenStreetMap files
 
 - **Mountain puzzle:** a new way to choose the mountain, **An OpenStreetMap file**. On openstreetmap.org, zoom to the

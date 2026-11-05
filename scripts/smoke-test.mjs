@@ -3408,6 +3408,18 @@ try {
     const enclosed = await shown();
     if (enclosed.errors) throw new Error(`the enclosure has ${enclosed.errors} feature problem(s)`);
     await shot("library-enclosure");
+    step = "Design library: a Honeycomb wall tile, found by searching";
+    await tool("Library");
+    await page.getByLabel("Search the library").fill("honeycomb");
+    await page.getByRole("button", { name: /^Honeycomb wall tile \(HSW\):/ }).click();
+    await page.locator(".library-preview polygon").first().waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Honeycomb wall tile", { timeout: 10_000 });
+    // 6 columns across, 23.6 × √3/2 = 20.438 mm apart: 122.63 mm.
+    await waitShown(1, 6 * 23.6 * Math.sqrt(3) / 2, "the honeycomb tile didn't build one tile, 122.63 mm across");
+    const honeycomb = await shown();
+    if (honeycomb.errors) throw new Error(`the honeycomb tile has ${honeycomb.errors} feature problem(s)`);
+    await shot("library-honeycomb");
     step = "Design library: a stencil of HELLO, exported for laser";
     await tool("Library");
     await page.getByRole("tab", { name: "Laser cutting" }).click();
