@@ -338,7 +338,9 @@ export function MountainPuzzleDialog() {
                     {Math.round(puzzle.layout.high)} m, with {Math.round(baseFor(fullSpec))} mm of base under the lowest.
                   </p>
                   <p className="muted">
-                    Tabs' necks {puzzle.neck.toFixed(1)} mm; pegs {(puzzle.pegs.r * 2).toFixed(1)} mm across and {puzzle.pegs.h.toFixed(1)} mm tall.
+                    Tabs' necks {puzzle.neck.toFixed(1)} mm; each piece sits on a square key about{" "}
+                    {Math.round(Math.min(...puzzle.pieces.filter((p) => p.key).map((p) => p.key!.half * 2)))}–
+                    {Math.round(Math.max(...puzzle.pieces.filter((p) => p.key).map((p) => p.key!.half * 2)))} mm across and {puzzle.keys.h.toFixed(1)} mm tall.
                     {snowOn && snowline !== null && (snowParts ? ` ${snowParts} pieces have snow: filament 2.` : " Nothing reaches the snow line.")}
                   </p>
                   {puzzle.warnings.map((w) => (
