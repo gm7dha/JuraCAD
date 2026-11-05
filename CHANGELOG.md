@@ -8,7 +8,22 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.41 — More 3D printing designs
+## v0.42 — Mountain puzzle: a low base and chunkier tabs
+
+- **Much less plain side under the mountain.** The bottom layer is now a thin jigsaw plate (about 4 mm) instead of a full
+  cube, so the lowest ground sits only 10 mm above the bed. The layers above are full cubes as before, still locked
+  together by the plate's jigsaw and the keys.
+- **Chunkier tabs:** the round jigsaw tabs are now wide **dovetails** with rounded corners. Their necks are 7.5–10 mm
+  wide on 30 mm cubes (they were 3.4 mm), so they don't snap, even on the thin bottom plate, and they print cleanly.
+- **Every piece's tabs are its own:** each join is one of 16 dovetails (which way it points, a narrow or wide head,
+  shallow or deep, and set left, centre or right), and they're chosen so no two pieces have the same tabs, however
+  they're turned. A piece in the wrong place won't go in, or leaves a clear gap. The only exceptions are cubes with
+  one neighbour beside them or none (on a steep face), and their coded keys still tell them apart.
+- New setting, **Side under the ground**, for how many mm of plain side to leave (10 by default).
+- The area boxes now say **km west to east** and **km south to north**, instead of "wide" and "tall".
+- The mountain puzzle is 3D printing only now: the laser version has been taken out of JuraCUT.
+
+## v0.41 — More 3D printing designs · commit `ebb89f0`
 
 - Ten more designs in the **Library**'s 3D printing tab:
   - **Honeycomb wall tile** and clip-in **hook** and **bin** (Storage): honeycomb storage wall tiles with the same hole
@@ -20,7 +35,7 @@ The point in the history for each version is the commit shown (see https://githu
   - **Spool holder on a 608 bearing** (Workshop), **funnel** and **door wedge** (Household), **cable tie anchor** (Desk)
     and **box divider set** (Storage).
 
-## v0.40 — Mountain puzzle: OpenStreetMap files
+## v0.40 — Mountain puzzle: OpenStreetMap files · commit `976a36d`
 
 - **Mountain puzzle:** a new way to choose the mountain, **An OpenStreetMap file**. On openstreetmap.org, zoom to the
   mountain, press Export and save the .osm file; the puzzle takes its area from the file. The heights still come from the

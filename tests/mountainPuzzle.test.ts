@@ -10,6 +10,8 @@ import { insideGap, outlineGap, type P2 as LP2 } from "../src/library/outlines";
 import { areaProblem, gridFrom, heightAt, readHeights, terrariumHeight, tilesFor, worldPixel, type TilePixels } from "../src/terrain/elevation";
 import {
   baseFor,
+  plateFor,
+  PLATE_MIN,
   layoutFor,
   makeMountainPuzzle,
   mountainChecks,
@@ -189,6 +191,16 @@ function closed(b: Body): { open: number; volume: number } {
   return { open, volume };
 }
 
+function inside(p: P2, poly: P2[]): boolean {
+  let c = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) c = !c;
+  }
+  return c;
+}
+
 describe("Mountain puzzle", () => {
   const puzzle = makeMountainPuzzle(hill, W, H, SPEC);
 
@@ -201,7 +213,18 @@ describe("Mountain puzzle", () => {
     expect(L.height).toBeLessThanOrEqual(H + 1e-6);
     // Twice the scale: twice as many cubes across.
     expect(layoutFor(hill, W, H, { ...SPEC, scale: 2 }).cols).toBe(16);
-    expect(baseFor(SPEC)).toBeGreaterThan(SPEC.cube);
+    // Only 10 mm of plain side under the lowest ground: the bottom layer is a thin jigsaw plate.
+    expect(baseFor(SPEC)).toBe(10);
+    // Chunky dovetail tabs: necks a quarter of the cube or more.
+    expect(puzzle.neck).toBeGreaterThan(7);
+    expect(plateFor(SPEC)).toBeGreaterThanOrEqual(PLATE_MIN);
+    let lowest = Infinity;
+    for (const p of puzzle.pieces) {
+      if (p.layer === 0) expect(p.height - (p.key ? puzzle.keys.h : 0), p.name).toBeCloseTo(plateFor(SPEC), 6);
+      if (p.top) for (const b of p.bodies) for (let i = 2; i < b.vertices.length; i += 3) if (b.vertices[i] > p.z0 + puzzle.keys.depth + 0.01) lowest = Math.min(lowest, b.vertices[i]);
+    }
+    expect(lowest).toBeLessThanOrEqual(10 + 0.5);
+    expect(lowest).toBeGreaterThanOrEqual(10 - 0.1);
     // Every column has a whole jigsaw cube at the bottom.
     for (let r = 0; r < L.rows; r++)
       for (let c = 0; c < L.cols; c++) {
@@ -260,6 +283,33 @@ describe("Mountain puzzle", () => {
     expect(Math.min(...puzzle.pieces.filter((p) => p.key).map((p) => p.key!.half * 2))).toBeGreaterThan(2 * g.h);
     expect(g.slope / g.h).toBeGreaterThan(0.5);
     expect(puzzle.warnings).toEqual([]);
+  });
+
+  it("gives every piece with tabs a shape no other piece has, however it's turned", () => {
+    const blocks = puzzle.pieces.filter((p) => !p.top && p.outline.length > 4);
+    expect(blocks.length).toBeGreaterThan(20);
+    const shapes = new Map<string, string>();
+    const h = SPEC.cube / 2 + 0.25 * SPEC.cube;
+    for (const p of blocks) {
+      const [cx, cy] = [(p.col + 0.5) * SPEC.cube, (p.row + 0.5) * SPEC.cube];
+      const masks = [0, 1, 2, 3].map((k) => {
+        let bits = "";
+        for (let y = -h; y <= h; y += 1)
+          for (let x = -h; x <= h; x += 1) {
+            // The point turned back by k quarter turns, so the mask is the piece turned by k.
+            const [u, v] = k === 0 ? [x, y] : k === 1 ? [y, -x] : k === 2 ? [-x, -y] : [-y, x];
+            bits += inside([cx + u, cy + v], p.outline) ? "1" : "0";
+          }
+        return `${(p.height - (p.key ? puzzle.keys.h : 0)).toFixed(2)}:${bits}`;
+      });
+      const own = new Set(masks);
+      for (const m of own) {
+        const other = shapes.get(m);
+        expect(other, `${p.name} has the same shape as ${other}`).toBeUndefined();
+      }
+      for (const m of own) shapes.set(m, p.name);
+    }
+    expect(puzzle.warnings.some((w) => w.includes("same tabs"))).toBe(false);
   });
 
   it("makes every piece fit only its own place: a neighbour's key won't go into its pocket, nor its own turned round", () => {
