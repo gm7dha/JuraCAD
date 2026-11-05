@@ -38,7 +38,7 @@ The point in the history for each version is the commit shown (see https://githu
   allows. Choose the inside size, Easy / Medium / Hard (a finer track = more turns) and the fit.
 - Both parts print without supports: the box standing on its flange, the lid upside down beside it.
 
-## v0.44 — Photo relief puzzle
+## v0.44 — Photo relief puzzle · commit `439b03a`
 
 - New in the Design library under **Puzzles**: the **Photo relief puzzle**. Choose any picture — a face, a pet, a bold
   logo — and it becomes the same interlocking-cube puzzle as the Mountain puzzle, with light parts standing high and dark
