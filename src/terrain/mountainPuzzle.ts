@@ -1,16 +1,17 @@
 /**
  * A mountain as a 3D printed puzzle (pure, numbers in mm; z up, x east, y north): the ground is cut into columns of
  * cubes. Inside the mountain each layer is a jigsaw — classic round tabs (src/library/puzzle.ts) running the full
- * height of the layer, so the pieces lock side to side — and every piece has pegs on top that fit sockets in the
- * underside of the piece above. Everything goes together by dropping pieces in from above, the way the tabs and
- * pegs both point.
+ * height of the layer, so the pieces lock side to side — and every piece has a key on top (a low, wide square pad
+ * with sloping sides) that fits a matching pocket in the underside of the piece above. Everything goes together by
+ * dropping pieces in from above, the way the tabs and keys both point; the slopes steer each piece into place and let
+ * it lift straight out, and there's nothing thin to snap.
  *
  * Each column ends in a "top" piece: the ground's surface on top, flat sides (its neighbours' tops are different
- * heights, so tabs would stick out into the air), held by the pegs of the cube below. A top piece is never thinner
- * than its sockets need. Pieces on the outside of the puzzle have flat outer faces.
+ * heights, so tabs would stick out into the air), held by the key of the cube below. A top piece is never thinner
+ * than its pocket needs. Pieces on the outside of the puzzle have flat outer faces.
  *
  * Snow: every piece is split at the snow line into a rock part and a snow part, so a multi-colour printer (Bambu AMS)
- * prints the snow in white. The split is moved a little where it would fall right by a socket or peg, so no piece
+ * prints the snow in white. The split is moved a little where it would fall right by a pocket or key, so no piece
  * gets a sliver of a different colour.
  *
  * Every mesh is watertight: faces meet the walls corner to corner (src/terrain/triangulate.ts).
@@ -50,29 +51,59 @@ export const TAB = 0.28;
 export const MIN_NECK = 2;
 /** Necks thinner than this (mm) work but are fragile: warned about. */
 export const GOOD_NECK = 3;
-/** Plastic left round a socket or peg, mm. */
+/** Plastic left round a key or its pocket, mm. */
 export const WALL = 1.2;
-/** Points round a peg or socket. */
-const ROUND = 24;
 /** Points on each arc of a tab. */
 const ARC_STEPS = 6;
 /** At most this many pieces in one layer (the jigsaw's own limit). */
 export const MAX_COLUMNS = 400;
 
-export interface PegSizes {
-  /** Peg radius, its height, the chamfer round its top. */
-  r: number;
+/**
+ * The locating key: a square pad with rounded corners and sloping sides on top of each cube, and a matching pocket
+ * under the piece above (the fit gap bigger all round, 0.4 mm deeper, the same slope).
+ */
+export interface KeySizes {
+  /** Height of the pad. */
   h: number;
-  chamfer: number;
-  /** Socket radius (peg + fit) and depth (peg + 0.4 mm). */
-  socketR: number;
+  /** How far each side slopes in from its foot to its top (mm): about 39° from upright. */
+  slope: number;
+  /** Gap all round the key in its pocket (the puzzle's fit). */
+  fit: number;
+  /** Pocket depth. */
   depth: number;
+  /** The biggest and smallest half-width tried for the key's foot. */
+  most: number;
+  least: number;
 }
 
-export function pegSizes(spec: Pick<MountainSpec, "cube" | "fit">): PegSizes {
-  const d = Math.min(8, Math.max(3.5, 0.14 * spec.cube));
-  const h = Math.min(6, Math.max(3, 0.18 * spec.cube));
-  return { r: d / 2, h, chamfer: Math.min(0.6, h / 4, d / 6), socketR: d / 2 + spec.fit, depth: h + 0.4 };
+export function keySizes(spec: Pick<MountainSpec, "cube" | "fit">): KeySizes {
+  const h = Math.min(3.5, Math.max(2, 0.09 * spec.cube));
+  return { h, slope: 0.8 * h, fit: spec.fit, depth: h + 0.4, most: Math.min(9, 0.22 * spec.cube), least: 0.8 * h + 0.5 };
+}
+
+/** A key's foot (or its pocket's mouth): a square of half-width `half` with rounded corners, anticlockwise. */
+export function keyLoop(c: P2, half: number, corner: number): P2[] {
+  const r = Math.min(corner, half * 0.45);
+  const k = half - r;
+  const out: P2[] = [];
+  [
+    [1, -1, -90],
+    [1, 1, 0],
+    [-1, 1, 90],
+    [-1, -1, 180],
+  ].forEach(([sx, sy, a0]) => {
+    for (let i = 0; i <= 4; i++) {
+      const a = ((a0 + (90 * i) / 4) * Math.PI) / 180;
+      out.push([c[0] + sx * k + r * Math.cos(a), c[1] + sy * k + r * Math.sin(a)]);
+    }
+  });
+  return out;
+}
+
+/** Where a key sits and how big its foot is (half-width, mm). */
+export interface Key {
+  c: P2;
+  half: number;
 }
 
 /** The narrowest tab neck a cube size gives (mm), with the fit gap taken off both sides. */
@@ -88,7 +119,7 @@ export function smallestCube(fit: number, neck = MIN_NECK): number {
 
 /** The solid under the lowest ground (mm): as asked, but at least one jigsaw layer plus the thinnest top piece. */
 export function baseFor(spec: Pick<MountainSpec, "base" | "cube" | "fit">): number {
-  return Math.max(spec.base, spec.cube + pegSizes(spec).depth + 3);
+  return Math.max(spec.base, spec.cube + keySizes(spec).depth + 3);
 }
 
 /** How the ground maps onto the puzzle. */
@@ -142,8 +173,6 @@ export function mountainChecks(spec: MountainSpec, layout?: MountainLayout): { p
   if (spec.fit < 0 || spec.fit > 0.5) problems.push("The fit gap should be between 0 and 0.5 mm.");
   if (!(spec.exaggeration > 0 && spec.exaggeration <= 5)) problems.push("Height stretch should be between 0.1 and 5.");
   if (!(spec.scale >= 0.2 && spec.scale <= 10)) problems.push("Scale should be between 20% and 1000%.");
-  const pegs = pegSizes(spec);
-  if (!problems.length && pegs.r * 2 < 4) warnings.push(`The pegs will be ${(pegs.r * 2).toFixed(1)} mm across — small; print them slowly.`);
   if (layout) {
     if (layout.cols * layout.rows > MAX_COLUMNS) problems.push(`That's ${layout.cols} × ${layout.rows} cubes in each layer — at most ${MAX_COLUMNS}. Use bigger cubes or a smaller scale.`);
     const tall = baseFor(spec) + (layout.high - layout.low) * layout.k * spec.exaggeration;
@@ -171,19 +200,20 @@ export interface PuzzlePiece {
   top: boolean;
   /** Where its underside sits in the finished puzzle (mm). */
   z0: number;
-  /** Its height including pegs (mm), as printed standing on its underside. */
+  /** Its height including its key (mm), as printed standing on its underside. */
   height: number;
   /** Its footprint (mm, puzzle coordinates). */
   outline: P2[];
-  pegs: number;
-  sockets: number;
+  /** The key on top of it and the pocket under it (null where there's none). */
+  key: Key | null;
+  pocket: Key | null;
   bodies: Body[];
 }
 
 export interface MountainPuzzle {
   spec: MountainSpec;
   layout: MountainLayout;
-  pegs: PegSizes;
+  keys: KeySizes;
   /** The snow line in the puzzle (mm), Infinity for none. */
   snowZ: number;
   /** Layers in the tallest column. */
@@ -237,8 +267,6 @@ class Mesh {
   }
 }
 
-const circle = (c: P2, r: number, n = ROUND): P2[] => Array.from({ length: n }, (_, i) => [c[0] + r * Math.cos((2 * Math.PI * i) / n), c[1] + r * Math.sin((2 * Math.PI * i) / n)] as P2);
-
 function distanceToOutline(p: P2, poly: P2[]): number {
   let best = Infinity;
   for (let i = 0; i < poly.length; i++) {
@@ -262,31 +290,48 @@ function inside(p: P2, poly: P2[]): boolean {
   return c;
 }
 
-/** Where a piece's pegs go: in corners clear of every tab and blank, of the piece below and the one above. */
-export function pegPlaces(centre: P2, cube: number, below: P2[], above: P2[], pegs: PegSizes): P2[] {
-  const ok = (p: P2) =>
-    inside(p, below) && inside(p, above) && distanceToOutline(p, below) >= pegs.r + WALL && distanceToOutline(p, above) >= pegs.socketR + WALL;
-  const corners: (P2 | null)[] = [
-    [-1, -1],
-    [1, -1],
-    [1, 1],
-    [-1, 1],
-  ].map(([sx, sy]) => {
-    for (const u of [0.2, 0.18, 0.22, 0.16, 0.24, 0.14, 0.26, 0.12]) {
-      const p: P2 = [centre[0] + sx * (0.5 - u) * cube, centre[1] + sy * (0.5 - u) * cube];
-      if (ok(p)) return p;
+/**
+ * The key between a piece and the one above: as big as fits inside both outlines — clear of every tab and blank by
+ * `WALL` — up to `most`, in the middle if it fits there, else nudged towards whichever corner has room; null if not
+ * even `least` fits anywhere.
+ */
+export function keyPlace(centre: P2, below: P2[], above: P2[], g: KeySizes, cube = 30): Key | null {
+  // A square of half-width h round c stays clear of an outline by `room` if every side of the outline keeps at least
+  // h + room from c in the "square" (largest of x and y) sense: so the biggest key at c comes straight from that.
+  const squareRoom = (c: P2, outline: P2[]) => {
+    let best = Infinity;
+    for (let i = 0; i < outline.length; i++) {
+      const [a, b] = [outline[i], outline[(i + 1) % outline.length]];
+      const [ax, ay, dx, dy] = [a[0] - c[0], a[1] - c[1], b[0] - a[0], b[1] - a[1]];
+      // max(|x|, |y|) along the side is smallest at an end or where |x| = |y|.
+      const ts = [0, 1];
+      if (Math.abs(dx - dy) > 1e-12) ts.push((ay - ax) / (dx - dy));
+      if (Math.abs(dx + dy) > 1e-12) ts.push(-(ax + ay) / (dx + dy));
+      for (const t of ts) if (t >= 0 && t <= 1) best = Math.min(best, Math.max(Math.abs(ax + t * dx), Math.abs(ay + t * dy)));
     }
-    return null;
-  });
-  // Two pegs on a diagonal hold the piece square; any two will do; one, or the middle, at a pinch.
-  for (const [a, b] of [
-    [0, 2],
-    [1, 3],
-  ])
-    if (corners[a] && corners[b]) return [corners[a]!, corners[b]!];
-  const found = corners.filter((c): c is P2 => !!c);
-  if (found.length) return found.slice(0, 2);
-  return ok(centre) ? [centre] : [];
+    return best;
+  };
+  const biggest = (c: P2) => (inside(c, below) && inside(c, above) ? Math.min(squareRoom(c, below) - WALL, squareRoom(c, above) - WALL - g.fit, g.most) : -Infinity);
+  // In the middle if it fits there; else nudged towards whichever corner leaves room for a bigger key.
+  let best: Key | null = null;
+  const consider = (c: P2) => {
+    const half = Math.floor(biggest(c) * 10) / 10;
+    if (half >= g.least && (!best || half > best.half + 0.5)) best = { c, half };
+  };
+  consider(centre);
+  for (const d of [0.04, 0.08, 0.12, 0.16])
+    for (const [sx, sy] of [
+      [1, 1],
+      [-1, 1],
+      [-1, -1],
+      [1, -1],
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ])
+      consider([centre[0] + sx * d * cube, centre[1] + sy * d * cube]);
+  return best;
 }
 
 /** A layer's jigsaw, with a pattern number whose tabs keep clear of each other. */
@@ -318,47 +363,52 @@ interface BlockShape {
   outline: P2[];
   z0: number;
   z1: number;
-  sockets: P2[];
-  pegs: P2[];
-  sizes: PegSizes;
+  /** The pocket in its underside (for the key of the piece below) and the key on its top. */
+  pocket: Key | null;
+  key: Key | null;
+  sizes: KeySizes;
+}
+
+/** The key's outline at height `up` above its foot (its sides slope in). */
+function keyAt(k: Key, g: KeySizes, up: number): P2[] {
+  const inset = (g.slope * up) / g.h;
+  return keyLoop(k.c, k.half - inset, Math.max(0.5, 2 - inset));
+}
+
+/** The pocket's outline at height `up` above its mouth: the key's shape, the fit gap bigger all round. */
+function pocketAt(k: Key, g: KeySizes, up: number): P2[] {
+  const inset = (g.slope * up) / g.h;
+  return keyLoop(k.c, k.half + g.fit - inset, Math.max(0.5, 2 + g.fit - inset));
 }
 
 /** The part of a layer piece between heights lo and hi (both within it), as one closed mesh. */
 function blockBody(s: BlockShape, lo: number, hi: number, part: "rock" | "snow"): Body | null {
   const m = new Mesh();
   const { outline: O, z0, z1, sizes: g } = s;
-  const sd = z0 + g.depth;
-  const holesBelow = s.sockets.map((c) => circle(c, g.socketR));
-  const pegBase = s.pegs.map((c) => circle(c, g.r));
+  const pd = z0 + g.depth;
   const a = Math.max(lo, z0);
   const b = Math.min(hi, z1);
   if (b > a + 1e-9) {
     m.wall(O, a, b);
-    const socketsHere = s.sockets.length > 0 && a < sd;
-    // Underside: less the sockets' mouths if they start here.
-    m.face(O, socketsHere ? holesBelow : [], a, false);
-    if (socketsHere) {
-      const top = Math.min(b, sd);
-      for (const h of holesBelow) m.wall(h, a, top, false);
-      if (sd < b) for (const h of holesBelow) m.face(h, [], sd, false);
+    const pocketHere = !!s.pocket && a < pd;
+    // Underside: less the pocket's mouth if it starts here.
+    m.face(O, pocketHere ? [pocketAt(s.pocket!, g, a - z0)] : [], a, false);
+    if (pocketHere) {
+      const top = Math.min(b, pd);
+      m.wall(pocketAt(s.pocket!, g, a - z0), a, top, false, pocketAt(s.pocket!, g, top - z0));
+      if (pd < b) m.face(pocketAt(s.pocket!, g, g.depth), [], pd, false);
     }
-    const throughTop = socketsHere && b <= sd;
-    const pegsHere = b >= z1 - 1e-9 && hi > z1 + 1e-9 && s.pegs.length > 0;
-    m.face(O, [...(throughTop ? holesBelow : []), ...(pegsHere ? pegBase : [])], b, true);
+    const throughTop = pocketHere && b <= pd;
+    const keyHere = b >= z1 - 1e-9 && hi > z1 + 1e-9 && !!s.key;
+    m.face(O, [...(throughTop ? [pocketAt(s.pocket!, g, b - z0)] : []), ...(keyHere ? [keyAt(s.key!, g, 0)] : [])], b, true);
   }
-  // Pegs: straight, then a chamfer in to the top.
-  const pa = Math.max(lo, z1);
-  const pb = Math.min(hi, z1 + g.h);
-  if (pb > pa + 1e-9) {
-    const zc = z1 + g.h - g.chamfer;
-    const rAt = (z: number) => (z <= zc ? g.r : g.r - (z - zc));
-    for (const c of s.pegs) {
-      const levels = [pa, ...(zc > pa && zc < pb ? [zc] : []), pb];
-      for (let i = 0; i + 1 < levels.length; i++)
-        m.wall(circle(c, rAt(levels[i])), levels[i], levels[i + 1], true, circle(c, rAt(levels[i + 1])));
-      if (pa > z1 + 1e-9) m.face(circle(c, rAt(pa)), [], pa, false);
-      m.face(circle(c, rAt(pb)), [], pb, true);
-    }
+  // The key: its sides slope in to a flat top.
+  const ka = Math.max(lo, z1);
+  const kb = Math.min(hi, z1 + g.h);
+  if (s.key && kb > ka + 1e-9) {
+    m.wall(keyAt(s.key, g, ka - z1), ka, kb, true, keyAt(s.key, g, kb - z1));
+    if (ka > z1 + 1e-9) m.face(keyAt(s.key, g, ka - z1), [], ka, false);
+    m.face(keyAt(s.key, g, kb - z1), [], kb, true);
   }
   return m.t.length ? m.body(part) : null;
 }
@@ -370,8 +420,8 @@ function topBodies(
   Z: (x: number, y: number) => number,
   z0: number,
   zs: number,
-  sockets: P2[],
-  g: PegSizes,
+  pocket: Key | null,
+  g: KeySizes,
 ): Body[] {
   const [xa, ya, xb, yb] = square;
   const N = n + 1;
@@ -457,12 +507,11 @@ function topBodies(
     z0,
     edge.map((v) => Math.min(v.h, zs)),
   );
-  const holes = sockets.map((c) => circle(c, g.socketR));
-  rock.face(loop, holes, z0, false);
-  for (const h of holes) {
-    rock.wall(h, z0, z0 + g.depth, false);
-    rock.face(h, [], z0 + g.depth, false);
-  }
+  if (pocket) {
+    rock.face(loop, [pocketAt(pocket, g, 0)], z0, false);
+    rock.wall(pocketAt(pocket, g, 0), z0, z0 + g.depth, false, pocketAt(pocket, g, g.depth));
+    rock.face(pocketAt(pocket, g, g.depth), [], z0 + g.depth, false);
+  } else rock.face(loop, [], z0, false);
   // The snow's own sides: only where the ground is above the snow line.
   const snowIds = edge.map((v) => [snow.point(v.x, v.y, zs), snow.point(v.x, v.y, Math.max(v.h, zs))]);
   for (let k = 0; k < edge.length; k++) {
@@ -486,7 +535,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const { cols, rows, k } = layout;
   const cube = spec.cube;
   const fit = spec.fit;
-  const g = pegSizes(spec);
+  const g = keySizes(spec);
   const base = baseFor(spec);
   const zOf = (h: number) => base + (h - layout.low) * k * spec.exaggeration;
   const Z = (x: number, y: number) => zOf(heightAt(grid, layout.e0 + x / k, layout.n0 + y / k));
@@ -536,46 +585,46 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   };
 
   const pieces: PuzzlePiece[] = [];
-  const pegsMissing: string[] = [];
+  const keyless: string[] = [];
   for (let r = 0; r < rows; r++)
     for (let c = 0; c < cols; c++) {
       const f = fullAt(c, r);
       const outlines = Array.from({ length: f + 1 }, (_, L) => outlineOf(L, c, r));
       const centre: P2 = [(c + 0.5) * cube, (r + 0.5) * cube];
-      // Pegs between each piece and the one above it.
-      const joins = Array.from({ length: f }, (_, L) => pegPlaces(centre, cube, outlines[L], outlines[L + 1], g));
+      // The key between each piece and the one above it.
+      const joins = Array.from({ length: f }, (_, L) => keyPlace(centre, outlines[L], outlines[L + 1], g, cube));
       for (let L = 0; L <= f; L++) {
         const name = `${columnName(c)}${r + 1}-${L + 1}`;
-        const sockets = L > 0 ? joins[L - 1] : [];
-        if (L > 0 && !sockets.length) pegsMissing.push(name);
+        const pocket = L > 0 ? joins[L - 1] : null;
+        if (L > 0 && !pocket) keyless.push(name);
         const z0 = L * cube;
         if (L < f) {
-          const shape: BlockShape = { outline: outlines[L], z0, z1: z0 + cube, sockets, pegs: joins[L], sizes: g };
-          // The snow line, moved clear of the sockets and the very top.
+          const shape: BlockShape = { outline: outlines[L], z0, z1: z0 + cube, pocket, key: joins[L], sizes: g };
+          // The snow line, moved clear of the pocket and the very top.
           let cut = snowZ;
-          if (cut <= z0 + (sockets.length ? g.depth + 1 : 1)) cut = -Infinity;
+          if (cut <= z0 + (pocket ? g.depth + 1 : 1)) cut = -Infinity;
           else if (cut >= z0 + cube - 1) cut = Infinity;
-          const top = z0 + cube + (joins[L].length ? g.h : 0);
+          const top = z0 + cube + (joins[L] ? g.h : 0);
           const bodies =
             cut === -Infinity
               ? [blockBody(shape, z0, top, "snow")]
               : cut === Infinity
                 ? [blockBody(shape, z0, top, "rock")]
                 : [blockBody(shape, z0, cut, "rock"), blockBody(shape, cut, top, "snow")];
-          pieces.push({ name, col: c, row: r, layer: L, top: false, z0, height: top - z0, outline: outlines[L], pegs: joins[L].length, sockets: sockets.length, bodies: bodies.filter((b): b is Body => !!b) });
+          pieces.push({ name, col: c, row: r, layer: L, top: false, z0, height: top - z0, outline: outlines[L], key: joins[L], pocket, bodies: bodies.filter((b): b is Body => !!b) });
         } else {
           const sq: [number, number, number, number] = [c * cube + fit, r * cube + fit, (c + 1) * cube - fit, (r + 1) * cube - fit];
-          const zs = Math.max(snowZ, z0 + (sockets.length ? g.depth + 1 : 1));
-          const bodies = topBodies(sq, n, Z, z0, zs, sockets, g);
+          const zs = Math.max(snowZ, z0 + (pocket ? g.depth + 1 : 1));
+          const bodies = topBodies(sq, n, Z, z0, zs, pocket, g);
           let peak = z0;
           for (const b of bodies) for (let i = 2; i < b.vertices.length; i += 3) peak = Math.max(peak, b.vertices[i]);
-          pieces.push({ name, col: c, row: r, layer: L, top: true, z0, height: peak - z0, outline: outlines[L], pegs: 0, sockets: sockets.length, bodies });
+          pieces.push({ name, col: c, row: r, layer: L, top: true, z0, height: peak - z0, outline: outlines[L], key: null, pocket, bodies });
         }
       }
     }
   const warnings = [...checks.warnings];
-  if (pegsMissing.length) warnings.push(`No room for pegs under ${pegsMissing.length === 1 ? "piece" : "pieces"} ${pegsMissing.slice(0, 6).join(", ")}${pegsMissing.length > 6 ? "…" : ""}: ${pegsMissing.length === 1 ? "it rests" : "they rest"} on the piece below with nothing to hold ${pegsMissing.length === 1 ? "it" : "them"}.`);
+  if (keyless.length) warnings.push(`No room for a key under ${keyless.length === 1 ? "piece" : "pieces"} ${keyless.slice(0, 6).join(", ")}${keyless.length > 6 ? "…" : ""}: ${keyless.length === 1 ? "it rests" : "they rest"} on the piece below with nothing to hold ${keyless.length === 1 ? "it" : "them"} in place.`);
   const tallest = Math.max(...pieces.map((p) => p.height));
   if (tallest > spec.bed[2]) warnings.push(`The tallest piece is ${Math.round(tallest)} mm — taller than the printer (${spec.bed[2]} mm). Lower the height stretch.`);
-  return { spec, layout, pegs: g, snowZ, layers, pieces, warnings, neck: Number.isFinite(neck) ? neck : neckFor(cube, fit) };
+  return { spec, layout, keys: g, snowZ, layers, pieces, warnings, neck: Number.isFinite(neck) ? neck : neckFor(cube, fit) };
 }

@@ -1,12 +1,12 @@
 /**
  * Mountain puzzle (pure): OS grid references, reading terrarium height tiles, flat faces into triangles, and the
- * puzzle itself — every part watertight, pieces in a layer clear of each other by the fit gap, pegs exactly under
- * sockets, snow only above the snow line, sizes refused or warned about, and the pieces laid out on plates and written
+ * puzzle itself — every part watertight, pieces in a layer clear of each other by the fit gap, each key right under
+ * its pocket, snow only above the snow line, sizes refused or warned about, and the pieces laid out on plates and written
  * as 3MF files with the snow on filament 2.
  */
 import { describe, expect, it } from "vitest";
 import { weld } from "../src/geometry/threeMf";
-import { outlineGap, type P2 as LP2 } from "../src/library/outlines";
+import { insideGap, outlineGap, type P2 as LP2 } from "../src/library/outlines";
 import { areaProblem, gridFrom, heightAt, readHeights, terrariumHeight, tilesFor, worldPixel, type TilePixels } from "../src/terrain/elevation";
 import {
   baseFor,
@@ -18,6 +18,8 @@ import {
   smallestCube,
   MIN_NECK,
   GOOD_NECK,
+  keyLoop,
+  WALL,
   type MountainSpec,
   type Body,
 } from "../src/terrain/mountainPuzzle";
@@ -235,13 +237,27 @@ describe("Mountain puzzle", () => {
     expect(Math.max(...puzzle.pieces.filter((p) => !p.top).map((p) => p.outline.length))).toBeGreaterThan(30);
   });
 
-  it("puts two pegs under every piece above the bottom, each right under a socket", () => {
+  it("puts a key under every piece above the bottom, right under its pocket, clear of every tab", () => {
+    const g = puzzle.keys;
     for (const p of puzzle.pieces) {
-      if (p.layer === 0) expect(p.sockets).toBe(0);
-      else expect(p.sockets, p.name).toBe(2);
+      if (p.layer === 0) expect(p.pocket).toBeNull();
+      else expect(p.pocket, p.name).not.toBeNull();
       const above = puzzle.pieces.find((q) => q.col === p.col && q.row === p.row && q.layer === p.layer + 1);
-      expect(p.pegs).toBe(above ? above.sockets : 0);
+      // The same key: the pocket of the piece above is exactly where (and as big as) the key below is.
+      expect(p.key).toBe(above ? above.pocket : null);
+      if (p.key) {
+        expect(p.key.half).toBeGreaterThanOrEqual(g.least);
+        expect(p.key.half).toBeLessThanOrEqual(g.most);
+        // Its foot inside this piece, its pocket's mouth inside the one above, both clear of their edges.
+        expect(outlineGap(keyLoop(p.key.c, p.key.half, 2) as LP2[], p.outline as LP2[])).toBe(0);
+        expect(insideGap(keyLoop(p.key.c, p.key.half, 2) as LP2[], p.outline as LP2[])).toBeGreaterThan(WALL * 0.9);
+        expect(insideGap(keyLoop(p.key.c, p.key.half + g.fit, 2) as LP2[], above!.outline as LP2[])).toBeGreaterThan(WALL * 0.9);
+      }
     }
+    // Low and wide, with sloping sides: nothing thin to snap, and it steers itself in.
+    expect(g.h).toBeLessThanOrEqual(3.5);
+    expect(Math.min(...puzzle.pieces.filter((p) => p.key).map((p) => p.key!.half * 2))).toBeGreaterThan(2 * g.h);
+    expect(g.slope / g.h).toBeGreaterThan(0.5);
     expect(puzzle.warnings).toEqual([]);
   });
 
