@@ -4039,3 +4039,118 @@ kbd {
   margin-right: auto;
   font-size: 13px;
 }
+
+/* Mountain puzzle window (MountainPuzzleDialog.tsx). */
+.mountain-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) 1fr;
+  gap: 18px;
+  align-items: start;
+}
+.mountain-side .library-heading:first-child {
+  margin-top: 0;
+}
+.mountain-choices {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.mountain-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+  color: var(--ink-2);
+}
+.mountain-row input:not([type]),
+.mountain-row select {
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 8px;
+  background: var(--panel);
+  color: var(--ink);
+  min-width: 0;
+}
+.mountain-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.mountain-number input {
+  width: 68px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 6px;
+  background: var(--panel);
+  color: var(--ink);
+}
+.mountain-fetch {
+  margin: 6px 0 2px;
+}
+.mountain-main {
+  min-width: 0;
+}
+.mountain-empty {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 40px 24px;
+  text-align: center;
+}
+.mountain-previews {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.mountain-figure {
+  margin: 0;
+}
+.mountain-top {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.mountain-3d {
+  height: 320px;
+  min-width: 220px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--viewport-bg);
+  overflow: hidden;
+  touch-action: none;
+}
+.mountain-explode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  margin: 6px 0;
+  color: var(--ink-2);
+}
+.mountain-summary p {
+  margin: 4px 0;
+}
+.mountain-warn {
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+.mountain-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 10px 0 6px;
+}
+@media (max-width: 820px) {
+  .mountain-layout,
+  .mountain-previews {
+    grid-template-columns: 1fr;
+  }
+}
