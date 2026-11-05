@@ -922,16 +922,24 @@
   less 10 mm, whole cubes, area trimmed and centred; heights z = `baseFor` (≥ one cube + the thinnest top, so every column
   stands on a jigsaw cube) + (h − low)·k·exaggeration. Per column, `full` = whole cubes under the top piece (top ≥ socket depth
   + 2 mm thick everywhere). Each layer is `makePuzzle` (tab `TAB` 0.28, pattern tried until `narrowestGap` ≥ MIN_GAP + 2·fit)
-  with tabs only between two whole cubes (else straight; top pieces are squares), outlines shrunk by `fit`. Pegs
-  (`pegSizes`, `pegPlaces`: two on a diagonal, clear of both outlines by `WALL`) on each cube's top, sockets (peg + fit, peg
-  + 0.4 deep) under the piece above. Snow: blocks are cut by the plane (moved to a whole piece near sockets/the top), top
+  with tabs only between two whole cubes (else straight; top pieces are squares), outlines shrunk by `fit`. One locating key
+  per join (it replaced two thin pegs, which were fiddly and could snap): a rounded-square pad on each cube's top
+  (`keySizes`: h 2–3.5 mm, sides sloping in 0.8·h, `keyLoop`), a matching pocket under the piece above (fit bigger all round,
+  h + 0.4 deep, the same slope); `keyPlace` sizes it straight from the "square" (L∞) room to both outlines less `WALL`
+  (+ fit for the pocket), up to `most` (0.22·cube ≤ 9), in the middle or nudged towards a corner with more room; it's the same
+  `Key` object on the piece below (`key`) and above (`pocket`). Then `codeKeys` gives every key a code (`KEY_CODES`: moved
+  −1/0/+1 × `CODE_STEP` (1 mm) each way × which corner is cut off, `CUT` of the half-width — 36) and ONE size for the
+  whole puzzle (the 5th-percentile room less a step; a smaller key would drop into a bigger pocket), checking with
+  `keyGoesIn` (the key moved into the other cube, `insideGap` > 0 with the other's pocket) both ways against every coded
+  key in the 3 × 3 × 3 round it, so a piece fits only its own place; unavoidable pairs are counted in a warning (only
+  below the sturdy cube size). Pocket ceilings use `pd − z0`, the walls' own sum, or float rounding split the weld. Snow: blocks are cut by the plane (moved to a whole piece near sockets/the top), top
   pieces' ground triangles are clipped at the snow line with crossings shared by key (`topBodies`), so rock and snow are
   each closed; snow is a zero-thickness edge along the contour. Limits: `mountainChecks` refuses necks < `MIN_NECK` 2 mm
-  (`smallestCube`), warns < `GOOD_NECK` 3 mm and pegs < 4 mm, ≤ `MAX_COLUMNS` per layer, ≤ 40 layers. Plates: `platesFor`
+  (`smallestCube`), warns < `GOOD_NECK` 3 mm, ≤ `MAX_COLUMNS` per layer, ≤ 40 layers. Plates: `platesFor`
   (rows on the bed, layer by layer), `plate3mf` = core 3MF, each piece an object of component parts (rock, snow) + Bambu's
   `Metadata/model_settings.config` with `extruder` 1/2 per part (untested in Bambu Studio itself; other slicers see parts to
   assign by hand). Tests: tests/mountainPuzzle (pure: grid refs vs known summits, a fake tile loader, triangulation, every
-  part watertight with positive volume, gaps, pegs ↔ sockets, snow above the line, limits, plates). The laser
+  part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates). The laser
   version (layered contour sheets cut into staggered jigsaw pieces) lives in JuraCUT (its Mountain tool,
   `src/terrain/contourPuzzle.ts`), which shares osGrid.ts, elevation.ts, peaks.ts and app/mountainTiles.ts unchanged:
   keep them identical in both apps.
