@@ -858,8 +858,10 @@
   (rows on the bed, layer by layer), `plate3mf` = core 3MF, each piece an object of component parts (rock, snow) + Bambu's
   `Metadata/model_settings.config` with `extruder` 1/2 per part (untested in Bambu Studio itself; other slicers see parts to
   assign by hand). Tests: tests/mountainPuzzle (pure: grid refs vs known summits, a fake tile loader, triangulation, every
-  part watertight with positive volume, gaps, pegs ↔ sockets, snow above the line, limits, plates). Next: the laser
-  version (layered contour sheets cut into staggered jigsaw pieces, sent with Send to JuraCUT).
+  part watertight with positive volume, gaps, pegs ↔ sockets, snow above the line, limits, plates). The laser
+  version (layered contour sheets cut into staggered jigsaw pieces) lives in JuraCUT (its Mountain tool,
+  `src/terrain/contourPuzzle.ts`), which shares osGrid.ts, elevation.ts, peaks.ts and app/mountainTiles.ts unchanged:
+  keep them identical in both apps.
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
