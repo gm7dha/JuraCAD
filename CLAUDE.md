@@ -828,7 +828,8 @@
   choices): "rigid" (one-piece shells) refuses `LOCKING_SHAPES` and patterns that change up the height (only none, ribs, waves)
   with the owner's wording, then `lockedAt` (every corner ≥ draft further out on the level above, no turning); "split"
   (pillar halves along y = 0, pulled apart in ±y) fades relief within `SPLIT_FADE` 35° of the split and `splitCatch` checks
-  every edge's normal on each level and half-way; "master" anything; all check `steepestOverhang` ≤ 45° (corner moves square
+  every edge's normal on each level and half-way, an edge crossing y = 0 counting in BOTH halves (twisted always catches,
+  so it's refused for split moulds — master only); "master" anything; all check `steepestOverhang` ≤ 45° (corner moves square
   to their faces). `wallAround` = the mould wall (plain base shape ≥ wall clear of every point, leaning ≤ 45°); `sideOnX` turns
   rigid moulds' polygons a side to +x (`CastSize.turn`). `mouldKit.ts`: stacks → level sketches + lofts, densities (wax 0.9,
   concrete/Jesmonite 2.1, silicone 1.1), `waxLine`/`concreteLine`, and the advice sentences every description ends with.
@@ -843,9 +844,13 @@
   draft; heart = two lobes + tangents). Shell + inner piece (`castMoulds.ts` `cupPlan`): shell New loft − cast; the inner
   piece hangs from a flange on the rim, a `LIP` round the shell's outside with `fit`, pour holes over the concrete; core =
   `insideAt` (wall square to drafted sides; a dome's concentric ball), hollow with a 45° pointed roof (pot) or solid; drain
-  pin; dish raised-centre cone (recess); holder plug (tealight 41 × 18, taper 22.5 × 25; "cube" = square, H = W); turned over
-  beside the shell (`beside`, `lowest`). Volumes `pillarVolumes`/`cupVolumes`/`meltTrayVolume`/`wickBarVolume`. Search maps
-  "mold"→"mould" (`britishSpelling` in browse.ts). Tests: tests/libraryMoulds (pure), engineLibraryMoulds (volumes to 2e-5,
+  pin; dish raised-centre cone (recess); holder plug with its own `POCKET_DRAFT` 1° sized from the bottom
+  (tealight 39.6 × 18, taper 21.8 × 25; "cube" = square, H = W); dish ring post ≤ `RING_POST`; `floatWeight` (summary: what the
+  inner piece pushes aside × `WET_CONCRETE` 2.3 − sand in its hollow × `SAND` 1.6 − plastic × `PRINTED`, +25%, to the next 50 g —
+  a sand-filled core still floats, so the wording says weigh it down or tape/clamp it); `bedProblem` (shell + inner piece ≤ `BED`
+  250 across) on all three; a 3 mm wall note above 150 mm; turned over
+  beside the shell (`beside`, `lowest`). Volumes `pillarVolumes`/`cupVolumes`/`meltTrayVolume`/`wickBarVolume`. Pegs `PEG_LENGTH` 2.5 into
+  `HOLE_DEPTH` 3 (1 mm of flange left behind). Search maps "mold"→"mould", "centering"→"centring" (`britishSpelling` in browse.ts). Tests: tests/libraryMoulds (pure), engineLibraryMoulds (volumes to 2e-5,
   halves meet with pegs free by 0.9·fit·√2 and hitting at 1.3, core probes, discs fit high and hit low, a user's part
   untouched), mcpLibraryMoulds; the smoke test searches "candle" and inserts the pillar mould (2 parts, 96 mm).
   Third laser batch (`designs/boxes3.ts`, `laserHome3.ts`, `jigsaw.ts` + pure `puzzle.ts`, `ornament.ts`; list in `laserSet3.ts`).

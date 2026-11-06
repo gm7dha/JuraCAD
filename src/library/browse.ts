@@ -15,7 +15,12 @@ export const searchWords = (text: string) =>
     .filter(Boolean);
 
 /** American spellings typed into the search, as the library writes them ("mold" finds the moulds). */
-export const britishSpelling = (w: string) => w.replace(/^mold/, "mould").replace(/^color/, "colour").replace(/^center/, "centre");
+export const britishSpelling = (w: string) =>
+  w
+    .replace(/^mold/, "mould")
+    .replace(/^color/, "colour")
+    // centering → centring, centered → centred, centers → centres, center → centre.
+    .replace(/^center(ing|ed|s)?/, (_, end: string | undefined) => (end === "ing" ? "centring" : end === "ed" ? "centred" : end === "s" ? "centres" : "centre"));
 
 /**
  * The designs matching what was typed: every word typed must start a word of the design's name, group, section,

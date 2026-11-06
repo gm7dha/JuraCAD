@@ -30,7 +30,7 @@ export const concreteLine = (mm3: number) => `${ml(mm3)} ml of concrete or Jesmo
 
 /** Advice that ends each description. */
 export const WAX_ADVICE =
-  "Filament: print it in PETG — soy wax is usually poured at about 55–70 °C and paraffin hotter, and PLA starts to soften at about 55–60 °C, so PLA only suits cool-poured soy wax, used carefully. A light spray of mould release or silicone spray helps the candle come out.";
+  "Filament: print it in PETG — soy wax is usually poured at about 55–70 °C and paraffin hotter (let paraffin cool to about 70–75 °C before pouring it into PETG), and PLA starts to soften at about 55–60 °C, so PLA only suits cool-poured soy wax, used carefully. A light spray of mould release or silicone spray helps the candle come out.";
 export const CONCRETE_ADVICE =
   "Filament: PLA or PETG both work. Wipe the inside with a release agent (vaseline, cooking spray or a proper release spray) before every pour, and sand or smooth the inside first: every layer line shows on the cast.";
 export const MASTER_ADVICE =

@@ -536,9 +536,14 @@ export function splitCatch(stack: Section[]): number {
       const len = Math.hypot(dx, dy);
       if (len < 1e-9) continue;
       const ny = -dx / len;
-      const my = (a[1] + b[1]) / 2;
-      const back = my > 1e-6 ? -ny : my < -1e-6 ? ny : 0;
-      if (back > 1e-9) worst = Math.max(worst, (Math.asin(Math.min(1, back)) * 180) / Math.PI);
+      // An edge crossing the split is two pieces, one in each half; each must face away from the split in its own half.
+      const halves: number[] = [];
+      if (a[1] > 1e-9 || b[1] > 1e-9) halves.push(1);
+      if (a[1] < -1e-9 || b[1] < -1e-9) halves.push(-1);
+      for (const side of halves) {
+        const back = -side * ny;
+        if (back > 1e-9) worst = Math.max(worst, (Math.asin(Math.min(1, back)) * 180) / Math.PI);
+      }
     }
   }
   return worst;
@@ -591,6 +596,8 @@ export function outsideProblems(o: Outside, b: CastSize, release: Release, mater
   if (o.shape === "stepped" && b.H / o.tiers < 2 * stepSize(b.W)) out.push(`${o.tiers} tiers don't fit in this height: use fewer tiers or make it taller.`);
   if (o.shape === "barrel" && release === "rigid") out.push(`A bulging shape would lock the ${material} in a one-piece mould: choose another shape, or make a master for silicone with the pillar candle mould.`);
   if (o.shape === "twisted" && release === "rigid") out.push(`A twisted shape would lock the ${material} in a one-piece mould: choose another shape, or make a master for silicone with the pillar candle mould.`);
+  // Twisting turns the corners across the split, so some face always looks back at it.
+  if (o.shape === "twisted" && release === "split") out.push(`A twisted shape would catch where the two halves pull apart: turn on "Make a master instead" and make a silicone mould from it.`);
   if (release === "rigid" && changesUp(o.pattern)) {
     const name = patternLabel(o.pattern);
     out.push(`${name[0].toUpperCase()}${name.slice(1)} would lock the ${material} in a one-piece mould: choose vertical ribs, waves or no pattern — or use the pillar candle's two-part mould, or make a master for silicone.`);

@@ -17,7 +17,7 @@ import type { DesignValues } from "../src/library/types";
 import { lit } from "../src/library/ex";
 import { extrudeFeature, shapesSketch, sketchFeature } from "../src/library/sketchKit";
 import { levelPlane } from "../src/library/printKit";
-import { HALF_GAP, PEG, pillarPlan, pillarVolumes, wickBarVolume } from "../src/library/designs/candleMould";
+import { HALF_GAP, PEG, PEG_LENGTH, pillarPlan, pillarVolumes, wickBarVolume } from "../src/library/designs/candleMould";
 import { meltTrayVolume } from "../src/library/designs/meltTray";
 import { cupVolumes, dishPlan, holderPlan, insideAt, LIP, potPlan, type CupPlan } from "../src/library/designs/castMoulds";
 import { apothemAt } from "../src/library/designs/mouldSurface";
@@ -119,9 +119,9 @@ describe("pillar candle mould", () => {
       const p = pillarPlan(v);
       const r = build(insert("pillar-candle-mould", extra));
       const [a, b] = [partEnding(r.parts, "_half-a"), partEnding(r.parts, "_half-b")];
-      // Half A on y ≥ 0 (its pegs reaching 3 mm past the split), half B beside it.
-      expect(box(a).min[1]).toBeCloseTo(-3, 4);
-      expect(box(b).max[1]).toBeCloseTo(-HALF_GAP + 3, 4);
+      // Half A on y ≥ 0 (its pegs reaching past the split), half B beside it.
+      expect(box(a).min[1]).toBeCloseTo(-PEG_LENGTH, 4);
+      expect(box(b).max[1]).toBeCloseTo(-HALF_GAP + PEG_LENGTH, 4);
       const back = (dx = 0, dz = 0): number => shared({ part: a }, { part: b, position: [dx, HALF_GAP, dz] });
       expect(back()).toBeLessThan(1e-3);
       // The holes are the fit bigger square to every face: free sliding 0.9 of it across (√2 × fit along x or z) …

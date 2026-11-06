@@ -12,7 +12,7 @@
  *
  * To print, the shell stands as it is (floor on the bed, open end up: the cavity only widens going up) and the inner
  * piece is turned over (flange on the bed) and put beside it: its sides then lean in going up, the pot's core is hollow
- * (to fill with sand so it doesn't float) with a 45° pointed roof inside, and the drain pin, lip and plug point up.
+ * (to fill with sand — and weigh down, as wet concrete is heavier than sand) with a 45° pointed roof inside, and the drain pin, lip and plug point up.
  */
 import type { Feature } from "../../model/types";
 import { lit } from "../ex";
@@ -53,6 +53,16 @@ import {
 /** The flange's thickness and the lip's length below it. */
 export const FLANGE_T = 3;
 export const LIP = 6;
+/** The holder's pocket draft (°), whatever the mould's: a candle has straight sides. */
+export const POCKET_DRAFT = 1;
+/** The widest a dish's raised centre (ring post) gets at its foot, as a radius. */
+export const RING_POST = 15;
+/** Densities for the float check: wet concrete (a heavy mix, to be safe), dry sand, and a printed part (PLA, about a third solid). */
+export const WET_CONCRETE = 2.3;
+export const SAND = 1.6;
+export const PRINTED = 1.24 * 0.35;
+/** The usual biggest bed (Bambu X1/P1/A1: 256 mm), less a little. */
+export const BED = 250;
 /** At most this many pour holes. */
 export const MOST_HOLES = 8;
 /** How far apart the shell and the inner piece print. */
@@ -76,7 +86,7 @@ export function insideAt(o: Outside, b: CastSize, w: number, z: number): number 
   return base - w * Math.sqrt(1 + slope * slope);
 }
 
-export type InnerKind = { kind: "core"; wall: number; floor: number; hollow: boolean; pin: number; centre: boolean } | { kind: "plug"; top: number; depth: number };
+export type InnerKind = { kind: "core"; wall: number; floor: number; hollow: boolean; pin: number; centre: boolean } | { kind: "plug"; bottom: number; depth: number };
 
 /** Everything about a shell-and-inner-piece mould (mm; z up from the bed, assembled). */
 export function cupPlan(o: Outside, size: CastSize, wall: number, fit: number, inner: InnerKind) {
@@ -124,16 +134,18 @@ export function cupPlan(o: Outside, size: CastSize, wall: number, fit: number, i
       pin = { r1: inner.pin / 2, r0: inner.pin / 2 - zf * k, z0: wall, z1: bottom };
     }
     if (inner.centre) {
-      const r0 = Math.max(6, 0.3 * insideAt(o, b, inner.wall, zf));
+      // A ring post: never wider than RING_POST across its foot.
+      const r0 = Math.min(RING_POST, Math.max(6, 0.3 * insideAt(o, b, inner.wall, zf)));
       const h = 0.7 * (b.H - zf);
       const r1 = 3;
       recess = [circleAt(r0 + (r0 - r1) / h, bottom - 1), circleAt(r0, bottom), circleAt(r1, bottom + h)].map((s) => ({ z: six(s.z), r: six(s.r!) }));
     }
   } else {
-    const k = sideSlope({ ...b, lean: 0 });
-    const r0 = inner.top / 2 - inner.depth * k;
-    plug = extended([circleAt(r0, rim - inner.depth), circleAt(inner.top / 2, rim)].map((s) => ({ z: six(s.z), r: six(s.r!) })), FLANGE_T / 2);
-    innerRim = inner.top / 2;
+    // The pocket has its own small draft, sized from its bottom, so the candle still drops all the way in.
+    const r0 = inner.bottom / 2;
+    const r1 = r0 + inner.depth * Math.tan((POCKET_DRAFT * Math.PI) / 180);
+    plug = extended([circleAt(r0, rim - inner.depth), circleAt(r1, rim)].map((s) => ({ z: six(s.z), r: six(s.r!) })), FLANGE_T / 2);
+    innerRim = r1;
     bottom = rim - inner.depth;
   }
   // Pour holes over the concrete between the inner piece and the shell's wall, square to the faces.
@@ -149,6 +161,41 @@ export function cupPlan(o: Outside, size: CastSize, wall: number, fit: number, i
 }
 
 export type CupPlan = ReturnType<typeof cupPlan>;
+
+/**
+ * How much weight the inner piece needs on its flange to stay down in wet concrete (g, rounded up to the next 50 g with
+ * a quarter extra): what it pushes aside below the rim × wet concrete, less sand filling its hollow and its own plastic.
+ * Sand (≈ 1.6 g/ml) is lighter than wet concrete (2.1–2.4), so a core full of sand still floats.
+ */
+export function floatWeight(p: CupPlan): { displaced: number; sand: number; plastic: number; weight: number } {
+  const below = (stack: Section[]) => stackVolume(stack, stack[0].z, Math.min(p.rim, stack[stack.length - 1].z));
+  const frustumOf = (a: Section, b: Section) => frustum(a.r!, b.r!, b.z - a.z);
+  let displaced: number;
+  if (p.plug.length) displaced = frustumOf(p.plug[0], p.plug[1]);
+  else {
+    displaced = below(p.core) + (p.pin ? frustum(p.pin.r0, p.pin.r1, p.pin.z1 - p.pin.z0) : 0);
+    if (p.recess.length) displaced -= frustumOf(p.recess[1], p.recess[2]);
+  }
+  const sand = p.hollow.length ? stackVolume(p.hollow, p.hollow[0].z, p.top) : 0;
+  const plastic = cupVolumes(p).inner;
+  const net = (displaced * WET_CONCRETE - sand * SAND - plastic * PRINTED) / 1000;
+  return { displaced, sand, plastic, weight: net > 0 ? Math.ceil((net * 1.25) / 50) * 50 : 0 };
+}
+
+/** A line for the summary: the weight to hold the inner piece down. */
+function weightLine(p: CupPlan, piece: string): string {
+  const w = floatWeight(p).weight;
+  if (!w) return "";
+  const kg = w >= 1000 ? `${Math.round(w / 100) / 10} kg` : `${w} g`;
+  return ` Wet concrete is heavier than the ${piece}${p.hollow.length ? " even full of sand" : ""}, so it floats: put at least ${kg} on its flange (a bag of sand, a tin), or tape or clamp it to the shell.`;
+}
+
+/** Whether the shell and inner piece fit on the bed side by side; and a note for big moulds whose wall may bulge. */
+function bedProblem(p: CupPlan, what: string): string[] {
+  const across = extentX(p.outer) + p.beside + p.reach;
+  return across > BED ? [`The shell and ${what} side by side are ${mm(across)} across, too wide for most beds (${BED} mm): make it smaller.`] : [];
+}
+const wallNote = (p: CupPlan) => (p.b.W > 150 && p.wall < 3 ? ` For a mould this big, a mould wall of 3 mm or more stops the shell bulging under the weight of the concrete.` : "");
 
 const frustum = (r0: number, r1: number, h: number) => (Math.PI * h * (r0 * r0 + r0 * r1 + r1 * r1)) / 3;
 
@@ -238,7 +285,7 @@ export const concretePotMould: LibraryDesign = {
   id: "concrete-pot-mould",
   name: "Concrete plant pot mould",
   description:
-    "A mould for casting plant pots in concrete or Jesmonite: an outer shell and an inner core that sits on the shell's rim, so the wall comes out the same thickness all round. The pot comes out the right way up: pour most of the mix into the shell, push the core down (fill it with sand or gravel so it doesn't float) until its flange rests on the rim, top up through the pour holes and tap the sides to shake out bubbles. A pin under the core leaves a drainage hole. Both pieces print without supports: the shell open end up, the core turned over beside it. Choose the outside shape and a pattern; only ones that slide straight out of a one-piece mould are allowed. " +
+    "A mould for casting plant pots in concrete or Jesmonite: an outer shell and an inner core that sits on the shell's rim, so the wall comes out the same thickness all round. The pot comes out the right way up: pour most of the mix into the shell, fill the core with sand and push it down slowly, with a little twist so the air gets out, until its flange rests on the rim. Wet concrete is heavier than sand, so the core still wants to float up: put a weight on its flange (the summary says how much) or tape or clamp it to the shell. Spare mix squeezes out through the holes in the flange; top up through them and tap the sides to shake out bubbles. A pin under the core leaves a drainage hole. Both pieces print without supports: the shell open end up, the core turned over beside it. Choose the outside shape and a pattern; only ones that slide straight out of a one-piece mould are allowed. " +
     `${CONCRETE_ADVICE} ${MASTER_ADVICE.replace("print a master instead", "print the pot's shape as a master (the pillar candle mould's \"Make a master instead\" makes any of these shapes)")}`,
   category: "print",
   group: "Moulds and casting",
@@ -263,13 +310,13 @@ export const concretePotMould: LibraryDesign = {
     else if (inside < 15) out.push("The pot's inside would be too small at the bottom: make the wall thinner or the pot wider.");
     else if (v.drain === true && num(v, "drainSize") / 2 > inside - 5) out.push(`The drainage hole is too big for the pot's floor: make it at most ${mm(2 * (inside - 5))}.`);
     if (!out.length && !p.holes.length) out.push("The pot wall is too thin for pour holes: make it at least 6 mm.");
-    if (!out.length && p.beside + p.reach > 250) out.push("The shell and core side by side are too wide for most beds: make the pot smaller.");
+    if (!out.length) out.push(...bedProblem(p, "core"));
     return out;
   },
   summary: (v) => {
     const p = potPlan(v);
     const vol = cupVolumes(p);
-    return `2 parts: the shell and the core, side by side. The pot: ${concreteLine(vol.cast)}.`;
+    return `2 parts: the shell and the core, side by side. The pot: ${concreteLine(vol.cast)}.${weightLine(p, "core")}${wallNote(p)}`;
   },
   make: (ctx) => {
     const p = potPlan(ctx.values);
@@ -282,8 +329,8 @@ export const concretePotMould: LibraryDesign = {
 // Candle / tealight holder
 
 export const POCKETS = {
-  tealight: { top: 41, depth: 18, label: "Tealight (39 mm)" },
-  taper: { top: 22.5, depth: 25, label: "Taper candle (22 mm)" },
+  tealight: { bottom: 39.6, depth: 18, label: "Tealight (39 mm)" },
+  taper: { bottom: 21.8, depth: 25, label: "Taper candle (22 mm)" },
 } as const;
 
 export function holderPlan(v: DesignValues) {
@@ -293,7 +340,7 @@ export function holderPlan(v: DesignValues) {
   const b = sizeOf(v);
   if (cube) b.H = b.W;
   const pocket = POCKETS[v.pocket === "taper" ? "taper" : "tealight"];
-  return { o, cube, pocket, ...cupPlan(o, b, num(v, "wall"), num(v, "fit"), { kind: "plug", top: pocket.top, depth: pocket.depth }) };
+  return { o, cube, pocket, ...cupPlan(o, b, num(v, "wall"), num(v, "fit"), { kind: "plug", bottom: pocket.bottom, depth: pocket.depth }) };
 }
 
 const holderShapes = () => {
@@ -307,7 +354,7 @@ export const concreteHolderMould: LibraryDesign = {
   id: "concrete-holder-mould",
   name: "Concrete candle / tealight holder mould",
   description:
-    "A mould for a concrete or Jesmonite candle holder: an outer shell, and an insert that rests on the shell's rim with a plug hanging down that leaves a pocket for a tealight (39 mm, with room to drop it in) or a 22 mm taper candle. Round, square, cube, hexagon, rounded (ball), faceted, fluted and more, with a pattern if you like. Pour the shell nearly full, press the insert on until it sits on the rim, top up through the holes and tap out the bubbles. Both pieces print without supports: the shell open end up, the insert turned over beside it. " +
+    "A mould for a concrete or Jesmonite candle holder: an outer shell, and an insert that rests on the shell's rim with a plug hanging down that leaves a pocket for a tealight (39 mm, with room to drop it in) or a 22 mm taper candle. Round, square, cube, hexagon, rounded (ball), faceted, fluted and more, with a pattern if you like. Pour the shell nearly full and press the insert on slowly until it sits on the rim; spare mix squeezes out through the holes in it. The insert floats on wet concrete, so put a weight on it (the summary says how much) or tape or clamp it to the shell, then tap out the bubbles. Both pieces print without supports: the shell open end up, the insert turned over beside it. " +
     `${CONCRETE_ADVICE} Concrete holders can get hot: don't leave a burning candle unattended.`,
   category: "print",
   group: "Moulds and casting",
@@ -324,14 +371,15 @@ export const concreteHolderMould: LibraryDesign = {
     const p = holderPlan(v);
     const out = outsideProblems(p.o, p.b, "rigid", "concrete");
     if (out.length) return out;
-    if (p.gap < 10) out.push(`Too narrow round the pocket: make the holder at least ${mm(2 * (p.pocket.top / 2 + 10) + (p.b.W - 2 * (p.gap + p.pocket.top / 2)))} wide.`);
+    if (p.gap < 10) out.push(`Too narrow round the pocket: make the holder at least ${mm(p.b.W + 2 * (10 - p.gap))} wide.`);
     if (p.b.H - p.pocket.depth < 8) out.push(`Make it at least ${mm(p.pocket.depth + 8)} tall, to leave a solid bottom under the pocket.`);
+    if (!out.length) out.push(...bedProblem(p, "insert"));
     return out;
   },
   summary: (v) => {
     const p = holderPlan(v);
     const vol = cupVolumes(p);
-    return `2 parts: the shell and the insert, side by side${p.cube ? `; a ${mm(p.b.W)} cube` : ""}. The holder: ${concreteLine(vol.cast)}.`;
+    return `2 parts: the shell and the insert, side by side${p.cube ? `; a ${mm(p.b.W)} cube` : ""}. The holder: ${concreteLine(vol.cast)}.${weightLine(p, "insert")}${wallNote(p)}`;
   },
   make: (ctx) => {
     const p = holderPlan(ctx.values);
@@ -355,7 +403,7 @@ export const trinketDishMould: LibraryDesign = {
   id: "trinket-dish-mould",
   name: "Trinket / ring dish mould",
   description:
-    "A mould for a small concrete or Jesmonite dish for rings, keys or jewellery: a shallow shell and a core that rests on its rim, with sides that slope out into a lip and, if you like, a raised cone in the middle to hang rings on. Round, hexagon or any of the other shapes, plain or patterned. Fill the shell about two thirds, press the core down until it sits on the rim, top up through the holes and tap out the bubbles. Both pieces print without supports. " +
+    "A mould for a small concrete or Jesmonite dish for rings, keys or jewellery: a shallow shell and a core that rests on its rim, with sides that slope out into a lip and, if you like, a raised cone in the middle to hang rings on. Round, hexagon or any of the other shapes, plain or patterned. Fill the shell about two thirds and press the core down slowly, with a little twist so the air gets out, until it sits on the rim; spare mix squeezes out through the holes in its flange. The core floats on wet concrete, so put a weight on it (the summary says how much) or tape or clamp it to the shell, then tap out the bubbles. Both pieces print without supports. " +
     CONCRETE_ADVICE,
   category: "print",
   group: "Moulds and casting",
@@ -378,12 +426,13 @@ export const trinketDishMould: LibraryDesign = {
     if (num(v, "floor") > p.b.H - 5) out.push(`Make the dish at least ${mm(num(v, "floor") + 5)} tall, or its floor thinner.`);
     else if (insideAt(p.o, p.b, num(v, "concrete"), num(v, "floor")) < 12) out.push("The dish's inside would be too small: make it wider, the sides steeper or the wall thinner.");
     if (!out.length && !p.holes.length) out.push("The dish wall is too thin for pour holes: make it at least 6 mm.");
+    if (!out.length) out.push(...bedProblem(p, "core"));
     return out;
   },
   summary: (v) => {
     const p = dishPlan(v);
     const vol = cupVolumes(p);
-    return `2 parts: the shell and the core, side by side. The dish: ${concreteLine(vol.cast)}.`;
+    return `2 parts: the shell and the core, side by side. The dish: ${concreteLine(vol.cast)}.${weightLine(p, "core")}${wallNote(p)}`;
   },
   make: (ctx) => {
     const p = dishPlan(ctx.values);

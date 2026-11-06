@@ -30,8 +30,9 @@ export const FLANGE = 16;
 export const FLANGE_THICK = 4;
 /** Pegs: square on a corner, `PEG` from the middle to each corner, `PEG_LENGTH` long; their holes `HOLE_DEPTH` deep. */
 export const PEG = 3;
-export const PEG_LENGTH = 3;
-export const HOLE_DEPTH = 3.5;
+export const PEG_LENGTH = 2.5;
+/** Leaves 1 mm of flange behind each hole. */
+export const HOLE_DEPTH = 3;
 /** The rubber-band notches: V-shaped, this deep into the flange's edge (45° sides). */
 export const NOTCH = 3;
 /** How far apart the two halves print. */
@@ -256,7 +257,7 @@ export const pillarCandleMould: LibraryDesign = {
   id: "pillar-candle-mould",
   name: "Pillar candle mould",
   description:
-    "A two-part mould for pillar candles, in any outside shape — round, square, faceted, fluted, twisted, stepped and more — with an optional pattern that stands out on the candle (ribs, spirals, rings, honeycomb, waves, dots…). The candle is poured upside down: the closed end makes the candle's top, with a hole for the wick, and the open end at the top is the candle's base. The halves line up with pegs and hold together with rubber bands in the notches (or bulldog clips on the flanges). Each half prints standing on its closed end, no supports. Thread the wick through the hole, tape it underneath, hold it straight with the wick centring bar, and pour. " +
+    "A two-part mould for pillar candles, in any outside shape — round, square, faceted, fluted, twisted, stepped and more — with an optional pattern that stands out on the candle (ribs, spirals, rings, honeycomb, waves, dots…). The candle is poured upside down: the closed end makes the candle's top, with a hole for the wick, and the open end at the top is the candle's base. The halves line up with pegs and hold together with rubber bands in the notches (or bulldog clips on the flanges). Each half prints standing on its closed end, no supports. Thread the wick through the hole, seal the hole and the seam outside with mould putty or tape, hold the wick straight with the wick centring bar, and pour. Wax shrinks as it sets and leaves a dip round the wick: keep about a tenth back, and top up once the first pour has set. " +
     `${WAX_ADVICE} Or turn on "Make a master instead" for a solid candle to pour silicone round. ${MASTER_ADVICE}`,
   category: "print",
   group: "Moulds and casting",
@@ -286,7 +287,7 @@ export const pillarCandleMould: LibraryDesign = {
       const silicone = w * w * (p.b.H + 10) - vol.cast;
       return `1 part: the candle, standing on its base. It holds ${waxLine(vol.cast)}. A mould box 10 mm bigger all round takes about ${ml(silicone)} ml of silicone (${grams(silicone, SILICONE_DENSITY)}).`;
     }
-    return `2 halves, each ${mm(2 * p.X)} wide and ${mm(p.top)} tall, printed side by side. The candle: ${waxLine(vol.cast)}.`;
+    return `2 halves, each ${mm(2 * p.X)} wide and ${mm(p.top)} tall, printed side by side. The candle: ${waxLine(vol.cast)}. For the wick centring bar, type a mouth width of ${mm(p.b.W)}.`;
   },
   make: (ctx) => {
     const p = pillarPlan(ctx.values);
@@ -348,7 +349,7 @@ export const wickBar: LibraryDesign = {
   prefix: "wickbar",
   icon: '<path d="M4 20h40v6H4z"/><path d="M10 26h4v5h-4zM34 26h4v5h-4z" opacity=".6"/><circle cx="24" cy="23" r="1.6" fill="none" stroke="currentColor"/>',
   inputs: [
-    { key: "span", label: "Mouth width", kind: "length", default: 70, min: 20, max: 200, help: "Inside the top of the mould or jar." },
+    { key: "span", label: "Mouth width", kind: "length", default: 60, min: 20, max: 200, help: "Inside the top of the mould or jar." },
     { key: "wick", label: "Wick thickness", kind: "length", default: 2, min: 1, max: 6 },
   ],
   problems: (v) => {

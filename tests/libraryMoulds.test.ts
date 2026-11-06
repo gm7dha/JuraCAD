@@ -35,7 +35,7 @@ import {
 } from "../src/library/designs/mouldSurface";
 import { FLANGE, halfChain, halfSections, HALF_GAP, pillarPlan, pillarVolumes, PEG, wickBarPlan, wickBarVolume } from "../src/library/designs/candleMould";
 import { meltOutline, meltPlan, meltTrayVolume } from "../src/library/designs/meltTray";
-import { cupVolumes, holderPlan, insideAt, potPlan, dishPlan, POCKETS } from "../src/library/designs/castMoulds";
+import { cupVolumes, floatWeight, holderPlan, insideAt, potPlan, dishPlan, POCKET_DRAFT, POCKETS, PRINTED, RING_POST, SAND, WET_CONCRETE } from "../src/library/designs/castMoulds";
 import { CONCRETE_DENSITY, ml, WAX_DENSITY } from "../src/library/designs/mouldKit";
 import type { DesignValues } from "../src/library/types";
 
@@ -116,8 +116,29 @@ describe("outside shapes and patterns", () => {
     for (const shape of ["square", "hexagon", "octagon", "faceted", "tapered", "stepped", "barrel"] as OutsideShape[]) expect(splitCatch(castSections(outside(shape), SIZE, { split: true }).sections)).toBe(0);
     // Without the fade, ribs right at the split would catch.
     expect(splitCatch(castSections(outside("round", "ribs", { patternCount: 24 }), SIZE).sections)).toBeGreaterThan(1);
-    // A twisted shape turns its ribs across the split.
+    // A twisted shape turns its faces across the split — even a small twist, even with no pattern — so it's refused.
+    for (const [twist, sides] of [[45, 8], [5, 8], [45, 5], [90, 12]]) expect(splitCatch(castSections(outside("twisted", "none", { twist, sides }), SIZE, { split: true }).sections)).toBeGreaterThan(1);
     expect(splitCatch(castSections(outside("twisted", "ribs"), SIZE, { split: true }).sections)).toBeGreaterThan(1);
+    // An edge crossing the split counts in both halves: one piece of it always faces back.
+    const crossing = [{ z: 0, pts: [[10, -1], [10, 1], [-10, 1], [-10, -1]] as [number, number][] }];
+    expect(splitCatch(crossing)).toBe(0);
+    const slanted = [{ z: 0, pts: [[10, -1], [11, 1], [-10, 1], [-10, -1]] as [number, number][] }];
+    expect(splitCatch(slanted)).toBeGreaterThan(20);
+  });
+
+  it("with the strict split check, every combination the pillar mould allows has nothing facing back at the split", () => {
+    const d = design("pillar-candle-mould");
+    let allowed = 0;
+    for (const shape of SHAPES)
+      for (const pattern of PATTERNS)
+        for (const extra of [{}, { width: 40, height: 60 }, { width: 100, height: 150, patternCount: 5 }, { draft: 4, patternDepth: 2 }, { height: 25 }, { sides: 5 }, { sides: 12 }] as DesignValues[]) {
+          const v = valuesOf("pillar-candle-mould", { shape, pattern, ...extra });
+          if (valueProblems(d, v).length) continue;
+          allowed++;
+          expect(shape).not.toBe("twisted");
+          expect(splitCatch(pillarPlan(v).cast)).toBe(0);
+        }
+    expect(allowed).toBe(553);
   });
 
   it("everything prints without supports: nothing leans over more than 45°", () => {
@@ -144,8 +165,10 @@ describe("outside shapes and patterns", () => {
     for (const p of PATTERNS) expect(outsideProblems(outside("barrel", p), SIZE, "master", "wax")).toEqual([]);
     expect(problems("concrete-pot-mould", { pattern: "dots" })[0]).toMatch(/Bubbles would lock the concrete/);
     expect(problems("pillar-candle-mould", { pattern: "dots" })).toEqual([]);
-    expect(problems("pillar-candle-mould", { shape: "twisted", pattern: "ribs" })[0]).toMatch(/^The vertical ribs would catch where the two halves pull apart/);
-    expect(problems("pillar-candle-mould", { shape: "twisted", pattern: "ribs", master: true })).toEqual([]);
+    expect(problems("pillar-candle-mould", { shape: "twisted" })).toEqual(['A twisted shape would catch where the two halves pull apart: turn on "Make a master instead" and make a silicone mould from it.']);
+    expect(problems("pillar-candle-mould", { shape: "twisted", pattern: "ribs" })[0]).toMatch(/^A twisted shape would catch/);
+    expect(problems("pillar-candle-mould", { shape: "twisted", master: true })).toEqual([]);
+    expect(problems("pillar-candle-mould", { shape: "fluted", pattern: "ribs", patternCount: 24 })[0]).toMatch(/^The vertical ribs would catch where the two halves pull apart/);
     expect(problems("pillar-candle-mould", { shape: "dome" })[0]).toMatch(/A rounded shape this wide can be at most 28\.02 mm tall/);
   });
 });
@@ -158,7 +181,7 @@ describe("pillar candle mould", () => {
     expect(pillarVolumes(v).cast).toBeCloseTo(frustum(r0, r1, 90), 1);
     const mlOf = Math.round(frustum(r0, r1, 90) / 100) / 10;
     expect(design("pillar-candle-mould").summary!(v)).toBe(
-      `2 halves, each 96 mm wide and 92 mm tall, printed side by side. The candle: ${mlOf} ml of wax — about ${Math.round((frustum(r0, r1, 90) / 1000) * WAX_DENSITY)} g (soy wax is about 0.9 g/ml).`,
+      `2 halves, each 96 mm wide and 92 mm tall, printed side by side. The candle: ${mlOf} ml of wax — about ${Math.round((frustum(r0, r1, 90) / 1000) * WAX_DENSITY)} g (soy wax is about 0.9 g/ml). For the wick centring bar, type a mouth width of 60 mm.`,
     );
   });
 
@@ -210,14 +233,16 @@ describe("pillar candle mould", () => {
 describe("wick bar and wax melt tray", () => {
   it("the wick bar: lugs just inside the mouth, a hole for the wick and a slot to it; exact volume", () => {
     const p = wickBarPlan(valuesOf("wick-bar"));
-    expect(p.length).toBe(90);
-    expect(p.lugOut).toBe(34.5);
+    // The default fits the pillar candle mould's default 60 mm candle.
+    expect(p.span).toBe(valuesOf("pillar-candle-mould").width);
+    expect(p.length).toBe(80);
+    expect(p.lugOut).toBe(29.5);
     expect(p.hole).toBeCloseTo(2.4, 9);
-    // 90 × 12 × 3 bar, two 3 × 12 × 4 lugs, less a 2.4 mm hole and a 1.5 mm slot (their overlap counted once).
+    // 80 × 12 × 3 bar, two 3 × 12 × 4 lugs, less a 2.4 mm hole and a 1.5 mm slot (their overlap counted once).
     const R = 1.2;
     const h = 0.75;
     const overlap = h * Math.sqrt(R * R - h * h) + R * R * Math.asin(h / R);
-    expect(wickBarVolume(valuesOf("wick-bar"))).toBeCloseTo(90 * 12 * 3 + 2 * 3 * 12 * 4 - (Math.PI * R * R + 1.5 * 6 - overlap) * 3, 9);
+    expect(wickBarVolume(valuesOf("wick-bar"))).toBeCloseTo(80 * 12 * 3 + 2 * 3 * 12 * 4 - (Math.PI * R * R + 1.5 * 6 - overlap) * 3, 9);
     expect(problems("wick-bar", { span: 20, wick: 6 })[0]).toMatch(/too narrow/);
   });
 
@@ -264,7 +289,9 @@ describe("shell and core moulds", () => {
     const vol = cupVolumes(p);
     // (Sections are kept to 6 decimal places, so to within a hundredth of a mm³.)
     expect(vol.cast).toBeCloseTo(frustum(at(0), at(100), 100) - core - pin, 1);
-    expect(design("concrete-pot-mould").summary!(v)).toBe(`2 parts: the shell and the core, side by side. The pot: ${ml(vol.cast)} ml of concrete or Jesmonite — about ${Math.round((vol.cast / 1000) * CONCRETE_DENSITY)} g (about 2.1 g/ml).`);
+    expect(design("concrete-pot-mould").summary!(v)).toBe(
+      `2 parts: the shell and the core, side by side. The pot: ${ml(vol.cast)} ml of concrete or Jesmonite — about ${Math.round((vol.cast / 1000) * CONCRETE_DENSITY)} g (about 2.1 g/ml). Wet concrete is heavier than the core even full of sand, so it floats: put at least ${floatWeight(p).weight} g on its flange (a bag of sand, a tin), or tape or clamp it to the shell.`,
+    );
     // The core's flange rests on the shell's rim, its lip round the outside with the fit.
     expect(p.flange.z).toBe(p.rim);
     expect(p.lipInside.r! - p.outerRim).toBeCloseTo(0.3, 9);
@@ -276,16 +303,17 @@ describe("shell and core moulds", () => {
   });
 
   it("the holder: a pocket for a tealight (39 mm + room, 18 deep) or a 22 mm taper; a cube is as tall as it's wide", () => {
-    expect(POCKETS.tealight.top).toBeGreaterThan(39);
+    expect(POCKETS.tealight.bottom).toBeGreaterThan(39);
     expect(POCKETS.tealight.depth).toBe(18);
     const p = holderPlan(valuesOf("concrete-holder-mould"));
-    expect(p.plug[1].r).toBe(41 / 2);
+    expect(p.plug[0].r).toBe(39.6 / 2);
+    expect(p.plug[1].r).toBeCloseTo(19.8 + 18 * tan(POCKET_DRAFT), 6);
     expect(p.plug[1].z - p.plug[0].z).toBe(18);
     const cube = holderPlan(valuesOf("concrete-holder-mould", { shape: "cube" }));
     expect(cube.b.H).toBe(cube.b.W);
     const taper = holderPlan(valuesOf("concrete-holder-mould", { pocket: "taper" }));
     const vol = cupVolumes(taper);
-    expect(vol.cast).toBeCloseTo(stackVolume(taper.cast) - frustum(11.25 - 25 * tan(3), 11.25, 25), 2);
+    expect(vol.cast).toBeCloseTo(stackVolume(taper.cast) - frustum(10.9, 10.9 + 25 * tan(1), 25), 2);
     expect(problems("concrete-holder-mould", { width: 50 })[0]).toMatch(/Too narrow round the pocket/);
     expect(problems("concrete-holder-mould", { height: 25 })[0]).toMatch(/Make it at least 26 mm tall/);
   });
@@ -298,6 +326,60 @@ describe("shell and core moulds", () => {
     const plain = cupVolumes(dishPlan(valuesOf("trinket-dish-mould")));
     expect(vol.cast).toBeGreaterThan(plain.cast);
     expect(problems("trinket-dish-mould", { height: 10, floor: 8 })[0]).toMatch(/Make the dish at least 13 mm tall/);
+  });
+});
+
+describe("the holder's pocket", () => {
+  it("keeps its own 1° draft whatever the mould's, so a 39 mm tealight and a 22 mm taper go all the way in", () => {
+    for (const draft of [1, 3, 5, 10]) {
+      const t = holderPlan(valuesOf("concrete-holder-mould", { draft }));
+      // A tealight is 38–39 mm across and about 15 mm tall: 39.5 mm or more all the way down to 18 mm.
+      expect(2 * t.plug[0].r!).toBeGreaterThanOrEqual(39.5);
+      expect(t.plug[1].z - t.plug[0].z).toBe(18);
+      const k = holderPlan(valuesOf("concrete-holder-mould", { draft, pocket: "taper" }));
+      // A 7/8" (22.2 mm) taper candle: about 23 mm at the top, 21.5–22 at the bottom 25 mm down.
+      expect(2 * k.plug[1].r!).toBeGreaterThan(22.5);
+      expect(2 * k.plug[1].r!).toBeLessThan(23.2);
+      expect(2 * k.plug[0].r!).toBeGreaterThanOrEqual(21.5);
+      expect(2 * k.plug[0].r!).toBeLessThanOrEqual(22);
+      expect(k.plug[1].z - k.plug[0].z).toBe(25);
+    }
+  });
+});
+
+describe("holding the inner piece down", () => {
+  it("works out the weight: what it pushes aside × wet concrete, less sand in it and its plastic, a quarter extra, to the next 50 g", () => {
+    const p = potPlan(valuesOf("concrete-pot-mould"));
+    const f = floatWeight(p);
+    const pin = frustum(p.pin!.r0, p.pin!.r1, p.pin!.z1 - p.pin!.z0);
+    expect(f.displaced).toBeCloseTo(stackVolume(p.core) + pin, 6);
+    expect(f.sand).toBeCloseTo(stackVolume(p.hollow, p.hollow[0].z, p.top), 6);
+    const net = (f.displaced * WET_CONCRETE - f.sand * SAND - f.plastic * PRINTED) / 1000;
+    expect(net).toBeGreaterThan(256);
+    expect(f.weight).toBe(Math.ceil((net * 1.25) / 50) * 50);
+    // A 200 mm pot needs kilos.
+    expect(floatWeight(potPlan(valuesOf("concrete-pot-mould", { width: 200, height: 180, wall: 3 }))).weight).toBeGreaterThan(2400);
+    // The holder's insert and the dish's core float too.
+    const h = holderPlan(valuesOf("concrete-holder-mould"));
+    expect(floatWeight(h).displaced).toBeCloseTo(frustum(h.plug[0].r!, h.plug[1].r!, 18), 6);
+    expect(floatWeight(h).weight).toBeGreaterThan(0);
+    expect(floatWeight(dishPlan(valuesOf("trinket-dish-mould"))).weight).toBeGreaterThan(0);
+    for (const id of ["concrete-holder-mould", "trinket-dish-mould"]) expect(design(id).summary!(valuesOf(id))).toMatch(/floats: put at least \d+ g on its flange.*or tape or clamp it to the shell/);
+    for (const id of ["concrete-pot-mould", "concrete-holder-mould", "trinket-dish-mould"]) expect(design(id).description).toMatch(/put a weight on .*or tape or clamp it to the shell/);
+  });
+
+  it("big moulds: a bed check for every shell-and-core mould, and a note about the wall", () => {
+    expect(problems("concrete-holder-mould", { width: 140 })[0]).toMatch(/^The shell and insert side by side are [\d.]+ mm across, too wide for most beds \(250 mm\)/);
+    expect(problems("trinket-dish-mould", { width: 150 })[0]).toMatch(/too wide for most beds/);
+    expect(problems("concrete-pot-mould", { width: 130 })[0]).toMatch(/too wide for most beds/);
+    expect(problems("concrete-holder-mould", { shape: "cube", width: 140 })[0]).toMatch(/too wide for most beds/);
+    expect(design("concrete-pot-mould").summary!(valuesOf("concrete-pot-mould", { width: 160 }))).toMatch(/a mould wall of 3 mm or more/);
+    expect(design("concrete-pot-mould").summary!(valuesOf("concrete-pot-mould", { width: 160, wall: 3 }))).not.toMatch(/a mould wall of 3 mm/);
+  });
+
+  it("the dish's raised centre stays a ring post", () => {
+    const big = dishPlan(valuesOf("trinket-dish-mould", { width: 250, centre: true }));
+    expect(big.recess[1].r).toBe(RING_POST);
   });
 });
 
@@ -364,6 +446,8 @@ describe("finding them in the library", () => {
     expect(searchDesigns("candle").map((d) => d.id).slice(0, 2)).toEqual(["pillar-candle-mould", "concrete-holder-mould"]);
     const concrete = searchDesigns("concrete").map((d) => d.id);
     for (const id of ["concrete-pot-mould", "concrete-holder-mould", "trinket-dish-mould"]) expect(concrete).toContain(id);
+    expect(searchDesigns("centering")[0].id).toBe("wick-bar");
+    expect(searchDesigns("center bar")[0].id).toBe("wick-bar");
     for (const word of ["mould", "mold", "molds"]) {
       const found = searchDesigns(word).map((d) => d.id);
       for (const id of ["pillar-candle-mould", "wax-melt-tray", "concrete-pot-mould", "concrete-holder-mould", "trinket-dish-mould"]) expect(found).toContain(id);
