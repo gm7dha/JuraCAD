@@ -615,7 +615,7 @@
   bag clip, knurled thumb knob, hose/vacuum adapter, SD card holder — each
   sits flat on the bed at z ≥ 0); `LIBRARY_CATEGORIES`, `designsIn`, `categoryFrom`;
   optional `LibraryDesign.group` = a heading within the tab (`designGroups` = `groupDesigns(designsIn(c))`: ungrouped first, then
-  groups — that section's `GROUP_ORDER` first (print: Fixings, Hinges, Storage, Gridfinity, Household, Desk, Garden, Workshop, Electronics, Test prints; laser: none), the rest in order of first use;
+  groups — that section's `GROUP_ORDER` first (print: Puzzles, Fixings, Hinges, Storage, Gridfinity, Household, Moulds and casting, Desk, Garden, Workshop, Electronics, Test prints; laser: none), the rest in order of first use;
   laser: Boxes and stands, Signs and stamps, Home, Workshop, Toys and gifts, Garden, Desk). The window also has a search box (`browse.ts` `searchDesigns`: every
   typed word must start a word of the name/group/section/description or a choice's label — "M8" finds the bolt set — name matches first; results across both tabs, under
   section headings; cleared on close).
@@ -815,6 +815,44 @@
   socket clear of the stand at the defaults, plug 40 and angle 75; magnet probes; bins in the magnet plate; pipe free ±0.18
   and held; the bearing ± fit/2; dividers crossing; a user's part untouched), mcpLibraryPrint5; the smoke test searches
   "honeycomb" and inserts the tile (1 part, 122.63 mm).
+  Sixth print batch (`printDesigns6.ts` `PRINT_DESIGNS_6`, after the puzzles; heading "Moulds and casting", after Household):
+  casting moulds for wax, concrete and Jesmonite, no variables. Shared pure outsides `designs/mouldSurface.ts`: a cast is a
+  stack of level `Section`s (a circle, or a polygon whose corners sit at the same angles on every level) joined by a ruled
+  Loft, so `stackVolume` (Simpson per slab) is exact; z from the CLOSED end (0) to the open end (H), width W at the open
+  end. `OUTSIDE_SHAPES` (round/square/hexagon/octagon/faceted `sides`/fluted `ribs`/twisted `twist`/tapered `narrow`/barrel
+  `bulge`/stepped `tiers` with 45° steps/dome = a ball cut `draft` below its middle, `domeMostHeight`) × `SURFACE_PATTERNS`
+  (`patternAt` 0…1 × `patternDepth`, added to the radius so it stands proud on the cast; repeats `patternCount`, cells as
+  tall as wide; honeycomb/dots use an even column count; lowpoly = seeded `facetHeights`); `outsideInputs()` is the same
+  input list on every mould. Sampling caps `MOST_CORNERS` 96 / `MOST_LEVELS` 36 / `MOST_POINTS` 1200 (corners drop to ≥ 5 per
+  repeat first; else "too much detail"). Release rules in `outsideProblems(o, size, release, material)` (problems, not hidden
+  choices): "rigid" (one-piece shells) refuses `LOCKING_SHAPES` and patterns that change up the height (only none, ribs, waves)
+  with the owner's wording, then `lockedAt` (every corner ≥ draft further out on the level above, no turning); "split"
+  (pillar halves along y = 0, pulled apart in ±y) fades relief within `SPLIT_FADE` 35° of the split and `splitCatch` checks
+  every edge's normal on each level and half-way, an edge crossing y = 0 counting in BOTH halves (twisted always catches,
+  so it's refused for split moulds — master only); "master" anything; all check `steepestOverhang` ≤ 45° (corner moves square
+  to their faces). `wallAround` = the mould wall (plain base shape ≥ wall clear of every point, leaning ≤ 45°); `sideOnX` turns
+  rigid moulds' polygons a side to +x (`CastSize.turn`). `mouldKit.ts`: stacks → level sketches + lofts, densities (wax 0.9,
+  concrete/Jesmonite 2.1, silicone 1.1), `waxLine`/`concreteLine`, and the advice sentences every description ends with.
+  Pillar candle mould (`candleMould.ts`): poured upside down (candle top = closed end on the bed, wick hole on the axis);
+  two halves standing, half B `HALF_GAP` along −y; flange `FLANGE` × `FLANGE_THICK` with diamond pegs (`PEG`) on one side and
+  holes `fit`·√2 bigger on the other (B the other way round), V band notches. Round with no pattern: outer loft + flange −
+  cavity − other half (fast). Polygon casts (`byHalves`): each half is ONE ruled Loft of `halfSections` (flange, wall over
+  the top, back along the split, round the inside; the closed end's inside is the wick hole at the same angles, opening to the
+  candle over `TOP_DIP` 0.5) — replicad's booleans run SimplifyResult, ~1.5 s each on ruled faces, so detailed cavities are
+  never cut; patterned pillars still take ~3–10 s. "Make a master instead" = the cast standing on its base (`masterStack`).
+  Wick centring bar; wax melt tray (`meltTray.ts`: cavities shrunk towards `shrinkCentre` so the nearest side tilts by the
+  draft; heart = two lobes + tangents). Shell + inner piece (`castMoulds.ts` `cupPlan`): shell New loft − cast; the inner
+  piece hangs from a flange on the rim, a `LIP` round the shell's outside with `fit`, pour holes over the concrete; core =
+  `insideAt` (wall square to drafted sides; a dome's concentric ball), hollow with a 45° pointed roof (pot) or solid; drain
+  pin; dish raised-centre cone (recess); holder plug with its own `POCKET_DRAFT` 1° sized from the bottom
+  (tealight 39.6 × 18, taper 21.8 × 25; "cube" = square, H = W); dish ring post ≤ `RING_POST`; `floatWeight` (summary: what the
+  inner piece pushes aside × `WET_CONCRETE` 2.3 − sand in its hollow × `SAND` 1.6 − plastic × `PRINTED`, +25%, to the next 50 g —
+  a sand-filled core still floats, so the wording says weigh it down or tape/clamp it); `bedProblem` (shell + inner piece ≤ `BED`
+  250 across) on all three; a 3 mm wall note above 150 mm; turned over
+  beside the shell (`beside`, `lowest`). Volumes `pillarVolumes`/`cupVolumes`/`meltTrayVolume`/`wickBarVolume`. Pegs `PEG_LENGTH` 2.5 into
+  `HOLE_DEPTH` 3 (1 mm of flange left behind). Search maps "mold"→"mould", "centering"→"centring" (`britishSpelling` in browse.ts). Tests: tests/libraryMoulds (pure), engineLibraryMoulds (volumes to 2e-5,
+  halves meet with pegs free by 0.9·fit·√2 and hitting at 1.3, core probes, discs fit high and hit low, a user's part
+  untouched), mcpLibraryMoulds; the smoke test searches "candle" and inserts the pillar mould (2 parts, 96 mm).
   Third laser batch (`designs/boxes3.ts`, `laserHome3.ts`, `jigsaw.ts` + pure `puzzle.ts`, `ornament.ts`; list in `laserSet3.ts`).
   Sliding-lid box: a laser can't cut a groove part-way, so each groove is a *rail* — a second panel inside each long wall with a
   through slot (a C open at the right-hand end, `slidingOutlines().rail`); grooves z = g0…g1 (g0 = H − 3t − 2c, g1 = g0 + t + 2c), a 2t
