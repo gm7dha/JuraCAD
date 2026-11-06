@@ -57,7 +57,7 @@ export interface DesignGroup {
 /** Per section, headings that come first, in this order; any others follow in the order they're first used. */
 export const GROUP_ORDER: Record<DesignCategory, readonly string[]> = {
   laser: [],
-  print: ["Puzzles", "Fixings", "Hinges", "Storage", "Gridfinity", "Household", "Desk", "Garden", "Workshop", "Electronics", "Test prints"],
+  print: ["Puzzles", "Fixings", "Hinges", "Storage", "Gridfinity", "Household", "Moulds and casting", "Desk", "Garden", "Workshop", "Electronics", "Test prints"],
 };
 
 /** Designs under their headings (`LibraryDesign.group`): ungrouped ones first, then the groups (`order`'s first), each in the library's order. */

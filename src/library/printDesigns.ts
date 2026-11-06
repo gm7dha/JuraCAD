@@ -24,6 +24,7 @@ import { cardHolder } from "./designs/cardHolder";
 import { PRINT_DESIGNS_4 } from "./printDesigns4";
 import { PRINT_DESIGNS_5 } from "./printDesigns5";
 import { PUZZLE_DESIGNS } from "./puzzleDesigns";
+import { PRINT_DESIGNS_6 } from "./printDesigns6";
 import type { LibraryDesign } from "./types";
 
 /** The third batch (Gridfinity and more), shown after the others. */
@@ -41,5 +42,5 @@ const PRINT_DESIGNS_3: readonly LibraryDesign[] = [
   cardHolder,
 ];
 
-export const PRINT_DESIGNS: readonly LibraryDesign[] = [boltSet, standoff, pianoHinge, jar, bitHolder, pegboardHook, drawerPull, grommet, cornerGuard, ...PRINT_DESIGNS_3, ...PRINT_DESIGNS_4, ...PRINT_DESIGNS_5, ...PUZZLE_DESIGNS];
+export const PRINT_DESIGNS: readonly LibraryDesign[] = [boltSet, standoff, pianoHinge, jar, bitHolder, pegboardHook, drawerPull, grommet, cornerGuard, ...PRINT_DESIGNS_3, ...PRINT_DESIGNS_4, ...PRINT_DESIGNS_5, ...PUZZLE_DESIGNS, ...PRINT_DESIGNS_6];
 

@@ -3420,6 +3420,18 @@ try {
     const honeycomb = await shown();
     if (honeycomb.errors) throw new Error(`the honeycomb tile has ${honeycomb.errors} feature problem(s)`);
     await shot("library-honeycomb");
+    step = "Design library: a pillar candle mould, found by searching";
+    await tool("Library");
+    await page.getByLabel("Search the library").fill("candle");
+    await page.getByRole("button", { name: /^Pillar candle mould:/ }).click();
+    await page.locator(".library-preview polygon").first().waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.waitForSelector(".tab.active >> text=Pillar candle mould", { timeout: 10_000 });
+    // Two halves side by side: each 2 × (32 + 16) = 96 mm across.
+    await waitShown(2, 96, "the pillar candle mould didn't build its two halves, 96 mm across");
+    const candle = await shown();
+    if (candle.errors) throw new Error(`the pillar candle mould has ${candle.errors} feature problem(s)`);
+    await shot("library-candle");
     step = "Design library: a stencil of HELLO, exported for laser";
     await tool("Library");
     await page.getByRole("tab", { name: "Laser cutting" }).click();
