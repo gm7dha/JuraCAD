@@ -8,6 +8,22 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.48 — Moulds for casting candles, pots and more
+
+- A new **Moulds and casting** heading in the Library's 3D printing tab, for making things to sell:
+  - **Pillar candle mould**: two halves that line up with pegs and hold with rubber bands, poured upside down with a
+    hole for the wick, or a solid **master** to make a silicone mould from.
+  - **Wick centring bar**, and a **wax melt / soap tray** (round, heart, star or square cavities).
+  - **Concrete plant pot**, **candle / tealight holder** and **trinket / ring dish** moulds: an outer shell and an inner
+    core that sits on its rim, so the wall stays even. Standard tealights and 7/8" taper candles fit the holder's pocket.
+- **11 outside shapes** (round, square, hexagon, octagon, faceted, fluted, twisted, tapered, barrel, stepped, rounded) and
+  **11 surface patterns** (ribs, spirals, rings, lattice, honeycomb, waves, chevrons, basket weave, dots, random facets),
+  cut into the mould so they stand out on the cast. The app refuses any shape or pattern that would lock the cast in, and
+  suggests a master for silicone instead.
+- Each mould says how much it holds (ml, and grams of wax or concrete), how much weight holds its core down in wet
+  concrete, and which filament to print it in (PETG for hot wax; PLA or PETG with a release agent for concrete).
+- Searching "mold", "color" or "center" finds the British spellings too.
+
 ## v0.47 — Island puzzle
 
 - New in the Design library under **Puzzles**: the **Island puzzle**. Choose an island — Arran, Skye, Mull, Islay, the
