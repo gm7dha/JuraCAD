@@ -1015,16 +1015,38 @@ try {
       return { names: fs.map((f) => f.name), sketch: sk.name, extrude: ex?.name, extrudeId: ex?.id, filletOn: (fillet?.picks ?? []).map((p) => p.partId.split(/[~@]/)[0]), steps: st.history.past.length };
     });
     if (!before.extrude) throw new Error(`no extrude uses ${before.sketch}`);
-    // The fillet goes too when every edge it rounds is on the extrude's part.
+    // Round the extruded part's top face too (Fillet 2), so it's sketch → extrude → fillet.
+    await page.keyboard.press("Escape");
+    const top = await page.evaluate((id) => {
+      const v = window.juracadViewport.current;
+      const p = v.shownParts().find((x) => x.id === id);
+      const i = p ? p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99) : -1;
+      return i >= 0 ? v.screenPointOnFace(p.id, i) : null;
+    }, before.extrudeId);
+    if (!top) throw new Error(`couldn't find the top face of ${before.extrude}'s part on screen`);
+    await page.locator(".viewport-canvas").click({ position: top });
+    await page.waitForTimeout(300);
+    await page.keyboard.press("Shift+KeyF");
+    await page.waitForSelector(".feature-dialog .pick-list li", { timeout: 5_000 });
+    await page.locator("#param-radius").fill("0.5");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForSelector(".feature-row:not(.datum) >> text=Fillet 2", { timeout: 10_000 });
+    await page.waitForTimeout(2_000);
+    if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error(`Fillet 2 failed: ${await page.locator(".feature-row.failed").first().getAttribute("title")}`);
+    const fillet2On = await page.evaluate(() => (window.juracadStore.getState().history.present.features.find((f) => f.name === "Fillet 2")?.picks ?? []).map((p) => p.partId.split(/[~@]/)[0]));
+    if (!fillet2On.length || fillet2On.some((id) => id !== before.extrudeId)) throw new Error(`Fillet 2 should round ${before.extrude}'s part, not ${fillet2On.join(", ")}`);
+    before.names.push("Fillet 2");
+    before.steps += 1;
+    // Fillet 1 goes too when every edge it rounds is on the extrude's part (else it rounds the box, and stays).
     const filletGoes = before.filletOn.length > 0 && before.filletOn.every((id) => id === before.extrudeId);
     await page.locator(".feature-row:not(.datum)", { hasText: before.sketch }).first().click({ button: "right" });
     await page.getByRole("menuitem", { name: "Delete with dependents…" }).click();
     await page.waitForSelector(".delete-question");
     const question = await page.locator(".delete-question").innerText();
-    const expected = filletGoes ? `Delete ${before.sketch} and the 2 features that use it: ${before.extrude} and Fillet 1?` : `Delete ${before.sketch} and the feature that uses it: ${before.extrude}?`;
+    const expected = filletGoes ? `Delete ${before.sketch} and the 3 features that use it: ${before.extrude}, Fillet 1 and Fillet 2?` : `Delete ${before.sketch} and the 2 features that use it: ${before.extrude} and Fillet 2?`;
     if (question !== expected) throw new Error(`the Delete question should be "${expected}", not "${question}"`);
     await page.locator(".modal-footer .primary-button").click();
-    const gone = [before.sketch, before.extrude, ...(filletGoes ? ["Fillet 1"] : [])];
+    const gone = [before.sketch, before.extrude, ...(filletGoes ? ["Fillet 1"] : []), "Fillet 2"];
     await page.waitForFunction((g) => !window.juracadStore.getState().history.present.features.some((f) => g.includes(f.name)), gone);
     const after = await page.evaluate(() => ({ names: window.juracadStore.getState().history.present.features.map((f) => f.name), steps: window.juracadStore.getState().history.past.length }));
     if (after.names.length !== before.names.length - gone.length) throw new Error(`expected exactly ${gone.join(", ")} to go: ${before.names.join(", ")} → ${after.names.join(", ")}`);
@@ -1036,6 +1058,10 @@ try {
     await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 2"), null, { timeout: 30_000 });
     await page.waitForTimeout(1_500);
     if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after undoing Delete with dependents");
+    // And take Fillet 2 off again, so the steps after this see the design as before.
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(() => !window.juracadStore.getState().history.present.features.some((f) => f.name === "Fillet 2"));
+    await page.waitForTimeout(1_500);
   }
 
   step = "sketching a profile with a construction line to spin around";
