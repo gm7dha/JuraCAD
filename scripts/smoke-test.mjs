@@ -1173,6 +1173,135 @@ try {
     throw new Error(`the move failed: ${await page.locator(".feature-row.failed").first().getAttribute("title")} (${info})`);
   }
 
+  step = "dragging the Move triad's X arrow";
+  {
+    await page.getByRole("button", { name: "Move", exact: true }).click();
+    await page.waitForSelector(".feature-dialog >> text=How to move it");
+    // The triad appears once the preview is built (it needs the part's centre).
+    await page.waitForFunction(() => !!window.juracadViewport.current.triadShown(), null, { timeout: 30_000 });
+    const moved = await page.evaluate(() => window.juracadStore.getState().editing.draft.transform.partId);
+    const minX = () =>
+      page.evaluate((id) => {
+        const p = window.juracadStore.getState().parts.find((q) => q.id === id);
+        let m = Infinity;
+        for (let i = 0; i < p.vertices.length; i += 3) m = Math.min(m, p.vertices[i]);
+        return m;
+      }, moved);
+    const before = await minX();
+    // Bring the triad to the middle of the view, then find its X arrow on screen and how many pixels 1 mm along X is.
+    const plan = await page.evaluate(() => {
+      const v = window.juracadViewport.current;
+      const vp = document.querySelector(".viewport").getBoundingClientRect();
+      let t = v.triadShown();
+      let o = v.worldToScreen(t.frame.origin);
+      v.panBy(vp.width * 0.6 - o.x, vp.height * 0.55 - o.y);
+      t = v.triadShown();
+      const size = v.triadSize();
+      const at = (k) => v.worldToScreen(t.frame.origin.map((c, i) => c + t.frame.x[i] * k));
+      o = at(0);
+      const grab = at(size * 0.62);
+      const one = at(1);
+      const perMm = Math.hypot(one.x - o.x, one.y - o.y);
+      return { grab, dir: [(one.x - o.x) / perMm, (one.y - o.y) / perMm], perMm, mmPerPixel: v.mmPerPixel(), handle: v.triadHandleAt(grab.x, grab.y) };
+    });
+    if (plan.handle?.kind !== "arrow" || plan.handle.axis !== 0) throw new Error(`the X arrow isn't under its own middle on screen (found ${JSON.stringify(plan.handle)})`);
+    const vp = await page.locator(".viewport canvas").first().boundingBox();
+    const pixels = 120;
+    await page.mouse.move(vp.x + plan.grab.x, vp.y + plan.grab.y);
+    await page.mouse.down();
+    for (let k = 1; k <= 6; k++) await page.mouse.move(vp.x + plan.grab.x + (plan.dir[0] * pixels * k) / 6, vp.y + plan.grab.y + (plan.dir[1] * pixels * k) / 6);
+    // While dragging, the box follows live.
+    const live = Number.parseFloat(await page.locator("#param-dx").inputValue());
+    await page.mouse.up();
+    const step = [1, 5, 10, 50, 100, 500, 1000].find((x) => x >= 3 * plan.mmPerPixel);
+    const expected = Math.round(pixels / plan.perMm / step) * step;
+    const typed = Number.parseFloat(await page.locator("#param-dx").inputValue());
+    if (!(Math.abs(typed - expected) <= step) || typed !== live || typed <= 0) {
+      throw new Error(`dragging the X arrow ${pixels} px (${(pixels / plan.perMm).toFixed(2)} mm) put ${typed} in Move X (live ${live}; expected about ${expected}, steps of ${step})`);
+    }
+    // One change to the draft, rebuilt: the part is that much further along X.
+    await page.waitForFunction(
+      ([id, want, was]) => {
+        const s = window.juracadStore.getState();
+        const p = s.parts.find((q) => q.id === id);
+        if (s.rebuildBusy || !p) return false;
+        let m = Infinity;
+        for (let i = 0; i < p.vertices.length; i += 3) m = Math.min(m, p.vertices[i]);
+        return Math.abs(m - was - want) < 0.01;
+      },
+      [moved, typed, before],
+      { timeout: 30_000 },
+    ).catch(async () => {
+      throw new Error(`after dragging, the part's left side went from ${before} to ${await minX()} (Move X says ${typed})`);
+    });
+    const steps = await page.evaluate(() => window.juracadStore.getState().draftSteps?.drafts.length ?? 0);
+    if (steps !== 1) throw new Error(`one drag made ${steps} undo steps in the dialog`);
+    await shot("triad-drag");
+    // Ctrl+Z (the dialog's own undo) takes the drag back.
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(() => (window.juracadStore.getState().editing?.draft.params.dx ?? "") === "0", null, { timeout: 5_000 });
+    if ((await page.locator("#param-dx").inputValue()) !== "0") throw new Error("Ctrl+Z didn't put Move X back to 0");
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().editing && !window.juracadViewport.current.triadShown(), null, { timeout: 5_000 });
+  }
+
+  step = "turning with the Move triad's X ring after a turn about Z";
+  {
+    await page.getByRole("button", { name: "Move", exact: true }).click();
+    await page.waitForSelector(".feature-dialog >> text=How to move it");
+    // Reopened after Cancel: nothing from the last time to undo.
+    if ((await page.getByRole("button", { name: "Undo last change here" }).count()) > 0) throw new Error("Move opened again after Cancel still offers to undo the last dialog's drag");
+    await page.locator("#param-rz").fill("40");
+    await page.locator("#param-rz").blur();
+    await page.waitForFunction(() => !!window.juracadViewport.current.triadShown() && !window.juracadStore.getState().rebuildBusy, null, { timeout: 30_000 });
+    const ring = await page.evaluate(() => {
+      const v = window.juracadViewport.current;
+      const vp = document.querySelector(".viewport").getBoundingClientRect();
+      let t = v.triadShown();
+      const o = v.worldToScreen(t.frame.origin);
+      v.panBy(vp.width * 0.6 - o.x, vp.height * 0.55 - o.y);
+      t = v.triadShown();
+      const r = 0.78 * v.triadSize();
+      const at = (deg) => {
+        const a = (deg * Math.PI) / 180;
+        return v.worldToScreen(t.frame.origin.map((c, i) => c + r * (Math.cos(a) * t.frame.y[i] + Math.sin(a) * t.frame.z[i])));
+      };
+      // A place on the X ring where it is the handle under the pointer, then points on round it.
+      for (const start of [45, 135, 225, 315, 90, 270, 0, 180]) {
+        const p = at(start);
+        const h = v.triadHandleAt(p.x, p.y);
+        if (h?.kind === "ring" && h.axis === 0) return { path: [0, 10, 20, 30, 40, 50, 60].map((d) => at(start + d)) };
+      }
+      return null;
+    });
+    if (!ring) throw new Error("couldn't find the X ring on screen");
+    const vp = await page.locator(".viewport canvas").first().boundingBox();
+    await page.mouse.move(vp.x + ring.path[0].x, vp.y + ring.path[0].y);
+    await page.mouse.down();
+    for (const p of ring.path.slice(1)) await page.mouse.move(vp.x + p.x, vp.y + p.y);
+    await page.mouse.up();
+    const turns = await page.evaluate(() => {
+      const d = window.juracadStore.getState().editing.draft.params;
+      return [d.rx, d.ry, d.rz].map(Number);
+    });
+    // The turn now = a turn about X (the ring's drawn axis) on top of the 40° about Z: so it carries X to X.
+    const rot = (axis, deg) => {
+      const a = (deg * Math.PI) / 180;
+      const c = Math.cos(a);
+      const s1 = Math.sin(a);
+      return axis === 0 ? [[1, 0, 0], [0, c, -s1], [0, s1, c]] : axis === 1 ? [[c, 0, s1], [0, 1, 0], [-s1, 0, c]] : [[c, -s1, 0], [s1, c, 0], [0, 0, 1]];
+    };
+    const mul = (a, b) => a.map((row) => [0, 1, 2].map((j) => row[0] * b[0][j] + row[1] * b[1][j] + row[2] * b[2][j]));
+    const after = mul(rot(2, turns[2]), mul(rot(1, turns[1]), rot(0, turns[0])));
+    const extra = mul(after, rot(2, -40));
+    const angle = (Math.acos(Math.max(-1, Math.min(1, (extra[0][0] + extra[1][1] + extra[2][2] - 1) / 2))) * 180) / Math.PI;
+    if (Math.abs(extra[0][0] - 1) > 1e-3 || angle < 20) {
+      throw new Error(`dragging the X ring after 40° about Z gave turns ${turns.join(", ")} — that's not a turn about X on top (${angle.toFixed(1)}° extra)`);
+    }
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().editing && !window.juracadStore.getState().draftSteps, null, { timeout: 5_000 });
+  }
+
   step = "adding a variable";
   await tool("Variables");
   await page.getByRole("button", { name: "+ Add variable" }).click();

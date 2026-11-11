@@ -132,6 +132,11 @@ function useShortcuts() {
         return;
       }
 
+      // Move / copy open: Ctrl+Z takes back its last drag of the triad (or click), one at a time.
+      if (mod && !isTyping(e.target) && s.editing?.draft.type === "transform" && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        if (s.undoDraftStep()) e.preventDefault();
+        return;
+      }
       // Undo / redo the document — but not while typing in a box (the box
       // undoes its own text) or while a feature dialog is open, where it
       // would silently undo an earlier, already-saved change.
