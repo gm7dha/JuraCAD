@@ -28,6 +28,8 @@ export interface OsmData {
   regionNames: { level: number; text: string; at: LatLon }[];
   /** Nodes in the file (for "nothing here" messages). */
   nodes: number;
+  /** Woods and forests (outline first, then clearings), when the map has any — only coloured, never pressed into the ground. */
+  woods?: LatLon[][][];
 }
 
 /** The map's things on the OS grid (metres). */
@@ -35,6 +37,8 @@ export interface MapFeatures {
   lines: { kind: OsmLineKind; pts: XY[] }[];
   shapes: { kind: OsmShapeKind; rings: XY[][] }[];
   names: { kind: OsmNameKind; text: string; at: XY }[];
+  /** Woods (rings, outline first), for full-colour prints only; missing when there are none. */
+  woods?: XY[][][];
 }
 
 export const NO_FEATURES: MapFeatures = { lines: [], shapes: [], names: [] };
@@ -86,6 +90,9 @@ function shapeKind(t: Tags): OsmShapeKind | null {
   if (t.building && t.building !== "no") return "building";
   return null;
 }
+
+/** Woods and forests: coloured on full-colour prints, nothing else. */
+const isWood = (t: Tags) => t.natural === "wood" || t.landuse === "forest";
 
 function nameKind(t: Tags): OsmNameKind | null {
   if (t.natural === "peak" || t.natural === "hill" || t.natural === "volcano") return "peak";
@@ -200,6 +207,11 @@ export function readOsm(text: string): OsmData {
       if (pts.length >= 2) data.lines.push({ kind, name: tags.name, pts });
       continue;
     }
+    if (isWood(tags) && refs.length >= 4 && refs[0] === refs[refs.length - 1]) {
+      const ring = pointsOf(refs);
+      if (ring.length === refs.length) (data.woods ??= []).push([ring]);
+      continue;
+    }
     const shape = shapeKind(tags);
     if (shape && refs.length >= 4 && refs[0] === refs[refs.length - 1]) {
       const ring = pointsOf(refs);
@@ -207,8 +219,9 @@ export function readOsm(text: string): OsmData {
     }
   }
   for (const { members, tags } of relations) {
+    const wood = tags.type === "multipolygon" && isWood(tags);
     const shape = tags.type === "multipolygon" ? shapeKind(tags) : null;
-    if (!shape) continue;
+    if (!shape && !wood) continue;
     const ringsOf = (role: (r: string) => boolean) =>
       joinRings(members.filter((x) => x.type === "way" && role(x.role)).map((x) => ways.get(x.ref)?.refs ?? []))
         .map(pointsOf)
@@ -218,7 +231,8 @@ export function readOsm(text: string): OsmData {
     // Each outline with the islands that lie in it.
     for (const outer of outers) {
       const holes = inners.filter((h) => insideLatLon(h[0], outer));
-      data.shapes.push({ kind: shape, name: tags.name, rings: [outer, ...holes] });
+      if (shape) data.shapes.push({ kind: shape, name: tags.name, rings: [outer, ...holes] });
+      else (data.woods ??= []).push([outer, ...holes]);
     }
   }
   for (const { at, tags } of nodeTags) {
@@ -321,7 +335,8 @@ export function featuresOnGrid(data: OsmData, detail: OsmDetail): MapFeatures {
       if (s.kind === "water" && s.name) names.push({ kind: "water", text: s.name, at: namePoint(shapes[i].rings[0]) });
     });
   }
-  return { lines, shapes, names };
+  const woods = data.woods?.map((w) => w.map((r) => r.map(onGrid)));
+  return woods?.length ? { lines, shapes, names, woods } : { lines, shapes, names };
 }
 
 /** What boundaries a map has, coarsest first: [admin_level, how many lines]. */

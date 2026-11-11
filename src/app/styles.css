@@ -4190,3 +4190,58 @@ kbd {
     grid-template-columns: 1fr;
   }
 }
+
+/* Puzzle colours (Island and Mountain puzzle windows) */
+.colour-bands {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 8px;
+}
+.colour-band {
+  display: grid;
+  grid-template-columns: 34px minmax(70px, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+.colour-band input[type="color"],
+.colour-bands .mountain-check input[type="color"] {
+  width: 30px;
+  height: 26px;
+  padding: 0 2px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+}
+.colour-band-name {
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 6px;
+  background: var(--panel);
+  color: var(--ink);
+  min-width: 0;
+}
+.colour-band-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.colour-bands .mountain-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.colour-filament {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+  white-space: nowrap;
+}
+.colour-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+}
