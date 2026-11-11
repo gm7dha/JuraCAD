@@ -8,12 +8,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CUSTOM_PRINTER, PRINTERS } from "../model/printBed";
 import { areaProblem, readHeights, zoomFor, type HeightGrid } from "../terrain/elevation";
-import { ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, type IslandCuts, type IslandLand, type IslandPuzzle, type IslandSpec } from "../terrain/islandPuzzle";
+import { ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandSpec } from "../terrain/islandPuzzle";
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { allPlatesZip, plate3mf, platesFor } from "../terrain/puzzle3mf";
 import { downloadFile, safeFileName } from "./download";
+import type { IslandJob, IslandReply } from "./islandPuzzle.worker";
 import { Modal } from "./Modal";
 import { DETAILS, Mountain3D } from "./MountainPuzzleDialog";
 import { openMountain } from "./mountainState";
@@ -44,6 +45,25 @@ function areaFrom(source: "island" | "ref", islandId: string, ref: string, km: [
   return areaProblem(sw, width, height, MOST, zoomFor(sw, width, height)) ?? { sw, width, height, name: `Island at ${formatGridRef(centre, 6) ?? ref}` };
 }
 
+/**
+ * What OpenStreetMap's query service sent, as a map — or a plain reason. It answers 200 even when a query ran out of
+ * time or memory, with a <remark> saying so instead of the map.
+ */
+async function overpassMap(res: Response, what: string): Promise<OsmData> {
+  if (res.status === 429 || res.status === 504) throw new Error(`OpenStreetMap's map service is busy — try again in a minute, or use a map file.`);
+  if (res.status === 400) throw new Error(`OpenStreetMap's map service couldn't make sense of the request for ${what}. Please use a map file instead.`);
+  if (!res.ok) throw new Error(`OpenStreetMap's map service didn't answer properly (error ${res.status}). Try again later, or use a map file.`);
+  const text = await res.text();
+  const remark = /<remark>([\s\S]*?)<\/remark>/.exec(text)?.[1] ?? "";
+  if (/timed out|timeout|out of memory|memory/i.test(remark))
+    throw new Error(`There's too much ${what} in this area for OpenStreetMap's map service to send at once. Use a map file instead (on openstreetmap.org, Export a smaller area).`);
+  if (remark && !/<node\b/.test(text)) throw new Error(`OpenStreetMap's map service couldn't send the ${what} (${remark.trim().slice(0, 120)}). Try again later, or use a map file.`);
+  if (!/<node\b/.test(text)) return { bounds: null, lines: [], shapes: [], names: [], boundaries: [], regionNames: [], nodes: 0 };
+  return readOsm(text);
+}
+
+const areaKey = (a: Area) => `${a.sw.e},${a.sw.n},${a.width},${a.height}`;
+
 const sameArea = (a: Area | null, b: Area | null) => !!a && !!b && a.sw.e === b.sw.e && a.sw.n === b.sw.n && a.width === b.width && a.height === b.height;
 
 export function IslandPuzzleDialog() {
@@ -70,8 +90,12 @@ export function IslandPuzzleDialog() {
   const [loaded, setLoaded] = useState<{ area: Area; grid: HeightGrid } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [puzzle, setPuzzle] = useState<IslandPuzzle | null>(null);
+  const [puzzle, setPuzzle] = useState<IslandBuilt | null>(null);
+  // The area whose heights are loaded now: an answer from OpenStreetMap for another one is ignored.
+  const loadedKey = useRef<string | null>(null);
+  loadedKey.current = loaded ? areaKey(loaded.area) : null;
   const [working, setWorking] = useState(false);
+  const builder = useRef(new IslandBuilder());
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
 
@@ -103,15 +127,16 @@ export function IslandPuzzleDialog() {
     setMapError(null);
     try {
       const { sw, width, height } = loaded.area;
+      const asked = areaKey(loaded.area);
       let res: Response;
       try {
         res = await fetch(OVERPASS_URL, { method: "POST", body: new URLSearchParams({ data: boundaryQuery(sw, width, height, level) }) });
       } catch {
-        throw new Error("Couldn't reach OpenStreetMap's boundary service — check you're online, or use a map file.");
+        throw new Error("Couldn't reach OpenStreetMap's map service — check you're online, or use a map file.");
       }
-      if (res.status === 429 || res.status === 504) throw new Error("OpenStreetMap's boundary service is busy — try again in a minute.");
-      if (!res.ok) throw new Error(`OpenStreetMap's boundary service said ${res.status}.`);
-      setMap({ name: `${levelName(level)} from OpenStreetMap`, data: readOsm(await res.text()) });
+      const data = await overpassMap(res, "boundaries");
+      if (loadedKey.current !== asked) return;
+      setMap({ name: `${levelName(level)} from OpenStreetMap`, data });
     } catch (e) {
       setMap(null);
       setMapError(e instanceof Error ? e.message : String(e));
@@ -128,6 +153,7 @@ export function IslandPuzzleDialog() {
     if (!query) return;
     setMarksBusy(true);
     setMarksError(null);
+    const asked = areaKey(loaded.area);
     try {
       let res: Response;
       try {
@@ -135,12 +161,10 @@ export function IslandPuzzleDialog() {
       } catch {
         throw new Error("Couldn't reach OpenStreetMap's map service — check you're online, or use a map file.");
       }
-      if (res.status === 429 || res.status === 504) throw new Error("OpenStreetMap's map service is busy — try again in a minute, or use a map file.");
-      if (!res.ok) throw new Error(`OpenStreetMap's map service said ${res.status}.`);
-      const text = await res.text();
-      // An area with nothing on it comes back with no nodes at all.
-      if (!/<node\b/.test(text)) setMarksMap({ name: "OpenStreetMap", data: { bounds: null, lines: [], shapes: [], names: [], boundaries: [], regionNames: [], nodes: 0 }, fetched: detail });
-      else setMarksMap({ name: "OpenStreetMap", data: readOsm(text), fetched: detail });
+      const data = await overpassMap(res, "paths, rivers and lochs");
+      // Heights for another area were fetched meanwhile: this map is for the old one.
+      if (loadedKey.current !== asked) return;
+      setMarksMap({ name: "OpenStreetMap", data, fetched: detail });
     } catch (e) {
       setMarksError(e instanceof OsmError ? e.message : e instanceof Error ? e.message : String(e));
     } finally {
@@ -192,19 +216,23 @@ export function IslandPuzzleDialog() {
     }
     setWorking(true);
     const timer = setTimeout(() => {
-      try {
-        setPuzzle(makeIslandPuzzle(loaded.grid, loaded.area.sw, loaded.area.width, loaded.area.height, fullSpec, cuts, features));
-        setBuildError(null);
-      } catch (e) {
-        setPuzzle(null);
-        setBuildError(e instanceof Error ? e.message : String(e));
-      } finally {
+      builder.current.build({ grid: loaded.grid, sw: loaded.area.sw, width: loaded.area.width, height: loaded.area.height, spec: fullSpec, cuts, features }, (reply) => {
+        if ("error" in reply) {
+          setPuzzle(null);
+          setBuildError(reply.error);
+        } else {
+          setPuzzle(reply.puzzle);
+          setBuildError(null);
+        }
         setWorking(false);
-      }
+      });
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, specKey, cuts, features]);
+
+  // Stop the builder when the window closes.
+  useEffect(() => () => builder.current.stop(), []);
 
   const plates = useMemo(() => (puzzle ? platesFor(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2]]);
   const fileName = safeFileName(`${loaded?.area.name ?? "Island"} puzzle`, "Island puzzle");
@@ -435,8 +463,9 @@ export function IslandPuzzleDialog() {
                     on the highest ground ({Math.round(puzzle.high)} m). 1 mm is {formatDistance(1 / puzzle.k)} across.
                   </p>
                   <p className="muted">
-                    {puzzle.joins} dovetails hold the pieces together — at least two on every piece (one where a piece has only one
-                    neighbour).{puzzle.marks.shown ? ` ${puzzle.marks.shown} things from the map are pressed into the ground.` : ""}
+                    {puzzle.joins} dovetails hold the pieces together
+                    {puzzle.warnings.some((w) => w.includes("fewer than two")) ? "" : ` — at least two on every piece${puzzle.loose ? " that has a neighbour" : ""}`}.
+                    {puzzle.marks.shown ? ` ${puzzle.marks.shown} things from the map are pressed into the ground.` : ""}
                   </p>
                   {puzzle.warnings.map((w) => (
                     <p key={w} className="mountain-warn">
@@ -474,11 +503,43 @@ export function IslandPuzzleDialog() {
   );
 }
 
+/**
+ * Builds puzzles in a worker, one at a time: a new build stops one still running (the worker is started afresh), so
+ * only the latest settings' answer arrives.
+ */
+class IslandBuilder {
+  private worker: Worker | null = null;
+  private busy = false;
+  private next = 1;
+  build(job: Omit<IslandJob, "id">, done: (reply: IslandReply) => void) {
+    if (this.busy) this.stop();
+    if (!this.worker) this.worker = new Worker(new URL("./islandPuzzle.worker.ts", import.meta.url), { type: "module", name: "juracad-island" });
+    const id = this.next++;
+    this.busy = true;
+    this.worker.onmessage = (e: MessageEvent<IslandReply>) => {
+      if (e.data.id !== id) return;
+      this.busy = false;
+      done(e.data);
+    };
+    this.worker.onerror = (e) => {
+      e.preventDefault();
+      this.stop();
+      done({ id, error: "The puzzle couldn't be made — the browser stopped the work part-way. Try smaller pieces or a smaller area." });
+    };
+    this.worker.postMessage({ ...job, id } satisfies IslandJob);
+  }
+  stop() {
+    this.worker?.terminate();
+    this.worker = null;
+    this.busy = false;
+  }
+}
+
 /** "120 m", "2.5 km". */
 const formatDistance = (m: number) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`);
 
 /** From above, north up: each piece in its own colour with its number. */
-function IslandTopView({ puzzle }: { puzzle: IslandPuzzle | null }) {
+function IslandTopView({ puzzle }: { puzzle: IslandBuilt | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;

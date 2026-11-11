@@ -88,9 +88,14 @@ export interface IslandPuzzle {
   loose: number;
   warnings: string[];
   marks: IslandMarks;
+  /** Every dovetail. */
+  tabs: IslandTab[];
   /** The ground's height (mm) at x, y — the one field every piece's top is drawn from, marks and all. */
   groundAt(x: number, y: number): number;
 }
+
+/** A puzzle as sent back from a worker: everything but the `groundAt` function. */
+export type IslandBuilt = Omit<IslandPuzzle, "groundAt">;
 
 /** The smallest piece kept on its own (mm²); smaller ones join a neighbour. */
 export const smallestPiece = (piece: number) => Math.max(60, (0.4 * piece) ** 2);
@@ -100,10 +105,9 @@ export const LEAST_BASE = 1.5;
 /** Shortest line (mm on the puzzle) and smallest loch (mm²) worth pressing in; smaller ones would be dimples. */
 export const LEAST_MARK_LINE = 3;
 export const LEAST_MARK_WATER = 4;
-/** Grooves fade to nothing over this far (mm) towards a thin part. */
-export const MARK_FADE = 1.5;
-/** The top is drawn at least this finely (mm) where map marks are. */
-export const MARK_SAMPLE = 0.45;
+/** Grooves fade to nothing over this far (mm) towards a dovetail's neck, and stay off it and this much round it. */
+export const MARK_FADE = 1;
+export const NECK_ROOM = 0.5;
 
 export function islandChecks(spec: IslandSpec): string[] {
   const out: string[] = [];
@@ -444,21 +448,20 @@ export function makeIslandPuzzle(
   const lift = spec.relief / Math.max(high, 1);
   const plainTop = (x: number, y: number) => spec.base + Math.max(0, ground(x, y)) * lift;
   let top = plainTop;
-  let fine: FineTop | undefined;
+  let fine: ((x: number, y: number) => number) | undefined;
   let marks = NO_MARKS;
   const used = featuresForIsland(features, k);
   if (used.features.lines.length || used.features.shapes.length) {
     const m = groundMarks(used.features, sw.e, sw.n, k, W, H, plainTop);
     if (!m.empty) {
-      const fade = thinFade(piece, nx, ny, cell, 0.6 * neck);
+      const fade = neckFade(joined.tabs, nx, ny, cell);
       top = (x, y) => {
         const p = plainTop(x, y);
         let z = m.apply(x, y, p);
         if (z < p) z = Math.max(LEAST_BASE, p + fade(x, y) * (z - p));
         return z;
       };
-      const step = Math.max(1, Math.round(0.7 / cell));
-      fine = { s: Math.max(1, Math.ceil((step * cell) / MARK_SAMPLE)), plain: plainTop };
+      fine = plainTop;
     }
     marks = marksOnLand(used.features, used.tooSmall, sw, k, (x, y) => {
       const [i, j] = [Math.floor(x / cell), Math.floor(y / cell)];
@@ -466,6 +469,7 @@ export function makeIslandPuzzle(
     });
   }
   const pieces: IslandPiece[] = [];
+  const indexOf = new Map<number, number>();
   const order: { id: number; x: number; y: number; n: number }[] = [];
   const sums = new Map<number, [number, number, number]>();
   for (let c = 0; c < N; c++) {
@@ -492,6 +496,7 @@ export function makeIslandPuzzle(
       z1 = Math.max(z1, body.vertices[i + 2]);
     }
     const region = pieceRegion[o.id];
+    indexOf.set(o.id, pieces.length);
     pieces.push({
       name: `${n + 1}${region ? ` ${region}` : ""}`,
       col: Math.round(o.x / P),
@@ -516,7 +521,10 @@ export function makeIslandPuzzle(
     });
   });
   if (unjoined) warnings.push(`${unjoined} ${unjoined === 1 ? "border is" : "borders are"} too short or crowded for a dovetail; those pieces just sit side by side there.`);
-  return { width: W, height: H, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, groundAt: top };
+  const tabs: IslandTab[] = joined.tabs
+    .filter((tb) => indexOf.has(tb.from) && indexOf.has(tb.into))
+    .map((tb) => ({ from: indexOf.get(tb.from)!, into: indexOf.get(tb.into)!, at: tb.at, dir: tb.dir, neck: tb.neck, reach: tb.reach }));
+  return { width: W, height: H, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, tabs, groundAt: top };
 }
 
 /**
@@ -604,43 +612,30 @@ function marksOnLand(f: MapFeatures, tooSmall: number, sw: { e: number; n: numbe
 }
 
 /**
- * How much of a mark's depth to keep at x, y (0–1): none over thin parts of any piece — where a disc `r` mm across
- * the middle doesn't fit, such as a dovetail or a narrow strip of land — rising to all of it `MARK_FADE` mm away.
- * One smooth field over the whole puzzle, so both sides of a join see the same.
+ * How much of a mark's depth to keep at x, y (0–1): none over the necks of the dovetails (the narrow stem, where a
+ * groove would weaken a piece most) and `NECK_ROOM` round them, rising to all of it `MARK_FADE` mm further away — a fixed
+ * size, whatever the tab. One smooth field over the whole puzzle, so both sides of a join see the same.
  */
-function thinFade(piece: Int32Array, nx: number, ny: number, cell: number, r: number): (x: number, y: number) => number {
+function neckFade(tabs: Joined["tabs"], nx: number, ny: number, cell: number): (x: number, y: number) => number {
+  if (!tabs.length) return () => 1;
   const N = nx * ny;
-  // Distance (cells) to the nearest edge: sea, or a cell beside another piece.
-  const edge = new Uint8Array(N);
-  for (let j = 0; j < ny; j++)
-    for (let i = 0; i < nx; i++) {
-      const c = j * nx + i;
-      const p = piece[c];
-      if (p < 0 || i === 0 || j === 0 || i === nx - 1 || j === ny - 1) edge[c] = 1;
-      else if (piece[c - 1] !== p || piece[c + 1] !== p || piece[c - nx] !== p || piece[c + nx] !== p) edge[c] = 1;
-    }
-  const dEdge = distanceTransform(edge, nx, ny);
-  // Where a disc of radius r fits (its middles), then everything those discs cover: the thick parts.
-  const R = r / cell;
-  const core = new Uint8Array(N);
-  let anyCore = false;
-  for (let c = 0; c < N; c++)
-    if (piece[c] >= 0 && dEdge[c] >= R * R) {
-      core[c] = 1;
-      anyCore = true;
-    }
-  const thin = new Uint8Array(N);
-  let anyThin = false;
-  const dCore = anyCore ? distanceTransform(core, nx, ny) : null;
-  for (let c = 0; c < N; c++)
-    if (piece[c] >= 0 && (!dCore || dCore[c] > (R + 0.5) ** 2)) {
-      thin[c] = 1;
-      anyThin = true;
-    }
-  if (!anyThin) return () => 1;
-  const dThin = distanceTransform(thin, nx, ny);
+  const neckCells = new Uint8Array(N);
+  for (const tb of tabs) {
+    const shape = tabShape(tb.neck);
+    const t: XY = [tb.dir[1], -tb.dir[0]];
+    const R = Math.ceil((tb.neck / 2 + shape.stem + 2 * NECK_ROOM) / cell) + 2;
+    const [ci, cj] = [Math.floor(tb.at[0] / cell), Math.floor(tb.at[1] / cell)];
+    for (let j = Math.max(0, cj - R); j <= Math.min(ny - 1, cj + R); j++)
+      for (let i = Math.max(0, ci - R); i <= Math.min(nx - 1, ci + R); i++) {
+        const [x, y] = [(i + 0.5) * cell - tb.at[0], (j + 0.5) * cell - tb.at[1]];
+        const [u, v] = [x * t[0] + y * t[1], x * tb.dir[0] + y * tb.dir[1]];
+        // The neck: the narrow straight stem, from just behind the border to where the knob starts.
+        if (Math.abs(u) <= tb.neck / 2 + NECK_ROOM && v >= -NECK_ROOM && v <= shape.stem) neckCells[j * nx + i] = 1;
+      }
+  }
+  const d = distanceTransform(neckCells, nx, ny);
   const keep = new Float32Array(N);
-  for (let c = 0; c < N; c++) keep[c] = Math.max(0, Math.min(1, (Math.sqrt(dThin[c]) * cell - 0.3) / MARK_FADE));
+  for (let c = 0; c < N; c++) keep[c] = Math.max(0, Math.min(1, (Math.sqrt(d[c]) * cell) / MARK_FADE));
   return (x, y) => {
     const fx = Math.max(0, Math.min(nx - 1.000001, x / cell - 0.5));
     const fy = Math.max(0, Math.min(ny - 1.000001, y / cell - 0.5));
@@ -685,17 +680,12 @@ function wholePiece(piece: Int32Array, nx: number, ny: number, id: number, box: 
 /**
  * One piece as a closed mesh: its outline `fit` inside its cells (marching squares on the signed distance to its edge,
  * sampled at cell centres), the ground on top (`top(x, y)`), flat at z = 0 underneath, walls round every edge.
- * With `fine`, squares where the top differs from the plain ground are drawn s × s finer on top (only on top: the
- * outline, walls and underneath are the same as without), and so are whole sides they share with their neighbours, so
- * the top stays closed.
+ * The mesh is made of squares `S` cells across (~0.7 mm) where they're wholly inside the piece, and of single cells
+ * wherever the outline passes (so the outline is traced at full resolution: interpolating across coarser squares cut
+ * past it at tab corners, and neighbours could touch) — and, given `plain`, wherever the top differs from the plain
+ * ground (map marks). A coarse square beside fine ones takes their points along the side it shares with them.
  */
-/** Drawing the top finer where it differs from the `plain` ground (map marks): each square of the mesh split `s` × `s`. */
-export interface FineTop {
-  s: number;
-  plain: (x: number, y: number) => number;
-}
-
-export function pieceMesh(piece: Int32Array, nx: number, ny: number, cell: number, id: number, fit: number, top: (x: number, y: number) => number, fine?: FineTop): Body | null {
+export function pieceMesh(piece: Int32Array, nx: number, ny: number, cell: number, id: number, fit: number, top: (x: number, y: number) => number, plain?: (x: number, y: number) => number): Body | null {
   // The piece's box, with room round it.
   let [i0, j0, i1, j1] = [nx, ny, -1, -1];
   for (let c = 0; c < piece.length; c++)
@@ -722,16 +712,14 @@ export function pieceMesh(piece: Int32Array, nx: number, ny: number, cell: numbe
   const dIn = distanceTransform(inMask, w, h);
   const dOut = distanceTransform(outMask, w, h);
   // Signed distance (mm) less the fit: > 0 inside the piece's outline. Inside, from the cell's middle to the nearest
-  // other cell's middle less half a diagonal: never more than the real distance to its edge, so neighbours never get
-  // closer than 2 × fit.
+  // other cell's middle less half a diagonal: never more than the real distance to its edge.
   const f = new Float64Array(w * h);
   for (let c = 0; c < w * h; c++) f[c] = (inMask[c] ? Math.sqrt(dOut[c]) - Math.SQRT1_2 : -(Math.sqrt(dIn[c]) - 0.5)) * cell - fit;
-  // The mesh is made on every `step`-th sample: the distance changes smoothly, so its crossings are found as well,
-  // with far fewer triangles (the ground's heights are much coarser than the cells anyway).
-  const step = Math.max(1, Math.round(0.7 / cell));
-  const X = (i: number) => (i * step + i0 + 0.5) * cell;
-  const Y = (j: number) => (j * step + j0 + 0.5) * cell;
-  const [mw, mh] = [Math.ceil(w / step), Math.ceil(h / step)];
+  const S = Math.max(1, Math.round(0.7 / cell));
+  const X = (i: number) => (i + i0 + 0.5) * cell;
+  const Y = (j: number) => (j + j0 + 0.5) * cell;
+  const val = (i: number, j: number) => (i < 0 || j < 0 || i >= w || j >= h ? -1 : f[j * w + i]);
+  const [CW, CH] = [Math.ceil(w / S), Math.ceil(h / S)];
 
   const v: number[] = [];
   const t: number[] = [];
@@ -739,124 +727,145 @@ export function pieceMesh(piece: Int32Array, nx: number, ny: number, cell: numbe
   const botIds = new Map<string, number>();
   const vert = (key: string, x: number, y: number, up: boolean) => {
     const m = up ? topIds : botIds;
-    let id = m.get(key);
-    if (id === undefined) {
-      id = v.length / 3;
+    let n = m.get(key);
+    if (n === undefined) {
+      n = v.length / 3;
       v.push(x, y, up ? top(x, y) : 0);
-      m.set(key, id);
+      m.set(key, n);
     }
-    return id;
+    return n;
   };
-  const val = (i: number, j: number) => (i < 0 || j < 0 || i >= mw || j >= mh ? -1 : f[j * step * w + i * step]);
-  // Fine top: which squares have marks in them (any of their (s+1)² points off the plain ground).
-  const s = fine && fine.s > 1 ? fine.s : 0;
-  const markedMemo = new Map<number, boolean>();
-  const marked = (i: number, j: number): boolean => {
-    if (!s) return false;
-    const key = (j + 2) * (mw + 4) + i + 2;
-    let m = markedMemo.get(key);
-    if (m === undefined) {
-      m = false;
-      for (let b = 0; b <= s && !m; b++)
-        for (let a = 0; a <= s && !m; a++) {
-          const [x, y] = [X(i) + ((X(i + 1) - X(i)) * a) / s, Y(j) + ((Y(j + 1) - Y(j)) * b) / s];
-          if (Math.abs(top(x, y) - fine!.plain(x, y)) > 1e-9) m = true;
+  // Each coarse square: 0 outside, 1 wholly inside (drawn as one square), 2 the outline passes: drawn cell by cell.
+  // A wholly inside square with marks on it (3) has its top drawn cell by cell, its underside as one square.
+  const kinds = new Map<number, number>();
+  const kind = (I: number, J: number): number => {
+    if (I < -1 || J < -1 || I > CW || J > CH) return 0;
+    const key = (J + 1) * (CW + 3) + I + 1;
+    let k = kinds.get(key);
+    if (k === undefined) {
+      let [any, all] = [false, true];
+      for (let b = 0; b <= S; b++)
+        for (let a = 0; a <= S; a++) {
+          const inside = val(I * S + a, J * S + b) > 0;
+          any ||= inside;
+          all &&= inside;
         }
-      markedMemo.set(key, m);
+      k = !any ? 0 : !all ? 2 : 1;
+      if (k === 1 && plain)
+        for (let b = 0; b <= S && k === 1; b++)
+          for (let a = 0; a <= S && k === 1; a++) {
+            const [x, y] = [X(I * S + a), Y(J * S + b)];
+            if (Math.abs(top(x, y) - plain(x, y)) > 1e-9) k = 3;
+          }
+      kinds.set(key, k);
     }
-    return m;
+    return k;
   };
-  // A point of the fine grid (sub-square units), keyed so the mesh's own corners keep their keys.
-  const fineVert = (I: number, J: number) => {
-    if (I % s === 0 && J % s === 0) {
-      const [a, b] = [I / s, J / s];
-      return vert(`n${a},${b}`, X(a), Y(b), true);
-    }
-    const [x, y] = [((I / s) * step + i0 + 0.5) * cell, ((J / s) * step + j0 + 0.5) * cell];
-    return vert(`f${I},${J}`, x, y, true);
-  };
-  // The square across each side (0 bottom, 1 right, 2 top, 3 left).
+  const corner = (i: number, j: number) => ({ key: `n${i},${j}`, x: X(i), y: Y(j), cross: false });
   const ACROSS: XY[] = [
     [0, -1],
     [1, 0],
     [0, 1],
     [-1, 0],
   ];
-  for (let j = -1; j < mh; j++)
-    for (let i = -1; i < mw; i++) {
-      // The square's corners, anticlockwise, and where the outline crosses its sides.
+
+  /** One cell's square (corner samples i, j … i + 1, j + 1) by marching squares. */
+  const cellSquare = (i: number, j: number) => {
+    const cs: [number, number][] = [
+      [i, j],
+      [i + 1, j],
+      [i + 1, j + 1],
+      [i, j + 1],
+    ];
+    const fv = cs.map(([a, b]) => val(a, b));
+    const ins = fv.map((x) => x > 0);
+    if (!ins.some(Boolean)) return;
+    type Pt = { key: string; x: number; y: number; cross: boolean };
+    const crossing = (n: number): Pt => {
+      const m = (n + 1) % 4;
+      const [a, b] = [cs[n], cs[m]];
+      const s = fv[n] / (fv[n] - fv[m]);
+      // The same key from either square that shares the side.
+      const key = a[0] === b[0] ? `v${a[0]},${Math.min(a[1], b[1])}` : `h${Math.min(a[0], b[0])},${a[1]}`;
+      return { key, x: X(a[0]) + (X(b[0]) - X(a[0])) * s, y: Y(a[1]) + (Y(b[1]) - Y(a[1])) * s, cross: true };
+    };
+    // Each bit of the square inside the outline, its corners anticlockwise (always convex).
+    const polys: Pt[][] = [];
+    const saddle = ins[0] === ins[2] && ins[1] === ins[3] && ins[0] !== ins[1];
+    if (saddle && (fv[0] + fv[1] + fv[2] + fv[3]) / 4 <= 0) {
+      for (const n of ins[0] ? [0, 2] : [1, 3]) polys.push([corner(...cs[n]), crossing(n), crossing((n + 3) % 4)]);
+    } else {
+      const p: Pt[] = [];
+      for (let n = 0; n < 4; n++) {
+        if (ins[n]) p.push(corner(...cs[n]));
+        if (ins[n] !== ins[(n + 1) % 4]) p.push(crossing(n));
+      }
+      polys.push(p);
+    }
+    for (const p of polys) {
+      const T = p.map((q) => vert(q.key, q.x, q.y, true));
+      const B = p.map((q) => vert(q.key, q.x, q.y, false));
+      for (let n = 1; n + 1 < p.length; n++) {
+        t.push(T[0], T[n], T[n + 1]);
+        t.push(B[0], B[n + 1], B[n]);
+      }
+      // An edge between two crossings is the outline: a wall, facing out (the piece is on its left).
+      for (let n = 0; n < p.length; n++) {
+        const m = (n + 1) % p.length;
+        if (p[n].cross && p[m].cross) t.push(B[n], B[m], T[m], B[n], T[m], T[n]);
+      }
+    }
+  };
+
+  for (let J = -1; J <= CH; J++)
+    for (let I = -1; I <= CW; I++) {
+      const k = kind(I, J);
+      if (!k) continue;
+      if (k === 2) {
+        for (let j = J * S; j < (J + 1) * S; j++) for (let i = I * S; i < (I + 1) * S; i++) cellSquare(i, j);
+        continue;
+      }
+      // Wholly inside: one square, or a fan from its middle round the points of the fine squares beside it — on top,
+      // where the square or its neighbour is drawn finely there (outline or marks); underneath, only by the outline.
       const cs: [number, number][] = [
-        [i, j],
-        [i + 1, j],
-        [i + 1, j + 1],
-        [i, j + 1],
+        [I * S, J * S],
+        [(I + 1) * S, J * S],
+        [(I + 1) * S, (J + 1) * S],
+        [I * S, (J + 1) * S],
       ];
-      const fv = cs.map(([a, b]) => val(a, b));
-      const ins = fv.map((x) => x > 0);
-      if (!ins.some(Boolean)) continue;
-      type Pt = { key: string; x: number; y: number; cross: boolean };
-      const corner = (n: number): Pt => ({ key: `n${cs[n][0]},${cs[n][1]}`, x: X(cs[n][0]), y: Y(cs[n][1]), cross: false });
-      const crossing = (n: number): Pt => {
-        const m = (n + 1) % 4;
-        const [a, b] = [cs[n], cs[m]];
-        const s = fv[n] / (fv[n] - fv[m]);
-        // The same key from either square that shares the side.
-        const key = a[0] === b[0] ? `v${a[0]},${Math.min(a[1], b[1])}` : `h${Math.min(a[0], b[0])},${a[1]}`;
-        return { key, x: X(a[0]) + (X(b[0]) - X(a[0])) * s, y: Y(a[1]) + (Y(b[1]) - Y(a[1])) * s, cross: true };
-      };
-      // Each bit of the square inside the outline, its corners anticlockwise (always convex).
-      const polys: Pt[][] = [];
-      const saddle = ins[0] === ins[2] && ins[1] === ins[3] && ins[0] !== ins[1];
-      if (saddle && (fv[0] + fv[1] + fv[2] + fv[3]) / 4 <= 0) {
-        for (const n of ins[0] ? [0, 2] : [1, 3]) polys.push([corner(n), crossing(n), crossing((n + 3) % 4)]);
-      } else {
-        const p: Pt[] = [];
+      const square = (split: boolean[], up: boolean) => {
+        if (!split.some(Boolean)) {
+          const Q = cs.map(([a, b]) => vert(`n${a},${b}`, X(a), Y(b), up));
+          if (up) t.push(Q[0], Q[1], Q[2], Q[0], Q[2], Q[3]);
+          else t.push(Q[0], Q[2], Q[1], Q[0], Q[3], Q[2]);
+          return;
+        }
+        const ring: [number, number][] = [];
         for (let n = 0; n < 4; n++) {
-          if (ins[n]) p.push(corner(n));
-          if (ins[n] !== ins[(n + 1) % 4]) p.push(crossing(n));
+          const [a0, b0] = cs[n];
+          const [a1, b1] = cs[(n + 1) % 4];
+          ring.push([a0, b0]);
+          if (split[n]) for (let q = 1; q < S; q++) ring.push([a0 + ((a1 - a0) / S) * q, b0 + ((b1 - b0) / S) * q]);
         }
-        polys.push(p);
-      }
-      for (const p of polys) {
-        const T = p.map((q) => vert(q.key, q.x, q.y, true));
-        const B = p.map((q) => vert(q.key, q.x, q.y, false));
-        for (let n = 1; n + 1 < p.length; n++) t.push(B[0], B[n + 1], B[n]);
-        const own = s > 0 && marked(i, j);
-        // Which of the square's whole sides (both corners inside) are drawn finely: when it or the square across is marked.
-        const split = s > 0 && !saddle ? [0, 1, 2, 3].map((n) => ins[n] && ins[(n + 1) % 4] && (own || marked(i + ACROSS[n][0], j + ACROSS[n][1]))) : [false, false, false, false];
-        if (own && p.length === 4 && ins.every(Boolean)) {
-          // A whole square with marks: an s × s grid of its own.
-          for (let b = 0; b < s; b++)
-            for (let a = 0; a < s; a++) {
-              const [I, J] = [i * s + a, j * s + b];
-              const [q00, q10, q11, q01] = [fineVert(I, J), fineVert(I + 1, J), fineVert(I + 1, J + 1), fineVert(I, J + 1)];
-              t.push(q00, q10, q11, q00, q11, q01);
-            }
-        } else if (split.some(Boolean)) {
-          // Round the outline, with the fine points along split sides, as a fan from its middle.
-          const ring: number[] = [];
-          let [cx, cy] = [0, 0];
-          for (const q of p) [cx, cy] = [cx + q.x / p.length, cy + q.y / p.length];
-          for (let n = 0; n < p.length; n++) {
-            ring.push(T[n]);
-            const m = (n + 1) % p.length;
-            if (p[n].cross || p[m].cross) continue;
-            // Both corners: which side of the square runs from this one to the next?
-            const ca = cs.findIndex(([a, b]) => p[n].key === `n${a},${b}`);
-            if (ca < 0 || !split[ca]) continue;
-            const [a0, b0] = cs[ca];
-            const [a1, b1] = cs[(ca + 1) % 4];
-            for (let k = 1; k < s; k++) ring.push(fineVert(a0 * s + (a1 - a0) * k, b0 * s + (b1 - b0) * k));
+        const [cx, cy] = [(X(cs[0][0]) + X(cs[2][0])) / 2, (Y(cs[0][1]) + Y(cs[2][1])) / 2];
+        const C = vert(`c${I},${J}`, cx, cy, up);
+        const Q = ring.map(([a, b]) => vert(`n${a},${b}`, X(a), Y(b), up));
+        for (let n = 0; n < ring.length; n++) {
+          const m = (n + 1) % ring.length;
+          if (up) t.push(C, Q[n], Q[m]);
+          else t.push(C, Q[m], Q[n]);
+        }
+      };
+      const across = ACROSS.map(([a, b]) => kind(I + a, J + b));
+      if (k === 3) {
+        // Marks: the top cell by cell.
+        for (let j = J * S; j < (J + 1) * S; j++)
+          for (let i = I * S; i < (I + 1) * S; i++) {
+            const Q = [vert(`n${i},${j}`, X(i), Y(j), true), vert(`n${i + 1},${j}`, X(i + 1), Y(j), true), vert(`n${i + 1},${j + 1}`, X(i + 1), Y(j + 1), true), vert(`n${i},${j + 1}`, X(i), Y(j + 1), true)];
+            t.push(Q[0], Q[1], Q[2], Q[0], Q[2], Q[3]);
           }
-          const C = vert(`c${i},${j}`, cx, cy, true);
-          for (let n = 0; n < ring.length; n++) t.push(C, ring[n], ring[(n + 1) % ring.length]);
-        } else for (let n = 1; n + 1 < p.length; n++) t.push(T[0], T[n], T[n + 1]);
-        // An edge between two crossings is the outline: a wall, facing out (the piece is on its left).
-        for (let n = 0; n < p.length; n++) {
-          const m = (n + 1) % p.length;
-          if (p[n].cross && p[m].cross) t.push(B[n], B[m], T[m], B[n], T[m], T[n]);
-        }
-      }
+      } else square(across.map((a) => a >= 2), true);
+      square(across.map((a) => a === 2), false);
     }
   return v.length ? { part: "rock", vertices: v, triangles: t } : null;
 }
@@ -866,6 +875,36 @@ export const MIN_JOINTS = 2;
 const MAX_JOIN_PASSES = 8;
 /** The narrowest dovetail neck made (mm): smaller ones would snap. Short borders get smaller tabs down to this. */
 export const LEAST_NECK = 3.5;
+/** How far the knob stands out past the neck each side (mm, at least): what catches when pulled. */
+export const LEAST_UNDERCUT = 1.2;
+
+/**
+ * A dovetail's shape for a neck `neck` mm wide (tab coordinates: u along the border, v into the other piece): a short
+ * straight stem, then a round-ended knob (an ellipse) at least `LEAST_UNDERCUT` wider than the stem each side, whose
+ * shoulders face back towards the stem — so it catches as soon as it's pulled, not only after sliding along a 16° flare.
+ */
+export function tabShape(neck: number) {
+  const undercut = Math.max(LEAST_UNDERCUT, 0.2 * neck);
+  const a = neck / 2 + undercut;
+  const b = 0.65 * a;
+  const stem = Math.max(0.8, 0.15 * neck);
+  const vc = stem + b;
+  /** Inside the tab grown by m all round (m = 0: the tab itself). */
+  const inside = (u: number, v: number, m = 0) =>
+    v >= -m && ((Math.abs(u) <= neck / 2 + m && v <= vc) || (u / (a + m)) ** 2 + ((v - vc) / (b + m)) ** 2 <= 1);
+  return { neck, head: 2 * a, reach: vc + b, a, b, vc, stem, inside };
+}
+
+/** A dovetail as made: from the piece it belongs to into the other (piece indexes in `IslandPuzzle.pieces`). */
+export interface IslandTab {
+  from: number;
+  into: number;
+  /** Where its neck meets the border, the way it points (into `into`), its neck and how far it reaches (mm). */
+  at: XY;
+  dir: XY;
+  neck: number;
+  reach: number;
+}
 
 interface Joined {
   /** Dovetails per piece. */
@@ -878,6 +917,8 @@ interface Joined {
   loose: number;
   /** Cells of border each piece shares with each neighbour. */
   touching: Map<number, Map<number, number>>;
+  /** Every dovetail (piece ids). */
+  tabs: { from: number; into: number; at: XY; dir: XY; neck: number; reach: number }[];
 }
 
 /**
@@ -936,6 +977,7 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
   if (necks[necks.length - 1] > LEAST_NECK + 1e-9) necks.push(LEAST_NECK);
 
   /** One dovetail across the border a–b at a spot at least `apart` mm from every point in `away`; where it went, or null. */
+  const tabs: Joined["tabs"] = [];
   const tryJoin = (a: number, b: number, pts: XY[], away: XY[], apart: number): XY | null => {
     const mx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
     const my = pts.reduce((s, p) => s + p[1], 0) / pts.length;
@@ -945,8 +987,8 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
       ? pts.filter((p) => far(p) >= apart).sort((p, q) => far(q) - far(p))
       : [...pts].sort((p, q) => (p[0] - mx) ** 2 + (p[1] - my) ** 2 - ((q[0] - mx) ** 2 + (q[1] - my) ** 2));
     for (const neck of necks) {
-      const head = 1.4 * neck;
-      const reach = 0.7 * neck;
+      const shape = tabShape(neck);
+      const { head, reach } = shape;
       if (pts.length * cell < 1.6 * head) continue;
       for (let s = 0; s < spots.length && s < 120; s += 2) {
         const o = spots[s];
@@ -968,14 +1010,13 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
           if (at(o[0] + nrm[0] * reach * 0.5, o[1] + nrm[1] * reach * 0.5) !== into) nrm = [-nrm[0], -nrm[1]];
           if (at(o[0] + nrm[0] * reach * 0.5, o[1] + nrm[1] * reach * 0.5) !== into) continue;
           const local = (u: number, v: number): XY => [o[0] + t[0] * u + nrm[0] * v, o[1] + t[1] * u + nrm[1] * v];
-          // Every cell the tab covers, and a margin round its head, must be the other piece's; its neck's base meets ours.
-          const inTab = (u: number, v: number) => v >= 0 && v <= reach && Math.abs(u) <= neck / 2 + ((head - neck) / 2) * (v / reach);
+          // Every cell the tab covers, and a margin round it, must be the other piece's; its neck's base meets ours.
+          const inTab = (u: number, v: number) => shape.inside(u, v);
           const ok = (() => {
             const R = head / 2 + margin;
             for (let v = -margin; v <= reach + margin; v += cell / 2)
               for (let u = -R; u <= R; u += cell / 2) {
-                const inside = Math.abs(u) <= neck / 2 + ((head - neck) / 2) * (Math.max(0, v) / reach) + margin && v <= reach + margin;
-                if (!inside) continue;
+                if (!shape.inside(u, v, margin)) continue;
                 const [x, y] = local(u, v);
                 const p = at(x, y);
                 if (v > margin * 0.6 && p !== into) return false;
@@ -988,6 +1029,7 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
           const changed: number[] = [];
           const R = Math.ceil((head + reach) / cell) + 2;
           const [ci, cj] = [Math.floor(o[0] / cell), Math.floor(o[1] / cell)];
+          // (painted below; `locks` then checks it really catches)
           for (let j = Math.max(0, cj - R); j <= Math.min(ny - 1, cj + R); j++)
             for (let i = Math.max(0, ci - R); i <= Math.min(nx - 1, ci + R); i++) {
               const c = j * nx + i;
@@ -999,7 +1041,19 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
                 changed.push(c);
               }
             }
-          if (!changed.length || !wholePiece(piece, nx, ny, into, boxes.get(into)!)) {
+          // Pulled straight back by a little more than the gap, wiggled either way by the gap, the knob must hit the other
+          // piece's cells: else it would slide out.
+          const locks = () => {
+            const pull = 2 * spec.fit + 2 * cell + 0.3;
+            const wiggle = 2 * spec.fit + cell;
+            return [-wiggle, 0, wiggle].every((e) =>
+              changed.some((c) => {
+                const [x, y] = [((c % nx) + 0.5) * cell - nrm[0] * pull + t[0] * e, (Math.floor(c / nx) + 0.5) * cell - nrm[1] * pull + t[1] * e];
+                return at(x, y) === into;
+              }),
+            );
+          };
+          if (!changed.length || !wholePiece(piece, nx, ny, into, boxes.get(into)!) || !locks()) {
             for (const c of changed) piece[c] = into;
             continue;
           }
@@ -1008,6 +1062,7 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
             const [i, j] = [c % nx, Math.floor(c / nx)];
             [fb[0], fb[1], fb[2], fb[3]] = [Math.min(fb[0], i), Math.min(fb[1], j), Math.max(fb[2], i), Math.max(fb[3], j)];
           }
+          tabs.push({ from, into, at: o, dir: nrm, neck, reach });
           return o;
         }
       }
@@ -1038,7 +1093,7 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
     const key = p < q ? `${p},${q}` : `${q},${p}`;
     const first = placed.get(key);
     if (!first || first.length > 1) continue;
-    const o = tryJoin(p, q, borders.get(key)!, first, 2.2 * 1.4 * LEAST_NECK);
+    const o = tryJoin(p, q, borders.get(key)!, first, 2.2 * tabShape(LEAST_NECK).head);
     if (o) {
       made++;
       add(p);
@@ -1051,7 +1106,7 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
   for (const p of pieces) {
     const n = touching.get(p)?.size ?? 0;
     if (!n) loose++;
-    else if ((joints.get(p) ?? 0) < Math.min(MIN_JOINTS, n) || (n === 1 && !joints.get(p))) weak.push(p);
+    else if ((joints.get(p) ?? 0) < MIN_JOINTS) weak.push(p);
   }
-  return { joints, made, unjoined, weak, loose, touching };
+  return { joints, made, unjoined, weak, loose, touching, tabs };
 }

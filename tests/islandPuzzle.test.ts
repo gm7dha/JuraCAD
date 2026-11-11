@@ -10,6 +10,7 @@ import { boundariesOnGrid, boundaryLevels, readOsm } from "../src/terrain/osm";
 import { distanceTransform, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, MIN_JOINTS, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import type { Body } from "../src/terrain/mountainPuzzle";
 import { platesFor } from "../src/terrain/puzzle3mf";
+import { box, collides, outlineSegs, SegGrid, segSegDist, segsCross } from "./support/outlineGeom";
 
 // A lumpy island with a bay, on 6 × 4 km, and a small islet off it.
 const W = 6000;
@@ -44,12 +45,6 @@ function closed(b: Body): { open: number; volume: number } {
   return { open, volume };
 }
 
-/** Points sampled on a body's walls (z = 0 corners): the outline. */
-const footprint = (b: Body) => {
-  const pts: [number, number][] = [];
-  for (let i = 0; i < b.vertices.length; i += 3) if (b.vertices[i + 2] === 0) pts.push([b.vertices[i], b.vertices[i + 1]]);
-  return pts;
-};
 
 describe("distance transform", () => {
   it("gives squared distances to the nearest set cell", () => {
@@ -80,23 +75,17 @@ describe("island puzzle", () => {
     expect(p.joins).toBeGreaterThan(p.pieces.length * 0.8);
     expect(p.joins).toBeGreaterThan(p.unjoined * 2);
   });
-  it("keeps neighbours apart by the fit gap", () => {
-    const fps = p.pieces.map((q) => footprint(q.bodies[0]));
-    // Points of every piece on a 2 mm grid; each compared with other pieces' points nearby.
-    const grid = new Map<string, [number, number, number][]>();
-    fps.forEach((pts, n) => pts.forEach(([x, y]) => {
-      const k = `${Math.floor(x / 2)},${Math.floor(y / 2)}`;
-      grid.set(k, [...(grid.get(k) ?? []), [x, y, n]]);
-    }));
-    let nearest = Infinity;
-    fps.forEach((pts, n) => pts.forEach(([x, y]) => {
-      for (let a = -1; a <= 1; a++)
-        for (let b = -1; b <= 1; b++)
-          for (const [u, v, m] of grid.get(`${Math.floor(x / 2) + a},${Math.floor(y / 2) + b}`) ?? [])
-            if (m !== n) nearest = Math.min(nearest, Math.hypot(x - u, y - v));
-    }));
-    expect(nearest).toBeGreaterThan(2 * SPEC.fit * 0.8);
-    expect(nearest).toBeLessThan(2 * SPEC.fit + 0.6);
+  it("keeps neighbours apart by the fit gap: outlines from the mesh never cross or come nearer than 2 × fit", () => {
+    const g = outlineGaps(p);
+    expect(g.crossings).toBe(0);
+    expect(g.nearest).toBeGreaterThan(2 * SPEC.fit - 0.005);
+    expect(g.nearest).toBeLessThan(2 * SPEC.fit + 0.6);
+  });
+  it("locks every dovetail: pulled straight out, each catches within half a millimetre or so", () => {
+    const plays = pullOut(p);
+    expect(plays.free).toBe(0);
+    expect(plays.median).toBeLessThanOrEqual(0.5);
+    expect(plays.most).toBeLessThan(0.8);
   });
   it("is the same for the same seed and different for another", () => {
     const again = makeIslandPuzzle(island, sw, W, H, SPEC);
@@ -150,12 +139,50 @@ describe("island puzzle", () => {
   });
 });
 
-/** Every piece held by at least two dovetails, or by one when it has just one neighbour; only lone islets loose. */
+/** Outlines (from the meshes' undersides) of neighbouring pieces: how often they cross and how near they come. */
+function outlineGaps(p: IslandPuzzle): { crossings: number; nearest: number } {
+  const O = p.pieces.map((q) => outlineSegs(q.bodies[0]));
+  const G = O.map((s) => new SegGrid(s, 1));
+  const B = O.map(box);
+  let [crossings, nearest] = [0, Infinity];
+  for (let a = 0; a < O.length; a++)
+    for (let b = a + 1; b < O.length; b++) {
+      const [A, C] = [B[a], B[b]];
+      if (A[0] > C[2] + 1 || C[0] > A[2] + 1 || A[1] > C[3] + 1 || C[1] > A[3] + 1) continue;
+      for (const s of O[a])
+        for (const k of G[b].near((s[0] + s[2]) / 2, (s[1] + s[3]) / 2, 1 + Math.hypot(s[2] - s[0], s[3] - s[1]) / 2)) {
+          if (segsCross(s, G[b].segs[k])) crossings++;
+          nearest = Math.min(nearest, segSegDist(s, G[b].segs[k]));
+        }
+    }
+  return { crossings, nearest };
+}
+
+/** Each dovetail's piece pulled straight back out of its socket in 0.05 mm steps: how far it goes before it catches. */
+function pullOut(p: IslandPuzzle): { free: number; median: number; most: number } {
+  const O = p.pieces.map((q) => outlineSegs(q.bodies[0]));
+  const G = O.map((s) => new SegGrid(s, 1));
+  const plays: number[] = [];
+  let free = 0;
+  for (const t of p.tabs) {
+    let d = 0;
+    let hit = false;
+    while (d < t.reach + 1 && !hit) {
+      d += 0.05;
+      hit = collides(O[t.from], G[t.into], -t.dir[0] * d, -t.dir[1] * d);
+    }
+    if (hit) plays.push(d);
+    else free++;
+  }
+  plays.sort((a, b) => a - b);
+  return { free, median: plays[Math.floor(plays.length / 2)] ?? 0, most: plays[plays.length - 1] ?? 0 };
+}
+
+/** Every piece with a neighbour held by at least two dovetails; only lone islets loose. */
 function heldTogether(p: IslandPuzzle, label: string) {
   for (const q of p.pieces) {
     if (!q.neighbours) continue;
-    expect(q.joints, `${label}: piece ${q.name} (${q.neighbours} neighbours)`).toBeGreaterThanOrEqual(Math.min(MIN_JOINTS, q.neighbours));
-    expect(q.joints, `${label}: piece ${q.name}`).toBeGreaterThan(0);
+    expect(q.joints, `${label}: piece ${q.name} (${q.neighbours} neighbours)`).toBeGreaterThanOrEqual(MIN_JOINTS);
   }
   expect(p.pieces.filter((q) => !q.neighbours).length, label).toBe(p.loose);
   // Each dovetail holds two pieces.
@@ -171,13 +198,25 @@ describe("every piece is held", () => {
     return Math.max(0, (1 - r) * 300);
   });
   const small: IslandSpec = { ...SPEC, bed: [200, 200, 200] };
-  it("by at least two dovetails, on the lumpy island and a ragged coast, for several seeds and piece sizes", () => {
+  it("by at least two dovetails that lock and keep the gap, on the lumpy island and a ragged coast, for several seeds and piece sizes", () => {
     for (const [name, g] of [["lumpy", island], ["ragged", ragged]] as const)
-      for (const [piece, seed] of [[20, 1], [35, 2], [60, 3]]) {
+      for (const [piece, seed] of [[15, 1], [35, 2], [60, 3]]) {
+        const label = `${name} ${piece} mm seed ${seed}`;
         const p = makeIslandPuzzle(g, sw, W, H, { ...small, piece, seed });
-        heldTogether(p, `${name} ${piece} mm seed ${seed}`);
+        heldTogether(p, label);
         for (const q of p.pieces) expect(closed(q.bodies[0]).open, q.name).toBe(0);
+        const gaps = outlineGaps(p);
+        expect(gaps.crossings, label).toBe(0);
+        expect(gaps.nearest, label).toBeGreaterThan(2 * small.fit - 0.005);
+        const plays = pullOut(p);
+        expect(plays.free, label).toBe(0);
+        expect(plays.median, label).toBeLessThanOrEqual(0.5);
       }
+  });
+  it("is made for a pattern whose small pieces once joined each other round and round (it crashed)", () => {
+    const p = makeIslandPuzzle(island, sw, W, H, { ...SPEC, piece: 25, seed: 1 });
+    expect(p.pieces.length).toBeGreaterThan(10);
+    heldTogether(p, "lumpy 25 mm seed 1");
   });
   it("makes the islet off the lumpy island a loose piece and says so", () => {
     const p = makeIslandPuzzle(island, sw, W, H, SPEC);

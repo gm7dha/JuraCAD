@@ -133,7 +133,7 @@ describe("island puzzle with map marks", () => {
       expect(c.volume, p.name).toBeGreaterThan(0);
       expect(p.outline).toEqual(plain.pieces[i].outline);
       // Held by two dovetails (one where a piece has just one neighbour), marks or not.
-      if (p.neighbours) expect(p.joints, p.name).toBeGreaterThanOrEqual(Math.min(2, p.neighbours));
+      if (p.neighbours) expect(p.joints, p.name).toBeGreaterThanOrEqual(2);
     });
     const plates = platesFor(all.pieces, SPEC.bed);
     expect(plate3mf(plates[0], "Marks").length).toBeGreaterThan(1000);
