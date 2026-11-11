@@ -83,9 +83,7 @@ export function connectKernel(): () => void {
         s.showToast(result.message, "error");
         return;
       }
-      s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks, result.featureWarnings, result.featureNotes);
-      // Newer planes and mate connectors moved with the model: where they are now goes into the design.
-      if (result.followed) s.applyFollowedRefs(result.followed);
+      s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks, result.featureWarnings, result.featureNotes, result.followed);
       // Where each Move / copy's triad goes (kept the same object while nothing changed, so nothing redraws).
       // (Only the Part Studios rebuilt are in the result: the others' are kept.)
       const was = useStore.getState().transformCentres;

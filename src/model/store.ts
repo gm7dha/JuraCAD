@@ -4,8 +4,7 @@ import { followLinks, pruneReferences, type RefEdge, type SketchLinkInfo } from 
 import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
 import { create } from "zustand";
 
-import type { FollowedRefs, PartMesh } from "../kernel/protocol";
-import { applyFollowed, withFollowed } from "./followed";
+import type { FollowedFrame, PartMesh } from "../kernel/protocol";
 import {
   addFeature,
   insertFeatureAfter,
@@ -88,6 +87,7 @@ function samePlace(a: SketchPlane, b: SketchPlane): boolean {
 
 /** No sketch links (one shared object, so selectors stay stable). */
 const NO_LINKS: Record<string, SketchLinkInfo> = {};
+const NO_FRAMES: Record<string, FollowedFrame> = {};
 const NO_WARNINGS: Record<string, string> = {};
 const NO_CENTRES: Record<string, [number, number, number]> = {};
 
@@ -622,12 +622,13 @@ export interface AppState {
     sketchLinks?: Record<string, SketchLinkInfo>,
     featureWarnings?: Record<string, string>,
     featureNotes?: Record<string, string>,
+    followed?: Record<string, FollowedFrame>,
   ) => void;
   /**
-   * Newer Plane features and mate connectors as the engine found them again (RebuildResult.followed): written into
-   * the design and the open dialog's feature without an undo step (nothing the user chose changes, only where they are).
+   * Where Plane features that follow the model and mate connectors are, as the engine built them (RebuildResult.followed,
+   * every Part Studio). Shown and used instead of what the design's numbers give; the design stays as clicked.
    */
-  applyFollowedRefs: (followed: Record<string, FollowedRefs> | undefined) => void;
+  builtFrames: Record<string, FollowedFrame>;
   /** The Move / copy triad being dragged: the boxes' values so far (null when the drag ends or is taken back). */
   setTransformLive: (values: Record<string, string> | null) => void;
   /** Change the open draft as one step of the dialog's own undo (a finished drag of the triad, say). */
@@ -888,6 +889,7 @@ export const useStore = create<AppState>((set, get) => {
       return true;
     },
     sketchLinks: NO_LINKS,
+    builtFrames: NO_FRAMES,
     sketchCandidates: null,
     setSketchCandidates: (sketchCandidates) => set({ sketchCandidates }),
     lastRebuildMs: null,
@@ -915,7 +917,7 @@ export const useStore = create<AppState>((set, get) => {
       if (type === "sketch") {
         // On the highlighted plane, or Plane feature, if any — or the plane of the sketch whose areas are selected.
         const planeFeature = activeFeatures(s).find((f) => f.id === s.selectedFeatureId && (f.type === "plane" || f.type === "mateConnector"));
-        const frame = planeFeature ? framesOf(activeFeatures(s)).get(planeFeature.id) : undefined;
+        const frame = planeFeature ? framesOf(activeFeatures(s), undefined, s.builtFrames).get(planeFeature.id) : undefined;
         const sel = s.areaSelection;
         const areaPlane = sel ? (followedSketch(activeFeatures(s).find((f) => f.id === sel.sketch && f.type === "sketch"), s.sketchLinks)?.plane ?? null) : null;
         s.startSketch(planeFeature && frame ? planeAsSketchPlane(planeFeature, frame) : s.selectedPlane ? { kind: "default", name: s.selectedPlane } : areaPlane);
@@ -1018,7 +1020,7 @@ export const useStore = create<AppState>((set, get) => {
       // A plane starts from the plane (or Plane feature) highlighted, if any.
       if (type === "plane" && draft.planeDef) {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "plane");
-        const frame = picked ? framesOf(features).get(picked.id) : undefined;
+        const frame = picked ? framesOf(features, undefined, s.builtFrames).get(picked.id) : undefined;
         if (picked && frame) draft.planeDef = { ...draft.planeDef, ref: planeAsSketchPlane(picked, frame) };
         else if (s.selectedPlane) draft.planeDef = { ...draft.planeDef, ref: { kind: "default", name: s.selectedPlane } };
       }
@@ -2117,18 +2119,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setKernelStatus: (kernelStatus, error) => set({ kernelStatus, kernelError: error ?? null }),
     setRebuildBusy: (rebuildBusy) => set({ rebuildBusy }),
-    applyFollowedRefs: (followed) =>
-      set((s) => {
-        if (!followed || !Object.keys(followed).length || s.versionView) return {};
-        const present = applyFollowed(s.history.present, followed, resolveVariables(s.history.present.variables).values);
-        const draft = s.editing?.draft;
-        const followedDraft = draft ? withFollowed(draft, followed) : draft;
-        const out: Partial<AppState> = {};
-        if (present !== s.history.present) out.history = { ...s.history, present };
-        if (s.editing && followedDraft && followedDraft !== draft) out.editing = { ...s.editing, draft: followedDraft };
-        return out;
-      }),
-    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings, featureNotes) =>
+    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings, featureNotes, followed) =>
       set((s) => {
         // The sketch open for editing follows its part's face and edges, as the engine found them.
         const links = sketchLinks && Object.keys(sketchLinks).length ? sketchLinks : NO_LINKS;
@@ -2156,6 +2147,8 @@ export const useStore = create<AppState>((set, get) => {
           featureWarnings: featureWarnings && Object.keys(featureWarnings).length ? featureWarnings : NO_WARNINGS,
           featureNotes: featureNotes && Object.keys(featureNotes).length ? featureNotes : NO_WARNINGS,
           sketchLinks: links,
+          // (Kept the same object while nothing moved, so nothing redraws.)
+          builtFrames: !followed || !Object.keys(followed).length ? NO_FRAMES : JSON.stringify(followed) === JSON.stringify(s.builtFrames) ? s.builtFrames : followed,
           ...(editing !== s.editing ? { editing } : {}),
           lastRebuildMs: ms,
           rebuildBusy: false,

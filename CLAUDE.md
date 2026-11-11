@@ -473,15 +473,21 @@
   `findGeom`, `connectorBase` in engine.ts): at their place in the list it re-finds each pick, works out the frame, and things
   placed on them (`planeRef`) are repointed in the same build (`repointFeature` in planeFeature.ts — only new-type planes and
   connectors go in that map, so old files build exactly as before); Move / copy's `fromConnector`/`toConnector` are filled in as
-  `from`/`to`, and connectors owned by a moved part go with it (`moveOwnedConnectors`). What moved comes back as
-  `RebuildResult.followed` → store `applyFollowedRefs` → pure `src/model/followed.ts` `applyFollowed` (written into the design
-  and the open draft WITHOUT an undo step — only when the feature's choices are unchanged, `sameChoices`; then
-  `refreshDocumentPlanes`), the extension's `tryChange` does the same. Owned connectors ride on `PartMesh.connectors` (part
+  `from`/`to`; connectors owned by a moved part go with it (`moveOwnedConnectors`) and pass to the part theirs is merged into
+  (`reassignOwners`, after each feature: the part the last feature made/changed nearest them). Any plane (old modes too) whose
+  ref was repointed goes in the map as well, so chains follow in ONE build. Where each is built comes back as
+  `RebuildResult.followed` (id → frame, every studio, like sketchLinks) → store `builtFrames` → `framesOf(features, scope,
+  built)` (planes drawn, connector marks, geomPick, dialogs; the extension passes `Build.followed`); a sketch repointed this way
+  gets `SketchLinkInfo.plane`, so `followedSketch` shows/edits it there. The DESIGN IS NEVER CHANGED BY A REBUILD (stays as
+  clicked; tests/planeStore). Owned connectors ride on `PartMesh.connectors` (part
   coordinates), so assemblies use them: `MateConnector.connector` (+ a stand-in `pick`, `ownConnectorPick`), resolved by
   `connectorFrameOnParts` → `ownConnectorFrame`. Connectors are drawn/clicked as `SceneManager.setConnectorMarks` (PickTarget
-  "connector", within `CONNECTOR_PICK_PIXELS` of the middle, before faces); in an assembly only while a mate is made (key
+  "connector", within `CONNECTOR_PICK_PIXELS` of the middle, before faces unless behind the face hit; only while `connectorWanted`
+  (geomClicks.ts) says the tool open takes one — `setConnectorPicking`); in an assembly only while a mate is made (key
   "<leaf key>|<id>"). They're sketch planes (`framesOf`/`refreshPlaneRefs` include them as `planeRef`s), have an eye
-  (`hasEye`), and Delete with dependents knows `GeomPick`s, `connector.plane`/`owner`, `from/toConnector`. Not done: Onshape has
+  (`hasEye`), and Delete with dependents knows `GeomPick`s, `connector.plane`/`owner`, `from/toConnector` (and `outsideUsers` names
+  assembly mates on a connector that goes, `connectorMates`). Curve point's `position` is a share of the edge's LENGTH on both
+  sides (`fractionAlong` / the engine's `paramAtLength`). Not done: Onshape has
   no Tangent plane; sketch points can't be clicked in the 3D view (the extension takes them); a connector clicked while a Mirror is
   open is its plane (XY), but patterns can't use one as an axis yet. Claude: add_feature "plane" (plane_type…) / "mate_connector", add_sketch "plane":
   a Plane or connector name, add_mate end `{"instance", "connector"}` (`src/mcp/planeSpec.ts`). Tests: tests/planeTypes (pure),

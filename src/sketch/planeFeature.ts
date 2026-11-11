@@ -59,9 +59,16 @@ export function planeAsSketchPlane(f: Feature, frame: PlaneFrame): SketchPlane {
   return { kind: "face", origin: frame.origin, u: frame.u, v: frame.v, label: f.name, planeRef: f.id };
 }
 
-/** A plane feature's frame as things stand (null when it can't be made). */
-export function framesOf(features: Feature[], scope?: Scope): Map<string, PlaneFrame> {
+/**
+ * A plane feature's (or mate connector's) frame as things stand (missing when it can't be made). `built`: where the
+ * engine built the ones that follow the model (RebuildResult.followed) — those win over the design's own numbers.
+ */
+export function framesOf(features: Feature[], scope?: Scope, built?: Readonly<Record<string, PlaneFrame>>): Map<string, PlaneFrame> {
   const out = new Map<string, PlaneFrame>();
+  if (built) {
+    for (const [id, frame] of framesOf(features, scope)) out.set(id, built[id] ?? frame);
+    return out;
+  }
   for (const f of refreshPlaneRefs(features, scope)) {
     const cf = connectorFeaturePlane(f, scope);
     if (cf) out.set(f.id, cf);

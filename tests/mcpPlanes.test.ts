@@ -55,15 +55,27 @@ describe("planes and mate connectors made by Claude", () => {
     // The edge along X at the front top: list_edges numbers it; pick it by a point near its middle instead.
     await ok(s, "add_feature", { type: "plane", name: "End plane", plane_type: "point_normal", point: { corner: { near: [20, 0, 10] }, end: "end" }, line: "x" });
     const plane = s.doc.features.find((f) => f.name === "End plane")!;
-    expect(r(framesOf(s.doc.features).get(plane.id)!.origin)).toEqual([40, 0, 10]);
+    expect(r(framesOf(s.doc.features, undefined, s.build().followed).get(plane.id)!.origin)).toEqual([40, 0, 10]);
     await ok(s, "add_sketch", { name: "On end", plane: "End plane", shapes: [{ type: "circle", center: [0, 0], diameter: 4 }] });
     await ok(s, "set_variables", { variables: [{ name: "w", value: 60 }] });
     // Followed: the plane and the sketch on it are at the new end.
-    expect(r(framesOf(s.doc.features).get(plane.id)!.origin)).toEqual([60, 0, 10]);
-    const sk = s.doc.features.find((f) => f.name === "On end")!.sketch!.plane!;
-    expect(sk.kind === "face" && r(sk.origin)).toEqual([60, 0, 10]);
+    expect(r(framesOf(s.doc.features, undefined, s.build().followed).get(plane.id)!.origin)).toEqual([60, 0, 10]);
+    const sk = s.build().links?.[s.doc.features.find((f) => f.name === "On end")!.id]?.plane;
+    expect(sk?.kind === "face" && r(sk.origin)).toEqual([60, 0, 10]);
     const described = await ok(s, "describe_design");
     expect(described).toMatch(/End plane .*plane \(point_normal\) through a corner of Block, square to x axis/);
+  });
+
+  it("a round edge as the line gives its axis", async () => {
+    const s = newSession();
+    await ok(s, "add_feature", { type: "cylinder", diameter: 10, height: 10 });
+    await ok(s, "add_feature", { type: "plane", plane_type: "point_normal", point: [0, 0, 5], line: { edge: "E1", part: "Part 1" }, name: "Across" });
+    const pl = s.doc.features.find((f) => f.name === "Across")!;
+    // Stored as clicked: square to the cylinder's axis (Z), not along a chord of the circle.
+    expect(r(pl.planeDef!.line!.dir!.map(Math.abs))).toEqual([0, 0, 1]);
+    const fr = framesOf(s.doc.features, undefined, s.build().followed).get(pl.id)!;
+    expect(r(fr.n.map(Math.abs))).toEqual([0, 0, 1]);
+    expect(r(fr.origin)).toEqual([0, 0, 5]);
   });
 
   it("three point, line angle and fit planes; plain errors", async () => {
@@ -83,7 +95,7 @@ describe("planes and mate connectors made by Claude", () => {
     const s = newSession();
     await ok(s, "add_feature", { type: "box", width: 40, depth: 40, height: 10, name: "Base" });
     await ok(s, "add_feature", { type: "mate_connector", at: { face: "top", part: "Part 1" }, move: [5, 0, 0], name: "Peg spot" });
-    expect(await ok(s, "describe_design")).toMatch(/Peg spot .*mate connector at a flat face of Base.*origin \(20, 20, 10\), Z \(0, 0, 1\), dx 5/);
+    expect(await ok(s, "describe_design")).toMatch(/Peg spot .*mate connector at a flat face of Base.*origin \(25, 20, 10\), Z \(0, 0, 1\), dx 5/);
     await ok(s, "add_feature", { type: "box", width: 4, depth: 4, height: 4, x: 100, name: "Peg", operation: "new" });
     await ok(s, "create_assembly", { name: "Kit" });
     await ok(s, "insert_into_assembly", { part: "Part 1" });

@@ -9,7 +9,7 @@ import { emptyDocument } from "../model/document";
 import { resolveVariables } from "../model/variables";
 import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { GeometryEngine, type StudiosResult } from "../kernel/engine";
-import type { FollowedRefs, PartMesh, RebuildResult } from "../kernel/protocol";
+import type { FollowedFrame, PartMesh, RebuildResult } from "../kernel/protocol";
 import { InputError } from "./args";
 import type { DesignFolder } from "./files";
 import type { ToolResult } from "./tools";
@@ -51,8 +51,8 @@ export interface Build {
   notes?: Record<string, string>;
   /** Sketches on part faces or using part edges: where the engine moved them to (see RebuildResult.sketchLinks). */
   links?: Record<string, SketchLinkInfo>;
-  /** Newer planes and mate connectors found again (see RebuildResult.followed). */
-  followed?: Record<string, FollowedRefs>;
+  /** Planes that follow the model and mate connectors, where they are as built (see RebuildResult.followed). */
+  followed?: Record<string, FollowedFrame>;
 }
 
 /**

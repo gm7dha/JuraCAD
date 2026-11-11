@@ -321,6 +321,8 @@ export interface OutsideUse {
   assemblies: { id: string; name: string; copies: number }[];
   drawings: { id: string; name: string }[];
   derived: { studioName: string; featureName: string }[];
+  /** Assembly mates on a Part Studio mate connector that goes (missing when none). */
+  connectorMates?: { name: string; mates: string[] }[];
 }
 
 function drawsPart(d: Drawing, mine: (partId: string) => boolean): boolean {
@@ -338,7 +340,15 @@ export function outsideUsers(doc: JuraCADDocument, studioId: string, goneIds: It
   const derived = studiosOf(doc)
     .filter((s) => s.id !== studioId)
     .flatMap((s) => s.features.filter((f) => f.type === "derived" && f.derived?.studioId === studioId && mine(f.derived.partId)).map((f) => ({ studioName: s.name, featureName: f.name })));
-  return { assemblies, drawings, derived };
+  // Mates (and mirror planes) on one of its mate connectors.
+  const onConnector = (c: { connector?: string } | undefined) => !!c?.connector && ids.has(c.connector);
+  const connectorMates = (doc.assemblies ?? [])
+    .map((a) => ({
+      name: a.name,
+      mates: [...(a.mates ?? []).filter((m) => onConnector(m.a) || onConnector(m.b)).map((m) => m.name), ...(a.patterns ?? []).filter((p) => onConnector(p.plane)).map((p) => p.name)],
+    }))
+    .filter((a) => a.mates.length);
+  return { assemblies, drawings, derived, ...(connectorMates.length ? { connectorMates } : {}) };
 }
 
 /** Everything the Delete question needs. */
@@ -365,6 +375,7 @@ export function outsideLines(o: OutsideUse): string[] {
     ...o.assemblies.map((a) => `${a.name} has ${a.copies === 1 ? "a copy" : `${a.copies} copies`} of a part that will go — ${a.copies === 1 ? "it" : "they"}'ll show as missing.`),
     ...o.drawings.map((d) => `${d.name} draws a part that will go — it'll say the part is missing.`),
     ...o.derived.map((d) => `"${d.featureName}" in ${d.studioName} brings in a part that will go.`),
+    ...(o.connectorMates ?? []).map((a) => `In ${a.name}, ${listNames(a.mates)} ${a.mates.length === 1 ? "uses a mate connector that will go — it'll" : "use mate connectors that will go — they'll"} stop working.`),
   ];
 }
 

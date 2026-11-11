@@ -8,7 +8,7 @@
 import type { EdgeRef, TopoPick } from "../geometry/topoRef";
 import type { PlaneFrame, SketchPlane } from "../sketch/planes";
 import type { SketchLineRef } from "./patternRefs";
-import type { ConnectorSpot, GeomPick, MateConnectorDef, PlaneOptions, TransformFrame } from "./types";
+import type { ConnectorSpot, Feature, GeomPick, MateConnectorDef, PlaneOptions, TransformFrame } from "./types";
 import { circleOf, spotFrame, type SpotSource } from "./transformPicks";
 import { tidyVec } from "./transformPicks";
 
@@ -197,3 +197,18 @@ export function planeClick(def: PlaneOptions, c: GeomClick): PlaneOptions | stri
       return def;
   }
 }
+
+/**
+ * Whether a click may pick a mate connector now: only while what's open takes one (a Mate connector or Plane, Move /
+ * copy's From or To, a sketch waiting for its plane, a Mirror's plane, Text's plane), a mate is being made in an
+ * assembly, or nothing is open (it's selected). Otherwise clicks go to faces and edges as usual.
+ */
+export function connectorWanted(s: { editing: { draft: Feature } | null; sketch: unknown; mateDraft: unknown }, inAssembly: boolean): boolean {
+  if (inAssembly) return !!s.mateDraft;
+  const d = s.editing?.draft;
+  if (!d) return !s.sketch;
+  if (d.type === "sketch") return !!s.sketch && !d.sketch?.plane;
+  if (d.type === "mateConnector" || d.type === "plane" || d.type === "mirror" || d.type === "text") return true;
+  return d.type === "transform" && (d.transform?.picking === "from" || d.transform?.picking === "to");
+}
+

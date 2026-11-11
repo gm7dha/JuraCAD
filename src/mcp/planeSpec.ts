@@ -9,6 +9,7 @@ import { planeFrame, type SketchPlane, type Vec3 } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/planeFeature";
 import { amount, bool, InputError, list, noExtras, oneOf, text, xyz, type Obj } from "./args";
 import { pickEdges, pickFace } from "./picks";
+import { connectorFrame } from "../assembly/connectors";
 import type { SpecContext } from "./featureSpec";
 import { geomPickLabel } from "../sketch/planeTypes";
 
@@ -49,7 +50,7 @@ function geomFrom(v: unknown, where: string, ctx: SpecContext, as: "point" | "li
   if (has(o, "connector")) {
     noExtras(o, ["connector"], where);
     const c = ctx.session.feature(o.connector, `${where}.connector`, ["mateConnector"], ctx.doc);
-    const frame = framesOf(ctx.doc.features, ctx.scope).get(c.id);
+    const frame = framesOf(ctx.doc.features, ctx.scope, ctx.session.build().followed).get(c.id);
     return { p: frame?.origin ?? [0, 0, 0], ...(frame ? { dir: frame.n } : {}), connector: c.id };
   }
   if (has(o, "sketch")) {
@@ -102,7 +103,14 @@ function geomFrom(v: unknown, where: string, ctx: SpecContext, as: "point" | "li
   if (picks.length !== 1 || picks[0].ref.kind !== "edge") throw new InputError(`${where}.${key}: give one edge (E-number from list_edges), not a face.`);
   const pick = picks[0];
   const ref = pick.ref as Extract<typeof pick.ref, { kind: "edge" }>;
-  if (as === "line") return { p: ref.a, dir: [ref.b[0] - ref.a[0], ref.b[1] - ref.a[1], ref.b[2] - ref.a[2]], pick };
+  if (as === "line") {
+    if (ref.curve === "LINE") return { p: ref.a, dir: [ref.b[0] - ref.a[0], ref.b[1] - ref.a[1], ref.b[2] - ref.a[2]], pick };
+    // A round edge: its axis (through its centre, square to it), as in the app.
+    const index = part.edgeRefs.indexOf(ref);
+    const axis = index >= 0 && ref.curve === "CIRCLE" ? connectorFrame(part, "edge", index) : null;
+    if (!axis) throw new InputError(`${where}.${key}: that edge is neither straight nor round, so it gives no line. Choose a straight or round edge, a face, or an axis.`);
+    return { p: axis.origin, dir: axis.z, pick };
+  }
   const end = oneOf(o.end, ["start", "end", "middle"] as const, `${where}.end`, "middle");
   return { p: end === "start" ? ref.a : end === "end" ? ref.b : ref.mid, pick, end: end === "start" ? "a" : end === "end" ? "b" : "mid" };
 }
@@ -114,7 +122,7 @@ export function basePlane(v: unknown, where: string, ctx: Pick<SpecContext, "ses
     return { kind: "default", name: n === "top" ? "Top" : n === "front" ? "Front" : "Right" };
   }
   const f = ctx.session.feature(v, where, ["plane", "mateConnector"], ctx.doc);
-  const frame = framesOf(ctx.doc.features, ctx.scope).get(f.id);
+  const frame = framesOf(ctx.doc.features, ctx.scope, ctx.session.build().followed).get(f.id);
   if (!frame) throw new InputError(`${where}: ${f.name} can't be placed as things are, so it can't be used.`);
   return planeAsSketchPlane(f, frame);
 }
@@ -189,12 +197,13 @@ export function applyConnector(f: Feature, a: Obj, ctx: SpecContext): void {
 }
 
 /** Plain words for a plane or connector, for describe_design. */
-export function describeMore(f: Feature, nameOf: (id: string) => string | undefined): string {
+export function describeMore(f: Feature, nameOf: (id: string) => string | undefined, built?: { origin: Vec3; n: Vec3 }): string {
   const lc = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
   if (f.type === "mateConnector" && f.connector) {
     const c = f.connector;
-    const o = c.base.origin.map((v) => Math.round(v * 100) / 100).join(", ");
-    const z = c.base.z.map((v) => Math.round(v * 1000) / 1000).join(", ");
+    // Where it is as built (its moves and turns included), else where it was clicked.
+    const o = (built?.origin ?? c.base.origin).map((v) => Math.round(v * 100) / 100 + 0).join(", ");
+    const z = (built?.n ?? c.base.z).map((v) => Math.round(v * 1000) / 1000 + 0).join(", ");
     const p = f.params;
     const moved = ["dx", "dy", "dz", "rx", "ry", "rz"].filter((k) => p[k] && p[k] !== "0").map((k) => `${k} ${p[k]}`);
     const where = c.plane && !c.at.pick && !c.at.sketchPoint && !c.at.connector ? `on ${c.plane.kind === "default" ? `the ${c.plane.name} plane` : c.plane.label}` : `at ${lc(geomPickLabel(c.at, nameOf))}${c.at.spot ? ` (${c.at.spot})` : ""}`;

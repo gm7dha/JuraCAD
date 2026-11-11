@@ -9,10 +9,10 @@ import { analyzeMesh } from "../src/geometry/meshCheck";
 import { GeometryEngine } from "../src/kernel/engine";
 import type { EdgeRef, FaceRef, TopoPick } from "../src/geometry/topoRef";
 import type { Feature, GeomPick, MateConnectorDef, PlaneOptions } from "../src/model/types";
-import { applyFollowed } from "../src/model/followed";
-import { emptyDocument } from "../src/model/document";
 import { addRectangle } from "../src/sketch/ops";
 import { emptySketch } from "../src/sketch/types";
+import { addEllipse } from "../src/sketch/tools";
+import { fractionAlong } from "../src/model/geomClicks";
 import { connectorFrameOnParts } from "../src/assembly/connectors";
 import { loadOpenCascade, feature, sketchFeature, extrudeFeature } from "./support/engineHelpers";
 import type { Vec3 } from "../src/sketch/planes";
@@ -75,26 +75,38 @@ describe("newer planes follow the model", () => {
     engine = new GeometryEngine();
     const first = engine.rebuild(features, { w: 10 });
     expect(first.featureErrors).toEqual({});
-    // Nothing moved: nothing to tell the app.
-    expect(first.followed?.[plane.id]).toBeUndefined();
+    // Where it was built is told to the app (to show it there).
+    expect(r(first.followed![plane.id].origin)).toEqual([10, 0, 5]);
     const before = first.parts.findIndex((p) => p.id === pad.id);
     expect(boundsOf(first.parts, before)).toEqual([[10, 0, 5], [12, 2, 8]]);
 
     const wider = engine.rebuild(features, { w: 30 });
     expect(wider.featureErrors).toEqual({});
-    const now = wider.followed?.[plane.id]?.planeDef;
-    expect(now?.points?.[0].p).toEqual([30, 0, 5]);
-    expect(r(now!.line!.dir!)).toEqual([0, 0, 1]);
-    // The pad sketched on the plane went with it, in the same build.
+    const now = wider.followed![plane.id];
+    expect(r(now.origin)).toEqual([30, 0, 5]);
+    expect(r(now.n)).toEqual([0, 0, 1]);
+    // The pad sketched on the plane went with it, in the same build — and the app is told where the sketch is.
     const after = wider.parts.findIndex((p) => p.id === pad.id);
     expect(boundsOf(wider.parts, after)).toEqual([[30, 0, 5], [32, 2, 8]]);
+    const shownAt = wider.sketchLinks?.[sketch.id]?.plane;
+    expect(shownAt?.kind === "face" && r(shownAt.origin)).toEqual([30, 0, 5]);
+    // The design is left as clicked: building never changes what it's given.
+    expect(JSON.stringify(features[1].planeDef!.points![0].p)).toBe("[10,0,5]");
+  });
 
-    // Written into the design (as the app does), the plane and the sketch's stored frame are where they are now, and building again changes nothing more.
-    const doc = applyFollowed({ ...emptyDocument(), features, variables: [] }, wider.followed!, { w: 30 });
-    const sk = doc.features.find((f) => f.id === sketch.id)!.sketch!.plane!;
-    expect(sk.kind === "face" && r(sk.origin)).toEqual([30, 0, 5]);
-    const again = engine.rebuild(doc.features, { w: 30 });
-    expect(again.followed?.[plane.id]).toBeUndefined();
+  it("a plane based on a followed plane follows in the same build (Point normal → Offset → sketch → pad)", () => {
+    const box = feature("box", { width: "w", depth: 20, height: 5 });
+    const corner: GeomPick = { p: [10, 0, 5], pick: edge(box.id, [0, 0, 5], [10, 0, 5]), end: "b" };
+    const pn = planeOf({ mode: "pointNormal", ref: { kind: "default", name: "Top" }, axis: "u", points: [corner], line: { p: [0, 0, 0], axis: "z" } });
+    const off = planeOf({ mode: "offset", ref: { kind: "face", origin: [10, 0, 5], u: [1, 0, 0], v: [0, 1, 0], label: pn.name, planeRef: pn.id }, axis: "u" }, { distance: 5 });
+    const data = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 2, y: 2 }).sketch;
+    const sketch = sketchFeature({ kind: "face", origin: [10, 0, 10], u: [1, 0, 0], v: [0, 1, 0], label: off.name, planeRef: off.id }, data);
+    const pad = extrudeFeature(sketch.id, 3);
+    engine = new GeometryEngine();
+    expect(engine.rebuild([box, pn, off, sketch, pad], { w: 10 }).featureErrors).toEqual({});
+    const b = engine.rebuild([box, pn, off, sketch, pad], { w: 30 });
+    expect(boundsOf(b.parts, b.parts.findIndex((p) => p.id === pad.id))).toEqual([[30, 0, 10], [32, 2, 13]]);
+    expect(r(b.followed![off.id].origin)).toEqual([30, 0, 10]);
   });
 
   it("Three point, Curve point and Plane point on a part's corners, edges and faces", () => {
@@ -116,12 +128,35 @@ describe("newer planes follow the model", () => {
     expect(engine.rebuild([box, three, curve, parallel], { w: 10 }).featureErrors).toEqual({});
     const res = engine.rebuild([box, three, curve, parallel], { w: 30 });
     expect(res.featureErrors).toEqual({});
-    expect(res.followed![three.id].planeDef!.points!.map((p) => p.p)).toEqual([[0, 0, 5], [30, 0, 5], [30, 20, 0]]);
-    const c = res.followed![curve.id].planeDef!;
+    // Through (0,0,5), (30,0,5), (30,20,0).
+    const t = res.followed![three.id];
+    expect(r(t.origin)).toEqual([0, 0, 5]);
+    expect(Math.abs(t.n[0])).toBeLessThan(1e-9);
+    expect(r(t.n.map(Math.abs))).toEqual(r([0, 5 / Math.hypot(5, 20), 20 / Math.hypot(5, 20)]));
+    const c = res.followed![curve.id];
     // A quarter of the way along the 30 mm edge, square to it.
-    expect(r(c.points![0].p)).toEqual([7.5, 0, 0]);
-    expect(r(c.points![0].dir!)).toEqual([1, 0, 0]);
-    expect(res.followed![parallel.id].planeDef!.points![0].p).toEqual([30, 20, 0]);
+    expect(r(c.origin)).toEqual([7.5, 0, 0]);
+    expect(r(c.n)).toEqual([1, 0, 0]);
+    expect(r(res.followed![parallel.id].origin)).toEqual([30, 20, 0]);
+  });
+
+  it("Curve point on an ellipse: a share of the edge's length, as the app measures the click", () => {
+    const data = addEllipse(emptySketch(), { x: 0, y: 0 }, { x: 20, y: 0 }, [0, 5]).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+    const ex = extrudeFeature(sk.id, 5);
+    engine = new GeometryEngine();
+    const part = engine.rebuild([sk, ex]).parts[0];
+    const i = part.edgeRefs.findIndex((e) => e.curve === "ELLIPSE" && e.a[2] > 4);
+    const g = part.edgeGroups[i];
+    const pts: Vec3[] = [];
+    for (let k = g.start; k < g.start + g.count; k++) pts.push([part.lines[3 * k], part.lines[3 * k + 1], part.lines[3 * k + 2]]);
+    for (const position of [0.1, 0.35]) {
+      const plane = planeOf({ mode: "curvePoint", ref: { kind: "default", name: "Top" }, axis: "u", position, points: [{ p: [0, 0, 0], pick: { partId: part.id, ref: part.edgeRefs[i] } }] });
+      const res = engine.rebuild([sk, ex, plane]);
+      expect(res.featureErrors).toEqual({});
+      // The plane crosses the edge where a click that far along the drawn edge would be.
+      expect(Math.abs(fractionAlong(pts, res.followed![plane.id].origin) - position)).toBeLessThan(2e-3);
+    }
   });
 
   it("says plainly when what it was made from is gone", () => {
@@ -143,7 +178,7 @@ describe("mate connectors in the Part Studio", () => {
     engine = new GeometryEngine();
     const res = engine.rebuild([base, top, lid, under, move], { w: 30 });
     expect(res.featureErrors).toEqual({});
-    expect(res.followed![top.id].connector!.base.origin).toEqual([15, 10, 5]);
+    expect(r(res.followed![top.id].origin)).toEqual([15, 10, 5]);
     const basePart = res.parts.find((p) => p.id === base.id)!;
     expect(basePart.connectors?.map((c) => [c.id, r(c.origin), r(c.z)])).toEqual([[top.id, [15, 10, 5], [0, 0, 1]]]);
     // The lid now sits on the middle of the base's top.
@@ -155,6 +190,45 @@ describe("mate connectors in the Part Studio", () => {
     // An assembly mate end on that connector finds its frame on the part.
     const frame = connectorFrameOnParts(res.parts, { pick: { partId: base.id, ref: { kind: "face", surface: "PLANE", center: [0, 0, 0], normal: [0, 0, 1] } }, connector: top.id });
     expect(frame && r(frame.origin)).toEqual([15, 10, 5]);
+  });
+
+  it("a sketch on a connector whose part is moved later is built and shown where the connector went", () => {
+    const box = feature("box", { width: 10, depth: 20, height: 5 });
+    const conn = connectorOf({ at: { p: [5, 10, 5], pick: face(box.id, [5, 10, 5], [0, 0, 1]) } });
+    const move: Feature = { ...feature("transform", { dx: 100 }, "add"), transform: { partId: box.id, axis: "z", about: "centre", copy: false } };
+    const data = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 2, y: 2 }).sketch;
+    const sketch = sketchFeature({ kind: "face", origin: [5, 10, 5], u: [1, 0, 0], v: [0, 1, 0], label: conn.name, planeRef: conn.id }, data);
+    const pad = extrudeFeature(sketch.id, 3);
+    engine = new GeometryEngine();
+    const res = engine.rebuild([box, conn, move, sketch, pad]);
+    expect(res.featureErrors).toEqual({});
+    expect(boundsOf(res.parts, res.parts.findIndex((p) => p.id === pad.id))).toEqual([[105, 10, 5], [107, 12, 8]]);
+    expect(r(res.followed![conn.id].origin)).toEqual([105, 10, 5]);
+    const shownAt = res.sketchLinks?.[sketch.id]?.plane;
+    expect(shownAt?.kind === "face" && r(shownAt.origin)).toEqual([105, 10, 5]);
+  });
+
+  it("belong to the merged part when their part is joined into another (Boolean union, an Add joining parts)", () => {
+    const a = feature("box", { width: 10, depth: 20, height: 5 });
+    const b = feature("box", { width: 4, depth: 4, height: 8, x: 2, y: 2 });
+    const conn = connectorOf({ at: { p: [4, 4, 8], pick: { partId: b.id, ref: { kind: "face", surface: "PLANE", center: [4, 4, 8], normal: [0, 0, 1] } } } });
+    const uni: Feature = { ...feature("boolean", {}), booleanDef: { op: "union", targets: [a.id, b.id], tools: [], keepTools: false, picking: "targets" } };
+    engine = new GeometryEngine();
+    const res = engine.rebuild([a, b, conn, uni]);
+    expect(res.featureErrors).toEqual({});
+    expect(res.parts.map((p) => p.connectors?.length ?? 0)).toEqual([1]);
+    engine.dispose();
+    // An Add (Onshape-style) touching two parts joins them into the oldest.
+    const left = feature("box", { width: 10, depth: 10, height: 5 });
+    const right = feature("box", { width: 10, depth: 10, height: 5, x: 30 });
+    const onRight = connectorOf({ at: { p: [35, 5, 5], pick: { partId: right.id, ref: { kind: "face", surface: "PLANE", center: [35, 5, 5], normal: [0, 0, 1] } } } });
+    const bridge = sketchFeature({ kind: "default", name: "Top" }, addRectangle(emptySketch(), { x: 5, y: 2 }, { x: 35, y: 8 }).sketch);
+    const add: Feature = { ...extrudeFeature(bridge.id, 5, { operation: "add" }), apart: true };
+    engine = new GeometryEngine();
+    const joined = engine.rebuild([left, right, onRight, bridge, add]);
+    expect(joined.featureErrors).toEqual({});
+    expect(joined.parts).toHaveLength(1);
+    expect(joined.parts[0].connectors?.map((c) => c.id)).toEqual([onRight.id]);
   });
 
   it("on an edge's end and on a plane, with moves and turns", () => {

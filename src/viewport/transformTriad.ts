@@ -143,7 +143,7 @@ function spotSource(manager: SceneManager | null, target: PickTarget | null): { 
   if (target.kind === "customPlane") {
     const features = activeFeatures(s);
     const f = features.find((x) => x.id === target.id);
-    const frame = framesOf(features).get(target.id);
+    const frame = framesOf(features, undefined, s.builtFrames).get(target.id);
     const plane: SketchPlane | null = f && frame ? planeAsSketchPlane(f, frame) : null;
     return plane ? { src: { kind: "plane", frame: planeFrame(plane) } } : null;
   }

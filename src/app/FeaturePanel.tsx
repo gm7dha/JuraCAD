@@ -379,7 +379,7 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
         const d = st.editing?.draft;
         // A Plane feature clicked while something needs a plane: use it.
         if ((feature.type === "plane" || feature.type === "mateConnector") && d && d.id !== feature.id) {
-          const frame = framesOf(activeFeatures(st)).get(feature.id);
+          const frame = framesOf(activeFeatures(st), undefined, st.builtFrames).get(feature.id);
           const plane = frame ? planeAsSketchPlane(feature, frame) : null;
           if (plane && st.sketch && d.sketch && !d.sketch.plane) return st.setSketchPlane(plane);
           if (plane && d.type === "text" && d.text) return st.setDraftField({ text: { ...d.text, plane } });

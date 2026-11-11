@@ -89,11 +89,12 @@ function SplitOptionsField() {
   const setDraftField = useStore((s) => s.setDraftField);
   const parts = useStore(studioParts);
   const features = useStore(activeFeatures);
+  const built = useStore((s) => s.builtFrames);
   if (draft?.type !== "split" || !draft.splitDef) return null;
   const sp = draft.splitDef;
   const update = (patch: Partial<typeof sp>) => setDraftField({ splitDef: { ...sp, ...patch } });
   const planes = features.filter((f) => f.type === "plane");
-  const frames = framesOf(features);
+  const frames = framesOf(features, undefined, built);
   const surfaces = parts.filter((p) => p.surface && p.id !== sp.partId);
   const planeValue = sp.toolPartId ? `surface:${sp.toolPartId}` : sp.plane.kind === "default" ? sp.plane.name : sp.plane.planeRef ? `plane:${sp.plane.planeRef}` : "face";
   return (
@@ -159,11 +160,12 @@ function ReplaceFaceOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
+  const built = useStore((s) => s.builtFrames);
   if (draft?.type !== "replaceFace") return null;
   const rd = draft.replaceDef ?? { target: null };
   const picking = rd.picking === "target";
   const planes = features.filter((f) => f.type === "plane");
-  const frames = framesOf(features);
+  const frames = framesOf(features, undefined, built);
   const target = rd.target;
   const value = !target ? "" : target.kind === "default" ? target.name : target.planeRef ? `plane:${target.planeRef}` : "face";
   return (
@@ -207,11 +209,12 @@ function DraftOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
+  const built = useStore((s) => s.builtFrames);
   if (draft?.type !== "draft" && draft?.type !== "ruled") return null;
   const ruled = draft.type === "ruled";
   const neutral = draft.neutral ?? { kind: "default" as const, name: "Top" as const };
   const planes = features.filter((f) => f.type === "plane");
-  const frames = framesOf(features);
+  const frames = framesOf(features, undefined, built);
   const value = neutral.kind === "default" ? neutral.name : neutral.planeRef ? `plane:${neutral.planeRef}` : "face";
   return (
     <fieldset className="param-group">
@@ -602,13 +605,14 @@ function PlaneDefOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
+  const built = useStore((s) => s.builtFrames);
   if (draft?.type !== "plane" || !draft.planeDef) return null;
   const pd = draft.planeDef;
   const update = (patch: Partial<typeof pd>) => setDraftField({ planeDef: { ...pd, ...patch } });
   // Earlier Plane features can be based on too.
   const at = features.findIndex((f) => f.id === draft.id);
   const earlier = (at >= 0 ? features.slice(0, at) : features).filter((f) => f.type === "plane");
-  const frames = framesOf(features);
+  const frames = framesOf(features, undefined, built);
   const refValue = pd.ref.kind === "default" ? pd.ref.name : pd.ref.planeRef ? `plane:${pd.ref.planeRef}` : "face";
   return (
     <>

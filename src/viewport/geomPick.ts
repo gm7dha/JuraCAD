@@ -6,7 +6,7 @@
  */
 import { useStore, activeFeatures, pickFor } from "../model/store";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
-import { planeFrame } from "../sketch/planes";
+import { planeFrame, type PlaneFrame } from "../sketch/planes";
 import { connectorFromClick, planeClick, type GeomClick } from "../model/geomClicks";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { sketchLine3D } from "../model/patternRefs";
@@ -19,9 +19,9 @@ import { transformDraft } from "./transformTriad";
 type Vec3 = [number, number, number];
 
 /** Where each Part Studio mate connector is: as the engine placed it (on its owner part), else from its own settings. */
-export function connectorFrames(features: Feature[], parts: PartMesh[]): Map<string, { origin: Vec3; x: Vec3; z: Vec3 }> {
+export function connectorFrames(features: Feature[], parts: PartMesh[], built?: Readonly<Record<string, PlaneFrame>>): Map<string, { origin: Vec3; x: Vec3; z: Vec3 }> {
   const out = new Map<string, { origin: Vec3; x: Vec3; z: Vec3 }>();
-  const planes = framesOf(features);
+  const planes = framesOf(features, undefined, built);
   for (const f of features) {
     if (f.type !== "mateConnector" || f.suppressed) continue;
     const fr = planes.get(f.id);
@@ -32,8 +32,8 @@ export function connectorFrames(features: Feature[], parts: PartMesh[]): Map<str
 }
 
 /** The Part Studio's mate connectors to draw: those shown with the eye, and the one being made or changed. */
-export function studioConnectorMarks(features: Feature[], parts: PartMesh[], draft: Feature | null, picked: string | null): ConnectorMark[] {
-  const frames = connectorFrames(features, parts);
+export function studioConnectorMarks(features: Feature[], parts: PartMesh[], draft: Feature | null, picked: string | null, built?: Readonly<Record<string, PlaneFrame>>): ConnectorMark[] {
+  const frames = connectorFrames(features, parts, built);
   const out: ConnectorMark[] = [];
   for (const f of features) {
     if (f.type !== "mateConnector" || f.suppressed || f.id === draft?.id || !planeVisible(f)) continue;
@@ -41,7 +41,7 @@ export function studioConnectorMarks(features: Feature[], parts: PartMesh[], dra
     if (fr) out.push({ key: f.id, ...fr, lit: f.id === picked });
   }
   if (draft?.type === "mateConnector") {
-    const fr = connectorFrames([draft], []).get(draft.id);
+    const fr = connectorFrames([draft], [], built).get(draft.id);
     if (fr) out.push({ key: draft.id, ...fr, lit: true });
   }
   return out;
@@ -58,11 +58,11 @@ export function geomClickOf(manager: SceneManager | null, target: PickTarget | n
   }
   if (target.kind === "customPlane") {
     const f = features.find((x) => x.id === target.id);
-    const frame = framesOf(features).get(target.id);
+    const frame = framesOf(features, undefined, s.builtFrames).get(target.id);
     return f && frame ? { kind: "plane", plane: planeAsSketchPlane(f, frame), frame } : null;
   }
   if (target.kind === "connector") {
-    const fr = connectorFrames(features, s.parts).get(target.key);
+    const fr = connectorFrames(features, s.parts, s.builtFrames).get(target.key);
     return fr ? { kind: "connector", id: target.key, ...fr } : null;
   }
   if (target.kind === "sketchLine") {
@@ -109,7 +109,7 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
   // A mate connector clicked for Move / copy's "Transform by mate connectors".
   const t = transformDraft();
   if (t && (t.transform.picking === "from" || t.transform.picking === "to")) {
-    const fr = connectorFrames(activeFeatures(s), s.parts).get(target.key);
+    const fr = connectorFrames(activeFeatures(s), s.parts, s.builtFrames).get(target.key);
     if (!fr) return true;
     const frame = { origin: fr.origin, x: fr.x, z: fr.z };
     if (t.transform.picking === "from") s.changeDraftStep({ transform: { ...t.transform, from: frame, fromConnector: target.key, picking: t.transform.to || t.transform.toConnector ? undefined : "to" } });
@@ -119,7 +119,7 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
   // A sketch waiting for a plane: the connector's XY plane.
   const features = activeFeatures(s);
   const f = features.find((x) => x.id === target.key);
-  const frame = framesOf(features).get(target.key);
+  const frame = framesOf(features, undefined, s.builtFrames).get(target.key);
   if (s.sketch && d?.sketch && !d.sketch.plane && f && frame) {
     s.setSketchPlane(planeAsSketchPlane(f, frame));
     return true;

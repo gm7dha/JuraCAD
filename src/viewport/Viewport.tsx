@@ -32,6 +32,7 @@ import { setSketchTheme } from "./SketchLayer";
 import { draftEffect, partsOfFeature } from "../model/partLinks";
 import { SceneManager, type ConnectorMark, type PickAreas, type PickAreaSet, type PickTarget, type ScreenRay } from "./SceneManager";
 import { geomPick, studioConnectorMarks } from "./geomPick";
+import { connectorWanted } from "../model/geomClicks";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { areaClickChange, areaClickMode, areaOutlines, areaShades, areasTaken, clickableAreaSketches, followedSketch, selectArea, selectedAreaShades, selectedCount } from "../sketch/areaClicks";
 import { sketchAreas } from "../sketch/areas";
@@ -189,7 +190,7 @@ export function planeForFace(item: SelectionItem): SketchPlane | null {
 function customPlaneAt(id: string): SketchPlane | null {
   const features = activeFeatures(useStore.getState());
   const f = features.find((x) => x.id === id);
-  const frame = framesOf(features).get(id);
+  const frame = framesOf(features, undefined, useStore.getState().builtFrames).get(id);
   return f && frame ? planeAsSketchPlane(f, frame) : null;
 }
 
@@ -820,6 +821,7 @@ export function Viewport() {
   const planeDraft = useStore((s) => (s.editing?.draft.type === "plane" ? s.editing.draft : null));
   const listFeatures = useStore(activeFeatures);
   const pickedFeatureForPlanes = useStore((s) => s.selectedFeatureId);
+  const builtFrames = useStore((s) => s.builtFrames);
   useEffect(() => {
     const manager = viewportApi.current;
     if (!manager) return;
@@ -827,22 +829,23 @@ export function Viewport() {
       manager.setCustomPlanes([]);
       return;
     }
-    const frames = framesOf(listFeatures);
+    const frames = framesOf(listFeatures, undefined, builtFrames);
     const list = listFeatures
       // Hidden planes aren't drawn, so can't be clicked (one being edited is, below).
       .filter((f) => f.type === "plane" && frames.has(f.id) && f.id !== planeDraft?.id && planeVisible(f))
       .map((f) => ({ id: f.id, ...frames.get(f.id)!, label: f.name, highlight: f.id === pickedFeatureForPlanes }));
     if (planeDraft?.planeDef) {
       const { values, errors } = resolveParams(planeDraft);
-      const frame = Object.keys(errors).length ? null : planeFeatureFrame(planeDraft.planeDef, values);
+      // (Where the engine built it, when it follows the model; else from what's been clicked.)
+      const frame = Object.keys(errors).length ? null : builtFrames[planeDraft.id] ?? planeFeatureFrame(planeDraft.planeDef, values);
       if (frame && typeof frame !== "string") list.push({ id: planeDraft.id, ...frame, label: planeDraft.name, highlight: true });
     }
     manager.setCustomPlanes(list.map((p) => ({ id: p.id, origin: p.origin, u: p.u, v: p.v, label: p.label, highlight: p.highlight })));
-  }, [listFeatures, planeDraft, assembly, pickedFeatureForPlanes]);
+  }, [listFeatures, planeDraft, assembly, pickedFeatureForPlanes, builtFrames]);
   // Mate connectors: the Part Studio's own (shown with the eye), or — while a mate is made in an assembly — every part's own.
   const connectorDraft = useStore((s) => (s.editing?.draft.type === "mateConnector" ? s.editing.draft : null));
   const connectorMarks = useMemo<ConnectorMark[]>(() => {
-    if (!assembly) return studioConnectorMarks(listFeatures, parts, connectorDraft, pickedFeatureForPlanes);
+    if (!assembly) return studioConnectorMarks(listFeatures, parts, connectorDraft, pickedFeatureForPlanes, builtFrames);
     if (!mateDraft) return [];
     const out: ConnectorMark[] = [];
     const at = (m: number[], v: [number, number, number], w: number): [number, number, number] => [0, 1, 2].map((k) => m[k] * v[0] + m[4 + k] * v[1] + m[8 + k] * v[2] + w * m[12 + k]) as [number, number, number];
@@ -853,8 +856,10 @@ export function Viewport() {
       for (const c of part.connectors) out.push({ key: `${l.key}|${c.id}`, origin: at(m, c.origin, 1), x: at(m, c.x, 0), z: at(m, c.z, 0) });
     }
     return out;
-  }, [assembly, mateDraft, listFeatures, parts, connectorDraft, pickedFeatureForPlanes, leaves, placements]);
+  }, [assembly, mateDraft, listFeatures, parts, connectorDraft, pickedFeatureForPlanes, leaves, placements, builtFrames]);
   useEffect(() => viewportApi.current?.setConnectorMarks(connectorMarks), [connectorMarks]);
+  const wantsConnector = useStore((s) => connectorWanted(s, !!activeAssembly(s)));
+  useEffect(() => viewportApi.current?.setConnectorPicking(wantsConnector), [wantsConnector]);
   const selectedParts = useStore((s) => s.selectedParts);
   const pickedFeature = useStore((s) => s.selectedFeatureId);
   const studioFeatures = useStore(activeFeatures);

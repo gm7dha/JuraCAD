@@ -5,13 +5,14 @@
  */
 import { describe, expect, it } from "vitest";
 import { emptyDocument, parseDocument } from "../src/model/document";
-import { findDependents } from "../src/model/dependents";
+import { deletePlan, findDependents, outsideLines } from "../src/model/dependents";
+import { firstStudioId } from "../src/model/studios";
 import { visibleParamKeys } from "../src/model/features";
-import type { Feature, GeomPick, PlaneOptions } from "../src/model/types";
+import type { Feature, GeomPick, JuraCADDocument, PlaneOptions } from "../src/model/types";
 import { planeFeatureFrame, refreshPlaneRefs, framesOf } from "../src/sketch/planeFeature";
 import { connectorFrame, fitPlane, lineAngleReference, morePlaneFrame, rotateAbout } from "../src/sketch/planeTypes";
 import type { Vec3 } from "../src/sketch/planes";
-import { connectorFromClick, fractionAlong, lineFromClick, nearEnd, planeClick, pointFromClick, type GeomClick } from "../src/model/geomClicks";
+import { connectorFromClick, connectorWanted, fractionAlong, lineFromClick, nearEnd, planeClick, pointFromClick, type GeomClick } from "../src/model/geomClicks";
 
 const r = (v: number[]) => v.map((n) => Math.round(n * 1e6) / 1e6 + 0);
 const pt = (p: Vec3, extra: Partial<GeomPick> = {}): GeomPick => ({ p, ...extra });
@@ -225,5 +226,37 @@ describe("clicks for planes and mate connectors", () => {
     expect(typeof e !== "string" && e.at.spot).toBe("end");
     const p = connectorFromClick({ kind: "plane", plane: { kind: "default", name: "Front" }, frame: { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1], n: [0, -1, 0] } });
     expect(typeof p !== "string" && p.plane).toEqual({ kind: "default", name: "Front" });
+  });
+});
+
+describe("when a click can pick a mate connector", () => {
+  const draft = (type: Feature["type"], extra: Partial<Feature> = {}) => ({ editing: { draft: { id: "d", name: "d", type, operation: "new", suppressed: false, params: {}, ...extra } as Feature }, sketch: null, mateDraft: null });
+  it("only while the tool open takes one", () => {
+    expect(connectorWanted({ editing: null, sketch: null, mateDraft: null }, false)).toBe(true);
+    for (const t of ["mateConnector", "plane", "mirror", "text"] as const) expect(connectorWanted(draft(t), false)).toBe(true);
+    for (const t of ["fillet", "extrude", "chamfer", "hole"] as const) expect(connectorWanted(draft(t), false)).toBe(false);
+    expect(connectorWanted(draft("transform", { transform: { axis: "z", about: "centre", copy: false, mode: "mates", picking: "to" } }), false)).toBe(true);
+    expect(connectorWanted(draft("transform", { transform: { axis: "z", about: "centre", copy: false, mode: "mates" } }), false)).toBe(false);
+    // A sketch: only while it waits for its plane.
+    expect(connectorWanted({ ...draft("sketch", { sketch: { plane: null, data: { points: [], curves: [], constraints: [] } as never } }), sketch: {} }, false)).toBe(true);
+    expect(connectorWanted({ ...draft("sketch", { sketch: { plane: { kind: "default", name: "Top" }, data: { points: [], curves: [], constraints: [] } as never } }), sketch: {} }, false)).toBe(false);
+    // An assembly: while a mate is being made.
+    expect(connectorWanted({ editing: null, sketch: null, mateDraft: null }, true)).toBe(false);
+    expect(connectorWanted({ editing: null, sketch: null, mateDraft: {} }, true)).toBe(true);
+  });
+});
+
+describe("deleting a mate connector used in an assembly", () => {
+  it("the Delete question names the mates that use it", () => {
+    const mc: Feature = { id: "mc", name: "Peg spot", type: "mateConnector", operation: "new", suppressed: false, params: {}, connector: { at: { p: [0, 0, 0] }, base: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } } };
+    const end = { instanceId: "i1", pick: { partId: "b", ref: { kind: "face" as const, surface: "PLANE", center: [0, 0, 0] as Vec3, normal: [0, 0, 1] as Vec3 } } };
+    const doc = {
+      ...emptyDocument(),
+      features: [mc],
+      assemblies: [{ id: "a1", name: "Kit", instances: [], mates: [{ id: "m1", name: "Fasten 1", type: "fastened", a: { ...end, connector: "mc" }, b: end, flip: false, values: {} }] }],
+    } as unknown as JuraCADDocument;
+    const plan = deletePlan(doc, firstStudioId(doc), ["mc"]);
+    expect(outsideLines(plan.outside).join(" ")).toMatch(/In Kit, Fasten 1 uses a mate connector that will go/);
+    expect(outsideLines(deletePlan({ ...doc, assemblies: [] }, firstStudioId(doc), ["mc"]).outside)).toEqual([]);
   });
 });

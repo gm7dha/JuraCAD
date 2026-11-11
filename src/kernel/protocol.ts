@@ -3,7 +3,7 @@ import type { SketchPlane } from "../sketch/planes";
 import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
-import type { Feature, MateConnectorDef, MeshQuality, PlaneOptions, ViewKind } from "../model/types";
+import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
 import type { BedLayout, PrintPartResult } from "../model/printCheck";
 
@@ -123,10 +123,15 @@ export interface PartConnector {
   z: [number, number, number];
 }
 
-/** What the engine found again for a Plane feature or mate connector as the model is now (see RebuildResult.followed). */
-export interface FollowedRefs {
-  planeDef?: PlaneOptions;
-  connector?: MateConnectorDef;
+/**
+ * Where a Plane feature or mate connector is as built (see RebuildResult.followed): its plane — for a connector its
+ * XY plane (u = X, v = Y, n = Z). The design keeps what was clicked; this is where that is now.
+ */
+export interface FollowedFrame {
+  origin: [number, number, number];
+  u: [number, number, number];
+  v: [number, number, number];
+  n: [number, number, number];
 }
 
 /** A sheet metal part laid out flat (mm): the outline to cut, holes, and where it bends. */
@@ -165,10 +170,11 @@ export interface RebuildResult {
   /** Sketches on part faces or using part edges (by feature id): the face's edges, and where linked edges are now. */
   sketchLinks?: Record<string, SketchLinkInfo>;
   /**
-   * Plane features (newer types) and mate connectors whose points, lines or spots moved with the model: their settings
-   * with the numbers as found now (the app writes them into the design, so the plane shows where it is).
+   * Plane features that follow the model (the newer types, and any plane on one) and mate connectors, in every Part
+   * Studio (configuration on show), whether rebuilt now or before: where each is as built. Shown and used instead of
+   * what the design's numbers alone give (see framesOf's `built`); the design itself is never changed by a rebuild.
    */
-  followed?: Record<string, FollowedRefs>;
+  followed?: Record<string, FollowedFrame>;
 }
 
 export interface PartCheck {

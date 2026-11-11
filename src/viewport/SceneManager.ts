@@ -699,12 +699,18 @@ export class SceneManager {
     }
   }
   private connectorMarks: ConnectorMark[] = [];
+  /** Whether clicks can pick mate connectors (only while the tool open takes one; else they fall through to faces and edges). */
+  private connectorPicking = true;
+  setConnectorPicking(on: boolean): void {
+    this.connectorPicking = on;
+  }
   private readonly connectorGroup = new THREE.Group();
 
   /** The mate connector mark under a screen point (CSS px), if any. */
-  private connectorAt(x: number, y: number, reach: number): string | null {
+  private connectorAt(x: number, y: number, reach: number, inFront: (origin: [number, number, number]) => boolean): string | null {
     let best: { key: string; d: number } | null = null;
     for (const m of this.connectorMarks) {
+      if (!inFront(m.origin)) continue;
       const p = new THREE.Vector3(...m.origin).project(this.camera);
       if (p.z > 1) continue;
       const sx = ((p.x + 1) / 2) * this.width;
@@ -1591,15 +1597,19 @@ export class SceneManager {
     }
     // With a section on, ignore anything in the part that's cut away.
     const kept = (h: THREE.Intersection) => !this.section || this.section.distanceToPoint(h.point) >= -1e-6;
-    // A mate connector's middle wins over the faces and edges round it.
-    const connector = this.connectorMarks.length ? this.connectorAt(x, y, reach) : null;
-    if (connector) return { kind: "connector", key: connector };
     // A sketch area (while an Extrude, Revolve or Sweep is open): before parts, unless the extrude's end is being picked.
     const area = this.areaUnderPointer();
     const areaTarget = area ? ({ kind: "sketchArea", sketch: this.pickAreas!.sets[area.set].sketch, index: area.index } as const) : null;
     if (areaTarget && this.pickAreas?.mode === "first") return areaTarget;
     const faceHit = this.raycaster.intersectObjects(meshes, false).find(kept);
     const edgeHit = this.raycaster.intersectObjects(lines, false).find(kept);
+    // A mate connector's middle (when the tool open takes one) wins over the faces and edges round it — unless it's
+    // hidden behind the part.
+    if (this.connectorPicking && this.connectorMarks.length) {
+      const ray = this.raycaster.ray;
+      const key = this.connectorAt(x, y, reach, (o) => !faceHit || new THREE.Vector3(...o).sub(ray.origin).dot(ray.direction) <= faceHit.distance + threshold * 2);
+      if (key) return { kind: "connector", key };
+    }
     // Nothing open: an area wins when it's in front of the part (or on its face), unless an edge in front of it is under the pointer.
     if (area && areaTarget && this.pickAreas?.mode === "nearest" && (!faceHit || area.distance <= faceHit.distance + threshold) && (!edgeHit || this.facesOnly || edgeHit.distance > area.distance + threshold * 2)) {
       // The area lies on a face: say which, so clicking a selected area again can pick the face.
