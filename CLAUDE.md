@@ -1092,7 +1092,9 @@
   as far as it goes; a group free for good splits the set, each part must come apart too; returns the moves before the
   first split (level) or null. It answers exactly as the first version did (`tests/support/burrSlow.ts`, compared in
   libraryBurrSearch), only ~100× faster: how far a group slides depends only on each pair's relative place, so `pairHits`
-  works that out once per pair of piece shapes and relative position (cached across searches, `shapeIds`/`pairCache`); memo
+  works that out once per pair of piece shapes and relative position (cached across searches, `shapeIds`/`pairCache`, k < j
+  only; both emptied together at the start of a search past `MOST_HITS` results / `MOST_PAIRS` pairs, so a long-lived tab
+  stays bounded — `burrCacheSize`, tested over 300 hard seeds); memo
   keys are short strings (`groupKey`). `makeBurr(seed, difficulty)`: orders the pieces, mostly gives each cube to the first to leave
   (always comes apart), some at random and some empty (`gap` 0.35 / `mixed` 0.3 beyond Easy), `repaired` (gives a split
   piece back cubes that join it), then hill-climbs to the level range (Easy 1, Medium 2–3, Hard ≥ 4); cached. Its work is

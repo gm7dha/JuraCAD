@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { SEARCH_MOST, WORK_MOST, burrWork, contested, disassembly, makeBurr, piecesFrom, repaired, searchWithin } from "../src/library/burr";
+import { MOST_HITS, MOST_PAIRS, SEARCH_MOST, WORK_MOST, burrCacheSize, burrWork, contested, disassembly, makeBurr, piecesFrom, repaired, searchWithin } from "../src/library/burr";
 import { seeded } from "../src/library/puzzle";
 import { disassemblySlow } from "./support/burrSlow";
 
@@ -92,6 +92,21 @@ describe("Six-piece burr search", () => {
       expect(w.positions).toBeLessThanOrEqual(WORK_MOST);
       expect(disassembly(makeBurr(seed, "hard").pieces)).toBe(makeBurr(seed, "hard").level);
     }
+  });
+
+  it("keeps its shared cache bounded, however many burrs are made (a tab or the extension may make hundreds)", () => {
+    let emptied = 0;
+    let last = burrCacheSize().hits;
+    for (let seed = 101; seed <= 400; seed++) {
+      makeBurr(seed, "hard");
+      const c = burrCacheSize();
+      // It's emptied only as a search starts, so one search's worth can go past the caps.
+      expect(c.pairs, `hard ${seed}`).toBeLessThan(MOST_PAIRS + 1000);
+      expect(c.hits, `hard ${seed}`).toBeLessThan(MOST_HITS + 100_000);
+      if (c.hits < last) emptied++;
+      last = c.hits;
+    }
+    expect(emptied).toBeGreaterThan(0);
   });
 
   it("gives up after the given count of positions, the same way every time", () => {

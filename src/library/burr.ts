@@ -97,7 +97,7 @@ const DIRS: V3[] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0,
  */
 export function disassembly(pieces: Piece[], limit = 20000): number | null {
   const cubes = pieces.map((p) => Int32Array.from(p.flat()));
-  if (shapeIds.size > MOST_SHAPES) (shapeIds.clear(), pairCache.clear());
+  if (shapeIds.size > MOST_SHAPES || pairCache.size > MOST_PAIRS || cachedHits > MOST_HITS) (shapeIds.clear(), pairCache.clear(), (cachedHits = 0));
   const shapes = cubes.map((c) => {
     const k = String.fromCharCode.apply(null, Array.from(c, (x) => x + 0x4000));
     let n = shapeIds.get(k);
@@ -113,9 +113,19 @@ export function disassembly(pieces: Piece[], limit = 20000): number | null {
 // (`pairHits`): the hill-climb in `makeBurr` changes only a few cubes at a time, so most pairs come up again and again.
 const shapeIds = new Map<string, number>();
 const pairCache = new Map<number, Map<number, Uint8Array>>();
-// Forgotten (all at once) past MOST_SHAPES shapes; numbers stay below SHAPE_SPAN, so a pair of them is one small number.
+// Both are forgotten together (only as a search starts, so answers never change) once they hold more than MOST_HITS
+// results in all, MOST_PAIRS pairs or MOST_SHAPES shapes — or a long-lived tab making burr after burr would keep growing
+// (a few hundred bytes per result). Shape numbers stay below SHAPE_SPAN, so a pair of them is one small number.
+let cachedHits = 0;
+export const MOST_HITS = 300_000;
+export const MOST_PAIRS = 100_000;
 const MOST_SHAPES = 20000;
 const SHAPE_SPAN = 32768;
+
+/** How much the shared cache holds now (for tests: it must stay bounded). */
+export function burrCacheSize(): { shapes: number; pairs: number; hits: number } {
+  return { shapes: shapeIds.size, pairs: pairCache.size, hits: cachedHits };
+}
 
 /** Positions the burr solver has looked at so far (all searches added up): a measure of its work that doesn't depend on the machine. */
 let positionsSearched = 0;
@@ -172,14 +182,14 @@ function solveFast(cubes: Int32Array[], ids: number[], start: Int32Array, limit:
   // first[(k * n + j) * 6 + d]: how many cubes piece k slides along DIRS[d] before it first runs into piece j (NO_HIT: not
   // within FREE_STEPS).
   const first = new Uint8Array(n * n * 6);
-  // The cache for each pair of pieces here.
-  const caches: Map<number, Uint8Array>[] = [];
+  // The cache for each pair of pieces here (k < j only: the other way round is the same answer, mirrored).
+  const caches: Map<number, Uint8Array>[] = new Array(n * n);
   for (let k = 0; k < n; k++)
-    for (let j = 0; j < n; j++) {
+    for (let j = k + 1; j < n; j++) {
       const pair = shapes[ids[k]] * SHAPE_SPAN + shapes[ids[j]];
       let cache = pairCache.get(pair);
       if (!cache) pairCache.set(pair, (cache = new Map()));
-      caches.push(cache);
+      caches[k * n + j] = cache;
     }
   const seen = new Set<string>([id(start)]);
   let frontier: Int32Array[] = [start];
@@ -290,7 +300,7 @@ function pairHits(cubes: Int32Array[], reach: number[], a: number, b: number, rx
       else if (u === 0 && v === 0 && w !== 0) (d = w > 0 ? 4 : 5), (s = Math.abs(w));
       if (d >= 0 && s < out[d]) out[d] = s;
     }
-  if (!far) cache.set(key, out);
+  if (!far) (cache.set(key, out), cachedHits++);
   return out;
 }
 
