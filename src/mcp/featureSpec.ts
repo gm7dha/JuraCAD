@@ -33,6 +33,7 @@ export const FEATURE_KINDS = {
   circular_pattern: "circularPattern",
   mirror: "mirror",
   boolean: "boolean",
+  composite_part: "composite",
   box: "box",
   cylinder: "cylinder",
   sphere: "sphere",
@@ -51,10 +52,11 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   fillet: ["part", "edges", "radius", "end_radius"],
   chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side"],
   shell: ["part", "faces", "thickness", "outside"],
-  linear_pattern: ["features", "direction", "count", "spacing", "flip", "direction2", "count2", "spacing2", "flip2"],
-  circular_pattern: ["features", "axis", "count", "angle", "center"],
-  mirror: ["features", "part", "plane", "offset", "join"],
+  linear_pattern: ["features", "parts", "faces", "part", "direction", "count", "spacing", "flip", "direction2", "count2", "spacing2", "flip2", "skip"],
+  circular_pattern: ["features", "parts", "faces", "part", "axis", "count", "angle", "center", "skip"],
+  mirror: ["features", "part", "faces", "plane", "offset", "join"],
   boolean: ["op", "parts", "tools", "keep_tools"],
+  composite_part: ["parts"],
   box: ["width", "depth", "height", "x", "y", "z"],
   cylinder: ["diameter", "height", "x", "y", "z"],
   sphere: ["diameter", "x", "y", "z"],
@@ -458,7 +460,33 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
     case "linear_pattern":
     case "circular_pattern": {
       let p: NonNullable<Feature["pattern"]> = { ...(f.pattern ?? { sources: [], axis: "x" as const, flip: false }) };
-      if (has(a, "features") || !ctx.editing) p.sources = list(a.features, "features").map((r, i) => ctx.session.feature(r, `features[${i}]`, undefined, ctx.doc).id);
+      // Onshape's Pattern type: "features" (as before), whole "parts", or "faces" of one part (a boss, pocket or hole).
+      const given = ["features", "parts", "faces"].filter((k) => has(a, k));
+      if (given.length > 1) throw new InputError('Give one of "features" (features to repeat), "parts" (whole parts — each copy a new part) or "faces" (faces of one part: a boss, pocket or hole), not several.');
+      if (has(a, "part") && !has(a, "faces")) throw new InputError('"part" goes with "faces" (the part the faces are on). To repeat whole parts, give "parts": ["Part 1", …].');
+      if (has(a, "parts")) {
+        const parts = list(a.parts, "parts").map((r, i) => ctx.session.part(ctx.parts, r, `parts[${i}]`).id);
+        if (!parts.length) throw new InputError('"parts" needs at least one part.');
+        p = { ...p, of: "part", parts, sources: [] };
+        delete f.picks;
+      } else if (has(a, "faces")) {
+        const part = ctx.session.part(ctx.parts, a.part, "part");
+        f.picks = pickFaces(part, list(a.faces, "faces"), "faces");
+        const { parts: _parts, ...rest } = p;
+        p = { ...rest, of: "face", sources: [] };
+      } else if (has(a, "features") || !ctx.editing) {
+        const { parts: _parts, of: _of, ...rest } = p;
+        p = { ...rest, sources: list(a.features, "features").map((r, i) => ctx.session.feature(r, `features[${i}]`, undefined, ctx.doc).id) };
+        delete f.picks;
+      }
+      if (has(a, "skip")) {
+        const skip = [...new Set(list(a.skip, "skip", { allowEmpty: true }).map((n, i) => {
+          if (typeof n !== "number" || !Number.isInteger(n) || n < 2) throw new InputError(`skip[${i}] must be a copy number, 2 or more (the original is 1).`);
+          return n;
+        }))].sort((x, y) => x - y);
+        if (skip.length) p.skip = skip;
+        else delete p.skip;
+      }
       if (kind === "linear_pattern") {
         // A direction given here replaces anything clicked in the app (an edge, face or sketch line).
         if (has(a, "direction")) p = setPatternDirection(p, { kind: "axis", axis: oneOf(a.direction, ["x", "y", "z"] as const, "direction") });
@@ -494,12 +522,25 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
 
     case "mirror": {
       let m: NonNullable<Feature["mirror"]> = { ...(f.mirror ?? { sources: [], plane: { kind: "default", name: "Right" } as SketchPlane }) };
-      if (has(a, "features") && has(a, "part")) throw new InputError('Mirror either "features" (copies of them across the plane) or a whole "part", not both.');
-      if (has(a, "features")) {
+      if (has(a, "features") && (has(a, "part") || has(a, "faces"))) throw new InputError('Mirror either "features" (copies of them across the plane), a whole "part", or "faces" of a part — not several.');
+      if (has(a, "faces")) {
+        // Faces of one part (a boss, pocket or hole): mirrored onto the same part. "part" names the part they're on.
+        const part = ctx.session.part(ctx.parts, a.part, "part");
+        f.picks = pickFaces(part, list(a.faces, "faces"), "faces");
+        m.sources = [];
+        m.of = "face";
+        delete m.part;
+        delete m.join;
+        if (has(a, "join")) throw new InputError('"join" goes with mirroring a whole "part", not faces.');
+      } else if (has(a, "features")) {
         m.sources = list(a.features, "features").map((r, i) => ctx.session.feature(r, `features[${i}]`, undefined, ctx.doc).id);
         delete m.part;
         delete m.join;
+        delete m.of;
+        delete f.picks;
       } else if (has(a, "part")) {
+        delete m.of;
+        delete f.picks;
         m.part = ctx.session.part(ctx.parts, a.part, "part").id;
         m.sources = [];
       } else if (!ctx.editing) throw new InputError('Give "features" (a list of features to mirror) or "part" (a whole part to mirror).');
@@ -511,6 +552,15 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
         m.join = bool(a.join, "join") || undefined;
       }
       f.mirror = m;
+      break;
+    }
+
+    case "composite_part": {
+      if (has(a, "parts") || !ctx.editing) {
+        const ids = [...new Set(list(a.parts, "parts").map((r, i) => ctx.session.part(ctx.parts, r, `parts[${i}]`).id))];
+        if (ids.length < 2) throw new InputError('"parts" needs two or more different parts to group into a composite part.');
+        f.compositeParts = ids;
+      }
       break;
     }
 

@@ -8,6 +8,24 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.59 — Thin walls; Revolve two ways
+
+- New "Thin wall" option on Extrude, Revolve and Sweep (like Onshape's Thin): a solid wall of a set thickness along a sketch's lines, arcs and circles — open lines make walls, closed shapes make hollow tubes, with sharp corners.
+- Choose the thickness on each side, centre it on the lines, or flip it to the other side. Works with New, Add, Remove and Intersect and every way an extrude can end.
+- A rectangle with a line across it, or a house shape, gets clean walls that meet without gaps. Pick areas to put the wall only round those.
+- Revolve can now go two ways: one angle one way from the sketch and a second angle the other (One way / Symmetric / Two ways).
+- The "Surface" option is now worded "a skin with no inside", so it's clearly different from a thin wall.
+- Claude can make thin walls and two-way revolves too.
+
+## v0.58 — Pattern whole parts and faces; Composite part
+
+- Linear, Circular and Curve pattern can now repeat whole parts (each copy a new part) or the faces of a boss, pocket or
+  hole, as well as features — like Onshape's Pattern type.
+- Mirror can mirror faces too (Whole part / Features / Faces).
+- New **Composite part**: group parts into one that's picked, coloured, exported and put in assemblies together, while they
+  stay separate pieces inside. Export for laser cuts each piece as its own panel.
+- Claude can do all three.
+
 ## v0.57 — Red paths and black roads on colour puzzles
 
 - With **Colour bands**, footpaths and tracks from the map are painted **red** and roads **black** in their grooves, on

@@ -133,7 +133,7 @@ function usesOf(f: Feature): Uses {
       needPart(f.mirror.planePick?.partId);
       need(f.mirror.line?.sketch);
     }
-    if (f.mirror.sources.length) lists.push({ what: "feature it mirrors", many: "features it mirrors", features: f.mirror.sources });
+    if (!f.mirror.of && f.mirror.part === undefined && f.mirror.sources.length) lists.push({ what: "feature it mirrors", many: "features it mirrors", features: f.mirror.sources });
   }
   if (f.pattern) {
     if (!f.pattern.unset) {
@@ -142,7 +142,9 @@ function usesOf(f: Feature): Uses {
     }
     needPart(f.pattern.along2?.partId);
     need(f.pattern.line2?.sketch);
-    if (f.pattern.sources.length) lists.push({ what: "feature it repeats", many: "features it repeats", features: f.pattern.sources });
+    if (f.pattern.of === "part") {
+      if (f.pattern.parts?.length) lists.push({ what: "part it repeats", many: "parts it repeats", parts: f.pattern.parts });
+    } else if (!f.pattern.of && f.pattern.sources.length) lists.push({ what: "feature it repeats", many: "features it repeats", features: f.pattern.sources });
   }
   if (f.sections?.length) lists.push({ what: "loft section", many: "loft sections", features: f.sections, least: 2 });
   if (f.picks?.length) lists.push({ what: "picked edge or face", many: "picked edges and faces", parts: f.picks.map((p) => p.partId) });
@@ -154,6 +156,7 @@ function usesOf(f: Feature): Uses {
   }
   if (f.deleteParts?.length) lists.push({ what: "part it deletes", many: "parts it deletes", parts: f.deleteParts });
   if (f.simplifyParts?.length) lists.push({ what: "part it tidies", many: "parts it tidies", parts: f.simplifyParts });
+  if (f.compositeParts?.length) lists.push({ what: "part it groups", many: "parts it groups", parts: f.compositeParts, least: 2 });
   if (f.moreAreas?.length) optional.push({ what: "extra sketch it takes areas from", many: "extra sketches it takes areas from", features: f.moreAreas.map((m) => m.sketch) });
   if (f.sketch) {
     const links = sketchLinks(f.sketch.data);
@@ -183,6 +186,11 @@ function makesSolidPart(f: Feature, makers: Set<string>): boolean {
   if (f.type === "split") return f.splitDef?.keep === "both";
   if (f.type === "mirror" && f.mirror?.part !== undefined) return !f.mirror.join;
   if (f.type === "transform") return !!f.transform?.copy;
+  // A part pattern's copies are new parts; a face pattern or mirror changes the part its faces are on.
+  if (f.pattern?.of === "part") return !!f.pattern.parts?.length;
+  if (f.pattern?.of === "face" || f.mirror?.of === "face") return false;
+  // A composite part is the latest part once made (it's put at the end of the parts).
+  if (f.type === "composite") return !!f.compositeParts?.length;
   if (isPatternFeature(f.type)) return (f.pattern?.sources ?? f.mirror?.sources ?? []).some((id) => makers.has(id));
   if (f.type === "sheetMetal" && f.sheetConvert) return false;
   return f.operation === "new" && (isSolidFeature(f.type) || SOLID_MAKERS.has(f.type));
@@ -290,6 +298,8 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
     set({ booleanDef: { ...f.booleanDef, targets: f.booleanDef.targets.filter((p) => !partGone(p)), tools: f.booleanDef.tools.filter((p) => !partGone(p)) } });
   if (f.deleteParts?.some(partGone)) set({ deleteParts: f.deleteParts.filter((p) => !partGone(p)) });
   if (f.simplifyParts?.some(partGone)) set({ simplifyParts: f.simplifyParts.filter((p) => !partGone(p)) });
+  if (f.pattern?.parts?.some(partGone)) set({ pattern: { ...out.pattern!, parts: f.pattern.parts.filter((p) => !partGone(p)) } });
+  if (f.compositeParts?.some(partGone)) set({ compositeParts: f.compositeParts.filter((p) => !partGone(p)) });
   if (f.sketch) {
     const lost = (l: unknown) => linkGone(l, featureGone, partGone);
     const data = f.sketch.data;
