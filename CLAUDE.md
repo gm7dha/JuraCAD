@@ -966,7 +966,22 @@
   `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),
   `BOUNDARY_LEVELS`. osm.ts reads `boundaries`/`regionNames` (`boundaryLevels`, `boundariesOnGrid`, `levelName`).
   elevation.ts: `zoomFor` (finest zoom with ≤ MAX_TILES), `areaProblem(…, most, z)`, `readHeights(…, spacing, z)`.
-  Tests: tests/islandPuzzle (pure).
+  Joins (`joinPieces`): one dovetail per border, the biggest that fits from neck 0.26 × piece down to `LEAST_NECK` 3.5 mm
+  (×0.8 steps), and a second on the only border of a piece with one neighbour; a piece held by fewer than
+  min(`MIN_JOINTS` 2, neighbours) joins the neighbour it shares most border with and the joins are made again (≤ 8 passes);
+  pieces with no neighbour are `loose` (said in the summary). `IslandPiece.joints`/`neighbours`. Default fit 0.1 (the real
+  gap is 2·fit + ~0.4 cell on straight runs, ≥ 2·fit everywhere). Small-piece merging skips a pair that would join each
+  other (it used to recurse for ever). Map marks: `makeIslandPuzzle(…, cuts, features)` → `featuresForIsland` (drops lines
+  < 3 mm, lochs < 4 mm², buildings < ½ `BUILDING_LEAST` on the puzzle) → the Mountain's `groundMarks` (unchanged) over the
+  plain top; lowering fades to nothing over thin parts (`thinFade`: where a disc 1.2 × neck across doesn't fit — tabs, narrow
+  strips — `MARK_FADE` 1.5 mm, one field for all pieces so marks line up across joins) and never below `LEAST_BASE` 1.5;
+  only land is meshed, so rivers stop at the coast. `pieceMesh(…, fine)` draws squares whose top differs from the plain
+  ground s × s finer on top only (to ≤ `MARK_SAMPLE` 0.45 mm; whole sides shared with marked neighbours split too, partial
+  squares fanned from their middle), so outlines, walls and undersides are exactly the plain puzzle's. `IslandPuzzle.marks`
+  (lines clipped to the land, for the top view, drawn source-atop) and `groundAt`. With no features everything is byte for
+  byte the plain puzzle. Fetched with `marksQuery` (Overpass, one POST on a click: paths/tracks, rivers/streams, lochs; main
+  roads for "all"; no buildings — map file only; areas ≤ `MARKS_MOST` 130 km, else a map file).
+  Tests: tests/islandPuzzle (pure; every piece's joints over seeds/sizes on a ragged coast), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
   cards that open their own window instead of inserting features, found by the search via `searchTools`/`searchWords`;
   LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; `mountainState.kind` "photo" = the Photo relief

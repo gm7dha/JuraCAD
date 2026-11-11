@@ -66,9 +66,16 @@ describe("island puzzle with map marks", () => {
   });
 
   it("presses grooves into the tops at the right depth, and sets the loch flat", () => {
-    // The path's middle corner (202500, 772000) is well inland.
-    const [px, py] = mm(202500, 772000);
-    expect(plainAt(px, py) - water.groundAt(px, py)).toBeCloseTo(GROOVES.path.depth, 1);
+    // Along the path (inland, 201200,771000 → 202500,772000): the groove is its full depth except where it crosses a
+    // dovetail, where it fades; never deeper.
+    let [px, py, most] = [0, 0, 0];
+    for (let t = 0; t <= 1; t += 0.01) {
+      const [x, y] = mm(201200 + 1300 * t, 771000 + 1000 * t);
+      const d = plainAt(x, y) - water.groundAt(x, y);
+      expect(d).toBeLessThanOrEqual(GROOVES.path.depth + 1e-6);
+      if (d > most) [px, py, most] = [x, y, d];
+    }
+    expect(most).toBeCloseTo(GROOVES.path.depth, 1);
     // The pieces' top points near it are lowered by up to the groove's depth.
     let deepest = 0;
     for (const p of water.pieces) {
@@ -125,6 +132,8 @@ describe("island puzzle with map marks", () => {
       expect(c.open, p.name).toBe(0);
       expect(c.volume, p.name).toBeGreaterThan(0);
       expect(p.outline).toEqual(plain.pieces[i].outline);
+      // Held by two dovetails (one where a piece has just one neighbour), marks or not.
+      if (p.neighbours) expect(p.joints, p.name).toBeGreaterThanOrEqual(Math.min(2, p.neighbours));
     });
     const plates = platesFor(all.pieces, SPEC.bed);
     expect(plate3mf(plates[0], "Marks").length).toBeGreaterThan(1000);

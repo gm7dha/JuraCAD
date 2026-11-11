@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { weld } from "../src/geometry/threeMf";
 import { areaProblem, gridFrom, MAX_TILES, tilesFor, zoomFor } from "../src/terrain/elevation";
-import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS } from "../src/terrain/islands";
+import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, marksQuery } from "../src/terrain/islands";
 import { boundariesOnGrid, boundaryLevels, readOsm } from "../src/terrain/osm";
 import { distanceTransform, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, MIN_JOINTS, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import type { Body } from "../src/terrain/mountainPuzzle";
@@ -215,6 +215,16 @@ describe("islands and boundaries", () => {
     expect(w).toBeLessThan(-5.4);
     expect(e).toBeGreaterThan(-5.05);
     expect(BOUNDARY_LEVELS.map(([l]) => l)).toEqual([4, 6, 8, 10]);
+  });
+  it("asks OpenStreetMap for paths, rivers and lochs (roads too for everything), and not for Great Britain", () => {
+    const [arran, gb] = [ISLANDS[1], ISLANDS[0]];
+    const water = marksQuery(arran.sw, arran.width, arran.height, "water")!;
+    expect(water).toContain('way["waterway"');
+    expect(water).toContain('"natural"="water"');
+    expect(water).not.toContain("motorway");
+    expect(marksQuery(arran.sw, arran.width, arran.height, "all")).toContain("motorway");
+    expect(marksQuery(gb.sw, gb.width, gb.height, "water")).toBeNull();
+    for (const i of ISLANDS.slice(1)) expect(marksQuery(i.sw, i.width, i.height, "water"), i.name).not.toBeNull();
   });
   it("reads boundaries and their names from a map file", () => {
     const osm = `<?xml version="1.0"?><osm version="0.6">

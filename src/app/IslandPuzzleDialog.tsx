@@ -1,19 +1,21 @@
 /**
  * Island puzzle: pick an island (or all of Great Britain, or any area by grid reference), fetch its heights, cut its land
  * into interlocking pieces — of about a chosen size, or along county / parish boundaries fetched from OpenStreetMap — and
- * download the pieces as print plates (3MF). Nothing goes into the design. The maths is in src/terrain/islandPuzzle.ts.
+ * download the pieces as print plates (3MF). "From the map" presses paths, rivers and lochs (and roads and buildings) from
+ * OpenStreetMap into the ground, fetched for the island or read from a map file. Nothing goes into the design. The maths is
+ * in src/terrain/islandPuzzle.ts.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CUSTOM_PRINTER, PRINTERS } from "../model/printBed";
 import { areaProblem, readHeights, zoomFor, type HeightGrid } from "../terrain/elevation";
 import { ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, type IslandCuts, type IslandLand, type IslandPuzzle, type IslandSpec } from "../terrain/islandPuzzle";
-import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, OVERPASS_URL } from "../terrain/islands";
+import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
-import { boundariesOnGrid, boundaryLevels, levelName, OsmError, readOsm, type OsmData } from "../terrain/osm";
+import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { allPlatesZip, plate3mf, platesFor } from "../terrain/puzzle3mf";
 import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
-import { Mountain3D } from "./MountainPuzzleDialog";
+import { DETAILS, Mountain3D } from "./MountainPuzzleDialog";
 import { openMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
 import { loadPrinter, printerBed, savePrinter } from "./printerSetting";
@@ -59,6 +61,11 @@ export function IslandPuzzleDialog() {
   const [map, setMap] = useState<{ name: string; data: OsmData } | null>(null);
   const [mapBusy, setMapBusy] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  // "From the map": what to press into the ground, and the map it comes from (fetched, or a file).
+  const [detail, setDetail] = useState<OsmDetail>("area");
+  const [marksMap, setMarksMap] = useState<{ name: string; data: OsmData; fetched: OsmDetail | null } | null>(null);
+  const [marksBusy, setMarksBusy] = useState(false);
+  const [marksError, setMarksError] = useState<string | null>(null);
 
   const [loaded, setLoaded] = useState<{ area: Area; grid: HeightGrid } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -82,6 +89,7 @@ export function IslandPuzzleDialog() {
       const spacing = Math.max(15, Math.max(area.width, area.height) / 1000);
       setLoaded({ area, grid: await readHeights(loadTerrainTile, area.sw, area.width, area.height, spacing, z) });
       setMap(null);
+      setMarksMap(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -112,6 +120,46 @@ export function IslandPuzzleDialog() {
     }
   };
 
+  /** One request to OpenStreetMap's query service for the island's paths, rivers and lochs (and roads), on a click. */
+  const getMarks = async () => {
+    if (!loaded || detail === "area") return;
+    const { sw, width, height } = loaded.area;
+    const query = marksQuery(sw, width, height, detail);
+    if (!query) return;
+    setMarksBusy(true);
+    setMarksError(null);
+    try {
+      let res: Response;
+      try {
+        res = await fetch(OVERPASS_URL, { method: "POST", body: new URLSearchParams({ data: query }) });
+      } catch {
+        throw new Error("Couldn't reach OpenStreetMap's map service — check you're online, or use a map file.");
+      }
+      if (res.status === 429 || res.status === 504) throw new Error("OpenStreetMap's map service is busy — try again in a minute, or use a map file.");
+      if (!res.ok) throw new Error(`OpenStreetMap's map service said ${res.status}.`);
+      const text = await res.text();
+      // An area with nothing on it comes back with no nodes at all.
+      if (!/<node\b/.test(text)) setMarksMap({ name: "OpenStreetMap", data: { bounds: null, lines: [], shapes: [], names: [], boundaries: [], regionNames: [], nodes: 0 }, fetched: detail });
+      else setMarksMap({ name: "OpenStreetMap", data: readOsm(text), fetched: detail });
+    } catch (e) {
+      setMarksError(e instanceof OsmError ? e.message : e instanceof Error ? e.message : String(e));
+    } finally {
+      setMarksBusy(false);
+    }
+  };
+
+  const chooseMarksFile = (file: File | undefined) => {
+    if (!file) return;
+    setMarksError(null);
+    file
+      .text()
+      .then((text) => setMarksMap({ name: file.name, data: readOsm(text), fetched: null }))
+      .catch((e) => {
+        setMarksMap(null);
+        setMarksError(e instanceof OsmError ? e.message : "That file couldn't be read as an OpenStreetMap file.");
+      });
+  };
+
   const chooseFile = (file: File | undefined) => {
     if (!file) return;
     setMapError(null);
@@ -129,6 +177,11 @@ export function IslandPuzzleDialog() {
   const usedLevel = levels.some(([l]) => l === level) ? level : levels.length ? levels[levels.length - 1][0] : level;
   const cuts: IslandCuts | undefined = useMemo(() => (cutBy === "boundaries" && map ? boundariesOnGrid(map.data, usedLevel) : undefined), [cutBy, map, usedLevel]);
 
+  const features: MapFeatures = useMemo(() => (detail !== "area" && marksMap ? featuresOnGrid(marksMap.data, detail) : NO_FEATURES), [detail, marksMap]);
+  // Fetched for "Paths, rivers and lochs" only: "Everything" needs the roads too.
+  const needsFetch = detail !== "area" && (!marksMap || (marksMap.fetched === "water" && detail === "all"));
+  const canFetch = !!loaded && fresh && Math.max(loaded.area.width, loaded.area.height) <= MARKS_MOST;
+
   const fullSpec: IslandSpec = { ...spec, bed };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
@@ -140,7 +193,7 @@ export function IslandPuzzleDialog() {
     setWorking(true);
     const timer = setTimeout(() => {
       try {
-        setPuzzle(makeIslandPuzzle(loaded.grid, loaded.area.sw, loaded.area.width, loaded.area.height, fullSpec, cuts));
+        setPuzzle(makeIslandPuzzle(loaded.grid, loaded.area.sw, loaded.area.width, loaded.area.height, fullSpec, cuts, features));
         setBuildError(null);
       } catch (e) {
         setPuzzle(null);
@@ -151,7 +204,7 @@ export function IslandPuzzleDialog() {
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, specKey, cuts]);
+  }, [loaded, specKey, cuts, features]);
 
   const plates = useMemo(() => (puzzle ? platesFor(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2]]);
   const fileName = safeFileName(`${loaded?.area.name ?? "Island"} puzzle`, "Island puzzle");
@@ -262,7 +315,45 @@ export function IslandPuzzleDialog() {
             </>
           )}
 
-          <h3 className="library-heading">3. Size</h3>
+          <h3 className="library-heading">3. From the map</h3>
+          <label className="mountain-row">
+            <span>From the map</span>
+            <select value={detail} onChange={(e) => setDetail(e.target.value as OsmDetail)}>
+              {DETAILS.map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {detail !== "area" && (
+            <>
+              {canFetch || !loaded ? (
+                <button className="text-button mountain-fetch" onClick={getMarks} disabled={!loaded || !fresh || marksBusy}>
+                  {marksBusy ? "Getting the map…" : needsFetch ? "Get them from OpenStreetMap" : "Get them again from OpenStreetMap"}
+                </button>
+              ) : (
+                <p className="muted small">This area is too big to fetch from OpenStreetMap — use a map file (an Export from openstreetmap.org) instead.</p>
+              )}
+              <label className="mountain-row">
+                <span>Or a map file</span>
+                <input type="file" accept=".osm,.xml,application/xml,text/xml" onChange={(e) => chooseMarksFile(e.target.files?.[0])} />
+              </label>
+              {!loaded && <p className="muted small">Get the heights first.</p>}
+              {marksError && <p className="error-text small">{marksError}</p>}
+              <p className="muted small">
+                Paths and rivers become shallow grooves in the ground, lochs flat water{detail === "all" ? ", roads wider grooves and buildings small blocks (buildings only from a map file — fetched, a town would be too much)" : ""}. Rivers stop at the coast; grooves are kept shallow on the dovetails and narrow strips so nothing gets weak.
+              </p>
+              {marksMap && (
+                <p className="muted small">
+                  {marksMap.name}: {featureSummary(features)}.{puzzle?.marks.tooSmall ? ` ${puzzle.marks.tooSmall} too small to show at this scale are left off.` : ""}
+                  {marksMap.fetched === "water" && detail === "all" ? " Get them again for the roads." : ""}
+                </p>
+              )}
+            </>
+          )}
+
+          <h3 className="library-heading">4. Size</h3>
           <label className="mountain-row">
             <span>Printer</span>
             <select value={printer.printer} onChange={(e) => setPrinter(savePrinter({ printer: e.target.value }))} title="Also changes the printer in the 3D print panel">
@@ -297,7 +388,10 @@ export function IslandPuzzleDialog() {
           </div>
           <div className="mountain-row">
             <span>Fit gap</span>
-            {numberBox(spec.fit, (v) => set("fit", v), 0.05, 0, 0.5, "mm each side")}
+            <span>
+              {numberBox(spec.fit, (v) => set("fit", v), 0.01, 0, 0.5, "mm each side")}
+              <span className="muted small"> Too loose? Lower it by 0.02–0.05 mm. Too tight? Raise it.</span>
+            </span>
           </div>
           <div className="mountain-row">
             <span>Pattern</span>
@@ -341,7 +435,8 @@ export function IslandPuzzleDialog() {
                     on the highest ground ({Math.round(puzzle.high)} m). 1 mm is {formatDistance(1 / puzzle.k)} across.
                   </p>
                   <p className="muted">
-                    {puzzle.joins} dovetails hold the pieces together.
+                    {puzzle.joins} dovetails hold the pieces together — at least two on every piece (one where a piece has only one
+                    neighbour).{puzzle.marks.shown ? ` ${puzzle.marks.shown} things from the map are pressed into the ground.` : ""}
                   </p>
                   {puzzle.warnings.map((w) => (
                     <p key={w} className="mountain-warn">
@@ -400,8 +495,7 @@ function IslandTopView({ puzzle }: { puzzle: IslandPuzzle | null }) {
     const [w, h] = [Math.round(puzzle.width * s), Math.round(puzzle.height * s)];
     canvas.width = w;
     canvas.height = h;
-    ctx.fillStyle = "#4f7fae";
-    ctx.fillRect(0, 0, w, h);
+    ctx.clearRect(0, 0, w, h);
     ctx.font = "10px system-ui, sans-serif";
     ctx.textAlign = "center";
     puzzle.pieces.forEach((p, n) => {
@@ -415,17 +509,43 @@ function IslandTopView({ puzzle }: { puzzle: IslandPuzzle | null }) {
         ctx.closePath();
       }
       ctx.fill();
+    });
+    // The map's marks, only where there's land (drawn onto the pieces just painted).
+    ctx.save();
+    ctx.globalCompositeOperation = "source-atop";
+    const px = ([x, y]: [number, number]): [number, number] => [x * s, h - y * s];
+    for (const shape of puzzle.marks.shapes) {
+      ctx.beginPath();
+      for (const ring of shape.rings) ring.forEach((p, i) => (i ? ctx.lineTo(...px(p)) : ctx.moveTo(...px(p))));
+      ctx.fillStyle = shape.kind === "water" ? "rgba(60,120,200,0.85)" : "rgba(60,50,40,0.9)";
+      ctx.fill("evenodd");
+    }
+    for (const line of puzzle.marks.lines) {
+      ctx.beginPath();
+      line.pts.forEach((p, i) => (i ? ctx.lineTo(...px(p)) : ctx.moveTo(...px(p))));
+      ctx.strokeStyle = line.kind === "river" || line.kind === "stream" ? "rgba(40,100,200,0.9)" : line.kind === "road" ? "rgba(200,60,40,0.9)" : "rgba(120,60,20,0.9)";
+      ctx.lineWidth = line.kind === "river" || line.kind === "road" ? 1.6 : 1;
+      ctx.setLineDash(line.kind === "path" ? [3, 2] : []);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.setLineDash([]);
+    // The sea under it all, then the numbers.
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-over";
+    ctx.fillStyle = "#4f7fae";
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+    ctx.fillStyle = "rgba(20,30,40,0.9)";
+    puzzle.pieces.forEach((p) => {
       const [[x0, y0], , [x1, y1]] = p.outline;
-      if ((x1 - x0) * s > 14 && (y1 - y0) * s > 10) {
-        ctx.fillStyle = "rgba(20,30,40,0.9)";
-        ctx.fillText(p.name.split(" ")[0], ((x0 + x1) / 2) * s, h - ((y0 + y1) / 2) * s + 3);
-      }
+      if ((x1 - x0) * s > 14 && (y1 - y0) * s > 10) ctx.fillText(p.name.split(" ")[0], ((x0 + x1) / 2) * s, h - ((y0 + y1) / 2) * s + 3);
     });
   }, [puzzle]);
   return (
     <figure className="mountain-figure">
       <canvas ref={ref} className="mountain-top" />
-      <figcaption className="muted small">From above, north up: each piece numbered.</figcaption>
+      <figcaption className="muted small">From above, north up: each piece numbered, with the map's paths, rivers and lochs.</figcaption>
     </figure>
   );
 }
