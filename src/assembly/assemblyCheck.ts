@@ -53,7 +53,7 @@ export type Contact =
    * Two solids share some space: `depth` is how far one goes into the other (a side, mm; about, unless
    * `round` — a pin in a hole, measured exactly).
    */
-  | { kind: "overlap"; a: string; b: string; volume: number; depth?: number; round?: boolean }
+  | { kind: "overlap"; a: string; b: string; volume: number; depth?: number; round?: boolean; ids?: [string, string] }
   /** A surface goes through a solid (a is the surface). */
   | { kind: "through"; a: string; b: string; area: number }
   /** Two surfaces cross. */
@@ -85,7 +85,7 @@ export function judgeContact(m: ContactMeasure, tolerance: number): Contact | nu
       // How deep: a pin bigger than its hole exactly, else the estimate.
       const ring = m.ring && m.ring.radial < 0 ? -m.ring.radial : null;
       const depth = ring ?? thickness;
-      return { kind: "overlap", a: m.a, b: m.b, volume: v, ...(Number.isFinite(depth) ? { depth } : {}), ...(ring !== null ? { round: true } : {}) };
+      return { kind: "overlap", a: m.a, b: m.b, volume: v, ...(Number.isFinite(depth) ? { depth } : {}), ...(ring !== null ? { round: true } : {}), ...(m.ids ? { ids: m.ids } : {}) };
     }
   } else if (m.surfaceA && !m.surfaceB) {
     const area = m.area ?? 0;
@@ -173,7 +173,8 @@ export function assemblyReport(
       : [{ level: "ok", text: inUse.length ? "All mates are working" : (assembly.mates ?? []).length ? "No mates in use" : "No mates yet" }],
   );
 
-  const clashes = contacts.filter((c) => c.kind !== "touch" && !fits?.handled.has(pairKey(c.a, c.b)));
+  // Marked fits are judged under Fits instead (matched by the parts' keys, so two copies with the same name can't be mixed up).
+  const clashes = contacts.filter((c) => c.kind !== "touch" && !(c.kind === "overlap" && c.ids && fits?.handled.has(pairKey(c.ids[0], c.ids[1]))));
   const touching = contacts.filter((c) => c.kind === "touch");
   const notes: Finding[] = [];
   const out = [leftOut.hidden ? `${plural(leftOut.hidden, "hidden part")}` : "", leftOut.suppressed ? `${plural(leftOut.suppressed, "suppressed part")}` : ""].filter(Boolean);

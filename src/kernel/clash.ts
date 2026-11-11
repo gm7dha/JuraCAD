@@ -156,7 +156,7 @@ function surfacesCross(a: Shape3D, b: Shape3D, tolerance: number): number {
 type V3 = [number, number, number];
 
 /** A round face of a placed part: a whole or partial cylinder. */
-interface RoundFace {
+export interface RoundFace {
   radius: number;
   origin: V3;
   axis: V3;
@@ -177,11 +177,16 @@ const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 function roundFacesOf(shape: Shape3D): RoundFace[] | null {
   const oc = getOC();
   const out: RoundFace[] = [];
-  for (const f of shape.faces) {
-    const made: { delete(): void }[] = [f];
+  const faces = shape.faces;
+  let tooMany = false;
+  for (const f of faces) {
+    const made: { delete(): void }[] = [];
     try {
-      if (f.geomType !== "CYLINDRE") continue;
-      if (out.length >= MAX_ROUND_FACES) return null;
+      if (tooMany || f.geomType !== "CYLINDRE") continue;
+      if (out.length >= MAX_ROUND_FACES) {
+        tooMany = true;
+        continue;
+      }
       const adaptor = new oc.BRepAdaptor_Surface(f.wrapped, true);
       made.push(adaptor);
       const cyl = adaptor.Cylinder();
@@ -206,41 +211,65 @@ function roundFacesOf(shape: Shape3D): RoundFace[] | null {
       // not measurable; leave it out
     } finally {
       made.forEach(safeDelete);
+      // Every face's wrapper is freed, also the ones after there turned out to be too many.
+      safeDelete(f);
     }
   }
-  return out;
+  return tooMany ? null : out;
+}
+
+export interface Ring {
+  radial: number;
+  diameter: number;
+}
+
+/** What `pinInHole` finds between two parts' round faces. */
+export interface PinsFound {
+  /** The deepest overlap: a pin bigger than its hole (radial < 0). */
+  over?: Ring;
+  /** The tightest gap: a pin smaller than its hole (radial ≥ 0). */
+  gap?: Ring;
+  /** A pin beside a hole of about its size whose axis is parallel but off to one side: how far off (mm), the smallest. */
+  offAxis?: Ring & { off: number };
 }
 
 /**
- * A pin in a hole: a round face of one part and a round hole of the other on
- * the same axis (within 0.01 mm and about 0.05°), side by side along it. Of
- * those, the pair whose radii are closest; `radial` is the hole's radius less
- * the pin's — the gap all round (negative: the pin is bigger, an overlap) — and
- * `diameter` the pin's. Null when there's no such pair within `range` mm.
+ * Pins in holes: a round face of one part and a round hole of the other with
+ * parallel axes, side by side along them, radii within `range`. Coaxial (within
+ * 0.01 mm): `radial` = the hole's radius less the pin's — the gap all round
+ * (negative: the pin is bigger, an overlap) — and `diameter` the pin's; the
+ * deepest overlap and the tightest gap are kept apart, so a pin with a lead-in
+ * (a gap) and a body (an overlap) is read by its body. Parallel but off by more
+ * than 0.01 mm and at most `range`: `offAxis` (the pin isn't lined up).
  */
-function pinInHole(a: RoundFace[], b: RoundFace[], range: number): { radial: number; diameter: number } | null {
-  let best: { radial: number; diameter: number } | null = null;
+export function pinInHole(a: readonly RoundFace[], b: readonly RoundFace[], range: number): PinsFound {
+  const found: PinsFound = {};
   const check = (pin: RoundFace, hole: RoundFace) => {
     const radial = hole.radius - pin.radius;
-    if (Math.abs(radial) > range || (best && Math.abs(radial) >= Math.abs(best.radial))) return;
+    if (Math.abs(radial) > range) return;
     const c = dot3(pin.axis, hole.axis);
     if (Math.abs(c) < 0.9999996) return;
-    // The hole's axis passes through the pin's.
+    // How far the hole's axis is from the pin's.
     const d = sub3(hole.origin, pin.origin);
     const along = dot3(d, pin.axis);
     const off = Math.hypot(d[0] - pin.axis[0] * along, d[1] - pin.axis[1] * along, d[2] - pin.axis[2] * along);
-    if (off > 0.01) return;
+    if (off > range) return;
     // Side by side along the axis (both measured along the pin's axis).
     const h0 = along + c * hole.from;
     const h1 = along + c * hole.to;
     if (Math.min(pin.to, Math.max(h0, h1)) - Math.max(pin.from, Math.min(h0, h1)) <= 1e-6) return;
-    best = { radial, diameter: 2 * pin.radius };
+    const ring = { radial, diameter: 2 * pin.radius };
+    if (off > 0.01) {
+      if (!found.offAxis || off < found.offAxis.off) found.offAxis = { ...ring, off };
+    } else if (radial < 0) {
+      if (!found.over || radial < found.over.radial) found.over = ring;
+    } else if (!found.gap || radial < found.gap.radial) found.gap = ring;
   };
   for (const p of a) for (const q of b) {
     if (!p.hole && q.hole) check(p, q);
     else if (p.hole && !q.hole) check(q, p);
   }
-  return best;
+  return found;
 }
 
 /**
@@ -250,9 +279,12 @@ function pinInHole(a: RoundFace[], b: RoundFace[], range: number): { radial: num
  * gap between them, and for a pin in a hole the gap (or overlap) all round it
  * (ContactMeasure.ring).
  */
-export function measureContacts(parts: PlacedShape[], tolerance: number, withGaps = true, fitRange = 0): ContactMeasure[] {
+export function measureContacts(parts: PlacedShape[], tolerance: number, withGaps = true, fitRange = 0, fitPairs?: readonly (readonly [string, string])[]): ContactMeasure[] {
   const tol = Math.max(0, tolerance);
   const near = Math.max(tol, fitRange);
+  // Only these pairs (by PlacedShape.id) get the fit check, when given; the rest are measured as for clashes.
+  const only = fitPairs ? new Set(fitPairs.map(([x, y]) => (x < y ? `${x}|${y}` : `${y}|${x}`))) : null;
+  const fitPair = (x: PlacedShape, y: PlacedShape) => fitRange > 0 && (!only || (x.id !== undefined && y.id !== undefined && only.has(x.id < y.id ? `${x.id}|${y.id}` : `${y.id}|${x.id}`)));
   const out: ContactMeasure[] = [];
   const boxes = parts.map((p) => boundsOf(p.shape));
   const rounds = new Map<number, RoundFace[] | null>();
@@ -260,10 +292,11 @@ export function measureContacts(parts: PlacedShape[], tolerance: number, withGap
     if (!rounds.has(k)) rounds.set(k, roundFacesOf(parts[k].shape));
     return rounds.get(k)!;
   };
-  const apart = (a: Bounds, b: Bounds) => [0, 1, 2].some((i) => a[1][i] + near < b[0][i] || b[1][i] + near < a[0][i]);
+  const apart = (a: Bounds, b: Bounds, by: number) => [0, 1, 2].some((i) => a[1][i] + by < b[0][i] || b[1][i] + by < a[0][i]);
   for (let i = 0; i < parts.length; i++) {
     for (let j = i + 1; j < parts.length; j++) {
-      if (apart(boxes[i], boxes[j])) continue;
+      const checkFit = fitPair(parts[i], parts[j]);
+      if (apart(boxes[i], boxes[j], checkFit ? near : tol)) continue;
       // A surface and a solid: the surface first.
       const swap = !parts[i].surface && parts[j].surface;
       const [p, q] = swap ? [parts[j], parts[i]] : [parts[i], parts[j]];
@@ -286,17 +319,20 @@ export function measureContacts(parts: PlacedShape[], tolerance: number, withGap
           m.crossLength = surfacesCross(p.shape, q.shape, tol);
           meets = m.crossLength > tol;
         }
-        const fits = fitRange > 0 && solids;
+        const fits = checkFit && solids;
         if (fits) {
           const [ri, rj] = [roundOf(i), roundOf(j)];
-          const ring = ri && rj ? (swap ? pinInHole(rj, ri, fitRange) : pinInHole(ri, rj, fitRange)) : null;
+          const pins = ri && rj ? (swap ? pinInHole(rj, ri, fitRange) : pinInHole(ri, rj, fitRange)) : {};
+          // Overlapping: the pin that's too big; apart: the tightest gap round a pin.
+          const ring = meets ? pins.over : pins.gap;
           if (ring) m.ring = ring;
+          if (pins.offAxis) m.offAxis = pins.offAxis;
         }
         // Not overlapping: how far apart are they (only matters within the tolerance, and only when touching parts are listed — or for the fit check)?
         if (!meets) {
           if (!withGaps && !fits) continue;
           const gap = measureDistanceBetween(p.shape, q.shape);
-          if (gap > (fits ? near : tol) + 1e-6 && !m.ring) continue;
+          if (gap > (fits ? near : tol) + 1e-6 && !m.ring && !m.offAxis) continue;
           if (gap <= near + 1e-6) m.gap = gap;
         }
         out.push(m);

@@ -7,7 +7,8 @@ import { evaluate } from "../model/expr";
 import { lengthNumber, storeLength } from "../model/units";
 import { solveWithParts } from "../assembly/mates";
 import { assemblyReport, DEFAULT_CLASH_OPTIONS, judgeContacts, parseClashOptions, type ClashOptions } from "../assembly/assemblyCheck";
-import { DEFAULT_FIT_RANGE, FIT_RANGE, fitFor, judgeFits, matePair, MAX_FIT, type FitFinding } from "../assembly/fits";
+import { defaultFitRange, fitFor, fitRangeFor, judgeFits, matePair, MAX_FIT, pairKey, printFitsFrom, type FitFinding } from "../assembly/fits";
+import type { PrintFits } from "../model/printSettings";
 import { instanceAt } from "../assembly/subassembly";
 import { newId } from "../model/document";
 import type { Assembly, IntendedFit } from "../model/types";
@@ -42,6 +43,15 @@ function saveClashOptions(o: ClashOptions) {
   }
 }
 
+/** The printed fits to compare with: the design's fit_* variables where it has them, else this browser's printer settings (as the extension, which falls back to the usual values). */
+function printFitsNow(): PrintFits {
+  const read = (text: string) => {
+    const r = evaluate(text);
+    return r.ok ? r.value : null;
+  };
+  return printFitsFrom(useStore.getState().history.present.variables, read, loadPrinter().print.fits);
+}
+
 /** Runs the check in the geometry worker and returns the report (an assembly's check when one is on show). */
 export async function runCheck(options: ClashOptions = loadClashOptions()): Promise<CheckReport> {
   const kernel = getKernel();
@@ -57,13 +67,14 @@ export async function runCheck(options: ClashOptions = loadClashOptions()): Prom
     const isHidden = (key: string) => options.skipHidden && s.hiddenInstances.some((h) => key === h || key.startsWith(`${h}/`));
     const instances = all.filter((i) => !isHidden(i.id));
     const hidden = all.filter((i) => isHidden(i.id));
-    // Gaps only matter when touching parts are listed — or for the fit check (asked for, or fits are marked).
+    // Gaps only matter when touching parts are listed — or for the fit check: every pair when it's asked for, else just the marked ones.
     const withFits = !!options.checkFits || !!asm.fits?.length;
-    const range = withFits ? Math.max(FIT_RANGE, ...(asm.fits ?? []).filter((f) => f.kind === "clearance").map((f) => f.max + 0.5)) : 0;
-    const measured = await kernel.clashes(instances, options.tolerance, !options.ignoreTouching, range);
+    const range = withFits ? fitRangeFor(asm.fits) : 0;
+    const onlyMarked = !options.checkFits ? (asm.fits ?? []).map((f): [string, string] => [f.a, f.b]) : undefined;
+    const measured = await kernel.clashes(instances, options.tolerance, !options.ignoreTouching, range, onlyMarked);
     const names = Object.fromEntries(s.parts.map((p) => [p.id, p.name]));
     const fits = withFits
-      ? judgeFits({ measured, intended: asm.fits ?? [], tolerance: options.tolerance, printFits: loadPrinter().print.fits, nameOf: (k) => instances.find((i) => i.id === k)?.name })
+      ? judgeFits({ measured, intended: asm.fits ?? [], tolerance: options.tolerance, printFits: printFitsNow(), nameOf: (k) => instances.find((i) => i.id === k)?.name })
       : undefined;
     return assemblyReport(asm, solved, names, judgeContacts(measured, options), options, { hidden: hidden.length, suppressed: asm.instances.filter((i) => i.suppressed).length }, assemblies, fits);
   }
@@ -180,7 +191,7 @@ export function CheckDialog() {
     >
       {inAssembly && <ClashOptionsBar options={options} onChange={change} />}
       {inAssembly && (options.checkFits || asmFits.length > 0) && <MatePairPicker onPick={setEditing} />}
-      {inAssembly && editing && <FitEditor pair={editing} onClose={() => setEditing(null)} />}
+      {inAssembly && editing && <FitEditor key={pairKey(editing.a, editing.b)} pair={editing} onClose={() => setEditing(null)} />}
       {error ? (
         <p className="dialog-error">{error}</p>
       ) : report ? (
@@ -235,11 +246,16 @@ function ClashOptionsBar({ options, onChange }: { options: ClashOptions; onChang
 
 const NO_FITS: IntendedFit[] = [];
 
-/** A part's name in the assembly by its key ("copy" or "copy/inner/part"). */
+/** A part's name in the assembly by its key ("copy" or "copy/inner/part"), every level named: "Sub <1> / Inner <1> / Pin <1>". */
 function keyName(asm: Assembly, assemblies: readonly Assembly[], key: string): string {
-  const at = instanceAt(asm, assemblies, key);
-  if (!at) return "A part";
-  return at.path.length ? `${at.top.name} / ${at.part.name}` : at.top.name;
+  const ids = key.split("/");
+  const names: string[] = [];
+  for (let n = 1; n <= ids.length; n++) {
+    const at = instanceAt(asm, assemblies, ids.slice(0, n).join("/"));
+    if (!at) return "A part";
+    names.push(n === 1 ? at.top.name : at.part.name);
+  }
+  return names.join(" / ");
 }
 
 /** Mark the two parts a mate joins as a fit. */
@@ -285,9 +301,16 @@ function FitEditor({ pair, onClose }: { pair: FitPair; onClose: () => void }) {
   const existing = (asm && fitFor(asm, pair.a, pair.b)) ?? pair.fit;
   const startKind: IntendedFit["kind"] = existing?.kind ?? (pair.measured?.kind === "gap" ? "clearance" : "press");
   const [kind, setKind] = useState<IntendedFit["kind"]>(startKind);
+  const [printFits] = useState(printFitsNow);
   const show = (mm: number) => lengthNumber(mm, unit, unit === "in" ? 5 : 3);
-  const [from, setFrom] = useState(show(existing?.min ?? DEFAULT_FIT_RANGE[startKind][0]));
-  const [to, setTo] = useState(show(existing?.max ?? DEFAULT_FIT_RANGE[startKind][1]));
+  const [from, setFrom] = useState(show(existing?.min ?? defaultFitRange(startKind, printFits)[0]));
+  const [to, setTo] = useState(show(existing?.max ?? defaultFitRange(startKind, printFits)[1]));
+  const onEnter = (e: { key: string; preventDefault(): void }) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      save();
+    }
+  };
   const [problem, setProblem] = useState<string | null>(null);
   const read = (t: string) => {
     const r = evaluate(storeLength(t, unit));
@@ -315,20 +338,26 @@ function FitEditor({ pair, onClose }: { pair: FitPair; onClose: () => void }) {
             const k = e.target.value as IntendedFit["kind"];
             setKind(k);
             if (!existing) {
-              setFrom(show(DEFAULT_FIT_RANGE[k][0]));
-              setTo(show(DEFAULT_FIT_RANGE[k][1]));
+              const [lo, hi] = defaultFitRange(k, printFits);
+              setFrom(show(lo));
+              setTo(show(hi));
             }
           }}
         >
-          <option value="press">a press fit — a little too big, so it grips</option>
+          <option value="press">a press fit — drawn a little too big, so they overlap and it grips</option>
+          <option value="printed">a printed press fit — drawn with a small gap, as printed holes come out small</option>
           <option value="clearance">a clearance fit — a small gap, so it slides</option>
         </select>
       </label>
       <label>
-        {kind === "press" ? "Overlap" : "Gap"} from <input className="clash-tolerance" aria-label="Smallest amount" value={from} onChange={(e) => setFrom(e.target.value)} /> to{" "}
-        <input className="clash-tolerance" aria-label="Largest amount" value={to} onChange={(e) => setTo(e.target.value)} /> {unit}
+        {kind === "press" ? "Overlap" : "Gap"} from <input className="clash-tolerance" aria-label="Smallest amount" value={from} onChange={(e) => setFrom(e.target.value)} onKeyDown={onEnter} /> to{" "}
+        <input className="clash-tolerance" aria-label="Largest amount" value={to} onChange={(e) => setTo(e.target.value)} onKeyDown={onEnter} /> {unit}
       </label>
-      <p className="muted fit-editor-note">On the diameter for a pin in a hole (as your printer's fits are), otherwise straight across.</p>
+      <p className="muted fit-editor-note">
+        On the diameter for a pin in a hole (as your printer's fits are), otherwise straight across.
+        {kind === "press" && ` For 3D printing, a press fit is usually drawn with a small gap instead (your printer's is ${lengthNumber(printFits.press, unit, 3)} ${unit}), because printed holes come out a little small — choose "a printed press fit" for that.`}
+        {kind === "printed" && ` Your printer's press fit is ${lengthNumber(printFits.press, unit, 3)} ${unit}.`}
+      </p>
       {problem && <p className="dialog-error">{problem}</p>}
       <div className="fit-editor-buttons">
         <button className="primary-button" onClick={save}>

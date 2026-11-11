@@ -187,23 +187,30 @@
   description, custom properties: `doc.partProperties`), `assemblyCheck.ts` (clash report; `judgeContact` decides clash vs
   touching from the engine's measurements in `src/kernel/clash.ts`; an overlap's text says how deep it goes).
   Fit check (`src/assembly/fits.ts`, pure; Onshape/SolidWorks-style interference detection plus clearances): "Check fits
-  (interference and clearance)" in the Check window (`ClashOptions.checkFits`, kept with the clash options; always on when the
-  assembly has marked fits) and check_assembly's `fits` (default true) pass `fitRange` (`FIT_RANGE` 1 mm, more for a marked
-  clearance) to `engine.clashes`: solids that far apart get their smallest `gap`, and `pinInHole` (clash.ts: a part's cylinder
-  faces — ≤ `MAX_ROUND_FACES` — against the other's, coaxial within 0.01 mm, side by side along the axis, pin vs hole from the
-  face normal) gives `ContactMeasure.ring` (`radial` = hole r − pin r, negative = overlap; exact). `ContactMeasure.ids` = the
-  InstanceInput ids (leaf keys). `measuredFit`: overlap depth = −radial for a pin, else `overlapThickness` (judgeContact's
-  estimate); amounts are ON THE DIAMETER for a pin in a hole (as printSettings' fits), else straight across; wording always says
-  which ("0.1 mm on the diameter (0.05 mm a side)"). `Assembly.fits` (`IntendedFit`: a/b leaf keys, kind press|clearance, min/max
-  mm; parsed by `parseFits` — top instance must exist; missing = none) marks pairs; `judgeFits` judges them (`judgeIntended`: OK /
-  too tight / too loose / a gap instead / overlap instead / more than 1 mm apart), takes marked overlaps out of Clashes
-  (`handled`, name pairs), lists unmarked clearances (pins always; flat gaps above the tolerance) with `printFitHint` (nearest of
-  the printer's fits, half-way between them; app: `loadPrinter().print.fits`, extension: the design's fit_* variables else
-  DEFAULT_FITS) and leaves unmarked overlaps as clashes. `assemblyReport(…, fits)` adds a "Fits" section (findings carry `pair`, so
-  the Check window's `ReportView` offers "Mark as a fit…"/"Change…" → `FitEditor`; a mate's parts via `matePair`); store
-  `setAssemblyFit`/`removeAssemblyFit` (one undo step each, `putFit`/`removeFit`: one fit per pair). Claude: `mark_fit` (pair by
-  copy names or a mate; `remove`). Tests: tests/fits (pure), engineFits (⌀10.1 pin in ⌀10 hole = 0.1 on the diameter; ⌀9.8 =
-  0.1 a side; marked press fit OK; flat overlap about), mcpFits; the smoke test marks Fasten 1's parts and removes the mark. Connectors can sit at an edge's ends, halfway round,
+  (interference and clearance)" in the Check window (`ClashOptions.checkFits`, kept with the clash options) measures every pair;
+  unticked, an assembly with marks measures only the marked pairs (`engine.clashes(…, fitRange, fitPairs)`); check_assembly's
+  `fits` defaults to true. `fitRangeFor(marks)`: `FIT_RANGE` 1 mm, more for a looser marked gap, ≤ `MAX_FIT_RANGE` 3. Within it
+  solids get their smallest `gap`, and `pinInHole` (clash.ts: each part's cylinder faces — ≤ `MAX_ROUND_FACES`, all face
+  wrappers freed — pin vs hole from the face normal, parallel, side by side along the axis) keeps the deepest overlap ring
+  (`over`) and the tightest gap ring (`gap`) apart (coaxial within 0.01 mm; `ContactMeasure.ring` = `over` when the solids overlap,
+  else `gap`; `radial` = hole r − pin r, exact), and a parallel pin off by 0.01…range as `offAxis` (judged "the pin isn't lined up
+  with the hole", never as an amount). `ContactMeasure.ids` = the InstanceInput ids (leaf keys); overlap Contacts carry them, and
+  marked fits are matched by them, never by names. `measuredFit`: depth = −radial for a pin, else `overlapThickness`
+  (judgeContact's estimate); amounts are ON THE DIAMETER for a pin in a hole (as printSettings' fits), else straight across, worded
+  "0.1 mm on the diameter (0.05 mm a side)". `Assembly.fits` (`IntendedFit`: a/b leaf keys, kind press | printed | clearance,
+  min/max mm; `parseFits`; missing = none; `tidyFits` drops marks whose top copy is gone — run by `updateAssembly` and
+  `withoutInstances`) marks pairs. "printed" = a printed press fit: drawn with a small gap (printed holes come out small), judged as a
+  gap, default range the printer's press fit ± 0.05 (`defaultFitRange`); a "press" mark with a gap says so. `judgeIntended`: OK only
+  when measured round (a flat overlap = "not checked exactly", warn); too tight / loose / a gap instead / overlap instead / too far
+  apart. `judgeFits` takes marked overlaps out of Clashes (`handled`, id pairs), lists unmarked clearances (pins always; flat gaps
+  above the tolerance; off-centre pins) with `printFitHint`, leaves unmarked overlaps as clashes; findings carry `pair` (also "wasn't
+  checked" ones, so a stuck mark can be removed). Printed fits: `printFitsFrom` — the design's fit_* variables, else the printer
+  settings (app, `printFitsNow`) or DEFAULT_FITS (extension). UI: Check window `ReportView` "Mark as a fit…"/"Change…" →
+  `FitEditor` (keyed by the pair; Enter saves), a mate's parts via `matePair` (names with every sub-assembly level); store
+  `setAssemblyFit`/`removeAssemblyFit` (`putFit`/`removeFit`: one fit per pair). Claude: `mark_fit` (copy names or a mate; `remove`).
+  Tests: tests/fits (pure), engineFits (⌀10.1 pin in ⌀10 = 0.1 on the diameter; ⌀9.8 = 0.1 a side; a stepped pin read by its body;
+  a two-pin lid; an off-centre pin; marked press fit OK; flat overlap about; marked pairs only), mcpFits; the smoke test marks
+  Fasten 1's parts and removes the mark. Connectors can sit at an edge's ends, halfway round,
   or where clicked (`MateConnector.spot`/`point`, `spotFrame`). UI in `src/app/AssemblyUI.tsx`; instances are drawn as
   copies of part meshes moved with `SceneManager.setPlacements`.
   Sub-assemblies (`src/assembly/subassembly.ts`): an `Instance` with `subAssembly` (another assembly's id; `partId` "")

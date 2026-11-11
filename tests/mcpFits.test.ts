@@ -86,7 +86,15 @@ describe("fits made by Claude", () => {
     expect(s.doc.assemblies![0].fits).toBeUndefined();
     expect(await ok(s, "check_assembly", { fits: false })).not.toMatch(/Fits:/);
 
+    // A printed press fit: drawn with a gap round the design's fit_press (none here: the usual 0.1 mm) — this pin overlaps.
+    expect(await ok(s, "mark_fit", { first: "Pin <1>", second: "Plate <1>", kind: "printed" })).toMatch(/as a printed press fit of 0.05–0.15 mm/);
+    expect(await ok(s, "check_assembly", {})).toMatch(/LOOK: Pin <1> and Plate <1>: meant to be a printed press fit .* far too tight/);
+    // Removing the pin's copy takes its mark too.
+    await ok(s, "remove_from_assembly", { instances: ["Pin <1>"] });
+    expect(s.doc.assemblies![0].fits).toBeUndefined();
+
     // Plain-English problems.
+    await ok(s, "insert_into_assembly", { part: "Pin", at: [-60, 0, 0] });
     expect(await fails(s, "mark_fit", { first: "Pin <1>", second: "Pin <1>", kind: "press" })).toMatch(/same copy/);
     expect(await fails(s, "mark_fit", { first: "Pin <1>", kind: "press" })).toMatch(/"first" and "second"/);
     expect(await fails(s, "mark_fit", { first: "Pin <1>", second: "Plate <1>", kind: "snug" })).toMatch(/kind/);

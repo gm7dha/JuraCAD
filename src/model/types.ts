@@ -997,7 +997,8 @@ export interface IntendedFit {
   /** The two parts' keys in the assembly: an instance id, or "copy/inner/part" for a part inside a sub-assembly. */
   a: string;
   b: string;
-  kind: "press" | "clearance";
+  /** "printed": a press fit for printing — a small gap in the design (printed holes come out small), judged as a gap. */
+  kind: "press" | "clearance" | "printed";
   min: number;
   max: number;
 }

@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import { assemblyReport, DEFAULT_CLASH_OPTIONS, judgeContacts, parseClashOptions } from "../src/assembly/assemblyCheck";
 import { parseAssemblies } from "../src/assembly/assembly";
-import { FIT_EXPLAINED, fitFor, judgeFits, judgeIntended, matePair, measuredFit, pairKey, parseFits, printFitHint, putFit, removeFit } from "../src/assembly/fits";
+import { defaultFitRange, FIT_EXPLAINED, fitFor, fitRangeFor, judgeFits, judgeIntended, matePair, MAX_FIT_RANGE, measuredFit, pairKey, parseFits, printFitHint, printFitsFrom, putFit, removeFit, tidyFits } from "../src/assembly/fits";
+import { removeInstances, withoutInstances } from "../src/assembly/assembly";
 import type { ContactMeasure } from "../src/kernel/protocol";
 import { DEFAULT_FITS } from "../src/model/printSettings";
 import type { Assembly, IntendedFit } from "../src/model/types";
@@ -113,7 +114,7 @@ describe("the Fits section", () => {
   it("takes a marked press fit out of the clashes and judges it", () => {
     const measured = [pinMeasure(-0.05)];
     const fits = judgeFits({ measured, intended: [press(0.05, 0.15)], tolerance: 0.01, printFits: DEFAULT_FITS, nameOf });
-    expect(fits.handled.has(pairKey("Plate <1>", "Pin <1>"))).toBe(true);
+    expect(fits.handled.has(pairKey("i1", "i2"))).toBe(true);
     const contacts = judgeContacts(measured, DEFAULT_CLASH_OPTIONS);
     expect(contacts).toHaveLength(1);
     const report = assemblyReport(asm, solvedOk, names, contacts, DEFAULT_CLASH_OPTIONS, {}, [], fits);
@@ -141,6 +142,8 @@ describe("the Fits section", () => {
     const gone = judgeFits({ measured: [], intended: [{ ...press(0.05, 0.15), b: "i9" }], tolerance: 0.01, nameOf });
     expect(gone.warnings).toBe(0);
     expect(gone.findings[1].text).toMatch(/wasn't checked/);
+    // …but it can still be changed or taken away from the Check window.
+    expect(gone.findings[1].pair).toMatchObject({ a: "i1", b: "i9", fit: { id: "f1" } });
   });
 });
 
@@ -165,5 +168,71 @@ describe("saving fits", () => {
     expect(matePair({ id: "m", name: "M", type: "fastened", a: { instanceId: "@origin", pick }, b: { instanceId: "i2", pick }, flip: false, values: {} })).toBeNull();
     expect(parseClashOptions({ checkFits: true }).checkFits).toBe(true);
     expect("checkFits" in parseClashOptions({})).toBe(false);
+  });
+});
+
+describe("fits that can't be judged as they are", () => {
+  const n: [string, string] = ["Plate <1>", "Pin <1>"];
+  it("says a pin that isn't lined up with its hole, instead of an amount", () => {
+    // ⌀9.8 pin 0.2 off the middle of a ⌀10 hole: it overlaps one side, but that's not a press fit.
+    const m: ContactMeasure = { a: "Plate <1>", b: "Pin <1>", ids: ["i1", "i2"], volume: 3, area: 60, boxMin: 0.1, offAxis: { radial: 0.1, diameter: 9.8, off: 0.2 } };
+    const got = measuredFit(m)!;
+    expect(got.offAxis).toBe(0.2);
+    const f = judgeIntended(press(0.05, 0.15), n, got, 0.01);
+    expect(f.level).toBe("warn");
+    expect(f.text).toMatch(/the pin isn't lined up with the hole \(off by 0.2 mm\)/);
+    // Not marked: noted in Fits.
+    expect(judgeFits({ measured: [m], intended: [], tolerance: 0.01, nameOf }).findings.some((x) => /0.2 mm off the middle of its hole/.test(x.text))).toBe(true);
+  });
+  it("never says a press fit is OK from an estimate", () => {
+    const f = judgeIntended(press(0.05, 0.25), n, measuredFit({ a: "A", b: "B", volume: 20, area: 208 }), 0.01);
+    expect(f.level).toBe("warn");
+    expect(f.text).toMatch(/press fit not checked exactly — about 0.192 mm of interference, only an estimate/);
+  });
+});
+
+describe("printed press fits", () => {
+  const n: [string, string] = ["Plate <1>", "Pin <1>"];
+  it("are a small gap, judged round the printer's press fit", () => {
+    expect(defaultFitRange("printed", DEFAULT_FITS)).toEqual([0.05, 0.15]);
+    expect(defaultFitRange("printed", { ...DEFAULT_FITS, press: 0.02 })).toEqual([0, 0.07]);
+    const printed: IntendedFit = { id: "p", a: "i1", b: "i2", kind: "printed", min: 0.05, max: 0.15 };
+    expect(judgeIntended(printed, n, measuredFit(pinMeasure(0.05)), 0.01).text).toBe(
+      "Plate <1> and Pin <1>: printed press fit OK — a gap of 0.1 mm on the diameter (0.05 mm a side) (wanted 0.05–0.15 mm on the diameter).",
+    );
+    expect(judgeIntended(printed, n, measuredFit(pinMeasure(0.15)), 0.01).text).toMatch(/printed press fit too loose/);
+    expect(judgeIntended(printed, n, measuredFit(pinMeasure(-0.05)), 0.01).text).toMatch(/printed, it would be far too tight/);
+    expect(parseFits([printed], new Set(["i1", "i2"]))).toEqual([printed]);
+  });
+  it("explain themselves when a press fit is drawn with a gap", () => {
+    const f = judgeIntended(press(0.05, 0.15), n, measuredFit(pinMeasure(0.05)), 0.01, DEFAULT_FITS);
+    expect(f.text).toMatch(/a printed press fit is drawn with a small gap \(yours is 0.1 mm on the diameter\) — mark it as a printed press fit instead/);
+    expect(judgeIntended(press(0.05, 0.15), n, measuredFit(pinMeasure(0.05)), 0.01).text).not.toMatch(/printed/);
+  });
+  it("use the design's fit variables over the printer's", () => {
+    const read = (t: string) => (/^[\d.]+ mm$/.test(t) ? parseFloat(t) : null);
+    expect(printFitsFrom([{ name: "fit_press", value: "0.15 mm" }, { name: "fit_loose", value: "fit_snug * 2" }], read, DEFAULT_FITS)).toEqual({ ...DEFAULT_FITS, press: 0.15 });
+    expect(printFitsFrom(undefined, read, DEFAULT_FITS)).toEqual(DEFAULT_FITS);
+  });
+  it("measure a bounded range", () => {
+    expect(fitRangeFor([])).toBe(1);
+    expect(fitRangeFor([{ ...clearance(0.2, 1.5) }])).toBe(2);
+    expect(fitRangeFor([{ ...clearance(0.2, 9) }])).toBe(MAX_FIT_RANGE);
+    expect(fitRangeFor([press(0.05, 5)])).toBe(1);
+  });
+});
+
+describe("marks follow the copies", () => {
+  it("drops a mark when one of its copies is removed", () => {
+    const marked = putFit(asm, press(0.05, 0.15));
+    expect(tidyFits(marked)).toBe(marked);
+    const left = withoutInstances(marked, ["i2"]);
+    expect(left.fits).toBeUndefined();
+    const doc = { features: [], assemblies: [marked] } as unknown as Parameters<typeof removeInstances>[0];
+    expect(removeInstances(doc, "a", ["i1"]).assemblies![0].fits).toBeUndefined();
+    // A mark on a part inside a sub-assembly copy goes with the copy.
+    const inner = putFit(asm, { ...press(0.05, 0.15), b: "i2/inner" });
+    expect(withoutInstances(inner, ["i2"]).fits).toBeUndefined();
+    expect(withoutInstances(inner, ["nope"]).fits).toHaveLength(1);
   });
 });

@@ -98,4 +98,52 @@ describe("fit check", () => {
     const contacts = judgeContacts(m, DEFAULT_CLASH_OPTIONS);
     expect(contacts[0].kind).toBe("overlap");
   });
+
+  it("reads a stepped pin by its body, not its lead-in, and a lid with two pins by the tighter one", () => {
+    engine = new GeometryEngine();
+    // Plate as before; a ⌀9.96 lead-in (8 long, from below) under a ⌀10.1 body.
+    const lead = feature("cylinder", { diameter: 9.96, height: 8, x: 0, y: 0, z: -5 });
+    const body = feature("cylinder", { diameter: 10.1, height: 12, x: 0, y: 0, z: 3 }, "add");
+    // A second plate with two ⌀6 holes 16 apart, and a lid with a ⌀6.1 pin and a ⌀5.96 pin in them.
+    const plate2 = feature("box", { width: 30, depth: 20, height: 6, x: 50, y: -10, z: 0 });
+    const holeA = feature("cylinder", { diameter: 6, height: 6, x: 57, y: 0, z: 0 }, "remove");
+    const holeB = feature("cylinder", { diameter: 6, height: 6, x: 73, y: 0, z: 0 }, "remove");
+    const lid = feature("box", { width: 30, depth: 20, height: 3, x: 50, y: -10, z: 6 });
+    const pinA = feature("cylinder", { diameter: 6.1, height: 6, x: 57, y: 0, z: 0 }, "add");
+    const pinB = feature("cylinder", { diameter: 5.96, height: 6, x: 73, y: 0, z: 0 }, "add");
+    const r = engine.rebuild([plate, hole, lead, body, plate2, holeA, holeB, lid, pinA, pinB] as Feature[]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(4);
+    const [p1, stepped, p2, lidPart] = r.parts.map((p) => p.id);
+    const one = measure([put("i1", p1, "Plate <1>"), put("i2", stepped, "Pin <1>")]);
+    const f1 = measuredFit(one[0])!;
+    expect(f1).toMatchObject({ kind: "overlap", round: true });
+    expect(f1.amount).toBeCloseTo(0.1, 6);
+    const two = measure([put("i1", p2, "Plate <1>"), put("i2", lidPart, "Lid <1>")]);
+    const f2 = measuredFit(two[0])!;
+    expect(f2).toMatchObject({ kind: "overlap", round: true });
+    expect(f2.amount).toBeCloseTo(0.1, 6);
+    const ok = judgeFits({ measured: two, intended: [{ id: "f", a: "i1", b: "i2", kind: "press", min: 0.05, max: 0.15 }], tolerance: 0.01, nameOf: () => undefined });
+    expect(ok.findings[1].text).toMatch(/press fit OK — 0.1 mm on the diameter/);
+  });
+
+  it("says when a pin isn't lined up with its hole instead of judging the amount", () => {
+    const p = setup();
+    // The ⌀9.8 pin 0.2 off the middle of the ⌀10 hole: it overlaps the hole's side by 0.1.
+    const m = measure([put("i1", p.plate, "Plate <1>"), put("i2", p.small, "Pin <1>", 0.2)]);
+    expect(m).toHaveLength(1);
+    expect(m[0].offAxis?.off).toBeCloseTo(0.2, 6);
+    const fits = judgeFits({ measured: m, intended: [{ id: "f", a: "i1", b: "i2", kind: "press", min: 0.05, max: 0.15 }], tolerance: 0.01, nameOf: () => undefined });
+    expect(fits.warnings).toBe(1);
+    expect(fits.findings[1].text).toMatch(/the pin isn't lined up with the hole \(off by 0.2 mm\)/);
+    expect(fits.findings[1].level).toBe("warn");
+  });
+
+  it("measures only the marked pairs when asked to", () => {
+    const p = setup();
+    const both = [put("i1", p.plate, "Plate <1>"), put("i2", p.small, "Pin <1>")];
+    expect(engine.clashes(both, 0.01, false, FIT_RANGE, [["i1", "i9"]])).toEqual([]);
+    expect(engine.clashes(both, 0.01, false, FIT_RANGE, [["i2", "i1"]])).toHaveLength(1);
+  });
 });
+

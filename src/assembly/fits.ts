@@ -18,7 +18,7 @@
  */
 import type { ContactMeasure } from "../kernel/protocol";
 import type { Finding } from "../model/checkReport";
-import { FIT_LABELS, FIT_NAMES, type FitName, type PrintFits } from "../model/printSettings";
+import { DEFAULT_FITS, FIT_LABELS, FIT_NAMES, fitVariableName, type FitName, type PrintFits } from "../model/printSettings";
 import type { Assembly, IntendedFit, Mate } from "../model/types";
 import { formatLength } from "../model/units";
 
@@ -28,9 +28,25 @@ export const FIT_RANGE = 1;
 /** The most a fit's wanted amount can be, mm. */
 export const MAX_FIT = 10;
 
+/** mm: the furthest apart the fit check ever measures (a marked clearance fit can stretch FIT_RANGE up to this). */
+export const MAX_FIT_RANGE = 3;
+
+/** How far apart parts are measured for these marked fits: FIT_RANGE, more for a looser marked clearance, at most MAX_FIT_RANGE. */
+export function fitRangeFor(fits: readonly IntendedFit[] = []): number {
+  const wanted = fits.filter((f) => f.kind !== "press").map((f) => f.max + 0.5);
+  return Math.min(MAX_FIT_RANGE, Math.max(FIT_RANGE, ...wanted));
+}
+
+/** What each kind of fit is called. */
+export const FIT_KIND_LABELS: Record<IntendedFit["kind"], string> = {
+  press: "press fit",
+  printed: "printed press fit",
+  clearance: "clearance fit",
+};
+
 /** One line saying what the fits are, for the top of the Fits section. */
 export const FIT_EXPLAINED =
-  "A press (interference) fit is made a little too big on purpose, so it has to be pushed in and then grips; a clearance fit leaves a small gap so it slides or turns.";
+  "A press (interference) fit is made a little too big on purpose, so it has to be pushed in and then grips; a clearance fit leaves a small gap so it slides or turns. For printing, a press fit is drawn with a small gap (a printed press fit), as printed holes come out a little small.";
 
 /** How two parts that sit together fit, as measured. */
 export interface MeasuredFit {
@@ -49,6 +65,8 @@ export interface MeasuredFit {
   amount: number;
   /** The overlap's volume (mm³). */
   volume?: number;
+  /** A pin beside a hole of about its size but not lined up with it: how far off (mm). Its amount then means little. */
+  offAxis?: number;
 }
 
 /**
@@ -66,7 +84,7 @@ export function overlapThickness(m: ContactMeasure): number {
 /** A measured pair as a fit, or null (surfaces, or nothing measured close enough). */
 export function measuredFit(m: ContactMeasure): MeasuredFit | null {
   if (m.surfaceA || m.surfaceB) return null;
-  const base = { a: m.a, b: m.b, ...(m.ids ? { ids: m.ids } : {}) };
+  const base = { a: m.a, b: m.b, ...(m.ids ? { ids: m.ids } : {}), ...(m.offAxis ? { offAxis: m.offAxis.off } : {}) };
   const v = m.volume ?? 0;
   if (v > 1e-6) {
     // A pin bigger than its hole: exactly how much. Otherwise (or when the overlap is elsewhere) the estimate.
@@ -80,6 +98,8 @@ export function measuredFit(m: ContactMeasure): MeasuredFit | null {
   }
   if (m.ring && m.ring.radial >= 0) return { ...base, kind: "gap", side: m.ring.radial, round: true, diameter: m.ring.diameter, amount: 2 * m.ring.radial };
   if (m.gap !== undefined) return { ...base, kind: "gap", side: m.gap, round: false, amount: m.gap };
+  // Only an off-centre pin was found (further apart than measured): still worth saying.
+  if (m.offAxis) return { ...base, kind: "gap", side: Math.max(0, m.offAxis.radial - m.offAxis.off), round: false, amount: Math.max(0, m.offAxis.radial - m.offAxis.off) };
   return null;
 }
 
@@ -113,6 +133,24 @@ export function printFitHint(diametral: number, fits: PrintFits): string {
   return `about a ${label(best)} fit for your printer (${mm(val(best))})`;
 }
 
+/**
+ * The printed fits to compare gaps with: the design's own fit_press/fit_snug/
+ * fit_sliding/fit_loose variables where it has them (so the check uses what its
+ * holes were made with), else `fallback` (the app: the printer settings; the
+ * extension: the usual values). `valueOf` reads a variable's mm value (null if
+ * it isn't a plain length).
+ */
+export function printFitsFrom(variables: readonly { name: string; value: string }[] | undefined, valueOf: (text: string) => number | null, fallback: PrintFits): PrintFits {
+  const out = { ...fallback };
+  for (const n of FIT_NAMES) {
+    const v = (variables ?? []).find((x) => x.name === fitVariableName(n));
+    if (!v) continue;
+    const mmValue = valueOf(v.value);
+    if (mmValue !== null && Number.isFinite(mmValue)) out[n] = mmValue;
+  }
+  return out;
+}
+
 /** The two parts a mate joins, as keys like IntendedFit's (null for a mate to the assembly's origin). */
 export function matePair(m: Mate): [string, string] | null {
   const key = (c: Mate["a"]) => [c.instanceId, ...(c.path ?? [])].join("/");
@@ -142,7 +180,7 @@ export interface FitFinding extends Finding {
 
 export interface FitsResult {
   findings: FitFinding[];
-  /** Name pairs (pairKey of the names) judged here, so they aren't listed as clashes too. */
+  /** Pairs (pairKey of the two parts' keys) judged here, so they aren't listed as clashes too. */
   handled: Set<string>;
   /** How many fits need a look (warnings). */
   warnings: number;
@@ -150,26 +188,53 @@ export interface FitsResult {
 
 const range = (f: IntendedFit) => (f.min === f.max ? mm(f.min) : `${mm(f.min)}–${mm(f.max)}`.replace(/ mm–/, "–"));
 
-/** Judge one marked fit against what was measured (null: they're further apart than FIT_RANGE). */
-export function judgeIntended(fit: IntendedFit, names: [string, string], got: MeasuredFit | null, tolerance: number): Finding {
+/** Judge one marked fit against what was measured (null: they're further apart than the check measures). */
+export function judgeIntended(fit: IntendedFit, names: [string, string], got: MeasuredFit | null, tolerance: number, printFits?: PrintFits): Finding {
   const who = `${names[0]} and ${names[1]}`;
   const wanted = `wanted ${range(fit)}${got?.round ? " on the diameter" : ""}`;
   const tol = Math.max(0, tolerance);
   const inRange = (v: number) => v >= fit.min - 1e-6 && v <= fit.max + 1e-6;
+  const far = `more than ${mm(fitRangeFor([fit]))} apart`;
+  // A pin beside its hole but not lined up: whatever amount comes out is meaningless.
+  if (got?.offAxis !== undefined)
+    return {
+      level: "warn",
+      text: `${who}: the pin isn't lined up with the hole (off by ${mm(got.offAxis)}), so the ${FIT_KIND_LABELS[fit.kind]} can't be measured. Line them up (a Cylindrical or Revolute mate does it), then check again.`,
+    };
   if (fit.kind === "press") {
-    if (!got) return { level: "warn", text: `${who}: meant to be a press fit, but they don't touch (more than ${mm(FIT_RANGE)} apart).` };
+    if (!got) return { level: "warn", text: `${who}: meant to be a press fit, but they don't touch (${far}).` };
     if (got.kind === "gap") {
-      if (got.side <= tol + 1e-9 && inRange(0)) return { level: "ok", text: `${who}: press fit OK — they just touch (${wanted}).` };
-      return { level: "warn", text: `${who}: meant to be a press fit, but there's a gap of ${amountText(got)} instead of an overlap — it won't grip (${wanted}).` };
+      if (got.round && got.side <= tol + 1e-9 && inRange(0)) return { level: "ok", text: `${who}: press fit OK — they just touch (${wanted}).` };
+      const printed = printFits
+        ? ` If it's for printing, that may be right: printed holes come out a little small, so a printed press fit is drawn with a small gap (yours is ${mm(printFits.press)} on the diameter) — mark it as a printed press fit instead.`
+        : "";
+      return { level: "warn", text: `${who}: meant to be a press fit, but there's a gap of ${amountText(got)} instead of an overlap — it won't grip (${wanted}).${printed}` };
     }
+    if (!got.round)
+      return {
+        level: "warn",
+        text: `${who}: press fit not checked exactly — about ${mm(got.side)} of interference, only an estimate as they don't meet as a pin in a hole (${wanted}). Measure it to be sure.`,
+      };
     if (inRange(got.amount)) return { level: "ok", text: `${who}: press fit OK — ${amountText(got)} of interference (${wanted}).` };
     return got.amount > fit.max
       ? { level: "warn", text: `${who}: press fit too tight — ${amountText(got)} of interference (${wanted}). Make the hole a little bigger or the pin a little smaller.` }
       : { level: "warn", text: `${who}: press fit too loose — only ${amountText(got)} of interference (${wanted}). It may not grip.` };
   }
-  if (!got) return { level: "warn", text: `${who}: meant to be a clearance fit, but they're more than ${mm(FIT_RANGE)} apart.` };
-  if (got.kind === "overlap") return { level: "warn", text: `${who}: meant to have a gap, but they overlap by ${amountText(got)} — it won't go in (${wanted}).` };
-  if (inRange(got.amount)) return { level: "ok", text: `${who}: clearance OK — a gap of ${amountText(got)} (${wanted}).` };
+  const printed = fit.kind === "printed";
+  const what = printed ? "printed press fit" : "clearance";
+  if (!got) return { level: "warn", text: `${who}: meant to be a ${printed ? "printed press fit" : "clearance fit"}, but they're ${far}.` };
+  if (got.kind === "overlap")
+    return {
+      level: "warn",
+      text: printed
+        ? `${who}: meant to be a printed press fit (a small gap in the design), but they overlap by ${amountText(got)} — printed, it would be far too tight (${wanted}).`
+        : `${who}: meant to have a gap, but they overlap by ${amountText(got)} — it won't go in (${wanted}).`,
+    };
+  if (inRange(got.amount)) return { level: "ok", text: `${who}: ${what} OK — a gap of ${amountText(got)} (${wanted}).` };
+  if (printed)
+    return got.amount < fit.min
+      ? { level: "warn", text: `${who}: printed press fit too tight — a gap of only ${amountText(got)} (${wanted}). Printed, it may not go in.` }
+      : { level: "warn", text: `${who}: printed press fit too loose — a gap of ${amountText(got)} (${wanted}). Printed, it may not grip.` };
   return got.amount < fit.min
     ? { level: "warn", text: `${who}: clearance too tight — a gap of only ${amountText(got)} (${wanted}). It may stick.` }
     : { level: "warn", text: `${who}: clearance too loose — a gap of ${amountText(got)} (${wanted}). It may wobble.` };
@@ -196,26 +261,32 @@ export function judgeFits(input: FitsInput): FitsResult {
     const na = got ? (got.ids![0] === fit.a ? got.a : got.b) : input.nameOf(fit.a);
     const nb = got ? (got.ids![0] === fit.a ? got.b : got.a) : input.nameOf(fit.b);
     if (na === undefined || nb === undefined) {
-      // A part that's gone, suppressed or left out of the check: nothing to judge.
-      findings.push({ level: "ok", text: `A ${fit.kind === "press" ? "press" : "clearance"} fit wasn't checked: one of its parts is missing, suppressed or left out.` });
+      // A part that's gone, suppressed or left out of the check: nothing to judge, but the mark can still be changed or taken away.
+      const names: [string, string] = [na ?? "a part that's not in the check", nb ?? "a part that's not in the check"];
+      findings.push({ level: "ok", text: `A ${FIT_KIND_LABELS[fit.kind]} wasn't checked: one of its parts is missing, suppressed or left out.`, pair: { a: fit.a, b: fit.b, names, fit } });
       continue;
     }
-    if (got) handled.add(pairKey(got.a, got.b));
-    const f = judgeIntended(fit, [na, nb], got, tol);
+    if (got) handled.add(key);
+    const f = judgeIntended(fit, [na, nb], got, tol, input.printFits);
     if (f.level !== "ok") warnings++;
     findings.push({ ...f, pair: { a: fit.a, b: fit.b, names: [na, nb], fit, ...(got ? { measured: got } : {}) } });
   }
   // Pairs not marked: clearances listed with the printer's fit they're like; overlaps stay clashes.
   const clear = fits
     .filter((f) => !(f.ids && marked.has(pairKey(f.ids[0], f.ids[1]))))
-    .filter((f) => f.kind === "gap" && f.side <= FIT_RANGE + 1e-9 && (f.round || f.side > tol + 1e-9))
+    .filter((f) => f.kind === "gap" && f.side <= FIT_RANGE + 1e-9 && (f.round || f.offAxis !== undefined || f.side > tol + 1e-9))
     .sort((x, y) => x.side - y.side);
   for (const f of clear) {
+    if (f.offAxis !== undefined) {
+      findings.push({ level: "ok", text: `${f.a} and ${f.b}: a pin sits ${mm(f.offAxis)} off the middle of its hole.`, ...(f.ids ? { pair: { a: f.ids[0], b: f.ids[1], names: [f.a, f.b], measured: f } } : {}) });
+      continue;
+    }
     const hint = input.printFits && f.round ? ` — ${printFitHint(f.amount, input.printFits)}` : "";
     const text = f.round ? `${f.a} and ${f.b}: a gap of ${amountText(f)} round the pin${hint}.` : `${f.a} and ${f.b}: ${mm(f.side)} apart at the closest.`;
     findings.push({ level: "ok", text, ...(f.ids ? { pair: { a: f.ids[0], b: f.ids[1], names: [f.a, f.b], measured: f } } : {}) });
   }
   const overlaps = fits.filter((f) => f.kind === "overlap" && !(f.ids && marked.has(pairKey(f.ids[0], f.ids[1]))));
+  for (const f of overlaps.filter((x) => x.offAxis !== undefined)) findings.push({ level: "ok", text: `${f.a} and ${f.b}: a pin sits ${mm(f.offAxis!)} off the middle of its hole, so it's pushed into one side.` });
   if (overlaps.length) findings.push({ level: "ok", text: "Parts that overlap are listed under Clashes — mark one as a press fit if it's meant to be tight." });
   if (findings.length === 1) findings.push({ level: "ok", text: `No parts sit close together (within ${mm(FIT_RANGE)}), and no fits are marked.` });
   return { findings, handled, warnings };
@@ -246,8 +317,25 @@ export function fitFor(a: Assembly, x: string, y: string): IntendedFit | undefin
   return (a.fits ?? []).find((f) => pairKey(f.a, f.b) === key);
 }
 
-/** Usual starting range for a new fit, on the diameter (mm). */
-export const DEFAULT_FIT_RANGE: Record<IntendedFit["kind"], [number, number]> = { press: [0.05, 0.15], clearance: [0.2, 0.4] };
+/** Usual starting range for a new fit, on the diameter (mm); a printed press fit's is round the printer's own press fit. */
+export function defaultFitRange(kind: IntendedFit["kind"], printFits?: PrintFits): [number, number] {
+  if (kind === "printed") {
+    const p = printFits?.press ?? DEFAULT_FITS.press;
+    return [Math.max(0, Math.round((p - 0.05) * 1000) / 1000), Math.round((p + 0.05) * 1000) / 1000];
+  }
+  return kind === "press" ? [0.05, 0.15] : [0.2, 0.4];
+}
+
+/** Marks whose parts' copies are no longer in the assembly are dropped (after copies are removed or patterns change). */
+export function tidyFits(a: Assembly): Assembly {
+  if (!a.fits?.length) return a;
+  const present = new Set(a.instances.map((i) => i.id));
+  const left = a.fits.filter((f) => present.has(f.a.split("/")[0]) && present.has(f.b.split("/")[0]));
+  if (left.length === a.fits.length) return a;
+  const { fits: _, ...rest } = a;
+  void _;
+  return left.length ? { ...rest, fits: left } : rest;
+}
 
 /** Marked fits read from a file: odd entries dropped; parts must be copies in this assembly (by their first key part). */
 export function parseFits(raw: unknown, instanceIds: ReadonlySet<string>): IntendedFit[] {
@@ -258,7 +346,7 @@ export function parseFits(raw: unknown, instanceIds: ReadonlySet<string>): Inten
   for (const x of raw) {
     const r = (x ?? {}) as Record<string, unknown>;
     if (typeof r.id !== "string" || typeof r.a !== "string" || typeof r.b !== "string" || r.a === r.b) continue;
-    if (r.kind !== "press" && r.kind !== "clearance") continue;
+    if (r.kind !== "press" && r.kind !== "clearance" && r.kind !== "printed") continue;
     if (!instanceIds.has(r.a.split("/")[0]) || !instanceIds.has(r.b.split("/")[0])) continue;
     const min = num(r.min);
     const max = num(r.max);

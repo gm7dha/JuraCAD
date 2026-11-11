@@ -11,8 +11,8 @@
 import { addAssembly, billOfMaterials, insertInstance, placedBox, putMate, removeInstances, removeMate, renameAssembly, setExplode, settleSolved, spotBeside, updateAssembly, updateInstance, type Box3 } from "../assembly/assembly";
 import { setFlexible } from "../assembly/flexible";
 import { DEFAULT_CLASH_OPTIONS, assemblyReport, judgeContacts, type ClashOptions } from "../assembly/assemblyCheck";
-import { DEFAULT_FIT_RANGE, FIT_RANGE, fitFor, judgeFits, matePair, MAX_FIT, putFit, removeFit } from "../assembly/fits";
-import { DEFAULT_FITS, FIT_NAMES, fitVariableName, type PrintFits } from "../model/printSettings";
+import { defaultFitRange, FIT_KIND_LABELS, fitFor, fitRangeFor, judgeFits, matePair, MAX_FIT, printFitsFrom, putFit, removeFit } from "../assembly/fits";
+import { DEFAULT_FITS, type PrintFits } from "../model/printSettings";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { applyPlacement, compose, eulerDegFromQuat, IDENTITY, quatFromEulerDeg, rotate, type Placement, type Vec3 } from "../assembly/math";
 import { MATE_ORDER, MATE_TYPES, nextMateName, solveWithParts, type SolveResult } from "../assembly/mates";
@@ -640,7 +640,7 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
     name: "check_assembly",
     title: "Check an assembly for clashes and fits",
     description:
-      'Check an assembly with the real shapes: parts that overlap (clash, with how deep), mates that don\'t work, and copies whose part is missing. "tolerance" (mm, default 0.01): overlaps and gaps up to this count as touching. "list_touching": true also lists parts that only touch. "fits" (default true): also the Fits section — every fit marked with mark_fit judged (press fit OK / too tight / too loose / a gap instead), and the gap of parts that nearly touch (within 1 mm; a pin in a hole on the diameter and a side, with which printed fit it is like — from the design\'s fit_press/fit_snug/fit_sliding/fit_loose variables, else the usual 0.1/0.2/0.3/0.5 mm).',
+      'Check an assembly with the real shapes: parts that overlap (clash, with how deep), mates that don\'t work, and copies whose part is missing. "tolerance" (mm, default 0.01): overlaps and gaps up to this count as touching. "list_touching": true also lists parts that only touch. "fits" (default true): also the Fits section — every fit marked with mark_fit judged (OK / too tight / too loose / a gap instead / not lined up), and the gap of parts that nearly touch (within 1 mm; a pin in a hole on the diameter and a side, with which printed fit it is like — from the design\'s fit_press/fit_snug/fit_sliding/fit_loose variables, else the usual 0.1/0.2/0.3/0.5 mm; the app uses the same variables, else the printer settings).',
     inputSchema: { type: "object", properties: { assembly: ASSEMBLY_REF, tolerance: { type: "number" }, list_touching: { type: "boolean" }, fits: { type: "boolean" } } },
     readOnly: true,
     run: async (s, a) => {
@@ -656,7 +656,7 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
       const assemblies = assembliesOf(s.doc);
       const instances = instancesForKernel(asm, builtParts(s), assemblies, solved);
       await s.checkpoint();
-      const range = withFits ? fitRangeFor(asm) : 0;
+      const range = withFits ? fitRangeFor(asm.fits) : 0;
       const measured = instances.length > 1 ? s.withWholeEngine((e) => e.clashes(instances, options.tolerance, !options.ignoreTouching, range)) : [];
       const names = Object.fromEntries(builtParts(s).map((p) => [p.id, p.name]));
       const fits = withFits
@@ -673,7 +673,7 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
     name: "mark_fit",
     title: "Mark two parts as meant to fit",
     description:
-      'Mark two copies in an assembly as meant to fit together a set amount, so check_assembly judges it: "kind" "press" (an interference fit: made a little too big on purpose, so it\'s pushed in and grips — the overlap must be in range, and it\'s no longer called a clash) or "clearance" (a small gap so it slides or turns). "min"/"max" (mm) is the amount wanted: ON THE DIAMETER for a pin in a hole (so a pin 0.1 mm bigger than its hole is 0.1), otherwise straight across. Give the pair as "first" and "second" (copy names as in describe_assembly, e.g. "Pin <1>" or "Sub <1> / Pin <1>"), or "mate" (a mate\'s name: the two parts it joins). One fit per pair: marking it again replaces it. "remove": true takes the pair\'s mark away.',
+      'Mark two copies in an assembly as meant to fit together a set amount, so check_assembly judges it: "kind" "press" (an interference fit: made a little too big on purpose, so it\'s pushed in and grips — the overlap must be in range, and it\'s no longer called a clash), "printed" (a printed press fit: for 3D printing a press fit is drawn with a small GAP, as printed holes come out a little small — judged as a gap round the printer\'s fit_press, default range fit_press ± 0.05) or "clearance" (a small gap so it slides or turns). "min"/"max" (mm) is the amount wanted: ON THE DIAMETER for a pin in a hole (so a pin 0.1 mm bigger than its hole is 0.1), otherwise straight across. Give the pair as "first" and "second" (copy names as in describe_assembly, e.g. "Pin <1>" or "Sub <1> / Pin <1>"), or "mate" (a mate\'s name: the two parts it joins). One fit per pair: marking it again replaces it. "remove": true takes the pair\'s mark away.',
     inputSchema: {
       type: "object",
       properties: {
@@ -681,7 +681,7 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
         first: { type: "string" },
         second: { type: "string" },
         mate: { type: "string" },
-        kind: { type: "string", enum: ["press", "clearance"] },
+        kind: { type: "string", enum: ["press", "printed", "clearance"] },
         min: { type: "number" },
         max: { type: "number" },
         remove: { type: "boolean" },
@@ -713,10 +713,10 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
         if (a.kind !== undefined || a.min !== undefined || a.max !== undefined) throw new InputError('"remove" takes only the pair.');
         if (!existing) return say(`No fit is marked for ${label}.`);
         s.commit(updateAssembly(s.doc, asm.id, (x) => removeFit(x, existing.id)));
-        return say(`Removed the ${existing.kind} fit of ${label}. An overlap between them counts as a clash again.`);
+        return say(`Removed the ${FIT_KIND_LABELS[existing.kind]} of ${label}. An overlap between them counts as a clash again.`);
       }
-      const kind = oneOf(a.kind, ["press", "clearance"] as const, "kind");
-      const [d0, d1] = DEFAULT_FIT_RANGE[kind];
+      const kind = oneOf(a.kind, ["press", "printed", "clearance"] as const, "kind");
+      const [d0, d1] = defaultFitRange(kind, printFitsOf(s));
       const min = a.min === undefined ? d0 : amount(a.min, "min", s.scope(), { min: 0 }).value;
       const max = a.max === undefined ? Math.max(d1, min) : amount(a.max, "max", s.scope(), { min: 0 }).value;
       if (max > MAX_FIT) throw new InputError(`max can be at most ${MAX_FIT} mm.`);
@@ -724,7 +724,7 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
       const fit = { id: existing?.id ?? newId("fit"), a: pair[0], b: pair[1], kind, min, max };
       s.commit(updateAssembly(s.doc, asm.id, (x) => putFit(x, fit)));
       return say(
-        `Marked ${label} as a ${kind === "press" ? "press (interference)" : "clearance"} fit of ${Math.round(min * 1000) / 1000}–${Math.round(max * 1000) / 1000} mm (on the diameter for a pin in a hole).`,
+        `Marked ${label} as a ${kind === "press" ? "press (interference) fit" : FIT_KIND_LABELS[kind]} of ${Math.round(min * 1000) / 1000}–${Math.round(max * 1000) / 1000} mm (on the diameter for a pin in a hole).`,
         "check_assembly now judges it in its Fits section.",
       );
     },
@@ -748,24 +748,19 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
   },
 ];
 
-/** How far apart parts may be for the fit check: 1 mm, or more for a marked clearance fit that allows it. */
-function fitRangeFor(asm: Assembly): number {
-  return Math.max(FIT_RANGE, ...(asm.fits ?? []).filter((f) => f.kind === "clearance").map((f) => f.max + 0.5));
-}
-
-/** The printer's fits as the design has them (fit_* variables), else the usual ones. */
+/** The printed fits to compare with: the design's fit_* variables, else the usual ones (the app falls back to the printer settings instead). */
 function printFitsOf(s: Session): PrintFits {
-  const out = { ...DEFAULT_FITS };
-  for (const n of FIT_NAMES) {
-    const v = (s.doc.variables ?? []).find((x) => x.name === fitVariableName(n));
-    if (!v) continue;
-    try {
-      out[n] = amount(v.value, v.name, s.scope()).value;
-    } catch {
-      // not a plain length; keep the usual one
-    }
-  }
-  return out;
+  return printFitsFrom(
+    s.doc.variables,
+    (text) => {
+      try {
+        return amount(text, "fit", s.scope()).value;
+      } catch {
+        return null;
+      }
+    },
+    DEFAULT_FITS,
+  );
 }
 
 /** The boxes round what's in an assembly now (copies already added in this call count too), so a new copy goes beside them. */

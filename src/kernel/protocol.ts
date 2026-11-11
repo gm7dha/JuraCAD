@@ -198,6 +198,8 @@ export interface ContactMeasure {
    * the pin is bigger — an overlap that deep); `diameter` = the pin's (mm).
    */
   ring?: { radial: number; diameter: number };
+  /** The fit check only: a pin beside a hole of about its size, parallel to it but `off` mm to one side (not lined up). */
+  offAxis?: { radial: number; diameter: number; off: number };
 }
 
 export interface ExportResult {
@@ -276,7 +278,7 @@ export type KernelRequest =
   | { type: "check"; quality: MeshQuality; partIds?: string[] }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[]; tree?: StepTree }
-  | { type: "clashes"; instances: InstanceInput[]; tolerance?: number; withGaps?: boolean; fitRange?: number }
+  | { type: "clashes"; instances: InstanceInput[]; tolerance?: number; withGaps?: boolean; fitRange?: number; fitPairs?: [string, string][] }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
