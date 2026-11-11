@@ -1018,7 +1018,8 @@
   "all"; no buildings — map file only; areas ≤ `MARKS_MOST` 130 km, else a map file); the dialog's `overpassMap` turns a
   200 with a <remark> (timeout, out of memory) and 400s into plain words, and answers for an area no longer loaded are
   ignored. The dialog builds in `src/app/islandPuzzle.worker.ts` (`IslandBuilder`: a new build terminates one still
-  running; `IslandBuilt` = the puzzle without `groundAt`).
+  running, as do settings becoming invalid; a worker that never answers is stopped after `BUILD_LIMIT_MS` 2 min; `IslandBuilt` = the
+  puzzle without `groundAt`). The plates' .zip and .3mf are stored, not compressed (`zipStored` has no deflate).
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
