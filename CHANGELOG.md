@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.59 — More kinds of plane; mate connectors in the Part Studio
+
+- New kinds of Plane, as in Onshape: through a point and parallel to a face, square to a line through a point, through a
+  line at an angle, through three points, square to an edge at a point along it, and a best fit through points. They follow
+  the part when it changes.
+- New **Mate connector** feature: a point with its own directions on a face, edge or corner that belongs to a part. Mate to
+  it in assemblies, move parts by it in Move / copy, sketch on it or mirror across it. It stays with its part when the part
+  is joined to another or made into a composite.
+- Claude can add both, and mate to a part's own connectors.
+
 ## v0.58 — Pattern whole parts and faces; Composite part
 
 - Linear, Circular and Curve pattern can now repeat whole parts (each copy a new part) or the faces of a boss, pocket or
