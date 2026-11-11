@@ -19,6 +19,7 @@ import { MATE_ORDER, MATE_TYPES, nextMateName, solveWithParts, type SolveResult 
 import { isOrigin, originConnector, ORIGIN_PLANES, type OriginPlane } from "../assembly/origin";
 import { explodeAssembly, instancesForKernel, partBox } from "../assembly/placed";
 import { stepPartOffsets } from "../assembly/explode";
+import { ownConnectorPick } from "../assembly/connectors";
 import { stepTree } from "../assembly/stepTree";
 import { insertProblem, insertSubAssembly, leavesOf, ownBox, type Leaf } from "../assembly/subassembly";
 import { RELATION_KINDS } from "../assembly/relations";
@@ -143,7 +144,7 @@ const MATE_WORDS: Record<string, MateType> = {
 const MATE_HELP = MATE_ORDER.map((t) => `${t === "fastened" ? "fasten" : t === "revolute" ? "hinge (revolute)" : t === "pinSlot" ? "pin_slot" : t}: ${MATE_TYPES[t].description} Amounts: ${MATE_TYPES[t].values.map((v) => `${v.key} (${v.label}, ${v.unit})`).join(", ")}.`);
 
 const CONNECTOR_HELP =
-  `Each end is {"instance": "<copy name>", "face": …} or {"instance": …, "edge": …} (a round edge puts the connector at its centre, on its axis — the usual choice for hinges and pins in holes), optionally "at": "start" | "end" | "middle" on an edge; Width mates take "face" and "face2" (the two sides) on each end — on a sub-assembly copy, "instance2" may name another part of the same copy for "face2" (a slot made by two plates); {"origin": "Top" | "Front" | "Right"} is one of the assembly's own planes (it never moves). Faces and edges are chosen as on a part, but as the copy sits in the assembly now: ${PICK_HELP.faces} Edges: "E5" (list_edges with "assembly" and "instance" numbers them) or {"near": [x, y, z]}. A copy inside a sub-assembly is named "Sub <1> / Part <1>".`;
+  `Each end is {"instance": "<copy name>", "face": …} or {"instance": …, "edge": …} (a round edge puts the connector at its centre, on its axis — the usual choice for hinges and pins in holes), optionally "at": "start" | "end" | "middle" on an edge; Width mates take "face" and "face2" (the two sides) on each end — on a sub-assembly copy, "instance2" may name another part of the same copy for "face2" (a slot made by two plates); {"origin": "Top" | "Front" | "Right"} is one of the assembly's own planes (it never moves); {"instance": …, "connector": "<name>"} is one of the part's own mate connectors (made in its Part Studio). Faces and edges are chosen as on a part, but as the copy sits in the assembly now: ${PICK_HELP.faces} Edges: "E5" (list_edges with "assembly" and "instance" numbers them) or {"near": [x, y, z]}. A copy inside a sub-assembly is named "Sub <1> / Part <1>".`;
 
 export function oneFaceOrEdge(placed: ReturnType<typeof placedFacesAndEdges>, original: PartMesh, o: Obj, key: "face" | "face2" | "edge", where: string): TopoPick {
   const sel = o[key];
@@ -165,9 +166,18 @@ function connector(s: Session, asm: Assembly, raw: unknown, where: string, width
     const plane = oneOf(o.origin, ORIGIN_PLANES, `${where}.origin`) as OriginPlane;
     return { c: originConnector(plane), label: `the assembly's ${plane} plane` };
   }
-  noExtras(o, ["instance", "face", "face2", "instance2", "edge", "at"], where);
+  noExtras(o, ["instance", "face", "face2", "instance2", "edge", "at", "connector"], where);
   if (o.instance === undefined) throw new InputError(`${where}: give "instance" (a copy's name, e.g. "Bracket <1>") and a "face" or "edge" — or {"origin": "Top"}. ${CONNECTOR_HELP}`);
   const t = findTarget(s, asm, o.instance, `${where}.instance`, solved);
+  // One of the part's own mate connectors (made in its Part Studio with add_feature "mate_connector").
+  if (o.connector !== undefined) {
+    if (o.face !== undefined || o.edge !== undefined || width) throw new InputError(`${where}: "connector" goes on its own (no face or edge), and not in a Width mate.`);
+    const own = t.mesh.connectors ?? [];
+    const want = typeof o.connector === "string" ? o.connector.trim().toLowerCase() : "";
+    const mc = own.find((c) => c.id.toLowerCase() === want) ?? own.find((c) => c.name.toLowerCase() === want);
+    if (!mc) throw new InputError(`${where}.connector: ${t.leaf.name} has ${own.length ? `these mate connectors: ${own.map((c) => c.name).join(", ")}` : "no mate connectors of its own (add one in its Part Studio with add_feature \"mate_connector\")"}.`);
+    return { c: { instanceId: t.leaf.top, ...(t.leaf.path.length ? { path: t.leaf.path } : {}), ...ownConnectorPick(t.mesh.id, mc) }, label: `${t.leaf.name} (${mc.name})` };
+  }
   const placed = placedFacesAndEdges(t);
   if ((o.face === undefined) === (o.edge === undefined)) throw new InputError(`${where}: give either "face" or "edge" (one of them).`);
   if (o.face2 !== undefined && !width) throw new InputError(`${where}.face2 is only for Width mates (the second side).`);

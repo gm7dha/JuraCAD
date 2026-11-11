@@ -10,6 +10,8 @@ import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, 
 import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
 import { describeHole } from "../model/holes";
 import type { Feature, JuraCADDocument } from "../model/types";
+import { applyFollowed } from "../model/followed";
+import { describeMore, LINE_HELP, POINT_HELP } from "./planeSpec";
 import { SIMPLIFY_LEVELS } from "../model/simplify";
 import { planeFrame, planeLabel } from "../sketch/planes";
 import { holePositionsIn } from "../sketch/holePositions";
@@ -138,6 +140,9 @@ export function summarize(f: Feature, doc: JuraCADDocument): string {
       return `cylinder ⌀${p.diameter} × ${p.height} mm at (${p.x}, ${p.y}, ${p.z}), ${op}`;
     case "sphere":
       return `sphere ⌀${p.diameter} mm at (${p.x}, ${p.y}, ${p.z}), ${op}`;
+    case "plane":
+    case "mateConnector":
+      return describeMore(f, (id) => doc.features.find((x) => x.id === id)?.name);
     default:
       return `${f.type} (made in the app)`;
   }
@@ -304,7 +309,9 @@ async function tryChange(s: Session, next: JuraCADDocument, featureId: string | 
     if (problem) refuse(`: ${problem}`);
   }
   s.throwIfCancelled();
-  s.commit(next);
+  // Newer planes and mate connectors are written where the build found them (as the app does).
+  const followed = s.build(next.features, next).followed;
+  s.commit(followed ? applyFollowed(next, followed, s.scope(next)) : next);
   return [...notes.map((n) => `Note: ${n}`), volumeChange(beforeVolumes, afterVolumes)!, ...partsReport(s)];
 }
 
@@ -342,6 +349,8 @@ const KIND_HELP: Record<FeatureKind, string> = {
   box: "box: width (X), depth (Y), height (Z), x, y, z (its corner), operation",
   cylinder: "cylinder: diameter, height (Z), x, y, z (centre of its base), operation",
   sphere: "sphere: diameter, x, y, z (its centre), operation",
+  plane: `plane (a construction plane to sketch on, mirror across or use in assemblies; Onshape's types): plane_type ("offset" default — from + distance; "angle" — from + angle + tilt_about "across"|"up"; "point" — through point, parallel to from; "point_normal" — through point, square to line; "line_angle" — through line, turned by angle from the upright plane holding it; "three_point" — through points (3); "curve_point" — square to line (an edge) at position 0…1 along it; "fit" — best fit through points (3 or more)), from ("Top"|"Front"|"Right" or a Plane / mate connector name), point, points, line, angle (°), distance, position, flip (turn it over). ${POINT_HELP} ${LINE_HELP} Points and lines on parts follow them when the design changes`,
+  mate_connector: 'mate_connector (a point with its own X/Y/Z that belongs to a part: mate to it in assemblies with add_mate\'s "connector", sketch on it with add_sketch "plane", move parts by it): at (a point — see plane; or {"edge": "E3", "part": name}: an edge\'s middle with Z along it, a round edge\'s centre with Z along its axis; or {"face": "F2", "part": name}: a flat face\'s centre, Z out of it), or on_plane ("Top"|"Front"|"Right" or a Plane name: at its origin), spot ("start"|"end"|"middle" on an edge), owner (the part it belongs to; default the part it\'s on), flip_z, move ([x, y, z] mm along its own axes), turn ([x, y, z]° about its own axes)',
 };
 
 /** A part (list_faces / list_edges), or with "assembly" and "instance", a copy of one as it sits in an assembly. */

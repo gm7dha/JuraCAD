@@ -9,7 +9,7 @@ import { emptyDocument } from "../model/document";
 import { resolveVariables } from "../model/variables";
 import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { GeometryEngine, type StudiosResult } from "../kernel/engine";
-import type { PartMesh, RebuildResult } from "../kernel/protocol";
+import type { FollowedRefs, PartMesh, RebuildResult } from "../kernel/protocol";
 import { InputError } from "./args";
 import type { DesignFolder } from "./files";
 import type { ToolResult } from "./tools";
@@ -51,6 +51,8 @@ export interface Build {
   notes?: Record<string, string>;
   /** Sketches on part faces or using part edges: where the engine moved them to (see RebuildResult.sketchLinks). */
   links?: Record<string, SketchLinkInfo>;
+  /** Newer planes and mate connectors found again (see RebuildResult.followed). */
+  followed?: Record<string, FollowedRefs>;
 }
 
 /**
@@ -198,7 +200,7 @@ export class Session {
   }
 
   private keepBuild(key: string, r: RebuildResult): Build {
-    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, notes: r.featureNotes ?? {}, links: r.sketchLinks ?? {} };
+    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, notes: r.featureNotes ?? {}, links: r.sketchLinks ?? {}, ...(r.followed ? { followed: r.followed } : {}) };
     this.builtKey = key;
     return this.built;
   }

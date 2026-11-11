@@ -4,7 +4,8 @@ import { followLinks, pruneReferences, type RefEdge, type SketchLinkInfo } from 
 import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
 import { create } from "zustand";
 
-import type { PartMesh } from "../kernel/protocol";
+import type { FollowedRefs, PartMesh } from "../kernel/protocol";
+import { applyFollowed, withFollowed } from "./followed";
 import {
   addFeature,
   insertFeatureAfter,
@@ -622,6 +623,11 @@ export interface AppState {
     featureWarnings?: Record<string, string>,
     featureNotes?: Record<string, string>,
   ) => void;
+  /**
+   * Newer Plane features and mate connectors as the engine found them again (RebuildResult.followed): written into
+   * the design and the open dialog's feature without an undo step (nothing the user chose changes, only where they are).
+   */
+  applyFollowedRefs: (followed: Record<string, FollowedRefs> | undefined) => void;
   /** The Move / copy triad being dragged: the boxes' values so far (null when the drag ends or is taken back). */
   setTransformLive: (values: Record<string, string> | null) => void;
   /** Change the open draft as one step of the dialog's own undo (a finished drag of the triad, say). */
@@ -2111,6 +2117,17 @@ export const useStore = create<AppState>((set, get) => {
 
     setKernelStatus: (kernelStatus, error) => set({ kernelStatus, kernelError: error ?? null }),
     setRebuildBusy: (rebuildBusy) => set({ rebuildBusy }),
+    applyFollowedRefs: (followed) =>
+      set((s) => {
+        if (!followed || !Object.keys(followed).length || s.versionView) return {};
+        const present = applyFollowed(s.history.present, followed, resolveVariables(s.history.present.variables).values);
+        const draft = s.editing?.draft;
+        const followedDraft = draft ? withFollowed(draft, followed) : draft;
+        const out: Partial<AppState> = {};
+        if (present !== s.history.present) out.history = { ...s.history, present };
+        if (s.editing && followedDraft && followedDraft !== draft) out.editing = { ...s.editing, draft: followedDraft };
+        return out;
+      }),
     setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings, featureNotes) =>
       set((s) => {
         // The sketch open for editing follows its part's face and edges, as the engine found them.
