@@ -407,6 +407,7 @@ describe("Mountain puzzle: every piece held", () => {
     ["ridge", ridge, 2, 30, 0.15],
     ["rugged", rugged, 3, 25, 0.1],
     ["rugged", rugged, 1, 30, 0.1],
+    ["rugged", rugged, 2, 30, 0.15],
   ] as const)
     it(`dovetails every piece to those beside it at its level, top pieces too, keeping the gap (${name}, cube ${cube}, fit ${fit}, pattern ${seed})`, () => {
       const p = makeMountainPuzzle(grid, W, H, { ...SPEC, seed, cube, fit });
@@ -447,6 +448,33 @@ describe("Mountain puzzle: every piece held", () => {
       }
       // Top pieces are dovetailed now (they used to be plain squares held only by their key).
       expect(topTabs).toBeGreaterThan(0);
+      // Their tops follow the ground: every upward triangle's middle within 0.2 mm of it (snow cut flat at its line). Not
+      // where the test's height grid itself ends (the area runs a little past it, held level there: a kink in the ground).
+      const spec = { ...SPEC, seed, cube, fit };
+      const L = p.layout;
+      const ground = (x: number, y: number) => baseFor(spec) + (heightAt(grid, L.e0 + x / L.k, L.n0 + y / L.k) - L.low) * L.k * spec.exaggeration;
+      let worst = 0;
+      for (const q of p.pieces) {
+        if (!q.top || q.outline.length === 4) continue;
+        for (const b of q.bodies) {
+          const v = b.vertices;
+          for (let t = 0; t < b.triangles.length; t += 3) {
+            const [i, j, k] = [b.triangles[t] * 3, b.triangles[t + 1] * 3, b.triangles[t + 2] * 3];
+            const [ux, uy, wx, wy] = [v[j] - v[i], v[j + 1] - v[i + 1], v[k] - v[i], v[k + 1] - v[i + 1]];
+            if (ux * wy - uy * wx <= 1e-9) continue; // not facing up (walls, underside, snow's underside)
+            const [x, y, z] = [(v[i] + v[j] + v[k]) / 3, (v[i + 1] + v[j + 1] + v[k + 1]) / 3, (v[i + 2] + v[j + 2] + v[k + 2]) / 3];
+            if (Math.min(v[i + 2], v[j + 2], v[k + 2]) <= q.z0 + 1e-9) continue;
+            const edges = [(grid.e0 - L.e0) * L.k, (grid.e0 + (grid.nx - 1) * grid.spacing - L.e0) * L.k];
+            const sides = [(grid.n0 - L.n0) * L.k, (grid.n0 + (grid.ny - 1) * grid.spacing - L.n0) * L.k];
+            if (edges.some((e) => Math.abs(x - e) < 2) || sides.some((e) => Math.abs(y - e) < 2)) continue;
+            const want = ground(x, y);
+            // A rock triangle under the snow line is cut flat there.
+            if (b.part === "rock" && z < want - 1e-6 && Math.abs(z - p.snowZ) < 1e-6) continue;
+            worst = Math.max(worst, Math.abs(z - want));
+          }
+        }
+      }
+      expect(worst, "ground off by").toBeLessThan(0.2);
       // Pieces where fewer than two are possible are counted in a warning.
       if (few) expect(p.warnings.join(" ")).toContain(`${few} ${few === 1 ? "piece has" : "pieces have"} fewer than two dovetails`);
       else expect(p.warnings.join(" ")).not.toMatch(/fewer than two dovetails/);

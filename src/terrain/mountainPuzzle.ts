@@ -681,82 +681,13 @@ function topBodies(
 
 /**
  * A dovetailed top piece: the ground over any outline (anticlockwise), split at `zs` into rock and snow, as `topBodies`
- * does for a square. Its walls and underside are the outline itself — every corner, its sides cut into pieces no longer
- * than `step` — so the footprint is exactly the shrunk outline, like a cube's (`blockBody`). On top, the grid squares
- * (`step` mm) lying wholly inside, clear of the outline, are drawn as squares, and the band between them and the outline
- * is triangulated from the outline's points and the squares' edge points; every triangle is then cut at the snow line.
+ * does for a square. Its walls and underside are the outline itself — every corner, plus every place it crosses a line
+ * of the sampling grid (`step` mm) — so the footprint is exactly the shrunk outline, like a cube's (`blockBody`). On top,
+ * grid squares wholly inside are drawn as squares, and every square the outline passes through is clipped against it
+ * (its corners inside, the outline's corners and crossings) and each clipped part triangulated on its own — so no top
+ * triangle is bigger than a grid square and the ground is followed as closely as on a plain square piece.
  */
 function outlineTopBodies(outline: P2[], step: number, Z: (x: number, y: number) => number, z0: number, zs: number, pocket: Key | null, g: KeySizes): Body[] {
-  // The outline with no side longer than a step (the extra points lie on it).
-  const O: P2[] = [];
-  for (let k = 0; k < outline.length; k++) {
-    const [a, b] = [outline[k], outline[(k + 1) % outline.length]];
-    const parts = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
-    for (let q = 0; q < parts; q++) O.push([a[0] + ((b[0] - a[0]) * q) / parts, a[1] + ((b[1] - a[1]) * q) / parts]);
-  }
-  const xs = outline.map((p) => p[0]);
-  const ys = outline.map((p) => p[1]);
-  const [x0, y0] = [Math.min(...xs), Math.min(...ys)];
-  const mi = Math.ceil((Math.max(...xs) - x0) / step);
-  const mj = Math.ceil((Math.max(...ys) - y0) / step);
-  const X = (i: number) => x0 + i * step;
-  const Y = (j: number) => y0 + j * step;
-  // Squares wholly inside and at least a hair clear of every side of the outline.
-  const clear = 0.05 * step;
-  const segNearBox = (a: P2, b: P2, bx0: number, by0: number, bx1: number, by1: number) => {
-    if (Math.max(a[0], b[0]) < bx0 || Math.min(a[0], b[0]) > bx1 || Math.max(a[1], b[1]) < by0 || Math.min(a[1], b[1]) > by1) return false;
-    // Separating axis along the segment's normal.
-    const [nx, ny] = [-(b[1] - a[1]), b[0] - a[0]];
-    const d = [bx0 * nx + by0 * ny, bx1 * nx + by0 * ny, bx0 * nx + by1 * ny, bx1 * nx + by1 * ny].map((v) => v - (a[0] * nx + a[1] * ny));
-    return Math.min(...d) <= 0 && Math.max(...d) >= 0;
-  };
-  const full = new Uint8Array(mi * mj);
-  for (let j = 0; j < mj; j++)
-    for (let i = 0; i < mi; i++) {
-      if (!inside([X(i + 0.5), Y(j + 0.5)], outline)) continue;
-      let ok = true;
-      for (let k = 0; k < outline.length && ok; k++)
-        if (segNearBox(outline[k], outline[(k + 1) % outline.length], X(i) - clear, Y(j) - clear, X(i + 1) + clear, Y(j + 1) + clear)) ok = false;
-      if (ok) full[j * mi + i] = 1;
-    }
-  const at = (i: number, j: number) => (i >= 0 && j >= 0 && i < mi && j < mj ? full[j * mi + i] : 0);
-  // No two squares touching only at a corner (their outline would pass the same point twice).
-  for (let again = true; again; ) {
-    again = false;
-    for (let j = 0; j + 1 < mj; j++)
-      for (let i = 0; i + 1 < mi; i++) {
-        const [a, b, c, d] = [at(i, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1)];
-        if ((a && d && !b && !c) || (b && c && !a && !d)) {
-          full[(j + 1) * mi + (a ? i + 1 : i)] = 0;
-          again = true;
-        }
-      }
-  }
-  // The squares' outlines (anticlockwise round each patch of squares): the band's holes.
-  const nextEdge = new Map<string, [number, number]>();
-  for (let j = 0; j < mj; j++)
-    for (let i = 0; i < mi; i++) {
-      if (!at(i, j)) continue;
-      if (!at(i, j - 1)) nextEdge.set(`${i},${j}`, [i + 1, j]);
-      if (!at(i + 1, j)) nextEdge.set(`${i + 1},${j}`, [i + 1, j + 1]);
-      if (!at(i, j + 1)) nextEdge.set(`${i + 1},${j + 1}`, [i, j + 1]);
-      if (!at(i - 1, j)) nextEdge.set(`${i},${j + 1}`, [i, j]);
-    }
-  const loops: [number, number][][] = [];
-  const used = new Set<string>();
-  for (const startKey of nextEdge.keys()) {
-    if (used.has(startKey)) continue;
-    const loop: [number, number][] = [];
-    for (let key = startKey; !used.has(key); ) {
-      used.add(key);
-      const [a, b] = key.split(",").map(Number);
-      loop.push([a, b]);
-      const nb = nextEdge.get(key)!;
-      key = `${nb[0]},${nb[1]}`;
-    }
-    loops.push(loop);
-  }
-
   interface V {
     key: string;
     x: number;
@@ -772,19 +703,120 @@ function outlineTopBodies(outline: P2[], step: number, Z: (x: number, y: number)
     }
     return v;
   };
+  const xs = outline.map((p) => p[0]);
+  const ys = outline.map((p) => p[1]);
+  // The grid set off from round numbers, so the outline's corners never sit on its lines.
+  const [x0, y0] = [Math.min(...xs) - 0.3713 * step, Math.min(...ys) - 0.2917 * step];
+  const mi = Math.ceil((Math.max(...xs) - x0) / step) + 1;
+  const mj = Math.ceil((Math.max(...ys) - y0) / step) + 1;
+  const X = (i: number) => x0 + i * step;
+  const Y = (j: number) => y0 + j * step;
   const node = (i: number, j: number) => vertex(`n${i},${j}`, X(i), Y(j));
-  const ring = O.map(([x, y], k) => vertex(`o${k}`, x, y));
-  const tris: V[][] = [];
-  for (let j = 0; j < mj; j++)
-    for (let i = 0; i < mi; i++)
-      if (at(i, j)) {
-        const [a, b, c, d] = [node(i, j), node(i + 1, j), node(i + 1, j + 1), node(i, j + 1)];
-        tris.push([a, b, c], [a, c, d]);
+
+  // Round the outline: its corners and, between them, every crossing with a grid line in order. A crossing is on the
+  // side of a square: vertical line i (x = X(i)) in row j, or horizontal line j in column i.
+  interface Cross {
+    v: V;
+    vertical: boolean;
+    line: number;
+    along: number;
+  }
+  const ring: V[] = [];
+  const crossAt = new Map<number, Cross>();
+  for (let k = 0; k < outline.length; k++) {
+    const [a, b] = [outline[k], outline[(k + 1) % outline.length]];
+    ring.push(vertex(`o${k}`, a[0], a[1]));
+    const here: (Cross & { t: number })[] = [];
+    const [ia, ib] = [Math.floor((a[0] - x0) / step), Math.floor((b[0] - x0) / step)];
+    for (let i = Math.min(ia, ib) + 1; i <= Math.max(ia, ib); i++) {
+      const t = (X(i) - a[0]) / (b[0] - a[0]);
+      const y = a[1] + (b[1] - a[1]) * t;
+      here.push({ t, v: vertex(`v${i}e${k}`, X(i), y), vertical: true, line: i, along: Math.floor((y - y0) / step) });
+    }
+    const [ja, jb] = [Math.floor((a[1] - y0) / step), Math.floor((b[1] - y0) / step)];
+    for (let j = Math.min(ja, jb) + 1; j <= Math.max(ja, jb); j++) {
+      const t = (Y(j) - a[1]) / (b[1] - a[1]);
+      const x = a[0] + (b[0] - a[0]) * t;
+      here.push({ t, v: vertex(`h${j}e${k}`, x, Y(j)), vertical: false, line: j, along: Math.floor((x - x0) / step) });
+    }
+    here.sort((p, q) => p.t - q.t);
+    for (const c of here) {
+      crossAt.set(ring.length, c);
+      ring.push(c.v);
+    }
+  }
+
+  // The outline cut at its crossings into runs, each lying in one square: entering it, its corners, leaving it.
+  const squareOf = (p: V, q: V) => {
+    const [mx, my] = [(p.x + q.x) / 2, (p.y + q.y) / 2];
+    return [Math.floor((mx - x0) / step), Math.floor((my - y0) / step)];
+  };
+  interface Run {
+    pts: V[];
+    from: Cross;
+    to: Cross;
+  }
+  const runs = new Map<number, Run[]>();
+  const firsts = [...crossAt.keys()].sort((p, q) => p - q);
+  for (let r = 0; r < firsts.length; r++) {
+    const [s0, s1] = [firsts[r], firsts[(r + 1) % firsts.length]];
+    const pts: V[] = [];
+    for (let k = s0; ; k = (k + 1) % ring.length) {
+      pts.push(ring[k]);
+      if (k === s1 && pts.length > 1) break;
+    }
+    const [I, J] = squareOf(pts[0], pts[1]);
+    const key = J * mi + I;
+    const list = runs.get(key) ?? [];
+    list.push({ pts, from: crossAt.get(s0)!, to: crossAt.get(s1)! });
+    runs.set(key, list);
+  }
+
+  const tops: V[][] = [];
+  for (let J = 0; J < mj; J++)
+    for (let I = 0; I < mi; I++) {
+      const mine = runs.get(J * mi + I);
+      if (!mine) {
+        // Untouched by the outline: wholly inside or wholly out.
+        if (inside([X(I + 0.5), Y(J + 0.5)], outline)) {
+          const [a, b, c, d] = [node(I, J), node(I + 1, J), node(I + 1, J + 1), node(I, J + 1)];
+          tops.push([a, b, c], [a, c, d]);
+        }
+        continue;
       }
-  // The band: the outline less the patches of squares.
-  const holeVerts = loops.map((l) => l.map(([i, j]) => node(i, j)));
-  const all = [...ring, ...holeVerts.flat()];
-  for (const [a, b, c] of triangulate(O, holeVerts.map((l) => l.map((v) => [v.x, v.y] as P2)))) tris.push([all[a], all[b], all[c]]);
+      // Where a crossing sits round this square's edge, anticlockwise from its corner (I, J): 0…4.
+      const round = (c: Cross) => {
+        if (c.vertical) return c.line === I ? 3 + (Y(J + 1) - c.v.y) / step : 1 + (c.v.y - Y(J)) / step;
+        return c.line === J ? (c.v.x - X(I)) / step : 2 + (X(I + 1) - c.v.x) / step;
+      };
+      const corners = [node(I, J), node(I + 1, J), node(I + 1, J + 1), node(I, J + 1)];
+      const left = new Set(mine);
+      while (left.size) {
+        const first = left.values().next().value as Run;
+        const piece: V[] = [];
+        for (let run: Run = first; ; ) {
+          left.delete(run);
+          piece.push(...run.pts.slice(0, -1));
+          // Leaving the square: round its edge to where the outline next comes in, past the corners on the way.
+          const out = round(run.to);
+          let next: Run | null = null;
+          let gap = Infinity;
+          for (const other of mine) {
+            const d = (round(other.from) - out + 4) % 4;
+            if (d < gap) [gap, next] = [d, other];
+          }
+          piece.push(run.pts[run.pts.length - 1]);
+          for (let c = 1; c <= 4; c++) {
+            const at = (Math.floor(out) + c) % 4;
+            const d = (at - out + 4) % 4;
+            if (d > 0 && d < gap) piece.push(corners[at]);
+          }
+          if (!next || next === first || !left.has(next)) break;
+          run = next;
+        }
+        for (const [a, b, c] of triangulate(piece.map((v) => [v.x, v.y] as P2))) tops.push([piece[a], piece[b], piece[c]]);
+      }
+    }
 
   const below = (v: V) => v.h <= zs;
   const crossings = new Map<string, V>();
@@ -807,7 +839,7 @@ function outlineTopBodies(outline: P2[], step: number, Z: (x: number, y: number)
     for (let k = 1; k + 1 < ids.length; k++) up ? m.tri(ids[0], ids[k], ids[k + 1]) : m.tri(ids[0], ids[k + 1], ids[k]);
   };
   // The ground, triangle by triangle, cut at the snow line.
-  for (const tri of tris) {
+  for (const tri of tops) {
     const lowPart: V[] = [];
     const highPart: V[] = [];
     for (let m = 0; m < 3; m++) {
@@ -1083,7 +1115,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const fewJoints = pieces.filter((p) => p.layer > 0 && (p.joints ?? 0) < 2).length;
   if (fewJoints)
     warnings.push(
-      `${fewJoints} ${fewJoints === 1 ? "piece has" : "pieces have"} fewer than two dovetails: on a peak, in a hollow or on a steep face too few pieces beside ${fewJoints === 1 ? "it start" : "them start"} at the same height, so ${fewJoints === 1 ? "it sits" : "they sit"} on ${fewJoints === 1 ? "its" : "their"} key and lift${fewJoints === 1 ? "s" : ""} straight off.`,
+      `${fewJoints} ${fewJoints === 1 ? "piece has" : "pieces have"} fewer than two dovetails: on a peak, in a hollow or on a steep face too few pieces beside ${fewJoints === 1 ? "it start" : "them start"} at the same height, so only ${fewJoints === 1 ? "its key holds it" : "their keys hold them"} in place.`,
     );
   if (clashes) warnings.push(`${clashes} ${clashes === 1 ? "pair" : "pairs"} of neighbouring keys could still go into each other's pockets: take care with those pieces.`);
   if (keyless.length) warnings.push(`No room for a key under ${keyless.length === 1 ? "piece" : "pieces"} ${keyless.slice(0, 6).join(", ")}${keyless.length > 6 ? "…" : ""}: ${keyless.length === 1 ? "it rests" : "they rest"} on the piece below with nothing to hold ${keyless.length === 1 ? "it" : "them"} in place.`);
