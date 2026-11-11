@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { assemblyReport, DEFAULT_CLASH_OPTIONS, judgeContacts, parseClashOptions } from "../src/assembly/assemblyCheck";
 import { parseAssemblies } from "../src/assembly/assembly";
-import { defaultFitRange, FIT_EXPLAINED, fitFor, fitRangeFor, judgeFits, judgeIntended, matePair, MAX_FIT_RANGE, measuredFit, pairKey, parseFits, printFitHint, printFitsFrom, putFit, removeFit, tidyFits } from "../src/assembly/fits";
+import { copyPathName, defaultFitRange, FIT_EXPLAINED, fitFor, fitRangeFor, judgeFits, judgeIntended, matePair, MAX_FIT_RANGE, measuredFit, pairKey, parseFits, printFitHint, printFitsFrom, putFit, removeFit, tidyFits } from "../src/assembly/fits";
 import { removeInstances, withoutInstances } from "../src/assembly/assembly";
 import type { ContactMeasure } from "../src/kernel/protocol";
 import { DEFAULT_FITS } from "../src/model/printSettings";
@@ -234,5 +234,17 @@ describe("marks follow the copies", () => {
     const inner = putFit(asm, { ...press(0.05, 0.15), b: "i2/inner" });
     expect(withoutInstances(inner, ["i2"]).fits).toBeUndefined();
     expect(withoutInstances(inner, ["nope"]).fits).toHaveLength(1);
+  });
+});
+
+describe("names of parts inside sub-assemblies", () => {
+  it("names every copy on the way down, sub-assembly copies too", () => {
+    const inner: Assembly = { id: "in", name: "Inner", instances: [{ id: "p", partId: "pin", name: "Pin <1>", placement: ID, fixed: true }] };
+    const middle: Assembly = { id: "mid", name: "Middle", instances: [{ id: "c", partId: "", subAssembly: "in", name: "Inner <1>", placement: ID, fixed: true }] };
+    const top: Assembly = { ...asm, instances: [...asm.instances, { id: "s1", partId: "", subAssembly: "mid", name: "Middle <1>", placement: ID, fixed: false }] };
+    const all = [top, middle, inner];
+    expect(copyPathName(top, all, "i1")).toBe("Plate <1>");
+    expect(copyPathName(top, all, "s1/c/p")).toBe("Middle <1> / Inner <1> / Pin <1>");
+    expect(copyPathName(top, all, "s1/x")).toBe("A part");
   });
 });

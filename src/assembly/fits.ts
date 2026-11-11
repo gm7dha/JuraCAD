@@ -312,6 +312,22 @@ export function removeFit(a: Assembly, id: string): Assembly {
 }
 
 /** The fit marked for a pair, if any. */
+/**
+ * A part's name as the user sees it, with every sub-assembly copy it sits in: "Sub <1> / Pin <1>" for key "s1/p".
+ * Walks the copies down from the top (a sub-assembly copy on the way is fine); "A part" if the key leads nowhere.
+ */
+export function copyPathName(asm: Assembly, assemblies: readonly Assembly[], key: string): string {
+  const names: string[] = [];
+  let here: Assembly | undefined = asm;
+  for (const id of key.split("/")) {
+    const inst = here?.instances.find((i) => i.id === id);
+    if (!inst) return "A part";
+    names.push(inst.name);
+    here = inst.subAssembly ? assemblies.find((a) => a.id === inst.subAssembly) : undefined;
+  }
+  return names.join(" / ");
+}
+
 export function fitFor(a: Assembly, x: string, y: string): IntendedFit | undefined {
   const key = pairKey(x, y);
   return (a.fits ?? []).find((f) => pairKey(f.a, f.b) === key);

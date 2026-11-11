@@ -7,9 +7,8 @@ import { evaluate } from "../model/expr";
 import { lengthNumber, storeLength } from "../model/units";
 import { solveWithParts } from "../assembly/mates";
 import { assemblyReport, DEFAULT_CLASH_OPTIONS, judgeContacts, parseClashOptions, type ClashOptions } from "../assembly/assemblyCheck";
-import { defaultFitRange, fitFor, fitRangeFor, judgeFits, matePair, MAX_FIT, pairKey, printFitsFrom, type FitFinding } from "../assembly/fits";
+import { copyPathName, defaultFitRange, fitFor, fitRangeFor, judgeFits, matePair, MAX_FIT, pairKey, printFitsFrom, type FitFinding } from "../assembly/fits";
 import type { PrintFits } from "../model/printSettings";
-import { instanceAt } from "../assembly/subassembly";
 import { newId } from "../model/document";
 import type { Assembly, IntendedFit } from "../model/types";
 import { loadPrinter } from "./printerSetting";
@@ -247,17 +246,6 @@ function ClashOptionsBar({ options, onChange }: { options: ClashOptions; onChang
 const NO_FITS: IntendedFit[] = [];
 
 /** A part's name in the assembly by its key ("copy" or "copy/inner/part"), every level named: "Sub <1> / Inner <1> / Pin <1>". */
-function keyName(asm: Assembly, assemblies: readonly Assembly[], key: string): string {
-  const ids = key.split("/");
-  const names: string[] = [];
-  for (let n = 1; n <= ids.length; n++) {
-    const at = instanceAt(asm, assemblies, ids.slice(0, n).join("/"));
-    if (!at) return "A part";
-    names.push(n === 1 ? at.top.name : at.part.name);
-  }
-  return names.join(" / ");
-}
-
 /** Mark the two parts a mate joins as a fit. */
 function MatePairPicker({ onPick }: { onPick: (pair: FitPair) => void }) {
   const asm = useStore((s) => activeAssembly(s));
@@ -275,7 +263,7 @@ function MatePairPicker({ onPick }: { onPick: (pair: FitPair) => void }) {
             const m = mates.find((x) => x.id === e.target.value);
             const p = m && matePair(m);
             if (!p) return;
-            onPick({ a: p[0], b: p[1], names: [keyName(asm, assemblies, p[0]), keyName(asm, assemblies, p[1])], fit: fitFor(asm, p[0], p[1]) });
+            onPick({ a: p[0], b: p[1], names: [copyPathName(asm, assemblies, p[0]), copyPathName(asm, assemblies, p[1])], fit: fitFor(asm, p[0], p[1]) });
           }}
         >
           <option value="">Choose a mate…</option>
