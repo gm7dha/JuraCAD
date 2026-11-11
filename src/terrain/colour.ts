@@ -42,6 +42,10 @@ export interface ColourSpec {
   base: string | null;
   /** Lochs and rivers from the map in this colour (null: not coloured). */
   water: string | null;
+  /** Footpaths and tracks from the map in this colour (null or missing: not coloured). */
+  paths?: string | null;
+  /** Roads from the map in this colour (null or missing: not coloured). */
+  roads?: string | null;
   /** Print layer height (mm): band edges are moved onto whole layers. */
   layer: number;
   /** The first layer's height (mm), when it isn't `layer` (Bambu Studio's "Initial layer height"). */
@@ -65,6 +69,15 @@ export const LEAST_BANDS = 2;
 export const MOST_FILAMENTS = 8;
 
 export const SEA_BLUE = "#2f6ea5";
+/** Footpaths and tracks: red, as on OS maps' footpaths (the owner's wish). */
+export const PATH_RED = "#d22a1e";
+
+/** Roads: black (the owner's wish). */
+export const ROAD_BLACK = "#1f1f1f";
+
+/** What the map has to colour: water (lochs, rivers, streams), paths (footpaths, tracks) and roads. `true`/`false` = all/none. */
+export type MapHas = boolean | { water: boolean; paths?: boolean; roads?: boolean };
+const hasOf = (h: MapHas) => (typeof h === "boolean" ? { water: h, paths: h, roads: h } : { water: h.water, paths: !!h.paths, roads: !!h.roads });
 export const WATER_BLUE = "#3a7bc0";
 
 /**
@@ -113,10 +126,10 @@ export const PLAIN_COLOUR: ColourSpec = { mode: "plain", bands: [], base: null, 
 export const AMS_SLOTS = 4;
 
 /** Things worth knowing about the colour choices that don't stop them (plain English). */
-export function colourWarnings(spec: ColourSpec, hasWater = true, ground: [number, number] | null = null): string[] {
+export function colourWarnings(spec: ColourSpec, has: MapHas = true, ground: [number, number] | null = null): string[] {
   if (spec.mode === "plain") return [];
   const out: string[] = [];
-  const n = filaments(spec, hasWater).length;
+  const n = filaments(spec, has).length;
   if (spec.mode === "bands" && n > AMS_SLOTS)
     out.push(`That's ${n} filaments, and one AMS holds ${AMS_SLOTS}: use a second AMS or the spool holder for the rest, or fewer bands (or the same colour for two of them).`);
   if (ground && spec.bands.length > 1) {
@@ -128,17 +141,19 @@ export function colourWarnings(spec: ColourSpec, hasWater = true, ground: [numbe
 }
 
 /** What's wrong with the colour choices (plain English). */
-export function colourProblems(spec: ColourSpec, hasWater = true): string[] {
+export function colourProblems(spec: ColourSpec, has: MapHas = true): string[] {
   if (spec.mode === "plain") return [];
   const out: string[] = [];
   if (spec.bands.length < LEAST_BANDS || spec.bands.length > MOST_BANDS) out.push(`Use between ${LEAST_BANDS} and ${MOST_BANDS} colour bands.`);
+  if (spec.paths && !/^#[0-9a-f]{6}$/i.test(spec.paths)) out.push("The paths' colour isn't a colour.");
+  if (spec.roads && !/^#[0-9a-f]{6}$/i.test(spec.roads)) out.push("The roads' colour isn't a colour.");
   if (!(spec.layer >= 0.04 && spec.layer <= 1)) out.push("The layer height should be between 0.04 and 1 mm (0.2 mm is usual).");
   if (spec.firstLayer !== undefined && !(spec.firstLayer >= 0.04 && spec.firstLayer <= 1)) out.push("The first layer's height should be between 0.04 and 1 mm.");
   for (let i = 1; i < spec.bands.length; i++)
     if (!(spec.bands[i].from > spec.bands[i - 1].from) && i > 1) out.push(`${spec.bands[i].name} should start higher than ${spec.bands[i - 1].name}.`);
   for (const b of spec.bands) if (!/^#[0-9a-f]{6}$/i.test(b.colour)) out.push(`${b.name}'s colour isn't a colour.`);
-  if (spec.mode === "bands" && filaments(spec, hasWater).length > MOST_FILAMENTS)
-    out.push(`That's ${filaments(spec, hasWater).length} filaments — at most ${MOST_FILAMENTS}. Use fewer bands, or the same colour for the base or water as a band.`);
+  if (spec.mode === "bands" && filaments(spec, has).length > MOST_FILAMENTS)
+    out.push(`That's ${filaments(spec, has).length} filaments — at most ${MOST_FILAMENTS}. Use fewer bands, or the same colour for the base, water, paths or roads as a band.`);
   return out;
 }
 
@@ -146,12 +161,13 @@ export interface Filament {
   /** 1-based, as Bambu Studio numbers them. */
   n: number;
   colour: string;
-  /** What it's used for: "Base", "Sand", "Water". */
+  /** What it's used for: "Base", "Sand", "Water", "Paths", "Roads". */
   uses: string[];
 }
 
-/** The filaments the bands need: one per different colour, in the order they're first used (base, bands, water). */
-export function filaments(spec: ColourSpec, hasWater = true): Filament[] {
+/** The filaments the bands need: one per different colour, in the order they're first used (base, bands, water, paths, roads). */
+export function filaments(spec: ColourSpec, has: MapHas = true): Filament[] {
+  const map = hasOf(has);
   const out: Filament[] = [];
   const add = (colour: string, use: string) => {
     const c = colour.toLowerCase();
@@ -161,7 +177,9 @@ export function filaments(spec: ColourSpec, hasWater = true): Filament[] {
   };
   if (spec.base) add(spec.base, "Base");
   for (const b of spec.bands) add(b.colour, b.name);
-  if (spec.water && hasWater) add(spec.water, "Water");
+  if (spec.water && map.water) add(spec.water, "Water");
+  if (spec.paths && map.paths) add(spec.paths, "Paths");
+  if (spec.roads && map.roads) add(spec.roads, "Roads");
   return out;
 }
 
@@ -491,9 +509,13 @@ export interface MapRaster {
   empty: boolean;
   /** Any water on it. */
   water: boolean;
+  /** Any footpaths or tracks on it. */
+  paths: boolean;
+  /** Any roads on it. */
+  roads: boolean;
 }
 
-const EMPTY_RASTER: MapRaster = { kindAt: () => MapKind.None, empty: true, water: false };
+const EMPTY_RASTER: MapRaster = { kindAt: () => MapKind.None, empty: true, water: false, paths: false, roads: false };
 
 /** The map drawn on a grid over the puzzle (`width` × `height` mm), so a point's kind is one lookup. */
 export function mapRaster(map: PuzzleMap, width: number, height: number): MapRaster {
@@ -552,10 +574,18 @@ export function mapRaster(map: PuzzleMap, width: number, height: number): MapRas
     }
   }
   let water = false;
-  for (let i = 0; i < g.length && !water; i++) water = g[i] === MapKind.Water;
+  let paths = false;
+  let roads = false;
+  for (let i = 0; i < g.length && !(water && paths && roads); i++) {
+    water ||= g[i] === MapKind.Water;
+    paths ||= g[i] === MapKind.Path || g[i] === MapKind.Track;
+    roads ||= g[i] === MapKind.Road;
+  }
   return {
     empty: false,
     water,
+    paths,
+    roads,
     kindAt: (x, y) => {
       const i = Math.round(x / cell);
       const j = Math.round(y / cell);
@@ -573,6 +603,8 @@ export interface BandPart {
   triangles: number[];
   /** Per triangle: a filament painted on it (Bambu's paint_color), or 0. Missing when nothing is painted. */
   paint?: Uint8Array;
+  /** Where paint is, per painted filament: height ranges as printed (mm above the piece's underside), merged. */
+  paintRanges?: { filament: number; low: number; high: number }[];
   /** Its height range as printed (mm above the piece's underside). */
   low: number;
   high: number;
@@ -595,12 +627,19 @@ function normalOf(V: ArrayLike<number>, a: number, b: number, c: number): [numbe
   return [n[0] / l, n[1] / l, n[2] / l];
 }
 
-/** A piece's bodies as one part per colour band (lowest first), with water painted on. */
+/**
+ * A piece's bodies as one part per colour band (lowest first), with the map's water, paths and roads painted on: an
+ * upward triangle whose middle the map says is water (or a footpath or track, or a road) is painted that filament — the
+ * grooves' floors and sides, as the map's lines are drawn exactly as wide as their grooves.
+ */
 export function bandParts(bodies: Body[], z0: number, ctx: BandContext): BandPart[] {
-  const fs = filaments(ctx.spec, ctx.map.water);
+  const fs = filaments(ctx.spec, ctx.map);
   const { below, levels } = bandLevels(ctx.spec, ctx.scale, fs);
   const { below: first, cuts } = snappedCuts(levels, below, z0, ctx.spec.layer, ctx.spec.firstLayer ?? ctx.spec.layer);
   const waterN = ctx.spec.water && ctx.map.water ? filamentOf(fs, ctx.spec.water) : 0;
+  const pathN = ctx.spec.paths && ctx.map.paths ? filamentOf(fs, ctx.spec.paths) : 0;
+  const roadN = ctx.spec.roads && ctx.map.roads ? filamentOf(fs, ctx.spec.roads) : 0;
+  const paintOf = (kind: MapKind) => (kind === MapKind.Water ? waterN : kind === MapKind.Path || kind === MapKind.Track ? pathN : kind === MapKind.Road ? roadN : 0);
   const parts: BandPart[] = [];
   for (const body of bodies) {
     const slabs = sliceMesh(body.vertices, body.triangles, cuts.map((c) => c.z));
@@ -611,26 +650,47 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext): BandPar
       let high = -Infinity;
       for (let i = 2; i < slab.vertices.length; i += 3) [low, high] = [Math.min(low, slab.vertices[i]), Math.max(high, slab.vertices[i])];
       const part: BandPart = { filament, vertices: slab.vertices, triangles: slab.triangles, low: low - z0, high: high - z0 };
-      if (waterN && waterN !== filament) {
+      if ([waterN, pathN, roadN].some((f) => f && f !== filament)) {
         const paint = new Uint8Array(slab.triangles.length / 3);
         let any = false;
         const V = slab.vertices;
+        const ranges = new Map<number, [number, number][]>();
         for (let t = 0; t < slab.triangles.length; t += 3) {
           const [a, b, c] = [slab.triangles[t], slab.triangles[t + 1], slab.triangles[t + 2]];
           if (!facesUp(normalOf(V, a, b, c)[2])) continue;
           const x = (V[a * 3] + V[b * 3] + V[c * 3]) / 3;
           const y = (V[a * 3 + 1] + V[b * 3 + 1] + V[c * 3 + 1]) / 3;
-          if (ctx.map.kindAt(x, y) === MapKind.Water) {
-            paint[t / 3] = waterN;
+          const f = paintOf(ctx.map.kindAt(x, y));
+          if (f && f !== filament) {
+            paint[t / 3] = f;
             any = true;
+            const zs = [V[a * 3 + 2], V[b * 3 + 2], V[c * 3 + 2]];
+            const list = ranges.get(f) ?? [];
+            list.push([Math.min(...zs) - z0, Math.max(...zs) - z0]);
+            ranges.set(f, list);
           }
         }
-        if (any) part.paint = paint;
+        if (any) {
+          part.paint = paint;
+          part.paintRanges = [...ranges.entries()].flatMap(([f, list]) => mergeRanges(list, ctx.spec.layer).map(([lo, hi]) => ({ filament: f, low: lo, high: hi })));
+        }
       }
       parts.push(part);
     });
   }
   return parts;
+}
+
+/** Height ranges joined where they overlap or come within `gap`. */
+function mergeRanges(list: [number, number][], gap: number): [number, number][] {
+  const sorted = [...list].sort((a, b) => a[0] - b[0]);
+  const out: [number, number][] = [];
+  for (const [lo, hi] of sorted) {
+    const last = out[out.length - 1];
+    if (last && lo <= last[1] + gap) last[1] = Math.max(last[1], hi);
+    else out.push([lo, hi]);
+  }
+  return out;
 }
 
 /**
@@ -660,7 +720,10 @@ export function paintCode(n: number): string {
  * layer by layer, the slicer starts with the filament it ended the last layer on if it's needed, then changes once per
  * other filament needed there.
  */
-export function filamentSwaps(parts: { filament: number; low: number; high: number; paint?: Uint8Array }[], layer: number): number {
+export function filamentSwaps(
+  parts: { filament: number; low: number; high: number; paint?: Uint8Array; paintRanges?: { filament: number; low: number; high: number }[] }[],
+  layer: number,
+): number {
   let top = 0;
   for (const p of parts) top = Math.max(top, p.high);
   const n = Math.ceil(top / layer);
@@ -668,11 +731,18 @@ export function filamentSwaps(parts: { filament: number; low: number; high: numb
   for (const p of parts) {
     const a = Math.max(0, Math.floor(p.low / layer + 1e-6));
     const b = Math.min(n, Math.ceil(p.high / layer - 1e-6));
-    const painted = p.paint ? [...new Set(p.paint)].filter((f) => f > 0) : [];
+    // Without ranges (older parts), painted triangles are taken to lie on the part's top few layers.
+    const painted = !p.paintRanges && p.paint ? [...new Set(p.paint)].filter((f) => f > 0) : [];
     for (let l = a; l < b; l++) {
       sets[l].add(p.filament);
-      // Painted water lies on the ground, at the part's top layers: counted there.
       if (painted.length && l >= b - 3) for (const f of painted) sets[l].add(f);
+    }
+    // Paint is on the layers its triangles span — a path climbing a hill paints a little on many layers — and Bambu
+    // Studio paints a layer or so into the part below them, so one layer more is counted under each range.
+    for (const r of p.paintRanges ?? []) {
+      const ra = Math.max(0, Math.floor(r.low / layer + 1e-6) - 1);
+      const rb = Math.min(n, Math.ceil(r.high / layer - 1e-6));
+      for (let l = ra; l < Math.max(rb, ra + 1) && l < n; l++) sets[l].add(r.filament);
     }
   }
   let swaps = 0;
@@ -716,6 +786,11 @@ export const SNOW_SLOPE = 0.72;
 /** Sides of the pieces are a little darker than the ground's tint at their height. */
 export const SIDE_SHADE = 0.88;
 
+/**
+ * The map's colours on full-colour prints when paths or roads aren't given a colour of their own (`ColourSpec.paths` /
+ * `roads` null); otherwise footpaths and tracks take the paths colour (red) and roads the roads colour (black), solid.
+ * Buildings stay a dark brick brown.
+ */
 const MAP_COLOURS: Partial<Record<number, { colour: RGB; amount: number }>> = {
   [MapKind.Path]: { colour: [122, 78, 42], amount: 0.85 },
   [MapKind.Track]: { colour: [150, 110, 70], amount: 0.75 },
@@ -789,8 +864,9 @@ export function fullColours(bodies: Body[], ctx: FullContext): ColouredMesh {
     for (let t = 0; t < T.length; t += 3) {
       const n = tn[t / 3];
       const cz = (V[T[t] * 3 + 2] + V[T[t + 1] * 3 + 2] + V[T[t + 2] * 3 + 2]) / 3;
-      const inBase = baseRgb && cz < baseTop;
       const ground = n[2] > 0.2;
+      // The base's own colour is for its sides; ground pressed below the base's top (a groove at the coast) stays ground.
+      const inBase = baseRgb && cz < baseTop && !(ground && cz > baseTop - 2);
       for (let k = 0; k < 3; k++) {
         const i = T[t + k];
         triangles.push(i + off);
@@ -811,12 +887,14 @@ export function fullColours(bodies: Body[], ctx: FullContext): ColouredMesh {
           rgbs.push(water[0], water[1], water[2]);
           continue;
         } else {
+          const own = kind === MapKind.Path || kind === MapKind.Track ? spec.paths : kind === MapKind.Road ? spec.roads : null;
           const f = MAP_COLOURS[kind];
-          if (f) c = mix(c, f.colour, f.amount);
+          if (own) c = hexRgb(own);
+          else if (f) c = mix(c, f.colour, f.amount);
           if (snowRgb && snow) {
             const above = Math.max(0, Math.min(1, (heightOfZ(scale, z) - snow.from) / snowRange + 0.5));
             const gentle = Math.max(0, Math.min(1, (Math.min(nn[2], n[2]) - SNOW_SLOPE) / 0.15));
-            if (above * gentle > 0 && kind !== MapKind.Road && kind !== MapKind.Building) c = mix(c, snowRgb, above * gentle);
+            if (above * gentle > 0 && !own && kind !== MapKind.Road && kind !== MapKind.Building) c = mix(c, snowRgb, above * gentle);
           }
         }
         const lit = nn[0] * LIGHT[0] + nn[1] * LIGHT[1] + nn[2] * LIGHT[2];

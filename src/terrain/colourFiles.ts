@@ -39,7 +39,7 @@ export interface BandedPuzzle {
 export function bandPuzzle(pieces: PuzzlePiece[], ctx: BandContext): BandedPuzzle {
   const parts = new Map<PuzzlePiece, BandPart[]>();
   let uncut = 0;
-  const first = filaments(ctx.spec, ctx.map.water)[0]?.n ?? 1;
+  const first = filaments(ctx.spec, ctx.map)[0]?.n ?? 1;
   for (const p of pieces) {
     try {
       parts.set(p, bandParts(p.bodies, p.z0, ctx));
@@ -57,7 +57,7 @@ export function bandPuzzle(pieces: PuzzlePiece[], ctx: BandContext): BandedPuzzl
 
 /** A banded plate's .3mf. */
 export function bandPlateFile(plate: Plate, title: string, banded: BandedPuzzle, ctx: BandContext): Promise<Uint8Array> {
-  const fs = filaments(ctx.spec, ctx.map.water);
+  const fs = filaments(ctx.spec, ctx.map);
   const label = (n: number) => fs.find((f) => f.n === n)?.uses.join(" and ") ?? `filament ${n}`;
   const partsOf = (p: PuzzlePiece): BandPartFile[] => (banded.parts.get(p) ?? []).map((b) => ({ ...b, label: `${label(b.filament)} (filament ${b.filament})` }));
   return bandPlate3mf(plate, title, partsOf, paintCode);

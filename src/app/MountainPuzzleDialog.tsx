@@ -212,7 +212,7 @@ export function MountainPuzzleDialog() {
   const puzzleMap = useMemo(() => (puzzle ? mapOnPuzzle(features, puzzle.layout.e0, puzzle.layout.n0, puzzle.layout.k) : NO_MAP), [puzzle, features]);
   const mapSize: [number, number] = puzzle ? [puzzle.layout.cols * puzzle.spec.cube, puzzle.layout.rows * puzzle.spec.cube] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
-  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap.water);
+  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
   const usualBands = () => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline) : mountainBands(0, 1000, snowline));
   const fileName = safeFileName(`${loaded?.area.name ?? "Mountain"} puzzle`, "Mountain puzzle");
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
@@ -468,7 +468,7 @@ export function MountainPuzzleDialog() {
             usual={usualBands}
             usualBase={null}
             usualWater={WATER_BLUE}
-            hasMap={paintMap.water}
+            has={paintMap}
             ground={puzzle ? [puzzle.layout.low, puzzle.layout.high] : null}
           />
             </>

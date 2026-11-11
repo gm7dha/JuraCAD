@@ -251,7 +251,7 @@ export function IslandPuzzleDialog() {
   const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(features, loaded.area.sw.e, loaded.area.sw.n, puzzle.k) : NO_MAP), [puzzle, features]);
   const mapSize: [number, number] = puzzle ? [puzzle.width, puzzle.height] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
-  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap.water);
+  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string) => (
     <span className="mountain-number">
@@ -452,7 +452,7 @@ export function IslandPuzzleDialog() {
             usual={() => islandBands(puzzle?.high ?? 500)}
             usualBase={SEA_BLUE}
             usualWater={SEA_BLUE}
-            hasMap={paintMap.water}
+            has={paintMap}
             ground={puzzle ? [0, puzzle.high] : null}
           />
         </div>

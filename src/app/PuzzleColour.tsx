@@ -19,6 +19,9 @@ import {
   type PreviewMesh,
   type PuzzleMap,
   type ColouredMesh,
+  type MapHas,
+  PATH_RED,
+  ROAD_BLACK,
 } from "../terrain/colour";
 import type { ColourJob, ColourReply } from "../terrain/colourJob";
 import { allItems, bandPlateFile, colour3mfFiles, colourObjFiles, colourWrl, plateItems, plateSwaps, zipDeflated, type BandedPuzzle } from "../terrain/colourFiles";
@@ -35,14 +38,14 @@ export const COLOUR_MODES: [ColourMode, string][] = [
   ["full", "Full colour (full-colour printers and services)"],
 ];
 
-/** The colour choices: mode, bands, base and water colours, layer height. */
+/** The colour choices: mode, bands, base, water, paths and roads colours, layer height. */
 export function ColourPanel({
   spec,
   setSpec,
   usual,
   usualBase,
   usualWater,
-  hasMap,
+  has,
   ground,
 }: {
   spec: ColourSpec;
@@ -51,14 +54,14 @@ export function ColourPanel({
   usual: () => ColourBand[];
   usualBase: string | null;
   usualWater: string;
-  /** Lochs and rivers from the map are loaded. */
-  hasMap: boolean;
+  /** What the map loaded now has to colour: lochs and rivers, footpaths and tracks, roads. */
+  has: { water: boolean; paths: boolean; roads: boolean };
   /** The ground's lowest and highest (m), for the hint. */
   ground: [number, number] | null;
 }) {
   const choose = (mode: ColourMode) => {
     if (mode === "plain" || spec.bands.length) return setSpec({ ...spec, mode });
-    setSpec({ ...spec, mode, bands: usual(), base: usualBase, water: usualWater });
+    setSpec({ ...spec, mode, bands: usual(), base: usualBase, water: usualWater, paths: PATH_RED, roads: ROAD_BLACK });
   };
   const band = (i: number, change: Partial<ColourBand>) => setSpec({ ...spec, bands: spec.bands.map((b, k) => (k === i ? { ...b, ...change } : b)) });
   const add = () => {
@@ -73,8 +76,9 @@ export function ColourPanel({
     setSpec({ ...spec, bands: [...spec.bands.slice(0, at), nb, ...spec.bands.slice(at)] });
   };
   const remove = (i: number) => setSpec({ ...spec, bands: spec.bands.filter((_, k) => k !== i) });
-  const fs = filaments(spec, hasMap);
-  const problems = colourProblems(spec, hasMap);
+  const fs = filaments(spec, has);
+  const problems = colourProblems(spec, has);
+  const hasMap = has.water || has.paths || has.roads;
   return (
     <>
       <label className="mountain-row">
@@ -143,7 +147,20 @@ export function ColourPanel({
             the map in blue
             {spec.water !== null && <input type="color" value={spec.water} onChange={(e) => setSpec({ ...spec, water: e.target.value })} aria-label="Water colour" />}
           </label>
-          {spec.water !== null && !hasMap && <p className="muted small">Load the map's paths, rivers and lochs (From the map) to colour the water.</p>}
+          <label className="mountain-check">
+            <input type="checkbox" checked={!!spec.paths} onChange={(e) => setSpec({ ...spec, paths: e.target.checked ? PATH_RED : null })} /> Footpaths and tracks
+            from the map in red
+            {!!spec.paths && <input type="color" value={spec.paths} onChange={(e) => setSpec({ ...spec, paths: e.target.value })} aria-label="Paths colour" />}
+          </label>
+          <label className="mountain-check">
+            <input type="checkbox" checked={!!spec.roads} onChange={(e) => setSpec({ ...spec, roads: e.target.checked ? ROAD_BLACK : null })} /> Roads from the map in
+            black
+            {!!spec.roads && <input type="color" value={spec.roads} onChange={(e) => setSpec({ ...spec, roads: e.target.value })} aria-label="Roads colour" />}
+          </label>
+          {(spec.water !== null || !!spec.paths || !!spec.roads) && !hasMap && (
+            <p className="muted small">Load the map's paths, rivers and lochs (From the map; roads with "Everything") to colour them.</p>
+          )}
+          {hasMap && !has.roads && !!spec.roads && <p className="muted small">No roads in the map loaded — choose "Everything" in From the map to include them.</p>}
           {spec.mode === "bands" && (
             <>
               <div className="mountain-row">
@@ -183,7 +200,7 @@ export function ColourPanel({
             </p>
           ))}
           {!problems.length &&
-            colourWarnings(spec, hasMap, ground).map((w) => (
+            colourWarnings(spec, has, ground).map((w) => (
               <p key={w} className="mountain-warn small">
                 {w}
               </p>
@@ -270,14 +287,14 @@ export function useColoured(
   scale: HeightScale | null,
   map: PuzzleMap,
   mapSize: [number, number],
-  hasWater: boolean,
+  has: MapHas,
 ): { coloured: Coloured | null; working: boolean; error: string | null } {
   const [coloured, setColoured] = useState<Coloured | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const runner = useRef<ColourRunner | null>(null);
   const key = JSON.stringify([spec, scale]);
-  const ok = !!pieces && !!scale && spec.mode !== "plain" && !colourProblems(spec, hasWater).length;
+  const ok = !!pieces && !!scale && spec.mode !== "plain" && !colourProblems(spec, has).length;
   useEffect(() => () => runner.current?.stop(), []);
   useEffect(() => {
     if (!ok || !pieces || !scale) {

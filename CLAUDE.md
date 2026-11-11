@@ -1125,19 +1125,27 @@
   (weld, planes moved ≥ `PLANE_CLEAR` 1e-4 off every corner to the nearest free height, each triangle clipped to each slab with
   crossings keyed by mesh edge + plane so neighbours share them, caps from the reversed plane edges chained into loops, nested by
   area sign, `triangulateFast` — triangulate.ts's algorithm with a grid for the ear test, kept apart so plain meshes never
-  change) → `BandPart`s (filament, low/high as printed, `paint`: water triangles facing up get Bambu's `paint_color` —
+  change) → `BandPart`s (filament, low/high as printed, `paint`: upward triangles whose middle the map raster calls water, a
+  footpath/track or a road — the grooves' floors and walls, as `mapRaster` draws lines exactly `GROOVES` wide — get that
+  filament with Bambu's `paint_color`, and `paintRanges` (merged height ranges per painted filament) —
   `paintCode`, from BambuStudio's TriangleSelector::serialize / get_triangle_as_string: 1 "4", 2 "8", n ≥ 3 "<n−3 hex>C", 18
-  "0FC"). `filaments` numbers distinct colours (base, bands, water — only if the map has water), ≤ `MOST_FILAMENTS` 8.
+  "0FC"). `filaments(spec, has)` numbers distinct colours (base, bands, then water, paths and roads — each only if
+  the map has it: `MapHas`, a `MapRaster`'s `water`/`paths`/`roads` or a boolean for all), ≤ `MOST_FILAMENTS` 8. `ColourSpec.paths`
+  (`PATH_RED`) and `.roads` (`ROAD_BLACK`) — the owner's wish: red paths, black roads; set when a colour mode is first chosen,
+  rows "Footpaths and tracks…" / "Roads…" in the panel, null = off.
   `bandPlate3mf` (puzzle3mf.ts, async: deflated with `src/geometry/zipDeflate.ts`, as Bambu's own 3MFs are) writes a part per band
   with `extruder` in model_settings.config, as rock/snow. Banded plates come from `platesByLevel` (one set of plates per piece
   underside height — mixing the mountain's layers on a plate cost hundreds of filament changes; plain keeps `platesFor`).
   `colourWarnings`: more than `AMS_SLOTS` (4) filaments; no band starting within the ground's range (re-offers "Usual colours and
   heights"). `filamentSwaps`:
-  per layer, the filaments in use, starting with the last one used (painted water counted on a part's top 3 layers) — a rough
+  per layer, the filaments in use, starting with the last one used (paint counted on the layers its `paintRanges` span, one more
+  below; a path up a hill adds changes on many layers, so the estimate can be large and says so honestly) — a rough
   count shown per plate. Full colour: `fullColours` divides triangles at the tint's stops (sliceMesh without caps) and gives every
   corner a colour — `tintAt` (band colours blended between their heights, snow left out), sides × `SIDE_SHADE`, the base colour
   below z0, on upward faces hill shading from the NW (`SHADE`, smooth normals of upward faces), map kinds (`mapRaster` of
-  `mapOnPuzzle`: water flat blue unshaded, paths/tracks/roads/buildings/woods mixed in) and snow where above the line and the
+  `mapOnPuzzle`: water flat blue unshaded; paths/tracks solid in `spec.paths` (red), roads in `spec.roads` (black), both shaded and never
+  snowed on — or, switched off, the old browns/grey mixed in; buildings a dark brick brown, woods dark green mixed in; upward ground
+  pressed just below the base's top stays ground-coloured, not the base's) and snow where above the line and the
   slope's normal z ≥ `SNOW_SLOPE` (min of corner and face normals). Files (`colourFiles.ts`): 3MF with one `m:colorgroup`
   (`palette`, colours rounded to 4) and `pid`/`p1 p2 p3` per triangle (Bambu Studio reads these from non-Bambu 3MFs — bbs_3mf.cpp);
   OBJ + MTL + a palette PNG (each triangle one colour — its corners' mean — on a `SWATCH` square, ≤ `MOST_SWATCHES`; `pngStored`);

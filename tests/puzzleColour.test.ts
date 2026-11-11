@@ -26,6 +26,8 @@ import {
   mountainBands,
   NO_MAP,
   paintCode,
+  PATH_RED,
+  ROAD_BLACK,
   palette,
   SEA_BLUE,
   SIDE_SHADE,
@@ -41,6 +43,7 @@ import { allItems, bandPlateFile, bandPuzzle, colour3mfModel, colourObjFiles, co
 import { ISLAND_DEFAULTS, makeIslandPuzzle } from "../src/terrain/islandPuzzle";
 import { baseFor, makeMountainPuzzle, MOUNTAIN_DEFAULTS, type MountainSpec, type PuzzlePiece } from "../src/terrain/mountainPuzzle";
 import { featuresOnGrid, readOsm } from "../src/terrain/osm";
+import { GROOVES } from "../src/terrain/groundMarks";
 import { gridToLatLon } from "../src/terrain/osGrid";
 import { plate3mf, plateFiles, platesByLevel, platesFor } from "../src/terrain/puzzle3mf";
 import { ColourCache } from "../src/terrain/colourJob";
@@ -523,5 +526,124 @@ describe("review fixes", () => {
     const full = cache.run({ ...job, id: 4, pieces: undefined, spec: islandSpec("full") });
     if ("error" in full || full.mode !== "full") throw new Error("expected full colour");
     expect(full.full.length).toBe(2);
+  });
+});
+
+describe("red paths and black roads", () => {
+  // The test island with a footpath, a track and a road pressed into it (OS grid metres).
+  const mid = { e: isw.e + IW / 2, n: isw.n + IH / 2 };
+  const features = {
+    lines: [
+      { kind: "path" as const, pts: [[mid.e - 1800, mid.n - 300], [mid.e, mid.n + 200], [mid.e + 1500, mid.n + 900]] as [number, number][] },
+      { kind: "track" as const, pts: [[mid.e - 1000, mid.n - 1200], [mid.e + 800, mid.n - 900]] as [number, number][] },
+      { kind: "road" as const, pts: [[mid.e - 2000, mid.n + 1100], [mid.e + 1200, mid.n - 600]] as [number, number][] },
+    ],
+    shapes: [],
+    names: [],
+  };
+  const marked = makeIslandPuzzle(islandGrid, isw, IW, IH, { ...ISLAND_DEFAULTS, bed: BED, piece: 60 }, undefined, features);
+  const pmap = mapOnPuzzle(features, isw.e, isw.n, marked.k);
+  const raster = mapRaster(pmap, marked.width, marked.height);
+  const scale: HeightScale = { z0: ISLAND_DEFAULTS.base, h0: 0, mmPerM: ISLAND_DEFAULTS.relief / Math.max(marked.high, 1) };
+  const spec = (mode: ColourSpec["mode"]): ColourSpec => ({ ...islandSpec(mode), paths: PATH_RED, roads: ROAD_BLACK });
+  const distTo = (x: number, y: number, pts: [number, number][]) => {
+    let best = Infinity;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [a, b] = [pts[i], pts[i + 1]];
+      const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy)));
+      best = Math.min(best, Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy));
+    }
+    return best;
+  };
+
+  it("the map knows it has paths and roads; they count as filaments and towards the AMS warning", () => {
+    expect(raster.paths).toBe(true);
+    expect(raster.roads).toBe(true);
+    expect(raster.water).toBe(false);
+    const fs = filaments(spec("bands"), raster);
+    expect(fs.map((f) => f.uses.join("+"))).toEqual(["Base", "Sand", "Green", "Brown", "Grey", "Paths", "Roads"]);
+    expect(filaments(spec("bands"), { water: true, paths: false, roads: false }).some((f) => f.uses.includes("Paths"))).toBe(false);
+    expect(filaments({ ...spec("bands"), paths: null }, raster).some((f) => f.uses.includes("Paths"))).toBe(false);
+    expect(colourWarnings(spec("bands"), raster).some((w) => /7 filaments/.test(w))).toBe(true);
+  });
+
+  it("paints only the grooves: path triangles on the footpath and track, road triangles on the road", () => {
+    const ctx = { spec: spec("bands"), scale, map: raster };
+    const fs = filaments(ctx.spec, raster);
+    const pathN = fs.find((f) => f.uses.includes("Paths"))!.n;
+    const roadN = fs.find((f) => f.uses.includes("Roads"))!.n;
+    const banded = bandPuzzle(marked.pieces, ctx);
+    let paths = 0;
+    let roads = 0;
+    const pathLines = pmap.lines.filter((l) => l.kind !== "road").map((l) => l.pts);
+    const roadLine = pmap.lines.find((l) => l.kind === "road")!.pts;
+    for (const parts of banded.parts.values())
+      for (const p of parts) {
+        if (!p.paint) continue;
+        for (let t = 0; t < p.triangles.length; t += 3) {
+          const f = p.paint[t / 3];
+          if (!f) continue;
+          const ids = [p.triangles[t], p.triangles[t + 1], p.triangles[t + 2]];
+          const x = ids.reduce((s, i) => s + p.vertices[i * 3], 0) / 3;
+          const y = ids.reduce((s, i) => s + p.vertices[i * 3 + 1], 0) / 3;
+          if (f === pathN) {
+            paths++;
+            // Within the groove (half its width, plus the map grid's cell).
+            expect(Math.min(...pathLines.map((l) => distTo(x, y, l)))).toBeLessThan(GROOVES.track.width / 2 + 0.25);
+          } else if (f === roadN) {
+            roads++;
+            expect(distTo(x, y, roadLine)).toBeLessThan(GROOVES.road.width / 2 + 0.25);
+          } else throw new Error(`unexpected paint ${f}`);
+        }
+        // Paint is on the layers where the painted triangles are.
+        for (const r of p.paintRanges ?? []) expect(r.low).toBeGreaterThanOrEqual(p.low - 1e-6);
+      }
+    expect(paths).toBeGreaterThan(50);
+    expect(roads).toBeGreaterThan(50);
+    // Switched off: nothing painted.
+    const off = bandPuzzle(marked.pieces.slice(0, 4), { ...ctx, spec: { ...ctx.spec, paths: null, roads: null } });
+    for (const parts of off.parts.values()) for (const p of parts) expect(p.paint).toBeUndefined();
+  });
+
+  it("filament changes count paint on the layers it spans", () => {
+    const flat = [{ filament: 1, low: 0, high: 2 }];
+    expect(filamentSwaps(flat, 0.2)).toBe(0);
+    // Red paint from 1 to 1.4 mm on a one-colour part: on and off it, about twice per layer there.
+    const painted = filamentSwaps([{ filament: 1, low: 0, high: 2, paintRanges: [{ filament: 2, low: 1, high: 1.4 }] }], 0.2);
+    expect(painted).toBeGreaterThanOrEqual(3);
+    expect(painted).toBeLessThanOrEqual(6);
+  });
+
+  it("full colour: paths red and roads black", () => {
+    const coloured = colourPuzzle(marked.pieces, { spec: spec("full"), scale, map: raster });
+    let red = 0;
+    let black = 0;
+    for (const m of coloured.values())
+      for (let c = 0; c < m.triangles.length; c++) {
+        const i = m.triangles[c];
+        const kind = raster.kindAt(m.vertices[i * 3], m.vertices[i * 3 + 1]);
+        const [r, g, b] = [m.rgb[c * 3], m.rgb[c * 3 + 1], m.rgb[c * 3 + 2]];
+        const t = c - (c % 3);
+        const ids = [m.triangles[t], m.triangles[t + 1], m.triangles[t + 2]];
+        const up = (() => {
+          const V = m.vertices;
+          const [a, bb, cc] = ids;
+          const u = [V[bb * 3] - V[a * 3], V[bb * 3 + 1] - V[a * 3 + 1], V[bb * 3 + 2] - V[a * 3 + 2]];
+          const w = [V[cc * 3] - V[a * 3], V[cc * 3 + 1] - V[a * 3 + 1], V[cc * 3 + 2] - V[a * 3 + 2]];
+          const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+          return n[2] / Math.hypot(n[0], n[1], n[2]) > 0.5;
+        })();
+        if (!up) continue;
+        if (kind === MapKind.Path || kind === MapKind.Track) {
+          red++;
+          expect(r > 150 && g < 70 && b < 70, `path corner ${r},${g},${b}`).toBe(true);
+        } else if (kind === MapKind.Road) {
+          black++;
+          expect(Math.max(r, g, b), `road corner ${r},${g},${b}`).toBeLessThan(50);
+        }
+      }
+    expect(red).toBeGreaterThan(50);
+    expect(black).toBeGreaterThan(50);
   });
 });
