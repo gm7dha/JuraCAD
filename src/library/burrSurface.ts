@@ -13,7 +13,7 @@
  * shallow groove's roof is only as wide as the groove is deep (≤ 1.5 mm), which prints without supports. The badge
  * is a diamond whose lower sides slope at 45°, so it prints on an upright end without supports too.
  */
-import { AXIS, CROSS, LENGTH, disassembly, fullStick, type Piece, type V3 } from "./burr";
+import { AXIS, CROSS, LENGTH, disassembly, fullStick, pathApart, replay, type Piece, type V3 } from "./burr";
 import { seeded } from "./puzzle";
 import { SURFACE_PATTERNS, type SurfacePattern } from "./designs/mouldSurface";
 import { areaOf, clipToBox, type P2 } from "./designs/printShapes";
@@ -569,17 +569,20 @@ export function withEndCubes(pieces: Piece[]): Piece[] {
   });
 }
 
-const badgeLevels = new Map<string, number | null>();
+const badgeChecks = new Map<string, boolean>();
 
 /**
- * Does the puzzle still come apart in the same number of moves with something on every end (a whole cube's worth —
- * far more than a badge)? Then badges can never get in the way.
+ * Can raised badges never get in the way of the solution? With a whole cube's worth on every end (far more than a
+ * badge), the puzzle must still come apart in the same number of moves, AND the plain sticks' own shortest way apart
+ * (`pathApart`, the one the puzzle checker finds) must still be clear all the way, one cube at a time (`replay`).
  */
 export function badgesFree(pieces: Piece[], level: number, cacheKey: string): boolean {
-  let l = badgeLevels.get(cacheKey);
-  if (l === undefined) {
-    l = disassembly(withEndCubes(pieces));
-    badgeLevels.set(cacheKey, l);
+  let ok = badgeChecks.get(cacheKey);
+  if (ok === undefined) {
+    const ends = withEndCubes(pieces);
+    const path = pathApart(pieces);
+    ok = disassembly(ends) === level && !!path && replay(ends, path);
+    badgeChecks.set(cacheKey, ok);
   }
-  return l === level;
+  return ok;
 }

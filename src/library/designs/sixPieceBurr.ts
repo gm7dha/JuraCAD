@@ -127,6 +127,12 @@ const FACE_LABEL = { top: "top", bed: "underside", front: "front side", back: "b
  */
 export const MARKS_PER_CUT = 12;
 
+/** Would engraved numbers be big enough to print on these sticks? */
+function engravedFits(v: DesignValues): boolean {
+  const caps = burrWork({ ...v, ends: "number" }).flatMap((w) => w.filter((f) => f.number).map((f) => f.number!.cap));
+  return caps.length > 0 && Math.min(...caps) >= MIN_LABEL;
+}
+
 /** One face's decoration as sketches on a plane by the face and extrudes (cut in, or the badge added). */
 function faceFeatures(w: FaceWork, i: number, ctx: MakeContext): Feature[] {
   const role = `piece-${i}-${w.face}-${w.kind}`;
@@ -178,10 +184,14 @@ export const sixPieceBurr: LibraryDesign = {
     if (s.ends === "badge" || s.ends === "number") {
       const caps = work.flatMap((w) => w.filter((f) => f.number).map((f) => f.number!.cap));
       if (!caps.length || Math.min(...caps) < MIN_LABEL)
-        out.push(s.ends === "badge" ? "These sticks are too thin for raised badges — choose engraved numbers, or thicker sticks." : "These sticks are too thin for engraved numbers — choose plain ends, or thicker sticks.");
+        out.push(
+          s.ends === "number" || !engravedFits(v)
+            ? `These sticks are too thin for ${s.ends === "badge" ? "raised badges" : "engraved numbers"} — choose plain ends, or thicker sticks.`
+            : "These sticks are too thin for raised badges — choose engraved numbers, or thicker sticks.",
+        );
     }
     if (s.ends === "badge" && !badgesFree(L.pieces, L.level, `${num(v, "pattern")}:${String(v.difficulty)}`))
-      out.push("Raised badges on the ends would get in the way of this puzzle's moves — choose engraved numbers instead.");
+      out.push("Raised badges on the ends would get in the way of this puzzle's solution — choose engraved numbers instead.");
     return out;
   },
   make: (ctx) => {

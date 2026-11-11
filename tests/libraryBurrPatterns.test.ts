@@ -1,6 +1,6 @@
 /** The six-piece burr's surface patterns (pure): which faces show, where the patterns go, depths, and plain = unchanged. */
 import { describe, expect, it } from "vitest";
-import { AXIS, LENGTH, fullStick, makeBurr, type Piece, type V3 } from "../src/library/burr";
+import { AXIS, LENGTH, OUT, disassembly, fullStick, makeBurr, pathApart, replay, type V3 } from "../src/library/burr";
 import { MIN_LABEL } from "../src/library/designs/testPrints";
 import {
   BURR_PATTERNS,
@@ -221,7 +221,10 @@ describe("Six-piece burr surface patterns", () => {
       expect(sixPieceBurr.problems(v)).toEqual([]);
     }
     // Below the smallest stick the window offers (8 mm), they'd be too small.
-    expect(sixPieceBurr.problems({ ...base, size: 6, ends: "badge" })).toEqual(["These sticks are too thin for raised badges — choose engraved numbers, or thicker sticks."]);
+    expect(sixPieceBurr.problems({ ...base, size: 6, ends: "badge" })).toEqual(["These sticks are too thin for raised badges — choose plain ends, or thicker sticks."]);
+    // At 8 mm with the loosest fit, both are too small, so the badge's message doesn't suggest engraved numbers.
+    expect(sixPieceBurr.problems({ ...base, size: 8, fit: 0.6, ends: "badge" })).toEqual(["These sticks are too thin for raised badges — choose plain ends, or thicker sticks."]);
+    expect(sixPieceBurr.problems({ ...base, size: 8, fit: 0.6, ends: "number" })).toEqual(["These sticks are too thin for engraved numbers — choose plain ends, or thicker sticks."]);
     expect(sixPieceBurr.problems({ ...base, size: 6, ends: "number" })).toEqual(["These sticks are too thin for engraved numbers — choose plain ends, or thicker sticks."]);
     // The badge's number fits inside its diamond: the digit's box (0.7 × cap wide) within |x| + |y| ≤ R.
     const badge = burrWork({ ...base, size: 8, ends: "badge" })[0].filter((f) => f.face === "right");
@@ -229,19 +232,36 @@ describe("Six-piece burr surface patterns", () => {
     expect(0.35 * badge[1].number!.cap + 0.5 * badge[1].number!.cap).toBeLessThan(0.8 * R);
   });
 
-  it("walks the whole way apart with a cube on every end, so badges never block the solution", () => {
-    for (const [seed, d] of [[1, "easy"], [3, "medium"], [1, "hard"], [2, "hard"], [3, "hard"], [4, "hard"]] as const) {
-      const b = makeBurr(seed, d);
-      const path = pathApart(b.pieces);
-      expect(path, `${d} ${seed}`).not.toBeNull();
-      // Its moves up to the first piece taken away are the burr's level; then the rest come apart too (5 take-aways).
-      expect(path!.findIndex((m) => m.steps === OUT) + 1).toBe(b.level);
-      expect(path!.filter((m) => m.steps === OUT)).toHaveLength(5);
-      // The replay does notice a clash: the plain pieces with one cube too many in the way.
-      expect(replay(b.pieces.map((p, i) => (i === 0 ? [...p, ...fullStick(2)] : p)), path!)).toBe(false);
-      // The same moves with a cube beyond every end: no step runs into anything still in the same group.
-      expect(replay(withEndCubes(b.pieces), path!), `${d} ${seed}`).toBe(true);
-    }
+  it("offers raised badges only when they never block the solution: the plain way apart walked with a cube on every end", () => {
+    let offered = 0;
+    for (const d of ["easy", "medium", "hard"])
+      for (let seed = 1; seed <= 12; seed++) {
+        // Hard 6 takes the burr maker ~50 s to find (its search, not this check), so it's left out to keep CI quick.
+        if (d === "hard" && seed === 6) continue;
+        const b = makeBurr(seed, d);
+        const path = pathApart(b.pieces);
+        expect(path, `${d} ${seed}`).not.toBeNull();
+        // Its moves up to the first piece taken away are the burr's level; then the rest come apart too (5 take-aways).
+        expect(path!.findIndex((m) => m.steps === OUT) + 1, `${d} ${seed}`).toBe(b.level);
+        expect(path!.filter((m) => m.steps === OUT)).toHaveLength(5);
+        const clear = replay(withEndCubes(b.pieces), path!);
+        const free = badgesFree(b.pieces, b.level, `${seed}:${d}`);
+        expect(free, `${d} ${seed}`).toBe(clear && disassembly(withEndCubes(b.pieces)) === b.level);
+        if (free) offered++;
+      }
+    expect(offered).toBeGreaterThan(20);
+    expect(offered).toBeLessThan(35);
+    // Hard 12: another way apart exists in 4 moves, but the plain solution's 4th move (piece 6 out along −x) runs into
+    // an end, so badges are refused.
+    const hard12 = makeBurr(12, "hard");
+    expect(hard12.level).toBe(4);
+    expect(disassembly(withEndCubes(hard12.pieces))).toBe(4);
+    expect(replay(withEndCubes(hard12.pieces), pathApart(hard12.pieces)!)).toBe(false);
+    expect(sixPieceBurr.problems({ ...base, difficulty: "hard", pattern: 12, ends: "badge" })).toEqual(["Raised badges on the ends would get in the way of this puzzle's solution — choose engraved numbers instead."]);
+    expect(sixPieceBurr.problems({ ...base, difficulty: "hard", pattern: 12, ends: "number" })).toEqual([]);
+    // The replay does notice a clash: the plain pieces with one cube too many in the way.
+    const b = makeBurr(3, "medium");
+    expect(replay(b.pieces.map((p, i) => (i === 0 ? [...p, ...fullStick(2)] : p)), pathApart(b.pieces)!)).toBe(false);
   });
 });
 
@@ -250,74 +270,3 @@ function DIRSOF(v: V3): V3[] {
   return [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map((d) => [v[0] + d[0], v[1] + d[1], v[2] + d[2]] as V3);
 }
 
-type Move = { group: number[]; d: V3; steps: number };
-const DIRS6: V3[] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
-const OUT = 3 * LENGTH;
-
-/** A complete way apart (shortest to each split, BFS): moves of groups, `OUT` steps = taken away for good. */
-function pathApart(pieces: Piece[], ids = pieces.map((_, i) => i), start: V3[] = pieces.map(() => [0, 0, 0])): Move[] | null {
-  const n = ids.length;
-  if (n < 2) return [];
-  const id = (off: V3[]) => off.map((o) => o.join(",")).join("|");
-  const parent = new Map<string, { from: string; move: Move } | null>([[id(start), null]]);
-  let frontier = [start];
-  while (frontier.length && parent.size < 50000) {
-    const next: V3[][] = [];
-    for (const off of frontier) {
-      const occ = new Map<string, number>();
-      ids.forEach((g, k) => pieces[g].forEach((v) => occ.set(key([v[0] + off[k][0], v[1] + off[k][1], v[2] + off[k][2]]), k)));
-      for (let mask = 2; mask < 1 << n; mask += 2)
-        for (const d of DIRS6) {
-          const blocked = (s: number) => ids.some((g, k) => mask & (1 << k) && pieces[g].some((v) => {
-            const o = occ.get(key([v[0] + off[k][0] + d[0] * s, v[1] + off[k][1] + d[1] * s, v[2] + off[k][2] + d[2] * s]));
-            return o !== undefined && !(mask & (1 << o));
-          }));
-          if (blocked(1)) continue;
-          const group = ids.filter((_, k) => mask & (1 << k));
-          let free = true;
-          for (let s = 2; s <= OUT; s++) if (blocked(s)) free = false;
-          if (free) {
-            const moves: Move[] = [];
-            for (let k = id(off); parent.get(k); k = parent.get(k)!.from) moves.unshift(parent.get(k)!.move);
-            const inA = ids.map((_, k) => !!(mask & (1 << k)));
-            const a = pathApart(pieces, ids.filter((_, k) => inA[k]), off.filter((_, k) => inA[k]));
-            const b = pathApart(pieces, ids.filter((_, k) => !inA[k]), off.filter((_, k) => !inA[k]));
-            if (a && b) return [...moves, { group, d, steps: OUT }, ...a, ...b];
-            continue;
-          }
-          for (let s = 1; s <= LENGTH && !blocked(s); s++) {
-            const moved = off.map((o, k) => (mask & (1 << k) ? ([o[0] + d[0] * s, o[1] + d[1] * s, o[2] + d[2] * s] as V3) : o));
-            const k = id(moved);
-            if (parent.has(k)) continue;
-            parent.set(k, { from: id(off), move: { group, d, steps: s } });
-            next.push(moved);
-          }
-        }
-    }
-    frontier = next;
-  }
-  return null;
-}
-
-/** Play the moves one cube at a time: does any piece moving hit one it hasn't been taken apart from? */
-function replay(pieces: Piece[], moves: Move[]): boolean {
-  const off: V3[] = pieces.map(() => [0, 0, 0]);
-  // Which pieces are still together (a group taken away is a world of its own).
-  const world = pieces.map(() => 0);
-  let worlds = 1;
-  for (const m of moves) {
-    const w = world[m.group[0]];
-    const others = pieces.map((_, i) => i).filter((i) => world[i] === w && !m.group.includes(i));
-    const steps = m.steps === OUT ? 2 * LENGTH + 2 : m.steps;
-    for (let s = 1; s <= steps; s++) {
-      for (const g of m.group) off[g] = [off[g][0] + m.d[0], off[g][1] + m.d[1], off[g][2] + m.d[2]];
-      const taken = new Set(others.flatMap((i) => pieces[i].map((v) => key([v[0] + off[i][0], v[1] + off[i][1], v[2] + off[i][2]]))));
-      if (m.group.some((g) => pieces[g].some((v) => taken.has(key([v[0] + off[g][0], v[1] + off[g][1], v[2] + off[g][2]]))))) return false;
-    }
-    if (m.steps === OUT) {
-      const fresh = worlds++;
-      for (const g of m.group) world[g] = fresh;
-    }
-  }
-  return true;
-}

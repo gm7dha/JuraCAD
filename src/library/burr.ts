@@ -295,3 +295,79 @@ export function laidFlat(p: Piece, axis: number): { cells: V3[]; overhangs: numb
   }
   return best!;
 }
+
+/** A move of a group of pieces (indices) `steps` cubes along d; `OUT` steps = taken away for good. */
+export type Move = { group: number[]; d: V3; steps: number };
+export const OUT = 3 * LENGTH;
+
+/**
+ * A complete way apart, as `disassembly` searches (breadth first, so the fewest moves to each split; the same order of
+ * groups and directions): the moves of groups, `OUT` steps = taken away for good. Null if it can't (or the search runs
+ * out of room).
+ */
+export function pathApart(pieces: Piece[], ids = pieces.map((_, i) => i), start: V3[] = pieces.map(() => [0, 0, 0])): Move[] | null {
+  const n = ids.length;
+  if (n < 2) return [];
+  const id = (off: V3[]) => off.map((o) => o.join(",")).join("|");
+  const parent = new Map<string, { from: string; move: Move } | null>([[id(start), null]]);
+  let frontier = [start];
+  while (frontier.length && parent.size < 50000) {
+    const next: V3[][] = [];
+    for (const off of frontier) {
+      const occ = new Map<string, number>();
+      ids.forEach((g, k) => pieces[g].forEach((v) => occ.set(key([v[0] + off[k][0], v[1] + off[k][1], v[2] + off[k][2]]), k)));
+      for (let mask = 2; mask < 1 << n; mask += 2)
+        for (const d of DIRS) {
+          const blocked = (s: number) => ids.some((g, k) => mask & (1 << k) && pieces[g].some((v) => {
+            const o = occ.get(key([v[0] + off[k][0] + d[0] * s, v[1] + off[k][1] + d[1] * s, v[2] + off[k][2] + d[2] * s]));
+            return o !== undefined && !(mask & (1 << o));
+          }));
+          if (blocked(1)) continue;
+          const group = ids.filter((_, k) => mask & (1 << k));
+          let free = true;
+          for (let s = 2; s <= OUT; s++) if (blocked(s)) free = false;
+          if (free) {
+            const moves: Move[] = [];
+            for (let k = id(off); parent.get(k); k = parent.get(k)!.from) moves.unshift(parent.get(k)!.move);
+            const inA = ids.map((_, k) => !!(mask & (1 << k)));
+            const a = pathApart(pieces, ids.filter((_, k) => inA[k]), off.filter((_, k) => inA[k]));
+            const b = pathApart(pieces, ids.filter((_, k) => !inA[k]), off.filter((_, k) => !inA[k]));
+            if (a && b) return [...moves, { group, d, steps: OUT }, ...a, ...b];
+            continue;
+          }
+          for (let s = 1; s <= LENGTH && !blocked(s); s++) {
+            const moved = off.map((o, k) => (mask & (1 << k) ? ([o[0] + d[0] * s, o[1] + d[1] * s, o[2] + d[2] * s] as V3) : o));
+            const k = id(moved);
+            if (parent.has(k)) continue;
+            parent.set(k, { from: id(off), move: { group, d, steps: s } });
+            next.push(moved);
+          }
+        }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
+/** Play the moves one cube at a time: does any piece moving hit one it hasn't been taken apart from? */
+export function replay(pieces: Piece[], moves: Move[]): boolean {
+  const off: V3[] = pieces.map(() => [0, 0, 0]);
+  // Which pieces are still together (a group taken away is a world of its own).
+  const world = pieces.map(() => 0);
+  let worlds = 1;
+  for (const m of moves) {
+    const w = world[m.group[0]];
+    const others = pieces.map((_, i) => i).filter((i) => world[i] === w && !m.group.includes(i));
+    const steps = m.steps === OUT ? 2 * LENGTH + 2 : m.steps;
+    for (let s = 1; s <= steps; s++) {
+      for (const g of m.group) off[g] = [off[g][0] + m.d[0], off[g][1] + m.d[1], off[g][2] + m.d[2]];
+      const taken = new Set(others.flatMap((i) => pieces[i].map((v) => key([v[0] + off[i][0], v[1] + off[i][1], v[2] + off[i][2]]))));
+      if (m.group.some((g) => pieces[g].some((v) => taken.has(key([v[0] + off[g][0], v[1] + off[g][1], v[2] + off[g][2]]))))) return false;
+    }
+    if (m.steps === OUT) {
+      const fresh = worlds++;
+      for (const g of m.group) world[g] = fresh;
+    }
+  }
+  return true;
+}

@@ -1080,13 +1080,16 @@
   is never decorated (first layers fill a shallow groove; its roof would be mid-air); upright sides' grooves are ≤ 1.5 deep.
   Depth ≤ `MOST_DEPTH` and ≤ `DEPTH_SHARE` × cube. Ends: plain / pattern / number (Text "1"–"6") / badge (a raised diamond,
   45° lower sides, `BADGE_EDGE` from the end's edges, + the number (`BADGE_CAP` × R) cut through it `BADGE_NUMBER_EXTRA`
-  into the end); numbers under `MIN_LABEL` (2.5, testPrints.ts) are refused. Badges only if `badgesFree` (the solver with a
-  whole cube added beyond every end still comes apart at the same level) — note that on some hard burrs end cubes still
-  block a few side moves plain sticks allow, though never the solution. Per decorated face, `fixedPlane`
+  into the end); numbers under `MIN_LABEL` (2.5, testPrints.ts) are refused. Badges only if `badgesFree` (cached: with a
+  whole cube added beyond every end, `withEndCubes`, the solver still comes apart at the same level AND the plain sticks'
+  shortest way apart — `pathApart` in burr.ts, the same BFS as `disassembly` but keeping the moves — replays clear one cube
+  at a time, `replay`; hard 12 has another 4-move way but its own solution's 4th move hits an end, so it's refused). So a
+  badge never blocks the solution, though on some hard burrs it blocks a few side moves plain sticks allow. Per decorated face, `fixedPlane`
   sketches + extrudes of `MARKS_PER_CUT` (12) marks each (`CUT_START` outside the face, cut flipped in; the engine fuses a
   sketch's regions one by one, so big sketches get slow), appended after that piece's notches (not apart, so they cut the
   latest part = that piece); ≤ `MOST_SHAPES` (120) per piece — the default lattice burr builds in ~8 s. "none" + "plain" (and old inserts without the values)
-  make exactly the old features. Tests: libraryBurrPatterns (pure), engineBurrPatterns (heavy, own file: volumes lost =
+  make exactly the old features. Tests: libraryBurrPatterns (pure; badges vs the solution for seeds 1–12 of each difficulty, hard 6 skipped as
+  makeBurr takes ~50 s to find it), engineBurrPatterns (heavy, own file: volumes lost =
   engraving, no overlaps, the first few free moves of the plain cubes still free half a cube at a time; pieces reach past the plain ones only beyond
   their ends), mcpBurrPatterns.
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
