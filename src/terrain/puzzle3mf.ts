@@ -7,6 +7,7 @@
  */
 import { weld, zipStored } from "../geometry/threeMf";
 import type { PuzzlePiece } from "./mountainPuzzle";
+import { zipDeflated } from "../geometry/zipDeflate";
 
 export interface PlacedPiece {
   piece: PuzzlePiece;
@@ -148,4 +149,106 @@ export function plate3mf(plate: Plate, title: string): Uint8Array {
 /** Every plate's .3mf in one .zip. */
 export function allPlatesZip(plates: Plate[], name: string): Uint8Array {
   return zipStored(plates.map((p, i) => ({ name: `${name} - plate ${i + 1} of ${plates.length}.3mf`, data: plate3mf(p, `${name} - plate ${i + 1}`) })));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Colour bands and full colour (the plain plates above are left exactly as they were)
+
+/** A piece's parts for a colour-band plate: one closed mesh per filament band, lowest first. */
+export interface BandPartFile {
+  filament: number;
+  /** "Sand", "Water", … for the part's name. */
+  label: string;
+  vertices: number[];
+  triangles: number[];
+  /** Per triangle: a filament painted on (Bambu's paint_color), or 0. */
+  paint?: Uint8Array;
+}
+
+/**
+ * One colour-band plate's 3MF texts: each piece one object of parts, a part per band with its filament in Bambu's
+ * model_settings.config (as rock and snow), water painted onto the ground's triangles with `paint_color`.
+ * `paintCode(n)` gives the attribute for filament n. The meshes are written as given (already welded, so the paint
+ * stays with its triangle).
+ */
+export function bandPlateFiles(plate: Plate, title: string, partsOf: (p: PuzzlePiece) => BandPartFile[], paintCode: (n: number) => string): { model: string; config: string } {
+  const lines: string[] = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<model unit="millimeter" xml:lang="en-GB" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
+    ` <metadata name="Title">${xmlEscape(title)}</metadata>`,
+    ' <metadata name="Application">JuraCAD</metadata>',
+    " <resources>",
+  ];
+  const config: string[] = ['<?xml version="1.0" encoding="UTF-8"?>', "<config>"];
+  const items: string[] = [];
+  const instances: string[] = [];
+  let id = 1;
+  for (const { piece, move } of plate.pieces) {
+    const parts: { id: number; part: BandPartFile }[] = [];
+    for (const part of partsOf(piece)) {
+      if (!part.triangles.length) continue;
+      const partId = id++;
+      parts.push({ id: partId, part });
+      lines.push(`  <object id="${partId}" type="model" name="${xmlEscape(`${piece.name} ${part.label}`)}">`, "   <mesh>", "    <vertices>");
+      const v = part.vertices;
+      for (let i = 0; i < v.length; i += 3) lines.push(`     <vertex x="${num(v[i])}" y="${num(v[i + 1])}" z="${num(v[i + 2])}"/>`);
+      lines.push("    </vertices>", "    <triangles>");
+      const t = part.triangles;
+      for (let i = 0; i < t.length; i += 3) {
+        const paint = part.paint?.[i / 3] ? ` paint_color="${paintCode(part.paint[i / 3])}"` : "";
+        lines.push(`     <triangle v1="${t[i]}" v2="${t[i + 1]}" v3="${t[i + 2]}"${paint}/>`);
+      }
+      lines.push("    </triangles>", "   </mesh>", "  </object>");
+    }
+    if (!parts.length) continue;
+    const objectId = id++;
+    lines.push(`  <object id="${objectId}" type="model" name="${xmlEscape(piece.name)}">`, "   <components>");
+    for (const p of parts) lines.push(`    <component objectid="${p.id}"/>`);
+    lines.push("   </components>", "  </object>");
+    items.push(`  <item objectid="${objectId}" transform="1 0 0 0 1 0 0 0 1 ${move.map(num).join(" ")}" printable="1"/>`);
+    config.push(`  <object id="${objectId}">`, `    <metadata key="name" value="${xmlEscape(piece.name)}"/>`, `    <metadata key="extruder" value="${parts[0].part.filament}"/>`);
+    for (const p of parts)
+      config.push(
+        `    <part id="${p.id}" subtype="normal_part">`,
+        `      <metadata key="name" value="${xmlEscape(`${piece.name} ${p.part.label}`)}"/>`,
+        '      <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>',
+        `      <metadata key="extruder" value="${p.part.filament}"/>`,
+        "    </part>",
+      );
+    config.push("  </object>");
+    instances.push("    <model_instance>", `      <metadata key="object_id" value="${objectId}"/>`, '      <metadata key="instance_id" value="0"/>', "    </model_instance>");
+  }
+  lines.push(" </resources>", " <build>", ...items, " </build>", "</model>", "");
+  config.push("  <plate>", '    <metadata key="plater_id" value="1"/>', `    <metadata key="plater_name" value="${xmlEscape(title)}"/>`, '    <metadata key="locked" value="false"/>', ...instances, "  </plate>", "</config>", "");
+  return { model: lines.join("\n"), config: config.join("\n") };
+}
+
+/** One colour-band plate as a .3mf file, compressed (as Bambu Studio's own are). */
+export async function bandPlate3mf(plate: Plate, title: string, partsOf: (p: PuzzlePiece) => BandPartFile[], paintCode: (n: number) => string): Promise<Uint8Array> {
+  const { model, config } = bandPlateFiles(plate, title, partsOf, paintCode);
+  return zipDeflated([
+    { name: "[Content_Types].xml", data: CONTENT_TYPES },
+    { name: "_rels/.rels", data: RELS },
+    { name: "3D/3dmodel.model", data: model },
+    { name: "Metadata/model_settings.config", data: config },
+  ]);
+}
+
+/** The 3MF's fixed texts, for other writers (full colour). */
+export const THREE_MF_PARTS = { contentTypes: CONTENT_TYPES, rels: RELS };
+
+/**
+ * Plates for colour bands: pieces whose undersides sit at different heights in the puzzle (the mountain's layers) have
+ * their band edges at different heights as printed, so a plate mixing them changes filament on almost every layer.
+ * Each underside height gets plates of its own (lowest first), laid out as `platesFor` does.
+ */
+export function platesByLevel(pieces: PuzzlePiece[], bed: [number, number, number]): Plate[] {
+  const groups = new Map<number, PuzzlePiece[]>();
+  for (const p of pieces) {
+    const key = Math.round(p.z0 * 1e4) / 1e4;
+    const g = groups.get(key);
+    if (g) g.push(p);
+    else groups.set(key, [p]);
+  }
+  return [...groups.entries()].sort((a, b) => a[0] - b[0]).flatMap(([, g]) => platesFor(g, bed));
 }
