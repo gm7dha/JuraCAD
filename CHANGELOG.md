@@ -8,6 +8,20 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.50 — Patterns and numbers on the six-piece burr
+
+- The **Six-piece burr** in the Design library can now be decorated with the same **surface patterns as the moulds**:
+  ribs along the sticks, slanting (spiral) ribs, rings round the sticks, diamond lattice, honeycomb, waves, chevron
+  zigzag, basket weave, bubbles and random geometric facets (each facets number gives a different pattern). Choose how
+  deep (0.6 mm to start with) and how many times it repeats across a stick.
+- Patterns are cut shallowly into the faces that show when the puzzle is together, never raised, and never on the faces
+  that slide against each other, so the puzzle goes together and comes apart exactly as before.
+- **Stick ends**: plain, the same pattern, the **piece's number (1–6)** cut in so the solution is easy to follow, or a
+  **raised diamond badge** with the number. Very thin sticks say when the numbers would be too small to print.
+- Everything still prints without supports, lying the same way as before; the face on the bed is left plain, as the first
+  layers would fill a shallow groove.
+- The burr's "Pattern" box is now called **Puzzle number**, so it isn't mixed up with the surface pattern.
+
 ## v0.49 — Check fits in assemblies; the Bambu Lab X2D
 
 - **Check fits (interference and clearance)** in an assembly's Check window: for parts that overlap it says by how much

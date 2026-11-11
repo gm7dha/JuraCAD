@@ -1026,28 +1026,7 @@
   LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; `mountainState.kind` "photo" = the Photo relief
   puzzle, the same window and puzzle with a picture for heights: `src/terrain/photoRelief.ts` (pure: `greyFromRgba`,
   `blurred`, `photoGrid` — one unit per pixel, top row north, heights scaled so the relief is `reliefMm` at the spec's `k`
-  from `layoutFor`, stretch 1; ≤ `PHOTO_MAX_SIDE` 400 px; no snow; tests/photoRelief);
-  Puzzle designs (`src/library/puzzleDesigns.ts` `PUZZLE_DESIGNS`, group "Puzzles", first in the print tab's GROUP_ORDER;
-  LibraryDialog's `GroupedCards` shows the tools first under the same heading). Cylinder maze box (`designs/mazeBox.ts`,
-  no variables): `makeMaze` — a perfect maze (seeded backtracker) on `cols` × `rows` cells round HALF the box (repeated, two
-  nubs 180° apart), wrapping round; home on the bottom row, exit the furthest top-row cell (`path`); every groove is a
-  symmetric partial Revolve of a rectangle on a `fixedPlane` turned to its angle (`turnedPlane`; runs along a row merged,
-  a column's ways up merged), the ups `NUDGE` deeper and longer so no two cuts share a face (shared faces made the box
-  invalid). Lid printed upside down beside the box; nubs chamfered 45° towards the bed, their footprint at the core
-  centred on the groove (`groove` = nub + depth − 2·fit + 0.6). Tests: tests/libraryPuzzles (pure), engineLibraryPuzzles
-  (the lid turned over: no overlap along the whole way out, blocked by walls — engine.clashes sometimes returns nothing at
-  an exact placement, so walls are probed at ±1.5° too).
-  Six-piece burr (`designs/sixPieceBurr.ts` over pure `src/library/burr.ts`, no variables): pieces are unit cubes of 2 × 2 × 8
-  sticks crossing in the middle 4³ (`AXIS`, `CROSS`, `fullStick`); the 32 `contested` cubes (8 covered by three sticks) each
-  go to one stick or none (`piecesFrom`). `disassembly` = BurrTools-style BFS: any group not holding piece 0 slides ±x/y/z
-  as far as it goes; a group free for good splits the set, each part must come apart too; returns the moves before the
-  first split (level) or null. `makeBurr(seed, difficulty)`: orders the pieces, mostly gives each cube to the first to leave
-  (always comes apart), some at random and some empty (`gap` 0.35 / `mixed` 0.3 beyond Easy), `repaired` (gives a split
-  piece back cubes that join it), then hill-climbs to the level range (Easy 1, Medium 2–3, Hard ≥ 4); cached. Laid flat
-  (`laidFlat`: the turn with fewest bridges); notches = `cellOutlines` of columns cut through / top only / bottom only,
-  `offsetPolygon` by fit, Removes from `levelPlane`s; the piece itself drawn fit smaller and f lower (`assembledToBed`
-  maps the puzzle to each laid piece). Tests: libraryPuzzles (pure), engineLibraryPuzzles (pieces put back by
-  `assembledToBed` don't overlap; nudged, they do). open state in `mountainState.ts`, session only,
+  from `layoutFor`, stretch 1; ≤ `PHOTO_MAX_SIDE` 400 px; no snow; tests/photoRelief); open state in `mountainState.ts`, session only,
   never in the document): a real mountain as a 3D printed puzzle of interlocking cubes. Pure in `src/terrain/`: `osGrid.ts`
   (OS grid refs ↔ E/N, `gridToLatLon` = OS transverse Mercator inverse on Airy 1830 + Helmert to WGS84, ~5 m), `elevation.ts`
   (AWS open "Terrain Tiles", terrarium PNGs — `terrariumHeight`, Web Mercator `worldPixel`, zoom `TILE_ZOOM` 12 ≈ 20 m/px,
@@ -1095,6 +1074,48 @@
   (≥ `BUILDING_LEAST` across), on a ≥ 0.25 mm grid; `makeMountainPuzzle(…, features)` wraps the ground height with it
   (so `full`, snow and every mesh see it) and samples top pieces finer (≤ 64 a side). Names aren't printed. Tests:
   tests/osm.test.ts (sample file in tests/support/osmSample.ts).
+- Puzzle designs (`src/library/puzzleDesigns.ts` `PUZZLE_DESIGNS`, group "Puzzles", first in the print tab's GROUP_ORDER;
+  LibraryDialog's `GroupedCards` shows the tools first under the same heading). Cylinder maze box (`designs/mazeBox.ts`,
+  no variables): `makeMaze` — a perfect maze (seeded backtracker) on `cols` × `rows` cells round HALF the box (repeated, two
+  nubs 180° apart), wrapping round; home on the bottom row, exit the furthest top-row cell (`path`); every groove is a
+  symmetric partial Revolve of a rectangle on a `fixedPlane` turned to its angle (`turnedPlane`; runs along a row merged,
+  a column's ways up merged), the ups `NUDGE` deeper and longer so no two cuts share a face (shared faces made the box
+  invalid). Lid printed upside down beside the box; nubs chamfered 45° towards the bed, their footprint at the core
+  centred on the groove (`groove` = nub + depth − 2·fit + 0.6). Tests: tests/libraryPuzzles (pure), engineLibraryPuzzles
+  (the lid turned over: no overlap along the whole way out, blocked by walls — engine.clashes sometimes returns nothing at
+  an exact placement, so walls are probed at ±1.5° too).
+  Six-piece burr (`designs/sixPieceBurr.ts` over pure `src/library/burr.ts`, no variables): pieces are unit cubes of 2 × 2 × 8
+  sticks crossing in the middle 4³ (`AXIS`, `CROSS`, `fullStick`); the 32 `contested` cubes (8 covered by three sticks) each
+  go to one stick or none (`piecesFrom`). `disassembly` = BurrTools-style BFS: any group not holding piece 0 slides ±x/y/z
+  as far as it goes; a group free for good splits the set, each part must come apart too; returns the moves before the
+  first split (level) or null. `makeBurr(seed, difficulty)`: orders the pieces, mostly gives each cube to the first to leave
+  (always comes apart), some at random and some empty (`gap` 0.35 / `mixed` 0.3 beyond Easy), `repaired` (gives a split
+  piece back cubes that join it), then hill-climbs to the level range (Easy 1, Medium 2–3, Hard ≥ 4); cached. Laid flat
+  (`laidFlat`: the turn with fewest bridges); notches = `cellOutlines` of columns cut through / top only / bottom only,
+  `offsetPolygon` by fit, Removes from `levelPlane`s; the piece itself drawn fit smaller and f lower (`assembledToBed`
+  maps the puzzle to each laid piece). Tests: libraryPuzzles (pure), engineLibraryPuzzles (pieces put back by
+  `assembledToBed` don't overlap; nudged, they do). Surface patterns (`src/library/burrSurface.ts`, pure; inputs `surface`/`surfaceDepth`/
+  `surfaceRepeats`/`surfaceSeed`/`ends` — the burr's own "pattern" is its puzzle number): the moulds' `SURFACE_PATTERNS` list,
+  but as flat constant-depth ENGRAVED shapes (`patternMarks`: convex shapes clipped to the face, wavy/zigzag bands cut square
+  at their ends, whole circles; never overlapping) — never raised on a long face, as the sticks slide. Only cube faces whose
+  next cube is in no full stick show from outside (`outsideCells`, via `cubeOnBed` = laidFlat's turn) — 32 along each stick +
+  8 on its ends, whatever the notches; runs of them → `outsideRects`, inset `marginFor` (1 + depth + fit); shapes thinner
+  than `LEAST_WIDTH` 0.8 (`thickness`) are dropped. The face on the bed
+  is never decorated (first layers fill a shallow groove; its roof would be mid-air); upright sides' grooves are ≤ 1.5 deep.
+  Depth ≤ `MOST_DEPTH` and ≤ `DEPTH_SHARE` × cube. Ends: plain / pattern / number (Text "1"–"6") / badge (a raised diamond,
+  45° lower sides, `BADGE_EDGE` from the end's edges, + the number (`BADGE_CAP` × R) cut through it `BADGE_NUMBER_EXTRA`
+  into the end); numbers under `MIN_LABEL` (2.5, testPrints.ts) are refused. Badges only if `badgesFree` (cached: with a
+  whole cube added beyond every end, `withEndCubes`, the solver still comes apart at the same level AND the plain sticks'
+  shortest way apart — `pathApart` in burr.ts, the same BFS as `disassembly` but keeping the moves — replays clear one cube
+  at a time, `replay`; hard 12 has another 4-move way but its own solution's 4th move hits an end, so it's refused). So a
+  badge never blocks the solution, though on some hard burrs it blocks a few side moves plain sticks allow. Per decorated face, `fixedPlane`
+  sketches + extrudes of `MARKS_PER_CUT` (12) marks each (`CUT_START` outside the face, cut flipped in; the engine fuses a
+  sketch's regions one by one, so big sketches get slow), appended after that piece's notches (not apart, so they cut the
+  latest part = that piece); ≤ `MOST_SHAPES` (120) per piece — the default lattice burr builds in ~8 s. "none" + "plain" (and old inserts without the values)
+  make exactly the old features. Tests: libraryBurrPatterns (pure; badges vs the solution for seeds 1–12 of each difficulty, hard 6 skipped as
+  makeBurr takes ~50 s to find it), engineBurrPatterns (heavy, own file: volumes lost =
+  engraving, no overlaps, the first few free moves of the plain cubes still free half a cube at a time; pieces reach past the plain ones only beyond
+  their ends), mcpBurrPatterns.
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
