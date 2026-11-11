@@ -8,6 +8,17 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.54 — Drag parts with the mouse in Move / copy (like Onshape's Transform)
+
+- While **Move / copy** is open, a **triad** sits on the part: drag an arrow to slide along that axis, a square to move in
+  that plane, a ring to turn about that axis, or the centre ball to move freely across the screen. The dialog's numbers
+  follow the drag and snap to 1 mm and 5° (hold Shift, or "No snapping" on a tablet, for free movement); typing still
+  works and the triad follows. Works with a finger or Apple Pencil too.
+- **Move triad**: click a face, edge, round edge or plane to put the triad there and line it up; Reset puts it back.
+- **How to move it**: drag or type, by XYZ, a distance along an axis/edge/face, along a line, rotate about an axis or
+  edge, or from one mate connector to another (with Flip). "Make a copy" works with all of them.
+- Ctrl+Z inside the dialog steps back through your drags and typed numbers; Esc mid-drag takes back just that drag.
+
 ## v0.53 — Colour puzzles: colour bands for the AMS, full colour for the H3C and print services
 
 - **Colour** in the island and mountain puzzle windows: Plain (as before), **Colour bands** or **Full colour**.
