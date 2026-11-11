@@ -989,14 +989,39 @@
   make more areas than there are bits of land, names from label points) or by seeded jittered Voronoi points `piece` mm
   apart; pieces = 4-connected stretches, ones under `smallestPiece` join the neighbour they share most border with;
   a dovetail painted across each border ≥ 1.6 × head long (checked to lie in the other piece with a margin, which must
-  stay one piece); each piece meshed from its signed distance (`distanceTransform`, inside less ½√2 cell so neighbours
-  stay ≥ 2 × fit apart) by marching squares on every `step`-th sample (~0.7 mm): ground on top (base + h × relief/high),
-  flat at 0, walls. Pieces are `PuzzlePiece`s (layer 0, bbox outline) so `platesFor`/`plate3mf` work. `src/terrain/islands.ts`:
+  stay one piece); each piece meshed from its signed distance (`distanceTransform`, inside less ½√2 cell) by marching
+  squares: squares `S` cells across (~0.7 mm) where wholly inside, single cells where the outline passes (interpolating
+  across coarser squares cut past it at tab corners and neighbours touched) — the gap is then ≥ 2·fit + ~0.06 mm, measured
+  segment to segment on the meshes' undersides; a coarse square beside fine ones fans from its middle round their side
+  points. Ground on top (base + h × relief/high), flat at 0, walls. Pieces are `PuzzlePiece`s (layer 0, bbox outline) so
+  `platesFor`/`plate3mf` work. `src/terrain/islands.ts`:
   `ISLANDS` (boxes by lat/lon middle; Great Britain = sw (0, 0), 665 × 1230 km — Ireland and France touch its edges),
   `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),
   `BOUNDARY_LEVELS`. osm.ts reads `boundaries`/`regionNames` (`boundaryLevels`, `boundariesOnGrid`, `levelName`).
   elevation.ts: `zoomFor` (finest zoom with ≤ MAX_TILES), `areaProblem(…, most, z)`, `readHeights(…, spacing, z)`.
-  Tests: tests/islandPuzzle (pure).
+  Joins (`joinPieces`): each dovetail is a `tabShape` — a short stem, then an elliptical knob ≥ `LEAST_UNDERCUT` 1.2 mm
+  wider than the neck each side, its shoulders facing back (the old 16° flare let small tabs slide out, and gave 0.7–0.9 mm
+  of pull-out play); one per border, the biggest that fits from neck 0.26 × piece down to `LEAST_NECK` 3.5 mm (×0.8 steps),
+  kept only if it `locks` (its cells pulled back by 2·fit + 2 cells + 0.3, wiggled ± the gap, hit the other piece); a second
+  on the only border of a piece with one neighbour. Every piece with a neighbour needs `MIN_JOINTS` 2: one with fewer joins
+  the neighbour it shares most border with and the joins are made again (≤ 8 passes); pieces with no neighbour are `loose`
+  (said in the summary). `IslandPiece.joints`/`neighbours`, `IslandPuzzle.tabs` (`IslandTab`: piece indexes, where, which
+  way, neck, reach — tests pull each out). Default fit 0.1. Small-piece merging skips a pair that would join each other (it
+  used to recurse for ever). Map marks: `makeIslandPuzzle(…, cuts, features)` → `featuresForIsland` (drops lines
+  < 3 mm, lochs < 4 mm², buildings < ½ `BUILDING_LEAST` on the puzzle) → the Mountain's `groundMarks` (unchanged) over the
+  plain top; lowering fades to nothing over the dovetails' necks (`neckFade`: the stem + `NECK_ROOM` 0.5, then
+  `MARK_FADE` 1 mm — a fixed size; one field for all pieces so marks line up across joins) and never below `LEAST_BASE` 1.5;
+  only land is meshed, so rivers stop at the coast. `pieceMesh(…, plain)`: wholly-inside squares where the top differs
+  from the plain ground get their top cell by cell (their underside stays one square). `IslandPuzzle.marks` (lines clipped
+  to the land, for the top view, drawn source-atop) and `groundAt`. With no features everything is byte for byte the plain
+  puzzle. Fetched with `marksQuery` (Overpass, one POST on a click: paths/tracks, rivers/streams, lochs; main roads for
+  "all"; no buildings — map file only; areas ≤ `MARKS_MOST` 130 km, else a map file); the dialog's `overpassMap` turns a
+  200 with a <remark> (timeout, out of memory) and 400s into plain words, and answers for an area no longer loaded are
+  ignored. The dialog builds in `src/app/islandPuzzle.worker.ts` (`IslandBuilder`: a new build terminates one still
+  running, as do settings becoming invalid; a worker that never answers is stopped after `BUILD_LIMIT_MS` 2 min; `IslandBuilt` = the
+  puzzle without `groundAt`). The plates' .zip and .3mf are stored, not compressed (`zipStored` has no deflate).
+  Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
+  cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
   cards that open their own window instead of inserting features, found by the search via `searchTools`/`searchWords`;
   LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; `mountainState.kind` "photo" = the Photo relief
@@ -1021,7 +1046,7 @@
   reaches, so neighbouring sides' tabs never meet. `layerJoins` picks them (seeded); `uniqueBlocks` re-picks until no two
   tabbed pieces of the same height have the same four `sideCode`s in any turn (the owner wants each piece to fit only its
   own place) — only pieces with < 2 tabs can stay alike (16 shapes), counted in a warning; their keys differ. They replaced
-  library/puzzle.ts's round tabs (necks 3.4 mm on 30 mm cubes, snapping on the plate); `MIN_NECK` 3, `GOOD_NECK` 5) with tabs only between two whole cubes (else straight; top pieces are squares), outlines shrunk by `fit`. One locating key
+  library/puzzle.ts's round tabs (necks 3.4 mm on 30 mm cubes, snapping on the plate); `MIN_NECK` 3, `GOOD_NECK` 5) with tabs between two whole cubes, and between two top pieces that start at the same level (`besideTop`; the top layer's joins `topLayerJoins` have their own seed so lower layers are unchanged), else straight; a top piece with none is a square as before (`topBodies`), one with tabs is meshed by `outlineTopBodies` (walls and underside on the exact shrunk outline — its corners plus every crossing with a line of the sampling grid, set off from round numbers — as `blockBody`'s footprint is exact, so the gap is exactly 2·fit; on top, squares wholly inside as squares, and each square the outline passes through clipped against it — the outline's runs in that square joined round the square's edge past its corners — and triangulated on its own, so no top triangle is bigger than a square; an ear-clipped band once left 28 mm slivers up to 17 mm off the ground; every triangle cut at the snow line); outlines shrunk by `fit`. `PuzzlePiece.joints`/`neighbours` = dovetails to pieces beside it at its level (every such side has one); pieces above the plate with fewer than two (a peak, a hollow, a steep face: no more are possible — a dovetail can't go only part way up a taller cube) are counted in a warning. Tabbed top outlines leave keys a little less room, so `codeKeys`' one key size can come out a step smaller than before. One locating key
   per join (it replaced two thin pegs, which were fiddly and could snap): a rounded-square pad on each cube's top
   (`keySizes`: h 2–3.5 mm, sides sloping in 0.8·h, `keyLoop`), a matching pocket under the piece above (fit bigger all round,
   h + 0.4 deep, the same slope); `keyPlace` sizes it straight from the "square" (L∞) room to both outlines less `WALL`
@@ -1038,7 +1063,8 @@
   (rows on the bed, layer by layer), `plate3mf` = core 3MF, each piece an object of component parts (rock, snow) + Bambu's
   `Metadata/model_settings.config` with `extruder` 1/2 per part (untested in Bambu Studio itself; other slicers see parts to
   assign by hand). Tests: tests/mountainPuzzle (pure: grid refs vs known summits, a fake tile loader, triangulation, every
-  part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates). A laser version (layered contour
+  part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates; every piece's dovetails
+  found on its outline for several patterns, top pieces' printed footprints never cross and stay ≥ 2·fit apart, segment to segment, at fit 0.1 and 0.15 on rugged ground — `tests/support/outlineGeom.ts`; the warning's count; every upward triangle of a dovetailed top within 0.2 mm of the ground). A laser version (layered contour
   sheets) was tried in JuraCUT and taken out at the owner's request (JuraCUT v0.12): the mountain puzzle is 3D printing only.
   OpenStreetMap files: source "An OpenStreetMap file" + "From the map" (`OsmDetail`: area / water — paths, tracks, rivers,
   streams, lochs / all — roads, buildings, names too). `src/terrain/osm.ts` (pure): a small

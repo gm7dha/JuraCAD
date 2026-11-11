@@ -37,7 +37,7 @@ import { loadPrinter, printerBed, savePrinter } from "./printerSetting";
 type Source = "peak" | "ref" | "picture" | "osm";
 
 /** What the three map choices put on a printed puzzle. */
-const DETAILS: [OsmDetail, string][] = [
+export const DETAILS: [OsmDetail, string][] = [
   ["area", "Just the area"],
   ["water", "Paths, rivers and lochs"],
   ["all", "Everything: roads and buildings too"],
