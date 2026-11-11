@@ -7,9 +7,14 @@
  */
 import { AXIS, CROSS, DIFFICULTIES, LENGTH, laidFlat, makeBurr, type V3 } from "../burr";
 import { lit, type Ex } from "../ex";
+import { BADGE_ROOT, CUT_START, MOST_SHAPES, badgesFree, isPlain, pieceWork, shapeCount, surfaceInputs, surfaceOf, type FaceWork } from "../burrSurface";
+import { addTextBlock } from "../textKit";
+import { loopsSketch } from "./mouldKit";
+import { circleShape } from "./printShapes";
+import { MIN_LABEL } from "./testPrints";
 import { offsetPolygon, type P2 } from "../outlines";
-import { levelPlane } from "../printKit";
-import { extrudeFeature, outlineSketch, sketchFeature } from "../sketchKit";
+import { fixedPlane, levelPlane } from "../printKit";
+import { extrudeFeature, outlineSketch, shapesSketch, sketchFeature } from "../sketchKit";
 import type { Feature } from "../../model/types";
 import type { DesignValues, LibraryDesign, MakeContext, PreviewShape } from "../types";
 import { mm, num } from "./common";
@@ -70,6 +75,8 @@ export function cellOutlines(cells: [number, number][]): P2[][] {
 }
 
 export interface BurrLayout {
+  /** The pieces' cubes in the assembled puzzle. */
+  pieces: V3[][];
   unit: number;
   fit: number;
   /** Each piece's cubes as laid on the bed: (along, across, up) in cubes. */
@@ -85,7 +92,7 @@ export interface BurrLayout {
 export function burrLayout(v: DesignValues): BurrLayout {
   const burr = makeBurr(num(v, "pattern"), String(v.difficulty));
   const laid = burr.pieces.map((p, i) => laidFlat(p, AXIS[i]));
-  return { unit: num(v, "size") / 2, fit: num(v, "fit"), laid: laid.map((l) => l.cells), turns: laid.map((l) => l.turn), mins: laid.map((l) => l.min), level: burr.level, gaps: burr.gaps, bridges: laid.reduce((n, l) => n + l.overhangs, 0) };
+  return { pieces: burr.pieces, unit: num(v, "size") / 2, fit: num(v, "fit"), laid: laid.map((l) => l.cells), turns: laid.map((l) => l.turn), mins: laid.map((l) => l.min), level: burr.level, gaps: burr.gaps, bridges: laid.reduce((n, l) => n + l.overhangs, 0) };
 }
 
 /**
@@ -106,10 +113,53 @@ export const pieceY = (i: number, unit: number) => i * (2 * unit + PIECE_GAP);
 
 const outline = (pts: P2[], ctx: MakeContext) => outlineSketch(pts.map(([x, y]) => [lit(x), lit(y)] as [Ex, Ex]), ctx.scope);
 
+/** What's engraved on (or added to) each piece's faces — nothing at all for plain sticks (burrSurface.ts). */
+export function burrWork(v: DesignValues, L = burrLayout(v)): FaceWork[][] {
+  const s = surfaceOf(v, L.unit);
+  return L.pieces.map((piece, i) => pieceWork(s, { piece, axis: AXIS[i], turn: L.turns[i], min: L.mins[i], y0: pieceY(i, L.unit) }, i, L.unit, L.fit));
+}
+
+const FACE_LABEL = { top: "top", bed: "underside", front: "front side", back: "back side", left: "left end", right: "right end" } as const;
+
+/**
+ * Marks per sketch. The engine fuses a sketch's shapes one after another (each fuse slower than the last), so a face's
+ * marks are cut a batch at a time: about as quick as it gets for many small shapes.
+ */
+export const MARKS_PER_CUT = 12;
+
+/** Would engraved numbers be big enough to print on these sticks? */
+function engravedFits(v: DesignValues): boolean {
+  const caps = burrWork({ ...v, ends: "number" }).flatMap((w) => w.filter((f) => f.number).map((f) => f.number!.cap));
+  return caps.length > 0 && Math.min(...caps) >= MIN_LABEL;
+}
+
+/** One face's decoration as sketches on a plane by the face and extrudes (cut in, or the badge added). */
+function faceFeatures(w: FaceWork, i: number, ctx: MakeContext): Feature[] {
+  const role = `piece-${i}-${w.face}-${w.kind}`;
+  const label = `Piece ${i + 1} ${w.kind === "badge" ? "badge" : w.kind === "number" ? "number" : "pattern"}`;
+  const batches: FaceWork["marks"][] = [];
+  for (let k = 0; k < w.marks.length; k += MARKS_PER_CUT) batches.push(w.marks.slice(k, k + MARKS_PER_CUT));
+  if (!batches.length) batches.push([]);
+  return batches.flatMap((marks, k) => {
+    const r = k ? `${role}-${k + 1}` : role;
+    let data = loopsSketch(marks.map((m) => ("pts" in m ? outline(m.pts, ctx) : shapesSketch([circleShape(m.c[0], m.c[1], m.d)], ctx.scope))));
+    if (w.number) data = addTextBlock(data, { font: "bold", capHeight: w.number.cap, lines: [w.number.text], centre: w.number.centre });
+    const sk = sketchFeature(ctx.id(`${r}-sketch`), label, fixedPlane(`Piece ${i + 1} ${FACE_LABEL[w.face]}`, w.origin, w.u, w.v), data);
+    const cut =
+      w.kind === "badge"
+        ? extrudeFeature(ctx.id(r), label, sk.id, { depth: lit(r6(w.depth + BADGE_ROOT)), operation: "add" })
+        : extrudeFeature(ctx.id(r), label, sk.id, { depth: lit(r6(w.depth + CUT_START)), operation: "remove", flip: true });
+    return [sk, cut];
+  });
+}
+
+const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
+
 export const sixPieceBurr: LibraryDesign = {
   id: "six-piece-burr",
   name: "Six-piece burr",
-  description: "The classic interlocking puzzle of six notched square sticks — a different one for every pattern number, checked to come apart and go back together.",
+  description:
+    "The classic interlocking puzzle of six notched square sticks — a different one for every pattern number, checked to come apart and go back together. Decorate the sticks with a surface pattern and number their ends: patterns are cut shallowly into the faces that show when it's together, so the sliding is never affected.",
   category: "print",
   group: "Puzzles",
   prefix: "burr",
@@ -117,13 +167,37 @@ export const sixPieceBurr: LibraryDesign = {
   inputs: [
     { key: "size", label: "Stick thickness", kind: "length", default: 20, min: 8, max: 60, help: "Each stick is this square and four times as long." },
     { key: "difficulty", label: "Difficulty", kind: "choice", default: "medium", choices: Object.entries(DIFFICULTIES).map(([value, d]) => ({ value, label: d.label })) },
-    { key: "pattern", label: "Pattern", kind: "count", default: 1, min: 1, max: 99999, help: "Each number gives a different burr." },
+    { key: "pattern", label: "Puzzle number", kind: "count", default: 1, min: 1, max: 99999, help: "Each number gives a different burr." },
     { key: "fit", label: "Fit gap", kind: "length", default: 0.2, min: 0, max: 0.6, help: "Room round every piece, each side. 0.2 mm suits most printers." },
+    ...surfaceInputs(),
   ],
-  problems: (v) => (num(v, "fit") * 4 >= num(v, "size") / 2 ? ["The fit gap is too big for sticks this thin."] : []),
+  problems: (v) => {
+    if (num(v, "fit") * 4 >= num(v, "size") / 2) return ["The fit gap is too big for sticks this thin."];
+    const L = burrLayout(v);
+    const s = surfaceOf(v, L.unit);
+    if (isPlain(s)) return [];
+    const out: string[] = [];
+    const work = burrWork(v, L);
+    if (Math.max(...work.map(shapeCount)) > MOST_SHAPES) out.push("That's too much pattern detail to build quickly — choose fewer pattern repeats across.");
+    if (s.pattern !== "none" && work.every((w) => w.every((f) => f.kind !== "engrave"))) out.push("The sticks are too thin for this pattern — choose fewer pattern repeats across, or thicker sticks.");
+    // Numbers smaller than the fit test's smallest don't print legibly.
+    if (s.ends === "badge" || s.ends === "number") {
+      const caps = work.flatMap((w) => w.filter((f) => f.number).map((f) => f.number!.cap));
+      if (!caps.length || Math.min(...caps) < MIN_LABEL)
+        out.push(
+          s.ends === "number" || !engravedFits(v)
+            ? `These sticks are too thin for ${s.ends === "badge" ? "raised badges" : "engraved numbers"} — choose plain ends, or thicker sticks.`
+            : "These sticks are too thin for raised badges — choose engraved numbers, or thicker sticks.",
+        );
+    }
+    if (s.ends === "badge" && !badgesFree(L.pieces, L.level, `${num(v, "pattern")}:${String(v.difficulty)}`))
+      out.push("Raised badges on the ends would get in the way of this puzzle's solution — choose engraved numbers instead.");
+    return out;
+  },
   make: (ctx) => {
     const L = burrLayout(ctx.values);
     const { unit: U, fit: f } = L;
+    const work = burrWork(ctx.values, L);
     const features: Feature[] = [];
     const partNames: Record<string, string> = {};
     L.laid.forEach((cells, i) => {
@@ -157,6 +231,8 @@ export const sixPieceBurr: LibraryDesign = {
             extrudeFeature(ctx.id(`piece-${i}-${kind}-${k}`), `Piece ${i + 1} notch`, nsk, { depth: lit(z1 - z0), operation: "remove" }),
           );
         });
+      // Decorations last, while this piece is still the latest part (none at all for plain sticks).
+      for (const w of work[i]) features.push(...faceFeatures(w, i, ctx));
     });
     return { features, partNames };
   },
@@ -176,6 +252,14 @@ export const sixPieceBurr: LibraryDesign = {
   },
   summary: (v) => {
     const L = burrLayout(v);
-    return `Comes apart in ${L.level} ${L.level === 1 ? "move" : "moves"} before the first piece is free${L.gaps ? `; ${L.gaps} empty cubes inside` : ""}. Sticks ${mm(2 * L.unit)} square, ${mm(LENGTH * L.unit)} long${L.bridges ? `; ${L.bridges} short bridges to print` : ""}.`;
+    const plain = `Comes apart in ${L.level} ${L.level === 1 ? "move" : "moves"} before the first piece is free${L.gaps ? `; ${L.gaps} empty cubes inside` : ""}. Sticks ${mm(2 * L.unit)} square, ${mm(LENGTH * L.unit)} long${L.bridges ? `; ${L.bridges} short bridges to print` : ""}.`;
+    const s = surfaceOf(v, L.unit);
+    if (isPlain(s)) return plain;
+    const notes: string[] = [];
+    if (s.pattern !== "none")
+      notes.push(`Pattern cut ${mm(s.depth)} deep${s.depth < s.asked - 1e-9 ? " (the most for sticks this thin)" : ""} into the faces that show when it's together; the face lying on the bed is left plain, as its first layers would fill a shallow groove.`);
+    if (s.ends === "number" || s.ends === "badge") notes.push(`Each end carries its piece's number (1–6)${s.ends === "badge" ? ` on a raised diamond ${mm(s.depth)} high, sloping at 45° so it prints without supports` : ""}.`);
+    else if (s.ends === "pattern" && s.pattern !== "none") notes.push("The ends have the pattern too.");
+    return [plain, ...notes].join(" ");
   },
 };
