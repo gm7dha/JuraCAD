@@ -982,6 +982,25 @@ export interface Assembly {
   replicates?: Replicate[];
   /** Parts locked together so they move as one (optional: older saves have none). */
   groups?: AssemblyGroup[];
+  /** Pairs of parts marked as meant to fit together a set amount (the fit check; optional: older saves have none). */
+  fits?: IntendedFit[];
+}
+
+/**
+ * Two parts meant to fit together (src/assembly/fits.ts): a press fit (one is
+ * a little bigger than where it goes, so they overlap and it grips) or a
+ * clearance fit (a small gap, so it slides or turns). `min`…`max` is the amount
+ * wanted, mm: on the diameter for a pin in a hole, otherwise straight across.
+ */
+export interface IntendedFit {
+  id: string;
+  /** The two parts' keys in the assembly: an instance id, or "copy/inner/part" for a part inside a sub-assembly. */
+  a: string;
+  b: string;
+  /** "printed": a press fit for printing — a small gap in the design (printed holes come out small), judged as a gap. */
+  kind: "press" | "clearance" | "printed";
+  min: number;
+  max: number;
 }
 
 /** One step of an exploded view: some parts moved along X, Y or Z by a distance. */

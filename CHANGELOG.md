@@ -8,6 +8,19 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.49 — Check fits in assemblies; the Bambu Lab X2D
+
+- **Check fits (interference and clearance)** in an assembly's Check window: for parts that overlap it says by how much
+  (for a pin in a hole, on the diameter like your printer fits, and per side), and for parts that nearly touch it gives the
+  smallest gap and which printer fit that's like ("about a sliding fit for your printer").
+- **Mark a fit**: mark two parts (or the parts of a mate) as a press fit, a **printed press fit** (drawn with a small gap,
+  as printed holes come out small) or a clearance fit, with the range you want. The check then says OK, too tight, too
+  loose, or a gap instead; a pin that isn't lined up with its hole is said so. Marks are saved with the assembly.
+- Clashes now say how deep the overlap goes.
+- Claude can check fits too (`check_assembly`) and mark them (`mark_fit`).
+- **Bambu Lab X2D** in the printer list: 256 × 256 × 260 mm with the main nozzle; the print bed panel says when a part
+  needs the main nozzle only, as both nozzles together reach 235.5 × 256 × 256 mm.
+
 ## v0.48 — Moulds for casting candles, pots and more
 
 - A new **Moulds and casting** heading in the Library's 3D printing tab, for making things to sell:

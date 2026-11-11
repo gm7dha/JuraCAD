@@ -5504,11 +5504,15 @@ export class GeometryEngine {
     }
   }
 
-  /** How pairs of assembly instances meet: overlapping, or within `tolerance` (mm) of each other (see clash.ts). */
-  clashes(instances: InstanceInput[], tolerance = 0, withGaps = true): ContactMeasure[] {
+  /**
+   * How pairs of assembly instances meet: overlapping, or within `tolerance` (mm) of each other (see clash.ts);
+   * with `fitRange`, also solids up to that far apart, with pins in holes measured all round (the fit check) —
+   * only for `fitPairs` (instance ids) when given.
+   */
+  clashes(instances: InstanceInput[], tolerance = 0, withGaps = true, fitRange = 0, fitPairs?: [string, string][]): ContactMeasure[] {
     const placed = this.placeInstances(instances);
     try {
-      return measureContacts(placed, tolerance, withGaps);
+      return measureContacts(placed, tolerance, withGaps, fitRange, fitPairs);
     } finally {
       placed.forEach((p) => p.shape.delete());
     }

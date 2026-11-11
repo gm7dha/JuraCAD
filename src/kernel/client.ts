@@ -178,8 +178,8 @@ export class KernelClient {
   }
 
   /** How pairs of assembly instances meet: overlapping, or (`withGaps`) within `tolerance` (mm) of each other. */
-  clashes(instances: InstanceInput[], tolerance = 0, withGaps = true): Promise<ContactMeasure[]> {
-    return this.send({ type: "clashes", instances, tolerance, withGaps }).then((body) => body.result as ContactMeasure[]);
+  clashes(instances: InstanceInput[], tolerance = 0, withGaps = true, fitRange = 0, fitPairs?: [string, string][]): Promise<ContactMeasure[]> {
+    return this.send({ type: "clashes", instances, tolerance, withGaps, ...(fitRange > 0 ? { fitRange } : {}), ...(fitPairs ? { fitPairs } : {}) }).then((body) => body.result as ContactMeasure[]);
   }
 
   terminate(): void {
