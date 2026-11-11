@@ -485,6 +485,13 @@ export const Icons = {
       <path d="M4 10l10 10" fill="currentColor" opacity="0.35" />
     </Svg>
   ),
+  Composite: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="4" y="9" width="7" height="7" />
+      <rect x="13" y="6" width="7" height="7" />
+      <path d="M2.5 4.5h19v15h-19z" strokeDasharray="2 2" />
+    </Svg>
+  ),
   Boolean: (p: IconProps) => (
     <Svg {...p}>
       <circle cx="9.5" cy="12" r="5.5" />

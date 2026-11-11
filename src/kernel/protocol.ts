@@ -110,6 +110,8 @@ export interface PartMesh {
   surface?: boolean;
   /** Exact volume of a solid part (mm³), from the solid model rather than the display mesh — for weights. */
   volume?: number;
+  /** A composite part: the parts grouped in it (separate solids inside it), shown under it in the Parts list. */
+  members?: { id: string; name: string }[];
   /** Part Studio mate connectors this part owns (feature id, name, frame in the Part Studio), offered when it's mated in an assembly. */
   connectors?: PartConnector[];
 }
@@ -189,6 +191,8 @@ export interface PartCheck {
   thinnest: ThicknessEstimate | null;
   /** A surface (a skin with no inside), not a solid. */
   surface?: boolean;
+  /** A composite part: how many parts it groups (its separate pieces are meant). */
+  members?: number;
 }
 
 export interface CheckResult {

@@ -42,6 +42,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   boolean: Icons.Boolean,
   deletePart: Icons.Trash,
   simplify: Icons.Simplify,
+  composite: Icons.Composite,
   fastener: Icons.Bolt,
   derived: Icons.Derived,
   split: Icons.Split,
@@ -593,7 +594,7 @@ function PartsList({
   linked,
 }: {
   linked: string[];
-  parts: { id: string; name: string; flat?: unknown; surface?: boolean }[];
+  parts: { id: string; name: string; flat?: unknown; surface?: boolean; members?: { id: string; name: string }[] }[];
   hiddenParts: string[];
   toggleHidden: (id: string) => void;
   onMenu: (e: ReactMouseEvent, entries: MenuEntry[]) => void;
@@ -632,6 +633,12 @@ function PartsList({
       st().toggleBooleanPart(id);
       return;
     }
+    // A Composite part or a part pattern open: the part is added to it (or taken off).
+    const open = st().editing?.draft;
+    if (open && (open.type === "composite" || open.pattern?.of === "part")) {
+      st().toggleDraftPart(id);
+      return;
+    }
     e.preventDefault(); // no text highlighting while dragging
     const add = addHeld(e);
     const r = clickRow(order, st().selectedParts, anchor.current, id, { add, range: e.shiftKey });
@@ -660,6 +667,7 @@ function PartsList({
       "divider",
       { label: `Duplicate these ${n} parts`, action: () => st().duplicateParts(group) },
       { label: `Merge these ${n} parts into one`, action: () => st().mergeParts(group) },
+      { label: `Make a composite part of these ${n}…`, action: () => st().startCreate("composite") },
       { label: `Delete these ${n} parts…`, action: () => st().startCreate("deletePart") },
       { label: `Simplify these ${n} parts…`, action: () => st().startCreate("simplify") },
       { label: `Export these ${n} parts…`, action: () => st().openDialog("export") },
@@ -677,7 +685,7 @@ function PartsList({
           if (e.target === e.currentTarget && e.button === 0) st().setSelectedParts([]);
         }}
       >
-        {parts.map((p) => (
+        {parts.map((p) => [
           <PartRow
             key={p.id}
             id={p.id}
@@ -690,8 +698,14 @@ function PartsList({
             onMenu={(e, entries) => onMenu(e, menuFor(p.id, entries))}
             onPress={(e) => press(e, p.id)}
             onPassOver={(e) => passOver(e, p.id)}
-          />
-        ))}
+          />,
+          // A composite part's parts, listed under it (it's picked, coloured and exported as one).
+          ...(p.members ?? []).map((m) => (
+            <li key={`${p.id}/${m.id}`} className="part-member muted small" title={`Part of the composite part ${p.name}`}>
+              {m.name}
+            </li>
+          )),
+        ])}
       </ul>
       {selected.length > 0 && (
         <div className="parts-selection-bar" role="toolbar" aria-label="Selected parts">

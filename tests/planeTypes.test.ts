@@ -180,6 +180,10 @@ describe("Part Studio mate connectors", () => {
     const list = [box, mc, sk, pl, mv];
     expect(findDependents(list, ["b"]).going.sort()).toEqual(["b", "m", "mc", "p"].sort());
     expect(findDependents(list, ["s"]).going.sort()).toEqual(["p", "s"]);
+    // A connector owned by (or on) a pattern copy of a part goes with the pattern.
+    const pat: Feature = { id: "pt", name: "Pattern", type: "linearPattern", operation: "new", suppressed: false, params: {}, pattern: { sources: [], of: "part", parts: ["b"], axis: "x" } as never };
+    const onCopy: Feature = { ...mc, id: "mc2", connector: { at: { p: [0, 0, 0], pick: { partId: "pt~2", ref: { kind: "face", surface: "PLANE", center: [0, 0, 0], normal: [0, 0, 1] } } }, owner: "pt~3", base } };
+    expect(findDependents([box, pat, onCopy], ["pt"]).going.sort()).toEqual(["mc2", "pt"]);
   });
 });
 

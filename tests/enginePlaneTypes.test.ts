@@ -231,6 +231,19 @@ describe("mate connectors in the Part Studio", () => {
     expect(joined.parts[0].connectors?.map((c) => c.id)).toEqual([onRight.id]);
   });
 
+  it("a member's connector belongs to the Composite part it's grouped into", () => {
+    const a = feature("box", { width: 10, depth: 20, height: 5 });
+    const b = feature("box", { width: 4, depth: 4, height: 4, x: 30 });
+    const conn = connectorOf({ at: { p: [32, 2, 4], pick: { partId: b.id, ref: { kind: "face", surface: "PLANE", center: [32, 2, 4], normal: [0, 0, 1] } } } });
+    const comp: Feature = { ...feature("composite", {}), compositeParts: [a.id, b.id] };
+    engine = new GeometryEngine();
+    const res = engine.rebuild([a, b, conn, comp]);
+    expect(res.featureErrors).toEqual({});
+    expect(res.parts.map((p) => p.id)).toEqual([comp.id]);
+    expect(res.parts[0].connectors?.map((c) => [c.id, r(c.origin)])).toEqual([[conn.id, [32, 2, 4]]]);
+    expect(res.featureWarnings?.[conn.id]).toBeUndefined();
+  });
+
   it("cut away by a Subtract: no part takes it over, and it says so", () => {
     const a = feature("box", { width: 10, depth: 20, height: 5 });
     const b = feature("box", { width: 4, depth: 4, height: 8, x: 2, y: 2 });

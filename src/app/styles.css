@@ -429,6 +429,21 @@ button:disabled {
   cursor: default;
 }
 
+/* A composite part's parts, listed under it. */
+.part-member {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px 0 40px;
+  user-select: none;
+  cursor: default;
+}
+.part-member::before {
+  content: "└";
+  margin-right: 6px;
+  opacity: 0.6;
+}
+
 .feature-row:hover,
 .part-row:hover {
   background: var(--line-2);

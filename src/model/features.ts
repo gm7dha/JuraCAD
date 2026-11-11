@@ -132,7 +132,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "linearPattern",
     label: "Linear pattern",
     namePrefix: "Linear pattern",
-    description: "Repeats features in a straight line, evenly spaced — or in a grid of rows.",
+    description: "Repeats features, whole parts or faces in a straight line, evenly spaced — or in a grid of rows.",
     params: [
       { key: "count", label: "How many (including the original)", defaultValue: "3", positive: true, integer: true, min: 2, group: "size", unit: "" },
       { key: "spacing", label: "Spacing", defaultValue: "20", positive: true, group: "size" },
@@ -144,7 +144,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "circularPattern",
     label: "Circular pattern",
     namePrefix: "Circular pattern",
-    description: "Repeats features around an axis, evenly spaced. The axis can go through any point.",
+    description: "Repeats features, whole parts or faces around an axis, evenly spaced. The axis can go through any point.",
     params: [
       { key: "count", label: "How many (including the original)", defaultValue: "6", positive: true, integer: true, min: 2, group: "size", unit: "" },
       { key: "angle", label: "Spread over", defaultValue: "360", positive: true, group: "size", unit: "°" },
@@ -157,7 +157,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "curvePattern",
     label: "Curve pattern",
     namePrefix: "Curve pattern",
-    description: "Repeats features along a path drawn in a sketch, evenly spaced.",
+    description: "Repeats features, whole parts or faces along a path drawn in a sketch, evenly spaced.",
     params: [{ key: "count", label: "How many (including the original)", defaultValue: "5", positive: true, integer: true, min: 2, group: "size", unit: "" }],
   },
   sweep: {
@@ -433,6 +433,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     label: "Delete part",
     namePrefix: "Delete part",
     description: "Removes whole parts from the Part Studio (from this point on in the feature list).",
+    params: [],
+  },
+  composite: {
+    type: "composite",
+    label: "Composite part",
+    namePrefix: "Composite part",
+    description: "Groups parts into one composite part: it's picked, coloured, exported and put in assemblies as one, while the parts stay separate solids inside.",
     params: [],
   },
   simplify: {

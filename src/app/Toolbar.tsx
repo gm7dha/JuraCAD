@@ -450,6 +450,15 @@ export function Toolbar() {
                 : "Make or import a part first",
             },
             {
+              key: "composite",
+              label: "Composite part",
+              icon: <Icons.Composite />,
+              onClick: () => startCreate("composite"),
+              disabled: !ready || partCount < 2,
+              active: editingType === "composite",
+              title: partCount >= 2 ? "Composite part — group parts into one that's picked, coloured, exported and put in assemblies together (they stay separate pieces inside)" : "Make two or more parts first",
+            },
+            {
               key: "deletePart",
               label: "Delete part",
               icon: <Icons.Trash />,
