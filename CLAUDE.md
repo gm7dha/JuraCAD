@@ -1012,7 +1012,7 @@
   reaches, so neighbouring sides' tabs never meet. `layerJoins` picks them (seeded); `uniqueBlocks` re-picks until no two
   tabbed pieces of the same height have the same four `sideCode`s in any turn (the owner wants each piece to fit only its
   own place) — only pieces with < 2 tabs can stay alike (16 shapes), counted in a warning; their keys differ. They replaced
-  library/puzzle.ts's round tabs (necks 3.4 mm on 30 mm cubes, snapping on the plate); `MIN_NECK` 3, `GOOD_NECK` 5) with tabs only between two whole cubes (else straight; top pieces are squares), outlines shrunk by `fit`. One locating key
+  library/puzzle.ts's round tabs (necks 3.4 mm on 30 mm cubes, snapping on the plate); `MIN_NECK` 3, `GOOD_NECK` 5) with tabs between two whole cubes, and between two top pieces that start at the same level (`besideTop`; the top layer's joins `topLayerJoins` have their own seed so lower layers are unchanged), else straight; a top piece with none is a square as before (`topBodies`), one with tabs is meshed by `outlineTopBodies` (marching squares over the outline at half the usual step, crossings found exactly on the outline, cut at the snow line triangle by triangle); outlines shrunk by `fit`. `PuzzlePiece.joints`/`neighbours` = dovetails to pieces beside it at its level (every such side has one). One locating key
   per join (it replaced two thin pegs, which were fiddly and could snap): a rounded-square pad on each cube's top
   (`keySizes`: h 2–3.5 mm, sides sloping in 0.8·h, `keyLoop`), a matching pocket under the piece above (fit bigger all round,
   h + 0.4 deep, the same slope); `keyPlace` sizes it straight from the "square" (L∞) room to both outlines less `WALL`
@@ -1029,7 +1029,8 @@
   (rows on the bed, layer by layer), `plate3mf` = core 3MF, each piece an object of component parts (rock, snow) + Bambu's
   `Metadata/model_settings.config` with `extruder` 1/2 per part (untested in Bambu Studio itself; other slicers see parts to
   assign by hand). Tests: tests/mountainPuzzle (pure: grid refs vs known summits, a fake tile loader, triangulation, every
-  part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates). A laser version (layered contour
+  part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates; every piece's dovetails
+  found on its outline for several patterns, top pieces' printed footprints ≥ 0.75 × 2·fit apart). A laser version (layered contour
   sheets) was tried in JuraCUT and taken out at the owner's request (JuraCUT v0.12): the mountain puzzle is 3D printing only.
   OpenStreetMap files: source "An OpenStreetMap file" + "From the map" (`OsmDetail`: area / water — paths, tracks, rivers,
   streams, lochs / all — roads, buildings, names too). `src/terrain/osm.ts` (pure): a small

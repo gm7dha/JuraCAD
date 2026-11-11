@@ -397,3 +397,54 @@ describe("Mountain puzzle", () => {
     expect(text).toContain("Metadata/model_settings.config");
   });
 });
+
+describe("Mountain puzzle: every piece held", () => {
+  /** Distance from p to a closed outline, and whether it's inside. */
+  const toOutline = (p: [number, number], poly: [number, number][]) => {
+    let d = Infinity;
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [a, b] = [poly[j], poly[i]];
+      const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+      const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+      d = Math.min(d, Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy));
+      if (a[1] > p[1] !== b[1] > p[1] && p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside;
+    }
+    return { d, inside };
+  };
+  const ridge = gridFrom({ e: 200000, n: 770000 }, W, H, 20, (e, n) => 200 + 700 * Math.exp(-(((n - 771500) / 500) ** 2)) * (0.6 + 0.4 * Math.sin(e / 400)));
+  for (const [name, grid, seed] of [["hill", hill, 1], ["hill", hill, 4], ["ridge", ridge, 2]] as const)
+    it(`dovetails every piece to those beside it at its level, top pieces too (${name}, pattern ${seed})`, () => {
+      const p = makeMountainPuzzle(grid, W, H, { ...SPEC, seed });
+      const cube = SPEC.cube;
+      const at = new Map(p.pieces.map((q) => [`${q.col},${q.row},${q.layer}`, q]));
+      let topTabs = 0;
+      for (const q of p.pieces) {
+        // The rule: two dovetails, or one where a piece has only one beside it.
+        if (q.neighbours) expect(q.joints!, q.name).toBeGreaterThanOrEqual(Math.min(2, q.neighbours));
+        expect(q.joints).toBe(q.neighbours);
+        // And each really is there: on every side shared with such a piece, one of the two reaches into the other's square.
+        let seen = 0;
+        for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const o = at.get(`${q.col + dc},${q.row + dr},${q.layer}`);
+          if (!o || o.top !== q.top || o.z0 !== q.z0) continue;
+          const into = (a: typeof q, b: typeof q) => a.outline.some(([x, y]) => x > b.col * cube + 1 && x < (b.col + 1) * cube - 1 && y > b.row * cube + 1 && y < (b.row + 1) * cube - 1);
+          if (into(q, o) || into(o, q)) seen++;
+          if (q.top) {
+            // The printed footprints keep the fit gap: no point of one inside the other, none nearer than ~2 × fit.
+            for (let i = 0; i < q.bodies[0].vertices.length; i += 3) {
+              if (q.bodies[0].vertices[i + 2] !== q.z0) continue;
+              const r = toOutline([q.bodies[0].vertices[i], q.bodies[0].vertices[i + 1]], o.outline);
+              expect(r.inside, q.name).toBe(false);
+              expect(r.d, `${q.name} beside ${o.name}`).toBeGreaterThan(SPEC.fit * 2 * 0.75);
+            }
+          }
+        }
+        expect(seen, q.name).toBe(q.neighbours);
+        if (q.top) topTabs += q.joints!;
+        for (const b of q.bodies) expect(closed(b).open, `${q.name} ${b.part}`).toBe(0);
+      }
+      // Top pieces are dovetailed now (they used to be plain squares held only by their key).
+      expect(topTabs).toBeGreaterThan(0);
+    });
+});
