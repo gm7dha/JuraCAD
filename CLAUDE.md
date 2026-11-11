@@ -1018,7 +1018,8 @@
   "all"; no buildings — map file only; areas ≤ `MARKS_MOST` 130 km, else a map file); the dialog's `overpassMap` turns a
   200 with a <remark> (timeout, out of memory) and 400s into plain words, and answers for an area no longer loaded are
   ignored. The dialog builds in `src/app/islandPuzzle.worker.ts` (`IslandBuilder`: a new build terminates one still
-  running; `IslandBuilt` = the puzzle without `groundAt`).
+  running, as do settings becoming invalid; a worker that never answers is stopped after `BUILD_LIMIT_MS` 2 min; `IslandBuilt` = the
+  puzzle without `groundAt`). The plates' .zip and .3mf are stored, not compressed (`zipStored` has no deflate).
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
@@ -1045,7 +1046,7 @@
   reaches, so neighbouring sides' tabs never meet. `layerJoins` picks them (seeded); `uniqueBlocks` re-picks until no two
   tabbed pieces of the same height have the same four `sideCode`s in any turn (the owner wants each piece to fit only its
   own place) — only pieces with < 2 tabs can stay alike (16 shapes), counted in a warning; their keys differ. They replaced
-  library/puzzle.ts's round tabs (necks 3.4 mm on 30 mm cubes, snapping on the plate); `MIN_NECK` 3, `GOOD_NECK` 5) with tabs only between two whole cubes (else straight; top pieces are squares), outlines shrunk by `fit`. One locating key
+  library/puzzle.ts's round tabs (necks 3.4 mm on 30 mm cubes, snapping on the plate); `MIN_NECK` 3, `GOOD_NECK` 5) with tabs between two whole cubes, and between two top pieces that start at the same level (`besideTop`; the top layer's joins `topLayerJoins` have their own seed so lower layers are unchanged), else straight; a top piece with none is a square as before (`topBodies`), one with tabs is meshed by `outlineTopBodies` (walls and underside on the exact shrunk outline — its corners plus every crossing with a line of the sampling grid, set off from round numbers — as `blockBody`'s footprint is exact, so the gap is exactly 2·fit; on top, squares wholly inside as squares, and each square the outline passes through clipped against it — the outline's runs in that square joined round the square's edge past its corners — and triangulated on its own, so no top triangle is bigger than a square; an ear-clipped band once left 28 mm slivers up to 17 mm off the ground; every triangle cut at the snow line); outlines shrunk by `fit`. `PuzzlePiece.joints`/`neighbours` = dovetails to pieces beside it at its level (every such side has one); pieces above the plate with fewer than two (a peak, a hollow, a steep face: no more are possible — a dovetail can't go only part way up a taller cube) are counted in a warning. Tabbed top outlines leave keys a little less room, so `codeKeys`' one key size can come out a step smaller than before. One locating key
   per join (it replaced two thin pegs, which were fiddly and could snap): a rounded-square pad on each cube's top
   (`keySizes`: h 2–3.5 mm, sides sloping in 0.8·h, `keyLoop`), a matching pocket under the piece above (fit bigger all round,
   h + 0.4 deep, the same slope); `keyPlace` sizes it straight from the "square" (L∞) room to both outlines less `WALL`
@@ -1062,7 +1063,8 @@
   (rows on the bed, layer by layer), `plate3mf` = core 3MF, each piece an object of component parts (rock, snow) + Bambu's
   `Metadata/model_settings.config` with `extruder` 1/2 per part (untested in Bambu Studio itself; other slicers see parts to
   assign by hand). Tests: tests/mountainPuzzle (pure: grid refs vs known summits, a fake tile loader, triangulation, every
-  part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates). A laser version (layered contour
+  part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates; every piece's dovetails
+  found on its outline for several patterns, top pieces' printed footprints never cross and stay ≥ 2·fit apart, segment to segment, at fit 0.1 and 0.15 on rugged ground — `tests/support/outlineGeom.ts`; the warning's count; every upward triangle of a dovetailed top within 0.2 mm of the ground). A laser version (layered contour
   sheets) was tried in JuraCUT and taken out at the owner's request (JuraCUT v0.12): the mountain puzzle is 3D printing only.
   OpenStreetMap files: source "An OpenStreetMap file" + "From the map" (`OsmDetail`: area / water — paths, tracks, rivers,
   streams, lochs / all — roads, buildings, names too). `src/terrain/osm.ts` (pure): a small
