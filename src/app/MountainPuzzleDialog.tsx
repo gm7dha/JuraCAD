@@ -27,7 +27,9 @@ import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { PEAKS } from "../terrain/peaks";
 import { blurred, greyFromRgba, photoGrid, photoReadSize, type PhotoPixels } from "../terrain/photoRelief";
-import { allPlatesZip, plate3mf, platesFor } from "../terrain/puzzle3mf";
+import { allPlatesZip, plate3mf, platesByLevel, platesFor } from "../terrain/puzzle3mf";
+import { mapOnPuzzle, mapRaster, mountainBands, NO_MAP, PLAIN_COLOUR, WATER_BLUE, type ColourSpec, type HeightScale, type PreviewMesh } from "../terrain/colour";
+import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
 import { openMountain, useMountain } from "./mountainState";
@@ -131,6 +133,9 @@ export function MountainPuzzleDialog() {
   const [spec, setSpec] = useState<Omit<MountainSpec, "bed" | "snowline">>(() => ({ ...MOUNTAIN_DEFAULTS }));
   const [snowOn, setSnowOn] = useState(true);
   const [snowline, setSnowline] = useState<number | null>(null);
+  const [colour, setColour] = useState<ColourSpec>(PLAIN_COLOUR);
+  // Colour bands and full colour bring their own snow; the photo puzzle is always plain.
+  const colourOn = !photoMode && colour.mode !== "plain";
 
   const [mapLoaded, setLoaded] = useState<{ area: Area; grid: HeightGrid } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -171,7 +176,7 @@ export function MountainPuzzleDialog() {
     }
   };
 
-  const fullSpec: MountainSpec = photoMode ? { ...spec, bed, exaggeration: 1, snowline: null } : { ...spec, bed, snowline: snowOn ? snowline : null };
+  const fullSpec: MountainSpec = photoMode ? { ...spec, bed, exaggeration: 1, snowline: null } : { ...spec, bed, snowline: snowOn && !colourOn ? snowline : null };
   const layout = useMemo(() => (loaded ? layoutFor(loaded.grid, loaded.area.width, loaded.area.height, { ...spec, bed, snowline: null }) : null), [loaded, spec, bed[0], bed[1], bed[2]]);
   const checks = mountainChecks(fullSpec, layout ?? undefined);
 
@@ -198,7 +203,17 @@ export function MountainPuzzleDialog() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, specKey, features]);
 
-  const plates = useMemo(() => (puzzle ? platesFor(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2]]);
+  // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
+  const byLevel = colourOn && colour.mode === "bands";
+  const plates = useMemo(() => (puzzle ? (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2], byLevel]);
+  // How ground heights sit in the puzzle, and the map drawn over it, for colouring.
+  const scaleKey = puzzle ? [baseFor(puzzle.spec), puzzle.layout.low, puzzle.layout.k * puzzle.spec.exaggeration].join(",") : "";
+  const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: baseFor(puzzle.spec), h0: puzzle.layout.low, mmPerM: puzzle.layout.k * puzzle.spec.exaggeration } : null), [scaleKey]);
+  const puzzleMap = useMemo(() => (puzzle ? mapOnPuzzle(features, puzzle.layout.e0, puzzle.layout.n0, puzzle.layout.k) : NO_MAP), [puzzle, features]);
+  const mapSize: [number, number] = puzzle ? [puzzle.layout.cols * puzzle.spec.cube, puzzle.layout.rows * puzzle.spec.cube] : [1, 1];
+  const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
+  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap.water);
+  const usualBands = () => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline) : mountainBands(0, 1000, snowline));
   const fileName = safeFileName(`${loaded?.area.name ?? "Mountain"} puzzle`, "Mountain puzzle");
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string) => (
@@ -446,7 +461,22 @@ export function MountainPuzzleDialog() {
 
           {!photoMode && (
             <>
-          <h3 className="library-heading">3. Snow</h3>
+          <h3 className="library-heading">3. Colour</h3>
+          <ColourPanel
+            spec={colour}
+            setSpec={setColour}
+            usual={usualBands}
+            usualBase={null}
+            usualWater={WATER_BLUE}
+            hasMap={paintMap.water}
+            ground={puzzle ? [puzzle.layout.low, puzzle.layout.high] : null}
+          />
+            </>
+          )}
+
+          {!photoMode && !colourOn && (
+            <>
+          <h3 className="library-heading">4. Snow</h3>
           <div className="mountain-row">
             <span>Snow caps</span>
             <span>
@@ -484,7 +514,7 @@ export function MountainPuzzleDialog() {
             <>
               <div className="mountain-previews">
                 <TopView grid={loaded.grid} area={loaded.area} puzzle={puzzle} picture={photoMode ? photo?.url ?? null : source === "picture" ? picture : null} features={photoMode ? NO_FEATURES : features} />
-                <Mountain3D puzzle={puzzle} explode={explode} />
+                <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} />
               </div>
               <label className="mountain-explode small">
                 Pull apart <input type="range" min={0} max={20} value={explode} onChange={(e) => setExplode(Number(e.target.value))} />
@@ -513,7 +543,7 @@ export function MountainPuzzleDialog() {
                     Tabs' necks {puzzle.neck.toFixed(1)} mm; each piece sits on a square key about{" "}
                     {Math.round(Math.min(...puzzle.pieces.filter((p) => p.key).map((p) => p.key!.half * 2)))}–
                     {Math.round(Math.max(...puzzle.pieces.filter((p) => p.key).map((p) => p.key!.half * 2)))} mm across and {puzzle.keys.h.toFixed(1)} mm tall.
-                    {snowOn && snowline !== null && (snowParts ? ` ${snowParts} pieces have snow: filament 2.` : " Nothing reaches the snow line.")}
+                    {!colourOn && snowOn && snowline !== null && (snowParts ? ` ${snowParts} pieces have snow: filament 2.` : " Nothing reaches the snow line.")}
                   </p>
                   {puzzle.warnings.map((w) => (
                     <p key={w} className="mountain-warn">
@@ -522,7 +552,12 @@ export function MountainPuzzleDialog() {
                   ))}
                 </div>
               )}
-              {puzzle && plates.length > 0 && (
+              {colourOn && colouring && <p className="muted small">Colouring the pieces…</p>}
+              {colourOn && colourError && <p className="error-text small">{colourError}</p>}
+              {colourOn && puzzle && coloured && scale && plates.length > 0 && (
+                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} />
+              )}
+              {!colourOn && puzzle && plates.length > 0 && (
                 <div className="mountain-downloads">
                   <span className="small">
                     {plates.length} {plates.length === 1 ? "plate" : "plates"} for Bambu Studio:
@@ -663,7 +698,7 @@ function TopView({ grid, area, puzzle, picture, features }: { grid: HeightGrid; 
 }
 
 /** The puzzle in 3D, to turn round; pulled apart by `explode` mm per step. */
-export function Mountain3D({ puzzle, explode }: { puzzle: { pieces: PuzzlePiece[] } | null; explode: number }) {
+export function Mountain3D({ puzzle, explode, paint }: { puzzle: { pieces: PuzzlePiece[] } | null; explode: number; paint?: PreviewMesh[] | null }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<{ renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; group: THREE.Group; framed: boolean } | null>(null);
 
@@ -721,7 +756,34 @@ export function Mountain3D({ puzzle, explode }: { puzzle: { pieces: PuzzlePiece[
       v.group.remove(child);
     }
     if (!puzzle) return void v.renderer.render(v.scene, v.camera);
-    for (const part of ["rock", "snow"] as const) {
+    // Coloured (bands or full colour): one mesh with a colour per corner.
+    if (paint && paint.length === puzzle.pieces.length) {
+      let n = 0;
+      for (const m of paint) n += m.pos.length;
+      const pos = new Float32Array(n);
+      const col = new Float32Array(n);
+      let at = 0;
+      puzzle.pieces.forEach((p, i) => {
+        const m = paint[i];
+        const [dx, dy, dz] = [p.col * explode, p.row * explode, p.layer * explode * 1.5];
+        for (let k = 0; k < m.pos.length; k += 3) {
+          pos[at + k] = m.pos[k] + dx;
+          pos[at + k + 1] = m.pos[k + 1] + dy;
+          pos[at + k + 2] = m.pos[k + 2] + dz;
+        }
+        // The colours are sRGB; three.js wants vertex colours linear.
+        for (let k = 0; k < m.col.length; k++) {
+          const c = m.col[k];
+          col[at + k] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        }
+        at += m.pos.length;
+      });
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+      geo.computeVertexNormals();
+      v.group.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true })));
+    } else for (const part of ["rock", "snow"] as const) {
       const pos: number[] = [];
       for (const p of puzzle.pieces)
         for (const b of p.bodies) {
@@ -748,7 +810,7 @@ export function Mountain3D({ puzzle, explode }: { puzzle: { pieces: PuzzlePiece[
       v.framed = true;
     }
     v.renderer.render(v.scene, v.camera);
-  }, [puzzle, explode]);
+  }, [puzzle, explode, paint]);
 
   return <div ref={host} className="mountain-3d" aria-label="The puzzle in 3D: drag to turn it" />;
 }

@@ -388,6 +388,51 @@ const FEATURE_TYPES = new Set<string>(Object.keys(FEATURE_DEFS));
 const OPERATIONS = new Set<string>(["new", "add", "remove", "intersect"]);
 
 /** Check one Part Studio's features from untrusted JSON (ids must be unique across the document: `seen`). */
+const TRANSFORM_MODES = new Set(["free", "xyz", "distance", "line", "rotate", "mates"]);
+const TRANSFORM_PICKING = new Set(["part", "triad", "along", "line", "from", "to"]);
+
+/** Three finite numbers, or null. */
+function parseVec3(raw: unknown): [number, number, number] | null {
+  return Array.isArray(raw) && raw.length === 3 && raw.every((n) => typeof n === "number" && Number.isFinite(n)) ? [raw[0], raw[1], raw[2]] : null;
+}
+
+/** A Move / copy frame (origin, X, Z; the directions not zero and not along each other), or null. */
+function parseTransformFrame(raw: unknown): NonNullable<NonNullable<Feature["transform"]>["triad"]> | null {
+  const f = (raw ?? {}) as Record<string, unknown>;
+  const origin = parseVec3(f.origin);
+  const x = parseVec3(f.x);
+  const z = parseVec3(f.z);
+  if (!origin || !x || !z) return null;
+  const c = [x[1] * z[2] - x[2] * z[1], x[2] * z[0] - x[0] * z[2], x[0] * z[1] - x[1] * z[0]];
+  return Math.hypot(c[0], c[1], c[2]) > 1e-9 ? { origin, x, z } : null;
+}
+
+/** Move / copy's newer choices (each left out when missing or odd, so older designs read exactly as before). */
+function parseTransformExtras(t: Record<string, unknown>): Partial<NonNullable<Feature["transform"]>> {
+  const out: Partial<NonNullable<Feature["transform"]>> = {};
+  if (typeof t.mode === "string" && TRANSFORM_MODES.has(t.mode) && t.mode !== "free") out.mode = t.mode as NonNullable<typeof out.mode>;
+  const triad = parseTransformFrame(t.triad);
+  if (triad) out.triad = triad;
+  const along = (t.along ?? null) as Record<string, unknown> | null;
+  if (along && (along.axis === "x" || along.axis === "y" || along.axis === "z")) out.along = { axis: along.axis };
+  else if (along) {
+    const dir = parseVec3(along.dir);
+    const through = parseVec3(along.through);
+    if (dir && through && Math.hypot(...dir) > 1e-9) out.along = { dir, through };
+  }
+  const line = (t.line ?? null) as Record<string, unknown> | null;
+  const a = parseVec3(line?.a);
+  const b = parseVec3(line?.b);
+  if (a && b) out.line = { a, b };
+  const from = parseTransformFrame(t.from);
+  if (from) out.from = from;
+  const to = parseTransformFrame(t.to);
+  if (to) out.to = to;
+  if (t.flip === true) out.flip = true;
+  if (typeof t.picking === "string" && TRANSFORM_PICKING.has(t.picking) && t.picking !== "part") out.picking = t.picking as NonNullable<typeof out.picking>;
+  return out;
+}
+
 function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
   const features: Feature[] = [];
   for (const raw of list) {
@@ -473,6 +518,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         axis: t.axis === "x" || t.axis === "y" ? t.axis : "z",
         about: t.about === "origin" ? "origin" : "centre",
         copy: t.copy === true,
+        ...parseTransformExtras(t),
       };
       // Older designs turned about one chosen axis: that angle becomes the turn about that axis.
       if (typeof params.angle === "string" && params.rx === undefined && params.ry === undefined && params.rz === undefined) {

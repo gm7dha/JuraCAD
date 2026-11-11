@@ -394,6 +394,37 @@
   (heavy: a machined block's STL from the app's exporter → 10 faces, Ø5/Ø8/R2 within 0.01, volume within 0.5%, fillet on a
   recovered edge; slot ends, inside fillets and a notch; a STEP with split faces → 6 faces, same volume; a roof at 0.86° left
   alone; a mesh-like STEP skin → a solid; a lumpy ball stays sound), mcpSimplify.
+- Move / copy (Onshape's Transform): `Feature.transform` (`TransformDef` in types.ts). `mode` (missing = "free": turns about
+  X, then Y, then Z, then the move — the original way) or "xyz" (Translate by XYZ: moves only), "distance" (`distance` box along
+  `along`: the triad's X/Y/Z or a clicked `{dir, through}`), "line" (`line` {a, b}: a clicked straight edge, from the end nearer the
+  click), "rotate" (`turn` box about `along`), "mates" (`from` → `to` frames, Z onto Z; `flip` turns it over about X); `flip` also
+  reverses distance/line/turn. `triad` ("Move triad": a `TransformFrame` origin/x/z) makes free/xyz moves and turns go along and
+  about its directions through its origin; missing = the part's centre (or the origin with `about`), X/Y/Z. Every clicked thing is kept
+  as numbers, as clicked (it doesn't follow later edits); a click on the moved part itself is taken back through the current move
+  first (transformTriad.ts `shownMotion`). Pure maths `src/model/transformMath.ts` (`transformMotion` → a `Rigid`, `transformTriad`,
+  `valuesInFrame` — re-expresses the move for a new triad so placing or resetting it never moves the part; `transformKeys` = the boxes
+  shown, via `visibleParamKeys`); clicks → frames/directions/lines in `src/model/transformPicks.ts` (a flat face's middle, an edge's
+  nearest end or middle, a round edge's centre from `SceneManager.edgePoints`, a plane). The engine's `applyTransform` keeps the old
+  code path exactly when `isClassicTransform` (free, no triad), else applies the Rigid as one turn + move (`toAxisAngle`); it reports
+  each transform's turning centre (`RebuildResult.transformCentres` → `store.transformCentres`, merged per rebuild) so the view can
+  place the triad. The triad (`src/viewport/transformDrag.ts`, pure: `handleAt` screen-space hit tests, `startTriadDrag` → arrows by
+  the nearest point of the ray to the axis line, squares by ray ∩ plane, the ball in the view plane, rings by angle in their plane —
+  added up, so past 180° — or, edge-on, by sliding along the grabbed point's tangent; in free mode a ring's turn goes on top of the turn
+  so far, R' = Rot(drawn axis, Δ)·R, and all three angle boxes are read back from R' (`turnOf`/`turnsOf`, also used by `valuesInFrame`; `turnsNear` picks of the two XYZ solutions, each shifted by whole turns, the one nearest the boxes shown last — the ring's own box nearest start + Δ — so they never jump to an equivalent set and long drags go past 180°), so a
+  ring always turns about the axis it's drawn round; arrows seen within `MIN_ARROW_SIDE` of end-on and squares within `MIN_SQUARE_FACING` of
+  edge-on are faded and can't be grabbed (`handleUsable`); `snapTo` with `lengthStep` (1 mm / 0.05 in, more
+  zoomed out) and 5°; Shift via `shiftHeld` = free) is drawn by `SceneManager.setTriad` (constant `TRIAD_PIXELS` on screen, depthTest
+  off) and dragged through `onTriadStart/Move/End/Cancel` (mouse: a press on a handle wins over everything else; touch/pen: a finger
+  landing on a handle drags it on `dragStart`, never orbits; a second finger or lost capture = cancel). Glue in
+  `src/viewport/transformTriad.ts`: live values → `store.transformLive` (the dialog's boxes show them) and `setPreviewMove` (the part's
+  mesh moved by M(live)·M(shown)⁻¹ until the rebuilt parts arrive, `partsArrived`); letting go is one `changeDraftStep` (the open
+  dialog's own undo, `draftSteps`, reset by startCreate/startEdit/commitDraft/cancelDraft; Ctrl+Z while Move / copy is open → `undoDraftStep`;
+  mode/flip/clicked refs are steps too, and so is typing — `setDraftParam`/`setDraftField` on a Move draft go through `draftStepAfter`,
+  typing on in the same box merging into one step, a change of `picking` alone not a step). A triad press blurs a box in the dialog (so
+  Ctrl+Z reaches the dialog's undo); Esc mid-drag takes back only the drag (`escapeTriadDrag` → `SceneManager.cancelTriadDrag`), and a
+  drag whose dialog closed is dropped; finger taps on handles do nothing; a live move only shifts the triad's drawing.
+  `transform.picking` says what a click chooses (missing = the part). Tests: tests/transformDrag.test.ts (pure), tests/transformStore.test.ts,
+  tests/engineTransform.test.ts.
 - Mirror planes and pattern axes: `src/model/patternRefs.ts` (pure). A mirror's plane is a default plane, a Plane
   feature, a clicked flat face (`mirror.planePick`, found again on rebuild; `plane` keeps where it was when clicked) or a
   sketch line (`mirror.line`: the plane through it, square to its sketch). Patterns use X/Y/Z, a clicked edge/face
@@ -422,7 +453,7 @@
   (`gh api repos/gm7dha/JuraCAD/check-runs/<job id>/annotations`), readable even when job logs and
   artifacts aren't downloadable.
 - `npm run smoke` (`scripts/smoke-test.mjs`) drives the built app in headless Chromium: box → drilled
-  hole → colour it blue → glossy finish (the colour popover wholly inside the window at 1180 × 760, short and narrow sizes) → save a 2× see-through picture → section view → check → export STL, STEP and 3MF → Laser: click the top face, save SVG (40 × 30 mm, blue hole, red outline) and DXF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → the STL again with Simplify on (the summary shows, fewer faces), undo → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, make a copy flexible (nothing jumps), undo, double-click opens it → add a second Part Studio with a box (and, on a page of its own, three studios: one dragged to the front, one moved with Move right, Part Studio 1 deleted — the question names the assembly using it — and undone) → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → a view of another part with a projected top view (lined up), auto-dimensioned, then removed → draw the assembly exploded (parts list) → sheet metal from a part (a shelled box in a new Part Studio: its walls clicked one at a time from views that see them, a rip clicked, three more added, Accept: 4 bends); Design library: a finger-joint box inserted (6 panels, 140 mm) and widened to 170 mm in Variables, then a box with lid from the 3D printing tab (2 parts), then a bolt, nut and washer set found by searching, then a stencil of HELLO exported for laser (1 red outline, 5 blue holes), a 12-piece jigsaw's sketch (1 red, 17 blue) and a dice tower found by searching, all its parts saved for laser (7 red outlines, 20 blue slots), then a bird box found by searching (7 pieces, 182 mm across the roof), all saved for laser (7 red, 7 blue holes), and a Honeycomb wall tile found by searching (1 part, 122.63 mm); a touch screen (an iPad-sized page with `hasTouch`, fingers sent through CDP `Input.dispatchTouchEvent`: pinch zooms the 3D view and not the page, double-tap fits, a tap selects a face, in a sketch two fingers pan and draw nothing, a one-finger drag draws a line); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
+  hole → colour it blue → glossy finish (the colour popover wholly inside the window at 1180 × 760, short and narrow sizes) → save a 2× see-through picture → section view → check → export STL, STEP and 3MF → Laser: click the top face, save SVG (40 × 30 mm, blue hole, red outline) and DXF → edit → undo → sketch (rectangle, dimension, circle) → extrude → P hides/shows all planes, undo → fillet a face → revolve around a construction line → linear pattern → Mirror: click a face for the plane, Top, clear → Circular: Z axis → hole dialog (M4 sizes) → move a copy of a part → open Move again and drag the triad's X arrow a measured 120 px (Move X follows live, snapped to the step; the part moves by it once rebuilt; one dialog undo step; Ctrl+Z puts it back to 0) → open Move again (no undo left over from the cancelled one), type 40° about Z, drag the X ring (the turn added is about X) → add a variable → save to .juracad → New → open it again → import the STEP and STL it exported → the STL again with Simplify on (the summary shows, fewer faces), undo → assembly: insert copies, parts list, type a position → Fasten mate by clicking two top faces → drag a part → rename a part → check the assembly (clashes) and export it as STEP → explode it → pattern a part → group two parts → sub-assembly: insert Assembly 1 twice into Assembly 2, fasten a fixed part to a part inside one (it moves), flattened and structured parts lists, make a copy flexible (nothing jumps), undo, double-click opens it → add a second Part Studio with a box (and, on a page of its own, three studios: one dragged to the front, one moved with Move right, Part Studio 1 deleted — the question names the assembly using it — and undone) → Help: download the Claude extension → Extend a spline up to a line → make a drawing (4 views, title block), add a dimension by clicking two corners, save DXF and PDF → drag a dimension's number, then a slanted angle's (arc follows; across an arm it measures the supplementary angle; Shift into the opposite angle, the outside angle), undo → add a section view, a detail view and an auxiliary view → second sheet → a third sheet of Assembly 1 with its own part number → a view of another part with a projected top view (lined up), auto-dimensioned, then removed → draw the assembly exploded (parts list) → sheet metal from a part (a shelled box in a new Part Studio: its walls clicked one at a time from views that see them, a rip clicked, three more added, Accept: 4 bends); Design library: a finger-joint box inserted (6 panels, 140 mm) and widened to 170 mm in Variables, then a box with lid from the 3D printing tab (2 parts), then a bolt, nut and washer set found by searching, then a stencil of HELLO exported for laser (1 red outline, 5 blue holes), a 12-piece jigsaw's sketch (1 red, 17 blue) and a dice tower found by searching, all its parts saved for laser (7 red outlines, 20 blue slots), then a bird box found by searching (7 pieces, 182 mm across the roof), all saved for laser (7 red, 7 blue holes), and a Honeycomb wall tile found by searching (1 part, 122.63 mm); a touch screen (an iPad-sized page with `hasTouch`, fingers sent through CDP `Input.dispatchTouchEvent`: pinch zooms the 3D view and not the page, double-tap fits, a tap selects a face, in a sketch two fingers pan and draw nothing, a one-finger drag draws a line); Live with Claude (two chats, a third later; then through Safari's link window with `?liveRelay`) (the page is opened with `?smoke`, which exposes `window.juracadViewport`, `window.juracadStore` and `window.juracadDrawing` (a view's points on the sheet on show) so the test can find faces on screen). To see the result, set `SMOKE_SCREENSHOTS: "1"` in the CI
   workflow; small screenshots then arrive as base64 notice annotations ("screenshot N-name part i/n")
   that can be joined and decoded. GitHub keeps only 50 annotations per job (~12 screenshots), so set `SMOKE_SHOW`
   to the shot names you want (e.g. "assembly,mated"; the emit steps send the 1st…16th chosen shot, whatever its number). Set `SMOKE_SCREENSHOTS` back to "0" before merging.
@@ -518,7 +549,8 @@
   layouts and bed checks use): a two-nozzle printer may have `bothNozzles` (the room both reach) and a `note` (shown under the
   printer choice). The Bambu Lab X2D is 256 × 256 × 260 (main nozzle; `bothNozzles` 235.5 × 256 × 256, from 3D Printing
   Industry's launch article); nothing yet knows whether a print uses both nozzles, so `bedSize` is the main nozzle's and the print
-  bed panel adds `bothNozzlesNote` when a part fits only that way. The H2D has no `bothNozzles` yet.
+  bed panel adds `bothNozzlesNote` when a part fits only that way. The H2D has no `bothNozzles` yet. The Bambu Lab H3C (full colour,
+  Bambu Studio combines and layers CMYKW filaments) is 330 × 320 × 325, from 3DPrinting.com's launch news (on sale 3 Nov 2026).
 - 3D printing: `src/model/printCheck.ts` (pure: `bedRotation(down)` turns a part so `down` faces the bed, `findOverhangs`,
   `arrangeOnBed`, `printPartReport`), `src/model/printSettings.ts` (nozzle, limits, printed fits + `withFitVariables`:
   fit_press/snug/sliding/loose; a hole's size `fitExpression` "5 mm + fit_sliding"), `src/model/slicers.ts` (why there's no
@@ -1076,6 +1108,47 @@
   (≥ `BUILDING_LEAST` across), on a ≥ 0.25 mm grid; `makeMountainPuzzle(…, features)` wraps the ground height with it
   (so `full`, snow and every mesh see it) and samples top pieces finer (≤ 64 a side). Names aren't printed. Tests:
   tests/osm.test.ts (sample file in tests/support/osmSample.ts).
+- Puzzle colours (Island and Mountain puzzle windows' "Colour" choice; `src/app/PuzzleColour.tsx`: `ColourPanel`, `useColoured`,
+  `ColourDownloads`; the photo puzzle stays plain): pure `src/terrain/colour.ts` + `colourFiles.ts`. Colouring runs in
+  `src/app/puzzleColour.worker.ts` (`ColourRunner`: a new job while one runs restarts the worker; pieces sent only when new) over
+  the pure `src/terrain/colourJob.ts` `ColourCache` (keeps the pieces, the map's raster by `mapId`, and the last cut into bands
+  keyed by `bandLevels` + layers + water filament — a change of colour or name only repaints the preview; `replyTransfers`). `ColourSpec` = mode "plain" |
+  "bands" | "full", 2–8 `ColourBand`s (name, colour, `from` m — the first's ignored; `snow` marks the mountain's top band), `base`
+  (the side under the ground in its own colour), `water`, `layer` (0.2). Plain = exactly the old files (`plate3mf` untouched; its
+  hash is pinned in tests/puzzleColour). In bands/full the mountain is built with `snowline: null` (the snow band replaces it).
+  `HeightScale` (z = z0 + (h − h0)·mmPerM: island base / 0 / relief÷high; mountain `baseFor` / low / k·exaggeration). Defaults
+  `islandBands` (sand, green, brown, grey at fractions of the highest — olive is the first spare; base and water `SEA_BLUE`, one
+  filament, so five in all) and
+  `mountainBands` (green, brown, grey rock, snow at the snow line). Bands: `bandLevels` (with a base colour, levels clamped to ≥ z0;
+  sorted lowest first, stably) → per piece `snappedCuts` (sorted again; each edge on a layer boundary of the piece AS PRINTED, from its
+  own z0: `firstLayer` then every `layer`; edges on the bed dropped; same layer → the later band wins) → `sliceMesh`
+  (weld, planes moved ≥ `PLANE_CLEAR` 1e-4 off every corner to the nearest free height, each triangle clipped to each slab with
+  crossings keyed by mesh edge + plane so neighbours share them, caps from the reversed plane edges chained into loops, nested by
+  area sign, `triangulateFast` — triangulate.ts's algorithm with a grid for the ear test, kept apart so plain meshes never
+  change) → `BandPart`s (filament, low/high as printed, `paint`: water triangles facing up get Bambu's `paint_color` —
+  `paintCode`, from BambuStudio's TriangleSelector::serialize / get_triangle_as_string: 1 "4", 2 "8", n ≥ 3 "<n−3 hex>C", 18
+  "0FC"). `filaments` numbers distinct colours (base, bands, water — only if the map has water), ≤ `MOST_FILAMENTS` 8.
+  `bandPlate3mf` (puzzle3mf.ts, async: deflated with `src/geometry/zipDeflate.ts`, as Bambu's own 3MFs are) writes a part per band
+  with `extruder` in model_settings.config, as rock/snow. Banded plates come from `platesByLevel` (one set of plates per piece
+  underside height — mixing the mountain's layers on a plate cost hundreds of filament changes; plain keeps `platesFor`).
+  `colourWarnings`: more than `AMS_SLOTS` (4) filaments; no band starting within the ground's range (re-offers "Usual colours and
+  heights"). `filamentSwaps`:
+  per layer, the filaments in use, starting with the last one used (painted water counted on a part's top 3 layers) — a rough
+  count shown per plate. Full colour: `fullColours` divides triangles at the tint's stops (sliceMesh without caps) and gives every
+  corner a colour — `tintAt` (band colours blended between their heights, snow left out), sides × `SIDE_SHADE`, the base colour
+  below z0, on upward faces hill shading from the NW (`SHADE`, smooth normals of upward faces), map kinds (`mapRaster` of
+  `mapOnPuzzle`: water flat blue unshaded, paths/tracks/roads/buildings/woods mixed in) and snow where above the line and the
+  slope's normal z ≥ `SNOW_SLOPE` (min of corner and face normals). Files (`colourFiles.ts`): 3MF with one `m:colorgroup`
+  (`palette`, colours rounded to 4) and `pid`/`p1 p2 p3` per triangle (Bambu Studio reads these from non-Bambu 3MFs — bbs_3mf.cpp);
+  OBJ + MTL + a palette PNG (each triangle one colour — its corners' mean — on a `SWATCH` square, ≤ `MOST_SWATCHES`; `pngStored`);
+  VRML 2.0 with `colorPerVertex` + `colorIndex`; per plate 3MFs or every piece in one file (`allItems`: plates side by side);
+  compressed with `zipDeflated` (src/geometry/zipDeflate.ts: CompressionStream "deflate-raw", stored where there's none). `Mountain3D`'s `paint` draws the
+  preview (`previewOfBands`/`previewOfFull`, sRGB → linear). osm.ts reads woods (`natural=wood`, `landuse=forest`) into the
+  optional `OsmData.woods`/`MapFeatures.woods` — coloured only, never pressed into the ground (missing when there are none, so
+  plain features are unchanged). Tests: tests/puzzleColour (pure: layers, parts closed and adding up with shared corners at every
+  edge, paint codes, swaps, woods, full colour's sides/snow, 3MF/OBJ/MTL/PNG/WRL counts, the plain writer's hash; levels kept in
+  order with a base and a band below the ground; first-layer snapping; plates by level ≤ bands − 1 changes each; warnings; the
+  cache not re-cutting for a colour change).
 - Puzzle designs (`src/library/puzzleDesigns.ts` `PUZZLE_DESIGNS`, group "Puzzles", first in the print tab's GROUP_ORDER;
   LibraryDialog's `GroupedCards` shows the tools first under the same heading). Cylinder maze box (`designs/mazeBox.ts`,
   no variables): `makeMaze` — a perfect maze (seeded backtracker) on `cols` × `rows` cells round HALF the box (repeated, two

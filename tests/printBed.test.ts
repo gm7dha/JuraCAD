@@ -23,6 +23,14 @@ describe("print bed", () => {
     expect(long.fitsTurned).toBe(true);
   });
 
+  it("has the Bambu Lab H3C, the full-colour printer, after the X2D", () => {
+    const h3c = printerOf("bambu-h3c")!;
+    expect(h3c.name).toBe("Bambu Lab H3C");
+    expect(bedSize("bambu-h3c")).toEqual([330, 320, 325]);
+    expect(h3c.note).toMatch(/CMYKW|cyan, magenta, yellow, black and white/);
+    expect(PRINTERS.findIndex((p) => p.id === "bambu-h3c")).toBe(PRINTERS.findIndex((p) => p.id === "bambu-x2d") + 1);
+  });
+
   it("has the Bambu Lab X2D, with its main-nozzle bed and the room both nozzles reach", () => {
     const x2d = printerOf("bambu-x2d")!;
     expect(x2d.name).toBe("Bambu Lab X2D");

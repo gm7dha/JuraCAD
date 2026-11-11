@@ -8,6 +8,7 @@ import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, mak
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, refDistance, relativeTo, roundVec, sameRef, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { applyPoint, applyVec, isClassicTransform, isStill, toAxisAngle, transformMotion } from "../model/transformMath";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { planeFeatureFrame } from "../sketch/planeFeature";
@@ -1878,6 +1879,8 @@ interface StudioBuild {
   warnings?: Record<string, string>;
   /** Plain information about features built (see RebuildResult.featureNotes). */
   notes?: Record<string, string>;
+  /** Move / copy features: the point they turn about (see RebuildResult.transformCentres). */
+  centres?: Record<string, Vec3>;
   /** Sketches on part faces, or using part edges: what was found for them. */
   links: Record<string, SketchLinkInfo>;
   /** Each sketch: what it could snap to, as things were where it sits (see sketchCandidates). */
@@ -1980,6 +1983,7 @@ export class GeometryEngine {
     const featureErrors: Record<string, string> = {};
     const featureWarnings: Record<string, string> = {};
     const featureNotes: Record<string, string> = {};
+    const transformCentres: Record<string, Vec3> = {};
     const shared = JSON.stringify([variables, partNames]);
     // Part Studios using parts from others (Derived) are built after them, and again whenever they change.
     const sourcesOf = (s: StudioInput) => [...new Set(s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId))].filter((id) => id !== s.id);
@@ -2029,7 +2033,7 @@ export class GeometryEngine {
           for (const p of this.parts) if (names[p.id]) p.name = names[p.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, links: this.links, snaps: this.snaps ?? new Map() };
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map() };
           this.snaps = null;
           this.builds.set(studio.id, b);
           building = null;
@@ -2042,6 +2046,7 @@ export class GeometryEngine {
           Object.assign(featureErrors, b.errors);
           Object.assign(featureWarnings, b.warnings ?? {});
           Object.assign(featureNotes, b.notes ?? {});
+          Object.assign(transformCentres, b.centres ?? {});
         }
         this.studiosBuilt.add(studio.id);
       }
@@ -2059,6 +2064,7 @@ export class GeometryEngine {
       featureErrors,
       ...(Object.keys(featureWarnings).length ? { featureWarnings } : {}),
       ...(Object.keys(featureNotes).length ? { featureNotes } : {}),
+      ...(Object.keys(transformCentres).length ? { transformCentres } : {}),
       durationMs: Math.round(performance.now() - started),
       rebuilt,
       studioOrder: studios.map((s) => s.id),
@@ -2446,6 +2452,8 @@ export class GeometryEngine {
   private warnings: Record<string, string> = {};
   /** Notes from the latest `buildFeatures` (plain information, such as what Simplify did). */
   private notes: Record<string, string> = {};
+  /** Move / copy features' turning points from the latest `buildFeatures` (for the triad in the 3D view). */
+  private centres: Record<string, Vec3> = {};
   /** Simplify part results, by everything that went into them (simplifying a big part takes a while). */
   private simplified = new Map<string, { shapes: [string, Shape3D][]; note: string; error?: string }>();
 
@@ -2553,6 +2561,7 @@ export class GeometryEngine {
     this.warnings = warnings;
     const infoNotes: Record<string, string> = {};
     this.notes = infoNotes;
+    this.centres = {};
     let partCounter = 0;
     let surfaceCounter = 0;
     const sketches: SketchMap = new Map();
@@ -4556,14 +4565,27 @@ export class GeometryEngine {
       [values.ry, [0, 1, 0]],
       [values.rz, [0, 0, 1]],
     ];
-    const turning = turns.some(([a]) => Math.abs(a) > 1e-12);
-    if (!turning && Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) < 1e-12 && !t.copy) {
-      return { error: "Nothing to do yet — enter a distance to move or an angle to turn." };
-    }
     const [lo, hi] = boundsOf(part.shape);
     const centre: [number, number, number] = t.about === "origin" ? [0, 0, 0] : [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+    // (For the triad in the 3D view: where the turns go about, before the move.)
+    this.centres[feature.id] = centre;
+    // The original way (turns about X, Y, Z through the centre, then the move) is done exactly as it always was;
+    // every other way (a triad put somewhere, Translate by line, Rotate, mate connectors…) is one worked-out move.
+    const classic = isClassicTransform(t);
+    const motion = classic ? null : transformMotion(t, values, centre);
+    if (typeof motion === "string") return { error: motion };
+    const turning = turns.some(([a]) => Math.abs(a) > 1e-12);
+    if (classic ? !turning && Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) < 1e-12 && !t.copy : isStill(motion!) && !t.copy) {
+      return { error: "Nothing to do yet — enter a distance to move or an angle to turn." };
+    }
+    const turned = motion ? toAxisAngle(motion) : null;
     const move = (s: Shape3D): Shape3D => {
       let out = s;
+      if (turned) {
+        if (turned.degrees > 1e-12) out = out.rotate(turned.degrees, [0, 0, 0], turned.axis);
+        if (Math.abs(turned.t[0]) + Math.abs(turned.t[1]) + Math.abs(turned.t[2]) > 0) out = out.translate(turned.t);
+        return out;
+      }
       for (const [a, axis] of turns) if (Math.abs(a) > 1e-12) out = out.rotate(a, centre, axis);
       if (Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) > 0) out = out.translate([values.dx, values.dy, values.dz]);
       return out;
@@ -4577,6 +4599,7 @@ export class GeometryEngine {
     }
     // Its threads (for drawings) go with it.
     const turnVec = (p: Vec3, withCentre: boolean): Vec3 => {
+      if (motion) return withCentre ? applyPoint(motion, p) : applyVec(motion, p);
       let q: Vec3 = withCentre ? [p[0] - centre[0], p[1] - centre[1], p[2] - centre[2]] : p;
       for (const [a, axis] of turns) if (Math.abs(a) > 1e-12) q = rotateAbout(q, axis, (a * Math.PI) / 180);
       return withCentre ? [q[0] + centre[0] + values.dx, q[1] + centre[1] + values.dy, q[2] + centre[2] + values.dz] : q;
