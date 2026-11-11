@@ -549,7 +549,8 @@
   layouts and bed checks use): a two-nozzle printer may have `bothNozzles` (the room both reach) and a `note` (shown under the
   printer choice). The Bambu Lab X2D is 256 × 256 × 260 (main nozzle; `bothNozzles` 235.5 × 256 × 256, from 3D Printing
   Industry's launch article); nothing yet knows whether a print uses both nozzles, so `bedSize` is the main nozzle's and the print
-  bed panel adds `bothNozzlesNote` when a part fits only that way. The H2D has no `bothNozzles` yet.
+  bed panel adds `bothNozzlesNote` when a part fits only that way. The H2D has no `bothNozzles` yet. The Bambu Lab H3C (full colour,
+  Bambu Studio combines and layers CMYKW filaments) is 330 × 320 × 325, from 3DPrinting.com's launch news (on sale 3 Nov 2026).
 - 3D printing: `src/model/printCheck.ts` (pure: `bedRotation(down)` turns a part so `down` faces the bed, `findOverhangs`,
   `arrangeOnBed`, `printPartReport`), `src/model/printSettings.ts` (nozzle, limits, printed fits + `withFitVariables`:
   fit_press/snug/sliding/loose; a hole's size `fitExpression` "5 mm + fit_sliding"), `src/model/slicers.ts` (why there's no
@@ -1107,6 +1108,47 @@
   (≥ `BUILDING_LEAST` across), on a ≥ 0.25 mm grid; `makeMountainPuzzle(…, features)` wraps the ground height with it
   (so `full`, snow and every mesh see it) and samples top pieces finer (≤ 64 a side). Names aren't printed. Tests:
   tests/osm.test.ts (sample file in tests/support/osmSample.ts).
+- Puzzle colours (Island and Mountain puzzle windows' "Colour" choice; `src/app/PuzzleColour.tsx`: `ColourPanel`, `useColoured`,
+  `ColourDownloads`; the photo puzzle stays plain): pure `src/terrain/colour.ts` + `colourFiles.ts`. Colouring runs in
+  `src/app/puzzleColour.worker.ts` (`ColourRunner`: a new job while one runs restarts the worker; pieces sent only when new) over
+  the pure `src/terrain/colourJob.ts` `ColourCache` (keeps the pieces, the map's raster by `mapId`, and the last cut into bands
+  keyed by `bandLevels` + layers + water filament — a change of colour or name only repaints the preview; `replyTransfers`). `ColourSpec` = mode "plain" |
+  "bands" | "full", 2–8 `ColourBand`s (name, colour, `from` m — the first's ignored; `snow` marks the mountain's top band), `base`
+  (the side under the ground in its own colour), `water`, `layer` (0.2). Plain = exactly the old files (`plate3mf` untouched; its
+  hash is pinned in tests/puzzleColour). In bands/full the mountain is built with `snowline: null` (the snow band replaces it).
+  `HeightScale` (z = z0 + (h − h0)·mmPerM: island base / 0 / relief÷high; mountain `baseFor` / low / k·exaggeration). Defaults
+  `islandBands` (sand, green, brown, grey at fractions of the highest — olive is the first spare; base and water `SEA_BLUE`, one
+  filament, so five in all) and
+  `mountainBands` (green, brown, grey rock, snow at the snow line). Bands: `bandLevels` (with a base colour, levels clamped to ≥ z0;
+  sorted lowest first, stably) → per piece `snappedCuts` (sorted again; each edge on a layer boundary of the piece AS PRINTED, from its
+  own z0: `firstLayer` then every `layer`; edges on the bed dropped; same layer → the later band wins) → `sliceMesh`
+  (weld, planes moved ≥ `PLANE_CLEAR` 1e-4 off every corner to the nearest free height, each triangle clipped to each slab with
+  crossings keyed by mesh edge + plane so neighbours share them, caps from the reversed plane edges chained into loops, nested by
+  area sign, `triangulateFast` — triangulate.ts's algorithm with a grid for the ear test, kept apart so plain meshes never
+  change) → `BandPart`s (filament, low/high as printed, `paint`: water triangles facing up get Bambu's `paint_color` —
+  `paintCode`, from BambuStudio's TriangleSelector::serialize / get_triangle_as_string: 1 "4", 2 "8", n ≥ 3 "<n−3 hex>C", 18
+  "0FC"). `filaments` numbers distinct colours (base, bands, water — only if the map has water), ≤ `MOST_FILAMENTS` 8.
+  `bandPlate3mf` (puzzle3mf.ts, async: deflated with `src/geometry/zipDeflate.ts`, as Bambu's own 3MFs are) writes a part per band
+  with `extruder` in model_settings.config, as rock/snow. Banded plates come from `platesByLevel` (one set of plates per piece
+  underside height — mixing the mountain's layers on a plate cost hundreds of filament changes; plain keeps `platesFor`).
+  `colourWarnings`: more than `AMS_SLOTS` (4) filaments; no band starting within the ground's range (re-offers "Usual colours and
+  heights"). `filamentSwaps`:
+  per layer, the filaments in use, starting with the last one used (painted water counted on a part's top 3 layers) — a rough
+  count shown per plate. Full colour: `fullColours` divides triangles at the tint's stops (sliceMesh without caps) and gives every
+  corner a colour — `tintAt` (band colours blended between their heights, snow left out), sides × `SIDE_SHADE`, the base colour
+  below z0, on upward faces hill shading from the NW (`SHADE`, smooth normals of upward faces), map kinds (`mapRaster` of
+  `mapOnPuzzle`: water flat blue unshaded, paths/tracks/roads/buildings/woods mixed in) and snow where above the line and the
+  slope's normal z ≥ `SNOW_SLOPE` (min of corner and face normals). Files (`colourFiles.ts`): 3MF with one `m:colorgroup`
+  (`palette`, colours rounded to 4) and `pid`/`p1 p2 p3` per triangle (Bambu Studio reads these from non-Bambu 3MFs — bbs_3mf.cpp);
+  OBJ + MTL + a palette PNG (each triangle one colour — its corners' mean — on a `SWATCH` square, ≤ `MOST_SWATCHES`; `pngStored`);
+  VRML 2.0 with `colorPerVertex` + `colorIndex`; per plate 3MFs or every piece in one file (`allItems`: plates side by side);
+  compressed with `zipDeflated` (src/geometry/zipDeflate.ts: CompressionStream "deflate-raw", stored where there's none). `Mountain3D`'s `paint` draws the
+  preview (`previewOfBands`/`previewOfFull`, sRGB → linear). osm.ts reads woods (`natural=wood`, `landuse=forest`) into the
+  optional `OsmData.woods`/`MapFeatures.woods` — coloured only, never pressed into the ground (missing when there are none, so
+  plain features are unchanged). Tests: tests/puzzleColour (pure: layers, parts closed and adding up with shared corners at every
+  edge, paint codes, swaps, woods, full colour's sides/snow, 3MF/OBJ/MTL/PNG/WRL counts, the plain writer's hash; levels kept in
+  order with a base and a band below the ground; first-layer snapping; plates by level ≤ bands − 1 changes each; warnings; the
+  cache not re-cutting for a colour change).
 - Puzzle designs (`src/library/puzzleDesigns.ts` `PUZZLE_DESIGNS`, group "Puzzles", first in the print tab's GROUP_ORDER;
   LibraryDialog's `GroupedCards` shows the tools first under the same heading). Cylinder maze box (`designs/mazeBox.ts`,
   no variables): `makeMaze` — a perfect maze (seeded backtracker) on `cols` × `rows` cells round HALF the box (repeated, two

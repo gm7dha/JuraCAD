@@ -12,7 +12,9 @@ import { ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type 
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
-import { allPlatesZip, plate3mf, platesFor } from "../terrain/puzzle3mf";
+import { allPlatesZip, plate3mf, platesByLevel, platesFor } from "../terrain/puzzle3mf";
+import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
+import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
 import type { IslandJob, IslandReply } from "./islandPuzzle.worker";
 import { Modal } from "./Modal";
@@ -98,6 +100,8 @@ export function IslandPuzzleDialog() {
   const builder = useRef(new IslandBuilder());
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
+  const [colour, setColour] = useState<ColourSpec>(PLAIN_COLOUR);
+  const colourOn = colour.mode !== "plain";
 
   const area = areaFrom(source, islandId, ref, km);
   const areaReady = typeof area !== "string";
@@ -237,8 +241,17 @@ export function IslandPuzzleDialog() {
   // Stop the builder when the window closes.
   useEffect(() => () => builder.current.stop(), []);
 
-  const plates = useMemo(() => (puzzle ? platesFor(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2]]);
+  // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
+  const byLevel = colourOn && colour.mode === "bands";
+  const plates = useMemo(() => (puzzle ? (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2], byLevel]);
   const fileName = safeFileName(`${loaded?.area.name ?? "Island"} puzzle`, "Island puzzle");
+  // How ground heights sit in the puzzle (base + height × relief / highest), and the map over it, for colouring.
+  const scaleKey = puzzle ? [spec.base, spec.relief, puzzle.high].join(",") : "";
+  const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: spec.base, h0: 0, mmPerM: spec.relief / Math.max(puzzle.high, 1) } : null), [scaleKey]);
+  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(features, loaded.area.sw.e, loaded.area.sw.n, puzzle.k) : NO_MAP), [puzzle, features]);
+  const mapSize: [number, number] = puzzle ? [puzzle.width, puzzle.height] : [1, 1];
+  const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
+  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap.water);
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string) => (
     <span className="mountain-number">
@@ -431,6 +444,17 @@ export function IslandPuzzleDialog() {
               <span className="muted small"> where the pieces and tabs go</span>
             </span>
           </div>
+
+          <h3 className="library-heading">5. Colour</h3>
+          <ColourPanel
+            spec={colour}
+            setSpec={setColour}
+            usual={() => islandBands(puzzle?.high ?? 500)}
+            usualBase={SEA_BLUE}
+            usualWater={SEA_BLUE}
+            hasMap={paintMap.water}
+            ground={puzzle ? [0, puzzle.high] : null}
+          />
         </div>
 
         <div className="mountain-main">
@@ -445,7 +469,7 @@ export function IslandPuzzleDialog() {
             <>
               <div className="mountain-previews">
                 <IslandTopView puzzle={puzzle} />
-                <Mountain3D puzzle={puzzle} explode={explode} />
+                <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} />
               </div>
               <label className="mountain-explode small">
                 Pull apart <input type="range" min={0} max={20} value={explode} onChange={(e) => setExplode(Number(e.target.value))} />
@@ -477,7 +501,12 @@ export function IslandPuzzleDialog() {
                   ))}
                 </div>
               )}
-              {puzzle && plates.length > 0 && (
+              {colourOn && colouring && <p className="muted small">Colouring the pieces…</p>}
+              {colourOn && colourError && <p className="error-text small">{colourError}</p>}
+              {colourOn && puzzle && coloured && scale && plates.length > 0 && (
+                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} />
+              )}
+              {!colourOn && puzzle && plates.length > 0 && (
                 <div className="mountain-downloads">
                   <span className="small">
                     {plates.length} {plates.length === 1 ? "plate" : "plates"} for Bambu Studio:
