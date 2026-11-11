@@ -41,11 +41,17 @@ export const DEPTH_SHARE = 0.15;
 export const EDGE_MARGIN = 1;
 /** The smallest repeat (mm), and the most engraved shapes on one piece (so a build stays quick). */
 export const LEAST_CELL = 3;
+export const MOST_REPEATS = 6;
 export const MOST_SHAPES = 120;
 /** The sketch for an engraving sits this far out from its face, so the cut doesn't start exactly on it. */
 export const CUT_START = 0.5;
 /** The badge's sketch starts this far inside the end, so it joins solidly. */
 export const BADGE_ROOT = 0.3;
+/** The badge comes this close to the end's edges; its number's capitals are this share of its half-diagonal. */
+export const BADGE_EDGE = 0.6;
+export const BADGE_CAP = 0.85;
+/** An engraved number's capitals: this share of the room inside the end's margin. */
+export const NUMBER_CAP = 0.6;
 /** Numbers on a badge go this far into the end as well. */
 export const BADGE_NUMBER_EXTRA = 0.3;
 
@@ -65,7 +71,7 @@ export function surfaceInputs(): DesignInput[] {
   return [
     { key: "surface", label: "Surface pattern", kind: "choice", default: "none", choices: BURR_PATTERNS.map((c) => ({ ...c })), help: "Engraved into the faces that show when the puzzle is together, so it never gets in the way of the sliding." },
     { key: "surfaceDepth", label: "Pattern depth", kind: "length", default: 0.6, min: 0.3, max: MOST_DEPTH, help: "How deep the pattern is cut in. Thin sticks get no more than 15% of half their thickness." },
-    { key: "surfaceRepeats", label: "Pattern repeats across", kind: "count", default: 3, min: 1, max: 6, help: "How many times the pattern repeats across a stick's face." },
+    { key: "surfaceRepeats", label: "Pattern repeats across", kind: "count", default: 3, min: 1, max: MOST_REPEATS, help: "How many times the pattern repeats across a stick's face." },
     { key: "surfaceSeed", label: "Facets pattern number", kind: "count", default: 1, min: 1, max: 9999, help: "Geometric facets: each number gives a different random pattern." },
     { key: "ends", label: "Stick ends", kind: "choice", default: "plain", choices: END_STYLES.map((c) => ({ ...c })), help: "The numbers (1–6) make the solution easy to follow." },
   ];
@@ -81,7 +87,7 @@ export function surfaceOf(v: DesignValues, unit: number): BurrSurface {
     pattern: pick(v.surface, BURR_PATTERNS, "none"),
     asked,
     depth: Math.round(Math.min(asked, MOST_DEPTH, DEPTH_SHARE * unit) * 1e6) / 1e6,
-    repeats: Math.max(1, Math.round(numberOr(v.surfaceRepeats, 3))),
+    repeats: Math.min(MOST_REPEATS, Math.max(1, Math.round(numberOr(v.surfaceRepeats, 3)))),
     seed: Math.max(1, Math.round(numberOr(v.surfaceSeed, 1))),
     ends: pick(v.ends, END_STYLES, "plain"),
   };
@@ -199,7 +205,19 @@ function clipped(pts: P2[], r: Rect, least: number, share = 0.3): P2[] | null {
   const xs = c.map((p) => p[0]);
   const ys = c.map((p) => p[1]);
   if (Math.max(...xs) - Math.min(...xs) < 0.8 || Math.max(...ys) - Math.min(...ys) < 0.8) return null;
-  return tidy(c);
+  return thickness(c) >= LEAST_WIDTH ? tidy(c) : null;
+}
+
+/** Engraved shapes thinner than this anywhere (a slanting groove clipped at a corner) aren't worth printing. */
+export const LEAST_WIDTH = 0.8;
+
+/** About how thick a shape is: the short side of the rectangle with its area and perimeter (exact for rectangles, less for points). */
+export function thickness(pts: P2[]): number {
+  let per = 0;
+  for (let i = 0; i < pts.length; i++) per += Math.hypot(pts[(i + 1) % pts.length][0] - pts[i][0], pts[(i + 1) % pts.length][1] - pts[i][1]);
+  const a = areaOf(pts);
+  const h = per / 2;
+  return (h - Math.sqrt(Math.max(0, h * h - 4 * a))) / 2;
 }
 
 /** Starts of a row of `n` repeats `pitch` apart centred in lo…hi. */
@@ -511,18 +529,20 @@ export function pieceWork(s: BurrSurface, p: PieceLaid, index: number, unit: num
     const end = rects[0];
     if (!end) return;
     const inner = inset(end, margin);
-    if (!inner) return;
-    const centre: P2 = [r6((inner[0] + inner[2]) / 2), r6((inner[1] + inner[3]) / 2)];
-    const room = Math.min(inner[2] - inner[0], inner[3] - inner[1]);
+    if (!inner && style === "number") return;
     const text = String(index + 1);
-    if (style === "number") {
-      out.push({ face, kind: "number", at, ...plane(CUT_START), marks: [], number: { centre, cap: r6(0.6 * room), text }, depth: s.depth });
+    if (style === "number" && inner) {
+      const centre: P2 = [r6((inner[0] + inner[2]) / 2), r6((inner[1] + inner[3]) / 2)];
+      const room = Math.min(inner[2] - inner[0], inner[3] - inner[1]);
+      out.push({ face, kind: "number", at, ...plane(CUT_START), marks: [], number: { centre, cap: r6(NUMBER_CAP * room), text }, depth: s.depth });
       return;
     }
-    // The badge reaches the end's inset corners' middle lines; the number fits in the square inside the diamond.
-    const R = r6(room / 2);
-    out.push({ face, kind: "badge", at, ...plane(-BADGE_ROOT), marks: [{ pts: badgeDiamond(centre, R) }], depth: s.depth });
-    out.push({ face, kind: "number", at, ...plane(s.depth + CUT_START), marks: [], number: { centre, cap: r6(0.55 * R), text }, depth: s.depth + BADGE_NUMBER_EXTRA });
+    // The badge only stands out from the end, where nothing slides, so it may come within `BADGE_EDGE` of the end's
+    // edges; the number (capitals `BADGE_CAP` × R tall) fits inside the diamond with a wall all round.
+    const R = r6(unit - fit - BADGE_EDGE);
+    const mid: P2 = [r6((end[0] + end[2]) / 2), r6((end[1] + end[3]) / 2)];
+    out.push({ face, kind: "badge", at, ...plane(-BADGE_ROOT), marks: [{ pts: badgeDiamond(mid, R) }], depth: s.depth });
+    out.push({ face, kind: "number", at, ...plane(s.depth + CUT_START), marks: [], number: { centre: mid, cap: r6(BADGE_CAP * R), text }, depth: s.depth + BADGE_NUMBER_EXTRA });
   });
   return out;
 }

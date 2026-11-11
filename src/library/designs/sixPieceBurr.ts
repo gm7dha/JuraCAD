@@ -11,6 +11,7 @@ import { BADGE_ROOT, CUT_START, MOST_SHAPES, badgesFree, isPlain, pieceWork, sha
 import { addTextBlock } from "../textKit";
 import { loopsSketch } from "./mouldKit";
 import { circleShape } from "./printShapes";
+import { MIN_LABEL } from "./testPrints";
 import { offsetPolygon, type P2 } from "../outlines";
 import { fixedPlane, levelPlane } from "../printKit";
 import { extrudeFeature, outlineSketch, shapesSketch, sketchFeature } from "../sketchKit";
@@ -160,7 +161,7 @@ export const sixPieceBurr: LibraryDesign = {
   inputs: [
     { key: "size", label: "Stick thickness", kind: "length", default: 20, min: 8, max: 60, help: "Each stick is this square and four times as long." },
     { key: "difficulty", label: "Difficulty", kind: "choice", default: "medium", choices: Object.entries(DIFFICULTIES).map(([value, d]) => ({ value, label: d.label })) },
-    { key: "pattern", label: "Pattern", kind: "count", default: 1, min: 1, max: 99999, help: "Each number gives a different burr." },
+    { key: "pattern", label: "Puzzle number", kind: "count", default: 1, min: 1, max: 99999, help: "Each number gives a different burr." },
     { key: "fit", label: "Fit gap", kind: "length", default: 0.2, min: 0, max: 0.6, help: "Room round every piece, each side. 0.2 mm suits most printers." },
     ...surfaceInputs(),
   ],
@@ -173,6 +174,12 @@ export const sixPieceBurr: LibraryDesign = {
     const work = burrWork(v, L);
     if (Math.max(...work.map(shapeCount)) > MOST_SHAPES) out.push("That's too much pattern detail to build quickly — choose fewer pattern repeats across.");
     if (s.pattern !== "none" && work.every((w) => w.every((f) => f.kind !== "engrave"))) out.push("The sticks are too thin for this pattern — choose fewer pattern repeats across, or thicker sticks.");
+    // Numbers smaller than the fit test's smallest don't print legibly.
+    if (s.ends === "badge" || s.ends === "number") {
+      const caps = work.flatMap((w) => w.filter((f) => f.number).map((f) => f.number!.cap));
+      if (!caps.length || Math.min(...caps) < MIN_LABEL)
+        out.push(s.ends === "badge" ? "These sticks are too thin for raised badges — choose engraved numbers, or thicker sticks." : "These sticks are too thin for engraved numbers — choose plain ends, or thicker sticks.");
+    }
     if (s.ends === "badge" && !badgesFree(L.pieces, L.level, `${num(v, "pattern")}:${String(v.difficulty)}`))
       out.push("Raised badges on the ends would get in the way of this puzzle's moves — choose engraved numbers instead.");
     return out;

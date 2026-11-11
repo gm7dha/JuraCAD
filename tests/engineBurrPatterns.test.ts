@@ -1,7 +1,9 @@
 /**
  * The six-piece burr with surface patterns, built with the real OpenCascade engine (in its own file: several whole
  * burrs are built). Each piece loses exactly what its engraving takes out (and gains its badge); the pieces still go
- * together without overlapping, and the moves that were free with plain sticks are still free — badges and all.
+ * together without overlapping, the first few moves that are free with plain cubes are still free all the way along —
+ * badges and all — and a decorated piece reaches past its plain self only beyond its two ends (the badges). The whole
+ * way apart is walked with a cube on every end in libraryBurrPatterns.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { GeometryEngine } from "../src/kernel/engine";
@@ -30,10 +32,17 @@ function build(values: DesignValues) {
   expect(r.featureErrors).toEqual({});
   const check = engine.check("normal");
   for (const p of check.parts) expect(p.geometryValid, p.partId).toBe(true);
-  const byPiece: Record<number, { id: string; volume: number; name: string }> = {};
+  const byPiece: Record<number, { id: string; volume: number; name: string; box: [V3, V3] }> = {};
   for (const p of r.parts) {
     const i = Number(p.id.match(/piece-(\d)$/)?.[1]);
-    byPiece[i] = { id: p.id, name: p.name, volume: check.parts.find((c) => c.partId === p.id)!.exactVolume ?? 0 };
+    const lo: V3 = [Infinity, Infinity, Infinity];
+    const hi: V3 = [-Infinity, -Infinity, -Infinity];
+    for (let k = 0; k < p.vertices.length; k += 3)
+      for (let a = 0; a < 3; a++) {
+        lo[a] = Math.min(lo[a], p.vertices[k + a]);
+        hi[a] = Math.max(hi[a], p.vertices[k + a]);
+      }
+    byPiece[i] = { id: p.id, name: p.name, volume: check.parts.find((c) => c.partId === p.id)!.exactVolume ?? 0, box: [lo, hi] };
   }
   expect(Object.keys(byPiece)).toHaveLength(6);
   return byPiece;
@@ -115,6 +124,12 @@ describe("Six-piece burr with surface patterns", () => {
           }
         }
         expect(removed + letters, `piece ${i + 1}`).not.toBe(0);
+        // Nothing stands out of the plain piece's box, but a badge beyond each end (the pieces lie along x).
+        const [[plo, phi], [flo, fhi]] = [plain[i].box, fancy[i].box];
+        const out = s.ends === "badge" ? s.depth : 0;
+        for (const a of [1, 2]) expect([flo[a] >= plo[a] - 1e-3, fhi[a] <= phi[a] + 1e-3], `piece ${i + 1} axis ${a}`).toEqual([true, true]);
+        expect(Math.abs(plo[0] - flo[0] - out), `piece ${i + 1} start`).toBeLessThan(1e-3);
+        expect(Math.abs(fhi[0] - phi[0] - out), `piece ${i + 1} end`).toBeLessThan(1e-3);
         const lost = plain[i].volume - fancy[i].volume;
         expect(Math.abs(lost - removed - letters), `piece ${i + 1}: lost ${lost}, expected ${removed + letters}`).toBeLessThan(1e-3 * Math.abs(removed) + 0.02 * letters + 1e-3);
       }
