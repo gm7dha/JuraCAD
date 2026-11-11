@@ -8,6 +8,21 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.53 — Colour puzzles: colour bands for the AMS, full colour for the H3C and print services
+
+- **Colour** in the island and mountain puzzle windows: Plain (as before), **Colour bands** or **Full colour**.
+- **Colour bands** (for the AMS): pick the colours and the height each one starts at — the usual ones are sand, green,
+  brown and grey with a sea-blue base for islands, and green, brown, grey rock and snow for mountains. Lochs and rivers
+  can be blue. Each band starts on a whole layer (set your first layer and layer heights to match Bambu Studio), every
+  piece is split into a part per colour with its filament already set, and plates hold pieces of the same height so
+  the printer only swaps filament a few times a plate (the window shows how many). It warns when you pick more colours
+  than one AMS holds.
+- **Full colour** (for the Bambu Lab H3C or a full-colour print service): smooth height colours with hill shading
+  printed in, snow only on gentle slopes, and blue water, paths and woods from a map file. Saved as a coloured 3MF, an
+  OBJ with its colour picture, or VRML for PolyJet services.
+- **Bambu Lab H3C** in the printer list (330 × 320 × 325 mm).
+- Colouring works in the background, so the window doesn't freeze.
+
 ## v0.52 — Mountain puzzle: dovetails on the top pieces
 
 - **Top pieces now dovetail together.** Before, the pieces with the ground on top were plain squares held only by the key
