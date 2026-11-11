@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-import { bedFit, bedSize, CUSTOM_PRINTER, PRINTERS } from "../model/printBed";
+import { bedFit, bedSize, bothNozzlesNote, CUSTOM_PRINTER, printerOf, PRINTERS } from "../model/printBed";
 import { useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { viewportApi } from "../viewport/Viewport";
@@ -69,6 +69,7 @@ export function PrintBedPanel() {
         ))}
         <option value={CUSTOM_PRINTER}>Another printer (type its size)…</option>
       </select>
+      {printerOf(bed.printer)?.note && <p className="muted small">{printerOf(bed.printer)!.note}</p>}
       {bed.printer === CUSTOM_PRINTER && (
         <div className="print-bed-sizes">
           {AXES.map((label, i) => (
@@ -99,7 +100,7 @@ export function PrintBedPanel() {
             What's shown: {partSize.map((v) => lengthNumber(Math.round(v * 10) / 10, unit)).join(" × ")} {unit}
           </p>
           {fit?.fits ? (
-            <p className="print-bed-ok">✓ Fits on the bed.</p>
+            <p className="print-bed-ok">✓ Fits on the bed.{partSize && bothNozzlesNote(bed.printer, partSize) ? ` ${bothNozzlesNote(bed.printer, partSize)}` : ""}</p>
           ) : (
             <p className="print-bed-bad">
               Too big: {tooBig.join(", ")}.{fit?.fitsTurned ? " It fits if you turn it a quarter turn on the bed." : ""}

@@ -6,7 +6,12 @@
 export interface Printer {
   id: string;
   name: string;
+  /** The usual build volume (with the main nozzle, for a printer with two). */
   size: [number, number, number];
+  /** Two nozzles: the room both reach, for a print using the second nozzle or both (two colours or materials). */
+  bothNozzles?: [number, number, number];
+  /** A line about the printer for its description (e.g. how two nozzles change the room). */
+  note?: string;
 }
 
 export const PRINTERS: Printer[] = [
@@ -14,6 +19,15 @@ export const PRINTERS: Printer[] = [
   { id: "bambu-a1", name: "Bambu Lab A1", size: [256, 256, 256] },
   { id: "bambu-a1-mini", name: "Bambu Lab A1 mini", size: [180, 180, 180] },
   { id: "bambu-h2d", name: "Bambu Lab H2D", size: [325, 320, 325] },
+  {
+    // From 3D Printing Industry's launch article: 256 × 256 × 260 with the main nozzle; 235.5 × 256 × 256 for the
+    // second nozzle and for both together. Nozzles up to 300 °C, a heated chamber up to 65 °C.
+    id: "bambu-x2d",
+    name: "Bambu Lab X2D",
+    size: [256, 256, 260],
+    bothNozzles: [235.5, 256, 256],
+    note: "Two nozzles: 256 × 256 × 260 mm with the main nozzle; 235.5 × 256 × 256 mm with the second nozzle or both (two colours). Nozzles up to 300 °C, heated chamber up to 65 °C.",
+  },
   { id: "prusa-mk4", name: "Prusa MK4 / MK4S", size: [250, 210, 220] },
   { id: "prusa-mini", name: "Prusa MINI+", size: [180, 180, 180] },
   { id: "prusa-xl", name: "Prusa XL", size: [360, 360, 360] },
@@ -32,6 +46,27 @@ export const CUSTOM_PRINTER = "custom";
 export function bedSize(printer: string, custom?: [number, number, number]): [number, number, number] {
   if (printer === CUSTOM_PRINTER) return custom ?? [220, 220, 250];
   return PRINTERS.find((p) => p.id === printer)?.size ?? PRINTERS[0].size;
+}
+
+/** The printer by its id (undefined for a custom printer or an unknown id). */
+export function printerOf(printer: string): Printer | undefined {
+  return PRINTERS.find((p) => p.id === printer);
+}
+
+/**
+ * For a two-nozzle printer, what to say about a part that fits with the main
+ * nozzle but not where both nozzles reach (null: nothing to say).
+ */
+export function bothNozzlesNote(printer: string, part: [number, number, number]): string | null {
+  const p = printerOf(printer);
+  if (!p?.bothNozzles) return null;
+  if (!bedFit(part, p.size).fits && !bedFit(part, p.size).fitsTurned) return null;
+  const both = bedFit(part, p.bothNozzles);
+  if (both.fits) return null;
+  const room = p.bothNozzles.join(" × ");
+  return both.fitsTurned
+    ? `With the second nozzle or both (two colours) the room is ${room} mm: turn it a quarter turn to fit.`
+    : `It fits with the main nozzle only: with the second nozzle or both (two colours) the room is ${room} mm.`;
 }
 
 export interface BedFit {
