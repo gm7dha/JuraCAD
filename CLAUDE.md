@@ -993,7 +993,21 @@
   (`laidFlat`: the turn with fewest bridges); notches = `cellOutlines` of columns cut through / top only / bottom only,
   `offsetPolygon` by fit, Removes from `levelPlane`s; the piece itself drawn fit smaller and f lower (`assembledToBed`
   maps the puzzle to each laid piece). Tests: libraryPuzzles (pure), engineLibraryPuzzles (pieces put back by
-  `assembledToBed` don't overlap; nudged, they do). open state in `mountainState.ts`, session only,
+  `assembledToBed` don't overlap; nudged, they do). Surface patterns (`src/library/burrSurface.ts`, pure; inputs `surface`/`surfaceDepth`/
+  `surfaceRepeats`/`surfaceSeed`/`ends` — the burr's own "pattern" is its puzzle number): the moulds' `SURFACE_PATTERNS` list,
+  but as flat constant-depth ENGRAVED shapes (`patternMarks`: convex shapes clipped to the face, wavy/zigzag bands cut square
+  at their ends, whole circles; never overlapping) — never raised on a long face, as the sticks slide. Only cube faces whose
+  next cube is in no full stick show from outside (`outsideCells`, via `cubeOnBed` = laidFlat's turn) — 32 along each stick +
+  8 on its ends, whatever the notches; runs of them → `outsideRects`, inset `marginFor` (1 + depth + fit). The face on the bed
+  is never decorated (first layers fill a shallow groove; its roof would be mid-air); upright sides' grooves are ≤ 1.5 deep.
+  Depth ≤ `MOST_DEPTH` and ≤ `DEPTH_SHARE` × cube. Ends: plain / pattern / number (Text "1"–"6") / badge (a raised diamond,
+  45° lower sides, + the number cut through it `BADGE_NUMBER_EXTRA` into the end) — offered only if `badgesFree` (the
+  solver with a whole cube added beyond every end still comes apart at the same level). Per decorated face, `fixedPlane`
+  sketches + extrudes of `MARKS_PER_CUT` (12) marks each (`CUT_START` outside the face, cut flipped in; the engine fuses a
+  sketch's regions one by one, so big sketches get slow), appended after that piece's notches (not apart, so they cut the
+  latest part = that piece); ≤ `MOST_SHAPES` (120) per piece — the default lattice burr builds in ~8 s. "none" + "plain" (and old inserts without the values)
+  make exactly the old features. Tests: libraryBurrPatterns (pure), engineBurrPatterns (heavy, own file: volumes lost =
+  engraving, no overlaps, every first move of the plain cubes still free half a cube at a time), mcpBurrPatterns. open state in `mountainState.ts`, session only,
   never in the document): a real mountain as a 3D printed puzzle of interlocking cubes. Pure in `src/terrain/`: `osGrid.ts`
   (OS grid refs ↔ E/N, `gridToLatLon` = OS transverse Mercator inverse on Airy 1830 + Helmert to WGS84, ~5 m), `elevation.ts`
   (AWS open "Terrain Tiles", terrarium PNGs — `terrariumHeight`, Web Mercator `worldPixel`, zoom `TILE_ZOOM` 12 ≈ 20 m/px,
