@@ -8,6 +8,20 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.51 — Island puzzle: rivers and paths from the map, a snugger fit, every piece joined
+
+- **From the map** in the island puzzle, as in the mountain puzzle: just the area, paths, rivers and lochs, or
+  everything (roads too, and buildings from a map file). Get them from OpenStreetMap with one click (areas up to about
+  130 km across) or from a map file. Grooves line up across the joins and stay shallow only right at a dovetail's neck.
+- **Snugger fit:** the gap between pieces is now 0.10 mm a side (it was 0.15), with a hint in the window if it's too loose
+  or tight. The gap is even all the way round: neighbouring pieces never touch.
+- **Every piece is held by at least two dovetails.** Small dovetails now have a round knob that can't slide out, and each
+  one is checked to hold; play in the joints is about 0.35 mm (it was about 0.8). A piece that can't get two is joined
+  onto a neighbour; a tiny islet with nothing beside it is a loose piece, and the summary says so.
+- Some pattern numbers that couldn't be made at all now work.
+- The puzzle is worked out in the background, so the window doesn't freeze; OpenStreetMap errors are explained in
+  plain English.
+
 ## v0.50 — Patterns and numbers on the six-piece burr
 
 - The **Six-piece burr** in the Design library can now be decorated with the same **surface patterns as the moulds**:
