@@ -10,16 +10,18 @@ import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, 
 import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
 import { describeHole } from "../model/holes";
 import type { Feature, JuraCADDocument } from "../model/types";
+import { describeMore, LINE_HELP, POINT_HELP } from "./planeSpec";
 import { SIMPLIFY_LEVELS } from "../model/simplify";
 import { planeFrame, planeLabel } from "../sketch/planes";
 import { holePositionsIn } from "../sketch/holePositions";
 import { evaluate } from "../model/expr";
 import { analyzeSketch } from "../sketch/solver";
 import { DIMENSION_TYPES } from "../sketch/types";
-import type { PartMesh } from "../kernel/protocol";
+import type { FollowedFrame, PartMesh } from "../kernel/protocol";
 import { bool, InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, type Obj } from "./args";
 import { deleteFeatures, deletePlan, listNames, outsideLines } from "../model/dependents";
 import { firstStudioId } from "../model/studios";
+import { followedSketch } from "../sketch/areaClicks";
 import { applyFeature, applySketch, describePlane, FEATURE_KINDS, KIND_OF, limitProblems, type FeatureKind, type SpecContext } from "./featureSpec";
 import { describeEdge, describeFace, edgeList, faceList, facing, PICK_HELP } from "./picks";
 import { renderViews, RENDER_VIEWS, type RenderView } from "./render";
@@ -95,7 +97,7 @@ function patternOf(f: Feature, nameOf: (id?: string) => string): string {
   return `${(p?.sources ?? []).map(nameOf).join(", ")}${skip}`;
 }
 
-export function summarize(f: Feature, doc: JuraCADDocument): string {
+export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<string, FollowedFrame>): string {
   const nameOf = (id?: string) => doc.features.find((x) => x.id === id)?.name ?? "(missing)";
   const p = f.params;
   const op = f.operation === "new" ? "new part" : f.operation === "add" ? "added to the part" : f.operation === "remove" ? "cut from the part" : "intersected";
@@ -150,6 +152,9 @@ export function summarize(f: Feature, doc: JuraCADDocument): string {
       return `cylinder ⌀${p.diameter} × ${p.height} mm at (${p.x}, ${p.y}, ${p.z}), ${op}`;
     case "sphere":
       return `sphere ⌀${p.diameter} mm at (${p.x}, ${p.y}, ${p.z}), ${op}`;
+    case "plane":
+    case "mateConnector":
+      return describeMore(f, (id) => doc.features.find((x) => x.id === id)?.name, built?.[f.id]);
     default:
       return `${f.type} (made in the app)`;
   }
@@ -325,8 +330,8 @@ function context(s: Session, before: Feature[] | null, editing: boolean): SpecCo
   return { session: s, doc: s.doc, parts: s.build(features).parts, scope: s.scope(), editing };
 }
 
-const featureLine = (f: Feature, doc: JuraCADDocument, errors: Record<string, string>) =>
-  `- ${f.name} [id ${f.id}]${f.suppressed ? " (suppressed)" : ""}: ${summarize(f, doc)}${errors[f.id] ? ` — PROBLEM: ${errors[f.id]}` : ""}`;
+const featureLine = (f: Feature, doc: JuraCADDocument, errors: Record<string, string>, built?: Record<string, FollowedFrame>) =>
+  `- ${f.name} [id ${f.id}]${f.suppressed ? " (suppressed)" : ""}: ${summarize(f, doc, built)}${errors[f.id] ? ` — PROBLEM: ${errors[f.id]}` : ""}`;
 
 const SHAPES_SCHEMA = {
   type: "array",
@@ -355,6 +360,8 @@ const KIND_HELP: Record<FeatureKind, string> = {
   box: "box: width (X), depth (Y), height (Z), x, y, z (its corner), operation",
   cylinder: "cylinder: diameter, height (Z), x, y, z (centre of its base), operation",
   sphere: "sphere: diameter, x, y, z (its centre), operation",
+  plane: `plane (a construction plane to sketch on, mirror across or use in assemblies; Onshape's types): plane_type ("offset" default — from + distance; "angle" — from + angle + tilt_about "across"|"up"; "point" — through point, parallel to from; "point_normal" — through point, square to line; "line_angle" — through line, turned by angle from the upright plane holding it; "three_point" — through points (3); "curve_point" — square to line (an edge) at position 0…1 along it; "fit" — best fit through points (3 or more)), from ("Top"|"Front"|"Right" or a Plane / mate connector name), point, points, line, angle (°), distance, position, flip (turn it over). ${POINT_HELP} ${LINE_HELP} Points and lines on parts follow them when the design changes`,
+  mate_connector: 'mate_connector (a point with its own X/Y/Z that belongs to a part: mate to it in assemblies with add_mate\'s "connector", sketch on it with add_sketch "plane", move parts by it): at (a point — see plane; or {"edge": "E3", "part": name}: an edge\'s middle with Z along it, a round edge\'s centre with Z along its axis; or {"face": "F2", "part": name}: a flat face\'s centre, Z out of it), or on_plane ("Top"|"Front"|"Right" or a Plane name: at its origin), spot ("start"|"end"|"middle" on an edge), owner (the part it belongs to; default the part it\'s on), flip_z, move ([x, y, z] mm along its own axes), turn ([x, y, z]° about its own axes)',
 };
 
 /** A part (list_faces / list_edges), or with "assembly" and "instance", a copy of one as it sits in an assembly. */
@@ -444,7 +451,7 @@ export const TOOLS: ToolDef[] = [
           : free === 0
             ? "It's fully defined (every size and position is dimensioned)."
             : `It has ${free} way(s) still free to move (fine for building, but the app shows it in blue).`,
-        `On this plane ${describePlane(f.sketch!.plane!)}.`,
+        `On this plane ${describePlane(followedSketch(f, s.build().links ?? {})?.plane ?? f.sketch!.plane!)}.`,
         ...report,
       );
     },
@@ -474,7 +481,7 @@ export const TOOLS: ToolDef[] = [
       }
       applyFeature(f, kind, a, ctx);
       const report = await tryChange(s, addFeature(s.doc, f), f.id, `add the ${kind.replace("_", " ")}`);
-      return say(`Added ${f.name} [id ${f.id}]: ${summarize(f, s.doc)}.`, ...report);
+      return say(`Added ${f.name} [id ${f.id}]: ${summarize(f, s.doc, s.build().followed)}.`, ...report);
     },
   },
   {
@@ -511,8 +518,8 @@ export const TOOLS: ToolDef[] = [
       // Sketches on faces stay where the face was when they were drawn (as in the app).
       const onFaces = s.doc.features.slice(at + 1).filter((x) => x.type === "sketch" && x.sketch?.plane?.kind === "face" && !x.sketch.plane.planeRef && / face of /.test(x.sketch.plane.label));
       return say(
-        `Changed ${f.name}: ${summarize(f, s.doc)}.`,
-        f.type === "sketch" && f.sketch?.plane && `On its plane ${describePlane(f.sketch.plane)}.`,
+        `Changed ${f.name}: ${summarize(f, s.doc, s.build().followed)}.`,
+        f.type === "sketch" && f.sketch?.plane && `On its plane ${describePlane(followedSketch(f, s.build().links ?? {})?.plane ?? f.sketch.plane)}.`,
         onFaces.length > 0 && f.type !== "sketch" && `Note: ${onFaces.map((x) => x.name).join(", ")} ${onFaces.length > 1 ? "are" : "is"} drawn where a face was. If this change moved that face, put the sketch back on it with edit_feature {"feature": "<sketch>", "on_face": …}.`,
         ...report,
       );
@@ -692,7 +699,7 @@ export const TOOLS: ToolDef[] = [
           ? `Design "${doc.name}", open live in the user's JuraCAD tab (the Part Studio on show there).`
           : `Design "${doc.name}"${s.file ? `, file ${s.file}` : ", not saved yet"}${s.unsaved && s.file ? " (unsaved changes)" : ""}.`,
         doc.variables?.length ? `Variables: ${doc.variables.map((v) => `${v.name} = ${v.value}`).join(", ")}.` : null,
-        doc.features.length ? `Features, in build order:\n${doc.features.map((f) => featureLine(f, doc, b.errors)).join("\n")}` : "No features yet.",
+        doc.features.length ? `Features, in build order:\n${doc.features.map((f) => featureLine(f, doc, b.errors, b.followed)).join("\n")}` : "No features yet.",
         (s.outer ? s.outer.doc.partStudios?.length : doc.partStudios?.length) ? `(The design also has ${s.outer ? `${s.outer.doc.partStudios!.length + 1} Part Studios in all; these tools work on the one on show and leave the others` : `${doc.partStudios!.length} more Part Studio(s), which these tools leave`} as they are.)` : null,
         b.parts.length ? "Parts:" : "No parts yet.",
         ...b.parts.map((p) => {
@@ -845,7 +852,7 @@ export const TOOLS: ToolDef[] = [
       if (!r.doc.name) r.doc.name = nameFromFileName(name);
       s.reset(r.doc, path);
       const b = s.build();
-      return say(`Opened ${name}: "${r.doc.name}", ${r.doc.features.length} features.`, `Features:\n${r.doc.features.map((f) => featureLine(f, r.doc, b.errors)).join("\n") || "(none)"}`, ...partsReport(s));
+      return say(`Opened ${name}: "${r.doc.name}", ${r.doc.features.length} features.`, `Features:\n${r.doc.features.map((f) => featureLine(f, r.doc, b.errors, b.followed)).join("\n") || "(none)"}`, ...partsReport(s));
     },
   },
   {

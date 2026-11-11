@@ -84,7 +84,7 @@ export function connectKernel(): () => void {
         s.showToast(result.message, "error");
         return;
       }
-      s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks, result.featureWarnings, result.featureNotes);
+      s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks, result.featureWarnings, result.featureNotes, result.followed);
       // Where each Move / copy's triad goes (kept the same object while nothing changed, so nothing redraws).
       // (Only the Part Studios rebuilt are in the result: the others' are kept.)
       const was = useStore.getState().transformCentres;

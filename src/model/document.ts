@@ -3,6 +3,7 @@ import { parsePick } from "../geometry/topoRef";
 import { parseLineRef } from "./patternRefs";
 import { FASTENER_KINDS, FASTENER_SIZES, type FastenerKind } from "./fasteners";
 import { parsePlane, parseSketchData } from "../sketch/validate";
+import { isMorePlaneMode } from "../sketch/planeTypes";
 import { defaultAxis } from "../sketch/axis";
 import { emptySketch } from "../sketch/types";
 import { FEATURE_DEFS, defaultParams, isSolidFeature } from "./features";
@@ -14,7 +15,7 @@ import { parseMaterials } from "./materials";
 import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
-import type { Feature, FeatureType, ImportedFile, Operation, JuraCADDocument, PartStudio } from "./types";
+import type { Feature, FeatureType, GeomPick, ImportedFile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
 import { MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
 import { parseVersions } from "./versions";
@@ -159,6 +160,8 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
   if (type === "fastener") feature.fastener = { kind: "bolt", size: "M6", threaded: false };
   if (type === "boolean") feature.booleanDef = { op: "union", targets: [], tools: [], keepTools: false, picking: "targets" };
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
+  // A mate connector starts at the origin, on Top, until something is clicked.
+  if (type === "mateConnector") feature.connector = { at: { p: [0, 0, 0] }, plane: { kind: "default", name: "Top" }, base: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } };
   if (type === "transform") {
     feature.operation = "add";
     feature.transform = { axis: "z", about: "centre", copy: false };
@@ -448,6 +451,63 @@ function parseTransformFrame(raw: unknown): NonNullable<NonNullable<Feature["tra
   return Math.hypot(c[0], c[1], c[2]) > 1e-9 ? { origin, x, z } : null;
 }
 
+/** A clicked point / line for a Plane feature or mate connector, or null when it's odd. */
+export function parseGeomPick(raw: unknown): GeomPick | null {
+  if (!raw || typeof raw !== "object") return null;
+  const g = raw as Record<string, unknown>;
+  const p = parseVec3(g.p);
+  if (!p) return null;
+  const out: GeomPick = { p };
+  const dir = parseVec3(g.dir);
+  if (dir && Math.hypot(...dir) > 1e-12) out.dir = dir;
+  const pick = parsePick(g.pick);
+  if (pick) out.pick = pick;
+  if (g.end === "a" || g.end === "b" || g.end === "mid") out.end = g.end;
+  const sp = (g.sketchPoint ?? null) as Record<string, unknown> | null;
+  if (sp && typeof sp.sketch === "string" && typeof sp.point === "string") out.sketchPoint = { sketch: sp.sketch, point: sp.point };
+  const sl = parseLineRef(g.sketchLine);
+  if (sl) out.sketchLine = sl;
+  if (typeof g.connector === "string") out.connector = g.connector;
+  if (g.axis === "x" || g.axis === "y" || g.axis === "z") out.axis = g.axis;
+  return out;
+}
+
+/** The newer Plane types' choices (left out when missing, so older planes read exactly as before). */
+function parsePlaneExtras(pd: Record<string, unknown>): Partial<PlaneOptions> {
+  const out: Partial<PlaneOptions> = {};
+  if (Array.isArray(pd.points)) {
+    const points = pd.points.map(parseGeomPick).filter((x): x is GeomPick => x !== null);
+    if (points.length) out.points = points;
+  }
+  const line = parseGeomPick(pd.line);
+  if (line) out.line = line;
+  if (typeof pd.position === "number" && Number.isFinite(pd.position)) out.position = Math.min(1, Math.max(0, pd.position));
+  if (pd.flip === true) out.flip = true;
+  return out;
+}
+
+const CONNECTOR_SPOTS = new Set(["start", "end", "middle", "clicked"]);
+
+/** A Part Studio mate connector's settings, or null when they can't be read. */
+function parseConnectorDef(raw: unknown): MateConnectorDef | null {
+  if (!raw || typeof raw !== "object") return null;
+  const c = raw as Record<string, unknown>;
+  const base = parseTransformFrame(c.base);
+  const at = parseGeomPick(c.at);
+  if (!base || !at) return null;
+  const a = (c.at ?? {}) as Record<string, unknown>;
+  const spot = typeof a.spot === "string" && CONNECTOR_SPOTS.has(a.spot) ? (a.spot as MateConnectorDef["at"]["spot"]) : undefined;
+  const point = parseVec3(a.point);
+  const plane = c.plane ? parsePlane(c.plane) : null;
+  return {
+    at: { ...at, ...(spot ? { spot } : {}), ...(point ? { point } : {}) },
+    ...(plane ? { plane } : {}),
+    ...(typeof c.owner === "string" ? { owner: c.owner } : {}),
+    ...(c.flipZ === true ? { flipZ: true } : {}),
+    base,
+  };
+}
+
 /** Move / copy's newer choices (each left out when missing or odd, so older designs read exactly as before). */
 function parseTransformExtras(t: Record<string, unknown>): Partial<NonNullable<Feature["transform"]>> {
   const out: Partial<NonNullable<Feature["transform"]>> = {};
@@ -470,6 +530,8 @@ function parseTransformExtras(t: Record<string, unknown>): Partial<NonNullable<F
   const to = parseTransformFrame(t.to);
   if (to) out.to = to;
   if (t.flip === true) out.flip = true;
+  if (typeof t.fromConnector === "string") out.fromConnector = t.fromConnector;
+  if (typeof t.toConnector === "string") out.toConnector = t.toConnector;
   if (typeof t.picking === "string" && TRANSFORM_PICKING.has(t.picking) && t.picking !== "part") out.picking = t.picking as NonNullable<typeof out.picking>;
   return out;
 }
@@ -669,11 +731,16 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       const pd = (f.planeDef ?? {}) as Record<string, unknown>;
       const ref2 = parsePlane(pd.ref2);
       feature.planeDef = {
-        mode: pd.mode === "angle" || pd.mode === "midplane" ? pd.mode : "offset",
+        mode: pd.mode === "angle" || pd.mode === "midplane" ? pd.mode : typeof pd.mode === "string" && isMorePlaneMode(pd.mode) ? pd.mode : "offset",
         ref: parsePlane(pd.ref) ?? { kind: "default", name: "Top" },
         ...(ref2 ? { ref2 } : {}),
         axis: pd.axis === "v" ? "v" : "u",
+        ...parsePlaneExtras(pd),
       };
+    }
+    if (feature.type === "mateConnector") {
+      const c = parseConnectorDef(f.connector);
+      if (c) feature.connector = c;
     }
     if (feature.type === "loft") feature.sections = Array.isArray(f.sections) ? f.sections.filter((x): x is string => typeof x === "string") : [];
     if (feature.type === "loft" && f.loftRuled === true) feature.loftRuled = true;

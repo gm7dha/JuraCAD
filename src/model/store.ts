@@ -4,7 +4,7 @@ import { followLinks, pruneReferences, type RefEdge, type SketchLinkInfo } from 
 import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
 import { create } from "zustand";
 
-import type { PartMesh } from "../kernel/protocol";
+import type { FollowedFrame, PartMesh } from "../kernel/protocol";
 import {
   addFeature,
   insertFeatureAfter,
@@ -90,6 +90,7 @@ function samePlace(a: SketchPlane, b: SketchPlane): boolean {
 
 /** No sketch links (one shared object, so selectors stay stable). */
 const NO_LINKS: Record<string, SketchLinkInfo> = {};
+const NO_FRAMES: Record<string, FollowedFrame> = {};
 const NO_WARNINGS: Record<string, string> = {};
 const NO_CENTRES: Record<string, [number, number, number]> = {};
 
@@ -375,7 +376,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
@@ -626,7 +627,13 @@ export interface AppState {
     sketchLinks?: Record<string, SketchLinkInfo>,
     featureWarnings?: Record<string, string>,
     featureNotes?: Record<string, string>,
+    followed?: Record<string, FollowedFrame>,
   ) => void;
+  /**
+   * Where Plane features that follow the model and mate connectors are, as the engine built them (RebuildResult.followed,
+   * every Part Studio). Shown and used instead of what the design's numbers give; the design stays as clicked.
+   */
+  builtFrames: Record<string, FollowedFrame>;
   /** The Move / copy triad being dragged: the boxes' values so far (null when the drag ends or is taken back). */
   setTransformLive: (values: Record<string, string> | null) => void;
   /** Change the open draft as one step of the dialog's own undo (a finished drag of the triad, say). */
@@ -887,6 +894,7 @@ export const useStore = create<AppState>((set, get) => {
       return true;
     },
     sketchLinks: NO_LINKS,
+    builtFrames: NO_FRAMES,
     sketchCandidates: null,
     setSketchCandidates: (sketchCandidates) => set({ sketchCandidates }),
     lastRebuildMs: null,
@@ -913,8 +921,8 @@ export const useStore = create<AppState>((set, get) => {
       const s = get();
       if (type === "sketch") {
         // On the highlighted plane, or Plane feature, if any — or the plane of the sketch whose areas are selected.
-        const planeFeature = activeFeatures(s).find((f) => f.id === s.selectedFeatureId && f.type === "plane");
-        const frame = planeFeature ? framesOf(activeFeatures(s)).get(planeFeature.id) : undefined;
+        const planeFeature = activeFeatures(s).find((f) => f.id === s.selectedFeatureId && (f.type === "plane" || f.type === "mateConnector"));
+        const frame = planeFeature ? framesOf(activeFeatures(s), undefined, s.builtFrames).get(planeFeature.id) : undefined;
         const sel = s.areaSelection;
         const areaPlane = sel ? (followedSketch(activeFeatures(s).find((f) => f.id === sel.sketch && f.type === "sketch"), s.sketchLinks)?.plane ?? null) : null;
         s.startSketch(planeFeature && frame ? planeAsSketchPlane(planeFeature, frame) : s.selectedPlane ? { kind: "default", name: s.selectedPlane } : areaPlane);
@@ -1017,7 +1025,7 @@ export const useStore = create<AppState>((set, get) => {
       // A plane starts from the plane (or Plane feature) highlighted, if any.
       if (type === "plane" && draft.planeDef) {
         const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "plane");
-        const frame = picked ? framesOf(features).get(picked.id) : undefined;
+        const frame = picked ? framesOf(features, undefined, s.builtFrames).get(picked.id) : undefined;
         if (picked && frame) draft.planeDef = { ...draft.planeDef, ref: planeAsSketchPlane(picked, frame) };
         else if (s.selectedPlane) draft.planeDef = { ...draft.planeDef, ref: { kind: "default", name: s.selectedPlane } };
       }
@@ -2146,7 +2154,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setKernelStatus: (kernelStatus, error) => set({ kernelStatus, kernelError: error ?? null }),
     setRebuildBusy: (rebuildBusy) => set({ rebuildBusy }),
-    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings, featureNotes) =>
+    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings, featureNotes, followed) =>
       set((s) => {
         // The sketch open for editing follows its part's face and edges, as the engine found them.
         const links = sketchLinks && Object.keys(sketchLinks).length ? sketchLinks : NO_LINKS;
@@ -2177,6 +2185,8 @@ export const useStore = create<AppState>((set, get) => {
           featureWarnings: featureWarnings && Object.keys(featureWarnings).length ? featureWarnings : NO_WARNINGS,
           featureNotes: featureNotes && Object.keys(featureNotes).length ? featureNotes : NO_WARNINGS,
           sketchLinks: links,
+          // (Kept the same object while nothing moved, so nothing redraws.)
+          builtFrames: !followed || !Object.keys(followed).length ? NO_FRAMES : JSON.stringify(followed) === JSON.stringify(s.builtFrames) ? s.builtFrames : followed,
           ...(editing !== s.editing ? { editing } : {}),
           lastRebuildMs: ms,
           rebuildBusy: false,

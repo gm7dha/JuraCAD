@@ -8,14 +8,15 @@ import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, mak
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, refDistance, relativeTo, roundVec, sameRef, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
-import { applyPoint, applyVec, isClassicTransform, isStill, toAxisAngle, transformMotion } from "../model/transformMath";
+import { applyPoint, applyVec, isClassicTransform, isStill, toAxisAngle, transformMotion, type Rigid } from "../model/transformMath";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
 import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
-import { planeFeatureFrame } from "../sketch/planeFeature";
+import { planeAsSketchPlane, planeFeatureFrame, repointFeature } from "../sketch/planeFeature";
+import { asTransformFrame, connectorFrame, connectorPlane, isMorePlaneMode, type FullFrame } from "../sketch/planeTypes";
 import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/patternRefs";
 import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { geometrySound } from "../model/checkReport";
-import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
+import { MESH_TOLERANCES, type Axis, type Feature, type GeomPick, type ImportedFile, type MateConnectorDef, type MeshQuality, type Operation, type PlaneMoreMode, type PlaneOptions, type TransformFrame } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
 import { axisInPlane, centreRevolve, revolveAxis, revolveSketch } from "./revolve";
 import { holeTool, type ThreadedHoleCache } from "./hole";
@@ -44,6 +45,7 @@ import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fastene
 import { measureContacts } from "./clash";
 import { biggestFlatFace, faceFrame, faceWires, flatFaceNormal, planeOutline, type FlatFrame } from "./laserFaces";
 import type { LaserOutline, LaserSource } from "../laser/sources";
+import type { FollowedFrame, PartConnector } from "./protocol";
 import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
@@ -580,6 +582,28 @@ function withoutSeams(shape: Shape3D, edges: { lines: number[]; edgeGroups: { st
     edgeGroups.push({ start, count: g.count, edgeId: g.edgeId });
   }
   return { ...edges, lines, edgeGroups };
+}
+
+/**
+ * The parameter (0…1, as replicad's `pointAt` takes it) a share `fraction` of the way along an edge by length — the
+ * same as a click measured along the drawn edge, so a spline or ellipse's plane stays where it was clicked.
+ */
+function paramAtLength(edge: Edge, fraction: number): number {
+  const N = 256;
+  const pts: Vec3[] = [];
+  for (let i = 0; i <= N; i++) pts.push(take(edge.pointAt(i / N)));
+  const lens = [0];
+  for (let i = 1; i <= N; i++) lens.push(lens[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]));
+  const want = Math.min(1, Math.max(0, fraction)) * lens[N];
+  let k = 1;
+  while (k < N && lens[k] < want) k++;
+  const span = lens[k] - lens[k - 1];
+  return (k - 1 + (span > 0 ? (want - lens[k - 1]) / span : 0)) / N;
+}
+
+/** A clicked point / line with its numbers tidied for saving (0.1 µm). */
+function tidyPick<T extends GeomPick>(g: T): T {
+  return { ...g, p: roundVec(g.p), ...(g.dir ? { dir: roundVec(g.dir) } : {}) };
 }
 
 /** A round face's cylinder, worked out from one of its round edges (null if it has none). */
@@ -1902,6 +1926,10 @@ interface StudioBuild {
   links: Record<string, SketchLinkInfo>;
   /** Each sketch: what it could snap to, as things were where it sits (see sketchCandidates). */
   snaps: Map<string, SketchSnap>;
+  /** Newer planes and mate connectors found again (see RebuildResult.followed). */
+  followed?: Record<string, FollowedFrame>;
+  /** Mate connectors by the part that owns them (see PartMesh.connectors). */
+  owned?: Record<string, PartConnector[]>;
 }
 
 /** What a sketch could snap to, kept from a build: the parts (shared copies) and sketches before it, and the list it's in. */
@@ -2001,6 +2029,7 @@ export class GeometryEngine {
     const featureWarnings: Record<string, string> = {};
     const featureNotes: Record<string, string> = {};
     const transformCentres: Record<string, Vec3> = {};
+    const followed: Record<string, FollowedFrame> = {};
     const shared = JSON.stringify([variables, partNames]);
     // Part Studios using parts from others (Derived) are built after them, and again whenever they change.
     const sourcesOf = (s: StudioInput) => [...new Set(s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId))].filter((id) => id !== s.id);
@@ -2045,19 +2074,24 @@ export class GeometryEngine {
             throw e;
           }
           setCurrentScope(variables);
+          // (Before the parts are renamed for another configuration: connectors are kept by the parts' own ids.)
+          this.reassignOwners();
           // Names the user gave parts (used in the lists and in exported files).
           const names = studio.partNames ?? partNames;
           for (const p of this.parts) if (names[p.id]) p.name = names[p.id];
           for (const p of this.parts) for (const m of p.members ?? []) if (names[m.id]) m.name = names[m.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map() };
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned };
           this.snaps = null;
           this.builds.set(studio.id, b);
           building = null;
           rebuilt.push(studio.id);
           const configuration = studio.partSuffix?.replace(/^@/, "");
-          for (const p of b.parts) meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}) });
+          for (const p of b.parts) {
+            const owned = b.owned?.[studio.partSuffix ? p.id.slice(0, -studio.partSuffix.length) : p.id];
+            meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}), ...(owned?.length ? { connectors: owned } : {}) });
+          }
         }
         // Problems are shown for the configuration on show only.
         if (!studio.partSuffix) {
@@ -2077,12 +2111,14 @@ export class GeometryEngine {
     // Every Part Studio's sketch links (in the configuration on show), whether rebuilt now or before.
     const sketchLinks: Record<string, SketchLinkInfo> = {};
     for (const s of studios) if (!s.partSuffix) Object.assign(sketchLinks, this.builds.get(s.id)?.links ?? {});
+    for (const s of studios) if (!s.partSuffix) Object.assign(followed, this.builds.get(s.id)?.followed ?? {});
     return {
       parts: meshes,
       featureErrors,
       ...(Object.keys(featureWarnings).length ? { featureWarnings } : {}),
       ...(Object.keys(featureNotes).length ? { featureNotes } : {}),
       ...(Object.keys(transformCentres).length ? { transformCentres } : {}),
+      ...(Object.keys(followed).length ? { followed } : {}),
       durationMs: Math.round(performance.now() - started),
       rebuilt,
       studioOrder: studios.map((s) => s.id),
@@ -2583,11 +2619,37 @@ export class GeometryEngine {
     let partCounter = 0;
     let surfaceCounter = 0;
     const sketches: SketchMap = new Map();
+    // Newer Plane features and mate connectors, where they're found this build (things on them follow).
+    this.followed = {};
+    this.connectorFrames = new Map();
+    this.owned = {};
+    this.lastBuiltName = "";
+    this.mergedInto = new Map();
+    const moved = new Map<string, SketchPlane>();
+    const listed = features;
 
-    for (const feature of features) {
+    for (let index = 0; index < listed.length; index++) {
+      const feature = this.followedFeature(listed[index], moved);
+      if (feature !== listed[index]) {
+        if (features === listed) features = [...listed];
+        features[index] = feature;
+      }
       if (feature.suppressed) continue;
       // A safe place to stop: between features.
       yield;
+      // Mate connectors whose part was merged into another (a Boolean, an Add joining parts) belong to that one now.
+      this.reassignOwners();
+      this.lastBuiltName = feature.name;
+      if (feature.type === "mateConnector") {
+        const err = this.placeConnector(feature, sketches, features, moved);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
+      if (feature.type === "plane" && feature.planeDef && isMorePlaneMode(feature.planeDef.mode)) {
+        const err = this.placeMorePlane(feature, sketches, features, moved);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "plane") {
         // Construction planes make no solid; just say if one can't be placed.
         const { values, errors } = resolveParams(feature);
@@ -2595,6 +2657,8 @@ export class GeometryEngine {
         const frame = feature.planeDef ? planeFeatureFrame(feature.planeDef, values) : "Choose what the plane is based on.";
         if (bad) featureErrors[feature.id] = `${bad.label}: ${errors[bad.key]}`;
         else if (typeof frame === "string") featureErrors[feature.id] = frame;
+        // Based on a plane that follows the model: it follows too (and so does anything on it, in this same build).
+        else if (feature !== listed[index]) this.place(moved, feature, frame);
         continue;
       }
       if (feature.type === "sketch") {
@@ -2602,6 +2666,10 @@ export class GeometryEngine {
         if (!feature.sketch?.plane) featureErrors[feature.id] = "Pick a plane or flat face to sketch on.";
         else {
           const followed = this.followSketch(feature, sketches);
+          // On a plane or mate connector that follows the model: the app shows (and edits) it where it's built.
+          if (feature !== listed[index] && feature.sketch.plane !== listed[index].sketch?.plane && !this.links[feature.id]?.plane) {
+            this.links[feature.id] = { ...(this.links[feature.id] ?? { edges: [], links: {} }), plane: followed.sketch?.plane ?? feature.sketch.plane };
+          }
           this.recordSnap(feature, followed, sketches, features);
           sketches.set(feature.id, followed);
           const problem = linkProblem(this.links[feature.id], feature.sketch.data);
@@ -2717,9 +2785,12 @@ export class GeometryEngine {
         continue;
       }
       if (feature.type === "transform") {
+        this.lastMotion = null;
         const r = this.applyTransform(feature, partCounter + 1);
         if (r.error) featureErrors[feature.id] = r.error;
         if (r.newPart) partCounter++;
+        // Mate connectors owned by the moved part go with it (not with a copy).
+        else if (!r.error && this.lastMotion && feature.transform?.partId) this.moveOwnedConnectors(feature.transform.partId, this.lastMotion, moved, features);
         continue;
       }
       if (feature.type === "mirror" && feature.mirror?.part !== undefined) {
@@ -3168,6 +3239,7 @@ export class GeometryEngine {
       }
       // Earlier features on it now belong to the part it joined (patterns of them work on that).
       for (const t of this.tools.values()) if (t.partId === gone) t.partId = into;
+      if (keep) this.mergedInto.set(gone, into);
       part.shape.delete();
       this.parts = this.parts.filter((p) => p !== part);
     }
@@ -4543,6 +4615,7 @@ export class GeometryEngine {
         // (Only for Join: repeating a feature of an intersected part would add its whole solid back.)
         const joined = new Set(b.op === "union" ? ts.slice(1).map((p) => p.id) : []);
         for (const tool of this.tools.values()) if (joined.has(tool.partId)) tool.partId = ts[0].id;
+        for (const id of joined) this.mergedInto.set(id, ts[0].id);
       } else {
         if (ts.length === 0) return "Pick the parts to cut — click them in the 3D view or the Parts list.";
         if (tls.length === 0) return "Now pick the parts to cut with: choose “Cut with” below, then click them.";
@@ -4602,6 +4675,8 @@ export class GeometryEngine {
       return { error: "Nothing to do yet — enter a distance to move or an angle to turn." };
     }
     const turned = motion ? toAxisAngle(motion) : null;
+    const asRigid = motion ?? transformMotion({ ...t, mode: "free" }, values, centre);
+    this.lastMotion = typeof asRigid === "string" ? null : asRigid;
     const move = (s: Shape3D): Shape3D => {
       let out = s;
       if (turned) {
@@ -5059,6 +5134,8 @@ export class GeometryEngine {
     for (const p of members) {
       p.shape.delete();
       for (const t of this.tools.values()) if (t.partId === p.id) t.partId = feature.id;
+      // Its mate connectors belong to the composite now.
+      this.mergedInto.set(p.id, feature.id);
     }
     this.parts = this.parts.filter((p) => !members.includes(p));
     this.parts.push({ id: feature.id, name: feature.name, featureIds, shape, members: list, ...(threads.length ? { threads } : {}) });
@@ -5079,6 +5156,317 @@ export class GeometryEngine {
       return list.length;
     };
     return count(after) === count(before) && solids(after) === solids(before) && measureVolume(after) < measureVolume(before) - 1e-3;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Onshape's other Plane types and Part Studio mate connectors: what they were
+  // clicked on, found again on the model as it is at their place in the list.
+
+  /** Newer planes and mate connectors whose numbers changed this build (see RebuildResult.followed). */
+  private followed: Record<string, FollowedFrame> = {};
+
+  /** A plane or mate connector placed in this build: things on it follow it, and it's reported where it is. */
+  private place(moved: Map<string, SketchPlane>, f: Feature, frame: PlaneFrame): void {
+    moved.set(f.id, planeAsSketchPlane(f, frame));
+    this.followed[f.id] = { origin: roundVec(frame.origin), u: roundVec(frame.u), v: roundVec(frame.v), n: roundVec(frame.n) };
+  }
+  /** Mate connector features placed so far this build (id → frame). */
+  private connectorFrames = new Map<string, FullFrame>();
+  /** Mate connectors by the part that owns them. */
+  private owned: Record<string, PartConnector[]> = {};
+  /** Parts merged into another this build (a Boolean union, an Add joining parts): gone id → the part it joined. */
+  private mergedInto = new Map<string, string>();
+  private lastBuiltName = "";
+
+  /**
+   * Mate connectors whose owner part has gone: a part merged into another (a Boolean union, an Add joining parts) hands
+   * them on to that part. Otherwise (cut away by a Subtract, deleted…) they belong to no part any more, with a note.
+   */
+  private reassignOwners(): void {
+    for (const id of Object.keys(this.owned)) {
+      if (this.parts.some((p) => p.id === id)) continue;
+      const list = this.owned[id];
+      delete this.owned[id];
+      let heir: string | undefined = id;
+      const seen = new Set<string>();
+      while (heir && !this.parts.some((p) => p.id === heir) && !seen.has(heir)) {
+        seen.add(heir);
+        heir = this.mergedInto.get(heir);
+      }
+      if (heir && this.parts.some((p) => p.id === heir)) (this.owned[heir] ??= []).push(...list);
+      else for (const c of list) this.warnings[c.id] = `Its part was used up by ${this.lastBuiltName || "a later feature"}, so it no longer belongs to a part (assemblies can't mate to it).`;
+    }
+  }
+
+  /** The last Move / copy's move (for the mate connectors that go with its part). */
+  private lastMotion: Rigid | null = null;
+
+  /** A feature with things placed on newer planes / mate connectors put where those are now, and Move / copy's connectors filled in. */
+  private followedFeature(f: Feature, moved: ReadonlyMap<string, SketchPlane>): Feature {
+    let g = moved.size ? repointFeature(f, moved) : f;
+    const t = g.transform;
+    if (t && (t.fromConnector || t.toConnector)) {
+      const frame = (id: string | undefined): TransformFrame | undefined => {
+        const c = id ? this.connectorFrames.get(id) : undefined;
+        return c ? asTransformFrame(c) : undefined;
+      };
+      const from = frame(t.fromConnector) ?? t.from;
+      const to = frame(t.toConnector) ?? t.to;
+      g = { ...g, transform: { ...t, ...(from ? { from } : {}), ...(to ? { to } : {}) } };
+    }
+    return g;
+  }
+
+  /** A clicked point or line found again: its point and (for a line or a face) direction. Throws a plain message when it can't be. */
+  private findGeom(g: GeomPick, as: "point" | "line" | "curve", sketches: SketchMap, all: Feature[], position = 0.5): { p: Vec3; dir?: Vec3 } {
+    const unit = (v: Vec3): Vec3 => {
+      const l = Math.hypot(...v);
+      return l > 1e-12 ? [v[0] / l, v[1] / l, v[2] / l] : v;
+    };
+    if (g.axis) return { p: [0, 0, 0], dir: g.axis === "x" ? [1, 0, 0] : g.axis === "y" ? [0, 1, 0] : [0, 0, 1] };
+    if (g.connector) {
+      const c = this.connectorFrames.get(g.connector);
+      if (!c) throw new Error("The mate connector it uses is gone, suppressed or comes later in the list. Click something else.");
+      return { p: c.origin, dir: c.z };
+    }
+    if (g.sketchPoint || g.sketchLine) {
+      const id = (g.sketchPoint ?? g.sketchLine)!.sketch;
+      const sk = sketches.get(id) ?? all.find((f) => f.id === id);
+      if (!sk || sk.type !== "sketch" || !sk.sketch?.plane || sk.suppressed) throw new Error("The sketch it uses is gone, suppressed or comes later in the list. Click something else.");
+      if (g.sketchLine) {
+        const line = sketchLine3D([sk], g.sketchLine);
+        if (typeof line === "string") throw new Error(line);
+        return { p: line.a, dir: unit([line.b[0] - line.a[0], line.b[1] - line.a[1], line.b[2] - line.a[2]]) };
+      }
+      const frame = planeFrame(sk.sketch.plane);
+      const pid = g.sketchPoint!.point;
+      const pt = pid === "origin" ? { x: 0, y: 0 } : sk.sketch.data.points.find((q) => q.id === pid);
+      if (!pt) throw new Error(`The point picked in ${sk.name} has been deleted. Click another point.`);
+      return { p: toWorld(frame, pt.x, pt.y), dir: frame.n };
+    }
+    if (!g.pick) return { p: g.p, ...(g.dir ? { dir: g.dir } : {}) };
+    const pick = g.pick;
+    const part = this.parts.find((p) => p.id === pick.partId);
+    if (!part) throw new Error("The part it was clicked on no longer exists (or comes later in the list). Click something else.");
+    if (pick.ref.kind === "face") {
+      if (as === "point" && pick.ref.surface === "PLANE") {
+        const face = findPickedFace(part.shape, pick);
+        try {
+          const c = take(face.center);
+          return { p: c, dir: unit(take(face.normalAt(c))) };
+        } finally {
+          face.delete();
+        }
+      }
+      const axis = this.pickedAxis(pick, pick.ref.surface !== "PLANE");
+      return { p: axis.through, dir: axis.dir };
+    }
+    if (as === "line") {
+      const axis = this.pickedAxis(pick, true);
+      return { p: axis.through, dir: axis.dir };
+    }
+    const ref = pick.ref;
+    const [edge] = findPickedEdges(part.shape, [pick]);
+    try {
+      const a = take(edge.startPoint);
+      const b = take(edge.endPoint);
+      // OpenCascade may number the ends the other way round from when it was picked.
+      const swapped = Math.hypot(a[0] - ref.a[0], a[1] - ref.a[1], a[2] - ref.a[2]) > Math.hypot(b[0] - ref.a[0], b[1] - ref.a[1], b[2] - ref.a[2]) + 1e-9;
+      if (as === "curve") {
+        // `position` is a share of the edge's length (as the app measures a click along it), so turn it into the curve's own parameter.
+        const at = edge.geomType === "LINE" || edge.geomType === "CIRCLE" ? (swapped ? 1 - position : position) : paramAtLength(edge, swapped ? 1 - position : position);
+        const p = take(edge.pointAt(at));
+        let dir = unit(take(edge.tangentAt(at)));
+        if (swapped) dir = [-dir[0], -dir[1], -dir[2]];
+        return { p, dir };
+      }
+      if (g.end === "a") return { p: swapped ? b : a };
+      if (g.end === "b") return { p: swapped ? a : b };
+      if (edge.geomType === "CIRCLE" && g.end !== "mid") {
+        const axis = this.pickedAxis(pick, true);
+        return { p: axis.through, dir: axis.dir };
+      }
+      return { p: take(edge.pointAt(0.5)) };
+    } finally {
+      edge.delete();
+    }
+  }
+
+  /** A newer Plane feature: its points and line found again, then the plane worked out (an error message, or null). */
+  private placeMorePlane(feature: Feature, sketches: SketchMap, all: Feature[], moved: Map<string, SketchPlane>): string | null {
+    const def = feature.planeDef!;
+    const { values, errors } = resolveParams(feature);
+    const bad = FEATURE_DEFS.plane.params.find((p) => errors[p.key]);
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    let now: PlaneOptions;
+    try {
+      const mode = def.mode as PlaneMoreMode;
+      const points = (def.points ?? []).map((g) => ({ ...g, ...this.findGeom(g, mode === "curvePoint" ? "curve" : "point", sketches, all, def.position ?? 0.5) }));
+      // Curve point: the edge gives the point and the direction at it.
+      const line = mode === "curvePoint" ? (points[0] ? { ...points[0] } : def.line) : def.line ? { ...def.line, ...this.findGeom(def.line, "line", sketches, all) } : undefined;
+      let ref = def.ref;
+      // Plane point: the face it's parallel to, as it is now.
+      if (mode === "point" && ref.kind === "face" && ref.face && !ref.planeRef) {
+        const found = this.findGeom({ p: ref.origin, pick: ref.face }, "point", sketches, all);
+        if (found.dir) {
+          const n0 = planeFrame(ref).n;
+          const n = found.dir[0] * n0[0] + found.dir[1] * n0[1] + found.dir[2] * n0[2] < 0 ? ([-found.dir[0], -found.dir[1], -found.dir[2]] as Vec3) : found.dir;
+          const frame = planeFrame(ref);
+          // Keep its directions unless the face turned.
+          if (Math.abs(n[0] * n0[0] + n[1] * n0[1] + n[2] * n0[2]) < 1 - 1e-9) {
+            const shown = planeFeatureFrame({ ...def, mode: "pointNormal", points: [{ p: found.p }], line: { p: found.p, dir: n } }, {});
+            if (typeof shown !== "string") ref = { ...ref, origin: shown.origin, u: shown.u, v: shown.v };
+          } else ref = { ...ref, origin: found.p, u: frame.u, v: frame.v };
+        }
+      }
+      now = { ...def, ref, ...(def.points ? { points: points.map((p) => tidyPick(p)) } : {}), ...(line ? { line: tidyPick(line) } : {}) };
+      if (mode === "curvePoint") delete now.line;
+    } catch (e) {
+      return describeError(e, "Couldn't find what this plane was made from. Edit it and click again.");
+    }
+    const frame = planeFeatureFrame(now, values);
+    if (typeof frame === "string") return frame;
+    this.place(moved, feature, frame);
+    return null;
+  }
+
+  /** Where a mate connector sits before its moves and turns, found on the model as it is now. */
+  private connectorBase(def: MateConnectorDef, sketches: SketchMap, all: Feature[]): TransformFrame {
+    const at = def.at;
+    const perp = (z: Vec3): Vec3 => {
+      const r: Vec3 = Math.abs(z[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+      const d = r[0] * z[0] + r[1] * z[1] + r[2] * z[2];
+      const x: Vec3 = [r[0] - z[0] * d, r[1] - z[1] * d, r[2] - z[2] * d];
+      const l = Math.hypot(...x);
+      return [x[0] / l, x[1] / l, x[2] / l];
+    };
+    const unit = (v: Vec3): Vec3 => {
+      const l = Math.hypot(...v);
+      return [v[0] / l, v[1] / l, v[2] / l];
+    };
+    if (at.connector) {
+      const c = this.connectorFrames.get(at.connector);
+      if (!c) throw new Error("The mate connector it's on is gone or comes later in the list.");
+      return { origin: c.origin, x: c.x, z: c.z };
+    }
+    if (at.sketchPoint) {
+      const found = this.findGeom(at, "point", sketches, all);
+      const sk = sketches.get(at.sketchPoint.sketch) ?? all.find((f) => f.id === at.sketchPoint!.sketch);
+      const frame = sk?.sketch?.plane ? planeFrame(sk.sketch.plane) : null;
+      return { origin: found.p, x: frame?.u ?? [1, 0, 0], z: frame?.n ?? [0, 0, 1] };
+    }
+    if (!at.pick) {
+      const frame = planeFrame(def.plane ?? { kind: "default", name: "Top" });
+      // On a plane: at the clicked point brought onto it (the plane's origin when nothing was clicked).
+      const d = (at.p[0] - frame.origin[0]) * frame.n[0] + (at.p[1] - frame.origin[1]) * frame.n[1] + (at.p[2] - frame.origin[2]) * frame.n[2];
+      return { origin: [at.p[0] - frame.n[0] * d, at.p[1] - frame.n[1] * d, at.p[2] - frame.n[2] * d], x: frame.u, z: frame.n };
+    }
+    const pick = at.pick;
+    const part = this.parts.find((p) => p.id === pick.partId);
+    if (!part) throw new Error("The part it's on no longer exists (or comes later in the list). Edit it and click again.");
+    const project = (q: Vec3, o: Vec3, z: Vec3): Vec3 => {
+      const d = (q[0] - o[0]) * z[0] + (q[1] - o[1]) * z[1] + (q[2] - o[2]) * z[2];
+      return [o[0] + z[0] * d, o[1] + z[1] * d, o[2] + z[2] * d];
+    };
+    if (pick.ref.kind === "face") {
+      const face = findPickedFace(part.shape, pick);
+      try {
+        const c = take(face.center);
+        if (face.geomType === "PLANE") {
+          const z = unit(take(face.normalAt(c)));
+          let origin = c;
+          if (at.spot === "clicked" && at.point) {
+            const d = (at.point[0] - c[0]) * z[0] + (at.point[1] - c[1]) * z[1] + (at.point[2] - c[2]) * z[2];
+            origin = [at.point[0] - z[0] * d, at.point[1] - z[1] * d, at.point[2] - z[2] * d];
+          }
+          return { origin, x: perp(z), z };
+        }
+        const cyl = cylinderOfFace(face);
+        if (!cyl) throw new Error("That face is neither flat nor round. Click a flat face, a round face, an edge or a corner.");
+        const origin = project(at.spot === "clicked" && at.point ? at.point : c, cyl.origin, cyl.axis);
+        return { origin, x: perp(cyl.axis), z: cyl.axis };
+      } finally {
+        face.delete();
+      }
+    }
+    const ref = pick.ref;
+    const [edge] = findPickedEdges(part.shape, [pick]);
+    try {
+      const a = take(edge.startPoint);
+      const b = take(edge.endPoint);
+      const swapped = Math.hypot(a[0] - ref.a[0], a[1] - ref.a[1], a[2] - ref.a[2]) > Math.hypot(b[0] - ref.a[0], b[1] - ref.a[1], b[2] - ref.a[2]) + 1e-9;
+      const start = swapped ? b : a;
+      const end = swapped ? a : b;
+      if (edge.geomType === "CIRCLE") {
+        const axis = this.pickedAxis(pick, true);
+        const z = axis.dir;
+        let origin = axis.through;
+        if (at.spot === "middle") origin = take(edge.pointAt(0.5));
+        else if (at.spot === "start") origin = start;
+        else if (at.spot === "end") origin = end;
+        else if (at.spot === "clicked" && at.point) {
+          // The nearest point on the circle.
+          const c = axis.through;
+          const r = Math.hypot(a[0] - c[0], a[1] - c[1], a[2] - c[2]);
+          const q = at.point;
+          const d = (q[0] - c[0]) * z[0] + (q[1] - c[1]) * z[1] + (q[2] - c[2]) * z[2];
+          const w: Vec3 = [q[0] - c[0] - z[0] * d, q[1] - c[1] - z[1] * d, q[2] - c[2] - z[2] * d];
+          const l = Math.hypot(...w);
+          if (l > 1e-9) origin = [c[0] + (w[0] * r) / l, c[1] + (w[1] * r) / l, c[2] + (w[2] * r) / l];
+        }
+        return { origin, x: perp(z), z };
+      }
+      let z = unit(take(edge.tangentAt(0.5)));
+      if (swapped) z = [-z[0], -z[1], -z[2]];
+      let origin = take(edge.pointAt(0.5));
+      if (at.spot === "start") origin = start;
+      else if (at.spot === "end") origin = end;
+      else if (at.spot === "clicked" && at.point && edge.geomType === "LINE") {
+        const d = unit([end[0] - start[0], end[1] - start[1], end[2] - start[2]]);
+        origin = project(at.point, start, d);
+      }
+      return { origin, x: perp(z), z };
+    } finally {
+      edge.delete();
+    }
+  }
+
+  /** A mate connector feature: where it sits now, with its moves and turns, and which part owns it (an error message, or null). */
+  private placeConnector(feature: Feature, sketches: SketchMap, all: Feature[], moved: Map<string, SketchPlane>): string | null {
+    const def = feature.connector;
+    if (!def) return "Click where the mate connector goes: a face, an edge, a corner, a sketch point or a plane.";
+    const { values, errors } = resolveParams(feature);
+    const bad = FEATURE_DEFS.mateConnector.params.find((p) => errors[p.key]);
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    let base: TransformFrame;
+    try {
+      base = this.connectorBase(def, sketches, all);
+    } catch (e) {
+      return describeError(e, "Couldn't find where this mate connector goes. Edit it and click again.");
+    }
+    const tidied: TransformFrame = { origin: roundVec(base.origin), x: roundVec(base.x), z: roundVec(base.z) };
+    const now = { ...def, base: tidied };
+    const frame = connectorFrame(now, values);
+    this.connectorFrames.set(feature.id, frame);
+    this.place(moved, feature, connectorPlane(frame));
+    // Owned by the part chosen, else the part it's on, else the latest part.
+    const owner = def.owner ?? def.at.pick?.partId ?? this.parts.filter((p) => !p.surface).at(-1)?.id;
+    if (owner && this.parts.some((p) => p.id === owner)) (this.owned[owner] ??= []).push({ id: feature.id, name: feature.name, origin: frame.origin, x: frame.x, z: frame.z });
+    else if (def.owner) return "The part chosen to own this mate connector no longer exists. Edit it and choose another.";
+    return null;
+  }
+
+  /** Move / copy moved a part: the mate connectors it owns go with it (and so does anything placed on them). */
+  private moveOwnedConnectors(partId: string, m: Rigid, moved: Map<string, SketchPlane>, all: Feature[]): void {
+    for (const c of this.owned[partId] ?? []) {
+      const was = this.connectorFrames.get(c.id);
+      if (!was) continue;
+      const frame: FullFrame = { origin: applyPoint(m, was.origin), x: applyVec(m, was.x), y: applyVec(m, was.y), z: applyVec(m, was.z) };
+      this.connectorFrames.set(c.id, frame);
+      Object.assign(c, { origin: frame.origin, x: frame.x, z: frame.z });
+      const f = all.find((x) => x.id === c.id);
+      if (f) this.place(moved, f, connectorPlane(frame));
+    }
   }
 
   /**

@@ -413,7 +413,9 @@ export function spotOptions(c: { instanceId: string; pick: TopoPick; point?: Vec
 }
 
 /** A connector's frame on its part as built now — halfway between both faces for a Width mate (null if it can't be found). */
-export function connectorFrameOnParts(parts: PartMesh[], c: { pick: TopoPick; pick2?: TopoPick; spot?: ConnectorSpot; point?: Vec3 }): Frame | null {
+export function connectorFrameOnParts(parts: PartMesh[], c: { pick: TopoPick; pick2?: TopoPick; spot?: ConnectorSpot; point?: Vec3; connector?: string }): Frame | null {
+  // One of the part's own mate connectors (made in its Part Studio): where the engine put it.
+  if (c.connector) return ownConnectorFrame(parts.find((p) => p.id === c.pick.partId), c.connector);
   if (!c.pick2 && c.spot) {
     const part = parts.find((p) => p.id === c.pick.partId);
     const index = part ? findPick(part, c.pick) : -1;
@@ -465,4 +467,18 @@ export function matchingConnectors(part: PartMesh, pick: TopoPick): TopoPick[] {
     out.push({ partId: part.id, ref: kind === "face" ? part.faceRefs[i] : part.edgeRefs[i] });
   }
   return out;
+}
+
+/** A Part Studio mate connector the part owns (by the feature's id), as a frame in the part's own coordinates; null when it's gone. */
+export function ownConnectorFrame(part: Pick<PartMesh, "connectors"> | undefined, id: string): Frame | null {
+  const c = part?.connectors?.find((x) => x.id === id);
+  return c ? { origin: [...c.origin], x: normalize(c.x), z: normalize(c.z) } : null;
+}
+
+/**
+ * A mate end on one of a part's own mate connectors: the connector's id, and a stand-in face at its origin (so
+ * everything that looks at `pick` — which part, which copy — works as for a clicked face).
+ */
+export function ownConnectorPick(partId: string, c: { id: string; origin: Vec3; z: Vec3 }): { pick: TopoPick; connector: string } {
+  return { pick: { partId, ref: { kind: "face", surface: "PLANE", center: [...c.origin], normal: [...c.z] } }, connector: c.id };
 }

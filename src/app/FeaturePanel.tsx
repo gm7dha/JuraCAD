@@ -38,6 +38,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   loft: Icons.Loft,
   text: Icons.Text,
   plane: Icons.Plane,
+  mateConnector: Icons.MateConnector,
   boolean: Icons.Boolean,
   deletePart: Icons.Trash,
   simplify: Icons.Simplify,
@@ -378,8 +379,8 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
         const st = useStore.getState();
         const d = st.editing?.draft;
         // A Plane feature clicked while something needs a plane: use it.
-        if (feature.type === "plane" && d && d.id !== feature.id) {
-          const frame = framesOf(activeFeatures(st)).get(feature.id);
+        if ((feature.type === "plane" || feature.type === "mateConnector") && d && d.id !== feature.id) {
+          const frame = framesOf(activeFeatures(st), undefined, st.builtFrames).get(feature.id);
           const plane = frame ? planeAsSketchPlane(feature, frame) : null;
           if (plane && st.sketch && d.sketch && !d.sketch.plane) return st.setSketchPlane(plane);
           if (plane && d.type === "text" && d.text) return st.setDraftField({ text: { ...d.text, plane } });

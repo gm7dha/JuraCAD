@@ -18,6 +18,7 @@ import { isAngleDimension } from "../sketch/types";
 import { pickEdges, pickFace, pickFaces, facing } from "./picks";
 import type { Session } from "./session";
 import { buildSketch } from "./sketchShapes";
+import { applyConnector, applyPlane, basePlane, CONNECTOR_KEYS, PLANE_KEYS } from "./planeSpec";
 import type { SketchData, SketchLine } from "../sketch/types";
 
 /** The feature kinds Claude can add, by the name used in the tools. */
@@ -37,6 +38,8 @@ export const FEATURE_KINDS = {
   box: "box",
   cylinder: "cylinder",
   sphere: "sphere",
+  plane: "plane",
+  mate_connector: "mateConnector",
 } as const satisfies Record<string, FeatureType>;
 export type FeatureKind = keyof typeof FEATURE_KINDS;
 export const KIND_OF: Partial<Record<FeatureType, FeatureKind>> = Object.fromEntries(Object.entries(FEATURE_KINDS).map(([k, v]) => [v, k as FeatureKind]));
@@ -60,6 +63,8 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   box: ["width", "depth", "height", "x", "y", "z"],
   cylinder: ["diameter", "height", "x", "y", "z"],
   sphere: ["diameter", "x", "y", "z"],
+  plane: PLANE_KEYS,
+  mate_connector: CONNECTOR_KEYS,
 };
 
 /** Most copies in one direction of a pattern, and in all (bigger takes minutes to build). */
@@ -186,6 +191,8 @@ export function applySketch(f: Feature, a: Obj, ctx: SpecContext): { freedom: nu
   if (has(a, "offset") && has(a, "on_face")) throw new InputError('"offset" goes with "plane" (e.g. {"plane":"Top","offset":10}); to sketch on a face, leave it out.');
   let plane = f.sketch?.plane ?? null;
   if (has(a, "on_face")) plane = facePlane(ctx, a.part, a.on_face);
+  // A Plane feature or mate connector by name (its plane, followed as it moves).
+  else if (typeof a.plane === "string" && !["top", "front", "right"].includes(a.plane.trim().toLowerCase()) && !has(a, "offset")) plane = basePlane(a.plane, "plane", ctx);
   else if (has(a, "plane") || has(a, "offset")) plane = namedPlane(has(a, "plane") ? a.plane : plane?.kind === "default" ? plane.name : undefined, a.offset, ctx);
   else if (!ctx.editing) plane = { kind: "default", name: "Top" };
   let data = f.sketch?.data;
@@ -497,6 +504,12 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       break;
     }
 
+    case "plane":
+      applyPlane(f, a, ctx);
+      break;
+    case "mate_connector":
+      applyConnector(f, a, ctx);
+      break;
     case "composite_part": {
       if (has(a, "parts") || !ctx.editing) {
         const ids = [...new Set(list(a.parts, "parts").map((r, i) => ctx.session.part(ctx.parts, r, `parts[${i}]`).id))];
