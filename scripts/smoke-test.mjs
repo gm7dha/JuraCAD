@@ -1479,17 +1479,22 @@ try {
   await page.waitForSelector(".check-headline", { timeout: 30_000 });
   await page.getByLabel("Ignore parts that only touch").check();
   await page.waitForSelector(".check-headline", { timeout: 30_000 });
-  // The fit check: a Fits section; the parts Fasten 1 joins marked as a press fit (they only touch, so it says
-  // there's no overlap), then the mark taken away again.
+  // The fit check: a Fits section; the parts Fasten 1 joins marked as a press fit and judged, then the mark taken away again.
   step = "checking fits in the assembly";
   await page.getByLabel("Check fits (interference and clearance)").check();
   await page.waitForSelector(".check-part h4 >> text=Fits", { timeout: 30_000 });
   await page.getByLabel("Mate to mark as a fit").selectOption({ label: "Fasten 1" });
   await page.getByRole("button", { name: "Save fit" }).click();
-  await page.waitForSelector(".check-part li >> text=/meant to be a press fit/", { timeout: 30_000 });
+  // Judged in the Fits section (they only touch, or overlap: either way it's a marked press fit line with "Change…").
+  try {
+    await page.locator(".check-part li", { hasText: "press fit" }).getByRole("button", { name: "Change…" }).waitFor({ timeout: 30_000 });
+  } catch {
+    const shown = await page.locator(".check-report").innerText().catch(() => "(no report)");
+    throw new Error(`the marked press fit isn't judged in the Fits section: "${shown.replace(/\n/g, " / ")}"`);
+  }
   if (!(await page.evaluate(() => window.juracadStore.getState().history.present.assemblies?.[0]?.fits?.length === 1))) throw new Error("the press fit wasn't saved in the assembly");
   await shot("assembly-fits");
-  await page.locator(".check-part li", { hasText: "meant to be a press fit" }).getByRole("button", { name: "Change…" }).click();
+  await page.locator(".check-part li", { hasText: "press fit" }).getByRole("button", { name: "Change…" }).click();
   await page.getByRole("button", { name: "Remove the mark" }).click();
   await page.waitForFunction(() => !window.juracadStore.getState().history.present.assemblies?.[0]?.fits, null, { timeout: 10_000 });
   await page.getByLabel("Check fits (interference and clearance)").uncheck();
