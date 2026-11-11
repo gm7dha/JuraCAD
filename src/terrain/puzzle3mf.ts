@@ -7,6 +7,7 @@
  */
 import { weld, zipStored } from "../geometry/threeMf";
 import type { PuzzlePiece } from "./mountainPuzzle";
+import { zipDeflated } from "../geometry/zipDeflate";
 
 export interface PlacedPiece {
   piece: PuzzlePiece;
@@ -222,10 +223,10 @@ export function bandPlateFiles(plate: Plate, title: string, partsOf: (p: PuzzleP
   return { model: lines.join("\n"), config: config.join("\n") };
 }
 
-/** One colour-band plate as a .3mf file. */
-export function bandPlate3mf(plate: Plate, title: string, partsOf: (p: PuzzlePiece) => BandPartFile[], paintCode: (n: number) => string): Uint8Array {
+/** One colour-band plate as a .3mf file, compressed (as Bambu Studio's own are). */
+export async function bandPlate3mf(plate: Plate, title: string, partsOf: (p: PuzzlePiece) => BandPartFile[], paintCode: (n: number) => string): Promise<Uint8Array> {
   const { model, config } = bandPlateFiles(plate, title, partsOf, paintCode);
-  return zipStored([
+  return zipDeflated([
     { name: "[Content_Types].xml", data: CONTENT_TYPES },
     { name: "_rels/.rels", data: RELS },
     { name: "3D/3dmodel.model", data: model },
@@ -235,3 +236,19 @@ export function bandPlate3mf(plate: Plate, title: string, partsOf: (p: PuzzlePie
 
 /** The 3MF's fixed texts, for other writers (full colour). */
 export const THREE_MF_PARTS = { contentTypes: CONTENT_TYPES, rels: RELS };
+
+/**
+ * Plates for colour bands: pieces whose undersides sit at different heights in the puzzle (the mountain's layers) have
+ * their band edges at different heights as printed, so a plate mixing them changes filament on almost every layer.
+ * Each underside height gets plates of its own (lowest first), laid out as `platesFor` does.
+ */
+export function platesByLevel(pieces: PuzzlePiece[], bed: [number, number, number]): Plate[] {
+  const groups = new Map<number, PuzzlePiece[]>();
+  for (const p of pieces) {
+    const key = Math.round(p.z0 * 1e4) / 1e4;
+    const g = groups.get(key);
+    if (g) g.push(p);
+    else groups.set(key, [p]);
+  }
+  return [...groups.entries()].sort((a, b) => a[0] - b[0]).flatMap(([, g]) => platesFor(g, bed));
+}

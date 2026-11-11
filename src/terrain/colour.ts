@@ -44,6 +44,8 @@ export interface ColourSpec {
   water: string | null;
   /** Print layer height (mm): band edges are moved onto whole layers. */
   layer: number;
+  /** The first layer's height (mm), when it isn't `layer` (Bambu Studio's "Initial layer height"). */
+  firstLayer?: number;
 }
 
 /** How ground heights map to the puzzle: z = z0 + (h − h0) × mmPerM. */
@@ -65,13 +67,15 @@ export const MOST_FILAMENTS = 8;
 export const SEA_BLUE = "#2f6ea5";
 export const WATER_BLUE = "#3a7bc0";
 
-/** The usual island colours: sand at the coast, green, olive, brown, grey on the tops. */
+/**
+ * The usual island colours: sand at the coast, green, brown, grey on the tops — with the sea-blue base and water, five
+ * filaments (olive is first among the spare colours, for a sixth).
+ */
 export const ISLAND_COLOURS: [string, string, number][] = [
   ["Sand", "#e2d199", 0],
   ["Green", "#5d9a45", 0.06],
-  ["Olive", "#8c8a3f", 0.3],
-  ["Brown", "#8b6745", 0.55],
-  ["Grey", "#9d9d9b", 0.8],
+  ["Brown", "#8b6745", 0.45],
+  ["Grey", "#9d9d9b", 0.75],
 ];
 
 /** The usual mountain colours: green low down, brown, grey rock, white snow. */
@@ -83,7 +87,7 @@ export const MOUNTAIN_COLOURS: [string, string, number][] = [
 ];
 
 /** More colours offered when bands are added: the next unused one. */
-export const SPARE_COLOURS = ["#c9b27c", "#3f6f36", "#b08d5a", "#6b6b6b", "#d8d0c0", "#a04f3a", "#e8e8e8", "#556b2f"];
+export const SPARE_COLOURS = ["#8c8a3f", "#c9b27c", "#3f6f36", "#b08d5a", "#6b6b6b", "#d8d0c0", "#a04f3a", "#e8e8e8", "#556b2f"];
 
 const nice = (m: number) => (Math.abs(m) < 50 ? Math.round(m) : Math.round(m / 10) * 10);
 
@@ -105,12 +109,31 @@ export function mountainBands(low: number, high: number, snowline: number | null
 
 export const PLAIN_COLOUR: ColourSpec = { mode: "plain", bands: [], base: null, water: null, layer: LAYER_DEFAULT };
 
+/** Filaments one AMS holds. */
+export const AMS_SLOTS = 4;
+
+/** Things worth knowing about the colour choices that don't stop them (plain English). */
+export function colourWarnings(spec: ColourSpec, hasWater = true, ground: [number, number] | null = null): string[] {
+  if (spec.mode === "plain") return [];
+  const out: string[] = [];
+  const n = filaments(spec, hasWater).length;
+  if (spec.mode === "bands" && n > AMS_SLOTS)
+    out.push(`That's ${n} filaments, and one AMS holds ${AMS_SLOTS}: use a second AMS or the spool holder for the rest, or fewer bands (or the same colour for two of them).`);
+  if (ground && spec.bands.length > 1) {
+    const [lo, hi] = ground;
+    const inside = spec.bands.slice(1).filter((b) => !b.snow || spec.mode === "bands").some((b) => b.from > lo && b.from < hi);
+    if (!inside) out.push(`No band starts between ${Math.round(lo)} m and ${Math.round(hi)} m, the ground here — so it's all one colour. Press "Usual colours and heights" for heights to suit it.`);
+  }
+  return out;
+}
+
 /** What's wrong with the colour choices (plain English). */
 export function colourProblems(spec: ColourSpec, hasWater = true): string[] {
   if (spec.mode === "plain") return [];
   const out: string[] = [];
   if (spec.bands.length < LEAST_BANDS || spec.bands.length > MOST_BANDS) out.push(`Use between ${LEAST_BANDS} and ${MOST_BANDS} colour bands.`);
   if (!(spec.layer >= 0.04 && spec.layer <= 1)) out.push("The layer height should be between 0.04 and 1 mm (0.2 mm is usual).");
+  if (spec.firstLayer !== undefined && !(spec.firstLayer >= 0.04 && spec.firstLayer <= 1)) out.push("The first layer's height should be between 0.04 and 1 mm.");
   for (let i = 1; i < spec.bands.length; i++)
     if (!(spec.bands[i].from > spec.bands[i - 1].from) && i > 1) out.push(`${spec.bands[i].name} should start higher than ${spec.bands[i - 1].name}.`);
   for (const b of spec.bands) if (!/^#[0-9a-f]{6}$/i.test(b.colour)) out.push(`${b.name}'s colour isn't a colour.`);
@@ -152,24 +175,40 @@ export function bandLevels(spec: ColourSpec, scale: HeightScale, fs: Filament[])
     below = filamentOf(fs, spec.base);
     levels.push({ z: scale.z0, filament: filamentOf(fs, spec.bands[0].colour) });
   }
-  for (let i = 1; i < spec.bands.length; i++) levels.push({ z: zOfHeight(scale, spec.bands[i].from), filament: filamentOf(fs, spec.bands[i].colour) });
-  return { below, levels };
+  // With a base colour no band starts below the ground's lowest (it would be under the base's top).
+  for (let i = 1; i < spec.bands.length; i++) {
+    const z = zOfHeight(scale, spec.bands[i].from);
+    levels.push({ z: spec.base ? Math.max(scale.z0, z) : z, filament: filamentOf(fs, spec.bands[i].colour) });
+  }
+  // Lowest first (stable: of bands starting at the same height, the later one wins in snappedCuts).
+  return { below, levels: levels.map((l, i) => ({ l, i })).sort((a, b) => a.l.z - b.l.z || a.i - b.i).map((x) => x.l) };
 }
 
 /**
- * A piece's band edges on whole layers: heights above its underside `z0` (as printed) rounded to `layer`; edges at or
+ * A piece's band edges on whole layers: heights above its underside `z0` (as printed) rounded to the layer boundaries
+ * (`firstLayer`, then every `layer` — default: all `layer`); edges at or
  * below the bed are dropped (the band above starts on the bed), and of edges on the same layer the higher band wins.
  */
-export function snappedCuts(levels: { z: number; filament: number }[], below: number, z0: number, layer: number): { below: number; cuts: { z: number; filament: number }[] } {
+export function snappedCuts(
+  levels: { z: number; filament: number }[],
+  below: number,
+  z0: number,
+  layer: number,
+  firstLayer = layer,
+): { below: number; cuts: { z: number; filament: number }[] } {
   const cuts: { z: number; filament: number }[] = [];
   let first = below;
-  for (const l of levels) {
-    const print = Math.round((l.z - z0) / layer) * layer;
+  // Lowest first, stable (the caller's order decides between equal heights).
+  const sorted = levels.map((l, i) => ({ l, i })).sort((a, b) => a.l.z - b.l.z || a.i - b.i).map((x) => x.l);
+  for (const l of sorted) {
+    const h = l.z - z0;
+    // Layer boundaries as printed: firstLayer, firstLayer + layer, …
+    const print = h < firstLayer / 2 ? 0 : firstLayer + Math.max(0, Math.round((h - firstLayer) / layer)) * layer;
     if (print <= 1e-9) {
       first = l.filament;
       continue;
     }
-    const z = z0 + Math.round(print / layer) * layer;
+    const z = z0 + print;
     if (cuts.length && Math.abs(cuts[cuts.length - 1].z - z) < 1e-9) cuts[cuts.length - 1].filament = l.filament;
     else cuts.push({ z, filament: l.filament });
   }
@@ -560,7 +599,7 @@ function normalOf(V: ArrayLike<number>, a: number, b: number, c: number): [numbe
 export function bandParts(bodies: Body[], z0: number, ctx: BandContext): BandPart[] {
   const fs = filaments(ctx.spec, ctx.map.water);
   const { below, levels } = bandLevels(ctx.spec, ctx.scale, fs);
-  const { below: first, cuts } = snappedCuts(levels, below, z0, ctx.spec.layer);
+  const { below: first, cuts } = snappedCuts(levels, below, z0, ctx.spec.layer, ctx.spec.firstLayer ?? ctx.spec.layer);
   const waterN = ctx.spec.water && ctx.map.water ? filamentOf(fs, ctx.spec.water) : 0;
   const parts: BandPart[] = [];
   for (const body of bodies) {
@@ -597,7 +636,7 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext): BandPar
 /**
  * Bambu Studio's `paint_color` for a whole (unsplit) triangle painted with filament `n` — TriangleSelector's bits
  * (2 bits of split sides = 0, then the state: 2 bits, or 0b11 and 4-bit nibbles of n − 3) as hex digits, last first:
- * 1 → "4", 2 → "8", 3 → "0C", 4 → "1C", … 18 → "FC" … (BambuStudio src/libslic3r/TriangleSelector.cpp serialize,
+ * 1 → "4", 2 → "8", 3 → "0C", 4 → "1C", … 17 → "EC", 18 → "0FC", 19 → "1FC" (BambuStudio src/libslic3r/TriangleSelector.cpp serialize,
  * Model.cpp FacetsAnnotation::get_triangle_as_string).
  */
 export function paintCode(n: number): string {
@@ -687,7 +726,7 @@ const MAP_COLOURS: Partial<Record<number, { colour: RGB; amount: number }>> = {
 
 /** The smooth height tint (m → colour): band colours at their start heights, blended between; the snow left out. */
 export function tintAt(bands: ColourBand[], h: number): RGB {
-  const stops = bands.filter((b) => !b.snow);
+  const stops = bands.filter((b) => !b.snow).sort((a, b) => a.from - b.from);
   if (!stops.length) return [160, 160, 160];
   if (h <= stops[0].from || stops.length === 1) return hexRgb(stops[0].colour);
   for (let i = 1; i < stops.length; i++)

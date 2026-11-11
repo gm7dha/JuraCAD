@@ -3,14 +3,13 @@
  * an AMS) or Full colour (full-colour printers and services), the bands' colours and heights, and the downloads for the
  * banded and full-colour files. The maths and the files are in src/terrain/colour.ts and colourFiles.ts.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   colourProblems,
+  colourWarnings,
   filaments,
   LEAST_BANDS,
   MOST_BANDS,
-  previewOfBands,
-  previewOfFull,
   SPARE_COLOURS,
   type ColourBand,
   type ColourMode,
@@ -18,9 +17,11 @@ import {
   type HeightScale,
   type MapRaster,
   type PreviewMesh,
+  type PuzzleMap,
   type ColouredMesh,
 } from "../terrain/colour";
-import { allItems, bandPlateFile, bandPuzzle, colour3mfFiles, colourObjFiles, colourPuzzle, colourWrl, plateItems, plateSwaps, zipDeflated, type BandedPuzzle } from "../terrain/colourFiles";
+import type { ColourJob, ColourReply } from "../terrain/colourJob";
+import { allItems, bandPlateFile, colour3mfFiles, colourObjFiles, colourWrl, plateItems, plateSwaps, zipDeflated, type BandedPuzzle } from "../terrain/colourFiles";
 import type { PuzzlePiece } from "../terrain/mountainPuzzle";
 import { zipStored } from "../geometry/threeMf";
 import type { Plate } from "../terrain/puzzle3mf";
@@ -152,6 +153,20 @@ export function ColourPanel({
                   <span className="muted">mm — the same as in Bambu Studio</span>
                 </span>
               </div>
+              <div className="mountain-row">
+                <span>First layer</span>
+                <span className="mountain-number">
+                  <input
+                    type="number"
+                    value={spec.firstLayer ?? spec.layer}
+                    step={0.04}
+                    min={0.04}
+                    max={1}
+                    onChange={(e) => Number.isFinite(e.target.valueAsNumber) && setSpec({ ...spec, firstLayer: e.target.valueAsNumber })}
+                  />
+                  <span className="muted">mm — Bambu Studio's "Initial layer height" (0.2 mm on its usual profiles)</span>
+                </span>
+              </div>
               <p className="small">
                 Load:{" "}
                 {fs.map((f) => (
@@ -167,6 +182,12 @@ export function ColourPanel({
               {p}
             </p>
           ))}
+          {!problems.length &&
+            colourWarnings(spec, hasMap, ground).map((w) => (
+              <p key={w} className="mountain-warn small">
+                {w}
+              </p>
+            ))}
         </div>
       )}
     </>
@@ -183,42 +204,106 @@ export interface Coloured {
   preview: PreviewMesh[];
 }
 
+/** The longest colouring is given before the work is taken as lost. */
+const COLOUR_LIMIT_MS = 120_000;
+
 /**
- * The pieces coloured for the choices — worked out a moment after the last change (it takes a second or two on big
- * puzzles) — or null while there's nothing to colour.
+ * Colours puzzles in a worker, one job at a time: a new job while one is running starts the worker afresh (so only the
+ * latest choices' answer comes back); the pieces are sent only when they're new to the worker.
  */
-export function useColoured(pieces: PuzzlePiece[] | null, spec: ColourSpec, scale: HeightScale | null, map: MapRaster): { coloured: Coloured | null; working: boolean; error: string | null } {
+class ColourRunner {
+  private worker: Worker | null = null;
+  private sent: PuzzlePiece[] | null = null;
+  private busy = false;
+  private next = 1;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
+  run(job: Omit<ColourJob, "id" | "pieces">, pieces: PuzzlePiece[], done: (reply: ColourReply) => void) {
+    if (this.busy) this.stop();
+    if (!this.worker) {
+      this.worker = new Worker(new URL("./puzzleColour.worker.ts", import.meta.url), { type: "module", name: "juracad-colour" });
+      this.sent = null;
+    }
+    const id = this.next++;
+    this.busy = true;
+    const finish = (reply: ColourReply) => {
+      if (this.watchdog !== null) clearTimeout(this.watchdog);
+      this.watchdog = null;
+      this.busy = false;
+      done(reply);
+    };
+    this.worker.onmessage = (e: MessageEvent<ColourReply>) => {
+      if (e.data.id === id) finish(e.data);
+    };
+    this.worker.onerror = (e) => {
+      e.preventDefault();
+      this.stop();
+      finish({ id, error: "The colours couldn't be worked out — the browser stopped the work part-way. Try fewer or bigger pieces." });
+    };
+    this.watchdog = setTimeout(() => {
+      this.stop();
+      finish({ id, error: "Colouring the puzzle took too long and was stopped. Try bigger pieces or a lower scale." });
+    }, COLOUR_LIMIT_MS);
+    const fresh = this.sent !== pieces;
+    this.sent = pieces;
+    this.worker.postMessage({ ...job, id, ...(fresh ? { pieces: pieces.map((p) => ({ bodies: p.bodies, z0: p.z0, height: p.height })) } : {}) } satisfies ColourJob);
+  }
+  stop() {
+    if (this.watchdog !== null) clearTimeout(this.watchdog);
+    this.watchdog = null;
+    this.worker?.terminate();
+    this.worker = null;
+    this.sent = null;
+    this.busy = false;
+  }
+}
+
+let mapIds = 0;
+const mapIdOf = new WeakMap<PuzzleMap, number>();
+
+/**
+ * The pieces coloured for the choices, worked out in a worker a moment after the last change — or null while there's
+ * nothing to colour. `map` is the map on the puzzle (`mapSize` mm); keep it the same object while it doesn't change.
+ */
+export function useColoured(
+  pieces: PuzzlePiece[] | null,
+  spec: ColourSpec,
+  scale: HeightScale | null,
+  map: PuzzleMap,
+  mapSize: [number, number],
+  hasWater: boolean,
+): { coloured: Coloured | null; working: boolean; error: string | null } {
   const [coloured, setColoured] = useState<Coloured | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const runner = useRef<ColourRunner | null>(null);
   const key = JSON.stringify([spec, scale]);
-  const ok = !!pieces && !!scale && spec.mode !== "plain" && !colourProblems(spec, map.water).length;
+  const ok = !!pieces && !!scale && spec.mode !== "plain" && !colourProblems(spec, hasWater).length;
+  useEffect(() => () => runner.current?.stop(), []);
   useEffect(() => {
     if (!ok || !pieces || !scale) {
+      runner.current?.stop();
       setColoured(null);
       setWorking(false);
       return;
     }
     setWorking(true);
     const timer = setTimeout(() => {
-      try {
-        if (spec.mode === "bands") {
-          const ctx = { spec, scale, map };
-          const banded = bandPuzzle(pieces, ctx);
-          const fs = filaments(spec, map.water);
-          setColoured({ pieces, key, banded, preview: pieces.map((p) => previewOfBands(banded.parts.get(p) ?? [], fs)) });
-        } else {
-          const full = colourPuzzle(pieces, { spec, scale, map });
-          setColoured({ pieces, key, full, preview: pieces.map((p) => previewOfFull(full.get(p)!)) });
+      let mapId = mapIdOf.get(map);
+      if (mapId === undefined) mapIdOf.set(map, (mapId = ++mapIds));
+      runner.current ??= new ColourRunner();
+      runner.current.run({ spec, scale, map, mapSize, mapId }, pieces, (reply) => {
+        setWorking(false);
+        if ("error" in reply) {
+          setColoured(null);
+          setError(reply.error);
+          return;
         }
         setError(null);
-      } catch (e) {
-        setColoured(null);
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setWorking(false);
-      }
-    }, 300);
+        if (reply.mode === "bands")
+          setColoured({ pieces, key, banded: { parts: new Map(pieces.map((p, i) => [p, reply.parts[i]])), uncut: reply.uncut }, preview: reply.preview });
+        else setColoured({ pieces, key, full: new Map(pieces.map((p, i) => [p, reply.full[i]])), preview: reply.preview });
+      });
+    }, 250);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pieces, key, map, ok]);
@@ -246,10 +331,21 @@ export function ColourDownloads({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const plateName = (i: number) => `${fileName} - plate ${i + 1} of ${plates.length}`;
-  if (spec.mode === "bands" && coloured.banded) {
-    const banded = coloured.banded;
+  const banded = spec.mode === "bands" ? coloured.banded ?? null : null;
+  const swaps = useMemo(() => (banded ? plateSwaps(plates, banded, spec.layer) : []), [banded, plates, spec.layer]);
+  const save = async (what: string, make: () => Promise<[Uint8Array, string, string]>) => {
+    setBusy(what);
+    try {
+      // Let the window show "Making…" first: big files take a moment.
+      await new Promise((r) => setTimeout(r, 30));
+      const [bytes, type, name] = await make();
+      downloadFile(blobOf(bytes, type), name);
+    } finally {
+      setBusy(null);
+    }
+  };
+  if (banded) {
     const ctx = { spec, scale, map };
-    const swaps = plateSwaps(plates, banded, spec.layer);
     const file = (i: number) => bandPlateFile(plates[i], `${fileName} - plate ${i + 1}`, banded, ctx);
     return (
       <>
@@ -258,19 +354,34 @@ export function ColourDownloads({
             {plates.length} {plates.length === 1 ? "plate" : "plates"} in colour bands for Bambu Studio:
           </span>
           {plates.map((p, i) => (
-            <button key={i} className="text-button" onClick={() => downloadFile(blobOf(file(i), "model/3mf"), `${plateName(i)}.3mf`)} title={p.pieces.map((x) => x.piece.name).join(", ")}>
+            <button
+              key={i}
+              className="text-button"
+              disabled={!!busy}
+              onClick={() => save(`p${i}`, async () => [await file(i), "model/3mf", `${plateName(i)}.3mf`])}
+              title={`${p.pieces.map((x) => x.piece.name).join(", ")} — about ${swaps[i]} filament changes`}
+            >
               Plate {i + 1} ({p.pieces.length})
             </button>
           ))}
           <button
             className="primary-button"
-            onClick={() => downloadFile(blobOf(zipStored(plates.map((_, i) => ({ name: `${plateName(i)}.3mf`, data: file(i) }))), "application/zip"), `${fileName} - colour bands.zip`)}
+            disabled={!!busy}
+            onClick={() =>
+              save("all", async () => {
+                const files: { name: string; data: Uint8Array }[] = [];
+                for (let i = 0; i < plates.length; i++) files.push({ name: `${plateName(i)}.3mf`, data: await file(i) });
+                return [zipStored(files), "application/zip", `${fileName} - colour bands.zip`];
+              })
+            }
           >
             All plates (.zip)
           </button>
+          {busy && <span className="muted small">Making the file…</span>}
         </div>
         <p className="muted small">
-          Filament changes, roughly (colour changes up the height of each plate): {swaps.map((s, i) => `plate ${i + 1} about ${s}`).join(", ")}.
+          Filament changes, roughly: {swaps.map((n, i) => `plate ${i + 1} about ${n}`).join(", ")}. Pieces standing at different heights in the
+          puzzle are on plates of their own, so every piece on a plate changes colour on the same layers.
           {banded.uncut ? ` ${banded.uncut} ${banded.uncut === 1 ? "piece" : "pieces"} couldn't be split and stay one colour.` : ""}
         </p>
       </>
@@ -278,17 +389,6 @@ export function ColourDownloads({
   }
   if (spec.mode === "full" && coloured.full) {
     const full = coloured.full;
-    const save = async (what: string, make: () => Promise<[Uint8Array, string, string]>) => {
-      setBusy(what);
-      try {
-        // Let the window show "Making…" first: big files take a moment.
-        await new Promise((r) => setTimeout(r, 30));
-        const [bytes, type, name] = await make();
-        downloadFile(blobOf(bytes, type), name);
-      } finally {
-        setBusy(null);
-      }
-    };
     const plate3mf = async (i: number) => zipDeflated(colour3mfFiles(plateItems(plates[i], full), `${fileName} - plate ${i + 1}`));
     return (
       <>

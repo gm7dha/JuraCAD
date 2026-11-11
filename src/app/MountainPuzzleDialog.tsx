@@ -27,7 +27,7 @@ import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { PEAKS } from "../terrain/peaks";
 import { blurred, greyFromRgba, photoGrid, photoReadSize, type PhotoPixels } from "../terrain/photoRelief";
-import { allPlatesZip, plate3mf, platesFor } from "../terrain/puzzle3mf";
+import { allPlatesZip, plate3mf, platesByLevel, platesFor } from "../terrain/puzzle3mf";
 import { mapOnPuzzle, mapRaster, mountainBands, NO_MAP, PLAIN_COLOUR, WATER_BLUE, type ColourSpec, type HeightScale, type PreviewMesh } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
@@ -203,15 +203,16 @@ export function MountainPuzzleDialog() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, specKey, features]);
 
-  const plates = useMemo(() => (puzzle ? platesFor(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2]]);
+  // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
+  const byLevel = colourOn && colour.mode === "bands";
+  const plates = useMemo(() => (puzzle ? (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2], byLevel]);
   // How ground heights sit in the puzzle, and the map drawn over it, for colouring.
   const scaleKey = puzzle ? [baseFor(puzzle.spec), puzzle.layout.low, puzzle.layout.k * puzzle.spec.exaggeration].join(",") : "";
   const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: baseFor(puzzle.spec), h0: puzzle.layout.low, mmPerM: puzzle.layout.k * puzzle.spec.exaggeration } : null), [scaleKey]);
-  const paintMap = useMemo(
-    () => (puzzle ? mapRaster(mapOnPuzzle(features, puzzle.layout.e0, puzzle.layout.n0, puzzle.layout.k), puzzle.layout.cols * puzzle.spec.cube, puzzle.layout.rows * puzzle.spec.cube) : mapRaster(NO_MAP, 1, 1)),
-    [puzzle, features],
-  );
-  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, paintMap);
+  const puzzleMap = useMemo(() => (puzzle ? mapOnPuzzle(features, puzzle.layout.e0, puzzle.layout.n0, puzzle.layout.k) : NO_MAP), [puzzle, features]);
+  const mapSize: [number, number] = puzzle ? [puzzle.layout.cols * puzzle.spec.cube, puzzle.layout.rows * puzzle.spec.cube] : [1, 1];
+  const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
+  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap.water);
   const usualBands = () => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline) : mountainBands(0, 1000, snowline));
   const fileName = safeFileName(`${loaded?.area.name ?? "Mountain"} puzzle`, "Mountain puzzle");
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));

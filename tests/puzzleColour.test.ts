@@ -10,7 +10,9 @@ import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
 import {
   bandLevels,
+  bandParts,
   colourProblems,
+  colourWarnings,
   filamentSwaps,
   filaments,
   fullColours,
@@ -40,7 +42,8 @@ import { ISLAND_DEFAULTS, makeIslandPuzzle } from "../src/terrain/islandPuzzle";
 import { baseFor, makeMountainPuzzle, MOUNTAIN_DEFAULTS, type MountainSpec, type PuzzlePiece } from "../src/terrain/mountainPuzzle";
 import { featuresOnGrid, readOsm } from "../src/terrain/osm";
 import { gridToLatLon } from "../src/terrain/osGrid";
-import { plate3mf, plateFiles, platesFor } from "../src/terrain/puzzle3mf";
+import { plate3mf, plateFiles, platesByLevel, platesFor } from "../src/terrain/puzzle3mf";
+import { ColourCache } from "../src/terrain/colourJob";
 
 const BED: [number, number, number] = [256, 256, 256];
 const NO_MAP_RASTER = mapRaster(NO_MAP, 1, 1);
@@ -149,11 +152,11 @@ describe("band edges", () => {
   });
 
   it("offers the usual colours", () => {
-    expect(islandBands(500).map((b) => b.name)).toEqual(["Sand", "Green", "Olive", "Brown", "Grey"]);
+    expect(islandBands(500).map((b) => b.name)).toEqual(["Sand", "Green", "Brown", "Grey"]);
     expect(mountainBands(300, 1300, 1000).map((b) => b.name)).toEqual(["Green", "Brown", "Grey rock", "Snow"]);
     expect(mountainBands(300, 1300, 1000)[3]).toMatchObject({ from: 1000, snow: true });
     // Island: base and water share the sea blue, so one filament.
-    expect(filaments(islandSpec("bands")).map((f) => f.uses.join("+"))).toEqual(["Base+Water", "Sand", "Green", "Olive", "Brown", "Grey"]);
+    expect(filaments(islandSpec("bands")).map((f) => f.uses.join("+"))).toEqual(["Base+Water", "Sand", "Green", "Brown", "Grey"]);
     expect(colourProblems(islandSpec("bands"))).toEqual([]);
     expect(colourProblems({ ...islandSpec("bands"), bands: islandBands(500).slice(0, 1) })[0]).toMatch(/between 2 and 8/);
     const many = { ...islandSpec("bands"), bands: [...islandBands(500), ...islandBands(500).map((b, i) => ({ ...b, from: 600 + i * 10, colour: `#00000${i}` }))].slice(0, 8), water: "#123456" };
@@ -389,13 +392,13 @@ describe("full colour", () => {
 });
 
 describe("colour-band plates", () => {
-  it("write a part per band with its filament and water painted, well formed", () => {
+  it("write a part per band with its filament and water painted, well formed (and compressed)", async () => {
     const water = mapRaster({ lines: [], shapes: [{ kind: "water", rings: [[[0, 0], [island.width / 2, 0], [island.width / 2, island.height], [0, island.height]]] }], woods: [] }, island.width, island.height);
     const ctx = { spec: islandSpec("bands"), scale: islandScale, map: water };
     const pieces = island.pieces.slice(0, 3);
     const banded = bandPuzzle(pieces, ctx);
     const [plate] = platesFor(pieces, BED);
-    const files = unzip(bandPlateFile(plate, "Bands", banded, ctx));
+    const files = unzip(await bandPlateFile(plate, "Bands", banded, ctx));
     const model = text(files.get("3D/3dmodel.model"));
     const config = text(files.get("Metadata/model_settings.config"));
     expect(wellFormed(model)).toBe(true);
@@ -433,5 +436,92 @@ describe("colour-band plates", () => {
     // The hash of what v0.52 wrote for this plate.
     expect(createHash("sha256").update(plate3mf(plate, 'Test "plate"')).digest("hex")).toBe("1d9e6116aef5c7dd853a5743022fd09ad2a596e2b7f7370287b175c45a4de2df");
     expect(plateFiles(plate, "x").model).not.toContain("paint_color");
+  });
+});
+
+describe("review fixes", () => {
+  const cube = (s: number) => {
+    const v = [0, 0, 0, s, 0, 0, s, s, 0, 0, s, 0, 0, 0, s, s, 0, s, s, s, s, 0, s, s];
+    const t = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7];
+    return [{ part: "rock" as const, vertices: v, triangles: t }];
+  };
+
+  it("bands keep their order when one starts below the ground and the base has its own colour", () => {
+    const spec: ColourSpec = {
+      mode: "bands",
+      bands: [
+        { name: "A", colour: "#ff0000", from: 0 },
+        { name: "B", colour: "#00ff00", from: -10 },
+        { name: "C", colour: "#0000ff", from: 50 },
+      ],
+      base: "#000000",
+      water: null,
+      layer: 0.2,
+    };
+    const scale: HeightScale = { z0: 3, h0: 0, mmPerM: 0.1 };
+    const fs = filaments(spec, false);
+    const { levels } = bandLevels(spec, scale, fs);
+    for (let i = 1; i < levels.length; i++) expect(levels[i].z).toBeGreaterThanOrEqual(levels[i - 1].z);
+    const parts = bandParts(cube(10), 0, { spec, scale, map: NO_MAP_RASTER }).sort((a, b) => a.low - b.low);
+    const name = (n: number) => fs.find((f) => f.n === n)!.uses.join("+");
+    // The base under the ground (to 3 mm), then B — starting below the ground, it takes the ground from A — then C at 8 mm.
+    expect(parts.map((p) => name(p.filament))).toEqual(["Base", "B", "C"]);
+    expect(parts.map((p) => Number(p.high.toFixed(2)))).toEqual([3, 8, 10]);
+    // Each slab's filament matches the band of its height.
+    for (const p of parts) expect(meshCheck(p.vertices, p.triangles).open).toBe(0);
+  });
+
+  it("snaps to the first layer's height, then whole layers", () => {
+    // Layer tops at 0.3 (the first layer), 0.5, 0.7, 0.9, 1.1…: 0.25 goes to 0.3, 1.05 to 1.1 — and the lower one first.
+    const { cuts } = snappedCuts([{ z: 1.05, filament: 2 }, { z: 0.25, filament: 3 }], 1, 0, 0.2, 0.3);
+    expect(cuts.map((c) => [Number(c.z.toFixed(6)), c.filament])).toEqual([
+      [0.3, 3],
+      [1.1, 2],
+    ]);
+  });
+
+  it("puts a mountain's pieces of different heights on plates of their own, so plates need few filament changes", () => {
+    const spec = { ...MSPEC, cube: 30 };
+    const m = makeMountainPuzzle(hill, MW, MH, spec);
+    const scale: HeightScale = { z0: baseFor(spec), h0: m.layout.low, mmPerM: m.layout.k * spec.exaggeration };
+    const cs = { ...mountainSpec("bands"), bands: mountainBands(m.layout.low, m.layout.high, 1000), water: null };
+    const banded = bandPuzzle(m.pieces, { spec: cs, scale, map: NO_MAP_RASTER });
+    const mixed = plateSwaps(platesFor(m.pieces, BED), banded, cs.layer);
+    const plates = platesByLevel(m.pieces, BED);
+    // Every plate has one underside height.
+    for (const pl of plates) expect(new Set(pl.pieces.map((x) => x.piece.z0.toFixed(4))).size).toBe(1);
+    expect(plates.reduce((n, pl) => n + pl.pieces.length, 0)).toBe(m.pieces.length);
+    const swaps = plateSwaps(plates, banded, cs.layer);
+    for (const n of swaps) expect(n).toBeLessThanOrEqual(cs.bands.length - 1);
+    expect(swaps.reduce((a, b) => a + b, 0)).toBeLessThan(mixed.reduce((a, b) => a + b, 0));
+  });
+
+  it("warns past one AMS's four filaments, and when no band starts within the ground", () => {
+    expect(colourWarnings(islandSpec("bands"), true).some((w) => /one AMS holds 4/.test(w))).toBe(true);
+    const four = { ...islandSpec("bands"), bands: islandBands(500).slice(0, 3) };
+    expect(colourWarnings(four, true).some((w) => /AMS/.test(w))).toBe(false);
+    const high = { ...four, bands: islandBands(5000) };
+    expect(colourWarnings(high, true, [0, 300]).some((w) => /No band starts between 0 m and 300 m/.test(w))).toBe(true);
+    expect(colourWarnings(four, true, [0, 500]).some((w) => /No band/.test(w))).toBe(false);
+  });
+
+  it("colours in a worker's cache: a change of colour alone doesn't cut the pieces again", () => {
+    const cache = new ColourCache();
+    const pieces = island.pieces.slice(0, 2).map((p) => ({ bodies: p.bodies, z0: p.z0, height: p.height }));
+    const job = { id: 1, pieces, spec: islandSpec("bands"), scale: islandScale, map: NO_MAP, mapSize: [1, 1] as [number, number], mapId: 1 };
+    const r1 = cache.run(job);
+    expect("error" in r1).toBe(false);
+    expect(cache.cuts).toBe(1);
+    const recoloured = { ...islandSpec("bands"), bands: islandSpec("bands").bands.map((b, i) => (i === 1 ? { ...b, colour: "#123456", name: "Moss" } : b)) };
+    const r2 = cache.run({ ...job, id: 2, pieces: undefined, spec: recoloured });
+    expect(cache.cuts).toBe(1);
+    if ("error" in r2 || r2.mode !== "bands") throw new Error("expected bands");
+    expect(r2.preview.length).toBe(2);
+    const higher = { ...islandSpec("bands"), bands: islandSpec("bands").bands.map((b, i) => (i === 2 ? { ...b, from: b.from + 50 } : b)) };
+    cache.run({ ...job, id: 3, pieces: undefined, spec: higher });
+    expect(cache.cuts).toBe(2);
+    const full = cache.run({ ...job, id: 4, pieces: undefined, spec: islandSpec("full") });
+    if ("error" in full || full.mode !== "full") throw new Error("expected full colour");
+    expect(full.full.length).toBe(2);
   });
 });

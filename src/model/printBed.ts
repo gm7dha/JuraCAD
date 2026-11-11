@@ -29,11 +29,11 @@ export const PRINTERS: Printer[] = [
     note: "Two nozzles: 256 × 256 × 260 mm with the main nozzle; 235.5 × 256 × 256 mm with the second nozzle or both (two colours). Nozzles up to 300 °C, heated chamber up to 65 °C.",
   },
   {
-    // From 3DPrinting.com's launch news (on sale 3 November 2026): 330 × 320 × 325 mm, full colour by mixing CMYKW.
+    // From 3DPrinting.com's launch news (on sale 3 November 2026): 330 × 320 × 325 mm, full colour by combining CMYKW filaments.
     id: "bambu-h3c",
     name: "Bambu Lab H3C",
     size: [330, 320, 325],
-    note: "Full colour: Bambu Studio mixes cyan, magenta, yellow, black and white (CMYKW) filaments to print the colours of a full-colour file (choose Colour: Full colour in the puzzle windows).",
+    note: "Full colour: Bambu Studio combines and layers cyan, magenta, yellow, black and white (CMYKW) filaments to print the colours of a full-colour file (choose Colour: Full colour in the puzzle windows).",
   },
   { id: "prusa-mk4", name: "Prusa MK4 / MK4S", size: [250, 210, 220] },
   { id: "prusa-mini", name: "Prusa MINI+", size: [180, 180, 180] },

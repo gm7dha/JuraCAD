@@ -12,7 +12,7 @@ import { ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type 
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
-import { allPlatesZip, plate3mf, platesFor } from "../terrain/puzzle3mf";
+import { allPlatesZip, plate3mf, platesByLevel, platesFor } from "../terrain/puzzle3mf";
 import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
@@ -241,16 +241,17 @@ export function IslandPuzzleDialog() {
   // Stop the builder when the window closes.
   useEffect(() => () => builder.current.stop(), []);
 
-  const plates = useMemo(() => (puzzle ? platesFor(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2]]);
+  // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
+  const byLevel = colourOn && colour.mode === "bands";
+  const plates = useMemo(() => (puzzle ? (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2], byLevel]);
   const fileName = safeFileName(`${loaded?.area.name ?? "Island"} puzzle`, "Island puzzle");
   // How ground heights sit in the puzzle (base + height × relief / highest), and the map over it, for colouring.
   const scaleKey = puzzle ? [spec.base, spec.relief, puzzle.high].join(",") : "";
   const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: spec.base, h0: 0, mmPerM: spec.relief / Math.max(puzzle.high, 1) } : null), [scaleKey]);
-  const paintMap = useMemo(
-    () => (puzzle && loaded ? mapRaster(mapOnPuzzle(features, loaded.area.sw.e, loaded.area.sw.n, puzzle.k), puzzle.width, puzzle.height) : mapRaster(NO_MAP, 1, 1)),
-    [puzzle, features],
-  );
-  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, paintMap);
+  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(features, loaded.area.sw.e, loaded.area.sw.n, puzzle.k) : NO_MAP), [puzzle, features]);
+  const mapSize: [number, number] = puzzle ? [puzzle.width, puzzle.height] : [1, 1];
+  const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
+  const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap.water);
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string) => (
     <span className="mountain-number">
