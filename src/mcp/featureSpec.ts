@@ -229,10 +229,8 @@ function thinWall(f: Feature, a: Obj, ctx: SpecContext) {
     if (has(a, "more_sketches")) throw new InputError('A thin wall follows the curves of its own sketch only; leave "more_sketches" out.');
     delete f.moreAreas;
   }
-  if (f.type === "extrude" && f.params.draft && amount(f.params.draft, "draft", ctx.scope).value !== 0) {
-    if (has(a, "draft")) throw new InputError('A thin wall can\'t taper; leave "draft" out (or 0).');
-    f.params = { ...f.params, draft: "0" };
-  }
+  // (A draft already set is left as it is: the engine leaves it out of a thin wall, with a note.)
+  if (f.type === "extrude" && has(a, "draft") && amount(a.draft, "draft", ctx.scope).value !== 0) throw new InputError('A thin wall can\'t taper; leave "draft" out (or 0).');
 }
 
 const END_OF = { blind: "blind", symmetric: "symmetric", through_all: "throughAll", up_to_face: "upToFace" } as const;

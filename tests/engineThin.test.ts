@@ -303,3 +303,39 @@ describe("thin walls round picked areas", () => {
     expect(relativeError(meshOf(t).volume, Math.PI * (100 - 64) * 20)).toBeLessThan(0.01);
   });
 });
+
+describe("one-sided walls at junctions stay one part", () => {
+  const ray = (deg: number, len = 20): { x: number; y: number } => ({ x: len * Math.cos((deg * Math.PI) / 180), y: len * Math.sin((deg * Math.PI) / 180) });
+  const cases: [string, () => SketchData][] = [
+    ["a rectangle with a line out from its corner", () => addLine(rectSketch(0, 0, 40, 20), { x: 0, y: 0 }, { x: -10, y: -10 }).sketch],
+    ["a rectangle with a line carrying its top edge on", () => addLine(rectSketch(0, 0, 40, 20), { x: 40, y: 20 }, { x: 60, y: 20 }).sketch],
+    [
+      "a Y of three lines",
+      () => {
+        let d = emptySketch();
+        for (const deg of [90, 210, 330]) d = addLine(d, { x: 0, y: 0 }, ray(deg)).sketch;
+        return d;
+      },
+    ],
+  ];
+  for (const [name, make] of cases) {
+    for (const flip of [false, true]) {
+      it(`${name}${flip ? ", flipped" : ""}`, () => {
+        const sk = sketchFeature(top, make());
+        const f = thinExtrude(sk.id, 10, 2, { thin: flip ? { flip: true } : {} });
+        const r = build([sk, f]);
+        expect(r.featureErrors).toEqual({});
+        expect(r.parts).toHaveLength(1);
+        expect(meshOf(r).watertight).toBe(true);
+        expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+      });
+    }
+  }
+
+  it("a line carrying a rectangle's top edge on keeps the wall on the same side (inside, then below the line)", () => {
+    const sk = sketchFeature(top, addLine(rectSketch(0, 0, 40, 20), { x: 40, y: 20 }, { x: 60, y: 20 }).sketch);
+    const m = meshOf(build([sk, thinExtrude(sk.id, 10, 2)]));
+    expect(m.volume).toBeCloseTo((224 + 40) * 10, 3);
+    expect(m.bounds?.max[1]).toBeCloseTo(20, 6);
+  });
+});

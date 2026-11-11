@@ -551,7 +551,7 @@ function closeUp(segments: Segment[]): { segments: Segment[]; closed: boolean } 
  * Which way an open run goes, so its first side faces the area it borders: if there's an area on just one side
  * of it, that side; else (areas both sides, or none) from its bottom-left end.
  */
-function facing(prims: Prim[], areaAt: (p: Pt) => number, size: number): Prim[] {
+function facing(prims: Prim[], areaAt: (p: Pt) => number, size: number): { prims: Prim[]; free: boolean } {
   const mid = prims[Math.floor(prims.length / 2)];
   let at: Pt, dir: Pt;
   if (mid.kind === "line") {
@@ -566,9 +566,56 @@ function facing(prims: Prim[], areaAt: (p: Pt) => number, size: number): Prim[] 
   const n: Pt = [-dir[1], dir[0]];
   const left = areaAt(add(at, mul(n, eps))) >= 0;
   const right = areaAt(sub(at, mul(n, eps))) >= 0;
-  if (left && !right) return prims;
-  if (right && !left) return backwards(prims);
-  return fromBottomLeft(prims);
+  if (left && !right) return { prims, free: false };
+  if (right && !left) return { prims: backwards(prims), free: false };
+  return { prims: fromBottomLeft(prims), free: !left && !right };
+}
+
+/**
+ * Open runs with no area either side (a stub off a shape, a line carrying another on, the arms of a Y) take their
+ * side from the wall they carry on from at a junction: the curve there with the smallest turn into them, keeping
+ * the same side across the turn (walking in along it and out along this run, the first side stays on the same
+ * hand). Runs settled so far are used first; a group of free runs with nothing settled starts from its first.
+ */
+function settleFreeRuns(runs: Run[], free: boolean[]): void {
+  const ends = (r: Run) => {
+    const last = r.prims.length - 1;
+    return [
+      { key: keyOf(primStart(r.prims[0])), atStart: true, out: startDir(r.prims[0]) },
+      { key: keyOf(primEnd(r.prims[last])), atStart: false, out: mul(endDir(r.prims[last]), -1) },
+    ];
+  };
+  const settled = runs.map((r, i) => !free[i] || !r.prims.length);
+  for (;;) {
+    let progress = false;
+    for (let i = 0; i < runs.length; i++) {
+      if (settled[i]) continue;
+      let best: { turn: number; flip: boolean } | null = null;
+      for (const mine of ends(runs[i])) {
+        runs.forEach((other, j) => {
+          if (j === i || !settled[j] || !other.prims.length) return;
+          for (const theirs of ends(other)) {
+            if (theirs.key !== mine.key) continue;
+            // Walking in along theirs (against its way out) and out along mine.
+            const turn = Math.abs(Math.atan2(cross(mul(theirs.out, -1), mine.out), dotp(mul(theirs.out, -1), mine.out)));
+            // Their first side is on the right of their way out at their end (the run's left, walked in); mine is
+            // on the left of my way out at my start. Same hand: my end here must be a start exactly when theirs isn't.
+            const flip = mine.atStart === theirs.atStart;
+            if (!best || turn < best.turn - 1e-9) best = { turn, flip };
+          }
+        });
+      }
+      if (best) {
+        if (best.flip) runs[i] = { ...runs[i], prims: backwards(runs[i].prims) };
+        settled[i] = true;
+        progress = true;
+      }
+    }
+    if (progress) continue;
+    const next = settled.indexOf(false);
+    if (next < 0) return;
+    settled[next] = true;
+  }
 }
 
 /** One curve end at a junction: which run, which end, and its faces' pieces and thicknesses on the way out. */
@@ -601,7 +648,8 @@ const rightOf = (u: Pt): Pt => [u[1], -u[0]];
  * them. Each wall is square-ended at the junction to start with (so the walls together leave nothing out), then:
  * where the gap opens wider than a half turn, both facing sides are carried on to meet (cut square past
  * `MITRE_LIMIT`, or to a shared point halfway, when they can't meet), so the corner is filled; where it's
- * narrower, a wall whose square end would reach past the far side of its neighbour's wall is cut back to it.
+ * narrower, a wall facing into it whose neighbour's facing face lies behind its end is carried on to meet that
+ * face, and a wall whose square end would reach past the far side of its neighbour's wall is cut back to it.
  */
 function junctionGap(node: Pt, a: Arm, b: Arm): { a: SideEnd; b: SideEnd } {
   const pa = add(node, mul(leftOf(a.out), a.leftT));
@@ -625,13 +673,22 @@ function junctionGap(node: Pt, a: Arm, b: Arm): { a: SideEnd; b: SideEnd } {
   // far side of the neighbour's wall is cut back to it (so a line's wall doesn't spill across the other line into
   // the area beyond, or out of the shape).
   const result = { ...square };
+  // A wall facing into the gap is carried on to meet the neighbour's facing face (its line, where it has no
+  // thickness on this side) when that's behind its own end — so the two walls join along a face, not at a point.
+  const meet = nearest(a.leftFace, b.rightFace);
+  if (meet) {
+    const alongA = dotp(sub(meet, node), a.out);
+    const alongB = dotp(sub(meet, node), b.out);
+    if (a.leftT > 1e-12 && alongA < -1e-9 && alongB > -1e-9 && alongB < 0.9 * b.length) result.a = { face: meet, via: [] };
+    if (b.rightT > 1e-12 && alongB < -1e-9 && alongA > -1e-9 && alongA < 0.9 * a.length) result.b = { face: meet, via: [] };
+  }
   const farA = rightOf(a.out);
-  if (dotp(sub(pb, node), farA) > a.rightT + 1e-9) {
+  if (result.b === square.b && dotp(sub(pb, node), farA) > a.rightT + 1e-9) {
     const x = nearest(b.rightFace, a.rightFace);
     if (x && dotp(sub(x, node), b.out) > -1e-9 && dotp(sub(x, node), b.out) < 0.9 * b.length) result.b = { face: x, via: [] };
   }
   const farB = leftOf(b.out);
-  if (dotp(sub(pa, node), farB) > b.leftT + 1e-9) {
+  if (result.a === square.a && dotp(sub(pa, node), farB) > b.leftT + 1e-9) {
     const x = nearest(a.leftFace, b.leftFace);
     if (x && dotp(sub(x, node), a.out) > -1e-9 && dotp(sub(x, node), a.out) < 0.9 * a.length) result.a = { face: x, via: [] };
   }
@@ -737,12 +794,17 @@ export function thinSketches(data: SketchData, sides: ThinSides, opts: ThinOptio
   let areaAt: ((p: Pt) => number) | null = null;
   const pts = data.points.map((p) => [p.x, p.y] as Pt);
   const size = pts.length ? Math.max(1, Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1])) - Math.min(...pts.map((p) => p[1]))) : 1;
+  const free: boolean[] = [];
   const runs: Run[] = sketchRuns(chains).map(({ segments, closed }) => {
     const raw = primsOf(segments);
+    free.push(false);
     if (!raw) return { prims: [], closed: true, circle: segments[0] as Extract<Segment, { kind: "circle" }> };
     if (closed) return { prims: signedArea(sampled(raw)) > 0 ? raw : backwards(raw), closed: true };
-    return { prims: facing(raw, areaAt ?? (areaAt = areasOf(drawn)), size), closed: false };
+    const f = facing(raw, areaAt ?? (areaAt = areasOf(drawn)), size);
+    free[free.length - 1] = f.free;
+    return { prims: f.prims, closed: false };
   });
+  settleFreeRuns(runs, free);
   // Junctions: three or more curve ends at one place.
   const arms = new Map<string, { node: Pt; arms: Arm[] }>();
   const offsets = runs.map((r) => (r.circle || !r.prims.length ? null : { L: offsetPieces(r.prims, left, r.closed), R: offsetPieces(r.prims, -right, r.closed) }));
