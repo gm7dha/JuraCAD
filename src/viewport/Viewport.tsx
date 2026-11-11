@@ -443,6 +443,11 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
+  // Picking parts for a Composite part (click again to leave one out).
+  if (s.editing?.draft.type === "composite") {
+    if (target?.kind === "part") s.toggleDraftPart(target.item.partId);
+    return;
+  }
   // Picking parts for a Boolean.
   if (s.editing?.draft.type === "boolean") {
     if (target?.kind === "part") s.toggleBooleanPart(target.item.partId);
@@ -466,6 +471,13 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   if (s.editing?.draft.type === "mirror" && s.editing.draft.mirror) {
     const m = s.editing.draft.mirror;
     const setMirror = (mirror: typeof m) => s.setDraftField({ mirror });
+    // A face mirror picking its faces: a click on the part picks (or drops) a face.
+    if (m.of === "face" && m.picking === "faces" && target?.kind === "part") {
+      if (target.item.kind !== "face") return s.showToast("Click the faces of the boss or pocket to mirror (not an edge).");
+      const pick = pickFor(s.parts, target.item);
+      if (pick) s.toggleDraftPick(pick);
+      return;
+    }
     if (target?.kind === "plane") s.setDraftMirrorPlane({ kind: "default", name: target.plane });
     else if (target?.kind === "sketchLine") {
       const line = { sketch: target.id, line: target.line };
@@ -486,6 +498,15 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   // face or a sketch line) of a linear pattern, or the axis (a round face or edge, a straight edge or a sketch line) of a circular one.
   if (s.editing && isPatternFeature(s.editing.draft.type)) {
     const d = s.editing.draft;
+    // Part and face patterns: while the parts / faces box is the one picking (always for a curve pattern), a click picks them.
+    if (d.pattern?.of && (d.pattern.picking === "items" || d.type === "curvePattern")) {
+      if (target?.kind !== "part") return;
+      if (d.pattern.of === "part") return s.toggleDraftPart(target.item.partId);
+      if (target.item.kind !== "face") return s.showToast("Click the faces of the boss, pocket or hole to repeat (not an edge).");
+      const pick = pickFor(s.parts, target.item);
+      if (pick) s.toggleDraftPick(pick);
+      return;
+    }
     if ((d.type !== "linearPattern" && d.type !== "circularPattern") || !d.pattern) return;
     const second = d.type === "linearPattern" && d.pattern.picking === "along2";
     const { picking: _p, ...pattern } = d.pattern;
@@ -759,7 +780,11 @@ export function Viewport() {
   useEffect(() => viewportApi.current?.setDragEnabled(!!assembly && !mateDraft && explode === null), [assembly, mateDraft, explode]);
   const editingAnything = useStore((s) => !!s.editing);
   // Tools that only take faces: clicking near an edge picks the face it's on.
-  const facesOnly = useStore((s) => FACE_TOOLS.has(s.editing?.draft.type ?? ""));
+  const facesOnly = useStore((s) => {
+    const d = s.editing?.draft;
+    // A face pattern or face mirror picking its faces takes only faces too.
+    return FACE_TOOLS.has(d?.type ?? "") || (d?.pattern?.of === "face" && d.pattern.picking === "items") || (d?.mirror?.of === "face" && d.mirror.picking === "faces");
+  });
   useEffect(() => viewportApi.current?.setFacesOnly(facesOnly), [facesOnly]);
   useEffect(() => viewportApi.current?.setBoxSelectEnabled(!assembly && !editingAnything), [assembly, editingAnything]);
 
@@ -821,7 +846,17 @@ export function Viewport() {
   const studioFeatures = useStore(activeFeatures);
   // Picked parts, or the parts a picked feature made (or a Boolean being set up uses), light up.
   const booleanDef = useStore((s) => (s.editing?.draft.type === "boolean" ? s.editing.draft.booleanDef ?? null : null));
-  const deleting = useStore((s) => (s.editing?.draft.type === "deletePart" ? s.editing.draft.deleteParts ?? NO_IDS : s.editing?.draft.type === "simplify" ? s.editing.draft.simplifyParts ?? NO_IDS : null));
+  const deleting = useStore((s) =>
+    s.editing?.draft.type === "deletePart"
+      ? s.editing.draft.deleteParts ?? NO_IDS
+      : s.editing?.draft.type === "simplify"
+        ? s.editing.draft.simplifyParts ?? NO_IDS
+        : s.editing?.draft.type === "composite"
+          ? s.editing.draft.compositeParts ?? NO_IDS
+          : s.editing?.draft.pattern?.of === "part"
+            ? s.editing.draft.pattern.parts ?? NO_IDS
+            : null,
+  );
   // An Extrude, Revolve, Sweep or Hole open: the parts it joins or cuts (from its preview) light up.
   const effectDraft = useStore((s) => {
     const d = s.editing?.draft;

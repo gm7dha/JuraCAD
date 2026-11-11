@@ -110,6 +110,8 @@ export interface PartMesh {
   surface?: boolean;
   /** Exact volume of a solid part (mm³), from the solid model rather than the display mesh — for weights. */
   volume?: number;
+  /** A composite part: the parts grouped in it (separate solids inside it), shown under it in the Parts list. */
+  members?: { id: string; name: string }[];
 }
 
 /** A sheet metal part laid out flat (mm): the outline to cut, holes, and where it bends. */

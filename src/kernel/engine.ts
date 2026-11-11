@@ -57,6 +57,7 @@ import { writeStep, writeStepAssembly } from "./stepExport";
 import { stepPartCount } from "./stepCount";
 import { importCacheKey, importKey, importReport, importSolids, isImportedSurface } from "./importer";
 import { simplifyShape } from "./simplify";
+import { regionOfFaces } from "./facePattern";
 import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
 import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
@@ -65,6 +66,8 @@ import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredIt
 const MAIN_STUDIO_ID = "main";
 
 interface BuiltPart {
+  /** A composite part: the parts grouped in it (they stay separate solids in its shape). */
+  members?: { id: string; name: string }[];
   /** Parts a feature merged into this one, by the feature's id: their names (for the dialog's "joining Part 2 into it"). */
   joined?: { feature: string; names: string[] }[];
   /** Built in another configuration, only for assemblies (left out when "all parts" are meant). */
@@ -2031,6 +2034,7 @@ export class GeometryEngine {
           // Names the user gave parts (used in the lists and in exported files).
           const names = studio.partNames ?? partNames;
           for (const p of this.parts) if (names[p.id]) p.name = names[p.id];
+          for (const p of this.parts) for (const m of p.members ?? []) if (names[m.id]) m.name = names[m.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
           b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map() };
@@ -2668,6 +2672,11 @@ export class GeometryEngine {
         const r = this.applySimplify(feature, features);
         if (r.error) featureErrors[feature.id] = r.error;
         if (r.note) infoNotes[feature.id] = r.note;
+        continue;
+      }
+      if (feature.type === "composite") {
+        const err = this.applyComposite(feature);
+        if (err) featureErrors[feature.id] = err;
         continue;
       }
       if (feature.type === "deletePart") {
@@ -4648,8 +4657,10 @@ export class GeometryEngine {
     const badParam = def.params.find((p) => errors[p.key]);
     if (badParam) return { error: `${badParam.label}: ${errors[badParam.key]}` };
     const mirror = feature.type === "mirror";
-    const sourceIds = (mirror ? feature.mirror?.sources : feature.pattern?.sources) ?? [];
-    if (sourceIds.length === 0) {
+    // Onshape's Pattern type: whole parts, or faces of one part, instead of features.
+    const of = mirror ? feature.mirror?.of : feature.pattern?.of;
+    const sourceIds = of ? [] : ((mirror ? feature.mirror?.sources : feature.pattern?.sources) ?? []);
+    if (!of && sourceIds.length === 0) {
       return { error: `Pick the features to ${mirror ? "mirror" : "repeat"} — click them in the feature list while this dialog is open.` };
     }
 
@@ -4708,10 +4719,15 @@ export class GeometryEngine {
         if (sk.suppressed || !sk.sketch?.plane) return { error: `${sk.name} can't be used as the path.` };
         // Walk the path from the end nearest the first thing being repeated.
         const firstTool = this.tools.get(ordered[0]?.id ?? "");
+        const firstPart = of === "part" ? this.parts.find((p) => p.id === feature.pattern?.parts?.[0]) : undefined;
         let near: Vec3 | undefined;
-        if (firstTool) {
-          const [lo, hi] = boundsOf(firstTool.shape);
+        const seed = firstTool?.shape ?? firstPart?.shape;
+        if (seed) {
+          const [lo, hi] = boundsOf(seed);
           near = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+        } else if (of === "face") {
+          const centres = (feature.picks ?? []).flatMap((p) => (p.ref.kind === "face" ? [p.ref.center] : []));
+          if (centres.length) near = [0, 1, 2].map((k) => centres.reduce((t, c) => t + c[k], 0) / centres.length) as Vec3;
         }
         const walk = walkPath(sk.sketch.plane, sk.sketch.data, near);
         if (typeof walk === "string") return { error: walk };
@@ -4765,6 +4781,8 @@ export class GeometryEngine {
     }
 
     if (placements.length === 0) return { error: "Every copy is skipped, so the pattern does nothing. Take some numbers out of Skip copies." };
+    if (of === "part") return this.patternParts(feature, placements, partCounter);
+    if (of === "face") return this.patternFaces(feature, placements);
 
     // Work on copies of the parts, and only keep them if everything succeeds.
     const working = new Map<string, Shape3D>();
@@ -4865,6 +4883,152 @@ export class GeometryEngine {
     }
     const { made } = this.commitPlan(feature, plan, partCounter, "");
     return made ? { newParts: made } : {};
+  }
+
+  /**
+   * Part pattern (Onshape's Pattern type "Part"): each picked part copied to
+   * every place, each copy a new part (numbered on, like Move / copy's copies;
+   * a surface's copies named after it).
+   */
+  private patternParts(feature: Feature, placements: ((s: Shape3D) => Shape3D)[], partCounter: number): { error?: string; newParts?: number } {
+    const ids = [...new Set(feature.pattern?.parts ?? [])];
+    if (!ids.length) return { error: "Click the parts to repeat — in the 3D view or in the Parts list." };
+    const parts = ids.map((id) => this.parts.find((p) => p.id === id));
+    if (parts.some((p) => !p)) return { error: "One of the parts it repeats no longer exists (or is made later in the list). Edit this pattern and pick the parts again." };
+    for (const p of parts as BuiltPart[]) {
+      if (p.sheet) return { error: `${p.name} is sheet metal, which can't be patterned whole yet (its flat pattern couldn't follow). Copy it with Move / copy, or pattern the features that made it.` };
+    }
+    const made: BuiltPart[] = [];
+    const taken = new Set(this.parts.map((p) => p.id));
+    let solids = 0;
+    try {
+      for (const part of parts as BuiltPart[]) {
+        for (const [k, place] of placements.entries()) {
+          const shape = place(part.shape.clone());
+          let id = feature.id;
+          for (let i = 2; taken.has(id); i++) id = `${feature.id}~${i}`;
+          taken.add(id);
+          if (part.surface) made.push({ id, name: `${part.name} (copy ${k + 1})`, featureIds: [feature.id], shape, surface: true });
+          else {
+            solids++;
+            made.push({
+              id,
+              name: `Part ${partCounter + solids}`,
+              featureIds: [feature.id],
+              shape,
+              // A copy of a composite part is a composite of copies of its parts.
+              ...(part.members?.length ? { members: part.members.map((m) => ({ id: `${id}/${m.id}`, name: m.name })) } : {}),
+            });
+          }
+        }
+      }
+    } catch (e) {
+      made.forEach((p) => p.shape.delete());
+      return { error: describeError(e, "Couldn't copy the parts.") };
+    }
+    this.parts.push(...made);
+    return solids ? { newParts: solids } : {};
+  }
+
+  /**
+   * Face pattern / face mirror (Onshape's Pattern type "Face"): the boss,
+   * pocket or hole the picked faces bound (see facePattern.ts) is copied to
+   * every place on the same part — added for a boss, cut for a pocket or hole.
+   */
+  private patternFaces(feature: Feature, placements: ((s: Shape3D) => Shape3D)[]): { error?: string } {
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    const verb = feature.type === "mirror" ? "mirror" : "repeat";
+    if (!picks.length) return { error: `Click the faces to ${verb} — for example the side and top of a boss, or the walls and floor of a pocket or hole.` };
+    if (new Set(picks.map((p) => p.partId)).size > 1) return { error: `Face ${feature.type === "mirror" ? "mirrors" : "patterns"} work on one part at a time. Take out the faces picked on the other part.` };
+    const part = this.parts.find((p) => p.id === picks[0].partId);
+    if (!part) return { error: "The part these faces were on no longer exists. Edit this feature and pick the faces again." };
+    if (part.surface) return { error: `${part.name} is a surface. Face ${feature.type === "mirror" ? "mirrors" : "patterns"} work on solid parts.` };
+    let region: ReturnType<typeof regionOfFaces>;
+    let faces: Face[];
+    try {
+      faces = findPickedFaces(part.shape, picks);
+    } catch (e) {
+      return { error: describeError(e, "Couldn't find the picked faces.") };
+    }
+    try {
+      region = regionOfFaces(faces, part.shape);
+    } catch (e) {
+      return { error: describeError(e, "Couldn't work out what the picked faces enclose.") };
+    } finally {
+      faces.forEach((f) => f.delete());
+    }
+    const count = (x: Shape3D) => {
+      const list = solidsOf(x);
+      list.forEach((y) => y.delete());
+      return list.length;
+    };
+    const before = count(part.shape);
+    let shape = part.shape.clone();
+    try {
+      for (const place of placements) {
+        const copy = place(region.tool.clone());
+        try {
+          const next = region.operation === "remove" ? shape.cut(copy) : shape.fuse(copy);
+          shape.delete();
+          shape = next;
+        } finally {
+          copy.delete();
+        }
+      }
+    } catch (e) {
+      shape.delete();
+      return { error: describeError(e, `Couldn't ${verb} these faces.`) };
+    } finally {
+      region.tool.delete();
+    }
+    const after = count(shape);
+    if (after === 0) {
+      shape.delete();
+      return { error: "This would remove the whole part." };
+    }
+    if (region.operation === "add" && after > before) {
+      shape.delete();
+      return { error: `A copy doesn't touch ${part.name}, so it would be a loose piece. Check the ${feature.type === "mirror" ? "mirror plane" : "direction, spacing and number of copies"} — each copy must sit on the part.` };
+    }
+    part.shape.delete();
+    part.shape = shape;
+    if (!part.featureIds.includes(feature.id)) part.featureIds.push(feature.id);
+    return {};
+  }
+
+  /**
+   * Composite part (Onshape's, "closed"): the picked parts become one part — its
+   * shape a compound of theirs, so they stay separate solids inside — picked,
+   * listed, coloured, exported and put in assemblies as one. It goes at the end
+   * of the parts (so it's the latest part, as a new part would be).
+   */
+  private applyComposite(feature: Feature): string | null {
+    const ids = [...new Set(feature.compositeParts ?? [])];
+    if (ids.length < 2) return "Pick two or more parts to group into a composite part — in the 3D view or in the Parts list.";
+    const parts = ids.map((id) => this.parts.find((p) => p.id === id));
+    if (parts.some((p) => !p)) return "One of its parts no longer exists (or is made later in the list). Edit this composite part and pick the parts again.";
+    const members = parts as BuiltPart[];
+    for (const p of members) {
+      if (p.surface) return `${p.name} is a surface. A composite part is made of solid parts — thicken it first, or leave it out.`;
+      if (p.sheet) return `${p.name} is sheet metal, which can't go in a composite part yet (its flat pattern couldn't follow).`;
+    }
+    let shape: Shape3D;
+    try {
+      shape = makeCompound(members.map((p) => p.shape)) as Shape3D;
+    } catch (e) {
+      return describeError(e, "Couldn't group these parts.");
+    }
+    const threads = members.flatMap((p) => p.threads ?? []);
+    const featureIds = [...new Set([...members.flatMap((p) => p.featureIds), feature.id])];
+    // A composite inside another: its own members are listed.
+    const list = members.flatMap((p) => p.members ?? [{ id: p.id, name: p.name }]);
+    for (const p of members) {
+      p.shape.delete();
+      for (const t of this.tools.values()) if (t.partId === p.id) t.partId = feature.id;
+    }
+    this.parts = this.parts.filter((p) => !members.includes(p));
+    this.parts.push({ id: feature.id, name: feature.name, featureIds, shape, members: list, ...(threads.length ? { threads } : {}) });
+    return null;
   }
 
   /** A cut came out right: a valid solid, with as many solids and shells as `plain` (the same cut without the extras), and less in it. */
@@ -5949,7 +6113,7 @@ export class GeometryEngine {
         volume = null;
       }
     }
-    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
+    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(p.members?.length ? { members: p.members.map((m) => ({ ...m })) } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
   }
 
   /** A sheet metal part's flat pattern (null for other parts, or if it can't be unfolded). */

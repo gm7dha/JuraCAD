@@ -459,6 +459,25 @@
   circular patterns made in the dialog start so, and ask); the engine's `mirrorPlane`/`pickedAxis`/`lineAxis` resolve them.
   The dialogs' boxes are `ReferenceBox` in FeatureDialog.tsx; sketch lines are clickable in the view (`PickTarget`
   "sketchLine", `SceneManager.setPickLines`) and the chosen plane/axis is drawn (`setReference`) while one is open.
+- Pattern types and Composite part (Onshape's): Linear/Circular/Curve pattern `pattern.of` ("part" | "face"; missing =
+  features, `sources`, exactly as before) and Mirror `mirror.of` "face" (beside `part` = whole part). Part: `pattern.parts`,
+  each copy a new part (`patternParts` in engine.ts: ids `<feature>`, `~2`…, solids "Part N" numbered on, surfaces
+  "<name> (copy k)", a composite's copies keep `members`; threads not copied; sheet metal refused). Face: faces of one part in
+  `Feature.picks` (parsed only when `of` is "face") → `src/kernel/facePattern.ts` `regionOfFaces`: the faces' open rim
+  (edges only one picked face uses) chained into loops, each capped flat (a rim that isn't flat is refused in plain words),
+  made a solid; inside the part = a boss (copies fused; a copy that would float off is refused), outside = a pocket/hole
+  (copies cut); half and half refused. `patternFaces` does both patterns and face mirrors (same placements). Dialog: Parts /
+  Features / Faces segmented choice (mirror: Whole part / Features / Faces), `PatternItemsBox` takes view clicks while
+  `pattern.picking === "items"` (always for a curve pattern) / `mirror.picking === "faces"` (not saved); Parts list clicks
+  go to `toggleDraftPart`; starting a pattern with parts / faces selected picks them (store startCreate). Composite part:
+  feature "composite", `compositeParts` (≥ 2 solid parts; Toolbar next to Delete part, Parts list's several-parts menu) →
+  `applyComposite`: the members are taken out and one part with id = the feature's, name = its name, shape = a compound of
+  theirs (separate solids inside), their featureIds/threads, `BuiltPart.members` → `PartMesh.members` (listed under it in
+  the Parts list, renamed by partNames) is put at the end; so selection, colour, exports, assemblies treat it as one. Only
+  "closed" composites (members aren't selectable on their own). Dependents: part lists for `pattern.parts` /
+  `compositeParts` (`withoutGone` drops gone ones). Claude: linear/circular_pattern `parts` | `faces` (+ `part`) | `features`,
+  `skip`; mirror `faces` (+ `part`); `composite_part` `parts`. Tests: tests/patternTypes (pure), enginePartPattern (counts,
+  ids, names, skip, boss/hole/pocket by faces, face mirror, composite export/assembly), mcpPatternTypes.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.

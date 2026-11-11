@@ -375,6 +375,8 @@ export interface AppState {
   setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
+  /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
+  toggleDraftPart: (partId: string) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
   toggleDraftSource: (featureId: string) => void;
   /** Mirror: the plane to mirror across. */
@@ -1033,6 +1035,19 @@ export const useStore = create<AppState>((set, get) => {
           if (draft.pattern) draft.pattern = { ...draft.pattern, sources: [picked.id] };
         }
       }
+      // As in Onshape: a pattern started with parts picked (in the Parts list) repeats those parts; with faces picked in
+      // the view, those faces (a boss or pocket). A mirror started with faces picked mirrors them.
+      const pickedFaces = s.selection.filter((item) => item.kind === "face").map((item) => pickFor(s.parts, item)).filter((p): p is TopoPick => p !== null);
+      if (draft.pattern && s.selectedParts.length) draft.pattern = { ...draft.pattern, of: "part", parts: [...s.selectedParts], sources: [] };
+      else if (draft.pattern && pickedFaces.length) {
+        draft.pattern = { ...draft.pattern, of: "face", sources: [] };
+        draft.picks = pickedFaces;
+      } else if (draft.mirror && pickedFaces.length) {
+        draft.mirror = { ...draft.mirror, of: "face", sources: [] };
+        draft.picks = pickedFaces;
+      }
+      // A composite part starts with the parts picked in the Parts list.
+      if (type === "composite") draft.compositeParts = [...s.selectedParts];
       // Fillet, chamfer and shell start with whatever is selected (faces only, for shell).
       if (isPickFeature(type)) {
         draft.picks = s.selection
@@ -1216,6 +1231,16 @@ export const useStore = create<AppState>((set, get) => {
         const i = picks.findIndex((p) => p.partId === pick.partId && sameRef(p.ref, pick.ref));
         const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, pick];
         return { editing: { ...s.editing, draft: { ...s.editing.draft, picks: next } } };
+      }),
+
+    toggleDraftPart: (partId) =>
+      set((s) => {
+        const d = s.editing?.draft;
+        if (!s.editing || !d) return {};
+        const toggle = (list: string[]) => (list.includes(partId) ? list.filter((x) => x !== partId) : [...list, partId]);
+        if (d.type === "composite") return { editing: { ...s.editing, draft: { ...d, compositeParts: toggle(d.compositeParts ?? []) } } };
+        if (d.pattern?.of === "part") return { editing: { ...s.editing, draft: { ...d, pattern: { ...d.pattern, parts: toggle(d.pattern.parts ?? []), picking: "items" } } } };
+        return {};
       }),
 
     toggleDraftSource: (featureId) =>

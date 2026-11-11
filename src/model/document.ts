@@ -151,6 +151,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.neutral = { kind: "default", name: "Top" };
   }
   if (type === "deletePart") feature.deleteParts = [];
+  if (type === "composite") feature.compositeParts = [];
   if (type === "simplify") {
     feature.simplifyParts = [];
     feature.simplify = "normal";
@@ -496,6 +497,8 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         ...(feature.type === "linearPattern" && parseLineRef(pt?.line2) ? { line2: parseLineRef(pt?.line2)! } : {}),
         ...(feature.type !== "curvePattern" && pt?.unset === true ? { unset: true } : {}),
         ...(skipList(pt?.skip).length ? { skip: skipList(pt?.skip) } : {}),
+        ...(pt?.of === "part" || pt?.of === "face" ? { of: pt.of } : {}),
+        ...(pt?.of === "part" ? { parts: ids(pt?.parts) } : {}),
       };
       if (feature.type === "curvePattern" && typeof f.pathRef === "string") feature.pathRef = f.pathRef;
     }
@@ -509,6 +512,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         ...(mr?.unset === true ? { unset: true } : {}),
         ...(typeof mr?.part === "string" ? { part: mr.part } : {}),
         ...(mr?.join === true ? { join: true } : {}),
+        ...(mr?.of === "face" && typeof mr?.part !== "string" ? { of: "face" as const } : {}),
       };
     }
     if (feature.type === "transform") {
@@ -607,6 +611,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       feature.simplify = isSimplifyLevel(f.simplify) ? f.simplify : "normal";
     }
     if (feature.type === "import" && isSimplifyLevel(f.simplify)) feature.simplify = f.simplify;
+    if (feature.type === "composite") feature.compositeParts = ids(f.compositeParts);
     if (feature.type === "deletePart") {
       feature.deleteParts = Array.isArray(f.deleteParts) ? (f.deleteParts as unknown[]).filter((x): x is string => typeof x === "string") : [];
     }
@@ -665,7 +670,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       });
       if (more.length) feature.moreAreas = more;
     }
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert)) {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert) || feature.pattern?.of === "face" || feature.mirror?.of === "face") {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);
