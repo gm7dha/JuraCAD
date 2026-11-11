@@ -97,7 +97,9 @@ jobs:
         run: node scripts/check-claude-extension.mjs dist/juracad-claude.mcpb
 
       - name: Install browser for the smoke test
-        run: npx playwright install --with-deps chromium
+        # Ubuntu's package mirrors are sometimes unreachable from GitHub's runners; the runner image already has
+        # Chromium's system libraries, so fall back to installing just the browser.
+        run: npx playwright install --with-deps chromium || npx playwright install chromium
 
       - name: Browser smoke test
         env:
