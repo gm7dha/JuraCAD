@@ -592,8 +592,9 @@ function settleFreeRuns(runs: Run[], free: boolean[]): void {
       if (settled[i]) continue;
       let best: { turn: number; flip: boolean } | null = null;
       for (const mine of ends(runs[i])) {
-        runs.forEach((other, j) => {
-          if (j === i || !settled[j] || !other.prims.length) return;
+        for (let j = 0; j < runs.length; j++) {
+          const other = runs[j];
+          if (j === i || !settled[j] || !other.prims.length) continue;
           for (const theirs of ends(other)) {
             if (theirs.key !== mine.key) continue;
             // Walking in along theirs (against its way out) and out along mine.
@@ -603,7 +604,7 @@ function settleFreeRuns(runs: Run[], free: boolean[]): void {
             const flip = mine.atStart === theirs.atStart;
             if (!best || turn < best.turn - 1e-9) best = { turn, flip };
           }
-        });
+        }
       }
       if (best) {
         if (best.flip) runs[i] = { ...runs[i], prims: backwards(runs[i].prims) };
