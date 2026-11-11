@@ -1,19 +1,19 @@
 /**
- * Outlines of printed puzzle pieces for tests: the boundary of a mesh's flat underside (z = 0) as segments, a grid to
+ * Outlines of printed puzzle pieces for tests: the boundary of a mesh's flat underside (z = 0, or another height) as segments, a grid to
  * look segments up near a point, segment distances and crossings, and "does this outline, moved, cross that one?".
  */
 type XY = [number, number];
 export type Seg = [number, number, number, number];
 
-/** The edges of a body's z = 0 faces that belong to one triangle only: its outline. */
-export function outlineSegs(b: { vertices: ArrayLike<number>; triangles: ArrayLike<number> }): Seg[] {
+/** The edges of a body's faces at height z (its underside) that belong to one triangle only: its outline. */
+export function outlineSegs(b: { vertices: ArrayLike<number>; triangles: ArrayLike<number> }, z = 0): Seg[] {
   const v = b.vertices;
   const t = b.triangles;
   const key = (i: number) => `${v[i * 3].toFixed(6)},${v[i * 3 + 1].toFixed(6)}`;
   const count = new Map<string, { n: number; a: XY; b: XY }>();
   for (let k = 0; k < t.length; k += 3) {
     const ids = [t[k], t[k + 1], t[k + 2]];
-    if (!ids.every((i) => v[i * 3 + 2] === 0)) continue;
+    if (!ids.every((i) => Math.abs(v[i * 3 + 2] - z) < 1e-9)) continue;
     for (let e = 0; e < 3; e++) {
       const [p, q] = [ids[e], ids[(e + 1) % 3]];
       const [kp, kq] = [key(p), key(q)];
