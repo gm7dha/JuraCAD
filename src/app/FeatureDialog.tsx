@@ -17,6 +17,7 @@ import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import type { Axis, ExtrudeEnd, Feature } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { activeFeatures, activeStudioId, studioParts, useLengthUnit, useStore } from "../model/store";
+import { compositeProblem } from "../model/composite";
 import { draftEffect } from "../model/partLinks";
 import { studiosOf } from "../model/studios";
 import type { Operation } from "../model/types";
@@ -2244,9 +2245,16 @@ function CompositeOptions() {
   if (draft?.type !== "composite") return null;
   const ids = draft.compositeParts ?? [];
   const nameOf = (id: string) => parts.find((p) => p.id === id)?.name ?? "(missing part)";
+  // Said at once (the composite isn't built while its parts are being picked).
+  const problem = compositeProblem(ids, parts);
   return (
     <fieldset className="param-group">
       <legend>Parts in it</legend>
+      {problem && (
+        <p className="dialog-error" role="alert">
+          {problem}
+        </p>
+      )}
       {ids.length ? (
         <ul className="pick-list" aria-label="Parts in the composite part">
           {ids.map((id) => (

@@ -9,6 +9,7 @@ import { createFeature, emptyDocument, historyOf, madeByDraft, parseDocument, pi
 import { buildCheckReport } from "../src/model/checkReport";
 import { useStore } from "../src/model/store";
 import type { PartMesh } from "../src/kernel/protocol";
+import { compositeProblem } from "../src/model/composite";
 import type { Feature, JuraCADDocument } from "../src/model/types";
 import type { TopoPick } from "../src/geometry/topoRef";
 
@@ -106,6 +107,9 @@ describe("the check report", () => {
     expect(texts).not.toMatch(/separate pieces — /);
     expect(texts).toMatch(/composite part of 2 parts/);
     expect(r.parts[0].findings.every((f) => f.level === "ok")).toBe(true);
+    // Split into more pieces than it had parts: it says pieces, as its Parts list does.
+    const split = buildCheckReport({ parts: [{ partId: "c", name: "C", geometryValid: true, exactVolume: 2000, mesh: { ...mesh, pieces: 3 }, thinnest: null, members: 2 }] }, 0);
+    expect(split.parts[0].findings.map((f) => f.text).join("\n")).toMatch(/composite part in 3 pieces/);
   });
 });
 
@@ -151,5 +155,51 @@ describe("the app: picking parts and faces", () => {
     expect(s().editing!.draft.pattern?.parts).toEqual(["a"]);
     s().toggleDraftPart("b");
     expect(s().editing!.draft.pattern?.parts).toEqual(["a", "b"]);
+  });
+});
+
+describe("composite part problems, before Accept", () => {
+  const parts = [{ id: "a", name: "Part 1" }, { id: "b", name: "Part 2" }, { id: "s", name: "Surface 1", surface: true }];
+  it("asks for two or more solid parts that are there", () => {
+    expect(compositeProblem([], parts)).toMatch(/two or more/);
+    expect(compositeProblem(["a"], parts)).toMatch(/two or more/);
+    expect(compositeProblem(["a", "a"], parts)).toMatch(/two or more/);
+    expect(compositeProblem(["a", "s"], parts)).toMatch(/Surface 1 is a surface/);
+    expect(compositeProblem(["a", "gone"], parts)).toMatch(/no longer exists/);
+    expect(compositeProblem(["a", "b"], parts)).toBeNull();
+  });
+});
+
+describe("the app: picking state isn't kept, and later parts' flags survive the preview", () => {
+  const s = () => useStore.getState();
+  const mesh = (id: string): PartMesh =>
+    ({ id, name: id, featureIds: [id], vertices: new Float32Array(), normals: new Float32Array(), triangles: new Uint32Array(), faceGroups: [], lines: new Float32Array(), edgeGroups: [], faceRefs: [], edgeRefs: [] }) as PartMesh;
+
+  it("drops pattern.picking and mirror.picking on Accept", () => {
+    useStore.setState({ history: historyOf(docOf([feat("a", "box")])), editing: null, parts: [mesh("a")], selectedParts: ["a"], selection: [], selectedFeatureId: null, rollbackTo: null });
+    s().startCreate("linearPattern");
+    s().setDraftField({ pattern: { ...s().editing!.draft.pattern!, picking: "items" } });
+    expect(s().commitDraft()).toBe(true);
+    const saved = s().history.present.features.at(-1)!;
+    expect(saved.pattern?.of).toBe("part");
+    expect("picking" in saved.pattern!).toBe(false);
+    useStore.setState({ selection: [], selectedParts: [] });
+    s().startCreate("mirror");
+    s().setDraftField({ mirror: { ...s().editing!.draft.mirror!, of: "face", picking: "faces" } });
+    s().commitDraft();
+    expect("picking" in s().history.present.features.at(-1)!.mirror!).toBe(false);
+  });
+
+  it("keeps hidden, see-through and selected parts while only the parts before are shown", () => {
+    useStore.setState({ history: historyOf(docOf([feat("a", "box"), feat("z", "box")])), editing: null, parts: [mesh("a"), mesh("z")], hiddenParts: ["z"], transparentParts: ["z"], selectedParts: [], selection: [], rollbackTo: null });
+    s().startCreate("composite");
+    // The picking preview has only the parts before it (here, none after "a" would be built if it sat earlier).
+    s().setRebuildResult([mesh("a")], {}, 1);
+    expect(s().hiddenParts).toEqual(["z"]);
+    expect(s().transparentParts).toEqual(["z"]);
+    // With nothing picking, parts that are gone are forgotten as before.
+    s().cancelDraft();
+    s().setRebuildResult([mesh("a")], {}, 1);
+    expect(s().hiddenParts).toEqual([]);
   });
 });

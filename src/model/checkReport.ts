@@ -92,7 +92,8 @@ export function reportPart(p: PartCheck): PartReport {
 
   if (p.members && m.pieces > 1) {
     // A composite part is meant to be several pieces.
-    findings.push({ level: "ok", text: `A composite part of ${plural(p.members, "part")} (${m.pieces} separate pieces, made as one item)` });
+    // As its Parts list shows it: its parts while there's one piece each, else its pieces.
+    findings.push({ level: "ok", text: p.members === m.pieces ? `A composite part of ${plural(p.members, "part")} (separate pieces, made as one item)` : `A composite part in ${m.pieces} pieces (made as one item)` });
   } else if (m.pieces > 1) {
     findings.push({ level: "warn", text: `Is in ${m.pieces} separate pieces — they'll be made as separate objects` });
   } else if (m.pieces === 1) {

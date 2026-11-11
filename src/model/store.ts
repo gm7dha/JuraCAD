@@ -12,6 +12,8 @@ import {
   commit,
   createFeature,
   madeByDraft,
+  picksPartsBefore,
+  withoutPicking,
   emptyDocument,
   historyOf,
   redo as redoHistory,
@@ -1279,7 +1281,7 @@ export const useStore = create<AppState>((set, get) => {
       if (Object.keys(errors).length > 0) return false;
       // A printed fit chosen in the Hole dialog brings its fit_* variables into the design, in the same undo step.
       const fitted = settlePrintedFit(get().history.present.variables, editing.draft, () => newId("v"));
-      const named = { ...fitted.draft, name: fitted.draft.name.trim() || "Unnamed feature" };
+      const named = withoutPicking({ ...fitted.draft, name: fitted.draft.name.trim() || "Unnamed feature" });
       // Part edges brought in just to snap to, that nothing uses any more, are tidied away.
       const sk = named.sketch;
       const draft = sk ? { ...named, sketch: { ...sk, data: withoutEmptyExtras(pruneReferences(sk.data)) } } : named;
@@ -2166,6 +2168,9 @@ export const useStore = create<AppState>((set, get) => {
           }
         }
         const ids = new Set(parts.map((p) => p.id));
+        // Picking parts for the open feature shows only the parts before it for a while: later parts' hidden,
+        // see-through and selected flags are kept for when they're back.
+        const keep = picksPartsBefore(s.editing?.draft ?? null);
         return {
           parts,
           featureErrors,
@@ -2177,9 +2182,9 @@ export const useStore = create<AppState>((set, get) => {
           rebuildBusy: false,
           // Drop picks and hidden flags for parts that no longer exist.
           selection: s.selection.filter((x) => ids.has(x.partId)),
-          hiddenParts: s.hiddenParts.filter((p) => ids.has(p)),
-          transparentParts: s.transparentParts.filter((p) => ids.has(p)),
-          selectedParts: s.selectedParts.filter((p) => ids.has(p)),
+          hiddenParts: keep ? s.hiddenParts : s.hiddenParts.filter((p) => ids.has(p)),
+          transparentParts: keep ? s.transparentParts : s.transparentParts.filter((p) => ids.has(p)),
+          selectedParts: keep ? s.selectedParts : s.selectedParts.filter((p) => ids.has(p)),
         };
       }),
   };

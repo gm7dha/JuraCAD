@@ -314,6 +314,20 @@ export function pickingPreview(features: Feature[], draft: Feature | null): Feat
   return at < 0 ? features : features.slice(0, at);
 }
 
+/** The open feature as saved: which box a click goes to (`pattern.picking`, `mirror.picking`) is never kept. */
+export function withoutPicking(f: Feature): Feature {
+  let out = f;
+  if (out.pattern?.picking !== undefined) {
+    const { picking: _p, ...pattern } = out.pattern;
+    out = { ...out, pattern };
+  }
+  if (out.mirror?.picking !== undefined) {
+    const { picking: _p, ...mirror } = out.mirror;
+    out = { ...out, mirror };
+  }
+  return out;
+}
+
 /** Is this part made by the open feature itself (a copy it makes, or the composite)? */
 export function madeByDraft(partId: string, draftId: string): boolean {
   return partId === draftId || partId.startsWith(`${draftId}~`);

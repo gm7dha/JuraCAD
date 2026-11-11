@@ -471,7 +471,9 @@
   Features / Faces segmented choice (mirror: Whole part / Features / Faces), `PatternItemsBox` takes view clicks while
   `pattern.picking === "items"` / `mirror.picking === "faces"` (not saved; "Done — show the copies" stops it). While picking
   (and always for an open Composite part), `picksPartsBefore` → connect.ts builds `pickingPreview` (the features before it),
-  so the real parts are clicked and lit (the Viewport's part highlight); `madeByDraft` refuses its own copies anyway. Parts
+  so the real parts are clicked and lit (the Viewport's part highlight; setRebuildResult keeps hidden/see-through/selected
+  part ids meanwhile; `withoutPicking` drops `picking` on Accept); the Composite dialog shows `compositeProblem`
+  (src/model/composite.ts) at once; `madeByDraft` refuses its own copies anyway. Parts
   list clicks go to `toggleDraftPart`; the view shows picked faces together with the mirror plane / pattern direction; starting a pattern with parts / faces selected picks them (store startCreate). Composite part:
   feature "composite", `compositeParts` (≥ 2 solid parts; Toolbar next to Delete part, Parts list's several-parts menu) →
   `applyComposite`: the members are taken out and one part with id = the feature's, name = its name, shape = a compound of
