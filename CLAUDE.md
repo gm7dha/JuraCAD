@@ -367,6 +367,23 @@
   BSplines that break round corners — and the pieces, which only touch end to end, are fused with `JOIN_FUZZ`. Kept facing one way,
   a closed loop is its smooth runs moved along (a smooth loop is refused: it always goes edge-on somewhere). Surfaces still refuse
   twist round corners and loops.
+- Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
+  `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
+  params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin). Pure
+  `src/sketch/thin.ts`: `thinSketches(data, sides, keep)` — every run of `findChains(…, { branching: true })` offset each
+  side (`offsetRun`: lines and arcs only — splines/ellipses refused; neighbours carried on or cut back to where they meet, the
+  meeting nearest the corner = sharp mitred corners, a bridging line past `MITRE_LIMIT` × d; arcs keep their centre), an open
+  run closed by square ends, a closed one two loops (walked anticlockwise, so its first side is inside; an open run walked from
+  its bottom-left end, so a left-to-right line's first side is above); too thick = a plain `ThinError` (loops crossing, a piece
+  eaten by its corners, an arc closing on its centre). Each run comes back as its own SketchData of lines/arcs/circles (the
+  original points + construction lines kept; `keep` = a revolve's axis, as construction). The engine's `buildThin` (top of
+  `buildSolid`) builds each as the feature would build that sketch (same ends, depths, axis, path; `areas`/`moreAreas`
+  ignored, a note says so) and fuses them, so every operation, `apart` rule and extrude end works unchanged. "Surface" is the
+  other checkbox (a skin, no inside); the two are exclusive. Revolve "Two ways": `revolve.second` + `angle2` (not with
+  `symmetric`): revolved by angle + angle2 (`twoWayAngle`, ≤ 360) then turned back by angle2 (`twoWayRevolve` in revolve.ts;
+  `revolveMore` too); the dialog's One way / Symmetric / Two ways. Claude: `thin`, `thin_other_side`, `thin_centred`,
+  `thin_flip` on extrude/revolve/sweep and revolve's `second_angle` (featureSpec `thinWall`). Tests: tests/sketchThin (pure),
+  engineThin, mcpThin.
 - Surfaces: `src/kernel/surface.ts` (extrude/revolve/sweep/loft of a sketch's open or closed runs — `findChains` in
   `src/sketch/regions.ts` — as shells; Fill from edges; thicken, enclose and offset). A surface part has `surface: true`
   (BuiltPart and PartMesh); solid features add to / cut from the latest *solid* part, never a surface. replicad's

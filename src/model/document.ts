@@ -635,7 +635,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "revolve") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const rv = f.revolve as Record<string, unknown> | undefined;
-      feature.revolve = { axis: typeof rv?.axis === "string" ? rv.axis : "vertical", flip: rv?.flip === true, ...(rv?.symmetric === true ? { symmetric: true } : {}) };
+      feature.revolve = { axis: typeof rv?.axis === "string" ? rv.axis : "vertical", flip: rv?.flip === true, ...(rv?.symmetric === true ? { symmetric: true } : {}), ...(rv?.second === true && rv?.symmetric !== true ? { second: true } : {}) };
     }
     if (feature.type === "import") {
       const im = parseImportedFile(f.import);
@@ -656,6 +656,10 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     }
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "hole") && f.apart === true) feature.apart = true;
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && f.intersectAll === true) feature.intersectAll = true;
+    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && f.thin && typeof f.thin === "object" && f.surface !== true) {
+      const th = f.thin as Record<string, unknown>;
+      feature.thin = { ...(th.midPlane === true ? { midPlane: true } : {}), ...(th.flip === true ? { flip: true } : {}) };
+    }
     if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && Array.isArray(f.moreAreas)) {
       const more = f.moreAreas.flatMap((m: unknown) => {
         if (!m || typeof m !== "object") return [];

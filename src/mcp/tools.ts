@@ -86,6 +86,17 @@ function mirrorWay(f: Feature, doc: JuraCADDocument): string {
   return planeLabel(m.plane);
 }
 
+/** ", a thin wall 2 mm thick (centred)" for a thin feature, else "". */
+function thinText(f: Feature): string {
+  if (!f.thin || f.surface) return "";
+  const p = f.params;
+  const t = p.thickness ?? "2";
+  const mm = (v: string) => (/^-?[\d.]+$/.test(v) ? `${v} mm` : `"${v}"`);
+  if (f.thin.midPlane) return `, a thin wall ${mm(t)} thick (centred on the lines)`;
+  const other = p.thickness2 && Number(p.thickness2) !== 0 ? ` + ${mm(p.thickness2)} on the other side` : "";
+  return `, a thin wall ${mm(t)} thick${other}${f.thin.flip ? " (flipped)" : ""}`;
+}
+
 export function summarize(f: Feature, doc: JuraCADDocument): string {
   const nameOf = (id?: string) => doc.features.find((x) => x.id === id)?.name ?? "(missing)";
   const p = f.params;
@@ -102,17 +113,17 @@ export function summarize(f: Feature, doc: JuraCADDocument): string {
       const e = f.extrude!;
       const how = e.end === "throughAll" ? "through all" : e.end === "upToFace" ? "up to a face" : e.end === "symmetric" ? `${mm(p.depth)} (half each way)` : `${mm(p.depth)}${e.second ? ` + ${mm(p.depth2)} the other way` : ""}`;
       const more = (f.moreAreas ?? []).map((m) => nameOf(m.sketch));
-      return `extrude ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} ${how}${e.flip ? ", flipped" : ""}${p.draft && p.draft !== "0" ? `, draft ${p.draft}°` : ""}, ${op}`;
+      return `extrude ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} ${how}${e.flip ? ", flipped" : ""}${p.draft && p.draft !== "0" ? `, draft ${p.draft}°` : ""}${thinText(f)}, ${op}`;
     }
     case "revolve": {
       const more = (f.moreAreas ?? []).map((m) => nameOf(m.sketch));
-      return `revolve ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too, round the same axis)` : ""} ${p.angle ?? 360}° about ${f.revolve?.axis === "vertical" || f.revolve?.axis === "horizontal" ? `the sketch's ${f.revolve.axis} axis` : "a sketch line"}${f.revolve?.symmetric ? " (half each way)" : ""}, ${op}`;
+      return `revolve ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too, round the same axis)` : ""} ${p.angle ?? 360}° about ${f.revolve?.axis === "vertical" || f.revolve?.axis === "horizontal" ? `the sketch's ${f.revolve.axis} axis` : "a sketch line"}${f.revolve?.symmetric ? " (half each way)" : f.revolve?.second ? ` + ${p.angle2 ?? 90}° the other way` : ""}${thinText(f)}, ${op}`;
     }
     case "sweep": {
       if (f.surface) return `surface sweep of ${nameOf(f.sketchRef)} along ${nameOf(f.pathRef)} (made in the app)`;
       const more = (f.moreAreas ?? []).map((m) => nameOf(m.sketch));
       const twist = f.sweepControl?.lockOrientation ? ", keeping its orientation" : p.twist && p.twist !== "0" ? `, twisting ${p.twist}°` : "";
-      return `sweep ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} along ${nameOf(f.pathRef)}${twist}, ${op}`;
+      return `sweep ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} along ${nameOf(f.pathRef)}${twist}${thinText(f)}, ${op}`;
     }
     case "hole": {
       const h = f.hole!;
@@ -328,9 +339,9 @@ const SHAPES_SCHEMA = {
 };
 
 const KIND_HELP: Record<FeatureKind, string> = {
-  extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" (right through, both ways) | "up_to_face" with up_to_face, up_to_part), flip (a "remove" cut on a face sketch goes into the part unless flip is given), second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), more_sketches ([{"sketch": name, "areas": [[x,y],…]}, …]: areas of other sketches made with the same settings, as clicking them in the app does; null or [] for none), operation',
-  revolve: 'revolve: sketch, axis ("vertical" | "horizontal" — the sketch\'s axes through its origin — or {"from":[x,y],"to":[x,y]} naming a line drawn in the sketch), angle (° default 360), symmetric, flip, areas, more_sketches (spun round the same axis, which must lie in their planes), operation',
-  sweep: 'sweep: sketch (the closed shape, drawn on a plane across the start of the path), path (another sketch: the lines/arcs to follow), twist (° turned along the whole path, default 0; whole turns — 360, 720… — on a closed loop), keep_orientation (true: the shape doesn\'t turn with the path; no twist then), areas, more_sketches (more shapes swept along the same path), operation',
+  extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" (right through, both ways) | "up_to_face" with up_to_face, up_to_part), flip (a "remove" cut on a face sketch goes into the part unless flip is given), second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), more_sketches ([{"sketch": name, "areas": [[x,y],…]}, …]: areas of other sketches made with the same settings, as clicking them in the app does; null or [] for none), thin (a wall this thick along the sketch lines/arcs/circles — open or closed — instead of filling closed shapes; null to turn off), thin_other_side (thickness on the other side too, default 0), thin_centred (true: the thickness shared both sides), thin_flip (swap the sides; on a closed shape the first side is inside), operation',
+  revolve: 'revolve: sketch, axis ("vertical" | "horizontal" — the sketch\'s axes through its origin — or {"from":[x,y],"to":[x,y]} naming a line drawn in the sketch), angle (° default 360), symmetric, second_angle (° the other way from the sketch too; angle + second_angle ≤ 360; 0 to turn off), flip, areas, more_sketches (spun round the same axis, which must lie in their planes), thin, thin_other_side, thin_centred, thin_flip (as extrude; the axis line is left out of the wall), operation',
+  sweep: 'sweep: sketch (the closed shape, drawn on a plane across the start of the path), path (another sketch: the lines/arcs to follow), twist (° turned along the whole path, default 0; whole turns — 360, 720… — on a closed loop), keep_orientation (true: the shape doesn\'t turn with the path; no twist then), areas, more_sketches (more shapes swept along the same path), thin, thin_other_side, thin_centred, thin_flip (as extrude: the profile curves made into a wall, then swept), operation',
   hole: 'hole: sketch (whose points and circle centres mark the holes — draw it on the face the holes start from, with add_sketch "on_face"), size ("M2"…"M12") with fit ("clearance" default | "tapped"), or diameter for a custom hole; style ("simple" | "counterbore" | "countersink"), end ("through_all" default | "blind" with depth), flip. Custom holes may set counterbore_diameter/counterbore_depth/countersink_diameter/countersink_angle',
   fillet: "fillet: edges (see edge choices), radius, end_radius (optional, a radius growing along the edge), part (default the latest)",
   chamfer: "chamfer: edges, distance, and optionally second_distance or angle (°), flip_side, part",

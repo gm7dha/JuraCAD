@@ -11,7 +11,7 @@ export interface ParamDef {
   /** Must be greater than zero (sizes). Positions may be any value. */
   positive?: boolean;
   /** Grouping in the dialog. */
-  group: "size" | "position";
+  group: "size" | "position" | "thin";
   /** Unit shown beside the box (millimetres unless it's an angle or a count). */
   unit?: "mm" | "°" | "";
   /** Must be a whole number. */
@@ -74,6 +74,8 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "depth2", label: "Depth the other way", defaultValue: "10", positive: true, group: "size" },
       { key: "draft", label: "Draft (taper)", defaultValue: "0", group: "size", unit: "°" },
       { key: "offset", label: "Offset (past it, or short of it with a minus amount)", defaultValue: "0", group: "size" },
+      { key: "thickness", label: "Wall thickness", defaultValue: "2", positive: true, group: "thin" },
+      { key: "thickness2", label: "Wall thickness on the other side", defaultValue: "0", min: 0, group: "thin" },
     ],
   },
   revolve: {
@@ -81,7 +83,12 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     label: "Revolve",
     namePrefix: "Revolve",
     description: "Spins the closed shapes of a sketch around a line, for round parts.",
-    params: [{ key: "angle", label: "Angle", defaultValue: "360", positive: true, group: "size", unit: "°" }],
+    params: [
+      { key: "angle", label: "Angle", defaultValue: "360", positive: true, group: "size", unit: "°" },
+      { key: "angle2", label: "Angle the other way", defaultValue: "90", positive: true, group: "size", unit: "°" },
+      { key: "thickness", label: "Wall thickness", defaultValue: "2", positive: true, group: "thin" },
+      { key: "thickness2", label: "Wall thickness on the other side", defaultValue: "0", min: 0, group: "thin" },
+    ],
   },
   shell: {
     type: "shell",
@@ -165,7 +172,11 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     label: "Sweep",
     namePrefix: "Sweep",
     description: "Carries a sketch's closed shape along a path drawn in another sketch — for pipes, handles and rails.",
-    params: [{ key: "twist", label: "Twist (turn along the whole path)", defaultValue: "0", group: "size", unit: "°" }],
+    params: [
+      { key: "twist", label: "Twist (turn along the whole path)", defaultValue: "0", group: "size", unit: "°" },
+      { key: "thickness", label: "Wall thickness", defaultValue: "2", positive: true, group: "thin" },
+      { key: "thickness2", label: "Wall thickness on the other side", defaultValue: "0", min: 0, group: "thin" },
+    ],
   },
   loft: {
     type: "loft",
@@ -527,12 +538,16 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   // Sheet metal from a part's faces has rips but no depth; from a sketch, the other way round.
   if (f.type === "sheetMetal") keys.delete(f.sheetConvert ? "depth" : "ripGap");
   // A profile kept facing one way can't also twist.
   if (f.type === "sweep" && f.sweepControl?.lockOrientation) keys.delete("twist");
+  // Thin walls: their thicknesses only when Thin is on (one when centred); a revolve's second angle only for two directions.
+  if (!f.thin || f.surface) ["thickness", "thickness2"].forEach((k) => keys.delete(k));
+  if (f.thin?.midPlane) keys.delete("thickness2");
+  if (f.type === "revolve" && !(f.revolve?.second && !f.revolve.symmetric)) keys.delete("angle2");
   if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");
   if (f.type === "extendSurface" && f.extendTo) keys.delete("distance");
   const end = f.extrude?.end ?? "blind";

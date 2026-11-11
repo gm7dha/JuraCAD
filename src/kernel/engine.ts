@@ -17,7 +17,8 @@ import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { geometrySound } from "../model/checkReport";
 import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQuality, type Operation } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
-import { axisInPlane, centreRevolve, revolveAxis, revolveSketch } from "./revolve";
+import { axisInPlane, centreRevolve, revolveAxis, revolveSketch, twoWayAngle, twoWayRevolve } from "./revolve";
+import { thinSketches } from "../sketch/thin";
 import { holeTool, type ThreadedHoleCache } from "./hole";
 import { HOLE_LEAD_IN, SCREW_SIZES, straightStart, type HoleSize } from "../model/holes";
 import { copyNumber, isSkipped } from "../model/patterns";
@@ -1394,14 +1395,52 @@ function revolveMore(feature: Feature, v: Record<string, number>, sketches: Sket
   if (!local) {
     throw new Error("the axis doesn't lie in its plane, so its shapes can't be spun round it. Use sketches drawn on a plane through the axis, or click its areas to leave them out.");
   }
-  const ropts = { axis: opts.axis, angle: v.angle, flip: opts.flip, areas: more.areas };
+  const twoWay = !!opts.second && !opts.symmetric;
+  const ropts = { axis: opts.axis, angle: twoWay ? twoWayAngle(v.angle, v.angle2) : v.angle, flip: opts.flip, areas: more.areas };
   const { plane, data } = own.sketch;
   const shape = revolveSketch(plane, data, ropts, local);
+  if (twoWay) return twoWayRevolve(shape, plane, data, ropts, v.angle2, world);
   return opts.symmetric ? centreRevolve(shape, plane, data, ropts, world) : shape;
+}
+
+/**
+ * Thin: the wall's outlines round each run of the sketch's curves (src/sketch/thin.ts), each built as the
+ * feature would build a sketch of them (same ends, depths, axis or path), joined. Areas picked and other
+ * sketches' areas don't apply (the wall follows every curve).
+ */
+function buildThin(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], notes?: string[]): Shape3D {
+  const plain: Feature = { ...feature, thin: undefined, areas: undefined, moreAreas: undefined };
+  const source = feature.sketchRef ? sketches.get(feature.sketchRef) : undefined;
+  // No usable sketch: the usual message.
+  if (!source?.sketch?.plane) return buildSolid(plain, v, sketches, all, parts);
+  if (feature.moreAreas?.length) notes?.push("A thin wall follows the curves of its own sketch only, so the areas of other sketches are left out.");
+  const keep = feature.type === "revolve" ? feature.revolve?.axis : undefined;
+  const pieces = thinSketches(source.sketch.data, { thickness: v.thickness, thickness2: v.thickness2 ?? 0, midPlane: feature.thin?.midPlane, flip: feature.thin?.flip }, keep);
+  let shape: Shape3D | null = null;
+  try {
+    for (const data of pieces) {
+      const map: SketchMap = new Map(sketches);
+      map.set(source.id, { ...source, sketch: { plane: source.sketch.plane, data } });
+      const piece = buildSolid(plain, v, map, all, parts);
+      if (!shape) shape = piece;
+      else {
+        const next: Shape3D = shape.fuse(piece);
+        shape.delete();
+        piece.delete();
+        shape = next;
+      }
+    }
+  } catch (e) {
+    shape?.delete();
+    throw e;
+  }
+  return shape!;
 }
 
 /** `notes`: problems that don't stop it being built (shown on the feature). */
 function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], threaded?: ThreadedHoleCache, notes?: string[]): Shape3D {
+  // Thin (Onshape's): a wall along the sketch's curves — each run's outlines made into a sketch of their own and built as usual.
+  if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && feature.thin && !feature.surface) return buildThin(feature, v, sketches, all, parts, notes);
   // An extrude, revolve or sweep using areas of other sketches too: each made from its own sketch with the same settings
   // (a revolve round the first sketch's axis, a sweep along the same path), then put together.
   if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && feature.moreAreas?.length && !feature.surface) {
@@ -1451,9 +1490,12 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       }
       if (feature.type === "revolve") {
         const opts = feature.revolve ?? { axis: "vertical", flip: false };
-        const ropts = { axis: opts.axis, angle: v.angle, flip: opts.flip, areas: feature.areas };
+        // Two directions: both angles in one go, then turned back by the second.
+        const twoWay = !!opts.second && !opts.symmetric;
+        const ropts = { axis: opts.axis, angle: twoWay ? twoWayAngle(v.angle, v.angle2) : v.angle, flip: opts.flip, areas: feature.areas };
         const { plane, data } = sketch.sketch;
         const shape = feature.surface ? revolveSurface(plane, data, ropts) : revolveSketch(plane, data, ropts);
+        if (twoWay) return twoWayRevolve(shape, plane, data, ropts, v.angle2);
         // Symmetric: half the angle each way from the sketch.
         return opts.symmetric ? centreRevolve(shape, plane, data, ropts) : shape;
       }
@@ -2791,7 +2833,7 @@ export class GeometryEngine {
         continue;
       }
       // An outline that's an offset crossing itself: built, but probably not as meant.
-      if ((feature.type === "extrude" || feature.type === "revolve") && feature.sketchRef) {
+      if ((feature.type === "extrude" || feature.type === "revolve") && feature.sketchRef && !feature.thin) {
         const uses = [{ sketch: feature.sketchRef, areas: feature.areas }, ...(feature.moreAreas ?? [])];
         for (const u of uses) {
           const data = sketches.get(u.sketch)?.sketch?.data;
