@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.58 — Pattern whole parts and faces; Composite part
+
+- Linear, Circular and Curve pattern can now repeat whole parts (each copy a new part) or the faces of a boss, pocket or
+  hole, as well as features — like Onshape's Pattern type.
+- Mirror can mirror faces too (Whole part / Features / Faces).
+- New **Composite part**: group parts into one that's picked, coloured, exported and put in assemblies together, while they
+  stay separate pieces inside. Export for laser cuts each piece as its own panel.
+- Claude can do all three.
+
 ## v0.57 — Red paths and black roads on colour puzzles
 
 - With **Colour bands**, footpaths and tracks from the map are painted **red** and roads **black** in their grooves, on
