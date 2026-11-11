@@ -530,12 +530,11 @@ export const TOOLS: ToolDef[] = [
         throw new InputError(
           `${f.name} is used by ${listNames(users)}. Delete ${users.length > 1 ? "those" : "that"} first (or change ${users.length > 1 ? "them" : "it"} to use something else), or delete them all with {"feature": ${JSON.stringify(f.name)}, "with_dependents": true}. Nothing was changed.`,
         );
-      const going = [f.id, ...plan.dependents];
-      const report = await tryChange(s, deleteFeatures(s.doc, going), null, `delete ${f.name}${users.length ? ` and ${users.length} feature${users.length > 1 ? "s" : ""} using it` : ""}`);
+      const report = await tryChange(s, deleteFeatures(s.doc, plan.going, withDependents), null, `delete ${f.name}${users.length ? ` and ${users.length} feature${users.length > 1 ? "s" : ""} using it` : ""}`);
       const outside = outsideLines(plan.outside);
       return say(
         users.length ? `Deleted ${f.name} and the ${users.length === 1 ? "feature" : `${users.length} features`} that used it: ${listNames(users)}.` : `Deleted ${f.name}.`,
-        plan.partial.length > 0 && `Kept, but now missing some of what they used: ${plan.partial.map((p) => `${p.name} (${p.loses.join(", ")})`).join("; ")}.`,
+        withDependents && plan.partial.length > 0 && `Kept, with what they used from it taken out: ${plan.partial.map((p) => `${p.name} (lost ${p.loses.join(", ")})`).join("; ")}.`,
         outside.length > 0 && `Used elsewhere (left as they are, showing the missing parts): ${outside.join(" ")}`,
         ...report,
       );

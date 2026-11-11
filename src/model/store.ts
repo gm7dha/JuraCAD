@@ -1249,15 +1249,24 @@ export const useStore = create<AppState>((set, get) => {
     deleteFeatures: (ids, justThese = false) => {
       const features = activeFeatures(get());
       const plan = findDependents(features, ids);
-      const going = new Set(justThese ? plan.picked : [...plan.picked, ...plan.dependents]);
+      const going = new Set(justThese ? plan.picked : plan.going);
       set({ deleteAsk: null });
       if (!going.size) return 0;
-      changeStudio((doc) => deleteFeaturesIn(doc, going));
+      // A rollback bar on a feature that goes moves up to the nearest earlier one that stays (the end if that's the last).
+      const bar = get().rollbackTo;
+      let rollbackTo = bar;
+      if (bar && going.has(bar)) {
+        const left = features.filter((f) => !going.has(f.id));
+        const at = features.findIndex((f) => f.id === bar);
+        const keep = features.slice(0, at).reverse().find((f) => !going.has(f.id));
+        rollbackTo = keep && keep.id !== left.at(-1)?.id ? keep.id : null;
+      }
+      changeStudio((doc) => deleteFeaturesIn(doc, going, !justThese));
       set((s) => {
         const open = s.editing && going.has(s.editing.draft.id);
         return {
           selectedFeatureId: s.selectedFeatureId && going.has(s.selectedFeatureId) ? null : s.selectedFeatureId,
-          rollbackTo: s.rollbackTo && going.has(s.rollbackTo) ? null : s.rollbackTo,
+          rollbackTo,
           editing: open ? null : s.editing,
           sketch: open ? null : s.sketch,
         };

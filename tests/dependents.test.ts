@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { addAssembly, insertInstance } from "../src/assembly/assembly";
 import { addDrawing } from "../src/drawing/drawing";
-import { deleteFeatures, deletePlan, deleteQuestion, findDependents, listNames, outsideLines, partMaker } from "../src/model/dependents";
+import { deleteFeatures, deletePlan, deleteQuestion, findDependents, listNames, outsideLines, partMaker, withoutGone } from "../src/model/dependents";
 import { emptyDocument } from "../src/model/document";
 import { addStudio, studioFeatures } from "../src/model/studios";
 import type { Feature, JuraCADDocument } from "../src/model/types";
@@ -133,8 +133,66 @@ describe("finding what uses a feature", () => {
       feat("fl", "flange", { picks: [edge("e1")] }),
     ];
     const d = findDependents(list, ["e1"]);
-    expect(d.dependents).toEqual(["cut", "del", "mv", "up", "fl"]);
-    expect(d.partial.map((p) => p.id)).toEqual(["u"]);
+    // A union left with one part to join has nothing to do, so it goes too.
+    expect(d.dependents).toEqual(["u", "cut", "del", "mv", "up", "fl"]);
+    // "Up to" only counts when the extrude really ends there; a Split by a surface ignores its plane.
+    const loose = [
+      sketch("s1"),
+      feat("e1", "extrude", { sketchRef: "s1", apart: true }),
+      feat("blind", "extrude", { sketchRef: "s9", apart: true, extrude: { end: "blind", flip: false, upTo: face("e1") } }),
+      feat("sp", "split", { splitDef: { plane: { kind: "face", origin: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], label: "f", face: face("e1") }, toolPartId: "box", keep: "both" } }),
+    ];
+    expect(findDependents(loose, ["s1"]).dependents).toEqual(["e1"]);
+  });
+
+  it("takes old-style Add/Remove features whose latest part goes (they'd change an earlier part instead)", () => {
+    // The user's block, then a stencil-like design: its sheet, letters cut from it (not apart), bridges added back.
+    const list = [
+      feat("block", "box"),
+      sketch("sheetSk"),
+      feat("sheet", "extrude", { sketchRef: "sheetSk", apart: true }),
+      sketch("lettersSk"),
+      feat("letters", "extrude", { operation: "remove", sketchRef: "lettersSk", extrude: { end: "throughAll", flip: false } }),
+      sketch("bridgesSk"),
+      feat("bridges", "extrude", { operation: "add", sketchRef: "bridgesSk" }),
+      // Onshape-style ones keep their own rules (cutting whatever they reach), and a later New starts afresh.
+      feat("apartCut", "extrude", { operation: "remove", sketchRef: "lettersSk", apart: true }),
+      feat("later", "box"),
+      feat("laterCut", "extrude", { operation: "remove", sketchRef: "lettersSk" }),
+    ];
+    expect(findDependents(list, ["sheetSk"]).dependents).toEqual(["sheet", "letters", "bridges"]);
+    // A suppressed maker isn't the latest part.
+    const off = list.map((f) => (f.id === "sheet" ? { ...f, suppressed: true } : f));
+    expect(findDependents(off, ["sheetSk"]).dependents).toEqual(["sheet"]);
+    // A pattern of a New feature makes parts too.
+    const pat = [feat("block", "box"), sketch("k"), feat("peg", "extrude", { sketchRef: "k" }), feat("row", "linearPattern", { pattern: { sources: ["peg"], axis: "x", flip: false } }), feat("cut", "extrude", { operation: "remove", sketchRef: "k2" })];
+    expect(findDependents(pat, ["row"]).dependents).toEqual(["cut"]);
+  });
+
+  it("rewrites the features left without what they used, so they still build", () => {
+    const data = emptySketch();
+    data.points.push({ id: "p", x: 0, y: 0, link: { sketch: "a", item: "q" } } as (typeof data.points)[number]);
+    data.points.push({ id: "p2", x: 1, y: 0 } as (typeof data.points)[number]);
+    data.curves.push({ id: "c", kind: "line", a: "p", b: "p2", link: { partId: "e1~2", ref: { kind: "edge" } } } as unknown as (typeof data.curves)[number]);
+    const f = feat("x", "sketch", {
+      sketch: { plane: { kind: "default", name: "Top" }, data },
+      picks: [edge("e1"), edge("box")],
+      pattern: { sources: ["a", "b"], axis: "x", flip: false },
+      sections: ["a", "b", "c"],
+      moreAreas: [{ sketch: "a", areas: [] }],
+      booleanDef: { op: "subtract", targets: ["box"], tools: ["e1", "box2"], keepTools: false },
+      deleteParts: ["e1", "box"],
+    });
+    const out = withoutGone(f, new Set(["a", "e1"]));
+    expect(out.picks!.map((p) => p.partId)).toEqual(["box"]);
+    expect(out.pattern!.sources).toEqual(["b"]);
+    expect(out.sections).toEqual(["b", "c"]);
+    expect(out.moreAreas).toBeUndefined();
+    expect(out.booleanDef!.tools).toEqual(["box2"]);
+    expect(out.deleteParts).toEqual(["box"]);
+    expect(out.sketch!.data.points[0].link).toBeUndefined();
+    expect((out.sketch!.data.curves[0] as { link?: unknown }).link).toBeUndefined();
+    expect(withoutGone(f, new Set(["zzz"]))).toBe(f);
   });
 
   it("asks in plain English", () => {
@@ -156,6 +214,31 @@ describe("deleting with dependents", () => {
     expect(out.configurations![0].suppressed).toEqual(["box"]);
     expect(out.configurations![1]).toBe(doc.configurations![1]);
     expect(deleteFeatures(doc, ["nothing"])).toBe(doc);
+    // Tidied: the fillet over two parts keeps only the box's edge.
+    const two = { ...doc, features: [...chain(), feat("f3", "fillet", { picks: [edge("e1"), edge("box")] })] };
+    expect(deleteFeatures(two, ["s1", "e1", "f1", "s2", "e2"], true).features.find((f) => f.id === "f3")!.picks!.map((p) => p.partId)).toEqual(["box"]);
+    expect(deleteFeatures(two, ["s1", "e1", "f1", "s2", "e2"]).features.find((f) => f.id === "f3")!.picks).toHaveLength(2);
+  });
+
+  it("forgets a library design whose features have all gone, and its variables nothing else uses", () => {
+    const doc: JuraCADDocument = {
+      ...emptyDocument(),
+      features: [feat("mine", "box", { params: { x: "keep_me * 2" } }), sketch("lib_a"), feat("lib_b", "extrude", { sketchRef: "lib_a", params: { depth: "box_t + box_w" } })],
+      variables: [
+        { id: "v1", name: "box_t", value: "3" },
+        { id: "v2", name: "box_w", value: "box_t * 4" },
+        { id: "v3", name: "keep_me", value: "box_t" },
+      ],
+      libraryInserts: [{ id: "lib", design: "finger-box", name: "Box 1", prefix: "box", values: {}, features: ["lib_a", "lib_b"], variables: { t: "v1", w: "v2" } }],
+      configurations: [{ id: "c", name: "A", values: { v1: "4", v2: "9", v3: "1" }, suppressed: [] }],
+    };
+    const out = deleteFeatures(doc, ["lib_a", "lib_b"], true);
+    expect(out.libraryInserts).toBeUndefined();
+    // box_t is still used by keep_me, so it stays; box_w goes.
+    expect(out.variables!.map((v) => v.name)).toEqual(["box_t", "keep_me"]);
+    expect(out.configurations![0].values).toEqual({ v1: "4", v3: "1" });
+    // Only some of its features gone: the design stays.
+    expect(deleteFeatures(doc, ["lib_b"], true).libraryInserts).toHaveLength(1);
   });
 
   it("names assemblies, drawings and other Part Studios' Derived features using parts that go", () => {

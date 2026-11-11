@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-import { deletePlan, deleteQuestion, outsideLines } from "../model/dependents";
+import { deletePlan, deleteQuestion, listNames, outsideLines } from "../model/dependents";
 import { activeFeatures, activeStudioId, useStore } from "../model/store";
 import { firstStudioId } from "../model/studios";
 import { Modal } from "./Modal";
@@ -37,11 +37,11 @@ export function DeleteDialog() {
             Cancel
           </button>
           {n > 0 && (
-            <button className="text-button" onClick={() => run(true)} title="The features that use it are kept, and show what they've lost (as now)">
+            <button className="text-button" autoFocus={ask.from === "key"} onClick={() => run(true)} title="The features that use it are kept, and show what they've lost (as now)">
               Delete just {these}
             </button>
           )}
-          <button className="primary-button" autoFocus onClick={() => run(false)}>
+          <button className="primary-button" autoFocus={ask.from !== "key" || n === 0} onClick={() => run(false)}>
             {n > 0 ? `Delete with the ${n === 1 ? "feature" : `${n} features`} that ${n === 1 ? "uses" : "use"} ${plan.picked.length === 1 ? "it" : "them"}` : "Delete"}
           </button>
         </>
@@ -50,11 +50,11 @@ export function DeleteDialog() {
       <p className="delete-question">{deleteQuestion(features, plan)}</p>
       {plan.partial.length > 0 && (
         <>
-          <p className="small">These stay, but lose some of what they use:</p>
+          <p className="small">These stay, without what they used from it:</p>
           <ul className="small delete-list">
             {plan.partial.map((p) => (
               <li key={p.id}>
-                {name(p.id)}: {p.loses.join(", ")}
+                {name(p.id)} will lose {listNames(p.loses)}.
               </li>
             ))}
           </ul>
@@ -62,7 +62,7 @@ export function DeleteDialog() {
       )}
       {outside.length > 0 && (
         <>
-          <p className="small">Their parts are used elsewhere (nothing there is removed):</p>
+          <p className="small">Parts that will go are used elsewhere (nothing there is removed):</p>
           <ul className="small delete-list">
             {outside.map((line) => (
               <li key={line}>{line}</li>

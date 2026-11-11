@@ -37,6 +37,13 @@ describe("delete with dependents in the app", () => {
     expect(ids()).toEqual(["box"]);
   });
 
+  it("moves a rollback bar on a deleted feature up to the nearest earlier one that stays", () => {
+    // The bar is on Fillet 1 (set in beforeEach); deleting the extrude takes the fillet too: the bar goes to Sketch 1.
+    s().deleteFeatures(["e1"]);
+    expect(ids()).toEqual(["s1", "box"]);
+    expect(s().rollbackTo).toBe("s1");
+  });
+
   it("can delete just the picked feature, leaving the ones that use it", () => {
     expect(s().deleteFeatures(["e1"], true)).toBe(1);
     expect(ids()).toEqual(["s1", "f1", "box"]);

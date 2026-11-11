@@ -156,24 +156,31 @@
   get role="dialog" unless they also have the `.feature-dialog` class, or their keys will be ignored.
   `visible` (like folders and sketch pictures) is left out of what the engine gets (`src/kernel/buildInput.ts`), so eye clicks never rebuild.
 - Delete with dependents (Onshape's Delete dialog): `src/model/dependents.ts` (pure). `findDependents(features, ids)` walks the
-  list once, in order: a later feature goes when it can't do without something gone — `sketchRef`, `pathRef`, `hole.sketchRef`, a
-  Plane feature (`planeRef` on any SketchPlane it's on or measured from: sketch, text, planeDef ref/ref2, split, mirror, replace,
-  neutral), a sketch line (`mirror.line`, `pattern.line`/`line2`), or a part made by a gone feature (`partMaker`: the id before
-  "~"/"@") picked as a face sketch's `face`, text face, extrude `upTo`, extend `target`, transform/split/mirror part, mirror
-  `planePick`, pattern `along`/`along2` — or when every item of a list goes (picks, pattern/mirror sources, boolean targets/
-  subtract tools, deleteParts, simplifyParts; a loft with < 2 sections left). Losing only some list items, extra sketches
-  (`moreAreas`) or sketch references brought in (`SketchItemLink`/`PointLink`/part links) keeps it, listed in `partial`
-  ("1 of its 2 picked edges and faces"). Unset mirror planes/pattern axes count as unused. Not seen without geometry: an
-  edge picked on an older part that a deleted Add feature changed (shows as an error, as with plain Delete). The extension's
-  on_face sketches carry no `face`, so they never count. `outsideUsers`/`outsideLines`: assemblies, drawings and other
-  studios' Derived features using parts that go (named, never changed); `deleteQuestion` ("Delete Sketch 2 and the 3
-  features that use it: Extrude 2, Fillet 1 and Hole 1?"); `deleteFeatures` (also drops the ids from configurations'
-  `suppressed`). Store `deleteFeatures(ids, justThese?)` (one undo step; clears selection/rollback/an open dialog on them),
-  `deleteAsk`/`askDelete` → `src/app/DeleteDialog.tsx` (rendered by App): from the row's "Delete with dependents…", the
-  folder's "Delete the folder's features with dependents…", or the Delete key when something uses the feature (it then
-  offers "Delete just this" and "Delete with the N features that use it"; with nothing using it, Delete deletes at once, as
-  before). Plain "Delete" in the menu is unchanged. Claude: `delete_feature` `with_dependents` (same function; without it,
-  refused when anything would go). Tests: tests/dependents (pure), deleteDependentsStore, mcpDeleteDependents.
+  list once, in order (returns `picked`, `dependents`, `going` = both, `partial`): a later feature goes when it can't do without
+  something gone — `sketchRef`, `pathRef`, `hole.sketchRef`, a Plane feature (`planeRef` on any SketchPlane it's on or measured
+  from: sketch, text, planeDef ref/ref2, split (not with a `toolPartId`), mirror, replace, neutral), a sketch line (`mirror.line`,
+  `pattern.line`/`line2`), or a part made by a gone feature (`partMaker`: the id before "~"/"@") picked as a face sketch's `face`,
+  text face, extrude `upTo` (only for upToFace/Vertex/Part ends), extend `target`, transform/split/mirror part, mirror `planePick`,
+  pattern `along`/`along2` — or when too few of a list are left (picks, pattern/mirror sources, subtract targets/tools, deleteParts,
+  simplifyParts: none; union/intersect targets and loft sections: < 2). Also an old-style (not `apart`; not `intersectAll`)
+  Add/Remove/Intersect of a solid type (`usesLatestPart`) when the latest solid part's maker (`makesSolidPart`: unsuppressed New
+  solids, New fasteners/derived/coils/thicken/sheet metal, mirror of a part not joined, transform copies, patterns of makers) goes —
+  else it would silently change an earlier part (a stencil's letters carving the user's block). Losing only some list items, extra
+  sketches (`moreAreas`) or sketch references brought in keeps it, in `partial` (shown "Fillet 3 will lose 1 of its 2 picked edges
+  and faces"); `withoutGone` rewrites such a feature without them (the engine fails any feature with a missing reference), and
+  `deleteFeatures(doc, ids, tidy)` applies it to every feature left when `tidy`, drops the ids from configurations' `suppressed`, and
+  (tidy) forgets a library insert all of whose features went, with its variables unless still named elsewhere (`nameUsed`; their
+  configuration values too). Not seen without geometry: an edge picked on an older part that a deleted Add feature changed. The
+  extension's on_face sketches carry no `face`, so they never count. `outsideUsers`/`outsideLines`: assemblies, drawings and other
+  studios' Derived features using parts that go (named, never changed); `deleteQuestion` ("Delete Sketch 2 and the 3 features that
+  use it: Extrude 2, Fillet 1 and Hole 1?"). Store `deleteFeatures(ids, justThese?)` (one undo step; tidy unless justThese; clears
+  selection/an open dialog on them; a rollback bar on a feature that goes moves to the nearest earlier one that stays),
+  `deleteAsk`/`askDelete` → `src/app/DeleteDialog.tsx` (rendered by App): from the row's "Delete with dependents…", the folder's
+  "Delete the folder's features with dependents…", or the Delete key when something uses the feature (then "Delete just this" has
+  the focus, so Delete + Enter does what it always did; with nothing using it, Delete deletes at once). Plain "Delete" in the menu
+  is unchanged (no tidying). Claude: `delete_feature` `with_dependents` (same function, tidied; without it, refused when anything
+  would go, untidied). Tests: tests/dependents (pure), deleteDependentsStore, mcpDeleteDependents (real OCCT: a pattern of two cuts
+  with one gone and a fillet over two parts still build; a stencil's sheet deleted leaves the user's block whole).
 - Part Studios: `src/model/studios.ts`. The first tab's features are `doc.features` (old files still open);
   more are in `doc.partStudios`, in tab order. Feature ids are unique across the document. Store helpers `activeStudioId`,
   `activeFeatures`, `studioParts` (cached, selector-safe); feature edits go through `changeStudio`/`inStudio`.

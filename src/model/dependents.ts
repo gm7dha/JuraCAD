@@ -24,6 +24,7 @@ import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { partCopiesPlan } from "../assembly/assembly";
 import { studiosOf } from "./studios";
+import { isPatternFeature, isSolidFeature } from "./features";
 import type { Drawing, Feature, JuraCADDocument } from "./types";
 
 /** The feature that made a part, from the part's id. */
@@ -33,7 +34,7 @@ export const partMaker = (partId: string): string => partId.split(/[~@]/)[0];
 export interface PartialUse {
   id: string;
   name: string;
-  /** Plain English, e.g. "2 of its 3 edges or faces". */
+  /** Plain English, e.g. "1 of its 2 picked edges and faces" (shown as "Fillet 3 will lose …"). */
   loses: string[];
 }
 
@@ -42,7 +43,9 @@ export interface Dependents {
   picked: string[];
   /** Later features that go too, in list order (not including the picked ones). */
   dependents: string[];
-  /** Features that stay but lose some references. */
+  /** Everything that goes: the picked features and their dependents. */
+  going: string[];
+  /** Features that stay but lose some references (deleteFeatures takes those references out, so they still build). */
   partial: PartialUse[];
 }
 
@@ -53,7 +56,8 @@ function planesOf(f: Feature): SketchPlane[] {
     f.text?.plane,
     f.planeDef?.ref,
     f.planeDef?.ref2,
-    f.splitDef?.plane,
+    // Split by a surface part ignores the plane.
+    f.splitDef && !f.splitDef.toolPartId ? f.splitDef.plane : undefined,
     f.mirror && !f.mirror.unset && !f.mirror.planePick && !f.mirror.line ? f.mirror.plane : undefined,
     f.replaceDef?.target,
     f.neutral,
@@ -69,10 +73,19 @@ interface Uses {
   features: string[];
   /** Part ids it can't do without. */
   parts: string[];
-  /** Lists: it goes when every item of one goes (or fewer than `least` are left); it loses some when some go. */
+  /** Lists: it goes when fewer than `least` (1) items are left; it loses some when some go. */
   lists: { what: string; many: string; features?: string[]; parts?: string[]; least?: number }[];
   /** References it can lose without going (a sketch's brought-in edges, extra sketches). */
   optional: { what: string; many: string; features?: string[]; parts?: string[] }[];
+}
+
+type Link = { sketch?: unknown; partId?: unknown } | undefined;
+
+function linkGone(l: unknown, featureGone: (id: string) => boolean, partGone: (id: string) => boolean): boolean {
+  if (!l || typeof l !== "object") return false;
+  const link = l as NonNullable<Link>;
+  if (typeof link.partId === "string") return partGone(link.partId);
+  return typeof link.sketch === "string" && featureGone(link.sketch);
 }
 
 function sketchLinks(data: SketchData): { features: string[]; parts: string[] } {
@@ -80,7 +93,7 @@ function sketchLinks(data: SketchData): { features: string[]; parts: string[] } 
   const parts: string[] = [];
   const add = (l: unknown) => {
     if (!l || typeof l !== "object") return;
-    const link = l as { sketch?: unknown; partId?: unknown };
+    const link = l as NonNullable<Link>;
     if (typeof link.partId === "string") parts.push(link.partId);
     else if (typeof link.sketch === "string") features.push(link.sketch);
   };
@@ -88,6 +101,9 @@ function sketchLinks(data: SketchData): { features: string[]; parts: string[] } 
   for (const c of data.curves) add((c as { link?: unknown }).link);
   return { features, parts };
 }
+
+/** Extrude ends that stop at a picked face, corner or part. */
+const UP_TO_PICK = new Set(["upToFace", "upToVertex", "upToPart"]);
 
 function usesOf(f: Feature): Uses {
   const features: string[] = [];
@@ -106,7 +122,7 @@ function usesOf(f: Feature): Uses {
     needPart(plane.face?.partId);
   }
   needPart(f.text?.face?.partId);
-  needPart(f.extrude?.upTo?.partId);
+  if (UP_TO_PICK.has(f.extrude?.end ?? "")) needPart(f.extrude?.upTo?.partId);
   needPart(f.extendTo?.target?.partId);
   needPart(f.transform?.partId);
   needPart(f.splitDef?.partId);
@@ -131,8 +147,10 @@ function usesOf(f: Feature): Uses {
   if (f.sections?.length) lists.push({ what: "loft section", many: "loft sections", features: f.sections, least: 2 });
   if (f.picks?.length) lists.push({ what: "picked edge or face", many: "picked edges and faces", parts: f.picks.map((p) => p.partId) });
   if (f.booleanDef) {
-    if (f.booleanDef.targets.length) lists.push({ what: f.booleanDef.op === "subtract" ? "part it cuts" : "part it joins", many: f.booleanDef.op === "subtract" ? "parts it cuts" : "parts it joins", parts: f.booleanDef.targets });
-    if (f.booleanDef.op === "subtract" && f.booleanDef.tools.length) lists.push({ what: "part it cuts with", many: "parts it cuts with", parts: f.booleanDef.tools });
+    const sub = f.booleanDef.op === "subtract";
+    if (f.booleanDef.targets.length)
+      lists.push({ what: sub ? "part it cuts" : "part it joins", many: sub ? "parts it cuts" : "parts it joins", parts: f.booleanDef.targets, least: sub ? 1 : 2 });
+    if (sub && f.booleanDef.tools.length) lists.push({ what: "part it cuts with", many: "parts it cuts with", parts: f.booleanDef.tools });
   }
   if (f.deleteParts?.length) lists.push({ what: "part it deletes", many: "parts it deletes", parts: f.deleteParts });
   if (f.simplifyParts?.length) lists.push({ what: "part it tidies", many: "parts it tidies", parts: f.simplifyParts });
@@ -142,6 +160,35 @@ function usesOf(f: Feature): Uses {
     if (links.features.length + links.parts.length) optional.push({ what: "reference brought in from elsewhere", many: "references brought in from elsewhere", ...links });
   }
   return { features, parts, lists, optional };
+}
+
+/** Types whose New makes a solid part of its own (so it becomes "the latest part" older features act on). */
+const SOLID_MAKERS = new Set<Feature["type"]>(["fastener", "derived", "coil", "thicken", "sheetMetal"]);
+/** Types that, without `apart`, add to / cut from the latest solid part. */
+const LATEST_USERS = new Set<Feature["type"]>(["box", "cylinder", "sphere", "extrude", "revolve", "hole", "import", "sweep", "loft", "text", "coil", "rib", "fastener"]);
+
+const isSurfaceFeature = (f: Feature) => !!f.surface || f.type === "fill" || f.type === "offsetSurface" || f.type === "enclose" || f.type === "ruled";
+
+/** Does this feature (built) make a new solid part? */
+function makesSolidPart(f: Feature, makers: Set<string>): boolean {
+  if (f.suppressed || isSurfaceFeature(f)) return false;
+  if (f.type === "mirror" && f.mirror?.part !== undefined) return !f.mirror.join;
+  if (f.type === "transform") return !!f.transform?.copy;
+  if (isPatternFeature(f.type)) return (f.pattern?.sources ?? f.mirror?.sources ?? []).some((id) => makers.has(id));
+  if (f.type === "sheetMetal" && f.sheetConvert) return false;
+  return f.operation === "new" && (isSolidFeature(f.type) || SOLID_MAKERS.has(f.type));
+}
+
+/**
+ * Old-style (not `apart`) Add/Remove/Intersect: it changes whichever solid part
+ * was made last. When that part's maker goes, it would silently change an
+ * earlier part (the user's own), so it goes too.
+ */
+function usesLatestPart(f: Feature): boolean {
+  if (f.suppressed || isSurfaceFeature(f) || f.operation === "new" || !LATEST_USERS.has(f.type)) return false;
+  if (f.apart && (f.operation === "add" || f.operation === "remove")) return false;
+  if (f.intersectAll && f.operation === "intersect") return false;
+  return true;
 }
 
 /**
@@ -156,28 +203,40 @@ export function findDependents(features: Feature[], ids: Iterable<string>): Depe
   const partial: PartialUse[] = [];
   const featureGone = (id: string) => gone.has(id);
   const partGone = (id: string) => gone.has(partMaker(id));
+  const makers = new Set<string>();
+  let latest: string | null = null;
+  const made = (f: Feature) => {
+    if (!makesSolidPart(f, makers)) return;
+    makers.add(f.id);
+    latest = f.id;
+  };
   for (const f of features) {
     if (wanted.has(f.id)) {
       gone.add(f.id);
       picked.push(f.id);
+      made(f);
       continue;
     }
-    if (!gone.size) continue;
+    if (!gone.size) {
+      made(f);
+      continue;
+    }
     const u = usesOf(f);
-    let goes = u.features.some(featureGone) || u.parts.some(partGone);
+    let goes = u.features.some(featureGone) || u.parts.some(partGone) || (latest !== null && gone.has(latest) && usesLatestPart(f));
     const loses: string[] = [];
     if (!goes) {
       for (const list of u.lists) {
         const all = [...(list.features ?? []), ...(list.parts ?? [])];
         const lost = (list.features ?? []).filter(featureGone).length + (list.parts ?? []).filter(partGone).length;
         if (!lost) continue;
-        if (lost === all.length || all.length - lost < (list.least ?? 1)) {
+        if (all.length - lost < (list.least ?? 1)) {
           goes = true;
           break;
         }
         loses.push(`${lost} of its ${count(all.length, list.what, list.many)}`);
       }
     }
+    made(f);
     if (goes) {
       gone.add(f.id);
       dependents.push(f.id);
@@ -189,7 +248,52 @@ export function findDependents(features: Feature[], ids: Iterable<string>): Depe
     }
     if (loses.length) partial.push({ id: f.id, name: f.name, loses });
   }
-  return { picked, dependents, partial };
+  return { picked, dependents, going: [...picked, ...dependents], partial };
+}
+
+/**
+ * A feature that stays, with what it used from deleted features taken out: picks
+ * on their parts, them as pattern/mirror/loft/extra sketches, Boolean/Delete
+ * part/Simplify parts, and sketch references brought in from them. The engine
+ * fails a feature whose references are missing, so this keeps it building.
+ * The same object when nothing changes.
+ */
+export function withoutGone(f: Feature, gone: Set<string>): Feature {
+  const featureGone = (id: string) => gone.has(id);
+  const partGone = (id: string) => gone.has(partMaker(id));
+  let out = f;
+  const set = (patch: Partial<Feature>) => {
+    out = { ...out, ...patch };
+  };
+  if (f.picks?.some((p) => partGone(p.partId))) set({ picks: f.picks.filter((p) => !partGone(p.partId)) });
+  if (f.pattern?.sources.some(featureGone)) set({ pattern: { ...f.pattern, sources: f.pattern.sources.filter((id) => !featureGone(id)) } });
+  if (f.mirror?.sources.some(featureGone)) set({ mirror: { ...f.mirror, sources: f.mirror.sources.filter((id) => !featureGone(id)) } });
+  if (f.sections?.some(featureGone)) set({ sections: f.sections.filter((id) => !featureGone(id)) });
+  if (f.moreAreas?.some((m) => featureGone(m.sketch))) {
+    const more = f.moreAreas.filter((m) => !featureGone(m.sketch));
+    if (more.length) set({ moreAreas: more });
+    else {
+      const { moreAreas: _gone, ...rest } = out;
+      out = rest;
+    }
+  }
+  if (f.booleanDef && (f.booleanDef.targets.some(partGone) || f.booleanDef.tools.some(partGone)))
+    set({ booleanDef: { ...f.booleanDef, targets: f.booleanDef.targets.filter((p) => !partGone(p)), tools: f.booleanDef.tools.filter((p) => !partGone(p)) } });
+  if (f.deleteParts?.some(partGone)) set({ deleteParts: f.deleteParts.filter((p) => !partGone(p)) });
+  if (f.simplifyParts?.some(partGone)) set({ simplifyParts: f.simplifyParts.filter((p) => !partGone(p)) });
+  if (f.sketch) {
+    const lost = (l: unknown) => linkGone(l, featureGone, partGone);
+    const data = f.sketch.data;
+    if (data.points.some((p) => lost(p.link)) || data.curves.some((c) => lost((c as { link?: unknown }).link))) {
+      const unlink = <T extends { link?: unknown }>(x: T): T => {
+        if (!lost(x.link)) return x;
+        const { link: _gone, ...rest } = x;
+        return rest as T;
+      };
+      set({ sketch: { ...f.sketch, data: { ...data, points: data.points.map(unlink), curves: data.curves.map(unlink) } } });
+    }
+  }
+  return out;
 }
 
 /** What outside the Part Studio uses parts the deleted features made. */
@@ -226,8 +330,7 @@ export interface DeletePlan extends Dependents {
 export function deletePlan(doc: JuraCADDocument, studioId: string, ids: string[], justThese = false): DeletePlan {
   const features = studiosOf(doc).find((s) => s.id === studioId)?.features ?? [];
   const deps = findDependents(features, ids);
-  const going = justThese ? deps.picked : [...deps.picked, ...deps.dependents];
-  return { ...deps, outside: outsideUsers(doc, studioId, going) };
+  return { ...deps, outside: outsideUsers(doc, studioId, justThese ? deps.picked : deps.going) };
 }
 
 /** "A", "A and B", "A, B and C". */
@@ -255,17 +358,52 @@ export function deleteQuestion(features: Feature[], plan: Dependents): string {
   return `Delete ${picked} and the ${n === 1 ? "feature" : `${n} features`} that ${n === 1 ? "uses" : "use"} ${it}: ${listNames(plan.dependents.map(name))}?`;
 }
 
+/** Does any text of the document (features of every studio, variables, assemblies, drawings) use this variable name? */
+function nameUsed(doc: JuraCADDocument, name: string, skip: Set<string>): boolean {
+  const re = new RegExp(`(^|[^A-Za-z0-9_])${name.replace(/[^A-Za-z0-9_]/g, "")}($|[^A-Za-z0-9_])`);
+  const text = JSON.stringify([doc.features, (doc.partStudios ?? []).map((s) => s.features), (doc.variables ?? []).filter((v) => !skip.has(v.id)).map((v) => v.value), doc.assemblies ?? [], doc.drawings ?? []]);
+  return re.test(text);
+}
+
 /**
  * Delete features from a document view (its `features` = one Part Studio's),
- * and forget them in configurations (their suppressed lists). One change, so
- * one undo step in the app.
+ * and forget them in configurations (their suppressed lists). With `tidy`
+ * (Delete with dependents), the features left are rewritten without what they
+ * used from the deleted ones (`withoutGone`), so they still build; and a
+ * library design all of whose features have gone is forgotten, with its
+ * variables when nothing else uses them. One change, so one undo step.
  */
-export function deleteFeatures(doc: JuraCADDocument, ids: Iterable<string>): JuraCADDocument {
+export function deleteFeatures(doc: JuraCADDocument, ids: Iterable<string>, tidy = false): JuraCADDocument {
   const gone = new Set(ids);
   if (!doc.features.some((f) => gone.has(f.id))) return doc;
-  let out: JuraCADDocument = { ...doc, features: doc.features.filter((f) => !gone.has(f.id)) };
+  const left = doc.features.filter((f) => !gone.has(f.id));
+  let out: JuraCADDocument = { ...doc, features: tidy ? left.map((f) => withoutGone(f, gone)) : left };
   if (doc.configurations?.some((c) => c.suppressed.some((f) => gone.has(f)))) {
     out = { ...out, configurations: doc.configurations.map((c) => (c.suppressed.some((f) => gone.has(f)) ? { ...c, suppressed: c.suppressed.filter((f) => !gone.has(f)) } : c)) };
+  }
+  if (tidy && doc.libraryInserts?.length) {
+    const there = new Set(out.features.map((f) => f.id));
+    const over = doc.libraryInserts.filter((i) => i.features.some((id) => gone.has(id)) && i.features.every((id) => !there.has(id)));
+    if (over.length) {
+      const inserts = doc.libraryInserts.filter((i) => !over.includes(i));
+      const { libraryInserts: _old, ...rest } = out;
+      out = inserts.length ? { ...rest, libraryInserts: inserts } : rest;
+      const candidates = new Set(over.flatMap((i) => Object.values(i.variables ?? {})));
+      // Drop them all at once, then put back any still named by what's left.
+      const unused = new Set([...candidates].filter((id) => {
+        const v = out.variables?.find((x) => x.id === id);
+        return v && !nameUsed(out, v.name, candidates);
+      }));
+      if (unused.size) {
+        out = {
+          ...out,
+          variables: (out.variables ?? []).filter((v) => !unused.has(v.id)),
+          ...(out.configurations
+            ? { configurations: out.configurations.map((c) => (Object.keys(c.values).some((k) => unused.has(k)) ? { ...c, values: Object.fromEntries(Object.entries(c.values).filter(([k]) => !unused.has(k))) } : c)) }
+            : {}),
+        };
+      }
+    }
   }
   return out;
 }
