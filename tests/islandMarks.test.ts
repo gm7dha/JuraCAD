@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { weld } from "../src/geometry/threeMf";
 import { gridFrom, heightAt } from "../src/terrain/elevation";
-import { GROOVES, WATER_DROP } from "../src/terrain/groundMarks";
+import { GROOVES } from "../src/terrain/groundMarks";
 import { featuresForIsland, ISLAND_DEFAULTS, LEAST_BASE, makeIslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import type { Body } from "../src/terrain/mountainPuzzle";
 import { featuresOnGrid, readOsm } from "../src/terrain/osm";
