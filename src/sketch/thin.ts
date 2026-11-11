@@ -10,7 +10,8 @@
  * with no relations) that the ordinary solid code extrudes, revolves or
  * sweeps; the walls of separate runs are then joined.
  */
-import { findChains, type Pt, type Segment } from "./regions";
+import { findChains, type Chain, type Pt, type Segment } from "./regions";
+import { matchArea, missingAreasMessage, sketchAreas, type AreaPick } from "./areas";
 import type { SketchArc, SketchCircle, SketchCurve, SketchData, SketchLine, SketchPoint } from "./types";
 
 /** How thick the wall is and which way it goes, as the dialog sets it. */
@@ -187,21 +188,31 @@ function turnedRound(before: Prim, after: Prim): boolean {
   return false;
 }
 
-/** How far past a corner its offset may reach before it's cut off square instead (very sharp corners). */
-const MITRE_LIMIT = 50;
+/**
+ * How far past a corner the outside of a wall may reach (× its thickness) before the corner is cut off square
+ * instead — very sharp corners, as Onshape does.
+ */
+export const MITRE_LIMIT = 4;
+
+/** A run's pieces moved to one side, and the short straight pieces (as points) that join some of them where a sharp corner was cut off. */
+interface Offset {
+  pieces: Prim[];
+  /** After piece i: the corner points of a cut-off corner, in order (an empty list = one straight join). */
+  bridges: Map<number, Pt[]>;
+}
 
 /**
  * A run moved `d` to its left (minus: right), corners joined sharp: each pair
  * of neighbouring pieces is carried on (or cut back) to where they meet, the
- * meeting point nearest the corner; where they can't meet, or would only meet
- * far beyond a very sharp corner, a short straight piece bridges the gap.
+ * meeting point nearest the corner; an outside corner that would reach more
+ * than `MITRE_LIMIT` × d past the corner is cut off square there, and pieces
+ * that can't meet are joined by a straight piece.
  */
-export function offsetRun(prims: Prim[], d: number, closed: boolean): Prim[] {
-  if (Math.abs(d) < 1e-12) return prims.slice();
+function offsetPieces(prims: Prim[], d: number, closed: boolean): Offset {
+  if (Math.abs(d) < 1e-12) return { pieces: prims.slice(), bridges: new Map() };
   const moved = prims.map((p) => shifted(p, d));
   const out: Prim[] = moved.slice();
-  /** Bridging pieces, put after piece i. */
-  const bridges = new Map<number, Extract<Prim, { kind: "line" }>>();
+  const bridges = new Map<number, Pt[]>();
   const joints = closed ? prims.length : prims.length - 1;
   for (let i = 0; i < joints; i++) {
     const j = (i + 1) % prims.length;
@@ -210,34 +221,71 @@ export function offsetRun(prims: Prim[], d: number, closed: boolean): Prim[] {
     const t2 = startDir(prims[j]);
     const turn = cross(t1, t2);
     if (Math.abs(turn) < 1e-9 && dotp(t1, t2) > 0) {
-      // Smooth: both offsets end at the same place (corner + d × the shared normal), unless both are arcs of different centres.
+      // Smooth: both offsets end at the same place (corner + d × the shared normal).
       const x = mul(add(primEnd(out[i]), primStart(out[j])), 0.5);
       out[i] = withEnd(out[i], x);
       out[j] = withStart(out[j], x);
       continue;
     }
     if (Math.abs(turn) < 1e-9) throw new ThinError("The sketch's lines double back on themselves at a corner, so there's no wall to make there. Separate the lines a little.");
-    const options = crossings(out[i], out[j]);
-    const best = options.sort((p, q) => dist(p, corner) - dist(q, corner))[0];
-    if (!best || dist(best, corner) > MITRE_LIMIT * Math.abs(d) + 1e-9) {
-      bridges.set(i, { kind: "line", a: primEnd(out[i]), b: primStart(out[j]) });
+    // On this side the corner opens out (the outside of the turn) or closes up (the inside).
+    const opens = turn * d < 0;
+    const best = crossings(out[i], out[j]).sort((p, q) => dist(p, corner) - dist(q, corner))[0];
+    if (best && (!opens || dist(best, corner) <= MITRE_LIMIT * Math.abs(d) + 1e-9)) {
+      out[i] = withEnd(out[i], best);
+      out[j] = withStart(out[j], best);
       continue;
     }
-    out[i] = withEnd(out[i], best);
-    out[j] = withStart(out[j], best);
+    bridges.set(i, opens ? squareCut(primEnd(out[i]), t1, primStart(out[j]), t2, corner, best, d) : []);
   }
   for (let i = 0; i < out.length; i++) {
     if (turnedRound(moved[i], out[i])) {
       throw new ThinError("The wall is too thick for one of the short pieces of the sketch: the corners on either side of it meet. Make the wall thinner or that piece longer.");
     }
   }
+  return { pieces: out, bridges };
+}
+
+/**
+ * An outside corner cut off square `MITRE_LIMIT` × d from the corner: the two offset pieces carried on along
+ * their directions to the cut. No points (a plain straight join) when that can't be done.
+ */
+function squareCut(end: Pt, t1: Pt, start: Pt, t2: Pt, corner: Pt, tip: Pt | undefined, d: number): Pt[] {
+  const away = tip && dist(tip, corner) > 1e-9 ? unit(sub(tip, corner)) : unit(add(sub(end, corner), sub(start, corner)));
+  if (!Number.isFinite(away[0])) return [];
+  const c = MITRE_LIMIT * Math.abs(d);
+  const a1 = dotp(t1, away);
+  const a2 = dotp(t2, away);
+  if (a1 < 1e-9 || a2 > -1e-9) return [];
+  const s1 = (c - dotp(sub(end, corner), away)) / a1;
+  const s2 = (dotp(sub(start, corner), away) - c) / a2;
+  if (s1 < 0 || s2 < 0) return [];
+  return [add(end, mul(t1, s1)), sub(start, mul(t2, s2))];
+}
+
+/** The pieces in order with their joins, as one list. */
+function assemble(o: Offset): Prim[] {
   const all: Prim[] = [];
-  out.forEach((p, i) => {
+  o.pieces.forEach((p, i) => {
     all.push(p);
-    const b = bridges.get(i);
-    if (b && dist(b.a, b.b) > 1e-9) all.push(b);
+    const b = o.bridges.get(i);
+    if (!b) return;
+    const pts = [primEnd(p), ...b, primStart(o.pieces[(i + 1) % o.pieces.length])];
+    all.push(...linesThrough(pts));
   });
   return all;
+}
+
+/** Straight pieces through points in turn (repeats skipped). */
+function linesThrough(pts: Pt[]): Prim[] {
+  const out: Prim[] = [];
+  for (let k = 0; k + 1 < pts.length; k++) if (dist(pts[k], pts[k + 1]) > 1e-9) out.push({ kind: "line", a: pts[k], b: pts[k + 1] });
+  return out;
+}
+
+/** A run moved `d` to its left (minus: right), corners joined sharp (see `offsetPieces`). */
+export function offsetRun(prims: Prim[], d: number, closed: boolean): Prim[] {
+  return assemble(offsetPieces(prims, d, closed));
 }
 
 /** Points round a run of pieces, for checking (arcs every 5° or so). */
@@ -287,55 +335,60 @@ const TOO_THICK = "The wall is too thick for this shape: its sides would run int
 /** One closed outline of the wall, as lines and arcs (a whole circle: `circle`). */
 export type ThinLoop = { prims: Prim[] } | { circle: { c: Pt; r: number } };
 
-/**
- * The closed outlines of the wall round one run: for an open run one loop
- * (its left offset, a square end, its right offset back, a square end); for a
- * closed run two (each side), or one when a side has no thickness (the run
- * itself is then that side).
- */
-export function thinLoops(segments: Segment[], closed: boolean, [left, right]: [number, number]): ThinLoop[] {
+/** A run turned to go the other way. */
+const backwards = (prims: Prim[]) => prims.slice().reverse().map(reversed);
+
+/** The end nearest the bottom left first (lowest x, then lowest y). */
+function fromBottomLeft(prims: Prim[]): Prim[] {
+  const s = primStart(prims[0]);
+  const e = primEnd(prims[prims.length - 1]);
+  return e[0] < s[0] - 1e-9 || (Math.abs(e[0] - s[0]) <= 1e-9 && e[1] < s[1]) ? backwards(prims) : prims;
+}
+
+/** The two loops of a closed run's wall (its left side `left`, right `right`); checked. */
+function ringLoops(prims: Prim[], left: number, right: number, mustTurn: 1 | -1): ThinLoop[] {
+  const l = offsetRun(prims, left, true);
+  const r = offsetRun(prims, -right, true);
+  const loops = [l, r].map((x) => sampled(x));
+  if (loops.some((x) => outlineCrosses(x)) || outlineCrosses(loops[0], loops[1])) throw new ThinError(TOO_THICK);
+  // Neither side may have turned inside out.
+  if (signedArea(loops[0]) * mustTurn <= 1e-9 || signedArea(loops[1]) * mustTurn <= 1e-9) throw new ThinError(TOO_THICK);
+  return [{ prims: r }, { prims: l }];
+}
+
+/** A whole circle's ring: `inside` mm inwards, `outside` outwards. */
+function circleRing(c: Extract<Segment, { kind: "circle" }>, inside: number, outside: number): ThinLoop[] {
+  const inner = c.radius - inside;
+  if (inner <= 1e-6) throw new ThinError(`The wall is too thick for a circle of radius ${round(c.radius)} mm: it would fill the middle. Make it thinner than ${round(c.radius)} mm on the inside (or flip it outside).`);
+  return [{ circle: { c: c.center, r: c.radius + outside } }, { circle: { c: c.center, r: inner } }];
+}
+
+function checkAmounts([left, right]: [number, number]) {
   if (left < 0 || right < 0) throw new ThinError("The wall's thicknesses can't be less than 0.");
   if (left + right <= 1e-9) throw new ThinError("Give the wall a thickness (more than 0).");
+}
+
+/**
+ * The closed outlines of the wall round one run on its own: for an open run one loop (its left offset, a square
+ * end, its right offset back, a square end), walked from its bottom-left end; for a closed run two (each side),
+ * walked anticlockwise so its first side is inside (`inward` false: clockwise, its first side outside).
+ */
+export function thinLoops(segments: Segment[], closed: boolean, amounts: [number, number], inward = true): ThinLoop[] {
+  checkAmounts(amounts);
+  const [left, right] = amounts;
   const raw = primsOf(segments);
   if (!raw) {
-    // A whole circle, walked anticlockwise: its left is inside.
     const c = segments[0] as Extract<Segment, { kind: "circle" }>;
-    const inner = c.radius - left;
-    if (inner <= 1e-6) throw new ThinError(`The wall is too thick for a circle of radius ${round(c.radius)} mm: it would fill the middle. Make it thinner than ${round(c.radius)} mm on the inside (or flip it outside).`);
-    const loops: ThinLoop[] = [{ circle: { c: c.center, r: c.radius + right } }];
-    loops.push({ circle: { c: c.center, r: inner } });
-    return loops;
+    return inward ? circleRing(c, left, right) : circleRing(c, right, left);
   }
   if (!raw.length) return [];
-  let prims = raw;
   if (closed) {
-    // Anticlockwise, so the first side is inside.
-    if (signedArea(sampled(prims)) < 0) prims = prims.slice().reverse().map(reversed);
-  } else {
-    // From the end nearest the bottom left.
-    const s = primStart(prims[0]);
-    const e = primEnd(prims[prims.length - 1]);
-    if (e[0] < s[0] - 1e-9 || (Math.abs(e[0] - s[0]) <= 1e-9 && e[1] < s[1])) prims = prims.slice().reverse().map(reversed);
+    const ccw = signedArea(sampled(raw)) > 0;
+    const prims = ccw === inward ? raw : backwards(raw);
+    return ringLoops(prims, left, right, inward ? 1 : -1);
   }
-  const l = offsetRun(prims, left, closed);
-  const r = offsetRun(prims, -right, closed);
-  if (closed) {
-    const loops = [l, r].map((x) => sampled(x));
-    if (loops.some((x) => outlineCrosses(x)) || outlineCrosses(loops[0], loops[1])) throw new ThinError(TOO_THICK);
-    // The inside loop must still go round the same way (else it has turned inside out).
-    if (signedArea(loops[0]) <= 1e-9) throw new ThinError(TOO_THICK);
-    return [{ prims: r }, { prims: l }];
-  }
-  const loop: Prim[] = [...l];
-  const lEnd = primEnd(l[l.length - 1]);
-  const rEnd = primEnd(r[r.length - 1]);
-  if (dist(lEnd, rEnd) > 1e-9) loop.push({ kind: "line", a: lEnd, b: rEnd });
-  for (let i = r.length - 1; i >= 0; i--) loop.push(reversed(r[i]));
-  const rStart = primStart(r[0]);
-  const lStart = primStart(l[0]);
-  if (dist(rStart, lStart) > 1e-9) loop.push({ kind: "line", a: rStart, b: lStart });
-  if (outlineCrosses(sampled(loop))) throw new ThinError(TOO_THICK);
-  return [{ prims: loop }];
+  const run: Run = { prims: fromBottomLeft(raw), closed: false };
+  return [{ prims: openLoop(run, left, right, null, null) }];
 }
 
 function signedArea(poly: Pt[]): number {
@@ -358,14 +411,271 @@ export function loopArea(loop: ThinLoop): number {
   return Math.abs(a);
 }
 
+/** A run of the sketch's curves, walked one way, as lines and arcs. */
+interface Run {
+  prims: Prim[];
+  closed: boolean;
+  /** A whole circle on its own. */
+  circle?: Extract<Segment, { kind: "circle" }>;
+}
+
 /**
- * A sketch with the wall's outlines for one run (`loops`), keeping the
- * original's points and its construction lines (and `keep`, a revolve's axis
- * line, as construction) so axes and references still resolve.
+ * How one end of an open run meets the others at a junction (three or more curve ends at one place): where each
+ * side of its wall stops, as the point its face runs to (`face`, trimmed or carried on to meet the neighbour's
+ * face) and any corner points from there to the junction itself (`via`, for a corner cut off square).
  */
-export function loopsSketch(original: SketchData, loops: ThinLoop[], keep?: string): SketchData {
+interface EndCap {
+  node: Pt;
+  /** Its side to the left of the way out of the junction, then to the right. */
+  left: { face: Pt; via: Pt[] };
+  right: { face: Pt; via: Pt[] };
+}
+
+/**
+ * The wall's outline round an open run: its left side forward, the far end (square, or meeting the walls of the
+ * other curves at a junction: `endCap`), its right side back, the near end (`startCap`).
+ */
+function openLoop(run: Run, left: number, right: number, startCap: EndCap | null, endCap: EndCap | null): Prim[] {
+  const L = offsetPieces(run.prims, left, false);
+  const R = offsetPieces(run.prims, -right, false);
+  const last = run.prims.length - 1;
+  // At the start the way out is along the run: its left is the run's left. At the end it's the other way round.
+  if (startCap) {
+    L.pieces[0] = withStart(L.pieces[0], startCap.left.face);
+    R.pieces[0] = withStart(R.pieces[0], startCap.right.face);
+  }
+  if (endCap) {
+    L.pieces[last] = withEnd(L.pieces[last], endCap.right.face);
+    R.pieces[last] = withEnd(R.pieces[last], endCap.left.face);
+  }
+  for (const [o, d] of [[L, left], [R, -right]] as const) {
+    for (const k of [0, last]) if (Math.abs(d) > 1e-12 && turnedRound(shifted(run.prims[k], d), o.pieces[k])) throw new ThinError(TOO_THICK);
+  }
+  const l = assemble(L);
+  const r = assemble(R);
+  const loop: Prim[] = [...l];
+  const lEnd = primEnd(l[l.length - 1]);
+  const rEnd = primEnd(r[r.length - 1]);
+  loop.push(...linesThrough(endCap ? [lEnd, ...endCap.right.via, endCap.node, ...endCap.left.via.slice().reverse(), rEnd] : [lEnd, rEnd]));
+  for (let i = r.length - 1; i >= 0; i--) loop.push(reversed(r[i]));
+  const rStart = primStart(r[0]);
+  const lStart = primStart(l[0]);
+  loop.push(...linesThrough(startCap ? [rStart, ...startCap.right.via, startCap.node, ...startCap.left.via.slice().reverse(), lStart] : [rStart, lStart]));
+  if (outlineCrosses(sampled(loop))) throw new ThinError(TOO_THICK);
+  return loop;
+}
+
+const keyOf = (p: Pt) => `${Math.round(p[0] * 1e5)},${Math.round(p[1] * 1e5)}`;
+const segStart = (s: Segment): Pt | null => (s.kind === "circle" || s.kind === "ellipse" ? null : s.from);
+const segEnd = (s: Segment): Pt | null => (s.kind === "circle" || s.kind === "ellipse" ? null : s.to);
+function reversedSegment(s: Segment): Segment {
+  switch (s.kind) {
+    case "line":
+      return { kind: "line", from: s.to, to: s.from };
+    case "arc":
+      return { kind: "arc", from: s.to, mid: s.mid, to: s.from };
+    case "bezier":
+      return { kind: "bezier", from: s.to, c1: s.c2, c2: s.c1, to: s.from };
+    case "ellipseArc":
+      return { ...s, from: s.to, to: s.from };
+    default:
+      return s;
+  }
+}
+
+/**
+ * The runs of a sketch's curves: closed rings and open runs as `findChains` finds them, and where three or more
+ * curves meet (a junction) the curves of that group joined end to end through every point where just two of
+ * them meet, so only real junctions split them. A run that comes back to its own start is closed.
+ */
+export function sketchRuns(chains: Chain[]): { segments: Segment[]; closed: boolean }[] {
+  const out: { segments: Segment[]; closed: boolean }[] = [];
+  const groups = new Map<number, Segment[][]>();
+  for (const ch of chains) {
+    if (!ch.branching) out.push({ segments: ch.segments, closed: ch.closed });
+    else groups.set(ch.group ?? -1, [...(groups.get(ch.group ?? -1) ?? []), ch.segments]);
+  }
+  for (const pieces of groups.values()) {
+    const count = new Map<string, number>();
+    const at = new Map<string, number[]>();
+    pieces.forEach((p, i) => {
+      for (const e of [segStart(p[0]), segEnd(p[p.length - 1])]) {
+        if (!e) continue;
+        const k = keyOf(e);
+        count.set(k, (count.get(k) ?? 0) + 1);
+        at.set(k, [...(at.get(k) ?? []), i]);
+      }
+    });
+    const used = new Set<number>();
+    /** Walk on from piece i, leaving it at `from` (its start) or its end. */
+    const walk = (first: number, reverse: boolean): Segment[] => {
+      let segs = reverse ? pieces[first].slice().reverse().map(reversedSegment) : pieces[first];
+      used.add(first);
+      const run = [...segs];
+      for (;;) {
+        const end = segEnd(run[run.length - 1]);
+        if (!end) break;
+        const k = keyOf(end);
+        if (count.get(k) !== 2) break;
+        const next = (at.get(k) ?? []).find((j) => !used.has(j));
+        if (next === undefined) break;
+        const forward = keyOf(segStart(pieces[next][0])!) === k;
+        segs = forward ? pieces[next] : pieces[next].slice().reverse().map(reversedSegment);
+        used.add(next);
+        run.push(...segs);
+      }
+      return run;
+    };
+    // Start from the ends that aren't pass-through points (junctions and loose ends), then whatever is left.
+    pieces.forEach((p, i) => {
+      if (used.has(i)) return;
+      const s = segStart(p[0]);
+      const e = segEnd(p[p.length - 1]);
+      if (s && count.get(keyOf(s)) !== 2) out.push(closeUp(walk(i, false)));
+      else if (e && count.get(keyOf(e)) !== 2) out.push(closeUp(walk(i, true)));
+    });
+    pieces.forEach((_p, i) => {
+      if (!used.has(i)) out.push(closeUp(walk(i, false)));
+    });
+  }
+  return out;
+}
+
+function closeUp(segments: Segment[]): { segments: Segment[]; closed: boolean } {
+  const s = segStart(segments[0]);
+  const e = segEnd(segments[segments.length - 1]);
+  return { segments, closed: !!s && !!e && keyOf(s) === keyOf(e) };
+}
+
+/**
+ * Which way an open run goes, so its first side faces the area it borders: if there's an area on just one side
+ * of it, that side; else (areas both sides, or none) from its bottom-left end.
+ */
+function facing(prims: Prim[], areaAt: (p: Pt) => number, size: number): Prim[] {
+  const mid = prims[Math.floor(prims.length / 2)];
+  let at: Pt, dir: Pt;
+  if (mid.kind === "line") {
+    at = mul(add(mid.a, mid.b), 0.5);
+    dir = unit(sub(mid.b, mid.a));
+  } else {
+    const a = mid.a0 + mid.sweep / 2;
+    at = [mid.c[0] + mid.r * Math.cos(a), mid.c[1] + mid.r * Math.sin(a)];
+    dir = arcTangent(mid, a);
+  }
+  const eps = Math.max(1e-4, size * 1e-5);
+  const n: Pt = [-dir[1], dir[0]];
+  const left = areaAt(add(at, mul(n, eps))) >= 0;
+  const right = areaAt(sub(at, mul(n, eps))) >= 0;
+  if (left && !right) return prims;
+  if (right && !left) return backwards(prims);
+  return fromBottomLeft(prims);
+}
+
+/** One curve end at a junction: which run, which end, and its faces' pieces and thicknesses on the way out. */
+interface Arm {
+  run: number;
+  atStart: boolean;
+  angle: number;
+  out: Pt;
+  /** Its offset pieces next to the junction, each side of the way out, and how thick that side is. */
+  leftFace: Prim;
+  rightFace: Prim;
+  leftT: number;
+  rightT: number;
+  length: number;
+}
+
+const primLength = (p: Prim) => (p.kind === "line" ? dist(p.a, p.b) : Math.abs(p.sweep) * p.r);
+
+/** Where one side of a curve's wall stops at a junction: the point its face runs to, then any corner points to the junction. */
+interface SideEnd {
+  face: Pt;
+  via: Pt[];
+}
+
+const leftOf = (u: Pt): Pt => [-u[1], u[0]];
+const rightOf = (u: Pt): Pt => [u[1], -u[0]];
+
+/**
+ * How the walls of two neighbouring curves at a junction (`a` then `b`, anticlockwise) end in the gap between
+ * them. Each wall is square-ended at the junction to start with (so the walls together leave nothing out), then:
+ * where the gap opens wider than a half turn, both facing sides are carried on to meet (cut square past
+ * `MITRE_LIMIT`, or to a shared point halfway, when they can't meet), so the corner is filled; where it's
+ * narrower, a wall whose square end would reach past the far side of its neighbour's wall is cut back to it.
+ */
+function junctionGap(node: Pt, a: Arm, b: Arm): { a: SideEnd; b: SideEnd } {
+  const pa = add(node, mul(leftOf(a.out), a.leftT));
+  const pb = add(node, mul(rightOf(b.out), b.rightT));
+  const square: { a: SideEnd; b: SideEnd } = { a: { face: pa, via: [] }, b: { face: pb, via: [] } };
+  let gap = b.angle - a.angle;
+  while (gap <= 1e-9) gap += TAU;
+  if (Math.abs(gap - Math.PI) < 1e-6) return square;
+  const nearest = (p: Prim, q: Prim) => crossings(p, q).sort((u, v) => dist(u, node) - dist(v, node))[0];
+  if (gap > Math.PI) {
+    if (a.leftT < 1e-12 && b.rightT < 1e-12) return square;
+    const t = Math.max(a.leftT, b.rightT);
+    const x = nearest(a.leftFace, b.rightFace);
+    if (x && dist(x, node) <= MITRE_LIMIT * t + 1e-9 && dotp(sub(x, node), a.out) < 0.9 * a.length && dotp(sub(x, node), b.out) < 0.9 * b.length) {
+      return { a: { face: x, via: [] }, b: { face: x, via: [] } };
+    }
+    const m = mul(add(pa, pb), 0.5);
+    return { a: { face: pa, via: [m] }, b: { face: pb, via: [m] } };
+  }
+  // Narrower than a half turn: each wall stays on its own side of its neighbour — a square end reaching past the
+  // far side of the neighbour's wall is cut back to it (so a line's wall doesn't spill across the other line into
+  // the area beyond, or out of the shape).
+  const result = { ...square };
+  const farA = rightOf(a.out);
+  if (dotp(sub(pb, node), farA) > a.rightT + 1e-9) {
+    const x = nearest(b.rightFace, a.rightFace);
+    if (x && dotp(sub(x, node), b.out) > -1e-9 && dotp(sub(x, node), b.out) < 0.9 * b.length) result.b = { face: x, via: [] };
+  }
+  const farB = leftOf(b.out);
+  if (dotp(sub(pa, node), farB) > b.leftT + 1e-9) {
+    const x = nearest(a.leftFace, b.leftFace);
+    if (x && dotp(sub(x, node), a.out) > -1e-9 && dotp(sub(x, node), a.out) < 0.9 * a.length) result.a = { face: x, via: [] };
+  }
+  return result;
+}
+
+function areasOf(data: SketchData): (p: Pt) => number {
+  const map = sketchAreas(data);
+  return (p) => map.areaAt(p);
+}
+
+export interface ThinOptions {
+  /** A revolve's axis: the line with this id, and any solid line lying along `axis` (sketch x, y and direction), are left out. */
+  keep?: string;
+  axis?: { at: Pt; dir: Pt };
+  /** Areas picked: the wall goes round just these (their outlines and holes); none = every curve. */
+  areas?: (AreaPick | (number | string)[])[];
+  verb?: string;
+}
+
+/** Solid curves lying on a revolve's axis (or the axis line itself) turned into construction, so no wall follows them. */
+function withoutAxis(data: SketchData, opts: ThinOptions): SketchData {
+  const pos = new Map(data.points.map((p) => [p.id, [p.x, p.y] as Pt]));
+  pos.set("origin", [0, 0]);
+  const onAxis = (c: SketchCurve) => {
+    if (c.id === opts.keep) return true;
+    if (!opts.axis || c.type !== "line") return false;
+    const { at, dir } = opts.axis;
+    return [c.p1, c.p2].every((id) => {
+      const q = pos.get(id);
+      return !!q && Math.abs(cross(sub(q, at), dir)) < 1e-6;
+    });
+  };
+  if (!data.curves.some((c) => !c.construction && onAxis(c))) return data;
+  return { ...data, curves: data.curves.map((c) => (!c.construction && onAxis(c) ? ({ ...c, construction: true } as SketchCurve) : c)) };
+}
+
+/**
+ * A sketch with the wall's outlines for one run (`loops`), keeping the original's points and its construction
+ * lines (the axis too, as construction) so axes and references still resolve.
+ */
+export function loopsSketch(original: SketchData, loops: ThinLoop[], kept: SketchData = original): SketchData {
   const points: SketchPoint[] = [...original.points];
-  const curves: SketchCurve[] = original.curves.filter((c) => c.construction || c.id === keep).map((c) => (c.id === keep && !c.construction ? ({ ...c, construction: true } as SketchCurve) : c));
+  const curves: SketchCurve[] = kept.curves.filter((c) => c.construction);
   let n = 0;
   const point = (p: Pt) => {
     const id = `thin:p${n++}`;
@@ -394,14 +704,79 @@ export function loopsSketch(original: SketchData, loops: ThinLoop[], keep?: stri
 }
 
 /**
- * The wall's sketches: one per run of the sketch's (non-construction) curves,
- * each holding that run's closed outlines. `keep` = a revolve's axis line,
- * left out of the wall. Throws a ThinError (plain words) when it can't be made.
+ * The wall's sketches, each holding closed outlines to build as usual. With areas picked: a ring round each
+ * picked area's outline and holes, its first side into the area. Otherwise one piece per run of the sketch's
+ * curves (`sketchRuns`): a closed run's first side inside it, an open run's towards the area it borders; where
+ * runs meet at a junction their walls are carried on to meet each other's faces, so they join sharp with no
+ * notches. Throws a ThinError (plain words) when it can't be made.
  */
-export function thinSketches(data: SketchData, sides: ThinSides, keep?: string): SketchData[] {
+export function thinSketches(data: SketchData, sides: ThinSides, opts: ThinOptions = {}): SketchData[] {
   const amounts = thinAmounts(sides);
-  const drawn: SketchData = { points: data.points, curves: data.curves.map((c) => (c.id === keep && !c.construction ? ({ ...c, construction: true } as SketchCurve) : c)), constraints: [] };
+  checkAmounts(amounts);
+  const [left, right] = amounts;
+  const drawn = withoutAxis({ points: data.points, curves: data.curves, constraints: [] }, opts);
+  if (opts.areas?.length) {
+    const map = sketchAreas(data);
+    const chosen: number[] = [];
+    let missing = 0;
+    for (const p of opts.areas) {
+      const i = matchArea(map, p);
+      if (i < 0) missing++;
+      else if (!chosen.includes(i)) chosen.push(i);
+    }
+    if (missing) throw new ThinError(missingAreasMessage(missing, opts.verb ?? "extrude"));
+    const pieces: SketchData[] = [];
+    for (const region of map.join(chosen)) {
+      pieces.push(loopsSketch(data, thinLoops(region.outer.segments, true, amounts, true), drawn));
+      for (const hole of region.holes) pieces.push(loopsSketch(data, thinLoops(hole.segments, true, amounts, false), drawn));
+    }
+    return pieces;
+  }
   const { chains } = findChains(drawn, { branching: true });
   if (!chains.length) throw new ThinError("The sketch has no lines or curves to make a wall along (construction lines don't count).");
-  return chains.map((ch) => loopsSketch(data, thinLoops(ch.segments, ch.closed, amounts), keep));
+  let areaAt: ((p: Pt) => number) | null = null;
+  const pts = data.points.map((p) => [p.x, p.y] as Pt);
+  const size = pts.length ? Math.max(1, Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1])) - Math.min(...pts.map((p) => p[1]))) : 1;
+  const runs: Run[] = sketchRuns(chains).map(({ segments, closed }) => {
+    const raw = primsOf(segments);
+    if (!raw) return { prims: [], closed: true, circle: segments[0] as Extract<Segment, { kind: "circle" }> };
+    if (closed) return { prims: signedArea(sampled(raw)) > 0 ? raw : backwards(raw), closed: true };
+    return { prims: facing(raw, areaAt ?? (areaAt = areasOf(drawn)), size), closed: false };
+  });
+  // Junctions: three or more curve ends at one place.
+  const arms = new Map<string, { node: Pt; arms: Arm[] }>();
+  const offsets = runs.map((r) => (r.circle || !r.prims.length ? null : { L: offsetPieces(r.prims, left, r.closed), R: offsetPieces(r.prims, -right, r.closed) }));
+  runs.forEach((r, i) => {
+    const o = offsets[i];
+    if (!o) return;
+    const last = r.prims.length - 1;
+    const ends: [Pt, boolean][] = [[primStart(r.prims[0]), true], [primEnd(r.prims[last]), false]];
+    for (const [node, atStart] of ends) {
+      const out = atStart ? startDir(r.prims[0]) : mul(endDir(r.prims[last]), -1);
+      const arm: Arm = atStart
+        ? { run: i, atStart, angle: Math.atan2(out[1], out[0]), out, leftFace: o.L.pieces[0], rightFace: o.R.pieces[0], leftT: left, rightT: right, length: primLength(r.prims[0]) }
+        : { run: i, atStart, angle: Math.atan2(out[1], out[0]), out, leftFace: o.R.pieces[last], rightFace: o.L.pieces[last], leftT: right, rightT: left, length: primLength(r.prims[last]) };
+      const k = keyOf(node);
+      const entry = arms.get(k) ?? { node, arms: [] };
+      entry.arms.push(arm);
+      arms.set(k, entry);
+    }
+  });
+  const caps = new Map<string, EndCap>();
+  const capKey = (run: number, atStart: boolean) => `${run}:${atStart ? "s" : "e"}`;
+  for (const { node, arms: list } of arms.values()) {
+    if (list.length < 3) continue;
+    list.sort((p, q) => p.angle - q.angle);
+    const gaps = list.map((a, i) => junctionGap(node, a, list[(i + 1) % list.length]));
+    list.forEach((a, i) => {
+      if (runs[a.run].closed) return;
+      caps.set(capKey(a.run, a.atStart), { node, left: gaps[i].a, right: gaps[(i - 1 + list.length) % list.length].b });
+    });
+  }
+  return runs.map((r, i) => {
+    if (r.circle) return loopsSketch(data, circleRing(r.circle, left, right), drawn);
+    if (r.closed) return loopsSketch(data, ringLoops(r.prims, left, right, 1), drawn);
+    const loop = openLoop(r, left, right, caps.get(capKey(i, true)) ?? null, caps.get(capKey(i, false)) ?? null);
+    return loopsSketch(data, [{ prims: loop }], drawn);
+  });
 }

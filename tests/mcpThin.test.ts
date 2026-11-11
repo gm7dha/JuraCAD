@@ -78,4 +78,23 @@ describe("thin walls and two-way revolves, from Claude", () => {
     await ok(s, "edit_feature", { feature: "Revolve 1", second_angle: 0 });
     expect(Math.abs(total(s) / ((90 / 360) * Math.PI * 300 * 10) - 1)).toBeLessThan(0.005);
   });
+
+  it("keeps a new two-way revolve within a full turn, and refuses a tapering thin wall", async () => {
+    const s = newSession();
+    await ok(s, "new_design", { name: "Two" });
+    await ok(s, "add_sketch", { name: "P", plane: "Front", shapes: [{ type: "rectangle", corner: [10, 0], width: 10, height: 10 }] });
+    // No angle given: 360° + 90° would be more than a turn, so it starts at 180° + 90°, as the app does.
+    await ok(s, "add_feature", { type: "revolve", sketch: "P", axis: "vertical", second_angle: 90 });
+    expect(Math.abs(total(s) / ((270 / 360) * Math.PI * 300 * 10) - 1)).toBeLessThan(0.005);
+    await ok(s, "add_sketch", { name: "L", plane: "Top", offset: 50, shapes: [{ type: "line", from: [0, 0], to: [40, 0] }] });
+    expect(await fails(s, "add_feature", { type: "extrude", sketch: "L", depth: 10, thin: 2, draft: 5 })).toMatch(/can't taper/);
+  });
+
+  it("makes the wall round just the areas picked", async () => {
+    const s = newSession();
+    await ok(s, "new_design", { name: "Pick" });
+    await ok(s, "add_sketch", { name: "Two", plane: "Top", shapes: [{ type: "rectangle", corner: [0, 0], width: 20, height: 20 }, { type: "rectangle", corner: [30, 0], width: 20, height: 20 }] });
+    await ok(s, "add_feature", { type: "extrude", sketch: "Two", depth: 10, thin: 2, areas: [[5, 5]] });
+    exactly(total(s), (400 - 256) * 10);
+  });
 });

@@ -5,7 +5,7 @@ import { formatLength, lengthNumber, showLength, storeLength } from "../model/un
 import { describeRef } from "../geometry/topoRef";
 import { AreaPicker } from "./AreaPicker";
 import { areasTaken, followedSketch, pathChange, sketchesOffered, takesSeveral } from "../sketch/areaClicks";
-import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, visibleParamKeys, type ParamDef } from "../model/features";
+import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, revolveWay, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
 import { holePositionCount } from "../sketch/holePositions";
@@ -731,7 +731,7 @@ function ThinOptions() {
             </label>
           )}
           <p className="dialog-hint field-hint">
-            Follows every line, arc and circle in the sketch{draft.type === "revolve" ? " (not the line it spins around)" : ""}; construction lines are left out. On a closed shape the first side is inside it.
+            With no areas picked it follows every line, arc and circle in the sketch{draft.type === "revolve" ? " (not the line it spins around)" : ""}; pick areas to make the wall only round them. Construction lines are left out. On a closed shape, or a line along the edge of one, the first side goes into the shape.
           </p>
         </fieldset>
       )}
@@ -743,6 +743,7 @@ function SketchSolidOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const mode = useStore((s) => s.editing?.mode);
   const setDraftField = useStore((s) => s.setDraftField);
+  const setDraftParam = useStore((s) => s.setDraftParam);
   const features = useStore(activeFeatures);
   const sketchLinks = useStore((s) => s.sketchLinks);
   const rollbackTo = useStore((s) => s.rollbackTo);
@@ -783,8 +784,8 @@ function SketchSolidOptions() {
           ))}
         </select>
       )}
-      {sketches.length > 0 && !draft.sketchRef && !draft.surface && !draft.thin && <p className="dialog-hint field-hint">Or click an area of any sketch in the 3D view.</p>}
-      {chosen && !draft.surface && !draft.thin && (
+      {sketches.length > 0 && !draft.sketchRef && !draft.surface && <p className="dialog-hint field-hint">Or click an area of any sketch in the 3D view.</p>}
+      {chosen && !draft.surface && (
         <AreaPicker data={chosenData ?? chosen} areas={draft.areas} verb={draft.type === "revolve" ? "revolve" : "extrude"} onChange={(areas) => setDraftField({ areas })} taken={taken} />
       )}
       <MoreAreasNote />
@@ -830,8 +831,10 @@ function SketchSolidOptions() {
                   className={now === way ? "selected" : ""}
                   title={hint}
                   onClick={() => {
-                    const { symmetric: _s, second: _t, ...rest } = rev;
-                    setDraftField({ revolve: { ...rest, ...(way === "symmetric" ? { symmetric: true } : way === "two" ? { second: true } : {}) } });
+                    // Two ways keeps both angles within a full turn (a new revolve's 360° becomes 180° + 90°).
+                    const next = revolveWay(draft, way);
+                    setDraftField({ revolve: next.revolve });
+                    for (const [key, value] of Object.entries(next.params)) setDraftParam(key, value);
                   }}
                 >
                   {label}
@@ -996,7 +999,7 @@ function SweepLoftOptions() {
       <fieldset className="param-group">
         <legend>Sketches</legend>
         {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined, moreAreas: undefined }))}
-        {profile && !draft.surface && !draft.thin && (
+        {profile && !draft.surface && (
           <AreaPicker
             data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile}
             areas={draft.areas}

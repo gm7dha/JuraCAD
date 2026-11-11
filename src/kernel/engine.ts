@@ -19,6 +19,7 @@ import { MESH_TOLERANCES, type Axis, type Feature, type ImportedFile, type MeshQ
 import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
 import { axisInPlane, centreRevolve, revolveAxis, revolveSketch, twoWayAngle, twoWayRevolve } from "./revolve";
 import { thinSketches } from "../sketch/thin";
+import { axisInSketch } from "../sketch/axis";
 import { holeTool, type ThreadedHoleCache } from "./hole";
 import { HOLE_LEAD_IN, SCREW_SIZES, straightStart, type HoleSize } from "../model/holes";
 import { copyNumber, isSkipped } from "../model/patterns";
@@ -1404,24 +1405,38 @@ function revolveMore(feature: Feature, v: Record<string, number>, sketches: Sket
 }
 
 /**
- * Thin: the wall's outlines round each run of the sketch's curves (src/sketch/thin.ts), each built as the
- * feature would build a sketch of them (same ends, depths, axis or path), joined. Areas picked and other
- * sketches' areas don't apply (the wall follows every curve).
+ * Thin: the wall's outlines (src/sketch/thin.ts) — round the picked areas, or along every curve of the sketch —
+ * each built as the feature would build a sketch of them (same ends, depths, axis or path), joined. Other
+ * sketches' areas don't apply; a draft is left out (a thin wall doesn't taper), with a note for each.
  */
 function buildThin(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], notes?: string[]): Shape3D {
   const plain: Feature = { ...feature, thin: undefined, areas: undefined, moreAreas: undefined };
   const source = feature.sketchRef ? sketches.get(feature.sketchRef) : undefined;
   // No usable sketch: the usual message.
-  if (!source?.sketch?.plane) return buildSolid(plain, v, sketches, all, parts);
-  if (feature.moreAreas?.length) notes?.push("A thin wall follows the curves of its own sketch only, so the areas of other sketches are left out.");
-  const keep = feature.type === "revolve" ? feature.revolve?.axis : undefined;
-  const pieces = thinSketches(source.sketch.data, { thickness: v.thickness, thickness2: v.thickness2 ?? 0, midPlane: feature.thin?.midPlane, flip: feature.thin?.flip }, keep);
+  if (!source?.sketch?.plane) return buildSolid(plain, v, sketches, all, parts, undefined, notes);
+  const say = (note: string) => {
+    if (notes && !notes.includes(note)) notes.push(note);
+  };
+  if (feature.moreAreas?.length) say("A thin wall follows the curves of its own sketch only, so the areas of other sketches are left out.");
+  let values = v;
+  if (feature.type === "extrude" && Math.abs(v.draft ?? 0) > 1e-9) {
+    say("A thin wall can't taper, so the draft is left out.");
+    values = { ...v, draft: 0 };
+  }
+  const rev = feature.type === "revolve" ? feature.revolve?.axis ?? "vertical" : undefined;
+  const axis = rev !== undefined ? axisInSketch(source.sketch.data, rev) ?? undefined : undefined;
+  const pieces = thinSketches(
+    source.sketch.data,
+    { thickness: v.thickness, thickness2: v.thickness2 ?? 0, midPlane: feature.thin?.midPlane, flip: feature.thin?.flip },
+    { keep: rev, axis, areas: feature.areas, verb: feature.type },
+  );
+  const inner: string[] = [];
   let shape: Shape3D | null = null;
   try {
     for (const data of pieces) {
       const map: SketchMap = new Map(sketches);
       map.set(source.id, { ...source, sketch: { plane: source.sketch.plane, data } });
-      const piece = buildSolid(plain, v, map, all, parts);
+      const piece = buildSolid(plain, values, map, all, parts, undefined, inner);
       if (!shape) shape = piece;
       else {
         const next: Shape3D = shape.fuse(piece);
@@ -1434,6 +1449,7 @@ function buildThin(feature: Feature, v: Record<string, number>, sketches: Sketch
     shape?.delete();
     throw e;
   }
+  inner.forEach(say);
   return shape!;
 }
 

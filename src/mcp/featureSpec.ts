@@ -13,7 +13,7 @@ import { SCREW_SIZES, standardParams } from "../model/holes";
 import { planeFrame, planeOnFace, type SketchPlane, type Vec3 } from "../sketch/planes";
 import { evaluate } from "../model/expr";
 import { amount, bool, InputError, list, MAX_LENGTH, noExtras, oneOf, text, tidy, xy, xyz, type Obj } from "./args";
-import { FEATURE_DEFS } from "../model/features";
+import { FEATURE_DEFS, revolveWay } from "../model/features";
 import { isAngleDimension } from "../sketch/types";
 import { pickEdges, pickFace, pickFaces, facing } from "./picks";
 import type { Session } from "./session";
@@ -224,10 +224,14 @@ function thinWall(f: Feature, a: Obj, ctx: SpecContext) {
   }
   if (!f.thin.midPlane && !("thickness2" in f.params)) f.params = { ...f.params, thickness2: "0" };
   f.thin = { ...(f.thin.midPlane ? { midPlane: true } : {}), ...(f.thin.flip ? { flip: true } : {}) };
-  if (f.thin && (f.areas || f.moreAreas)) {
-    // A thin wall follows every curve of its sketch: picked areas don't apply.
-    delete f.areas;
+  // A thin wall goes round the picked areas (or along every curve); it takes no areas of other sketches, and doesn't taper.
+  if (f.moreAreas) {
+    if (has(a, "more_sketches")) throw new InputError('A thin wall follows the curves of its own sketch only; leave "more_sketches" out.');
     delete f.moreAreas;
+  }
+  if (f.type === "extrude" && f.params.draft && amount(f.params.draft, "draft", ctx.scope).value !== 0) {
+    if (has(a, "draft")) throw new InputError('A thin wall can\'t taper; leave "draft" out (or 0).');
+    f.params = { ...f.params, draft: "0" };
   }
 }
 
@@ -339,6 +343,11 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       f.revolve = rv;
       param(f, a, "angle", "angle", ctx, { positive: true, unit: "°" });
       if (f.params.angle && Number(f.params.angle) > 360) throw new InputError("angle can be at most 360 (all the way round).");
+      // Two ways with no angle given: kept to a full turn together, as the app's dialog does (360° → 180°).
+      if (rv.second && !has(a, "angle")) {
+        const kept = revolveWay({ ...f, revolve: rv }, "two").params.angle;
+        if (kept !== undefined && amount(f.params.angle2 ?? "90", "second_angle", ctx.scope).value <= 180) f.params = { ...f.params, angle: kept };
+      }
       if (rv.second) {
         const one = amount(f.params.angle ?? "360", "angle", ctx.scope).value;
         const two = amount(f.params.angle2 ?? "90", "second_angle", ctx.scope).value;

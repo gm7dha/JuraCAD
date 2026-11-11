@@ -73,7 +73,8 @@ function takenBy(features: Feature[], sketchId: string, data: SketchData, except
   const map = sketchAreas(data);
   const taken = new Set<number>();
   for (const f of features) {
-    if (f.id === exceptId || f.suppressed || !usesAreas(f)) continue;
+    // A thin wall uses the sketch's lines, not the space inside them: a later Extrude can still fill it (a floor).
+    if (f.id === exceptId || f.suppressed || !usesAreas(f) || f.thin) continue;
     // Areas it takes from this sketch as one of several.
     for (const m of f.moreAreas ?? []) if (m.sketch === sketchId) for (const i of pickedAreas(map, m.areas).picked) taken.add(i);
     if (f.sketchRef !== sketchId) continue;

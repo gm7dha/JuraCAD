@@ -7,6 +7,7 @@ import { GeometryEngine } from "../src/kernel/engine";
 import type { Feature } from "../src/model/types";
 import { addCircle, addLine, addRectangle } from "../src/sketch/ops";
 import { emptySketch, type SketchData } from "../src/sketch/types";
+import * as areasModule from "../src/sketch/areas";
 import { loadOpenCascade, feature, sketchFeature, extrudeFeature, relativeError, rectSketch, lineSketch, meshOf } from "./support/engineHelpers";
 
 beforeAll(loadOpenCascade);
@@ -165,5 +166,140 @@ describe("revolve in two directions", () => {
     // Without "second", the second angle is ignored (old files build as before).
     const plain = meshOf(build([sk, { ...rev, revolve: { axis: "vertical", flip: false } }]));
     expect(relativeError(plain.volume, (90 / 360) * Math.PI * 300 * 10)).toBeLessThan(0.01);
+  });
+});
+
+/** The area of a convex polygon clipped to a box (Sutherland–Hodgman), for expected volumes. */
+function clippedArea(poly: [number, number][], [x0, y0, x1, y1]: [number, number, number, number]): number {
+  let pts = poly;
+  const edges: [(p: [number, number]) => number][] = [[(p) => p[0] - x0], [(p) => x1 - p[0]], [(p) => p[1] - y0], [(p) => y1 - p[1]]];
+  for (const [f] of edges) {
+    const out: [number, number][] = [];
+    pts.forEach((p, i) => {
+      const q = pts[(i + 1) % pts.length];
+      const fp = f(p);
+      const fq = f(q);
+      if (fp >= 0) out.push(p);
+      if (fp >= 0 !== fq >= 0) {
+        const t = fp / (fp - fq);
+        out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+      }
+    });
+    pts = out;
+  }
+  let a = 0;
+  pts.forEach((p, i) => {
+    const q = pts[(i + 1) % pts.length];
+    a += p[0] * q[1] - q[0] * p[1];
+  });
+  return Math.abs(a) / 2;
+}
+
+describe("thin walls where lines meet", () => {
+  it("a short line off a rectangle's corner doesn't notch it", () => {
+    let d = rectSketch(0, 0, 40, 20);
+    d = addLine(d, { x: -5, y: 0 }, { x: 0, y: 0 }).sketch;
+    const sk = sketchFeature(top, d);
+    const r = build([sk, thinExtrude(sk.id, 10, 2)]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    const m = meshOf(r);
+    expect(m.watertight).toBe(true);
+    // The tube (walls inside) plus the strip above the short line, touching it along a face.
+    expect(m.volume).toBeCloseTo((224 + 10) * 10, 3);
+  });
+
+  it("a rectangle with a diagonal: every wall inside, joined, sound", () => {
+    let d = rectSketch(0, 0, 40, 20);
+    d = addLine(d, { x: 0, y: 0 }, { x: 40, y: 20 }).sketch;
+    const sk = sketchFeature(top, d);
+    const r = build([sk, thinExtrude(sk.id, 10, 2)]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    const m = meshOf(r);
+    expect(m.watertight).toBe(true);
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    // The ring inside the rectangle, plus the diagonal's strip (above it, walked from the bottom-left) inside the ring;
+    // the rectangle's top wall stays on its side of the diagonal, so the ring's corner below the diagonal at
+    // (40, 20) — a 2 × 1 triangle beside the right-hand wall — is left open, as the lower triangle has no wall there.
+    const n: [number, number] = [-20 / Math.hypot(40, 20), 40 / Math.hypot(40, 20)];
+    const band: [number, number][] = [[0, 0], [40, 20], [40 + 2 * n[0], 20 + 2 * n[1]], [2 * n[0], 2 * n[1]]];
+    expect(m.volume).toBeCloseTo((224 - 1 + clippedArea(band, [2, 2, 38, 18])) * 10, 2);
+    expect(m.bounds?.min[0]).toBeCloseTo(0, 6);
+    expect(m.bounds?.max[1]).toBeCloseTo(20, 6);
+  });
+
+  it("a house: the walls go into the room and the roof, meeting sharp", () => {
+    let d = rectSketch(0, 0, 40, 30);
+    d = addLine(d, { x: 0, y: 30 }, { x: 20, y: 45 }).sketch;
+    d = addLine(d, { x: 20, y: 45 }, { x: 40, y: 30 }).sketch;
+    const sk = sketchFeature(top, d);
+    const r = build([sk, thinExtrude(sk.id, 10, 2)]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    const m = meshOf(r);
+    expect(m.watertight).toBe(true);
+    // The room's ring (40 × 30 less 36 × 26) and the roof's (a triangle of 300 mm², in-radius 20/3, less the
+    // triangle 2 mm in: × 0.7²) — but the line they share has one wall, which (walked left to right) goes up into
+    // the roof, so the room's ring loses its top 36 × 2 (the roof's walls stop at the shared line, not spilling
+    // into the room).
+    expect(m.volume).toBeCloseTo((1200 - 936 - 36 * 2 + 300 * (1 - 0.49)) * 10, 2);
+  });
+
+  it("a bracket with a brace: one sound part inside the bracket's outline", () => {
+    let d = polyline([[0, 0], [40, 0], [40, 30]]);
+    d = addLine(d, { x: 20, y: 0 }, { x: 40, y: 20 }).sketch;
+    const sk = sketchFeature(top, d);
+    const r = build([sk, thinExtrude(sk.id, 10, 2, { thin: { midPlane: true } })]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    const m = meshOf(r);
+    expect(m.watertight).toBe(true);
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    const plain = meshOf(build([sketchFeature(top, polyline([[0, 0], [40, 0], [40, 30]])), thinExtrude(sk.id, 10, 2, { thin: { midPlane: true } })].map((f, i, all) => (i === 1 ? { ...f, sketchRef: all[0].id } : f))));
+    expect(m.volume).toBeGreaterThan(plain.volume + 20 * Math.SQRT2 * 2 * 10 * 0.8);
+    expect(m.volume).toBeLessThan(plain.volume + 20 * Math.SQRT2 * 2 * 10);
+    expect(m.bounds?.max[0]).toBeCloseTo(41, 6);
+    expect(m.bounds?.min[1]).toBeCloseTo(-1, 6);
+  });
+});
+
+describe("thin walls round picked areas", () => {
+  it("goes round just the picked area, and a floor can fill it afterwards", () => {
+    let d = rectSketch(0, 0, 40, 20);
+    d = addLine(d, { x: 20, y: 0 }, { x: 20, y: 20 }).sketch;
+    const sk = sketchFeature(top, d);
+    const base = build([sk]);
+    expect(base.featureErrors).toEqual({});
+    // The left half's area (0…20 × 0…20), picked as the app does.
+    const { pickOf, sketchAreas } = areasModule;
+    const map = sketchAreas(d);
+    const left = pickOf(map.areas[map.areaAt([5, 10])]);
+    const wall = thinExtrude(sk.id, 10, 2, { areas: [left] });
+    const r = build([sk, wall]);
+    expect(r.featureErrors).toEqual({});
+    expect(meshOf(r).volume).toBeCloseTo((400 - 16 * 16) * 10, 3);
+    // A floor in the same area, 2 mm thick, added to it.
+    const floor: Feature = { ...extrudeFeature(sk.id, 2, { operation: "add" }), apart: true, areas: [left] };
+    const f = build([sk, wall, floor]);
+    expect(f.featureErrors).toEqual({});
+    expect(f.parts).toHaveLength(1);
+    expect(meshOf(f).volume).toBeCloseTo((400 - 256) * 10 + 256 * 2, 3);
+  });
+
+  it("leaves out a draft and lines on the sketch's own axis, saying so", () => {
+    const sk = sketchFeature(top, lineSketch(0, 0, 40, 0));
+    const f = thinExtrude(sk.id, 10, 2, { params: { draft: "5" } });
+    const r = build([sk, f]);
+    expect(r.featureErrors).toEqual({});
+    expect(meshOf(r).volume).toBeCloseTo(800, 3);
+    expect(r.featureWarnings?.[f.id]).toMatch(/can't taper/);
+    let d = addLine(emptySketch(), { x: 0, y: 0 }, { x: 0, y: 20 }).sketch;
+    d = addLine(d, { x: 10, y: 0 }, { x: 10, y: 20 }).sketch;
+    const prof = sketchFeature(front, d);
+    const rev: Feature = { ...feature("revolve", { angle: 360, thickness: 2 }), sketchRef: prof.id, revolve: { axis: "vertical", flip: false }, apart: true, thin: {} };
+    const t = build([prof, rev]);
+    expect(t.featureErrors).toEqual({});
+    expect(relativeError(meshOf(t).volume, Math.PI * (100 - 64) * 20)).toBeLessThan(0.01);
   });
 });

@@ -369,21 +369,27 @@
   twist round corners and loops.
 - Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
   `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
-  params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin). Pure
-  `src/sketch/thin.ts`: `thinSketches(data, sides, keep)` — every run of `findChains(…, { branching: true })` offset each
-  side (`offsetRun`: lines and arcs only — splines/ellipses refused; neighbours carried on or cut back to where they meet, the
-  meeting nearest the corner = sharp mitred corners, a bridging line past `MITRE_LIMIT` × d; arcs keep their centre), an open
-  run closed by square ends, a closed one two loops (walked anticlockwise, so its first side is inside; an open run walked from
-  its bottom-left end, so a left-to-right line's first side is above); too thick = a plain `ThinError` (loops crossing, a piece
-  eaten by its corners, an arc closing on its centre). Each run comes back as its own SketchData of lines/arcs/circles (the
-  original points + construction lines kept; `keep` = a revolve's axis, as construction). The engine's `buildThin` (top of
-  `buildSolid`) builds each as the feature would build that sketch (same ends, depths, axis, path; `areas`/`moreAreas`
-  ignored, a note says so) and fuses them, so every operation, `apart` rule and extrude end works unchanged. "Surface" is the
-  other checkbox (a skin, no inside); the two are exclusive. Revolve "Two ways": `revolve.second` + `angle2` (not with
-  `symmetric`): revolved by angle + angle2 (`twoWayAngle`, ≤ 360) then turned back by angle2 (`twoWayRevolve` in revolve.ts;
-  `revolveMore` too); the dialog's One way / Symmetric / Two ways. Claude: `thin`, `thin_other_side`, `thin_centred`,
-  `thin_flip` on extrude/revolve/sweep and revolve's `second_angle` (featureSpec `thinWall`). Tests: tests/sketchThin (pure),
-  engineThin, mcpThin.
+  params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin; draft hidden).
+  Pure `src/sketch/thin.ts` `thinSketches(data, sides, { keep, axis, areas, verb })`: with areas picked, a ring round each
+  picked area's outline and holes (`map.join`), first side into the area; else every curve: `sketchRuns` (findChains with
+  branching, then a junction group's curves joined end to end through points where just two meet — only real junctions
+  (3+ ends) split runs; a run back at its own start is closed). Closed runs anticlockwise (first side inside); open runs
+  `facing` the area they border (an area on just one side → that side first; else from the bottom-left end). Offsets
+  (`offsetPieces`: lines/arcs only, splines/ellipses refused; neighbours carried on or cut back to where they meet; an
+  outside corner reaching past `MITRE_LIMIT` (4) × d is cut off square, `squareCut`); open ends square, but at a junction each
+  pair of neighbouring arms (sorted by angle) is settled by `junctionGap`: a gap past a half turn has both facing sides
+  carried on to meet (≤ MITRE_LIMIT, else a shared midpoint), a narrower one cuts a square end back to the neighbour's far
+  face when it reaches past it (a wall stays on its own side of the other line: no spilling into the next area or out of
+  the shape); closed runs through a junction keep their own mitred loops. Too thick = a plain `ThinError`. Each run → its
+  own SketchData (original points + construction lines kept; revolve axis line and solid lines lying on the axis turned
+  construction, `withoutAxis`). The engine's `buildThin` (top of `buildSolid`) builds each as the feature would (same ends,
+  depths, axis, path), fuses them, ignores other sketches' areas and a draft (notes say so; inner notes passed on).
+  `areasTaken` skips thin features (a floor can fill the wall's area later). "Surface" is the other checkbox (a skin);
+  the two are exclusive. Revolve "Two ways": `revolve.second` + `angle2` (not with `symmetric`): revolved by angle + angle2
+  (`twoWayAngle`, ≤ 360) then turned back by angle2 (`twoWayRevolve`; `revolveMore` too); dialog One way / Symmetric / Two
+  ways through pure `revolveWay` (features.ts: switching to Two ways keeps the sum ≤ 360 — 360 + 90 → 180 + 90). Claude:
+  `thin`, `thin_other_side`, `thin_centred`, `thin_flip` (areas kept; more_sketches and a draft refused) and revolve's
+  `second_angle` (featureSpec `thinWall`). Tests: tests/sketchThin (pure), engineThin, mcpThin.
 - Surfaces: `src/kernel/surface.ts` (extrude/revolve/sweep/loft of a sketch's open or closed runs — `findChains` in
   `src/sketch/regions.ts` — as shells; Fill from edges; thicken, enclose and offset). A surface part has `surface: true`
   (BuiltPart and PartMesh); solid features add to / cut from the latest *solid* part, never a surface. replicad's
