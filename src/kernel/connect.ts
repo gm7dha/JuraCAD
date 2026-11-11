@@ -84,6 +84,11 @@ export function connectKernel(): () => void {
         return;
       }
       s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks, result.featureWarnings, result.featureNotes);
+      // Where each Move / copy's triad goes (kept the same object while nothing changed, so nothing redraws).
+      // (Only the Part Studios rebuilt are in the result: the others' are kept.)
+      const was = useStore.getState().transformCentres;
+      const centres = { ...was, ...(result.transformCentres ?? {}) };
+      if (JSON.stringify(centres) !== JSON.stringify(was)) useStore.setState({ transformCentres: centres });
       refreshCandidates();
     });
   };

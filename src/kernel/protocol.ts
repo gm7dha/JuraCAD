@@ -137,6 +137,8 @@ export interface RebuildResult {
   featureWarnings?: Record<string, string>;
   /** Feature ID → plain information about a feature that was built (what Simplify did, say). */
   featureNotes?: Record<string, string>;
+  /** Move / copy features → the point they turn about, before the move (the part's centre, or the origin): where the 3D view draws the triad. */
+  transformCentres?: Record<string, [number, number, number]>;
   /** Milliseconds the rebuild took in the worker. */
   durationMs: number;
   /** Part Studios that were rebuilt (`parts` holds only theirs); the others are as before. */
