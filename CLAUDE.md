@@ -1163,9 +1163,19 @@
   sticks crossing in the middle 4³ (`AXIS`, `CROSS`, `fullStick`); the 32 `contested` cubes (8 covered by three sticks) each
   go to one stick or none (`piecesFrom`). `disassembly` = BurrTools-style BFS: any group not holding piece 0 slides ±x/y/z
   as far as it goes; a group free for good splits the set, each part must come apart too; returns the moves before the
-  first split (level) or null. `makeBurr(seed, difficulty)`: orders the pieces, mostly gives each cube to the first to leave
+  first split (level) or null. It answers exactly as the first version did (`tests/support/burrSlow.ts`, compared in
+  libraryBurrSearch), only ~100× faster: how far a group slides depends only on each pair's relative place, so `pairHits`
+  works that out once per pair of piece shapes and relative position (cached across searches, `shapeIds`/`pairCache`, k < j
+  only; both emptied together at the start of a search past `MOST_HITS` results / `MOST_PAIRS` pairs, so a long-lived tab
+  stays bounded — `burrCacheSize`, tested over 300 hard seeds); memo
+  keys are short strings (`groupKey`). `makeBurr(seed, difficulty)`: orders the pieces, mostly gives each cube to the first to leave
   (always comes apart), some at random and some empty (`gap` 0.35 / `mixed` 0.3 beyond Easy), `repaired` (gives a split
-  piece back cubes that join it), then hill-climbs to the level range (Easy 1, Medium 2–3, Hard ≥ 4); cached. Laid flat
+  piece back cubes that join it), then hill-climbs to the level range (Easy 1, Medium 2–3, Hard ≥ 4); cached. Its work is
+  bounded by positions looked at, never a clock (`searchWithin`): one search gives up after `SEARCH_MOST` (30,000; treated
+  as "doesn't come apart"), the hunt stops at `WORK_MOST` (80,000) with the best so far; `burrWork` reports it. Seeds 1–100
+  never needed more than 17,000 / 33,000 (only hard 39 and 42 give up a search — once each, with the same puzzle as
+  before), so every saved seed is unchanged; libraryBurrSearch pins seeds 1–30 by fingerprint. Saved inserts keep only
+  the seed: never change what a seed makes. Laid flat
   (`laidFlat`: the turn with fewest bridges); notches = `cellOutlines` of columns cut through / top only / bottom only,
   `offsetPolygon` by fit, Removes from `levelPlane`s; the piece itself drawn fit smaller and f lower (`assembledToBed`
   maps the puzzle to each laid piece). Tests: libraryPuzzles (pure), engineLibraryPuzzles (pieces put back by
@@ -1187,8 +1197,7 @@
   sketches + extrudes of `MARKS_PER_CUT` (12) marks each (`CUT_START` outside the face, cut flipped in; the engine fuses a
   sketch's regions one by one, so big sketches get slow), appended after that piece's notches (not apart, so they cut the
   latest part = that piece); ≤ `MOST_SHAPES` (120) per piece — the default lattice burr builds in ~8 s. "none" + "plain" (and old inserts without the values)
-  make exactly the old features. Tests: libraryBurrPatterns (pure; badges vs the solution for seeds 1–12 of each difficulty, hard 6 skipped as
-  makeBurr takes ~50 s to find it), engineBurrPatterns (heavy, own file: volumes lost =
+  make exactly the old features. Tests: libraryBurrPatterns (pure; badges vs the solution for seeds 1–12 of each difficulty), engineBurrPatterns (heavy, own file: volumes lost =
   engraving, no overlaps, the first few free moves of the plain cubes still free half a cube at a time; pieces reach past the plain ones only beyond
   their ends), mcpBurrPatterns.
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not

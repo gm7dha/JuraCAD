@@ -8,6 +8,11 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.55 — Six-piece burr: hard puzzles appear at once
+
+- Hard puzzles that took up to a minute (number 6) or several minutes (39, 42) to work out now take a second or two.
+  Every puzzle number comes out exactly as before, so burrs you've already made don't change.
+
 ## v0.54 — Drag parts with the mouse in Move / copy (like Onshape's Transform)
 
 - While **Move / copy** is open, a **triad** sits on the part: drag an arrow to slide along that axis, a square to move in
