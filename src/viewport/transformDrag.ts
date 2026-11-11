@@ -14,7 +14,7 @@
  * Results snap to steps (1 mm or more as you zoom out, 5°) unless `snap` is off
  * (Shift, or the touch bar's "No snapping").
  */
-import { add, compose, cross, dot, frameAxis, length, rotation, scale, sub, turnOf, turnsOf, unit, type Triad, type TransformValues, type Vec3 } from "../model/transformMath";
+import { add, compose, cross, dot, frameAxis, length, rotation, scale, sub, turnOf, turnsNear, unit, type Triad, type TransformValues, type Vec3 } from "../model/transformMath";
 
 export interface Ray {
   origin: Vec3;
@@ -298,13 +298,19 @@ export function startTriadDrag(handle: TriadHandle, triad: Triad, size: number, 
   // Free (turn and move): the turn so far, then the ring's turn about its drawn axis on top — written back as the
   // X-then-Y-then-Z turns of the three boxes (so a ring always turns about the axis it's drawn round).
   const before = mode === "free" ? turnOf(startOf("rx"), startOf("ry"), startOf("rz")) : null;
+  // The angles shown last (the drag's start values first): the next ones are kept as near them as they can be.
+  let shown = { rx: startOf("rx"), ry: startOf("ry"), rz: startOf("rz") };
+  const names = ["rx", "ry", "rz"] as const;
   const finish = (opts: DragOptions) => {
     if (before) {
       const delta = opts.snap ? snapTo(total, opts.angleStep ?? ANGLE_STEP) : total;
       const axis: Vec3 = [handle.axis === 0 ? 1 : 0, handle.axis === 1 ? 1 : 0, handle.axis === 2 ? 1 : 0];
-      const turns = turnsOf(compose(rotation(axis, delta), { r: before, t: [0, 0, 0] }).r);
+      // Nearest what was shown, with the ring's own box where the drag alone would take it (so 400° stays 400°).
+      const near = { ...shown, [names[handle.axis]]: startOf(names[handle.axis]) + delta };
+      const turns = turnsNear(compose(rotation(axis, delta), { r: before, t: [0, 0, 0] }).r, near);
       const tidy = (n: number) => Math.round(n * 1000) / 1000 + 0;
-      return { rx: tidy(turns.rx), ry: tidy(turns.ry), rz: tidy(turns.rz) };
+      shown = { rx: tidy(turns.rx), ry: tidy(turns.ry), rz: tidy(turns.rz) };
+      return { ...shown };
     }
     const v = startOf(k) + total;
     return { [k]: opts.snap ? snapTo(v, opts.angleStep ?? ANGLE_STEP) : Math.round(v * 100) / 100 } as Partial<Record<keyof TransformValues, number>>;

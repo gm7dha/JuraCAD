@@ -410,7 +410,7 @@
   place the triad. The triad (`src/viewport/transformDrag.ts`, pure: `handleAt` screen-space hit tests, `startTriadDrag` → arrows by
   the nearest point of the ray to the axis line, squares by ray ∩ plane, the ball in the view plane, rings by angle in their plane —
   added up, so past 180° — or, edge-on, by sliding along the grabbed point's tangent; in free mode a ring's turn goes on top of the turn
-  so far, R' = Rot(drawn axis, Δ)·R, and all three angle boxes are read back from R' (`turnOf`/`turnsOf`, also used by `valuesInFrame`), so a
+  so far, R' = Rot(drawn axis, Δ)·R, and all three angle boxes are read back from R' (`turnOf`/`turnsOf`, also used by `valuesInFrame`; `turnsNear` picks of the two XYZ solutions, each shifted by whole turns, the one nearest the boxes shown last — the ring's own box nearest start + Δ — so they never jump to an equivalent set and long drags go past 180°), so a
   ring always turns about the axis it's drawn round; arrows seen within `MIN_ARROW_SIDE` of end-on and squares within `MIN_SQUARE_FACING` of
   edge-on are faded and can't be grabbed (`handleUsable`); `snapTo` with `lengthStep` (1 mm / 0.05 in, more
   zoomed out) and 5°; Shift via `shiftHeld` = free) is drawn by `SceneManager.setTriad` (constant `TRIAD_PIXELS` on screen, depthTest

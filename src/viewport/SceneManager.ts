@@ -1886,6 +1886,8 @@ export class SceneManager {
     const st = this.touchStroke;
     if (!d && !st?.triadOn) return;
     this.triadDrag = null;
+    // (A release after Esc near where the drag began mustn't count as a click.)
+    this.pointerDown = null;
     if (st?.triadOn) st.triadOn = false;
     if (d && this.renderer.domElement.hasPointerCapture(d.pointerId)) this.renderer.domElement.releasePointerCapture(d.pointerId);
     this.renderer.domElement.style.cursor = "";

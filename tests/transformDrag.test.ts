@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPoint, applyVec, compose, frameFromZ, invert, isClassicTransform, rotation, toAxisAngle, transformMotion, transformTriad, transformKeys, valuesInFrame, type Rigid, type Triad, type Vec3 } from "../src/model/transformMath";
+import { applyPoint, applyVec, compose, frameFromZ, invert, isClassicTransform, rotation, toAxisAngle, transformMotion, transformTriad, transformKeys, valuesInFrame, turnOf, turnsNear, type Rigid, type Triad, type Vec3 } from "../src/model/transformMath";
 import { axisParam, handleAt, handleUsable, lengthStep, planeHit, snapTo, startTriadDrag, TRIAD_LAYOUT, type Ray } from "../src/viewport/transformDrag";
 import type { TransformDef } from "../src/model/types";
 import { circleOf, directionOf, lineOf, spotFrame } from "../src/model/transformPicks";
@@ -130,9 +130,8 @@ describe("dragging the triad", () => {
     const ring = startTriadDrag({ kind: "ring", axis: 2 }, triad, 50, down(39, 0), { rz: 10 }, "free")!;
     expect(ring.move(down(0, 39), snap)).toEqual({ rx: 0, ry: 0, rz: 100 });
     ring.move(down(-39, 1), snap);
-    // 225° on from 10° is 235°, written as the same turn the other way: −125°.
-    expect(ring.move(down(-30, -30), snap)).toEqual({ rx: 0, ry: 0, rz: -125 });
-    expect(ring.move(down(-30, -30), { ...free, angleStep: 5 }).rz).toBeCloseTo(-125, 1);
+    expect(ring.move(down(-30, -30), snap)).toEqual({ rx: 0, ry: 0, rz: 235 });
+    expect(ring.move(down(-30, -30), { ...free, angleStep: 5 }).rz).toBeCloseTo(235, 1);
     // Seen edge-on (a ring about X from above): sliding along it turns it.
     const edge = startTriadDrag({ kind: "ring", axis: 0 }, triad, 50, down(0, 0), {}, "free")!;
     // Grabbed at the front (nearest the eye), sliding towards −Y turns it anticlockwise about X.
@@ -150,6 +149,45 @@ describe("dragging the triad", () => {
       const want = compose(rotation([1, 0, 0], 90), transformMotion(def({ triad: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } }), { ry, rz }, [0, 0, 0]) as Rigid);
       for (const p of [[1, 0, 0], [0, 1, 0], [0, 0, 1]] as Vec3[]) close(applyVec(after, p), applyVec(want, p), 4);
     }
+  });
+
+  it("keeps the boxes near what they said: no jumps to an equivalent set of angles", () => {
+    const quarter = (axis: number): [Ray, Ray] => {
+      // Seen from the + end of the axis, from the next axis round to the one after it (a +90° drag).
+      const look: Vec3 = axis === 0 ? [-1, 0, 0] : axis === 1 ? [0, -1, 0] : [0, 0, -1];
+      const from = (p: Vec3): Ray => ({ origin: [p[0] - 100 * look[0], p[1] - 100 * look[1], p[2] - 100 * look[2]], dir: look });
+      const u = [0, 0, 0] as Vec3;
+      const v = [0, 0, 0] as Vec3;
+      u[(axis + 1) % 3] = 39;
+      v[(axis + 2) % 3] = 39;
+      return [from(u), from(v)];
+    };
+    // Turned 10° on by sliding a little way round from where it's grabbed.
+    const tenDegrees = (axis: number, start: Record<string, number>) => {
+      const [a] = quarter(axis);
+      const drag = startTriadDrag({ kind: "ring", axis }, triad, 50, a, start, "free")!;
+      const i = (axis + 1) % 3;
+      const j = (axis + 2) % 3;
+      const at = (deg: number): Ray => {
+        const p = [0, 0, 0] as Vec3;
+        p[i] = 39 * Math.cos((deg * Math.PI) / 180);
+        p[j] = 39 * Math.sin((deg * Math.PI) / 180);
+        return { origin: [p[0] - 100 * a.dir[0], p[1] - 100 * a.dir[1], p[2] - 100 * a.dir[2]], dir: a.dir };
+      };
+      return { drag, at };
+    };
+    const y = tenDegrees(1, { ry: 120 });
+    expect(y.drag.move(y.at(10), snap)).toEqual({ rx: 0, ry: 130, rz: 0 });
+    const z = tenDegrees(2, { rz: 175 });
+    expect(z.drag.move(z.at(10), snap)).toEqual({ rx: 0, ry: 0, rz: 185 });
+    const x = tenDegrees(0, { rx: 200 });
+    expect(x.drag.move(x.at(10), snap)).toEqual({ rx: 210, ry: 0, rz: 0 });
+    // Round and round: 400° stays 400° (dragged step by step; and worked out straight from the turn).
+    const long = tenDegrees(0, {});
+    let out = {};
+    for (let d = 20; d <= 400; d += 20) out = long.drag.move(long.at(d), snap);
+    expect(out).toEqual({ rx: 400, ry: 0, rz: 0 });
+    expect(turnsNear(turnOf(400, 0, 0), { rx: 400, ry: 0, rz: 0 })).toEqual({ rx: 400, ry: 0, rz: 0 });
   });
 
   it("drags only what each way of moving uses", () => {

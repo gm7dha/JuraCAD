@@ -311,6 +311,21 @@ export function turnOf(rx: number, ry: number, rz: number): number[] {
   return m.r;
 }
 
+/**
+ * The X-then-Y-then-Z turns (degrees) that make the turn `r`, as near as can be to `near`: of the two sets that make
+ * it — (α, β, γ) and (α + 180, 180 − β, γ + 180) — each angle shifted by whole turns to come nearest, the nearer set.
+ * (So boxes that said 120° about Y say 130° after a 10° drag, not 180°, 50°, 180°; and a drag can go on past 180°.)
+ */
+export function turnsNear(r: number[], near: { rx: number; ry: number; rz: number }): { rx: number; ry: number; rz: number } {
+  const p = turnsOf(r);
+  const shift = (a: number, to: number) => a + 360 * Math.round((to - a) / 360);
+  const fit = (t: { rx: number; ry: number; rz: number }) => ({ rx: shift(t.rx, near.rx), ry: shift(t.ry, near.ry), rz: shift(t.rz, near.rz) });
+  const far = (t: { rx: number; ry: number; rz: number }) => Math.abs(t.rx - near.rx) + Math.abs(t.ry - near.ry) + Math.abs(t.rz - near.rz);
+  const a = fit(p);
+  const b = fit({ rx: p.rx + 180, ry: 180 - p.ry, rz: p.rz + 180 });
+  return far(b) < far(a) - 1e-9 ? b : a;
+}
+
 /** The X-then-Y-then-Z turns (degrees) that make the turn `r` (3 × 3, row by row). */
 export function turnsOf(r: number[]): { rx: number; ry: number; rz: number } {
   // R = Rz(γ)·Ry(β)·Rx(α): r20 = −sin β, r21 = cos β sin α, r22 = cos β cos α, r10 = cos β sin γ, r00 = cos β cos γ.
