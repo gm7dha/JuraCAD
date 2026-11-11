@@ -9,9 +9,16 @@
  * enough border, into one side or the other. Each piece's outline is traced from a signed distance to its edge (a
  * Euclidean distance transform), `fit` inside its own cells, so neighbours have a gap of 2 × fit; marching squares give a
  * watertight mesh: the ground on top, flat underneath, walls round every edge.
+ *
+ * Map marks (paths, rivers, lochs, roads, buildings from OpenStreetMap) are pressed into the ground with the Mountain
+ * puzzle's `groundMarks`, on one height field shared by every piece (so a river crossing a join lines up across the
+ * gap). Only land is meshed, so rivers end at the coast and the sea stays as it is; grooves fade out over thin parts
+ * (dovetails, narrow strips) and never leave the ground thinner than `LEAST_BASE`.
  */
 import { heightAt, type HeightGrid } from "./elevation";
+import { BUILDING_LEAST, groundMarks } from "./groundMarks";
 import type { Body, PuzzlePiece } from "./mountainPuzzle";
+import { NO_FEATURES, type MapFeatures, type OsmLineKind } from "./osm";
 
 type XY = [number, number];
 
@@ -50,6 +57,17 @@ export interface IslandPiece extends PuzzlePiece {
   area: number;
 }
 
+/** The map marks on the puzzle (mm, x east, y north), for the preview: lines clipped to the land, shapes as they are. */
+export interface IslandMarks {
+  lines: { kind: OsmLineKind; pts: XY[] }[];
+  shapes: { kind: "water" | "building"; rings: XY[][] }[];
+  /** Lines and shapes on the land, and how many were too small to show at this scale. */
+  shown: number;
+  tooSmall: number;
+}
+
+export const NO_MARKS: IslandMarks = { lines: [], shapes: [], shown: 0, tooSmall: 0 };
+
 export interface IslandPuzzle {
   width: number;
   height: number;
@@ -64,15 +82,28 @@ export interface IslandPuzzle {
   joins: number;
   unjoined: number;
   warnings: string[];
+  marks: IslandMarks;
+  /** The ground's height (mm) at x, y — the one field every piece's top is drawn from, marks and all. */
+  groundAt(x: number, y: number): number;
 }
 
 /** The smallest piece kept on its own (mm²); smaller ones join a neighbour. */
 export const smallestPiece = (piece: number) => Math.max(60, (0.4 * piece) ** 2);
 
+/** The thinnest base allowed (mm): map marks never take the ground below it either. */
+export const LEAST_BASE = 1.5;
+/** Shortest line (mm on the puzzle) and smallest loch (mm²) worth pressing in; smaller ones would be dimples. */
+export const LEAST_MARK_LINE = 3;
+export const LEAST_MARK_WATER = 4;
+/** Grooves fade to nothing over this far (mm) towards a thin part. */
+export const MARK_FADE = 1.5;
+/** The top is drawn at least this finely (mm) where map marks are. */
+export const MARK_SAMPLE = 0.45;
+
 export function islandChecks(spec: IslandSpec): string[] {
   const out: string[] = [];
   if (!(spec.piece >= 15 && spec.piece <= 150)) out.push("Pieces should be between 15 and 150 mm.");
-  if (!(spec.base >= 1.5 && spec.base <= 30)) out.push("The base should be between 1.5 and 30 mm.");
+  if (!(spec.base >= LEAST_BASE && spec.base <= 30)) out.push("The base should be between 1.5 and 30 mm.");
   if (!(spec.relief >= 0 && spec.relief <= 150)) out.push("The highest ground should be between 0 and 150 mm above the base.");
   if (!(spec.fit >= 0 && spec.fit <= 0.5)) out.push("The fit gap should be between 0 and 0.5 mm.");
   return out;
@@ -188,7 +219,15 @@ function spreadOwners(owner: Int32Array, nx: number, ny: number, land: (c: numbe
  * The puzzle from heights over an area `areaWidth` × `areaHeight` m whose south-west corner is grid point `sw`. Cut
  * along `cuts`' lines when given (and they divide the land), else into pieces of about `spec.piece` mm.
  */
-export function makeIslandPuzzle(grid: HeightGrid, sw: { e: number; n: number }, areaWidth: number, areaHeight: number, spec: IslandSpec, cuts?: IslandCuts): IslandPuzzle {
+export function makeIslandPuzzle(
+  grid: HeightGrid,
+  sw: { e: number; n: number },
+  areaWidth: number,
+  areaHeight: number,
+  spec: IslandSpec,
+  cuts?: IslandCuts,
+  features: MapFeatures = NO_FEATURES,
+): IslandPuzzle {
   const problems = islandChecks(spec);
   if (problems.length) throw new Error(problems[0]);
   const k = Math.min((spec.bed[0] - 10) / areaWidth, (spec.bed[1] - 10) / areaHeight) * spec.scale;
@@ -489,7 +528,29 @@ export function makeIslandPuzzle(grid: HeightGrid, sw: { e: number; n: number },
 
   // Each piece's mesh.
   const lift = spec.relief / Math.max(high, 1);
-  const top = (x: number, y: number) => spec.base + Math.max(0, ground(x, y)) * lift;
+  const plainTop = (x: number, y: number) => spec.base + Math.max(0, ground(x, y)) * lift;
+  let top = plainTop;
+  let fine: FineTop | undefined;
+  let marks = NO_MARKS;
+  const used = featuresForIsland(features, k);
+  if (used.features.lines.length || used.features.shapes.length) {
+    const m = groundMarks(used.features, sw.e, sw.n, k, W, H, plainTop);
+    if (!m.empty) {
+      const fade = thinFade(piece, nx, ny, cell, 0.6 * neck);
+      top = (x, y) => {
+        const p = plainTop(x, y);
+        let z = m.apply(x, y, p);
+        if (z < p) z = Math.max(LEAST_BASE, p + fade(x, y) * (z - p));
+        return z;
+      };
+      const step = Math.max(1, Math.round(0.7 / cell));
+      fine = { s: Math.max(1, Math.ceil((step * cell) / MARK_SAMPLE)), plain: plainTop };
+    }
+    marks = marksOnLand(used.features, used.tooSmall, sw, k, (x, y) => {
+      const [i, j] = [Math.floor(x / cell), Math.floor(y / cell)];
+      return i >= 0 && j >= 0 && i < nx && j < ny && piece[j * nx + i] >= 0;
+    });
+  }
   const pieces: IslandPiece[] = [];
   const order: { id: number; x: number; y: number; n: number }[] = [];
   const sums = new Map<number, [number, number, number]>();
@@ -506,7 +567,7 @@ export function makeIslandPuzzle(grid: HeightGrid, sw: { e: number; n: number },
   // Numbered from the north-west, row by row.
   order.sort((p, q) => Math.round((q.y - p.y) / P) * 1e6 + (p.x - q.x) || q.y - p.y);
   order.forEach((o, n) => {
-    const body = pieceMesh(piece, nx, ny, cell, o.id, spec.fit, top);
+    const body = pieceMesh(piece, nx, ny, cell, o.id, spec.fit, top, fine);
     if (!body) return;
     let [x0, y0, x1, y1, z1] = [Infinity, Infinity, -Infinity, -Infinity, 0];
     for (let i = 0; i < body.vertices.length; i += 3) {
@@ -539,7 +600,139 @@ export function makeIslandPuzzle(grid: HeightGrid, sw: { e: number; n: number },
     });
   });
   if (unjoined) warnings.push(`${unjoined} ${unjoined === 1 ? "border is" : "borders are"} too short or crowded for a dovetail; those pieces just sit side by side there.`);
-  return { width: W, height: H, k, high, pieces, alongBoundaries, joins, unjoined, warnings };
+  return { width: W, height: H, k, high, pieces, alongBoundaries, joins, unjoined, warnings, marks, groundAt: top };
+}
+
+/**
+ * The map's features worth pressing into an island at `k` mm per metre: lines at least `LEAST_MARK_LINE` long, lochs
+ * at least `LEAST_MARK_WATER` mm², buildings at least half `BUILDING_LEAST` across (groundMarks draws those a little
+ * bigger so they print; smaller ones at an island's scale would be specks).
+ */
+export function featuresForIsland(f: MapFeatures, k: number): { features: MapFeatures; tooSmall: number } {
+  let tooSmall = 0;
+  const lines = f.lines.filter((l) => {
+    let len = 0;
+    for (let i = 1; i < l.pts.length; i++) len += Math.hypot(l.pts[i][0] - l.pts[i - 1][0], l.pts[i][1] - l.pts[i - 1][1]);
+    const ok = len * k >= LEAST_MARK_LINE;
+    if (!ok) tooSmall++;
+    return ok;
+  });
+  const shapes = f.shapes.filter((s) => {
+    const ring = s.rings[0];
+    let ok: boolean;
+    if (s.kind === "water") {
+      let a = 0;
+      for (let i = 0; i < ring.length; i++) {
+        const [p, q] = [ring[i], ring[(i + 1) % ring.length]];
+        a += p[0] * q[1] - q[0] * p[1];
+      }
+      ok = (Math.abs(a) / 2) * k * k >= LEAST_MARK_WATER;
+    } else {
+      const xs = ring.map((p) => p[0]);
+      const ys = ring.map((p) => p[1]);
+      ok = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * k >= BUILDING_LEAST / 2;
+    }
+    if (!ok) tooSmall++;
+    return ok;
+  });
+  return { features: { lines, shapes, names: [] }, tooSmall };
+}
+
+/** The marks in puzzle mm, lines cut where they leave the land (`onLand`). */
+function marksOnLand(f: MapFeatures, tooSmall: number, sw: { e: number; n: number }, k: number, onLand: (x: number, y: number) => boolean): IslandMarks {
+  const at = ([e, n]: XY): XY => [(e - sw.e) * k, (n - sw.n) * k];
+  const lines: IslandMarks["lines"] = [];
+  let shown = 0;
+  for (const line of f.lines) {
+    const pts = line.pts.map(at);
+    let run: XY[] = [];
+    let any = false;
+    const end = () => {
+      if (run.length >= 2) {
+        lines.push({ kind: line.kind, pts: run });
+        any = true;
+      }
+      run = [];
+    };
+    // Was the run's last point a sample part-way along the current segment (so the next one can replace it)?
+    let mid = false;
+    for (let s = 0; s + 1 < pts.length; s++) {
+      const [a, b] = [pts[s], pts[s + 1]];
+      const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.2));
+      for (let t = s ? 1 : 0; t <= n; t++) {
+        const p: XY = [a[0] + ((b[0] - a[0]) * t) / n, a[1] + ((b[1] - a[1]) * t) / n];
+        if (onLand(p[0], p[1])) {
+          // A straight stretch needs only its ends.
+          if (mid && run.length >= 2) run[run.length - 1] = p;
+          else run.push(p);
+          mid = t < n;
+        } else {
+          end();
+          mid = false;
+        }
+      }
+      mid = false;
+    }
+    end();
+    if (any) shown++;
+  }
+  const shapes: IslandMarks["shapes"] = [];
+  for (const s of f.shapes) {
+    const rings = s.rings.map((r) => r.map(at));
+    if (rings[0].some(([x, y]) => onLand(x, y))) {
+      shapes.push({ kind: s.kind, rings });
+      shown++;
+    }
+  }
+  return { lines, shapes, shown, tooSmall };
+}
+
+/**
+ * How much of a mark's depth to keep at x, y (0–1): none over thin parts of any piece — where a disc `r` mm across
+ * the middle doesn't fit, such as a dovetail or a narrow strip of land — rising to all of it `MARK_FADE` mm away.
+ * One smooth field over the whole puzzle, so both sides of a join see the same.
+ */
+function thinFade(piece: Int32Array, nx: number, ny: number, cell: number, r: number): (x: number, y: number) => number {
+  const N = nx * ny;
+  // Distance (cells) to the nearest edge: sea, or a cell beside another piece.
+  const edge = new Uint8Array(N);
+  for (let j = 0; j < ny; j++)
+    for (let i = 0; i < nx; i++) {
+      const c = j * nx + i;
+      const p = piece[c];
+      if (p < 0 || i === 0 || j === 0 || i === nx - 1 || j === ny - 1) edge[c] = 1;
+      else if (piece[c - 1] !== p || piece[c + 1] !== p || piece[c - nx] !== p || piece[c + nx] !== p) edge[c] = 1;
+    }
+  const dEdge = distanceTransform(edge, nx, ny);
+  // Where a disc of radius r fits (its middles), then everything those discs cover: the thick parts.
+  const R = r / cell;
+  const core = new Uint8Array(N);
+  let anyCore = false;
+  for (let c = 0; c < N; c++)
+    if (piece[c] >= 0 && dEdge[c] >= R * R) {
+      core[c] = 1;
+      anyCore = true;
+    }
+  const thin = new Uint8Array(N);
+  let anyThin = false;
+  const dCore = anyCore ? distanceTransform(core, nx, ny) : null;
+  for (let c = 0; c < N; c++)
+    if (piece[c] >= 0 && (!dCore || dCore[c] > (R + 0.5) ** 2)) {
+      thin[c] = 1;
+      anyThin = true;
+    }
+  if (!anyThin) return () => 1;
+  const dThin = distanceTransform(thin, nx, ny);
+  const keep = new Float32Array(N);
+  for (let c = 0; c < N; c++) keep[c] = Math.max(0, Math.min(1, (Math.sqrt(dThin[c]) * cell - 0.3) / MARK_FADE));
+  return (x, y) => {
+    const fx = Math.max(0, Math.min(nx - 1.000001, x / cell - 0.5));
+    const fy = Math.max(0, Math.min(ny - 1.000001, y / cell - 0.5));
+    const [i, j] = [Math.floor(fx), Math.floor(fy)];
+    const [u, v] = [fx - i, fy - j];
+    const c = j * nx + i;
+    return (keep[c] * (1 - u) + keep[c + 1] * u) * (1 - v) + (keep[c + nx] * (1 - u) + keep[c + nx + 1] * u) * v;
+  };
 }
 
 /** Is piece `id` (within its box [i0, j0, i1, j1]) still one 4-connected stretch of cells? */
@@ -576,8 +769,17 @@ function wholePiece(piece: Int32Array, nx: number, ny: number, id: number, box: 
 /**
  * One piece as a closed mesh: its outline `fit` inside its cells (marching squares on the signed distance to its edge,
  * sampled at cell centres), the ground on top (`top(x, y)`), flat at z = 0 underneath, walls round every edge.
+ * With `fine`, squares where the top differs from the plain ground are drawn s × s finer on top (only on top: the
+ * outline, walls and underneath are the same as without), and so are whole sides they share with their neighbours, so
+ * the top stays closed.
  */
-export function pieceMesh(piece: Int32Array, nx: number, ny: number, cell: number, id: number, fit: number, top: (x: number, y: number) => number): Body | null {
+/** Drawing the top finer where it differs from the `plain` ground (map marks): each square of the mesh split `s` × `s`. */
+export interface FineTop {
+  s: number;
+  plain: (x: number, y: number) => number;
+}
+
+export function pieceMesh(piece: Int32Array, nx: number, ny: number, cell: number, id: number, fit: number, top: (x: number, y: number) => number, fine?: FineTop): Body | null {
   // The piece's box, with room round it.
   let [i0, j0, i1, j1] = [nx, ny, -1, -1];
   for (let c = 0; c < piece.length; c++)
@@ -630,6 +832,40 @@ export function pieceMesh(piece: Int32Array, nx: number, ny: number, cell: numbe
     return id;
   };
   const val = (i: number, j: number) => (i < 0 || j < 0 || i >= mw || j >= mh ? -1 : f[j * step * w + i * step]);
+  // Fine top: which squares have marks in them (any of their (s+1)² points off the plain ground).
+  const s = fine && fine.s > 1 ? fine.s : 0;
+  const markedMemo = new Map<number, boolean>();
+  const marked = (i: number, j: number): boolean => {
+    if (!s) return false;
+    const key = (j + 2) * (mw + 4) + i + 2;
+    let m = markedMemo.get(key);
+    if (m === undefined) {
+      m = false;
+      for (let b = 0; b <= s && !m; b++)
+        for (let a = 0; a <= s && !m; a++) {
+          const [x, y] = [X(i) + ((X(i + 1) - X(i)) * a) / s, Y(j) + ((Y(j + 1) - Y(j)) * b) / s];
+          if (Math.abs(top(x, y) - fine!.plain(x, y)) > 1e-9) m = true;
+        }
+      markedMemo.set(key, m);
+    }
+    return m;
+  };
+  // A point of the fine grid (sub-square units), keyed so the mesh's own corners keep their keys.
+  const fineVert = (I: number, J: number) => {
+    if (I % s === 0 && J % s === 0) {
+      const [a, b] = [I / s, J / s];
+      return vert(`n${a},${b}`, X(a), Y(b), true);
+    }
+    const [x, y] = [((I / s) * step + i0 + 0.5) * cell, ((J / s) * step + j0 + 0.5) * cell];
+    return vert(`f${I},${J}`, x, y, true);
+  };
+  // The square across each side (0 bottom, 1 right, 2 top, 3 left).
+  const ACROSS: XY[] = [
+    [0, -1],
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+  ];
   for (let j = -1; j < mh; j++)
     for (let i = -1; i < mw; i++) {
       // The square's corners, anticlockwise, and where the outline crosses its sides.
@@ -668,10 +904,37 @@ export function pieceMesh(piece: Int32Array, nx: number, ny: number, cell: numbe
       for (const p of polys) {
         const T = p.map((q) => vert(q.key, q.x, q.y, true));
         const B = p.map((q) => vert(q.key, q.x, q.y, false));
-        for (let n = 1; n + 1 < p.length; n++) {
-          t.push(T[0], T[n], T[n + 1]);
-          t.push(B[0], B[n + 1], B[n]);
-        }
+        for (let n = 1; n + 1 < p.length; n++) t.push(B[0], B[n + 1], B[n]);
+        const own = s > 0 && marked(i, j);
+        // Which of the square's whole sides (both corners inside) are drawn finely: when it or the square across is marked.
+        const split = s > 0 && !saddle ? [0, 1, 2, 3].map((n) => ins[n] && ins[(n + 1) % 4] && (own || marked(i + ACROSS[n][0], j + ACROSS[n][1]))) : [false, false, false, false];
+        if (own && p.length === 4 && ins.every(Boolean)) {
+          // A whole square with marks: an s × s grid of its own.
+          for (let b = 0; b < s; b++)
+            for (let a = 0; a < s; a++) {
+              const [I, J] = [i * s + a, j * s + b];
+              const [q00, q10, q11, q01] = [fineVert(I, J), fineVert(I + 1, J), fineVert(I + 1, J + 1), fineVert(I, J + 1)];
+              t.push(q00, q10, q11, q00, q11, q01);
+            }
+        } else if (split.some(Boolean)) {
+          // Round the outline, with the fine points along split sides, as a fan from its middle.
+          const ring: number[] = [];
+          let [cx, cy] = [0, 0];
+          for (const q of p) [cx, cy] = [cx + q.x / p.length, cy + q.y / p.length];
+          for (let n = 0; n < p.length; n++) {
+            ring.push(T[n]);
+            const m = (n + 1) % p.length;
+            if (p[n].cross || p[m].cross) continue;
+            // Both corners: which side of the square runs from this one to the next?
+            const ca = cs.findIndex(([a, b]) => p[n].key === `n${a},${b}`);
+            if (ca < 0 || !split[ca]) continue;
+            const [a0, b0] = cs[ca];
+            const [a1, b1] = cs[(ca + 1) % 4];
+            for (let k = 1; k < s; k++) ring.push(fineVert(a0 * s + (a1 - a0) * k, b0 * s + (b1 - b0) * k));
+          }
+          const C = vert(`c${i},${j}`, cx, cy, true);
+          for (let n = 0; n < ring.length; n++) t.push(C, ring[n], ring[(n + 1) % ring.length]);
+        } else for (let n = 1; n + 1 < p.length; n++) t.push(T[0], T[n], T[n + 1]);
         // An edge between two crossings is the outline: a wall, facing out (the piece is on its left).
         for (let n = 0; n < p.length; n++) {
           const m = (n + 1) % p.length;
