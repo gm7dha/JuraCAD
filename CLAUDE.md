@@ -164,7 +164,8 @@
   pattern `along`/`along2` — or when too few of a list are left (picks, pattern/mirror sources, subtract targets/tools, deleteParts,
   simplifyParts: none; union/intersect targets and loft sections: < 2). Also an old-style (not `apart`; not `intersectAll`)
   Add/Remove/Intersect of a solid type (`usesLatestPart`) when the latest solid part's maker (`makesSolidPart`: unsuppressed New
-  solids, New fasteners/derived/coils/thicken/sheet metal, mirror of a part not joined, transform copies, patterns of makers) goes —
+  solids, New fasteners/derived/coils/thicken/sheet metal, Enclose, a Split keeping both pieces, mirror of a part not joined, transform copies,
+  patterns of makers; an approximation — Delete part or a Boolean union can change which part is last too) goes —
   else it would silently change an earlier part (a stencil's letters carving the user's block). Losing only some list items, extra
   sketches (`moreAreas`) or sketch references brought in keeps it, in `partial` (shown "Fillet 3 will lose 1 of its 2 picked edges
   and faces"); `withoutGone` rewrites such a feature without them (the engine fails any feature with a missing reference), and

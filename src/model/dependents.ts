@@ -169,9 +169,18 @@ const LATEST_USERS = new Set<Feature["type"]>(["box", "cylinder", "sphere", "ext
 
 const isSurfaceFeature = (f: Feature) => !!f.surface || f.type === "fill" || f.type === "offsetSurface" || f.type === "enclose" || f.type === "ruled";
 
-/** Does this feature (built) make a new solid part? */
+/**
+ * Does this feature (built) make a new solid part, so it becomes the part old-style Add/Remove features act on?
+ * An approximation from the list alone: Delete part or a Boolean union can also change which part is last, and a
+ * Split is assumed to split a solid (not a surface).
+ */
 function makesSolidPart(f: Feature, makers: Set<string>): boolean {
-  if (f.suppressed || isSurfaceFeature(f)) return false;
+  if (f.suppressed) return false;
+  // Enclose closes surfaces into a solid part of its own.
+  if (f.type === "enclose") return true;
+  if (isSurfaceFeature(f)) return false;
+  // Keeping both pieces adds the front one as a part under the split's id.
+  if (f.type === "split") return f.splitDef?.keep === "both";
   if (f.type === "mirror" && f.mirror?.part !== undefined) return !f.mirror.join;
   if (f.type === "transform") return !!f.transform?.copy;
   if (isPatternFeature(f.type)) return (f.pattern?.sources ?? f.mirror?.sources ?? []).some((id) => makers.has(id));

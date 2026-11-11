@@ -164,6 +164,15 @@ describe("finding what uses a feature", () => {
     // A suppressed maker isn't the latest part.
     const off = list.map((f) => (f.id === "sheet" ? { ...f, suppressed: true } : f));
     expect(findDependents(off, ["sheetSk"]).dependents).toEqual(["sheet"]);
+    // A Split keeping both pieces, or an Enclose, makes the latest part: deleting the earlier maker keeps the cut, deleting them takes it.
+    for (const maker of [feat("split", "split", { splitDef: { partId: "block", plane: { kind: "default", name: "Right" }, keep: "both" } }), feat("split", "enclose")]) {
+      const after = [...list.slice(0, 7), maker, feat("cyl", "cylinder", { operation: "remove" })];
+      expect(findDependents(after, ["sheetSk"]).dependents).toEqual(["sheet", "letters", "bridges"]);
+      expect(findDependents(after, ["split"]).dependents).toEqual(["cyl"]);
+    }
+    // Keeping one side adds no part.
+    const oneSide = [...list.slice(0, 7), feat("split", "split", { splitDef: { partId: "block", plane: { kind: "default", name: "Right" }, keep: "front" } }), feat("cyl", "cylinder", { operation: "remove" })];
+    expect(findDependents(oneSide, ["split"]).dependents).toEqual([]);
     // A pattern of a New feature makes parts too.
     const pat = [feat("block", "box"), sketch("k"), feat("peg", "extrude", { sketchRef: "k" }), feat("row", "linearPattern", { pattern: { sources: ["peg"], axis: "x", flip: false } }), feat("cut", "extrude", { operation: "remove", sketchRef: "k2" })];
     expect(findDependents(pat, ["row"]).dependents).toEqual(["cut"]);
