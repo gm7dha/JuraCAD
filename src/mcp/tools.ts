@@ -5,7 +5,7 @@
  * MCP plumbing (tests/mcpTools.test.ts).
  */
 import { mirrorReferenceText, patternReferenceText } from "../model/patternRefs";
-import { createFeature, emptyDocument, removeFeature, renamePart, replaceFeature, addFeature, newId } from "../model/document";
+import { createFeature, emptyDocument, renamePart, replaceFeature, addFeature, newId } from "../model/document";
 import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, OLD_FILE_EXTENSION } from "../model/fileFormat";
 import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
 import { describeHole } from "../model/holes";
@@ -17,7 +17,9 @@ import { evaluate } from "../model/expr";
 import { analyzeSketch } from "../sketch/solver";
 import { DIMENSION_TYPES } from "../sketch/types";
 import type { PartMesh } from "../kernel/protocol";
-import { InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, type Obj } from "./args";
+import { bool, InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, type Obj } from "./args";
+import { deleteFeatures, deletePlan, listNames, outsideLines } from "../model/dependents";
+import { firstStudioId } from "../model/studios";
 import { applyFeature, applySketch, describePlane, FEATURE_KINDS, KIND_OF, limitProblems, type FeatureKind, type SpecContext } from "./featureSpec";
 import { describeEdge, describeFace, edgeList, faceList, facing, PICK_HELP } from "./picks";
 import { renderViews, RENDER_VIEWS, type RenderView } from "./render";
@@ -506,15 +508,37 @@ export const TOOLS: ToolDef[] = [
   {
     name: "delete_feature",
     title: "Delete a feature",
-    description: 'Delete a feature (by name or id). Refused, with the reason, if later features depend on it (delete or change those first).',
-    inputSchema: { type: "object", properties: { feature: { type: "string" } }, required: ["feature"] },
+    description:
+      'Delete a feature (by name or id). Refused, with the reason, if later features depend on it — unless `with_dependents` is true, which (like Onshape\'s Delete) also deletes every later feature that uses it, directly or through another (an extrude of a deleted sketch, a fillet on its edges, a sketch on its face, a pattern of it…), in one undo step. Features that only lose some of what they use (a fillet with edges on two parts) are kept and named.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        feature: { type: "string" },
+        with_dependents: { type: "boolean", description: "Also delete every later feature that uses it (default false)." },
+      },
+      required: ["feature"],
+    },
     run: async (s, a) => {
-      noExtras(a, ["feature"], "delete_feature");
+      noExtras(a, ["feature", "with_dependents"], "delete_feature");
       const f = s.feature(a.feature, "feature");
-      const users = s.doc.features.filter((x) => x.sketchRef === f.id || x.hole?.sketchRef === f.id || x.pattern?.sources.includes(f.id) || x.mirror?.sources.includes(f.id));
-      if (users.length) throw new InputError(`${f.name} is used by ${users.map((u) => u.name).join(", ")}. Delete ${users.length > 1 ? "those" : "that"} first (or change ${users.length > 1 ? "them" : "it"} to use something else). Nothing was changed.`);
-      const report = await tryChange(s, removeFeature(s.doc, f.id), null, `delete ${f.name}`);
-      return say(`Deleted ${f.name}.`, ...report);
+      const withDependents = bool(a.with_dependents, "with_dependents");
+      const studio = s.outer?.studio ?? firstStudioId(s.doc);
+      const plan = deletePlan(s.wholeDoc(), studio, [f.id]);
+      const name = (id: string) => s.doc.features.find((x) => x.id === id)?.name ?? id;
+      const users = plan.dependents.map(name);
+      if (users.length && !withDependents)
+        throw new InputError(
+          `${f.name} is used by ${listNames(users)}. Delete ${users.length > 1 ? "those" : "that"} first (or change ${users.length > 1 ? "them" : "it"} to use something else), or delete them all with {"feature": ${JSON.stringify(f.name)}, "with_dependents": true}. Nothing was changed.`,
+        );
+      const going = [f.id, ...plan.dependents];
+      const report = await tryChange(s, deleteFeatures(s.doc, going), null, `delete ${f.name}${users.length ? ` and ${users.length} feature${users.length > 1 ? "s" : ""} using it` : ""}`);
+      const outside = outsideLines(plan.outside);
+      return say(
+        users.length ? `Deleted ${f.name} and the ${users.length === 1 ? "feature" : `${users.length} features`} that used it: ${listNames(users)}.` : `Deleted ${f.name}.`,
+        plan.partial.length > 0 && `Kept, but now missing some of what they used: ${plan.partial.map((p) => `${p.name} (${p.loses.join(", ")})`).join("; ")}.`,
+        outside.length > 0 && `Used elsewhere (left as they are, showing the missing parts): ${outside.join(" ")}`,
+        ...report,
+      );
     },
   },
   {

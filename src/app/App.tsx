@@ -3,12 +3,14 @@ import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
 import { activeAssembly, activeDrawing, activeFeatures, studioParts, useStore } from "../model/store";
+import { findDependents } from "../model/dependents";
 import { DrawingPanel, DrawingSheet, DrawingToolbar } from "./DrawingUI";
 import { AssemblyPanel, AssemblyToolbar, ExplodePanel, InsertPanel, InstancePanel, MateDialog, PatternPanel } from "./AssemblyUI";
 import { Viewport, viewNormalToPlaneFeature, viewportApi } from "../viewport/Viewport";
 import type { StandardView } from "../viewport/ViewCube";
 import { CheckDialog } from "./CheckDialog";
 import { ExportDialog } from "./ExportDialog";
+import { DeleteDialog } from "./DeleteDialog";
 import { PictureDialog } from "./PictureDialog";
 import { FeatureDialog } from "./FeatureDialog";
 import { FeaturePanel } from "./FeaturePanel";
@@ -236,7 +238,9 @@ function useShortcuts() {
         case "Backspace":
           if (s.selectedFeatureId && !s.editing) {
             e.preventDefault();
-            s.deleteFeature(s.selectedFeatureId);
+            // Other features use it: ask whether to delete them too (as Onshape does); else delete it as before.
+            if (findDependents(activeFeatures(s), [s.selectedFeatureId]).dependents.length) s.askDelete({ ids: [s.selectedFeatureId], from: "key" });
+            else s.deleteFeature(s.selectedFeatureId);
           }
           break;
       }
@@ -248,6 +252,7 @@ function useShortcuts() {
 
 export function App() {
   const dialog = useStore((s) => s.dialog);
+  const deleteAsk = useStore((s) => s.deleteAsk !== null);
   const libraryOpen = useStore((s) => s.library !== null);
   const mountainOpen = useMountain((s) => s.open);
   const puzzleKind = useMountain((s) => s.kind);
@@ -332,6 +337,7 @@ export function App() {
       {dialog === "variables" && <VariablesDialog />}
       {dialog === "configurations" && <ConfigurationsDialog />}
       {dialog === "versions" && <VersionsDialog />}
+      {deleteAsk && <DeleteDialog />}
       {libraryOpen && <LibraryDialog />}
       {mountainOpen && (puzzleKind === "island" ? <IslandPuzzleDialog /> : <MountainPuzzleDialog />)}
       <ToastView />

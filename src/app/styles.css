@@ -2100,6 +2100,19 @@ kbd {
   margin-top: 6px;
 }
 
+/* The Delete question (DeleteDialog.tsx). */
+.delete-question {
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+
+.delete-list {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
 .small-text {
   font-size: 12px;
   margin: -2px 0 6px;

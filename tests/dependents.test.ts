@@ -1,0 +1,181 @@
+import { describe, expect, it } from "vitest";
+
+import { addAssembly, insertInstance } from "../src/assembly/assembly";
+import { addDrawing } from "../src/drawing/drawing";
+import { deleteFeatures, deletePlan, deleteQuestion, findDependents, listNames, outsideLines, partMaker } from "../src/model/dependents";
+import { emptyDocument } from "../src/model/document";
+import { addStudio, studioFeatures } from "../src/model/studios";
+import type { Feature, JuraCADDocument } from "../src/model/types";
+import type { TopoPick } from "../src/geometry/topoRef";
+import { emptySketch } from "../src/sketch/types";
+
+function feat(id: string, type: Feature["type"], extra: Partial<Feature> = {}): Feature {
+  return { id, name: id, type, operation: "new", suppressed: false, params: {}, ...extra };
+}
+const sketch = (id: string, extra: Partial<Feature> = {}) => feat(id, "sketch", { sketch: { plane: { kind: "default", name: "Top" }, data: emptySketch() }, ...extra });
+const edge = (partId: string): TopoPick => ({ partId, ref: { kind: "edge" } as unknown as TopoPick["ref"] });
+const face = (partId: string): TopoPick => ({ partId, ref: { kind: "face" } as unknown as TopoPick["ref"] });
+const onFace = (id: string, partId: string) =>
+  sketch(id, { sketch: { plane: { kind: "face", origin: [0, 0, 10], u: [1, 0, 0], v: [0, 1, 0], label: "Top face of Part 1", face: face(partId) }, data: emptySketch() } });
+
+/** Sketch 1 → Extrude 1 → Fillet 1 → Sketch 2 (on its face) → Extrude 2 (Add), and a separate Box. */
+function chain(): Feature[] {
+  return [
+    sketch("s1"),
+    feat("e1", "extrude", { sketchRef: "s1", apart: true }),
+    feat("box", "box"),
+    feat("f1", "fillet", { operation: "add", picks: [edge("e1"), edge("e1")] }),
+    onFace("s2", "e1"),
+    feat("e2", "extrude", { operation: "add", sketchRef: "s2", apart: true }),
+    feat("f2", "fillet", { operation: "add", picks: [edge("box")] }),
+  ];
+}
+
+describe("finding what uses a feature", () => {
+  it("follows a sketch → extrude → fillet → sketch on its face → extrude chain", () => {
+    const d = findDependents(chain(), ["s1"]);
+    expect(d.picked).toEqual(["s1"]);
+    expect(d.dependents).toEqual(["e1", "f1", "s2", "e2"]);
+    expect(d.partial).toEqual([]);
+  });
+
+  it("starts from the middle of the list and leaves earlier features alone", () => {
+    expect(findDependents(chain(), ["f1"]).dependents).toEqual([]);
+    expect(findDependents(chain(), ["e1"]).dependents).toEqual(["f1", "s2", "e2"]);
+    expect(findDependents(chain(), ["box"]).dependents).toEqual(["f2"]);
+  });
+
+  it("knows parts by the feature that made them (pieces and configured copies too)", () => {
+    expect(partMaker("e1~3")).toBe("e1");
+    expect(partMaker("e1@c2")).toBe("e1");
+    const list = [sketch("s1"), feat("e1", "extrude", { sketchRef: "s1" }), feat("c1", "chamfer", { picks: [edge("e1~2")] })];
+    expect(findDependents(list, ["s1"]).dependents).toEqual(["e1", "c1"]);
+  });
+
+  it("keeps a fillet that loses only some of its edges, and says so", () => {
+    const list = [...chain(), feat("f3", "fillet", { picks: [edge("e1"), edge("box")] })];
+    const d = findDependents(list, ["e1"]);
+    expect(d.dependents).not.toContain("f3");
+    expect(d.partial).toEqual([{ id: "f3", name: "f3", loses: ["1 of its 2 picked edges and faces"] }]);
+  });
+
+  it("goes through patterns and mirrors: the features they repeat, their axes and planes", () => {
+    const list = [
+      sketch("s1"),
+      feat("e1", "extrude", { sketchRef: "s1" }),
+      feat("h1", "hole", { hole: { sketchRef: "s1" } as Feature["hole"] }),
+      feat("lp", "linearPattern", { pattern: { sources: ["e1", "h1"], axis: "x", flip: false } }),
+      feat("lp2", "linearPattern", { pattern: { sources: ["box"], axis: "x", flip: false, along: edge("e1") } }),
+      feat("mp", "mirror", { mirror: { sources: ["box"], plane: { kind: "default", name: "Top" }, planePick: face("e1") } }),
+      feat("ml", "mirror", { mirror: { sources: ["box"], plane: { kind: "default", name: "Top" }, line: { sketch: "s1", line: "l1" } } }),
+      feat("cp", "circularPattern", { pattern: { sources: ["box"], axis: "z", flip: false, line: { sketch: "s1", line: "l1" } } }),
+      feat("half", "mirror", { mirror: { sources: [], plane: { kind: "default", name: "Right" }, part: "e1" } }),
+    ];
+    expect(findDependents(list, ["s1"]).dependents).toEqual(["e1", "h1", "lp", "lp2", "mp", "ml", "cp", "half"]);
+    // A pattern of two features where only one goes keeps the other.
+    const d = findDependents(list, ["h1"]);
+    expect(d.dependents).toEqual([]);
+    expect(d.partial.map((p) => p.id)).toEqual(["lp"]);
+    // A mirror not yet given a plane doesn't use the old one.
+    const unset = [sketch("s1"), feat("m", "mirror", { mirror: { sources: ["x"], plane: { kind: "default", name: "Top" }, line: { sketch: "s1", line: "l" }, unset: true } })];
+    expect(findDependents(unset, ["s1"]).dependents).toEqual([]);
+  });
+
+  it("goes through Plane features made from faces, and what's drawn on them", () => {
+    const plane = { kind: "face" as const, origin: [0, 0, 5] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number], label: "Plane 1", planeRef: "p1" };
+    const list = [
+      sketch("s1"),
+      feat("e1", "extrude", { sketchRef: "s1" }),
+      feat("p1", "plane", { planeDef: { mode: "offset", axis: "u", ref: { kind: "face", origin: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], label: "face", face: face("e1") } } }),
+      sketch("s2", { sketch: { plane, data: emptySketch() } }),
+      feat("split", "split", { splitDef: { plane, keep: "both" } }),
+      feat("t1", "text", { text: { value: "Hi", plane, bold: false, flip: false } }),
+    ];
+    expect(findDependents(list, ["e1"]).dependents).toEqual(["p1", "s2", "split", "t1"]);
+  });
+
+  it("deletes a loft left with one section, keeps one left with two", () => {
+    const list = [sketch("a"), sketch("b"), sketch("c"), feat("l2", "loft", { sections: ["a", "b"] }), feat("l3", "loft", { sections: ["a", "b", "c"] })];
+    const d = findDependents(list, ["a"]);
+    expect(d.dependents).toEqual(["l2"]);
+    expect(d.partial).toEqual([{ id: "l3", name: "l3", loses: ["1 of its 3 loft sections"] }]);
+  });
+
+  it("keeps an extrude that also takes areas of a deleted sketch, and a sketch with references brought in", () => {
+    const data = emptySketch();
+    data.points.push({ id: "p", x: 0, y: 0, link: { sketch: "s1", item: "q" } } as (typeof data.points)[number]);
+    data.points.push({ id: "p2", x: 0, y: 0, link: { partId: "e1", ref: { kind: "edge" } as never, end: "a" } } as (typeof data.points)[number]);
+    const list = [
+      sketch("s1"),
+      sketch("s0"),
+      feat("e1", "extrude", { sketchRef: "s0", moreAreas: [{ sketch: "s1", areas: [] }] }),
+      sketch("s3", { sketch: { plane: { kind: "default", name: "Front" }, data } }),
+    ];
+    const d = findDependents(list, ["s1"]);
+    expect(d.dependents).toEqual([]);
+    expect(d.partial).toEqual([
+      { id: "e1", name: "e1", loses: ["1 extra sketch it takes areas from"] },
+      { id: "s3", name: "s3", loses: ["1 reference brought in from elsewhere"] },
+    ]);
+    expect(findDependents(list, ["s0"]).partial).toEqual([{ id: "s3", name: "s3", loses: ["1 reference brought in from elsewhere"] }]);
+  });
+
+  it("follows parts named by Boolean, Delete part, Transform, Up to face and sheet metal flanges", () => {
+    const list = [
+      sketch("s1"),
+      feat("e1", "extrude", { sketchRef: "s1" }),
+      feat("box", "box"),
+      feat("u", "boolean", { booleanDef: { op: "union", targets: ["e1", "box"], tools: [], keepTools: false } }),
+      feat("cut", "boolean", { booleanDef: { op: "subtract", targets: ["box"], tools: ["e1"], keepTools: false } }),
+      feat("del", "deletePart", { deleteParts: ["e1"] }),
+      feat("mv", "transform", { transform: { partId: "e1", axis: "z", about: "origin", copy: false } }),
+      feat("up", "extrude", { sketchRef: "s9", extrude: { end: "upToFace", flip: false, upTo: face("e1") } }),
+      feat("fl", "flange", { picks: [edge("e1")] }),
+    ];
+    const d = findDependents(list, ["e1"]);
+    expect(d.dependents).toEqual(["cut", "del", "mv", "up", "fl"]);
+    expect(d.partial.map((p) => p.id)).toEqual(["u"]);
+  });
+
+  it("asks in plain English", () => {
+    const list = chain().map((f) => ({ ...f, name: { s1: "Sketch 1", e1: "Extrude 1", f1: "Fillet 1", s2: "Sketch 2", e2: "Extrude 2" }[f.id] ?? f.name }));
+    expect(deleteQuestion(list, findDependents(list, ["s2"]))).toBe("Delete Sketch 2 and the feature that uses it: Extrude 2?");
+    expect(deleteQuestion(list, findDependents(list, ["s1"]))).toBe("Delete Sketch 1 and the 4 features that use it: Extrude 1, Fillet 1, Sketch 2 and Extrude 2?");
+    expect(deleteQuestion(list, findDependents(list, ["f1", "e2"]))).toBe("Delete Fillet 1 and Extrude 2? Nothing else uses them.");
+    expect(listNames(["A", "B"])).toBe("A and B");
+  });
+});
+
+describe("deleting with dependents", () => {
+  it("removes them all in one change and forgets them in configurations", () => {
+    let doc: JuraCADDocument = { ...emptyDocument(), features: chain() };
+    doc = { ...doc, configurations: [{ id: "c1", name: "A", values: {}, suppressed: ["f1", "box"] }, { id: "c2", name: "B", values: {}, suppressed: [] }] };
+    const plan = deletePlan(doc, "main", ["s1"]);
+    const out = deleteFeatures(doc, [...plan.picked, ...plan.dependents]);
+    expect(out.features.map((f) => f.id)).toEqual(["box", "f2"]);
+    expect(out.configurations![0].suppressed).toEqual(["box"]);
+    expect(out.configurations![1]).toBe(doc.configurations![1]);
+    expect(deleteFeatures(doc, ["nothing"])).toBe(doc);
+  });
+
+  it("names assemblies, drawings and other Part Studios' Derived features using parts that go", () => {
+    let doc: JuraCADDocument = { ...emptyDocument(), features: chain() };
+    doc = addStudio(doc, "s2studio");
+    doc = { ...doc, partStudios: doc.partStudios!.map((s) => ({ ...s, features: [feat("d1", "derived", { name: "Derived 1", derived: { studioId: "main", partId: "e1" } })] })) };
+    doc = addAssembly(doc, "a1");
+    doc = insertInstance(insertInstance(doc, "a1", { id: "e1", name: "Part 1" }), "a1", { id: "box", name: "Part 2" });
+    doc = addDrawing(doc, "dr1", { kind: "part", id: "e1" });
+    const plan = deletePlan(doc, "main", ["s1"]);
+    expect(plan.outside.assemblies.map((a) => a.copies)).toEqual([1]);
+    expect(plan.outside.drawings.map((d) => d.id)).toEqual(["dr1"]);
+    expect(plan.outside.derived).toEqual([{ studioName: studioNameOf(doc), featureName: "Derived 1" }]);
+    expect(outsideLines(plan.outside)).toHaveLength(3);
+    // Deleting just the box's fillet touches nothing outside.
+    expect(outsideLines(deletePlan(doc, "main", ["f2"]).outside)).toEqual([]);
+    // Just the picked feature: its own parts only.
+    expect(deletePlan(doc, "main", ["e2"], true).outside.assemblies).toEqual([]);
+    expect(studioFeatures(doc, "s2studio")).toHaveLength(1);
+  });
+});
+
+const studioNameOf = (doc: JuraCADDocument) => doc.partStudios![0].name;
