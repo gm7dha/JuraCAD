@@ -151,6 +151,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.neutral = { kind: "default", name: "Top" };
   }
   if (type === "deletePart") feature.deleteParts = [];
+  if (type === "composite") feature.compositeParts = [];
   if (type === "simplify") {
     feature.simplifyParts = [];
     feature.simplify = "normal";
@@ -290,6 +291,46 @@ export function convertPreview(features: Feature[], draft: Feature | null): Feat
   const at = features.findIndex((f) => f.id === draft.id);
   if (at < 0) return features;
   return [...features.slice(0, at), { ...features[at], sheetConvertCheck: true }];
+}
+
+/**
+ * Is the open feature picking whole parts or faces right now (a Composite part,
+ * or a part/face pattern or face mirror whose parts/faces box is the active one)?
+ * Then the parts are shown as they were before it (`pickingPreview`), so the real
+ * parts are clicked — never the copies it makes — and a picked one can be clicked
+ * again to leave it out.
+ */
+export function picksPartsBefore(draft: Feature | null): boolean {
+  if (!draft) return false;
+  if (draft.type === "composite") return true;
+  if (draft.pattern?.of && draft.pattern.picking === "items") return true;
+  return draft.mirror?.of === "face" && draft.mirror.picking === "faces";
+}
+
+/** What the engine builds while `picksPartsBefore`: the features before the open one (it's left out). */
+export function pickingPreview(features: Feature[], draft: Feature | null): Feature[] {
+  if (!draft || !picksPartsBefore(draft)) return features;
+  const at = features.findIndex((f) => f.id === draft.id);
+  return at < 0 ? features : features.slice(0, at);
+}
+
+/** The open feature as saved: which box a click goes to (`pattern.picking`, `mirror.picking`) is never kept. */
+export function withoutPicking(f: Feature): Feature {
+  let out = f;
+  if (out.pattern?.picking !== undefined) {
+    const { picking: _p, ...pattern } = out.pattern;
+    out = { ...out, pattern };
+  }
+  if (out.mirror?.picking !== undefined) {
+    const { picking: _p, ...mirror } = out.mirror;
+    out = { ...out, mirror };
+  }
+  return out;
+}
+
+/** Is this part made by the open feature itself (a copy it makes, or the composite)? */
+export function madeByDraft(partId: string, draftId: string): boolean {
+  return partId === draftId || partId.startsWith(`${draftId}~`);
 }
 
 export function featuresWithDraft(features: Feature[], draft: Feature | null): Feature[] {
@@ -496,6 +537,8 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         ...(feature.type === "linearPattern" && parseLineRef(pt?.line2) ? { line2: parseLineRef(pt?.line2)! } : {}),
         ...(feature.type !== "curvePattern" && pt?.unset === true ? { unset: true } : {}),
         ...(skipList(pt?.skip).length ? { skip: skipList(pt?.skip) } : {}),
+        ...(pt?.of === "part" || pt?.of === "face" ? { of: pt.of } : {}),
+        ...(pt?.of === "part" ? { parts: ids(pt?.parts) } : {}),
       };
       if (feature.type === "curvePattern" && typeof f.pathRef === "string") feature.pathRef = f.pathRef;
     }
@@ -509,6 +552,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         ...(mr?.unset === true ? { unset: true } : {}),
         ...(typeof mr?.part === "string" ? { part: mr.part } : {}),
         ...(mr?.join === true ? { join: true } : {}),
+        ...(mr?.of === "face" && typeof mr?.part !== "string" ? { of: "face" as const } : {}),
       };
     }
     if (feature.type === "transform") {
@@ -607,6 +651,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       feature.simplify = isSimplifyLevel(f.simplify) ? f.simplify : "normal";
     }
     if (feature.type === "import" && isSimplifyLevel(f.simplify)) feature.simplify = f.simplify;
+    if (feature.type === "composite") feature.compositeParts = ids(f.compositeParts);
     if (feature.type === "deletePart") {
       feature.deleteParts = Array.isArray(f.deleteParts) ? (f.deleteParts as unknown[]).filter((x): x is string => typeof x === "string") : [];
     }
@@ -665,7 +710,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       });
       if (more.length) feature.moreAreas = more;
     }
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert)) {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert) || feature.pattern?.of === "face" || feature.mirror?.of === "face") {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

@@ -17,6 +17,7 @@ import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import type { Axis, ExtrudeEnd, Feature } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { activeFeatures, activeStudioId, studioParts, useLengthUnit, useStore } from "../model/store";
+import { compositeProblem } from "../model/composite";
 import { draftEffect } from "../model/partLinks";
 import { studiosOf } from "../model/studios";
 import type { Operation } from "../model/types";
@@ -1400,6 +1401,8 @@ function PatternOptions() {
   const m = draft.mirror;
   // Mirror a whole part (Onshape's part mirror) instead of features.
   const partMode = mirror && m?.part !== undefined;
+  // Onshape's Pattern / Mirror type: whole parts, features (as before) or faces of one part.
+  const of = mirror ? (partMode ? "part" : m?.of) : draft.pattern?.of;
   // Only parts that exist by this point in the list (not ones made by later features).
   const at = features.findIndex((f) => f.id === draft.id);
   const later = new Set(at >= 0 ? features.slice(at + 1).map((f) => f.id) : []);
@@ -1408,24 +1411,27 @@ function PatternOptions() {
   return (
     <>
       {mirror && m && (
-        <div className="segmented two" role="radiogroup" aria-label="What to mirror">
+        <div className="segmented three" role="radiogroup" aria-label="What to mirror">
           {(
             [
-              [false, "Features", "Mirror chosen features (a boss, a hole…) onto the same part"],
-              [true, "Whole part", "Mirror a whole part — as a new part, or joined onto it (model half, mirror the rest)"],
+              ["part", "Whole part", "Mirror a whole part — as a new part, or joined onto it (model half, mirror the rest)"],
+              [undefined, "Features", "Mirror chosen features (a boss, a hole…) onto the same part"],
+              ["face", "Faces", "Mirror a boss, pocket or hole by clicking its faces — it's added or cut on the same part"],
             ] as const
-          ).map(([whole, label, hint]) => (
+          ).map(([kind, label, hint]) => (
             <button
               type="button"
               key={label}
               role="radio"
-              aria-checked={partMode === whole}
-              className={partMode === whole ? "selected" : ""}
+              aria-checked={of === kind}
+              className={of === kind ? "selected" : ""}
               title={hint}
               onClick={() => {
-                if (whole === partMode) return;
-                const { part: _part, join: _join, ...rest } = m;
-                setDraftField({ mirror: whole ? { ...rest, part: partChoices[partChoices.length - 1]?.id ?? "", join: true } : rest });
+                if (kind === of) return;
+                const { part: _part, join: _join, of: _of, picking: _picking, ...rest } = m;
+                if (kind === "part") setDraftField({ mirror: { ...rest, part: partChoices[partChoices.length - 1]?.id ?? "", join: true }, picks: undefined });
+                else if (kind === "face") setDraftField({ mirror: { ...rest, of: "face", picking: "faces" }, picks: draft.picks ?? [] });
+                else setDraftField({ mirror: rest, picks: undefined });
               }}
             >
               {label}
@@ -1433,12 +1439,47 @@ function PatternOptions() {
           ))}
         </div>
       )}
+      {!mirror && (
+        <div className="segmented three" role="radiogroup" aria-label="What to repeat">
+          {(
+            [
+              ["part", "Parts", "Repeat whole parts — each copy is a new part"],
+              [undefined, "Features", "Repeat chosen features (a boss, a hole…) — each copy adds or cuts like the original"],
+              ["face", "Faces", "Repeat a boss, pocket or hole by clicking its faces — the copies are added or cut on the same part"],
+            ] as const
+          ).map(([kind, label, hint]) => (
+            <button
+              type="button"
+              key={label}
+              role="radio"
+              aria-checked={of === kind}
+              className={of === kind ? "selected" : ""}
+              title={hint}
+              onClick={() => {
+                if (kind === of) return;
+                const { of: _of, parts: _parts, picking: _picking, ...rest } = pattern;
+                if (kind === "part") setDraftField({ pattern: { ...rest, of: "part", parts: [], picking: "items" }, picks: undefined });
+                else if (kind === "face") setDraftField({ pattern: { ...rest, of: "face", picking: "items" }, picks: draft.picks ?? [] });
+                else setDraftField({ pattern: rest, picks: undefined });
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {of === "part" && !mirror && <PatternItemsBox />}
+      {of === "face" && <PatternItemsBox />}
       {mirror && m && (
         <ReferenceBox
           label="Mirror plane"
           text={mirrorReferenceText(m, features)}
           prompt="Click a flat face, a plane or a sketch line in the view"
-          active
+          active={!(m.of === "face" && m.picking === "faces")}
+          onActivate={() => {
+            const { picking: _p, ...rest } = m;
+            setDraftField({ mirror: rest });
+          }}
           onClear={() => setDraftField({ mirror: setMirrorReference(m, { kind: "none" }) })}
           hint="A flat face is followed as the part changes. A sketch line mirrors across the plane through it, standing square to its sketch."
         >
@@ -1475,7 +1516,7 @@ function PatternOptions() {
           </label>
           <p className="dialog-hint field-hint">Tip: model one half up to the plane, then mirror it and join — both halves stay the same as you change it.</p>
         </fieldset>
-      ) : (
+      ) : of ? null : (
       <fieldset className="param-group">
         <legend>Features to {mirror ? "mirror" : "repeat"}</legend>
         {named.length === 0 ? (
@@ -1629,7 +1670,7 @@ function PatternDirectionBoxes() {
         label={circular ? "Axis" : "Direction"}
         text={patternReferenceText(pattern, features)}
         prompt={circular ? "Click a round face, an edge or a sketch line in the view" : "Click an edge, a flat face or a sketch line in the view"}
-        active={!second}
+        active={!second && picking !== "items"}
         onActivate={() => setDraftField({ pattern })}
         onClear={() => setDraftField({ pattern: setPatternDirection(pattern, { kind: "none" }) })}
         hint={
@@ -1662,6 +1703,110 @@ function PatternDirectionBoxes() {
         </ReferenceBox>
       )}
     </>
+  );
+}
+
+/**
+ * Part and face patterns, and face mirrors: the parts or faces picked, in a box
+ * that takes clicks in the 3D view (and, for parts, in the Parts list) while
+ * it's the active one.
+ */
+function PatternItemsBox() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const parts = useStore(studioParts);
+  if (!draft) return null;
+  const mirror = draft.type === "mirror";
+  const of = mirror ? draft.mirror?.of : draft.pattern?.of;
+  if (!of) return null;
+  const nameOf = (id: string) => parts.find((p) => p.id === id)?.name ?? "(missing part)";
+  const active = mirror ? draft.mirror?.picking === "faces" : draft.pattern?.picking === "items";
+  const activate = () => {
+    if (mirror && draft.mirror) setDraftField({ mirror: { ...draft.mirror, picking: "faces" } });
+    else if (draft.pattern) setDraftField({ pattern: { ...draft.pattern, picking: "items" } });
+  };
+  // Finished picking: the copies are shown (while picking, the parts are shown as they were before this feature).
+  const done = active ? (
+    <button
+      type="button"
+      className="text-button small-text"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (mirror && draft.mirror) {
+          const { picking: _p, ...rest } = draft.mirror;
+          setDraftField({ mirror: rest });
+        } else if (draft.pattern) {
+          const { picking: _p, ...rest } = draft.pattern;
+          setDraftField({ pattern: rest });
+        }
+      }}
+      title="Stop picking and show the copies"
+    >
+      Done — show the copies
+    </button>
+  ) : (
+    <p className="muted small field-note">Click this box to pick more (the parts are shown as they were before this feature while you pick).</p>
+  );
+  if (of === "part") {
+    const ids = draft.pattern?.parts ?? [];
+    return (
+      <fieldset className={`param-group pick-slot reference-box${active ? " active" : ""}`} aria-label="Parts to repeat" onClick={() => !active && activate()}>
+        <legend>Parts to repeat</legend>
+        {ids.length ? (
+          <ul className="pick-list" aria-label="Parts to repeat">
+            {ids.map((id) => (
+              <li key={id}>
+                <span>{nameOf(id)}</span>
+                <button
+                  type="button"
+                  className="icon-button small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDraftField({ pattern: { ...draft.pattern!, parts: ids.filter((x) => x !== id) } });
+                  }}
+                  title="Leave this part out"
+                  aria-label={`Leave out ${nameOf(id)}`}
+                >
+                  <Icons.Cross size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <p className="dialog-hint pick-hint">Click the parts to repeat, in the 3D view or the Parts list (click one again to leave it out). Each copy is a new part.</p>
+        {done}
+      </fieldset>
+    );
+  }
+  const picks = draft.picks ?? [];
+  const onParts: string[] = [...new Set(picks.map((p) => p.partId))];
+  return (
+    <fieldset className={`param-group pick-slot reference-box${active ? " active" : ""}`} aria-label={mirror ? "Faces to mirror" : "Faces to repeat"} onClick={() => !active && activate()}>
+      <legend>{mirror ? "Faces to mirror" : "Faces to repeat"}</legend>
+      {picks.length ? (
+        <div className="reference-chip">
+          <span>
+            {picks.length === 1 ? "1 face" : `${picks.length} faces`} of {onParts.map(nameOf).join(", ")}
+          </span>
+          <button
+            type="button"
+            className="icon-button small"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDraftField({ picks: [] });
+            }}
+            title="Clear the faces"
+            aria-label="Clear the faces"
+          >
+            <Icons.Cross size={14} />
+          </button>
+        </div>
+      ) : null}
+      <p className="dialog-hint pick-hint">
+        Click every face of the boss, pocket or hole — its sides as well as its top or floor (click one again to leave it out). A boss's copies are added to the part; a pocket's or hole's are cut. It must sit on a flat face.
+      </p>
+      {done}
+    </fieldset>
   );
 }
 
@@ -2092,6 +2237,46 @@ function DeletePartOptions() {
   );
 }
 
+/** Composite part: the parts it groups into one. */
+function CompositeOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const parts = useStore(studioParts);
+  if (draft?.type !== "composite") return null;
+  const ids = draft.compositeParts ?? [];
+  const nameOf = (id: string) => parts.find((p) => p.id === id)?.name ?? "(missing part)";
+  // Said at once (the composite isn't built while its parts are being picked).
+  const problem = compositeProblem(ids, parts);
+  return (
+    <fieldset className="param-group">
+      <legend>Parts in it</legend>
+      {problem && (
+        <p className="dialog-error" role="alert">
+          {problem}
+        </p>
+      )}
+      {ids.length ? (
+        <ul className="pick-list" aria-label="Parts in the composite part">
+          {ids.map((id) => (
+            <li key={id}>
+              <span>{nameOf(id)}</span>
+              <button type="button" className="icon-button small" onClick={() => setDraftField({ compositeParts: ids.filter((x) => x !== id) })} title="Leave this part out" aria-label={`Leave out ${nameOf(id)}`}>
+                <Icons.Cross size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="dialog-hint pick-hint">
+        Click two or more parts, in the 3D view or the Parts list (click one again to leave it out). They become one part — picked, coloured, exported and put in assemblies together — but stay separate pieces inside.
+      </p>
+      <p className="muted small field-note">
+        Assemblies, drawings and later features that use these parts on their own will need the composite part instead (the parts aren&apos;t there separately any more).
+      </p>
+    </fieldset>
+  );
+}
+
 /** The floating feature dialog (top-left of the viewport), like Onshape's. */
 export function FeatureDialog() {
   const editing = useStore((s) => s.editing);
@@ -2170,7 +2355,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "composite" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -2201,6 +2386,7 @@ export function FeatureDialog() {
         <PlaneDefOptions />
         <BooleanOptionsField />
         <DeletePartOptions />
+        <CompositeOptions />
         <SimplifyPartOptions />
         <FastenerOptions />
         <DerivedOptions />

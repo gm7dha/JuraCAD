@@ -13,7 +13,7 @@ import type { FinishId } from "./finishes";
 import type { LibraryInsert } from "../library/types";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "composite";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -360,8 +360,16 @@ export interface Feature {
     unset?: boolean;
     /** Copies left out, by number (the original is 1; in a grid, row by row). */
     skip?: number[];
-    /** While editing a grid: a click in the 3D view sets the rows' direction (`along2`) instead of `along`. Not saved. */
-    picking?: "along2";
+    /** While editing a grid: a click in the 3D view sets the rows' direction (`along2`) instead of `along`; "items": it picks the parts or faces to repeat. Not saved. */
+    picking?: "along2" | "items";
+    /**
+     * Onshape's Pattern type: whole parts ("part": each copy a new part) or faces
+     * of one part ("face": the boss or pocket they bound repeated on it, picked in
+     * `Feature.picks`). Missing = features (`sources`), as before.
+     */
+    of?: "part" | "face";
+    /** Part pattern: the parts to repeat. */
+    parts?: string[];
   };
   /**
    * Mirror: the features to mirror, and the plane to mirror them across. Or,
@@ -380,7 +388,13 @@ export interface Feature {
     unset?: boolean;
     part?: string;
     join?: boolean;
+    /** Face mirror (Onshape's Mirror type "Face"): the faces in `Feature.picks` (a boss or pocket) mirrored onto their part. Missing = features or (with `part`) a part. */
+    of?: "face";
+    /** While editing a face mirror: clicks on the part pick the faces (not the plane). Not saved. */
+    picking?: "faces";
   };
+  /** Composite part (Onshape's): the parts grouped into one, which acts as one part (selected, coloured, exported, put in assemblies) while they stay separate solids inside. */
+  compositeParts?: string[];
   /** Import: the file, stored in the design. */
   import?: ImportedFile;
   /** Fillet and chamfer: the edges (or faces, meaning all their edges) to round or bevel. Shell: the faces to remove. */

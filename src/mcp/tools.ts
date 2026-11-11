@@ -86,6 +86,15 @@ function mirrorWay(f: Feature, doc: JuraCADDocument): string {
   return planeLabel(m.plane);
 }
 
+/** What a pattern repeats: its features, whole parts (each copy a new part) or faces of one part. */
+function patternOf(f: Feature, nameOf: (id?: string) => string): string {
+  const p = f.pattern;
+  const skip = p?.skip?.length ? ` (copies ${p.skip.join(", ")} left out)` : "";
+  if (p?.of === "part") return `the parts ${(p.parts ?? []).join(", ")} (each copy a new part)${skip}`;
+  if (p?.of === "face") return `${f.picks?.length ?? 0} face(s) of ${f.picks?.[0]?.partId ?? "a part"} (a boss or pocket, added or cut)${skip}`;
+  return `${(p?.sources ?? []).map(nameOf).join(", ")}${skip}`;
+}
+
 export function summarize(f: Feature, doc: JuraCADDocument): string {
   const nameOf = (id?: string) => doc.features.find((x) => x.id === id)?.name ?? "(missing)";
   const p = f.params;
@@ -125,13 +134,16 @@ export function summarize(f: Feature, doc: JuraCADDocument): string {
     case "shell":
       return `shell, walls ${mm(p.thickness)}, ${f.picks?.length ? `${f.picks.length} face(s) left open` : "closed inside"}`;
     case "linearPattern":
-      return `linear pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} along ${patternWay(f, doc, false)}, ${mm(p.spacing)} apart${Number(p.count2 ?? 1) > 1 ? `, ${p.count2} rows along ${patternWay(f, doc, true)} ${mm(p.spacing2)} apart` : ""}`;
+      return `linear pattern of ${patternOf(f, nameOf)}: ${p.count} along ${patternWay(f, doc, false)}, ${mm(p.spacing)} apart${Number(p.count2 ?? 1) > 1 ? `, ${p.count2} rows along ${patternWay(f, doc, true)} ${mm(p.spacing2)} apart` : ""}`;
     case "circularPattern":
-      return `circular pattern of ${(f.pattern?.sources ?? []).map(nameOf).join(", ")}: ${p.count} round ${patternWay(f, doc, false)} over ${p.angle ?? 360}°`;
+      return `circular pattern of ${patternOf(f, nameOf)}: ${p.count} round ${patternWay(f, doc, false)} over ${p.angle ?? 360}°`;
     case "mirror":
+      if (f.mirror?.of === "face") return `mirror of ${f.picks?.length ?? 0} face(s) (a boss or pocket) across ${mirrorWay(f, doc)}`;
       return f.mirror?.part ? `mirror of a whole part across ${mirrorWay(f, doc)}${f.mirror.join ? ", joined on" : ""}` : `mirror of ${(f.mirror?.sources ?? []).map(nameOf).join(", ")} across ${mirrorWay(f, doc)}`;
     case "boolean":
       return `boolean ${f.booleanDef?.op}`;
+    case "composite":
+      return `composite part of ${(f.compositeParts ?? []).join(", ")} (one part made of separate solids)`;
     case "box":
       return `box ${p.width} × ${p.depth} × ${p.height} mm at (${p.x}, ${p.y}, ${p.z}), ${op}`;
     case "cylinder":
@@ -335,10 +347,11 @@ const KIND_HELP: Record<FeatureKind, string> = {
   fillet: "fillet: edges (see edge choices), radius, end_radius (optional, a radius growing along the edge), part (default the latest)",
   chamfer: "chamfer: edges, distance, and optionally second_distance or angle (°), flip_side, part",
   shell: "shell: faces to leave open (empty list = hollow inside, closed), thickness, outside (walls grow outwards), part",
-  linear_pattern: 'linear_pattern: features (names/ids of solid features such as an extrude cut or hole), direction ("x"|"y"|"z"), count (including the original), spacing, flip; for a grid also direction2, count2, spacing2, flip2',
-  circular_pattern: 'circular_pattern: features, axis ("x"|"y"|"z", default "z"), count, angle (° spread over, default 360), center ([x,y,z] a point on the axis)',
-  mirror: 'mirror: features (to copy across) or part (a whole part), plane ("Top"|"Front"|"Right"), offset (moves the plane along its normal), join (part only: join the copy on)',
+  linear_pattern: 'linear_pattern: what to repeat — one of features (names/ids of solid features such as an extrude cut or hole), parts (whole parts; each copy is a new part) or faces (face choices of one part, with "part": every face of a boss, pocket or hole on a flat face — a boss\'s copies are added, a pocket\'s or hole\'s cut); direction ("x"|"y"|"z"), count (including the original), spacing, flip, skip (copy numbers to leave out, the original is 1); for a grid also direction2, count2, spacing2, flip2',
+  circular_pattern: 'circular_pattern: features, parts or faces (+ part) as for linear_pattern; axis ("x"|"y"|"z", default "z"), count, angle (° spread over, default 360), center ([x,y,z] a point on the axis), skip',
+  mirror: 'mirror: features (to copy across), part (a whole part), or faces (face choices of "part": a boss, pocket or hole mirrored onto the same part); plane ("Top"|"Front"|"Right"), offset (moves the plane along its normal), join (whole part only: join the copy on)',
   boolean: 'boolean: op ("union"|"subtract"|"intersect"), parts, tools (subtract: the cutters), keep_tools',
+  composite_part: "composite_part: parts (two or more) grouped into one composite part — it acts as one part (picked, coloured, exported, put in assemblies as one) while they stay separate solids inside",
   box: "box: width (X), depth (Y), height (Z), x, y, z (its corner), operation",
   cylinder: "cylinder: diameter, height (Z), x, y, z (centre of its base), operation",
   sphere: "sphere: diameter, x, y, z (its centre), operation",

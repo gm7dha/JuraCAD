@@ -11,6 +11,9 @@ import {
   newId,
   commit,
   createFeature,
+  madeByDraft,
+  picksPartsBefore,
+  withoutPicking,
   emptyDocument,
   historyOf,
   redo as redoHistory,
@@ -372,9 +375,11 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
+  /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
+  toggleDraftPart: (partId: string) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
   toggleDraftSource: (featureId: string) => void;
   /** Mirror: the plane to mirror across. */
@@ -1033,6 +1038,19 @@ export const useStore = create<AppState>((set, get) => {
           if (draft.pattern) draft.pattern = { ...draft.pattern, sources: [picked.id] };
         }
       }
+      // As in Onshape: a pattern started with parts picked (in the Parts list) repeats those parts; with faces picked in
+      // the view, those faces (a boss or pocket). A mirror started with faces picked mirrors them.
+      const pickedFaces = s.selection.filter((item) => item.kind === "face").map((item) => pickFor(s.parts, item)).filter((p): p is TopoPick => p !== null);
+      if (draft.pattern && s.selectedParts.length) draft.pattern = { ...draft.pattern, of: "part", parts: [...s.selectedParts], sources: [] };
+      else if (draft.pattern && pickedFaces.length) {
+        draft.pattern = { ...draft.pattern, of: "face", sources: [] };
+        draft.picks = pickedFaces;
+      } else if (draft.mirror && pickedFaces.length) {
+        draft.mirror = { ...draft.mirror, of: "face", sources: [] };
+        draft.picks = pickedFaces;
+      }
+      // A composite part starts with the parts picked in the Parts list.
+      if (type === "composite") draft.compositeParts = [...s.selectedParts];
       // Fillet, chamfer and shell start with whatever is selected (faces only, for shell).
       if (isPickFeature(type)) {
         draft.picks = s.selection
@@ -1218,6 +1236,23 @@ export const useStore = create<AppState>((set, get) => {
         return { editing: { ...s.editing, draft: { ...s.editing.draft, picks: next } } };
       }),
 
+    toggleDraftPart: (partId) => {
+      const d0 = get().editing?.draft;
+      // Never a part the open feature makes itself (a copy or the composite): it would use itself.
+      if (d0 && (d0.type === "composite" || d0.pattern?.of === "part") && madeByDraft(partId, d0.id)) {
+        get().showToast(`That part is made by ${d0.name} itself. Click one of the parts made before it.`, "info");
+        return;
+      }
+      set((s) => {
+        const d = s.editing?.draft;
+        if (!s.editing || !d) return {};
+        const toggle = (list: string[]) => (list.includes(partId) ? list.filter((x) => x !== partId) : [...list, partId]);
+        if (d.type === "composite") return { editing: { ...s.editing, draft: { ...d, compositeParts: toggle(d.compositeParts ?? []) } } };
+        if (d.pattern?.of === "part") return { editing: { ...s.editing, draft: { ...d, pattern: { ...d.pattern, parts: toggle(d.pattern.parts ?? []), picking: "items" } } } };
+        return {};
+      });
+    },
+
     toggleDraftSource: (featureId) =>
       set((s) => {
         if (!s.editing) return {};
@@ -1246,7 +1281,7 @@ export const useStore = create<AppState>((set, get) => {
       if (Object.keys(errors).length > 0) return false;
       // A printed fit chosen in the Hole dialog brings its fit_* variables into the design, in the same undo step.
       const fitted = settlePrintedFit(get().history.present.variables, editing.draft, () => newId("v"));
-      const named = { ...fitted.draft, name: fitted.draft.name.trim() || "Unnamed feature" };
+      const named = withoutPicking({ ...fitted.draft, name: fitted.draft.name.trim() || "Unnamed feature" });
       // Part edges brought in just to snap to, that nothing uses any more, are tidied away.
       const sk = named.sketch;
       const draft = sk ? { ...named, sketch: { ...sk, data: withoutEmptyExtras(pruneReferences(sk.data)) } } : named;
@@ -2133,6 +2168,9 @@ export const useStore = create<AppState>((set, get) => {
           }
         }
         const ids = new Set(parts.map((p) => p.id));
+        // Picking parts for the open feature shows only the parts before it for a while: later parts' hidden,
+        // see-through and selected flags are kept for when they're back.
+        const keep = picksPartsBefore(s.editing?.draft ?? null);
         return {
           parts,
           featureErrors,
@@ -2144,9 +2182,9 @@ export const useStore = create<AppState>((set, get) => {
           rebuildBusy: false,
           // Drop picks and hidden flags for parts that no longer exist.
           selection: s.selection.filter((x) => ids.has(x.partId)),
-          hiddenParts: s.hiddenParts.filter((p) => ids.has(p)),
-          transparentParts: s.transparentParts.filter((p) => ids.has(p)),
-          selectedParts: s.selectedParts.filter((p) => ids.has(p)),
+          hiddenParts: keep ? s.hiddenParts : s.hiddenParts.filter((p) => ids.has(p)),
+          transparentParts: keep ? s.transparentParts : s.transparentParts.filter((p) => ids.has(p)),
+          selectedParts: keep ? s.selectedParts : s.selectedParts.filter((p) => ids.has(p)),
         };
       }),
   };
