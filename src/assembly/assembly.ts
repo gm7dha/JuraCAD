@@ -710,7 +710,7 @@ export function parseConnector(raw: unknown): MateConnector | null {
   const path = pathOf(c.path);
   // (A Width mate's second face on another part of the same sub-assembly copy.)
   const path2 = pick2 && path ? pathOf(c.path2) : null;
-  return { instanceId: c.instanceId, ...(path ? { path } : {}), pick, ...(pick2 ? { pick2 } : {}), ...(path2 ? { path2 } : {}), ...(spot ? { spot } : {}), ...(point ? { point } : {}) };
+  return { instanceId: c.instanceId, ...(path ? { path } : {}), pick, ...(pick2 ? { pick2 } : {}), ...(path2 ? { path2 } : {}), ...(spot ? { spot } : {}), ...(point ? { point } : {}), ...(typeof c.connector === "string" && !pick2 ? { connector: c.connector } : {}) };
 }
 
 function parseMate(raw: unknown, ids: Set<string>): Mate | null {

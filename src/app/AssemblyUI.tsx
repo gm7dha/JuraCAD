@@ -1669,6 +1669,7 @@ function ExplodeStepRow({ step, number, names }: { step: ExplodeStep; number: nu
 function connectorLabel(c: MateConnector): string {
   const plane = originPlaneOf(c);
   if (plane) return `${plane} plane`;
+  if (c.connector) return "its mate connector";
   const ref = c.pick.ref;
   if (ref.kind === "face") {
     if (ref.surface === "PLANE") return "flat face";
@@ -1774,7 +1775,7 @@ function MateValueField({
 
 /** Where on a picked face or edge the connector sits (only when there's a choice). */
 function SpotChoice({ c, onChange }: { c: MateConnector; onChange: (c: MateConnector) => void }) {
-  const options = spotOptions(c);
+  const options = c.connector ? [] : spotOptions(c);
   if (options.length < 2) return null;
   return (
     <select

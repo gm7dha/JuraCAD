@@ -112,6 +112,28 @@ export interface PartMesh {
   volume?: number;
   /** A composite part: the parts grouped in it (separate solids inside it), shown under it in the Parts list. */
   members?: { id: string; name: string }[];
+  /** Part Studio mate connectors this part owns (feature id, name, frame in the Part Studio), offered when it's mated in an assembly. */
+  connectors?: PartConnector[];
+}
+
+/** A mate connector feature owned by a part (see PartMesh.connectors). */
+export interface PartConnector {
+  id: string;
+  name: string;
+  origin: [number, number, number];
+  x: [number, number, number];
+  z: [number, number, number];
+}
+
+/**
+ * Where a Plane feature or mate connector is as built (see RebuildResult.followed): its plane — for a connector its
+ * XY plane (u = X, v = Y, n = Z). The design keeps what was clicked; this is where that is now.
+ */
+export interface FollowedFrame {
+  origin: [number, number, number];
+  u: [number, number, number];
+  v: [number, number, number];
+  n: [number, number, number];
 }
 
 /** A sheet metal part laid out flat (mm): the outline to cut, holes, and where it bends. */
@@ -149,6 +171,12 @@ export interface RebuildResult {
   studioOrder?: string[];
   /** Sketches on part faces or using part edges (by feature id): the face's edges, and where linked edges are now. */
   sketchLinks?: Record<string, SketchLinkInfo>;
+  /**
+   * Plane features that follow the model (the newer types, and any plane on one) and mate connectors, in every Part
+   * Studio (configuration on show), whether rebuilt now or before: where each is as built. Shown and used instead of
+   * what the design's numbers alone give (see framesOf's `built`); the design itself is never changed by a rebuild.
+   */
+  followed?: Record<string, FollowedFrame>;
 }
 
 export interface PartCheck {

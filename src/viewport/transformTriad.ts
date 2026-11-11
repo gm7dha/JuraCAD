@@ -143,7 +143,7 @@ function spotSource(manager: SceneManager | null, target: PickTarget | null): { 
   if (target.kind === "customPlane") {
     const features = activeFeatures(s);
     const f = features.find((x) => x.id === target.id);
-    const frame = framesOf(features).get(target.id);
+    const frame = framesOf(features, undefined, s.builtFrames).get(target.id);
     const plane: SketchPlane | null = f && frame ? planeAsSketchPlane(f, frame) : null;
     return plane ? { src: { kind: "plane", frame: planeFrame(plane) } } : null;
   }
@@ -206,10 +206,10 @@ export function transformPick(manager: SceneManager | null, target: PickTarget |
   const shown = spotFrame(hit.src, triadFor(d, centre, null)?.frame.origin ?? centre);
   if (typeof shown === "string") return say(shown), true;
   if (picking === "from") {
-    s.changeDraftStep({ transform: { ...t, from: savedFrame(frameBy(back, shown)), picking: t.to ? undefined : "to" } });
+    s.changeDraftStep({ transform: { ...t, from: savedFrame(frameBy(back, shown)), fromConnector: undefined, picking: t.to ? undefined : "to" } });
     return true;
   }
-  s.changeDraftStep({ transform: { ...t, to: savedFrame(shown), picking: undefined } });
+  s.changeDraftStep({ transform: { ...t, to: savedFrame(shown), toConnector: undefined, picking: undefined } });
   return true;
 }
 

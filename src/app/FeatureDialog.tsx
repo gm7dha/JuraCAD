@@ -14,6 +14,8 @@ import { formatSkip, parseSkip, totalCopies } from "../model/patterns";
 import { planeLabel } from "../sketch/planes";
 import { mirrorReferenceText, patternReferenceText, setMirrorReference, setPatternDirection, type DirectionChoice } from "../model/patternRefs";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
+import { isMorePlaneMode } from "../sketch/planeTypes";
+import { MateConnectorOptions, MorePlaneFields, PlaneKindSelect } from "./PlaneMoreOptions";
 import type { Axis, ExtrudeEnd, Feature } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { activeFeatures, activeStudioId, studioParts, useLengthUnit, useStore } from "../model/store";
@@ -88,11 +90,12 @@ function SplitOptionsField() {
   const setDraftField = useStore((s) => s.setDraftField);
   const parts = useStore(studioParts);
   const features = useStore(activeFeatures);
+  const built = useStore((s) => s.builtFrames);
   if (draft?.type !== "split" || !draft.splitDef) return null;
   const sp = draft.splitDef;
   const update = (patch: Partial<typeof sp>) => setDraftField({ splitDef: { ...sp, ...patch } });
   const planes = features.filter((f) => f.type === "plane");
-  const frames = framesOf(features);
+  const frames = framesOf(features, undefined, built);
   const surfaces = parts.filter((p) => p.surface && p.id !== sp.partId);
   const planeValue = sp.toolPartId ? `surface:${sp.toolPartId}` : sp.plane.kind === "default" ? sp.plane.name : sp.plane.planeRef ? `plane:${sp.plane.planeRef}` : "face";
   return (
@@ -158,11 +161,12 @@ function ReplaceFaceOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
+  const built = useStore((s) => s.builtFrames);
   if (draft?.type !== "replaceFace") return null;
   const rd = draft.replaceDef ?? { target: null };
   const picking = rd.picking === "target";
   const planes = features.filter((f) => f.type === "plane");
-  const frames = framesOf(features);
+  const frames = framesOf(features, undefined, built);
   const target = rd.target;
   const value = !target ? "" : target.kind === "default" ? target.name : target.planeRef ? `plane:${target.planeRef}` : "face";
   return (
@@ -206,11 +210,12 @@ function DraftOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
+  const built = useStore((s) => s.builtFrames);
   if (draft?.type !== "draft" && draft?.type !== "ruled") return null;
   const ruled = draft.type === "ruled";
   const neutral = draft.neutral ?? { kind: "default" as const, name: "Top" as const };
   const planes = features.filter((f) => f.type === "plane");
-  const frames = framesOf(features);
+  const frames = framesOf(features, undefined, built);
   const value = neutral.kind === "default" ? neutral.name : neutral.planeRef ? `plane:${neutral.planeRef}` : "face";
   return (
     <fieldset className="param-group">
@@ -601,31 +606,21 @@ function PlaneDefOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
+  const built = useStore((s) => s.builtFrames);
   if (draft?.type !== "plane" || !draft.planeDef) return null;
   const pd = draft.planeDef;
   const update = (patch: Partial<typeof pd>) => setDraftField({ planeDef: { ...pd, ...patch } });
   // Earlier Plane features can be based on too.
   const at = features.findIndex((f) => f.id === draft.id);
   const earlier = (at >= 0 ? features.slice(0, at) : features).filter((f) => f.type === "plane");
-  const frames = framesOf(features);
+  const frames = framesOf(features, undefined, built);
   const refValue = pd.ref.kind === "default" ? pd.ref.name : pd.ref.planeRef ? `plane:${pd.ref.planeRef}` : "face";
   return (
     <>
-      <div className="segmented three" role="radiogroup" aria-label="Kind of plane">
-        {(
-          [
-            ["offset", "Distance", "Parallel to a plane or flat face, a set distance away"],
-            ["angle", "Tilted", "Turned about one of the plane's directions"],
-            ["midplane", "Halfway", "Halfway between two parallel flat faces"],
-          ] as const
-        ).map(([mode, label, hint]) => (
-          <button type="button" key={mode} role="radio" aria-checked={pd.mode === mode} className={pd.mode === mode ? "selected" : ""} title={hint} onClick={() => update({ mode })}>
-            {label}
-          </button>
-        ))}
-      </div>
+      <PlaneKindSelect pd={pd} update={update} />
+      {(!isMorePlaneMode(pd.mode) || pd.mode === "point") && (
       <fieldset className="param-group">
-        <legend>{pd.mode === "midplane" ? "Between" : "From"}</legend>
+        <legend>{pd.mode === "midplane" ? "Between" : pd.mode === "point" ? "Parallel to" : "From"}</legend>
         <select
           className="full-select"
           aria-label="Plane to start from"
@@ -666,8 +661,10 @@ function PlaneDefOptions() {
             <option value="v">Tilt about its up direction</option>
           </select>
         )}
-        <p className="dialog-hint field-hint">Or click a plane or flat face in the 3D view{pd.mode === "midplane" ? " (first one face, then the other)" : ""}.</p>
+        <p className="dialog-hint field-hint">{pd.mode === "point" ? "Or click a plane in the 3D view." : `Or click a plane or flat face in the 3D view${pd.mode === "midplane" ? " (first one face, then the other)" : ""}.`}</p>
       </fieldset>
+      )}
+      <MorePlaneFields pd={pd} update={update} />
     </>
   );
 }
@@ -1071,6 +1068,7 @@ function PartEffect() {
 function TransformOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const parts = useStore(studioParts);
+  const features = useStore(activeFeatures);
   const setDraftField = useStore((s) => s.setDraftField);
   const changeDraftStep = useStore((s) => s.changeDraftStep);
   const undoDraftStep = useStore((s) => s.undoDraftStep);
@@ -1202,22 +1200,22 @@ function TransformOptions() {
         <>
           <ReferenceBox
             label="From (on the part)"
-            text={t.from ? "A spot on the part" : null}
+            text={t.fromConnector ? `${features.find((f) => f.id === t.fromConnector)?.name ?? "A mate connector"}` : t.from ? "A spot on the part" : null}
             prompt="Click a face, an edge or a corner on the part"
             active={picking === "from"}
             onActivate={() => update({ picking: "from" })}
-            onClear={() => changeDraftStep({ transform: { ...t, from: undefined, picking: "from" } })}
+            onClear={() => changeDraftStep({ transform: { ...t, from: undefined, fromConnector: undefined, picking: "from" } })}
           />
           <ReferenceBox
             label="To"
-            text={t.to ? "Where it goes" : null}
+            text={t.toConnector ? `${features.find((f) => f.id === t.toConnector)?.name ?? "A mate connector"}` : t.to ? "Where it goes" : null}
             prompt="Click where it goes: a face, an edge, a corner or a plane"
             active={picking === "to"}
             onActivate={() => update({ picking: "to" })}
-            onClear={() => changeDraftStep({ transform: { ...t, to: undefined, picking: "to" } })}
+            onClear={() => changeDraftStep({ transform: { ...t, to: undefined, toConnector: undefined, picking: "to" } })}
           />
           {flip("Flip (turn it over, so the faces meet)")}
-          <p className="dialog-hint field-hint">Spots are a flat face's middle, an edge's ends or middle, or a round edge's centre — as Onshape's mate connectors.</p>
+          <p className="dialog-hint field-hint">Spots are a flat face's middle, an edge's ends or middle, or a round edge's centre — as Onshape's mate connectors. Or click a Mate connector made in this Part Studio.</p>
         </>
       )}
       {canUndo && (
@@ -2426,7 +2424,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "composite" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "mateConnector" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "composite" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -2456,6 +2454,7 @@ export function FeatureDialog() {
         )}
         <ThinOptions />
         <PlaneDefOptions />
+        <MateConnectorOptions />
         <BooleanOptionsField />
         <DeletePartOptions />
         <CompositeOptions />

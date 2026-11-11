@@ -8,7 +8,7 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.59 — Thin walls; Revolve two ways
+## v0.60 — Thin walls; Revolve two ways
 
 - New "Thin wall" option on Extrude, Revolve and Sweep (like Onshape's Thin): a solid wall of a set thickness along a sketch's lines, arcs and circles — open lines make walls, closed shapes make hollow tubes, with sharp corners.
 - Choose the thickness on each side, centre it on the lines, or flip it to the other side. Works with New, Add, Remove and Intersect and every way an extrude can end.
@@ -16,6 +16,16 @@ The point in the history for each version is the commit shown (see https://githu
 - Revolve can now go two ways: one angle one way from the sketch and a second angle the other (One way / Symmetric / Two ways).
 - The "Surface" option is now worded "a skin with no inside", so it's clearly different from a thin wall.
 - Claude can make thin walls and two-way revolves too.
+
+## v0.59 — More kinds of plane; mate connectors in the Part Studio
+
+- New kinds of Plane, as in Onshape: through a point and parallel to a face, square to a line through a point, through a
+  line at an angle, through three points, square to an edge at a point along it, and a best fit through points. They follow
+  the part when it changes.
+- New **Mate connector** feature: a point with its own directions on a face, edge or corner that belongs to a part. Mate to
+  it in assemblies, move parts by it in Move / copy, sketch on it or mirror across it. It stays with its part when the part
+  is joined to another or made into a composite.
+- Claude can add both, and mate to a part's own connectors.
 
 ## v0.58 — Pattern whole parts and faces; Composite part
 

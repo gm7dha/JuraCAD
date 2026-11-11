@@ -106,6 +106,12 @@ export const Icons = {
       <path d="M3 15.5 9 7h12l-6 8.5z" />
     </Svg>
   ),
+  MateConnector: (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="9" cy="15" r="2" fill="currentColor" />
+      <path d="M9 15V4M9 15h11M9 15l-5 5" />
+    </Svg>
+  ),
   Part: (p: IconProps) => (
     <Svg {...p}>
       <path d="M12 3 20 7.5v9L12 21 4 16.5v-9z" fill="currentColor" fillOpacity={0.15} />

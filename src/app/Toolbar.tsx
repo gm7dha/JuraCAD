@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 
-import { activeFeatures, activeStudioId, studioParts, useStore } from "../model/store";
+import { activeFeatures, activeStudioId, pickFor, studioParts, useStore } from "../model/store";
+import { connectorFromClick, type GeomClick } from "../model/geomClicks";
+import { planeFrame } from "../sketch/planes";
 import type { FeatureType } from "../model/types";
 import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
@@ -70,6 +72,28 @@ export function startPlaneFromSelection() {
   s.startCreate("plane");
   const draft = useStore.getState().editing?.draft;
   if (face && draft?.planeDef) useStore.getState().setDraftField({ planeDef: { ...draft.planeDef, ref: face } });
+}
+
+/** Mate connector: on the selected face or edge (or the selected plane), else placed by clicking once the dialog is open. */
+export function startMateConnectorFromSelection() {
+  const s = useStore.getState();
+  const item = s.selection.length === 1 ? s.selection[0] : null;
+  const plane = s.selectedPlane;
+  s.startCreate("mateConnector");
+  const st = useStore.getState();
+  const draft = st.editing?.draft;
+  if (!draft?.connector) return;
+  const pick = item ? pickFor(st.parts, item) : null;
+  const click: GeomClick | null = pick
+    ? { kind: "part", pick, ...(item?.kind === "edge" ? { points: viewportApi.current?.edgePoints(item.partId, item.index) ?? [] } : {}) }
+    : plane
+      ? { kind: "plane", plane: { kind: "default", name: plane }, frame: planeFrame({ kind: "default", name: plane }) }
+      : null;
+  const placed = click ? connectorFromClick(click) : null;
+  if (placed && typeof placed !== "string") {
+    const { plane: _p, ...rest } = draft.connector;
+    st.setDraftField({ connector: { ...rest, ...placed } });
+  }
 }
 
 export function Toolbar() {
@@ -154,7 +178,15 @@ export function Toolbar() {
           onClick={startPlaneFromSelection}
           disabled={!ready}
           active={editingType === "plane"}
-          title="Plane — a construction plane to sketch on: a distance from a plane or flat face, tilted, or halfway between two faces"
+          title="Plane — a construction plane to sketch on: a distance from a plane or flat face, tilted, halfway between two faces, through points, square to an edge…"
+        />
+        <ToolButton
+          label="Mate connector"
+          icon={<Icons.MateConnector />}
+          onClick={startMateConnectorFromSelection}
+          disabled={!ready}
+          active={editingType === "mateConnector"}
+          title="Mate connector — a point with its own directions on a face, edge or corner, belonging to a part: mate to it in assemblies, move parts by it, or sketch on it"
         />
         <ToolButton
           label="Extrude"

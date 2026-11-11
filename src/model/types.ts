@@ -13,7 +13,7 @@ import type { FinishId } from "./finishes";
 import type { LibraryInsert } from "../library/types";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "composite";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -21,12 +21,67 @@ export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" |
  * parallel faces ("midplane").
  */
 export interface PlaneOptions {
-  mode: "offset" | "angle" | "midplane";
+  mode: "offset" | "angle" | "midplane" | PlaneMoreMode;
   ref: SketchPlane;
   /** Midplane: the second face. */
   ref2?: SketchPlane;
   /** Angle: tilt about the reference's across (u) or up (v) direction. */
   axis: "u" | "v";
+  /**
+   * Onshape's other plane types (missing for offset / angle / midplane): the points it goes through — one for
+   * "point", "pointNormal" and "curvePoint", three for "threePoint", three or more for "fit".
+   */
+  points?: GeomPick[];
+  /** Point normal: what it's square to. Line angle: the line it turns about. Curve point: the edge (`points[0]` is on it). */
+  line?: GeomPick;
+  /** Curve point: how far along the edge, 0…1 (missing = halfway). */
+  position?: number;
+  /** Turned over (its normal the other way). */
+  flip?: boolean;
+}
+
+/**
+ * Onshape's other Plane types: through a point parallel to `ref` ("point"), through a point square to a line
+ * ("pointNormal"), through a line turned by an angle ("lineAngle"), through three points ("threePoint"), square
+ * to an edge at a place along it ("curvePoint") and the best fit through points ("fit").
+ */
+export type PlaneMoreMode = "point" | "pointNormal" | "lineAngle" | "threePoint" | "curvePoint" | "fit";
+
+/**
+ * A point, line or direction clicked for a Plane feature (or a Part Studio mate connector), kept as numbers as last
+ * found (`p`, `dir`) and followed when the model changes through what it's on: a part's edge or face (`pick`), a
+ * sketch's point or line, a mate connector, or one of the X/Y/Z axes.
+ */
+export interface GeomPick {
+  /** The point (on a line: a point on it). */
+  p: [number, number, number];
+  /** Along a line or edge, or a flat face's normal / a round face's axis. Missing for a plain point. */
+  dir?: [number, number, number];
+  /** A part's edge or face it's on. With an edge, `end` says which point: an end ("a"/"b", a corner) or the middle. */
+  pick?: TopoPick;
+  end?: "a" | "b" | "mid";
+  /** A point of a sketch (`point`: its id, or "origin"). */
+  sketchPoint?: { sketch: string; point: string };
+  /** A line of a sketch. */
+  sketchLine?: SketchLineRef;
+  /** A mate connector feature (its origin, or its Z axis for a line). */
+  connector?: string;
+  /** The X, Y or Z axis through the origin. */
+  axis?: "x" | "y" | "z";
+}
+
+/** Where a Part Studio mate connector sits and which part it belongs to (Onshape's Mate connector feature). */
+export interface MateConnectorDef {
+  /** On a part's face or edge (at `spot`, as assembly connectors), a sketch point, or a plane (at its origin). */
+  at: GeomPick & { spot?: ConnectorSpot; point?: [number, number, number] };
+  /** On a plane: which one (Top/Front/Right or a Plane feature). */
+  plane?: SketchPlane;
+  /** The part it belongs to ("owner part"): offered when that part is mated in an assembly. Missing = the part it's on. */
+  owner?: string;
+  /** Z turned over (about its X). */
+  flipZ?: boolean;
+  /** Where it was last found, before the moves and turns typed (kept up to date as the model changes). */
+  base: TransformFrame;
 }
 
 /**
@@ -65,6 +120,9 @@ export interface TransformDef {
   /** Transform by mate connectors: the spot on the part, and where it goes. */
   from?: TransformFrame;
   to?: TransformFrame;
+  /** Transform by mate connectors: a Part Studio mate connector feature (its id) instead of `from` / `to` (followed as the model changes). */
+  fromConnector?: string;
+  toConnector?: string;
   /** The other way (distance, line, turn), or (mate connectors) turned over. */
   flip?: boolean;
   /** What a click in the 3D view chooses (missing = the part). */
@@ -266,6 +324,8 @@ export interface Feature {
   hole?: HoleOptions;
   /** Plane features: where the plane is. */
   planeDef?: PlaneOptions;
+  /** Mate connector features: where it sits and which part owns it. */
+  connector?: MateConnectorDef;
   /** Boolean features: which parts, and what to do with them. */
   /** Delete part: the parts it removes from the Part Studio. */
   deleteParts?: string[];
@@ -974,6 +1034,11 @@ export interface MateConnector {
   spot?: ConnectorSpot;
   /** Where the face or edge was clicked, in the part's own coordinates (mm). */
   point?: [number, number, number];
+  /**
+   * One of the part's own mate connectors (a Mate connector feature in its Part Studio, by id): the frame is that
+   * connector's, as built (`pick` is then a stand-in at its origin). Missing = the face or edge picked.
+   */
+  connector?: string;
 }
 
 /** What a parts list says about a part besides its name (as in Onshape's part properties). */
