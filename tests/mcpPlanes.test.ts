@@ -58,6 +58,8 @@ describe("planes and mate connectors made by Claude", () => {
     expect(r(framesOf(s.doc.features, undefined, s.build().followed).get(plane.id)!.origin)).toEqual([40, 0, 10]);
     await ok(s, "add_sketch", { name: "On end", plane: "End plane", shapes: [{ type: "circle", center: [0, 0], diameter: 4 }] });
     await ok(s, "set_variables", { variables: [{ name: "w", value: 60 }] });
+    // Its plane is described where it's built now.
+    expect(await ok(s, "edit_feature", { feature: "On end", shapes: [{ type: "circle", center: [0, 0], diameter: 5 }] })).toMatch(/sketch origin \(0, 0\) is at world \(60, 0, 10\)/);
     // Followed: the plane and the sketch on it are at the new end.
     expect(r(framesOf(s.doc.features, undefined, s.build().followed).get(plane.id)!.origin)).toEqual([60, 0, 10]);
     const sk = s.build().links?.[s.doc.features.find((f) => f.name === "On end")!.id]?.plane;

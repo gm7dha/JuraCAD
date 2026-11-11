@@ -474,7 +474,8 @@
   placed on them (`planeRef`) are repointed in the same build (`repointFeature` in planeFeature.ts — only new-type planes and
   connectors go in that map, so old files build exactly as before); Move / copy's `fromConnector`/`toConnector` are filled in as
   `from`/`to`; connectors owned by a moved part go with it (`moveOwnedConnectors`) and pass to the part theirs is merged into
-  (`reassignOwners`, after each feature: the part the last feature made/changed nearest them). Any plane (old modes too) whose
+  (`reassignOwners`, after each feature and before a configuration's ids get their suffix: `mergedInto`, recorded by a Boolean
+  union and `commitPlan` joins; a part used up otherwise — Subtract, Delete part — leaves them unowned with a `featureWarnings` note). Any plane (old modes too) whose
   ref was repointed goes in the map as well, so chains follow in ONE build. Where each is built comes back as
   `RebuildResult.followed` (id → frame, every studio, like sketchLinks) → store `builtFrames` → `framesOf(features, scope,
   built)` (planes drawn, connector marks, geomPick, dialogs; the extension passes `Build.followed`); a sketch repointed this way
@@ -483,7 +484,7 @@
   coordinates), so assemblies use them: `MateConnector.connector` (+ a stand-in `pick`, `ownConnectorPick`), resolved by
   `connectorFrameOnParts` → `ownConnectorFrame`. Connectors are drawn/clicked as `SceneManager.setConnectorMarks` (PickTarget
   "connector", within `CONNECTOR_PICK_PIXELS` of the middle, before faces unless behind the face hit; only while `connectorWanted`
-  (geomClicks.ts) says the tool open takes one — `setConnectorPicking`); in an assembly only while a mate is made (key
+  (geomClicks.ts) says the tool open takes one — `setConnectorPicking`; Text: "notOnRound", as a round face wraps it); in an assembly only while a mate is made (key
   "<leaf key>|<id>"). They're sketch planes (`framesOf`/`refreshPlaneRefs` include them as `planeRef`s), have an eye
   (`hasEye`), and Delete with dependents knows `GeomPick`s, `connector.plane`/`owner`, `from/toConnector` (and `outsideUsers` names
   assembly mates on a connector that goes, `connectorMates`). Curve point's `position` is a share of the edge's LENGTH on both

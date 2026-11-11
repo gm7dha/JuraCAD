@@ -2057,12 +2057,13 @@ export class GeometryEngine {
             throw e;
           }
           setCurrentScope(variables);
+          // (Before the parts are renamed for another configuration: connectors are kept by the parts' own ids.)
+          this.reassignOwners();
           // Names the user gave parts (used in the lists and in exported files).
           const names = studio.partNames ?? partNames;
           for (const p of this.parts) if (names[p.id]) p.name = names[p.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          this.reassignOwners();
           b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned };
           this.snaps = null;
           this.builds.set(studio.id, b);
@@ -2604,7 +2605,8 @@ export class GeometryEngine {
     this.followed = {};
     this.connectorFrames = new Map();
     this.owned = {};
-    this.lastBuilt = "";
+    this.lastBuiltName = "";
+    this.mergedInto = new Map();
     const moved = new Map<string, SketchPlane>();
     const listed = features;
 
@@ -2619,7 +2621,7 @@ export class GeometryEngine {
       yield;
       // Mate connectors whose part was merged into another (a Boolean, an Add joining parts) belong to that one now.
       this.reassignOwners();
-      this.lastBuilt = feature.id;
+      this.lastBuiltName = feature.name;
       if (feature.type === "mateConnector") {
         const err = this.placeConnector(feature, sketches, features, moved);
         if (err) featureErrors[feature.id] = err;
@@ -3214,6 +3216,7 @@ export class GeometryEngine {
       }
       // Earlier features on it now belong to the part it joined (patterns of them work on that).
       for (const t of this.tools.values()) if (t.partId === gone) t.partId = into;
+      if (keep) this.mergedInto.set(gone, into);
       part.shape.delete();
       this.parts = this.parts.filter((p) => p !== part);
     }
@@ -4589,6 +4592,7 @@ export class GeometryEngine {
         // (Only for Join: repeating a feature of an intersected part would add its whole solid back.)
         const joined = new Set(b.op === "union" ? ts.slice(1).map((p) => p.id) : []);
         for (const tool of this.tools.values()) if (joined.has(tool.partId)) tool.partId = ts[0].id;
+        for (const id of joined) this.mergedInto.set(id, ts[0].id);
       } else {
         if (ts.length === 0) return "Pick the parts to cut — click them in the 3D view or the Parts list.";
         if (tls.length === 0) return "Now pick the parts to cut with: choose “Cut with” below, then click them.";
@@ -4970,37 +4974,27 @@ export class GeometryEngine {
   private connectorFrames = new Map<string, FullFrame>();
   /** Mate connectors by the part that owns them. */
   private owned: Record<string, PartConnector[]> = {};
-  /** The feature built last (whose parts take over mate connectors of parts it merged away). */
-  private lastBuilt = "";
+  /** Parts merged into another this build (a Boolean union, an Add joining parts): gone id → the part it joined. */
+  private mergedInto = new Map<string, string>();
+  private lastBuiltName = "";
 
   /**
-   * Mate connectors whose owner part has gone (merged into another by the feature just built): given to the part that
-   * feature made or changed nearest them — the merged part. With none, they belong to no part.
+   * Mate connectors whose owner part has gone: a part merged into another (a Boolean union, an Add joining parts) hands
+   * them on to that part. Otherwise (cut away by a Subtract, deleted…) they belong to no part any more, with a note.
    */
   private reassignOwners(): void {
-    const gone = Object.keys(this.owned).filter((id) => !this.parts.some((p) => p.id === id));
-    if (!gone.length) return;
-    const heirs = this.parts.filter((p) => p.featureIds.includes(this.lastBuilt) && !p.surface);
-    for (const id of gone) {
+    for (const id of Object.keys(this.owned)) {
+      if (this.parts.some((p) => p.id === id)) continue;
       const list = this.owned[id];
       delete this.owned[id];
-      for (const c of list) {
-        let best: { part: BuiltPart; d: number } | null = null;
-        if (heirs.length === 1) best = { part: heirs[0], d: 0 };
-        else
-          for (const part of heirs) {
-            const v = makeVertex(c.origin);
-            try {
-              const d = measureDistanceBetween(part.shape, v);
-              if (!best || d < best.d) best = { part, d };
-            } catch {
-              // (Not measurable: skip it.)
-            } finally {
-              v.delete();
-            }
-          }
-        if (best) (this.owned[best.part.id] ??= []).push(c);
+      let heir: string | undefined = id;
+      const seen = new Set<string>();
+      while (heir && !this.parts.some((p) => p.id === heir) && !seen.has(heir)) {
+        seen.add(heir);
+        heir = this.mergedInto.get(heir);
       }
+      if (heir && this.parts.some((p) => p.id === heir)) (this.owned[heir] ??= []).push(...list);
+      else for (const c of list) this.warnings[c.id] = `Its part was used up by ${this.lastBuiltName || "a later feature"}, so it no longer belongs to a part (assemblies can't mate to it).`;
     }
   }
 

@@ -200,15 +200,18 @@ export function planeClick(def: PlaneOptions, c: GeomClick): PlaneOptions | stri
 
 /**
  * Whether a click may pick a mate connector now: only while what's open takes one (a Mate connector or Plane, Move /
- * copy's From or To, a sketch waiting for its plane, a Mirror's plane, Text's plane), a mate is being made in an
+ * copy's From or To, a sketch waiting for its plane, a Mirror's plane, Text's plane — not over a round face, which Text
+ * wraps onto: "notOnRound"), a mate is being made in an
  * assembly, or nothing is open (it's selected). Otherwise clicks go to faces and edges as usual.
  */
-export function connectorWanted(s: { editing: { draft: Feature } | null; sketch: unknown; mateDraft: unknown }, inAssembly: boolean): boolean {
+export function connectorWanted(s: { editing: { draft: Feature } | null; sketch: unknown; mateDraft: unknown }, inAssembly: boolean): boolean | "notOnRound" {
   if (inAssembly) return !!s.mateDraft;
   const d = s.editing?.draft;
   if (!d) return !s.sketch;
   if (d.type === "sketch") return !!s.sketch && !d.sketch?.plane;
-  if (d.type === "mateConnector" || d.type === "plane" || d.type === "mirror" || d.type === "text") return true;
+  if (d.type === "mateConnector" || d.type === "plane" || d.type === "mirror") return true;
+  // Text: a connector's plane, but a click on a round face wraps the text round it instead.
+  if (d.type === "text") return "notOnRound";
   return d.type === "transform" && (d.transform?.picking === "from" || d.transform?.picking === "to");
 }
 

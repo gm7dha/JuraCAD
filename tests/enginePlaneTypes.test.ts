@@ -231,6 +231,30 @@ describe("mate connectors in the Part Studio", () => {
     expect(joined.parts[0].connectors?.map((c) => c.id)).toEqual([onRight.id]);
   });
 
+  it("cut away by a Subtract: no part takes it over, and it says so", () => {
+    const a = feature("box", { width: 10, depth: 20, height: 5 });
+    const b = feature("box", { width: 4, depth: 4, height: 8, x: 2, y: 2 });
+    const conn = connectorOf({ at: { p: [4, 4, 8], pick: { partId: b.id, ref: { kind: "face", surface: "PLANE", center: [4, 4, 8], normal: [0, 0, 1] } } } });
+    const sub: Feature = { ...feature("boolean", {}), name: "Subtract 1", booleanDef: { op: "subtract", targets: [a.id], tools: [b.id], keepTools: false, picking: "targets" } };
+    engine = new GeometryEngine();
+    const res = engine.rebuild([a, b, conn, sub]);
+    expect(res.featureErrors).toEqual({});
+    expect(res.parts.map((p) => p.connectors?.length ?? 0)).toEqual([0]);
+    expect(res.featureWarnings?.[conn.id]).toMatch(/used up by Subtract 1/);
+  });
+
+  it("is kept on the parts built in another configuration too", () => {
+    const base = feature("box", { width: "w", depth: 20, height: 5 });
+    const top = connectorOf({ at: { p: [5, 10, 5], pick: face(base.id, [5, 10, 5], [0, 0, 1]) } });
+    const other = feature("box", { width: 3, depth: 3, height: 3, x: 50 });
+    engine = new GeometryEngine();
+    const res = engine.rebuildStudios([{ id: "main", features: [base, top, other] }, { id: "main@big", features: [base, top, other], variables: { w: 40 }, partSuffix: "@big" }], { w: 10 });
+    const owned = Object.fromEntries(res.parts.map((p) => [p.id, (p.connectors ?? []).map((c) => r(c.origin))]));
+    expect(owned[base.id]).toEqual([[5, 10, 5]]);
+    expect(owned[`${base.id}@big`]).toEqual([[20, 10, 5]]);
+    expect(owned[other.id]).toEqual([]);
+  });
+
   it("on an edge's end and on a plane, with moves and turns", () => {
     const box = feature("box", { width: 10, depth: 20, height: 5 });
     const end = connectorOf({ at: { p: [10, 0, 5], pick: edge(box.id, [0, 0, 5], [10, 0, 5]), spot: "end" } }, { dz: 2 });

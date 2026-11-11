@@ -21,6 +21,7 @@ import type { FollowedFrame, PartMesh } from "../kernel/protocol";
 import { bool, InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, type Obj } from "./args";
 import { deleteFeatures, deletePlan, listNames, outsideLines } from "../model/dependents";
 import { firstStudioId } from "../model/studios";
+import { followedSketch } from "../sketch/areaClicks";
 import { applyFeature, applySketch, describePlane, FEATURE_KINDS, KIND_OF, limitProblems, type FeatureKind, type SpecContext } from "./featureSpec";
 import { describeEdge, describeFace, edgeList, faceList, facing, PICK_HELP } from "./picks";
 import { renderViews, RENDER_VIEWS, type RenderView } from "./render";
@@ -437,7 +438,7 @@ export const TOOLS: ToolDef[] = [
           : free === 0
             ? "It's fully defined (every size and position is dimensioned)."
             : `It has ${free} way(s) still free to move (fine for building, but the app shows it in blue).`,
-        `On this plane ${describePlane(f.sketch!.plane!)}.`,
+        `On this plane ${describePlane(followedSketch(f, s.build().links ?? {})?.plane ?? f.sketch!.plane!)}.`,
         ...report,
       );
     },
@@ -505,7 +506,7 @@ export const TOOLS: ToolDef[] = [
       const onFaces = s.doc.features.slice(at + 1).filter((x) => x.type === "sketch" && x.sketch?.plane?.kind === "face" && !x.sketch.plane.planeRef && / face of /.test(x.sketch.plane.label));
       return say(
         `Changed ${f.name}: ${summarize(f, s.doc, s.build().followed)}.`,
-        f.type === "sketch" && f.sketch?.plane && `On its plane ${describePlane(f.sketch.plane)}.`,
+        f.type === "sketch" && f.sketch?.plane && `On its plane ${describePlane(followedSketch(f, s.build().links ?? {})?.plane ?? f.sketch.plane)}.`,
         onFaces.length > 0 && f.type !== "sketch" && `Note: ${onFaces.map((x) => x.name).join(", ")} ${onFaces.length > 1 ? "are" : "is"} drawn where a face was. If this change moved that face, put the sketch back on it with edit_feature {"feature": "<sketch>", "on_face": …}.`,
         ...report,
       );

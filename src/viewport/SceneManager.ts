@@ -700,9 +700,19 @@ export class SceneManager {
   }
   private connectorMarks: ConnectorMark[] = [];
   /** Whether clicks can pick mate connectors (only while the tool open takes one; else they fall through to faces and edges). */
-  private connectorPicking = true;
-  setConnectorPicking(on: boolean): void {
+  private connectorPicking: boolean | "notOnRound" = true;
+  /** "notOnRound": only when the click isn't on a round face (Text wraps onto those). */
+  setConnectorPicking(on: boolean | "notOnRound"): void {
     this.connectorPicking = on;
+  }
+  /** Is a face hit on a curved face (not flat)? */
+  private roundFaceHit(hit: THREE.Intersection): boolean {
+    if (hit.faceIndex === undefined || hit.faceIndex === null) return false;
+    const data = this.parts.get(hit.object.userData.partId as string)?.data;
+    const tri = hit.faceIndex * 3;
+    const index = data?.faceGroups.findIndex((g) => tri >= g.start && tri < g.start + g.count) ?? -1;
+    const ref = index >= 0 ? data?.faceRefs?.[index] : undefined;
+    return !!ref && ref.surface !== "PLANE";
   }
   private readonly connectorGroup = new THREE.Group();
 
@@ -1605,7 +1615,7 @@ export class SceneManager {
     const edgeHit = this.raycaster.intersectObjects(lines, false).find(kept);
     // A mate connector's middle (when the tool open takes one) wins over the faces and edges round it — unless it's
     // hidden behind the part.
-    if (this.connectorPicking && this.connectorMarks.length) {
+    if (this.connectorPicking && this.connectorMarks.length && !(this.connectorPicking === "notOnRound" && faceHit && this.roundFaceHit(faceHit))) {
       const ray = this.raycaster.ray;
       const key = this.connectorAt(x, y, reach, (o) => !faceHit || new THREE.Vector3(...o).sub(ray.origin).dot(ray.direction) <= faceHit.distance + threshold * 2);
       if (key) return { kind: "connector", key };

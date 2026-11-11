@@ -233,7 +233,9 @@ describe("when a click can pick a mate connector", () => {
   const draft = (type: Feature["type"], extra: Partial<Feature> = {}) => ({ editing: { draft: { id: "d", name: "d", type, operation: "new", suppressed: false, params: {}, ...extra } as Feature }, sketch: null, mateDraft: null });
   it("only while the tool open takes one", () => {
     expect(connectorWanted({ editing: null, sketch: null, mateDraft: null }, false)).toBe(true);
-    for (const t of ["mateConnector", "plane", "mirror", "text"] as const) expect(connectorWanted(draft(t), false)).toBe(true);
+    for (const t of ["mateConnector", "plane", "mirror"] as const) expect(connectorWanted(draft(t), false)).toBe(true);
+    // Text: not where the click is on a round face (it wraps onto those).
+    expect(connectorWanted(draft("text"), false)).toBe("notOnRound");
     for (const t of ["fillet", "extrude", "chamfer", "hole"] as const) expect(connectorWanted(draft(t), false)).toBe(false);
     expect(connectorWanted(draft("transform", { transform: { axis: "z", about: "centre", copy: false, mode: "mates", picking: "to" } }), false)).toBe(true);
     expect(connectorWanted(draft("transform", { transform: { axis: "z", about: "centre", copy: false, mode: "mates" } }), false)).toBe(false);
