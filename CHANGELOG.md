@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.52 — Mountain puzzle: dovetails on the top pieces
+
+- **Top pieces now dovetail together.** Before, the pieces with the ground on top were plain squares held only by the key
+  underneath; now each one locks into every top piece beside it that starts at the same height, with the full fit gap
+  all round so they still push together easily.
+- A few top pieces (on a peak, in a hollow or on a steep face) have no same-height neighbour to join; the summary says how
+  many, as only their keys hold them in place. Bigger cubes or less height stretch give fewer of them.
+- The island puzzle window now stops an old build when you change a setting to something it can't make, and gives up
+  with a plain message if making a puzzle ever takes more than two minutes.
+
 ## v0.51 — Island puzzle: rivers and paths from the map, a snugger fit, every piece joined
 
 - **From the map** in the island puzzle, as in the mountain puzzle: just the area, paths, rivers and lochs, or
