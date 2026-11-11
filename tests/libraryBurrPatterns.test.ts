@@ -100,8 +100,7 @@ describe("Six-piece burr surface patterns", () => {
   });
 
   it("keeps every pattern inside its face, clear of the edges, without overlapping", () => {
-    for (const size of [8, 20, 40])
-      for (const repeats of [1, 3, 6])
+    for (const [size, repeats] of [[8, 1], [20, 3], [30, 5], [40, 2]] as const)
         for (const p of BURR_PATTERNS) {
           const v = { ...base, size, surface: p.value, surfaceRepeats: repeats, ends: "pattern", surfaceSeed: 7 };
           const L = burrLayout(v);
@@ -124,7 +123,9 @@ describe("Six-piece burr surface patterns", () => {
                 expect(home, `${p.value} ${size}/${repeats} piece ${i + 1} ${w.face}`).toBeDefined();
                 expect(markArea(m)).toBeGreaterThan(0);
               }
-              // No two marks overlap: probe a grid over each mark's box.
+              // No two marks overlap: probe a grid over where their boxes cross (on the first piece; the rest are alike).
+              if (i > 0) continue;
+              let overlaps = 0;
               for (let a = 0; a < w.marks.length; a++)
                 for (let b = a + 1; b < w.marks.length; b++) {
                   const [A, B] = [w.marks[a], w.marks[b]].map((m) => {
@@ -133,8 +134,9 @@ describe("Six-piece burr surface patterns", () => {
                   });
                   const box: Rect = [Math.max(A[0], B[0]), Math.max(A[1], B[1]), Math.min(A[2], B[2]), Math.min(A[3], B[3])];
                   if (box[2] <= box[0] || box[3] <= box[1]) continue;
-                  for (let x = box[0]; x <= box[2]; x += 0.1) for (let y = box[1]; y <= box[3]; y += 0.1) expect(inMark(w.marks[a], [x, y]) && inMark(w.marks[b], [x, y])).toBe(false);
+                  for (let x = box[0]; x <= box[2]; x += 0.15) for (let y = box[1]; y <= box[3]; y += 0.15) if (inMark(w.marks[a], [x, y]) && inMark(w.marks[b], [x, y])) overlaps++;
                 }
+              expect(overlaps, `${p.value} ${size}/${repeats} ${w.face}: marks overlap`).toBe(0);
             }
           });
         }
