@@ -681,91 +681,111 @@ function topBodies(
 
 /**
  * A dovetailed top piece: the ground over any outline (anticlockwise), split at `zs` into rock and snow, as `topBodies`
- * does for a square. The ground is drawn by marching squares over the outline, sampled every `step` mm (each square's
- * part inside the outline is convex); the outline itself is where the squares' sides cross it (exactly), so the walls,
- * the underside (less the pocket) and the snow's sides all use exactly those points.
+ * does for a square. Its walls and underside are the outline itself — every corner, its sides cut into pieces no longer
+ * than `step` — so the footprint is exactly the shrunk outline, like a cube's (`blockBody`). On top, the grid squares
+ * (`step` mm) lying wholly inside, clear of the outline, are drawn as squares, and the band between them and the outline
+ * is triangulated from the outline's points and the squares' edge points; every triangle is then cut at the snow line.
  */
 function outlineTopBodies(outline: P2[], step: number, Z: (x: number, y: number) => number, z0: number, zs: number, pocket: Key | null, g: KeySizes): Body[] {
+  // The outline with no side longer than a step (the extra points lie on it).
+  const O: P2[] = [];
+  for (let k = 0; k < outline.length; k++) {
+    const [a, b] = [outline[k], outline[(k + 1) % outline.length]];
+    const parts = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+    for (let q = 0; q < parts; q++) O.push([a[0] + ((b[0] - a[0]) * q) / parts, a[1] + ((b[1] - a[1]) * q) / parts]);
+  }
   const xs = outline.map((p) => p[0]);
   const ys = outline.map((p) => p[1]);
-  const [x0, y0] = [Math.min(...xs) - step, Math.min(...ys) - step];
-  const mi = Math.ceil((Math.max(...xs) + step - x0) / step);
-  const mj = Math.ceil((Math.max(...ys) + step - y0) / step);
+  const [x0, y0] = [Math.min(...xs), Math.min(...ys)];
+  const mi = Math.ceil((Math.max(...xs) - x0) / step);
+  const mj = Math.ceil((Math.max(...ys) - y0) / step);
   const X = (i: number) => x0 + i * step;
   const Y = (j: number) => y0 + j * step;
-  // Which nodes are inside the outline (1) or not (−1).
-  const f = new Float64Array((mi + 1) * (mj + 1));
-  for (let j = 0; j <= mj; j++) for (let i = 0; i <= mi; i++) f[j * (mi + 1) + i] = inside([X(i), Y(j)], outline) ? 1 : -1;
-  const val = (i: number, j: number) => (i < 0 || j < 0 || i > mi || j > mj ? -1 : f[j * (mi + 1) + i]);
+  // Squares wholly inside and at least a hair clear of every side of the outline.
+  const clear = 0.05 * step;
+  const segNearBox = (a: P2, b: P2, bx0: number, by0: number, bx1: number, by1: number) => {
+    if (Math.max(a[0], b[0]) < bx0 || Math.min(a[0], b[0]) > bx1 || Math.max(a[1], b[1]) < by0 || Math.min(a[1], b[1]) > by1) return false;
+    // Separating axis along the segment's normal.
+    const [nx, ny] = [-(b[1] - a[1]), b[0] - a[0]];
+    const d = [bx0 * nx + by0 * ny, bx1 * nx + by0 * ny, bx0 * nx + by1 * ny, bx1 * nx + by1 * ny].map((v) => v - (a[0] * nx + a[1] * ny));
+    return Math.min(...d) <= 0 && Math.max(...d) >= 0;
+  };
+  const full = new Uint8Array(mi * mj);
+  for (let j = 0; j < mj; j++)
+    for (let i = 0; i < mi; i++) {
+      if (!inside([X(i + 0.5), Y(j + 0.5)], outline)) continue;
+      let ok = true;
+      for (let k = 0; k < outline.length && ok; k++)
+        if (segNearBox(outline[k], outline[(k + 1) % outline.length], X(i) - clear, Y(j) - clear, X(i + 1) + clear, Y(j + 1) + clear)) ok = false;
+      if (ok) full[j * mi + i] = 1;
+    }
+  const at = (i: number, j: number) => (i >= 0 && j >= 0 && i < mi && j < mj ? full[j * mi + i] : 0);
+  // No two squares touching only at a corner (their outline would pass the same point twice).
+  for (let again = true; again; ) {
+    again = false;
+    for (let j = 0; j + 1 < mj; j++)
+      for (let i = 0; i + 1 < mi; i++) {
+        const [a, b, c, d] = [at(i, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1)];
+        if ((a && d && !b && !c) || (b && c && !a && !d)) {
+          full[(j + 1) * mi + (a ? i + 1 : i)] = 0;
+          again = true;
+        }
+      }
+  }
+  // The squares' outlines (anticlockwise round each patch of squares): the band's holes.
+  const nextEdge = new Map<string, [number, number]>();
+  for (let j = 0; j < mj; j++)
+    for (let i = 0; i < mi; i++) {
+      if (!at(i, j)) continue;
+      if (!at(i, j - 1)) nextEdge.set(`${i},${j}`, [i + 1, j]);
+      if (!at(i + 1, j)) nextEdge.set(`${i + 1},${j}`, [i + 1, j + 1]);
+      if (!at(i, j + 1)) nextEdge.set(`${i + 1},${j + 1}`, [i, j + 1]);
+      if (!at(i - 1, j)) nextEdge.set(`${i},${j + 1}`, [i, j]);
+    }
+  const loops: [number, number][][] = [];
+  const used = new Set<string>();
+  for (const startKey of nextEdge.keys()) {
+    if (used.has(startKey)) continue;
+    const loop: [number, number][] = [];
+    for (let key = startKey; !used.has(key); ) {
+      used.add(key);
+      const [a, b] = key.split(",").map(Number);
+      loop.push([a, b]);
+      const nb = nextEdge.get(key)!;
+      key = `${nb[0]},${nb[1]}`;
+    }
+    loops.push(loop);
+  }
+
   interface V {
     key: string;
     x: number;
     y: number;
     h: number;
-    cross: boolean;
   }
   const verts = new Map<string, V>();
-  const vertex = (key: string, x: number, y: number, cross: boolean): V => {
+  const vertex = (key: string, x: number, y: number): V => {
     let v = verts.get(key);
     if (!v) {
-      v = { key, x, y, h: Z(x, y), cross };
+      v = { key, x, y, h: Z(x, y) };
       verts.set(key, v);
     }
     return v;
   };
-  const corner = (i: number, j: number) => vertex(`n${i},${j}`, X(i), Y(j), false);
-  // Where the outline crosses a square's side — exactly, the crossing nearest the side's inside end (kept a hair off
-  // the ends) — worked out once per side.
-  const sideCross = (a: [number, number], b: [number, number]) => {
-    const [p, q] = a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]) ? [a, b] : [b, a];
-    const key = p[0] === q[0] ? `v${p[0]},${p[1]}` : `h${p[0]},${p[1]}`;
-    const known = verts.get(key);
-    if (known) return known;
-    const [P, Q]: P2[] = [
-      [X(p[0]), Y(p[1])],
-      [X(q[0]), Y(q[1])],
-    ];
-    const fromP = val(p[0], p[1]) > 0;
-    let best = fromP ? Infinity : -Infinity;
-    const [ex, ey] = [Q[0] - P[0], Q[1] - P[1]];
-    for (let k = 0; k < outline.length; k++) {
-      const [A, B] = [outline[k], outline[(k + 1) % outline.length]];
-      const [dx, dy] = [B[0] - A[0], B[1] - A[1]];
-      const den = ex * dy - ey * dx;
-      if (Math.abs(den) < 1e-15) continue;
-      const t = ((A[0] - P[0]) * dy - (A[1] - P[1]) * dx) / den;
-      const u = ((A[0] - P[0]) * ey - (A[1] - P[1]) * ex) / den;
-      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
-      best = fromP ? Math.min(best, t) : Math.max(best, t);
-    }
-    // (None found only by rounding at a vertex: halfway is as good as any.)
-    const t = Math.max(0.02, Math.min(0.98, Number.isFinite(best) ? best : 0.5));
-    return vertex(key, P[0] + ex * t, P[1] + ey * t, true);
-  };
-  const polys: V[][] = [];
-  for (let j = -1; j <= mj; j++)
-    for (let i = -1; i <= mi; i++) {
-      const cs: [number, number][] = [
-        [i, j],
-        [i + 1, j],
-        [i + 1, j + 1],
-        [i, j + 1],
-      ];
-      const fv = cs.map(([a, b]) => val(a, b));
-      const ins = fv.map((x) => x > 0);
-      if (!ins.some(Boolean)) continue;
-      const saddle = ins[0] === ins[2] && ins[1] === ins[3] && ins[0] !== ins[1];
-      if (saddle && (fv[0] + fv[1] + fv[2] + fv[3]) / 4 <= 0) {
-        for (const k of ins[0] ? [0, 2] : [1, 3]) polys.push([corner(...cs[k]), sideCross(cs[k], cs[(k + 1) % 4]), sideCross(cs[(k + 3) % 4], cs[k])]);
-      } else {
-        const p: V[] = [];
-        for (let k = 0; k < 4; k++) {
-          if (ins[k]) p.push(corner(...cs[k]));
-          if (ins[k] !== ins[(k + 1) % 4]) p.push(sideCross(cs[k], cs[(k + 1) % 4]));
-        }
-        polys.push(p);
+  const node = (i: number, j: number) => vertex(`n${i},${j}`, X(i), Y(j));
+  const ring = O.map(([x, y], k) => vertex(`o${k}`, x, y));
+  const tris: V[][] = [];
+  for (let j = 0; j < mj; j++)
+    for (let i = 0; i < mi; i++)
+      if (at(i, j)) {
+        const [a, b, c, d] = [node(i, j), node(i + 1, j), node(i + 1, j + 1), node(i, j + 1)];
+        tris.push([a, b, c], [a, c, d]);
       }
-    }
+  // The band: the outline less the patches of squares.
+  const holeVerts = loops.map((l) => l.map(([i, j]) => node(i, j)));
+  const all = [...ring, ...holeVerts.flat()];
+  for (const [a, b, c] of triangulate(O, holeVerts.map((l) => l.map((v) => [v.x, v.y] as P2)))) tris.push([all[a], all[b], all[c]]);
+
   const below = (v: V) => v.h <= zs;
   const crossings = new Map<string, V>();
   const crossing = (a: V, b: V): V => {
@@ -774,7 +794,7 @@ function outlineTopBodies(outline: P2[], step: number, Z: (x: number, y: number)
     let v = crossings.get(key);
     if (!v) {
       const t = (zs - p.h) / (q.h - p.h);
-      v = { key: `s${key}`, x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, h: zs, cross: false };
+      v = { key: `s${key}`, x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, h: zs };
       crossings.set(key, v);
     }
     return v;
@@ -786,38 +806,25 @@ function outlineTopBodies(outline: P2[], step: number, Z: (x: number, y: number)
     const ids = poly.map((v) => m.point(v.x, v.y, z(v)));
     for (let k = 1; k + 1 < ids.length; k++) up ? m.tri(ids[0], ids[k], ids[k + 1]) : m.tri(ids[0], ids[k + 1], ids[k]);
   };
-  // The ground, square by square, cut at the snow line; and the outline's pieces (between two crossings), in order.
-  const next = new Map<string, V>();
-  for (const poly of polys) {
-    for (let k = 0; k < poly.length; k++) {
-      const [p, q] = [poly[k], poly[(k + 1) % poly.length]];
-      if (p.cross && q.cross) next.set(p.key, q);
-    }
-    // Triangle by triangle (a triangle crosses the snow line at most twice), as topBodies does.
-    for (let k = 1; k + 1 < poly.length; k++) {
-      const tri = [poly[0], poly[k], poly[k + 1]];
-      const lowPart: V[] = [];
-      const highPart: V[] = [];
-      for (let m = 0; m < 3; m++) {
-        const [p, q] = [tri[m], tri[(m + 1) % 3]];
-        (below(p) ? lowPart : highPart).push(p);
-        if (below(p) !== below(q)) {
-          const x = crossing(p, q);
-          lowPart.push(x);
-          highPart.push(x);
-        }
+  // The ground, triangle by triangle, cut at the snow line.
+  for (const tri of tris) {
+    const lowPart: V[] = [];
+    const highPart: V[] = [];
+    for (let m = 0; m < 3; m++) {
+      const [p, q] = [tri[m], tri[(m + 1) % 3]];
+      (below(p) ? lowPart : highPart).push(p);
+      if (below(p) !== below(q)) {
+        const x = crossing(p, q);
+        lowPart.push(x);
+        highPart.push(x);
       }
-      fan(rock, lowPart, (v) => v.h, true);
-      fan(rock, highPart, () => zs, true);
-      fan(snow, highPart, (v) => v.h, true);
-      fan(snow, highPart, () => zs, false);
     }
+    fan(rock, lowPart, (v) => v.h, true);
+    fan(rock, highPart, () => zs, true);
+    fan(snow, highPart, (v) => v.h, true);
+    fan(snow, highPart, () => zs, false);
   }
   // Round the edge, anticlockwise, with the snow line's crossings in their places.
-  const start = next.values().next().value as V;
-  const ring: V[] = [start];
-  for (let v = next.get(start.key)!; v !== start && ring.length <= next.size; v = next.get(v.key)!) ring.push(v);
-  if (ring.length !== next.size) throw new Error("A top piece's outline came out in more than one loop.");
   const edge: V[] = [];
   ring.forEach((v, k) => {
     const w = ring[(k + 1) % ring.length];
@@ -1058,7 +1065,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
         } else {
           const sq: [number, number, number, number] = [c * cube + fit, r * cube + fit, (c + 1) * cube - fit, (r + 1) * cube - fit];
           const zs = Math.max(snowZ, z0 + (pocket ? g.depth + 1 : 1));
-          const bodies = outlines[L].length === 4 ? topBodies(sq, n, Z, z0, zs, pocket, g) : outlineTopBodies(outlines[L], cube / n / 2, Z, z0, zs, pocket, g);
+          const bodies = outlines[L].length === 4 ? topBodies(sq, n, Z, z0, zs, pocket, g) : outlineTopBodies(outlines[L], cube / n, Z, z0, zs, pocket, g);
           let peak = z0;
           for (const b of bodies) for (let i = 2; i < b.vertices.length; i += 3) peak = Math.max(peak, b.vertices[i]);
           const beside = besideAtLevel(c, r, L);
@@ -1070,6 +1077,13 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   if (lookAlikes)
     warnings.push(
       `${lookAlikes} pieces stand where only one cube or none sits beside them, so their tabs alone can't make them all different: their coded keys tell them apart.`,
+    );
+  // Pieces with fewer than two dovetails: nothing (or one thing) beside them starts at the same height — a peak, a hollow
+  // or a steep face — so no more are possible; their key holds them in place from below.
+  const fewJoints = pieces.filter((p) => p.layer > 0 && (p.joints ?? 0) < 2).length;
+  if (fewJoints)
+    warnings.push(
+      `${fewJoints} ${fewJoints === 1 ? "piece has" : "pieces have"} fewer than two dovetails: on a peak, in a hollow or on a steep face too few pieces beside ${fewJoints === 1 ? "it start" : "them start"} at the same height, so ${fewJoints === 1 ? "it sits" : "they sit"} on ${fewJoints === 1 ? "its" : "their"} key and lift${fewJoints === 1 ? "s" : ""} straight off.`,
     );
   if (clashes) warnings.push(`${clashes} ${clashes === 1 ? "pair" : "pairs"} of neighbouring keys could still go into each other's pockets: take care with those pieces.`);
   if (keyless.length) warnings.push(`No room for a key under ${keyless.length === 1 ? "piece" : "pieces"} ${keyless.slice(0, 6).join(", ")}${keyless.length > 6 ? "…" : ""}: ${keyless.length === 1 ? "it rests" : "they rest"} on the piece below with nothing to hold ${keyless.length === 1 ? "it" : "them"} in place.`);

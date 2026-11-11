@@ -30,6 +30,7 @@ import { formatGridRef, gridToLatLon, parseGridRef } from "../src/terrain/osGrid
 import { PEAKS } from "../src/terrain/peaks";
 import { FILAMENT, plate3mf, plateFiles, platesFor } from "../src/terrain/puzzle3mf";
 import { triangulate, type P2 } from "../src/terrain/triangulate";
+import { outlineSegs, SegGrid, segSegDist, segsCross } from "./support/outlineGeom";
 
 describe("OS grid references", () => {
   it("reads letters and digits, and plain eastings/northings", () => {
@@ -399,31 +400,24 @@ describe("Mountain puzzle", () => {
 });
 
 describe("Mountain puzzle: every piece held", () => {
-  /** Distance from p to a closed outline, and whether it's inside. */
-  const toOutline = (p: [number, number], poly: [number, number][]) => {
-    let d = Infinity;
-    let inside = false;
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const [a, b] = [poly[j], poly[i]];
-      const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
-      const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
-      d = Math.min(d, Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy));
-      if (a[1] > p[1] !== b[1] > p[1] && p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside;
-    }
-    return { d, inside };
-  };
   const ridge = gridFrom({ e: 200000, n: 770000 }, W, H, 20, (e, n) => 200 + 700 * Math.exp(-(((n - 771500) / 500) ** 2)) * (0.6 + 0.4 * Math.sin(e / 400)));
-  for (const [name, grid, seed] of [["hill", hill, 1], ["hill", hill, 4], ["ridge", ridge, 2]] as const)
-    it(`dovetails every piece to those beside it at its level, top pieces too (${name}, pattern ${seed})`, () => {
-      const p = makeMountainPuzzle(grid, W, H, { ...SPEC, seed });
-      const cube = SPEC.cube;
+  const rugged = gridFrom({ e: 200000, n: 770000 }, W, H, 20, (e, n) => 150 + 500 * (1 + Math.sin(e / 230) * Math.cos(n / 310)) + 300 * Math.exp(-(((e - 202500) / 600) ** 2 + ((n - 770900) / 600) ** 2)));
+  for (const [name, grid, seed, cube, fit] of [
+    ["hill", hill, 1, 30, 0.15],
+    ["ridge", ridge, 2, 30, 0.15],
+    ["rugged", rugged, 3, 25, 0.1],
+    ["rugged", rugged, 1, 30, 0.1],
+  ] as const)
+    it(`dovetails every piece to those beside it at its level, top pieces too, keeping the gap (${name}, cube ${cube}, fit ${fit}, pattern ${seed})`, () => {
+      const p = makeMountainPuzzle(grid, W, H, { ...SPEC, seed, cube, fit });
       const at = new Map(p.pieces.map((q) => [`${q.col},${q.row},${q.layer}`, q]));
-      let topTabs = 0;
+      const foot = new Map(p.pieces.map((q) => [q, outlineSegs(q.bodies[0], q.z0)]));
+      let [topTabs, few] = [0, 0];
       for (const q of p.pieces) {
-        // The rule: two dovetails, or one where a piece has only one beside it.
-        if (q.neighbours) expect(q.joints!, q.name).toBeGreaterThanOrEqual(Math.min(2, q.neighbours));
+        // Every side shared with a piece at its level has a dovetail.
         expect(q.joints).toBe(q.neighbours);
-        // And each really is there: on every side shared with such a piece, one of the two reaches into the other's square.
+        if (q.layer > 0 && q.joints! < 2) few++;
+        // And each really is there: on every such side, one of the two reaches into the other's square.
         let seen = 0;
         for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const o = at.get(`${q.col + dc},${q.row + dr},${q.layer}`);
@@ -431,20 +425,30 @@ describe("Mountain puzzle: every piece held", () => {
           const into = (a: typeof q, b: typeof q) => a.outline.some(([x, y]) => x > b.col * cube + 1 && x < (b.col + 1) * cube - 1 && y > b.row * cube + 1 && y < (b.row + 1) * cube - 1);
           if (into(q, o) || into(o, q)) seen++;
           if (q.top) {
-            // The printed footprints keep the fit gap: no point of one inside the other, none nearer than ~2 × fit.
-            for (let i = 0; i < q.bodies[0].vertices.length; i += 3) {
-              if (q.bodies[0].vertices[i + 2] !== q.z0) continue;
-              const r = toOutline([q.bodies[0].vertices[i], q.bodies[0].vertices[i + 1]], o.outline);
-              expect(r.inside, q.name).toBe(false);
-              expect(r.d, `${q.name} beside ${o.name}`).toBeGreaterThan(SPEC.fit * 2 * 0.75);
-            }
+            // The printed footprints keep the whole fit gap: they never cross, nor come nearer than 2 × fit.
+            const [A, B] = [foot.get(q)!, foot.get(o)!];
+            const G = new SegGrid(B, 1);
+            let nearest = Infinity;
+            for (const s of A)
+              for (const k of G.near((s[0] + s[2]) / 2, (s[1] + s[3]) / 2, 1 + Math.hypot(s[2] - s[0], s[3] - s[1]) / 2)) {
+                expect(segsCross(s, G.segs[k]), `${q.name} crosses ${o.name}`).toBe(false);
+                nearest = Math.min(nearest, segSegDist(s, G.segs[k]));
+              }
+            expect(nearest, `${q.name} beside ${o.name}`).toBeGreaterThan(2 * fit - 0.005);
           }
         }
         expect(seen, q.name).toBe(q.neighbours);
         if (q.top) topTabs += q.joints!;
-        for (const b of q.bodies) expect(closed(b).open, `${q.name} ${b.part}`).toBe(0);
+        for (const b of q.bodies) {
+          const c = closed(b);
+          expect(c.open, `${q.name} ${b.part}`).toBe(0);
+          expect(c.volume, `${q.name} ${b.part}`).toBeGreaterThan(0);
+        }
       }
       // Top pieces are dovetailed now (they used to be plain squares held only by their key).
       expect(topTabs).toBeGreaterThan(0);
+      // Pieces where fewer than two are possible are counted in a warning.
+      if (few) expect(p.warnings.join(" ")).toContain(`${few} ${few === 1 ? "piece has" : "pieces have"} fewer than two dovetails`);
+      else expect(p.warnings.join(" ")).not.toMatch(/fewer than two dovetails/);
     });
 });
