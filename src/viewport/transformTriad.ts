@@ -206,10 +206,10 @@ export function transformPick(manager: SceneManager | null, target: PickTarget |
   const shown = spotFrame(hit.src, triadFor(d, centre, null)?.frame.origin ?? centre);
   if (typeof shown === "string") return say(shown), true;
   if (picking === "from") {
-    s.changeDraftStep({ transform: { ...t, from: savedFrame(frameBy(back, shown)), picking: t.to ? undefined : "to" } });
+    s.changeDraftStep({ transform: { ...t, from: savedFrame(frameBy(back, shown)), fromConnector: undefined, picking: t.to ? undefined : "to" } });
     return true;
   }
-  s.changeDraftStep({ transform: { ...t, to: savedFrame(shown), picking: undefined } });
+  s.changeDraftStep({ transform: { ...t, to: savedFrame(shown), toConnector: undefined, picking: undefined } });
   return true;
 }
 

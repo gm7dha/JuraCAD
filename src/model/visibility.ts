@@ -51,7 +51,7 @@ export function featureVisible(feature: Feature, features: Feature[]): boolean {
 
 /** Features with an eye in the feature list. */
 export function hasEye(feature: Pick<Feature, "type">): boolean {
-  return feature.type === "sketch" || feature.type === "plane";
+  return feature.type === "sketch" || feature.type === "plane" || feature.type === "mateConnector";
 }
 
 /** Show or hide some sketches/planes of the features given (other features are left alone). */

@@ -98,6 +98,8 @@ export type PickTarget =
   | { kind: "plane"; plane: PlaneName }
   /** A Plane feature (by its feature id). */
   | { kind: "customPlane"; id: string }
+  /** A mate connector drawn by `setConnectorMarks` (by the key it was given). */
+  | { kind: "connector"; key: string }
   /** A straight line in a finished sketch (`id` is the sketch feature's id), clickable while a mirror or pattern wants one. */
   | { kind: "sketchLine"; id: string; line: string }
   /** An area of a sketch (`sketch`: its feature id; `index` into `sketchAreas(sketch).areas`): see `setPickAreas`. */
@@ -108,6 +110,18 @@ export type PickTarget =
       /** With nothing open: a part's face right there too (the area lies on it), so a second click can pick the face. */
       under?: { item: SelectionItem; point: [number, number, number]; local: [number, number, number] };
     };
+
+/** A mate connector drawn in the 3D view (see `setConnectorMarks`). */
+export interface ConnectorMark {
+  key: string;
+  origin: [number, number, number];
+  x: [number, number, number];
+  z: [number, number, number];
+  lit?: boolean;
+}
+
+/** How near (screen pixels) a click must be to a mate connector's middle to pick it. */
+const CONNECTOR_PICK_PIXELS = 9;
 
 /** One sketch's areas to draw on its plane and make clickable (see `setPickAreas`). */
 export interface PickAreaSet {
@@ -357,7 +371,7 @@ export class SceneManager {
     };
     this.renderer.localClippingEnabled = true;
 
-    this.scene.add(this.partsGroup, this.ghostGroup, this.planesGroup, this.customPlanesGroup, this.originGroup, this.markersGroup, this.sketchLayer.group, this.triadGroup);
+    this.scene.add(this.partsGroup, this.ghostGroup, this.planesGroup, this.customPlanesGroup, this.originGroup, this.markersGroup, this.connectorGroup, this.sketchLayer.group, this.triadGroup);
     this.buildPlanes();
     this.buildOrigin();
 
@@ -645,6 +659,60 @@ export class SceneManager {
       g.position.set(...m.origin);
       this.markersGroup.add(g);
     }
+  }
+
+  /**
+   * Mate connectors to draw and make clickable (Part Studio mate connectors; in an assembly while a mate is being
+   * made, the parts' own ones): each a small X/Y/Z triad, `lit` drawn larger. Clicks within a few pixels of one's
+   * middle give PickTarget "connector" with its key.
+   */
+  setConnectorMarks(marks: ConnectorMark[]): void {
+    const same = JSON.stringify(marks) === JSON.stringify(this.connectorMarks);
+    if (same) return;
+    this.connectorMarks = marks;
+    for (const child of [...this.connectorGroup.children]) {
+      this.connectorGroup.remove(child);
+      child.traverse((o) => {
+        if (o instanceof THREE.Line || o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+    }
+    for (const m of marks) {
+      const z = new THREE.Vector3(...m.z).normalize();
+      const x = new THREE.Vector3(...m.x).normalize();
+      const y = new THREE.Vector3().crossVectors(z, x);
+      const g = new THREE.Group();
+      const arm = (dir: THREE.Vector3, colour: string, len: number) => {
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(len)]), new THREE.LineBasicMaterial({ color: colour, depthTest: false }));
+        line.renderOrder = 6;
+        return line;
+      };
+      g.add(arm(x, "#d43c3c", 0.6), arm(y, "#2f9e44", 0.6), arm(z, "#2f6fd1", 0.9));
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(m.lit ? 0.13 : 0.09, 12, 8), new THREE.MeshBasicMaterial({ color: m.lit ? "#f08c00" : "#1d232a", depthTest: false }));
+      dot.renderOrder = 6;
+      g.add(dot);
+      g.position.set(...m.origin);
+      g.userData.lit = !!m.lit;
+      this.connectorGroup.add(g);
+    }
+  }
+  private connectorMarks: ConnectorMark[] = [];
+  private readonly connectorGroup = new THREE.Group();
+
+  /** The mate connector mark under a screen point (CSS px), if any. */
+  private connectorAt(x: number, y: number, reach: number): string | null {
+    let best: { key: string; d: number } | null = null;
+    for (const m of this.connectorMarks) {
+      const p = new THREE.Vector3(...m.origin).project(this.camera);
+      if (p.z > 1) continue;
+      const sx = ((p.x + 1) / 2) * this.width;
+      const sy = ((1 - p.y) / 2) * this.height;
+      const d = Math.hypot(sx - x, sy - y);
+      if (d <= CONNECTOR_PICK_PIXELS * reach && (!best || d < best.d)) best = { key: m.key, d };
+    }
+    return best?.key ?? null;
   }
 
   /** Turn the section view on (cut along this plane) or off (null). */
@@ -1523,6 +1591,9 @@ export class SceneManager {
     }
     // With a section on, ignore anything in the part that's cut away.
     const kept = (h: THREE.Intersection) => !this.section || this.section.distanceToPoint(h.point) >= -1e-6;
+    // A mate connector's middle wins over the faces and edges round it.
+    const connector = this.connectorMarks.length ? this.connectorAt(x, y, reach) : null;
+    if (connector) return { kind: "connector", key: connector };
     // A sketch area (while an Extrude, Revolve or Sweep is open): before parts, unless the extrude's end is being picked.
     const area = this.areaUnderPointer();
     const areaTarget = area ? ({ kind: "sketchArea", sketch: this.pickAreas!.sets[area.set].sketch, index: area.index } as const) : null;
@@ -2075,7 +2146,7 @@ export class SceneManager {
     if (this.dragEnabled && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const hit = this.pickAt(x, y);
       this.drag = hit?.kind === "part" ? { target: hit, started: false, refused: false } : null;
-      this.lastDragDebug = `press hit ${hit ? (hit.kind === "part" ? hit.item.partId : hit.kind === "plane" ? hit.plane : hit.kind === "sketchArea" ? "sketch area" : hit.id) : "nothing"}`;
+      this.lastDragDebug = `press hit ${hit ? (hit.kind === "part" ? hit.item.partId : hit.kind === "plane" ? hit.plane : hit.kind === "sketchArea" ? "sketch area" : hit.kind === "connector" ? hit.key : hit.id) : "nothing"}`;
     }
     if (e.button === 2) {
       // Ctrl + right-drag pans, as in Onshape (⌘ + right-drag too, for Macs).
@@ -2537,6 +2608,7 @@ export class SceneManager {
     }
     this.originGroup.scale.setScalar(36 * wpp);
     for (const m of this.markersGroup.children) m.scale.setScalar(40 * wpp);
+    for (const m of this.connectorGroup.children) m.scale.setScalar((m.userData.lit ? 44 : 34) * wpp);
     this.triadGroup.scale.setScalar(TRIAD_PIXELS * wpp);
     this.fadeTriad();
     this.sketchLayer.frameUpdate(wpp);

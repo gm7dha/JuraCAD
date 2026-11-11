@@ -11,6 +11,7 @@ import type { Feature, GeomPick, PlaneOptions } from "../src/model/types";
 import { planeFeatureFrame, refreshPlaneRefs, framesOf } from "../src/sketch/planeFeature";
 import { connectorFrame, fitPlane, lineAngleReference, morePlaneFrame, rotateAbout } from "../src/sketch/planeTypes";
 import type { Vec3 } from "../src/sketch/planes";
+import { connectorFromClick, fractionAlong, lineFromClick, nearEnd, planeClick, pointFromClick, type GeomClick } from "../src/model/geomClicks";
 
 const r = (v: number[]) => v.map((n) => Math.round(n * 1e6) / 1e6 + 0);
 const pt = (p: Vec3, extra: Partial<GeomPick> = {}): GeomPick => ({ p, ...extra });
@@ -178,5 +179,51 @@ describe("Part Studio mate connectors", () => {
     const list = [box, mc, sk, pl, mv];
     expect(findDependents(list, ["b"]).going.sort()).toEqual(["b", "m", "mc", "p"].sort());
     expect(findDependents(list, ["s"]).going.sort()).toEqual(["p", "s"]);
+  });
+});
+
+describe("clicks for planes and mate connectors", () => {
+  const edgeRef = { kind: "edge" as const, curve: "LINE", a: [0, 0, 0] as Vec3, b: [12, 0, 0] as Vec3, mid: [6, 0, 0] as Vec3 };
+  const onEdge = (at: Vec3): GeomClick => ({ kind: "part", pick: { partId: "b", ref: edgeRef }, at, points: [[0, 0, 0], [12, 0, 0]] });
+  const topFace: GeomClick = { kind: "part", pick: { partId: "b", ref: { kind: "face", surface: "PLANE", center: [6, 5, 3], normal: [0, 0, 1] } }, at: [2, 2, 3] };
+
+  it("a click near an edge's end is its corner, else its middle; a flat face its centre", () => {
+    expect(nearEnd(edgeRef, [1, 0, 0])).toBe("a");
+    expect(nearEnd(edgeRef, [11.5, 0, 0])).toBe("b");
+    expect(nearEnd(edgeRef, [5, 0, 0])).toBeNull();
+    expect(pointFromClick(onEdge([11, 0, 0]))).toMatchObject({ p: [12, 0, 0], end: "b" });
+    expect(pointFromClick(onEdge([5, 0, 0]))).toMatchObject({ p: [6, 0, 0], end: "mid" });
+    expect(pointFromClick(topFace)).toMatchObject({ p: [6, 5, 3] });
+    expect(lineFromClick(onEdge([5, 0, 0]))).toMatchObject({ p: [0, 0, 0], dir: [12, 0, 0] });
+    expect(lineFromClick(topFace)).toMatchObject({ dir: [0, 0, 1] });
+    expect(fractionAlong([[0, 0, 0], [10, 0, 0], [10, 10, 0]], [10, 5, 0])).toBe(0.75);
+  });
+
+  it("Point normal takes a corner as the point and an edge or face as the line; three point toggles points", () => {
+    let d: PlaneOptions | string = def("pointNormal", {});
+    d = planeClick(d as PlaneOptions, onEdge([11.8, 0, 0]));
+    expect(typeof d !== "string" && d.points?.[0].p).toEqual([12, 0, 0]);
+    d = planeClick(d as PlaneOptions, topFace);
+    expect(typeof d !== "string" && d.line?.dir).toEqual([0, 0, 1]);
+    expect(r((frame(d as PlaneOptions)).origin)).toEqual([12, 0, 0]);
+    let t: PlaneOptions | string = def("threePoint", {});
+    for (const at of [[0.5, 0, 0], [11.5, 0, 0]] as Vec3[]) t = planeClick(t as PlaneOptions, onEdge(at));
+    t = planeClick(t as PlaneOptions, topFace);
+    expect((t as PlaneOptions).points).toHaveLength(3);
+    expect(planeClick(t as PlaneOptions, onEdge([6, 0, 0]))).toMatch(/already has three/);
+    // Clicking a chosen point again takes it out.
+    expect((planeClick(t as PlaneOptions, topFace) as PlaneOptions).points).toHaveLength(2);
+    // Curve point: where along the edge it was clicked.
+    const c = planeClick(def("curvePoint", {}), onEdge([3, 0, 0])) as PlaneOptions;
+    expect(c.position).toBe(0.25);
+  });
+
+  it("a mate connector goes on a face's centre, an edge's end or a plane", () => {
+    const f = connectorFromClick(topFace);
+    expect(typeof f !== "string" && f.base.origin).toEqual([6, 5, 3]);
+    const e = connectorFromClick(onEdge([11.9, 0, 0]));
+    expect(typeof e !== "string" && e.at.spot).toBe("end");
+    const p = connectorFromClick({ kind: "plane", plane: { kind: "default", name: "Front" }, frame: { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1], n: [0, -1, 0] } });
+    expect(typeof p !== "string" && p.plane).toEqual({ kind: "default", name: "Front" });
   });
 });

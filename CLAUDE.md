@@ -459,6 +459,33 @@
   circular patterns made in the dialog start so, and ask); the engine's `mirrorPlane`/`pickedAxis`/`lineAxis` resolve them.
   The dialogs' boxes are `ReferenceBox` in FeatureDialog.tsx; sketch lines are clickable in the view (`PickTarget`
   "sketchLine", `SceneManager.setPickLines`) and the chosen plane/axis is drawn (`setReference`) while one is open.
+- Onshape's other Plane types and Part Studio mate connectors. `PlaneOptions.mode` also "point" (Plane point: `points[0]`, parallel
+  to `ref`), "pointNormal" (`points[0]` + `line`), "lineAngle" (`line`, the `angle` param from the upright plane holding it —
+  `lineAngleReference`), "threePoint", "curvePoint" (`points[0]` on an edge at `position` 0…1, its `dir` the edge's direction there),
+  "fit" (least squares, ≥ 3); `flip`; missing for old modes, so old files read the same. Each point/line is a `GeomPick` (types.ts):
+  numbers as last found (`p`, `dir`) + what it follows (`pick` edge/face with `end` a/b/mid, `sketchPoint`, `sketchLine`,
+  `connector`, `axis`). Pure maths `src/sketch/planeTypes.ts` (`morePlaneFrame`, called by `planeFeatureFrame`; `fitPlane`,
+  `connectorFrame`); clicks → picks `src/model/geomClicks.ts` (`planeClick`: Point normal takes a corner as its point, an edge/face/
+  sketch line as its line; Three point/Fit toggle points; `connectorFromClick`); viewport glue `src/viewport/geomPick.ts`
+  (`geomPick`, called first in handlePick). Mate connector = feature type "mateConnector", `Feature.connector`
+  (`MateConnectorDef`: `at` (GeomPick + `spot` as assembly connectors), `plane`, `owner`, `flipZ`, `base` = where it was last found),
+  params dx/dy/dz/rx/ry/rz along/about its own axes. The ENGINE follows them (`followedFeature`, `placeMorePlane`, `placeConnector`,
+  `findGeom`, `connectorBase` in engine.ts): at their place in the list it re-finds each pick, works out the frame, and things
+  placed on them (`planeRef`) are repointed in the same build (`repointFeature` in planeFeature.ts — only new-type planes and
+  connectors go in that map, so old files build exactly as before); Move / copy's `fromConnector`/`toConnector` are filled in as
+  `from`/`to`, and connectors owned by a moved part go with it (`moveOwnedConnectors`). What moved comes back as
+  `RebuildResult.followed` → store `applyFollowedRefs` → pure `src/model/followed.ts` `applyFollowed` (written into the design
+  and the open draft WITHOUT an undo step — only when the feature's choices are unchanged, `sameChoices`; then
+  `refreshDocumentPlanes`), the extension's `tryChange` does the same. Owned connectors ride on `PartMesh.connectors` (part
+  coordinates), so assemblies use them: `MateConnector.connector` (+ a stand-in `pick`, `ownConnectorPick`), resolved by
+  `connectorFrameOnParts` → `ownConnectorFrame`. Connectors are drawn/clicked as `SceneManager.setConnectorMarks` (PickTarget
+  "connector", within `CONNECTOR_PICK_PIXELS` of the middle, before faces); in an assembly only while a mate is made (key
+  "<leaf key>|<id>"). They're sketch planes (`framesOf`/`refreshPlaneRefs` include them as `planeRef`s), have an eye
+  (`hasEye`), and Delete with dependents knows `GeomPick`s, `connector.plane`/`owner`, `from/toConnector`. Not done: Onshape has
+  no Tangent plane; sketch points can't be clicked in the 3D view (the extension takes them); mirror/pattern across a connector
+  only through its plane (a sketch on it). Claude: add_feature "plane" (plane_type…) / "mate_connector", add_sketch "plane":
+  a Plane or connector name, add_mate end `{"instance", "connector"}` (`src/mcp/planeSpec.ts`). Tests: tests/planeTypes (pure),
+  enginePlaneTypes (follow a variable, sketch on it in one build, Move / copy by connectors, owned connector), mcpPlanes.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.

@@ -9,7 +9,7 @@ import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, acti
 import { ghostParts } from "../app/versionActions";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
-import { clickedSpot, findPick, framePlacement } from "../assembly/connectors";
+import { clickedSpot, findPick, framePlacement, ownConnectorPick } from "../assembly/connectors";
 import { explodeAssembly, useAssemblyLeaves, useSolvedAssembly } from "../app/assemblySolve";
 import { stepPartOffsets } from "../assembly/explode";
 import { instanceAt, leafKey, leavesOf, topOfKey, type Leaf } from "../assembly/subassembly";
@@ -30,7 +30,9 @@ import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solve
 import type { SketchData } from "../sketch/types";
 import { setSketchTheme } from "./SketchLayer";
 import { draftEffect, partsOfFeature } from "../model/partLinks";
-import { SceneManager, type PickAreas, type PickAreaSet, type PickTarget, type ScreenRay } from "./SceneManager";
+import { SceneManager, type ConnectorMark, type PickAreas, type PickAreaSet, type PickTarget, type ScreenRay } from "./SceneManager";
+import { geomPick, studioConnectorMarks } from "./geomPick";
+import { isMorePlaneMode } from "../sketch/planeTypes";
 import { areaClickChange, areaClickMode, areaOutlines, areaShades, areasTaken, clickableAreaSketches, followedSketch, selectArea, selectedAreaShades, selectedCount } from "../sketch/areaClicks";
 import { sketchAreas } from "../sketch/areas";
 import { planDrag, type DragPlan } from "../assembly/drag";
@@ -70,7 +72,8 @@ function hiddenMeshes(hidden: string[], leaves: Leaf[]): string[] {
 function connectorItems(parts: PartMesh[], assembly: Assembly, assemblies: readonly Assembly[], connectors: (MateConnector | undefined)[]): SelectionItem[] {
   const items: SelectionItem[] = [];
   for (const c of connectors) {
-    if (!c) continue;
+    // (A part's own mate connector is drawn as its marker, not a face.)
+    if (!c || c.connector) continue;
     // On a part inside a sub-assembly, the path leads to it (a Width mate's second face may be on another part of the copy).
     const sides: [TopoPick, string[] | undefined][] = c.pick2 ? [[c.pick, c.path], [c.pick2, c.path2 ?? c.path]] : [[c.pick, c.path]];
     for (const [pick, path] of sides) {
@@ -112,8 +115,26 @@ function connectorAt(target: PickTarget | null): MateConnector | null {
   return { instanceId: found.top.id, ...(found.path.length ? { path: found.path } : {}), pick: { partId: instance.partId, ref }, ...(spot ? { spot } : {}), ...(point ? { point } : {}) };
 }
 
+/** A part's own mate connector clicked in an assembly (its mark's key: "<copy key>|<connector id>"), as a mate end. */
+function ownConnectorAt(key: string): MateConnector | null {
+  const s = useStore.getState();
+  const asm = activeAssembly(s);
+  const cut = key.lastIndexOf("|");
+  const found = asm ? instanceAt(asm, s.history.present.assemblies ?? [], key.slice(0, cut)) : null;
+  const instance = found?.part;
+  const part = instance && findMesh(s.parts, meshIdOf(instance));
+  const c = part?.connectors?.find((x) => x.id === key.slice(cut + 1));
+  if (!found || !instance || !c) return null;
+  return { instanceId: found.top.id, ...(found.path.length ? { path: found.path } : {}), ...ownConnectorPick(instance.partId, c) };
+}
+
 function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
+  if (s.mateDraft && target?.kind === "connector") {
+    const c = ownConnectorAt(target.key);
+    if (c) s.pickMateConnector(c);
+    return;
+  }
   if (s.mateDraft) {
     const c = connectorAt(target);
     if (c) s.pickMateConnector(c);
@@ -188,6 +209,8 @@ const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "dele
 function handlePick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
   if (activeAssembly(s)) return handleAssemblyPick(target, additive);
+  // Onshape's other Plane types, a Mate connector being placed, or a mate connector clicked.
+  if (geomPick(viewportApi.current, target)) return;
   // An area of the sketch an Extrude, Revolve or Sweep uses: pick it, or leave it out again (as the 2D map does).
   // Another sketch's area: that sketch becomes the feature's sketch. With nothing open: select it for the next feature.
   if (target?.kind === "sketchArea") {
@@ -525,7 +548,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
-  if (target.kind === "sketchLine") return;
+  if (target.kind === "sketchLine" || target.kind === "connector") return;
   if (target.kind === "plane") {
     // Clicking the selected plane again deselects it.
     selectPlane(selectedPlane === target.plane ? null : target.plane);
@@ -816,6 +839,22 @@ export function Viewport() {
     }
     manager.setCustomPlanes(list.map((p) => ({ id: p.id, origin: p.origin, u: p.u, v: p.v, label: p.label, highlight: p.highlight })));
   }, [listFeatures, planeDraft, assembly, pickedFeatureForPlanes]);
+  // Mate connectors: the Part Studio's own (shown with the eye), or — while a mate is made in an assembly — every part's own.
+  const connectorDraft = useStore((s) => (s.editing?.draft.type === "mateConnector" ? s.editing.draft : null));
+  const connectorMarks = useMemo<ConnectorMark[]>(() => {
+    if (!assembly) return studioConnectorMarks(listFeatures, parts, connectorDraft, pickedFeatureForPlanes);
+    if (!mateDraft) return [];
+    const out: ConnectorMark[] = [];
+    const at = (m: number[], v: [number, number, number], w: number): [number, number, number] => [0, 1, 2].map((k) => m[k] * v[0] + m[4 + k] * v[1] + m[8 + k] * v[2] + w * m[12 + k]) as [number, number, number];
+    for (const l of leaves) {
+      const part = findMesh(parts, meshIdOf(l.instance));
+      const m = placements[l.key];
+      if (!part?.connectors?.length || !m) continue;
+      for (const c of part.connectors) out.push({ key: `${l.key}|${c.id}`, origin: at(m, c.origin, 1), x: at(m, c.x, 0), z: at(m, c.z, 0) });
+    }
+    return out;
+  }, [assembly, mateDraft, listFeatures, parts, connectorDraft, pickedFeatureForPlanes, leaves, placements]);
+  useEffect(() => viewportApi.current?.setConnectorMarks(connectorMarks), [connectorMarks]);
   const selectedParts = useStore((s) => s.selectedParts);
   const pickedFeature = useStore((s) => s.selectedFeatureId);
   const studioFeatures = useStore(activeFeatures);
@@ -947,7 +986,9 @@ export function Viewport() {
     const d = s.editing?.draft;
     return d && (d.type === "mirror" || d.type === "linearPattern" || d.type === "circularPattern") ? d : null;
   });
-  const pickLines = useMemo(() => (refDraft && !inAssembly ? pickableSketchLines(features, refDraft.id) : NO_LINES), [refDraft, features, inAssembly]);
+  // A newer Plane type open: sketch lines can be clicked too (as its line, or a point on one).
+  const lineDraftId = useStore((s) => (s.editing?.draft.type === "plane" && s.editing.draft.planeDef && isMorePlaneMode(s.editing.draft.planeDef.mode) && s.editing.draft.planeDef.mode !== "curvePoint" ? s.editing.draft.id : null));
+  const pickLines = useMemo(() => (refDraft && !inAssembly ? pickableSketchLines(features, refDraft.id) : lineDraftId && !inAssembly ? pickableSketchLines(features, lineDraftId) : NO_LINES), [refDraft, lineDraftId, features, inAssembly]);
   useEffect(() => viewportApi.current?.setPickLines(pickLines), [pickLines]);
   useEffect(() => {
     const shape = refDraft && !inAssembly ? referenceShape(refDraft, features, resolveParams(refDraft).values) : null;

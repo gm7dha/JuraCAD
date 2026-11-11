@@ -373,7 +373,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Mirror/pattern: add a feature to repeat, or remove it if it's already there. */
@@ -914,7 +914,7 @@ export const useStore = create<AppState>((set, get) => {
       const s = get();
       if (type === "sketch") {
         // On the highlighted plane, or Plane feature, if any — or the plane of the sketch whose areas are selected.
-        const planeFeature = activeFeatures(s).find((f) => f.id === s.selectedFeatureId && f.type === "plane");
+        const planeFeature = activeFeatures(s).find((f) => f.id === s.selectedFeatureId && (f.type === "plane" || f.type === "mateConnector"));
         const frame = planeFeature ? framesOf(activeFeatures(s)).get(planeFeature.id) : undefined;
         const sel = s.areaSelection;
         const areaPlane = sel ? (followedSketch(activeFeatures(s).find((f) => f.id === sel.sketch && f.type === "sketch"), s.sketchLinks)?.plane ?? null) : null;
